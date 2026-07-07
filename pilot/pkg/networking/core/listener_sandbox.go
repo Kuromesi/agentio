@@ -53,8 +53,8 @@ import (
 	istio_route "istio.io/istio/pilot/pkg/networking/core/route"
 	"istio.io/istio/pilot/pkg/networking/core/route/retry"
 	"istio.io/istio/pilot/pkg/networking/util"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	xdsfilters "istio.io/istio/pilot/pkg/xds/filters"
 	"istio.io/istio/pkg/config/protocol"
@@ -426,7 +426,7 @@ func sandboxListeners(lb *ListenerBuilder) []*listener.Listener {
 // connect-terminate chain. Substitutes the sandbox-aware variant when this node
 // is a sandbox egress; otherwise returns the standard waypoint filter.
 func connectAuthorityFilter(node *model.Proxy) *hcm.HttpFilter {
-	if sandbox.IsSandboxEgress(node) {
+	if agentio.IsSandboxEgress(node) {
 		return xdsfilters.SandboxConnectAuthorityFilter
 	}
 	return xdsfilters.ConnectAuthorityFilter
@@ -500,7 +500,7 @@ func applySandboxInternalChains(
 	chains []*listener.FilterChain,
 	primaryMatcher *matcher.Matcher,
 ) []*listener.FilterChain {
-	if !sandbox.IsSandboxEgress(lb.node) {
+	if !agentio.IsSandboxEgress(lb.node) {
 		return chains
 	}
 	// catchall-main-forward: forwards unmatched traffic to the main_forward internal listener.
@@ -509,7 +509,7 @@ func applySandboxInternalChains(
 	target := deepestOnNoMatchTarget(primaryMatcher)
 	protocolFallback := buildSandboxProtocolMatcher()
 
-	gateway := sandbox.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
+	gateway := agentio.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
 	tlsTermCfg := gateway.GetTlsTermination()
 	if features.EnableOnDemandCerts && tlsTermCfg != nil {
 		// catchall-tls: terminates TLS with on-demand certs.
@@ -543,7 +543,7 @@ func buildSandboxDFPFilter() *hcm.HttpFilter {
 // for appending the router filter AFTER this returns. No-op when the node is not
 // a sandbox egress.
 func appendSandboxHTTPFilters(lb *ListenerBuilder, filters []*hcm.HttpFilter, validateSni bool) []*hcm.HttpFilter {
-	if !sandbox.IsSandboxEgress(lb.node) {
+	if !agentio.IsSandboxEgress(lb.node) {
 		return filters
 	}
 	if validateSni {
@@ -558,7 +558,7 @@ func appendSandboxHTTPFilters(lb *ListenerBuilder, filters []*hcm.HttpFilter, va
 	}
 	// ext_proc runs first so external auth/policy can reject before we pay the
 	// cost of a DNS lookup and to keep authz decisions before any egress side effect.
-	filters = append(filters, sandbox.BuildExtProcFilter(lb.node, lb.push.SandboxConfig)...)
+	filters = append(filters, agentio.BuildExtProcFilter(lb.node, lb.push.SandboxConfig)...)
 	// DFP must sit between authz/ext_proc and the router: prepending it would let
 	// it resolve the upstream host before RBAC/JWT/ext_proc had a chance to deny
 	// the request, leaking DNS for forbidden destinations.
@@ -575,10 +575,10 @@ var (
 // sandbox egress gateway. Returns nil when the node is not a sandbox egress
 // or no ConnectionPool is configured.
 func sandboxGatewayConnPool(lb *ListenerBuilder) *extensions.ConnectionPoolSettings {
-	if !sandbox.IsSandboxEgress(lb.node) {
+	if !agentio.IsSandboxEgress(lb.node) {
 		return nil
 	}
-	gw := sandbox.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
+	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
 	return gw.GetConnectionPool()
 }
 
@@ -643,7 +643,7 @@ func buildSandboxRoute(lb *ListenerBuilder, cc inboundChainConfig, settings *ext
 // egress nodes. Uses the gateway's connection_pool.stream_idle_timeout if
 // configured, otherwise defaults to 30min. No-op for non-sandbox nodes.
 func applySandboxStreamIdleTimeout(lb *ListenerBuilder, h *hcm.HttpConnectionManager) {
-	if !sandbox.IsSandboxEgress(lb.node) {
+	if !agentio.IsSandboxEgress(lb.node) {
 		return
 	}
 	connPool := sandboxGatewayConnPool(lb)
@@ -672,10 +672,10 @@ func applySandboxTCPTimeouts(connPool *extensions.ConnectionPoolSettings, tcpPro
 // HTTP filter from the sandbox LocalRateLimitSettings. Returns nil when rate
 // limiting is not configured.
 func buildSandboxConnectTerminateRateLimitFilter(lb *ListenerBuilder) *hcm.HttpFilter {
-	if !sandbox.IsSandboxEgress(lb.node) {
+	if !agentio.IsSandboxEgress(lb.node) {
 		return nil
 	}
-	gw := sandbox.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
+	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
 	rl := gw.GetConnectRateLimit()
 	if rl == nil {
 		return nil

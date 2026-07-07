@@ -26,8 +26,8 @@ import (
 
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/config/xds"
 	"istio.io/istio/pkg/spiffe"
@@ -37,7 +37,7 @@ import (
 func sandboxEgressNode() *model.Proxy {
 	return &model.Proxy{
 		Labels: map[string]string{
-			sandbox.LabelSandboxEgress: "true",
+			agentio.LabelSandboxEgress: "true",
 		},
 		ID:              "egress-gw-0.istio-system",
 		ConfigNamespace: "istio-system",

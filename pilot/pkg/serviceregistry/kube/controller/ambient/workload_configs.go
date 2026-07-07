@@ -16,7 +16,7 @@ package ambient
 
 import (
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/util/sets"
 )
 
@@ -36,7 +36,7 @@ func (a *index) WorkloadConfigs(requested sets.Set[model.ConfigKey]) []model.Wor
 }
 
 func (a *index) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	if !sandbox.IsSandboxDedicatedProxy(proxy) {
+	if !agentio.IsSandboxDedicatedProxy(proxy) {
 		return a.WorkloadConfigs(requested)
 	}
 

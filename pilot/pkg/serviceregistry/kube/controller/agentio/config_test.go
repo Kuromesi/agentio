@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sandbox
+package agentio
 
 import (
 	"reflect"
 	"testing"
 
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 )
 
 func TestApplySandboxConfig_BasicOverride(t *testing.T) {

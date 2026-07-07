@@ -35,8 +35,8 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pilot/pkg/serviceregistry/serviceentry"
 	labelutil "istio.io/istio/pilot/pkg/serviceregistry/util/label"
 	"istio.io/istio/pilot/pkg/util/protoconv"
@@ -884,15 +884,15 @@ func podWorkloadBuilder(
 		sc := krt.FetchOne(ctx, sandboxConfig.AsCollection())
 		labels := p.Labels
 		if len(sc.GetSandboxIgnoredLabels()) > 0 {
-			labels = sandbox.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
+			labels = agentio.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
 		}
-		metaExtension := sandbox.NewResourceMetadataExtension(labels, sandbox.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
+		metaExtension := agentio.NewResourceMetadataExtension(labels, agentio.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
 		if metaExtension != nil {
 			w.Extensions = append(w.Extensions, metaExtension)
 		}
 
 		if sc.GetEgressPolicies() != nil {
-			w.Extensions = append(w.Extensions, sandbox.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
+			w.Extensions = append(w.Extensions, agentio.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
 		}
 
 		if p.Spec.HostNetwork {

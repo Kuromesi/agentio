@@ -23,7 +23,7 @@ import (
 	"istio.io/istio/pilot/pkg/networking/apigen"
 	"istio.io/istio/pilot/pkg/networking/core"
 	"istio.io/istio/pilot/pkg/networking/grpcgen"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/xds"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/cluster"
@@ -35,7 +35,7 @@ func InitGenerators(
 	systemNameSpace string,
 	clusterID cluster.ID,
 	internalDebugMux *http.ServeMux,
-	sandboxController *sandbox.SandboxController,
+	sandboxController *agentio.Controller,
 ) {
 	env := s.Env
 	generators := map[string]model.XdsResourceGenerator{}
@@ -46,7 +46,7 @@ func InitGenerators(
 	generators[v3.EndpointType] = edsGen
 	ecdsGen := &xds.EcdsGenerator{ConfigGenerator: cg}
 	if env.CredentialsController != nil {
-		var onDemandController sandbox.OnDemandCertController
+		var onDemandController agentio.OnDemandCertController
 		if features.EnableOnDemandCerts {
 			onDemandController = sandboxController.OnDemandCertController()
 		}

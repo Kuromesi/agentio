@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"istio.io/api/label"
-	sandboxpkg "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	sandboxpkg "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/test/framework"

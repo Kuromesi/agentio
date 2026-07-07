@@ -5,7 +5,7 @@ package kruise.io.extensions.v1;
 import "google/protobuf/duration.proto";
 import "networking/v1alpha3/virtual_service.proto";
 
-option go_package = "pilot/pkg/serviceregistry/kube/controller/sandbox/extensions";
+option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
 
 // SandboxConfig is the complete configuration for the sandbox controller.
 message SandboxConfig {

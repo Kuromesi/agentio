@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config"
 	"istio.io/istio/pkg/config/schema/gvk"
 	"istio.io/istio/pkg/config/schema/kind"

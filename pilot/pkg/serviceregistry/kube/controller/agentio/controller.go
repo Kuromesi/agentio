@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sandbox
+package agentio
 
 import (
 	"strings"
@@ -22,7 +22,7 @@ import (
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/mesh/meshwatcher"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/kube"
@@ -60,13 +60,13 @@ var (
 			"SELF_SIGN: generate an ephemeral self-signed CA at startup (for testing only, not suitable for multi-instance deployments).").Get()
 )
 
-type SandboxControllerOptions struct {
+type Options struct {
 	KubeClient kube.Client
 	MeshConfig meshwatcher.WatcherCollection
 	Debugger   *krt.DebugHandler
 }
 
-type SandboxController struct {
+type Controller struct {
 	ConfigStoreController model.ConfigStoreController
 	meshConfig            meshwatcher.WatcherCollection
 	sandboxConfig         krt.Singleton[model.SandboxConfig]
@@ -83,7 +83,7 @@ type SandboxController struct {
 	stop chan struct{}
 }
 
-func NewSandboxController(options SandboxControllerOptions) (*SandboxController, error) {
+func NewController(options Options) (*Controller, error) {
 	stop := make(chan struct{})
 
 	opts := krt.NewOptionsBuilder(stop, "sandbox-controller", options.Debugger)
@@ -93,7 +93,7 @@ func NewSandboxController(options SandboxControllerOptions) (*SandboxController,
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
 	sandboxConfig := newSandboxControllerConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)
 
-	c := &SandboxController{
+	c := &Controller{
 		ConfigStoreController: store,
 		stop:                  stop,
 		trafficPolicies:       TrafficPolicies,
@@ -114,7 +114,7 @@ func NewSandboxController(options SandboxControllerOptions) (*SandboxController,
 	return c, nil
 }
 
-func (c *SandboxController) initOnDemandController(kc kube.Client, opts krt.OptionsBuilder) error {
+func (c *Controller) initOnDemandController(kc kube.Client, opts krt.OptionsBuilder) error {
 	onDemandController, err := newOnDemandCertController(kc, OnDemandCertControllerOption{
 		SecretNamespace: mitmSecretNamespace,
 		SecretName:      mitmSecretName,
@@ -133,12 +133,12 @@ func (c *SandboxController) initOnDemandController(kc kube.Client, opts krt.Opti
 	return nil
 }
 
-func (c *SandboxController) Run(stop <-chan struct{}) {
+func (c *Controller) Run(stop <-chan struct{}) {
 	<-stop
 	close(c.stop)
 }
 
-func (c *SandboxController) initExternalNamesController() {
+func (c *Controller) initExternalNamesController() {
 	externalNamesController := newExternalServiceController(externalNamesControllerOptions{
 		dnsServers: dnsServers,
 	})
@@ -205,7 +205,7 @@ func (c *SandboxController) initExternalNamesController() {
 	c.externalNamesController.Start(c.stop)
 }
 
-func (c *SandboxController) initWorkloadConfigs(opts krt.OptionsBuilder) {
+func (c *Controller) initWorkloadConfigs(opts krt.OptionsBuilder) {
 	rootNamespace := c.meshConfig.Get().RootNamespace
 	c.workloadConfigs = krt.NewSingleton(func(ctx krt.HandlerContext) *model.WorkloadConfig {
 		sc := krt.FetchOne(ctx, c.sandboxConfig.AsCollection())
@@ -226,11 +226,11 @@ func (c *SandboxController) initWorkloadConfigs(opts krt.OptionsBuilder) {
 	}, opts.WithName("WorkloadConfigs")...)
 }
 
-func (c *SandboxController) SandboxConfig() krt.Singleton[model.SandboxConfig] {
+func (c *Controller) SandboxConfig() krt.Singleton[model.SandboxConfig] {
 	return c.sandboxConfig
 }
 
-func (c *SandboxController) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {
+func (c *Controller) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {
 	return c.workloadConfigs.AsCollection()
 }
 
@@ -262,14 +262,14 @@ func resolveEgressPolicy(ctx krt.HandlerContext, p *extensions.EgressPolicy, enc
 	return clone
 }
 
-func (c *SandboxController) OnDemandCertController() OnDemandCertController {
+func (c *Controller) OnDemandCertController() OnDemandCertController {
 	if c.onDemandController == nil {
 		return nil
 	}
 	return c.onDemandController
 }
 
-func (c *SandboxController) BuildPolicyCollection(
+func (c *Controller) BuildPolicyCollection(
 	services krt.Collection[*corev1.Service],
 	endpointSlices krt.Collection[*discovery.EndpointSlice],
 	pods krt.Collection[*corev1.Pod],

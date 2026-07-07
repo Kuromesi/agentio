@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sandbox
+package agentio
 
 import (
 	"testing"
@@ -22,7 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 )
 
 func sandboxEgressProxy() *model.Proxy {

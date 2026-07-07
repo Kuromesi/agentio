@@ -46,7 +46,7 @@ import (
 	"istio.io/istio/pilot/pkg/leaderelection"
 	"istio.io/istio/pilot/pkg/leaderelection/k8sleaderelection/k8sresourcelock"
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/activenotifier"
 	"istio.io/istio/pkg/adsc"
 	"istio.io/istio/pkg/config/analysis/incluster"
@@ -102,7 +102,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 	}
 
-	sandboxController, err := sandbox.NewSandboxController(sandbox.SandboxControllerOptions{
+	sandboxController, err := agentio.NewController(agentio.Options{
 		KubeClient: s.kubeClient,
 		MeshConfig: s.environment.Watcher,
 		Debugger:   s.krtDebugger,

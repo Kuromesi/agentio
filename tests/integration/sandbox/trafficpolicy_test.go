@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/test/framework"
 	"istio.io/istio/pkg/test/framework/components/echo"
@@ -1051,7 +1051,7 @@ spec:
 				Run(func(ctx framework.TestContext) {
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"SrcApp":            src.Config().Service,
-						"LabelSandboxProxy": sandbox.LabelSandboxProxyType,
+						"LabelSandboxProxy": agentio.LabelSandboxProxyType,
 					}, `
 apiVersion: network.alibabacloud.com/v1alpha1
 kind: TrafficPolicy

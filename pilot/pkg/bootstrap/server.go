@@ -53,7 +53,7 @@ import (
 	sec_model "istio.io/istio/pilot/pkg/security/model"
 	"istio.io/istio/pilot/pkg/server"
 	"istio.io/istio/pilot/pkg/serviceregistry/aggregate"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/provider"
 	"istio.io/istio/pilot/pkg/serviceregistry/serviceentry"
 	"istio.io/istio/pilot/pkg/status"
@@ -118,7 +118,7 @@ type Server struct {
 	ConfigStores           []model.ConfigStoreController
 	serviceEntryController *serviceentry.Controller
 
-	sandboxController *sandbox.SandboxController
+	sandboxController *agentio.Controller
 
 	httpServer  *http.Server // debug, monitoring and readiness Server.
 	httpAddr    string

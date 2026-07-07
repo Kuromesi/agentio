@@ -35,8 +35,8 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry"
 	"istio.io/istio/pilot/pkg/serviceregistry/aggregate"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pilot/pkg/serviceregistry/provider"
 	labelutil "istio.io/istio/pilot/pkg/serviceregistry/util/label"
 	"istio.io/istio/pilot/pkg/serviceregistry/util/workloadinstances"
@@ -171,7 +171,7 @@ type Options struct {
 
 	KrtDebugger *krt.DebugHandler
 
-	SandboxController *sandbox.SandboxController
+	SandboxController *agentio.Controller
 }
 
 // kubernetesNode represents a kubernetes node that is reachable externally

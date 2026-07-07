@@ -33,8 +33,8 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/serviceentry"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config"
@@ -290,7 +290,7 @@ func serviceServiceBuilder(
 			Waypoint:      waypointStatus,
 			Scope:         serviceScope,
 			CreationTime:  s.CreationTimestamp.Time,
-			IsWaypoint:    sandbox.IsWaypointService(s),
+			IsWaypoint:    agentio.IsWaypointService(s),
 		}
 		if precompute {
 			return precomputeServicePtr(svcInfo)

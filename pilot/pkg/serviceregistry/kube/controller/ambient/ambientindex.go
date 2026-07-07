@@ -32,9 +32,9 @@ import (
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/statusqueue"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pkg/activenotifier"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config"
@@ -142,7 +142,7 @@ type index struct {
 	remoteClientConfigOverrides []func(*rest.Config)
 	builder                     Builder
 
-	sandboxController *sandbox.SandboxController
+	sandboxController *agentio.Controller
 }
 
 type FeatureFlags struct {
@@ -168,7 +168,7 @@ type Options struct {
 	Debugger                    *krt.DebugHandler
 	ClientBuilder               multicluster.ClientBuilder
 	RemoteClientConfigOverrides []func(*rest.Config)
-	SandboxController           *sandbox.SandboxController
+	SandboxController           *agentio.Controller
 }
 
 func New(options Options) Index {
@@ -547,7 +547,7 @@ func New(options Options) Index {
 	}
 
 	AlwaysPushWorkloads := krt.NewCollection(Workloads, func(ctx krt.HandlerContext, w model.WorkloadInfo) *model.WorkloadInfo {
-		if w.Workload.Waypoint != nil || w.Source == kind.WorkloadEntry || sandbox.IsWaypointWorkload(&w) {
+		if w.Workload.Waypoint != nil || w.Source == kind.WorkloadEntry || agentio.IsWaypointWorkload(&w) {
 			return &w
 		}
 		return nil
@@ -697,7 +697,7 @@ func (a *index) Lookup(key string) []model.AddressInfo {
 func (a *index) LookupForProxy(key string, proxy *model.Proxy) ([]model.AddressInfo, bool) {
 	// 1. Workload UID
 	if w := a.workloads.GetKey(key); w != nil {
-		if sandbox.ShouldPushWorkload(proxy, w) {
+		if agentio.ShouldPushWorkload(proxy, w) {
 			return []model.AddressInfo{w.AsAddress}, false
 		}
 		return nil, true
@@ -714,7 +714,7 @@ func (a *index) LookupForProxy(key string, proxy *model.Proxy) ([]model.AddressI
 	if wls := a.workloads.ByAddress.Lookup(networkAddr); len(wls) > 0 {
 		total := len(wls)
 		wls = slices.Filter(wls, func(wi model.WorkloadInfo) bool {
-			return sandbox.ShouldPushWorkload(proxy, &wi)
+			return agentio.ShouldPushWorkload(proxy, &wi)
 		})
 		return slices.Map(wls, modelWorkloadToAddressInfo), len(wls) < total
 	}
@@ -724,14 +724,14 @@ func (a *index) LookupForProxy(key string, proxy *model.Proxy) ([]model.AddressI
 	if svc := a.lookupService(key); svc != nil {
 		res := []model.AddressInfo{}
 		filtered := false
-		if sandbox.ShouldPushService(proxy, svc) {
+		if agentio.ShouldPushService(proxy, svc) {
 			res = append(res, svc.AsAddress)
 		} else {
 			filtered = true
 		}
 		// grab all workloads that reference this service
 		for _, w := range a.workloads.ByServiceKey.Lookup(svc.ResourceName()) {
-			if sandbox.ShouldPushWorkload(proxy, &w) {
+			if agentio.ShouldPushWorkload(proxy, &w) {
 				res = append(res, w.AsAddress)
 			} else {
 				filtered = true
@@ -786,7 +786,7 @@ func (a *index) AllForProxy(proxy *model.Proxy) []model.AddressInfo {
 	// Add all workloads
 	res := make([]model.AddressInfo, 0, len(a.workloads.List())+len(a.services.List()))
 
-	resourceName, ok := sandbox.BuildProxyWorkloadKey(proxy)
+	resourceName, ok := agentio.BuildProxyWorkloadKey(proxy)
 	if !ok {
 		log.Warnf("invalid proxy id: %s", proxy.ID)
 		return a.All() // fallback to full list if we can't determine the workload key
@@ -891,7 +891,7 @@ func (a *index) AddressInformationForProxy(
 	proxy *model.Proxy,
 	addresses sets.String,
 ) ([]model.AddressInfo, sets.String) {
-	if features.MeshInternalTrafficPolicy != sandbox.MeshInternalTrafficPolicyPassthrough || !sandbox.IsSandboxDedicatedProxy(proxy) {
+	if features.MeshInternalTrafficPolicy != agentio.MeshInternalTrafficPolicyPassthrough || !agentio.IsSandboxDedicatedProxy(proxy) {
 		return a.AddressInformation(addresses)
 	}
 

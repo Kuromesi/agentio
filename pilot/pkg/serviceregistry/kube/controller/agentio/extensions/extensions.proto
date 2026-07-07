@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package kruise.io.extensions.v1;
 
-option go_package = "pilot/pkg/serviceregistry/kube/controller/sandbox/extensions";
+option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
 
 // TrafficPolicyExtension provides traffic policy priority and protocol information.
 // Attached to Authorization policies via auth_extensions field.

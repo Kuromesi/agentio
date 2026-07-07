@@ -38,7 +38,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/model/credentials"
 	securitymodel "istio.io/istio/pilot/pkg/security/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config/schema/kind"
@@ -418,7 +418,7 @@ func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy 
 			// A denied resource is dropped from retained → GenerateDeltas surfaces it as
 			// removed_resources so envoy fails the handshake fast instead of waiting on
 			// TransportSocketConnectTimeout.
-			if isOnDemandAuthorized() && sandbox.IsAllowedOnDemandDomain(proxy, push, r.Name) {
+			if isOnDemandAuthorized() && agentio.IsAllowedOnDemandDomain(proxy, push, r.Name) {
 				allowedResources = append(allowedResources, r)
 			} else {
 				deniedResources = append(deniedResources, r.Name)
@@ -605,7 +605,7 @@ type SecretGen struct {
 	cache         model.XdsCache
 	configCluster cluster.ID
 	meshConfig    *mesh.MeshConfig
-	onDemandCerts sandbox.OnDemandCertController
+	onDemandCerts agentio.OnDemandCertController
 }
 
 var (
@@ -614,7 +614,7 @@ var (
 )
 
 func NewSecretGen(sc credscontroller.MulticlusterController, cache model.XdsCache, configCluster cluster.ID,
-	meshConfig *mesh.MeshConfig, onDemandController sandbox.OnDemandCertController,
+	meshConfig *mesh.MeshConfig, onDemandController agentio.OnDemandCertController,
 ) *SecretGen {
 	return &SecretGen{
 		secrets:       sc,

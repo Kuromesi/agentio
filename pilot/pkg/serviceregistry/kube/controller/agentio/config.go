@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sandbox
+package agentio
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/kclient"

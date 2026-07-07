@@ -26,7 +26,7 @@ import (
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/maps"
@@ -71,7 +71,7 @@ func (a *index) PoliciesForProxy(
 	proxy *model.Proxy,
 	requested sets.Set[model.ConfigKey],
 ) []model.WorkloadAuthorization {
-	if !sandbox.IsSandboxDedicatedProxy(proxy) {
+	if !agentio.IsSandboxDedicatedProxy(proxy) {
 		return a.Policies(requested)
 	}
 
@@ -87,7 +87,7 @@ func (a *index) PoliciesForProxy(
 		if cfg.Authorization == nil {
 			continue
 		}
-		if !sandbox.ShouldPushAuthorizationPolicy(proxy, &cfg, a.SystemNamespace) {
+		if !agentio.ShouldPushAuthorizationPolicy(proxy, &cfg, a.SystemNamespace) {
 			continue
 		}
 		k := model.ConfigKey{
