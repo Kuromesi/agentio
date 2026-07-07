@@ -113,7 +113,7 @@ type Environment struct {
 	// Watcher is the watcher for the mesh config (to be merged into the config store)
 	Watcher
 
-	SandboxController
+	AgentioController
 
 	// NetworksWatcher (loaded from a config map) provides information about the
 	// set of networks inside a mesh and how to route to endpoints in each
@@ -161,9 +161,9 @@ func (e *Environment) Mesh() *meshconfig.MeshConfig {
 	return nil
 }
 
-func (e *Environment) SandboxConfig() *SandboxConfig {
-	if e != nil && e.SandboxController != nil {
-		return e.SandboxController.SandboxConfig().Get()
+func (e *Environment) AgentioConfig() *AgentioConfig {
+	if e != nil && e.AgentioController != nil {
+		return e.AgentioController.AgentioConfig().Get()
 	}
 	return nil
 }

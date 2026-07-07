@@ -68,7 +68,7 @@ func (a Builder) WorkloadsCollection(
 	pods krt.Collection[*v1.Pod],
 	nodes krt.Collection[Node],
 	meshConfig krt.Singleton[MeshConfig],
-	sandboxConfig krt.Singleton[model.SandboxConfig],
+	agentioConfig krt.Singleton[model.AgentioConfig],
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
@@ -88,7 +88,7 @@ func (a Builder) WorkloadsCollection(
 		pods,
 		a.podWorkloadBuilder(
 			meshConfig,
-			sandboxConfig,
+			agentioConfig,
 			authorizationPolicies,
 			peerAuths,
 			waypoints,
@@ -795,7 +795,7 @@ func computeWaypoint(
 
 func podWorkloadBuilder(
 	meshConfig krt.Singleton[MeshConfig],
-	sandboxConfig krt.Singleton[model.SandboxConfig],
+	agentioConfig krt.Singleton[model.AgentioConfig],
 	localNetworkGetter func(krt.HandlerContext) network.ID,
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
@@ -881,7 +881,7 @@ func podWorkloadBuilder(
 			Locality:              getPodLocality(ctx, nodes, p),
 		}
 
-		sc := krt.FetchOne(ctx, sandboxConfig.AsCollection())
+		sc := krt.FetchOne(ctx, agentioConfig.AsCollection())
 		labels := p.Labels
 		if len(sc.GetSandboxIgnoredLabels()) > 0 {
 			labels = agentio.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
@@ -920,7 +920,7 @@ func podWorkloadBuilder(
 
 func (a Builder) podWorkloadBuilder(
 	meshConfig krt.Singleton[MeshConfig],
-	sandboxConfig krt.Singleton[model.SandboxConfig],
+	agentioConfig krt.Singleton[model.AgentioConfig],
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
@@ -936,7 +936,7 @@ func (a Builder) podWorkloadBuilder(
 	}
 	return podWorkloadBuilder(
 		meshConfig,
-		sandboxConfig,
+		agentioConfig,
 		localNetworkGetter,
 		authorizationPolicies,
 		peerAuths,

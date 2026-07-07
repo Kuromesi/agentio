@@ -142,7 +142,7 @@ type index struct {
 	remoteClientConfigOverrides []func(*rest.Config)
 	builder                     Builder
 
-	sandboxController *agentio.Controller
+	agentioController *agentio.Controller
 }
 
 type FeatureFlags struct {
@@ -168,7 +168,7 @@ type Options struct {
 	Debugger                    *krt.DebugHandler
 	ClientBuilder               multicluster.ClientBuilder
 	RemoteClientConfigOverrides []func(*rest.Config)
-	SandboxController           *agentio.Controller
+	AgentioController           *agentio.Controller
 }
 
 func New(options Options) Index {
@@ -279,19 +279,19 @@ func New(options Options) Index {
 		}),
 	)...)
 
-	var sandboxConfig krt.Singleton[model.SandboxConfig]
+	var sandboxConfig krt.Singleton[model.AgentioConfig]
 	var workloadConfigs krt.Collection[model.WorkloadConfig]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
-	TrafficPolicyDerivedPolicies = options.SandboxController.BuildPolicyCollection(
+	TrafficPolicyDerivedPolicies = options.AgentioController.BuildPolicyCollection(
 		Services,
 		EndpointSlices,
 		Pods,
 		func(policy *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
 			return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
 		})
-	a.sandboxController = options.SandboxController
-	sandboxConfig = a.sandboxController.SandboxConfig()
-	workloadConfigs = a.sandboxController.WorkloadConfigs()
+	a.agentioController = options.AgentioController
+	sandboxConfig = a.agentioController.AgentioConfig()
+	workloadConfigs = a.agentioController.WorkloadConfigs()
 
 	a.builder = Builder{
 		DomainSuffix: a.DomainSuffix,

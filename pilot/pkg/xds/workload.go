@@ -273,7 +273,7 @@ func (e WorkloadConfigGenerator) GenerateDeltas(
 		expected.Delete(n)
 		resources = append(resources, &discovery.Resource{
 			Name:     n,
-			Resource: protoconv.MessageToAny(p.Extension),
+			Resource: protoconv.MessageToAny(p.Config),
 		})
 	}
 

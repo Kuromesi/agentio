@@ -45,7 +45,7 @@ func TestSandboxEgressHTTP2(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:

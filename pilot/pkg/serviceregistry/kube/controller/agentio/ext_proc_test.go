@@ -37,9 +37,9 @@ func nonEgressProxy() *model.Proxy {
 	return &model.Proxy{Labels: map[string]string{}}
 }
 
-func minimalExtProcConfig() *model.SandboxConfig {
-	return &model.SandboxConfig{
-		SandboxConfig: &extensions.SandboxConfig{
+func minimalExtProcConfig() *model.AgentioConfig {
+	return &model.AgentioConfig{
+		AgentioConfig: &extensions.AgentioConfig{
 			SandboxExtProc: &extensions.ExtProcProvider{
 				Service: "ext-proc.svc.local",
 				Port:    9000,
@@ -97,12 +97,12 @@ func TestBuildExtProcClusters_Skip(t *testing.T) {
 	cases := []struct {
 		name   string
 		proxy  *model.Proxy
-		config *model.SandboxConfig
+		config *model.AgentioConfig
 	}{
 		{"non-egress proxy returns nil", nonEgressProxy(), minimalExtProcConfig()},
 		{"egress proxy but nil ext_proc config returns nil",
 			sandboxEgressProxy(),
-			&model.SandboxConfig{SandboxConfig: &extensions.SandboxConfig{}},
+			&model.AgentioConfig{AgentioConfig: &extensions.AgentioConfig{}},
 		},
 	}
 	for _, tc := range cases {
@@ -159,8 +159,8 @@ func TestBuildExtProcHttpProtocolOptions(t *testing.T) {
 	})
 
 	t.Run("http settings populate values", func(t *testing.T) {
-		cfg := &model.SandboxConfig{
-			SandboxConfig: &extensions.SandboxConfig{
+		cfg := &model.AgentioConfig{
+			AgentioConfig: &extensions.AgentioConfig{
 				SandboxExtProc: &extensions.ExtProcProvider{
 					Service: "svc", Port: 1,
 					ClusterSettings: &extensions.ClusterSettings{
@@ -187,12 +187,12 @@ func TestBuildExtProcFilter_Skip(t *testing.T) {
 	cases := []struct {
 		name   string
 		proxy  *model.Proxy
-		config *model.SandboxConfig
+		config *model.AgentioConfig
 	}{
 		{"non-egress proxy returns nil", nonEgressProxy(), minimalExtProcConfig()},
 		{"nil ext_proc returns nil",
 			sandboxEgressProxy(),
-			&model.SandboxConfig{SandboxConfig: &extensions.SandboxConfig{}},
+			&model.AgentioConfig{AgentioConfig: &extensions.AgentioConfig{}},
 		},
 	}
 	for _, tc := range cases {
@@ -228,8 +228,8 @@ func TestBuildExtProcFilter_Defaults(t *testing.T) {
 }
 
 func TestBuildExtProcFilter_CustomModes(t *testing.T) {
-	cfg := &model.SandboxConfig{
-		SandboxConfig: &extensions.SandboxConfig{
+	cfg := &model.AgentioConfig{
+		AgentioConfig: &extensions.AgentioConfig{
 			SandboxExtProc: &extensions.ExtProcProvider{
 				Service: "svc", Port: 1,
 				FailureModeAllow: true,

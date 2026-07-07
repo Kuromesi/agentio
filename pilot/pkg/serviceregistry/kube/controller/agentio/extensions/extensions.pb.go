@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v5.28.2
-// source: pilot/pkg/serviceregistry/kube/controller/sandbox/extensions/extensions.proto
+// source: pilot/pkg/serviceregistry/kube/controller/agentio/extensions/extensions.proto
 
 package extensions
 
@@ -22,7 +22,7 @@ const (
 )
 
 // MeshInternalTrafficPolicy defines how mesh-internal (east-west) traffic is
-// handled by sandbox tunnel proxies.
+// handled by agentio tunnel proxies.
 type MeshInternalTrafficPolicy int32
 
 const (
@@ -53,11 +53,11 @@ func (x MeshInternalTrafficPolicy) String() string {
 }
 
 func (MeshInternalTrafficPolicy) Descriptor() protoreflect.EnumDescriptor {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_enumTypes[0].Descriptor()
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes[0].Descriptor()
 }
 
 func (MeshInternalTrafficPolicy) Type() protoreflect.EnumType {
-	return &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_enumTypes[0]
+	return &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes[0]
 }
 
 func (x MeshInternalTrafficPolicy) Number() protoreflect.EnumNumber {
@@ -66,7 +66,7 @@ func (x MeshInternalTrafficPolicy) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use MeshInternalTrafficPolicy.Descriptor instead.
 func (MeshInternalTrafficPolicy) EnumDescriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescGZIP(), []int{0}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescGZIP(), []int{0}
 }
 
 // Traffic direction mode (server = inbound, client = outbound)
@@ -100,11 +100,11 @@ func (x TrafficPolicyMode) String() string {
 }
 
 func (TrafficPolicyMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_enumTypes[1].Descriptor()
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes[1].Descriptor()
 }
 
 func (TrafficPolicyMode) Type() protoreflect.EnumType {
-	return &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_enumTypes[1]
+	return &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes[1]
 }
 
 func (x TrafficPolicyMode) Number() protoreflect.EnumNumber {
@@ -113,7 +113,7 @@ func (x TrafficPolicyMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TrafficPolicyMode.Descriptor instead.
 func (TrafficPolicyMode) EnumDescriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescGZIP(), []int{1}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescGZIP(), []int{1}
 }
 
 // TrafficPolicyExtension provides traffic policy priority and protocol information.
@@ -133,7 +133,7 @@ type TrafficPolicyExtension struct {
 
 func (x *TrafficPolicyExtension) Reset() {
 	*x = TrafficPolicyExtension{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_msgTypes[0]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -145,7 +145,7 @@ func (x *TrafficPolicyExtension) String() string {
 func (*TrafficPolicyExtension) ProtoMessage() {}
 
 func (x *TrafficPolicyExtension) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_msgTypes[0]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -158,7 +158,7 @@ func (x *TrafficPolicyExtension) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficPolicyExtension.ProtoReflect.Descriptor instead.
 func (*TrafficPolicyExtension) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescGZIP(), []int{0}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *TrafficPolicyExtension) GetPriority() int32 {
@@ -185,7 +185,7 @@ type Metadata struct {
 
 func (x *Metadata) Reset() {
 	*x = Metadata{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_msgTypes[1]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -197,7 +197,7 @@ func (x *Metadata) String() string {
 func (*Metadata) ProtoMessage() {}
 
 func (x *Metadata) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_msgTypes[1]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -210,7 +210,7 @@ func (x *Metadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Metadata.ProtoReflect.Descriptor instead.
 func (*Metadata) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescGZIP(), []int{1}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Metadata) GetLabels() map[string]string {
@@ -227,11 +227,11 @@ func (x *Metadata) GetMeshInternalTrafficPolicy() MeshInternalTrafficPolicy {
 	return MeshInternalTrafficPolicy_MESH_INTERNAL_PEER_AWARE
 }
 
-var File_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto protoreflect.FileDescriptor
+var File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto protoreflect.FileDescriptor
 
-const file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDesc = "" +
+const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDesc = "" +
 	"\n" +
-	"Mpilot/pkg/serviceregistry/kube/controller/sandbox/extensions/extensions.proto\x12\x17kruise.io.extensions.v1\"t\n" +
+	"Mpilot/pkg/serviceregistry/kube/controller/agentio/extensions/extensions.proto\x12\x17kruise.io.extensions.v1\"t\n" +
 	"\x16TrafficPolicyExtension\x12\x1a\n" +
 	"\bpriority\x18\x01 \x01(\x05R\bpriority\x12>\n" +
 	"\x04mode\x18\x02 \x01(\x0e2*.kruise.io.extensions.v1.TrafficPolicyModeR\x04mode\"\x81\x02\n" +
@@ -248,30 +248,30 @@ const file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensio
 	"\n" +
 	"\x06SERVER\x10\x00\x12\n" +
 	"\n" +
-	"\x06CLIENT\x10\x01B>Z<pilot/pkg/serviceregistry/kube/controller/sandbox/extensionsb\x06proto3"
+	"\x06CLIENT\x10\x01B>Z<pilot/pkg/serviceregistry/kube/controller/agentio/extensionsb\x06proto3"
 
 var (
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescOnce sync.Once
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescData []byte
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescOnce sync.Once
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescData []byte
 )
 
-func file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescGZIP() []byte {
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescOnce.Do(func() {
-		file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDesc)))
+func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescGZIP() []byte {
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescOnce.Do(func() {
+		file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDesc)))
 	})
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDescData
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDescData
 }
 
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_goTypes = []any{
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_goTypes = []any{
 	(MeshInternalTrafficPolicy)(0), // 0: kruise.io.extensions.v1.MeshInternalTrafficPolicy
 	(TrafficPolicyMode)(0),         // 1: kruise.io.extensions.v1.TrafficPolicyMode
 	(*TrafficPolicyExtension)(nil), // 2: kruise.io.extensions.v1.TrafficPolicyExtension
 	(*Metadata)(nil),               // 3: kruise.io.extensions.v1.Metadata
 	nil,                            // 4: kruise.io.extensions.v1.Metadata.LabelsEntry
 }
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_depIdxs = []int32{
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_depIdxs = []int32{
 	1, // 0: kruise.io.extensions.v1.TrafficPolicyExtension.mode:type_name -> kruise.io.extensions.v1.TrafficPolicyMode
 	4, // 1: kruise.io.extensions.v1.Metadata.labels:type_name -> kruise.io.extensions.v1.Metadata.LabelsEntry
 	0, // 2: kruise.io.extensions.v1.Metadata.mesh_internal_traffic_policy:type_name -> kruise.io.extensions.v1.MeshInternalTrafficPolicy
@@ -283,28 +283,28 @@ var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions
 }
 
 func init() {
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_init()
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_init()
 }
-func file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_init() {
-	if File_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto != nil {
+func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_init() {
+	if File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDesc)),
 			NumEnums:      2,
 			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_goTypes,
-		DependencyIndexes: file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_depIdxs,
-		EnumInfos:         file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_enumTypes,
-		MessageInfos:      file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_msgTypes,
+		GoTypes:           file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_goTypes,
+		DependencyIndexes: file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_depIdxs,
+		EnumInfos:         file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes,
+		MessageInfos:      file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes,
 	}.Build()
-	File_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto = out.File
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_goTypes = nil
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_extensions_proto_depIdxs = nil
+	File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto = out.File
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_goTypes = nil
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_depIdxs = nil
 }

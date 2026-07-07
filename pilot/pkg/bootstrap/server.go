@@ -118,7 +118,7 @@ type Server struct {
 	ConfigStores           []model.ConfigStoreController
 	serviceEntryController *serviceentry.Controller
 
-	sandboxController *agentio.Controller
+	agentioController *agentio.Controller
 
 	httpServer  *http.Server // debug, monitoring and readiness Server.
 	httpAddr    string
@@ -333,7 +333,7 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 		return nil, err
 	}
 
-	InitGenerators(s.XDSServer, configGen, args.Namespace, s.clusterID, s.internalDebugMux, s.sandboxController)
+	InitGenerators(s.XDSServer, configGen, args.Namespace, s.clusterID, s.internalDebugMux, s.agentioController)
 
 	// Initialize workloadTrustBundle after CA has been initialized
 	if err := s.initWorkloadTrustBundle(args); err != nil {

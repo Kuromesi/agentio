@@ -43,7 +43,7 @@ func TestSandboxExtProc(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     sandboxExtProc:
@@ -89,7 +89,7 @@ func TestSandboxTraffic(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -203,7 +203,7 @@ func TestSandboxMatchPorts(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -296,7 +296,7 @@ func TestSandboxExternalHTTP(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -357,7 +357,7 @@ func TestSandboxOnDemandCert(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -385,7 +385,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -459,7 +459,7 @@ func TestSandboxTLSExcludeHosts(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:

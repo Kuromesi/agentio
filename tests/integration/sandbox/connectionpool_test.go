@@ -91,7 +91,7 @@ func TestSandboxConnectionPool(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -126,7 +126,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -168,7 +168,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -210,7 +210,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -266,7 +266,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -331,7 +331,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -373,7 +373,7 @@ func TestSandboxConnectionPoolTimeout(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -460,7 +460,7 @@ func TestSandboxRateLimit(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -503,7 +503,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -587,7 +587,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -650,7 +650,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:

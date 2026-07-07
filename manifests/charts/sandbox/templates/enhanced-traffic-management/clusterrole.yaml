@@ -7,7 +7,7 @@ metadata:
   name: {{ include "sandbox.controller.name" . }}-clusterrole
 rules:
 - apiGroups:
-  - network.alibabacloud.com
+  - agents.kruise.io
   resources:
   - trafficpolicies
   - globaltrafficpolicies

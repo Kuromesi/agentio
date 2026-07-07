@@ -78,10 +78,10 @@ type OnDemandCertControllerOption struct {
 	MaxAge     time.Duration
 	SignMode   string
 	KrtOptions krt.OptionsBuilder
-	// SandboxConfig is consulted by Authorize to gate on-demand cert pulls:
+	// AgentioConfig is consulted by Authorize to gate on-demand cert pulls:
 	// only proxies whose ServiceAccount/Namespace match a configured
 	// EgressGateway (name == SA, namespace == NS) are allowed.
-	SandboxConfig krt.Singleton[model.SandboxConfig]
+	AgentioConfig krt.Singleton[model.AgentioConfig]
 }
 
 type caState struct {
@@ -151,9 +151,9 @@ type onDemandCertController struct {
 	maxAge       time.Duration
 
 	caSingleton krt.Singleton[caState]
-	// sandboxConfig is the live sandbox config used by Authorize to decide
+	// agentioConfig is the live sandbox config used by Authorize to decide
 	// whether a (SA, NS) pair belongs to a registered EgressGateway.
-	sandboxConfig krt.Singleton[model.SandboxConfig]
+	agentioConfig krt.Singleton[model.AgentioConfig]
 
 	// onEviction is invoked after the reaper evicts at least one entry. Bootstrap
 	// injects a callback that fires an XDS broadcast push so SDS generator can
@@ -175,7 +175,7 @@ func newOnDemandCertController(kc kube.Client, opt OnDemandCertControllerOption)
 		certValidity:  opt.CertValidity,
 		renewBefore:   opt.RenewBefore,
 		maxAge:        opt.MaxAge,
-		sandboxConfig: opt.SandboxConfig,
+		agentioConfig: opt.AgentioConfig,
 	}
 
 	switch OnDemandCertSignMode(opt.SignMode) {
@@ -392,10 +392,10 @@ func (c *onDemandCertController) GetDockerCredential(_, _ string) ([]byte, error
 // namespace must match exactly. Domain-level scoping (include_hosts) is
 // applied separately by the caller via IsAllowedOnDemandDomain.
 func (c *onDemandCertController) Authorize(serviceAccount, namespace string) error {
-	if c.sandboxConfig == nil {
+	if c.agentioConfig == nil {
 		return fmt.Errorf("on-demand cert controller has no sandbox config wired in")
 	}
-	cfg := c.sandboxConfig.Get()
+	cfg := c.agentioConfig.Get()
 	if cfg == nil {
 		return fmt.Errorf("sandbox config not loaded yet")
 	}

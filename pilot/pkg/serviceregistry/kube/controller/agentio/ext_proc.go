@@ -42,8 +42,8 @@ var SandboxExtProcName = env.Register("SANDBOX_EXT_PROC_NAME", "sandbox-ext-proc
 	"External processing cluster name for sandbox.").Get()
 
 // resolveExtProc returns the effective ExtProcProvider for the given proxy.
-// Gateway-level ext_proc takes precedence over the global SandboxConfig default.
-func resolveExtProc(proxy *model.Proxy, config *model.SandboxConfig) *extensions.ExtProcProvider {
+// Gateway-level ext_proc takes precedence over the global AgentioConfig default.
+func resolveExtProc(proxy *model.Proxy, config *model.AgentioConfig) *extensions.ExtProcProvider {
 	if g := FindEgressGatewayForProxy(proxy, config.GetEgressGateways()); g != nil && g.ExtProc != nil {
 		if g.ExtProc.Service == "" {
 			return nil
@@ -55,7 +55,7 @@ func resolveExtProc(proxy *model.Proxy, config *model.SandboxConfig) *extensions
 
 // BuildExtProcClusters returns the STRICT_DNS cluster for the ext_proc gRPC upstream,
 // or nil when the proxy is not a sandbox egress or no ext_proc provider is configured.
-func BuildExtProcClusters(proxy *model.Proxy, config *model.SandboxConfig) []*cluster.Cluster {
+func BuildExtProcClusters(proxy *model.Proxy, config *model.AgentioConfig) []*cluster.Cluster {
 	extProc := resolveExtProc(proxy, config)
 	if !IsSandboxEgress(proxy) || extProc == nil {
 		return nil
@@ -162,7 +162,7 @@ func toEnvoyHeaderSendMode(mode extensions.HeaderSendMode, defaultMode extproc.P
 // built by BuildExtProcClusters. Returns nil when the proxy is not a sandbox
 // egress or no ext_proc provider is configured — the caller relies on this nil
 // return to skip filter wiring entirely.
-func BuildExtProcFilter(proxy *model.Proxy, config *model.SandboxConfig) []*hcm.HttpFilter {
+func BuildExtProcFilter(proxy *model.Proxy, config *model.AgentioConfig) []*hcm.HttpFilter {
 	extProc := resolveExtProc(proxy, config)
 	if !IsSandboxEgress(proxy) || extProc == nil {
 		return nil

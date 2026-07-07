@@ -22,17 +22,17 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 )
 
-func TestApplySandboxConfig_BasicOverride(t *testing.T) {
+func TestApplyAgentioConfig_BasicOverride(t *testing.T) {
 	t.Run("ext_proc set and default ignored labels preserved", func(t *testing.T) {
-		defaults := model.DefaultSandboxControllerConfig()
+		defaults := model.DefaultAgentioConfig()
 		yml := `
 sandboxExtProc:
   service: "ext-proc.example.com"
   port: 9090
 `
-		got, err := applySandboxConfig(yml, defaults)
+		got, err := applyAgentioConfig(yml, defaults)
 		if err != nil {
-			t.Fatalf("applySandboxConfig failed: %v", err)
+			t.Fatalf("applyAgentioConfig failed: %v", err)
 		}
 
 		extProc := got.GetSandboxExtProc()
@@ -55,10 +55,10 @@ sandboxExtProc:
 	})
 }
 
-func TestApplySandboxConfig_FullSubMessageReplacement(t *testing.T) {
+func TestApplyAgentioConfig_FullSubMessageReplacement(t *testing.T) {
 	t.Run("override replaces entire sub-message, unset fields reset to zero", func(t *testing.T) {
-		base := &model.SandboxConfig{
-			SandboxConfig: &extensions.SandboxConfig{
+		base := &model.AgentioConfig{
+			AgentioConfig: &extensions.AgentioConfig{
 				SandboxExtProc: &extensions.ExtProcProvider{
 					Service: "old.example.com",
 					Port:    8080,
@@ -70,9 +70,9 @@ func TestApplySandboxConfig_FullSubMessageReplacement(t *testing.T) {
 sandboxExtProc:
   service: "new.example.com"
 `
-		got, err := applySandboxConfig(yml, base)
+		got, err := applyAgentioConfig(yml, base)
 		if err != nil {
-			t.Fatalf("applySandboxConfig failed: %v", err)
+			t.Fatalf("applyAgentioConfig failed: %v", err)
 		}
 
 		extProc := got.GetSandboxExtProc()
@@ -89,10 +89,10 @@ sandboxExtProc:
 	})
 }
 
-func TestApplySandboxConfig_RepeatedFieldReplacement(t *testing.T) {
+func TestApplyAgentioConfig_RepeatedFieldReplacement(t *testing.T) {
 	t.Run("override fully replaces repeated field", func(t *testing.T) {
-		base := &model.SandboxConfig{
-			SandboxConfig: &extensions.SandboxConfig{
+		base := &model.AgentioConfig{
+			AgentioConfig: &extensions.AgentioConfig{
 				SandboxIgnoredLabels: []string{"a", "b"},
 			},
 		}
@@ -100,9 +100,9 @@ func TestApplySandboxConfig_RepeatedFieldReplacement(t *testing.T) {
 sandboxIgnoredLabels:
   - "c"
 `
-		got, err := applySandboxConfig(yml, base)
+		got, err := applyAgentioConfig(yml, base)
 		if err != nil {
-			t.Fatalf("applySandboxConfig failed: %v", err)
+			t.Fatalf("applyAgentioConfig failed: %v", err)
 		}
 
 		want := []string{"c"}
@@ -113,9 +113,9 @@ sandboxIgnoredLabels:
 	})
 }
 
-func TestApplySandboxConfig_MultiLayerMerge(t *testing.T) {
+func TestApplyAgentioConfig_MultiLayerMerge(t *testing.T) {
 	t.Run("default -> base -> primary three-layer merge", func(t *testing.T) {
-		defaults := model.DefaultSandboxControllerConfig()
+		defaults := model.DefaultAgentioConfig()
 
 		// Base layer: sets ext_proc, does not touch ignored labels.
 		baseYml := `
@@ -123,9 +123,9 @@ sandboxExtProc:
   service: "base.example.com"
   port: 8080
 `
-		afterBase, err := applySandboxConfig(baseYml, defaults)
+		afterBase, err := applyAgentioConfig(baseYml, defaults)
 		if err != nil {
-			t.Fatalf("applySandboxConfig (base) failed: %v", err)
+			t.Fatalf("applyAgentioConfig (base) failed: %v", err)
 		}
 
 		// Primary layer: overrides ext_proc service only (port resets to 0).
@@ -133,9 +133,9 @@ sandboxExtProc:
 sandboxExtProc:
   service: "primary.example.com"
 `
-		got, err := applySandboxConfig(primaryYml, afterBase)
+		got, err := applyAgentioConfig(primaryYml, afterBase)
 		if err != nil {
-			t.Fatalf("applySandboxConfig (primary) failed: %v", err)
+			t.Fatalf("applyAgentioConfig (primary) failed: %v", err)
 		}
 
 		extProc := got.GetSandboxExtProc()
@@ -159,7 +159,7 @@ sandboxExtProc:
 	})
 }
 
-func TestApplySandboxConfig_EmptyOverride(t *testing.T) {
+func TestApplyAgentioConfig_EmptyOverride(t *testing.T) {
 	cases := []struct {
 		name string
 		yml  string
@@ -169,10 +169,10 @@ func TestApplySandboxConfig_EmptyOverride(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			defaults := model.DefaultSandboxControllerConfig()
-			got, err := applySandboxConfig(tc.yml, defaults)
+			defaults := model.DefaultAgentioConfig()
+			got, err := applyAgentioConfig(tc.yml, defaults)
 			if err != nil {
-				t.Fatalf("applySandboxConfig failed: %v", err)
+				t.Fatalf("applyAgentioConfig failed: %v", err)
 			}
 
 			// Defaults should be fully preserved.
@@ -190,7 +190,7 @@ func TestApplySandboxConfig_EmptyOverride(t *testing.T) {
 	}
 }
 
-func TestApplySandboxConfig_NilDefaultConfig(t *testing.T) {
+func TestApplyAgentioConfig_NilDefaultConfig(t *testing.T) {
 	t.Run("nil default produces valid output from override", func(t *testing.T) {
 		yml := `
 sandboxExtProc:
@@ -200,11 +200,11 @@ sandboxIgnoredLabels:
   - "x"
   - "y"
 `
-		got, err := applySandboxConfig(yml, nil)
+		got, err := applyAgentioConfig(yml, nil)
 		if err != nil {
-			t.Fatalf("applySandboxConfig failed: %v", err)
+			t.Fatalf("applyAgentioConfig failed: %v", err)
 		}
-		if got == nil || got.SandboxConfig == nil {
+		if got == nil || got.AgentioConfig == nil {
 			t.Fatal("expected non-nil result")
 		}
 
@@ -227,12 +227,12 @@ sandboxIgnoredLabels:
 	})
 
 	t.Run("nil default with empty yaml produces empty config", func(t *testing.T) {
-		got, err := applySandboxConfig("", nil)
+		got, err := applyAgentioConfig("", nil)
 		if err != nil {
-			t.Fatalf("applySandboxConfig failed: %v", err)
+			t.Fatalf("applyAgentioConfig failed: %v", err)
 		}
-		if got == nil || got.SandboxConfig == nil {
-			t.Fatal("expected non-nil result with valid SandboxConfig")
+		if got == nil || got.AgentioConfig == nil {
+			t.Fatal("expected non-nil result with valid AgentioConfig")
 		}
 		if got.GetSandboxExtProc() != nil {
 			t.Errorf("expected nil sandboxExtProc, got %+v", got.GetSandboxExtProc())

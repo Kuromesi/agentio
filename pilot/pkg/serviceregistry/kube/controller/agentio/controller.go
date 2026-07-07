@@ -69,7 +69,7 @@ type Options struct {
 type Controller struct {
 	ConfigStoreController model.ConfigStoreController
 	meshConfig            meshwatcher.WatcherCollection
-	sandboxConfig         krt.Singleton[model.SandboxConfig]
+	agentioConfig         krt.Singleton[model.AgentioConfig]
 
 	externalNamesController *externalNamesController
 	authorizationController *authorizationController
@@ -91,7 +91,7 @@ func NewController(options Options) (*Controller, error) {
 	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop)
 
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
-	sandboxConfig := newSandboxControllerConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)
+	agentioConfig := newAgentioConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)
 
 	c := &Controller{
 		ConfigStoreController: store,
@@ -99,7 +99,7 @@ func NewController(options Options) (*Controller, error) {
 		trafficPolicies:       TrafficPolicies,
 		meshConfig:            options.MeshConfig,
 		globalTrafficPolicies: GlobalTrafficPolicies,
-		sandboxConfig:         sandboxConfig,
+		agentioConfig:         agentioConfig,
 	}
 
 	if features.EnableOnDemandCerts {
@@ -123,7 +123,7 @@ func (c *Controller) initOnDemandController(kc kube.Client, opts krt.OptionsBuil
 		MaxAge:          mitmCertMaxAge,
 		SignMode:        mitmSignMode,
 		KrtOptions:      opts,
-		SandboxConfig:   c.sandboxConfig,
+		AgentioConfig:   c.agentioConfig,
 	})
 	if err != nil {
 		return err
@@ -189,7 +189,7 @@ func (c *Controller) initExternalNamesController() {
 		}
 	})
 
-	c.sandboxConfig.AsCollection().Register(func(o krt.Event[model.SandboxConfig]) {
+	c.agentioConfig.AsCollection().Register(func(o krt.Event[model.AgentioConfig]) {
 		oldHosts := o.Old.ExtractMatchHosts()
 		newHosts := o.New.ExtractMatchHosts()
 		removed, added := oldHosts.Diff(newHosts)
@@ -208,7 +208,7 @@ func (c *Controller) initExternalNamesController() {
 func (c *Controller) initWorkloadConfigs(opts krt.OptionsBuilder) {
 	rootNamespace := c.meshConfig.Get().RootNamespace
 	c.workloadConfigs = krt.NewSingleton(func(ctx krt.HandlerContext) *model.WorkloadConfig {
-		sc := krt.FetchOne(ctx, c.sandboxConfig.AsCollection())
+		sc := krt.FetchOne(ctx, c.agentioConfig.AsCollection())
 		var resolved []*extensions.EgressPolicy
 		if sc != nil {
 			for _, p := range sc.GetEgressPolicies() {
@@ -218,7 +218,7 @@ func (c *Controller) initWorkloadConfigs(opts krt.OptionsBuilder) {
 		return &model.WorkloadConfig{
 			Namespace: rootNamespace,
 			Name:      "default",
-			Extension: &extensions.WorkloadConfig{
+			Config: &extensions.WorkloadConfig{
 				EgressPolicies: resolved,
 				Scope:          extensions.WorkloadConfigScope_WORKLOAD_CONFIG_SCOPE_GLOBAL,
 			},
@@ -226,8 +226,8 @@ func (c *Controller) initWorkloadConfigs(opts krt.OptionsBuilder) {
 	}, opts.WithName("WorkloadConfigs")...)
 }
 
-func (c *Controller) SandboxConfig() krt.Singleton[model.SandboxConfig] {
-	return c.sandboxConfig
+func (c *Controller) AgentioConfig() krt.Singleton[model.AgentioConfig] {
+	return c.agentioConfig
 }
 
 func (c *Controller) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {

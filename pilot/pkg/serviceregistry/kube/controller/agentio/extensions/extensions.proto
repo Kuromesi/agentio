@@ -17,7 +17,7 @@ message TrafficPolicyExtension {
 }
 
 // MeshInternalTrafficPolicy defines how mesh-internal (east-west) traffic is
-// handled by sandbox tunnel proxies.
+// handled by agentio tunnel proxies.
 enum MeshInternalTrafficPolicy {
   MESH_INTERNAL_PEER_AWARE = 0;
   MESH_INTERNAL_PASSTHROUGH = 1;

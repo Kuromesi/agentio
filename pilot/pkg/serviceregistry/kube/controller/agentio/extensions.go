@@ -152,10 +152,10 @@ func ExtractProxyMeta(proxy *model.Proxy) (string, string, bool) {
 // in include_hosts (e.g. "*.example.com") use the same matching rules as
 // host.Name.SubsetOf.
 func IsAllowedOnDemandDomain(proxy *model.Proxy, push *model.PushContext, domain string) bool {
-	if push == nil || push.SandboxConfig == nil {
+	if push == nil || push.AgentioConfig == nil {
 		return false
 	}
-	g := FindEgressGatewayForProxy(proxy, push.SandboxConfig.GetEgressGateways())
+	g := FindEgressGatewayForProxy(proxy, push.AgentioConfig.GetEgressGateways())
 	if g == nil {
 		return false
 	}

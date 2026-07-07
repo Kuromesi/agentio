@@ -509,7 +509,7 @@ func applySandboxInternalChains(
 	target := deepestOnNoMatchTarget(primaryMatcher)
 	protocolFallback := buildSandboxProtocolMatcher()
 
-	gateway := agentio.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
+	gateway := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
 	tlsTermCfg := gateway.GetTlsTermination()
 	if features.EnableOnDemandCerts && tlsTermCfg != nil {
 		// catchall-tls: terminates TLS with on-demand certs.
@@ -558,7 +558,7 @@ func appendSandboxHTTPFilters(lb *ListenerBuilder, filters []*hcm.HttpFilter, va
 	}
 	// ext_proc runs first so external auth/policy can reject before we pay the
 	// cost of a DNS lookup and to keep authz decisions before any egress side effect.
-	filters = append(filters, agentio.BuildExtProcFilter(lb.node, lb.push.SandboxConfig)...)
+	filters = append(filters, agentio.BuildExtProcFilter(lb.node, lb.push.AgentioConfig)...)
 	// DFP must sit between authz/ext_proc and the router: prepending it would let
 	// it resolve the upstream host before RBAC/JWT/ext_proc had a chance to deny
 	// the request, leaking DNS for forbidden destinations.
@@ -578,7 +578,7 @@ func sandboxGatewayConnPool(lb *ListenerBuilder) *extensions.ConnectionPoolSetti
 	if !agentio.IsSandboxEgress(lb.node) {
 		return nil
 	}
-	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
+	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
 	return gw.GetConnectionPool()
 }
 
@@ -675,7 +675,7 @@ func buildSandboxConnectTerminateRateLimitFilter(lb *ListenerBuilder) *hcm.HttpF
 	if !agentio.IsSandboxEgress(lb.node) {
 		return nil
 	}
-	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
+	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
 	rl := gw.GetConnectRateLimit()
 	if rl == nil {
 		return nil

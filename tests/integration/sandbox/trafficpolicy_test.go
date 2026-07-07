@@ -37,7 +37,7 @@ func TestSandboxTrafficPolicy(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -386,7 +386,7 @@ func TestSandboxGlobalTrafficPolicy(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -559,7 +559,7 @@ func TestSandboxPriorityMatching(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -838,7 +838,7 @@ func TestSandboxTrafficPolicyMatchExpressions(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -1157,7 +1157,7 @@ func TestSandboxTrafficPolicyWorkloadPeer(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -1421,7 +1421,7 @@ func TestSandboxTrafficPolicyProtocol(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -1846,7 +1846,7 @@ func TestPolicyInteraction(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -2139,7 +2139,7 @@ func TestSandboxTrafficPolicyComplexRules(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -2306,7 +2306,7 @@ func TestSandboxTrafficPolicyManualEndpoints(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: `+sandboxConfigMapName+`
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:

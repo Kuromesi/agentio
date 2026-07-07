@@ -37,7 +37,7 @@ import (
 	"istio.io/istio/pkg/test/util/retry"
 )
 
-const sandboxConfigMapName = "sandbox-config-primary"
+const agentioConfigMapName = "agentio-config-primary"
 
 var (
 	i   istio.Instance

@@ -34,13 +34,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const AgentioConfigMapKey = "config"
+
 var (
-	SandboxConfigMapName = env.Register("SANDBOX_CONFIGMAP_NAME", "sandbox-config",
-		"ConfigMap name of sandbox config").Get()
-	PrimarySandboxConfigMapName = env.Register("PRIMARY_SANDBOX_CONFIGMAP_NAME", "sandbox-config-primary",
-		"ConfigMap name of primary sandbox config. When set, this config takes precedence over the base sandbox config.").Get()
-	SandboxConfigMapKey = env.Register("SANDBOX_CONFIGMAP_KEY",
-		"config", "Sandbox configmap key.").Get()
+	AgentioConfigMapName = env.Register("AGENTIO_CONFIGMAP_NAME", "agentio-config",
+		"ConfigMap name of agentio config").Get()
+	PrimaryAgentioConfigMapName = env.Register("PRIMARY_AGENTIO_CONFIGMAP_NAME", "agentio-config-primary",
+		"ConfigMap name of primary sandbox config. When set, this config takes precedence over the base agentio config.").Get()
 )
 
 func IgnoreSandboxLabels(labels map[string]string, sandboxIgnoredLabels []string) map[string]string {
@@ -65,46 +65,46 @@ func matchesIgnoredLabel(key string, patterns []string) bool {
 	return false
 }
 
-func applySandboxConfig(yml string, defaultConfig *model.SandboxConfig) (*model.SandboxConfig, error) {
-	out := &model.SandboxConfig{SandboxConfig: &extensions.SandboxConfig{}}
-	if defaultConfig != nil && defaultConfig.SandboxConfig != nil {
-		out.SandboxConfig = proto.Clone(defaultConfig.SandboxConfig).(*extensions.SandboxConfig)
+func applyAgentioConfig(yml string, defaultConfig *model.AgentioConfig) (*model.AgentioConfig, error) {
+	out := &model.AgentioConfig{AgentioConfig: &extensions.AgentioConfig{}}
+	if defaultConfig != nil && defaultConfig.AgentioConfig != nil {
+		out.AgentioConfig = proto.Clone(defaultConfig.AgentioConfig).(*extensions.AgentioConfig)
 	}
-	if err := protomarshal.ApplyYAML(yml, out.SandboxConfig); err != nil {
+	if err := protomarshal.ApplyYAML(yml, out.AgentioConfig); err != nil {
 		return nil, err
 	}
-	log.Infof("Loaded sandbox config: %v", out.SandboxConfig)
+	log.Infof("Loaded sandbox config: %v", out.AgentioConfig)
 	return out, nil
 }
 
-func newSandboxControllerConfig(client kube.Client, rootNamespace string, opts krt.OptionsBuilder) krt.Singleton[model.SandboxConfig] {
+func newAgentioConfig(client kube.Client, rootNamespace string, opts krt.OptionsBuilder) krt.Singleton[model.AgentioConfig] {
 	clt := kclient.NewFiltered[*v1.ConfigMap](client, kclient.Filter{
 		Namespace:     rootNamespace,
-		FieldSelector: fields.OneTermEqualSelector(metav1.ObjectNameField, SandboxConfigMapName).String(),
+		FieldSelector: fields.OneTermEqualSelector(metav1.ObjectNameField, AgentioConfigMapName).String(),
 	})
-	cms := krt.WrapClient(clt, opts.WithName("ConfigMap_"+SandboxConfigMapName)...)
+	cms := krt.WrapClient(clt, opts.WithName("ConfigMap_"+AgentioConfigMapName)...)
 	clt.Start(opts.Stop())
 
 	var primaryCms krt.Collection[*v1.ConfigMap]
 	var primaryCmKey string
-	if PrimarySandboxConfigMapName != "" {
+	if PrimaryAgentioConfigMapName != "" {
 		primaryClt := kclient.NewFiltered[*v1.ConfigMap](client, kclient.Filter{
 			Namespace:     rootNamespace,
-			FieldSelector: fields.OneTermEqualSelector(metav1.ObjectNameField, PrimarySandboxConfigMapName).String(),
+			FieldSelector: fields.OneTermEqualSelector(metav1.ObjectNameField, PrimaryAgentioConfigMapName).String(),
 		})
-		primaryCms = krt.WrapClient(primaryClt, opts.WithName("ConfigMap_"+PrimarySandboxConfigMapName)...)
+		primaryCms = krt.WrapClient(primaryClt, opts.WithName("ConfigMap_"+PrimaryAgentioConfigMapName)...)
 		primaryClt.Start(opts.Stop())
-		primaryCmKey = types.NamespacedName{Namespace: rootNamespace, Name: PrimarySandboxConfigMapName}.String()
+		primaryCmKey = types.NamespacedName{Namespace: rootNamespace, Name: PrimaryAgentioConfigMapName}.String()
 	}
 
-	cmKey := types.NamespacedName{Namespace: rootNamespace, Name: SandboxConfigMapName}.String()
-	return krt.NewSingleton(func(ctx krt.HandlerContext) *model.SandboxConfig {
-		cfg := model.DefaultSandboxControllerConfig()
+	cmKey := types.NamespacedName{Namespace: rootNamespace, Name: AgentioConfigMapName}.String()
+	return krt.NewSingleton(func(ctx krt.HandlerContext) *model.AgentioConfig {
+		cfg := model.DefaultAgentioConfig()
 
 		// Apply base config (Helm-managed)
 		if cm := ptr.Flatten(krt.FetchOne(ctx, cms, krt.FilterKey(cmKey))); cm != nil {
-			if cfgYaml, exists := cm.Data[SandboxConfigMapKey]; exists {
-				applied, err := applySandboxConfig(cfgYaml, cfg)
+			if cfgYaml, exists := cm.Data[AgentioConfigMapKey]; exists {
+				applied, err := applyAgentioConfig(cfgYaml, cfg)
 				if err != nil {
 					log.Warnf("Failed to apply base sandbox config, err: %+v", err)
 				} else {
@@ -116,8 +116,8 @@ func newSandboxControllerConfig(client kube.Client, rootNamespace string, opts k
 		// Apply primary config (user-managed, higher priority)
 		if primaryCms != nil {
 			if cm := ptr.Flatten(krt.FetchOne(ctx, primaryCms, krt.FilterKey(primaryCmKey))); cm != nil {
-				if cfgYaml, exists := cm.Data[SandboxConfigMapKey]; exists {
-					applied, err := applySandboxConfig(cfgYaml, cfg)
+				if cfgYaml, exists := cm.Data[AgentioConfigMapKey]; exists {
+					applied, err := applyAgentioConfig(cfgYaml, cfg)
 					if err != nil {
 						log.Warnf("Failed to apply primary sandbox config, err: %+v", err)
 					} else {
@@ -128,5 +128,5 @@ func newSandboxControllerConfig(client kube.Client, rootNamespace string, opts k
 		}
 
 		return cfg
-	}, opts.WithName(fmt.Sprintf("ConfigMap_%s_%s", SandboxConfigMapName, SandboxConfigMapKey))...)
+	}, opts.WithName(fmt.Sprintf("ConfigMap_%s_%s", AgentioConfigMapName, AgentioConfigMapKey))...)
 }

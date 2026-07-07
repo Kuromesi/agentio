@@ -102,7 +102,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 	}
 
-	sandboxController, err := agentio.NewController(agentio.Options{
+	agentioController, err := agentio.NewController(agentio.Options{
 		KubeClient: s.kubeClient,
 		MeshConfig: s.environment.Watcher,
 		Debugger:   s.krtDebugger,
@@ -110,10 +110,10 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 	if err != nil {
 		return err
 	}
-	s.sandboxController = sandboxController
-	s.ConfigStores = append(s.ConfigStores, sandboxController.ConfigStoreController)
-	s.environment.SandboxController = sandboxController
-	s.sandboxController.SandboxConfig().AsCollection().RegisterBatch(func([]krt.Event[model.SandboxConfig]) {
+	s.agentioController = agentioController
+	s.ConfigStores = append(s.ConfigStores, agentioController.ConfigStoreController)
+	s.environment.AgentioController = agentioController
+	s.agentioController.AgentioConfig().AsCollection().RegisterBatch(func([]krt.Event[model.AgentioConfig]) {
 		s.XDSServer.ConfigUpdate(&model.PushRequest{
 			Full:   true,
 			Reason: model.NewReasonStats(model.GlobalUpdate),
@@ -123,7 +123,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 	if features.EnableOnDemandCerts {
 		// When the on-demand cert reaper evicts idle entries, broadcast an eviction
 		// push so SDS generator can emit removed_resources to all subscribed envoys.
-		s.sandboxController.OnDemandCertController().RegisterCertsEviction(func() {
+		s.agentioController.OnDemandCertController().RegisterCertsEviction(func() {
 			s.XDSServer.ConfigUpdate(&model.PushRequest{
 				Full:   true,
 				Reason: model.NewReasonStats(model.OnDemandEviction),
@@ -132,7 +132,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		})
 	}
 	s.addStartFunc("sandbox-controller", func(stop <-chan struct{}) error {
-		go s.sandboxController.Run(stop)
+		go s.agentioController.Run(stop)
 		return nil
 	})
 

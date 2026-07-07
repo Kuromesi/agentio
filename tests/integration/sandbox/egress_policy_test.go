@@ -45,7 +45,7 @@ func TestEgressPolicy(t *testing.T) {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -72,7 +72,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -100,7 +100,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -130,7 +130,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -180,7 +180,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -210,7 +210,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -241,7 +241,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -276,7 +276,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -313,7 +313,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -364,7 +364,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -395,7 +395,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:
@@ -420,13 +420,13 @@ data:
 			ctx.NewSubTest("namespace scoped policy").
 				Run(func(ctx framework.TestContext) {
 					ctx.ConfigIstio().Eval(i.Settings().SystemNamespace, map[string]any{
-						"Namespace":   i.Settings().SystemNamespace,
+						"Namespace":    i.Settings().SystemNamespace,
 						"SrcNamespace": src.NamespaceName(),
 					}, `
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ` + sandboxConfigMapName + `
+  name: `+agentioConfigMapName+`
 data:
   config: |
     egressPolicies:

@@ -7,8 +7,8 @@ import "networking/v1alpha3/virtual_service.proto";
 
 option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
 
-// SandboxConfig is the complete configuration for the sandbox controller.
-message SandboxConfig {
+// AgentioConfig is the complete configuration for the sandbox controller.
+message AgentioConfig {
   // External processing provider for sandbox traffic inspection and policy enforcement.
   ExtProcProvider sandbox_ext_proc = 1;
 
@@ -45,7 +45,7 @@ message EgressGateway {
   TlsTerminationConfig tls_termination = 3;
 
   // Per-gateway ext_proc override. When set, this gateway uses its own
-  // ext_proc endpoint instead of the global SandboxConfig.sandbox_ext_proc.
+  // ext_proc endpoint instead of the global AgentioConfig.sandbox_ext_proc.
   // nil means fall back to the global configuration.
   ExtProcProvider ext_proc = 4;
 

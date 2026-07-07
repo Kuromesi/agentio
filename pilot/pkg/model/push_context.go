@@ -280,11 +280,11 @@ type PushContext struct {
 	initializeMutex sync.Mutex
 	ambientIndex    AmbientIndexes
 
-	SandboxConfig *SandboxConfig
+	AgentioConfig *AgentioConfig
 }
 
-type SandboxController interface {
-	SandboxConfig() krt.Singleton[SandboxConfig]
+type AgentioController interface {
+	AgentioConfig() krt.Singleton[AgentioConfig]
 }
 
 type consolidatedDestRules struct {
@@ -1394,7 +1394,7 @@ func (ps *PushContext) createNewContext(env *Environment) {
 	ps.initEnvoyFilters(env, nil, nil)
 	ps.initGateways(env)
 	ps.initAmbient(env)
-	ps.initSandboxController(env)
+	ps.initAgentioController(env)
 
 	// Must be initialized in the end
 	ps.initSidecarScopes(env)
@@ -1518,7 +1518,7 @@ func (ps *PushContext) updateContext(
 	}
 
 	ps.initAmbient(env)
-	ps.initSandboxController(env)
+	ps.initAgentioController(env)
 
 	// Must be initialized in the end
 	// Sidecars need to be updated if services, virtual services, destination rules, or the sidecar configs change
@@ -2403,8 +2403,8 @@ func (ps *PushContext) initAmbient(env *Environment) {
 	ps.ambientIndex = env
 }
 
-func (ps *PushContext) initSandboxController(env *Environment) {
-	ps.SandboxConfig = env.SandboxConfig()
+func (ps *PushContext) initAgentioController(env *Environment) {
+	ps.AgentioConfig = env.AgentioConfig()
 }
 
 // InternalGatewayServiceAnnotation represents the hostname of the service a gateway will use. This is

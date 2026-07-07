@@ -35,7 +35,7 @@ func InitGenerators(
 	systemNameSpace string,
 	clusterID cluster.ID,
 	internalDebugMux *http.ServeMux,
-	sandboxController *agentio.Controller,
+	agentioController *agentio.Controller,
 ) {
 	env := s.Env
 	generators := map[string]model.XdsResourceGenerator{}
@@ -48,7 +48,7 @@ func InitGenerators(
 	if env.CredentialsController != nil {
 		var onDemandController agentio.OnDemandCertController
 		if features.EnableOnDemandCerts {
-			onDemandController = sandboxController.OnDemandCertController()
+			onDemandController = agentioController.OnDemandCertController()
 		}
 		generators[v3.SecretType] = xds.NewSecretGen(env.CredentialsController, s.Cache, clusterID, env.Mesh(), onDemandController)
 		ecdsGen.SetCredController(env.CredentialsController)

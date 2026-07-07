@@ -27,21 +27,21 @@ import (
 	"istio.io/istio/pkg/util/sets"
 )
 
-type SandboxConfig struct {
-	*extensions.SandboxConfig
+type AgentioConfig struct {
+	*extensions.AgentioConfig
 }
 
-func (c SandboxConfig) ResourceName() string {
+func (c AgentioConfig) ResourceName() string {
 	return "sandbox-config"
 }
 
-func (m SandboxConfig) Equals(other SandboxConfig) bool {
-	return proto.Equal(m.SandboxConfig, other.SandboxConfig)
+func (m AgentioConfig) Equals(other AgentioConfig) bool {
+	return proto.Equal(m.AgentioConfig, other.AgentioConfig)
 }
 
-func DefaultSandboxControllerConfig() *SandboxConfig {
-	return &SandboxConfig{
-		SandboxConfig: &extensions.SandboxConfig{
+func DefaultAgentioConfig() *AgentioConfig {
+	return &AgentioConfig{
+		AgentioConfig: &extensions.AgentioConfig{
 			SandboxIgnoredLabels: []string{
 				"sidecar.istio.io/inject",
 				"networking.agents.kruise.io/proxy-type",
@@ -69,7 +69,7 @@ func MakeSource(o controllers.Object) TypedObject {
 type WorkloadConfig struct {
 	Name      string
 	Namespace string
-	Extension *extensions.WorkloadConfig
+	Config    *extensions.WorkloadConfig
 }
 
 func (w WorkloadConfig) ResourceName() string {
@@ -77,14 +77,14 @@ func (w WorkloadConfig) ResourceName() string {
 }
 
 func (w WorkloadConfig) Equals(other WorkloadConfig) bool {
-	return w.Namespace == other.Namespace && w.Name == other.Name && proto.Equal(w.Extension, other.Extension)
+	return w.Namespace == other.Namespace && w.Name == other.Name && proto.Equal(w.Config, other.Config)
 }
 
 func (w WorkloadConfig) ConfigKey() ConfigKey {
 	return ConfigKey{Kind: kind.WorkloadConfig, Name: w.Name, Namespace: w.Namespace}
 }
 
-func (sc *SandboxConfig) ExtractMatchHosts() sets.String {
+func (sc *AgentioConfig) ExtractMatchHosts() sets.String {
 	hosts := sets.New[string]()
 	if sc == nil {
 		return hosts

@@ -168,9 +168,9 @@ func TestCaState_Equals(t *testing.T) {
 	}
 }
 
-func sandboxConfigSingletonForTest(gateways ...*extensions.EgressGateway) krt.Singleton[model.SandboxConfig] {
-	cfg := &model.SandboxConfig{
-		SandboxConfig: &extensions.SandboxConfig{
+func agentioConfigSingletonForTest(gateways ...*extensions.EgressGateway) krt.Singleton[model.AgentioConfig] {
+	cfg := &model.AgentioConfig{
+		AgentioConfig: &extensions.AgentioConfig{
 			EgressGateways: gateways,
 		},
 	}
@@ -178,7 +178,7 @@ func sandboxConfigSingletonForTest(gateways ...*extensions.EgressGateway) krt.Si
 }
 
 func TestAuthorize(t *testing.T) {
-	t.Run("nil sandboxConfig returns error", func(t *testing.T) {
+	t.Run("nil agentioConfig returns error", func(t *testing.T) {
 		c := &onDemandCertController{}
 		if err := c.Authorize("sa", "ns"); err == nil {
 			t.Error("expected error when sandbox config not wired in")
@@ -187,7 +187,7 @@ func TestAuthorize(t *testing.T) {
 
 	t.Run("unloaded config returns error", func(t *testing.T) {
 		c := &onDemandCertController{
-			sandboxConfig: krt.NewStatic[model.SandboxConfig](nil, true),
+			agentioConfig: krt.NewStatic[model.AgentioConfig](nil, true),
 		}
 		if err := c.Authorize("sa", "ns"); err == nil {
 			t.Error("expected error when config not loaded")
@@ -196,7 +196,7 @@ func TestAuthorize(t *testing.T) {
 
 	t.Run("no matching gateway returns error", func(t *testing.T) {
 		c := &onDemandCertController{
-			sandboxConfig: sandboxConfigSingletonForTest(
+			agentioConfig: agentioConfigSingletonForTest(
 				&extensions.EgressGateway{Name: "other", Namespace: "other-ns"},
 			),
 		}
@@ -208,7 +208,7 @@ func TestAuthorize(t *testing.T) {
 
 	t.Run("matching gateway allows", func(t *testing.T) {
 		c := &onDemandCertController{
-			sandboxConfig: sandboxConfigSingletonForTest(
+			agentioConfig: agentioConfigSingletonForTest(
 				&extensions.EgressGateway{Name: "my-gw", Namespace: "my-ns"},
 			),
 		}
@@ -377,7 +377,7 @@ func TestGetCertInfo_SelfSignSignsAndCaches(t *testing.T) {
 		MaxAge:        0,
 		SignMode:      string(SignModeSelfSign),
 		KrtOptions:    krtOptionsForTest(),
-		SandboxConfig: krt.NewStatic[model.SandboxConfig](nil, true),
+		AgentioConfig: krt.NewStatic[model.AgentioConfig](nil, true),
 	}
 	c, err := newOnDemandCertController(nil, opt)
 	if err != nil {

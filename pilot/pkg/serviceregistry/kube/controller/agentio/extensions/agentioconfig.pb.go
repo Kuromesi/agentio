@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v5.28.2
-// source: pilot/pkg/serviceregistry/kube/controller/sandbox/extensions/sandboxconfig.proto
+// source: pilot/pkg/serviceregistry/kube/controller/agentio/extensions/agentioconfig.proto
 
 package extensions
 
@@ -57,11 +57,11 @@ func (x WorkloadConfigScope) String() string {
 }
 
 func (WorkloadConfigScope) Descriptor() protoreflect.EnumDescriptor {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes[0].Descriptor()
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes[0].Descriptor()
 }
 
 func (WorkloadConfigScope) Type() protoreflect.EnumType {
-	return &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes[0]
+	return &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes[0]
 }
 
 func (x WorkloadConfigScope) Number() protoreflect.EnumNumber {
@@ -70,7 +70,7 @@ func (x WorkloadConfigScope) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use WorkloadConfigScope.Descriptor instead.
 func (WorkloadConfigScope) EnumDescriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{0}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{0}
 }
 
 // HeaderSendMode mirrors Envoy's ProcessingMode.HeaderSendMode.
@@ -110,11 +110,11 @@ func (x HeaderSendMode) String() string {
 }
 
 func (HeaderSendMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes[1].Descriptor()
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes[1].Descriptor()
 }
 
 func (HeaderSendMode) Type() protoreflect.EnumType {
-	return &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes[1]
+	return &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes[1]
 }
 
 func (x HeaderSendMode) Number() protoreflect.EnumNumber {
@@ -123,7 +123,7 @@ func (x HeaderSendMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use HeaderSendMode.Descriptor instead.
 func (HeaderSendMode) EnumDescriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{1}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{1}
 }
 
 // EgressPolicyAction defines the action for matching egress traffic.
@@ -163,11 +163,11 @@ func (x EgressPolicyAction) String() string {
 }
 
 func (EgressPolicyAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes[2].Descriptor()
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes[2].Descriptor()
 }
 
 func (EgressPolicyAction) Type() protoreflect.EnumType {
-	return &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes[2]
+	return &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes[2]
 }
 
 func (x EgressPolicyAction) Number() protoreflect.EnumNumber {
@@ -176,11 +176,11 @@ func (x EgressPolicyAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EgressPolicyAction.Descriptor instead.
 func (EgressPolicyAction) EnumDescriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{2}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{2}
 }
 
-// SandboxConfig is the complete configuration for the sandbox controller.
-type SandboxConfig struct {
+// AgentioConfig is the complete configuration for the sandbox controller.
+type AgentioConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// External processing provider for sandbox traffic inspection and policy enforcement.
 	SandboxExtProc *ExtProcProvider `protobuf:"bytes,1,opt,name=sandbox_ext_proc,json=sandboxExtProc,proto3" json:"sandbox_ext_proc,omitempty"`
@@ -196,21 +196,21 @@ type SandboxConfig struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *SandboxConfig) Reset() {
-	*x = SandboxConfig{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[0]
+func (x *AgentioConfig) Reset() {
+	*x = AgentioConfig{}
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SandboxConfig) String() string {
+func (x *AgentioConfig) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SandboxConfig) ProtoMessage() {}
+func (*AgentioConfig) ProtoMessage() {}
 
-func (x *SandboxConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[0]
+func (x *AgentioConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -221,33 +221,33 @@ func (x *SandboxConfig) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SandboxConfig.ProtoReflect.Descriptor instead.
-func (*SandboxConfig) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{0}
+// Deprecated: Use AgentioConfig.ProtoReflect.Descriptor instead.
+func (*AgentioConfig) Descriptor() ([]byte, []int) {
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *SandboxConfig) GetSandboxExtProc() *ExtProcProvider {
+func (x *AgentioConfig) GetSandboxExtProc() *ExtProcProvider {
 	if x != nil {
 		return x.SandboxExtProc
 	}
 	return nil
 }
 
-func (x *SandboxConfig) GetEgressPolicies() []*EgressPolicy {
+func (x *AgentioConfig) GetEgressPolicies() []*EgressPolicy {
 	if x != nil {
 		return x.EgressPolicies
 	}
 	return nil
 }
 
-func (x *SandboxConfig) GetSandboxIgnoredLabels() []string {
+func (x *AgentioConfig) GetSandboxIgnoredLabels() []string {
 	if x != nil {
 		return x.SandboxIgnoredLabels
 	}
 	return nil
 }
 
-func (x *SandboxConfig) GetEgressGateways() []*EgressGateway {
+func (x *AgentioConfig) GetEgressGateways() []*EgressGateway {
 	if x != nil {
 		return x.EgressGateways
 	}
@@ -272,7 +272,7 @@ type EgressGateway struct {
 	// no-SNI-match protocolMatcher).
 	TlsTermination *TlsTerminationConfig `protobuf:"bytes,3,opt,name=tls_termination,json=tlsTermination,proto3" json:"tls_termination,omitempty"`
 	// Per-gateway ext_proc override. When set, this gateway uses its own
-	// ext_proc endpoint instead of the global SandboxConfig.sandbox_ext_proc.
+	// ext_proc endpoint instead of the global AgentioConfig.sandbox_ext_proc.
 	// nil means fall back to the global configuration.
 	ExtProc *ExtProcProvider `protobuf:"bytes,4,opt,name=ext_proc,json=extProc,proto3" json:"ext_proc,omitempty"`
 	// Per-gateway connection pool and timeout settings. Controls HCM
@@ -290,7 +290,7 @@ type EgressGateway struct {
 
 func (x *EgressGateway) Reset() {
 	*x = EgressGateway{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[1]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -302,7 +302,7 @@ func (x *EgressGateway) String() string {
 func (*EgressGateway) ProtoMessage() {}
 
 func (x *EgressGateway) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[1]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -315,7 +315,7 @@ func (x *EgressGateway) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressGateway.ProtoReflect.Descriptor instead.
 func (*EgressGateway) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{1}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *EgressGateway) GetName() string {
@@ -379,7 +379,7 @@ type TlsTerminationConfig struct {
 
 func (x *TlsTerminationConfig) Reset() {
 	*x = TlsTerminationConfig{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[2]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -391,7 +391,7 @@ func (x *TlsTerminationConfig) String() string {
 func (*TlsTerminationConfig) ProtoMessage() {}
 
 func (x *TlsTerminationConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[2]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -404,7 +404,7 @@ func (x *TlsTerminationConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TlsTerminationConfig.ProtoReflect.Descriptor instead.
 func (*TlsTerminationConfig) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{2}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *TlsTerminationConfig) GetIncludeHosts() []string {
@@ -431,7 +431,7 @@ type EgressPolicies struct {
 
 func (x *EgressPolicies) Reset() {
 	*x = EgressPolicies{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[3]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -443,7 +443,7 @@ func (x *EgressPolicies) String() string {
 func (*EgressPolicies) ProtoMessage() {}
 
 func (x *EgressPolicies) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[3]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -456,7 +456,7 @@ func (x *EgressPolicies) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressPolicies.ProtoReflect.Descriptor instead.
 func (*EgressPolicies) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{3}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EgressPolicies) GetEgressPolicies() []*EgressPolicy {
@@ -477,7 +477,7 @@ type WorkloadConfig struct {
 
 func (x *WorkloadConfig) Reset() {
 	*x = WorkloadConfig{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[4]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -489,7 +489,7 @@ func (x *WorkloadConfig) String() string {
 func (*WorkloadConfig) ProtoMessage() {}
 
 func (x *WorkloadConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[4]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -502,7 +502,7 @@ func (x *WorkloadConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkloadConfig.ProtoReflect.Descriptor instead.
 func (*WorkloadConfig) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{4}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *WorkloadConfig) GetScope() WorkloadConfigScope {
@@ -545,7 +545,7 @@ type ExtProcProvider struct {
 
 func (x *ExtProcProvider) Reset() {
 	*x = ExtProcProvider{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[5]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +557,7 @@ func (x *ExtProcProvider) String() string {
 func (*ExtProcProvider) ProtoMessage() {}
 
 func (x *ExtProcProvider) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[5]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +570,7 @@ func (x *ExtProcProvider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtProcProvider.ProtoReflect.Descriptor instead.
 func (*ExtProcProvider) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{5}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ExtProcProvider) GetService() string {
@@ -633,7 +633,7 @@ type ClusterSettings struct {
 
 func (x *ClusterSettings) Reset() {
 	*x = ClusterSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[6]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -645,7 +645,7 @@ func (x *ClusterSettings) String() string {
 func (*ClusterSettings) ProtoMessage() {}
 
 func (x *ClusterSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[6]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -658,7 +658,7 @@ func (x *ClusterSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterSettings.ProtoReflect.Descriptor instead.
 func (*ClusterSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{6}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ClusterSettings) GetHttp() *HttpSettings {
@@ -683,7 +683,7 @@ type HttpSettings struct {
 
 func (x *HttpSettings) Reset() {
 	*x = HttpSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[7]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -695,7 +695,7 @@ func (x *HttpSettings) String() string {
 func (*HttpSettings) ProtoMessage() {}
 
 func (x *HttpSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[7]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -708,7 +708,7 @@ func (x *HttpSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpSettings.ProtoReflect.Descriptor instead.
 func (*HttpSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{7}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *HttpSettings) GetMaxConcurrentStreams() uint32 {
@@ -737,7 +737,7 @@ type ProcessingModeOptions struct {
 
 func (x *ProcessingModeOptions) Reset() {
 	*x = ProcessingModeOptions{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[8]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -749,7 +749,7 @@ func (x *ProcessingModeOptions) String() string {
 func (*ProcessingModeOptions) ProtoMessage() {}
 
 func (x *ProcessingModeOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[8]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -762,7 +762,7 @@ func (x *ProcessingModeOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProcessingModeOptions.ProtoReflect.Descriptor instead.
 func (*ProcessingModeOptions) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{8}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProcessingModeOptions) GetHeaderMode() HeaderSendMode {
@@ -809,7 +809,7 @@ type EgressPolicy struct {
 
 func (x *EgressPolicy) Reset() {
 	*x = EgressPolicy{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[9]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -821,7 +821,7 @@ func (x *EgressPolicy) String() string {
 func (*EgressPolicy) ProtoMessage() {}
 
 func (x *EgressPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[9]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -834,7 +834,7 @@ func (x *EgressPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressPolicy.ProtoReflect.Descriptor instead.
 func (*EgressPolicy) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{9}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EgressPolicy) GetNamespaces() []string {
@@ -892,7 +892,7 @@ type GatewayAddress struct {
 
 func (x *GatewayAddress) Reset() {
 	*x = GatewayAddress{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[10]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -904,7 +904,7 @@ func (x *GatewayAddress) String() string {
 func (*GatewayAddress) ProtoMessage() {}
 
 func (x *GatewayAddress) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[10]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -917,7 +917,7 @@ func (x *GatewayAddress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GatewayAddress.ProtoReflect.Descriptor instead.
 func (*GatewayAddress) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{10}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GatewayAddress) GetService() string {
@@ -949,7 +949,7 @@ type ConnectionPoolSettings struct {
 
 func (x *ConnectionPoolSettings) Reset() {
 	*x = ConnectionPoolSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[11]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -961,7 +961,7 @@ func (x *ConnectionPoolSettings) String() string {
 func (*ConnectionPoolSettings) ProtoMessage() {}
 
 func (x *ConnectionPoolSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[11]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -974,7 +974,7 @@ func (x *ConnectionPoolSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionPoolSettings.ProtoReflect.Descriptor instead.
 func (*ConnectionPoolSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{11}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ConnectionPoolSettings) GetTcp() *TcpSettings {
@@ -1008,7 +1008,7 @@ type TcpSettings struct {
 
 func (x *TcpSettings) Reset() {
 	*x = TcpSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[12]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1020,7 +1020,7 @@ func (x *TcpSettings) String() string {
 func (*TcpSettings) ProtoMessage() {}
 
 func (x *TcpSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[12]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1033,7 +1033,7 @@ func (x *TcpSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TcpSettings.ProtoReflect.Descriptor instead.
 func (*TcpSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{12}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TcpSettings) GetIdleTimeout() *duration.Duration {
@@ -1071,7 +1071,7 @@ type ConnectionPoolHttpSettings struct {
 
 func (x *ConnectionPoolHttpSettings) Reset() {
 	*x = ConnectionPoolHttpSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[13]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1083,7 +1083,7 @@ func (x *ConnectionPoolHttpSettings) String() string {
 func (*ConnectionPoolHttpSettings) ProtoMessage() {}
 
 func (x *ConnectionPoolHttpSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[13]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1096,7 +1096,7 @@ func (x *ConnectionPoolHttpSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionPoolHttpSettings.ProtoReflect.Descriptor instead.
 func (*ConnectionPoolHttpSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{13}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ConnectionPoolHttpSettings) GetStreamIdleTimeout() *duration.Duration {
@@ -1134,7 +1134,7 @@ type HttpRouteOverride struct {
 
 func (x *HttpRouteOverride) Reset() {
 	*x = HttpRouteOverride{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[14]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1146,7 +1146,7 @@ func (x *HttpRouteOverride) String() string {
 func (*HttpRouteOverride) ProtoMessage() {}
 
 func (x *HttpRouteOverride) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[14]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1159,7 +1159,7 @@ func (x *HttpRouteOverride) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpRouteOverride.ProtoReflect.Descriptor instead.
 func (*HttpRouteOverride) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{14}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *HttpRouteOverride) GetHosts() []string {
@@ -1190,7 +1190,7 @@ type HttpRouteSettings struct {
 
 func (x *HttpRouteSettings) Reset() {
 	*x = HttpRouteSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[15]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1202,7 +1202,7 @@ func (x *HttpRouteSettings) String() string {
 func (*HttpRouteSettings) ProtoMessage() {}
 
 func (x *HttpRouteSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[15]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1215,7 +1215,7 @@ func (x *HttpRouteSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpRouteSettings.ProtoReflect.Descriptor instead.
 func (*HttpRouteSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{15}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HttpRouteSettings) GetTimeout() *duration.Duration {
@@ -1254,7 +1254,7 @@ type LocalRateLimitSettings struct {
 
 func (x *LocalRateLimitSettings) Reset() {
 	*x = LocalRateLimitSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[16]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1266,7 +1266,7 @@ func (x *LocalRateLimitSettings) String() string {
 func (*LocalRateLimitSettings) ProtoMessage() {}
 
 func (x *LocalRateLimitSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[16]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1279,7 +1279,7 @@ func (x *LocalRateLimitSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LocalRateLimitSettings.ProtoReflect.Descriptor instead.
 func (*LocalRateLimitSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{16}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LocalRateLimitSettings) GetTokenBucket() *TokenBucket {
@@ -1319,7 +1319,7 @@ type TokenBucket struct {
 
 func (x *TokenBucket) Reset() {
 	*x = TokenBucket{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[17]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1331,7 +1331,7 @@ func (x *TokenBucket) String() string {
 func (*TokenBucket) ProtoMessage() {}
 
 func (x *TokenBucket) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[17]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1344,7 +1344,7 @@ func (x *TokenBucket) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenBucket.ProtoReflect.Descriptor instead.
 func (*TokenBucket) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{17}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TokenBucket) GetMaxTokens() uint32 {
@@ -1383,7 +1383,7 @@ type RateLimitDescriptor struct {
 
 func (x *RateLimitDescriptor) Reset() {
 	*x = RateLimitDescriptor{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[18]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1395,7 +1395,7 @@ func (x *RateLimitDescriptor) String() string {
 func (*RateLimitDescriptor) ProtoMessage() {}
 
 func (x *RateLimitDescriptor) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[18]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1408,7 +1408,7 @@ func (x *RateLimitDescriptor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateLimitDescriptor.ProtoReflect.Descriptor instead.
 func (*RateLimitDescriptor) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{18}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RateLimitDescriptor) GetEntries() []*RateLimitEntry {
@@ -1447,7 +1447,7 @@ type RateLimitEntry struct {
 
 func (x *RateLimitEntry) Reset() {
 	*x = RateLimitEntry{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[19]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1459,7 +1459,7 @@ func (x *RateLimitEntry) String() string {
 func (*RateLimitEntry) ProtoMessage() {}
 
 func (x *RateLimitEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes[19]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1472,7 +1472,7 @@ func (x *RateLimitEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateLimitEntry.ProtoReflect.Descriptor instead.
 func (*RateLimitEntry) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP(), []int{19}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RateLimitEntry) GetKey() string {
@@ -1496,12 +1496,12 @@ func (x *RateLimitEntry) GetCel() string {
 	return ""
 }
 
-var File_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto protoreflect.FileDescriptor
+var File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto protoreflect.FileDescriptor
 
-const file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDesc = "" +
+const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc = "" +
 	"\n" +
-	"Ppilot/pkg/serviceregistry/kube/controller/sandbox/extensions/sandboxconfig.proto\x12\x17kruise.io.extensions.v1\x1a\x1egoogle/protobuf/duration.proto\x1a)networking/v1alpha3/virtual_service.proto\"\xba\x02\n" +
-	"\rSandboxConfig\x12R\n" +
+	"Ppilot/pkg/serviceregistry/kube/controller/agentio/extensions/agentioconfig.proto\x12\x17kruise.io.extensions.v1\x1a\x1egoogle/protobuf/duration.proto\x1a)networking/v1alpha3/virtual_service.proto\"\xba\x02\n" +
+	"\rAgentioConfig\x12R\n" +
 	"\x10sandbox_ext_proc\x18\x01 \x01(\v2(.kruise.io.extensions.v1.ExtProcProviderR\x0esandboxExtProc\x12N\n" +
 	"\x0fegress_policies\x18\x02 \x03(\v2%.kruise.io.extensions.v1.EgressPolicyR\x0eegressPolicies\x124\n" +
 	"\x16sandbox_ignored_labels\x18\x03 \x03(\tR\x14sandboxIgnoredLabels\x12O\n" +
@@ -1597,27 +1597,27 @@ const file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxc
 	"\x12EgressPolicyAction\x12\x0f\n" +
 	"\vPASSTHROUGH\x10\x00\x12\b\n" +
 	"\x04DENY\x10\x01\x12\v\n" +
-	"\aGATEWAY\x10\x02B>Z<pilot/pkg/serviceregistry/kube/controller/sandbox/extensionsb\x06proto3"
+	"\aGATEWAY\x10\x02B>Z<pilot/pkg/serviceregistry/kube/controller/agentio/extensionsb\x06proto3"
 
 var (
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescOnce sync.Once
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescData []byte
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescOnce sync.Once
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescData []byte
 )
 
-func file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescGZIP() []byte {
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescOnce.Do(func() {
-		file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDesc)))
+func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP() []byte {
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescOnce.Do(func() {
+		file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc)))
 	})
-	return file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDescData
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescData
 }
 
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_goTypes = []any{
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_goTypes = []any{
 	(WorkloadConfigScope)(0),           // 0: kruise.io.extensions.v1.WorkloadConfigScope
 	(HeaderSendMode)(0),                // 1: kruise.io.extensions.v1.HeaderSendMode
 	(EgressPolicyAction)(0),            // 2: kruise.io.extensions.v1.EgressPolicyAction
-	(*SandboxConfig)(nil),              // 3: kruise.io.extensions.v1.SandboxConfig
+	(*AgentioConfig)(nil),              // 3: kruise.io.extensions.v1.AgentioConfig
 	(*EgressGateway)(nil),              // 4: kruise.io.extensions.v1.EgressGateway
 	(*TlsTerminationConfig)(nil),       // 5: kruise.io.extensions.v1.TlsTerminationConfig
 	(*EgressPolicies)(nil),             // 6: kruise.io.extensions.v1.EgressPolicies
@@ -1640,10 +1640,10 @@ var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxcon
 	(*duration.Duration)(nil),          // 23: google.protobuf.Duration
 	(*v1alpha3.HTTPRetry)(nil),         // 24: istio.networking.v1alpha3.HTTPRetry
 }
-var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_depIdxs = []int32{
-	8,  // 0: kruise.io.extensions.v1.SandboxConfig.sandbox_ext_proc:type_name -> kruise.io.extensions.v1.ExtProcProvider
-	12, // 1: kruise.io.extensions.v1.SandboxConfig.egress_policies:type_name -> kruise.io.extensions.v1.EgressPolicy
-	4,  // 2: kruise.io.extensions.v1.SandboxConfig.egress_gateways:type_name -> kruise.io.extensions.v1.EgressGateway
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_depIdxs = []int32{
+	8,  // 0: kruise.io.extensions.v1.AgentioConfig.sandbox_ext_proc:type_name -> kruise.io.extensions.v1.ExtProcProvider
+	12, // 1: kruise.io.extensions.v1.AgentioConfig.egress_policies:type_name -> kruise.io.extensions.v1.EgressPolicy
+	4,  // 2: kruise.io.extensions.v1.AgentioConfig.egress_gateways:type_name -> kruise.io.extensions.v1.EgressGateway
 	5,  // 3: kruise.io.extensions.v1.EgressGateway.tls_termination:type_name -> kruise.io.extensions.v1.TlsTerminationConfig
 	8,  // 4: kruise.io.extensions.v1.EgressGateway.ext_proc:type_name -> kruise.io.extensions.v1.ExtProcProvider
 	14, // 5: kruise.io.extensions.v1.EgressGateway.connection_pool:type_name -> kruise.io.extensions.v1.ConnectionPoolSettings
@@ -1681,28 +1681,28 @@ var file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxcon
 }
 
 func init() {
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_init()
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_init()
 }
-func file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_init() {
-	if File_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto != nil {
+func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_init() {
+	if File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc)),
 			NumEnums:      3,
 			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_goTypes,
-		DependencyIndexes: file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_depIdxs,
-		EnumInfos:         file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_enumTypes,
-		MessageInfos:      file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_msgTypes,
+		GoTypes:           file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_goTypes,
+		DependencyIndexes: file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_depIdxs,
+		EnumInfos:         file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes,
+		MessageInfos:      file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes,
 	}.Build()
-	File_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto = out.File
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_goTypes = nil
-	file_pilot_pkg_serviceregistry_kube_controller_sandbox_extensions_sandboxconfig_proto_depIdxs = nil
+	File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto = out.File
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_goTypes = nil
+	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_depIdxs = nil
 }

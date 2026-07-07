@@ -171,7 +171,7 @@ type Options struct {
 
 	KrtDebugger *krt.DebugHandler
 
-	SandboxController *agentio.Controller
+	AgentioController *agentio.Controller
 }
 
 // kubernetesNode represents a kubernetes node that is reachable externally
@@ -332,7 +332,7 @@ func NewController(kubeClient kubelib.Client, options Options) *Controller {
 					r.Burst = options.KubernetesAPIBurst
 				},
 			},
-			SandboxController: options.SandboxController,
+			AgentioController: options.AgentioController,
 		})
 	}
 

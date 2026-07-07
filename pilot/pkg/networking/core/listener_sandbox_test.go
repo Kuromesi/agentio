@@ -296,8 +296,8 @@ func TestApplySandboxStreamIdleTimeout_Default(t *testing.T) {
 	lb := &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
-			SandboxConfig: &model.SandboxConfig{
-				SandboxConfig: &extensions.SandboxConfig{
+			AgentioConfig: &model.AgentioConfig{
+				AgentioConfig: &extensions.AgentioConfig{
 					EgressGateways: []*extensions.EgressGateway{{
 						Name:      "egress-gw",
 						Namespace: "istio-system",
@@ -318,8 +318,8 @@ func TestApplySandboxStreamIdleTimeout_Configured(t *testing.T) {
 	lb := &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
-			SandboxConfig: &model.SandboxConfig{
-				SandboxConfig: &extensions.SandboxConfig{
+			AgentioConfig: &model.AgentioConfig{
+				AgentioConfig: &extensions.AgentioConfig{
 					EgressGateways: []*extensions.EgressGateway{{
 						Name:      "egress-gw",
 						Namespace: "istio-system",
@@ -495,8 +495,8 @@ func sandboxLBWithRateLimit(rl *extensions.LocalRateLimitSettings) *ListenerBuil
 	return &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
-			SandboxConfig: &model.SandboxConfig{
-				SandboxConfig: &extensions.SandboxConfig{
+			AgentioConfig: &model.AgentioConfig{
+				AgentioConfig: &extensions.AgentioConfig{
 					EgressGateways: []*extensions.EgressGateway{{
 						Name:             "egress-gw",
 						Namespace:        "istio-system",
