@@ -1,0 +1,34 @@
+name: copyright
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - "release-*"
+
+permissions:
+  contents: read
+
+jobs:
+  copyright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine base ref
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" || true
+            echo "ref=$(git merge-base "origin/${{ github.base_ref }}" HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            before="${{ github.event.before }}"
+            if ! git rev-parse -q --verify "${before}^{commit}" >/dev/null 2>&1; then
+              before="HEAD~1"
+            fi
+            echo "ref=${before}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check copyright headers
+        run: ./bin/lint_copyright_kruise.sh "${{ steps.base.outputs.ref }}"
