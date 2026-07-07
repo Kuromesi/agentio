@@ -80,8 +80,8 @@ func TestMain(m *testing.M) {
 		})).
 		Setup(sandboxcomp.Setup(&sb, func(_ resource.Context, cfg *sandboxcomp.Config) {
 			cfg.Values = map[string]string{
-				"enhancedTrafficManagement.ambient.ztunnel.env.FIREWALL_BACKEND": firewallBackend,
-				"enhancedTrafficManagement.global.enableFirewallRules":           fmt.Sprintf("%t", enableFirewall),
+				"ambient.ztunnel.env.FIREWALL_BACKEND": firewallBackend,
+				"global.enableFirewallRules":           fmt.Sprintf("%t", enableFirewall),
 			}
 		})).
 		Setup(namespace.Setup(&ns, nsCfg)).

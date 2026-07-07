@@ -1,6 +1,0 @@
-{{- if .Values.enhancedTrafficManagement.enabled }}
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ include "sandbox.namespace" . }}
-{{- end }}

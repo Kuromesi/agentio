@@ -1,25 +1,25 @@
-{{- if and .Values.enhancedTrafficManagement.enabled .Values.enhancedTrafficManagement.ambient.enabled }}
+{{- if .Values.ambient.enabled }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   labels:
-    {{- include "sandbox.ztunnel.labels" . | nindent 4 }}
-  name: {{ include "sandbox.ztunnel.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+    {{- include "agentio.ztunnel.labels" . | nindent 4 }}
+  name: {{ include "agentio.ztunnel.name" . }}
+  namespace: {{ include "agentio.namespace" . }}
 spec:
-  {{- with .Values.enhancedTrafficManagement.ambient.ztunnel.updateStrategy }}
+  {{- with .Values.ambient.ztunnel.updateStrategy }}
   updateStrategy:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "sandbox.ztunnel.selectorLabels" . | nindent 6 }}
+      {{- include "agentio.ztunnel.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
         sidecar.istio.io/inject: "false"
         istio.io/dataplane-mode: none
-        {{- include "sandbox.ztunnel.labels" . | nindent 8 }}
+        {{- include "agentio.ztunnel.labels" . | nindent 8 }}
       annotations:
         sidecar.istio.io/inject: "false"
         prometheus.io/port: "15020"
@@ -27,23 +27,23 @@ spec:
     spec:
       nodeSelector:
         kubernetes.io/os: linux
-      {{- with .Values.enhancedTrafficManagement.ambient.ztunnel.tolerations }}
+      {{- with .Values.ambient.ztunnel.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "sandbox.ztunnel.name" . }}
+      serviceAccountName: {{ include "agentio.ztunnel.name" . }}
       priorityClassName: system-node-critical
-      terminationGracePeriodSeconds: {{ .Values.enhancedTrafficManagement.ambient.ztunnel.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .Values.ambient.ztunnel.terminationGracePeriodSeconds }}
       containers:
-      - name: {{ include "sandbox.ztunnel.name" . }}
-        image: {{ include "sandbox.ztunnelImage" . }}
+      - name: {{ include "agentio.ztunnel.name" . }}
+        image: {{ include "agentio.ztunnelImage" . }}
         ports:
         - containerPort: 15020
           name: ztunnel-stats
           protocol: TCP
-        {{- if .Values.enhancedTrafficManagement.ambient.ztunnel.resources }}
+        {{- if .Values.ambient.ztunnel.resources }}
         resources:
-          {{- toYaml .Values.enhancedTrafficManagement.ambient.ztunnel.resources | nindent 10 }}
+          {{- toYaml .Values.ambient.ztunnel.resources | nindent 10 }}
         {{- end }}
         securityContext:
           allowPrivilegeEscalation: true
@@ -68,29 +68,29 @@ spec:
         - ztunnel
         env:
         - name: CA_ADDRESS
-          value: {{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc.cluster.local:15012
+          value: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local:15012
         - name: XDS_ADDRESS
-          value: {{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc.cluster.local:15012
+          value: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local:15012
         - name: SANDBOX_MODE
           value: "true"
         - name: RUST_LOG
-          value: {{ .Values.enhancedTrafficManagement.ambient.ztunnel.logLevel | quote }}
-        {{- if .Values.enhancedTrafficManagement.ambient.ztunnel.logAsJson }}
+          value: {{ .Values.ambient.ztunnel.logLevel | quote }}
+        {{- if .Values.ambient.ztunnel.logAsJson }}
         - name: LOG_FORMAT
           value: json
         {{- end }}
         - name: RUST_BACKTRACE
           value: "1"
         - name: ISTIO_META_CLUSTER_ID
-          value: {{ .Values.enhancedTrafficManagement.global.clusterId | quote }}
+          value: {{ .Values.global.clusterId | quote }}
         - name: INPOD_ENABLED
           value: "true"
-        {{- if .Values.enhancedTrafficManagement.global.enableFirewallRules }}
+        {{- if .Values.global.enableFirewallRules }}
         - name: ENABLE_FIREWALL_RULES
           value: "true"
         {{- end }}
         - name: TERMINATION_GRACE_PERIOD_SECONDS
-          value: {{ .Values.enhancedTrafficManagement.ambient.ztunnel.terminationGracePeriodSeconds | quote }}
+          value: {{ .Values.ambient.ztunnel.terminationGracePeriodSeconds | quote }}
         - name: POD_NAME
           valueFrom:
             fieldRef:
@@ -116,7 +116,7 @@ spec:
             resourceFieldRef:
               resource: limits.cpu
               divisor: "1"
-        {{- range $key, $val := .Values.enhancedTrafficManagement.ambient.ztunnel.env }}
+        {{- range $key, $val := .Values.ambient.ztunnel.env }}
         - name: {{ $key }}
           value: {{ $val | quote }}
         {{- end }}
@@ -139,7 +139,7 @@ spec:
               audience: istio-ca
       - name: istiod-ca-cert
         configMap:
-          name: {{ include "sandbox.caCertConfigMap" . }}
+          name: {{ include "agentio.caCertConfigMap" . }}
       - name: cni-ztunnel-sock-dir
         hostPath:
           path: /var/run/ztunnel

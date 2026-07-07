@@ -143,22 +143,21 @@ func writeValues(ctx resource.Context, cfg Config) (string, error) {
 	hub := ctx.Settings().Image.Hub
 	tag := ctx.Settings().Image.Tag
 
-	values := fmt.Sprintf(`enhancedTrafficManagement:
-  enabled: true
-  namespace: %s
-  global:
+	values := fmt.Sprintf(`enabled: true
+namespace: %s
+global:
+  hub: %s
+  trustDomain: cluster.local
+  clusterId: Kubernetes
+  ztunnelImage:
     hub: %s
-    trustDomain: cluster.local
-    clusterId: Kubernetes
-    ztunnelImage:
-      hub: %s
-      name: sandbox-tunnel
-      tag: %s
-  gatewayController:
-    image:
-      hub: %s
-      name: pilot
-      tag: %s
+    name: sandbox-tunnel
+    tag: %s
+agentiod:
+  image:
+    hub: %s
+    name: pilot
+    tag: %s
 `, cfg.Namespace, hub, hub, tag, hub, tag)
 
 	dir, err := ctx.CreateTmpDirectory("sandbox-values")

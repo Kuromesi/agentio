@@ -1,7 +1,7 @@
 {{- define "enhancedTrafficManagement.meshConfig" }}
 ingressControllerMode: "OFF"
 defaultConfig:
-  discoveryAddress: {{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc:15012
+  discoveryAddress: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc:15012
 defaultProviders:
   accessLogging:
   - envoy
@@ -34,15 +34,14 @@ extensionProviders:
         sandbox_name: '%CEL(filter_state[''downstream_peer''].name)%'
         sandbox_namespace: '%CEL(filter_state[''downstream_peer''].namespace)%'
 enablePrometheusMerge: true
-rootNamespace: {{ include "sandbox.namespace" . }}
-trustDomain: {{ .Values.enhancedTrafficManagement.global.trustDomain }}
+rootNamespace: {{ include "agentio.namespace" . }}
+trustDomain: {{ .Values.global.trustDomain }}
 {{- end }}
 
-{{- if .Values.enhancedTrafficManagement.enabled }}
-{{/* Merge built-in defaults above with user overrides from .Values.enhancedTrafficManagement.meshConfig. */}}
+{{/* Merge built-in defaults above with user overrides from .Values.meshConfig. */}}
 {{/* The intent is that meshConfig.foo becomes the raw API rather than re-modeling every field in values.yaml. */}}
 {{- $defaults := include "enhancedTrafficManagement.meshConfig" . | fromYaml }}
-{{- $mesh := mergeOverwrite $defaults (.Values.enhancedTrafficManagement.meshConfig | default dict) }}
+{{- $mesh := mergeOverwrite $defaults (.Values.meshConfig | default dict) }}
 apiVersion: v1
 data:
   mesh: |-
@@ -51,7 +50,6 @@ data:
 kind: ConfigMap
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix }}
-  namespace: {{ include "sandbox.namespace" . }}
-{{- end }}
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ .Values.global.resourcePrefix }}
+  namespace: {{ include "agentio.namespace" . }}

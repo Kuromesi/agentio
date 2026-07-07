@@ -1,5 +1,4 @@
-{{- if .Values.enhancedTrafficManagement.enabled }}
-{{- if .Values.enhancedTrafficManagement.sidecarInjector.enabled }}
+{{- if .Values.sidecarInjector.enabled }}
 apiVersion: v1
 data:
   config: |-
@@ -12,12 +11,12 @@ data:
       },
       "global": {
         "proxy_ztunnel": {
-          "image": "{{ include "sandbox.ztunnelImage" . }}",
-          "enableFirewallRules": {{ .Values.enhancedTrafficManagement.global.enableFirewallRules | default false }}
+          "image": "{{ include "agentio.ztunnelImage" . }}",
+          "enableFirewallRules": {{ .Values.global.enableFirewallRules | default false }}
         },
-        "caAddress": "{{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc.cluster.local:15012",
-        "xdsAddress": "{{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc.cluster.local:15012",
-        "trustBundleName": "{{ include "sandbox.caCertConfigMap" . }}",
+        "caAddress": "{{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local:15012",
+        "xdsAddress": "{{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local:15012",
+        "trustBundleName": "{{ include "agentio.caCertConfigMap" . }}",
         "caName": "",
         "certSigners": [],
         "configCluster": false,
@@ -31,10 +30,10 @@ data:
           }
         },
         "externalIstiod": false,
-        "hub": "{{ .Values.enhancedTrafficManagement.global.hub }}",
+        "hub": "{{ .Values.global.hub }}",
         "imagePullPolicy": "",
         "imagePullSecrets": [],
-        "istioNamespace": "{{ include "sandbox.namespace" . }}",
+        "istioNamespace": "{{ include "agentio.namespace" . }}",
         "istiod": {
           "enableAnalysis": false
         },
@@ -46,7 +45,7 @@ data:
         "meshNetworks": {},
         "mountMtlsCerts": false,
         "multiCluster": {
-          "clusterName": "{{ .Values.enhancedTrafficManagement.global.clusterId }}"
+          "clusterName": "{{ .Values.global.clusterId }}"
         },
         "nativeNftables": false,
         "network": "",
@@ -58,9 +57,9 @@ data:
         "pilotCertProvider": "istiod",
         "priorityClassName": "",
         "proxy": {
-          "image": "{{ .Values.enhancedTrafficManagement.egressGateway.image.hub | default .Values.enhancedTrafficManagement.global.hub }}/{{ .Values.enhancedTrafficManagement.egressGateway.image.name }}:{{ .Values.enhancedTrafficManagement.egressGateway.image.tag }}",
+          "image": "{{ .Values.proxy.image.hub | default .Values.global.hub }}/{{ .Values.proxy.image.name }}:{{ .Values.proxy.image.tag }}",
           "autoInject": "enabled",
-          "clusterDomain": "{{ .Values.enhancedTrafficManagement.global.trustDomain }}",
+          "clusterDomain": "{{ .Values.global.trustDomain }}",
           "componentLogLevel": "misc:error",
           "excludeIPRanges": "",
           "excludeInboundPorts": "",
@@ -94,7 +93,7 @@ data:
         },
         "proxy_init": {
           "forceApplyIptables": false,
-          "image": "{{ .Values.enhancedTrafficManagement.egressGateway.image.hub | default .Values.enhancedTrafficManagement.global.hub }}/{{ .Values.enhancedTrafficManagement.egressGateway.image.name }}:{{ .Values.enhancedTrafficManagement.egressGateway.image.tag }}"
+          "image": "{{ .Values.proxy.image.hub | default .Values.global.hub }}/{{ .Values.proxy.image.name }}:{{ .Values.proxy.image.tag }}"
         },
         "remotePilotAddress": "",
         "resourceScope": "all",
@@ -106,7 +105,7 @@ data:
         "sts": {
           "servicePort": 0
         },
-        "tag": "{{ .Values.enhancedTrafficManagement.egressGateway.image.tag }}",
+        "tag": "{{ .Values.proxy.image.tag }}",
         "variant": "distroless",
         "waypoint": {
           "affinity": {},
@@ -150,7 +149,6 @@ data:
     }
 kind: ConfigMap
 metadata:
-  name: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix }}-sidecar-injector
-  namespace: {{ include "sandbox.namespace" . }}
-{{- end }}
+  name: {{ .Values.global.resourcePrefix }}-sidecar-injector
+  namespace: {{ include "agentio.namespace" . }}
 {{- end }}

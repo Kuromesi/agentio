@@ -1,23 +1,23 @@
-{{- if and .Values.enhancedTrafficManagement.enabled .Values.enhancedTrafficManagement.ambient.enabled }}
+{{- if .Values.ambient.enabled }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   labels:
-    {{- include "sandbox.cni.labels" . | nindent 4 }}
-  name: {{ include "sandbox.cni.daemonsetName" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+    {{- include "agentio.cni.labels" . | nindent 4 }}
+  name: {{ include "agentio.cni.daemonsetName" . }}
+  namespace: {{ include "agentio.namespace" . }}
 spec:
   selector:
     matchLabels:
-      {{- include "sandbox.cni.selectorLabels" . | nindent 6 }}
-  {{- with .Values.enhancedTrafficManagement.ambient.cni.updateStrategy }}
+      {{- include "agentio.cni.selectorLabels" . | nindent 6 }}
+  {{- with .Values.ambient.cni.updateStrategy }}
   updateStrategy:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   template:
     metadata:
       labels:
-        {{- include "sandbox.cni.labels" . | nindent 8 }}
+        {{- include "agentio.cni.labels" . | nindent 8 }}
         sidecar.istio.io/inject: "false"
         istio.io/dataplane-mode: none
       annotations:
@@ -31,16 +31,16 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         kubernetes.io/os: linux
-      {{- with .Values.enhancedTrafficManagement.ambient.cni.tolerations }}
+      {{- with .Values.ambient.cni.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       priorityClassName: system-node-critical
-      serviceAccountName: {{ include "sandbox.cni.name" . }}
-      terminationGracePeriodSeconds: {{ .Values.enhancedTrafficManagement.ambient.cni.terminationGracePeriodSeconds }}
+      serviceAccountName: {{ include "agentio.cni.name" . }}
+      terminationGracePeriodSeconds: {{ .Values.ambient.cni.terminationGracePeriodSeconds }}
       containers:
       - name: install-cni
-        image: {{ include "sandbox.image" (dict "hub" .Values.enhancedTrafficManagement.ambient.cni.image.hub "name" .Values.enhancedTrafficManagement.ambient.cni.image.name "tag" .Values.enhancedTrafficManagement.ambient.cni.image.tag "globalHub" .Values.enhancedTrafficManagement.global.hub) }}
+        image: {{ include "agentio.image" (dict "hub" .Values.ambient.cni.image.hub "name" .Values.ambient.cni.image.name "tag" .Values.ambient.cni.image.tag "globalHub" .Values.global.hub) }}
         ports:
         - containerPort: 15014
           name: metrics
@@ -66,7 +66,7 @@ spec:
         command: ["install-cni"]
         envFrom:
         - configMapRef:
-            name: {{ include "sandbox.cni.configName" . }}
+            name: {{ include "agentio.cni.configName" . }}
         env:
         - name: REPAIR_NODE_NAME
           valueFrom:
@@ -116,14 +116,14 @@ spec:
           name: cni-netns-dir
         - mountPath: /var/run/ztunnel
           name: cni-ztunnel-sock-dir
-        {{- if .Values.enhancedTrafficManagement.ambient.cni.resources }}
+        {{- if .Values.ambient.cni.resources }}
         resources:
-          {{- toYaml .Values.enhancedTrafficManagement.ambient.cni.resources | nindent 10 }}
+          {{- toYaml .Values.ambient.cni.resources | nindent 10 }}
         {{- end }}
       volumes:
       - name: cni-bin-dir
         hostPath:
-          path: {{ .Values.enhancedTrafficManagement.ambient.cni.cniBinDir }}
+          path: {{ .Values.ambient.cni.cniBinDir }}
       - name: cni-host-procfs
         hostPath:
           path: /proc
@@ -134,12 +134,12 @@ spec:
           type: DirectoryOrCreate
       - name: cni-net-dir
         hostPath:
-          path: {{ .Values.enhancedTrafficManagement.ambient.cni.cniConfDir }}
+          path: {{ .Values.ambient.cni.cniConfDir }}
       - name: cni-socket-dir
         hostPath:
           path: /var/run/istio-cni
       - name: cni-netns-dir
         hostPath:
-          path: {{ .Values.enhancedTrafficManagement.ambient.cni.cniNetnsDir }}
+          path: {{ .Values.ambient.cni.cniNetnsDir }}
           type: DirectoryOrCreate
 {{- end }}

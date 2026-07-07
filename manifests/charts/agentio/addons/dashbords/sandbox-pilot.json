@@ -131,7 +131,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(istio_requests_total{namespace=\"sandbox-traffic-system\"}[$__rate_interval]))",
+          "expr": "sum(rate(istio_requests_total{namespace=\"agentio-system\"}[$__rate_interval]))",
           "legendFormat": "rps",
           "range": true,
           "refId": "A"
@@ -232,7 +232,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(istio_requests_total{namespace=\"sandbox-traffic-system\",response_code=~\"2..\"}[$__rate_interval]))",
+          "expr": "sum(rate(istio_requests_total{namespace=\"agentio-system\",response_code=~\"2..\"}[$__rate_interval]))",
           "legendFormat": "2xx",
           "range": true,
           "refId": "A"
@@ -243,7 +243,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(istio_requests_total{namespace=\"sandbox-traffic-system\",response_code=~\"3..\"}[$__rate_interval]))",
+          "expr": "sum(rate(istio_requests_total{namespace=\"agentio-system\",response_code=~\"3..\"}[$__rate_interval]))",
           "hide": false,
           "legendFormat": "3xx",
           "range": true,
@@ -255,7 +255,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(istio_requests_total{namespace=\"sandbox-traffic-system\",response_code=~\"4..\"}[$__rate_interval]))",
+          "expr": "sum(rate(istio_requests_total{namespace=\"agentio-system\",response_code=~\"4..\"}[$__rate_interval]))",
           "hide": false,
           "legendFormat": "4xx",
           "range": true,
@@ -267,7 +267,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(istio_requests_total{namespace=\"sandbox-traffic-system\",response_code=~\"5..\"}[$__rate_interval]))",
+          "expr": "sum(rate(istio_requests_total{namespace=\"agentio-system\",response_code=~\"5..\"}[$__rate_interval]))",
           "hide": false,
           "legendFormat": "5xx",
           "range": true,
@@ -279,7 +279,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(istio_requests_total{namespace=\"sandbox-traffic-system\",response_code=\"0\"}[$__rate_interval]))",
+          "expr": "sum(rate(istio_requests_total{namespace=\"agentio-system\",response_code=\"0\"}[$__rate_interval]))",
           "hide": false,
           "legendFormat": "0 (connection error)",
           "range": true,
@@ -397,7 +397,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(istio_request_duration_milliseconds_bucket{namespace=\"sandbox-traffic-system\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(istio_request_duration_milliseconds_bucket{namespace=\"agentio-system\"}[$__rate_interval])))",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -408,7 +408,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.90, sum by (le) (rate(istio_request_duration_milliseconds_bucket{namespace=\"sandbox-traffic-system\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(istio_request_duration_milliseconds_bucket{namespace=\"agentio-system\"}[$__rate_interval])))",
           "hide": false,
           "legendFormat": "p90",
           "range": true,
@@ -420,7 +420,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{namespace=\"sandbox-traffic-system\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{namespace=\"agentio-system\"}[$__rate_interval])))",
           "hide": false,
           "legendFormat": "p99",
           "range": true,
@@ -522,7 +522,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(container_sockets{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\"}) by (pod)",
+          "expr": "sum(container_sockets{container=\"istio-proxy\",namespace=\"agentio-system\"}) by (pod)",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -623,7 +623,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"sandbox-traffic-system\",pod=~\"egress.*\"}[$__rate_interval])) by (pod)",
+          "expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"agentio-system\",pod=~\"egress.*\"}[$__rate_interval])) by (pod)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -724,7 +724,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(container_network_receive_bytes_total{namespace=\"sandbox-traffic-system\",pod=~\"egress.*\"}[$__rate_interval])) by (pod)",
+          "expr": "sum(rate(container_network_receive_bytes_total{namespace=\"agentio-system\",pod=~\"egress.*\"}[$__rate_interval])) by (pod)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -825,7 +825,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"}[$__rate_interval]))",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"}[$__rate_interval]))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -926,7 +926,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -1027,7 +1027,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -1128,7 +1128,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -1229,7 +1229,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -1330,7 +1330,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container=\"istio-proxy\",namespace=\"sandbox-traffic-system\",pod=~\"egress-gateway.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container=\"istio-proxy\",namespace=\"agentio-system\",pod=~\"egress-gateway.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -1443,7 +1443,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (result) (rate(traffix_extension_audit_webhook_dispatched_total{namespace=\"sandbox-traffic-system\"}[$__rate_interval]))",
+          "expr": "sum by (result) (rate(traffix_extension_audit_webhook_dispatched_total{namespace=\"agentio-system\"}[$__rate_interval]))",
           "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
@@ -1544,7 +1544,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(traffix_extension_audit_webhook_duration_seconds_bucket{namespace=\"sandbox-traffic-system\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(traffix_extension_audit_webhook_duration_seconds_bucket{namespace=\"agentio-system\"}[$__rate_interval])))",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -1555,7 +1555,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.90, sum by (le) (rate(traffix_extension_audit_webhook_duration_seconds_bucket{namespace=\"sandbox-traffic-system\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(traffix_extension_audit_webhook_duration_seconds_bucket{namespace=\"agentio-system\"}[$__rate_interval])))",
           "legendFormat": "p90",
           "range": true,
           "refId": "B",
@@ -1567,7 +1567,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(traffix_extension_audit_webhook_duration_seconds_bucket{namespace=\"sandbox-traffic-system\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(traffix_extension_audit_webhook_duration_seconds_bucket{namespace=\"agentio-system\"}[$__rate_interval])))",
           "legendFormat": "p99",
           "range": true,
           "refId": "C",
@@ -1669,7 +1669,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (reason) (rate(traffix_extension_audit_eval_dropped_total{namespace=\"sandbox-traffic-system\"}[$__rate_interval]))",
+          "expr": "sum by (reason) (rate(traffix_extension_audit_eval_dropped_total{namespace=\"agentio-system\"}[$__rate_interval]))",
           "legendFormat": "eval dropped: {{reason}}",
           "range": true,
           "refId": "A"
@@ -1680,7 +1680,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (reason) (rate(traffix_extension_audit_webhook_dropped_total{namespace=\"sandbox-traffic-system\"}[$__rate_interval]))",
+          "expr": "sum by (reason) (rate(traffix_extension_audit_webhook_dropped_total{namespace=\"agentio-system\"}[$__rate_interval]))",
           "legendFormat": "webhook dropped: {{reason}}",
           "range": true,
           "refId": "B",
@@ -1692,7 +1692,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(traffix_extension_audit_log_dropped_total{namespace=\"sandbox-traffic-system\"}[$__rate_interval]))",
+          "expr": "sum(rate(traffix_extension_audit_log_dropped_total{namespace=\"agentio-system\"}[$__rate_interval]))",
           "legendFormat": "log dropped",
           "range": true,
           "refId": "C",
@@ -1794,7 +1794,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (plugin) (rate(traffix_extension_post_resolution_errors_total{namespace=\"sandbox-traffic-system\"}[$__rate_interval]))",
+          "expr": "sum by (plugin) (rate(traffix_extension_post_resolution_errors_total{namespace=\"agentio-system\"}[$__rate_interval]))",
           "legendFormat": "{{plugin}}",
           "range": true,
           "refId": "A"
@@ -1896,7 +1896,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"}[$__rate_interval]))",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"}[$__rate_interval]))",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1997,7 +1997,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"})",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2098,7 +2098,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container!=\"\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container!=\"\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -2199,7 +2199,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container!=\"\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container!=\"\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -2300,7 +2300,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container!=\"\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container!=\"\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -2401,7 +2401,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container!=\"\",namespace=\"sandbox-traffic-system\",pod=~\"traffic-extension.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container!=\"\",namespace=\"agentio-system\",pod=~\"traffic-extension.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3011,7 +3011,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval]))",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval]))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3111,7 +3111,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3212,7 +3212,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3313,7 +3313,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3414,7 +3414,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3515,7 +3515,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container=\"discovery\",namespace=\"sandbox-traffic-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"

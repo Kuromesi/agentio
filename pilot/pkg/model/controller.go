@@ -54,7 +54,7 @@ type Controller interface {
 	HasSynced() bool
 }
 
-// AggregateController is a wrapper of Controller, it supports registering handlers of a specific cluster。
+// AggregateController is a wrapper of Controller, it supports registering handlers of a specific cluster.
 type AggregateController interface {
 	Controller
 	// AppendServiceHandlerForCluster is similar to Controller.AppendServiceHandler,

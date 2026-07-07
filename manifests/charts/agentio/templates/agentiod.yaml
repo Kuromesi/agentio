@@ -1,18 +1,17 @@
-{{- if .Values.enhancedTrafficManagement.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}
 spec:
-  {{- if not .Values.enhancedTrafficManagement.gatewayController.autoscaling.enabled }}
-  replicas: {{ .Values.enhancedTrafficManagement.gatewayController.replicas | default 1 }}
+  {{- if not .Values.agentiod.autoscaling.enabled }}
+  replicas: {{ .Values.agentiod.replicas | default 1 }}
   {{- end }}
   selector:
     matchLabels:
-      app: {{ include "sandbox.controller.name" . }}
+      app: {{ include "agentio.controller.name" . }}
   strategy:
     rollingUpdate:
       maxSurge: 100%
@@ -23,7 +22,7 @@ spec:
         prometheus.io/port: "15014"
         prometheus.io/scrape: "true"
       labels:
-        app: {{ include "sandbox.controller.name" . }}
+        app: {{ include "agentio.controller.name" . }}
     spec:
       containers:
       - args:
@@ -31,7 +30,7 @@ spec:
         - --monitoringAddr=:15014
         - --log_output_level=default:info
         - --domain
-        - {{ .Values.enhancedTrafficManagement.global.trustDomain }}
+        - {{ .Values.global.trustDomain }}
         - --keepaliveMaxServerConnectionAge
         - 30m
         env:
@@ -58,16 +57,16 @@ spec:
           value: /var/run/secrets/remote/config
         - name: PILOT_ENABLE_AMBIENT
           value: "true"
-        {{- if .Values.enhancedTrafficManagement.ambient.enabled }}
+        {{- if .Values.ambient.enabled }}
         - name: CA_TRUSTED_NODE_ACCOUNTS
-          value: {{ include "sandbox.namespace" . }}/{{ include "sandbox.ztunnel.name" . }}
+          value: {{ include "agentio.namespace" . }}/{{ include "agentio.ztunnel.name" . }}
         {{- end }}
         - name: PILOT_TRACE_SAMPLING
           value: "1"
         - name: PILOT_ENABLE_ANALYSIS
           value: "false"
         - name: CLUSTER_ID
-          value: "{{ .Values.enhancedTrafficManagement.global.clusterId }}"
+          value: "{{ .Values.global.clusterId }}"
         - name: GOMAXPROCS
           valueFrom:
             resourceFieldRef:
@@ -75,27 +74,27 @@ spec:
               resource: limits.cpu
         
         - name: MESH_CONFIG_MAP_NAME
-          value: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix | quote }}
+          value: {{ .Values.global.resourcePrefix | quote }}
         - name: INJECTOR_CONFIG_MAP_NAME
-          value: {{ printf "%s-sidecar-injector" .Values.enhancedTrafficManagement.gatewayController.resourcePrefix | quote }}
+          value: {{ printf "%s-sidecar-injector" .Values.global.resourcePrefix | quote }}
         - name: LEADER_ELECTION_PREFIX
-          value: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix | quote }}
-        {{- if .Values.enhancedTrafficManagement.gatewayController.onDemandCertSignMode }}
+          value: {{ .Values.global.resourcePrefix | quote }}
+        {{- if .Values.agentiod.onDemandCertSignMode }}
         - name: ON_DEMAND_SIGN_MODE
-          value: {{ .Values.enhancedTrafficManagement.gatewayController.onDemandCertSignMode | quote }}
+          value: {{ .Values.agentiod.onDemandCertSignMode | quote }}
         {{- end }}
-        {{- if .Values.enhancedTrafficManagement.gatewayController.restrictedSecretsScope }}
+        {{- if .Values.agentiod.restrictedSecretsScope }}
         - name: RESTRICTED_SECRETS_SCOPE
-          value: {{ include "sandbox.namespace" . }}
+          value: {{ include "agentio.namespace" . }}
         {{- end }}
         - name: PILOT_HTTP10
           value: "true"
         - name: ENABLE_ON_DEMAND_CERTS
-          value: "{{ .Values.enhancedTrafficManagement.gatewayController.enableTlsTermination }}"
+          value: "{{ .Values.agentiod.enableTlsTermination }}"
         - name: PILOT_ENABLE_IP_AUTOALLOCATE
           value: "false"
         - name: MESH_INTERNAL_TRAFFIC_POLICY
-          value: {{ .Values.enhancedTrafficManagement.global.meshInternalTrafficPolicy | default "PEER_AWARE" | quote }}
+          value: {{ .Values.global.meshInternalTrafficPolicy | default "PEER_AWARE" | quote }}
         - name: AMBIENT_ENABLE_MULTI_NETWORK_WAYPOINT
           value: "false"
         - name: PILOT_ENABLE_GATEWAY_API
@@ -103,11 +102,11 @@ spec:
         - name: PILOT_ENABLE_GATEWAY_API_STATUS
           value: "false"
         - name: INJECT_ENABLED
-          value: "{{ .Values.enhancedTrafficManagement.sidecarInjector.enabled }}"
+          value: "{{ .Values.sidecarInjector.enabled }}"
         - name: PILOT_ENABLE_CA_CRL
           value: "false"
         - name: PILOT_CA_CERT_CONFIGMAP
-          value: sandbox-ca-certs
+          value: agentio-ca-certs
         - name: AMBIENT_ENABLE_STATUS
           value: "false"
         - name: PILOT_IGNORE_RESOURCES
@@ -115,24 +114,24 @@ spec:
         - name: PILOT_INCLUDE_RESOURCES
           value: "trafficpolicies.network.alibabacloud.com,globaltrafficpolicies.network.alibabacloud.com"
         - name: ISTIOD_CUSTOM_HOST
-          value: {{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc,{{ include "sandbox.controller.name" . }}.{{ include "sandbox.namespace" . }}.svc.cluster.local
-        {{- if .Values.enhancedTrafficManagement.sidecarInjector.enabled }}
+          value: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc,{{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local
+        {{- if .Values.sidecarInjector.enabled }}
         - name: INJECTION_WEBHOOK_CONFIG_NAME
-          value: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix }}-sidecar-injector-{{ include "sandbox.namespace" . }}
+          value: {{ .Values.global.resourcePrefix }}-sidecar-injector-{{ include "agentio.namespace" . }}
         {{- end }}
-        {{- if .Values.enhancedTrafficManagement.gatewayController.krtEventDistributeDebounce }}
+        {{- if .Values.agentiod.krtEventDistributeDebounce }}
         - name: KRT_EVENT_DISTRIBUTE_DEBOUNCE
-          value: {{ .Values.enhancedTrafficManagement.gatewayController.krtEventDistributeDebounce | quote }}
+          value: {{ .Values.agentiod.krtEventDistributeDebounce | quote }}
         {{- end }}
-        {{- if .Values.enhancedTrafficManagement.gatewayController.krtEventDistributeDebounceMax }}
+        {{- if .Values.agentiod.krtEventDistributeDebounceMax }}
         - name: KRT_EVENT_DISTRIBUTE_DEBOUNCE_MAX
-          value: {{ .Values.enhancedTrafficManagement.gatewayController.krtEventDistributeDebounceMax | quote }}
+          value: {{ .Values.agentiod.krtEventDistributeDebounceMax | quote }}
         {{- end }}
-        {{- range $key, $val := .Values.enhancedTrafficManagement.gatewayController.env }}
+        {{- range $key, $val := .Values.agentiod.env }}
         - name: {{ $key }}
           value: {{ $val | quote }}
         {{- end }}
-        image: {{ include "sandbox.image" (dict "hub" .Values.enhancedTrafficManagement.gatewayController.image.hub "name" .Values.enhancedTrafficManagement.gatewayController.image.name "tag" .Values.enhancedTrafficManagement.gatewayController.image.tag "globalHub" .Values.enhancedTrafficManagement.global.hub) }}
+        image: {{ include "agentio.image" (dict "hub" .Values.agentiod.image.hub "name" .Values.agentiod.image.name "tag" .Values.agentiod.image.tag "globalHub" .Values.global.hub) }}
         name: discovery
         ports:
         - containerPort: 8080
@@ -158,8 +157,8 @@ spec:
           periodSeconds: 3
           timeoutSeconds: 5
         resources:
-          {{- if .Values.enhancedTrafficManagement.gatewayController.resources }}
-          {{- toYaml .Values.enhancedTrafficManagement.gatewayController.resources | nindent 10 }}
+          {{- if .Values.agentiod.resources }}
+          {{- toYaml .Values.agentiod.resources | nindent 10 }}
           {{- else }}
           requests:
             cpu: 500m
@@ -181,16 +180,16 @@ spec:
           readOnly: true
         - mountPath: /var/run/secrets/istio-dns
           name: local-certs
-      serviceAccountName: {{ include "sandbox.controller.name" . }}
-      {{- with .Values.enhancedTrafficManagement.gatewayController.nodeSelector }}
+      serviceAccountName: {{ include "agentio.controller.name" . }}
+      {{- with .Values.agentiod.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.enhancedTrafficManagement.gatewayController.tolerations }}
+      {{- with .Values.agentiod.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.enhancedTrafficManagement.gatewayController.affinity }}
+      {{- with .Values.agentiod.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -210,9 +209,9 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}
 spec:
   ports:
   - name: grpc-xds
@@ -229,43 +228,42 @@ spec:
     port: 15014
     protocol: TCP
   selector:
-    app: {{ include "sandbox.controller.name" . }}
-{{- if .Values.enhancedTrafficManagement.gatewayController.autoscaling.enabled }}
+    app: {{ include "agentio.controller.name" . }}
+{{- if .Values.agentiod.autoscaling.enabled }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}
   labels:
-    app: {{ include "sandbox.controller.name" . }}
+    app: {{ include "agentio.controller.name" . }}
 spec:
-  maxReplicas: {{ .Values.enhancedTrafficManagement.gatewayController.autoscaling.maxReplicas | default 5 }}
-  minReplicas: {{ .Values.enhancedTrafficManagement.gatewayController.autoscaling.minReplicas | default 2 }}
+  maxReplicas: {{ .Values.agentiod.autoscaling.maxReplicas | default 5 }}
+  minReplicas: {{ .Values.agentiod.autoscaling.minReplicas | default 2 }}
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "sandbox.controller.name" . }}
+    name: {{ include "agentio.controller.name" . }}
   metrics:
-  {{- if .Values.enhancedTrafficManagement.gatewayController.autoscaling.targetCPUUtilizationPercentage }}
+  {{- if .Values.agentiod.autoscaling.targetCPUUtilizationPercentage }}
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: {{ .Values.enhancedTrafficManagement.gatewayController.autoscaling.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ .Values.agentiod.autoscaling.targetCPUUtilizationPercentage }}
   {{- end }}
-  {{- if .Values.enhancedTrafficManagement.gatewayController.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- if .Values.agentiod.autoscaling.targetMemoryUtilizationPercentage }}
   - type: Resource
     resource:
       name: memory
       target:
         type: Utilization
-        averageUtilization: {{ .Values.enhancedTrafficManagement.gatewayController.autoscaling.targetMemoryUtilizationPercentage }}
+        averageUtilization: {{ .Values.agentiod.autoscaling.targetMemoryUtilizationPercentage }}
   {{- end }}
-  {{- if .Values.enhancedTrafficManagement.gatewayController.autoscaling.behavior }}
+  {{- if .Values.agentiod.autoscaling.behavior }}
   behavior:
-    {{- toYaml .Values.enhancedTrafficManagement.gatewayController.autoscaling.behavior | nindent 4 }}
+    {{- toYaml .Values.agentiod.autoscaling.behavior | nindent 4 }}
   {{- end }}
-{{- end }}
 {{- end }}

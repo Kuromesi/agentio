@@ -1,11 +1,10 @@
-{{- if .Values.enhancedTrafficManagement.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}
 rules:
 - apiGroups:
   - ""
@@ -38,15 +37,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "sandbox.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}
 subjects:
 - kind: ServiceAccount
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
-{{- end }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}

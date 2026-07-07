@@ -1,19 +1,18 @@
-{{- if .Values.enhancedTrafficManagement.enabled }}
-{{- if .Values.enhancedTrafficManagement.sidecarInjector.enabled }}
+{{- if .Values.sidecarInjector.enabled }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   labels:
     app: sidecar-injector
     istio.io/rev: default
-  name: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix }}-sidecar-injector-{{ include "sandbox.namespace" . }}
+  name: {{ .Values.global.resourcePrefix }}-sidecar-injector-{{ include "agentio.namespace" . }}
 webhooks:
 - admissionReviewVersions:
   - v1
   clientConfig:
     service:
-      name: {{ include "sandbox.controller.name" . }}
-      namespace: {{ include "sandbox.namespace" . }}
+      name: {{ include "agentio.controller.name" . }}
+      namespace: {{ include "agentio.namespace" . }}
       path: /inject
       port: 443
   failurePolicy: Fail
@@ -47,8 +46,8 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ include "sandbox.controller.name" . }}
-      namespace: {{ include "sandbox.namespace" . }}
+      name: {{ include "agentio.controller.name" . }}
+      namespace: {{ include "agentio.namespace" . }}
       path: /inject
       port: 443
   failurePolicy: Fail
@@ -84,8 +83,8 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ include "sandbox.controller.name" . }}
-      namespace: {{ include "sandbox.namespace" . }}
+      name: {{ include "agentio.controller.name" . }}
+      namespace: {{ include "agentio.namespace" . }}
       path: /inject
       port: 443
   failurePolicy: Fail
@@ -117,8 +116,8 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: {{ include "sandbox.controller.name" . }}
-      namespace: {{ include "sandbox.namespace" . }}
+      name: {{ include "agentio.controller.name" . }}
+      namespace: {{ include "agentio.namespace" . }}
       path: /inject
       port: 443
   failurePolicy: Fail
@@ -148,5 +147,4 @@ webhooks:
     resources:
     - pods
   sideEffects: None
-{{- end }}
 {{- end }}

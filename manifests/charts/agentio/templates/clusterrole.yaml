@@ -1,10 +1,9 @@
-{{- if .Values.enhancedTrafficManagement.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ include "sandbox.controller.name" . }}-clusterrole
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}-clusterrole
 rules:
 - apiGroups:
   - agents.kruise.io
@@ -116,14 +115,13 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
-    app: {{ include "sandbox.controller.name" . }}
-  name: {{ include "sandbox.controller.name" . }}-clusterrole
+    app: {{ include "agentio.controller.name" . }}
+  name: {{ include "agentio.controller.name" . }}-clusterrole
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "sandbox.controller.name" . }}-clusterrole
+  name: {{ include "agentio.controller.name" . }}-clusterrole
 subjects:
 - kind: ServiceAccount
-  name: {{ include "sandbox.controller.name" . }}
-  namespace: {{ include "sandbox.namespace" . }}
-{{- end }}
+  name: {{ include "agentio.controller.name" . }}
+  namespace: {{ include "agentio.namespace" . }}

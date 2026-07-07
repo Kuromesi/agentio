@@ -1,0 +1,38 @@
+{{- define "agentio.config" }}
+{{- if .Values.trafficExtension.enabled }}
+sandboxExtProc:
+  service: {{ .Values.trafficExtension.name }}.{{ include "agentio.namespace" . }}.svc.cluster.local
+  port: {{ .Values.trafficExtension.port }}
+  messageTimeout: {{ default "5s" .Values.trafficExtension.messageTimeout }}
+  request:
+    headerMode: SEND
+    attributes:
+    - filter_state['sandbox.id']
+    - filter_state['sandbox.token']
+    - filter_state['sandbox.labels']
+    - filter_state['downstream_peer'].name
+    - filter_state['downstream_peer'].namespace
+    - destination.port
+    - source.address
+  response:
+    headerMode: SKIP
+{{- end }}
+{{- if .Values.egressPolicies }}
+egressPolicies:
+{{ toYaml .Values.egressPolicies }}
+{{- end }}
+meshInternalTrafficPolicy: MESH_INTERNAL_PASSTHROUGH
+{{- end }}
+
+{{/* Merge built-in defaults above with user overrides from .Values.agentioConfig. */}}
+{{/* The intent is that agentioConfig.foo becomes the raw API rather than re-modeling every field in values.yaml. */}}
+{{- $defaults := include "agentio.config" . | fromYaml }}
+{{- $sandbox := mergeOverwrite $defaults (.Values.agentioConfig | default dict) }}
+apiVersion: v1
+data:
+  config: |
+{{ $sandbox | toYaml | indent 4 }}
+kind: ConfigMap
+metadata:
+  name: agentio-config
+  namespace: {{ include "agentio.namespace" . }}

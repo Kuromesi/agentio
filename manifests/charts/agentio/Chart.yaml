@@ -1,6 +1,6 @@
 apiVersion: v2
-name: ack-sandbox-manager
-description: The Helm chart for ACK Sandbox Manager
+name: agentio
+description: The Helm chart for Agentio — agent traffic governance
 
 # A chart can be either an 'application' or a 'library' chart.
 #
@@ -25,9 +25,7 @@ appVersion: "v0.6.1-rc.3"
 
 keywords:
   - agent
-  - sandbox
-  - apiserver
   - proxy
-  - rl
-  - e2b
-  - console-visibility:false
+  - mesh
+  - traffic-governance
+  - security
