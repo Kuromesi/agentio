@@ -417,12 +417,8 @@ func (lb *ListenerBuilder) buildMainForwardListener() *listener.Listener {
 }
 
 // sandboxListeners returns sandbox-egress-specific listeners appended to the
-// waypoint listener list. Returns nil when EnableSandboxController is off so the
-// caller can append unconditionally.
+// waypoint listener list.
 func sandboxListeners(lb *ListenerBuilder) []*listener.Listener {
-	if !features.EnableSandboxController {
-		return nil
-	}
 	return []*listener.Listener{lb.buildMainForwardListener()}
 }
 
@@ -430,30 +426,22 @@ func sandboxListeners(lb *ListenerBuilder) []*listener.Listener {
 // connect-terminate chain. Substitutes the sandbox-aware variant when this node
 // is a sandbox egress; otherwise returns the standard waypoint filter.
 func connectAuthorityFilter(node *model.Proxy) *hcm.HttpFilter {
-	if features.EnableSandboxController && sandbox.IsSandboxEgress(node) {
+	if sandbox.IsSandboxEgress(node) {
 		return xdsfilters.SandboxConnectAuthorityFilter
 	}
 	return xdsfilters.ConnectAuthorityFilter
 }
 
 // sandboxOverrideHTTPInspector returns the HTTP inspector to use on the
-// MainInternal listener when sandbox is on (the unmodified inspector, since
-// sandbox workloads can bind arbitrary ports and cannot opt out per-port).
-// Returns nil when sandbox is off, signaling the caller to compute its own.
+// MainInternal listener (the unmodified inspector, since sandbox workloads
+// can bind arbitrary ports and cannot opt out per-port).
 func sandboxOverrideHTTPInspector() *listener.ListenerFilter {
-	if !features.EnableSandboxController {
-		return nil
-	}
 	return xdsfilters.HTTPInspector
 }
 
 // sandboxOverrideTLSInspector returns the TLS inspector to use on the
-// MainInternal listener when sandbox is on (always enabled, no port filter).
-// Returns nil when sandbox is off, signaling the caller to compute its own.
+// MainInternal listener (always enabled, no port filter).
 func sandboxOverrideTLSInspector() *listener.ListenerFilter {
-	if !features.EnableSandboxController {
-		return nil
-	}
 	return xdsfilters.TLSInspector
 }
 
@@ -506,13 +494,13 @@ type sandboxTLSTermination interface {
 
 // applySandboxInternalChains appends sandbox-egress catchall filter chains to the
 // waypoint MainInternal listener and rewires primaryMatcher's deepest OnNoMatch
-// to route into them. No-op when sandbox is off or the node is not a sandbox egress.
+// to route into them. No-op when the node is not a sandbox egress.
 func applySandboxInternalChains(
 	lb *ListenerBuilder,
 	chains []*listener.FilterChain,
 	primaryMatcher *matcher.Matcher,
 ) []*listener.FilterChain {
-	if !features.EnableSandboxController || !sandbox.IsSandboxEgress(lb.node) {
+	if !sandbox.IsSandboxEgress(lb.node) {
 		return chains
 	}
 	// catchall-main-forward: forwards unmatched traffic to the main_forward internal listener.
@@ -552,10 +540,10 @@ func buildSandboxDFPFilter() *hcm.HttpFilter {
 
 // appendSandboxHTTPFilters appends sandbox-egress HCM filters in the required
 // order: optional SNI/host-mismatch RBAC, ext_proc, DFP. The caller is responsible
-// for appending the router filter AFTER this returns. No-op when sandbox is off
-// or the node is not a sandbox egress.
+// for appending the router filter AFTER this returns. No-op when the node is not
+// a sandbox egress.
 func appendSandboxHTTPFilters(lb *ListenerBuilder, filters []*hcm.HttpFilter, validateSni bool) []*hcm.HttpFilter {
-	if !features.EnableSandboxController || !sandbox.IsSandboxEgress(lb.node) {
+	if !sandbox.IsSandboxEgress(lb.node) {
 		return filters
 	}
 	if validateSni {
@@ -584,10 +572,10 @@ var (
 )
 
 // sandboxGatewayConnPool returns the ConnectionPoolSettings for the current
-// sandbox egress gateway. Returns nil when sandbox is off, the node is not
-// a sandbox egress, or no ConnectionPool is configured.
+// sandbox egress gateway. Returns nil when the node is not a sandbox egress
+// or no ConnectionPool is configured.
 func sandboxGatewayConnPool(lb *ListenerBuilder) *extensions.ConnectionPoolSettings {
-	if !features.EnableSandboxController || !sandbox.IsSandboxEgress(lb.node) {
+	if !sandbox.IsSandboxEgress(lb.node) {
 		return nil
 	}
 	gw := sandbox.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())
@@ -655,7 +643,7 @@ func buildSandboxRoute(lb *ListenerBuilder, cc inboundChainConfig, settings *ext
 // egress nodes. Uses the gateway's connection_pool.stream_idle_timeout if
 // configured, otherwise defaults to 30min. No-op for non-sandbox nodes.
 func applySandboxStreamIdleTimeout(lb *ListenerBuilder, h *hcm.HttpConnectionManager) {
-	if !features.EnableSandboxController || !sandbox.IsSandboxEgress(lb.node) {
+	if !sandbox.IsSandboxEgress(lb.node) {
 		return
 	}
 	connPool := sandboxGatewayConnPool(lb)
@@ -684,7 +672,7 @@ func applySandboxTCPTimeouts(connPool *extensions.ConnectionPoolSettings, tcpPro
 // HTTP filter from the sandbox LocalRateLimitSettings. Returns nil when rate
 // limiting is not configured.
 func buildSandboxConnectTerminateRateLimitFilter(lb *ListenerBuilder) *hcm.HttpFilter {
-	if !features.EnableSandboxController || !sandbox.IsSandboxEgress(lb.node) {
+	if !sandbox.IsSandboxEgress(lb.node) {
 		return nil
 	}
 	gw := sandbox.FindEgressGatewayForProxy(lb.node, lb.push.SandboxConfig.GetEgressGateways())

@@ -102,41 +102,39 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 	}
 
-	if features.EnableSandboxController {
-		sandboxController, err := sandbox.NewSandboxController(sandbox.SandboxControllerOptions{
-			KubeClient: s.kubeClient,
-			MeshConfig: s.environment.Watcher,
-			Debugger:   s.krtDebugger,
+	sandboxController, err := sandbox.NewSandboxController(sandbox.SandboxControllerOptions{
+		KubeClient: s.kubeClient,
+		MeshConfig: s.environment.Watcher,
+		Debugger:   s.krtDebugger,
+	})
+	if err != nil {
+		return err
+	}
+	s.sandboxController = sandboxController
+	s.ConfigStores = append(s.ConfigStores, sandboxController.ConfigStoreController)
+	s.environment.SandboxController = sandboxController
+	s.sandboxController.SandboxConfig().AsCollection().RegisterBatch(func([]krt.Event[model.SandboxConfig]) {
+		s.XDSServer.ConfigUpdate(&model.PushRequest{
+			Full:   true,
+			Reason: model.NewReasonStats(model.GlobalUpdate),
+			Forced: true,
 		})
-		if err != nil {
-			return err
-		}
-		s.sandboxController = sandboxController
-		s.ConfigStores = append(s.ConfigStores, sandboxController.ConfigStoreController)
-		s.environment.SandboxController = sandboxController
-		s.sandboxController.SandboxConfig().AsCollection().RegisterBatch(func([]krt.Event[model.SandboxConfig]) {
+	}, false)
+	if features.EnableOnDemandCerts {
+		// When the on-demand cert reaper evicts idle entries, broadcast an eviction
+		// push so SDS generator can emit removed_resources to all subscribed envoys.
+		s.sandboxController.OnDemandCertController().RegisterCertsEviction(func() {
 			s.XDSServer.ConfigUpdate(&model.PushRequest{
 				Full:   true,
-				Reason: model.NewReasonStats(model.GlobalUpdate),
+				Reason: model.NewReasonStats(model.OnDemandEviction),
 				Forced: true,
 			})
-		}, false)
-		if features.EnableOnDemandCerts {
-			// When the on-demand cert reaper evicts idle entries, broadcast an eviction
-			// push so SDS generator can emit removed_resources to all subscribed envoys.
-			s.sandboxController.OnDemandCertController().RegisterCertsEviction(func() {
-				s.XDSServer.ConfigUpdate(&model.PushRequest{
-					Full:   true,
-					Reason: model.NewReasonStats(model.OnDemandEviction),
-					Forced: true,
-				})
-			})
-		}
-		s.addStartFunc("sandbox-controller", func(stop <-chan struct{}) error {
-			go s.sandboxController.Run(stop)
-			return nil
 		})
 	}
+	s.addStartFunc("sandbox-controller", func(stop <-chan struct{}) error {
+		go s.sandboxController.Run(stop)
+		return nil
+	})
 
 	// If running in ingress mode (requires k8s), wrap the config controller.
 	if hasKubeRegistry(args.RegistryOptions.Registries) && meshConfig.IngressControllerMode != meshconfig.MeshConfig_OFF {

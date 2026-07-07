@@ -80,8 +80,6 @@ spec:
           value: {{ printf "%s-sidecar-injector" .Values.enhancedTrafficManagement.gatewayController.resourcePrefix | quote }}
         - name: LEADER_ELECTION_PREFIX
           value: {{ .Values.enhancedTrafficManagement.gatewayController.resourcePrefix | quote }}
-        - name: ENABLE_SANDBOX_CONTROLLER
-          value: "true"
         {{- if .Values.enhancedTrafficManagement.gatewayController.onDemandCertSignMode }}
         - name: ON_DEMAND_SIGN_MODE
           value: {{ .Values.enhancedTrafficManagement.gatewayController.onDemandCertSignMode | quote }}

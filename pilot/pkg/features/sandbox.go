@@ -21,16 +21,13 @@ import (
 )
 
 var (
-	EnableSandboxController = env.Register("ENABLE_SANDBOX_CONTROLLER", false,
-		"If enabled, the sandbox controller will be started").Get()
-
 	MeshInternalTrafficPolicy = env.Register("MESH_INTERNAL_TRAFFIC_POLICY", "PEER_AWARE",
 		"Controls how mesh-internal (east-west) traffic is handled for sandbox tunnel proxies. "+
 			"'PASSTHROUGH': skip upstream discovery for in-cluster destinations. "+
 			"'PEER_AWARE': full peer identity matching for mTLS and policy enforcement.").Get()
 
 	RestrictedSecretsScope = env.Register("RESTRICTED_SECRETS_SCOPE", "",
-		"If enabled, the sandbox controller will restrict the secrets it reads in the specified namespace instead of all secrets in the cluster."+
+		"If set, the sandbox controller will restrict the secrets it reads in the specified namespace instead of all secrets in the cluster."+
 			"This is required in environments with strict RBAC policies that limit secret access, but can cause issues if sandbox workloads need to read additional secrets.").Get()
 
 	EnableOnDemandCerts = env.Register("ENABLE_ON_DEMAND_CERTS", false,

@@ -25,14 +25,12 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	networking "istio.io/api/networking/v1alpha3"
-	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox/extensions"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/config/xds"
 	"istio.io/istio/pkg/spiffe"
-	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
 )
 
@@ -138,7 +136,7 @@ func testInboundChainConfig(clusterName string) inboundChainConfig {
 // --- buildSandboxHTTPRouteConfig ---
 
 func TestBuildSandboxHTTPRouteConfig_NoOverrides(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 	connPool := makeConnPool()
@@ -151,7 +149,7 @@ func TestBuildSandboxHTTPRouteConfig_NoOverrides(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_WithOverrides(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 	connPool := makeConnPool(
@@ -175,7 +173,7 @@ func TestBuildSandboxHTTPRouteConfig_WithOverrides(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_EmptyHostsSkipped(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 	connPool := makeConnPool()
@@ -193,7 +191,7 @@ func TestBuildSandboxHTTPRouteConfig_EmptyHostsSkipped(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_AppliesInboundEnvoyFilterPatches(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	patchValue, err := xds.BuildXDSObjectFromStruct(
 		networking.EnvoyFilter_ROUTE_CONFIGURATION,
 		buildPatchStruct(`{"request_headers_to_remove":["x-sandbox-test"]}`),
@@ -228,7 +226,7 @@ func TestBuildSandboxHTTPRouteConfig_AppliesInboundEnvoyFilterPatches(t *testing
 // --- buildSandboxRoute ---
 
 func TestBuildSandboxRoute_NilSettings(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -238,7 +236,7 @@ func TestBuildSandboxRoute_NilSettings(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_WithTimeout(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -250,7 +248,7 @@ func TestBuildSandboxRoute_WithTimeout(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_WithRetry(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -269,7 +267,7 @@ func TestBuildSandboxRoute_WithRetry(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_RouteMatch(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -280,7 +278,7 @@ func TestBuildSandboxRoute_RouteMatch(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_ClusterMatchesChainConfig(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("tls_connect_originate")
 
@@ -294,7 +292,7 @@ func TestBuildSandboxRoute_ClusterMatchesChainConfig(t *testing.T) {
 // --- applySandboxStreamIdleTimeout ---
 
 func TestApplySandboxStreamIdleTimeout_Default(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
@@ -316,7 +314,7 @@ func TestApplySandboxStreamIdleTimeout_Default(t *testing.T) {
 }
 
 func TestApplySandboxStreamIdleTimeout_Configured(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
@@ -341,22 +339,9 @@ func TestApplySandboxStreamIdleTimeout_Configured(t *testing.T) {
 }
 
 func TestApplySandboxStreamIdleTimeout_NonSandboxNoop(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{
 		node: nonSandboxNode(),
-		push: &model.PushContext{},
-	}
-	h := &hcm.HttpConnectionManager{StreamIdleTimeout: durationpb.New(0)}
-
-	applySandboxStreamIdleTimeout(lb, h)
-
-	assert.Equal(t, h.StreamIdleTimeout.AsDuration(), time.Duration(0))
-}
-
-func TestApplySandboxStreamIdleTimeout_FeatureOff(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, false)
-	lb := &ListenerBuilder{
-		node: sandboxEgressNode(),
 		push: &model.PushContext{},
 	}
 	h := &hcm.HttpConnectionManager{StreamIdleTimeout: durationpb.New(0)}
@@ -413,7 +398,7 @@ func TestApplySandboxTCPTimeouts_EmptyConnPool(t *testing.T) {
 // --- Error state / validation ---
 
 func TestBuildSandboxRoute_DecoratorNonEmpty(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 
 	for _, cluster := range []string{"passthrough", "encap", "tls_connect_originate"} {
@@ -429,7 +414,7 @@ func TestBuildSandboxRoute_DecoratorNonEmpty(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_DecoratorNonEmptyWithSettings(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("encap")
 
@@ -443,7 +428,7 @@ func TestBuildSandboxRoute_DecoratorNonEmptyWithSettings(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_AllRoutesHaveValidDecorator(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("encap")
 	connPool := makeConnPool(
@@ -463,7 +448,7 @@ func TestBuildSandboxHTTPRouteConfig_AllRoutesHaveValidDecorator(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_ValidateClustersDisabled(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -475,7 +460,7 @@ func TestBuildSandboxHTTPRouteConfig_ValidateClustersDisabled(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_FallbackAlwaysPresent(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -537,7 +522,7 @@ func parseRateLimitFilter(f *hcm.HttpFilter) *localratelimit.LocalRateLimit {
 // --- buildSandboxConnectTerminateRateLimitFilter ---
 
 func TestRateLimit_NilWhenNotConfigured(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(nil)
 
 	f := buildSandboxConnectTerminateRateLimitFilter(lb)
@@ -546,7 +531,7 @@ func TestRateLimit_NilWhenNotConfigured(t *testing.T) {
 }
 
 func TestRateLimit_NilForNonSandbox(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{
 		node: nonSandboxNode(),
 		push: &model.PushContext{},
@@ -557,23 +542,8 @@ func TestRateLimit_NilForNonSandbox(t *testing.T) {
 	assert.Equal(t, f == nil, true)
 }
 
-func TestRateLimit_NilWhenFeatureOff(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, false)
-	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
-		TokenBucket: &extensions.TokenBucket{
-			MaxTokens:     100,
-			TokensPerFill: 100,
-			FillInterval:  durationpb.New(time.Second),
-		},
-	})
-
-	f := buildSandboxConnectTerminateRateLimitFilter(lb)
-
-	assert.Equal(t, f == nil, true)
-}
-
 func TestRateLimit_GlobalBucketOnly(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens:     100,
@@ -597,7 +567,7 @@ func TestRateLimit_GlobalBucketOnly(t *testing.T) {
 }
 
 func TestRateLimit_PerDownstreamConnection(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens:     10,
@@ -613,7 +583,7 @@ func TestRateLimit_PerDownstreamConnection(t *testing.T) {
 }
 
 func TestRateLimit_WithDescriptors(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens:     100,
@@ -645,7 +615,7 @@ func TestRateLimit_WithDescriptors(t *testing.T) {
 }
 
 func TestRateLimit_MultipleDescriptorKeys(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		Descriptors: []*extensions.RateLimitDescriptor{
 			{
@@ -671,7 +641,7 @@ func TestRateLimit_MultipleDescriptorKeys(t *testing.T) {
 }
 
 func TestRateLimit_DescriptorWithoutCEL_NoAction(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens: 100, TokensPerFill: 100,
@@ -697,7 +667,7 @@ func TestRateLimit_DescriptorWithoutCEL_NoAction(t *testing.T) {
 }
 
 func TestRateLimit_CELExpression(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		Descriptors: []*extensions.RateLimitDescriptor{
 			{
@@ -753,7 +723,7 @@ func TestToEnvoyTokenBucket_ZeroTokensPerFill(t *testing.T) {
 // --- Full scenario ---
 
 func TestBuildSandboxHTTPRouteConfig_FullScenario(t *testing.T) {
-	test.SetForTest(t, &features.EnableSandboxController, true)
+
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("tls_connect_originate")
 

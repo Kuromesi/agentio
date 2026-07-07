@@ -282,18 +282,16 @@ func New(options Options) Index {
 	var sandboxConfig krt.Singleton[model.SandboxConfig]
 	var workloadConfigs krt.Collection[model.WorkloadConfig]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
-	if features.EnableSandboxController {
-		TrafficPolicyDerivedPolicies = options.SandboxController.BuildPolicyCollection(
-			Services,
-			EndpointSlices,
-			Pods,
-			func(policy *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
-				return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
-			})
-		a.sandboxController = options.SandboxController
-		sandboxConfig = a.sandboxController.SandboxConfig()
-		workloadConfigs = a.sandboxController.WorkloadConfigs()
-	}
+	TrafficPolicyDerivedPolicies = options.SandboxController.BuildPolicyCollection(
+		Services,
+		EndpointSlices,
+		Pods,
+		func(policy *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
+			return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
+		})
+	a.sandboxController = options.SandboxController
+	sandboxConfig = a.sandboxController.SandboxConfig()
+	workloadConfigs = a.sandboxController.WorkloadConfigs()
 
 	a.builder = Builder{
 		DomainSuffix: a.DomainSuffix,

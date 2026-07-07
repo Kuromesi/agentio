@@ -881,20 +881,18 @@ func podWorkloadBuilder(
 			Locality:              getPodLocality(ctx, nodes, p),
 		}
 
-		if features.EnableSandboxController {
-			sc := krt.FetchOne(ctx, sandboxConfig.AsCollection())
-			labels := p.Labels
-			if len(sc.GetSandboxIgnoredLabels()) > 0 {
-				labels = sandbox.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
-			}
-			metaExtension := sandbox.NewResourceMetadataExtension(labels, sandbox.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
-			if metaExtension != nil {
-				w.Extensions = append(w.Extensions, metaExtension)
-			}
+		sc := krt.FetchOne(ctx, sandboxConfig.AsCollection())
+		labels := p.Labels
+		if len(sc.GetSandboxIgnoredLabels()) > 0 {
+			labels = sandbox.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
+		}
+		metaExtension := sandbox.NewResourceMetadataExtension(labels, sandbox.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
+		if metaExtension != nil {
+			w.Extensions = append(w.Extensions, metaExtension)
+		}
 
-			if sc.GetEgressPolicies() != nil {
-				w.Extensions = append(w.Extensions, sandbox.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
-			}
+		if sc.GetEgressPolicies() != nil {
+			w.Extensions = append(w.Extensions, sandbox.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
 		}
 
 		if p.Spec.HostNetwork {

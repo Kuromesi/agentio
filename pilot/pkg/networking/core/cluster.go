@@ -258,9 +258,7 @@ func (configgen *ConfigGeneratorImpl) buildClusters(proxy *model.Proxy, req *mod
 		inboundPatcher := clusterPatcher{efw: envoyFilterPatches, pctx: networking.EnvoyFilter_SIDECAR_INBOUND}
 		clusters = append(clusters, configgen.buildWaypointInboundClusters(cb, proxy, req.Push, wps.services)...)
 		clusters = append(clusters, inboundPatcher.insertedClusters()...)
-		if features.EnableSandboxController {
-			clusters = append(clusters, sandbox.BuildExtProcClusters(proxy, req.Push.SandboxConfig)...)
-		}
+		clusters = append(clusters, sandbox.BuildExtProcClusters(proxy, req.Push.SandboxConfig)...)
 	default: // Gateways
 		patcher := clusterPatcher{efw: envoyFilterPatches, pctx: networking.EnvoyFilter_GATEWAY}
 		ob, cs := configgen.buildOutboundClusters(cb, proxy, patcher, services)

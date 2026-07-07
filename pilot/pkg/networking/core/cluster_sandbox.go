@@ -39,7 +39,6 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"time"
 
-	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
@@ -48,7 +47,7 @@ import (
 )
 
 // GetMainForwardCluster returns the cluster routing into the main_forward internal listener.
-// Sandbox-only: invoked from sandboxClusters when EnableSandboxController is on.
+// Sandbox-only: invoked from sandboxClusters.
 // h2=true so the codec follows the downstream protocol; without it h2 requests get re-encoded
 // as h1 to the cluster, causing UPE / stream reset. main_internal / encap already pass true.
 var GetMainForwardCluster = func() *cluster.Cluster {
@@ -56,12 +55,8 @@ var GetMainForwardCluster = func() *cluster.Cluster {
 }
 
 // sandboxClusters returns the sandbox-egress-specific clusters appended to the
-// waypoint cluster list. Returns nil when EnableSandboxController is off so the
-// caller can append unconditionally.
+// waypoint cluster list.
 func sandboxClusters(cb *ClusterBuilder) []*cluster.Cluster {
-	if !features.EnableSandboxController {
-		return nil
-	}
 	return []*cluster.Cluster{
 		buildSandboxPassthroughCluster(cb),
 		buildDefaultTLSConnectOriginateCluster(cb),

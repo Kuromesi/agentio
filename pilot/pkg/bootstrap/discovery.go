@@ -47,7 +47,7 @@ func InitGenerators(
 	ecdsGen := &xds.EcdsGenerator{ConfigGenerator: cg}
 	if env.CredentialsController != nil {
 		var onDemandController sandbox.OnDemandCertController
-		if features.EnableSandboxController && features.EnableOnDemandCerts {
+		if features.EnableOnDemandCerts {
 			onDemandController = sandboxController.OnDemandCertController()
 		}
 		generators[v3.SecretType] = xds.NewSecretGen(env.CredentialsController, s.Cache, clusterID, env.Mesh(), onDemandController)

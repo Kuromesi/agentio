@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strings"
 
-	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config/schema/kind"
 )
@@ -177,14 +176,11 @@ func ParseResourceName(resourceName string, proxyNamespace string, proxyCluster 
 		return SecretResource{ResourceType: InvalidSecretType, ResourceName: resourceName, Cluster: configCluster}, nil
 	}
 
-	if features.EnableSandboxController {
-		return SecretResource{
-			ResourceType: OnDemandCertificateType,
-			ResourceName: resourceName,
-			Namespace:    "",
-			Name:         resourceName,
-			Cluster:      configCluster,
-		}, nil
-	}
-	return SecretResource{}, fmt.Errorf("unknown resource type: %v", resourceName)
+	return SecretResource{
+		ResourceType: OnDemandCertificateType,
+		ResourceName: resourceName,
+		Namespace:    "",
+		Name:         resourceName,
+		Cluster:      configCluster,
+	}, nil
 }
