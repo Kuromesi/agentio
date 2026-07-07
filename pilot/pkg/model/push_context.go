@@ -43,6 +43,7 @@ import (
 	"istio.io/istio/pkg/config/security"
 	"istio.io/istio/pkg/config/visibility"
 	"istio.io/istio/pkg/jwt"
+	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/monitoring"
 	"istio.io/istio/pkg/network"
 	"istio.io/istio/pkg/ptr"
@@ -277,6 +278,12 @@ type PushContext struct {
 	InitDone        atomic.Bool
 	initializeMutex sync.Mutex
 	ambientIndex    AmbientIndexes
+
+	SandboxConfig *SandboxConfig
+}
+
+type SandboxController interface {
+	SandboxConfig() krt.Singleton[SandboxConfig]
 }
 
 type consolidatedDestRules struct {
@@ -483,6 +490,10 @@ const (
 	ClusterUpdate TriggerReason = "cluster"
 	// TagUpdate occurs when the revision's tags change, and all resources must be recalculated.
 	TagUpdate TriggerReason = "tag"
+	// OnDemandEviction signals an eviction push from the on-demand cert reaper: SDS generator
+	// should only return resources already in the on-demand cache, letting GenerateDeltas
+	// emit the rest as removed_resources so Envoy drops its stale entries.
+	OnDemandEviction TriggerReason = "ondemandeviction"
 )
 
 // Merge two update requests together
@@ -1382,6 +1393,7 @@ func (ps *PushContext) createNewContext(env *Environment) {
 	ps.initEnvoyFilters(env, nil, nil)
 	ps.initGateways(env)
 	ps.initAmbient(env)
+	ps.initSandboxController(env)
 
 	// Must be initialized in the end
 	ps.initSidecarScopes(env)
@@ -1505,6 +1517,7 @@ func (ps *PushContext) updateContext(
 	}
 
 	ps.initAmbient(env)
+	ps.initSandboxController(env)
 
 	// Must be initialized in the end
 	// Sidecars need to be updated if services, virtual services, destination rules, or the sidecar configs change
@@ -2387,6 +2400,10 @@ func (ps *PushContext) initGateways(env *Environment) {
 
 func (ps *PushContext) initAmbient(env *Environment) {
 	ps.ambientIndex = env
+}
+
+func (ps *PushContext) initSandboxController(env *Environment) {
+	ps.SandboxConfig = env.SandboxConfig()
 }
 
 // InternalGatewayServiceAnnotation represents the hostname of the service a gateway will use. This is

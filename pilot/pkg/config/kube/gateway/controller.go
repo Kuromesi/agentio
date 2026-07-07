@@ -189,6 +189,7 @@ func NewController(
 			kclient.NewFiltered[*corev1.Secret](kc, kubetypes.Filter{
 				FieldSelector: kubesecrets.SecretsFieldSelector,
 				ObjectFilter:  kc.ObjectFilter(),
+				Namespace:     features.RestrictedSecretsScope, // if empty, will watch all namespaces
 			}),
 			opts.WithName("informer/Secrets")...,
 		),

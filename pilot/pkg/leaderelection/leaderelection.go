@@ -34,31 +34,33 @@ import (
 	"istio.io/istio/pkg/revisions"
 )
 
-// Various locks used throughout the code
-const (
-	NamespaceController          = "istio-namespace-controller-election"
-	ClusterTrustBundleController = "istio-clustertrustbundle-controller-election"
-	ServiceExportController      = "istio-serviceexport-controller-election"
+// Various locks used throughout the code. The leading "<prefix>-" segment comes from
+// features.LeaderElectionPrefix (env var LEADER_ELECTION_PREFIX, default "istio") so that
+// operators running multiple control planes side-by-side can give each its own lock namespace.
+var (
+	NamespaceController          = features.LeaderElectionPrefix + "-namespace-controller-election"
+	ClusterTrustBundleController = features.LeaderElectionPrefix + "-clustertrustbundle-controller-election"
+	ServiceExportController      = features.LeaderElectionPrefix + "-serviceexport-controller-election"
 	// This holds the legacy name to not conflict with older control plane deployments which are just
 	// doing the ingress syncing.
-	IngressController = "istio-leader"
+	IngressController = features.LeaderElectionPrefix + "-leader"
 	// GatewayStatusController controls the status of gateway.networking.k8s.io objects. For the v1alpha1
 	// this was formally "istio-gateway-leader"; because they are a different API group we need a different
 	// election to ensure we do not only handle one or the other.
-	GatewayStatusController = "istio-gateway-status-leader"
+	GatewayStatusController = features.LeaderElectionPrefix + "-gateway-status-leader"
 	// StatusController controls writing Istio status to objects
-	StatusController  = "istio-status-leader"
-	AnalyzeController = "istio-analyze-leader"
+	StatusController  = features.LeaderElectionPrefix + "-status-leader"
+	AnalyzeController = features.LeaderElectionPrefix + "-analyze-leader"
 	// GatewayDeploymentController controls translating Kubernetes Gateway objects into various derived
 	// resources (Service, Deployment, etc).
 	// Unlike other types which use ConfigMaps, we use a Lease here. This is because:
 	// * Others use configmap for backwards compatibility
 	// * This type is per-revision, so it is higher cost. Leases are cheaper
 	// * Other types use "prioritized leader election", which isn't implemented for Lease
-	GatewayDeploymentController = "istio-gateway-deployment"
-	InferencePoolController     = "istio-gateway-inferencepool"
-	NodeUntaintController       = "istio-node-untaint"
-	IPAutoallocateController    = "istio-ip-autoallocate"
+	GatewayDeploymentController = features.LeaderElectionPrefix + "-gateway-deployment"
+	InferencePoolController     = features.LeaderElectionPrefix + "-gateway-inferencepool"
+	NodeUntaintController       = features.LeaderElectionPrefix + "-node-untaint"
+	IPAutoallocateController    = features.LeaderElectionPrefix + "-ip-autoallocate"
 )
 
 // Leader election key prefix for remote istiod managed clusters

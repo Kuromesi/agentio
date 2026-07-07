@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config/schema/kind"
 )
@@ -41,6 +42,9 @@ const (
 	// InvalidSecretType will be used to send a certificate that is never valid
 	InvalidSecretType    = "invalid"
 	InvalidSecretTypeURI = InvalidSecretType + "://"
+
+	OnDemandCertificateType    = "ondemand"
+	OnDemandCertificateTypeURI = OnDemandCertificateType + "://"
 )
 
 // SecretResource defines a reference to a secret
@@ -170,6 +174,16 @@ func ParseResourceName(resourceName string, proxyNamespace string, proxyCluster 
 		}, nil
 	} else if strings.HasPrefix(resourceName, InvalidSecretTypeURI) {
 		return SecretResource{ResourceType: InvalidSecretType, ResourceName: resourceName, Cluster: configCluster}, nil
+	}
+
+	if features.EnableSandboxController {
+		return SecretResource{
+			ResourceType: OnDemandCertificateType,
+			ResourceName: resourceName,
+			Namespace:    "",
+			Name:         resourceName,
+			Cluster:      configCluster,
+		}, nil
 	}
 	return SecretResource{}, fmt.Errorf("unknown resource type: %v", resourceName)
 }

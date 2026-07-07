@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/atomic"
 	corev1 "k8s.io/api/core/v1"
@@ -758,4 +760,52 @@ func TestCollectionMetadata(t *testing.T) {
 	)...)
 
 	assert.Equal(t, SimplePods.Metadata(), meta)
+}
+
+func TestManyCollection_DebounceBatchesDownstream(t *testing.T) {
+	stop := test.NewStop(t)
+
+	src := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop))
+
+	derived := krt.NewCollection(src, func(_ krt.HandlerContext, n Named) *Named {
+		cp := n
+		return &cp
+	}, krt.WithStop(stop), krt.WithDebounce(30*time.Millisecond, 0))
+
+	var mu sync.Mutex
+	var batches [][]krt.Event[Named]
+	derived.RegisterBatch(func(events []krt.Event[Named]) {
+		mu.Lock()
+		defer mu.Unlock()
+		cp := make([]krt.Event[Named], len(events))
+		copy(cp, events)
+		batches = append(batches, cp)
+	}, false)
+
+	// Quick burst of inserts on source — derived should aggregate them.
+	for i := 0; i < 5; i++ {
+		src.UpdateObject(Named{Namespace: "ns", Name: fmt.Sprintf("p%d", i)})
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		mu.Lock()
+		total := 0
+		for _, b := range batches {
+			total += len(b)
+		}
+		n := len(batches)
+		mu.Unlock()
+		if total >= 5 && n < 5 {
+			// We got all events, and the batch count is strictly less than
+			// the event count — that's the debounce win.
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected batched delivery; got %d batches totaling %d events", n, total)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

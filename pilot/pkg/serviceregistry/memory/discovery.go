@@ -360,6 +360,10 @@ func (sd *ServiceDiscovery) AddressInformation(requests sets.String) ([]model.Ad
 	return infos, removed
 }
 
+func (sd *ServiceDiscovery) AddressInformationForProxy(_ *model.Proxy, requests sets.String) ([]model.AddressInfo, sets.String) {
+	return sd.AddressInformation(requests)
+}
+
 func (sd *ServiceDiscovery) AdditionalPodSubscriptions(
 	*model.Proxy,
 	sets.String,
@@ -369,6 +373,18 @@ func (sd *ServiceDiscovery) AdditionalPodSubscriptions(
 }
 
 func (sd *ServiceDiscovery) Policies(sets.Set[model.ConfigKey]) []model.WorkloadAuthorization {
+	return nil
+}
+
+func (sd *ServiceDiscovery) PoliciesForProxy(_ *model.Proxy, _ sets.Set[model.ConfigKey]) []model.WorkloadAuthorization {
+	return nil
+}
+
+func (sd *ServiceDiscovery) WorkloadConfigs(sets.Set[model.ConfigKey]) []model.WorkloadConfig {
+	return nil
+}
+
+func (sd *ServiceDiscovery) WorkloadConfigsForProxy(_ *model.Proxy, _ sets.Set[model.ConfigKey]) []model.WorkloadConfig {
 	return nil
 }
 

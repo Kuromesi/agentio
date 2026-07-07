@@ -33,6 +33,7 @@ import (
 	"istio.io/istio/pilot/pkg/networking/serviceentry"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config"
@@ -280,7 +281,6 @@ func serviceServiceBuilder(
 		waypointStatus.Error = wperr
 
 		svc := constructService(ctx, s, waypoint, domainSuffix, networkGetter)
-
 		svcInfo := &model.ServiceInfo{
 			Service:       svc,
 			PortNames:     portNames,
@@ -289,6 +289,7 @@ func serviceServiceBuilder(
 			Waypoint:      waypointStatus,
 			Scope:         serviceScope,
 			CreationTime:  s.CreationTimestamp.Time,
+			IsWaypoint:    sandbox.IsWaypointService(s),
 		}
 		if precompute {
 			return precomputeServicePtr(svcInfo)
@@ -750,5 +751,6 @@ func setCanonical(se *model.ServiceInfo) model.ServiceInfo {
 		MarshaledAddress: se.MarshaledAddress,
 		AsAddress:        se.AsAddress,
 		CreationTime:     se.CreationTime,
+		IsWaypoint:       se.IsWaypoint,
 	})
 }

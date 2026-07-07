@@ -17,6 +17,7 @@ package krt
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -35,11 +36,20 @@ func (h handlerRegistration) UnregisterHandler() {
 	h.remove()
 }
 
+// distributeBatch is the envelope a handlerSet enqueues onto its
+// debouncer; flush concatenates events from multiple batches and
+// preserves initialSync (true if any constituent batch was initialSync).
+type distributeBatch[O any] struct {
+	events      []Event[O]
+	initialSync bool
+}
+
 // handlerSet tracks a set of handlers. Handlers can be added at any time.
 type handlerSet[O any] struct {
-	mu       sync.RWMutex
-	handlers sets.Set[*processorListener[O]]
-	wg       wait.Group
+	mu        sync.RWMutex
+	handlers  sets.Set[*processorListener[O]]
+	wg        wait.Group
+	debouncer *debouncer[distributeBatch[O]] // nil unless EnableDebounce called
 }
 
 func newHandlerSet[O any]() *handlerSet[O] {
@@ -110,11 +120,53 @@ func (o *handlerSet[O]) remove(p *processorListener[O]) {
 }
 
 func (o *handlerSet[O]) Distribute(events []Event[O], initialSync bool) {
+	if o.debouncer != nil {
+		o.debouncer.Enqueue(distributeBatch[O]{events: events, initialSync: initialSync})
+		return
+	}
+	o.distributeNow(events, initialSync)
+}
+
+func (o *handlerSet[O]) distributeNow(events []Event[O], initialSync bool) {
+	if len(events) == 0 {
+		return
+	}
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	for listener := range o.handlers {
 		listener.send(slices.Clone(events), initialSync)
 	}
+}
+
+// DebouncerSynced returns the debouncer's synced channel (closed after the
+// first non-empty flush). Returns nil if no debouncer is configured.
+func (o *handlerSet[O]) DebouncerSynced() <-chan struct{} {
+	if o.debouncer == nil {
+		return nil
+	}
+	return o.debouncer.Synced()
+}
+
+// WithDebounce installs a debouncer in front of Distribute. Must be
+// called before any events flow. Concurrent calls or calls after events
+// have started are not supported.
+func (o *handlerSet[O]) WithDebounce(after, maxDelay time.Duration, stop <-chan struct{}) {
+	if after <= 0 {
+		return
+	}
+	flush := func(batches []distributeBatch[O]) {
+		var merged []Event[O]
+		initialSync := false
+		for _, b := range batches {
+			merged = append(merged, b.events...)
+			if b.initialSync {
+				initialSync = true
+			}
+		}
+		o.distributeNow(merged, initialSync)
+	}
+	o.debouncer = newDebouncer[distributeBatch[O]](after, maxDelay, 1024, flush, stop, "handlerSet")
+	o.debouncer.Start()
 }
 
 // Synced returns a Syncer that will wait for all registered handlers (at the time of the call!) are synced.
@@ -315,6 +367,7 @@ func (t *countingTracker) Finished(count int) {
 	}
 	if !t.hasSynced && t.upstreamHasSyncedButEventsPending && result == 0 && count != 0 {
 		close(t.synced)
+		t.hasSynced = true
 	}
 }
 

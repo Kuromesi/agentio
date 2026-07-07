@@ -1,0 +1,99 @@
+{{- if and .Values.enhancedTrafficManagement.enabled .Values.enhancedTrafficManagement.ambient.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "sandbox.cni.labels" . | nindent 4 }}
+  name: {{ include "sandbox.cni.name" . }}
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes", "namespaces"]
+  verbs: ["get", "list", "watch"]
+---
+{{- if .Values.enhancedTrafficManagement.ambient.cni.repair.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "sandbox.cni.labels" . | nindent 4 }}
+  name: {{ include "sandbox.cni.name" . }}-repair-role
+rules:
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["watch", "get", "list"]
+{{- if .Values.enhancedTrafficManagement.ambient.cni.repair.deletePods }}
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["delete"]
+{{- else if .Values.enhancedTrafficManagement.ambient.cni.repair.labelPods }}
+- apiGroups: [""]
+  resources: ["pods/status"]
+  verbs: ["patch", "update"]
+{{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "sandbox.cni.labels" . | nindent 4 }}
+  name: {{ include "sandbox.cni.name" . }}-ambient
+rules:
+- apiGroups: [""]
+  resources: ["pods/status"]
+  verbs: ["patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  resourceNames: ["{{ include "sandbox.cni.daemonsetName" . }}"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    {{- include "sandbox.cni.labels" . | nindent 4 }}
+  name: {{ include "sandbox.cni.name" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sandbox.cni.name" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "sandbox.cni.name" . }}
+  namespace: {{ include "sandbox.namespace" . }}
+---
+{{- if .Values.enhancedTrafficManagement.ambient.cni.repair.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    {{- include "sandbox.cni.labels" . | nindent 4 }}
+  name: {{ include "sandbox.cni.name" . }}-repair-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sandbox.cni.name" . }}-repair-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "sandbox.cni.name" . }}
+  namespace: {{ include "sandbox.namespace" . }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    {{- include "sandbox.cni.labels" . | nindent 4 }}
+  name: {{ include "sandbox.cni.name" . }}-ambient
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sandbox.cni.name" . }}-ambient
+subjects:
+- kind: ServiceAccount
+  name: {{ include "sandbox.cni.name" . }}
+  namespace: {{ include "sandbox.namespace" . }}
+{{- end }}

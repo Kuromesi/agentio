@@ -1,0 +1,65 @@
+{{- define "enhancedTrafficManagement.sandboxConfig" }}
+{{- if .Values.enhancedTrafficManagement.trafficExtension.enabled }}
+sandboxExtProc:
+  service: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}.{{ include "sandbox.namespace" . }}.svc.cluster.local
+  port: {{ .Values.enhancedTrafficManagement.trafficExtension.port }}
+  messageTimeout: {{ default "5s" .Values.enhancedTrafficManagement.trafficExtension.messageTimeout }}
+  request:
+    headerMode: SEND
+    attributes:
+    - filter_state['sandbox.id']
+    - filter_state['sandbox.token']
+    - filter_state['sandbox.labels']
+    - filter_state['downstream_peer'].name
+    - filter_state['downstream_peer'].namespace
+    - destination.port
+    - source.address
+  response:
+    headerMode: SKIP
+{{- end }}
+{{- if .Values.enhancedTrafficManagement.egressPolicies }}
+egressPolicies:
+{{ toYaml .Values.enhancedTrafficManagement.egressPolicies }}
+{{- end }}
+{{- $defaultTls := .Values.enhancedTrafficManagement.egressGateway.tlsTermination | default dict }}
+{{- $emitList := list }}
+{{- range $gw := .Values.enhancedTrafficManagement.egressGateway.gateways }}
+{{- $tls := $gw.tlsTermination | default $defaultTls }}
+{{- if or $tls.includeHosts $tls.excludeHosts }}
+{{- $emitList = append $emitList $gw }}
+{{- end }}
+{{- end }}
+{{- if $emitList }}
+egressGateways:
+{{- range $gw := $emitList }}
+{{- $tls := $gw.tlsTermination | default $defaultTls }}
+- name: {{ $gw.name }}
+  namespace: {{ include "sandbox.namespace" $ }}
+  tlsTermination:
+    {{- with $tls.includeHosts }}
+    includeHosts:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $tls.excludeHosts }}
+    excludeHosts:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- end }}
+{{- end }}
+meshInternalTrafficPolicy: MESH_INTERNAL_PASSTHROUGH
+{{- end }}
+
+{{- if .Values.enhancedTrafficManagement.enabled }}
+{{/* Merge built-in defaults above with user overrides from .Values.enhancedTrafficManagement.sandboxConfig. */}}
+{{/* The intent is that sandboxConfig.foo becomes the raw API rather than re-modeling every field in values.yaml. */}}
+{{- $defaults := include "enhancedTrafficManagement.sandboxConfig" . | fromYaml }}
+{{- $sandbox := mergeOverwrite $defaults (.Values.enhancedTrafficManagement.sandboxConfig | default dict) }}
+apiVersion: v1
+data:
+  config: |
+{{ $sandbox | toYaml | indent 4 }}
+kind: ConfigMap
+metadata:
+  name: sandbox-config
+  namespace: {{ include "sandbox.namespace" . }}
+{{- end }}

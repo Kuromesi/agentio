@@ -24,6 +24,7 @@ import (
 
 	networkingclient "istio.io/client-go/pkg/apis/networking/v1"
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/schema/gvk"
@@ -162,6 +163,7 @@ func PolicyCollections(
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	meshConfig krt.Singleton[MeshConfig],
 	waypoints krt.Collection[Waypoint],
+	trafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization],
 	opts krt.OptionsBuilder,
 	flags FeatureFlags,
 ) (krt.Collection[model.WorkloadAuthorization], krt.Collection[model.WorkloadAuthorization]) {
@@ -284,6 +286,18 @@ func PolicyCollections(
 			},
 		}
 	}, opts.WithName("DefaultPolicy")...)
+
+	// join trafficpolicies in sandbox mode
+	if features.EnableSandboxController {
+		return krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{AuthzDerivedPolicies, trafficPolicyDerivedPolicies}),
+			krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{
+				AuthzDerivedPolicies,
+				PeerAuthDerivedPolicies,
+				DefaultPolicy.AsCollection(),
+				ImplicitWaypointPolicies,
+				trafficPolicyDerivedPolicies,
+			}, opts.WithName("Policies")...)
+	}
 
 	// Policies contains all of the policies we will send down to clients
 	// No need to add withDebug on join since it is trivial

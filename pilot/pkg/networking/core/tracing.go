@@ -713,6 +713,9 @@ func configureCustomTags(spec *model.TracingSpec, hcmTracing *hcm.HttpConnection
 	}
 
 	// For waypoint proxies, add source peer tags to capture client workload info.
+	// Skipped on sandbox egress: the source tags read downstream_peer_obj, which sandbox
+	// clears to keep it out of socket pool keys (see sandboxClearPeerMetadataObjFilter), so
+	// they would render empty — and sandbox egress does not consume waypoint peer tracing.
 	if node.Type == model.Waypoint {
 		tags = append(tags, buildWaypointSourceTags()...)
 	}

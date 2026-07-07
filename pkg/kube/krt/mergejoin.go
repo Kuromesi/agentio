@@ -420,6 +420,9 @@ func JoinWithMergeCollection[T any](cs []Collection[T], merge func(ts []T) *T, o
 			synced: synced,
 		},
 	}
+	if o.debounceInterval > 0 {
+		j.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
+	}
 
 	maybeRegisterCollectionForDebugging(j, o.debugger)
 

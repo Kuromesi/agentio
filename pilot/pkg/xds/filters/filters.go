@@ -133,7 +133,15 @@ var (
 		Name: wellknown.TLSInspector,
 		ConfigType: &listener.ListenerFilter_TypedConfig{
 			TypedConfig: protoconv.MessageToAny(&tlsinspector.TlsInspector{
-				InitialReadBufferSize: &wrapperspb.UInt32Value{Value: 512}, // Default is 64KB.
+				// 16384 = one TLS record fragment. Upstream Istio sets 512 (PR #51928),
+				// which is enough to detect "is this TLS?" but truncates ClientHellos that
+				// carry GREASE + many ALPN entries or ECH-encrypted extensions — the SNI
+				// extension is then unread, the sandbox SNI matcher falls through to
+				// on_no_match and routes the connection to forward-tcp instead of
+				// tls-terminate. Envoy's own default is 64KB, so 16384 is still 1/4 of
+				// that — bounded memory cost, and the buffer is freed once a filter
+				// chain matches.
+				InitialReadBufferSize: &wrapperspb.UInt32Value{Value: 16384},
 			}),
 		},
 	}
@@ -342,6 +350,173 @@ var (
 							},
 						},
 						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
+					},
+				},
+			}),
+		},
+	}
+
+	SandboxConnectAuthorityFilter = &hcm.HttpFilter{
+		Name: "connect_authority",
+		ConfigType: &hcm.HttpFilter_TypedConfig{
+			TypedConfig: protoconv.MessageToAny(&sfs.Config{
+				OnRequestHeaders: []*sfsvalue.FilterStateValue{
+					{
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: OriginalDstFilterStateKey,
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%REQ(:AUTHORITY)%",
+										},
+									},
+								},
+							},
+						},
+						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
+					}, {
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: AuthorityFilterStateKey,
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%REQ(:AUTHORITY)%",
+										},
+									},
+								},
+							},
+						},
+						FactoryKey: "istio.hashable_string",
+						// ONCE (not TRANSITIVE): connect_authority is RBAC-only. ONCE downgrades
+						// to None at the next hop so it is readable but stops propagating, and is
+						// re-declared once on the tls-terminate chain to reach the main_forward RBAC.
+						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
+					}, {
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "envoy.filters.listener.original_dst.remote_ip",
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%DOWNSTREAM_REMOTE_ADDRESS%",
+										},
+									},
+								},
+							},
+						},
+						// ONCE (not TRANSITIVE): remote_ip is the worst pool-key polluter
+						// (ip:ephemeral-port => unique pool per downstream connection). ONCE keeps
+						// it off every real upstream pool; re-declared on tls-terminate for RBAC.
+						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
+					}, {
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "io.istio.peer_principal",
+						},
+						FactoryKey: "istio.hashable_string",
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%DOWNSTREAM_PEER_URI_SAN%",
+										},
+									},
+								},
+							},
+						},
+						// ONCE (not TRANSITIVE): peer_principal is RBAC-only; re-declared on
+						// tls-terminate to reach the main_forward RBAC without polluting real pools.
+						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
+					}, {
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "io.istio.local_principal",
+						},
+						FactoryKey: "istio.hashable_string",
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%DOWNSTREAM_LOCAL_URI_SAN%",
+										},
+									},
+								},
+							},
+						},
+						// ONCE (not TRANSITIVE): local_principal is RBAC-only; re-declared on
+						// tls-terminate to reach the main_forward RBAC without polluting real pools.
+						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
+					},
+					// TODO(workload-discovery): the sandbox.token/labels/id keys below carry
+					// sandbox workload-discovery metadata and are currently TRANSITIVE (pass-through) —
+					// they ride along to every upstream hop. They are envoy.string (non-Hashable)
+					// so they don't bloat the socket pool key like the RBAC keys did, but TRANSITIVE
+					// still leaks them onto chains that never read them. Convert these to the same
+					// ONCE-relay pattern as the RBAC keys above: set ONCE here, then re-declare ONCE
+					// (via buildSandboxRelayFilter, extended for these keys) only on the chains
+					// that actually consume the workload-discovery metadata. Deferred until the exact
+					// consuming hops are confirmed so we don't drop metadata a downstream filter needs.
+					{
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "sandbox.token",
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%REQ(X-ACS-SANDBOX-TOKEN)%",
+										},
+									},
+								},
+							},
+						},
+						FactoryKey:         "envoy.string",
+						SharedWithUpstream: sfsvalue.FilterStateValue_TRANSITIVE,
+					},
+					{
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "sandbox.labels",
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%REQ(X-ACS-SANDBOX-LABELS)%",
+										},
+									},
+								},
+							},
+						},
+						FactoryKey:         "envoy.string",
+						SharedWithUpstream: sfsvalue.FilterStateValue_TRANSITIVE,
+					},
+					{
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "sandbox.id",
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%REQ(X-ACS-SANDBOX-ID)%",
+										},
+									},
+								},
+							},
+						},
+						FactoryKey:         "envoy.string",
+						SharedWithUpstream: sfsvalue.FilterStateValue_TRANSITIVE,
 					},
 				},
 			}),

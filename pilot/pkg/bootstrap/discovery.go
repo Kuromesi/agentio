@@ -17,10 +17,12 @@ package bootstrap
 import (
 	"net/http"
 
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/apigen"
 	"istio.io/istio/pilot/pkg/networking/core"
 	"istio.io/istio/pilot/pkg/networking/grpcgen"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pilot/pkg/xds"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/cluster"
@@ -32,6 +34,7 @@ func InitGenerators(
 	systemNameSpace string,
 	clusterID cluster.ID,
 	internalDebugMux *http.ServeMux,
+	sandboxController *sandbox.SandboxController,
 ) {
 	env := s.Env
 	generators := map[string]model.XdsResourceGenerator{}
@@ -42,7 +45,11 @@ func InitGenerators(
 	generators[v3.EndpointType] = edsGen
 	ecdsGen := &xds.EcdsGenerator{ConfigGenerator: cg}
 	if env.CredentialsController != nil {
-		generators[v3.SecretType] = xds.NewSecretGen(env.CredentialsController, s.Cache, clusterID, env.Mesh())
+		var onDemandController sandbox.OnDemandCertController
+		if features.EnableSandboxController && features.EnableOnDemandCerts {
+			onDemandController = sandboxController.OnDemandCertController()
+		}
+		generators[v3.SecretType] = xds.NewSecretGen(env.CredentialsController, s.Cache, clusterID, env.Mesh(), onDemandController)
 		ecdsGen.SetCredController(env.CredentialsController)
 	}
 	generators[v3.ExtensionConfigurationType] = ecdsGen
@@ -53,6 +60,7 @@ func InitGenerators(
 	generators[v3.AddressType] = workloadGen
 	generators[v3.WorkloadType] = workloadGen
 	generators[v3.WorkloadAuthorizationType] = &xds.WorkloadRBACGenerator{Server: s}
+	generators[v3.WorkloadConfigType] = &xds.WorkloadConfigGenerator{Server: s}
 
 	generators["grpc"] = &grpcgen.GrpcConfigGenerator{}
 	generators["grpc/"+v3.EndpointType] = edsGen

@@ -101,6 +101,8 @@ func (lb *ListenerBuilder) buildWaypointInbound() []*listener.Listener {
 		lb.buildWaypointInternal(wls, orderedWPS),
 	}
 
+	listeners = append(listeners, sandboxListeners(lb)...)
+
 	if features.EnableAmbientMultiNetwork && isEastWestGateway(lb.node) {
 		listeners = append(listeners, buildWaypointForwardInnerConnectListener(lb.push, lb.node))
 	} else {
@@ -174,15 +176,18 @@ func (lb *ListenerBuilder) buildHCMConnectTerminateChain(routes []*route.Route) 
 		// If we put them as a network filter, we get poor logs and cannot return an error at the CONNECT level
 		filters = authzBuilder.BuildTCPRulesAsHTTPFilter()
 	}
-	filters = append(filters,
-		xdsfilters.GenerateWaypointDownstreamMetadataFilter(),
-		xdsfilters.ConnectAuthorityFilter)
+	filters = append(filters, xdsfilters.GenerateWaypointDownstreamMetadataFilter())
+	filters = append(filters, connectAuthorityFilter(lb.node))
 
 	// This filter checks whether the request went through a waypoint already and thefore whether L7 policies have
 	// been applied already. We put that information into filter state for later use when we decide whether to
 	// send the request to a waypoint or skip it.
 	if features.EnableAmbientMultiNetwork && isEastWestGateway(lb.node) {
 		filters = append(filters, xdsfilters.RequestSourceFilter)
+	}
+
+	if rlFilter := buildSandboxConnectTerminateRateLimitFilter(lb); rlFilter != nil {
+		filters = append(filters, rlFilter)
 	}
 
 	// Filters needed to propagate the tunnel metadata to the inner streams.
@@ -265,6 +270,62 @@ func (lb *ListenerBuilder) findServiceWaypoint(svc *model.Service) host.Name {
 	}
 	waypoint := ws[0]
 	return host.Name(waypoint.WaypointHostname)
+}
+
+// computeDefaultHTTPInspector returns the HTTP inspector for the waypoint
+// MainInternal listener, optionally disabled on ports that are statically known
+// to be only-TCP or only-HTTP. Returns the unmodified base inspector when there
+// are workloads attached (any port may be bound).
+func computeDefaultHTTPInspector(wls []model.WorkloadInfo, portProtocols map[int]protocol.Instance) *listener.ListenerFilter {
+	httpInspector := xdsfilters.HTTPInspector
+	if len(wls) > 0 {
+		return httpInspector
+	}
+	nonInspectorPorts := []int{}
+	for p, proto := range portProtocols {
+		if !proto.IsUnsupported() {
+			nonInspectorPorts = append(nonInspectorPorts, p)
+		}
+	}
+	if len(nonInspectorPorts) == 0 {
+		return httpInspector
+	}
+	slices.Sort(nonInspectorPorts)
+	return &listener.ListenerFilter{
+		Name:           wellknown.HTTPInspector,
+		ConfigType:     httpInspector.ConfigType,
+		FilterDisabled: listenerPredicateExcludePorts(nonInspectorPorts),
+	}
+}
+
+// computeDefaultTLSInspector returns the TLS inspector for the waypoint
+// MainInternal listener, scoped to TLS ports only (returns nil when no TLS ports).
+func computeDefaultTLSInspector(svcs []*model.Service) *listener.ListenerFilter {
+	tlsPorts := sets.New[int]()
+	nonTLSPorts := sets.New[int]()
+	for _, s := range svcs {
+		for _, p := range s.Ports {
+			if p.Protocol.IsTLS() {
+				tlsPorts.Insert(p.Port)
+			} else {
+				nonTLSPorts.Insert(p.Port)
+			}
+		}
+	}
+	if len(tlsPorts) == 0 {
+		return nil
+	}
+	nonInspectorPorts := nonTLSPorts.DeleteAll(tlsPorts.UnsortedList()...).UnsortedList()
+	if len(nonInspectorPorts) == 0 {
+		// all ports are TLS, add the inspector with no disabled ports
+		return xdsfilters.TLSInspector
+	}
+	slices.Sort(nonInspectorPorts)
+	return &listener.ListenerFilter{
+		Name:           wellknown.TLSInspector,
+		ConfigType:     xdsfilters.TLSInspector.ConfigType,
+		FilterDisabled: listenerPredicateExcludePorts(nonInspectorPorts),
+	}
 }
 
 // This is the regular waypoint flow, where we terminate the tunnel, and then re-encap.
@@ -533,53 +594,14 @@ func (lb *ListenerBuilder) buildWaypointInternal(wls []model.WorkloadInfo, svcs 
 	// This may affect the data path due to the server-first protocols triggering a time-out.
 	// Currently, we attempt to exclude ports where we can, but it's not perfect.
 	// https://github.com/envoyproxy/envoy/issues/35958 is likely required for an optimal solution
-	httpInspector := xdsfilters.HTTPInspector
-	// If there are workloads, any port is accepted on them, so we cannot opt out
-	if len(wls) == 0 {
-		// Otherwise, find all the ports that have only TCP or only HTTP
-		nonInspectorPorts := []int{}
-		for p, proto := range portProtocols {
-			if !proto.IsUnsupported() {
-				nonInspectorPorts = append(nonInspectorPorts, p)
-			}
-		}
-		if len(nonInspectorPorts) > 0 {
-			// Sort for stable output, then replace the filter with one disabling the ports.
-			slices.Sort(nonInspectorPorts)
-			httpInspector = &listener.ListenerFilter{
-				Name:           wellknown.HTTPInspector,
-				ConfigType:     httpInspector.ConfigType,
-				FilterDisabled: listenerPredicateExcludePorts(nonInspectorPorts),
-			}
-		}
+	httpInspector := sandboxOverrideHTTPInspector()
+	if httpInspector == nil {
+		httpInspector = computeDefaultHTTPInspector(wls, portProtocols)
 	}
-	tlsInspector := func() *listener.ListenerFilter {
-		tlsPorts := sets.New[int]()
-		nonTLSPorts := sets.New[int]()
-		for _, s := range svcs {
-			for _, p := range s.Ports {
-				if p.Protocol.IsTLS() {
-					tlsPorts.Insert(p.Port)
-				} else {
-					nonTLSPorts.Insert(p.Port)
-				}
-			}
-		}
-		nonInspectorPorts := nonTLSPorts.DeleteAll(tlsPorts.UnsortedList()...).UnsortedList()
-		if len(tlsPorts) > 0 {
-			if len(nonInspectorPorts) > 0 {
-				slices.Sort(nonInspectorPorts)
-				return &listener.ListenerFilter{
-					Name:           wellknown.TLSInspector,
-					ConfigType:     xdsfilters.TLSInspector.ConfigType,
-					FilterDisabled: listenerPredicateExcludePorts(nonInspectorPorts),
-				}
-			}
-			// all ports are TLS, add the inspector with no disabled ports
-			return xdsfilters.TLSInspector
-		}
-		return nil
-	}()
+	tlsInspector := sandboxOverrideTLSInspector()
+	if tlsInspector == nil {
+		tlsInspector = computeDefaultTLSInspector(svcs)
+	}
 
 	// by default match IPs first
 	primaryMatcher := &matcher.Matcher{
@@ -617,6 +639,8 @@ func (lb *ListenerBuilder) buildWaypointInternal(wls []model.WorkloadInfo, svcs 
 		}
 	}
 
+	chains = applySandboxInternalChains(lb, chains, primaryMatcher)
+
 	l := &listener.Listener{
 		Name:              MainInternalName,
 		ListenerSpecifier: &listener.Listener_InternalListener{InternalListener: &listener.Listener_InternalListenerConfig{}},
@@ -627,6 +651,8 @@ func (lb *ListenerBuilder) buildWaypointInternal(wls []model.WorkloadInfo, svcs 
 		TrafficDirection:   core.TrafficDirection_INBOUND,
 		FilterChains:       chains,
 		FilterChainMatcher: primaryMatcher,
+		// continue=true so an inspector that can't classify falls through to the catchall instead of hanging the conn.
+		ListenerFiltersTimeout: lb.push.Mesh.GetProtocolDetectionTimeout(),
 	}
 
 	if tlsInspector != nil {
@@ -790,7 +816,7 @@ func (lb *ListenerBuilder) buildWaypointInboundHTTPFilters(svc *model.Service, c
 		policySvc:                 svc,
 	}
 	// See https://github.com/grpc/grpc-web/tree/master/net/grpc/gateway/examples/helloworld#configure-the-proxy
-	if cc.port.Protocol.IsHTTP2() {
+	if cc.port.Protocol.IsHTTP2() || cc.acceptHTTP2 {
 		httpOpts.connectionManager.Http2ProtocolOptions = &core.Http2ProtocolOptions{}
 	}
 
@@ -800,11 +826,22 @@ func (lb *ListenerBuilder) buildWaypointInboundHTTPFilters(svc *model.Service, c
 		}
 	}
 	h := lb.buildHTTPConnectionManager(httpOpts)
+	if cc.applySandboxConnectionPoolSettings {
+		applySandboxStreamIdleTimeout(lb, h)
+	}
+	if cc.schemeOverwrite != "" {
+		h.SchemeHeaderTransformation = &core.SchemeHeaderTransformation{
+			Transformation: &core.SchemeHeaderTransformation_SchemeToOverwrite{
+				SchemeToOverwrite: cc.schemeOverwrite,
+			},
+		}
+	}
 
 	// Last filter must be router.
 	router := h.HttpFilters[len(h.HttpFilters)-1]
 	h.HttpFilters = append(pre, h.HttpFilters[:len(h.HttpFilters)-1]...)
 	h.HttpFilters = append(h.HttpFilters, post...)
+	h.HttpFilters = appendSandboxHTTPFilters(lb, h.HttpFilters, cc.validateSni)
 	h.HttpFilters = append(h.HttpFilters, router)
 
 	filters = append(filters, &listener.Filter{
@@ -881,6 +918,11 @@ func (lb *ListenerBuilder) buildWaypointNetworkFilters(svc *model.Service, fcc i
 		tcpProxy.IdleTimeout = parseDuration(lb.node.Metadata.IdleTimeout)
 	}
 	tcpProxy.MaxDownstreamConnectionDuration = conPool.GetMaxConnectionDuration()
+	if fcc.applySandboxConnectionPoolSettings {
+		if sandboxPool := sandboxGatewayConnPool(lb); sandboxPool != nil {
+			applySandboxTCPTimeouts(sandboxPool, tcpProxy)
+		}
+	}
 
 	maybeSetHashPolicy(destinationRule, tcpProxy, subsetName)
 	tunnelingconfig.Apply(tcpProxy, destinationRule, subsetName)
@@ -971,6 +1013,11 @@ func buildRouteVHostDomains(svc *model.Service) []string {
 func buildWaypointInboundHTTPRouteConfig(lb *ListenerBuilder, svc *model.Service, cc inboundChainConfig) *route.RouteConfiguration {
 	// TODO: Policy binding via VIP+Host is inapplicable for direct pod access.
 	if svc == nil {
+		if cc.applySandboxConnectionPoolSettings {
+			if connPool := sandboxGatewayConnPool(lb); connPool != nil {
+				return buildSandboxHTTPRouteConfig(lb, cc, connPool)
+			}
+		}
 		return buildSidecarInboundHTTPRouteConfig(svc, lb, cc)
 	}
 

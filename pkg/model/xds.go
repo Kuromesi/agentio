@@ -38,6 +38,7 @@ const (
 	AddressType               = APITypePrefix + "istio.workload.Address"
 	WorkloadType              = APITypePrefix + "istio.workload.Workload"
 	WorkloadAuthorizationType = APITypePrefix + "istio.security.Authorization"
+	WorkloadConfigType = APITypePrefix + "kruise.extensions.WorkloadConfig"
 )
 
 // GetShortType returns an abbreviated form of a type, useful for logging or human friendly messages
@@ -63,6 +64,8 @@ func GetShortType(typeURL string) string {
 		return "WDS"
 	case WorkloadAuthorizationType:
 		return "WADS"
+	case WorkloadConfigType:
+		return "WCDS"
 	default:
 		return typeURL
 	}
@@ -93,6 +96,8 @@ func GetMetricType(typeURL string) string {
 		return "wds"
 	case WorkloadAuthorizationType:
 		return "wads"
+	case WorkloadConfigType:
+		return "wcds"
 	default:
 		return typeURL
 	}

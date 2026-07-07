@@ -70,6 +70,10 @@ func NewStaticCollection[T any](synced Syncer, vals []T, opts ...CollectionOptio
 		sl.metadata = o.metadata
 	}
 
+	if o.debounceInterval > 0 {
+		sl.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
+	}
+
 	c := StaticCollection[T]{
 		staticList: sl,
 	}

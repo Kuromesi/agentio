@@ -1,0 +1,223 @@
+{{- if .Values.enhancedTrafficManagement.enabled }}
+{{- if .Values.enhancedTrafficManagement.trafficExtension.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  namespace: {{ include "sandbox.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}-role
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+rules:
+  - apiGroups: ["agents.kruise.io"]
+    resources: ["securityprofiles"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agents.kruise.io"]
+    resources: ["securityprofiles/status"]
+    verbs: ["get"]
+  - apiGroups: ["agents.kruise.io"]
+    resources: ["accesspolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}-rolebinding
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+    namespace: {{ include "sandbox.namespace" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  namespace: {{ include "sandbox.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+    app.kubernetes.io/component: extproc
+spec:
+  clusterIP: None
+  ports:
+    - name: extproc
+      port: {{ .Values.enhancedTrafficManagement.trafficExtension.port }}
+      targetPort: {{ .Values.enhancedTrafficManagement.trafficExtension.port }}
+      protocol: TCP
+    - name: health
+      port: 9003
+      targetPort: 9003
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  namespace: {{ include "sandbox.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+spec:
+  {{- if not .Values.enhancedTrafficManagement.trafficExtension.autoscaling.enabled }}
+  replicas: {{ .Values.enhancedTrafficManagement.trafficExtension.replicas | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+      containers:
+        - name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+          image: {{ include "sandbox.image" (dict "hub" .Values.enhancedTrafficManagement.trafficExtension.image.hub "name" .Values.enhancedTrafficManagement.trafficExtension.image.name "tag" .Values.enhancedTrafficManagement.trafficExtension.image.tag "globalHub" .Values.enhancedTrafficManagement.global.hub) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - -grpc-port={{ .Values.enhancedTrafficManagement.trafficExtension.port }}
+            - -grpc-health-port=9003
+            - -metrics-port=9090
+          env:
+            - name: IDENTITY_PROVIDER_URL
+              value: {{ .Values.enhancedTrafficManagement.trafficExtension.identityProviderUrl | quote }}
+            - name: DEFAULT_SANDBOX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}-default-token
+                  key: token
+                  optional: true
+            - name: TOKEN_CACHE_TTL
+              value: "3h"
+            - name: TOKEN_CACHE_MAX_SIZE
+              value: "10000"
+            {{- range $key, $val := .Values.enhancedTrafficManagement.trafficExtension.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/zeus/mtls
+              readOnly: true
+          ports:
+            - containerPort: {{ .Values.enhancedTrafficManagement.trafficExtension.port }}
+              name: extproc
+              protocol: TCP
+            - containerPort: 9003
+              name: health
+              protocol: TCP
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+          livenessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- if .Values.enhancedTrafficManagement.trafficExtension.resources }}
+            {{- toYaml .Values.enhancedTrafficManagement.trafficExtension.resources | nindent 12 }}
+            {{- else }}
+            requests:
+              cpu: "2"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+            {{- end }}
+      volumes:
+        - name: mtls-certs
+          secret:
+            secretName: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}-mtls-client-cert
+            optional: true
+      {{- with .Values.enhancedTrafficManagement.trafficExtension.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.enhancedTrafficManagement.trafficExtension.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.enhancedTrafficManagement.trafficExtension.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.enhancedTrafficManagement.trafficExtension.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  namespace: {{ include "sandbox.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+spec:
+  maxReplicas: {{ .Values.enhancedTrafficManagement.trafficExtension.autoscaling.maxReplicas | default 5 }}
+  minReplicas: {{ .Values.enhancedTrafficManagement.trafficExtension.autoscaling.minReplicas | default 2 }}
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  metrics:
+  {{- if .Values.enhancedTrafficManagement.trafficExtension.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.enhancedTrafficManagement.trafficExtension.autoscaling.targetCPUUtilizationPercentage }}
+  {{- end }}
+  {{- if .Values.enhancedTrafficManagement.trafficExtension.autoscaling.targetMemoryUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.enhancedTrafficManagement.trafficExtension.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- end }}
+  {{- if .Values.enhancedTrafficManagement.trafficExtension.autoscaling.behavior }}
+  behavior:
+    {{- toYaml .Values.enhancedTrafficManagement.trafficExtension.autoscaling.behavior | nindent 4 }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+  namespace: {{ include "sandbox.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+spec:
+  minAvailable: {{ .Values.enhancedTrafficManagement.trafficExtension.pdbMinAvailable | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.enhancedTrafficManagement.trafficExtension.name }}
+{{- end }}
+{{- end }}

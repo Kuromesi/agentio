@@ -135,6 +135,48 @@ func (c *Controller) Policies(requested sets.Set[model.ConfigKey]) []model.Workl
 	return res
 }
 
+func (c *Controller) PoliciesForProxy(proxy *model.Proxy, requested sets.Set[model.ConfigKey]) []model.WorkloadAuthorization {
+	var res []model.WorkloadAuthorization
+	if !features.EnableAmbient {
+		return res
+	}
+	for _, p := range c.GetRegistries() {
+		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+			continue
+		}
+		res = append(res, p.PoliciesForProxy(proxy, requested)...)
+	}
+	return res
+}
+
+func (c *Controller) WorkloadConfigs(requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
+	var res []model.WorkloadConfig
+	if !features.EnableAmbient {
+		return res
+	}
+	for _, p := range c.GetRegistries() {
+		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+			continue
+		}
+		res = append(res, p.WorkloadConfigs(requested)...)
+	}
+	return res
+}
+
+func (c *Controller) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
+	var res []model.WorkloadConfig
+	if !features.EnableAmbient {
+		return res
+	}
+	for _, p := range c.GetRegistries() {
+		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+			continue
+		}
+		res = append(res, p.WorkloadConfigsForProxy(proxy, requested)...)
+	}
+	return res
+}
+
 func (c *Controller) AddressInformation(addresses sets.String) ([]model.AddressInfo, sets.String) {
 	if !features.EnableAmbient {
 		return nil, nil
@@ -166,6 +208,40 @@ func (c *Controller) AddressInformation(addresses sets.String) ([]model.AddressI
 		// As an optimization, we skip this in the common case of only one registry
 		for _, wl := range i {
 			// TODO(@hzxuzhonghu) This is not right for workload, we may search workload by ip, but the resource name is uid.
+			if removed.Contains(wl.ResourceName()) {
+				removed.Delete(wl.ResourceName())
+			}
+		}
+	}
+	return i, removed
+}
+
+func (c *Controller) AddressInformationForProxy(proxy *model.Proxy, addresses sets.String) ([]model.AddressInfo, sets.String) {
+	if !features.EnableAmbient {
+		return nil, nil
+	}
+	var i []model.AddressInfo
+	var removed sets.String
+	foundRegistryCount := 0
+	for _, p := range c.GetRegistries() {
+		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+			continue
+		}
+		wis, r := p.AddressInformationForProxy(proxy, addresses)
+		if len(wis) == 0 && len(r) == 0 {
+			continue
+		}
+		foundRegistryCount++
+		if foundRegistryCount == 1 {
+			removed = r
+			i = wis
+		} else {
+			i = append(i, wis...)
+			removed.Merge(r)
+		}
+	}
+	if foundRegistryCount > 1 {
+		for _, wl := range i {
 			if removed.Contains(wl.ResourceName()) {
 				removed.Delete(wl.ResourceName())
 			}

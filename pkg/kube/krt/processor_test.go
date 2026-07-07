@@ -16,7 +16,9 @@ package krt
 
 import (
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/test"
@@ -195,5 +197,60 @@ func BatchedTrackerHandler[T any](tracker *assert.Tracker[string]) func([]Event[
 		tracker.Record(slices.Join(",", slices.Map(o, func(o Event[T]) string {
 			return fmt.Sprintf("%v/%v", o.Event, GetKey(o.Latest()))
 		})...))
+	}
+}
+
+func TestHandlerSet_DebounceBatchesMultipleDistributeCalls(t *testing.T) {
+	stop := make(chan struct{})
+	defer close(stop)
+
+	hs := newHandlerSet[Named]()
+	hs.WithDebounce(30*time.Millisecond, 0, stop)
+
+	var mu sync.Mutex
+	var received [][]Event[Named]
+	reg := hs.Insert(
+		func(events []Event[Named]) {
+			mu.Lock()
+			defer mu.Unlock()
+			cp := make([]Event[Named], len(events))
+			copy(cp, events)
+			received = append(received, cp)
+		},
+		alwaysSynced{},
+		nil,
+		stop,
+	)
+	_ = reg
+
+	// Three quick Distribute calls within the after window
+	hs.Distribute([]Event[Named]{{New: &Named{Name: "a"}}}, false)
+	hs.Distribute([]Event[Named]{{New: &Named{Name: "b"}}}, false)
+	hs.Distribute([]Event[Named]{{New: &Named{Name: "c"}}}, false)
+
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		mu.Lock()
+		n := len(received)
+		var batch []Event[Named]
+		if n == 1 {
+			batch = received[0]
+		}
+		mu.Unlock()
+		if n == 1 && len(batch) == 3 {
+			names := []string{batch[0].New.Name, batch[1].New.Name, batch[2].New.Name}
+			if names[0] != "a" || names[1] != "b" || names[2] != "c" {
+				t.Fatalf("order broken: %v", names)
+			}
+			return
+		}
+		if n > 1 {
+			t.Fatalf("expected single batched call, got %d calls", n)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("no batched flush observed; n=%d", n)
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 }

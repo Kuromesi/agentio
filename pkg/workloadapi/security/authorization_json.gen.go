@@ -3,6 +3,7 @@ package security
 
 import (
 	bytes "bytes"
+
 	jsonpb "github.com/golang/protobuf/jsonpb"
 )
 
@@ -50,6 +51,17 @@ func (this *Match) UnmarshalJSON(b []byte) error {
 	return AuthorizationUnmarshaler.Unmarshal(bytes.NewReader(b), this)
 }
 
+// MarshalJSON is a custom marshaler for PortRange
+func (this *PortRange) MarshalJSON() ([]byte, error) {
+	str, err := AuthorizationMarshaler.MarshalToString(this)
+	return []byte(str), err
+}
+
+// UnmarshalJSON is a custom unmarshaler for PortRange
+func (this *PortRange) UnmarshalJSON(b []byte) error {
+	return AuthorizationUnmarshaler.Unmarshal(bytes.NewReader(b), this)
+}
+
 // MarshalJSON is a custom marshaler for Address
 func (this *Address) MarshalJSON() ([]byte, error) {
 	str, err := AuthorizationMarshaler.MarshalToString(this)
@@ -80,6 +92,17 @@ func (this *StringMatch) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON is a custom unmarshaler for StringMatch
 func (this *StringMatch) UnmarshalJSON(b []byte) error {
+	return AuthorizationUnmarshaler.Unmarshal(bytes.NewReader(b), this)
+}
+
+// MarshalJSON is a custom marshaler for Extension
+func (this *Extension) MarshalJSON() ([]byte, error) {
+	str, err := AuthorizationMarshaler.MarshalToString(this)
+	return []byte(str), err
+}
+
+// UnmarshalJSON is a custom unmarshaler for Extension
+func (this *Extension) UnmarshalJSON(b []byte) error {
 	return AuthorizationUnmarshaler.Unmarshal(bytes.NewReader(b), this)
 }
 

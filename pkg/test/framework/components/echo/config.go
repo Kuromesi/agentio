@@ -156,6 +156,8 @@ type Config struct {
 	// such that we can adequately simulate a VM and DIY the bootstrapping.
 	DeployAsVM bool
 
+	DeployAsSandbox bool
+
 	// If enabled, ISTIO_META_AUTO_REGISTER_GROUP will be set on the VM and the WorkloadEntry will be created automatically.
 	AutoRegisterVM bool
 
@@ -187,6 +189,9 @@ type Config struct {
 
 	// Specify IP family to which echo will bind
 	BindFamily string
+
+	// Capabilities is a list of Linux capabilities to add to the echo app containers.
+	Capabilities []string
 }
 
 // Getter for a custom echo deployment

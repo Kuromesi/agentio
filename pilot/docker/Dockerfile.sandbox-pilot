@@ -1,0 +1,27 @@
+FROM --platform=$BUILDPLATFORM golang:1.25.9-alpine3.22 AS builder
+
+ARG TARGETOS TARGETARCH
+ARG PACKAGE=istio.io/istio
+
+RUN mkdir -p /go/src/${PACKAGE}
+WORKDIR /go/src/${PACKAGE}
+COPY istioctl/    istioctl/
+COPY operator/    operator/
+COPY pilot/    pilot/
+COPY pkg/    pkg/
+COPY security/ security/
+COPY tools/  tools/
+COPY go.mod go.mod
+COPY go.sum go.sum
+# Build
+ARG BUILDINFO="-extldflags -static -s -w -X istio.io/pkg/version.buildVersion={_buildVersion} -X istio.io/pkg/version.buildGitRevision={_buildGitRevision} -X istio.io/pkg/version.buildStatus=Clean"
+
+RUN apk add --update --no-cache ca-certificates make git curl mercurial
+RUN GO111MODULE=on CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o pilot-discovery -trimpath -ldflags="${BUILDINFO}" ${PACKAGE}/pilot/cmd/pilot-discovery
+
+FROM registry.cn-hangzhou.aliyuncs.com/acs/pilot:1.18.0-distroless AS base
+FROM registry.cn-hangzhou.aliyuncs.com/acs/distroless:release-1.18-2023-06-05T19-04-11
+COPY --from=builder /go/src/istio.io/istio/pilot-discovery /usr/local/bin/pilot-discovery
+COPY --from=base /var/lib/istio/envoy/envoy_bootstrap_tmpl.json /var/lib/istio/envoy/envoy_bootstrap_tmpl.json
+USER 1337:1337
+ENTRYPOINT ["/usr/local/bin/pilot-discovery"]

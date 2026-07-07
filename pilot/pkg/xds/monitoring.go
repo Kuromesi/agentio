@@ -136,6 +136,7 @@ var triggerMetric = map[model.TriggerReason]monitoring.Metric{
 	model.ProxyRequest:    pushTriggers.With(typeTag.Value(string(model.ProxyRequest))),
 	model.NamespaceUpdate: pushTriggers.With(typeTag.Value(string(model.NamespaceUpdate))),
 	model.ClusterUpdate:   pushTriggers.With(typeTag.Value(string(model.ClusterUpdate))),
+	model.OnDemandEviction: pushTriggers.With(typeTag.Value(string(model.OnDemandEviction))),
 }
 
 func recordPushTriggers(reasons model.ReasonStats) {

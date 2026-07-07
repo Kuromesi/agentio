@@ -36,9 +36,14 @@ type informer[I controllers.ComparableObject] struct {
 	collectionName string
 	id             collectionUID
 
-	eventHandlers *handlers[I]
+	// eventHandlers is non-nil only when debounce is enabled. In that mode
+	// a single shared K8s handler fans events through the debouncer to all
+	// registered listeners. With debounce off we bypass it entirely and
+	// register handlers directly on the K8s informer (legacy path).
+	eventHandlers *handlerSet[I]
 	augmentation  func(a any) any
 	synced        chan struct{}
+	stop          <-chan struct{}
 	baseSyncer    Syncer
 	metadata      Metadata
 }
@@ -115,24 +120,46 @@ func (i *informer[I]) Register(f func(o Event[I])) HandlerRegistration {
 
 func (i *informer[I]) RegisterBatch(f func(o []Event[I]), runExistingState bool) HandlerRegistration {
 	// Note: runExistingState is NOT respected here.
-	// Informer doesn't expose a way to do that. However, due to the runtime model of informers, this isn't a dealbreaker;
-	// the handlers are all called async, so we don't end up with the same deadlocks we would have in the other collection types.
-	// While this is quite kludgy, this is an internal interface so its not too bad.
-	synced := i.inf.AddEventHandler(informerEventHandler[I](func(o Event[I], initialSync bool) {
-		f([]Event[I]{o})
-	}))
-	base := i.baseSyncer
-	handler := pollSyncer{
-		name: fmt.Sprintf("%v handler", i.name()),
-		f:    synced.HasSynced,
+	// Informer doesn't expose a way to opt-out; K8s always replays cached items to a newly-registered handler.
+	_ = runExistingState
+
+	if i.eventHandlers == nil {
+		// Debounce off: register directly on the K8s informer. Each handler
+		// gets its own per-handler syncTracker via cache.ResourceEventHandlerRegistration.
+		synced := i.inf.AddEventHandler(informerEventHandler[I](func(o Event[I], initialSync bool) {
+			f([]Event[I]{o})
+		}))
+		handlerSyncer := pollSyncer{
+			name: fmt.Sprintf("%v handler", i.name()),
+			f:    synced.HasSynced,
+		}
+		return informerHandlerRegistration{
+			Syncer: multiSyncer{syncers: []Syncer{i.baseSyncer, handlerSyncer}},
+			remove: func() {
+				i.inf.ShutdownHandler(synced)
+			},
+		}
 	}
-	sync := multiSyncer{syncers: []Syncer{base, handler}}
-	return informerHandlerRegistration{
-		Syncer: sync,
-		remove: func() {
-			i.inf.ShutdownHandler(synced)
-		},
+
+	// Debounce on: snapshot the current cache as initialEvents and route
+	// through handlerSet. This can race the shared K8s handler: an item may
+	// be visible in inf.List() (K8s processDeltas writes the indexer before
+	// invoking handlers) while still in flight toward the debouncer, so the
+	// same item may later be flushed to the new listener — producing a
+	// duplicate Add. Downstream consumers (manyCollection/join/mergejoin and
+	// the like) are idempotent under duplicate Add (state-diff absorbs it),
+	// so we accept this in exchange for the simpler design.
+	existing := i.inf.List(metav1.NamespaceAll, klabels.Everything())
+	initial := make([]Event[I], 0, len(existing))
+	for _, obj := range existing {
+		o := obj
+		initial = append(initial, Event[I]{
+			New:   &o,
+			Event: controllers.EventAdd,
+		})
 	}
+
+	return i.eventHandlers.Insert(f, i.baseSyncer, initial, i.stop)
 }
 
 type informerHandlerRegistration struct {
@@ -203,9 +230,9 @@ func WrapClient[I controllers.ComparableObject](c kclient.Informer[I], opts ...C
 		log:            log.WithLabels("owner", o.name),
 		collectionName: o.name,
 		id:             nextUID(),
-		eventHandlers:  &handlers[I]{},
 		augmentation:   o.augmentation,
 		synced:         make(chan struct{}),
+		stop:           o.stop,
 	}
 	h.baseSyncer = channelSyncer{
 		name:   h.collectionName,
@@ -216,11 +243,45 @@ func WrapClient[I controllers.ComparableObject](c kclient.Informer[I], opts ...C
 		h.metadata = o.metadata
 	}
 
+	if o.debounceInterval > 0 {
+		// Debounce mode: install a single shared K8s handler that fans every
+		// event through the handlerSet's debouncer to all listeners. Without
+		// this, RegisterBatch attaches handlers directly to the K8s informer
+		// (legacy path) and skips handlerSet entirely.
+		h.eventHandlers = newHandlerSet[I]()
+		h.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
+		c.AddEventHandler(informerEventHandler[I](func(e Event[I], initialSync bool) {
+			h.eventHandlers.Distribute([]Event[I]{e}, initialSync)
+		}))
+	}
+
 	go func() {
 		defer c.ShutdownHandlers()
 		// First, wait for the informer to populate. We ignore handlers which have their own syncing
 		if !kube.WaitForCacheSync(o.name, o.stop, c.HasSyncedIgnoringHandlers) {
 			return
+		}
+
+		// Under debounce, defer closing h.synced until the debouncer has
+		// flushed its initial backlog at least once. By construction the K8s
+		// shared handler delivers every initial-list item before any later
+		// event and synchronously calls debouncer.Enqueue, so the after-window
+		// naturally batches the entire initial backlog into a single flush;
+		// the first debouncer flush therefore implies "all initial events
+		// delivered". If the cache is empty no events will ever flow, so we
+		// close immediately. We CANNOT use c.HasSynced for this gating: for
+		// handlers added before the informer started, the K8s
+		// SingleFileTracker's count transiently fluctuates 0→1→0 during the
+		// initial-list drain.
+		if h.eventHandlers != nil {
+			if debSynced := h.eventHandlers.DebouncerSynced(); debSynced != nil &&
+				len(c.List(metav1.NamespaceAll, klabels.Everything())) > 0 {
+				select {
+				case <-debSynced:
+				case <-o.stop:
+					return
+				}
+			}
 		}
 		close(h.synced)
 		h.log.Infof("%v synced", h.name())

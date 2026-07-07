@@ -20,6 +20,7 @@ var (
 	serviceTemplateFile      = "service.yaml"
 	deploymentTemplateFile   = "deployment.yaml"
 	vmDeploymentTemplateFile = "vm_deployment.yaml"
+	sandboxTemplateFile      = "sandbox.yaml"
 )
 
 func init() {

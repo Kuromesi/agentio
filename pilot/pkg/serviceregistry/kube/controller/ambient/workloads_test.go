@@ -836,6 +836,7 @@ func TestPodWorkloads(t *testing.T) {
 			EndpointSlicesAddressIndex := endpointSliceAddressIndex(EndpointSlices)
 			builder := a.builder.podWorkloadBuilder(
 				GetMeshConfig(mock),
+				nil,
 				krttest.GetMockCollection[model.WorkloadAuthorization](mock),
 				krttest.GetMockCollection[*securityclient.PeerAuthentication](mock),
 				krttest.GetMockCollection[Waypoint](mock),

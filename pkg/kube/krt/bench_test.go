@@ -17,8 +17,13 @@ package krt_test
 import (
 	"fmt"
 	"net"
+	"os"
 	"reflect"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -259,5 +264,241 @@ func BenchmarkControllers(b *testing.B) {
 	})
 	b.Run("legacy", func(b *testing.B) {
 		benchmark(b, NewLegacy)
+	})
+}
+
+// MatchedPod models a PodWorkloads-style derived value: how many
+// "policies" (Services here, used as a stand-in for AuthorizationPolicy)
+// currently match a given pod via label selector.
+type MatchedPod struct {
+	krt.Named
+	PolicyCount int
+}
+
+// stormTracker is a thread-safe map of pod name -> latest PolicyCount,
+// plus a cond var to wait for "all pods at expected count".
+type stormTracker struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	counts map[string]int
+}
+
+func newStormTracker() *stormTracker {
+	t := &stormTracker{counts: map[string]int{}}
+	t.cond = sync.NewCond(&t.mu)
+	return t
+}
+
+func (t *stormTracker) update(name string, count int, deleted bool) {
+	t.mu.Lock()
+	if deleted {
+		delete(t.counts, name)
+	} else {
+		t.counts[name] = count
+	}
+	t.mu.Unlock()
+	t.cond.Broadcast()
+}
+
+// waitFor blocks until exactly numPods entries are present and every one
+// reports expected. Returns when both conditions hold.
+func (t *stormTracker) waitFor(numPods, expected int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for {
+		if len(t.counts) == numPods {
+			ok := true
+			for _, v := range t.counts {
+				if v != expected {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return
+			}
+		}
+		t.cond.Wait()
+	}
+}
+
+func envIntOr(name string, def int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// BenchmarkSecondaryEventStorm reproduces the perf-pathological topology
+// where N selector-based "policies" all match the same M target pods.
+// A single policy change is a secondary event affecting every matched
+// pod; without coalescing, a burst of policy changes causes N*M
+// recomputes (the user-reported case: 500 policies x 10000 pods ->
+// 5M recomputes that never converged).
+//
+// This mirrors the ambient PodWorkloads collection's
+// krt.Fetch(authorizationPolicies, FilterSelects(podLabels)) pattern.
+//
+// Model: Pods are pre-loaded and the collection is brought to a quiet
+// steady state (all pods report PolicyCount=0). Then each iteration
+// bursts N services into the fake client back-to-back; the krt
+// informer goroutine reads them out of the watch channel and
+// dispatches them. WithDebounce(after) on the Services informer holds
+// outbound dispatch open for `after` so the burst collapses into a
+// single secondary-event batch at PodWorkloads, which dedups affected
+// pods and runs the transformation once per pod instead of once per
+// (policy, pod) pair. The delete half is symmetric.
+//
+// Scale knobs (default small enough for CI):
+//
+//	KRT_BENCH_POLICIES   number of "policies" (default 50)
+//	KRT_BENCH_PODS       number of target pods (default 500)
+//
+// To reproduce the production scenario set
+// KRT_BENCH_POLICIES=500 KRT_BENCH_PODS=10000 and use -benchtime=1x
+// (this will be slow without debounce — that is the point).
+//
+// Sub-benchmarks:
+//
+//	baseline       no debouncing — each policy event is its own
+//	               secondary batch; recomputes/op grows ~ N*M
+//	debounce-50ms  WithDebounce(50ms, 500ms) on the Services
+//	               collection; the burst is coalesced into one
+//	               secondary batch; recomputes/op stays ~ 2*M
+//	               (add + delete halves)
+//
+// The win signal is the "recomputes/op" metric, not wall-clock —
+// wall-clock at small scale is dominated by fake-client event
+// delivery and the fixed debounce wait, but recomputes/op shows the
+// coalescing factor that drives the production perf cliff.
+func BenchmarkSecondaryEventStorm(b *testing.B) {
+	log.FindScope("krt").SetOutputLevel(log.WarnLevel)
+	watch.DefaultChanSize = 1_000_000
+
+	numPolicies := envIntOr("KRT_BENCH_POLICIES", 50)
+	numPods := envIntOr("KRT_BENCH_PODS", 500)
+
+	initialPods := make([]*v1.Pod, 0, numPods)
+	for i := 0; i < numPods; i++ {
+		initialPods = append(initialPods, &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("pod-%d", i),
+				Namespace: "default",
+				Labels:    map[string]string{"app": "foo"},
+			},
+			Spec: v1.PodSpec{ServiceAccountName: "fake-sa"},
+			Status: v1.PodStatus{
+				Phase: v1.PodRunning,
+				PodIP: GetIP(),
+			},
+		})
+	}
+
+	bench := func(b *testing.B, sourceDebounce time.Duration) {
+		c := kube.NewFakeClient()
+		stop := test.NewStop(b)
+
+		// WithStop must be threaded through every collection: after the
+		// informer->handlerSet pivot, every Register spins a
+		// processorListener goroutine that only exits on this signal.
+		baseOpts := []krt.CollectionOption{krt.WithStop(stop)}
+
+		sourceOpts := append([]krt.CollectionOption{}, baseOpts...)
+		if sourceDebounce > 0 {
+			sourceOpts = append(sourceOpts, krt.WithDebounce(sourceDebounce, 10*sourceDebounce))
+		}
+
+		Pods := krt.NewInformer[*v1.Pod](c, baseOpts...)
+		Services := krt.NewInformer[*v1.Service](
+			c,
+			append([]krt.CollectionOption{
+				krt.WithObjectAugmentation(func(o any) any { return ServiceWrapper{o.(*v1.Service)} }),
+			}, sourceOpts...)...,
+		)
+
+		var recomputes atomic.Int64
+		PodWorkloads := krt.NewCollection(Pods, func(ctx krt.HandlerContext, p *v1.Pod) *MatchedPod {
+			recomputes.Add(1)
+			matched := krt.Fetch(ctx, Services, krt.FilterSelectsNonEmpty(p.GetLabels()))
+			return &MatchedPod{
+				Named:       krt.NewNamed(p),
+				PolicyCount: len(matched),
+			}
+		}, baseOpts...)
+
+		tracker := newStormTracker()
+		PodWorkloads.Register(func(e krt.Event[MatchedPod]) {
+			name := e.Latest().Name
+			if e.Event == controllers.EventDelete {
+				tracker.update(name, 0, true)
+				return
+			}
+			tracker.update(name, e.Latest().PolicyCount, false)
+		})
+
+		podsW := clienttest.NewWriter[*v1.Pod](b, c)
+		servicesW := clienttest.NewWriter[*v1.Service](b, c)
+		for _, p := range initialPods {
+			podsW.Create(p)
+		}
+		c.RunAndWait(stop)
+		// Steady state: every pod has fired once with PolicyCount=0.
+		// The initial-sync recomputes (one per pod) are not counted in
+		// the storm metric.
+		tracker.waitFor(numPods, 0)
+		recomputes.Store(0)
+
+		b.ResetTimer()
+		for n := 0; n < b.N; n++ {
+			// Storm: add N policies as fast as the fake client accepts
+			// them. WithDebounce on Services should coalesce these into
+			// a single outbound batch at the dispatch layer.
+			for i := 0; i < numPolicies; i++ {
+				servicesW.Create(&v1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("svc-%d-%d", n, i),
+						Namespace: "default",
+					},
+					Spec: v1.ServiceSpec{
+						Selector: map[string]string{"app": "foo"},
+					},
+				})
+			}
+			tracker.waitFor(numPods, numPolicies)
+
+			// Reset to a clean state. Deletion exercises the same
+			// dispatch path with the inverse selector effect, so the
+			// metric reflects both halves of a full add+delete cycle.
+			for i := 0; i < numPolicies; i++ {
+				servicesW.Delete(fmt.Sprintf("svc-%d-%d", n, i), "default")
+			}
+			tracker.waitFor(numPods, 0)
+		}
+		b.StopTimer()
+		b.ReportMetric(float64(recomputes.Load())/float64(b.N), "recomputes/op")
+
+		// Drain: at large scale (500x10000) the manyCollection queue may
+		// still hold late secondary events that won't change any pod's
+		// PolicyCount but are still CPU-bound on Equal/Fetch. tracker
+		// returns as soon as the *visible* state matches, so we wait
+		// for the recompute counter to stabilize before letting b's
+		// stop chan close. Otherwise the leak detector catches the
+		// queue goroutine mid-task.
+		for {
+			before := recomputes.Load()
+			time.Sleep(50 * time.Millisecond)
+			if recomputes.Load() == before {
+				break
+			}
+		}
+	}
+
+	b.Run("baseline", func(b *testing.B) {
+		bench(b, 0)
+	})
+	b.Run("debounce-50ms", func(b *testing.B) {
+		bench(b, 50*time.Millisecond)
 	})
 }

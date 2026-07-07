@@ -1,0 +1,52 @@
+{{- if .Values.enhancedTrafficManagement.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app: {{ include "sandbox.controller.name" . }}
+  name: {{ include "sandbox.controller.name" . }}
+  namespace: {{ include "sandbox.namespace" . }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - watch
+  - list
+  - update
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - update
+  - patch
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app: {{ include "sandbox.controller.name" . }}
+  name: {{ include "sandbox.controller.name" . }}
+  namespace: {{ include "sandbox.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sandbox.controller.name" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "sandbox.controller.name" . }}
+  namespace: {{ include "sandbox.namespace" . }}
+{{- end }}

@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	kubeJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/utils/ptr"
 
 	kubeyaml2 "istio.io/istio/pilot/pkg/config/file/util/kubeyaml"
 	"istio.io/istio/pilot/pkg/config/memory"
@@ -60,7 +61,6 @@ type KubeSource struct {
 	mu sync.Mutex
 
 	name      string
-	schemas   *collection.Schemas
 	inner     model.ConfigStore
 	defaultNs resource.Namespace
 
@@ -72,7 +72,7 @@ type KubeSource struct {
 }
 
 func (s *KubeSource) Schemas() collection.Schemas {
-	return *s.schemas
+	return s.inner.Schemas()
 }
 
 func (s *KubeSource) Get(typ config.GroupVersionKind, name, namespace string) *config.Config {
@@ -144,17 +144,28 @@ type kubeResourceKey struct {
 
 var _ model.ConfigStore = &KubeSource{}
 
+func NewKubeSourceWithStore(store model.ConfigStore) *KubeSource {
+	name := fmt.Sprintf("kube-inmemory-%d", inMemoryKubeNameDiscriminator)
+	inMemoryKubeNameDiscriminator++
+
+	return &KubeSource{
+		name:   name,
+		inner:  store,
+		shas:   make(map[kubeResourceKey]resourceSha),
+		byFile: make(map[string]map[kubeResourceKey]config.GroupVersionKind),
+	}
+}
+
 // NewKubeSource returns a new in-memory Source that works with Kubernetes resources.
 func NewKubeSource(schemas collection.Schemas) *KubeSource {
 	name := fmt.Sprintf("kube-inmemory-%d", inMemoryKubeNameDiscriminator)
 	inMemoryKubeNameDiscriminator++
 
 	return &KubeSource{
-		name:    name,
-		schemas: &schemas,
-		inner:   memory.MakeSkipValidation(schemas),
-		shas:    make(map[kubeResourceKey]resourceSha),
-		byFile:  make(map[string]map[kubeResourceKey]config.GroupVersionKind),
+		name:   name,
+		inner:  memory.MakeSkipValidation(schemas),
+		shas:   make(map[kubeResourceKey]resourceSha),
+		byFile: make(map[string]map[kubeResourceKey]config.GroupVersionKind),
 	}
 }
 
@@ -172,7 +183,7 @@ func (s *KubeSource) SetNamespacesFilter(namespacesFilter func(obj interface{}) 
 func (s *KubeSource) Clear() {
 	s.shas = make(map[kubeResourceKey]resourceSha)
 	s.byFile = make(map[string]map[kubeResourceKey]config.GroupVersionKind)
-	s.inner = memory.MakeSkipValidation(*s.schemas)
+	s.inner = memory.MakeSkipValidation(s.inner.Schemas())
 }
 
 // ContentNames returns the names known to this source.
@@ -197,7 +208,7 @@ func (s *KubeSource) ApplyContent(name, yamlText string) error {
 	defer s.mu.Unlock()
 
 	// We hold off on dealing with parseErr until the end, since partial success is possible
-	resources, parseErrs := s.parseContent(s.schemas, name, yamlText)
+	resources, parseErrs := s.parseContent(ptr.To(s.inner.Schemas()), name, yamlText)
 
 	oldKeys := s.byFile[name]
 	newKeys := make(map[kubeResourceKey]config.GroupVersionKind)

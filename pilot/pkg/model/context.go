@@ -112,6 +112,8 @@ type Environment struct {
 	// Watcher is the watcher for the mesh config (to be merged into the config store)
 	Watcher
 
+	SandboxController
+
 	// NetworksWatcher (loaded from a config map) provides information about the
 	// set of networks inside a mesh and how to route to endpoints in each
 	// network. Each network provides information about the endpoints in a
@@ -154,6 +156,13 @@ type Environment struct {
 func (e *Environment) Mesh() *meshconfig.MeshConfig {
 	if e != nil && e.Watcher != nil {
 		return e.Watcher.Mesh()
+	}
+	return nil
+}
+
+func (e *Environment) SandboxConfig() *SandboxConfig {
+	if e != nil && e.SandboxController != nil {
+		return e.SandboxController.SandboxConfig().Get()
 	}
 	return nil
 }
@@ -713,7 +722,7 @@ func ParseServiceNodeWithMetadata(nodeID string, metadata *NodeMetadata) (*Proxy
 	out.ID = parts[2]
 	out.DNSDomain = parts[3]
 	if len(metadata.IstioVersion) == 0 {
-		log.Warnf("Istio Version is not found in metadata for %v, which may have undesirable side effects", out.ID)
+		log.Debugf("Istio Version is not found in metadata for %v, which may have undesirable side effects", out.ID)
 	}
 	out.IstioVersion = ParseIstioVersion(metadata.IstioVersion)
 	return out, nil

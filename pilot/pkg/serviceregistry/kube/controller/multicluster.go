@@ -174,9 +174,10 @@ func NewMulticluster(
 	return mc
 }
 
-// getMeshConfigMapName returns the mesh ConfigMap name based on the revision
+// getMeshConfigMapName returns the mesh ConfigMap name based on the revision.
+// The base name is configurable via MESH_CONFIG_MAP_NAME (features.MeshConfigMapName).
 func (m *Multicluster) getMeshConfigMapName() string {
-	name := "istio"
+	name := features.MeshConfigMapName
 	if m.revision == "" || m.revision == "default" {
 		return name
 	}

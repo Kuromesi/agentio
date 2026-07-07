@@ -1,0 +1,5 @@
+{{- if .Values.enhancedTrafficManagement.enabled }}
+{{ .Files.Get "files/enhanced-traffic-management/securityprofile-crd.yaml" }}
+---
+{{ .Files.Get "files/enhanced-traffic-management/accesspolicy-crd.yaml" }}
+{{- end }}

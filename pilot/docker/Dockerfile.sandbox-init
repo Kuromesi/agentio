@@ -1,0 +1,25 @@
+FROM --platform=$BUILDPLATFORM golang:1.25.9-alpine3.22 AS builder
+
+ARG TARGETOS TARGETARCH
+ARG PACKAGE=istio.io/istio
+
+RUN mkdir -p /go/src/${PACKAGE}
+WORKDIR /go/src/${PACKAGE}
+COPY pilot/    pilot/
+COPY pkg/    pkg/
+COPY security/ security/
+COPY tools/  tools/
+COPY operator/ operator/
+COPY istioctl/ istioctl/
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+ARG BUILDINFO="-extldflags -static -s -w"
+
+RUN apk add --update --no-cache ca-certificates make git curl mercurial
+RUN GO111MODULE=on CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o pilot-agent -trimpath -ldflags="${BUILDINFO}" ${PACKAGE}/pilot/cmd/pilot-agent
+
+FROM alpine:3.22
+RUN apk add --no-cache iptables ip6tables nftables
+COPY --from=builder /go/src/istio.io/istio/pilot-agent /usr/local/bin/pilot-agent
+ENTRYPOINT ["/usr/local/bin/pilot-agent"]

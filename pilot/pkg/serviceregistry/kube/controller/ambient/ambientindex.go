@@ -33,6 +33,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/statusqueue"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pkg/activenotifier"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config"
@@ -52,6 +53,7 @@ import (
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/workloadapi"
+	"istio.io/istio/pkg/workloadapi/security"
 )
 
 type Index interface {
@@ -78,6 +80,7 @@ func (n NamespaceHostname) String() string {
 
 type workloadsCollection struct {
 	krt.Collection[model.WorkloadInfo]
+	AlwaysPush               krt.Collection[model.WorkloadInfo]
 	ByAddress                krt.Index[networkAddress, model.WorkloadInfo]
 	ByServiceKey             krt.Index[string, model.WorkloadInfo]
 	ByOwningWaypointHostname krt.Index[NamespaceHostname, model.WorkloadInfo]
@@ -90,6 +93,7 @@ type waypointsCollection struct {
 
 type servicesCollection struct {
 	krt.Collection[model.ServiceInfo]
+	AlwaysPush               krt.Collection[model.ServiceInfo]
 	ByAddress                krt.Index[networkAddress, model.ServiceInfo]
 	ByOwningWaypointHostname krt.Index[NamespaceHostname, model.ServiceInfo]
 	ByOwningWaypointIP       krt.Index[networkAddress, model.ServiceInfo]
@@ -115,6 +119,7 @@ type index struct {
 	namespaces krt.Collection[model.NamespaceInfo]
 
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization]
+	workloadConfigs       krt.Collection[model.WorkloadConfig]
 
 	statusQueue *statusqueue.StatusQueue
 
@@ -135,6 +140,8 @@ type index struct {
 	meshConfig                  meshwatcher.WatcherCollection
 	remoteClientConfigOverrides []func(*rest.Config)
 	builder                     Builder
+
+	sandboxController *sandbox.SandboxController
 }
 
 type FeatureFlags struct {
@@ -160,6 +167,7 @@ type Options struct {
 	Debugger                    *krt.DebugHandler
 	ClientBuilder               multicluster.ClientBuilder
 	RemoteClientConfigOverrides []func(*rest.Config)
+	SandboxController           *sandbox.SandboxController
 }
 
 func New(options Options) Index {
@@ -270,6 +278,22 @@ func New(options Options) Index {
 		}),
 	)...)
 
+	var sandboxConfig krt.Singleton[model.SandboxConfig]
+	var workloadConfigs krt.Collection[model.WorkloadConfig]
+	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
+	if features.EnableSandboxController {
+		TrafficPolicyDerivedPolicies = options.SandboxController.BuildPolicyCollection(
+			Services,
+			EndpointSlices,
+			Pods,
+			func(policy *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
+				return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
+			})
+		a.sandboxController = options.SandboxController
+		sandboxConfig = a.sandboxController.SandboxConfig()
+		workloadConfigs = a.sandboxController.WorkloadConfigs()
+	}
+
 	a.builder = Builder{
 		DomainSuffix: a.DomainSuffix,
 		ClusterID:    a.ClusterID,
@@ -326,6 +350,7 @@ func New(options Options) Index {
 		AuthzPolicies,
 		PeerAuths,
 		Waypoints,
+		TrafficPolicyDerivedPolicies,
 		opts,
 	)
 	// these are workloadapi-style services combined from kube services and service entries
@@ -437,6 +462,7 @@ func New(options Options) Index {
 		Pods,
 		NodeLocality,
 		a.meshConfig,
+		sandboxConfig,
 		AuthorizationPolicies,
 		PeerAuths,
 		Waypoints,
@@ -521,9 +547,23 @@ func New(options Options) Index {
 		)
 	}
 
+	AlwaysPushWorkloads := krt.NewCollection(Workloads, func(ctx krt.HandlerContext, w model.WorkloadInfo) *model.WorkloadInfo {
+		if w.Workload.Waypoint != nil || w.Source == kind.WorkloadEntry || sandbox.IsWaypointWorkload(&w) {
+			return &w
+		}
+		return nil
+	}, opts.WithName("AlwaysPushWorkloads")...)
+	AlwaysPushServices := krt.NewCollection(WorkloadServices, func(ctx krt.HandlerContext, s model.ServiceInfo) *model.ServiceInfo {
+		if s.Service.Waypoint != nil || s.IsWaypoint || s.Source.Kind == kind.ServiceEntry {
+			return &s
+		}
+		return nil
+	}, opts.WithName("AlwaysPushServices")...)
+
 	a.namespaces = NamespacesInfo
 	a.workloads = workloadsCollection{
 		Collection:               Workloads,
+		AlwaysPush:               AlwaysPushWorkloads,
 		ByAddress:                WorkloadAddressIndex,
 		ByServiceKey:             WorkloadServiceIndex,
 		ByOwningWaypointHostname: WorkloadWaypointIndexHostname,
@@ -531,6 +571,7 @@ func New(options Options) Index {
 	}
 	a.services = servicesCollection{
 		Collection:               WorkloadServices,
+		AlwaysPush:               AlwaysPushServices,
 		ByAddress:                ServiceAddressIndex,
 		ByOwningWaypointHostname: ServiceInfosByOwningWaypointHostname,
 		ByOwningWaypointIP:       ServiceInfosByOwningWaypointIP,
@@ -541,6 +582,14 @@ func New(options Options) Index {
 	}
 	a.authorizationPolicies = AllPolicies
 
+	if workloadConfigs != nil {
+		a.workloadConfigs = workloadConfigs
+		workloadConfigs.RegisterBatch(PushXds(a.XDSUpdater,
+			func(i model.WorkloadConfig) model.ConfigKey {
+				return model.ConfigKey{Kind: kind.WorkloadConfig, Name: i.Name, Namespace: i.Namespace}
+			}), false)
+	}
+
 	return a
 }
 
@@ -548,10 +597,11 @@ func (a *index) buildAndRegisterPolicyCollections(
 	authzPolicies krt.Collection[*securityclient.AuthorizationPolicy],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
+	trafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization],
 	opts krt.OptionsBuilder,
 ) (authorizationPolicies krt.Collection[model.WorkloadAuthorization], allPolicies krt.Collection[model.WorkloadAuthorization]) {
 	// AllPolicies includes peer-authentication converted policies
-	authorizationPolicies, allPolicies = PolicyCollections(authzPolicies, peerAuths, a.meshConfig, waypoints, opts, a.Flags)
+	authorizationPolicies, allPolicies = PolicyCollections(authzPolicies, peerAuths, a.meshConfig, waypoints, trafficPolicyDerivedPolicies, opts, a.Flags)
 	allPolicies.RegisterBatch(PushXds(a.XDSUpdater,
 		func(i model.WorkloadAuthorization) model.ConfigKey {
 			if i.Authorization == nil {
@@ -645,6 +695,54 @@ func (a *index) Lookup(key string) []model.AddressInfo {
 	return nil
 }
 
+func (a *index) LookupForProxy(key string, proxy *model.Proxy) ([]model.AddressInfo, bool) {
+	// 1. Workload UID
+	if w := a.workloads.GetKey(key); w != nil {
+		if sandbox.ShouldPushWorkload(proxy, w) {
+			return []model.AddressInfo{w.AsAddress}, false
+		}
+		return nil, true
+	}
+
+	// 2. Workload by IP
+	network, ip, found := strings.Cut(key, "/")
+	if !found {
+		log.Warnf(`key (%v) did not contain the expected "/" character`, key)
+		return nil, false
+	}
+	networkAddr := networkAddress{network: network, ip: ip}
+
+	if wls := a.workloads.ByAddress.Lookup(networkAddr); len(wls) > 0 {
+		total := len(wls)
+		wls = slices.Filter(wls, func(wi model.WorkloadInfo) bool {
+			return sandbox.ShouldPushWorkload(proxy, &wi)
+		})
+		return slices.Map(wls, modelWorkloadToAddressInfo), len(wls) < total
+	}
+
+	// 3. Service
+	// Service and workload lookup by Service key
+	if svc := a.lookupService(key); svc != nil {
+		res := []model.AddressInfo{}
+		filtered := false
+		if sandbox.ShouldPushService(proxy, svc) {
+			res = append(res, svc.AsAddress)
+		} else {
+			filtered = true
+		}
+		// grab all workloads that reference this service
+		for _, w := range a.workloads.ByServiceKey.Lookup(svc.ResourceName()) {
+			if sandbox.ShouldPushWorkload(proxy, &w) {
+				res = append(res, w.AsAddress)
+			} else {
+				filtered = true
+			}
+		}
+		return res, filtered
+	}
+	return nil, false
+}
+
 func (a *index) lookupService(key string) *model.ServiceInfo {
 	// 1. namespace/hostname format
 	s := a.services.GetKey(key)
@@ -681,6 +779,47 @@ func (a *index) All() []model.AddressInfo {
 	for _, s := range a.services.List() {
 		res = append(res, s.AsAddress)
 	}
+	return res
+}
+
+// All return all known workloads and services. Result is un-ordered
+func (a *index) AllForProxy(proxy *model.Proxy) []model.AddressInfo {
+	// Add all workloads
+	res := make([]model.AddressInfo, 0, len(a.workloads.List())+len(a.services.List()))
+
+	resourceName, ok := sandbox.BuildProxyWorkloadKey(proxy)
+	if !ok {
+		log.Warnf("invalid proxy id: %s", proxy.ID)
+		return a.All() // fallback to full list if we can't determine the workload key
+	}
+
+	seen := sets.New[string]()
+	addOnce := func(addr model.AddressInfo) {
+		key := addr.ResourceName()
+		if !seen.InsertContains(key) {
+			res = append(res, addr)
+		}
+	}
+
+	self := a.workloads.GetKey(resourceName)
+	if self != nil {
+		addOnce(self.AsAddress)
+		for svcKey := range self.Workload.Services {
+			svc := a.services.GetKey(svcKey)
+			if svc != nil {
+				addOnce(svc.AsAddress)
+			}
+		}
+	}
+
+	for _, wl := range a.workloads.AlwaysPush.List() {
+		addOnce(wl.AsAddress)
+	}
+
+	for _, s := range a.services.AlwaysPush.List() {
+		addOnce(s.AsAddress)
+	}
+
 	return res
 }
 
@@ -737,6 +876,36 @@ func (a *index) AddressInformation(addresses sets.String) ([]model.AddressInfo, 
 	for wname := range addresses {
 		wl := a.Lookup(wname)
 		if len(wl) == 0 {
+			removed = append(removed, wname)
+		} else {
+			for _, addr := range wl {
+				if !got.InsertContains(addr.ResourceName()) {
+					res = append(res, addr)
+				}
+			}
+		}
+	}
+	return res, sets.New(removed...)
+}
+
+func (a *index) AddressInformationForProxy(
+	proxy *model.Proxy,
+	addresses sets.String,
+) ([]model.AddressInfo, sets.String) {
+	if features.MeshInternalTrafficPolicy != sandbox.MeshInternalTrafficPolicyPassthrough || !sandbox.IsSandboxDedicatedProxy(proxy) {
+		return a.AddressInformation(addresses)
+	}
+
+	if len(addresses) == 0 {
+		// Full update
+		return a.AllForProxy(proxy), nil
+	}
+	var res []model.AddressInfo
+	var removed []string
+	got := sets.New[string]()
+	for wname := range addresses {
+		wl, filtered := a.LookupForProxy(wname, proxy)
+		if len(wl) == 0 && !filtered {
 			removed = append(removed, wname)
 		} else {
 			for _, addr := range wl {

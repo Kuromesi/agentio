@@ -9,6 +9,7 @@ package security
 
 import (
 	protohelpers "github.com/planetscale/vtprotobuf/protohelpers"
+	anypb "github.com/planetscale/vtprotobuf/types/known/anypb"
 	emptypb1 "github.com/planetscale/vtprotobuf/types/known/emptypb"
 	proto "google.golang.org/protobuf/proto"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -59,6 +60,23 @@ func (this *Authorization) EqualVT(that *Authorization) bool {
 	}
 	if this.DryRun != that.DryRun {
 		return false
+	}
+	if len(this.AuthExtensions) != len(that.AuthExtensions) {
+		return false
+	}
+	for i, vx := range this.AuthExtensions {
+		vy := that.AuthExtensions[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &Extension{}
+			}
+			if q == nil {
+				q = &Extension{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -330,11 +348,70 @@ func (this *Match) EqualVT(that *Match) bool {
 			}
 		}
 	}
+	if len(this.DestinationPortRanges) != len(that.DestinationPortRanges) {
+		return false
+	}
+	for i, vx := range this.DestinationPortRanges {
+		vy := that.DestinationPortRanges[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &PortRange{}
+			}
+			if q == nil {
+				q = &PortRange{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
+	}
+	if len(this.NotDestinationPortRanges) != len(that.NotDestinationPortRanges) {
+		return false
+	}
+	for i, vx := range this.NotDestinationPortRanges {
+		vy := that.NotDestinationPortRanges[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &PortRange{}
+			}
+			if q == nil {
+				q = &PortRange{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
 func (this *Match) EqualMessageVT(thatMsg proto.Message) bool {
 	that, ok := thatMsg.(*Match)
+	if !ok {
+		return false
+	}
+	return this.EqualVT(that)
+}
+func (this *PortRange) EqualVT(that *PortRange) bool {
+	if this == that {
+		return true
+	} else if this == nil || that == nil {
+		return false
+	}
+	if this.Start != that.Start {
+		return false
+	}
+	if this.End != that.End {
+		return false
+	}
+	if this.Protocol != that.Protocol {
+		return false
+	}
+	return string(this.unknownFields) == string(that.unknownFields)
+}
+
+func (this *PortRange) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*PortRange)
 	if !ok {
 		return false
 	}
@@ -488,6 +565,28 @@ func (this *StringMatch_Presence) EqualVT(thatIface isStringMatch_MatchType) boo
 	return true
 }
 
+func (this *Extension) EqualVT(that *Extension) bool {
+	if this == that {
+		return true
+	} else if this == nil || that == nil {
+		return false
+	}
+	if this.Name != that.Name {
+		return false
+	}
+	if !(*anypb.Any)(this.Config).EqualVT((*anypb.Any)(that.Config)) {
+		return false
+	}
+	return string(this.unknownFields) == string(that.unknownFields)
+}
+
+func (this *Extension) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*Extension)
+	if !ok {
+		return false
+	}
+	return this.EqualVT(that)
+}
 func (m *Authorization) MarshalVTStrict() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -517,6 +616,20 @@ func (m *Authorization) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.AuthExtensions) > 0 {
+		for iNdEx := len(m.AuthExtensions) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.AuthExtensions[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x3e
+			i--
+			dAtA[i] = 0xba
+		}
 	}
 	if m.DryRun {
 		i--
@@ -687,6 +800,34 @@ func (m *Match) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.NotDestinationPortRanges) > 0 {
+		for iNdEx := len(m.NotDestinationPortRanges) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.NotDestinationPortRanges[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x3d
+			i--
+			dAtA[i] = 0xfa
+		}
+	}
+	if len(m.DestinationPortRanges) > 0 {
+		for iNdEx := len(m.DestinationPortRanges) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.DestinationPortRanges[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x3d
+			i--
+			dAtA[i] = 0xf2
+		}
+	}
 	if len(m.NotServiceAccounts) > 0 {
 		for iNdEx := len(m.NotServiceAccounts) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.NotServiceAccounts[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
@@ -846,6 +987,54 @@ func (m *Match) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
 			i--
 			dAtA[i] = 0xa
 		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *PortRange) MarshalVTStrict() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVTStrict(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *PortRange) MarshalToVTStrict(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVTStrict(dAtA[:size])
+}
+
+func (m *PortRange) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.Protocol != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Protocol))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.End != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.End))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.Start != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Start))
+		i--
+		dAtA[i] = 0x8
 	}
 	return len(dAtA) - i, nil
 }
@@ -1068,6 +1257,56 @@ func (m *StringMatch_Presence) MarshalToSizedBufferVTStrict(dAtA []byte) (int, e
 	}
 	return len(dAtA) - i, nil
 }
+func (m *Extension) MarshalVTStrict() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVTStrict(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Extension) MarshalToVTStrict(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVTStrict(dAtA[:size])
+}
+
+func (m *Extension) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.Config != nil {
+		size, err := (*anypb.Any)(m.Config).MarshalToSizedBufferVTStrict(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.Name) > 0 {
+		i -= len(m.Name)
+		copy(dAtA[i:], m.Name)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Name)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *Authorization) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -1096,6 +1335,12 @@ func (m *Authorization) SizeVT() (n int) {
 	}
 	if m.DryRun {
 		n += 2
+	}
+	if len(m.AuthExtensions) > 0 {
+		for _, e := range m.AuthExtensions {
+			l = e.SizeVT()
+			n += 2 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
 	}
 	n += len(m.unknownFields)
 	return n
@@ -1213,6 +1458,37 @@ func (m *Match) SizeVT() (n int) {
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
+	if len(m.DestinationPortRanges) > 0 {
+		for _, e := range m.DestinationPortRanges {
+			l = e.SizeVT()
+			n += 2 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	if len(m.NotDestinationPortRanges) > 0 {
+		for _, e := range m.NotDestinationPortRanges {
+			l = e.SizeVT()
+			n += 2 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	n += len(m.unknownFields)
+	return n
+}
+
+func (m *PortRange) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Start != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.Start))
+	}
+	if m.End != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.End))
+	}
+	if m.Protocol != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.Protocol))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -1307,5 +1583,22 @@ func (m *StringMatch_Presence) SizeVT() (n int) {
 	} else {
 		n += 2
 	}
+	return n
+}
+func (m *Extension) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Name)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.Config != nil {
+		l = (*anypb.Any)(m.Config).SizeVT()
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	n += len(m.unknownFields)
 	return n
 }

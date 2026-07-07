@@ -30,6 +30,9 @@ const (
 	// MainInternalName is the name for the resources associated with the main (non-tunnel) internal listener.
 	MainInternalName = "main_internal"
 
+	// MainForwardName is the name for the resources associated with the forward internal listener for sandbox catchall.
+	MainForwardName = "main_forward"
+
 	// ConnectOriginate is the name for the resources associated with the origination of HTTP CONNECT.
 	ConnectOriginate = "connect_originate"
 

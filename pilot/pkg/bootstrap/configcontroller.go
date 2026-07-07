@@ -45,12 +45,14 @@ import (
 	"istio.io/istio/pilot/pkg/leaderelection"
 	"istio.io/istio/pilot/pkg/leaderelection/k8sleaderelection/k8sresourcelock"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pkg/activenotifier"
 	"istio.io/istio/pkg/adsc"
 	"istio.io/istio/pkg/config/analysis/incluster"
 	"istio.io/istio/pkg/config/schema/collections"
 	"istio.io/istio/pkg/config/schema/gvr"
 	"istio.io/istio/pkg/config/validation/agent"
+	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/revisions"
 	"istio.io/istio/pkg/util/sets"
@@ -97,6 +99,42 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if features.EnableSandboxController {
+		sandboxController, err := sandbox.NewSandboxController(sandbox.SandboxControllerOptions{
+			KubeClient: s.kubeClient,
+			MeshConfig: s.environment.Watcher,
+			Debugger:   s.krtDebugger,
+		})
+		if err != nil {
+			return err
+		}
+		s.sandboxController = sandboxController
+		s.ConfigStores = append(s.ConfigStores, sandboxController.ConfigStoreController)
+		s.environment.SandboxController = sandboxController
+		s.sandboxController.SandboxConfig().AsCollection().RegisterBatch(func([]krt.Event[model.SandboxConfig]) {
+			s.XDSServer.ConfigUpdate(&model.PushRequest{
+				Full:   true,
+				Reason: model.NewReasonStats(model.GlobalUpdate),
+				Forced: true,
+			})
+		}, false)
+		if features.EnableOnDemandCerts {
+			// When the on-demand cert reaper evicts idle entries, broadcast an eviction
+			// push so SDS generator can emit removed_resources to all subscribed envoys.
+			s.sandboxController.OnDemandCertController().RegisterCertsEviction(func() {
+				s.XDSServer.ConfigUpdate(&model.PushRequest{
+					Full:   true,
+					Reason: model.NewReasonStats(model.OnDemandEviction),
+					Forced: true,
+				})
+			})
+		}
+		s.addStartFunc("sandbox-controller", func(stop <-chan struct{}) error {
+			go s.sandboxController.Run(stop)
+			return nil
+		})
 	}
 
 	// If running in ingress mode (requires k8s), wrap the config controller.

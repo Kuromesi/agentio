@@ -15,6 +15,7 @@
 package ambient
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ import (
 	"istio.io/istio/pkg/test/util/assert"
 	"istio.io/istio/pkg/test/util/retry"
 	"istio.io/istio/pkg/workloadapi"
+	"istio.io/istio/pkg/workloadapi/security"
 )
 
 const (
@@ -215,6 +217,66 @@ func TestConvertAuthorizationPolicyStatus(t *testing.T) {
 			_, outStatusMessage := convertAuthorizationPolicy(rootns, test.inputAuthzPol)
 			assert.Equal(t, test.expectStatusMessage, outStatusMessage)
 		})
+	}
+}
+
+func TestConvertAuthorizationPolicyKeepsWhenConditionsInSameGroup(t *testing.T) {
+	authz := &securityclient.AuthorizationPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cidr-and-port",
+			Namespace: "default",
+		},
+		Spec: v1beta1.AuthorizationPolicy{
+			Action: v1beta1.AuthorizationPolicy_ALLOW,
+			Rules: []*v1beta1.Rule{
+				{
+					When: []*v1beta1.Condition{
+						{
+							Key:    "destination.ip",
+							Values: []string{"10.0.0.0/24"},
+						},
+						{
+							Key:    "destination.portRange",
+							Values: []string{"80-81/TCP"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pol, status := convertAuthorizationPolicy(rootns, authz)
+	assert.Equal(t, nil, status)
+	if pol == nil {
+		t.Fatal("expected authorization policy")
+	}
+	if len(pol.Groups) != 1 {
+		t.Fatalf("expected one group, got %d: %+v", len(pol.Groups), pol.Groups)
+	}
+	group := pol.Groups[0]
+	if len(group.Rules) != 2 {
+		t.Fatalf("expected destination.ip and destination.portRange rules in one group, got %d: %+v", len(group.Rules), group.Rules)
+	}
+
+	var foundDstIP, foundPortRange bool
+	for _, rules := range group.Rules {
+		for _, match := range rules.Matches {
+			if len(match.DestinationIps) == 1 && bytes.Equal(match.DestinationIps[0].GetAddress(), []byte{10, 0, 0, 0}) && match.DestinationIps[0].GetLength() == 24 {
+				foundDstIP = true
+			}
+			if len(match.DestinationPortRanges) == 1 {
+				pr := match.DestinationPortRanges[0]
+				if pr.GetStart() == 80 && pr.GetEnd() == 81 && pr.GetProtocol() == security.Protocol_TCP {
+					foundPortRange = true
+				}
+			}
+		}
+	}
+	if !foundDstIP {
+		t.Fatalf("expected destination.ip match for 10.0.0.0/24 in group: %+v", group.Rules)
+	}
+	if !foundPortRange {
+		t.Fatalf("expected destination.portRange match for 80-81/TCP in group: %+v", group.Rules)
 	}
 }
 

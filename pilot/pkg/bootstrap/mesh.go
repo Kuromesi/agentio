@@ -29,11 +29,9 @@ import (
 	"istio.io/istio/pkg/version"
 )
 
-const (
-	// defaultMeshConfigMapName is the default name of the ConfigMap with the mesh config
-	// The actual name can be different - use getMeshConfigMapName
-	defaultMeshConfigMapName = "istio"
-)
+// The default name of the ConfigMap holding the mesh config is "istio"; it can be overridden
+// via the MESH_CONFIG_MAP_NAME env var (see features.MeshConfigMapName). The actual name used
+// at runtime may include a revision suffix - use getMeshConfigMapName.
 
 // initMeshConfiguration creates the mesh in the pilotConfig from the input arguments.
 // Original/default behavior:
@@ -91,7 +89,7 @@ func (s *Server) getMeshNetworks(args *PilotArgs, fileWatcher filewatcher.FileWa
 }
 
 func getMeshConfigMapName(revision string) string {
-	name := defaultMeshConfigMapName
+	name := features.MeshConfigMapName
 	if revision == "" || revision == "default" {
 		return name
 	}

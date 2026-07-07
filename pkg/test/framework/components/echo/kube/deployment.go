@@ -259,6 +259,8 @@ func GenerateDeployment(ctx resource.Context, cfg echo.Config, settings *resourc
 	deploy := getTemplate(deploymentTemplateFile)
 	if cfg.DeployAsVM {
 		deploy = getTemplate(vmDeploymentTemplateFile)
+	} else if cfg.DeployAsSandbox {
+		deploy = getTemplate(sandboxTemplateFile)
 	}
 
 	deploymentYAML, err := tmpl.Execute(deploy, params)
@@ -440,6 +442,7 @@ func deploymentParams(ctx resource.Context, cfg echo.Config, settings *resource.
 		"Ambient":                 settings.Ambient,
 		"BindFamily":              cfg.BindFamily,
 		"OpenShift":               settings.OpenShift,
+		"Capabilities":            cfg.Capabilities,
 	}
 
 	vmIstioHost, vmIstioIP := "", ""

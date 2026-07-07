@@ -112,6 +112,8 @@ func (configgen *ConfigGeneratorImpl) buildWaypointInboundClusters(
 		clusters = append(clusters, cb.buildWaypointConnectOriginate(proxy, push))
 	}
 
+	clusters = append(clusters, sandboxClusters(cb)...)
+
 	// This bit creates clusters needed to handle requests going to a remote network.
 	// In ambient, requests going to a remote network have to be wrapped in a double-HBONE tunnel (e.g.,
 	// HBONE inside another HBONE).

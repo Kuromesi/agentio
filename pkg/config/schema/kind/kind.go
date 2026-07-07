@@ -15,3 +15,7 @@
 package kind
 
 type Kind uint8
+
+const (
+	WorkloadConfig Kind = 200
+)

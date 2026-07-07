@@ -89,6 +89,9 @@ func NestedJoinWithMergeCollection[T any](collections Collection[Collection[T]],
 		collections: ics,
 		regs:        make(map[collectionUID]HandlerRegistration),
 	}
+	if o.debounceInterval > 0 {
+		j.mergejoin.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
+	}
 
 	j.mergejoin.collections = j
 	j.syncer = channelSyncer{

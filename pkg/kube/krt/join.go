@@ -398,6 +398,8 @@ func JoinCollection[T any](cs []Collection[T], opts ...CollectionOption) Collect
 
 	// For unchecked mode, we don't need the centralized event handling infrastructure.
 	// Handlers register directly with sub-collections in RegisterBatch.
+	// Note: WithDebounce takes effect only in checked mode. Unchecked mode
+	// registers handlers directly on sub-collections and bypasses handlerSet.
 	if o.joinUnchecked {
 		// for unchecked, we waitn for the sub-collections to sync here
 		go func() {
@@ -415,6 +417,10 @@ func JoinCollection[T any](cs []Collection[T], opts ...CollectionOption) Collect
 	// Checked mode: set up centralized event handling with conflict resolution
 	j.eventHandlers = newHandlerSet[T]()
 	j.processedState = make(map[string]*T)
+
+	if o.debounceInterval > 0 {
+		j.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
+	}
 
 	// Register handlers on sub-collections ONCE during construction
 	// These handlers will process events from sub-collections and distribute to registered handlers

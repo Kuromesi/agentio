@@ -1,0 +1,331 @@
+syntax = "proto3";
+
+package istio.alibabacloud.extensions.v1;
+
+import "google/protobuf/duration.proto";
+import "networking/v1alpha3/virtual_service.proto";
+
+option go_package = "pilot/pkg/serviceregistry/kube/controller/sandbox/extensions";
+
+// SandboxConfig is the complete configuration for the sandbox controller.
+message SandboxConfig {
+  // External processing provider for sandbox traffic inspection and policy enforcement.
+  ExtProcProvider sandbox_ext_proc = 1;
+
+  // Ordered list of egress policies. Traffic is evaluated against policies
+  // in order; the first matching policy's action is applied.
+  repeated EgressPolicy egress_policies = 2;
+
+  // Filter sandbox labels to reduce xds push size.
+  repeated string sandbox_ignored_labels = 3;
+
+  // Per-gateway settings; tls_termination lives inside each gateway here so
+  // SDS can authorize on-demand cert pulls per gateway.
+  repeated EgressGateway egress_gateways = 4;
+
+}
+
+// EgressGateway describes a sandbox egress gateway deployment.
+// name/namespace match the proxy via ExtractProxyMeta(proxy.ID): namespace
+// must match exactly and pod name must be prefixed with `name+"-"` (the
+// standard Deployment→ReplicaSet→Pod naming).
+message EgressGateway {
+  // Deployment name. Doubles as the ServiceAccount name for SDS Authorize
+  // (SA == Deployment name == EgressGateway.name convention) and as the pod
+  // name prefix for FindEgressGatewayForProxy.
+  string name = 1;
+
+  // Namespace where the gateway Deployment lives. Compared with the proxy's
+  // namespace using strict equality.
+  string namespace = 2;
+
+  // Per-gateway TLS termination policy. nil means this gateway forwards all
+  // TLS traffic without termination (waypoint listener falls back to the
+  // no-SNI-match protocolMatcher).
+  TlsTerminationConfig tls_termination = 3;
+
+  // Per-gateway ext_proc override. When set, this gateway uses its own
+  // ext_proc endpoint instead of the global SandboxConfig.sandbox_ext_proc.
+  // nil means fall back to the global configuration.
+  ExtProcProvider ext_proc = 4;
+
+  // Per-gateway connection pool and timeout settings. Controls HCM
+  // StreamIdleTimeout, TCPProxy idle/max-connection-duration, and
+  // per-host HTTP route timeouts. nil means use hardcoded defaults
+  // (StreamIdleTimeout=30min, TCPProxy IdleTimeout=1h).
+  ConnectionPoolSettings connection_pool = 5;
+
+  // Per-gateway connect rate limit. Controls the rate at which new
+  // H2 CONNECT streams are accepted on the connect_terminate HCM.
+  // nil means no rate limiting.
+  LocalRateLimitSettings connect_rate_limit = 6;
+}
+
+// TlsTerminationConfig defines which SNI domains should undergo TLS termination
+// and which should bypass it in the sandbox waypoint.
+message TlsTerminationConfig {
+  // Domains that should undergo TLS termination using on-demand certificates.
+  // Supports wildcards (e.g. *.example.com). When a TLS ClientHello's SNI
+  // matches one of these domains, traffic is routed to the TLS termination
+  // filter chain.
+  repeated string include_hosts = 1;
+
+  // Domains that should bypass TLS termination. Traffic matching these
+  // domains is forwarded as-is via the TCP filter chain without certificate
+  // termination. Supports wildcards (e.g. *.internal.com).
+  repeated string exclude_hosts = 2;
+}
+
+// EgressPolicies is an internal wrapper for marshaling repeated EgressPolicy.
+message EgressPolicies {
+    repeated EgressPolicy egress_policies = 1;
+}
+
+// WorkloadConfigScope determines the scope of a WorkloadConfig resource.
+enum WorkloadConfigScope {
+    // WORKLOAD_CONFIG_SCOPE_GLOBAL applies to all workloads in the mesh.
+    WORKLOAD_CONFIG_SCOPE_GLOBAL = 0;
+    // WORKLOAD_CONFIG_SCOPE_NAMESPACE applies only to workloads in the
+    // same namespace as the resource.
+    WORKLOAD_CONFIG_SCOPE_NAMESPACE = 1;
+}
+
+// WorkloadConfig is an independent xDS resource pushed to ztunnel.
+message WorkloadConfig {
+    WorkloadConfigScope scope = 1;
+    repeated EgressPolicy egress_policies = 2;
+}
+
+// HeaderSendMode mirrors Envoy's ProcessingMode.HeaderSendMode.
+enum HeaderSendMode {
+  // Use the default behavior (request headers are sent, response headers are not).
+  DEFAULT = 0;
+  // Send the header/trailer to the ext_proc server.
+  SEND = 1;
+  // Do not send the header/trailer to the ext_proc server.
+  SKIP = 2;
+}
+
+// ExtProcProvider configures the external processing endpoint.
+message ExtProcProvider {
+  // Service hostname or address for the ext_proc endpoint.
+  string service = 1;
+
+  // Service port for the ext_proc endpoint.
+  uint32 port = 2;
+
+  // Request processing mode options.
+  ProcessingModeOptions request = 3;
+
+  // Response processing mode options.
+  ProcessingModeOptions response = 4;
+
+  // If true, the filter will be allowed to continue processing even if the ext_proc
+  // server is unavailable or returns an error. Defaults to false.
+  bool failure_mode_allow = 5;
+
+  // Cluster-level settings for the ext_proc upstream cluster.
+  ClusterSettings cluster_settings = 6;
+
+  // Timeout for each message sent to the ext_proc server. If the server does not
+  // respond within this duration, the request is considered failed.
+  // Format: golang duration string (e.g. "200ms", "1s"). Defaults to 200ms if not set.
+  string message_timeout = 7;
+}
+
+// ClusterSettings configures upstream cluster behavior.
+message ClusterSettings {
+  // HTTP protocol settings for the upstream cluster.
+  HttpSettings http = 1;
+}
+
+// HttpSettings configures HTTP/2 protocol options for the upstream cluster.
+message HttpSettings {
+  // Maximum number of concurrent streams per HTTP/2 connection.
+  // Defaults to 100 if not set.
+  uint32 max_concurrent_streams = 1;
+
+  // Maximum number of requests per connection before it is closed.
+  // 0 means unlimited (default behavior).
+  uint32 max_requests_per_connection = 2;
+}
+
+message ProcessingModeOptions {
+    // Header send mode: DEFAULT, SEND, or SKIP.
+    HeaderSendMode header_mode = 1;
+
+    // Attributes to include in ext_proc headers.
+    repeated string attributes = 2;
+}
+
+// EgressPolicyAction defines the action for matching egress traffic.
+enum EgressPolicyAction {
+  // Passthrough allows traffic to flow directly to the destination.
+  PASSTHROUGH = 0;
+  // Deny blocks the traffic.
+  DENY = 1;
+  // Gateway forwards traffic through the specified egress gateway.
+  GATEWAY = 2;
+}
+
+// EgressPolicy defines a rule for handling egress traffic.
+// Traffic is evaluated in order; the first matching policy applies.
+message EgressPolicy {
+  // Namespaces restricts this policy to traffic originating from these namespaces.
+  // If empty, the policy applies to all namespaces.
+  repeated string namespaces = 1;
+
+  // MatchCidrs specifies the destination CIDR ranges to match.
+  // If empty, matches any destination.
+  repeated string match_cidrs = 2;
+
+  // MatchPorts specifies the destination ports to match. Each entry is a
+  // single port number as a decimal string (e.g. "443", "8080"). If empty,
+  // matches any destination port. A traffic flow matches the policy only
+  // when both match_cidrs and match_ports match (empty means wildcard on
+  // that dimension).
+  repeated string match_ports = 5;
+
+  // Policy defines the action to take for matching traffic.
+  EgressPolicyAction policy = 3;
+
+  // Gateway is the egress gateway address to forward traffic to (when policy is GATEWAY).
+  GatewayAddress gateway = 4;
+
+  // MatchHosts specifies destination hostnames to match. The control plane
+  // resolves these to IP addresses and merges the results into match_cidrs
+  // before sending to the data plane. DNS results are refreshed based on TTL.
+  repeated string match_hosts = 6;
+}
+
+// GatewayAddress represents the address of a gateway.
+message GatewayAddress {
+  // Service name of the gateway (e.g. egress-gateway.istio-system.svc.cluster.local).
+  string service = 1;
+
+  // Port is the port to reach the gateway at.
+  uint32 port = 2;
+}
+
+// ConnectionPoolSettings controls timeout and connection management for
+// the sandbox egress path. Mirrors the Istio DestinationRule
+// ConnectionPoolSettings structure with tcp/http sub-messages.
+message ConnectionPoolSettings {
+  // TCP-level connection pool settings.
+  TcpSettings tcp = 1;
+
+  // HTTP-level connection pool and route settings.
+  ConnectionPoolHttpSettings http = 2;
+}
+
+// TcpSettings configures TCP connection timeouts and limits for the
+// sandbox egress TCPProxy filters and passthrough path.
+message TcpSettings {
+  // Maximum time a TCP connection can be idle before Envoy closes it.
+  // Applies to TCPProxy filters on tls-terminate and forward-tcp chains.
+  // Default 1h.
+  google.protobuf.Duration idle_timeout = 1;
+
+  // Absolute maximum lifetime of a downstream TCP connection regardless
+  // of activity. Default unset (no limit).
+  google.protobuf.Duration max_connection_duration = 2;
+}
+
+// ConnectionPoolHttpSettings configures HTTP connection manager and
+// route-level settings for the sandbox egress HCM.
+message ConnectionPoolHttpSettings {
+  // Maximum time a stream (including upgraded WebSocket/SSE) can be idle
+  // before Envoy closes it. Applies to the HCM StreamIdleTimeout.
+  // Default 30min.
+  google.protobuf.Duration stream_idle_timeout = 1;
+
+  // Default route settings applied to the fallback wildcard ("*")
+  // VirtualHost. If nil, route timeout is 0 (disabled).
+  HttpRouteSettings default_route = 2;
+
+  // Per-host route overrides. Each entry generates a dedicated VirtualHost
+  // with the specified hosts as domains. Evaluated by Envoy's domain
+  // matching (exact > suffix > prefix > wildcard).
+  repeated HttpRouteOverride route_overrides = 3;
+}
+
+// HttpRouteOverride binds HTTP route settings to a set of destination hosts.
+message HttpRouteOverride {
+  // Destination host patterns. Supports exact ("api.example.com") and
+  // wildcard ("*.example.com") matching via Envoy VirtualHost domains.
+  repeated string hosts = 1;
+
+  // Route settings to apply for these hosts.
+  HttpRouteSettings settings = 2;
+}
+
+// HttpRouteSettings configures Envoy route-level timeout and retry behavior.
+// Fields mirror istio.networking.v1alpha3.HTTPRoute (timeout + retries).
+message HttpRouteSettings {
+  // Total request timeout. 0 means disabled (Envoy default).
+  google.protobuf.Duration timeout = 1;
+
+  // Retry policy for HTTP requests. Uses the Istio HTTPRetry definition.
+  istio.networking.v1alpha3.HTTPRetry retries = 2;
+}
+
+// LocalRateLimitSettings configures Envoy's local rate limit HTTP filter
+// on the connect_terminate HCM. Each new H2 CONNECT stream (= one client
+// TCP connection) consumes one token from the bucket.
+message LocalRateLimitSettings {
+  // Global token bucket applied to all streams on this gateway.
+  // Acts as the default when no descriptor matches. If unset, only
+  // descriptor-level rate limits apply.
+  TokenBucket token_bucket = 1;
+
+  // Per-descriptor rate limit overrides. The first descriptor whose
+  // entries fully match the request uses its own token bucket.
+  repeated RateLimitDescriptor descriptors = 2;
+
+  // When true, each downstream H2 connection (ztunnel → waypoint) gets
+  // its own token bucket. Default false (shared across all connections).
+  // Cannot be used together with wildcard descriptor values.
+  bool per_downstream_connection = 3;
+}
+
+// TokenBucket configures a token bucket rate limiter.
+message TokenBucket {
+  // Maximum tokens the bucket can hold. Also the initial token count.
+  uint32 max_tokens = 1;
+
+  // Tokens added per fill_interval. Defaults to 1 if not set.
+  uint32 tokens_per_fill = 2;
+
+  // Interval at which tokens_per_fill tokens are added to the bucket.
+  // Must be >= 50ms.
+  google.protobuf.Duration fill_interval = 3;
+}
+
+// RateLimitDescriptor defines a set of descriptor entries and an
+// associated token bucket. When all entries match, this descriptor's
+// bucket is used instead of (or in addition to) the global bucket.
+message RateLimitDescriptor {
+  // Entries that must all match for this descriptor to apply.
+  repeated RateLimitEntry entries = 1;
+
+  // Token bucket for streams matching this descriptor.
+  TokenBucket token_bucket = 2;
+}
+
+// RateLimitEntry is a single key/value pair in a rate limit descriptor.
+message RateLimitEntry {
+  // Descriptor key used in the Envoy descriptor matching.
+  string key = 1;
+
+  // Descriptor value to match. An empty string acts as a wildcard,
+  // creating a dynamic per-unique-value token bucket (e.g. per-IP).
+  string value = 2;
+
+  // CEL expression that produces the descriptor value at runtime.
+  // Uses the envoy.rate_limit_descriptors.expr extension. The
+  // expression has access to filter_state, e.g.:
+  //   filter_state["downstream_peer"].name
+  //   filter_state["downstream_peer"].namespace
+  //   filter_state["io.istio.peer_principal"]
+  string cel = 3;
+}

@@ -192,6 +192,7 @@ func (a *index) buildGlobalCollections(
 		localAuthzPolicies,
 		localPeerAuths,
 		LocalWaypoints,
+		nil,
 		opts,
 	)
 

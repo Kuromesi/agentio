@@ -25,6 +25,7 @@ import (
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/sandbox"
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/maps"
@@ -49,6 +50,43 @@ func (a *index) Policies(requested sets.Set[model.ConfigKey]) []model.WorkloadAu
 		// a nil Authorization means the WorkloadAuthorization contains an error condition which needs to be written but
 		// is otherwise an invalid policy and will be ignored
 		if cfg.Authorization == nil {
+			continue
+		}
+		k := model.ConfigKey{
+			Kind:      kind.AuthorizationPolicy,
+			Name:      cfg.Authorization.Name,
+			Namespace: cfg.Authorization.Namespace,
+		}
+
+		if len(requested) > 0 && !requested.Contains(k) {
+			continue
+		}
+		res = append(res, cfg)
+	}
+	return res
+}
+
+func (a *index) PoliciesForProxy(
+	proxy *model.Proxy,
+	requested sets.Set[model.ConfigKey],
+) []model.WorkloadAuthorization {
+	if !sandbox.IsSandboxDedicatedProxy(proxy) {
+		return a.Policies(requested)
+	}
+
+	cfgs := a.authorizationPolicies.List()
+	l := len(cfgs)
+	if len(requested) > 0 {
+		l = len(requested)
+	}
+	res := make([]model.WorkloadAuthorization, 0, l)
+	for _, cfg := range cfgs {
+		// a nil Authorization means the WorkloadAuthorization contains an error condition which needs to be written but
+		// is otherwise an invalid policy and will be ignored
+		if cfg.Authorization == nil {
+			continue
+		}
+		if !sandbox.ShouldPushAuthorizationPolicy(proxy, &cfg, a.SystemNamespace) {
 			continue
 		}
 		k := model.ConfigKey{
@@ -397,10 +435,14 @@ func convertPeerAuthentication(rootNamespace string, cfg, nsCfg, rootCfg *securi
 func convertAuthorizationPolicy(rootns string, obj *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
 	pol := &obj.Spec
 
-	dryRun, convErr := strconv.ParseBool(obj.Annotations[annotation.IoIstioDryRun.Name])
-	if convErr != nil {
-		// proceed anyway?
-		log.Errorf("Unable to parse dry run annotation, encountered error %v", convErr)
+	var dryRun bool
+	if obj.Annotations[annotation.IoIstioDryRun.Name] != "" {
+		var convErr error
+		dryRun, convErr = strconv.ParseBool(obj.Annotations[annotation.IoIstioDryRun.Name])
+		if convErr != nil {
+			// proceed anyway?
+			log.Errorf("Unable to parse dry run annotation, encountered error %v", convErr)
+		}
 	}
 
 	if dryRun && !features.EnableWdsDryRunAuthzPol {
@@ -590,6 +632,9 @@ func handleRule(action security.Action, rule *v1beta1.Rule, ruleNamespace string
 			NotSourceIps:        whenMatch("source.ip", when, true, stringToIP),
 			NotDestinationPorts: whenMatch("destination.port", when, true, stringToPort),
 			NotDestinationIps:   whenMatch("destination.ip", when, true, stringToIP),
+
+			DestinationPortRanges:    whenMatch("destination.portRange", when, false, stringToPortRange),
+			NotDestinationPortRanges: whenMatch("destination.portRange", when, true, stringToPortRange),
 		}
 		rules = append(rules, &security.Rules{Matches: []*security.Match{positiveMatch}})
 	}
@@ -608,6 +653,7 @@ var l4WhenAttributes = sets.New(
 	"source.principal",
 	"destination.ip",
 	"destination.port",
+	"destination.portRange",
 )
 
 func whenMatch[T any](s string, when *v1beta1.Condition, invert bool, f func(v []string) []T) []T {
@@ -672,6 +718,75 @@ func stringToPort(rules []string) []uint32 {
 			continue
 		}
 		res = append(res, uint32(p))
+	}
+	return res
+}
+
+func parseProtocol(s string) security.Protocol {
+	switch strings.ToUpper(s) {
+	case "TCP":
+		return security.Protocol_TCP
+	case "UDP":
+		return security.Protocol_UDP
+	case "ICMP":
+		return security.Protocol_ICMP
+	case "SCTP":
+		return security.Protocol_SCTP
+	default:
+		return security.Protocol_ALL
+	}
+}
+
+func stringToPortRange(rules []string) []*security.PortRange {
+	if len(rules) == 0 {
+		return nil
+	}
+	res := make([]*security.PortRange, 0, len(rules))
+	for _, m := range rules {
+		var protoStr string
+		portPart := m
+		if idx := strings.LastIndex(m, "/"); idx >= 0 {
+			portPart = m[:idx]
+			protoStr = m[idx+1:]
+		}
+		proto := parseProtocol(protoStr)
+
+		if portPart == "" {
+			res = append(res, &security.PortRange{Start: 0, End: 65535, Protocol: proto})
+			continue
+		}
+
+		parts := strings.Split(portPart, "-")
+		if len(parts) != 2 {
+			log.Warnf("Invalid port range %s", m)
+			continue
+		}
+		left, right := parts[0], parts[1]
+		var startPort, endPort uint64
+		var err error
+		if left == "" {
+			startPort = 0
+		} else {
+			startPort, err = strconv.ParseUint(left, 10, 32)
+			if err != nil || startPort > 65535 {
+				continue
+			}
+		}
+
+		if right == "" {
+			endPort = startPort
+		} else {
+			endPort, err = strconv.ParseUint(right, 10, 32)
+			if err != nil || endPort > 65535 || endPort < startPort {
+				continue
+			}
+		}
+
+		res = append(res, &security.PortRange{
+			Start:    uint32(startPort),
+			End:      uint32(endPort),
+			Protocol: proto,
+		})
 	}
 	return res
 }
