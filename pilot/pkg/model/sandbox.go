@@ -32,7 +32,7 @@ type AgentioConfig struct {
 }
 
 func (c AgentioConfig) ResourceName() string {
-	return "sandbox-config"
+	return "agentio-config"
 }
 
 func (m AgentioConfig) Equals(other AgentioConfig) bool {

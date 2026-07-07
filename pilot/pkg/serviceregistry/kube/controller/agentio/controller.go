@@ -35,7 +35,7 @@ import (
 )
 
 var (
-	log        = istiolog.RegisterScope("sandbox-controller", "sandbox controller")
+	log        = istiolog.RegisterScope("agentio-controller", "agentio controller")
 	dnsServers = func() []string {
 		servers := env.Register("EXTERNAL_NAMES_CONTROLLER_DNS_SERVER", "", "Dns servers for external names controller.").Get()
 		if servers == "" {
@@ -86,7 +86,7 @@ type Controller struct {
 func NewController(options Options) (*Controller, error) {
 	stop := make(chan struct{})
 
-	opts := krt.NewOptionsBuilder(stop, "sandbox-controller", options.Debugger)
+	opts := krt.NewOptionsBuilder(stop, "agentio-controller", options.Debugger)
 	TrafficPolicies := newTrafficPoliciesCollection(options.KubeClient, stop)
 	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop)
 

@@ -32,8 +32,8 @@ import (
 )
 
 // TestSandboxConnectionPool verifies that ConnectionPoolSettings in the
-// sandbox-config ConfigMap propagate to the egress gateway's Envoy
-// configuration. Each subtest applies a sandbox-config with specific
+// agentio-config ConfigMap propagate to the egress gateway's Envoy
+// configuration. Each subtest applies a agentio-config with specific
 // connection_pool values, then fetches the egress gateway's config_dump
 // and asserts that the Envoy listeners, HCM, and routes reflect the
 // configured timeouts, retries, and per-host overrides.

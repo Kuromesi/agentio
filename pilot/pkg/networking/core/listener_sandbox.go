@@ -67,12 +67,12 @@ const (
 	forwardTcpFilterChain   = "forward-tcp"
 	tlsTerminateFilterChain = "tls-terminate"
 	tlsOriginateCluster     = "tls_connect_originate"
-	// sandboxDFPCacheName is the dynamic_forward_proxy DNS cache name shared by
+	// agentioDFPCacheName is the dynamic_forward_proxy DNS cache name shared by
 	// the HTTP filter in buildWaypointInboundHTTPFilters and the upstream
 	// cluster in buildDefaultTLSConnectOriginateCluster. Both ends must use the
 	// same name or the HTTP forward path resolves into a different cache than
 	// the cluster connects from, causing intermittent UH/503.
-	sandboxDFPCacheName = "sandbox_dns_cache"
+	agentioDFPCacheName = "agentio_dns_cache"
 	// noSNISentinel is the SDS resource name envoy requests when the client
 	// hello has no SNI. It must be >=1 char (proto min_len) and must not match
 	// any real includeHosts pattern, so SDS denies it and the handshake fails.
@@ -530,7 +530,7 @@ func buildSandboxDFPFilter() *hcm.HttpFilter {
 		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&dfphttp.FilterConfig{
 			ImplementationSpecifier: &dfphttp.FilterConfig_DnsCacheConfig{
 				DnsCacheConfig: &dfp.DnsCacheConfig{
-					Name:            sandboxDFPCacheName,
+					Name:            agentioDFPCacheName,
 					DnsLookupFamily: cluster.Cluster_AUTO,
 				},
 			},

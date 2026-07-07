@@ -131,7 +131,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 			})
 		})
 	}
-	s.addStartFunc("sandbox-controller", func(stop <-chan struct{}) error {
+	s.addStartFunc("agentio-controller", func(stop <-chan struct{}) error {
 		go s.agentioController.Run(stop)
 		return nil
 	})

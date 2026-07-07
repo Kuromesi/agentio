@@ -39,7 +39,7 @@ import (
 // shared filter state, and an HCM RBAC filter that denies any inner request
 // whose Host header (port stripped, case-folded) does not match.
 //
-// Sandbox-config must enable tlsTermination.includeHosts for aliyun.com —
+// agentio-config must enable tlsTermination.includeHosts for aliyun.com —
 // without it the request never enters the tls-terminate chain, the filter
 // state is never written, and the test would vacuously pass for the wrong
 // reason.

@@ -29,6 +29,8 @@
 package core
 
 import (
+	"time"
+
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	dfpcluster "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
@@ -37,7 +39,6 @@ import (
 	httpupstream "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"time"
 
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/util/protoconv"
@@ -97,7 +98,7 @@ func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster
 				TypedConfig: protoconv.MessageToAny(&dfpcluster.ClusterConfig{
 					ClusterImplementationSpecifier: &dfpcluster.ClusterConfig_DnsCacheConfig{
 						DnsCacheConfig: &dfpcommon.DnsCacheConfig{
-							Name:            sandboxDFPCacheName,
+							Name:            agentioDFPCacheName,
 							DnsLookupFamily: cluster.Cluster_AUTO,
 						},
 					},
