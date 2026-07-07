@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package istio.alibabacloud.extensions.v1;
+package kruise.io.extensions.v1;
 
 option go_package = "pilot/pkg/serviceregistry/kube/controller/sandbox/extensions";
 
