@@ -105,6 +105,8 @@ spec:
           value: "{{ .Values.sidecarInjector.enabled }}"
         - name: AMBIENT_ENABLE_STATUS
           value: "false"
+        - name: PILOT_CA_CERT_CONFIGMAP
+          value: {{ include "agentio.caCertConfigMap" . }}
         - name: PILOT_IGNORE_RESOURCES
           value: "*."
         - name: PILOT_INCLUDE_RESOURCES

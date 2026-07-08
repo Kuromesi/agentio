@@ -25,7 +25,7 @@ global:
 ztunnel:
   image:
     hub: ""
-    name: agentio-tunnel
+    name: sandbox-tunnel
     tag: v0.1-5-gb51a6b9-aliyun
 
 sidecarInjector:
@@ -74,7 +74,7 @@ proxy:
     tag: v0.1-4-g733eb5a2-aliyun
 
 trafficExtension:
-  enabled: true
+  enabled: false
   name: traffic-extension
   port: 9002
   env: {}
@@ -84,7 +84,7 @@ trafficExtension:
   identityProviderUrl: "https://credential-provider.ack-agent-identity.svc.cluster.local:8443/"
   autoscaling:
     # -- Set to false to skip rendering the HPA.
-    enabled: true
+    enabled: false
     minReplicas: 2
     maxReplicas: 50
     targetCPUUtilizationPercentage: 80
@@ -112,12 +112,55 @@ trafficExtension:
 # -- Egress policies applied to agent traffic. Empty by default.
 egressPolicies: []
 
+# -- Statically chart-provisioned egress gateways — the alternative to creating
+# a Kubernetes Gateway and letting the controller provision it. Both approaches
+# produce workloads labeled networking.agents.kruise.io/sandbox-egress=true, so
+# the control plane treats them identically; use whichever fits (or both).
+# Per-gateway policy (tlsTermination, extProc, ...) is still matched from the
+# agentio-config EgressGateways list by name/namespace.
+egressGateway:
+  image:
+    hub: ""
+    name: proxyv2
+    tag: v0.1-4-g733eb5a2-aliyun
+  # -- Default replicas when a gateway's autoscaling is disabled.
+  replicas: 2
+  # -- Default resources per gateway (overridable per gateway).
+  resources:
+    requests:
+      cpu: "2"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  # -- Default autoscaling for every gateway (overridable per gateway).
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  pdbMinAvailable: 1
+  terminationGracePeriodSeconds: 30
+  # -- Optional Envoy stats flush/eviction intervals (empty = Istio defaults).
+  statsFlushInterval: ""
+  statsEvictionInterval: ""
+  # -- Extra env injected into every gateway proxy container.
+  env: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # -- One entry per egress gateway. Minimal form: [{ name: my-egress }].
+  # Each entry may override: labels, replicas, resources, autoscaling,
+  # nodeSelector, tolerations, affinity, pdbMinAvailable,
+  # terminationGracePeriodSeconds, statsFlushInterval, statsEvictionInterval.
+  gateways: []
+
 # -- Ambient mode. When enabled, deploys a node-level CNI DaemonSet and ztunnel
 # DaemonSet for ambient mesh. Independent of sidecarInjector — both can be
 # enabled simultaneously if needed.
 ambient:
   # -- Set true to deploy the CNI + ztunnel DaemonSets.
-  enabled: true
+  enabled: false
 
   cni:
     image:
