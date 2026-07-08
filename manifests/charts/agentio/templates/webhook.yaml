@@ -5,6 +5,7 @@ metadata:
   labels:
     app: sidecar-injector
     istio.io/rev: default
+    {{- include "agentio.commonLabels" . | nindent 4 }}
   name: {{ .Values.global.resourcePrefix }}-sidecar-injector-{{ include "agentio.namespace" . }}
 webhooks:
 - admissionReviewVersions:

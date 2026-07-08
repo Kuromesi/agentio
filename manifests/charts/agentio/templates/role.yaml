@@ -2,7 +2,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
-    app: {{ include "agentio.controller.name" . }}
+    {{- include "agentio.controller.labels" . | nindent 4 }}
   name: {{ include "agentio.controller.name" . }}
   namespace: {{ include "agentio.namespace" . }}
 rules:
@@ -37,7 +37,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
-    app: {{ include "agentio.controller.name" . }}
+    {{- include "agentio.controller.labels" . | nindent 4 }}
   name: {{ include "agentio.controller.name" . }}
   namespace: {{ include "agentio.namespace" . }}
 roleRef:

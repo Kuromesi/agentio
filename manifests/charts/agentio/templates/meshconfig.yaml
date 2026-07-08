@@ -50,6 +50,6 @@ data:
 kind: ConfigMap
 metadata:
   labels:
-    app: {{ include "agentio.controller.name" . }}
+    {{- include "agentio.controller.labels" . | nindent 4 }}
   name: {{ .Values.global.resourcePrefix }}
   namespace: {{ include "agentio.namespace" . }}

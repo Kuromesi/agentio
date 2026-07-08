@@ -67,5 +67,6 @@ kind: ConfigMap
 metadata:
   labels:
     manifests.agents.kruise.io/kube-source: "true"
+    {{- include "agentio.commonLabels" . | nindent 4 }}
   name: config-sources
   namespace: {{ include "agentio.namespace" . }}

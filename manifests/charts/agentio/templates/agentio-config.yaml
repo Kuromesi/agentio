@@ -21,7 +21,6 @@ sandboxExtProc:
 egressPolicies:
 {{ toYaml .Values.egressPolicies }}
 {{- end }}
-meshInternalTrafficPolicy: MESH_INTERNAL_PASSTHROUGH
 {{- end }}
 
 {{/* Merge built-in defaults above with user overrides from .Values.agentioConfig. */}}
@@ -36,3 +35,5 @@ kind: ConfigMap
 metadata:
   name: agentio-config
   namespace: {{ include "agentio.namespace" . }}
+  labels:
+    {{- include "agentio.commonLabels" . | nindent 4 }}

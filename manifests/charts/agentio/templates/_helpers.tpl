@@ -7,6 +7,23 @@ Shared helpers for the agentio chart.
 {{ .Release.Namespace }}
 {{- end -}}
 
+{{/*
+Common labels
+*/}}
+
+{{/* Chart name and version for the helm.sh/chart label. */}}
+{{- define "agentio.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* Provenance labels applied to every rendered resource's metadata (never to selectors). */}}
+{{- define "agentio.commonLabels" -}}
+helm.sh/chart: {{ include "agentio.chart" . }}
+app.kubernetes.io/part-of: agentio
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end -}}
+
 {{/* CA certificate ConfigMap name. */}}
 {{- define "agentio.caCertConfigMap" -}}
 {{ .Values.global.caCertConfigMap }}
@@ -15,6 +32,12 @@ Shared helpers for the agentio chart.
 {{/* agentiod (control plane) deployment name. */}}
 {{- define "agentio.controller.name" -}}
 agentiod
+{{- end -}}
+
+{{/* Metadata labels for control-plane (agentiod) resources. Not a selector. */}}
+{{- define "agentio.controller.labels" -}}
+app: {{ include "agentio.controller.name" . }}
+{{ include "agentio.commonLabels" . }}
 {{- end -}}
 
 {{/* Ambient mode toggle. */}}
@@ -60,6 +83,7 @@ k8s-app: {{ include "agentio.cni.daemonsetName" . }}
 {{- define "agentio.cni.labels" -}}
 {{ include "agentio.cni.selectorLabels" . }}
 app: {{ include "agentio.cni.name" . }}
+{{ include "agentio.commonLabels" . }}
 {{- end -}}
 
 {{/*
@@ -76,4 +100,5 @@ app: {{ include "agentio.ztunnel.name" . }}
 
 {{- define "agentio.ztunnel.labels" -}}
 {{ include "agentio.ztunnel.selectorLabels" . }}
+{{ include "agentio.commonLabels" . }}
 {{- end -}}

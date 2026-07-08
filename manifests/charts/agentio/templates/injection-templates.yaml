@@ -10,7 +10,7 @@ data:
     neverInjectSelector:
       []
     injectedAnnotations:
-    template: "{{`{{ Template_Version_And_Istio_Version_Mismatched_Check_Installation }}`}}"
+    template: {{ `{{ Template_Version_And_Istio_Version_Mismatched_Check_Installation }}` | quote }}
     templates:
       ztunnel: |
 {{ .Files.Get "files/ztunnel-injection-template.yaml" | trim | indent 8 }}
@@ -164,4 +164,7 @@ kind: ConfigMap
 metadata:
   name: {{ .Values.global.resourcePrefix }}-sidecar-injector
   namespace: {{ include "agentio.namespace" . }}
+  labels:
+    app: sidecar-injector
+    {{- include "agentio.commonLabels" . | nindent 4 }}
 {{- end }}
