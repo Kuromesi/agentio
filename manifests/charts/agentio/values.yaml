@@ -12,6 +12,11 @@ global:
   # -- When true, ztunnel (both sidecar and node-level) gets NET_ADMIN + root
   # to manage iptables/nftables firewall rules.
   enableFirewallRules: true
+  # -- Use the ClusterTrustBundle API instead of a ConfigMap to distribute the
+  # root cert. Requires the ClusterTrustBundle API enabled in the cluster. When
+  # true, agentiod publishes a ClusterTrustBundle and both injected sidecars and
+  # the node-level ztunnel mount it; when false they mount the caCertConfigMap.
+  enableClusterTrustBundle: false
   # -- Single identifier shared by MESH_CONFIG_MAP_NAME, INJECTOR_CONFIG_MAP_NAME,
   # LEADER_ELECTION_PREFIX, INJECTION_WEBHOOK_CONFIG_NAME and the matching ConfigMap /
   # MutatingWebhookConfiguration names. Change in one place; all references follow.
@@ -124,6 +129,10 @@ ambient:
     cniConfDir: /etc/cni/net.d
     cniConfFileName: ""
     cniNetnsDir: /var/run/netns
+    # -- Run install-cni in the host network namespace (hostNetwork + host DNS).
+    # Upstream default is false; only enable if your ambient setup requires
+    # sharing the host netns.
+    shareHostNetworkNamespace: false
     # -- Deploy as chained CNI plugin (true) or standalone (false)
     chained: true
     # -- Namespaces excluded from CNI ambient redirection

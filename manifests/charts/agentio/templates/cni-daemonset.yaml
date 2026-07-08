@@ -27,8 +27,10 @@ spec:
         prometheus.io/path: "/metrics"
         container.apparmor.security.beta.kubernetes.io/install-cni: unconfined
     spec:
+      {{- if .Values.ambient.cni.shareHostNetworkNamespace }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
       nodeSelector:
         kubernetes.io/os: linux
       {{- with .Values.ambient.cni.tolerations }}
@@ -76,8 +78,10 @@ spec:
           value: "true"
         - name: REPAIR_SIDECAR_ANNOTATION
           value: "sidecar.istio.io/status"
+        {{- if not .Values.ambient.cni.shareHostNetworkNamespace }}
         - name: ALLOW_SWITCH_TO_HOST_NS
           value: "true"
+        {{- end }}
         - name: NODE_NAME
           valueFrom:
             fieldRef:

@@ -91,6 +91,10 @@ spec:
           value: "true"
         - name: ENABLE_ON_DEMAND_CERTS
           value: "{{ .Values.agentiod.enableTlsTermination }}"
+        {{- if .Values.global.enableClusterTrustBundle }}
+        - name: ENABLE_CLUSTER_TRUST_BUNDLE_API
+          value: "true"
+        {{- end }}
         - name: PILOT_ENABLE_IP_AUTOALLOCATE
           value: "false"
         - name: MESH_INTERNAL_TRAFFIC_POLICY
