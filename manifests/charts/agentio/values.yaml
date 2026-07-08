@@ -31,7 +31,6 @@ sidecarInjector:
   enabled: true
 
 agentiod:
-  name: agentiod
   replicas: 1
   env: {}
   krtEventDistributeDebounce: "200ms"

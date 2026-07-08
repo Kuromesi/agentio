@@ -14,7 +14,7 @@ Shared helpers for the agentio chart.
 
 {{/* agentiod (control plane) deployment name. */}}
 {{- define "agentio.controller.name" -}}
-{{ .Values.agentiod.name }}
+agentiod
 {{- end -}}
 
 {{/* Ambient mode toggle. */}}

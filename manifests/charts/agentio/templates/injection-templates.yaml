@@ -2,7 +2,7 @@
 apiVersion: v1
 data:
   config: |-
-{{ .Files.Get "files/enhanced-traffic-management/injection-config.yaml" | indent 4 }}
+{{ .Files.Get "files/injection-config.yaml" | indent 4 }}
   values: |-
     {
       "gateways": {

@@ -30,9 +30,9 @@ import (
 )
 
 const (
-	DefaultNamespace   = "sandbox-traffic-system"
-	DefaultReleaseName = "sandbox"
-	DefaultChartDir    = "manifests/charts/sandbox"
+	DefaultNamespace   = "agentio-system"
+	DefaultReleaseName = "agentio"
+	DefaultChartDir    = "manifests/charts/agentio"
 )
 
 type Config struct {
