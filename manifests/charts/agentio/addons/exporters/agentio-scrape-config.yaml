@@ -15,20 +15,20 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
 
-  - job_name: traffic-proxy-stats
+  - job_name: istio-proxy-stats
     metrics_path: /stats/prometheus
     kubernetes_sd_configs:
       - role: pod
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_container_port_name]
         action: keep
-        regex: traffic-proxy-stats
+        regex: istio-proxy-stats
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
 
-  - job_name: sandbox-traffic-extension
+  - job_name: traffic-extension
     kubernetes_sd_configs:
       - role: endpoints
         namespaces:
@@ -43,7 +43,7 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
 
-  - job_name: sandbox-gateway-controller
+  - job_name: agemtopd
     kubernetes_sd_configs:
       - role: endpoints
         namespaces:
@@ -52,7 +52,7 @@ scrape_configs:
     relabel_configs:
       - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
         action: keep
-        regex: gateway-controller;http-monitoring
+        regex: agentiod;http-monitoring
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
       - source_labels: [__meta_kubernetes_pod_name]

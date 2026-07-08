@@ -2420,7 +2420,7 @@
       },
       "id": 102,
       "panels": [],
-      "title": "Gateway Controller",
+      "title": "Agentiod",
       "type": "row"
     },
     {
@@ -2545,7 +2545,7 @@
           "refId": "C"
         }
       ],
-      "title": "Gateway Controller - Push Time",
+      "title": "Agentiod - Push Time",
       "type": "timeseries"
     },
     {
@@ -2670,7 +2670,7 @@
           "refId": "C"
         }
       ],
-      "title": "Gateway Controller - Push Size",
+      "title": "Agentiod - Push Size",
       "type": "timeseries"
     },
     {
@@ -2792,7 +2792,7 @@
           "refId": "C"
         }
       ],
-      "title": "Gateway Controller - Push Queue Time",
+      "title": "Agentiod - Push Queue Time",
       "type": "timeseries"
     },
     {
@@ -2916,7 +2916,7 @@
           "hide": false
         }
       ],
-      "title": "Gateway Controller - Proxy Convergence Time",
+      "title": "Agentiod - Proxy Convergence Time",
       "type": "timeseries",
       "pluginVersion": "11.5.1"
     },
@@ -3011,13 +3011,13 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval]))",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"}[$__rate_interval]))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gateway Controller - CPU",
+      "title": "Agentiod - CPU",
       "type": "timeseries"
     },
     {
@@ -3111,13 +3111,13 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gateway Controller - Memory",
+      "title": "Agentiod - Memory",
       "type": "timeseries"
     },
     {
@@ -3212,13 +3212,13 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_requests{resource=\"cpu\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gateway Controller - CPU Usage/Request",
+      "title": "Agentiod - CPU Usage/Request",
       "type": "timeseries"
     },
     {
@@ -3313,13 +3313,13 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"}[$__rate_interval])) / sum by (pod) (kube_pod_container_resource_limits{resource=\"cpu\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gateway Controller - CPU Usage/Limit",
+      "title": "Agentiod - CPU Usage/Limit",
       "type": "timeseries"
     },
     {
@@ -3414,13 +3414,13 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"}) / sum by (pod) (kube_pod_container_resource_requests{resource=\"memory\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gateway Controller - Memory Usage/Request",
+      "title": "Agentiod - Memory Usage/Request",
       "type": "timeseries"
     },
     {
@@ -3515,13 +3515,13 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"gateway-controller-.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"}) / sum by (pod) (kube_pod_container_resource_limits{resource=\"memory\",container=\"discovery\",namespace=\"agentio-system\",pod=~\"agentiod-.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gateway Controller - Memory Usage/Limit",
+      "title": "Agentiod - Memory Usage/Limit",
       "type": "timeseries"
     },
     {
@@ -3628,7 +3628,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",container=~\"istio-proxy|traffic-proxy\",namespace=~\"$sandbox_namespace\",pod!~\"egress-gateway.*\"}[$__rate_interval]))",
+          "expr": "sum by (pod) (irate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",container=~\"istio-proxy\",namespace=~\"$sandbox_namespace\",pod!~\"egress-gateway.*\"}[$__rate_interval]))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3728,7 +3728,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",container=~\"istio-proxy|traffic-proxy\",namespace=~\"$sandbox_namespace\",pod!~\"egress-gateway.*\"})",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",container=~\"istio-proxy\",namespace=~\"$sandbox_namespace\",pod!~\"egress-gateway.*\"})",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -3742,8 +3742,7 @@
   "refresh": "30s",
   "schemaVersion": 40,
   "tags": [
-    "istio",
-    "pilot",
+    "agentio",
     "sandbox"
   ],
   "templating": {
@@ -3768,7 +3767,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "definition": "label_values(container_cpu_usage_seconds_total{container=~\"istio-proxy|traffic-proxy\"}, namespace)",
+        "definition": "label_values(container_cpu_usage_seconds_total{container=~\"istio-proxy\"}, namespace)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
@@ -3776,7 +3775,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(container_cpu_usage_seconds_total{container=~\"istio-proxy|traffic-proxy\"}, namespace)",
+          "query": "label_values(container_cpu_usage_seconds_total{container=~\"istio-proxy\"}, namespace)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,

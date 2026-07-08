@@ -2,9 +2,9 @@
 Shared helpers for the agentio chart.
 */}}
 
-{{/* Namespace for all agentio resources. */}}
+{{/* Namespace for all agentio resources: the Helm release namespace. */}}
 {{- define "agentio.namespace" -}}
-{{ .Values.namespace }}
+{{ .Release.Namespace }}
 {{- end -}}
 
 {{/* CA certificate ConfigMap name. */}}

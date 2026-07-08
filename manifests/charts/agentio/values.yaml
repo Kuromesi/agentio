@@ -1,8 +1,4 @@
 
-# -- Namespace for all enhanced traffic management resources.
-# Kept distinct from the agentio release namespace.
-namespace: agentio-system
-
 global:
   hub: registry-cn-hangzhou.ack.aliyuncs.com/dev
   trustDomain: cluster.local

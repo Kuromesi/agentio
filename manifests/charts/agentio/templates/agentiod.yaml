@@ -97,22 +97,14 @@ spec:
           value: {{ .Values.global.meshInternalTrafficPolicy | default "PEER_AWARE" | quote }}
         - name: AMBIENT_ENABLE_MULTI_NETWORK_WAYPOINT
           value: "false"
-        - name: PILOT_ENABLE_GATEWAY_API
-          value: "false"
-        - name: PILOT_ENABLE_GATEWAY_API_STATUS
-          value: "false"
         - name: INJECT_ENABLED
           value: "{{ .Values.sidecarInjector.enabled }}"
-        - name: PILOT_ENABLE_CA_CRL
-          value: "false"
-        - name: PILOT_CA_CERT_CONFIGMAP
-          value: agentio-ca-certs
         - name: AMBIENT_ENABLE_STATUS
           value: "false"
         - name: PILOT_IGNORE_RESOURCES
           value: "*."
         - name: PILOT_INCLUDE_RESOURCES
-          value: "trafficpolicies.network.alibabacloud.com,globaltrafficpolicies.network.alibabacloud.com"
+          value: "*.kruise.io,*.gateway.networking.k8s.io"
         - name: ISTIOD_CUSTOM_HOST
           value: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc,{{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local
         {{- if .Values.sidecarInjector.enabled }}

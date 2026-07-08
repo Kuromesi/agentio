@@ -110,6 +110,146 @@ rules:
   - subjectaccessreviews
   verbs:
   - create
+# Kubernetes Gateway API: read Gateways/routes and write their status.
+- apiGroups:
+  - gateway.networking.k8s.io
+  - gateway.networking.x-k8s.io
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - backendtlspolicies/status
+  - gatewayclasses/status
+  - gateways/status
+  - grpcroutes/status
+  - httproutes/status
+  - referencegrants/status
+  - tcproutes/status
+  - tlsroutes/status
+  - udproutes/status
+  verbs:
+  - update
+  - patch
+- apiGroups:
+  - gateway.networking.x-k8s.io
+  resources:
+  - xbackendtrafficpolicies/status
+  - xlistenersets/status
+  verbs:
+  - update
+  - patch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses
+  verbs:
+  - create
+  - update
+  - patch
+  - delete
+# Gateway/waypoint deployment controller: manage the injected Deployment,
+# Service, HPA, PDB and ServiceAccount for waypoints and gateways.
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - create
+  - delete
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - create
+  - delete
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - create
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - serviceaccounts
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - create
+  - delete
+# Certificate signing (needed when using the Kubernetes CA instead of SELF_SIGN).
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - certificatesigningrequests
+  - certificatesigningrequests/approval
+  - certificatesigningrequests/status
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - clustertrustbundles
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - signers
+  resourceNames:
+  - istio.io/istiod-ca
+  verbs:
+  - attest
+{{- if not .Values.agentiod.restrictedSecretsScope }}
+# When restrictedSecretsScope is disabled the control plane watches secrets in
+# every namespace (e.g. cross-namespace Gateway TLS), so it needs cluster-wide
+# read. With the scope restricted (default), secrets access lives in the
+# namespaced Role instead.
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
