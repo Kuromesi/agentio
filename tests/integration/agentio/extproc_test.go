@@ -337,19 +337,19 @@ func TestSandboxOnDemandCert(t *testing.T) {
 
 			// echo's forwarder auto-enables InsecureSkipVerify whenever CaCert
 			// is empty (pkg/test/echo/server/forwarder/config.go:292), so
-			// `Check: check.Error()` against aliyun.com would silently get a
+			// `Check: check.Error()` against example.com would silently get a
 			// 301 instead of a TLS failure. curl in the client pod uses the
 			// system trust store, which is what we actually want to assert.
 			curl := func() (string, string, error) {
 				return cluster.PodExec(podName, podNS, "app",
-					"curl -sS -o /dev/null -w %{http_code} --max-time 10 https://aliyun.com")
+					"curl -sS -o /dev/null -w %{http_code} --max-time 10 https://example.com")
 			}
 			curlInsecure := func() (string, string, error) {
 				return cluster.PodExec(podName, podNS, "app",
-					"curl -sS -k -o /dev/null -w %{http_code} --max-time 10 https://aliyun.com")
+					"curl -sS -k -o /dev/null -w %{http_code} --max-time 10 https://example.com")
 			}
 
-			ctx.NewSubTest("https to aliyun.com without tls termination").
+			ctx.NewSubTest("https to example.com without tls termination").
 				Run(func(ctx framework.TestContext) {
 					ctx.ConfigIstio().Eval(i.Settings().SystemNamespace, map[string]any{
 						"Namespace": i.Settings().SystemNamespace,
@@ -366,7 +366,7 @@ data:
       policy: GATEWAY
 `).ApplyOrFail(ctx)
 
-					// Raw TCP forward; client validates the real aliyun.com cert
+					// Raw TCP forward; client validates the real example.com cert
 					// against the system trust store and curl exits 0.
 					retry.UntilSuccessOrFail(ctx, func() error {
 						stdout, stderr, err := curl()
@@ -377,7 +377,7 @@ data:
 					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
 				})
 
-			ctx.NewSubTest("https to aliyun.com with tls termination requires insecure").
+			ctx.NewSubTest("https to example.com with tls termination requires insecure").
 				Run(func(ctx framework.TestContext) {
 					ctx.ConfigIstio().Eval(i.Settings().SystemNamespace, map[string]any{
 						"Namespace": i.Settings().SystemNamespace,
@@ -397,7 +397,7 @@ data:
       namespace: {{ .Namespace }}
       tlsTermination:
         includeHosts:
-        - "aliyun.com"
+        - "example.com"
 `).ApplyOrFail(ctx)
 
 					// SNI matches includeHosts → waypoint terminates with a leaf
@@ -471,23 +471,23 @@ data:
       namespace: {{ .Namespace }}
       tlsTermination:
         includeHosts:
-        - "aliyun.com"
+        - "example.com"
         excludeHosts:
-        - "www.baidu.com"
+        - "www.example.org"
 `).ApplyOrFail(ctx)
 
 			ctx.NewSubTest("excluded host bypasses termination").
 				Run(func(ctx framework.TestContext) {
-					// Real Baidu cert chains through the system trust store →
-					// exit 0 without -k. Any SSL error here means the exclude
-					// branch did not route to forward-tcp.
+					// Real example.org cert chains through the system trust
+					// store → exit 0 without -k. Any SSL error here means the
+					// exclude branch did not route to forward-tcp.
 					retry.UntilSuccessOrFail(ctx, func() error {
-						stdout, stderr, err := curl("www.baidu.com")
+						stdout, stderr, err := curl("www.example.org")
 						if err != nil {
 							return fmt.Errorf("excluded host should have used real cert, got: %v\nstderr=%s", err, stderr)
 						}
 						if stdout == "" {
-							return fmt.Errorf("empty status from baidu, stderr=%s", stderr)
+							return fmt.Errorf("empty status from example.org, stderr=%s", stderr)
 						}
 						return nil
 					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
@@ -500,7 +500,7 @@ data:
 					// untrusted sandbox-CA leaf — same assertion shape as
 					// TestSandboxOnDemandCert.
 					retry.UntilSuccessOrFail(ctx, func() error {
-						stdout, stderr, err := curl("aliyun.com")
+						stdout, stderr, err := curl("example.com")
 						if err == nil {
 							return fmt.Errorf("expected SSL trust failure for included host, got success: stdout=%s", stdout)
 						}

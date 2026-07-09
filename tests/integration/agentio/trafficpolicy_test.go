@@ -57,7 +57,7 @@ data:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-cidr
@@ -90,7 +90,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-deny
@@ -101,7 +101,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
       - action: allow
@@ -135,7 +135,7 @@ spec:
 						"SrcApp":          src.Config().Service,
 						"SrcAppNamespace": src.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-ingress-svc
@@ -178,7 +178,7 @@ spec:
 						"SrcApp":          src.Config().Service,
 						"SrcAppNamespace": src.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-ingress-deny-fallback
@@ -194,7 +194,7 @@ spec:
           - service:
               name: "{{ .SrcApp }}"
               namespace: "{{ .SrcAppNamespace }}"
-      - action: deny
+      - action: reject
         from:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -224,7 +224,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-port-range
@@ -295,7 +295,7 @@ spec:
 						"Dst":          dst.Config().Service,
 						"DstNamespace": dst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-fqdn
@@ -313,8 +313,8 @@ spec:
               name: kube-dns
       - action: allow
         to:
-          - fqdn: "www.aliyun.com"
-          - fqdn: "aliyun.com"
+          - fqdn: "www.example.com"
+          - fqdn: "example.com"
       - action: allow
         to:
           - service:
@@ -341,7 +341,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -350,7 +350,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTPS,
 							ServicePort: 443,
@@ -359,7 +359,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "baidu.com",
+						Address: "example.org",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -368,7 +368,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "baidu.com",
+						Address: "example.org",
 						Port: echo.Port{
 							Protocol:    protocol.HTTPS,
 							ServicePort: 443,
@@ -406,7 +406,7 @@ data:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: GlobalTrafficPolicy
 metadata:
   name: gtp-egress
@@ -441,7 +441,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -453,7 +453,7 @@ spec:
 			ctx.NewSubTest("global ingress deny baseline").
 				Run(func(ctx framework.TestContext) {
 					ctx.ConfigIstio().Eval("", nil, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: GlobalTrafficPolicy
 metadata:
   name: gtp-egress-baseline
@@ -462,9 +462,9 @@ spec:
   selector: {}
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
-          - fqdn: "aliyun.com"
+          - fqdn: "example.com"
       - action: allow
         to:
           - cidr: "0.0.0.0/0"
@@ -473,10 +473,10 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": anotherDst.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
-  name: tp-egress-baidu
+  name: tp-egress-example-org
 spec:
   priority: 100
   selector:
@@ -484,18 +484,18 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
-          - fqdn: "baidu.com"
+          - fqdn: "example.org"
 `).ApplyOrFail(ctx)
 
 					waitForAuthorizationPolicyOrFail(ctx, dst, "gtp-egress-baseline")
 					waitForAuthorizationPolicyOrFail(ctx, src, "gtp-egress-baseline")
 					waitForAuthorizationPolicyOrFail(ctx, anotherDst, "gtp-egress-baseline")
-					waitForAuthorizationPolicyOrFail(ctx, anotherDst, "tp-egress-baidu")
+					waitForAuthorizationPolicyOrFail(ctx, anotherDst, "tp-egress-example-org")
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -504,7 +504,7 @@ spec:
 					})
 
 					dst.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -513,7 +513,7 @@ spec:
 					})
 
 					anotherDst.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -522,7 +522,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "baidu.com",
+						Address: "example.org",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -531,7 +531,7 @@ spec:
 					})
 
 					dst.CallOrFail(ctx, echo.CallOptions{
-						Address: "baidu.com",
+						Address: "example.org",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -540,7 +540,7 @@ spec:
 					})
 
 					anotherDst.CallOrFail(ctx, echo.CallOptions{
-						Address: "baidu.com",
+						Address: "example.org",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -579,7 +579,7 @@ data:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-high-priority-deny
@@ -590,7 +590,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: "{{ .Dst }}"
 `).ApplyOrFail(ctx)
@@ -599,7 +599,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-low-priority-allow
@@ -636,7 +636,7 @@ spec:
 
 					// default deny
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Name:        "http",
 							Protocol:    protocol.HTTP,
@@ -651,7 +651,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-infra-policy
@@ -674,7 +674,7 @@ spec:
 						"Dst":        dst.Address(),
 						"AnotherDst": anotherDst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-business-policy
@@ -688,7 +688,7 @@ spec:
       - action: allow
         to:
           - cidr: "{{ .Dst }}"
-      - action: deny
+      - action: reject
         to:
           - cidr: "{{ .AnotherDst }}"
 `).ApplyOrFail(ctx)
@@ -696,7 +696,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-internet-policy
@@ -743,7 +743,7 @@ spec:
 
 					// default deny
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Name:        "http",
 							Protocol:    protocol.HTTP,
@@ -760,7 +760,7 @@ spec:
 						"Dst":        dst.Address(),
 						"AnotherDst": anotherDst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-rule-order-test
@@ -776,7 +776,7 @@ spec:
           - service:
               namespace: kube-system
               name: kube-dns
-      - action: deny
+      - action: reject
         to:
           - cidr: "{{ .AnotherDst }}"
       - action: allow
@@ -784,8 +784,8 @@ spec:
           - cidr: "{{ .Dst }}"
       - action: allow
         to:
-          - fqdn: "aliyun.com"
-      - action: deny
+          - fqdn: "example.com"
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -809,7 +809,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "baidu.com",
+						Address: "example.org",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -819,7 +819,7 @@ spec:
 
 					// default deny
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Name:        "http",
 							Protocol:    protocol.HTTP,
@@ -854,7 +854,7 @@ data:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-in
@@ -899,7 +899,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-notin-allow
@@ -923,7 +923,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"SrcApp": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-notin-deny
@@ -937,7 +937,7 @@ spec:
           - "{{ .SrcApp }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -971,7 +971,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-exists
@@ -1013,7 +1013,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"SrcApp": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-doesnotexist
@@ -1025,7 +1025,7 @@ spec:
         operator: DoesNotExist
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -1053,7 +1053,7 @@ spec:
 						"SrcApp":            src.Config().Service,
 						"LabelSandboxProxy": agentio.LabelSandboxProxyType,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-multi
@@ -1104,7 +1104,7 @@ spec:
 						"SrcApp":          src.Config().Service,
 						"SrcAppNamespace": src.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-matchexpr-ingress
@@ -1175,7 +1175,7 @@ data:
 						"DstApp":       dst.Config().Service,
 						"DstNamespace": dst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-deny-workload
@@ -1186,7 +1186,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - workload:
               namespace: "{{ .DstNamespace }}"
@@ -1225,7 +1225,7 @@ spec:
 						"DstApp":       dst.Config().Service,
 						"DstNamespace": dst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-allow-workload
@@ -1272,7 +1272,7 @@ spec:
 						"SrcApp":       src.Config().Service,
 						"SrcNamespace": src.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-ingress-allow-workload
@@ -1319,7 +1319,7 @@ spec:
 						"DstApp":       dst.Config().Service,
 						"DstNamespace": dst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-workload-port
@@ -1369,7 +1369,7 @@ spec:
 						"AnotherDstApp": anotherDst.Config().Service,
 						"AnotherDstNs":  anotherDst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-ingress-deny-workload-allow-all
@@ -1380,7 +1380,7 @@ spec:
       app: "{{ .App }}"
   ingress:
     rules:
-      - action: deny
+      - action: reject
         from:
           - workload:
               namespace: "{{ .AnotherDstNs }}"
@@ -1440,7 +1440,7 @@ data:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-allow-all-tcp
@@ -1461,7 +1461,7 @@ spec:
           - cidr: "{{ .Dst }}"
         ports:
           - protocol: TCP
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -1487,7 +1487,7 @@ spec:
 
 					// External traffic (not in CIDR allow list) should be denied
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -1502,7 +1502,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-port-with-proto
@@ -1524,7 +1524,7 @@ spec:
         ports:
           - protocol: TCP
             port: 80
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -1562,7 +1562,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-deny-udp-dns
@@ -1573,7 +1573,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         ports:
           - protocol: UDP
             port: 53
@@ -1610,7 +1610,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-mixed-proto
@@ -1634,7 +1634,7 @@ spec:
             port: 80
           - protocol: TCP
             port: 9090
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -1675,7 +1675,7 @@ spec:
 						"App": dst.Config().Service,
 						"Src": src.WorkloadsOrFail(ctx)[0].Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-ingress-port-with-proto
@@ -1692,7 +1692,7 @@ spec:
         ports:
           - protocol: TCP
             port: 18080
-      - action: deny
+      - action: reject
         from:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -1728,7 +1728,7 @@ spec:
 						"Namespace":  ns.Name(),
 						"DstService": dst.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-deny-tcp-not-icmp
@@ -1742,7 +1742,7 @@ spec:
       - action: allow
         ports:
           - protocol: UDP
-      - action: deny
+      - action: reject
         ports:
           - protocol: TCP
         to:
@@ -1786,7 +1786,7 @@ spec:
 						"Namespace":  ns.Name(),
 						"DstService": dst.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-deny-icmp-not-tcp
@@ -1800,7 +1800,7 @@ spec:
       - action: allow
         ports:
           - protocol: UDP
-      - action: deny
+      - action: reject
         ports:
           - protocol: ICMP
         to:
@@ -1879,7 +1879,7 @@ data:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-multi-pol-a
@@ -1902,7 +1902,7 @@ spec:
 						"App":       src.Config().Service,
 						"CidrBlock": anotherBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-multi-pol-b
@@ -1941,7 +1941,7 @@ spec:
 
 					// External traffic should be denied (not covered by either).
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -1957,7 +1957,7 @@ spec:
 			// ------------------------------------------------------------------
 			ctx.NewSubTest("egress and ingress in single policy").
 				Run(func(ctx framework.TestContext) {
-					// Deny dst's egress to external (aliyun.com IP block),
+					// Deny dst's egress to external (example.com IP block),
 					// and allow ingress from src's IP block.
 					srcIP := src.Instances()[0].WorkloadsOrFail(ctx)[0].Address()
 					srcParts := strings.Split(srcIP, ".")
@@ -1968,7 +1968,7 @@ spec:
 						"DstApp":   dst.Config().Service,
 						"SrcBlock": srcBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-combined-egress-ingress
@@ -1979,7 +1979,7 @@ spec:
       app: "{{ .DstApp }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: "198.51.100.0/24"
       - action: allow
@@ -2027,7 +2027,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-override-allow
@@ -2059,7 +2059,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": dstIP,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-override-deny
@@ -2070,7 +2070,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
 `).ApplyOrFail(ctx)
@@ -2101,7 +2101,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": dstIP,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-override-deny
@@ -2112,7 +2112,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
 `).DeleteOrFail(ctx)
@@ -2158,7 +2158,7 @@ data:
 						"DstService": dst.Config().Service,
 						"AltService": anotherDst.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-egress-multi-svc-port
@@ -2187,7 +2187,7 @@ spec:
             port: 80
           - protocol: TCP
             port: 9090
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -2222,7 +2222,7 @@ spec:
 					})
 
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -2239,7 +2239,7 @@ spec:
 						"SrcService": src.Config().Service,
 						"AltService": anotherDst.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-ingress-multi-src-port-range
@@ -2262,7 +2262,7 @@ spec:
           - protocol: TCP
             port: 18080
             endPort: 18081
-      - action: deny
+      - action: reject
         from:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -2355,7 +2355,7 @@ endpoints:
 						"App":       src.Config().Service,
 						"Namespace": ns.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-manual-ep
@@ -2376,7 +2376,7 @@ spec:
           - service:
               namespace: "{{ .Namespace }}"
               name: manual-svc
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -2444,7 +2444,7 @@ endpoints:
 						"App":       dst.Config().Service,
 						"Namespace": ns.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-manual-ep-ingress

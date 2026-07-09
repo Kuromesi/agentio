@@ -49,7 +49,7 @@ func TestSandboxTrafficPolicyLifecycle(t *testing.T) {
 						"App": src.Config().Service,
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-lifecycle-update
@@ -60,7 +60,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
 `).ApplyOrFail(ctx)
@@ -80,7 +80,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-lifecycle-update
@@ -111,7 +111,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-lifecycle-update
@@ -122,7 +122,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
 `).ApplyOrFail(ctx)
@@ -144,7 +144,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-lifecycle-delete
@@ -155,7 +155,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
 `).ApplyOrFail(ctx)
@@ -175,7 +175,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-lifecycle-delete
@@ -186,7 +186,7 @@ spec:
       app: "{{ .App }}"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
 `).DeleteOrFail(ctx)
@@ -221,7 +221,7 @@ spec:
 						"App":   src.Config().Service,
 						"Rules": rules.String(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-stress-50
@@ -233,7 +233,7 @@ spec:
   egress:
     rules:
 {{ .Rules }}
-      - action: deny
+      - action: reject
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(ctx)
@@ -258,7 +258,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-invalid-cidr
@@ -283,7 +283,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-after-invalid
@@ -316,7 +316,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-empty-selector
@@ -325,7 +325,7 @@ spec:
   selector: {}
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
       - action: allow
@@ -372,7 +372,7 @@ spec:
 						"App":          src.Config().Service,
 						"DstNamespace": dst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-wildcard-svc
@@ -417,7 +417,7 @@ spec:
 
 					// External traffic should be denied (not covered by service wildcard).
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -432,7 +432,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"Dst": dst.Address(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-label-reconcile
@@ -443,7 +443,7 @@ spec:
       app: "server"
   egress:
     rules:
-      - action: deny
+      - action: reject
         to:
           - cidr: {{ .Dst }}
       - action: allow
@@ -478,7 +478,7 @@ spec:
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-bad-fqdn
@@ -519,7 +519,7 @@ spec:
 						"App": src.Config().Service,
 						"Dst": serviceIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-after-bad-fqdn

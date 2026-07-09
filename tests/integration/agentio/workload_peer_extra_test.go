@@ -61,7 +61,7 @@ func TestSandboxWorkloadPeerAdvanced(t *testing.T) {
 						"App":          src.Config().Service,
 						"WlNamespace":  wlInst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-wl-multi-replica
@@ -122,7 +122,7 @@ spec:
 						"App":         src.Config().Service,
 						"WlNamespace": wlInst.Config().Namespace.Name(),
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-wl-dynamic
@@ -199,7 +199,7 @@ spec:
 						"AnotherSvcNs":   anotherDst.Config().Namespace.Name(),
 						"AnotherSvcName": anotherDst.Config().Service,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-wl-svc-mixed
@@ -249,7 +249,7 @@ spec:
 
 					// External FQDN should be denied (not in workload or service peers).
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,
@@ -272,7 +272,7 @@ spec:
 						"DstNamespace": dst.Config().Namespace.Name(),
 						"CidrBlock":    anotherIpBlock,
 					}, `
-apiVersion: network.alibabacloud.com/v1alpha1
+apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
   name: tp-wl-cidr-mixed
@@ -321,7 +321,7 @@ spec:
 
 					// External traffic should be denied.
 					src.CallOrFail(ctx, echo.CallOptions{
-						Address: "aliyun.com",
+						Address: "example.com",
 						Port: echo.Port{
 							Protocol:    protocol.HTTP,
 							ServicePort: 80,

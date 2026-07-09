@@ -39,7 +39,7 @@ import (
 // shared filter state, and an HCM RBAC filter that denies any inner request
 // whose Host header (port stripped, case-folded) does not match.
 //
-// agentio-config must enable tlsTermination.includeHosts for aliyun.com —
+// agentio-config must enable tlsTermination.includeHosts for example.com —
 // without it the request never enters the tls-terminate chain, the filter
 // state is never written, and the test would vacuously pass for the wrong
 // reason.
@@ -49,7 +49,7 @@ import (
 // which would tie SNI to the attacker-controlled Host and defeat the test.
 // InsecureSkipVerify is acceptable here — we assert RBAC decisions, not cert
 // trust (the waypoint terminates with a sandbox-CA leaf, not the real
-// aliyun.com cert).
+// example.com cert).
 func TestSandboxEgressSNIHostMatch(t *testing.T) {
 	framework.NewTest(t).
 		Run(func(ctx framework.TestContext) {
@@ -73,7 +73,7 @@ data:
       namespace: {{ .Namespace }}
       tlsTermination:
         includeHosts:
-        - "aliyun.com"
+        - "example.com"
 `).ApplyOrFail(ctx)
 
 			callOpts := func(hostHeader string) echo.CallOptions {
@@ -82,14 +82,14 @@ data:
 					headers.Set("Host", hostHeader)
 				}
 				return echo.CallOptions{
-					Address: "aliyun.com",
+					Address: "example.com",
 					Port: echo.Port{
 						Protocol:    protocol.HTTPS,
 						ServicePort: 443,
 					},
 					Scheme: scheme.HTTPS,
 					TLS: echo.TLS{
-						ServerName:         "aliyun.com",
+						ServerName:         "example.com",
 						InsecureSkipVerify: true,
 					},
 					HTTP: echo.HTTP{
@@ -98,10 +98,9 @@ data:
 				}
 			}
 
-			// allowed asserts the request was NOT RBAC-denied. aliyun.com may
-			// respond with anything 2xx/3xx (often a 301 to www.aliyun.com),
-			// so we only forbid 403 — the one symptom of the RBAC filter
-			// firing — rather than insisting on a specific 2xx.
+			// allowed asserts the request was NOT RBAC-denied. example.com
+			// returns 200, but we only forbid 403 — the one symptom of the
+			// RBAC filter firing — rather than insisting on a specific 2xx.
 			allowed := check.And(check.NoError(), check.NotStatus(http.StatusForbidden))
 			// denied asserts the RBAC filter rejected the request with 403.
 			denied := check.Forbidden(protocol.HTTP)
@@ -119,9 +118,9 @@ data:
 			ctx.NewSubTest("sni matches host with port suffix: allowed").
 				Run(func(ctx framework.TestContext) {
 					// request.host.split(':')[0] strips the port before
-					// comparison, so Host: aliyun.com:443 must still match.
+					// comparison, so Host: example.com:443 must still match.
 					retry.UntilSuccessOrFail(ctx, func() error {
-						opt := callOpts("aliyun.com:443")
+						opt := callOpts("example.com:443")
 						opt.Check = allowed
 						_, err := src.Call(opt)
 						return err
@@ -132,7 +131,7 @@ data:
 				Run(func(ctx framework.TestContext) {
 					// Both sides are lowerAscii'd before comparison.
 					retry.UntilSuccessOrFail(ctx, func() error {
-						opt := callOpts("ALIYUN.COM")
+						opt := callOpts("EXAMPLE.COM")
 						opt.Check = allowed
 						_, err := src.Call(opt)
 						return err
@@ -141,17 +140,17 @@ data:
 
 			ctx.NewSubTest("sni differs from host: denied with 403").
 				Run(func(ctx framework.TestContext) {
-					// The exact PoC: SNI=aliyun.com (passes
+					// The exact PoC: SNI=example.com (passes
 					// tls_termination.include_hosts and gets a leaf cert),
-					// Host=baidu.com (would route DFP to baidu.com without
+					// Host=example.org (would route DFP to example.org without
 					// the fix). With the fix, RBAC denies before DFP sees
 					// the host → 403.
 					retry.UntilSuccessOrFail(ctx, func() error {
-						opt := callOpts("baidu.com")
+						opt := callOpts("example.org")
 						opt.Check = denied
 						_, err := src.Call(opt)
 						if err != nil {
-							return fmt.Errorf("expected 403 for SNI=aliyun.com Host=baidu.com — egress allowlist may be bypassed: %w", err)
+							return fmt.Errorf("expected 403 for SNI=example.com Host=example.org — egress allowlist may be bypassed: %w", err)
 						}
 						return nil
 					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
@@ -160,14 +159,14 @@ data:
 			ctx.NewSubTest("sni differs from host different port: denied with 403").
 				Run(func(ctx framework.TestContext) {
 					// Port-stripping must not become a wildcard: Host
-					// baidu.com:443 still differs from SNI aliyun.com after
+					// example.org:443 still differs from SNI example.com after
 					// stripping the port.
 					retry.UntilSuccessOrFail(ctx, func() error {
-						opt := callOpts("baidu.com:443")
+						opt := callOpts("example.org:443")
 						opt.Check = denied
 						_, err := src.Call(opt)
 						if err != nil {
-							return fmt.Errorf("expected 403 for SNI=aliyun.com Host=baidu.com:443: %w", err)
+							return fmt.Errorf("expected 403 for SNI=example.com Host=example.org:443: %w", err)
 						}
 						return nil
 					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))

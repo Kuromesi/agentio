@@ -57,12 +57,12 @@ data:
       namespace: {{ .Namespace }}
       tlsTermination:
         includeHosts:
-        - "aliyun.com"
+        - "example.com"
 `).ApplyOrFail(ctx)
 
 			curlVersion := func(httpFlag string) (string, error) {
 				stdout, stderr, err := cluster.PodExec(podName, podNS, "app",
-					fmt.Sprintf("curl -sS -k -o /dev/null -w '%%{http_version}' --max-time 10 %s https://aliyun.com", httpFlag))
+					fmt.Sprintf("curl -sS -k -o /dev/null -w '%%{http_version}' --max-time 10 %s https://example.com", httpFlag))
 				if err != nil {
 					return "", fmt.Errorf("curl failed: %v, stderr: %s", err, stderr)
 				}
