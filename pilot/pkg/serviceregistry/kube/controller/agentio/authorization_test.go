@@ -18,6 +18,7 @@ import (
 	"sort"
 	"testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/api/security/v1beta1"
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/model"
@@ -69,8 +70,8 @@ func newControllerForTest(t *testing.T, services []*corev1.Service, endpointSlic
 	svcCol := krttest.GetMockCollection[*corev1.Service](mock)
 	esCol := krttest.GetMockCollection[*discovery.EndpointSlice](mock)
 	podCol := krttest.GetMockCollection[*corev1.Pod](mock)
-	tpCol := krttest.GetMockCollection[model.TrafficPolicy](mock)
-	gtpCol := krttest.GetMockCollection[model.GlobalTrafficPolicy](mock)
+	tpCol := krttest.GetMockCollection[*agentsv1alpha1.TrafficPolicy](mock)
+	gtpCol := krttest.GetMockCollection[*agentsv1alpha1.GlobalTrafficPolicy](mock)
 	return newAuthorizationController(tpCol, gtpCol, svcCol, esCol, fakeResolver, podCol, fakeTransform, "istio-system")
 }
 
@@ -113,10 +114,10 @@ func TestConvertRule_CIDRAllow(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
 	port := int32(8080)
 	endPort := int32(8090)
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To:     []model.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
-		Ports:  []model.TrafficPolicyPort{{Port: &port, EndPort: &endPort}},
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
+		Ports:  []agentsv1alpha1.TrafficPolicyPort{{Port: &port, EndPort: &endPort}},
 	}
 	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
 
@@ -135,9 +136,9 @@ func TestConvertRule_CIDRAllow(t *testing.T) {
 
 func TestConvertRule_CIDRDeny_UsesNotValues(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionDeny,
-		To:     []model.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionReject,
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
 	}
 	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
 	dst := findCondition(got, "destination.ip")
@@ -155,22 +156,22 @@ func TestConvertRule_PortRangeFormatting(t *testing.T) {
 	endOnly := int32(9000)
 	cases := []struct {
 		name  string
-		port  model.TrafficPolicyPort
+		port  agentsv1alpha1.TrafficPolicyPort
 		want  string // empty means no portRange condition expected
 		empty bool
 	}{
-		{"start only", model.TrafficPolicyPort{Port: &startOnly}, "8000-", false},
-		{"end only", model.TrafficPolicyPort{EndPort: &endOnly}, "-9000", false},
-		{"range with protocol", model.TrafficPolicyPort{Protocol: "TCP", Port: &startOnly, EndPort: &endOnly}, "8000-9000/TCP", false},
-		{"protocol only", model.TrafficPolicyPort{Protocol: "UDP"}, "/UDP", false},
-		{"both nil skips port", model.TrafficPolicyPort{}, "", true},
+		{"start only", agentsv1alpha1.TrafficPolicyPort{Port: &startOnly}, "8000-", false},
+		{"end only", agentsv1alpha1.TrafficPolicyPort{EndPort: &endOnly}, "-9000", false},
+		{"range with protocol", agentsv1alpha1.TrafficPolicyPort{Protocol: "TCP", Port: &startOnly, EndPort: &endOnly}, "8000-9000/TCP", false},
+		{"protocol only", agentsv1alpha1.TrafficPolicyPort{Protocol: "UDP"}, "/UDP", false},
+		{"both nil skips port", agentsv1alpha1.TrafficPolicyPort{}, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rule := model.TrafficPolicyRule{
-				Action: model.EgressRuleActionAllow,
-				To:     []model.TrafficPolicyPeer{{CIDR: "10.0.0.0/8"}},
-				Ports:  []model.TrafficPolicyPort{tc.port},
+			rule := agentsv1alpha1.TrafficPolicyRule{
+				Action: agentsv1alpha1.RuleActionAllow,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/8"}},
+				Ports:  []agentsv1alpha1.TrafficPolicyPort{tc.port},
 			}
 			got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
 			ports := findCondition(got, "destination.portRange")
@@ -189,9 +190,9 @@ func TestConvertRule_PortRangeFormatting(t *testing.T) {
 
 func TestConvertRule_FQDNResolver(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To:     []model.TrafficPolicyPeer{{FQDN: "example.com"}},
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "example.com"}},
 	}
 	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
 	dst := findCondition(got, "destination.ip")
@@ -206,9 +207,9 @@ func TestConvertRule_FQDNResolver(t *testing.T) {
 
 func TestConvertRule_FQDNUnknownReturnsEmpty(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To:     []model.TrafficPolicyPeer{{FQDN: "unknown.invalid"}},
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "unknown.invalid"}},
 	}
 	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
 	if dst := findCondition(got, "destination.ip"); dst != nil {
@@ -218,10 +219,10 @@ func TestConvertRule_FQDNUnknownReturnsEmpty(t *testing.T) {
 
 func TestConvertRule_SrcAndDstBothPopulated(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		From:   []model.TrafficPolicyPeer{{CIDR: "192.168.0.0/16"}},
-		To:     []model.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		From:   []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.168.0.0/16"}},
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
 	}
 	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
 	if src := findCondition(got, "source.ip"); src == nil || src.Values[0] != "192.168.0.0/16" {
@@ -234,19 +235,19 @@ func TestConvertRule_SrcAndDstBothPopulated(t *testing.T) {
 
 func TestConvertTrafficPolicyToWorkloadPolicies_EgressOnly(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	tp := model.TrafficPolicySpec{
+	tp := agentsv1alpha1.TrafficPolicySpec{
 		Priority: 500,
 		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "foo"}},
-		Egress: &model.TrafficPolicyDirection{
-			Rules: []model.TrafficPolicyRule{
+		Egress: &agentsv1alpha1.TrafficPolicyDirection{
+			Rules: []agentsv1alpha1.TrafficPolicyRule{
 				{
-					Action: model.EgressRuleActionAllow,
-					To:     []model.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
+					Action: agentsv1alpha1.RuleActionAllow,
+					To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
 				},
 			},
 		},
 	}
-	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ model.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
+	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		authz, _ := fakeTransform(ap)
 		return &model.WorkloadAuthorization{
 			Authorization: authz,
@@ -255,7 +256,7 @@ func TestConvertTrafficPolicyToWorkloadPolicies_EgressOnly(t *testing.T) {
 	policies := c.convertTrafficPolicyToWorkloadPolicies(
 		krt.TestingDummyContext{},
 		metav1.ObjectMeta{Name: "my-pol", Namespace: "ns"},
-		tp,
+		&tp,
 		"my-pol", "ns",
 		fakeResolver,
 		transform,
@@ -274,21 +275,21 @@ func TestConvertTrafficPolicyToWorkloadPolicies_EgressOnly(t *testing.T) {
 
 func TestConvertTrafficPolicyToWorkloadPolicies_IngressOnly(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	tp := model.TrafficPolicySpec{
+	tp := agentsv1alpha1.TrafficPolicySpec{
 		Priority: 100,
 		Selector: metav1.LabelSelector{},
-		Ingress: &model.TrafficPolicyDirection{
-			Rules: []model.TrafficPolicyRule{{Action: model.EgressRuleActionAllow}},
+		Ingress: &agentsv1alpha1.TrafficPolicyDirection{
+			Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}},
 		},
 	}
-	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ model.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
+	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		authz, _ := fakeTransform(ap)
 		return &model.WorkloadAuthorization{Authorization: authz}
 	}
 	policies := c.convertTrafficPolicyToWorkloadPolicies(
 		krt.TestingDummyContext{},
 		metav1.ObjectMeta{Name: "p"},
-		tp, "p", "ns",
+		&tp, "p", "ns",
 		fakeResolver, transform,
 	)
 	if len(policies) != 1 {
@@ -301,18 +302,18 @@ func TestConvertTrafficPolicyToWorkloadPolicies_IngressOnly(t *testing.T) {
 
 func TestConvertTrafficPolicyToWorkloadPolicies_Both(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	tp := model.TrafficPolicySpec{
-		Egress:  &model.TrafficPolicyDirection{Rules: []model.TrafficPolicyRule{{Action: model.EgressRuleActionAllow}}},
-		Ingress: &model.TrafficPolicyDirection{Rules: []model.TrafficPolicyRule{{Action: model.EgressRuleActionAllow}}},
+	tp := agentsv1alpha1.TrafficPolicySpec{
+		Egress:  &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}}},
+		Ingress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}}},
 	}
-	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ model.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
+	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		authz, _ := fakeTransform(ap)
 		return &model.WorkloadAuthorization{Authorization: authz}
 	}
 	policies := c.convertTrafficPolicyToWorkloadPolicies(
 		krt.TestingDummyContext{},
 		metav1.ObjectMeta{Name: "p"},
-		tp, "p", "ns",
+		&tp, "p", "ns",
 		fakeResolver, transform,
 	)
 	if len(policies) != 2 {
@@ -332,14 +333,14 @@ func TestConvertTrafficPolicyToWorkloadPolicies_Both(t *testing.T) {
 
 func TestConvertTrafficPolicyToWorkloadPolicies_Neither(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
-	tp := model.TrafficPolicySpec{}
-	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ model.TrafficPolicySpec, _ *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
+	tp := agentsv1alpha1.TrafficPolicySpec{}
+	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, _ *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		return nil
 	}
 	policies := c.convertTrafficPolicyToWorkloadPolicies(
 		krt.TestingDummyContext{},
 		metav1.ObjectMeta{Name: "p"},
-		tp, "p", "ns",
+		&tp, "p", "ns",
 		fakeResolver, transform,
 	)
 	if len(policies) != 0 {
@@ -370,9 +371,9 @@ func TestConvertRule_ServicePeer(t *testing.T) {
 	es := endpointSliceFor("frontend", "default", "10.244.0.7")
 	c := newControllerForTest(t, []*corev1.Service{svc}, []*discovery.EndpointSlice{es}, nil)
 
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To: []model.TrafficPolicyPeer{{Service: &model.TrafficPolicyServiceRef{
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To: []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{
 			Name: "frontend", Namespace: "default",
 		}}},
 	}
@@ -398,9 +399,9 @@ func TestConvertRule_ServicePeerWithManualEndpoints(t *testing.T) {
 	es := endpointSliceFor("external-db", "default", "192.168.1.100", "192.168.1.101")
 	c := newControllerForTest(t, []*corev1.Service{svc}, []*discovery.EndpointSlice{es}, nil)
 
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To: []model.TrafficPolicyPeer{{Service: &model.TrafficPolicyServiceRef{
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To: []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{
 			Name: "external-db", Namespace: "default",
 		}}},
 	}
@@ -427,9 +428,9 @@ func TestConvertRule_WorkloadPeerSkipsUnreadyPod(t *testing.T) {
 	unreadyPod := podWith("unready", "default", map[string]string{"app": "x"}, "10.244.0.2")
 	c := newControllerForTest(t, nil, nil, []*corev1.Pod{readyPod, unreadyPod})
 
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To: []model.TrafficPolicyPeer{{Workload: &model.TrafficPolicyWorkloadRef{
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To: []agentsv1alpha1.TrafficPolicyPeer{{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
 			Namespace: "default",
 			Selector:  map[string]string{"app": "x"},
 		}}},
@@ -458,9 +459,9 @@ func TestConvertRule_ServicePeerIncludesNotReadyEndpoints(t *testing.T) {
 	}
 	c := newControllerForTest(t, []*corev1.Service{svc}, []*discovery.EndpointSlice{es}, nil)
 
-	rule := model.TrafficPolicyRule{
-		Action: model.EgressRuleActionAllow,
-		To: []model.TrafficPolicyPeer{{Service: &model.TrafficPolicyServiceRef{
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To: []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{
 			Name: "my-svc", Namespace: "default",
 		}}},
 	}

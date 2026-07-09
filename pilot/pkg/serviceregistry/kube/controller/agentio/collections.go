@@ -15,58 +15,62 @@
 package agentio
 
 import (
-	"istio.io/istio/pilot/pkg/model"
+	"context"
+
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	agentsclient "github.com/openkruise/agents-api/client/clientset/versioned"
+	"istio.io/istio/pkg/config/schema/kubeclient"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/kclient"
 	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/kube/kubetypes"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
-func unstructuredToTyped[T any](us *unstructured.Unstructured) (T, error) {
-	var empty T
-	err := runtime.DefaultUnstructuredConverter.FromUnstructured(us.Object, &empty)
-	return empty, err
+// registerTypes registers the agents-api TrafficPolicy and
+// GlobalTrafficPolicy types with the kubeclient informer mechanism so that
+// NewDelayedInformer can use typed List/Watch instead of unstructured.
+func registerTypes(agentsCS agentsclient.Interface) {
+	tpGVR := schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "trafficpolicies"}
+	tpGVK := schema.GroupVersionKind{Group: "agents.kruise.io", Version: "v1alpha1", Kind: "TrafficPolicy"}
+	kubeclient.Register[*agentsv1alpha1.TrafficPolicy](tpGVR, tpGVK,
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (runtime.Object, error) {
+			return agentsCS.AgentsV1alpha1().TrafficPolicies(ns).List(context.Background(), opts)
+		},
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (watch.Interface, error) {
+			return agentsCS.AgentsV1alpha1().TrafficPolicies(ns).Watch(context.Background(), opts)
+		},
+		nil,
+	)
+
+	gtpGVR := schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "globaltrafficpolicies"}
+	gtpGVK := schema.GroupVersionKind{Group: "agents.kruise.io", Version: "v1alpha1", Kind: "GlobalTrafficPolicy"}
+	kubeclient.Register[*agentsv1alpha1.GlobalTrafficPolicy](gtpGVR, gtpGVK,
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (runtime.Object, error) {
+			return agentsCS.AgentsV1alpha1().GlobalTrafficPolicies().List(context.Background(), opts)
+		},
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (watch.Interface, error) {
+			return agentsCS.AgentsV1alpha1().GlobalTrafficPolicies().Watch(context.Background(), opts)
+		},
+		nil,
+	)
 }
 
-func newTrafficPoliciesCollection(client kube.Client, stop <-chan struct{}) krt.Collection[model.TrafficPolicy] {
-	trafficPolicies := kclient.NewDelayedInformer[*unstructured.Unstructured](client, schema.GroupVersionResource{
-		Group:    "network.alibabacloud.com",
-		Version:  "v1alpha1",
-		Resource: "trafficpolicies",
-	}, kubetypes.DynamicInformer, kclient.Filter{
-		ObjectFilter: client.ObjectFilter(),
-	})
-	trafficPolicies.Start(stop)
-
-	return krt.NewCollection(krt.WrapClient(trafficPolicies), func(ctx krt.HandlerContext, i *unstructured.Unstructured) *model.TrafficPolicy {
-		policy, err := unstructuredToTyped[model.TrafficPolicy](i)
-		if err != nil {
-			log.Warnf("Failed to convert traffic policy to typed, err: %v", err)
-			return nil
-		}
-		return &policy
-	})
+func newTrafficPoliciesCollection(client kube.Client, stop <-chan struct{}, opts krt.OptionsBuilder) krt.Collection[*agentsv1alpha1.TrafficPolicy] {
+	inf := kclient.NewDelayedInformer[*agentsv1alpha1.TrafficPolicy](client,
+		schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "trafficpolicies"},
+		kubetypes.StandardInformer, kclient.Filter{ObjectFilter: client.ObjectFilter()})
+	inf.Start(stop)
+	return krt.WrapClient(inf, opts.WithName("TrafficPolicies")...)
 }
 
-func newGlobalTrafficPoliciesCollection(client kube.Client, stop <-chan struct{}) krt.Collection[model.GlobalTrafficPolicy] {
-	globalTrafficPolicies := kclient.NewDelayedInformer[*unstructured.Unstructured](client, schema.GroupVersionResource{
-		Group:    "network.alibabacloud.com",
-		Version:  "v1alpha1",
-		Resource: "globaltrafficpolicies",
-	}, kubetypes.DynamicInformer, kclient.Filter{
-		ObjectFilter: client.ObjectFilter(),
-	})
-	globalTrafficPolicies.Start(stop)
-
-	return krt.NewCollection(krt.WrapClient(globalTrafficPolicies), func(ctx krt.HandlerContext, i *unstructured.Unstructured) *model.GlobalTrafficPolicy {
-		policy, err := unstructuredToTyped[model.GlobalTrafficPolicy](i)
-		if err != nil {
-			log.Warnf("Failed to convert global traffic policy to typed, err: %v", err)
-			return nil
-		}
-		return &policy
-	})
+func newGlobalTrafficPoliciesCollection(client kube.Client, stop <-chan struct{}, opts krt.OptionsBuilder) krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy] {
+	inf := kclient.NewDelayedInformer[*agentsv1alpha1.GlobalTrafficPolicy](client,
+		schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "globaltrafficpolicies"},
+		kubetypes.StandardInformer, kclient.Filter{ObjectFilter: client.ObjectFilter()})
+	inf.Start(stop)
+	return krt.WrapClient(inf, opts.WithName("GlobalTrafficPolicies")...)
 }

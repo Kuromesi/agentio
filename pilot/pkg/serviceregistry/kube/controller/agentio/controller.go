@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	agentsclient "github.com/openkruise/agents-api/client/clientset/versioned"
 	"google.golang.org/protobuf/proto"
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
@@ -29,6 +31,7 @@ import (
 	"istio.io/istio/pkg/kube/controllers"
 	"istio.io/istio/pkg/kube/krt"
 	istiolog "istio.io/istio/pkg/log"
+	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/workloadapi/security"
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -77,8 +80,8 @@ type Controller struct {
 
 	workloadConfigs krt.Singleton[model.WorkloadConfig]
 
-	trafficPolicies       krt.Collection[model.TrafficPolicy]
-	globalTrafficPolicies krt.Collection[model.GlobalTrafficPolicy]
+	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
+	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
 
 	stop chan struct{}
 }
@@ -86,9 +89,16 @@ type Controller struct {
 func NewController(options Options) (*Controller, error) {
 	stop := make(chan struct{})
 
+	// Create agents-api clientset and register types before creating collections
+	agentsCS, err := agentsclient.NewForConfig(options.KubeClient.RESTConfig())
+	if err != nil {
+		return nil, err
+	}
+	registerTypes(agentsCS)
+
 	opts := krt.NewOptionsBuilder(stop, "agentio-controller", options.Debugger)
-	TrafficPolicies := newTrafficPoliciesCollection(options.KubeClient, stop)
-	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop)
+	TrafficPolicies := newTrafficPoliciesCollection(options.KubeClient, stop, opts)
+	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop, opts)
 
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
 	agentioConfig := newAgentioConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)
@@ -143,19 +153,19 @@ func (c *Controller) initExternalNamesController() {
 		dnsServers: dnsServers,
 	})
 
-	c.trafficPolicies.Register(func(o krt.Event[model.TrafficPolicy]) {
+	c.trafficPolicies.Register(func(o krt.Event[*agentsv1alpha1.TrafficPolicy]) {
 		switch o.Event {
 		case controllers.EventAdd:
-			for hostname := range model.ExtractHostnameFromTrafficPolicy(o.New) {
+			for hostname := range extractHostname(&(*o.New).Spec) {
 				externalNamesController.HandleAdd(hostname)
 			}
 		case controllers.EventDelete:
-			for hostname := range model.ExtractHostnameFromTrafficPolicy(o.Old) {
+			for hostname := range extractHostname(&(*o.Old).Spec) {
 				externalNamesController.HandleDelete(hostname)
 			}
 		case controllers.EventUpdate:
-			oldSet := model.ExtractHostnameFromTrafficPolicy(o.Old)
-			newSet := model.ExtractHostnameFromTrafficPolicy(o.New)
+			oldSet := extractHostname(&(*o.Old).Spec)
+			newSet := extractHostname(&(*o.New).Spec)
 			removed, added := oldSet.Diff(newSet)
 			for _, hostname := range removed {
 				externalNamesController.HandleDelete(hostname)
@@ -166,19 +176,19 @@ func (c *Controller) initExternalNamesController() {
 		}
 	})
 
-	c.globalTrafficPolicies.Register(func(o krt.Event[model.GlobalTrafficPolicy]) {
+	c.globalTrafficPolicies.Register(func(o krt.Event[*agentsv1alpha1.GlobalTrafficPolicy]) {
 		switch o.Event {
 		case controllers.EventAdd:
-			for hostname := range model.ExtractHostnameFromGlobalTrafficPolicy(o.New) {
+			for hostname := range extractHostname(&(*o.New).Spec) {
 				externalNamesController.HandleAdd(hostname)
 			}
 		case controllers.EventDelete:
-			for hostname := range model.ExtractHostnameFromGlobalTrafficPolicy(o.Old) {
+			for hostname := range extractHostname(&(*o.Old).Spec) {
 				externalNamesController.HandleDelete(hostname)
 			}
 		case controllers.EventUpdate:
-			oldSet := model.ExtractHostnameFromGlobalTrafficPolicy(o.Old)
-			newSet := model.ExtractHostnameFromGlobalTrafficPolicy(o.New)
+			oldSet := extractHostname(&(*o.Old).Spec)
+			newSet := extractHostname(&(*o.New).Spec)
 			removed, added := oldSet.Diff(newSet)
 			for _, hostname := range removed {
 				externalNamesController.HandleDelete(hostname)
@@ -286,4 +296,36 @@ func (c *Controller) BuildPolicyCollection(
 		c.meshConfig.Get().RootNamespace,
 	)
 	return c.authorizationController.AsCollection()
+}
+
+// extractHostname returns all FQDN hostnames referenced in the policy's
+// ingress and egress rules (both From and To peers).
+func extractHostname(spec *agentsv1alpha1.TrafficPolicySpec) sets.Set[string] {
+	hosts := sets.New[string]()
+	if spec == nil {
+		return hosts
+	}
+	if spec.Egress != nil {
+		for _, rule := range spec.Egress.Rules {
+			for _, to := range rule.To {
+				hosts.Insert(to.FQDN)
+			}
+			for _, from := range rule.From {
+				hosts.Insert(from.FQDN)
+			}
+		}
+	}
+
+	if spec.Ingress != nil {
+		for _, rule := range spec.Ingress.Rules {
+			for _, to := range rule.To {
+				hosts.Insert(to.FQDN)
+			}
+			for _, from := range rule.From {
+				hosts.Insert(from.FQDN)
+			}
+		}
+	}
+
+	return hosts
 }

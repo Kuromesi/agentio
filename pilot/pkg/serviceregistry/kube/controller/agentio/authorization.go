@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/api/security/v1beta1"
 	typev1beta1 "istio.io/api/type/v1beta1"
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
@@ -46,8 +47,8 @@ type authorizationController struct {
 type resolveExternalName func(krt.HandlerContext, string) []string
 
 func newAuthorizationController(
-	TrafficPolicies krt.Collection[model.TrafficPolicy],
-	GlobalTrafficPolicies krt.Collection[model.GlobalTrafficPolicy],
+	TrafficPolicies krt.Collection[*agentsv1alpha1.TrafficPolicy],
+	GlobalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy],
 	services krt.Collection[*corev1.Service],
 	endpointSlices krt.Collection[*discovery.EndpointSlice],
 	resolver resolveExternalName,
@@ -73,7 +74,7 @@ func newAuthorizationController(
 
 	toWorkloadPolicy := func(ctx krt.HandlerContext,
 		objectMeta metav1.ObjectMeta,
-		policySpec model.TrafficPolicySpec,
+		policySpec *agentsv1alpha1.TrafficPolicySpec,
 		authz *securityclient.AuthorizationPolicy,
 	) *model.WorkloadAuthorization {
 		pol, status := toAuthorizationPolicy(authz)
@@ -108,12 +109,14 @@ func newAuthorizationController(
 		}
 	}
 
-	trafficPolicyAuthz := krt.NewManyCollection(TrafficPolicies, func(ctx krt.HandlerContext, i model.TrafficPolicy) []model.WorkloadAuthorization {
-		return c.convertTrafficPolicyToWorkloadPolicies(ctx, i.ObjectMeta, i.Spec, i.Name, i.Namespace, resolver, toWorkloadPolicy)
+	trafficPolicyAuthz := krt.NewManyCollection(TrafficPolicies, func(ctx krt.HandlerContext, i *agentsv1alpha1.TrafficPolicy) []model.WorkloadAuthorization {
+		meta := metav1.ObjectMeta{Name: i.Name, Namespace: i.Namespace, Annotations: i.Annotations, Generation: i.Generation}
+		return c.convertTrafficPolicyToWorkloadPolicies(ctx, meta, &i.Spec, i.Name, i.Namespace, resolver, toWorkloadPolicy)
 	})
 
-	globalTrafficPolicyAuthz := krt.NewManyCollection(GlobalTrafficPolicies, func(ctx krt.HandlerContext, i model.GlobalTrafficPolicy) []model.WorkloadAuthorization {
-		return c.convertTrafficPolicyToWorkloadPolicies(ctx, i.ObjectMeta, i.Spec, i.Name, rootNamespace, resolver, toWorkloadPolicy)
+	globalTrafficPolicyAuthz := krt.NewManyCollection(GlobalTrafficPolicies, func(ctx krt.HandlerContext, i *agentsv1alpha1.GlobalTrafficPolicy) []model.WorkloadAuthorization {
+		meta := metav1.ObjectMeta{Name: i.Name, Annotations: i.Annotations, Generation: i.Generation}
+		return c.convertTrafficPolicyToWorkloadPolicies(ctx, meta, &i.Spec, i.Name, rootNamespace, resolver, toWorkloadPolicy)
 	})
 
 	c.col = krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{
@@ -129,14 +132,14 @@ func (c *authorizationController) AsCollection() krt.Collection[model.WorkloadAu
 func (c *authorizationController) convertTrafficPolicyToWorkloadPolicies(
 	ctx krt.HandlerContext,
 	objectMeta metav1.ObjectMeta,
-	tp model.TrafficPolicySpec,
+	tp *agentsv1alpha1.TrafficPolicySpec,
 	name,
 	namespace string,
 	resolver resolveExternalName,
 	transform func(
 		krt.HandlerContext,
 		metav1.ObjectMeta,
-		model.TrafficPolicySpec,
+		*agentsv1alpha1.TrafficPolicySpec,
 		*securityclient.AuthorizationPolicy,
 	) *model.WorkloadAuthorization,
 ) []model.WorkloadAuthorization {
@@ -210,7 +213,7 @@ func (c *authorizationController) convertTrafficPolicyToWorkloadPolicies(
 
 // formatPortRange encodes a TrafficPolicyPort as "start-end/PROTO".
 // Examples: "80/TCP", "53-100/UDP", "/ICMP", "80-90", "".
-func formatPortRange(port model.TrafficPolicyPort) string {
+func formatPortRange(port agentsv1alpha1.TrafficPolicyPort) string {
 	hasPort := port.Port != nil || port.EndPort != nil
 	hasProto := port.Protocol != ""
 	if !hasPort && !hasProto {
@@ -233,10 +236,10 @@ func formatPortRange(port model.TrafficPolicyPort) string {
 	return s
 }
 
-func (c *authorizationController) convertRule(ctx krt.HandlerContext, rule model.TrafficPolicyRule, resolver resolveExternalName) *v1beta1.Rule {
+func (c *authorizationController) convertRule(ctx krt.HandlerContext, rule agentsv1alpha1.TrafficPolicyRule, resolver resolveExternalName) *v1beta1.Rule {
 	apRule := &v1beta1.Rule{}
 
-	fetchIps := func(peer model.TrafficPolicyPeer) []string {
+	fetchIps := func(peer agentsv1alpha1.TrafficPolicyPeer) []string {
 		ips := []string{}
 		if peer.CIDR != "" {
 			ips = append(ips, peer.CIDR)
@@ -311,7 +314,7 @@ func (c *authorizationController) convertRule(ctx krt.HandlerContext, rule model
 		if len(values) == 0 {
 			return
 		}
-		if rule.Action == model.EgressRuleActionAllow {
+		if rule.Action == agentsv1alpha1.RuleActionAllow {
 			apRule.When = append(apRule.When, &v1beta1.Condition{Key: key, Values: values})
 		} else {
 			apRule.When = append(apRule.When, &v1beta1.Condition{Key: key, NotValues: values})
