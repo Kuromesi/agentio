@@ -27,11 +27,11 @@ var (
 			"'PEER_AWARE': full peer identity matching for mTLS and policy enforcement.").Get()
 
 	RestrictedSecretsScope = env.Register("RESTRICTED_SECRETS_SCOPE", "",
-		"If set, the sandbox controller will restrict the secrets it reads in the specified namespace instead of all secrets in the cluster."+
+		"If set, the agentio controller will restrict the secrets it reads in the specified namespace instead of all secrets in the cluster."+
 			"This is required in environments with strict RBAC policies that limit secret access, but can cause issues if sandbox workloads need to read additional secrets.").Get()
 
 	EnableOnDemandCerts = env.Register("ENABLE_ON_DEMAND_CERTS", false,
-		"If enabled, the sandbox controller will sign certs for requested hostnames.").Get()
+		"If enabled, the agentio controller will sign certs for requested hostnames.").Get()
 
 	ValidateTlsTerminatedSNI = env.Register("VALIDATE_TLS_TERMINATED_SNI", true, "Validate if sni and host header is consistent after tls terminated.").Get()
 

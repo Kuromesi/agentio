@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run sandbox integration tests across a matrix of configurations.
+# Run agentio integration tests across a matrix of configurations.
 #
 # Usage:
 #   ./run-matrix.sh                    # run full matrix

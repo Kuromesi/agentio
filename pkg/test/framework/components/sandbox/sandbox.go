@@ -140,25 +140,41 @@ func (i *instance) Close() error {
 }
 
 func writeValues(ctx resource.Context, cfg Config) (string, error) {
+	// Only the images built from THIS repo and pushed to the KinD-local registry
+	// are overridden here (hub+tag from the test settings). The cni image is also
+	// renamed because the build target produces "install-cni" while the chart
+	// default name is different.
+	//
+	// External components (ztunnel, traffic-extension) are intentionally NOT
+	// overridden: they keep the chart's own default image references from
+	// values.yaml (global.hub is left untouched so the empty-hub ztunnel image
+	// resolves to it). Bumping those components is therefore a values.yaml change
+	// and never a CI/workflow change.
 	hub := ctx.Settings().Image.Hub
 	tag := ctx.Settings().Image.Tag
 
 	values := fmt.Sprintf(`enabled: true
 namespace: %s
 global:
-  hub: %s
   trustDomain: cluster.local
   clusterId: Kubernetes
-  ztunnelImage:
-    hub: %s
-    name: sandbox-tunnel
-    tag: %s
 agentiod:
   image:
     hub: %s
     name: pilot
     tag: %s
-`, cfg.Namespace, hub, hub, tag, hub, tag)
+proxy:
+  image:
+    hub: %s
+    name: proxyv2
+    tag: %s
+ambient:
+  cni:
+    image:
+      hub: %s
+      name: install-cni
+      tag: %s
+`, cfg.Namespace, hub, tag, hub, tag, hub, tag)
 
 	dir, err := ctx.CreateTmpDirectory("sandbox-values")
 	if err != nil {

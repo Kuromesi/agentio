@@ -7,7 +7,7 @@ import "networking/v1alpha3/virtual_service.proto";
 
 option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
 
-// AgentioConfig is the complete configuration for the sandbox controller.
+// AgentioConfig is the complete configuration for the agentio controller.
 message AgentioConfig {
   // External processing provider for sandbox traffic inspection and policy enforcement.
   ExtProcProvider sandbox_ext_proc = 1;

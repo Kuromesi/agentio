@@ -179,7 +179,7 @@ func (EgressPolicyAction) EnumDescriptor() ([]byte, []int) {
 	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{2}
 }
 
-// AgentioConfig is the complete configuration for the sandbox controller.
+// AgentioConfig is the complete configuration for the agentio controller.
 type AgentioConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// External processing provider for sandbox traffic inspection and policy enforcement.
