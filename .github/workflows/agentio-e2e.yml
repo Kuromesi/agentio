@@ -6,8 +6,8 @@ name: agentio-e2e
 #   - pilot(agentiod), install-cni, echo app, and ext-proc are BUILT from this
 #     repo and pushed only to the KinD-local registry by the Agentio-specific
 #     script.
-#   - proxy and ztunnel are pulled anonymously from the external ACR references
-#     configured in the job environment. No registry credentials are used.
+#   - no private registry credentials or temporary external image overrides are
+#     configured in this workflow.
 #
 # Failures are intentional signal: registry access and cluster setup are part of
 # the end-to-end contract and must not be reported as a successful check.
@@ -40,12 +40,6 @@ jobs:
       BUILD_WITH_CONTAINER: "0"
       ISTIO_DOCKER_BUILDER: docker
       JOB_TYPE: presubmit
-      AGENTIO_PROXY_IMAGE_HUB: registry-cn-hangzhou.ack.aliyuncs.com/dev
-      AGENTIO_PROXY_IMAGE_NAME: proxyv2
-      AGENTIO_PROXY_IMAGE_TAG: v0.1-4-g733eb5a2-aliyun
-      AGENTIO_ZTUNNEL_IMAGE_HUB: registry-cn-hangzhou.ack.aliyuncs.com/dev
-      AGENTIO_ZTUNNEL_IMAGE_NAME: sandbox-tunnel
-      AGENTIO_ZTUNNEL_IMAGE_TAG: v0.1-11-ge4be822-aliyun
     steps:
       - uses: actions/checkout@v4
         with:
