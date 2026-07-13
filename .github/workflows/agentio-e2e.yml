@@ -5,10 +5,10 @@ name: agentio-e2e
 # Component images:
 #   - pilot(agentiod), proxyv2, install-cni are BUILT from this repo and pushed
 #     to the KinD-local registry by prow/integ-suite-kind.sh (HUB/TAG handled
-#     automatically). No image refs are configured here.
-#   - ztunnel and traffic-extension are external images; the test uses the
-#     chart's own defaults in manifests/charts/agentio/values.yaml. Bumping them
-#     is a values.yaml change, never a workflow change.
+#     automatically). The locally built proxyv2 is not deployed when the
+#     external proxy override below is configured.
+#   - proxy and ztunnel are pulled anonymously from the external ACR references
+#     configured in the job environment. No registry credentials are used.
 #
 # Failures are intentional signal: registry access and cluster setup are part of
 # the end-to-end contract and must not be reported as a successful check.
@@ -20,7 +20,7 @@ on:
       - "manifests/charts/agentio/**"
       - "pilot/pkg/serviceregistry/kube/controller/agentio/**"
       - "pilot/pkg/networking/core/**"
-      - "tests/integration/sandbox/**"
+      - "tests/integration/agentio/**"
       - "pkg/test/framework/components/sandbox/**"
       - ".github/workflows/agentio-e2e.yml"
 
@@ -36,10 +36,18 @@ jobs:
       # the Istio build container, and build images with the docker builder.
       BUILD_WITH_CONTAINER: "0"
       ISTIO_DOCKER_BUILDER: docker
+      JOB_TYPE: presubmit
+      AGENTIO_PROXY_IMAGE_HUB: registry-cn-hangzhou.ack.aliyuncs.com/dev
+      AGENTIO_PROXY_IMAGE_NAME: proxyv2
+      AGENTIO_PROXY_IMAGE_TAG: v0.1-4-g733eb5a2-aliyun
+      AGENTIO_ZTUNNEL_IMAGE_HUB: registry-cn-hangzhou.ack.aliyuncs.com/dev
+      AGENTIO_ZTUNNEL_IMAGE_NAME: sandbox-tunnel
+      AGENTIO_ZTUNNEL_IMAGE_TAG: v0.1-8-gf471abf-aliyun
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -47,9 +55,10 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.2
-      - name: Install kind
+      - name: Install KinD and crane
         run: |
           go install sigs.k8s.io/kind@v0.24.0
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Run sandbox e2e (KinD)
-        run: prow/integ-suite-kind.sh test.integration.sandbox.kube
+      - name: Run agentio e2e (KinD)
+        run: prow/integ-suite-kind.sh test.integration.agentio.kube

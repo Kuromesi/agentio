@@ -16,7 +16,7 @@ set -euo pipefail
 MODES="${MODES:-sidecar ambient}"
 BACKENDS="${BACKENDS:-auto iptables}"
 TIMEOUT="${TIMEOUT:-30m}"
-TEST_PKG="./tests/integration/sandbox/..."
+TEST_PKG="./tests/integration/agentio/..."
 EXTRA_FLAGS="${*}"
 
 RED='\033[0;31m'

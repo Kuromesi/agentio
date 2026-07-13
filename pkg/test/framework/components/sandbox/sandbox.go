@@ -16,12 +16,15 @@ package sandbox
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
-	kubecluster "istio.io/istio/pkg/test/framework/components/cluster/kube"
 	testenv "istio.io/istio/pkg/test/env"
+	kubecluster "istio.io/istio/pkg/test/framework/components/cluster/kube"
 	"istio.io/istio/pkg/test/framework/resource"
 	"istio.io/istio/pkg/test/helm"
 	testKube "istio.io/istio/pkg/test/kube"
@@ -30,10 +33,17 @@ import (
 )
 
 const (
-	DefaultNamespace   = "agentio-system"
-	DefaultReleaseName = "agentio"
-	DefaultChartDir    = "manifests/charts/agentio"
+	DefaultNamespace        = "agentio-system"
+	DefaultReleaseName      = "agentio"
+	DefaultChartDir         = "manifests/charts/agentio"
+	controlPlanePodSelector = "app=agentiod"
 )
+
+type ImageConfig struct {
+	Hub  string
+	Name string
+	Tag  string
+}
 
 type Config struct {
 	Namespace   string
@@ -41,15 +51,58 @@ type Config struct {
 	ChartPath   string
 	WaitTimeout time.Duration
 	// Values are --set style overrides applied to the chart.
-	Values map[string]string
+	Values       map[string]string
+	ProxyImage   *ImageConfig
+	ZtunnelImage *ImageConfig
+}
+
+func (i ImageConfig) helmValues(prefix string) (map[string]string, error) {
+	fields := map[string]string{
+		"hub":  i.Hub,
+		"name": i.Name,
+		"tag":  i.Tag,
+	}
+	values := make(map[string]string, len(fields))
+	for key, value := range fields {
+		if value == "" || value != strings.TrimSpace(value) || strings.ContainsAny(value, ",={}") {
+			return nil, fmt.Errorf("invalid %s image %s %q", prefix, key, value)
+		}
+		values[fmt.Sprintf("%s.image.%s", prefix, key)] = value
+	}
+	return values, nil
+}
+
+func (c Config) helmValues() (map[string]string, error) {
+	values := maps.Clone(c.Values)
+	if values == nil {
+		values = map[string]string{}
+	}
+	images := []struct {
+		prefix string
+		image  *ImageConfig
+	}{
+		{prefix: "proxy", image: c.ProxyImage},
+		{prefix: "ztunnel", image: c.ZtunnelImage},
+	}
+	for _, configuredImage := range images {
+		if configuredImage.image == nil {
+			continue
+		}
+		imageValues, err := configuredImage.image.helmValues(configuredImage.prefix)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(values, imageValues)
+	}
+	return values, nil
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Namespace:       DefaultNamespace,
-		ReleaseName:     DefaultReleaseName,
-		ChartPath:       filepath.Join(testenv.IstioSrc, DefaultChartDir),
-		WaitTimeout:     5 * time.Minute,
+		Namespace:   DefaultNamespace,
+		ReleaseName: DefaultReleaseName,
+		ChartPath:   filepath.Join(testenv.IstioSrc, DefaultChartDir),
+		WaitTimeout: 5 * time.Minute,
 	}
 }
 
@@ -79,14 +132,14 @@ func Setup(i *Instance, cfn SetupConfigFn) resource.SetupFn {
 }
 
 type instance struct {
-	id        resource.ID
-	cfg       Config
-	helmInst  *helm.Helm
-	ctx       resource.Context
+	id       resource.ID
+	cfg      Config
+	helmInst *helm.Helm
+	ctx      resource.Context
 }
 
-func (i *instance) ID() resource.ID   { return i.id }
-func (i *instance) Namespace() string  { return i.cfg.Namespace }
+func (i *instance) ID() resource.ID     { return i.id }
+func (i *instance) Namespace() string   { return i.cfg.Namespace }
 func (i *instance) ReleaseName() string { return i.cfg.ReleaseName }
 
 func install(ctx resource.Context, cfg Config) (Instance, error) {
@@ -101,9 +154,20 @@ func install(ctx resource.Context, cfg Config) (Instance, error) {
 		return nil, fmt.Errorf("failed to write sandbox values: %v", err)
 	}
 
+	values, err := cfg.helmValues()
+	if err != nil {
+		return nil, fmt.Errorf("invalid sandbox Helm values: %v", err)
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	args := []string{"--create-namespace"}
-	for k, v := range cfg.Values {
-		args = append(args, "--set", fmt.Sprintf("%s=%s", k, v))
+	for _, key := range keys {
+		value := values[key]
+		args = append(args, "--set", fmt.Sprintf("%s=%s", key, value))
 	}
 
 	if err := h.InstallChart(
@@ -118,7 +182,7 @@ func install(ctx resource.Context, cfg Config) (Instance, error) {
 		return nil, fmt.Errorf("failed to install sandbox chart: %v", err)
 	}
 
-	fetchFn := testKube.NewPodFetch(cs, cfg.Namespace, "app=gateway-controller")
+	fetchFn := testKube.NewPodFetch(cs, cfg.Namespace, controlPlanePodSelector)
 	if _, err := testKube.WaitUntilPodsAreReady(fetchFn, retry.Timeout(cfg.WaitTimeout), retry.Delay(5*time.Second)); err != nil {
 		return nil, fmt.Errorf("sandbox control plane not ready: %v", err)
 	}
@@ -145,11 +209,9 @@ func writeValues(ctx resource.Context, cfg Config) (string, error) {
 	// renamed because the build target produces "install-cni" while the chart
 	// default name is different.
 	//
-	// External components (ztunnel, traffic-extension) are intentionally NOT
-	// overridden: they keep the chart's own default image references from
-	// values.yaml (global.hub is left untouched so the empty-hub ztunnel image
-	// resolves to it). Bumping those components is therefore a values.yaml change
-	// and never a CI/workflow change.
+	// External image overrides supplied through Config are applied later as Helm
+	// --set arguments, so they take precedence over these local image defaults.
+	// Components without an explicit override keep the chart's own defaults.
 	hub := ctx.Settings().Image.Hub
 	tag := ctx.Settings().Image.Tag
 

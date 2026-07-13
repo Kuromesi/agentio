@@ -47,10 +47,16 @@ var (
 )
 
 var (
-	deployAsSandbox = env.Register("DEPLOY_AS_SANDBOX", false, "Whether to deploy echo instances as sandbox workloads").Get()
-	ambientMode     = env.Register("AMBIENT_MODE", false, "Whether to use ambient mode (node-level ztunnel) instead of sidecar ztunnel").Get()
-	firewallBackend = env.Register("FIREWALL_BACKEND", "auto", "Ztunnel firewall backend: auto or iptables").Get()
-	enableFirewall  = env.Register("ENABLE_FIREWALL", false, "Whether to enable firewall rules; when false, UDP/ICMP traffic policy tests are skipped").Get()
+	deployAsSandbox  = env.Register("DEPLOY_AS_SANDBOX", false, "Whether to deploy echo instances as sandbox workloads").Get()
+	ambientMode      = env.Register("AMBIENT_MODE", false, "Whether to use ambient mode (node-level ztunnel) instead of sidecar ztunnel").Get()
+	firewallBackend  = env.Register("FIREWALL_BACKEND", "auto", "Ztunnel firewall backend: auto or iptables").Get()
+	enableFirewall   = env.Register("ENABLE_FIREWALL", false, "Whether to enable firewall rules; when false, UDP/ICMP traffic policy tests are skipped").Get()
+	proxyImageHub    = env.Register("AGENTIO_PROXY_IMAGE_HUB", "", "External proxy image registry and namespace").Get()
+	proxyImageName   = env.Register("AGENTIO_PROXY_IMAGE_NAME", "", "External proxy image name").Get()
+	proxyImageTag    = env.Register("AGENTIO_PROXY_IMAGE_TAG", "", "External proxy image tag").Get()
+	ztunnelImageHub  = env.Register("AGENTIO_ZTUNNEL_IMAGE_HUB", "", "External ztunnel image registry and namespace").Get()
+	ztunnelImageName = env.Register("AGENTIO_ZTUNNEL_IMAGE_NAME", "", "External ztunnel image name").Get()
+	ztunnelImageTag  = env.Register("AGENTIO_ZTUNNEL_IMAGE_TAG", "", "External ztunnel image tag").Get()
 )
 
 func TestMain(m *testing.M) {
@@ -82,6 +88,16 @@ func TestMain(m *testing.M) {
 			cfg.Values = map[string]string{
 				"ambient.ztunnel.env.FIREWALL_BACKEND": firewallBackend,
 				"global.enableFirewallRules":           fmt.Sprintf("%t", enableFirewall),
+				"agentiod.resources.requests.cpu":      "1",
+				"agentiod.resources.requests.memory":   "1Gi",
+				"agentiod.resources.limits.cpu":        "1",
+				"agentiod.resources.limits.memory":     "1Gi",
+			}
+			if proxyImageHub != "" || proxyImageName != "" || proxyImageTag != "" {
+				cfg.ProxyImage = &sandboxcomp.ImageConfig{Hub: proxyImageHub, Name: proxyImageName, Tag: proxyImageTag}
+			}
+			if ztunnelImageHub != "" || ztunnelImageName != "" || ztunnelImageTag != "" {
+				cfg.ZtunnelImage = &sandboxcomp.ImageConfig{Hub: ztunnelImageHub, Name: ztunnelImageName, Tag: ztunnelImageTag}
 			}
 		})).
 		Setup(namespace.Setup(&ns, nsCfg)).
