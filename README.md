@@ -1,7 +1,5 @@
 # agentio
 
----
-
 <img src="logo/agentio.png" alt="agentio logo" width="250">
 
 ---
