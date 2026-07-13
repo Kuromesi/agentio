@@ -151,7 +151,7 @@ type onDemandCertController struct {
 	maxAge       time.Duration
 
 	caSingleton krt.Singleton[caState]
-	// agentioConfig is the live sandbox config used by Authorize to decide
+	// agentioConfig is the live agentio config used by Authorize to decide
 	// whether a (SA, NS) pair belongs to a registered EgressGateway.
 	agentioConfig krt.Singleton[model.AgentioConfig]
 
@@ -393,11 +393,11 @@ func (c *onDemandCertController) GetDockerCredential(_, _ string) ([]byte, error
 // applied separately by the caller via IsAllowedOnDemandDomain.
 func (c *onDemandCertController) Authorize(serviceAccount, namespace string) error {
 	if c.agentioConfig == nil {
-		return fmt.Errorf("on-demand cert controller has no sandbox config wired in")
+		return fmt.Errorf("on-demand cert controller has no agentio config wired in")
 	}
 	cfg := c.agentioConfig.Get()
 	if cfg == nil {
-		return fmt.Errorf("sandbox config not loaded yet")
+		return fmt.Errorf("agentio config not loaded yet")
 	}
 	for _, g := range cfg.GetEgressGateways() {
 		if g.GetName() == serviceAccount && g.GetNamespace() == namespace {

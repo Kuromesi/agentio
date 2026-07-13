@@ -40,7 +40,7 @@ var (
 	AgentioConfigMapName = env.Register("AGENTIO_CONFIGMAP_NAME", "agentio-config",
 		"ConfigMap name of agentio config").Get()
 	PrimaryAgentioConfigMapName = env.Register("PRIMARY_AGENTIO_CONFIGMAP_NAME", "agentio-config-primary",
-		"ConfigMap name of primary sandbox config. When set, this config takes precedence over the base agentio config.").Get()
+		"ConfigMap name of primary agentio config. When set, this config takes precedence over the base agentio config.").Get()
 )
 
 func IgnoreSandboxLabels(labels map[string]string, sandboxIgnoredLabels []string) map[string]string {
@@ -73,7 +73,7 @@ func applyAgentioConfig(yml string, defaultConfig *model.AgentioConfig) (*model.
 	if err := protomarshal.ApplyYAML(yml, out.AgentioConfig); err != nil {
 		return nil, err
 	}
-	log.Infof("Loaded sandbox config: %v", out.AgentioConfig)
+	log.Infof("Loaded agentio config: %v", out.AgentioConfig)
 	return out, nil
 }
 
@@ -106,7 +106,7 @@ func newAgentioConfig(client kube.Client, rootNamespace string, opts krt.Options
 			if cfgYaml, exists := cm.Data[AgentioConfigMapKey]; exists {
 				applied, err := applyAgentioConfig(cfgYaml, cfg)
 				if err != nil {
-					log.Warnf("Failed to apply base sandbox config, err: %+v", err)
+					log.Warnf("Failed to apply base agentio config, err: %+v", err)
 				} else {
 					cfg = applied
 				}
@@ -119,7 +119,7 @@ func newAgentioConfig(client kube.Client, rootNamespace string, opts krt.Options
 				if cfgYaml, exists := cm.Data[AgentioConfigMapKey]; exists {
 					applied, err := applyAgentioConfig(cfgYaml, cfg)
 					if err != nil {
-						log.Warnf("Failed to apply primary sandbox config, err: %+v", err)
+						log.Warnf("Failed to apply primary agentio config, err: %+v", err)
 					} else {
 						cfg = applied
 					}

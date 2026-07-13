@@ -181,7 +181,7 @@ func TestAuthorize(t *testing.T) {
 	t.Run("nil agentioConfig returns error", func(t *testing.T) {
 		c := &onDemandCertController{}
 		if err := c.Authorize("sa", "ns"); err == nil {
-			t.Error("expected error when sandbox config not wired in")
+			t.Error("expected error when agentio config not wired in")
 		}
 	})
 

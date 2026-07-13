@@ -345,7 +345,7 @@ func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy 
 		return res
 	}
 
-	// isOnDemandAuthorized memoizes the SA/NS check against the sandbox config —
+	// isOnDemandAuthorized memoizes the SA/NS check against the agentio config —
 	// the OnDemand case is hit once per resource but the SA/NS answer is the
 	// same for the whole proxy, so we avoid re-walking egressGateways per
 	// resource. Domain-level scoping is handled separately below.
