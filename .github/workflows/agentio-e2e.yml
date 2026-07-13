@@ -45,7 +45,7 @@ jobs:
       AGENTIO_PROXY_IMAGE_TAG: v0.1-4-g733eb5a2-aliyun
       AGENTIO_ZTUNNEL_IMAGE_HUB: registry-cn-hangzhou.ack.aliyuncs.com/dev
       AGENTIO_ZTUNNEL_IMAGE_NAME: sandbox-tunnel
-      AGENTIO_ZTUNNEL_IMAGE_TAG: v0.1-8-gf471abf-aliyun
+      AGENTIO_ZTUNNEL_IMAGE_TAG: v0.1-11-ge4be822-aliyun
     steps:
       - uses: actions/checkout@v4
         with:

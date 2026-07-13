@@ -474,7 +474,7 @@ var (
 								Format: &core.SubstitutionFormatString_TextFormatSource{
 									TextFormatSource: &core.DataSource{
 										Specifier: &core.DataSource_InlineString{
-											InlineString: "%REQ(X-ACS-SANDBOX-TOKEN)%",
+											InlineString: "%REQ(X-AGENTIO-SANDBOX-TOKEN)%",
 										},
 									},
 								},
@@ -492,7 +492,7 @@ var (
 								Format: &core.SubstitutionFormatString_TextFormatSource{
 									TextFormatSource: &core.DataSource{
 										Specifier: &core.DataSource_InlineString{
-											InlineString: "%REQ(X-ACS-SANDBOX-LABELS)%",
+											InlineString: "%REQ(X-AGENTIO-SANDBOX-LABELS)%",
 										},
 									},
 								},
@@ -510,7 +510,7 @@ var (
 								Format: &core.SubstitutionFormatString_TextFormatSource{
 									TextFormatSource: &core.DataSource{
 										Specifier: &core.DataSource_InlineString{
-											InlineString: "%REQ(X-ACS-SANDBOX-ID)%",
+											InlineString: "%REQ(X-AGENTIO-SANDBOX-ID)%",
 										},
 									},
 								},

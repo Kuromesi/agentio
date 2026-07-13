@@ -230,7 +230,7 @@ spec:
     - proxy
     - ztunnel
     env:
-    - name: SANDBOX_MODE
+    - name: ENABLE_SANDBOX_MANAGER
       value: "true"
 {{- if .Values.global.proxy_ztunnel.enableFirewallRules }}
     - name: ENABLE_FIREWALL_RULES

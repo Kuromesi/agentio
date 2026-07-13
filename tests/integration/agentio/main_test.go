@@ -180,10 +180,6 @@ func deployEchoes(ctx resource.Context) error {
 	return err
 }
 
-func applyTrafficPolicyCRDs(ctx resource.Context) error {
-	return ctx.ConfigIstio().File("", "testdata/trafficpolicy-crds.yaml").Apply()
-}
-
 func deployExtProc(ctx resource.Context) error {
 	image := ctx.Settings().Image
 	if err := ctx.ConfigIstio().EvalFile(i.Settings().SystemNamespace, map[string]string{

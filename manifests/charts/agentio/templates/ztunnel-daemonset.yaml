@@ -71,7 +71,7 @@ spec:
           value: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local:15012
         - name: XDS_ADDRESS
           value: {{ include "agentio.controller.name" . }}.{{ include "agentio.namespace" . }}.svc.cluster.local:15012
-        - name: SANDBOX_MODE
+        - name: ENABLE_SANDBOX_MANAGER
           value: "true"
         - name: RUST_LOG
           value: {{ .Values.ambient.ztunnel.logLevel | quote }}
