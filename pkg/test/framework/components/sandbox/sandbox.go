@@ -82,6 +82,7 @@ func (c Config) helmValues() (map[string]string, error) {
 		image  *ImageConfig
 	}{
 		{prefix: "proxy", image: c.ProxyImage},
+		{prefix: "egressGateway", image: c.ProxyImage},
 		{prefix: "ztunnel", image: c.ZtunnelImage},
 	}
 	for _, configuredImage := range images {

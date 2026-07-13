@@ -86,12 +86,19 @@ func TestMain(m *testing.M) {
 		})).
 		Setup(sandboxcomp.Setup(&sb, func(_ resource.Context, cfg *sandboxcomp.Config) {
 			cfg.Values = map[string]string{
-				"ambient.ztunnel.env.FIREWALL_BACKEND": firewallBackend,
-				"global.enableFirewallRules":           fmt.Sprintf("%t", enableFirewall),
-				"agentiod.resources.requests.cpu":      "1",
-				"agentiod.resources.requests.memory":   "1Gi",
-				"agentiod.resources.limits.cpu":        "1",
-				"agentiod.resources.limits.memory":     "1Gi",
+				"ambient.ztunnel.env.FIREWALL_BACKEND":    firewallBackend,
+				"global.enableFirewallRules":              fmt.Sprintf("%t", enableFirewall),
+				"agentiod.resources.requests.cpu":         "1",
+				"agentiod.resources.requests.memory":      "1Gi",
+				"agentiod.resources.limits.cpu":           "1",
+				"agentiod.resources.limits.memory":        "1Gi",
+				"egressGateway.gateways[0].name":          "egress-gateway",
+				"egressGateway.autoscaling.enabled":       "false",
+				"egressGateway.replicas":                  "1",
+				"egressGateway.resources.requests.cpu":    "100m",
+				"egressGateway.resources.requests.memory": "128Mi",
+				"egressGateway.resources.limits.cpu":      "1",
+				"egressGateway.resources.limits.memory":   "512Mi",
 			}
 			if proxyImageHub != "" || proxyImageName != "" || proxyImageTag != "" {
 				cfg.ProxyImage = &sandboxcomp.ImageConfig{Hub: proxyImageHub, Name: proxyImageName, Tag: proxyImageTag}
