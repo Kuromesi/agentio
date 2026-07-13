@@ -1,6 +1,6 @@
 
 global:
-  hub: registry-cn-hangzhou.ack.aliyuncs.com/dev
+  hub: docker.io/openkruise
   trustDomain: cluster.local
   clusterId: 'Kubernetes'
   # -- CA certificate ConfigMap name. Shared by sidecar injector and ztunnel DaemonSet.
@@ -25,8 +25,8 @@ global:
 ztunnel:
   image:
     hub: ""
-    name: sandbox-tunnel
-    tag: v0.1-5-gb51a6b9-aliyun
+    name: ztunnel
+    tag: latest
 
 sidecarInjector:
   enabled: true
@@ -50,7 +50,7 @@ agentiod:
   image:
     hub: ""
     name: pilot
-    tag: v0.1-43-gc7543ab9f-aliyun
+    tag: latest
   # CPU request must equal limit so HPA-based utilization is meaningful.
   resources:
     requests:
@@ -67,11 +67,10 @@ agentiod:
   affinity: { }
 
 proxy:
-  # -- Sidecar proxy (proxyv2) image injected by the sidecar-injector template.
   image:
     hub: ""
-    name: proxyv2
-    tag: v0.1-4-g733eb5a2-aliyun
+    name: proxy
+    tag: latest
 
 trafficExtension:
   enabled: false
@@ -97,9 +96,9 @@ trafficExtension:
       cpu: 2
       memory: 2Gi
   image:
-    hub: "registry-cn-hangzhou.ack.aliyuncs.com/acs"
-    name: ack-sandbox-traffic-extension
-    tag: v0.1.1
+    hub: "docker.io/openkruise"
+    name: traffic-extension
+    tag: latest
   # -- PDB minAvailable for the traffic extension Deployment.
   pdbMinAvailable: 1
   # -- Node selector for traffic extension pods.
@@ -121,8 +120,8 @@ egressPolicies: []
 egressGateway:
   image:
     hub: ""
-    name: proxyv2
-    tag: v0.1-4-g733eb5a2-aliyun
+    name: proxy
+    tag: latest
   # -- Default replicas when a gateway's autoscaling is disabled.
   replicas: 2
   # -- Default resources per gateway (overridable per gateway).
@@ -164,9 +163,9 @@ ambient:
 
   cni:
     image:
-      hub: ""
-      name: asm-istio-cni
-      tag: v1.29.2.43-gccce198f63-aliyun
+      hub: "docker.io/istio"
+      name: install-cni
+      tag: "1.29.3"
     # -- Host paths for CNI binary and config installation
     cniBinDir: /opt/cni/bin
     cniConfDir: /etc/cni/net.d
