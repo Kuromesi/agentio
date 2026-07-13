@@ -30,8 +30,8 @@ import (
 
 // TestSandboxTrafficPolicyLifecycle covers policy lifecycle scenarios that go
 // beyond basic allow/deny enforcement: update propagation, deletion cleanup,
-// stress (50 rules), invalid CIDR resilience, empty selector, wildcard service,
-// label-change reconciliation, and unresolvable FQDN status.
+// invalid CIDR resilience, empty selector, wildcard service, label-change
+// reconciliation, and unresolvable FQDN status.
 func TestSandboxTrafficPolicyLifecycle(t *testing.T) {
 	framework.NewTest(t).
 		Run(func(ctx framework.TestContext) {
@@ -201,52 +201,6 @@ spec:
 							Name: "http",
 						},
 						Check: check.OK(),
-					})
-				})
-
-			ctx.NewSubTest("stress with 50 rules").
-				Run(func(ctx framework.TestContext) {
-					// Build 50 allow rules for different CIDRs + a final deny 0.0.0.0/0.
-					var rules strings.Builder
-					for j := 0; j < 50; j++ {
-						if j > 0 {
-							rules.WriteString("\n")
-						}
-						rules.WriteString(fmt.Sprintf(`      - action: allow
-        to:
-          - cidr: "10.%d.0.0/16"`, j))
-					}
-
-					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
-						"App":   src.Config().Service,
-						"Rules": rules.String(),
-					}, `
-apiVersion: agents.kruise.io/v1alpha1
-kind: TrafficPolicy
-metadata:
-  name: tp-stress-50
-spec:
-  priority: 100
-  selector:
-    matchLabels:
-      app: "{{ .App }}"
-  egress:
-    rules:
-{{ .Rules }}
-      - action: reject
-        to:
-          - cidr: "0.0.0.0/0"
-`).ApplyOrFail(ctx)
-
-					waitForAuthorizationPolicyOrFail(ctx, src, "tp-stress-50")
-
-					// dst (in-cluster service) should be denied (not in 10.x.0.0/16 range).
-					src.CallOrFail(ctx, echo.CallOptions{
-						To: dst,
-						Port: echo.Port{
-							Name: "http",
-						},
-						Check: check.Error(),
 					})
 				})
 

@@ -86,6 +86,7 @@ func TestMain(m *testing.M) {
 		})).
 		Setup(sandboxcomp.Setup(&sb, func(_ resource.Context, cfg *sandboxcomp.Config) {
 			cfg.Values = map[string]string{
+				"ambient.enabled":                         fmt.Sprintf("%t", ambientMode),
 				"ambient.ztunnel.env.FIREWALL_BACKEND":    firewallBackend,
 				"global.enableFirewallRules":              fmt.Sprintf("%t", enableFirewall),
 				"agentiod.resources.requests.cpu":         "1",
