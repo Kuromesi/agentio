@@ -1,0 +1,55 @@
+name: agentio-e2e
+
+# KinD-based end-to-end tests for the agentio sandbox data plane.
+#
+# Component images:
+#   - pilot(agentiod), proxyv2, install-cni are BUILT from this repo and pushed
+#     to the KinD-local registry by prow/integ-suite-kind.sh (HUB/TAG handled
+#     automatically). No image refs are configured here.
+#   - ztunnel and traffic-extension are external images; the test uses the
+#     chart's own defaults in manifests/charts/agentio/values.yaml. Bumping them
+#     is a values.yaml change, never a workflow change.
+#
+# Failures are intentional signal: registry access and cluster setup are part of
+# the end-to-end contract and must not be reported as a successful check.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "manifests/charts/agentio/**"
+      - "pilot/pkg/serviceregistry/kube/controller/agentio/**"
+      - "pilot/pkg/networking/core/**"
+      - "tests/integration/sandbox/**"
+      - "pkg/test/framework/components/sandbox/**"
+      - ".github/workflows/agentio-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Run make/build natively (we install go/helm/kind below) rather than in
+      # the Istio build container, and build images with the docker builder.
+      BUILD_WITH_CONTAINER: "0"
+      ISTIO_DOCKER_BUILDER: docker
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Install kind
+        run: |
+          go install sigs.k8s.io/kind@v0.24.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run sandbox e2e (KinD)
+        run: prow/integ-suite-kind.sh test.integration.sandbox.kube

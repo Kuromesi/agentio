@@ -1,0 +1,132 @@
+name: PR Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number'
+        required: true
+        type: string
+      head_sha:
+        description: 'PR head commit SHA'
+        required: true
+        type: string
+      requested_by:
+        description: 'GitHub login that requested the build'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  BUILD_WITH_CONTAINER: "0"
+  ISTIO_DOCKER_BUILDER: docker
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Validate trusted PR source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ ! "$INPUT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid PR number" >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid head SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$REQUESTED_BY" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]]; then
+            echo "Invalid requesting actor" >&2
+            exit 1
+          fi
+
+          PR_DATA=$(gh api "repos/${REPOSITORY}/pulls/${INPUT_PR_NUMBER}")
+          CURRENT_SHA=$(jq -r '.head.sha' <<<"$PR_DATA")
+          HEAD_REPO=$(jq -r '.head.repo.full_name' <<<"$PR_DATA")
+          if [[ "$CURRENT_SHA" != "$INPUT_HEAD_SHA" ]]; then
+            echo "PR head changed; refusing to build a stale or arbitrary SHA" >&2
+            exit 1
+          fi
+          if [[ "$HEAD_REPO" != "$REPOSITORY" ]]; then
+            echo "Fork PR images cannot be published with repository credentials" >&2
+            exit 1
+          fi
+
+          PERMISSION=$(gh api "repos/${REPOSITORY}/collaborators/${REQUESTED_BY}/permission" --jq '.permission')
+          case "$PERMISSION" in
+            admin|maintain|write) ;;
+            *) echo "Triggering actor lacks write permission" >&2; exit 1 ;;
+          esac
+
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compute image tag
+        run: |
+          PR_NUM="$INPUT_PR_NUMBER"
+          SHA="$INPUT_HEAD_SHA"
+          SHORT_SHA=$(echo "$SHA" | head -c 7)
+
+          # Tag format: pr-{number}-{short_sha}
+          TAG="pr-${PR_NUM}-${SHORT_SHA}"
+          {
+            echo "IMAGE_TAG=$TAG"
+            echo "HUB=localhost"
+          } >> "$GITHUB_ENV"
+
+          echo "Building PR #${PR_NUM} with tag: $TAG"
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          REPO_FULL_NAME: ${{ github.repository }}
+
+      - name: Build pilot image without registry credentials
+        run: |
+          DOCKER_ARCHITECTURES=linux/amd64 \
+          DOCKER_BUILD_VARIANTS=default \
+          DOCKER_TARGETS=docker.pilot \
+          make docker.pilot HUB="${HUB}" TAG="${IMAGE_TAG}"
+
+  report:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUM: ${{ inputs.pr_number }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+      BUILD_RESULT: ${{ needs.build.result }}
+    steps:
+      - name: Report build result
+        run: |
+          if [[ "$BUILD_RESULT" == "success" ]]; then
+            gh pr comment "$PR_NUM" --body "✅ Build successful!
+
+            Pilot image build passed for commit \`${HEAD_SHA:0:7}\`.
+
+            For security, PR builds do not receive registry write credentials or publish images."
+          else
+            gh pr comment "$PR_NUM" --body "❌ Build failed. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          fi

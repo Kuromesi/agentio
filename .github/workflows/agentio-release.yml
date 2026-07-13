@@ -1,0 +1,188 @@
+name: agentio-release
+
+# Release pipeline: build pilot, sync proxy, and publish the Helm chart.
+#
+# proxy is the only closed-source component mirrored from the internal ACR.
+# ztunnel and traffic-extension are versioned and published independently.
+#
+# Auth (set in repo Settings → Actions):
+#   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
+# Store all three credentials as secrets in a protected `release` Environment,
+# with required reviewers and deployment restricted to protected v* tags.
+#   secrets.HUB_KRUISE      — Docker Hub access token
+#   secrets.ACR_USERNAME    — read-only ACR account
+#   secrets.ACR_TOKEN       — read-only ACR token
+#
+# Variables (set in repo Settings → Variables → Actions):
+#   ACR_REGISTRY — internal ACR registry (default: registry-cn-hangzhou.ack.aliyuncs.com)
+#   ACR_PROJECT  — internal ACR project   (default: dev)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  CHART: manifests/charts/agentio
+  ACR_REGISTRY: ${{ vars.ACR_REGISTRY || 'registry-cn-hangzhou.ack.aliyuncs.com' }}
+  ACR_PROJECT: ${{ vars.ACR_PROJECT || 'dev' }}
+  DOCKER_HUB: docker.io/openkruise
+
+concurrency:
+  group: agentio-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release ref
+        run: |
+          if [[ ! "${GITHUB_REF}" =~ ^refs/heads/(master|release-[A-Za-z0-9._/-]+)$ && ! "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Releases are restricted to master, release branches, and semantic version tags" >&2
+            exit 1
+          fi
+
+  build-pilot:
+    needs: validate-release
+    uses: ./.github/workflows/agentio-image.yml
+    with:
+      tag: ${{ github.ref_name }}
+
+  sync-images:
+    needs: build-pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.7'
+          cache: false
+
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+
+      - name: Compute version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          PROXY_TAG="$VERSION"
+          if [[ ! "$PROXY_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid proxy image tag: $PROXY_TAG" >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "PROXY_TAG=${PROXY_TAG}" >> "$GITHUB_ENV"
+
+      - name: Login to internal ACR
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_TOKEN: ${{ secrets.ACR_TOKEN }}
+        run: echo "$ACR_TOKEN" | crane auth login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+
+      - name: Login to Docker Hub
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+        run: echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
+
+      - name: Sync proxy image
+        run: |
+          SRC="${ACR_REGISTRY}/${ACR_PROJECT}/proxy:${PROXY_TAG}"
+          DST="${DOCKER_HUB}/proxy:${VERSION}"
+          echo "Syncing ${SRC} -> ${DST}"
+          crane copy "${SRC}" "${DST}"
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            crane tag "${DST}" "latest"
+          fi
+
+  publish-chart:
+    needs: sync-images
+    if: needs.sync-images.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Compute version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Prepare chart for release
+        run: |
+          CHART_VERSION="${VERSION#v}"
+          CHART_DIR="/tmp/chart-release/agentio"
+
+          mkdir -p "$(dirname "$CHART_DIR")"
+          cp -r "$CHART" "$CHART_DIR"
+
+          # Update Chart.yaml version and appVersion
+          sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
+          sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
+
+          # Only pilot and proxy follow the Agentio release version. ztunnel,
+          # traffic-extension, and CNI are independently versioned.
+          sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: proxy/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+
+          echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"
+          echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Verify chart renders cleanly
+        run: |
+          helm lint "$CHART_DIR"
+          helm template agentio "$CHART_DIR" >/dev/null
+          helm template agentio "$CHART_DIR" \
+            --set ambient.enabled=true \
+            --set sidecarInjector.enabled=true >/dev/null
+
+      - name: Package chart
+        run: helm package "$CHART_DIR" -d /tmp/chart-pkg
+
+      - name: Login to Docker Hub
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+        run: echo "$HUB_TOKEN" | helm registry login docker.io -u "$HUB_USERNAME" --password-stdin
+
+      - name: Push chart to Docker Hub
+        run: helm push "/tmp/chart-pkg/agentio-${CHART_VERSION}.tgz" "oci://docker.io/openkruise/charts"
+
+  create-release:
+    needs: publish-chart
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Create GitHub Release with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists; skipping."
+          else
+            gh release create "$VERSION" --generate-notes --verify-tag
+          fi

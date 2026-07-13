@@ -1,0 +1,29 @@
+name: agentio-unit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - "release-*"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # agentio sandbox control-plane package (external names, authorization,
+      # ext-proc, config, on-demand certs) — the sandbox-specific unit tests.
+      - name: Unit tests — agentio controller
+        run: go test -race -tags=assert ./pilot/pkg/serviceregistry/kube/controller/agentio/...
+      # Sandbox listener/route/rate-limit tests live inside pilot/pkg/networking/core;
+      # scope by name so we don't run the entire (large) core suite here.
+      - name: Unit tests — sandbox listener/route/rate-limit
+        run: go test -race -tags=assert -run 'Sandbox|RateLimit|ToEnvoyTokenBucket' ./pilot/pkg/networking/core/...
