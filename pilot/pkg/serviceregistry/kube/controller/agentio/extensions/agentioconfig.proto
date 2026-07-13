@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package kruise.io.extensions.v1;
+package kruise.networking.extensions.v1;
 
 import "google/protobuf/duration.proto";
 import "networking/v1alpha3/virtual_service.proto";

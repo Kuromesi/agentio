@@ -167,6 +167,10 @@ func PolicyCollections(
 	opts krt.OptionsBuilder,
 	flags FeatureFlags,
 ) (krt.Collection[model.WorkloadAuthorization], krt.Collection[model.WorkloadAuthorization]) {
+	if trafficPolicyDerivedPolicies == nil {
+		trafficPolicyDerivedPolicies = krt.NewStaticCollection[model.WorkloadAuthorization](nil, nil,
+			opts.WithName("TrafficPolicyDerivedPolicies")...)
+	}
 	AuthzDerivedPolicies := krt.NewCollection(authzPolicies, func(ctx krt.HandlerContext, i *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		meshCfg := krt.FetchOne(ctx, meshConfig.AsCollection())
 		pol, status := convertAuthorizationPolicy(meshCfg.GetRootNamespace(), i)
@@ -288,7 +292,8 @@ func PolicyCollections(
 	}, opts.WithName("DefaultPolicy")...)
 
 	// join trafficpolicies in sandbox mode
-	return krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{AuthzDerivedPolicies, trafficPolicyDerivedPolicies}),
+	return krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{AuthzDerivedPolicies, trafficPolicyDerivedPolicies},
+			opts.WithName("AuthorizationPolicies")...),
 		krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{
 			AuthzDerivedPolicies,
 			PeerAuthDerivedPolicies,

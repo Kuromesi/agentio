@@ -48,6 +48,12 @@ func minimalExtProcConfig() *model.AgentioConfig {
 	}
 }
 
+func TestResolveExtProcNilConfig(t *testing.T) {
+	if got := resolveExtProc(sandboxEgressProxy(), nil); got != nil {
+		t.Fatalf("expected nil ext_proc provider without Agentio config, got %v", got)
+	}
+}
+
 func TestParseMessageTimeout(t *testing.T) {
 	cases := []struct {
 		name string

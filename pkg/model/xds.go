@@ -39,7 +39,7 @@ const (
 	AddressType               = APITypePrefix + "istio.workload.Address"
 	WorkloadType              = APITypePrefix + "istio.workload.Workload"
 	WorkloadAuthorizationType = APITypePrefix + "istio.security.Authorization"
-	WorkloadConfigType = APITypePrefix + "kruise.extensions.WorkloadConfig"
+	WorkloadConfigType        = APITypePrefix + "kruise.networking.extensions.v1.WorkloadConfig"
 )
 
 // GetShortType returns an abbreviated form of a type, useful for logging or human friendly messages

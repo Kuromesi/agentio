@@ -126,7 +126,7 @@ type TrafficPolicyExtension struct {
 	//
 	//	SERVER (0) = inbound traffic
 	//	CLIENT (1) = outbound traffic
-	Mode          TrafficPolicyMode `protobuf:"varint,2,opt,name=mode,proto3,enum=kruise.io.extensions.v1.TrafficPolicyMode" json:"mode,omitempty"`
+	Mode          TrafficPolicyMode `protobuf:"varint,2,opt,name=mode,proto3,enum=kruise.networking.extensions.v1.TrafficPolicyMode" json:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -178,7 +178,7 @@ func (x *TrafficPolicyExtension) GetMode() TrafficPolicyMode {
 type Metadata struct {
 	state                     protoimpl.MessageState    `protogen:"open.v1"`
 	Labels                    map[string]string         `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	MeshInternalTrafficPolicy MeshInternalTrafficPolicy `protobuf:"varint,2,opt,name=mesh_internal_traffic_policy,json=meshInternalTrafficPolicy,proto3,enum=kruise.io.extensions.v1.MeshInternalTrafficPolicy" json:"mesh_internal_traffic_policy,omitempty"`
+	MeshInternalTrafficPolicy MeshInternalTrafficPolicy `protobuf:"varint,2,opt,name=mesh_internal_traffic_policy,json=meshInternalTrafficPolicy,proto3,enum=kruise.networking.extensions.v1.MeshInternalTrafficPolicy" json:"mesh_internal_traffic_policy,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -231,13 +231,13 @@ var File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions
 
 const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_rawDesc = "" +
 	"\n" +
-	"Mpilot/pkg/serviceregistry/kube/controller/agentio/extensions/extensions.proto\x12\x17kruise.io.extensions.v1\"t\n" +
+	"Mpilot/pkg/serviceregistry/kube/controller/agentio/extensions/extensions.proto\x12\x1fkruise.networking.extensions.v1\"|\n" +
 	"\x16TrafficPolicyExtension\x12\x1a\n" +
-	"\bpriority\x18\x01 \x01(\x05R\bpriority\x12>\n" +
-	"\x04mode\x18\x02 \x01(\x0e2*.kruise.io.extensions.v1.TrafficPolicyModeR\x04mode\"\x81\x02\n" +
-	"\bMetadata\x12E\n" +
-	"\x06labels\x18\x01 \x03(\v2-.kruise.io.extensions.v1.Metadata.LabelsEntryR\x06labels\x12s\n" +
-	"\x1cmesh_internal_traffic_policy\x18\x02 \x01(\x0e22.kruise.io.extensions.v1.MeshInternalTrafficPolicyR\x19meshInternalTrafficPolicy\x1a9\n" +
+	"\bpriority\x18\x01 \x01(\x05R\bpriority\x12F\n" +
+	"\x04mode\x18\x02 \x01(\x0e22.kruise.networking.extensions.v1.TrafficPolicyModeR\x04mode\"\x91\x02\n" +
+	"\bMetadata\x12M\n" +
+	"\x06labels\x18\x01 \x03(\v25.kruise.networking.extensions.v1.Metadata.LabelsEntryR\x06labels\x12{\n" +
+	"\x1cmesh_internal_traffic_policy\x18\x02 \x01(\x0e2:.kruise.networking.extensions.v1.MeshInternalTrafficPolicyR\x19meshInternalTrafficPolicy\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*X\n" +
@@ -265,16 +265,16 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extension
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_goTypes = []any{
-	(MeshInternalTrafficPolicy)(0), // 0: kruise.io.extensions.v1.MeshInternalTrafficPolicy
-	(TrafficPolicyMode)(0),         // 1: kruise.io.extensions.v1.TrafficPolicyMode
-	(*TrafficPolicyExtension)(nil), // 2: kruise.io.extensions.v1.TrafficPolicyExtension
-	(*Metadata)(nil),               // 3: kruise.io.extensions.v1.Metadata
-	nil,                            // 4: kruise.io.extensions.v1.Metadata.LabelsEntry
+	(MeshInternalTrafficPolicy)(0), // 0: kruise.networking.extensions.v1.MeshInternalTrafficPolicy
+	(TrafficPolicyMode)(0),         // 1: kruise.networking.extensions.v1.TrafficPolicyMode
+	(*TrafficPolicyExtension)(nil), // 2: kruise.networking.extensions.v1.TrafficPolicyExtension
+	(*Metadata)(nil),               // 3: kruise.networking.extensions.v1.Metadata
+	nil,                            // 4: kruise.networking.extensions.v1.Metadata.LabelsEntry
 }
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_extensions_proto_depIdxs = []int32{
-	1, // 0: kruise.io.extensions.v1.TrafficPolicyExtension.mode:type_name -> kruise.io.extensions.v1.TrafficPolicyMode
-	4, // 1: kruise.io.extensions.v1.Metadata.labels:type_name -> kruise.io.extensions.v1.Metadata.LabelsEntry
-	0, // 2: kruise.io.extensions.v1.Metadata.mesh_internal_traffic_policy:type_name -> kruise.io.extensions.v1.MeshInternalTrafficPolicy
+	1, // 0: kruise.networking.extensions.v1.TrafficPolicyExtension.mode:type_name -> kruise.networking.extensions.v1.TrafficPolicyMode
+	4, // 1: kruise.networking.extensions.v1.Metadata.labels:type_name -> kruise.networking.extensions.v1.Metadata.LabelsEntry
+	0, // 2: kruise.networking.extensions.v1.Metadata.mesh_internal_traffic_policy:type_name -> kruise.networking.extensions.v1.MeshInternalTrafficPolicy
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name

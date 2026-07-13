@@ -44,6 +44,9 @@ var SandboxExtProcName = env.Register("SANDBOX_EXT_PROC_NAME", "sandbox-ext-proc
 // resolveExtProc returns the effective ExtProcProvider for the given proxy.
 // Gateway-level ext_proc takes precedence over the global AgentioConfig default.
 func resolveExtProc(proxy *model.Proxy, config *model.AgentioConfig) *extensions.ExtProcProvider {
+	if config == nil {
+		return nil
+	}
 	if g := FindEgressGatewayForProxy(proxy, config.GetEgressGateways()); g != nil && g.ExtProc != nil {
 		if g.ExtProc.Service == "" {
 			return nil

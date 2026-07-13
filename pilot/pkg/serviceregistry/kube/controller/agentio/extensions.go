@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	extensionPrefix         = "type.googleapis.com/kruise.io.extensions.v1."
+	extensionPrefix         = "type.googleapis.com/kruise.networking.extensions.v1."
 	trafficPolicyExtension  = extensionPrefix + "TrafficPolicyExtension"
 	metadataExtension       = extensionPrefix + "Metadata"
 	egressPoliciesExtension = extensionPrefix + "EgressPolicies"

@@ -279,19 +279,22 @@ func New(options Options) Index {
 		}),
 	)...)
 
-	var sandboxConfig krt.Singleton[model.AgentioConfig]
+	var sandboxConfig krt.Singleton[model.AgentioConfig] = krt.NewStatic(
+		model.DefaultAgentioConfig(), true, opts.WithName("AgentioConfig")...)
 	var workloadConfigs krt.Collection[model.WorkloadConfig]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
-	TrafficPolicyDerivedPolicies = options.AgentioController.BuildPolicyCollection(
-		Services,
-		EndpointSlices,
-		Pods,
-		func(policy *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
-			return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
-		})
-	a.agentioController = options.AgentioController
-	sandboxConfig = a.agentioController.AgentioConfig()
-	workloadConfigs = a.agentioController.WorkloadConfigs()
+	if options.AgentioController != nil {
+		TrafficPolicyDerivedPolicies = options.AgentioController.BuildPolicyCollection(
+			Services,
+			EndpointSlices,
+			Pods,
+			func(policy *securityclient.AuthorizationPolicy) (*security.Authorization, *model.StatusMessage) {
+				return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
+			})
+		a.agentioController = options.AgentioController
+		sandboxConfig = a.agentioController.AgentioConfig()
+		workloadConfigs = a.agentioController.WorkloadConfigs()
+	}
 
 	a.builder = Builder{
 		DomainSuffix: a.DomainSuffix,

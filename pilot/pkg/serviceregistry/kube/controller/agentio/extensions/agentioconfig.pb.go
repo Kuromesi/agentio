@@ -469,7 +469,7 @@ func (x *EgressPolicies) GetEgressPolicies() []*EgressPolicy {
 // WorkloadConfig is an independent xDS resource pushed to ztunnel.
 type WorkloadConfig struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	Scope          WorkloadConfigScope    `protobuf:"varint,1,opt,name=scope,proto3,enum=kruise.io.extensions.v1.WorkloadConfigScope" json:"scope,omitempty"`
+	Scope          WorkloadConfigScope    `protobuf:"varint,1,opt,name=scope,proto3,enum=kruise.networking.extensions.v1.WorkloadConfigScope" json:"scope,omitempty"`
 	EgressPolicies []*EgressPolicy        `protobuf:"bytes,2,rep,name=egress_policies,json=egressPolicies,proto3" json:"egress_policies,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -728,7 +728,7 @@ func (x *HttpSettings) GetMaxRequestsPerConnection() uint32 {
 type ProcessingModeOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Header send mode: DEFAULT, SEND, or SKIP.
-	HeaderMode HeaderSendMode `protobuf:"varint,1,opt,name=header_mode,json=headerMode,proto3,enum=kruise.io.extensions.v1.HeaderSendMode" json:"header_mode,omitempty"`
+	HeaderMode HeaderSendMode `protobuf:"varint,1,opt,name=header_mode,json=headerMode,proto3,enum=kruise.networking.extensions.v1.HeaderSendMode" json:"header_mode,omitempty"`
 	// Attributes to include in ext_proc headers.
 	Attributes    []string `protobuf:"bytes,2,rep,name=attributes,proto3" json:"attributes,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -796,7 +796,7 @@ type EgressPolicy struct {
 	// that dimension).
 	MatchPorts []string `protobuf:"bytes,5,rep,name=match_ports,json=matchPorts,proto3" json:"match_ports,omitempty"`
 	// Policy defines the action to take for matching traffic.
-	Policy EgressPolicyAction `protobuf:"varint,3,opt,name=policy,proto3,enum=kruise.io.extensions.v1.EgressPolicyAction" json:"policy,omitempty"`
+	Policy EgressPolicyAction `protobuf:"varint,3,opt,name=policy,proto3,enum=kruise.networking.extensions.v1.EgressPolicyAction" json:"policy,omitempty"`
 	// Gateway is the egress gateway address to forward traffic to (when policy is GATEWAY).
 	Gateway *GatewayAddress `protobuf:"bytes,4,opt,name=gateway,proto3" json:"gateway,omitempty"`
 	// MatchHosts specifies destination hostnames to match. The control plane
@@ -1500,46 +1500,46 @@ var File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentiocon
 
 const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc = "" +
 	"\n" +
-	"Ppilot/pkg/serviceregistry/kube/controller/agentio/extensions/agentioconfig.proto\x12\x17kruise.io.extensions.v1\x1a\x1egoogle/protobuf/duration.proto\x1a)networking/v1alpha3/virtual_service.proto\"\xba\x02\n" +
-	"\rAgentioConfig\x12R\n" +
-	"\x10sandbox_ext_proc\x18\x01 \x01(\v2(.kruise.io.extensions.v1.ExtProcProviderR\x0esandboxExtProc\x12N\n" +
-	"\x0fegress_policies\x18\x02 \x03(\v2%.kruise.io.extensions.v1.EgressPolicyR\x0eegressPolicies\x124\n" +
-	"\x16sandbox_ignored_labels\x18\x03 \x03(\tR\x14sandboxIgnoredLabels\x12O\n" +
-	"\x0fegress_gateways\x18\x04 \x03(\v2&.kruise.io.extensions.v1.EgressGatewayR\x0eegressGateways\"\x97\x03\n" +
+	"Ppilot/pkg/serviceregistry/kube/controller/agentio/extensions/agentioconfig.proto\x12\x1fkruise.networking.extensions.v1\x1a\x1egoogle/protobuf/duration.proto\x1a)networking/v1alpha3/virtual_service.proto\"\xd2\x02\n" +
+	"\rAgentioConfig\x12Z\n" +
+	"\x10sandbox_ext_proc\x18\x01 \x01(\v20.kruise.networking.extensions.v1.ExtProcProviderR\x0esandboxExtProc\x12V\n" +
+	"\x0fegress_policies\x18\x02 \x03(\v2-.kruise.networking.extensions.v1.EgressPolicyR\x0eegressPolicies\x124\n" +
+	"\x16sandbox_ignored_labels\x18\x03 \x03(\tR\x14sandboxIgnoredLabels\x12W\n" +
+	"\x0fegress_gateways\x18\x04 \x03(\v2..kruise.networking.extensions.v1.EgressGatewayR\x0eegressGateways\"\xb7\x03\n" +
 	"\rEgressGateway\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12V\n" +
-	"\x0ftls_termination\x18\x03 \x01(\v2-.kruise.io.extensions.v1.TlsTerminationConfigR\x0etlsTermination\x12C\n" +
-	"\bext_proc\x18\x04 \x01(\v2(.kruise.io.extensions.v1.ExtProcProviderR\aextProc\x12X\n" +
-	"\x0fconnection_pool\x18\x05 \x01(\v2/.kruise.io.extensions.v1.ConnectionPoolSettingsR\x0econnectionPool\x12]\n" +
-	"\x12connect_rate_limit\x18\x06 \x01(\v2/.kruise.io.extensions.v1.LocalRateLimitSettingsR\x10connectRateLimit\"`\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12^\n" +
+	"\x0ftls_termination\x18\x03 \x01(\v25.kruise.networking.extensions.v1.TlsTerminationConfigR\x0etlsTermination\x12K\n" +
+	"\bext_proc\x18\x04 \x01(\v20.kruise.networking.extensions.v1.ExtProcProviderR\aextProc\x12`\n" +
+	"\x0fconnection_pool\x18\x05 \x01(\v27.kruise.networking.extensions.v1.ConnectionPoolSettingsR\x0econnectionPool\x12e\n" +
+	"\x12connect_rate_limit\x18\x06 \x01(\v27.kruise.networking.extensions.v1.LocalRateLimitSettingsR\x10connectRateLimit\"`\n" +
 	"\x14TlsTerminationConfig\x12#\n" +
 	"\rinclude_hosts\x18\x01 \x03(\tR\fincludeHosts\x12#\n" +
-	"\rexclude_hosts\x18\x02 \x03(\tR\fexcludeHosts\"`\n" +
-	"\x0eEgressPolicies\x12N\n" +
-	"\x0fegress_policies\x18\x01 \x03(\v2%.kruise.io.extensions.v1.EgressPolicyR\x0eegressPolicies\"\xa4\x01\n" +
-	"\x0eWorkloadConfig\x12B\n" +
-	"\x05scope\x18\x01 \x01(\x0e2,.kruise.io.extensions.v1.WorkloadConfigScopeR\x05scope\x12N\n" +
-	"\x0fegress_policies\x18\x02 \x03(\v2%.kruise.io.extensions.v1.EgressPolicyR\x0eegressPolicies\"\x81\x03\n" +
+	"\rexclude_hosts\x18\x02 \x03(\tR\fexcludeHosts\"h\n" +
+	"\x0eEgressPolicies\x12V\n" +
+	"\x0fegress_policies\x18\x01 \x03(\v2-.kruise.networking.extensions.v1.EgressPolicyR\x0eegressPolicies\"\xb4\x01\n" +
+	"\x0eWorkloadConfig\x12J\n" +
+	"\x05scope\x18\x01 \x01(\x0e24.kruise.networking.extensions.v1.WorkloadConfigScopeR\x05scope\x12V\n" +
+	"\x0fegress_policies\x18\x02 \x03(\v2-.kruise.networking.extensions.v1.EgressPolicyR\x0eegressPolicies\"\x99\x03\n" +
 	"\x0fExtProcProvider\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
-	"\x04port\x18\x02 \x01(\rR\x04port\x12H\n" +
-	"\arequest\x18\x03 \x01(\v2..kruise.io.extensions.v1.ProcessingModeOptionsR\arequest\x12J\n" +
-	"\bresponse\x18\x04 \x01(\v2..kruise.io.extensions.v1.ProcessingModeOptionsR\bresponse\x12,\n" +
-	"\x12failure_mode_allow\x18\x05 \x01(\bR\x10failureModeAllow\x12S\n" +
-	"\x10cluster_settings\x18\x06 \x01(\v2(.kruise.io.extensions.v1.ClusterSettingsR\x0fclusterSettings\x12'\n" +
-	"\x0fmessage_timeout\x18\a \x01(\tR\x0emessageTimeout\"L\n" +
-	"\x0fClusterSettings\x129\n" +
-	"\x04http\x18\x01 \x01(\v2%.kruise.io.extensions.v1.HttpSettingsR\x04http\"\x83\x01\n" +
+	"\x04port\x18\x02 \x01(\rR\x04port\x12P\n" +
+	"\arequest\x18\x03 \x01(\v26.kruise.networking.extensions.v1.ProcessingModeOptionsR\arequest\x12R\n" +
+	"\bresponse\x18\x04 \x01(\v26.kruise.networking.extensions.v1.ProcessingModeOptionsR\bresponse\x12,\n" +
+	"\x12failure_mode_allow\x18\x05 \x01(\bR\x10failureModeAllow\x12[\n" +
+	"\x10cluster_settings\x18\x06 \x01(\v20.kruise.networking.extensions.v1.ClusterSettingsR\x0fclusterSettings\x12'\n" +
+	"\x0fmessage_timeout\x18\a \x01(\tR\x0emessageTimeout\"T\n" +
+	"\x0fClusterSettings\x12A\n" +
+	"\x04http\x18\x01 \x01(\v2-.kruise.networking.extensions.v1.HttpSettingsR\x04http\"\x83\x01\n" +
 	"\fHttpSettings\x124\n" +
 	"\x16max_concurrent_streams\x18\x01 \x01(\rR\x14maxConcurrentStreams\x12=\n" +
-	"\x1bmax_requests_per_connection\x18\x02 \x01(\rR\x18maxRequestsPerConnection\"\x81\x01\n" +
-	"\x15ProcessingModeOptions\x12H\n" +
-	"\vheader_mode\x18\x01 \x01(\x0e2'.kruise.io.extensions.v1.HeaderSendModeR\n" +
+	"\x1bmax_requests_per_connection\x18\x02 \x01(\rR\x18maxRequestsPerConnection\"\x89\x01\n" +
+	"\x15ProcessingModeOptions\x12P\n" +
+	"\vheader_mode\x18\x01 \x01(\x0e2/.kruise.networking.extensions.v1.HeaderSendModeR\n" +
 	"headerMode\x12\x1e\n" +
 	"\n" +
 	"attributes\x18\x02 \x03(\tR\n" +
-	"attributes\"\x99\x02\n" +
+	"attributes\"\xa9\x02\n" +
 	"\fEgressPolicy\x12\x1e\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\tR\n" +
@@ -1547,42 +1547,42 @@ const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioc
 	"\vmatch_cidrs\x18\x02 \x03(\tR\n" +
 	"matchCidrs\x12\x1f\n" +
 	"\vmatch_ports\x18\x05 \x03(\tR\n" +
-	"matchPorts\x12C\n" +
-	"\x06policy\x18\x03 \x01(\x0e2+.kruise.io.extensions.v1.EgressPolicyActionR\x06policy\x12A\n" +
-	"\agateway\x18\x04 \x01(\v2'.kruise.io.extensions.v1.GatewayAddressR\agateway\x12\x1f\n" +
+	"matchPorts\x12K\n" +
+	"\x06policy\x18\x03 \x01(\x0e23.kruise.networking.extensions.v1.EgressPolicyActionR\x06policy\x12I\n" +
+	"\agateway\x18\x04 \x01(\v2/.kruise.networking.extensions.v1.GatewayAddressR\agateway\x12\x1f\n" +
 	"\vmatch_hosts\x18\x06 \x03(\tR\n" +
 	"matchHosts\">\n" +
 	"\x0eGatewayAddress\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
-	"\x04port\x18\x02 \x01(\rR\x04port\"\x99\x01\n" +
-	"\x16ConnectionPoolSettings\x126\n" +
-	"\x03tcp\x18\x01 \x01(\v2$.kruise.io.extensions.v1.TcpSettingsR\x03tcp\x12G\n" +
-	"\x04http\x18\x02 \x01(\v23.kruise.io.extensions.v1.ConnectionPoolHttpSettingsR\x04http\"\x9e\x01\n" +
+	"\x04port\x18\x02 \x01(\rR\x04port\"\xa9\x01\n" +
+	"\x16ConnectionPoolSettings\x12>\n" +
+	"\x03tcp\x18\x01 \x01(\v2,.kruise.networking.extensions.v1.TcpSettingsR\x03tcp\x12O\n" +
+	"\x04http\x18\x02 \x01(\v2;.kruise.networking.extensions.v1.ConnectionPoolHttpSettingsR\x04http\"\x9e\x01\n" +
 	"\vTcpSettings\x12<\n" +
 	"\fidle_timeout\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\vidleTimeout\x12Q\n" +
-	"\x17max_connection_duration\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x15maxConnectionDuration\"\x8d\x02\n" +
+	"\x17max_connection_duration\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x15maxConnectionDuration\"\x9d\x02\n" +
 	"\x1aConnectionPoolHttpSettings\x12I\n" +
-	"\x13stream_idle_timeout\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x11streamIdleTimeout\x12O\n" +
-	"\rdefault_route\x18\x02 \x01(\v2*.kruise.io.extensions.v1.HttpRouteSettingsR\fdefaultRoute\x12S\n" +
-	"\x0froute_overrides\x18\x03 \x03(\v2*.kruise.io.extensions.v1.HttpRouteOverrideR\x0erouteOverrides\"q\n" +
+	"\x13stream_idle_timeout\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x11streamIdleTimeout\x12W\n" +
+	"\rdefault_route\x18\x02 \x01(\v22.kruise.networking.extensions.v1.HttpRouteSettingsR\fdefaultRoute\x12[\n" +
+	"\x0froute_overrides\x18\x03 \x03(\v22.kruise.networking.extensions.v1.HttpRouteOverrideR\x0erouteOverrides\"y\n" +
 	"\x11HttpRouteOverride\x12\x14\n" +
-	"\x05hosts\x18\x01 \x03(\tR\x05hosts\x12F\n" +
-	"\bsettings\x18\x02 \x01(\v2*.kruise.io.extensions.v1.HttpRouteSettingsR\bsettings\"\x88\x01\n" +
+	"\x05hosts\x18\x01 \x03(\tR\x05hosts\x12N\n" +
+	"\bsettings\x18\x02 \x01(\v22.kruise.networking.extensions.v1.HttpRouteSettingsR\bsettings\"\x88\x01\n" +
 	"\x11HttpRouteSettings\x123\n" +
 	"\atimeout\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12>\n" +
-	"\aretries\x18\x02 \x01(\v2$.istio.networking.v1alpha3.HTTPRetryR\aretries\"\xed\x01\n" +
-	"\x16LocalRateLimitSettings\x12G\n" +
-	"\ftoken_bucket\x18\x01 \x01(\v2$.kruise.io.extensions.v1.TokenBucketR\vtokenBucket\x12N\n" +
-	"\vdescriptors\x18\x02 \x03(\v2,.kruise.io.extensions.v1.RateLimitDescriptorR\vdescriptors\x12:\n" +
+	"\aretries\x18\x02 \x01(\v2$.istio.networking.v1alpha3.HTTPRetryR\aretries\"\xfd\x01\n" +
+	"\x16LocalRateLimitSettings\x12O\n" +
+	"\ftoken_bucket\x18\x01 \x01(\v2,.kruise.networking.extensions.v1.TokenBucketR\vtokenBucket\x12V\n" +
+	"\vdescriptors\x18\x02 \x03(\v24.kruise.networking.extensions.v1.RateLimitDescriptorR\vdescriptors\x12:\n" +
 	"\x19per_downstream_connection\x18\x03 \x01(\bR\x17perDownstreamConnection\"\x94\x01\n" +
 	"\vTokenBucket\x12\x1d\n" +
 	"\n" +
 	"max_tokens\x18\x01 \x01(\rR\tmaxTokens\x12&\n" +
 	"\x0ftokens_per_fill\x18\x02 \x01(\rR\rtokensPerFill\x12>\n" +
-	"\rfill_interval\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\ffillInterval\"\xa1\x01\n" +
-	"\x13RateLimitDescriptor\x12A\n" +
-	"\aentries\x18\x01 \x03(\v2'.kruise.io.extensions.v1.RateLimitEntryR\aentries\x12G\n" +
-	"\ftoken_bucket\x18\x02 \x01(\v2$.kruise.io.extensions.v1.TokenBucketR\vtokenBucket\"J\n" +
+	"\rfill_interval\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\ffillInterval\"\xb1\x01\n" +
+	"\x13RateLimitDescriptor\x12I\n" +
+	"\aentries\x18\x01 \x03(\v2/.kruise.networking.extensions.v1.RateLimitEntryR\aentries\x12O\n" +
+	"\ftoken_bucket\x18\x02 \x01(\v2,.kruise.networking.extensions.v1.TokenBucketR\vtokenBucket\"J\n" +
 	"\x0eRateLimitEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x10\n" +
@@ -1614,65 +1614,65 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioco
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_goTypes = []any{
-	(WorkloadConfigScope)(0),           // 0: kruise.io.extensions.v1.WorkloadConfigScope
-	(HeaderSendMode)(0),                // 1: kruise.io.extensions.v1.HeaderSendMode
-	(EgressPolicyAction)(0),            // 2: kruise.io.extensions.v1.EgressPolicyAction
-	(*AgentioConfig)(nil),              // 3: kruise.io.extensions.v1.AgentioConfig
-	(*EgressGateway)(nil),              // 4: kruise.io.extensions.v1.EgressGateway
-	(*TlsTerminationConfig)(nil),       // 5: kruise.io.extensions.v1.TlsTerminationConfig
-	(*EgressPolicies)(nil),             // 6: kruise.io.extensions.v1.EgressPolicies
-	(*WorkloadConfig)(nil),             // 7: kruise.io.extensions.v1.WorkloadConfig
-	(*ExtProcProvider)(nil),            // 8: kruise.io.extensions.v1.ExtProcProvider
-	(*ClusterSettings)(nil),            // 9: kruise.io.extensions.v1.ClusterSettings
-	(*HttpSettings)(nil),               // 10: kruise.io.extensions.v1.HttpSettings
-	(*ProcessingModeOptions)(nil),      // 11: kruise.io.extensions.v1.ProcessingModeOptions
-	(*EgressPolicy)(nil),               // 12: kruise.io.extensions.v1.EgressPolicy
-	(*GatewayAddress)(nil),             // 13: kruise.io.extensions.v1.GatewayAddress
-	(*ConnectionPoolSettings)(nil),     // 14: kruise.io.extensions.v1.ConnectionPoolSettings
-	(*TcpSettings)(nil),                // 15: kruise.io.extensions.v1.TcpSettings
-	(*ConnectionPoolHttpSettings)(nil), // 16: kruise.io.extensions.v1.ConnectionPoolHttpSettings
-	(*HttpRouteOverride)(nil),          // 17: kruise.io.extensions.v1.HttpRouteOverride
-	(*HttpRouteSettings)(nil),          // 18: kruise.io.extensions.v1.HttpRouteSettings
-	(*LocalRateLimitSettings)(nil),     // 19: kruise.io.extensions.v1.LocalRateLimitSettings
-	(*TokenBucket)(nil),                // 20: kruise.io.extensions.v1.TokenBucket
-	(*RateLimitDescriptor)(nil),        // 21: kruise.io.extensions.v1.RateLimitDescriptor
-	(*RateLimitEntry)(nil),             // 22: kruise.io.extensions.v1.RateLimitEntry
+	(WorkloadConfigScope)(0),           // 0: kruise.networking.extensions.v1.WorkloadConfigScope
+	(HeaderSendMode)(0),                // 1: kruise.networking.extensions.v1.HeaderSendMode
+	(EgressPolicyAction)(0),            // 2: kruise.networking.extensions.v1.EgressPolicyAction
+	(*AgentioConfig)(nil),              // 3: kruise.networking.extensions.v1.AgentioConfig
+	(*EgressGateway)(nil),              // 4: kruise.networking.extensions.v1.EgressGateway
+	(*TlsTerminationConfig)(nil),       // 5: kruise.networking.extensions.v1.TlsTerminationConfig
+	(*EgressPolicies)(nil),             // 6: kruise.networking.extensions.v1.EgressPolicies
+	(*WorkloadConfig)(nil),             // 7: kruise.networking.extensions.v1.WorkloadConfig
+	(*ExtProcProvider)(nil),            // 8: kruise.networking.extensions.v1.ExtProcProvider
+	(*ClusterSettings)(nil),            // 9: kruise.networking.extensions.v1.ClusterSettings
+	(*HttpSettings)(nil),               // 10: kruise.networking.extensions.v1.HttpSettings
+	(*ProcessingModeOptions)(nil),      // 11: kruise.networking.extensions.v1.ProcessingModeOptions
+	(*EgressPolicy)(nil),               // 12: kruise.networking.extensions.v1.EgressPolicy
+	(*GatewayAddress)(nil),             // 13: kruise.networking.extensions.v1.GatewayAddress
+	(*ConnectionPoolSettings)(nil),     // 14: kruise.networking.extensions.v1.ConnectionPoolSettings
+	(*TcpSettings)(nil),                // 15: kruise.networking.extensions.v1.TcpSettings
+	(*ConnectionPoolHttpSettings)(nil), // 16: kruise.networking.extensions.v1.ConnectionPoolHttpSettings
+	(*HttpRouteOverride)(nil),          // 17: kruise.networking.extensions.v1.HttpRouteOverride
+	(*HttpRouteSettings)(nil),          // 18: kruise.networking.extensions.v1.HttpRouteSettings
+	(*LocalRateLimitSettings)(nil),     // 19: kruise.networking.extensions.v1.LocalRateLimitSettings
+	(*TokenBucket)(nil),                // 20: kruise.networking.extensions.v1.TokenBucket
+	(*RateLimitDescriptor)(nil),        // 21: kruise.networking.extensions.v1.RateLimitDescriptor
+	(*RateLimitEntry)(nil),             // 22: kruise.networking.extensions.v1.RateLimitEntry
 	(*duration.Duration)(nil),          // 23: google.protobuf.Duration
 	(*v1alpha3.HTTPRetry)(nil),         // 24: istio.networking.v1alpha3.HTTPRetry
 }
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_depIdxs = []int32{
-	8,  // 0: kruise.io.extensions.v1.AgentioConfig.sandbox_ext_proc:type_name -> kruise.io.extensions.v1.ExtProcProvider
-	12, // 1: kruise.io.extensions.v1.AgentioConfig.egress_policies:type_name -> kruise.io.extensions.v1.EgressPolicy
-	4,  // 2: kruise.io.extensions.v1.AgentioConfig.egress_gateways:type_name -> kruise.io.extensions.v1.EgressGateway
-	5,  // 3: kruise.io.extensions.v1.EgressGateway.tls_termination:type_name -> kruise.io.extensions.v1.TlsTerminationConfig
-	8,  // 4: kruise.io.extensions.v1.EgressGateway.ext_proc:type_name -> kruise.io.extensions.v1.ExtProcProvider
-	14, // 5: kruise.io.extensions.v1.EgressGateway.connection_pool:type_name -> kruise.io.extensions.v1.ConnectionPoolSettings
-	19, // 6: kruise.io.extensions.v1.EgressGateway.connect_rate_limit:type_name -> kruise.io.extensions.v1.LocalRateLimitSettings
-	12, // 7: kruise.io.extensions.v1.EgressPolicies.egress_policies:type_name -> kruise.io.extensions.v1.EgressPolicy
-	0,  // 8: kruise.io.extensions.v1.WorkloadConfig.scope:type_name -> kruise.io.extensions.v1.WorkloadConfigScope
-	12, // 9: kruise.io.extensions.v1.WorkloadConfig.egress_policies:type_name -> kruise.io.extensions.v1.EgressPolicy
-	11, // 10: kruise.io.extensions.v1.ExtProcProvider.request:type_name -> kruise.io.extensions.v1.ProcessingModeOptions
-	11, // 11: kruise.io.extensions.v1.ExtProcProvider.response:type_name -> kruise.io.extensions.v1.ProcessingModeOptions
-	9,  // 12: kruise.io.extensions.v1.ExtProcProvider.cluster_settings:type_name -> kruise.io.extensions.v1.ClusterSettings
-	10, // 13: kruise.io.extensions.v1.ClusterSettings.http:type_name -> kruise.io.extensions.v1.HttpSettings
-	1,  // 14: kruise.io.extensions.v1.ProcessingModeOptions.header_mode:type_name -> kruise.io.extensions.v1.HeaderSendMode
-	2,  // 15: kruise.io.extensions.v1.EgressPolicy.policy:type_name -> kruise.io.extensions.v1.EgressPolicyAction
-	13, // 16: kruise.io.extensions.v1.EgressPolicy.gateway:type_name -> kruise.io.extensions.v1.GatewayAddress
-	15, // 17: kruise.io.extensions.v1.ConnectionPoolSettings.tcp:type_name -> kruise.io.extensions.v1.TcpSettings
-	16, // 18: kruise.io.extensions.v1.ConnectionPoolSettings.http:type_name -> kruise.io.extensions.v1.ConnectionPoolHttpSettings
-	23, // 19: kruise.io.extensions.v1.TcpSettings.idle_timeout:type_name -> google.protobuf.Duration
-	23, // 20: kruise.io.extensions.v1.TcpSettings.max_connection_duration:type_name -> google.protobuf.Duration
-	23, // 21: kruise.io.extensions.v1.ConnectionPoolHttpSettings.stream_idle_timeout:type_name -> google.protobuf.Duration
-	18, // 22: kruise.io.extensions.v1.ConnectionPoolHttpSettings.default_route:type_name -> kruise.io.extensions.v1.HttpRouteSettings
-	17, // 23: kruise.io.extensions.v1.ConnectionPoolHttpSettings.route_overrides:type_name -> kruise.io.extensions.v1.HttpRouteOverride
-	18, // 24: kruise.io.extensions.v1.HttpRouteOverride.settings:type_name -> kruise.io.extensions.v1.HttpRouteSettings
-	23, // 25: kruise.io.extensions.v1.HttpRouteSettings.timeout:type_name -> google.protobuf.Duration
-	24, // 26: kruise.io.extensions.v1.HttpRouteSettings.retries:type_name -> istio.networking.v1alpha3.HTTPRetry
-	20, // 27: kruise.io.extensions.v1.LocalRateLimitSettings.token_bucket:type_name -> kruise.io.extensions.v1.TokenBucket
-	21, // 28: kruise.io.extensions.v1.LocalRateLimitSettings.descriptors:type_name -> kruise.io.extensions.v1.RateLimitDescriptor
-	23, // 29: kruise.io.extensions.v1.TokenBucket.fill_interval:type_name -> google.protobuf.Duration
-	22, // 30: kruise.io.extensions.v1.RateLimitDescriptor.entries:type_name -> kruise.io.extensions.v1.RateLimitEntry
-	20, // 31: kruise.io.extensions.v1.RateLimitDescriptor.token_bucket:type_name -> kruise.io.extensions.v1.TokenBucket
+	8,  // 0: kruise.networking.extensions.v1.AgentioConfig.sandbox_ext_proc:type_name -> kruise.networking.extensions.v1.ExtProcProvider
+	12, // 1: kruise.networking.extensions.v1.AgentioConfig.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
+	4,  // 2: kruise.networking.extensions.v1.AgentioConfig.egress_gateways:type_name -> kruise.networking.extensions.v1.EgressGateway
+	5,  // 3: kruise.networking.extensions.v1.EgressGateway.tls_termination:type_name -> kruise.networking.extensions.v1.TlsTerminationConfig
+	8,  // 4: kruise.networking.extensions.v1.EgressGateway.ext_proc:type_name -> kruise.networking.extensions.v1.ExtProcProvider
+	14, // 5: kruise.networking.extensions.v1.EgressGateway.connection_pool:type_name -> kruise.networking.extensions.v1.ConnectionPoolSettings
+	19, // 6: kruise.networking.extensions.v1.EgressGateway.connect_rate_limit:type_name -> kruise.networking.extensions.v1.LocalRateLimitSettings
+	12, // 7: kruise.networking.extensions.v1.EgressPolicies.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
+	0,  // 8: kruise.networking.extensions.v1.WorkloadConfig.scope:type_name -> kruise.networking.extensions.v1.WorkloadConfigScope
+	12, // 9: kruise.networking.extensions.v1.WorkloadConfig.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
+	11, // 10: kruise.networking.extensions.v1.ExtProcProvider.request:type_name -> kruise.networking.extensions.v1.ProcessingModeOptions
+	11, // 11: kruise.networking.extensions.v1.ExtProcProvider.response:type_name -> kruise.networking.extensions.v1.ProcessingModeOptions
+	9,  // 12: kruise.networking.extensions.v1.ExtProcProvider.cluster_settings:type_name -> kruise.networking.extensions.v1.ClusterSettings
+	10, // 13: kruise.networking.extensions.v1.ClusterSettings.http:type_name -> kruise.networking.extensions.v1.HttpSettings
+	1,  // 14: kruise.networking.extensions.v1.ProcessingModeOptions.header_mode:type_name -> kruise.networking.extensions.v1.HeaderSendMode
+	2,  // 15: kruise.networking.extensions.v1.EgressPolicy.policy:type_name -> kruise.networking.extensions.v1.EgressPolicyAction
+	13, // 16: kruise.networking.extensions.v1.EgressPolicy.gateway:type_name -> kruise.networking.extensions.v1.GatewayAddress
+	15, // 17: kruise.networking.extensions.v1.ConnectionPoolSettings.tcp:type_name -> kruise.networking.extensions.v1.TcpSettings
+	16, // 18: kruise.networking.extensions.v1.ConnectionPoolSettings.http:type_name -> kruise.networking.extensions.v1.ConnectionPoolHttpSettings
+	23, // 19: kruise.networking.extensions.v1.TcpSettings.idle_timeout:type_name -> google.protobuf.Duration
+	23, // 20: kruise.networking.extensions.v1.TcpSettings.max_connection_duration:type_name -> google.protobuf.Duration
+	23, // 21: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.stream_idle_timeout:type_name -> google.protobuf.Duration
+	18, // 22: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.default_route:type_name -> kruise.networking.extensions.v1.HttpRouteSettings
+	17, // 23: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.route_overrides:type_name -> kruise.networking.extensions.v1.HttpRouteOverride
+	18, // 24: kruise.networking.extensions.v1.HttpRouteOverride.settings:type_name -> kruise.networking.extensions.v1.HttpRouteSettings
+	23, // 25: kruise.networking.extensions.v1.HttpRouteSettings.timeout:type_name -> google.protobuf.Duration
+	24, // 26: kruise.networking.extensions.v1.HttpRouteSettings.retries:type_name -> istio.networking.v1alpha3.HTTPRetry
+	20, // 27: kruise.networking.extensions.v1.LocalRateLimitSettings.token_bucket:type_name -> kruise.networking.extensions.v1.TokenBucket
+	21, // 28: kruise.networking.extensions.v1.LocalRateLimitSettings.descriptors:type_name -> kruise.networking.extensions.v1.RateLimitDescriptor
+	23, // 29: kruise.networking.extensions.v1.TokenBucket.fill_interval:type_name -> google.protobuf.Duration
+	22, // 30: kruise.networking.extensions.v1.RateLimitDescriptor.entries:type_name -> kruise.networking.extensions.v1.RateLimitEntry
+	20, // 31: kruise.networking.extensions.v1.RateLimitDescriptor.token_bucket:type_name -> kruise.networking.extensions.v1.TokenBucket
 	32, // [32:32] is the sub-list for method output_type
 	32, // [32:32] is the sub-list for method input_type
 	32, // [32:32] is the sub-list for extension type_name
