@@ -178,7 +178,11 @@ func applyTrafficPolicyCRDs(ctx resource.Context) error {
 }
 
 func deployExtProc(ctx resource.Context) error {
-	if err := ctx.ConfigIstio().File(i.Settings().SystemNamespace, "testdata/ext-proc.yaml").Apply(); err != nil {
+	image := ctx.Settings().Image
+	if err := ctx.ConfigIstio().EvalFile(i.Settings().SystemNamespace, map[string]string{
+		"ImageHub": image.Hub,
+		"ImageTag": image.Tag,
+	}, "testdata/ext-proc.yaml").Apply(); err != nil {
 		return err
 	}
 

@@ -28,8 +28,8 @@ spec:
         app: ext-proc
     spec:
       containers:
-      - image: registry-cn-hangzhou.ack.aliyuncs.com/dev/asm-ext-proc:test
-        imagePullPolicy: Always
+      - image: {{ .ImageHub }}/ext-proc:{{ .ImageTag }}
+        imagePullPolicy: IfNotPresent
         name: ext-proc
         env:
         - name: REQUEST_HEADERS_TO_ADD
@@ -38,10 +38,10 @@ spec:
           value: "x-hello-from-ext-proc=true"
         resources:
           requests:
-            cpu: "1"
-            memory: "2Gi"
+            cpu: "50m"
+            memory: "64Mi"
           limits:
-            cpu: "2"
-            memory: "4Gi"
+            cpu: "500m"
+            memory: "256Mi"
         ports:
         - containerPort: 9002

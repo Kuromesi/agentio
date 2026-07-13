@@ -70,7 +70,7 @@ fi
 trace "build Agentio test images" env \
   DOCKER_ARCHITECTURES="${arch}" \
   DOCKER_BUILD_VARIANTS="${VARIANT}" \
-  DOCKER_TARGETS="docker.pilot docker.install-cni docker.app" \
+  DOCKER_TARGETS="docker.pilot docker.install-cni docker.app docker.ext-proc" \
   make dockerx.pushx
 
 # Avoid stale negative DNS entries while the suite installs and removes test

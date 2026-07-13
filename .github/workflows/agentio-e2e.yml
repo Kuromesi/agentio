@@ -3,8 +3,9 @@ name: agentio-e2e
 # KinD-based end-to-end tests for the agentio sandbox data plane.
 #
 # Component images:
-#   - pilot(agentiod), install-cni, and echo app are BUILT from this repo and
-#     pushed only to the KinD-local registry by the Agentio-specific script.
+#   - pilot(agentiod), install-cni, echo app, and ext-proc are BUILT from this
+#     repo and pushed only to the KinD-local registry by the Agentio-specific
+#     script.
 #   - proxy and ztunnel are pulled anonymously from the external ACR references
 #     configured in the job environment. No registry credentials are used.
 #
@@ -20,7 +21,10 @@ on:
       - "pilot/pkg/networking/core/**"
       - "tests/integration/agentio/**"
       - "pkg/test/framework/components/sandbox/**"
+      - "pkg/test/extproc/**"
       - "prow/integ-suite-agentio-kind.sh"
+      - "Makefile.core.mk"
+      - "tools/docker.yaml"
       - ".github/workflows/agentio-e2e.yml"
 
 permissions:
