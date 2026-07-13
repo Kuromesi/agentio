@@ -3,10 +3,8 @@ name: agentio-e2e
 # KinD-based end-to-end tests for the agentio sandbox data plane.
 #
 # Component images:
-#   - pilot(agentiod), proxyv2, install-cni are BUILT from this repo and pushed
-#     to the KinD-local registry by prow/integ-suite-kind.sh (HUB/TAG handled
-#     automatically). The locally built proxyv2 is not deployed when the
-#     external proxy override below is configured.
+#   - pilot(agentiod), install-cni, and echo app are BUILT from this repo and
+#     pushed only to the KinD-local registry by the Agentio-specific script.
 #   - proxy and ztunnel are pulled anonymously from the external ACR references
 #     configured in the job environment. No registry credentials are used.
 #
@@ -22,6 +20,7 @@ on:
       - "pilot/pkg/networking/core/**"
       - "tests/integration/agentio/**"
       - "pkg/test/framework/components/sandbox/**"
+      - "prow/integ-suite-agentio-kind.sh"
       - ".github/workflows/agentio-e2e.yml"
 
 permissions:
@@ -55,10 +54,9 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.2
-      - name: Install KinD and crane
+      - name: Install KinD
         run: |
           go install sigs.k8s.io/kind@v0.24.0
-          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Run agentio e2e (KinD)
-        run: prow/integ-suite-kind.sh test.integration.agentio.kube
+        run: prow/integ-suite-agentio-kind.sh
