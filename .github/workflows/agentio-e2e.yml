@@ -1,6 +1,6 @@
 name: agentio-e2e
 
-# KinD-based end-to-end tests for the agentio sandbox data plane.
+# KinD-based end-to-end tests for the Agentio data plane.
 #
 # Component images:
 #   - pilot(agentiod), install-cni, echo app, and ext-proc are BUILT from this
@@ -20,7 +20,7 @@ on:
       - "pilot/pkg/serviceregistry/kube/controller/agentio/**"
       - "pilot/pkg/networking/core/**"
       - "tests/integration/agentio/**"
-      - "pkg/test/framework/components/sandbox/**"
+      - "pkg/test/framework/components/agentio/**"
       - "pkg/test/extproc/**"
       - "prow/integ-suite-agentio-kind.sh"
       - "Makefile.core.mk"

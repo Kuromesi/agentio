@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sandbox
+package agentio
 
 import (
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,72 +38,84 @@ const (
 	controlPlanePodSelector = "app=agentiod"
 )
 
-type ImageConfig struct {
-	Hub  string
-	Name string
-	Tag  string
-}
-
 type Config struct {
 	Namespace   string
 	ReleaseName string
 	ChartPath   string
 	WaitTimeout time.Duration
+	// ValuesFiles are Helm values overlays applied in order after the generated
+	// test values and before Values.
+	ValuesFiles []string
 	// Values are --set style overrides applied to the chart.
-	Values       map[string]string
-	ProxyImage   *ImageConfig
-	ZtunnelImage *ImageConfig
+	Values map[string]string
 }
 
-func (i ImageConfig) helmValues(prefix string) (map[string]string, error) {
-	fields := map[string]string{
-		"hub":  i.Hub,
-		"name": i.Name,
-		"tag":  i.Tag,
-	}
-	values := make(map[string]string, len(fields))
-	for key, value := range fields {
-		if value == "" || value != strings.TrimSpace(value) || strings.ContainsAny(value, ",={}") {
-			return nil, fmt.Errorf("invalid %s image %s %q", prefix, key, value)
-		}
-		values[fmt.Sprintf("%s.image.%s", prefix, key)] = value
-	}
-	return values, nil
-}
-
-func (c Config) helmValues() (map[string]string, error) {
-	values := maps.Clone(c.Values)
-	if values == nil {
-		values = map[string]string{}
-	}
-	images := []struct {
-		prefix string
-		image  *ImageConfig
-	}{
-		{prefix: "proxy", image: c.ProxyImage},
-		{prefix: "egressGateway", image: c.ProxyImage},
-		{prefix: "ztunnel", image: c.ZtunnelImage},
-	}
-	for _, configuredImage := range images {
-		if configuredImage.image == nil {
-			continue
-		}
-		imageValues, err := configuredImage.image.helmValues(configuredImage.prefix)
-		if err != nil {
+func (c Config) helmArgs() ([]string, error) {
+	args := []string{"--create-namespace"}
+	for _, valuesFile := range c.ValuesFiles {
+		if err := validateValuesFile(valuesFile); err != nil {
 			return nil, err
 		}
-		maps.Copy(values, imageValues)
+		args = append(args, "--values", valuesFile)
 	}
-	return values, nil
+
+	keys := make([]string, 0, len(c.Values))
+	for key := range c.Values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := c.Values[key]
+		if !isSafeHelmSetKey(key) || !isSafeHelmSetValue(value) {
+			return nil, fmt.Errorf("unsafe Helm --set value %q=%q", key, value)
+		}
+		args = append(args, "--set", fmt.Sprintf("%s=%s", key, value))
+	}
+	return args, nil
+}
+
+func isSafeHelmSetKey(value string) bool {
+	return value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || strings.ContainsRune("._-[]", r))
+	}) < 0
+}
+
+func isSafeHelmSetValue(value string) bool {
+	return value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || strings.ContainsRune("._/-:", r))
+	}) < 0
+}
+
+func validateValuesFile(path string) error {
+	if path == "" || strings.IndexFunc(path, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || strings.ContainsRune("/._-", r))
+	}) >= 0 {
+		return fmt.Errorf("unsafe Helm values file path %q", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("invalid Helm values file %q: %v", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("Helm values file %q is not a regular file", path)
+	}
+	return nil
 }
 
 func DefaultConfig() Config {
-	return Config{
+	cfg := Config{
 		Namespace:   DefaultNamespace,
 		ReleaseName: DefaultReleaseName,
 		ChartPath:   filepath.Join(testenv.IstioSrc, DefaultChartDir),
 		WaitTimeout: 5 * time.Minute,
 	}
+	if valuesFileFromCommandLine != "" {
+		cfg.ValuesFiles = []string{valuesFileFromCommandLine}
+	}
+	return cfg
 }
 
 type Instance interface {
@@ -145,30 +156,19 @@ func (i *instance) ReleaseName() string { return i.cfg.ReleaseName }
 
 func install(ctx resource.Context, cfg Config) (Instance, error) {
 	start := time.Now()
-	scopes.Framework.Infof("=== BEGIN: Install sandbox chart (namespace=%s) ===", cfg.Namespace)
+	scopes.Framework.Infof("=== BEGIN: Install Agentio chart (namespace=%s) ===", cfg.Namespace)
 
 	cs := ctx.Clusters().Default().(*kubecluster.Cluster)
 	h := helm.New(cs.Filename())
 
 	valuesFile, err := writeValues(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write sandbox values: %v", err)
+		return nil, fmt.Errorf("failed to write Agentio values: %v", err)
 	}
 
-	values, err := cfg.helmValues()
+	args, err := cfg.helmArgs()
 	if err != nil {
-		return nil, fmt.Errorf("invalid sandbox Helm values: %v", err)
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	args := []string{"--create-namespace"}
-	for _, key := range keys {
-		value := values[key]
-		args = append(args, "--set", fmt.Sprintf("%s=%s", key, value))
+		return nil, fmt.Errorf("invalid Agentio Helm arguments: %v", err)
 	}
 
 	if err := h.InstallChart(
@@ -179,16 +179,16 @@ func install(ctx resource.Context, cfg Config) (Instance, error) {
 		cfg.WaitTimeout,
 		args...,
 	); err != nil {
-		scopes.Framework.Errorf("=== FAILED: Install sandbox chart ===")
-		return nil, fmt.Errorf("failed to install sandbox chart: %v", err)
+		scopes.Framework.Errorf("=== FAILED: Install Agentio chart ===")
+		return nil, fmt.Errorf("failed to install Agentio chart: %v", err)
 	}
 
 	fetchFn := testKube.NewPodFetch(cs, cfg.Namespace, controlPlanePodSelector)
 	if _, err := testKube.WaitUntilPodsAreReady(fetchFn, retry.Timeout(cfg.WaitTimeout), retry.Delay(5*time.Second)); err != nil {
-		return nil, fmt.Errorf("sandbox control plane not ready: %v", err)
+		return nil, fmt.Errorf("Agentio control plane not ready: %v", err)
 	}
 
-	scopes.Framework.Infof("=== SUCCEEDED: Install sandbox chart in %v ===", time.Since(start))
+	scopes.Framework.Infof("=== SUCCEEDED: Install Agentio chart in %v ===", time.Since(start))
 
 	ins := &instance{
 		cfg:      cfg,
@@ -200,7 +200,7 @@ func install(ctx resource.Context, cfg Config) (Instance, error) {
 }
 
 func (i *instance) Close() error {
-	scopes.Framework.Infof("Cleaning up sandbox chart release %s", i.cfg.ReleaseName)
+	scopes.Framework.Infof("Cleaning up Agentio chart release %s", i.cfg.ReleaseName)
 	return i.helmInst.DeleteChart(i.cfg.ReleaseName, i.cfg.Namespace)
 }
 
@@ -210,9 +210,8 @@ func writeValues(ctx resource.Context, cfg Config) (string, error) {
 	// renamed because the build target produces "install-cni" while the chart
 	// default name is different.
 	//
-	// External image overrides supplied through Config are applied later as Helm
-	// --set arguments, so they take precedence over these local image defaults.
-	// Components without an explicit override keep the chart's own defaults.
+	// External values overlays are applied later, so they take precedence over
+	// these local image defaults. Scenario-specific --set values are applied last.
 	hub := ctx.Settings().Image.Hub
 	tag := ctx.Settings().Image.Tag
 
@@ -231,15 +230,25 @@ proxy:
     hub: %s
     name: proxyv2
     tag: %s
+egressGateway:
+  image:
+    hub: %s
+    name: proxyv2
+    tag: %s
+ztunnel:
+  image:
+    hub: %s
+    name: ztunnel
+    tag: %s
 ambient:
   cni:
     image:
       hub: %s
       name: install-cni
       tag: %s
-`, cfg.Namespace, hub, tag, hub, tag, hub, tag)
+`, cfg.Namespace, hub, tag, hub, tag, hub, tag, hub, tag, hub, tag)
 
-	dir, err := ctx.CreateTmpDirectory("sandbox-values")
+	dir, err := ctx.CreateTmpDirectory("agentio-values")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp directory: %v", err)
 	}

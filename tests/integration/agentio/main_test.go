@@ -22,16 +22,16 @@ import (
 	"time"
 
 	"istio.io/api/label"
-	sandboxpkg "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	controlleragentio "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/test/framework"
+	agentiocomp "istio.io/istio/pkg/test/framework/components/agentio"
 	"istio.io/istio/pkg/test/framework/components/echo"
 	"istio.io/istio/pkg/test/framework/components/echo/common/ports"
 	"istio.io/istio/pkg/test/framework/components/echo/deployment"
 	"istio.io/istio/pkg/test/framework/components/istio"
 	"istio.io/istio/pkg/test/framework/components/namespace"
-	sandboxcomp "istio.io/istio/pkg/test/framework/components/sandbox"
 	"istio.io/istio/pkg/test/framework/resource"
 	testKube "istio.io/istio/pkg/test/kube"
 	"istio.io/istio/pkg/test/util/retry"
@@ -41,22 +41,16 @@ const agentioConfigMapName = "agentio-config-primary"
 
 var (
 	i   istio.Instance
-	sb  sandboxcomp.Instance
+	ai  agentiocomp.Instance
 	ns  namespace.Instance
 	all echo.Instances
 )
 
 var (
-	deployAsSandbox  = env.Register("DEPLOY_AS_SANDBOX", false, "Whether to deploy echo instances as sandbox workloads").Get()
-	ambientMode      = env.Register("AMBIENT_MODE", false, "Whether to use ambient mode (node-level ztunnel) instead of sidecar ztunnel").Get()
-	firewallBackend  = env.Register("FIREWALL_BACKEND", "auto", "Ztunnel firewall backend: auto or iptables").Get()
-	enableFirewall   = env.Register("ENABLE_FIREWALL", false, "Whether to enable firewall rules; when false, UDP/ICMP traffic policy tests are skipped").Get()
-	proxyImageHub    = env.Register("AGENTIO_PROXY_IMAGE_HUB", "", "External proxy image registry and namespace").Get()
-	proxyImageName   = env.Register("AGENTIO_PROXY_IMAGE_NAME", "", "External proxy image name").Get()
-	proxyImageTag    = env.Register("AGENTIO_PROXY_IMAGE_TAG", "", "External proxy image tag").Get()
-	ztunnelImageHub  = env.Register("AGENTIO_ZTUNNEL_IMAGE_HUB", "", "External ztunnel image registry and namespace").Get()
-	ztunnelImageName = env.Register("AGENTIO_ZTUNNEL_IMAGE_NAME", "", "External ztunnel image name").Get()
-	ztunnelImageTag  = env.Register("AGENTIO_ZTUNNEL_IMAGE_TAG", "", "External ztunnel image tag").Get()
+	deployAsSandbox = env.Register("DEPLOY_AS_SANDBOX", false, "Whether to deploy echo instances as sandbox workloads").Get()
+	ambientMode     = env.Register("AMBIENT_MODE", false, "Whether to use ambient mode (node-level ztunnel) instead of sidecar ztunnel").Get()
+	firewallBackend = env.Register("FIREWALL_BACKEND", "auto", "Ztunnel firewall backend: auto or iptables").Get()
+	enableFirewall  = env.Register("ENABLE_FIREWALL", false, "Whether to enable firewall rules; when false, UDP/ICMP traffic policy tests are skipped").Get()
 )
 
 func TestMain(m *testing.M) {
@@ -82,9 +76,9 @@ func TestMain(m *testing.M) {
 	suite.
 		Setup(istio.Setup(&i, func(_ resource.Context, cfg *istio.Config) {
 			cfg.DeployIstio = false
-			cfg.SystemNamespace = sandboxcomp.DefaultNamespace
+			cfg.SystemNamespace = agentiocomp.DefaultNamespace
 		})).
-		Setup(sandboxcomp.Setup(&sb, func(_ resource.Context, cfg *sandboxcomp.Config) {
+		Setup(agentiocomp.Setup(&ai, func(_ resource.Context, cfg *agentiocomp.Config) {
 			cfg.Values = map[string]string{
 				"ambient.enabled":                         fmt.Sprintf("%t", ambientMode),
 				"ambient.ztunnel.env.FIREWALL_BACKEND":    firewallBackend,
@@ -100,12 +94,6 @@ func TestMain(m *testing.M) {
 				"egressGateway.resources.requests.memory": "128Mi",
 				"egressGateway.resources.limits.cpu":      "1",
 				"egressGateway.resources.limits.memory":   "512Mi",
-			}
-			if proxyImageHub != "" || proxyImageName != "" || proxyImageTag != "" {
-				cfg.ProxyImage = &sandboxcomp.ImageConfig{Hub: proxyImageHub, Name: proxyImageName, Tag: proxyImageTag}
-			}
-			if ztunnelImageHub != "" || ztunnelImageName != "" || ztunnelImageTag != "" {
-				cfg.ZtunnelImage = &sandboxcomp.ImageConfig{Hub: ztunnelImageHub, Name: ztunnelImageName, Tag: ztunnelImageTag}
 			}
 		})).
 		Setup(namespace.Setup(&ns, nsCfg)).
@@ -125,7 +113,7 @@ func deployEchoes(ctx resource.Context) error {
 	annotations := map[string]string{}
 	labels := map[string]string{}
 	if !ambientMode {
-		labels[sandboxpkg.LabelSandboxProxyType] = "ztunnel"
+		labels[controlleragentio.LabelSandboxProxyType] = "ztunnel"
 		if !deployAsSandbox {
 			annotations["inject.istio.io/templates"] = "ztunnel"
 		}
