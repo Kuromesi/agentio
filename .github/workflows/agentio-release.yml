@@ -1,6 +1,6 @@
 name: agentio-release
 
-# Release pipeline: build pilot, sync proxy, and publish the Helm chart.
+# Release pipeline: build pilot and proxy-init, sync proxy, and publish the Helm chart.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
 # ztunnel and traffic-extension are versioned and published independently.
@@ -46,14 +46,14 @@ jobs:
             exit 1
           fi
 
-  build-pilot:
+  build-images:
     needs: validate-release
     uses: ./.github/workflows/agentio-image.yml
     with:
       tag: ${{ github.ref_name }}
 
   sync-images:
-    needs: build-pilot
+    needs: build-images
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -138,9 +138,10 @@ jobs:
           sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
           sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
 
-          # Only pilot and proxy follow the Agentio release version. ztunnel,
-          # traffic-extension, and CNI are independently versioned.
+          # Pilot, proxy-init, and proxy follow the Agentio release version.
+          # ztunnel, traffic-extension, and CNI are independently versioned.
           sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: proxy-init/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxy/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
 
           echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"

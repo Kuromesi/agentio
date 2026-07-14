@@ -278,7 +278,7 @@ run_scenario() {
   run_traced "setup ${scenario} kind registry" setup_kind_registry || return $?
 
   if [[ "${IMAGES_BUILT}" == "false" ]]; then
-    local docker_targets="docker.pilot docker.install-cni docker.app docker.ext-proc"
+    local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc"
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
       arch=linux/arm64
     fi

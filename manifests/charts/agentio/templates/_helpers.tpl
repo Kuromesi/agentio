@@ -60,6 +60,11 @@ Image helpers
 {{- include "agentio.image" (dict "hub" .Values.ztunnel.image.hub "name" .Values.ztunnel.image.name "tag" .Values.ztunnel.image.tag "globalHub" .Values.global.hub) -}}
 {{- end -}}
 
+{{/* Lightweight image used by the iptables init container. */}}
+{{- define "agentio.proxyInitImage" -}}
+{{- include "agentio.image" (dict "hub" .Values.proxyInit.image.hub "name" .Values.proxyInit.image.name "tag" .Values.proxyInit.image.tag "globalHub" .Values.global.hub) -}}
+{{- end -}}
+
 {{/*
 CNI helpers
 */}}

@@ -225,6 +225,11 @@ agentiod:
     hub: %s
     name: pilot
     tag: %s
+proxyInit:
+  image:
+    hub: %s
+    name: proxy-init
+    tag: %s
 proxy:
   image:
     hub: %s
@@ -246,7 +251,7 @@ ambient:
       hub: %s
       name: install-cni
       tag: %s
-`, cfg.Namespace, hub, tag, hub, tag, hub, tag, hub, tag, hub, tag)
+`, cfg.Namespace, hub, tag, hub, tag, hub, tag, hub, tag, hub, tag, hub, tag)
 
 	dir, err := ctx.CreateTmpDirectory("agentio-values")
 	if err != nil {

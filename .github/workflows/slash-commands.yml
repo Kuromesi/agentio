@@ -56,7 +56,7 @@ jobs:
 
       - name: Get PR head SHA
         id: pr
-        if: contains(fromJSON('["retest", "build"]'), steps.parse.outputs.cmd)
+        if: steps.parse.outputs.cmd == 'retest'
         run: |
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${{ steps.parse.outputs.pr_num }})
           echo "head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> "$GITHUB_OUTPUT"
@@ -92,29 +92,6 @@ jobs:
           HAS_WRITE: ${{ steps.parse.outputs.has_write }}
           PR_NUM: ${{ steps.parse.outputs.pr_num }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-
-      - name: /build
-        if: steps.parse.outputs.cmd == 'build'
-        run: |
-          if [[ "$HAS_WRITE" != "true" ]]; then
-            gh pr comment "$PR_NUM" --body "❌ You don't have permission to run \`/build\`. Only collaborators can trigger builds."
-            exit 0
-          fi
-
-          # workflow_dispatch is one of the events that GITHUB_TOKEN may trigger.
-          gh workflow run pr-build.yml \
-            --ref ${{ github.event.repository.default_branch }} \
-            -f pr_number="$PR_NUM" \
-            -f head_sha="$HEAD_SHA" \
-            -f requested_by="$REQUESTED_BY"
-
-          gh pr comment "$PR_NUM" --body "✅ Build triggered for commit \`${HEAD_SHA:0:7}\`. See [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/workflows/pr-build.yml)."
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HAS_WRITE: ${{ steps.parse.outputs.has_write }}
-          PR_NUM: ${{ steps.parse.outputs.pr_num }}
-          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-          REQUESTED_BY: ${{ github.event.comment.user.login }}
 
       - name: /lgtm
         if: steps.parse.outputs.cmd == 'lgtm'
@@ -233,7 +210,6 @@ jobs:
       - name: Unknown command
         if: |
           steps.parse.outputs.cmd != 'retest' &&
-          steps.parse.outputs.cmd != 'build' &&
           steps.parse.outputs.cmd != 'lgtm' &&
           steps.parse.outputs.cmd != 'hold' &&
           steps.parse.outputs.cmd != 'unhold' &&
@@ -247,7 +223,6 @@ jobs:
 
           Available commands:
           - \`/retest\` — re-run failed CI
-          - \`/build\` — verify the PR pilot image builds without publishing it
           - \`/lgtm\` — add lgtm label
           - \`/hold\` / \`/unhold\` — block/allow merge
           - \`/ok-to-test\` — allow external contributor's PR to run CI (maintainers only)

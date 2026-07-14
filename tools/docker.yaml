@@ -33,6 +33,10 @@ images:
   - ${TARGET_OUT_LINUX}/${RELEASE_MODE}/${SIDECAR}
   targets:
   - ${TARGET_OUT_LINUX}/pilot-agent
+- name: proxy-init
+  dockerfile: pilot/docker/Dockerfile.proxy_init
+  targets:
+  - ${TARGET_OUT_LINUX}/pilot-agent
 - name: pilot
   dockerfile: pilot/docker/Dockerfile.pilot
   targets:

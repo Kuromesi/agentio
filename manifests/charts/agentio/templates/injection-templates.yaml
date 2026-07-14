@@ -106,7 +106,7 @@ data:
         },
         "proxy_init": {
           "forceApplyIptables": false,
-          "image": "{{ .Values.proxy.image.hub | default .Values.global.hub }}/{{ .Values.proxy.image.name }}:{{ .Values.proxy.image.tag }}"
+          "image": "{{ include "agentio.proxyInitImage" . }}"
         },
         "remotePilotAddress": "",
         "resourceScope": "all",

@@ -2,18 +2,24 @@ name: agentio-image
 
 # Build and push container images to Docker Hub.
 # Follows Istio's release-commit.sh tag strategy:
-# Called by agentio-release for a trusted semantic-version tag.
+# - pushes to protected release-* branches publish development images;
+# - agentio-release calls this workflow for trusted semantic-version tags.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
-#   secrets.HUB_KRUISE      — Docker Hub token in the protected `release` Environment
+#   secrets.HUB_KRUISE      — Docker Hub token in the `development` and protected
+#                             `release` Environments
 
 on:
+  push:
+    branches:
+      - "release-*"
   workflow_call:
     inputs:
       tag:
         description: 'Image tag'
-        required: true
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -24,11 +30,15 @@ env:
   ISTIO_DOCKER_BUILDER: docker
   HUB: docker.io/openkruise
 
+concurrency:
+  group: agentio-image-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/release-') }}
+
 jobs:
   build-images:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    environment: release
+    environment: ${{ startsWith(github.ref, 'refs/heads/release-') && 'development' || 'release' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,8 +59,26 @@ jobs:
             echo "Invalid OCI image tag: $INPUT_TAG" >&2
             exit 1
           fi
-          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Image publication requires a semantic version tag" >&2
+
+          if [[ "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            BRANCH="release-${BASH_REMATCH[1]}"
+            if [[ -n "$INPUT_TAG" ]]; then
+              echo "Development image builds must derive tags from the release branch commit" >&2
+              exit 1
+            fi
+            if [[ "$(gh api "repos/${GH_REPO}/branches/${BRANCH}" --jq '.protected')" != "true" ]]; then
+              echo "Development images may only be published from a protected release branch" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Image publication requires a protected release branch or semantic version tag" >&2
+            exit 1
+          fi
+          if [[ "$INPUT_TAG" != "${BASH_REMATCH[1]}" ]]; then
+            echo "Requested image tag does not match Git tag" >&2
             exit 1
           fi
 
@@ -109,17 +137,21 @@ jobs:
             echo "EXTRA_TAGS=latest" >> "$GITHUB_ENV"
           else
             SHA="${GITHUB_SHA}"
-            VER=$(cat VERSION)
+            if [[ ! "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
+              echo "Development image publication requires a versioned release branch" >&2
+              exit 1
+            fi
+            VER="${BASH_REMATCH[1]}"
             echo "PRIMARY_TAG=${SHA}" >> "$GITHUB_ENV"
             echo "EXTRA_TAGS=${VER}-alpha.${SHA},${VER}-dev" >> "$GITHUB_ENV"
           fi
 
-      - name: Build and push pilot
+      - name: Build and push Agentio images
         run: |
           DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
           DOCKER_BUILD_VARIANTS=default \
-          DOCKER_TARGETS=docker.pilot \
-          make push.docker.pilot HUB="${HUB}" TAG="${PRIMARY_TAG}"
+          DOCKER_TARGETS="docker.pilot docker.proxy-init" \
+          make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
 
       - name: Push extra tags (latest, dev, alpha)
         if: env.EXTRA_TAGS != ''
@@ -128,7 +160,7 @@ jobs:
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
 
           IFS=',' read -ra TAGS <<< "${EXTRA_TAGS}"
-          for image in pilot; do
+          for image in pilot proxy-init; do
             for tag in "${TAGS[@]}"; do
               echo "Tagging ${HUB}/${image}:${PRIMARY_TAG} -> ${tag}"
               crane tag "${HUB}/${image}:${PRIMARY_TAG}" "${tag}"

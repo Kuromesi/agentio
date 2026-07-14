@@ -3,9 +3,9 @@ name: agentio-e2e
 # KinD-based end-to-end tests for the Agentio data plane.
 #
 # Component images:
-#   - pilot(agentiod), install-cni, echo app, and ext-proc are BUILT from this
-#     repo and pushed only to the KinD-local registry by the Agentio-specific
-#     script.
+#   - pilot(agentiod), proxy-init, install-cni, echo app, and ext-proc are
+#     BUILT from this repo and pushed only to the KinD-local registry by the
+#     Agentio-specific script.
 #   - no private registry credentials or temporary external image overrides are
 #     configured in this workflow.
 #
@@ -24,6 +24,7 @@ on:
       - "pkg/test/extproc/**"
       - "prow/integ-suite-agentio-kind.sh"
       - "Makefile.core.mk"
+      - "pilot/docker/Dockerfile.proxy_init"
       - "tools/docker.yaml"
       - ".github/workflows/agentio-e2e.yml"
 
