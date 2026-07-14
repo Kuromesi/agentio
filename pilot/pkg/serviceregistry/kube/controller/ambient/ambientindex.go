@@ -279,8 +279,7 @@ func New(options Options) Index {
 		}),
 	)...)
 
-	var sandboxConfig krt.Singleton[model.AgentioConfig] = krt.NewStatic(
-		model.DefaultAgentioConfig(), true, opts.WithName("AgentioConfig")...)
+	var sandboxConfig krt.Singleton[model.AgentioConfig]
 	var workloadConfigs krt.Collection[model.WorkloadConfig]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
 	if options.AgentioController != nil {

@@ -163,9 +163,11 @@ func (e *Environment) Mesh() *meshconfig.MeshConfig {
 
 func (e *Environment) AgentioConfig() *AgentioConfig {
 	if e != nil && e.AgentioController != nil {
-		return e.AgentioController.AgentioConfig().Get()
+		if cfg := e.AgentioController.AgentioConfig().Get(); cfg != nil {
+			return cfg
+		}
 	}
-	return nil
+	return DefaultAgentioConfig()
 }
 
 func (e *Environment) MeshNetworks() *meshconfig.MeshNetworks {

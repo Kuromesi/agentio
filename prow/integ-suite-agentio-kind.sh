@@ -28,7 +28,7 @@ trim_whitespace() {
 }
 
 configure_scenarios() {
-  local requested="${AGENTIO_E2E_SCENARIOS:-sidecar-auto,ambient-auto,ambient-iptables}"
+  local requested="${AGENTIO_E2E_SCENARIOS:-sidecar-auto,sidecar-iptables,ambient-auto,ambient-iptables}"
   local raw_scenarios=()
   local selected_names=()
   local raw
@@ -54,6 +54,7 @@ configure_scenarios() {
 
     case "${scenario}" in
       sidecar-auto) SCENARIOS+=("sidecar-auto:false:auto") ;;
+      sidecar-iptables) SCENARIOS+=("sidecar-iptables:false:iptables") ;;
       ambient-auto) SCENARIOS+=("ambient-auto:true:auto") ;;
       ambient-iptables) SCENARIOS+=("ambient-iptables:true:iptables") ;;
       *)

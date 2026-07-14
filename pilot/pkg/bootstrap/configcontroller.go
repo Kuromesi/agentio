@@ -106,6 +106,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		KubeClient: s.kubeClient,
 		MeshConfig: s.environment.Watcher,
 		Debugger:   s.krtDebugger,
+		Stop:       s.internalStop,
 	})
 	if err != nil {
 		return err
@@ -131,11 +132,6 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 			})
 		})
 	}
-	s.addStartFunc("agentio-controller", func(stop <-chan struct{}) error {
-		go s.agentioController.Run(stop)
-		return nil
-	})
-
 	// If running in ingress mode (requires k8s), wrap the config controller.
 	if hasKubeRegistry(args.RegistryOptions.Registries) && meshConfig.IngressControllerMode != meshconfig.MeshConfig_OFF {
 		// Wrap the config controller with a cache.

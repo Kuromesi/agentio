@@ -82,6 +82,7 @@ func TestMain(m *testing.M) {
 			cfg.Values = map[string]string{
 				"ambient.enabled":                         fmt.Sprintf("%t", ambientMode),
 				"ambient.ztunnel.env.FIREWALL_BACKEND":    firewallBackend,
+				"sidecarInjector.ztunnel.firewallBackend": firewallBackend,
 				"global.enableFirewallRules":              fmt.Sprintf("%t", enableFirewall),
 				"agentiod.resources.requests.cpu":         "1",
 				"agentiod.resources.requests.memory":      "1Gi",

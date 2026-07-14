@@ -15,6 +15,7 @@
 package agentio
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -67,6 +68,7 @@ type Options struct {
 	KubeClient kube.Client
 	MeshConfig meshwatcher.WatcherCollection
 	Debugger   *krt.DebugHandler
+	Stop       <-chan struct{}
 }
 
 type Controller struct {
@@ -83,11 +85,14 @@ type Controller struct {
 	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
 	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
 
-	stop chan struct{}
+	stop <-chan struct{}
 }
 
 func NewController(options Options) (*Controller, error) {
-	stop := make(chan struct{})
+	stop := options.Stop
+	if stop == nil {
+		return nil, fmt.Errorf("stop channel is required")
+	}
 
 	// Create agents-api clientset and register types before creating collections
 	agentsCS, err := agentsclient.NewForConfig(options.KubeClient.RESTConfig())
@@ -141,11 +146,6 @@ func (c *Controller) initOnDemandController(kc kube.Client, opts krt.OptionsBuil
 	go onDemandController.Run(c.stop)
 	c.onDemandController = onDemandController
 	return nil
-}
-
-func (c *Controller) Run(stop <-chan struct{}) {
-	<-stop
-	close(c.stop)
 }
 
 func (c *Controller) initExternalNamesController() {

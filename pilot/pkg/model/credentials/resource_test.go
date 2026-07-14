@@ -152,6 +152,29 @@ func TestToResourceName(t *testing.T) {
 	}
 }
 
+func TestIsValidOnDemandDomain(t *testing.T) {
+	tests := map[string]bool{
+		"api.example.com":  true,
+		"API.Example.COM":  true,
+		"example.com.":     true,
+		"localhost":        false,
+		"127.0.0.1":        false,
+		"[::1]":            false,
+		"*.example.com":    false,
+		"example.com:443":  false,
+		"example.com/path": false,
+		" example.com":     false,
+		"":                 false,
+	}
+	for domain, want := range tests {
+		t.Run(domain, func(t *testing.T) {
+			if got := IsValidOnDemandDomain(domain); got != want {
+				t.Fatalf("IsValidOnDemandDomain(%q) = %v, want %v", domain, got, want)
+			}
+		})
+	}
+}
+
 func TestToKubernetesGatewayResource(t *testing.T) {
 	tests := []struct {
 		name      string

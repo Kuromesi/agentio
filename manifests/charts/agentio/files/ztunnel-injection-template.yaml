@@ -236,6 +236,8 @@ spec:
     - name: ENABLE_FIREWALL_RULES
       value: "true"
 {{- end }}
+    - name: FIREWALL_BACKEND
+      value: "{{ default .Values.global.proxy_ztunnel.firewallBackend `auto` }}"
     - name: ENABLE_SIDECAR_MODE
       value: "true"
     - name: ENABLE_ORIG_SRC

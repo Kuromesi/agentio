@@ -30,6 +30,9 @@ ztunnel:
 
 sidecarInjector:
   enabled: true
+  ztunnel:
+    # -- Firewall implementation used by injected per-pod ztunnels: auto or iptables.
+    firewallBackend: auto
 
 agentiod:
   replicas: 1

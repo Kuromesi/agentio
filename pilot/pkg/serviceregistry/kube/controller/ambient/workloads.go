@@ -881,18 +881,23 @@ func podWorkloadBuilder(
 			Locality:              getPodLocality(ctx, nodes, p),
 		}
 
-		sc := krt.FetchOne(ctx, agentioConfig.AsCollection())
+		var sc *model.AgentioConfig
+		if agentioConfig != nil {
+			sc = krt.FetchOne(ctx, agentioConfig.AsCollection())
+		}
 		labels := p.Labels
-		if len(sc.GetSandboxIgnoredLabels()) > 0 {
+		if sc != nil && len(sc.GetSandboxIgnoredLabels()) > 0 {
 			labels = agentio.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
 		}
-		metaExtension := agentio.NewResourceMetadataExtension(labels, agentio.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
-		if metaExtension != nil {
-			w.Extensions = append(w.Extensions, metaExtension)
-		}
+		if sc != nil {
+			metaExtension := agentio.NewResourceMetadataExtension(labels, agentio.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
+			if metaExtension != nil {
+				w.Extensions = append(w.Extensions, metaExtension)
+			}
 
-		if sc.GetEgressPolicies() != nil {
-			w.Extensions = append(w.Extensions, agentio.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
+			if sc.GetEgressPolicies() != nil {
+				w.Extensions = append(w.Extensions, agentio.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
+			}
 		}
 
 		if p.Spec.HostNetwork {

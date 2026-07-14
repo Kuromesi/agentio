@@ -40,7 +40,7 @@ func newConfigStore(kc kube.Client, rootNamespace string, stop <-chan struct{}) 
 		LabelSelector: KubeSourceConfigMapFiledSelector,
 		ObjectFilter:  kc.ObjectFilter(),
 		Namespace:     rootNamespace,
-	})
+	}, krt.WithStop(stop), krt.WithName("AgentioConfigStoreConfigMaps"))
 
 	store := memory.Make(collections.PilotGatewayAPI())
 	mc := memory.NewController(store)

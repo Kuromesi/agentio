@@ -37,6 +37,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/util"
 	sec_model "istio.io/istio/pilot/pkg/security/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pilot/pkg/xds/endpoints"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
@@ -113,7 +114,9 @@ func (configgen *ConfigGeneratorImpl) buildWaypointInboundClusters(
 		clusters = append(clusters, cb.buildWaypointConnectOriginate(proxy, push))
 	}
 
-	clusters = append(clusters, sandboxClusters(cb)...)
+	if agentio.IsSandboxEgress(proxy) {
+		clusters = append(clusters, sandboxClusters(cb)...)
+	}
 
 	// This bit creates clusters needed to handle requests going to a remote network.
 	// In ambient, requests going to a remote network have to be wrapped in a double-HBONE tunnel (e.g.,

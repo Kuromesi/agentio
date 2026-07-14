@@ -17,9 +17,11 @@ package credentials
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"istio.io/istio/pkg/cluster"
+	"istio.io/istio/pkg/config/labels"
 	"istio.io/istio/pkg/config/schema/kind"
 )
 
@@ -43,9 +45,34 @@ const (
 	InvalidSecretType    = "invalid"
 	InvalidSecretTypeURI = InvalidSecretType + "://"
 
-	OnDemandCertificateType    = "ondemand"
-	OnDemandCertificateTypeURI = OnDemandCertificateType + "://"
+	OnDemandCertificateType = "ondemand"
 )
+
+// IsValidOnDemandDomain reports whether a raw SDS resource name can safely be
+// interpreted as an on-demand certificate request. Envoy subscribes with the
+// SNI value directly, so this deliberately accepts only DNS FQDNs: not URIs,
+// paths, host:port values, IP addresses, wildcards, or single-label names.
+func IsValidOnDemandDomain(domain string) bool {
+	if domain != strings.TrimSpace(domain) || len(domain) == 0 || len(domain) > 255 || !strings.Contains(domain, ".") {
+		return false
+	}
+	parts := strings.Split(strings.ToLower(domain), ".")
+	if parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) < 2 {
+		return false
+	}
+	if _, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+		return false
+	}
+	for _, part := range parts {
+		if !labels.IsDNS1123Label(part) {
+			return false
+		}
+	}
+	return true
+}
 
 // SecretResource defines a reference to a secret
 type SecretResource struct {
@@ -176,11 +203,5 @@ func ParseResourceName(resourceName string, proxyNamespace string, proxyCluster 
 		return SecretResource{ResourceType: InvalidSecretType, ResourceName: resourceName, Cluster: configCluster}, nil
 	}
 
-	return SecretResource{
-		ResourceType: OnDemandCertificateType,
-		ResourceName: resourceName,
-		Namespace:    "",
-		Name:         resourceName,
-		Cluster:      configCluster,
-	}, nil
+	return SecretResource{}, fmt.Errorf("unknown resource type: %v", resourceName)
 }

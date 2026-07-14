@@ -52,6 +52,7 @@ import (
 	"istio.io/istio/pilot/pkg/networking/telemetry"
 	"istio.io/istio/pilot/pkg/networking/util"
 	security "istio.io/istio/pilot/pkg/security/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	xdsfilters "istio.io/istio/pilot/pkg/xds/filters"
 	"istio.io/istio/pkg/config"
@@ -114,7 +115,9 @@ func (lb *ListenerBuilder) buildWaypointInbound() []*listener.Listener {
 		lb.buildWaypointInternal(wls, orderedWPS),
 	}
 
-	listeners = append(listeners, sandboxListeners(lb)...)
+	if agentio.IsSandboxEgress(lb.node) {
+		listeners = append(listeners, sandboxListeners(lb)...)
+	}
 
 	if features.EnableAmbientMultiNetwork && isEastWestGateway(lb.node) {
 		listeners = append(listeners, buildWaypointForwardInnerConnectListener(lb.push, lb.node))
@@ -626,13 +629,11 @@ func (lb *ListenerBuilder) buildWaypointInternal(wls []model.WorkloadInfo, svcs 
 	// This may affect the data path due to the server-first protocols triggering a time-out.
 	// Currently, we attempt to exclude ports where we can, but it's not perfect.
 	// https://github.com/envoyproxy/envoy/issues/35958 is likely required for an optimal solution
-	httpInspector := sandboxOverrideHTTPInspector()
-	if httpInspector == nil {
-		httpInspector = computeDefaultHTTPInspector(wls, portProtocols)
-	}
-	tlsInspector := sandboxOverrideTLSInspector()
-	if tlsInspector == nil {
-		tlsInspector = computeDefaultTLSInspector(svcs)
+	httpInspector := computeDefaultHTTPInspector(wls, portProtocols)
+	tlsInspector := computeDefaultTLSInspector(svcs)
+	if agentio.IsSandboxEgress(lb.node) {
+		httpInspector = sandboxOverrideHTTPInspector()
+		tlsInspector = sandboxOverrideTLSInspector()
 	}
 
 	// by default match IPs first

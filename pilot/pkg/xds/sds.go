@@ -99,6 +99,19 @@ func (s *SecretGen) parseResources(names []string, proxy *model.Proxy) []SecretR
 	}
 	for _, resource := range names {
 		sr, err := credentials.ParseResourceName(resource, proxy.VerifiedIdentity.Namespace, proxy.Metadata.ClusterID, s.configCluster)
+		// Envoy's on-demand SNI selector subscribes using the raw server name,
+		// rather than a typed URI. Interpret that form only when the
+		// on-demand controller is enabled; the generic credentials parser must
+		// continue rejecting untyped and unknown resource names.
+		if err != nil && s.onDemandCerts != nil && credentials.IsValidOnDemandDomain(resource) {
+			sr = credentials.SecretResource{
+				ResourceType: credentials.OnDemandCertificateType,
+				ResourceName: resource,
+				Name:         resource,
+				Cluster:      s.configCluster,
+			}
+			err = nil
+		}
 		if err != nil {
 			pilotSDSCertificateErrors.Increment()
 			log.Warnf("error parsing resource name: %v", err)
