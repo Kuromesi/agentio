@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,12 +46,14 @@ import (
 	"istio.io/istio/pilot/pkg/leaderelection"
 	"istio.io/istio/pilot/pkg/leaderelection/k8sleaderelection/k8sresourcelock"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/activenotifier"
 	"istio.io/istio/pkg/adsc"
 	"istio.io/istio/pkg/config/analysis/incluster"
 	"istio.io/istio/pkg/config/schema/collections"
 	"istio.io/istio/pkg/config/schema/gvr"
 	"istio.io/istio/pkg/config/validation/agent"
+	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/revisions"
 	"istio.io/istio/pkg/util/sets"
@@ -98,6 +101,40 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 			return err
 		}
 	}
+
+	agentioController, err := agentio.NewController(agentio.Options{
+		KubeClient: s.kubeClient,
+		MeshConfig: s.environment.Watcher,
+		Debugger:   s.krtDebugger,
+	})
+	if err != nil {
+		return err
+	}
+	s.agentioController = agentioController
+	s.ConfigStores = append(s.ConfigStores, agentioController.ConfigStoreController)
+	s.environment.AgentioController = agentioController
+	s.agentioController.AgentioConfig().AsCollection().RegisterBatch(func([]krt.Event[model.AgentioConfig]) {
+		s.XDSServer.ConfigUpdate(&model.PushRequest{
+			Full:   true,
+			Reason: model.NewReasonStats(model.GlobalUpdate),
+			Forced: true,
+		})
+	}, false)
+	if features.EnableOnDemandCerts {
+		// When the on-demand cert reaper evicts idle entries, broadcast an eviction
+		// push so SDS generator can emit removed_resources to all subscribed envoys.
+		s.agentioController.OnDemandCertController().RegisterCertsEviction(func() {
+			s.XDSServer.ConfigUpdate(&model.PushRequest{
+				Full:   true,
+				Reason: model.NewReasonStats(model.OnDemandEviction),
+				Forced: true,
+			})
+		})
+	}
+	s.addStartFunc("agentio-controller", func(stop <-chan struct{}) error {
+		go s.agentioController.Run(stop)
+		return nil
+	})
 
 	// If running in ingress mode (requires k8s), wrap the config controller.
 	if hasKubeRegistry(args.RegistryOptions.Registries) && meshConfig.IngressControllerMode != meshconfig.MeshConfig_OFF {

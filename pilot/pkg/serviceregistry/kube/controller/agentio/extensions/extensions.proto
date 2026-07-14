@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package kruise.networking.extensions.v1;
+
+option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
+
+// TrafficPolicyExtension provides traffic policy priority and protocol information.
+// Attached to Authorization policies via auth_extensions field.
+message TrafficPolicyExtension {
+  // Rule evaluation priority (lower value = higher priority = executed first).
+  int32 priority = 1;
+
+  // Traffic direction mode:
+  //   SERVER (0) = inbound traffic
+  //   CLIENT (1) = outbound traffic
+  TrafficPolicyMode mode = 2;
+}
+
+// MeshInternalTrafficPolicy defines how mesh-internal (east-west) traffic is
+// handled by agentio tunnel proxies.
+enum MeshInternalTrafficPolicy {
+  MESH_INTERNAL_PEER_AWARE = 0;
+  MESH_INTERNAL_PASSTHROUGH = 1;
+}
+
+message Metadata {
+  map<string, string> labels = 1;
+  MeshInternalTrafficPolicy mesh_internal_traffic_policy = 2;
+}
+
+// Traffic direction mode (server = inbound, client = outbound)
+enum TrafficPolicyMode {
+  SERVER = 0;  // Inbound traffic (PREROUTING hook)
+  CLIENT = 1;  // Outbound traffic (OUTPUT hook)
+}

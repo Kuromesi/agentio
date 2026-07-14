@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,6 +31,7 @@ import (
 	authorizationv1client "k8s.io/client-go/kubernetes/typed/authorization/v1"
 
 	"istio.io/istio/pilot/pkg/credentials"
+	"istio.io/istio/pilot/pkg/features"
 	securitymodel "istio.io/istio/pilot/pkg/security/model"
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/kube"
@@ -95,6 +97,7 @@ func NewCredentialsController(kc kube.Client, handlers []func(typ kind.Kind, nam
 	secrets := kclient.NewFiltered[*v1.Secret](kc, kclient.Filter{
 		FieldSelector: SecretsFieldSelector,
 		ObjectFilter:  kc.ObjectFilter(),
+		Namespace:     features.RestrictedSecretsScope, // if empty, will watch all namespaces
 	})
 
 	var configMaps kclient.Client[*v1.ConfigMap]

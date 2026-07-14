@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +33,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/serviceentry"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pkg/cluster"
@@ -280,7 +282,6 @@ func serviceServiceBuilder(
 		waypointStatus.Error = wperr
 
 		svc := constructService(ctx, s, waypoint, domainSuffix, networkGetter)
-
 		svcInfo := &model.ServiceInfo{
 			Service:       svc,
 			PortNames:     portNames,
@@ -289,6 +290,7 @@ func serviceServiceBuilder(
 			Waypoint:      waypointStatus,
 			Scope:         serviceScope,
 			CreationTime:  s.CreationTimestamp.Time,
+			IsWaypoint:    agentio.IsWaypointService(s),
 		}
 		if precompute {
 			return precomputeServicePtr(svcInfo)
@@ -763,5 +765,6 @@ func setCanonical(se *model.ServiceInfo) model.ServiceInfo {
 		MarshaledAddress: se.MarshaledAddress,
 		AsAddress:        se.AsAddress,
 		CreationTime:     se.CreationTime,
+		IsWaypoint:       se.IsWaypoint,
 	})
 }

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -68,6 +69,10 @@ func NewStaticCollection[T any](synced Syncer, vals []T, opts ...CollectionOptio
 
 	if o.metadata != nil {
 		sl.metadata = o.metadata
+	}
+
+	if o.debounceInterval > 0 {
+		sl.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
 	}
 
 	c := StaticCollection[T]{

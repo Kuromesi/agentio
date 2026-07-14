@@ -1,26 +1,14 @@
-**Please provide a description of this PR:**
+<!--
+Please make sure you have read and understood the contributing guidelines;
+https://github.com/openkruise/agentio/blob/master/CONTRIBUTING.md -->
+
+### Ⅰ. Describe what this PR does
 
 
+### Ⅱ. Does this pull request fix one issue?
+<!--If so, add "fixes #xxxx" below in the next line, for example, fixes #15. Otherwise, add "NONE" -->
 
-**To help us figure out who should review this PR, please put an X in all the areas that this PR affects.**
+### Ⅲ. Describe how to verify it
 
-- [ ] Ambient
-- [ ] Configuration Infrastructure
-- [ ] Docs
-- [ ] Dual Stack
-- [ ] Installation
-- [ ] Networking
-- [ ] Performance and Scalability
-- [ ] Extensions and Telemetry
-- [ ] Security
-- [ ] Test and Release
-- [ ] User Experience
-- [ ] Developer Infrastructure
-- [ ] Upgrade
-- [ ] Multi Cluster
-- [ ] Virtual Machine
-- [ ] Control Plane Revisions
 
-**Please check any characteristics that apply to this pull request.**
-
-- [ ] Does not have any [user-facing](https://github.com/istio/istio/tree/master/releasenotes#when-to-add-release-notes) changes. This may include CLI changes, API changes, behavior changes, performance improvements, etc.
+### Ⅳ. Special notes for reviews

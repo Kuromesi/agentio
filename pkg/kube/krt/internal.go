@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +18,7 @@ package krt
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"go.uber.org/atomic"
 	"google.golang.org/protobuf/proto"
@@ -88,6 +90,14 @@ type collectionOptions struct {
 
 	indexCollectionFromString func(string) any
 	metadata                  Metadata
+	// debounceInterval, if > 0, enables debouncing of outbound events from
+	// this collection. Each new event resets the timer; events flush when no
+	// new events arrive within this interval.
+	debounceInterval time.Duration
+	// debounceMaxInterval caps the total debounce window. If events keep
+	// arriving, they will be flushed after this duration regardless. 0 means
+	// no upper bound (the after window can be reset indefinitely).
+	debounceMaxInterval time.Duration
 }
 
 type indexedDependency struct {

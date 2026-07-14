@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,6 +30,9 @@ const (
 
 	// MainInternalName is the name for the resources associated with the main (non-tunnel) internal listener.
 	MainInternalName = "main_internal"
+
+	// MainForwardName is the name for the resources associated with the forward internal listener for sandbox catchall.
+	MainForwardName = "main_forward"
 
 	// ConnectOriginate is the name for the resources associated with the origination of HTTP CONNECT.
 	ConnectOriginate = "connect_originate"

@@ -1,0 +1,3 @@
+# Upstream Istio release this repository was forked from.
+tag: 1.29.5
+commit: fe1d6ad986110a26ad4e8b4044589f2b112daac1

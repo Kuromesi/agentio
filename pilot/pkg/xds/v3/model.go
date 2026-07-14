@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,6 +34,7 @@ const (
 	AddressType                = model.AddressType
 	WorkloadType               = model.WorkloadType
 	WorkloadAuthorizationType  = model.WorkloadAuthorizationType
+	WorkloadConfigType         = model.WorkloadConfigType
 
 	// nolint
 	HttpProtocolOptionsType = "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"

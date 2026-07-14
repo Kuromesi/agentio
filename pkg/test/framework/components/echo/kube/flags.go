@@ -1,4 +1,5 @@
 //  Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
 //  you may not use this file except in compliance with the License.
@@ -20,6 +21,7 @@ var (
 	serviceTemplateFile      = "service.yaml"
 	deploymentTemplateFile   = "deployment.yaml"
 	vmDeploymentTemplateFile = "vm_deployment.yaml"
+	sandboxTemplateFile      = "sandbox.yaml"
 )
 
 func init() {

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -41,6 +42,9 @@ const (
 	// InvalidSecretType will be used to send a certificate that is never valid
 	InvalidSecretType    = "invalid"
 	InvalidSecretTypeURI = InvalidSecretType + "://"
+
+	OnDemandCertificateType    = "ondemand"
+	OnDemandCertificateTypeURI = OnDemandCertificateType + "://"
 )
 
 // SecretResource defines a reference to a secret
@@ -171,5 +175,12 @@ func ParseResourceName(resourceName string, proxyNamespace string, proxyCluster 
 	} else if strings.HasPrefix(resourceName, InvalidSecretTypeURI) {
 		return SecretResource{ResourceType: InvalidSecretType, ResourceName: resourceName, Cluster: configCluster}, nil
 	}
-	return SecretResource{}, fmt.Errorf("unknown resource type: %v", resourceName)
+
+	return SecretResource{
+		ResourceType: OnDemandCertificateType,
+		ResourceName: resourceName,
+		Namespace:    "",
+		Name:         resourceName,
+		Cluster:      configCluster,
+	}, nil
 }

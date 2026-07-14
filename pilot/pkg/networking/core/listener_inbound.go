@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -92,6 +93,28 @@ type inboundChainConfig struct {
 	policyService *model.Service
 
 	configMetadata *config.Meta
+
+	validateSni bool
+
+	// schemeOverwrite, when non-empty, sets the HCM's SchemeHeaderTransformation
+	// so the inner request's :scheme is rewritten to this value before reaching
+	// the upstream. Used on sandbox's inner main_forward HCM to restore :scheme=https
+	// after TLS is terminated one hop earlier.
+	schemeOverwrite string
+
+	// acceptHTTP2 explicitly sets Http2ProtocolOptions{} on the downstream HCM.
+	// Today this is needed by the inner main_forward HCM: if the outer ALPN
+	// negotiated h2, the bytes arriving across the internal-listener hop after
+	// TLS termination are HTTP/2 frames, and the HCM must be configured to handle
+	// them. Kept separate from schemeOverwrite so a future chain that needs one
+	// without the other does not silently get both.
+	acceptHTTP2 bool
+
+	// applySandboxConnectionPoolSettings when true causes sandbox connection pool timeouts
+	// (stream idle, TCP idle) to be applied to this chain's HCM/TCPProxy.
+	// Only set for sandbox egress catchall paths where unknown-destination
+	// connections need conservative resource limits.
+	applySandboxConnectionPoolSettings bool
 }
 
 // StatPrefix returns the stat prefix for the config

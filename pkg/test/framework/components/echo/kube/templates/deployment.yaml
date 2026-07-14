@@ -100,6 +100,14 @@ spec:
         image: {{ $.ImageHub }}/app:{{ $.ImageTag }}
 {{- end }}
         imagePullPolicy: {{ $.ImagePullPolicy }}
+{{- if $.Capabilities }}
+        securityContext:
+          capabilities:
+            add:
+{{- range $.Capabilities }}
+            - {{ . }}
+{{- end }}
+{{- end }}
         args:
 {{- if $appContainer.FallbackPort }}
           - --forwarding_address=0.0.0.0:{{ $appContainer.FallbackPort }}

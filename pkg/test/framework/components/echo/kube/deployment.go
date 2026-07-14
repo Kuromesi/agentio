@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -259,6 +260,8 @@ func GenerateDeployment(ctx resource.Context, cfg echo.Config, settings *resourc
 	deploy := getTemplate(deploymentTemplateFile)
 	if cfg.DeployAsVM {
 		deploy = getTemplate(vmDeploymentTemplateFile)
+	} else if cfg.DeployAsSandbox {
+		deploy = getTemplate(sandboxTemplateFile)
 	}
 
 	deploymentYAML, err := tmpl.Execute(deploy, params)
@@ -440,6 +443,7 @@ func deploymentParams(ctx resource.Context, cfg echo.Config, settings *resource.
 		"Ambient":                 settings.Ambient,
 		"BindFamily":              cfg.BindFamily,
 		"OpenShift":               settings.OpenShift,
+		"Capabilities":            cfg.Capabilities,
 	}
 
 	vmIstioHost, vmIstioIP := "", ""

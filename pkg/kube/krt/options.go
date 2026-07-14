@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +14,8 @@
 // limitations under the License.
 
 package krt
+
+import "time"
 
 // OptionsBuilder is a small wrapper around KRT options to make it easy to provide a common set of options to all collections
 // without excessive duplication.
@@ -107,5 +110,19 @@ func WithJoinUnchecked() CollectionOption {
 func WithMetadata(metadata Metadata) CollectionOption {
 	return func(c *collectionOptions) {
 		c.metadata = metadata
+	}
+}
+
+// WithDebounce enables debouncing of outbound events from this collection.
+// Each new event resets the after timer. Events are flushed when no new
+// events arrive within the after interval, or when maxDelay is reached —
+// whichever comes first. maxDelay of 0 disables the upper bound.
+//
+// Applies to informer, manyCollection, join (checked), mergejoin,
+// nestedjoinmerge, and staticList. Silently ignored by singleton.
+func WithDebounce(after time.Duration, maxDelay time.Duration) CollectionOption {
+	return func(c *collectionOptions) {
+		c.debounceInterval = after
+		c.debounceMaxInterval = maxDelay
 	}
 }

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,8 +16,10 @@
 package krt_test
 
 import (
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/atomic"
 	corev1 "k8s.io/api/core/v1"
@@ -404,4 +407,52 @@ func TestJoinCollectionConflictResolution(t *testing.T) {
 	c2.Set(nil)                             // c2 deletes but c1 still owns it
 	assert.Consistently(t, getEventsLen, 0) // c2 delete should be ignored
 	assert.Equal(t, j.GetKey("ns/b").Value, "c1-b")
+}
+
+func TestJoin_DebounceBatchesDownstream(t *testing.T) {
+	stop := test.NewStop(t)
+
+	a := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop))
+	b := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop))
+
+	j := krt.JoinCollection([]krt.Collection[Named]{a, b},
+		krt.WithStop(stop), krt.WithDebounce(30*time.Millisecond, 0))
+
+	var mu sync.Mutex
+	var batches [][]krt.Event[Named]
+	j.RegisterBatch(func(events []krt.Event[Named]) {
+		mu.Lock()
+		defer mu.Unlock()
+		cp := make([]krt.Event[Named], len(events))
+		copy(cp, events)
+		batches = append(batches, cp)
+	}, false)
+
+	for i := 0; i < 3; i++ {
+		a.UpdateObject(Named{Namespace: "ns", Name: fmt.Sprintf("a%d", i)})
+		time.Sleep(2 * time.Millisecond)
+	}
+	for i := 0; i < 3; i++ {
+		b.UpdateObject(Named{Namespace: "ns", Name: fmt.Sprintf("b%d", i)})
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		mu.Lock()
+		n := len(batches)
+		total := 0
+		for _, b := range batches {
+			total += len(b)
+		}
+		mu.Unlock()
+		if total >= 6 && n < 6 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected batched delivery; got %d batches totaling %d", n, total)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

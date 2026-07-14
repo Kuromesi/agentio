@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -183,9 +184,10 @@ func NewMulticluster(
 	return mc
 }
 
-// getMeshConfigMapName returns the mesh ConfigMap name based on the revision
+// getMeshConfigMapName returns the mesh ConfigMap name based on the revision.
+// The base name is configurable via MESH_CONFIG_MAP_NAME (features.MeshConfigMapName).
 func (m *Multicluster) getMeshConfigMapName() string {
-	name := "istio"
+	name := features.MeshConfigMapName
 	if m.revision == "" || m.revision == "default" {
 		return name
 	}

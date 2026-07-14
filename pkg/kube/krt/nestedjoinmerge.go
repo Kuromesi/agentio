@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -88,6 +89,9 @@ func NestedJoinWithMergeCollection[T any](collections Collection[Collection[T]],
 		},
 		collections: ics,
 		regs:        make(map[collectionUID]HandlerRegistration),
+	}
+	if o.debounceInterval > 0 {
+		j.mergejoin.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
 	}
 
 	j.mergejoin.collections = j

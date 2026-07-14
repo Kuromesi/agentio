@@ -1,0 +1,168 @@
+name: agentio-image
+
+# Build and push container images to Docker Hub.
+# Follows Istio's release-commit.sh tag strategy:
+# - pushes to protected release-* branches publish development images;
+# - agentio-release calls this workflow for trusted semantic-version tags.
+#
+# Auth (set in repo Settings → Actions):
+#   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
+#   secrets.HUB_KRUISE      — Docker Hub token in the `development` and protected
+#                             `release` Environments
+
+on:
+  push:
+    branches:
+      - "release-*"
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Image tag'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  BUILD_WITH_CONTAINER: "0"
+  ISTIO_DOCKER_BUILDER: docker
+  HUB: docker.io/openkruise
+
+concurrency:
+  group: agentio-image-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/release-') }}
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: ${{ startsWith(github.ref, 'refs/heads/release-') && 'development' || 'release' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate requested tag and ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ -n "$INPUT_TAG" && ! "$INPUT_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid OCI image tag: $INPUT_TAG" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            BRANCH="release-${BASH_REMATCH[1]}"
+            if [[ -n "$INPUT_TAG" ]]; then
+              echo "Development image builds must derive tags from the release branch commit" >&2
+              exit 1
+            fi
+            if [[ "$(gh api "repos/${GH_REPO}/branches/${BRANCH}" --jq '.protected')" != "true" ]]; then
+              echo "Development images may only be published from a protected release branch" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Image publication requires a protected release branch or semantic version tag" >&2
+            exit 1
+          fi
+          if [[ "$INPUT_TAG" != "${BASH_REMATCH[1]}" ]]; then
+            echo "Requested image tag does not match Git tag" >&2
+            exit 1
+          fi
+
+          is_trusted_branch() {
+            local branch="$1"
+            if [[ "$branch" == "master" ]]; then
+              return 0
+            fi
+            [[ "$branch" == release-* ]] || return 1
+            [[ "$(gh api "repos/${GH_REPO}/branches/${branch}" --jq '.protected')" == "true" ]]
+          }
+
+          trusted_commit=false
+          while IFS= read -r remote_branch; do
+            branch="${remote_branch#origin/}"
+            if is_trusted_branch "$branch"; then
+              trusted_commit=true
+              break
+            fi
+          done < <(git branch -r --contains "$GITHUB_SHA" --format='%(refname:short)')
+          if [[ "$trusted_commit" != "true" ]]; then
+            echo "Release tag commit is not reachable from master or a protected release branch" >&2
+            exit 1
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.HUB_KRUISE }}
+
+      - name: Compute image tags
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ -n "$INPUT_TAG" ]]; then
+            if [[ ! "$INPUT_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "Invalid OCI image tag: $INPUT_TAG" >&2
+              exit 1
+            fi
+            echo "PRIMARY_TAG=${INPUT_TAG}" >> "$GITHUB_ENV"
+            if [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "EXTRA_TAGS=latest" >> "$GITHUB_ENV"
+            else
+              echo "EXTRA_TAGS=" >> "$GITHUB_ENV"
+            fi
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            echo "PRIMARY_TAG=${VERSION}" >> "$GITHUB_ENV"
+            echo "EXTRA_TAGS=latest" >> "$GITHUB_ENV"
+          else
+            SHA="${GITHUB_SHA}"
+            if [[ ! "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
+              echo "Development image publication requires a versioned release branch" >&2
+              exit 1
+            fi
+            VER="${BASH_REMATCH[1]}"
+            echo "PRIMARY_TAG=${SHA}" >> "$GITHUB_ENV"
+            echo "EXTRA_TAGS=${VER}-alpha.${SHA},${VER}-dev" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and push Agentio images
+        run: |
+          DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
+          DOCKER_BUILD_VARIANTS=default \
+          DOCKER_TARGETS="docker.pilot docker.proxy-init" \
+          make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
+
+      - name: Push extra tags (latest, dev, alpha)
+        if: env.EXTRA_TAGS != ''
+        run: |
+          # Install a version pinned through Go module verification.
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+
+          IFS=',' read -ra TAGS <<< "${EXTRA_TAGS}"
+          for image in pilot proxy-init; do
+            for tag in "${TAGS[@]}"; do
+              echo "Tagging ${HUB}/${image}:${PRIMARY_TAG} -> ${tag}"
+              crane tag "${HUB}/${image}:${PRIMARY_TAG}" "${tag}"
+            done
+          done

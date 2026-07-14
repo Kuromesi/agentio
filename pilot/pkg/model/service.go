@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,6 +60,7 @@ import (
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/workloadapi"
 	"istio.io/istio/pkg/workloadapi/security"
+	klabels "k8s.io/apimachinery/pkg/labels"
 )
 
 // Service describes an Istio service (e.g., catalog.mystore.com:8080)
@@ -940,12 +942,16 @@ type ServiceDiscovery interface {
 type AmbientIndexes interface {
 	ServicesWithWaypoint(key string) []ServiceWaypointInfo
 	AddressInformation(addresses sets.String) ([]AddressInfo, sets.String)
+	AddressInformationForProxy(proxy *Proxy, addresses sets.String) ([]AddressInfo, sets.String)
 	AdditionalPodSubscriptions(
 		proxy *Proxy,
 		allAddresses sets.String,
 		currentSubs sets.String,
 	) sets.String
 	Policies(requested sets.Set[ConfigKey]) []WorkloadAuthorization
+	PoliciesForProxy(proxy *Proxy, requested sets.Set[ConfigKey]) []WorkloadAuthorization
+	WorkloadConfigs(requested sets.Set[ConfigKey]) []WorkloadConfig
+	WorkloadConfigsForProxy(proxy *Proxy, requested sets.Set[ConfigKey]) []WorkloadConfig
 	ServicesForWaypoint(WaypointKey) []ServiceInfo
 	WorkloadsForWaypoint(WaypointKey) []WorkloadInfo
 	// ServiceScope returns service information for services matching the key.
@@ -1015,6 +1021,10 @@ func (u NoopAmbientIndexes) AddressInformation(sets.String) ([]AddressInfo, sets
 	return nil, nil
 }
 
+func (u NoopAmbientIndexes) AddressInformationForProxy(*Proxy, sets.String) ([]AddressInfo, sets.String) {
+	return nil, nil
+}
+
 func (u NoopAmbientIndexes) AdditionalPodSubscriptions(
 	*Proxy,
 	sets.String,
@@ -1024,6 +1034,18 @@ func (u NoopAmbientIndexes) AdditionalPodSubscriptions(
 }
 
 func (u NoopAmbientIndexes) Policies(sets.Set[ConfigKey]) []WorkloadAuthorization {
+	return nil
+}
+
+func (u NoopAmbientIndexes) PoliciesForProxy(_ *Proxy, _ sets.Set[ConfigKey]) []WorkloadAuthorization {
+	return nil
+}
+
+func (u NoopAmbientIndexes) WorkloadConfigs(sets.Set[ConfigKey]) []WorkloadConfig {
+	return nil
+}
+
+func (u NoopAmbientIndexes) WorkloadConfigsForProxy(_ *Proxy, _ sets.Set[ConfigKey]) []WorkloadConfig {
 	return nil
 }
 
@@ -1126,6 +1148,8 @@ type ServiceInfo struct {
 	// CreationTime is the time when the service was created. Note this is used internally only
 	// for conflict resolution.
 	CreationTime time.Time
+
+	IsWaypoint bool
 }
 
 func (i ServiceInfo) GetLabelSelector() map[string]string {
@@ -1427,6 +1451,9 @@ func (i PolicyBindingStatus) Equals(other PolicyBindingStatus) bool {
 type WorkloadAuthorization struct {
 	// LabelSelectors for the workload. Note these are only used internally, not sent over XDS
 	LabelSelector
+	// Selector are extended for TrafficPolicies
+	Selector klabels.Selector
+
 	Authorization *security.Authorization
 
 	Source  TypedObject

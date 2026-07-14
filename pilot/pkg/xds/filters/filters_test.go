@@ -1,4 +1,4 @@
-// Copyright Istio Authors
+// Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import (
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
+	sfs "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 
 	"istio.io/istio/pilot/pkg/util/protoconv"
@@ -168,4 +169,25 @@ func TestMxFilters(t *testing.T) {
 			}),
 		},
 	})
+}
+
+func TestSandboxConnectAuthorityFilterUsesAgentioHeaders(t *testing.T) {
+	config, err := protoconv.UnmarshalAny[sfs.Config](SandboxConnectAuthorityFilter.GetTypedConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string)
+	for _, value := range config.GetOnRequestHeaders() {
+		key := value.GetObjectKey()
+		if key == "sandbox.token" || key == "sandbox.labels" || key == "sandbox.id" {
+			got[key] = value.GetFormatString().GetTextFormatSource().GetInlineString()
+		}
+	}
+
+	want := map[string]string{
+		"sandbox.token":  "%REQ(X-AGENTIO-SANDBOX-TOKEN)%",
+		"sandbox.labels": "%REQ(X-AGENTIO-SANDBOX-LABELS)%",
+		"sandbox.id":     "%REQ(X-AGENTIO-SANDBOX-ID)%",
+	}
+	assert.Equal(t, got, want)
 }
