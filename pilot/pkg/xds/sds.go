@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,6 +38,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/model/credentials"
 	securitymodel "istio.io/istio/pilot/pkg/security/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config/schema/kind"
@@ -97,6 +99,19 @@ func (s *SecretGen) parseResources(names []string, proxy *model.Proxy) []SecretR
 	}
 	for _, resource := range names {
 		sr, err := credentials.ParseResourceName(resource, proxy.VerifiedIdentity.Namespace, proxy.Metadata.ClusterID, s.configCluster)
+		// Envoy's on-demand SNI selector subscribes using the raw server name,
+		// rather than a typed URI. Interpret that form only when the
+		// on-demand controller is enabled; the generic credentials parser must
+		// continue rejecting untyped and unknown resource names.
+		if err != nil && s.onDemandCerts != nil && credentials.IsValidOnDemandDomain(resource) {
+			sr = credentials.SecretResource{
+				ResourceType: credentials.OnDemandCertificateType,
+				ResourceName: resource,
+				Name:         credentials.CanonicalOnDemandDomain(resource),
+				Cluster:      s.configCluster,
+			}
+			err = nil
+		}
 		if err != nil {
 			pilotSDSCertificateErrors.Increment()
 			log.Warnf("error parsing resource name: %v", err)
@@ -108,15 +123,44 @@ func (s *SecretGen) parseResources(names []string, proxy *model.Proxy) []SecretR
 }
 
 func (s *SecretGen) Generate(proxy *model.Proxy, w *model.WatchedResource, req *model.PushRequest) (model.Resources, model.XdsLogDetails, error) {
+	results, _, details, err := s.generateResources(proxy, req, w)
+	return results, details, err
+}
+
+// GenerateDeltas builds SDS resources for the watched names. For on-demand certificates,
+// resources that fail to generate are surfaced as removed_resources so the requesting Envoy
+// immediately fails the TLS handshake instead of blocking until TransportSocketConnectTimeout.
+func (s *SecretGen) GenerateDeltas(proxy *model.Proxy, req *model.PushRequest, w *model.WatchedResource) (model.Resources, model.DeletedResources, model.XdsLogDetails, bool, error) {
+	results, retained, details, err := s.generateResources(proxy, req, w)
+	if err != nil || retained == nil {
+		// retained == nil signals an early-return path (no push). Mirror that
+		// by leaving deletedRes nil so the framework short-circuits in pushDeltaXds.
+		return results, nil, details, false, err
+	}
+	removed := sets.New[string]()
+	for r := range w.ResourceNames {
+		if !retained.Contains(r) {
+			removed.Insert(r)
+		}
+	}
+	return results, removed.UnsortedList(), details, true, nil
+}
+
+// generateResources is the core SDS generation logic shared by Generate (SotW) and
+// GenerateDeltas. It returns the resources to push and the set of watched names that
+// were kept (either freshly generated or intentionally skipped as unchanged). Callers
+// that need to compute removed_resources can diff w.ResourceNames against retained.
+// A nil retained set signals an early-return path (auth failure, no push needed, etc.).
+func (s *SecretGen) generateResources(proxy *model.Proxy, req *model.PushRequest, w *model.WatchedResource) (model.Resources, sets.String, model.XdsLogDetails, error) {
 	if proxy.VerifiedIdentity == nil {
 		log.Warnf("proxy %s is not authorized to receive credscontroller. Ensure you are connecting over TLS port and are authenticated.", proxy.ID)
-		return nil, model.DefaultXdsLogDetails, nil
+		return nil, nil, model.DefaultXdsLogDetails, nil
 	}
 	if req == nil || !sdsNeedsPush(req.Forced, req.ConfigsUpdated) {
-		return nil, model.DefaultXdsLogDetails, nil
+		return nil, nil, model.DefaultXdsLogDetails, nil
 	}
 	var updatedSecrets sets.Set[model.ConfigKey]
-	if !req.Full {
+	if !req.Full && len(req.ConfigsUpdated) > 0 {
 		updatedSecrets = model.ConfigsOfKind(req.ConfigsUpdated, kind.Secret).Merge(model.ConfigsOfKind(req.ConfigsUpdated, kind.ConfigMap))
 	}
 
@@ -124,26 +168,53 @@ func (s *SecretGen) Generate(proxy *model.Proxy, w *model.WatchedResource, req *
 	if err != nil {
 		log.Warnf("proxy %s is from an unknown cluster, cannot retrieve certificates: %v", proxy.ID, err)
 		pilotSDSCertificateErrors.Increment()
-		return nil, model.DefaultXdsLogDetails, nil
+		return nil, nil, model.DefaultXdsLogDetails, nil
 	}
 	configClusterSecrets, err := s.secrets.ForCluster(s.configCluster)
 	if err != nil {
 		log.Warnf("config cluster %s not found, cannot retrieve certificates: %v", s.configCluster, err)
 		pilotSDSCertificateErrors.Increment()
-		return nil, model.DefaultXdsLogDetails, nil
+		return nil, nil, model.DefaultXdsLogDetails, nil
 	}
 
 	// Filter down to resources we can access. We do not return an error if they attempt to access a Secret
 	// they cannot; instead we just exclude it. This ensures that a single bad reference does not break the whole
 	// SDS flow. The pilotSDSCertificateErrors metric and logs handle visibility into invalid references.
-	resources := filterAuthorizedResources(s.parseResources(w.ResourceNames.UnsortedList(), proxy), proxy, proxyClusterSecrets)
+	resources := s.filterAuthorizedResources(s.parseResources(w.ResourceNames.UnsortedList(), proxy), proxy, req.Push, proxyClusterSecrets)
+
+	// Eviction push: the on-demand reaper just evicted entries. Read the explicit
+	// evicted set from the controller once; any OnDemand resource in that set
+	// is left out of retained and surfaces as removed_resources in
+	// GenerateDeltas, regardless of what else got merged into this push.
+	// evictionOnly distinguishes a pure eviction push (skip regen for the rest)
+	// from one merged with another reason (must run normal path so the merged
+	// update isn't dropped).
+	isEviction := req.Reason.Has(model.OnDemandEviction)
+	evictionOnly := isEviction && len(req.Reason) == 1
+	var evictedSet sets.String
+	if isEviction && s.onDemandCerts != nil {
+		evictedSet = sets.New(s.onDemandCerts.EvictedCerts()...)
+	}
 
 	var results model.Resources
+	retained := sets.New[string]()
 	cached, regenerated := 0, 0
 	for _, sr := range resources {
+		if isEviction && sr.ResourceType == credentials.OnDemandCertificateType && evictedSet.Contains(sr.Name) {
+			// Evicted from istiod cache → not retained → GenerateDeltas
+			// emits as removed_resources for this proxy.
+			continue
+		}
+		if evictionOnly {
+			// Pure eviction push: preserve everything else untouched, no regen.
+			retained.Insert(sr.ResourceName)
+			continue
+		}
+
 		if updatedSecrets != nil {
 			if !containsAny(updatedSecrets, relatedConfigs(model.ConfigKey{Kind: sr.ResourceKind, Name: sr.Name, Namespace: sr.Namespace})) {
 				// This is an incremental update, filter out secrets that are not updated.
+				retained.Insert(sr.ResourceName)
 				continue
 			}
 		}
@@ -153,6 +224,7 @@ func (s *SecretGen) Generate(proxy *model.Proxy, w *model.WatchedResource, req *
 			// If it is in the Cache, add it and continue
 			// We skip cache if assertions are enabled, so that the cache will assert our eviction logic is correct
 			results = append(results, cachedItem)
+			retained.Insert(sr.ResourceName)
 			cached++
 			continue
 		}
@@ -161,9 +233,20 @@ func (s *SecretGen) Generate(proxy *model.Proxy, w *model.WatchedResource, req *
 		if res != nil {
 			s.cache.Add(sr, req, res)
 			results = append(results, res)
+			retained.Insert(sr.ResourceName)
+			continue
+		}
+		// Generation returned nil (transient error). For non-OnDemand types we keep the
+		// previously sent resource by retaining the name; the Delta path otherwise would
+		// emit removed_resources and force Envoy to drop a still-valid secret. For OnDemand
+		// we intentionally let it fall through so Envoy fails the handshake fast instead
+		// of blocking on TransportSocketConnectTimeout.
+		if sr.ResourceType != credentials.OnDemandCertificateType {
+			retained.Insert(sr.ResourceName)
 		}
 	}
-	return results, model.XdsLogDetails{
+
+	return results, retained, model.XdsLogDetails{
 		Incremental:    updatedSecrets != nil,
 		AdditionalInfo: fmt.Sprintf("cached:%v/%v", cached, cached+regenerated),
 	}, nil
@@ -175,6 +258,20 @@ func (s *SecretGen) generate(sr SecretResource, configClusterSecrets, proxyClust
 	switch sr.ResourceType {
 	case credentials.KubernetesGatewaySecretType, credentials.KubernetesConfigMapType:
 		secretController = configClusterSecrets
+	case credentials.OnDemandCertificateType:
+		if s.onDemandCerts == nil {
+			log.Warnf("on-demand certificates are not enabled, cannot generate %s", sr.ResourceName)
+			return nil
+		}
+		certInfo, err := s.onDemandCerts.GetCertInfo(sr.Name, sr.Namespace)
+		if err != nil {
+			pilotSDSCertificateErrors.Increment()
+			log.Warnf("failed to generate on-demand certificate for %s: %v", sr.ResourceName, err)
+			return nil
+		}
+		res := toEnvoyTLSSecret(sr.ResourceName, certInfo, proxy, s.meshConfig)
+		return res
+
 	default:
 		secretController = proxyClusterSecrets
 	}
@@ -243,7 +340,7 @@ func recordInvalidCertificate(namespace string, name string, resourceName string
 }
 
 // filterAuthorizedResources takes a list of SecretResource and filters out resources that proxy cannot access
-func filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, secrets credscontroller.Controller) []SecretResource {
+func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, push *model.PushContext, secrets credscontroller.Controller) []SecretResource {
 	var authzResult *bool
 	var authzError error
 	// isAuthorized is a small wrapper around credscontroller.Authorize so we only call it once instead of each time in the loop
@@ -258,6 +355,28 @@ func filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, s
 			authzError = err
 		}
 		authzResult = &res
+		return res
+	}
+
+	// isOnDemandAuthorized memoizes the SA/NS check against the agentio config —
+	// the OnDemand case is hit once per resource but the SA/NS answer is the
+	// same for the whole proxy, so we avoid re-walking egressGateways per
+	// resource. Domain-level scoping is handled separately below.
+	var onDemandAuthzResult *bool
+	var onDemandAuthzError error
+	isOnDemandAuthorized := func() bool {
+		if onDemandAuthzResult != nil {
+			return *onDemandAuthzResult
+		}
+		res := false
+		if s.onDemandCerts == nil {
+			onDemandAuthzError = fmt.Errorf("on-demand cert controller not enabled")
+		} else if err := s.onDemandCerts.Authorize(proxy.VerifiedIdentity.ServiceAccount, proxy.VerifiedIdentity.Namespace); err == nil {
+			res = true
+		} else {
+			onDemandAuthzError = err
+		}
+		onDemandAuthzResult = &res
 		return res
 	}
 
@@ -300,6 +419,23 @@ func filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, s
 			} else {
 				deniedResources = append(deniedResources, r.Name)
 			}
+		case credentials.OnDemandCertificateType:
+			// On-demand certs are minted by the sandbox CA for any requested SNI; only the
+			// sandbox egress waypoint should be able to request them, AND only for domains
+			// its own EgressGateway has whitelisted via tls_termination.include_hosts.
+			// Two layers of authz here:
+			//   1. isOnDemandAuthorized: the proxy's verified SA/NS must match a configured
+			//      EgressGateway — defense against a non-egress workload requesting certs.
+			//   2. IsAllowedOnDemandDomain: the requested SNI must be whitelisted for that
+			//      proxy's gateway — domain-level scoping.
+			// A denied resource is dropped from retained → GenerateDeltas surfaces it as
+			// removed_resources so envoy fails the handshake fast instead of waiting on
+			// TransportSocketConnectTimeout.
+			if isOnDemandAuthorized() && agentio.IsAllowedOnDemandDomain(proxy, push, r.Name) {
+				allowedResources = append(allowedResources, r)
+			} else {
+				deniedResources = append(deniedResources, r.Name)
+			}
 		case credentials.InvalidSecretType:
 			// Do nothing. We return nothing, and logs for why an invalid resource was generated are handled elsewhere.
 		default:
@@ -313,6 +449,9 @@ func filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, s
 	// to avoid excessive logs.
 	if len(deniedResources) > 0 {
 		errMessage := authzError
+		if errMessage == nil {
+			errMessage = onDemandAuthzError
+		}
 		if errMessage == nil {
 			errMessage = fmt.Errorf("cross namespace secret reference requires ReferenceGrant")
 		}
@@ -479,19 +618,22 @@ type SecretGen struct {
 	cache         model.XdsCache
 	configCluster cluster.ID
 	meshConfig    *mesh.MeshConfig
+	onDemandCerts agentio.OnDemandCertController
 }
 
-var _ model.XdsResourceGenerator = &SecretGen{}
+var (
+	_ model.XdsResourceGenerator      = &SecretGen{}
+	_ model.XdsDeltaResourceGenerator = &SecretGen{}
+)
 
 func NewSecretGen(sc credscontroller.MulticlusterController, cache model.XdsCache, configCluster cluster.ID,
-	meshConfig *mesh.MeshConfig,
+	meshConfig *mesh.MeshConfig, onDemandController agentio.OnDemandCertController,
 ) *SecretGen {
-	// TODO: Currently we only have a single credentials controller (Kubernetes). In the future, we will need a mapping
-	// of resource type to secret controller (ie kubernetes:// -> KubernetesController, vault:// -> VaultController)
 	return &SecretGen{
 		secrets:       sc,
 		cache:         cache,
 		configCluster: configCluster,
 		meshConfig:    meshConfig,
+		onDemandCerts: onDemandController,
 	}
 }

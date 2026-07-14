@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,12 +22,14 @@
 package security
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	anypb "google.golang.org/protobuf/types/known/anypb"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -35,6 +38,61 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+type Protocol int32
+
+const (
+	Protocol_ALL  Protocol = 0
+	Protocol_TCP  Protocol = 1
+	Protocol_UDP  Protocol = 2
+	Protocol_ICMP Protocol = 3
+	Protocol_SCTP Protocol = 4
+)
+
+// Enum value maps for Protocol.
+var (
+	Protocol_name = map[int32]string{
+		0: "ALL",
+		1: "TCP",
+		2: "UDP",
+		3: "ICMP",
+		4: "SCTP",
+	}
+	Protocol_value = map[string]int32{
+		"ALL":  0,
+		"TCP":  1,
+		"UDP":  2,
+		"ICMP": 3,
+		"SCTP": 4,
+	}
+)
+
+func (x Protocol) Enum() *Protocol {
+	p := new(Protocol)
+	*p = x
+	return p
+}
+
+func (x Protocol) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Protocol) Descriptor() protoreflect.EnumDescriptor {
+	return file_workloadapi_security_authorization_proto_enumTypes[0].Descriptor()
+}
+
+func (Protocol) Type() protoreflect.EnumType {
+	return &file_workloadapi_security_authorization_proto_enumTypes[0]
+}
+
+func (x Protocol) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Protocol.Descriptor instead.
+func (Protocol) EnumDescriptor() ([]byte, []int) {
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{0}
+}
 
 type Scope int32
 
@@ -75,11 +133,11 @@ func (x Scope) String() string {
 }
 
 func (Scope) Descriptor() protoreflect.EnumDescriptor {
-	return file_workloadapi_security_authorization_proto_enumTypes[0].Descriptor()
+	return file_workloadapi_security_authorization_proto_enumTypes[1].Descriptor()
 }
 
 func (Scope) Type() protoreflect.EnumType {
-	return &file_workloadapi_security_authorization_proto_enumTypes[0]
+	return &file_workloadapi_security_authorization_proto_enumTypes[1]
 }
 
 func (x Scope) Number() protoreflect.EnumNumber {
@@ -88,7 +146,7 @@ func (x Scope) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Scope.Descriptor instead.
 func (Scope) EnumDescriptor() ([]byte, []int) {
-	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{0}
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{1}
 }
 
 type Action int32
@@ -123,11 +181,11 @@ func (x Action) String() string {
 }
 
 func (Action) Descriptor() protoreflect.EnumDescriptor {
-	return file_workloadapi_security_authorization_proto_enumTypes[1].Descriptor()
+	return file_workloadapi_security_authorization_proto_enumTypes[2].Descriptor()
 }
 
 func (Action) Type() protoreflect.EnumType {
-	return &file_workloadapi_security_authorization_proto_enumTypes[1]
+	return &file_workloadapi_security_authorization_proto_enumTypes[2]
 }
 
 func (x Action) Number() protoreflect.EnumNumber {
@@ -136,7 +194,7 @@ func (x Action) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Action.Descriptor instead.
 func (Action) EnumDescriptor() ([]byte, []int) {
-	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{1}
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{2}
 }
 
 type Authorization struct {
@@ -156,9 +214,10 @@ type Authorization struct {
 	Groups []*Group `protobuf:"bytes,5,rep,name=groups,proto3" json:"groups,omitempty"`
 	// Whether or not this is a dry run policy.
 	// Dry run policies are not enforced, but their matches are logged
-	DryRun        bool `protobuf:"varint,6,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DryRun         bool         `protobuf:"varint,6,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
+	AuthExtensions []*Extension `protobuf:"bytes,999,rep,name=auth_extensions,json=authExtensions,proto3" json:"auth_extensions,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Authorization) Reset() {
@@ -231,6 +290,13 @@ func (x *Authorization) GetDryRun() bool {
 		return x.DryRun
 	}
 	return false
+}
+
+func (x *Authorization) GetAuthExtensions() []*Extension {
+	if x != nil {
+		return x.AuthExtensions
+	}
+	return nil
 }
 
 type Group struct {
@@ -325,21 +391,23 @@ func (x *Rules) GetMatches() []*Match {
 }
 
 type Match struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	Namespaces          []*StringMatch         `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
-	NotNamespaces       []*StringMatch         `protobuf:"bytes,2,rep,name=not_namespaces,json=notNamespaces,proto3" json:"not_namespaces,omitempty"`
-	ServiceAccounts     []*ServiceAccountMatch `protobuf:"bytes,11,rep,name=service_accounts,json=serviceAccounts,proto3" json:"service_accounts,omitempty"`
-	NotServiceAccounts  []*ServiceAccountMatch `protobuf:"bytes,12,rep,name=not_service_accounts,json=notServiceAccounts,proto3" json:"not_service_accounts,omitempty"`
-	Principals          []*StringMatch         `protobuf:"bytes,3,rep,name=principals,proto3" json:"principals,omitempty"`
-	NotPrincipals       []*StringMatch         `protobuf:"bytes,4,rep,name=not_principals,json=notPrincipals,proto3" json:"not_principals,omitempty"`
-	SourceIps           []*Address             `protobuf:"bytes,5,rep,name=source_ips,json=sourceIps,proto3" json:"source_ips,omitempty"`
-	NotSourceIps        []*Address             `protobuf:"bytes,6,rep,name=not_source_ips,json=notSourceIps,proto3" json:"not_source_ips,omitempty"`
-	DestinationIps      []*Address             `protobuf:"bytes,7,rep,name=destination_ips,json=destinationIps,proto3" json:"destination_ips,omitempty"`
-	NotDestinationIps   []*Address             `protobuf:"bytes,8,rep,name=not_destination_ips,json=notDestinationIps,proto3" json:"not_destination_ips,omitempty"`
-	DestinationPorts    []uint32               `protobuf:"varint,9,rep,packed,name=destination_ports,json=destinationPorts,proto3" json:"destination_ports,omitempty"`
-	NotDestinationPorts []uint32               `protobuf:"varint,10,rep,packed,name=not_destination_ports,json=notDestinationPorts,proto3" json:"not_destination_ports,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	Namespaces               []*StringMatch         `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
+	NotNamespaces            []*StringMatch         `protobuf:"bytes,2,rep,name=not_namespaces,json=notNamespaces,proto3" json:"not_namespaces,omitempty"`
+	ServiceAccounts          []*ServiceAccountMatch `protobuf:"bytes,11,rep,name=service_accounts,json=serviceAccounts,proto3" json:"service_accounts,omitempty"`
+	NotServiceAccounts       []*ServiceAccountMatch `protobuf:"bytes,12,rep,name=not_service_accounts,json=notServiceAccounts,proto3" json:"not_service_accounts,omitempty"`
+	Principals               []*StringMatch         `protobuf:"bytes,3,rep,name=principals,proto3" json:"principals,omitempty"`
+	NotPrincipals            []*StringMatch         `protobuf:"bytes,4,rep,name=not_principals,json=notPrincipals,proto3" json:"not_principals,omitempty"`
+	SourceIps                []*Address             `protobuf:"bytes,5,rep,name=source_ips,json=sourceIps,proto3" json:"source_ips,omitempty"`
+	NotSourceIps             []*Address             `protobuf:"bytes,6,rep,name=not_source_ips,json=notSourceIps,proto3" json:"not_source_ips,omitempty"`
+	DestinationIps           []*Address             `protobuf:"bytes,7,rep,name=destination_ips,json=destinationIps,proto3" json:"destination_ips,omitempty"`
+	NotDestinationIps        []*Address             `protobuf:"bytes,8,rep,name=not_destination_ips,json=notDestinationIps,proto3" json:"not_destination_ips,omitempty"`
+	DestinationPorts         []uint32               `protobuf:"varint,9,rep,packed,name=destination_ports,json=destinationPorts,proto3" json:"destination_ports,omitempty"`
+	NotDestinationPorts      []uint32               `protobuf:"varint,10,rep,packed,name=not_destination_ports,json=notDestinationPorts,proto3" json:"not_destination_ports,omitempty"`
+	DestinationPortRanges    []*PortRange           `protobuf:"bytes,990,rep,name=destination_port_ranges,json=destinationPortRanges,proto3" json:"destination_port_ranges,omitempty"`
+	NotDestinationPortRanges []*PortRange           `protobuf:"bytes,991,rep,name=not_destination_port_ranges,json=notDestinationPortRanges,proto3" json:"not_destination_port_ranges,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *Match) Reset() {
@@ -456,6 +524,82 @@ func (x *Match) GetNotDestinationPorts() []uint32 {
 	return nil
 }
 
+func (x *Match) GetDestinationPortRanges() []*PortRange {
+	if x != nil {
+		return x.DestinationPortRanges
+	}
+	return nil
+}
+
+func (x *Match) GetNotDestinationPortRanges() []*PortRange {
+	if x != nil {
+		return x.NotDestinationPortRanges
+	}
+	return nil
+}
+
+type PortRange struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Start uint32                 `protobuf:"varint,1,opt,name=start,proto3" json:"start,omitempty"`
+	End   uint32                 `protobuf:"varint,2,opt,name=end,proto3" json:"end,omitempty"`
+	// Network protocol (e.g. "TCP", "UDP", "ICMP", "SCTP").
+	// Empty means any protocol.
+	Protocol      Protocol `protobuf:"varint,3,opt,name=protocol,proto3,enum=istio.security.Protocol" json:"protocol,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PortRange) Reset() {
+	*x = PortRange{}
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PortRange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PortRange) ProtoMessage() {}
+
+func (x *PortRange) ProtoReflect() protoreflect.Message {
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PortRange.ProtoReflect.Descriptor instead.
+func (*PortRange) Descriptor() ([]byte, []int) {
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PortRange) GetStart() uint32 {
+	if x != nil {
+		return x.Start
+	}
+	return 0
+}
+
+func (x *PortRange) GetEnd() uint32 {
+	if x != nil {
+		return x.End
+	}
+	return 0
+}
+
+func (x *PortRange) GetProtocol() Protocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return Protocol_ALL
+}
+
 type Address struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Address       []byte                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
@@ -466,7 +610,7 @@ type Address struct {
 
 func (x *Address) Reset() {
 	*x = Address{}
-	mi := &file_workloadapi_security_authorization_proto_msgTypes[4]
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -478,7 +622,7 @@ func (x *Address) String() string {
 func (*Address) ProtoMessage() {}
 
 func (x *Address) ProtoReflect() protoreflect.Message {
-	mi := &file_workloadapi_security_authorization_proto_msgTypes[4]
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -491,7 +635,7 @@ func (x *Address) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Address.ProtoReflect.Descriptor instead.
 func (*Address) Descriptor() ([]byte, []int) {
-	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{4}
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Address) GetAddress() []byte {
@@ -518,7 +662,7 @@ type ServiceAccountMatch struct {
 
 func (x *ServiceAccountMatch) Reset() {
 	*x = ServiceAccountMatch{}
-	mi := &file_workloadapi_security_authorization_proto_msgTypes[5]
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -530,7 +674,7 @@ func (x *ServiceAccountMatch) String() string {
 func (*ServiceAccountMatch) ProtoMessage() {}
 
 func (x *ServiceAccountMatch) ProtoReflect() protoreflect.Message {
-	mi := &file_workloadapi_security_authorization_proto_msgTypes[5]
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -543,7 +687,7 @@ func (x *ServiceAccountMatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceAccountMatch.ProtoReflect.Descriptor instead.
 func (*ServiceAccountMatch) Descriptor() ([]byte, []int) {
-	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{5}
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ServiceAccountMatch) GetNamespace() string {
@@ -575,7 +719,7 @@ type StringMatch struct {
 
 func (x *StringMatch) Reset() {
 	*x = StringMatch{}
-	mi := &file_workloadapi_security_authorization_proto_msgTypes[6]
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -587,7 +731,7 @@ func (x *StringMatch) String() string {
 func (*StringMatch) ProtoMessage() {}
 
 func (x *StringMatch) ProtoReflect() protoreflect.Message {
-	mi := &file_workloadapi_security_authorization_proto_msgTypes[6]
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -600,7 +744,7 @@ func (x *StringMatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StringMatch.ProtoReflect.Descriptor instead.
 func (*StringMatch) Descriptor() ([]byte, []int) {
-	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{6}
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StringMatch) GetMatchType() isStringMatch_MatchType {
@@ -677,22 +821,80 @@ func (*StringMatch_Suffix) isStringMatch_MatchType() {}
 
 func (*StringMatch_Presence) isStringMatch_MatchType() {}
 
+// Extension provides a mechanism to attach arbitrary additional configuration to an object.
+type Extension struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name provides an opaque name for the extension.
+	// This may have semantic meaning or used for debugging.
+	// This should be unique amongst all extensions attached to an item.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// config provides some opaque configuration.
+	Config        *anypb.Any `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Extension) Reset() {
+	*x = Extension{}
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Extension) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Extension) ProtoMessage() {}
+
+func (x *Extension) ProtoReflect() protoreflect.Message {
+	mi := &file_workloadapi_security_authorization_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Extension.ProtoReflect.Descriptor instead.
+func (*Extension) Descriptor() ([]byte, []int) {
+	return file_workloadapi_security_authorization_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *Extension) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Extension) GetConfig() *anypb.Any {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
 var File_workloadapi_security_authorization_proto protoreflect.FileDescriptor
 
 const file_workloadapi_security_authorization_proto_rawDesc = "" +
 	"\n" +
-	"(workloadapi/security/authorization.proto\x12\x0eistio.security\x1a\x1bgoogle/protobuf/empty.proto\"\xe6\x01\n" +
+	"(workloadapi/security/authorization.proto\x12\x0eistio.security\x1a\x1bgoogle/protobuf/empty.proto\x1a\x19google/protobuf/any.proto\"\xab\x02\n" +
 	"\rAuthorization\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12+\n" +
 	"\x05scope\x18\x03 \x01(\x0e2\x15.istio.security.ScopeR\x05scope\x12.\n" +
 	"\x06action\x18\x04 \x01(\x0e2\x16.istio.security.ActionR\x06action\x12-\n" +
 	"\x06groups\x18\x05 \x03(\v2\x15.istio.security.GroupR\x06groups\x12\x17\n" +
-	"\adry_run\x18\x06 \x01(\bR\x06dryRun\"4\n" +
+	"\adry_run\x18\x06 \x01(\bR\x06dryRun\x12C\n" +
+	"\x0fauth_extensions\x18\xe7\a \x03(\v2\x19.istio.security.ExtensionR\x0eauthExtensions\"4\n" +
 	"\x05Group\x12+\n" +
 	"\x05rules\x18\x01 \x03(\v2\x15.istio.security.RulesR\x05rules\"8\n" +
 	"\x05Rules\x12/\n" +
-	"\amatches\x18\x02 \x03(\v2\x15.istio.security.MatchR\amatches\"\x93\x06\n" +
+	"\amatches\x18\x02 \x03(\v2\x15.istio.security.MatchR\amatches\"\xc2\a\n" +
 	"\x05Match\x12;\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2\x1b.istio.security.StringMatchR\n" +
@@ -711,7 +913,13 @@ const file_workloadapi_security_authorization_proto_rawDesc = "" +
 	"\x13not_destination_ips\x18\b \x03(\v2\x17.istio.security.AddressR\x11notDestinationIps\x12+\n" +
 	"\x11destination_ports\x18\t \x03(\rR\x10destinationPorts\x122\n" +
 	"\x15not_destination_ports\x18\n" +
-	" \x03(\rR\x13notDestinationPorts\";\n" +
+	" \x03(\rR\x13notDestinationPorts\x12R\n" +
+	"\x17destination_port_ranges\x18\xde\a \x03(\v2\x19.istio.security.PortRangeR\x15destinationPortRanges\x12Y\n" +
+	"\x1bnot_destination_port_ranges\x18\xdf\a \x03(\v2\x19.istio.security.PortRangeR\x18notDestinationPortRanges\"i\n" +
+	"\tPortRange\x12\x14\n" +
+	"\x05start\x18\x01 \x01(\rR\x05start\x12\x10\n" +
+	"\x03end\x18\x02 \x01(\rR\x03end\x124\n" +
+	"\bprotocol\x18\x03 \x01(\x0e2\x18.istio.security.ProtocolR\bprotocol\";\n" +
 	"\aAddress\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\fR\aaddress\x12\x16\n" +
 	"\x06length\x18\x02 \x01(\rR\x06length\"[\n" +
@@ -724,7 +932,16 @@ const file_workloadapi_security_authorization_proto_rawDesc = "" +
 	"\x06suffix\x18\x03 \x01(\tH\x00R\x06suffix\x124\n" +
 	"\bpresence\x18\x04 \x01(\v2\x16.google.protobuf.EmptyH\x00R\bpresenceB\f\n" +
 	"\n" +
-	"match_type*9\n" +
+	"match_type\"M\n" +
+	"\tExtension\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
+	"\x06config\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\x06config*9\n" +
+	"\bProtocol\x12\a\n" +
+	"\x03ALL\x10\x00\x12\a\n" +
+	"\x03TCP\x10\x01\x12\a\n" +
+	"\x03UDP\x10\x02\x12\b\n" +
+	"\x04ICMP\x10\x03\x12\b\n" +
+	"\x04SCTP\x10\x04*9\n" +
 	"\x05Scope\x12\n" +
 	"\n" +
 	"\x06GLOBAL\x10\x00\x12\r\n" +
@@ -746,42 +963,51 @@ func file_workloadapi_security_authorization_proto_rawDescGZIP() []byte {
 	return file_workloadapi_security_authorization_proto_rawDescData
 }
 
-var file_workloadapi_security_authorization_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_workloadapi_security_authorization_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_workloadapi_security_authorization_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_workloadapi_security_authorization_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_workloadapi_security_authorization_proto_goTypes = []any{
-	(Scope)(0),                  // 0: istio.security.Scope
-	(Action)(0),                 // 1: istio.security.Action
-	(*Authorization)(nil),       // 2: istio.security.Authorization
-	(*Group)(nil),               // 3: istio.security.Group
-	(*Rules)(nil),               // 4: istio.security.Rules
-	(*Match)(nil),               // 5: istio.security.Match
-	(*Address)(nil),             // 6: istio.security.Address
-	(*ServiceAccountMatch)(nil), // 7: istio.security.ServiceAccountMatch
-	(*StringMatch)(nil),         // 8: istio.security.StringMatch
-	(*emptypb.Empty)(nil),       // 9: google.protobuf.Empty
+	(Protocol)(0),               // 0: istio.security.Protocol
+	(Scope)(0),                  // 1: istio.security.Scope
+	(Action)(0),                 // 2: istio.security.Action
+	(*Authorization)(nil),       // 3: istio.security.Authorization
+	(*Group)(nil),               // 4: istio.security.Group
+	(*Rules)(nil),               // 5: istio.security.Rules
+	(*Match)(nil),               // 6: istio.security.Match
+	(*PortRange)(nil),           // 7: istio.security.PortRange
+	(*Address)(nil),             // 8: istio.security.Address
+	(*ServiceAccountMatch)(nil), // 9: istio.security.ServiceAccountMatch
+	(*StringMatch)(nil),         // 10: istio.security.StringMatch
+	(*Extension)(nil),           // 11: istio.security.Extension
+	(*emptypb.Empty)(nil),       // 12: google.protobuf.Empty
+	(*anypb.Any)(nil),           // 13: google.protobuf.Any
 }
 var file_workloadapi_security_authorization_proto_depIdxs = []int32{
-	0,  // 0: istio.security.Authorization.scope:type_name -> istio.security.Scope
-	1,  // 1: istio.security.Authorization.action:type_name -> istio.security.Action
-	3,  // 2: istio.security.Authorization.groups:type_name -> istio.security.Group
-	4,  // 3: istio.security.Group.rules:type_name -> istio.security.Rules
-	5,  // 4: istio.security.Rules.matches:type_name -> istio.security.Match
-	8,  // 5: istio.security.Match.namespaces:type_name -> istio.security.StringMatch
-	8,  // 6: istio.security.Match.not_namespaces:type_name -> istio.security.StringMatch
-	7,  // 7: istio.security.Match.service_accounts:type_name -> istio.security.ServiceAccountMatch
-	7,  // 8: istio.security.Match.not_service_accounts:type_name -> istio.security.ServiceAccountMatch
-	8,  // 9: istio.security.Match.principals:type_name -> istio.security.StringMatch
-	8,  // 10: istio.security.Match.not_principals:type_name -> istio.security.StringMatch
-	6,  // 11: istio.security.Match.source_ips:type_name -> istio.security.Address
-	6,  // 12: istio.security.Match.not_source_ips:type_name -> istio.security.Address
-	6,  // 13: istio.security.Match.destination_ips:type_name -> istio.security.Address
-	6,  // 14: istio.security.Match.not_destination_ips:type_name -> istio.security.Address
-	9,  // 15: istio.security.StringMatch.presence:type_name -> google.protobuf.Empty
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	1,  // 0: istio.security.Authorization.scope:type_name -> istio.security.Scope
+	2,  // 1: istio.security.Authorization.action:type_name -> istio.security.Action
+	4,  // 2: istio.security.Authorization.groups:type_name -> istio.security.Group
+	11, // 3: istio.security.Authorization.auth_extensions:type_name -> istio.security.Extension
+	5,  // 4: istio.security.Group.rules:type_name -> istio.security.Rules
+	6,  // 5: istio.security.Rules.matches:type_name -> istio.security.Match
+	10, // 6: istio.security.Match.namespaces:type_name -> istio.security.StringMatch
+	10, // 7: istio.security.Match.not_namespaces:type_name -> istio.security.StringMatch
+	9,  // 8: istio.security.Match.service_accounts:type_name -> istio.security.ServiceAccountMatch
+	9,  // 9: istio.security.Match.not_service_accounts:type_name -> istio.security.ServiceAccountMatch
+	10, // 10: istio.security.Match.principals:type_name -> istio.security.StringMatch
+	10, // 11: istio.security.Match.not_principals:type_name -> istio.security.StringMatch
+	8,  // 12: istio.security.Match.source_ips:type_name -> istio.security.Address
+	8,  // 13: istio.security.Match.not_source_ips:type_name -> istio.security.Address
+	8,  // 14: istio.security.Match.destination_ips:type_name -> istio.security.Address
+	8,  // 15: istio.security.Match.not_destination_ips:type_name -> istio.security.Address
+	7,  // 16: istio.security.Match.destination_port_ranges:type_name -> istio.security.PortRange
+	7,  // 17: istio.security.Match.not_destination_port_ranges:type_name -> istio.security.PortRange
+	0,  // 18: istio.security.PortRange.protocol:type_name -> istio.security.Protocol
+	12, // 19: istio.security.StringMatch.presence:type_name -> google.protobuf.Empty
+	13, // 20: istio.security.Extension.config:type_name -> google.protobuf.Any
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_workloadapi_security_authorization_proto_init() }
@@ -789,7 +1015,7 @@ func file_workloadapi_security_authorization_proto_init() {
 	if File_workloadapi_security_authorization_proto != nil {
 		return
 	}
-	file_workloadapi_security_authorization_proto_msgTypes[6].OneofWrappers = []any{
+	file_workloadapi_security_authorization_proto_msgTypes[7].OneofWrappers = []any{
 		(*StringMatch_Exact)(nil),
 		(*StringMatch_Prefix)(nil),
 		(*StringMatch_Suffix)(nil),
@@ -800,8 +1026,8 @@ func file_workloadapi_security_authorization_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workloadapi_security_authorization_proto_rawDesc), len(file_workloadapi_security_authorization_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   7,
+			NumEnums:      3,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

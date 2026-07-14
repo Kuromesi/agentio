@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,9 +17,11 @@ package credentials
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"istio.io/istio/pkg/cluster"
+	"istio.io/istio/pkg/config/labels"
 	"istio.io/istio/pkg/config/schema/kind"
 )
 
@@ -41,7 +44,39 @@ const (
 	// InvalidSecretType will be used to send a certificate that is never valid
 	InvalidSecretType    = "invalid"
 	InvalidSecretTypeURI = InvalidSecretType + "://"
+
+	OnDemandCertificateType = "ondemand"
 )
+
+// IsValidOnDemandDomain reports whether a raw SDS resource name can safely be
+// interpreted as an on-demand certificate request. Envoy subscribes with the
+// SNI value directly, so this deliberately accepts only DNS FQDNs: not URIs,
+// paths, host:port values, IP addresses, wildcards, or single-label names.
+func IsValidOnDemandDomain(domain string) bool {
+	if domain != strings.TrimSpace(domain) || len(domain) == 0 || len(domain) > 255 || !strings.Contains(domain, ".") {
+		return false
+	}
+	parts := strings.Split(CanonicalOnDemandDomain(domain), ".")
+	if len(parts) < 2 {
+		return false
+	}
+	if _, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+		return false
+	}
+	for _, part := range parts {
+		if !labels.IsDNS1123Label(part) {
+			return false
+		}
+	}
+	return true
+}
+
+// CanonicalOnDemandDomain returns the representation used to look up and
+// compare on-demand certificate domains. ResourceName remains unchanged so
+// xDS responses still match the exact name subscribed to by Envoy.
+func CanonicalOnDemandDomain(domain string) string {
+	return strings.TrimSuffix(strings.ToLower(domain), ".")
+}
 
 // SecretResource defines a reference to a secret
 type SecretResource struct {
@@ -171,5 +206,6 @@ func ParseResourceName(resourceName string, proxyNamespace string, proxyCluster 
 	} else if strings.HasPrefix(resourceName, InvalidSecretTypeURI) {
 		return SecretResource{ResourceType: InvalidSecretType, ResourceName: resourceName, Cluster: configCluster}, nil
 	}
+
 	return SecretResource{}, fmt.Errorf("unknown resource type: %v", resourceName)
 }

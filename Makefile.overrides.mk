@@ -43,3 +43,21 @@ istioctl-install: istioctl-install-container
 .PHONY: coverage
 coverage:
 	prow/coverage.sh
+
+# Run the Agentio KinD E2E matrix on the host. Edit the ignored Helm values
+# overlay to select prebuilt proxy and ztunnel images. SCENARIO and TEST are optional.
+.PHONY: test.e2e.agentio
+test.e2e.agentio: export BUILD_WITH_CONTAINER := 0
+test.e2e.agentio: export ARTIFACTS ?= $(CURDIR)/artifacts/agentio-e2e
+ifneq ($(strip $(value SCENARIO)),)
+test.e2e.agentio: export AGENTIO_E2E_SCENARIOS := $(value SCENARIO)
+endif
+ifneq ($(strip $(value TEST)),)
+test.e2e.agentio: export AGENTIO_E2E_TEST := $(value TEST)
+endif
+test.e2e.agentio:
+	@if test -f "$(CURDIR)/tests/integration/agentio/testdata/local-values.yaml"; then \
+		prow/integ-suite-agentio-kind.sh --values-file "$(CURDIR)/tests/integration/agentio/testdata/local-values.yaml" --use-prebuilt-data-plane; \
+	else \
+		prow/integ-suite-agentio-kind.sh; \
+	fi

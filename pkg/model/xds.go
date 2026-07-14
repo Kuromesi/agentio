@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,6 +39,7 @@ const (
 	AddressType               = APITypePrefix + "istio.workload.Address"
 	WorkloadType              = APITypePrefix + "istio.workload.Workload"
 	WorkloadAuthorizationType = APITypePrefix + "istio.security.Authorization"
+	WorkloadConfigType        = APITypePrefix + "kruise.networking.extensions.v1.WorkloadConfig"
 )
 
 // GetShortType returns an abbreviated form of a type, useful for logging or human friendly messages
@@ -63,6 +65,8 @@ func GetShortType(typeURL string) string {
 		return "WDS"
 	case WorkloadAuthorizationType:
 		return "WADS"
+	case WorkloadConfigType:
+		return "WCDS"
 	default:
 		return typeURL
 	}
@@ -93,6 +97,8 @@ func GetMetricType(typeURL string) string {
 		return "wds"
 	case WorkloadAuthorizationType:
 		return "wads"
+	case WorkloadConfigType:
+		return "wcds"
 	default:
 		return typeURL
 	}

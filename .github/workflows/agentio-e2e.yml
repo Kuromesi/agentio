@@ -1,0 +1,59 @@
+name: agentio-e2e
+
+# KinD-based end-to-end tests for the Agentio data plane.
+#
+# All component images are built from this checkout and pushed only to the
+# KinD-local registry by the Agentio-specific script.
+#
+# Failures are intentional signal: registry access and cluster setup are part of
+# the end-to-end contract and must not be reported as a successful check.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - "release-*"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Run make/build natively (we install go/helm/kind below) rather than in
+      # the Istio build container, and build images with the docker builder.
+      BUILD_WITH_CONTAINER: "0"
+      ISTIO_DOCKER_BUILDER: docker
+      JOB_TYPE: presubmit
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Install KinD and test reporting tools
+        run: |
+          go install sigs.k8s.io/kind@v0.24.0
+          go install github.com/jstemmer/go-junit-report/v2@v2.1.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run agentio e2e scenarios (KinD)
+        env:
+          ARTIFACTS: ${{ runner.temp }}/agentio-e2e-artifacts
+        run: prow/integ-suite-agentio-kind.sh
+      - name: Upload agentio e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentio-e2e-artifacts
+          path: ${{ runner.temp }}/agentio-e2e-artifacts
+          if-no-files-found: warn
+          retention-days: 7

@@ -14,9 +14,9 @@
 
 BUF_CONFIG_DIR := tools/proto
 
-.PHONY: proto operator-proto dns-proto
+.PHONY: proto operator-proto dns-proto echo-proto workload-proto zds-proto agentio-proto
 
-proto: operator-proto dns-proto echo-proto workload-proto zds-proto
+proto: operator-proto dns-proto echo-proto workload-proto zds-proto agentio-proto
 
 operator-proto:
 	buf generate --config $(BUF_CONFIG_DIR)/buf.yaml --path operator/pkg/ --output operator --template $(BUF_CONFIG_DIR)/buf.golang.yaml
@@ -32,3 +32,6 @@ workload-proto:
 
 zds-proto:
 	buf generate --config $(BUF_CONFIG_DIR)/buf.yaml --path pkg/zdsapi --output pkg --template $(BUF_CONFIG_DIR)/buf.golang.yaml
+
+agentio-proto:
+	tools/proto/generate-agentio.sh

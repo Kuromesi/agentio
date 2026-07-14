@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -160,12 +161,12 @@ func (b *builder) With(i *echo.Instance, cfg echo.Config) Builder {
 		if !ok {
 			continue
 		}
-		if !b.validateTemplates(perClusterConfig, c) {
-			scopes.Framework.Warnf("%s does not contain injection templates for %s; skipping deployment", c.Name(), perClusterConfig.ClusterLocalFQDN())
-			// Don't error out when injection template missing.
-			shouldSkip = true
-			continue
-		}
+		// if !cfg.DeployAsSandbox && !b.validateTemplates(perClusterConfig, c) {
+		// 	scopes.Framework.Warnf("%s does not contain injection templates for %s; skipping deployment", c.Name(), perClusterConfig.ClusterLocalFQDN())
+		// 	// Don't error out when injection template missing.
+		// 	shouldSkip = true
+		// 	continue
+		// }
 
 		var ref *echo.Instance
 		if idx == 0 {

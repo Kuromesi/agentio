@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -78,6 +79,7 @@ func (s *Server) initKubeOptions(args *PilotArgs) {
 	args.RegistryOptions.KubeOptions.MeshWatcher = s.environment.Watcher
 	args.RegistryOptions.KubeOptions.SystemNamespace = args.Namespace
 	args.RegistryOptions.KubeOptions.MeshServiceController = s.ServiceController()
+	args.RegistryOptions.KubeOptions.AgentioController = s.agentioController
 }
 
 // initKubeRegistry creates all the k8s service controllers under this pilot

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +16,10 @@ package krt_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +29,7 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/maps"
 	"istio.io/istio/pkg/slices"
+	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
 )
 
@@ -325,4 +330,56 @@ func TestJoinWithMergeAndIndexSimpleCollection(t *testing.T) {
 	})
 
 	tt.WaitOrdered("update/namespace")
+}
+
+func TestMergeJoin_DebounceBatchesDownstream(t *testing.T) {
+	stop := test.NewStop(t)
+
+	a := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop))
+	b := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop))
+
+	merge := func(items []Named) *Named {
+		if len(items) == 0 {
+			return nil
+		}
+		cp := items[0]
+		return &cp
+	}
+
+	j := krt.JoinWithMergeCollection([]krt.Collection[Named]{a, b}, merge,
+		krt.WithStop(stop), krt.WithDebounce(30*time.Millisecond, 0))
+
+	var mu sync.Mutex
+	var batches [][]krt.Event[Named]
+	j.RegisterBatch(func(events []krt.Event[Named]) {
+		mu.Lock()
+		defer mu.Unlock()
+		cp := make([]krt.Event[Named], len(events))
+		copy(cp, events)
+		batches = append(batches, cp)
+	}, false)
+
+	for i := 0; i < 4; i++ {
+		a.UpdateObject(Named{Namespace: "ns", Name: fmt.Sprintf("a%d", i)})
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		mu.Lock()
+		n := len(batches)
+		total := 0
+		for _, b := range batches {
+			total += len(b)
+		}
+		mu.Unlock()
+		if total >= 4 && n < 4 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected batched delivery; got %d batches totaling %d", n, total)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

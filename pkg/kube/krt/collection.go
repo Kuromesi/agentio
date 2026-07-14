@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -113,6 +114,7 @@ func (i dependencyState[I]) delete(key Key[I]) {
 
 func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, events []Event[any]) sets.Set[Key[I]] {
 	changedInputKeys := sets.Set[Key[I]]{}
+	totalInputs := len(i.objectDependencies)
 	// Check old and new
 	for _, ev := range events {
 		// We have a possibly dependent object changed. For each input object, see if it depends on the object.
@@ -154,10 +156,17 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 		}
 		if !foundAny {
 			for iKey, dependencies := range i.objectDependencies {
+				if changedInputKeys.Contains(iKey) {
+					continue
+				}
 				if changed := objectChanged(dependencies, sourceCollection, ev, false); changed {
 					changedInputKeys.Insert(iKey)
 				}
 			}
+		}
+		// Short-circuit: all inputs are already marked changed, no need to check remaining events
+		if totalInputs > 0 && len(changedInputKeys) >= totalInputs {
+			break
 		}
 	}
 	return changedInputKeys
@@ -607,6 +616,9 @@ func newManyCollection[I, O any](
 		stop:                       opts.stop,
 		onPrimaryInputEventHandler: onPrimaryInputEventHandler,
 	}
+	if opts.debounceInterval > 0 {
+		h.eventHandlers.WithDebounce(opts.debounceInterval, opts.debounceMaxInterval, opts.stop)
+	}
 
 	if opts.metadata != nil {
 		h.metadata = opts.metadata
@@ -809,10 +821,7 @@ func (i *collectionDependencyTracker[I, O]) registerDependency(
 		i.log.WithLabels("collection", d.collectionName).Debugf("register new dependency")
 		syncer.WaitUntilSynced(i.stop)
 		register(func(o []Event[any]) {
-			i.queue.Push(func() error {
-				i.onSecondaryDependencyEvent(d.id, o)
-				return nil
-			})
+			i.enqueueSecondaryEvents(d.id, o)
 		}).WaitUntilSynced(i.stop)
 	}
 }
@@ -822,4 +831,13 @@ func (i *collectionDependencyTracker[I, O]) _internalHandler() {
 
 func (i *collectionDependencyTracker[I, O]) DiscardResult() {
 	i.discardUpdate = true
+}
+
+func (h *manyCollection[I, O]) enqueueSecondaryEvents(sourceCollection collectionUID, events []Event[any]) {
+	src := sourceCollection
+	evts := events
+	h.queue.Push(func() error {
+		h.onSecondaryDependencyEvent(src, evts)
+		return nil
+	})
 }

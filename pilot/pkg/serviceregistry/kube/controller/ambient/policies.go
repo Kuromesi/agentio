@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -162,9 +163,14 @@ func PolicyCollections(
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	meshConfig krt.Singleton[MeshConfig],
 	waypoints krt.Collection[Waypoint],
+	trafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization],
 	opts krt.OptionsBuilder,
 	flags FeatureFlags,
 ) (krt.Collection[model.WorkloadAuthorization], krt.Collection[model.WorkloadAuthorization]) {
+	if trafficPolicyDerivedPolicies == nil {
+		trafficPolicyDerivedPolicies = krt.NewStaticCollection[model.WorkloadAuthorization](nil, nil,
+			opts.WithName("TrafficPolicyDerivedPolicies")...)
+	}
 	AuthzDerivedPolicies := krt.NewCollection(authzPolicies, func(ctx krt.HandlerContext, i *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		meshCfg := krt.FetchOne(ctx, meshConfig.AsCollection())
 		pol, status := convertAuthorizationPolicy(meshCfg.GetRootNamespace(), i)
@@ -285,15 +291,16 @@ func PolicyCollections(
 		}
 	}, opts.WithName("DefaultPolicy")...)
 
-	// Policies contains all of the policies we will send down to clients
-	// No need to add withDebug on join since it is trivial
-	Policies := krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{
-		AuthzDerivedPolicies,
-		PeerAuthDerivedPolicies,
-		DefaultPolicy.AsCollection(),
-		ImplicitWaypointPolicies,
-	}, opts.WithName("Policies")...)
-	return AuthzDerivedPolicies, Policies
+	// join trafficpolicies in sandbox mode
+	return krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{AuthzDerivedPolicies, trafficPolicyDerivedPolicies},
+			opts.WithName("AuthorizationPolicies")...),
+		krt.JoinCollection([]krt.Collection[model.WorkloadAuthorization]{
+			AuthzDerivedPolicies,
+			PeerAuthDerivedPolicies,
+			DefaultPolicy.AsCollection(),
+			ImplicitWaypointPolicies,
+			trafficPolicyDerivedPolicies,
+		}, opts.WithName("Policies")...)
 }
 
 func implicitWaypointPolicyName(flags FeatureFlags, waypoint *Waypoint) string {

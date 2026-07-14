@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,6 +27,21 @@ import (
 
 type WorkloadGenerator struct {
 	Server *DiscoveryServer
+}
+
+const (
+	ZtunnelProxyMode = "ZTUNNEL_PROXY_MODE"
+)
+
+// func should(proxy *model.Proxy) bool {
+// 	if !proxy.IsZTunnel() {
+// 		return false
+// 	}
+
+// }
+
+type SandboxIndex interface {
+	AddressesForSandbox(proxy *model.Proxy) sets.String
 }
 
 var (
@@ -60,7 +76,7 @@ func (e WorkloadGenerator) GenerateDeltas(
 	if isReq {
 		reqAddresses = nil
 	}
-	addrs, removed := e.Server.Env.ServiceDiscovery.AddressInformation(reqAddresses)
+	addrs, removed := e.Server.Env.ServiceDiscovery.AddressInformationForProxy(proxy, reqAddresses)
 	// Note: while "removed" is a weird name for a resource that never existed, this is how the spec works:
 	// https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol#id2
 	have := sets.New[string]()
@@ -204,7 +220,7 @@ func (e WorkloadRBACGenerator) GenerateDeltas(
 	}
 
 	resources := make(model.Resources, 0)
-	policies := e.Server.Env.ServiceDiscovery.Policies(updatedPolicies)
+	policies := e.Server.Env.ServiceDiscovery.PoliciesForProxy(proxy, updatedPolicies)
 	for _, p := range policies {
 		n := p.ResourceName()
 		expected.Delete(n) // delete the generated policy name, left the removed ones
@@ -225,4 +241,51 @@ func (e WorkloadRBACGenerator) Generate(proxy *model.Proxy, w *model.WatchedReso
 var (
 	_ model.XdsResourceGenerator      = &WorkloadRBACGenerator{}
 	_ model.XdsDeltaResourceGenerator = &WorkloadRBACGenerator{}
+)
+
+type WorkloadConfigGenerator struct {
+	Server *DiscoveryServer
+}
+
+func (e WorkloadConfigGenerator) GenerateDeltas(
+	proxy *model.Proxy,
+	req *model.PushRequest,
+	w *model.WatchedResource,
+) (model.Resources, model.DeletedResources, model.XdsLogDetails, bool, error) {
+	var updatedPolicies sets.Set[model.ConfigKey]
+	expected := sets.New[string]()
+	if req.Forced {
+		expected.Merge(w.ResourceNames)
+	} else {
+		updatedPolicies = model.ConfigsOfKind(req.ConfigsUpdated, kind.WorkloadConfig)
+		if len(updatedPolicies) == 0 {
+			return nil, nil, model.DefaultXdsLogDetails, false, nil
+		}
+		for k := range updatedPolicies {
+			expected.Insert(k.Namespace + "/" + k.Name)
+		}
+	}
+
+	resources := make(model.Resources, 0)
+	policies := e.Server.Env.ServiceDiscovery.WorkloadConfigsForProxy(proxy, updatedPolicies)
+	for _, p := range policies {
+		n := p.ResourceName()
+		expected.Delete(n)
+		resources = append(resources, &discovery.Resource{
+			Name:     n,
+			Resource: protoconv.MessageToAny(p.Config),
+		})
+	}
+
+	return resources, sets.SortedList(expected), model.XdsLogDetails{}, true, nil
+}
+
+func (e WorkloadConfigGenerator) Generate(proxy *model.Proxy, w *model.WatchedResource, req *model.PushRequest) (model.Resources, model.XdsLogDetails, error) {
+	resources, _, details, _, err := e.GenerateDeltas(proxy, req, w)
+	return resources, details, err
+}
+
+var (
+	_ model.XdsResourceGenerator      = &WorkloadConfigGenerator{}
+	_ model.XdsDeltaResourceGenerator = &WorkloadConfigGenerator{}
 )

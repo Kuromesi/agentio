@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -147,6 +148,44 @@ func TestToResourceName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ToResourceName(tt.name); got != tt.want {
 				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidOnDemandDomain(t *testing.T) {
+	tests := map[string]bool{
+		"api.example.com":  true,
+		"API.Example.COM":  true,
+		"example.com.":     true,
+		"localhost":        false,
+		"127.0.0.1":        false,
+		"[::1]":            false,
+		"*.example.com":    false,
+		"example.com:443":  false,
+		"example.com/path": false,
+		" example.com":     false,
+		"":                 false,
+	}
+	for domain, want := range tests {
+		t.Run(domain, func(t *testing.T) {
+			if got := IsValidOnDemandDomain(domain); got != want {
+				t.Fatalf("IsValidOnDemandDomain(%q) = %v, want %v", domain, got, want)
+			}
+		})
+	}
+}
+
+func TestCanonicalOnDemandDomain(t *testing.T) {
+	tests := map[string]string{
+		"api.example.com": "api.example.com",
+		"API.Example.COM": "api.example.com",
+		"example.com.":    "example.com",
+	}
+	for domain, want := range tests {
+		t.Run(domain, func(t *testing.T) {
+			if got := CanonicalOnDemandDomain(domain); got != want {
+				t.Fatalf("CanonicalOnDemandDomain(%q) = %q, want %q", domain, got, want)
 			}
 		})
 	}

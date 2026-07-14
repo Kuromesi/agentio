@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +17,10 @@ package krt_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/networking/v1"
@@ -26,6 +30,7 @@ import (
 
 	"istio.io/istio/pkg/config/schema/kubeclient"
 	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/kube/kclient"
 	"istio.io/istio/pkg/kube/kclient/clienttest"
 	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/kube/kubetypes"
@@ -129,4 +134,52 @@ func TestInformerCollectionMetadata(t *testing.T) {
 	c.RunAndWait(opts.Stop())
 
 	assert.Equal(t, ConfigMaps.Metadata(), meta)
+}
+
+func TestInformer_DebounceBatchesK8sEvents(t *testing.T) {
+	stop := test.NewStop(t)
+	client := kube.NewFakeClient()
+
+	coll := krt.NewInformer[*corev1.Pod](client,
+		krt.WithStop(stop),
+		krt.WithDebounce(50*time.Millisecond, 0))
+
+	var mu sync.Mutex
+	var batches [][]krt.Event[*corev1.Pod]
+	coll.RegisterBatch(func(events []krt.Event[*corev1.Pod]) {
+		mu.Lock()
+		defer mu.Unlock()
+		cp := make([]krt.Event[*corev1.Pod], len(events))
+		copy(cp, events)
+		batches = append(batches, cp)
+	}, false)
+
+	client.RunAndWait(stop)
+
+	pc := clienttest.Wrap(t, kclient.New[*corev1.Pod](client))
+	for i := 0; i < 5; i++ {
+		pc.Create(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      fmt.Sprintf("p%d", i),
+		}})
+	}
+
+	deadline := time.After(3 * time.Second)
+	for {
+		mu.Lock()
+		n := len(batches)
+		total := 0
+		for _, b := range batches {
+			total += len(b)
+		}
+		mu.Unlock()
+		if total >= 5 && n < 5 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected batched delivery; got %d batches totaling %d", n, total)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
