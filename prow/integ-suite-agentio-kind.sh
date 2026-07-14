@@ -276,7 +276,7 @@ run_scenario() {
   CURRENT_CLUSTER="${cluster_name}"
   run_traced "setup ${scenario} kind cluster" \
     setup_kind_cluster_retry "${cluster_name}" "${NODE_IMAGE}" "" "" false || return $?
-  run_traced "setup ${scenario} kind registry" setup_kind_registry || return $?
+  run_traced "setup ${scenario} kind registry" setup_kind_registry "${cluster_name}" || return $?
 
   if [[ "${IMAGES_BUILT}" == "false" ]]; then
     local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc"
