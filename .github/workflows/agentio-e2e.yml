@@ -14,19 +14,10 @@ name: agentio-e2e
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "manifests/charts/agentio/**"
-      - "pilot/pkg/serviceregistry/kube/controller/agentio/**"
-      - "pilot/pkg/networking/core/**"
-      - "tests/integration/agentio/**"
-      - "pkg/test/framework/components/agentio/**"
-      - "pkg/test/extproc/**"
-      - "prow/integ-suite-agentio-kind.sh"
-      - "Makefile.core.mk"
-      - "pilot/docker/Dockerfile.proxy_init"
-      - "tools/docker.yaml"
-      - ".github/workflows/agentio-e2e.yml"
+  push:
+    branches:
+      - master
+      - "release-*"
 
 permissions:
   contents: read
