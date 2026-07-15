@@ -1,0 +1,38 @@
+name: agentio-chart
+
+on:
+  pull_request:
+    paths:
+      - "manifests/charts/agentio/**"
+      - ".github/workflows/agentio-chart.yml"
+  push:
+    branches:
+      - master
+      - "release-*"
+    paths:
+      - "manifests/charts/agentio/**"
+      - ".github/workflows/agentio-chart.yml"
+
+permissions:
+  contents: read
+
+env:
+  CHART: manifests/charts/agentio
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: helm lint
+        run: helm lint "$CHART"
+      # Render under representative value combinations; each must template cleanly.
+      - name: helm template — defaults
+        run: helm template agentio "$CHART" >/dev/null
+      - name: helm template — ambient + sidecar injector
+        run: helm template agentio "$CHART" --set ambient.enabled=true --set sidecarInjector.enabled=true >/dev/null
+      - name: helm template — ClusterTrustBundle enabled
+        run: helm template agentio "$CHART" --set ambient.enabled=true --set sidecarInjector.enabled=true --set global.enableClusterTrustBundle=true >/dev/null

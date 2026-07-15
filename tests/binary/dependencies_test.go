@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -79,6 +80,11 @@ func TestDependencies(t *testing.T) {
 		{
 			entrypoint: "pilot/cmd/pilot-discovery",
 			tag:        "vtprotobuf,disable_pgv",
+			exceptions: []string{
+				// agents-api uses controller-runtime's generated SchemeBuilder only;
+				// keep the exception narrow so no controller machinery enters the binary.
+				`^sigs\.k8s\.io/controller-runtime/pkg/scheme$`,
+			},
 			denied: []string{
 				// Deps meant only for other components; if we import them, something may be wrong
 				`^github\.com/containernetworking/`,
@@ -99,6 +105,11 @@ func TestDependencies(t *testing.T) {
 		},
 		{
 			entrypoint: "istioctl/cmd/istioctl",
+			exceptions: []string{
+				// agents-api uses controller-runtime's generated SchemeBuilder only;
+				// keep the exception narrow so no controller machinery enters the binary.
+				`^sigs\.k8s\.io/controller-runtime/pkg/scheme$`,
+			},
 			denied: []string{
 				// Deps meant only for other components; if we import them, something may be wrong
 				`^github\.com/containernetworking/`,

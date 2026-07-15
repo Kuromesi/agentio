@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,9 +16,13 @@
 package krt_test
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"istio.io/istio/pkg/kube/krt"
+	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
 )
 
@@ -43,4 +48,45 @@ func TestStaticCollection(t *testing.T) {
 
 	c.DeleteObject("ns/b")
 	tracker.WaitOrdered("delete/ns/b")
+}
+
+func TestStaticCollection_DebounceBatchesUpdates(t *testing.T) {
+	stop := test.NewStop(t)
+
+	s := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop),
+		krt.WithDebounce(30*time.Millisecond, 0))
+
+	var mu sync.Mutex
+	var batches [][]krt.Event[Named]
+	s.RegisterBatch(func(events []krt.Event[Named]) {
+		mu.Lock()
+		defer mu.Unlock()
+		cp := make([]krt.Event[Named], len(events))
+		copy(cp, events)
+		batches = append(batches, cp)
+	}, false)
+
+	for i := 0; i < 5; i++ {
+		s.UpdateObject(Named{Namespace: "ns", Name: fmt.Sprintf("p%d", i)})
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		mu.Lock()
+		n := len(batches)
+		total := 0
+		for _, b := range batches {
+			total += len(b)
+		}
+		mu.Unlock()
+		if total >= 5 && n < 5 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected batched delivery; got %d batches totaling %d", n, total)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

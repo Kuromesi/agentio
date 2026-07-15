@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +35,7 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/serviceregistry/serviceentry"
 	labelutil "istio.io/istio/pilot/pkg/serviceregistry/util/label"
@@ -56,6 +58,7 @@ import (
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/workloadapi"
+	klabels "k8s.io/apimachinery/pkg/labels"
 )
 
 // WorkloadsCollection builds out the core Workload object type used in ambient mode.
@@ -65,6 +68,7 @@ func (a Builder) WorkloadsCollection(
 	pods krt.Collection[*v1.Pod],
 	nodes krt.Collection[Node],
 	meshConfig krt.Singleton[MeshConfig],
+	agentioConfig krt.Singleton[model.AgentioConfig],
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
@@ -77,11 +81,14 @@ func (a Builder) WorkloadsCollection(
 ) krt.Collection[model.WorkloadInfo] {
 	WorkloadServicesNamespaceIndex := krt.NewNamespaceIndex(workloadServices)
 	EndpointSlicesByIPIndex := endpointSliceAddressIndex(endpointSlices)
+
+	copts := opts.WithName("PodWorkloads")
 	// Workloads coming from pods. There should be one workload for each (running) Pod.
 	PodWorkloads := krt.NewCollection(
 		pods,
 		a.podWorkloadBuilder(
 			meshConfig,
+			agentioConfig,
 			authorizationPolicies,
 			peerAuths,
 			waypoints,
@@ -92,7 +99,7 @@ func (a Builder) WorkloadsCollection(
 			namespaces,
 			nodes,
 		),
-		opts.WithName("PodWorkloads")...,
+		copts...,
 	)
 	// Workloads coming from workloadEntries. These are 1:1 with WorkloadEntry.
 	WorkloadEntryWorkloads := krt.NewCollection(
@@ -174,6 +181,7 @@ func MergedGlobalWorkloadsCollection(
 		localCluster.Pods(),
 		podWorkloadBuilder(
 			meshConfig,
+			nil,
 			localNetworkGetter,
 			localAuthorizationPolicies,
 			localPeerAuths,
@@ -413,6 +421,7 @@ func MergedGlobalWorkloadsCollection(
 				pods,
 				podWorkloadBuilder(
 					meshConfig,
+					nil,
 					localNetworkGetter,
 					localAuthorizationPolicies,
 					localPeerAuths,
@@ -786,6 +795,7 @@ func computeWaypoint(
 
 func podWorkloadBuilder(
 	meshConfig krt.Singleton[MeshConfig],
+	agentioConfig krt.Singleton[model.AgentioConfig],
 	localNetworkGetter func(krt.HandlerContext) network.ID,
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
@@ -871,6 +881,25 @@ func podWorkloadBuilder(
 			Locality:              getPodLocality(ctx, nodes, p),
 		}
 
+		var sc *model.AgentioConfig
+		if agentioConfig != nil {
+			sc = krt.FetchOne(ctx, agentioConfig.AsCollection())
+		}
+		labels := p.Labels
+		if sc != nil && len(sc.GetSandboxIgnoredLabels()) > 0 {
+			labels = agentio.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
+		}
+		if sc != nil {
+			metaExtension := agentio.NewWorkloadMetadataExtension(labels, agentio.MeshInternalTrafficPolicyFromString(features.MeshInternalTrafficPolicy))
+			if metaExtension != nil {
+				w.Extensions = append(w.Extensions, metaExtension)
+			}
+
+			if sc.GetEgressPolicies() != nil {
+				w.Extensions = append(w.Extensions, agentio.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
+			}
+		}
+
 		if p.Spec.HostNetwork {
 			w.NetworkMode = workloadapi.NetworkMode_HOST_NETWORK
 		}
@@ -896,6 +925,7 @@ func podWorkloadBuilder(
 
 func (a Builder) podWorkloadBuilder(
 	meshConfig krt.Singleton[MeshConfig],
+	agentioConfig krt.Singleton[model.AgentioConfig],
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
@@ -911,6 +941,7 @@ func (a Builder) podWorkloadBuilder(
 	}
 	return podWorkloadBuilder(
 		meshConfig,
+		agentioConfig,
 		localNetworkGetter,
 		authorizationPolicies,
 		peerAuths,
@@ -1020,6 +1051,9 @@ func buildWorkloadPolicies(
 				return false // filter policy which are invalid, only exist to hold the error condition
 			}
 			nsMatch := wa.Authorization.Namespace == meshCfg.RootNamespace || wa.Authorization.Namespace == workloadNamespace
+			if wa.Selector != nil {
+				return nsMatch && wa.Selector.Matches(klabels.Set(workloadLabels))
+			}
 			return nsMatch && wa.GetLabelSelector() != nil
 		}),
 	)

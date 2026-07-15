@@ -64,6 +64,7 @@ var/
 /manifests/charts/**/charts/
 /manifests/charts/**/Chart.lock
 coverage.out
+/tests/integration/agentio/testdata/local-values.yaml
 /cni/pkg/plugin/istio-cni.log
 .wiki
 artifacts

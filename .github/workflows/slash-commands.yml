@@ -1,0 +1,155 @@
+name: Slash Commands
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: write
+
+jobs:
+  handle:
+    # Only run on PR comments that start with /
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/')
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Parse command and check permissions
+        id: parse
+        run: |
+          FIRST_LINE=$(echo "$COMMENT_BODY" | head -n 1)
+
+          CMD_PART=$(echo "$FIRST_LINE" | awk '{print $1}')
+          CMD=${CMD_PART#/}
+          ARGS=$(echo "$FIRST_LINE" | cut -d' ' -f2-)
+
+          {
+            echo "cmd=$CMD"
+            echo "args=$ARGS"
+            echo "pr_num=$PR_NUM"
+          } >> "$GITHUB_OUTPUT"
+
+          PERMISSION=$(gh api "repos/${GH_REPO}/collaborators/${COMMENT_AUTHOR}/permission" --jq '.permission' 2>/dev/null || true)
+          if [[ "$PERMISSION" == "admin" || "$PERMISSION" == "maintain" || "$PERMISSION" == "write" ]]; then
+            echo "has_write=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_write=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_NUM: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+
+      - name: Get PR head SHA
+        id: pr
+        if: steps.parse.outputs.cmd == 'retest'
+        run: |
+          PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${{ steps.parse.outputs.pr_num }})
+          echo "head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: /retest
+        if: steps.parse.outputs.cmd == 'retest'
+        run: |
+          if [[ "$HAS_WRITE" != "true" ]]; then
+            gh pr comment "$PR_NUM" --body "❌ You don't have permission to run \`/retest\`."
+            exit 0
+          fi
+
+          RUNS=$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=$HEAD_SHA&status=failure" \
+            | jq -r '.workflow_runs[].id')
+
+          if [[ -z "$RUNS" ]]; then
+            gh pr comment "$PR_NUM" --body "ℹ️ No failed CI runs found for this PR"
+            exit 0
+          fi
+
+          for RUN_ID in $RUNS; do
+            echo "Re-running $RUN_ID"
+            gh api -X POST "repos/${{ github.repository }}/actions/runs/$RUN_ID/rerun-failed-jobs"
+          done
+
+          gh pr comment "$PR_NUM" --body "✅ Triggered re-run of failed CI checks"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_WRITE: ${{ steps.parse.outputs.has_write }}
+          PR_NUM: ${{ steps.parse.outputs.pr_num }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+
+      - name: /assign
+        if: steps.parse.outputs.cmd == 'assign'
+        run: |
+          if [[ "$HAS_WRITE" != "true" ]]; then
+            gh pr comment "$PR_NUM" --body "❌ You don't have permission to run \`/assign\`."
+            exit 0
+          fi
+
+          if [[ ! "$ARGS" =~ ^@[a-zA-Z0-9]([a-zA-Z0-9-]{0,38})$ ]]; then
+            gh pr comment "$PR_NUM" --body "❌ Usage: \`/assign @username\`"
+            exit 1
+          fi
+          USER="${ARGS#@}"
+
+          gh pr edit "$PR_NUM" --add-reviewer "$USER"
+          gh pr comment "$PR_NUM" --body "✅ Assigned @$USER as reviewer"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_WRITE: ${{ steps.parse.outputs.has_write }}
+          PR_NUM: ${{ steps.parse.outputs.pr_num }}
+          ARGS: ${{ steps.parse.outputs.args }}
+
+      - name: /close
+        if: steps.parse.outputs.cmd == 'close'
+        run: |
+          if [[ "$HAS_WRITE" != "true" ]]; then
+            gh pr comment "$PR_NUM" --body "❌ You don't have permission to run \`/close\`."
+            exit 0
+          fi
+
+          gh pr close "$PR_NUM"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_WRITE: ${{ steps.parse.outputs.has_write }}
+          PR_NUM: ${{ steps.parse.outputs.pr_num }}
+
+      - name: /reopen
+        if: steps.parse.outputs.cmd == 'reopen'
+        run: |
+          if [[ "$HAS_WRITE" != "true" ]]; then
+            gh pr comment "$PR_NUM" --body "❌ You don't have permission to run \`/reopen\`."
+            exit 0
+          fi
+
+          gh pr reopen "$PR_NUM"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_WRITE: ${{ steps.parse.outputs.has_write }}
+          PR_NUM: ${{ steps.parse.outputs.pr_num }}
+
+      - name: Unknown command
+        if: |
+          steps.parse.outputs.cmd != 'retest' &&
+          steps.parse.outputs.cmd != 'assign' &&
+          steps.parse.outputs.cmd != 'close' &&
+          steps.parse.outputs.cmd != 'reopen'
+        run: |
+          gh pr comment "$PR_NUM" \
+            --body "❓ Unknown command \`/$CMD\`.
+
+          Available commands:
+          - \`/retest\` — re-run failed CI
+          - \`/assign @user\` — assign reviewer
+          - \`/close\` / \`/reopen\` — close/reopen PR"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CMD: ${{ steps.parse.outputs.cmd }}
+          PR_NUM: ${{ steps.parse.outputs.pr_num }}

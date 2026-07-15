@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -54,7 +55,7 @@ type Controller interface {
 	HasSynced() bool
 }
 
-// AggregateController is a wrapper of Controller, it supports registering handlers of a specific cluster。
+// AggregateController is a wrapper of Controller, it supports registering handlers of a specific cluster.
 type AggregateController interface {
 	Controller
 	// AppendServiceHandlerForCluster is similar to Controller.AppendServiceHandler,

@@ -1,0 +1,67 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentio
+
+import (
+	"fmt"
+
+	"istio.io/istio/pilot/pkg/config/file"
+	"istio.io/istio/pilot/pkg/config/memory"
+	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pkg/config/schema/collections"
+	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/kube/controllers"
+	"istio.io/istio/pkg/kube/kclient"
+	"istio.io/istio/pkg/kube/krt"
+	"istio.io/istio/pkg/ptr"
+	v1 "k8s.io/api/core/v1"
+)
+
+const KubeSourceConfigMapFiledSelector = "manifests.agents.kruise.io/kube-source"
+
+type configStore struct {
+	model.ConfigStoreController
+}
+
+func newConfigStore(kc kube.Client, rootNamespace string, stop <-chan struct{}) *configStore {
+	configmaps := krt.NewFilteredInformer[*v1.ConfigMap](kc, kclient.Filter{
+		LabelSelector: KubeSourceConfigMapFiledSelector,
+		ObjectFilter:  kc.ObjectFilter(),
+		Namespace:     rootNamespace,
+	}, krt.WithStop(stop), krt.WithName("AgentioConfigStoreConfigMaps"))
+
+	store := memory.Make(collections.PilotGatewayAPI())
+	mc := memory.NewController(store)
+	kubeSource := file.NewKubeSourceWithStore(mc)
+
+	configmaps.Register(func(o krt.Event[*v1.ConfigMap]) {
+		if o.Event == controllers.EventDelete {
+			cm := ptr.Flatten(o.Old)
+			kubeSource.RemoveContent(fmt.Sprintf("%s/%s", cm.Namespace, cm.Name))
+			return
+		}
+
+		cm := ptr.Flatten(o.New)
+		sources := cm.Data["sources"]
+		if err := kubeSource.ApplyContent(fmt.Sprintf("%s/%s", cm.Namespace, cm.Name), sources); err != nil {
+			log.Errorf("Failed to apply configs from configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+		}
+	})
+
+	go mc.Run(stop)
+	return &configStore{
+		ConfigStoreController: mc,
+	}
+}

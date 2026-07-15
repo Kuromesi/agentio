@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -189,6 +190,7 @@ func NewController(
 			kclient.NewFiltered[*corev1.Secret](kc, kubetypes.Filter{
 				FieldSelector: kubesecrets.SecretsFieldSelector,
 				ObjectFilter:  kc.ObjectFilter(),
+				Namespace:     features.RestrictedSecretsScope, // if empty, will watch all namespaces
 			}),
 			opts.WithName("informer/Secrets")...,
 		),

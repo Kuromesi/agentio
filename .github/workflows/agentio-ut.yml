@@ -1,0 +1,29 @@
+name: agentio-ut
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - "release-*"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    container:
+      image: gcr.io/istio-testing/build-tools:release-1.29-ab0c7c31cf56f17a33788ee67aa501a87c054ba2
+      options: --privileged
+    env:
+      BUILD_WITH_CONTAINER: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Run Istio unit test suite
+        env:
+          JUNIT_OUT: ${{ runner.temp }}/junit.xml
+        run: make -e "T=-v -count=1" build racetest binaries-test

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,6 +37,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/util"
 	sec_model "istio.io/istio/pilot/pkg/security/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pilot/pkg/xds/endpoints"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
@@ -110,6 +112,10 @@ func (configgen *ConfigGeneratorImpl) buildWaypointInboundClusters(
 		clusters = append(clusters, cb.buildWaypointForwardInnerConnect(), cb.buildBlackHoleCluster())
 	} else {
 		clusters = append(clusters, cb.buildWaypointConnectOriginate(proxy, push))
+	}
+
+	if agentio.IsSandboxEgress(proxy) {
+		clusters = append(clusters, sandboxClusters(cb)...)
 	}
 
 	// This bit creates clusters needed to handle requests going to a remote network.

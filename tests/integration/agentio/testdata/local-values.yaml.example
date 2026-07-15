@@ -1,0 +1,21 @@
+# Copy this file to local-values.yaml in the same directory. The local file is
+# ignored by Git.
+# These three image groups are required because the local Make target skips
+# building proxy and ztunnel when this file exists. Do not store credentials here.
+proxy:
+  image:
+    hub: registry.example.com/project
+    name: proxyv2
+    tag: v1
+
+egressGateway:
+  image:
+    hub: registry.example.com/project
+    name: proxyv2
+    tag: v1
+
+ztunnel:
+  image:
+    hub: registry.example.com/project
+    name: ztunnel
+    tag: v1

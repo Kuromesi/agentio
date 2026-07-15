@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,6 +118,49 @@ func NewAppProtocol(pm ProtocolMatch) *matcher.Matcher {
 	}
 	m.OnNoMatch = pm.TCP
 	return m.Matcher
+}
+
+type TransportProtocolMatch struct {
+	TLS   *matcher.Matcher_OnMatch
+	Other *matcher.Matcher
+}
+
+func NewTransportProtocol(pm TransportProtocolMatch) *matcher.Matcher {
+	m := newMapper(TransportProtocolInput)
+	m.Map["tls"] = pm.TLS
+	m.OnNoMatch = ToMatcher(pm.Other)
+	return m.Matcher
+}
+
+type SNIDomainMatch struct {
+	Domains []string
+	OnMatch *matcher.Matcher_OnMatch
+}
+
+func NewSNIMatcher(domainMatches []SNIDomainMatch, onNoMatch *matcher.Matcher_OnMatch) *matcher.Matcher {
+	var domainMatchers []*matcher.ServerNameMatcher_DomainMatcher
+	for _, dm := range domainMatches {
+		if len(dm.Domains) > 0 {
+			domainMatchers = append(domainMatchers, &matcher.ServerNameMatcher_DomainMatcher{
+				Domains: dm.Domains,
+				OnMatch: dm.OnMatch,
+			})
+		}
+	}
+	return &matcher.Matcher{
+		MatcherType: &matcher.Matcher_MatcherTree_{
+			MatcherTree: &matcher.Matcher_MatcherTree{
+				Input: SNI,
+				TreeType: &matcher.Matcher_MatcherTree_CustomMatch{
+					CustomMatch: &xds.TypedExtensionConfig{
+						Name:        "sni",
+						TypedConfig: protoconv.MessageToAny(&matcher.ServerNameMatcher{DomainMatchers: domainMatchers}),
+					},
+				},
+			},
+		},
+		OnNoMatch: onNoMatch,
+	}
 }
 
 func ToChain(name string) *matcher.Matcher_OnMatch {

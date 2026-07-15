@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -506,6 +507,7 @@ var PushOrder = []string{
 	v3.AddressType,
 	v3.WorkloadType,
 	v3.WorkloadAuthorizationType,
+	v3.WorkloadConfigType,
 }
 
 // KnownOrderedTypeUrls has typeUrls for which we know the order of push.

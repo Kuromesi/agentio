@@ -143,6 +143,16 @@ function build_images() {
 
 # Creates a local registry for kind nodes to pull images from. Expects that the "kind" network already exists.
 function setup_kind_registry() {
+  local clusters=("$@")
+  if (( ${#clusters[@]} == 0 )); then
+    local discovered_cluster
+    while IFS= read -r discovered_cluster; do
+      if [[ -n "${discovered_cluster}" ]]; then
+        clusters+=("${discovered_cluster}")
+      fi
+    done < <(kind get clusters)
+  fi
+
   # create a registry container if it not running already
   running="$(docker inspect -f '{{.State.Running}}' "${KIND_REGISTRY_NAME}" 2>/dev/null || true)"
   if [[ "${running}" != 'true' ]]; then
@@ -155,7 +165,7 @@ function setup_kind_registry() {
   fi
 
   # https://docs.tilt.dev/choosing_clusters.html#discovering-the-registry
-  for cluster in $(kind get clusters); do
+  for cluster in "${clusters[@]}"; do
     # TODO get context/config from existing variables
     if [[ "${DEVCONTAINER}" ]]; then
       kind export kubeconfig --name="${cluster}" --internal

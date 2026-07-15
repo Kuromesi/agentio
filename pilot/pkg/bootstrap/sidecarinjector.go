@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,10 +34,11 @@ import (
 const (
 	// Name of the webhook config in the config - no need to change it.
 	webhookName = "sidecar-injector.istio.io"
-	// defaultInjectorConfigMapName is the default name of the ConfigMap with the injection config
-	// The actual name can be different - use getInjectorConfigMapName
-	defaultInjectorConfigMapName = "istio-sidecar-injector"
 )
+
+// The default name of the ConfigMap holding the injection config is "istio-sidecar-injector"; it
+// can be overridden via the INJECTOR_CONFIG_MAP_NAME env var (see features.InjectorConfigMapName).
+// The actual name used at runtime may include a revision suffix - use getInjectorConfigMapName.
 
 var injectionEnabled = env.Register("INJECT_ENABLED", true, "Enable mutating webhook handler.")
 
@@ -113,7 +115,7 @@ func (s *Server) initSidecarInjector(args *PilotArgs) (*inject.Webhook, error) {
 }
 
 func getInjectorConfigMapName(revision string) string {
-	name := defaultInjectorConfigMapName
+	name := features.InjectorConfigMapName
 	if revision == "" || revision == "default" {
 		return name
 	}
