@@ -24,6 +24,15 @@ Agent workloads break this assumption. An agent may execute arbitrary code, call
 
 Agentio is built on Istio, but shifts the center of gravity from the server to the client — from governing service-to-service communication, to governing what a single, potentially untrusted agent sends and receives. It's a different question, and it demands a different design.
 
+## Development
+
+Agentio is developed as a linear patch set layered on top of a specific upstream Istio release, rather than a long-lived fork stitched together with merge commits.
+
+- Active development lives on `release-*` branches; each holds the Agentio changes rebased on top of an upstream Istio release.
+- We track upstream by **rebasing** the Agentio patch set onto the new Istio release — never by merging it — so history stays linear and the divergence from upstream stays legible.
+- Feature branches are **squashed** to one logical patch before they land, which keeps the patch set easy to replay on the next rebase.
+- Avoid `--no-ff` merge commits: they do not survive the rebase-onto-upstream workflow.
+
 ## License & Attribution
 
 Agentio is licensed under the [Apache License 2.0](LICENSE).
