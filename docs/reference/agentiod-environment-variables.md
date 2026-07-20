@@ -29,8 +29,8 @@ After an environment-variable change, Helm rolls the `agentiod` Deployment. Thes
 | --- | --- | --- | --- |
 | `ENABLE_ON_DEMAND_CERTS` | Boolean | `false` | Enables on-demand certificate signing for SNI hosts allowed by an egress gateway's `tlsTermination.includeHosts`. |
 | `ON_DEMAND_SIGN_MODE` | String | `SECRET` | `SECRET` reads a persistent CA from a Kubernetes Secret. `SELF_SIGN` creates an ephemeral CA at startup and is intended only for testing; it is unsuitable for multiple `agentiod` replicas. |
-| `ON_DEMAND_SECRET_NAMESPACE` | String | "" | Namespace of the CA Secret used in `SECRET` mode. If `RESTRICTED_SECRETS_SCOPE` is set, the Secret must be readable within that scope. Must be set when `ON_DEMAND_SIGN_MODE` is set to `SECRET`. |
-| `ON_DEMAND_SECRET_NAME` | String | "" | Name of the CA Secret. It must contain `ca.crt` and `ca.key`.  Must be set when `ON_DEMAND_SIGN_MODE` is set to `SECRET`. |
+| `ON_DEMAND_SECRET_NAMESPACE` | String | Empty | Namespace of the CA Secret used in `SECRET` mode. If `RESTRICTED_SECRETS_SCOPE` is set, the Secret must be readable within that scope. Must be set when `ON_DEMAND_SIGN_MODE` is set to `SECRET`. |
+| `ON_DEMAND_SECRET_NAME` | String | Empty | Name of the CA Secret. It must contain `ca.crt` and `ca.key`. Must be set when `ON_DEMAND_SIGN_MODE` is set to `SECRET`. |
 | `ON_DEMAND_CERT_VALIDITY` | Duration | `24h` | Validity of generated certificates. Expired certificates are regenerated on the next request. |
 
 For production TLS termination, use a shared CA and keep the Secret, `RESTRICTED_SECRETS_SCOPE`, and the `EgressGateway` namespace configuration consistent:
