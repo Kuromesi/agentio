@@ -48,9 +48,9 @@ var (
 		return strings.Split(servers, ",")
 	}()
 
-	mitmSecretNamespace = env.Register("ON_DEMAND_SECRET_NAMESPACE", "ack-agent-identity",
+	mitmSecretNamespace = env.Register("ON_DEMAND_SECRET_NAMESPACE", "",
 		"The namespace of the Kubernetes Secret containing the CA certificate and key used for MITM certificate signing.").Get()
-	mitmSecretName = env.Register("ON_DEMAND_SECRET_NAME", "ack-agent-identity-mitm-proxy-ca",
+	mitmSecretName = env.Register("ON_DEMAND_SECRET_NAME", "",
 		"The name of the Kubernetes Secret containing the CA certificate (ca.crt) and key (ca.key) used for MITM certificate signing.").Get()
 	mitmCertValidity = env.Register("ON_DEMAND_CERT_VALIDITY", 24*time.Hour,
 		"The TTL of on-demand generated MITM certificates. Expired certificates are automatically regenerated on next request.").Get()
