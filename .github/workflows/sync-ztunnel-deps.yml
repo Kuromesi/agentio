@@ -1,9 +1,6 @@
 name: Sync ztunnel dependency
 
 on:
-  push:
-    branches:
-      - codex/ztunnel-deps-sync
   schedule:
     - cron: "23 2 * * *"
   workflow_dispatch:
@@ -56,7 +53,7 @@ jobs:
           test "$(gh api repos/openkruise/agentio --jq .full_name)" = "openkruise/agentio"
 
       - name: Update agentio.deps
-        if: github.event_name != 'push' && inputs.dry_run != true
+        if: inputs.dry_run != true
         id: update
         shell: bash
         run: |
@@ -87,7 +84,7 @@ jobs:
           echo "short_sha=${ztunnel_sha:0:12}" >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request
-        if: github.event_name != 'push' && inputs.dry_run != true && steps.update.outputs.sha != ''
+        if: inputs.dry_run != true && steps.update.outputs.sha != ''
         uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
