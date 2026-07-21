@@ -1,4 +1,0 @@
-MD013: false # Long lines are common in tables and prose in the existing docs.
-MD014: false # Console examples intentionally include shell prompts.
-MD033: true
-MD041: true
