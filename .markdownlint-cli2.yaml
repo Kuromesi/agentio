@@ -3,8 +3,3 @@ config:
   MD014: false # Console examples intentionally include shell prompts.
   MD033: false # README uses HTML for centered branding.
   MD041: false # The README branding block intentionally precedes the H1.
-
-globs:
-  - README.md
-  - docs/**/*.md
-  - "!docs/superpowers/**"

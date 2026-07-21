@@ -30,6 +30,9 @@ jobs:
         uses: DavidAnson/markdownlint-cli2-action@v24
         with:
           config: .markdownlint-cli2.yaml
+          globs: |
+            README.md
+            docs/**/*.md
       - name: Check local links
         uses: lycheeverse/lychee-action@v2
         with:
