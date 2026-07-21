@@ -175,9 +175,9 @@ ambient:
 
   cni:
     image:
-      hub: "docker.io/istio"
+      hub: ""
       name: install-cni
-      tag: "1.29.5"
+      tag: latest
     # -- Host paths for CNI binary and config installation
     cniBinDir: /opt/cni/bin
     cniConfDir: /etc/cni/net.d

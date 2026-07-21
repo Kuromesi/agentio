@@ -1,9 +1,9 @@
 name: agentio-release
 
-# Release pipeline: build pilot and proxy-init, sync proxy, and publish the Helm chart.
+# Release pipeline: build pilot, proxy-init, CNI, and ztunnel; sync proxy; and publish the Helm chart.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
-# ztunnel and traffic-extension are versioned and published independently.
+# traffic-extension remains versioned and published independently.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
@@ -138,11 +138,13 @@ jobs:
           sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
           sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
 
-          # Pilot, proxy-init, and proxy follow the Agentio release version.
-          # ztunnel, traffic-extension, and CNI are independently versioned.
+          # Pilot, proxy-init, proxy, CNI, and ztunnel follow the Agentio release version.
+          # traffic-extension is independently versioned.
           sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxy-init/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxy/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: install-cni/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: ztunnel/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
 
           echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"

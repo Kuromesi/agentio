@@ -1,0 +1,9 @@
+[
+  {
+    "_comment": "Agentio-patched ztunnel source used to build the Agentio ztunnel image.",
+    "name": "ZTUNNEL_REPO_SHA",
+    "repoName": "openkruise/ztunnel",
+    "file": "",
+    "lastStableSHA": "7c76af1abf842c04fef5da83e8cc4bbc5dbffdf6"
+  }
+]

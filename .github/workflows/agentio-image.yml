@@ -1,6 +1,6 @@
 name: agentio-image
 
-# Build and push container images to Docker Hub.
+# Build and push Agentio, CNI, and ztunnel container images to Docker Hub.
 # Follows Istio's release-commit.sh tag strategy:
 # - pushes to protected release-* branches publish development images;
 # - agentio-release calls this workflow for trusted semantic-version tags.
@@ -35,7 +35,78 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/release-') }}
 
 jobs:
+  build-ztunnel:
+    name: Build ztunnel (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            file_pattern: x86-64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            file_pattern: aarch64
+    steps:
+      - name: Checkout Agentio
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pinned ztunnel revision
+        id: ztunnel
+        run: |
+          repository=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .repoName' agentio.deps)
+          sha=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
+          if [[ ! "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Invalid ztunnel repository: $repository" >&2
+            exit 1
+          fi
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid ZTUNNEL_REPO_SHA: $sha" >&2
+            exit 1
+          fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout ztunnel
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.ztunnel.outputs.repository }}
+          ref: ${{ steps.ztunnel.outputs.sha }}
+          path: ztunnel-src
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup default 1.90.0
+
+      - name: Build ztunnel
+        working-directory: ztunnel-src
+        run: cargo build --locked --release
+
+      - name: Verify ztunnel architecture
+        env:
+          EXPECTED_PATTERN: ${{ matrix.file_pattern }}
+        run: |
+          binary=ztunnel-src/out/rust/release/ztunnel
+          file "$binary"
+          file "$binary" | grep -F "$EXPECTED_PATTERN"
+          install -D -m 0755 "$binary" ztunnel-artifact/ztunnel
+
+      - name: Upload ztunnel binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: ztunnel-${{ matrix.arch }}
+          path: ztunnel-artifact/ztunnel
+          if-no-files-found: error
+          retention-days: 1
+
   build-images:
+    needs: build-ztunnel
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment: ${{ startsWith(github.ref, 'refs/heads/release-') && 'development' || 'release' }}
@@ -48,6 +119,33 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Download amd64 ztunnel
+        uses: actions/download-artifact@v7
+        with:
+          name: ztunnel-amd64
+          path: out/linux_amd64
+
+      - name: Download arm64 ztunnel
+        uses: actions/download-artifact@v7
+        with:
+          name: ztunnel-arm64
+          path: out/linux_arm64
+
+      - name: Verify ztunnel inputs
+        run: |
+          chmod 0755 out/linux_amd64/ztunnel out/linux_arm64/ztunnel
+          file out/linux_amd64/ztunnel | grep -F x86-64
+          file out/linux_arm64/ztunnel | grep -F aarch64
+
+      - name: Resolve Agentio ztunnel version
+        run: |
+          sha=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid ZTUNNEL_REPO_SHA: $sha" >&2
+            exit 1
+          fi
+          echo "ZTUNNEL_REPO_SHA=$sha" >> "$GITHUB_ENV"
 
       - name: Validate requested tag and ref
         env:
@@ -139,8 +237,17 @@ jobs:
         run: |
           DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
           DOCKER_BUILD_VARIANTS=default \
-          DOCKER_TARGETS="docker.pilot docker.proxy-init" \
+          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni" \
           make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
+
+      - name: Package and push ztunnel image
+        run: |
+          SKIP_MAKE=true \
+          DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
+          DOCKER_BUILD_VARIANTS=default \
+          DOCKER_TARGETS="docker.ztunnel" \
+          TAG="${PRIMARY_TAG}" \
+          ./tools/docker --push --ztunnel-version="${ZTUNNEL_REPO_SHA}"
 
       - name: Push extra tags (latest, dev, alpha)
         if: env.EXTRA_TAGS != ''
@@ -149,7 +256,7 @@ jobs:
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
 
           IFS=',' read -ra TAGS <<< "${EXTRA_TAGS}"
-          for image in pilot proxy-init; do
+          for image in pilot proxy-init install-cni ztunnel; do
             for tag in "${TAGS[@]}"; do
               echo "Tagging ${HUB}/${image}:${PRIMARY_TAG} -> ${tag}"
               crane tag "${HUB}/${image}:${PRIMARY_TAG}" "${tag}"
