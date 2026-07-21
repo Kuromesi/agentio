@@ -1,0 +1,46 @@
+name: docs-lint
+
+on:
+  pull_request:
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/workflows/docs-lint.yml"
+  push:
+    branches:
+      - master
+      - "release-*"
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/workflows/docs-lint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@v24
+        with:
+          config: .markdownlint-cli2.yaml
+          globs: |
+            README.md
+            docs/**/*.md
+      - name: Check local links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          fail: true
+          args: >-
+            --offline
+            --include-fragments
+            --no-progress
+            --root-dir "${{ github.workspace }}"
+            README.md
+            'docs/**/*.md'

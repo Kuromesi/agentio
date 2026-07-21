@@ -92,7 +92,7 @@ trafficExtension:
   # -- Replica count when autoscaling.enabled is false. Ignored when HPA is enabled.
   replicas: 1
   # -- Identity provider endpoint used by the extension to mint sandbox tokens.
-  identityProviderUrl: "https://credential-provider.ack-agent-identity.svc.cluster.local:8443/"
+  identityProviderUrl: ""
   autoscaling:
     # -- Set to false to skip rendering the HPA.
     enabled: false

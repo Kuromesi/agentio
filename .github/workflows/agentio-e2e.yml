@@ -29,15 +29,15 @@ jobs:
       ISTIO_DOCKER_BUILDER: docker
       JOB_TYPE: presubmit
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.2
       - name: Install KinD and test reporting tools
@@ -51,7 +51,7 @@ jobs:
         run: prow/integ-suite-agentio-kind.sh
       - name: Upload agentio e2e artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: agentio-e2e-artifacts
           path: ${{ runner.temp }}/agentio-e2e-artifacts

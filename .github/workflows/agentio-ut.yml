@@ -20,7 +20,7 @@ jobs:
     env:
       BUILD_WITH_CONTAINER: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Run Istio unit test suite

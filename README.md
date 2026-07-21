@@ -24,6 +24,12 @@ Agent workloads break this assumption. An agent may execute arbitrary code, call
 
 Agentio is built on Istio, but shifts the center of gravity from the server to the client — from governing service-to-service communication, to governing what a single, potentially untrusted agent sends and receives. It's a different question, and it demands a different design.
 
+For a concrete example of this client-oriented model, see [Why not just Istio?](docs/concepts/why-not-just-istio.md).
+
+## Quick start
+
+Install Agentio on an existing Kubernetes cluster, route agent traffic through an egress gateway, and apply your first traffic policy with the [getting started guide](docs/getting-started.md).
+
 ## Development
 
 Agentio is developed as a linear patch set layered on top of a specific upstream Istio release, rather than a long-lived fork stitched together with merge commits.
