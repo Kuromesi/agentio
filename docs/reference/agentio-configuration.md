@@ -109,7 +109,7 @@ In this example the primary `egressPolicies` list replaces the complete list gen
 | --- | --- | --- | --- |
 | `sandboxExtProc` | `ExtProcProvider` | Unset | Global external-processing provider used by egress gateways unless a gateway supplies an override. |
 | `egressPolicies` | `EgressPolicy[]` | Empty | Ordered egress routing rules. The first matching policy is applied. |
-| `sandboxIgnoredLabels` | `string[]` | See [default ignored labels](#default-ignored-labels) | Label names or path-style patterns removed from sandbox workload metadata to reduce xDS size. |
+| `sandboxIgnoredLabels` | `string[]` | Built-in list | Label names or path-style patterns removed from sandbox workload metadata to reduce xDS size. |
 | `egressGateways` | `EgressGateway[]` | Empty | Per-gateway TLS termination, `ext_proc`, connection pool, and CONNECT rate-limit settings. |
 
 ## Egress policies

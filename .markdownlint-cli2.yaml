@@ -1,0 +1,5 @@
+config:
+  MD013: false # Long lines are common in tables and prose in the existing docs.
+  MD014: false # Console examples intentionally include shell prompts.
+  MD033: false # README uses HTML for centered branding.
+  MD041: false # The README branding block intentionally precedes the H1.
