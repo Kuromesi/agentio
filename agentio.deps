@@ -1,0 +1,14 @@
+[
+  {
+    "_comment": "Agentio-patched ztunnel source used to build the Agentio ztunnel image.",
+    "name": "ZTUNNEL_REPO_SHA",
+    "repoName": "openkruise/ztunnel",
+    "file": "",
+    "lastStableSHA": "0230aeaccb774b3f67f9ed78e8bd7cc8dae1874c"
+  },
+  {
+    "_comment": "Immutable digest of the multi-architecture proxy image.",
+    "name": "PROXY_IMAGE_DIGEST",
+    "digest": "sha256:4b33f37c339a046e663ead94126c87ab6c4ba03b99d69dc55f3a0017e52711ae"
+  }
+]

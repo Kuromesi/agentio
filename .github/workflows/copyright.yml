@@ -2,10 +2,18 @@ name: copyright
 
 on:
   pull_request:
+    paths:
+      - "**/*.go"
+      - "bin/lint_copyright_kruise.sh"
+      - ".github/workflows/copyright.yml"
   push:
     branches:
       - master
       - "release-*"
+    paths:
+      - "**/*.go"
+      - "bin/lint_copyright_kruise.sh"
+      - ".github/workflows/copyright.yml"
 
 permissions:
   contents: read

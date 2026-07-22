@@ -2,8 +2,11 @@ name: agentio-e2e
 
 # KinD-based end-to-end tests for the Agentio data plane.
 #
-# All component images are built from this checkout and pushed only to the
-# KinD-local registry by the Agentio-specific script.
+# Agentio control-plane, CNI, and test components are built from this checkout.
+# The patched ztunnel source and closed-source proxy image are pinned by
+# agentio.deps. All images are pushed only to the KinD-local registry.
+# Set the repository variable PROXY_SOURCE_IMAGE to the proxy repository without
+# a tag or digest; the immutable digest remains in agentio.deps.
 #
 # Failures are intentional signal: registry access and cluster setup are part of
 # the end-to-end contract and must not be reported as a successful check.
@@ -14,12 +17,75 @@ on:
     branches:
       - master
       - "release-*"
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "logo/**"
+      - "releasenotes/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs-lint.yml"
 
 permissions:
   contents: read
 
 jobs:
+  build-ztunnel:
+    name: Build pinned ztunnel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      sha: ${{ steps.ztunnel.outputs.sha }}
+    steps:
+      - name: Checkout Agentio
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pinned ztunnel revision
+        id: ztunnel
+        run: |
+          repository=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .repoName' agentio.deps)
+          sha=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
+          if [[ ! "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Invalid ztunnel repository: $repository" >&2
+            exit 1
+          fi
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid ZTUNNEL_REPO_SHA: $sha" >&2
+            exit 1
+          fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout ztunnel
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.ztunnel.outputs.repository }}
+          ref: ${{ steps.ztunnel.outputs.sha }}
+          path: ztunnel-src
+          persist-credentials: false
+
+      - name: Build ztunnel
+        working-directory: ztunnel-src
+        run: ./common/scripts/run.sh cargo build --locked --release
+
+      - name: Verify ztunnel architecture
+        run: |
+          binary=ztunnel-src/out/rust/release/ztunnel
+          file "$binary" | grep -F x86-64
+          install -D -m 0755 "$binary" ztunnel-artifact/ztunnel
+
+      - name: Upload ztunnel binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: agentio-e2e-ztunnel-amd64
+          path: ztunnel-artifact/ztunnel
+          if-no-files-found: error
+          retention-days: 1
+
   e2e:
+    needs: build-ztunnel
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -45,9 +111,17 @@ jobs:
           go install sigs.k8s.io/kind@v0.24.0
           go install github.com/jstemmer/go-junit-report/v2@v2.1.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Download pinned ztunnel
+        uses: actions/download-artifact@v7
+        with:
+          name: agentio-e2e-ztunnel-amd64
+          path: ${{ runner.temp }}/agentio-e2e-ztunnel
       - name: Run agentio e2e scenarios (KinD)
         env:
           ARTIFACTS: ${{ runner.temp }}/agentio-e2e-artifacts
+          AGENTIO_E2E_PROXY_IMAGE: ${{ vars.PROXY_SOURCE_IMAGE }}
+          AGENTIO_E2E_ZTUNNEL_BINARY: ${{ runner.temp }}/agentio-e2e-ztunnel/ztunnel
+          AGENTIO_E2E_ZTUNNEL_VERSION: ${{ needs.build-ztunnel.outputs.sha }}
         run: prow/integ-suite-agentio-kind.sh
       - name: Upload agentio e2e artifacts
         if: always()

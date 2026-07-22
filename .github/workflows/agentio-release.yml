@@ -1,21 +1,18 @@
 name: agentio-release
 
-# Release pipeline: build pilot and proxy-init, sync proxy, and publish the Helm chart.
+# Release pipeline: build pilot, proxy-init, CNI, and ztunnel; sync proxy; and publish the Helm chart.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
-# ztunnel and traffic-extension are versioned and published independently.
+# traffic-extension remains versioned and published independently.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
-# Store all three credentials as secrets in a protected `release` Environment,
-# with required reviewers and deployment restricted to protected v* tags.
+# Store the Docker Hub credential and, when required, the ACR credential pair in
+# a protected `release` Environment with deployment restricted to protected v* tags.
 #   secrets.HUB_KRUISE      — Docker Hub access token
-#   secrets.ACR_USERNAME    — read-only ACR account
-#   secrets.ACR_TOKEN       — read-only ACR token
-#
-# Variables (set in repo Settings → Variables → Actions):
-#   ACR_REGISTRY — internal ACR registry (default: registry-cn-hangzhou.ack.aliyuncs.com)
-#   ACR_PROJECT  — internal ACR project   (default: dev)
+#   secrets.ACR_USERNAME    — optional read-only account for the proxy registry
+#   secrets.ACR_TOKEN       — optional read-only token for the proxy registry
+#   vars.PROXY_SOURCE_IMAGE — proxy repository without a tag or digest
 
 on:
   push:
@@ -27,9 +24,8 @@ permissions:
 
 env:
   CHART: manifests/charts/agentio
-  ACR_REGISTRY: ${{ vars.ACR_REGISTRY || 'registry-cn-hangzhou.ack.aliyuncs.com' }}
-  ACR_PROJECT: ${{ vars.ACR_PROJECT || 'dev' }}
   DOCKER_HUB: docker.io/openkruise
+  PROXY_SOURCE_IMAGE: ${{ vars.PROXY_SOURCE_IMAGE }}
 
 concurrency:
   group: agentio-release-${{ github.ref }}
@@ -58,6 +54,10 @@ jobs:
     timeout-minutes: 30
     environment: release
     steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25.9'
@@ -73,19 +73,38 @@ jobs:
             echo "Invalid release version: $VERSION" >&2
             exit 1
           fi
-          PROXY_TAG="$VERSION"
-          if [[ ! "$PROXY_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "Invalid proxy image tag: $PROXY_TAG" >&2
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Resolve pinned proxy image
+        run: |
+          image="${PROXY_SOURCE_IMAGE}"
+          digest=$(jq -er '.[] | select(.name == "PROXY_IMAGE_DIGEST") | .digest' agentio.deps)
+          if [[ ! "$image" =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]]; then
+            echo "Invalid proxy image: $image" >&2
             exit 1
           fi
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "PROXY_TAG=${PROXY_TAG}" >> "$GITHUB_ENV"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid proxy digest: $digest" >&2
+            exit 1
+          fi
+          {
+            echo "PROXY_IMAGE=${image}"
+            echo "PROXY_DIGEST=${digest}"
+          } >> "$GITHUB_ENV"
 
       - name: Login to internal ACR
         env:
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_TOKEN: ${{ secrets.ACR_TOKEN }}
-        run: echo "$ACR_TOKEN" | crane auth login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+        run: |
+          if [[ -z "$ACR_USERNAME" && -z "$ACR_TOKEN" ]]; then
+            echo "Using anonymous access for ${PROXY_IMAGE%%/*}"
+          elif [[ -z "$ACR_USERNAME" || -z "$ACR_TOKEN" ]]; then
+            echo "ACR_USERNAME and ACR_TOKEN must be set together" >&2
+            exit 1
+          else
+            echo "$ACR_TOKEN" | crane auth login "${PROXY_IMAGE%%/*}" -u "$ACR_USERNAME" --password-stdin
+          fi
 
       - name: Login to Docker Hub
         env:
@@ -95,8 +114,8 @@ jobs:
 
       - name: Sync proxy image
         run: |
-          SRC="${ACR_REGISTRY}/${ACR_PROJECT}/proxy:${PROXY_TAG}"
-          DST="${DOCKER_HUB}/proxy:${VERSION}"
+          SRC="${PROXY_IMAGE}@${PROXY_DIGEST}"
+          DST="${DOCKER_HUB}/proxyv2:${VERSION}"
           echo "Syncing ${SRC} -> ${DST}"
           crane copy "${SRC}" "${DST}"
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -138,11 +157,13 @@ jobs:
           sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
           sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
 
-          # Pilot, proxy-init, and proxy follow the Agentio release version.
-          # ztunnel, traffic-extension, and CNI are independently versioned.
+          # Pilot, proxy-init, proxy, CNI, and ztunnel follow the Agentio release version.
+          # traffic-extension is independently versioned.
           sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxy-init/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-          sed -i "/name: proxy/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: proxyv2/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: install-cni/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: ztunnel/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
 
           echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"

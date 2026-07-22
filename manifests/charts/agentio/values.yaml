@@ -72,7 +72,7 @@ agentiod:
 proxy:
   image:
     hub: ""
-    name: proxy
+    name: proxyv2
     tag: latest
 
 # -- Lightweight image used only by the istio-init/istio-validation containers
@@ -132,7 +132,7 @@ egressPolicies: []
 egressGateway:
   image:
     hub: ""
-    name: proxy
+    name: proxyv2
     tag: latest
   # -- Default replicas when a gateway's autoscaling is disabled.
   replicas: 2
@@ -175,9 +175,9 @@ ambient:
 
   cni:
     image:
-      hub: "docker.io/istio"
+      hub: ""
       name: install-cni
-      tag: "1.29.5"
+      tag: latest
     # -- Host paths for CNI binary and config installation
     cniBinDir: /opt/cni/bin
     cniConfDir: /etc/cni/net.d

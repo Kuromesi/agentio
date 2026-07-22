@@ -1,0 +1,124 @@
+name: Sync ztunnel dependency
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate GitHub App access without updating dependencies
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-ztunnel-deps
+  cancel-in-progress: false
+
+env:
+  AGENTIO_REPOSITORY: openkruise/agentio
+  ZTUNNEL_REPOSITORY: openkruise/ztunnel
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AGENTIO_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIO_SYNC_APP_PRIVATE_KEY }}
+          owner: openkruise
+          repositories: agentio
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Resolve Agentio default branch
+        id: agentio
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          repository_json=$(gh api "repos/${AGENTIO_REPOSITORY}")
+          test "$(jq -r .full_name <<< "$repository_json")" = "$AGENTIO_REPOSITORY"
+
+          agentio_branch=$(jq -er .default_branch <<< "$repository_json")
+          if ! git check-ref-format --branch "$agentio_branch" >/dev/null; then
+            echo "Invalid default branch for ${AGENTIO_REPOSITORY}: ${agentio_branch}" >&2
+            exit 1
+          fi
+          echo "branch=$agentio_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Agentio
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.AGENTIO_REPOSITORY }}
+          ref: ${{ steps.agentio.outputs.branch }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Update agentio.deps
+        if: inputs.dry_run != true
+        id: update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_head=$(git ls-remote --symref \
+            "https://github.com/${ZTUNNEL_REPOSITORY}.git" HEAD)
+          ztunnel_ref=$(printf '%s\n' "$remote_head" | \
+            awk '$1 == "ref:" && $3 == "HEAD" {print $2}')
+          ztunnel_sha=$(printf '%s\n' "$remote_head" | \
+            awk '$2 == "HEAD" && $1 != "ref:" {print $1}')
+
+          if [[ ! "$ztunnel_ref" =~ ^refs/heads/.+ ]]; then
+            echo "Unable to resolve the default branch for ${ZTUNNEL_REPOSITORY}" >&2
+            exit 1
+          fi
+          ztunnel_branch=${ztunnel_ref#refs/heads/}
+          if ! git check-ref-format --branch "$ztunnel_branch" >/dev/null; then
+            echo "Invalid default branch for ${ZTUNNEL_REPOSITORY}: ${ztunnel_branch}" >&2
+            exit 1
+          fi
+          if [[ ! "$ztunnel_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve ${ZTUNNEL_REPOSITORY}:${ztunnel_branch}" >&2
+            exit 1
+          fi
+
+          current_sha=$(jq -r \
+            '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' \
+            agentio.deps)
+          if [[ "$current_sha" == "$ztunnel_sha" ]]; then
+            echo "agentio.deps is already up to date"
+            exit 0
+          fi
+
+          jq --arg sha "$ztunnel_sha" \
+            'map(if .name == "ZTUNNEL_REPO_SHA" then .lastStableSHA = $sha else . end)' \
+            agentio.deps > agentio.deps.tmp
+          mv agentio.deps.tmp agentio.deps
+
+          {
+            echo "sha=$ztunnel_sha"
+            echo "short_sha=${ztunnel_sha:0:12}"
+            echo "branch=$ztunnel_branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or update pull request
+        if: inputs.dry_run != true && steps.update.outputs.sha != ''
+        uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: ${{ steps.agentio.outputs.branch }}
+          branch: automation/ztunnel-deps
+          delete-branch: true
+          add-paths: agentio.deps
+          commit-message: "chore: update ztunnel dependency to ${{ steps.update.outputs.short_sha }}"
+          title: "chore: update ztunnel dependency to ${{ steps.update.outputs.short_sha }}"
+          body: |
+            Updates `agentio.deps` to track
+            [`${{ env.ZTUNNEL_REPOSITORY }}@${{ steps.update.outputs.sha }}`](https://github.com/${{ env.ZTUNNEL_REPOSITORY }}/commit/${{ steps.update.outputs.sha }})
+            from its default `${{ steps.update.outputs.branch }}` branch.

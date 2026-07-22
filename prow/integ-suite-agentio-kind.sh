@@ -94,6 +94,43 @@ if [[ "${USE_PREBUILT_DATA_PLANE}" == "true" && -z "${VALUES_FILE}" ]]; then
   exit 2
 fi
 
+ZTUNNEL_BINARY="${AGENTIO_E2E_ZTUNNEL_BINARY:-}"
+ZTUNNEL_VERSION="${AGENTIO_E2E_ZTUNNEL_VERSION:-}"
+if [[ -n "${ZTUNNEL_BINARY}" || -n "${ZTUNNEL_VERSION}" ]]; then
+  if [[ -z "${ZTUNNEL_BINARY}" || -z "${ZTUNNEL_VERSION}" ]]; then
+    echo "AGENTIO_E2E_ZTUNNEL_BINARY and AGENTIO_E2E_ZTUNNEL_VERSION must be set together" >&2
+    exit 2
+  fi
+  if [[ ! -f "${ZTUNNEL_BINARY}" || ! -r "${ZTUNNEL_BINARY}" ]]; then
+    echo "Agentio ztunnel binary is not a readable regular file: ${ZTUNNEL_BINARY}" >&2
+    exit 1
+  fi
+  if [[ ! "${ZTUNNEL_VERSION}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Invalid Agentio ztunnel version: ${ZTUNNEL_VERSION}" >&2
+    exit 1
+  fi
+  ZTUNNEL_BINARY="$(cd "$(dirname "${ZTUNNEL_BINARY}")"; pwd)/$(basename "${ZTUNNEL_BINARY}")"
+fi
+
+PROXY_IMAGE=""
+PROXY_DIGEST=""
+if [[ "${USE_PREBUILT_DATA_PLANE}" != "true" ]]; then
+  PROXY_IMAGE="${AGENTIO_E2E_PROXY_IMAGE:-}"
+  PROXY_DIGEST=$(jq -er '.[] | select(.name == "PROXY_IMAGE_DIGEST") | .digest' "${ROOT}/agentio.deps")
+  if [[ -z "${PROXY_IMAGE}" ]]; then
+    echo "AGENTIO_E2E_PROXY_IMAGE must identify the proxy repository without a tag or digest" >&2
+    exit 1
+  fi
+  if [[ ! "${PROXY_IMAGE}" =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]]; then
+    echo "Invalid Agentio proxy image: ${PROXY_IMAGE}" >&2
+    exit 1
+  fi
+  if [[ ! "${PROXY_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Invalid Agentio proxy digest: ${PROXY_DIGEST}" >&2
+    exit 1
+  fi
+fi
+
 if [[ -n "${VALUES_FILE}" ]]; then
   if [[ ! -r "${VALUES_FILE}" || ! -f "${VALUES_FILE}" ]]; then
     echo "Agentio Helm values file is not a readable regular file: ${VALUES_FILE}" >&2
@@ -147,6 +184,10 @@ esac
 if [[ "${AGENTIO_E2E_VALIDATE_ONLY:-false}" == "true" ]]; then
   printf 'VALUES_FILE=%s\n' "${VALUES_FILE}"
   printf 'USE_PREBUILT_DATA_PLANE=%s\n' "${USE_PREBUILT_DATA_PLANE}"
+  printf 'ZTUNNEL_BINARY=%s\n' "${ZTUNNEL_BINARY}"
+  printf 'ZTUNNEL_VERSION=%s\n' "${ZTUNNEL_VERSION}"
+  printf 'PROXY_IMAGE=%s\n' "${PROXY_IMAGE}"
+  printf 'PROXY_DIGEST=%s\n' "${PROXY_DIGEST}"
   printf 'AGENTIO_E2E_SCENARIO=%s\n' "${SCENARIOS[@]}"
   printf 'T=%s\n' "${T:-}"
   exit 0
@@ -242,6 +283,16 @@ run_traced() {
   return "${status}"
 }
 
+mirror_pinned_proxy() {
+  local platform=$1
+  local source_image="${PROXY_IMAGE}@${PROXY_DIGEST}"
+  local target_image="${HUB}/proxyv2:${TAG}"
+
+  docker pull --platform="${platform}" "${source_image}"
+  docker tag "${source_image}" "${target_image}"
+  docker push "${target_image}"
+}
+
 record_summary() {
   local results=("$@")
 
@@ -280,14 +331,29 @@ run_scenario() {
 
   if [[ "${IMAGES_BUILT}" == "false" ]]; then
     local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc"
+    local target_arch
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
       arch=linux/arm64
     fi
+    target_arch="${arch#linux/}"
 
-    # A local Helm overlay may point proxy and ztunnel at prebuilt images. The
-    # default CI path builds them from this checkout so it remains self-contained.
+    # A local Helm overlay may point proxy and ztunnel at other prebuilt images.
+    # The default CI path mirrors the agentio.deps-pinned proxy and packages the
+    # pinned ztunnel binary supplied through AGENTIO_E2E_ZTUNNEL_BINARY.
     if [[ "${USE_PREBUILT_DATA_PLANE}" != "true" ]]; then
-      docker_targets+=" docker.proxyv2 docker.ztunnel"
+      run_traced "mirror pinned Agentio proxy" mirror_pinned_proxy "${arch}" || return $?
+      if [[ -n "${ZTUNNEL_BINARY}" ]]; then
+        install -D -m 0755 "${ZTUNNEL_BINARY}" "${ROOT}/out/linux_${target_arch}/ztunnel"
+        run_traced "package pinned Agentio ztunnel" env \
+          SKIP_MAKE=true \
+          DOCKER_ARCHITECTURES="${arch}" \
+          DOCKER_BUILD_VARIANTS="${VARIANT}" \
+          DOCKER_TARGETS="docker.ztunnel" \
+          TAG="${TAG}" \
+          ./tools/docker --push --ztunnel-version="${ZTUNNEL_VERSION}" || return $?
+      else
+        docker_targets+=" docker.ztunnel"
+      fi
     fi
     run_traced "build Agentio test images" env \
       DOCKER_ARCHITECTURES="${arch}" \
