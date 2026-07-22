@@ -135,12 +135,6 @@ jobs:
           name: ztunnel-arm64
           path: out/linux_arm64
 
-      - name: Verify ztunnel inputs
-        run: |
-          chmod 0755 out/linux_amd64/ztunnel out/linux_arm64/ztunnel
-          file out/linux_amd64/ztunnel | grep -F x86-64
-          file out/linux_arm64/ztunnel | grep -F aarch64
-
       - name: Resolve Agentio ztunnel version
         run: |
           sha=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
@@ -149,6 +143,20 @@ jobs:
             exit 1
           fi
           echo "ZTUNNEL_REPO_SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Verify and install ztunnel inputs
+        run: |
+          chmod 0755 out/linux_amd64/ztunnel out/linux_arm64/ztunnel
+          file out/linux_amd64/ztunnel | grep -F x86-64
+          file out/linux_arm64/ztunnel | grep -F aarch64
+
+          for arch in amd64 arm64; do
+            binary="out/linux_${arch}/ztunnel"
+            release_dir="out/linux_${arch}/release"
+            install -D -m 0755 "$binary" \
+              "${release_dir}/ztunnel-${ZTUNNEL_REPO_SHA}"
+            install -m 0755 "$binary" "${release_dir}/ztunnel"
+          done
 
       - name: Validate requested tag and ref
         env:
@@ -167,7 +175,7 @@ jobs:
             exit 0
           fi
 
-          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)$ ]]; then
+          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)$ ]]; then
             echo "Image publication requires a versioned release branch or semantic version tag" >&2
             exit 1
           fi
@@ -216,7 +224,7 @@ jobs:
               exit 1
             fi
             echo "PRIMARY_TAG=${INPUT_TAG}" >> "$GITHUB_ENV"
-            if [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ "$INPUT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "EXTRA_TAGS=latest" >> "$GITHUB_ENV"
             else
               echo "EXTRA_TAGS=" >> "$GITHUB_ENV"

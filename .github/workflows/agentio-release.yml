@@ -8,7 +8,7 @@ name: agentio-release
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
 # Store the Docker Hub credential and, when required, the ACR credential pair in
-# a protected `release` Environment with deployment restricted to protected v* tags.
+# a protected `release` Environment with deployment restricted to protected SemVer tags.
 #   secrets.HUB_KRUISE      — Docker Hub access token
 #   secrets.ACR_USERNAME    — optional read-only account for the proxy registry
 #   secrets.ACR_TOKEN       — optional read-only token for the proxy registry
@@ -17,7 +17,7 @@ name: agentio-release
 on:
   push:
     tags:
-      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
     steps:
       - name: Validate release ref
         run: |
-          if [[ ! "${GITHUB_REF}" =~ ^refs/heads/(master|release-[A-Za-z0-9._/-]+)$ && ! "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "${GITHUB_REF}" =~ ^refs/heads/(master|release-[A-Za-z0-9._/-]+)$ && ! "${GITHUB_REF}" =~ ^refs/tags/[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Releases are restricted to master, release branches, and semantic version tags" >&2
             exit 1
           fi
@@ -45,6 +45,7 @@ jobs:
   build-images:
     needs: validate-release
     uses: ./.github/workflows/agentio-image.yml
+    secrets: inherit
     with:
       tag: ${{ github.ref_name }}
 
@@ -69,7 +70,7 @@ jobs:
       - name: Compute version
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release version: $VERSION" >&2
             exit 1
           fi
@@ -118,7 +119,7 @@ jobs:
           DST="${DOCKER_HUB}/proxyv2:${VERSION}"
           echo "Syncing ${SRC} -> ${DST}"
           crane copy "${SRC}" "${DST}"
-          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             crane tag "${DST}" "latest"
           fi
 
@@ -139,7 +140,7 @@ jobs:
       - name: Compute version
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release version: $VERSION" >&2
             exit 1
           fi
@@ -147,7 +148,7 @@ jobs:
 
       - name: Prepare chart for release
         run: |
-          CHART_VERSION="${VERSION#v}"
+          CHART_VERSION="${VERSION}"
           CHART_DIR="/tmp/chart-release/agentio"
 
           mkdir -p "$(dirname "$CHART_DIR")"
@@ -186,7 +187,7 @@ jobs:
         run: echo "$HUB_TOKEN" | helm registry login docker.io -u "$HUB_USERNAME" --password-stdin
 
       - name: Push chart to Docker Hub
-        run: helm push "/tmp/chart-pkg/agentio-${CHART_VERSION}.tgz" "oci://docker.io/openkruise/charts"
+        run: helm push "/tmp/chart-pkg/agentio-${CHART_VERSION}.tgz" "oci://docker.io/openkruise"
 
   create-release:
     needs: publish-chart
@@ -198,7 +199,7 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Create GitHub Release with generated notes
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ github.ref_name }}
@@ -206,5 +207,23 @@ jobs:
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "Release $VERSION already exists; skipping."
           else
-            gh release create "$VERSION" --generate-notes --verify-tag
+            release_flags=()
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              release_flags+=(--prerelease)
+            fi
+            {
+              echo "[Artifacts](https://hub.docker.com/u/openkruise)"
+              echo "[Documentation](https://github.com/${GITHUB_REPOSITORY}/tree/${VERSION}/docs)"
+              echo
+              echo "Install the Helm chart:"
+              echo
+              echo "\`\`\`shell"
+              echo "helm install agentio oci://docker.io/openkruise/agentio --version ${VERSION}"
+              echo "\`\`\`"
+            } >/tmp/release-notes.md
+            gh release create "$VERSION" \
+              --title "Agentio ${VERSION}" \
+              --notes-file /tmp/release-notes.md \
+              "${release_flags[@]}" \
+              --verify-tag
           fi
