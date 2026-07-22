@@ -18,9 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  AGENTIO_REPOSITORY: openkruise/agentio
   ZTUNNEL_REPOSITORY: openkruise/ztunnel
-  ZTUNNEL_BRANCH: release-0.1
-  AGENTIO_BRANCH: release-0.1
 
 jobs:
   sync:
@@ -38,19 +37,28 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Checkout Agentio
-        uses: actions/checkout@v5
-        with:
-          repository: openkruise/agentio
-          ref: ${{ env.AGENTIO_BRANCH }}
-          token: ${{ steps.app-token.outputs.token }}
-          persist-credentials: false
-
-      - name: Verify GitHub App access
+      - name: Resolve Agentio default branch
+        id: agentio
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          test "$(gh api repos/openkruise/agentio --jq .full_name)" = "openkruise/agentio"
+          repository_json=$(gh api "repos/${AGENTIO_REPOSITORY}")
+          test "$(jq -r .full_name <<< "$repository_json")" = "$AGENTIO_REPOSITORY"
+
+          agentio_branch=$(jq -er .default_branch <<< "$repository_json")
+          if ! git check-ref-format --branch "$agentio_branch" >/dev/null; then
+            echo "Invalid default branch for ${AGENTIO_REPOSITORY}: ${agentio_branch}" >&2
+            exit 1
+          fi
+          echo "branch=$agentio_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Agentio
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.AGENTIO_REPOSITORY }}
+          ref: ${{ steps.agentio.outputs.branch }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
       - name: Update agentio.deps
         if: inputs.dry_run != true
@@ -59,11 +67,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          ztunnel_sha=$(git ls-remote \
-            "https://github.com/${ZTUNNEL_REPOSITORY}.git" \
-            "refs/heads/${ZTUNNEL_BRANCH}" | awk '{print $1}')
+          remote_head=$(git ls-remote --symref \
+            "https://github.com/${ZTUNNEL_REPOSITORY}.git" HEAD)
+          ztunnel_ref=$(printf '%s\n' "$remote_head" | \
+            awk '$1 == "ref:" && $3 == "HEAD" {print $2}')
+          ztunnel_sha=$(printf '%s\n' "$remote_head" | \
+            awk '$2 == "HEAD" && $1 != "ref:" {print $1}')
+
+          if [[ ! "$ztunnel_ref" =~ ^refs/heads/.+ ]]; then
+            echo "Unable to resolve the default branch for ${ZTUNNEL_REPOSITORY}" >&2
+            exit 1
+          fi
+          ztunnel_branch=${ztunnel_ref#refs/heads/}
+          if ! git check-ref-format --branch "$ztunnel_branch" >/dev/null; then
+            echo "Invalid default branch for ${ZTUNNEL_REPOSITORY}: ${ztunnel_branch}" >&2
+            exit 1
+          fi
           if [[ ! "$ztunnel_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Unable to resolve ${ZTUNNEL_REPOSITORY}:${ZTUNNEL_BRANCH}" >&2
+            echo "Unable to resolve ${ZTUNNEL_REPOSITORY}:${ztunnel_branch}" >&2
             exit 1
           fi
 
@@ -80,15 +101,18 @@ jobs:
             agentio.deps > agentio.deps.tmp
           mv agentio.deps.tmp agentio.deps
 
-          echo "sha=$ztunnel_sha" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${ztunnel_sha:0:12}" >> "$GITHUB_OUTPUT"
+          {
+            echo "sha=$ztunnel_sha"
+            echo "short_sha=${ztunnel_sha:0:12}"
+            echo "branch=$ztunnel_branch"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request
         if: inputs.dry_run != true && steps.update.outputs.sha != ''
         uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
-          base: ${{ env.AGENTIO_BRANCH }}
+          base: ${{ steps.agentio.outputs.branch }}
           branch: automation/ztunnel-deps
           delete-branch: true
           add-paths: agentio.deps
@@ -97,4 +121,4 @@ jobs:
           body: |
             Updates `agentio.deps` to track
             [`${{ env.ZTUNNEL_REPOSITORY }}@${{ steps.update.outputs.sha }}`](https://github.com/${{ env.ZTUNNEL_REPOSITORY }}/commit/${{ steps.update.outputs.sha }})
-            from the `${{ env.ZTUNNEL_BRANCH }}` branch.
+            from its default `${{ steps.update.outputs.branch }}` branch.

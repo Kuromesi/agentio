@@ -79,14 +79,9 @@ jobs:
           path: ztunnel-src
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install 1.90.0 --profile minimal
-          rustup default 1.90.0
-
       - name: Build ztunnel
         working-directory: ztunnel-src
-        run: cargo build --locked --release
+        run: ./common/scripts/run.sh cargo build --locked --release
 
       - name: Verify ztunnel architecture
         env:
@@ -233,13 +228,6 @@ jobs:
             echo "EXTRA_TAGS=${VER}-alpha.${SHA},${VER}-dev" >> "$GITHUB_ENV"
           fi
 
-      - name: Build and push Agentio images
-        run: |
-          DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
-          DOCKER_BUILD_VARIANTS=default \
-          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni" \
-          make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
-
       - name: Package and push ztunnel image
         run: |
           SKIP_MAKE=true \
@@ -248,6 +236,13 @@ jobs:
           DOCKER_TARGETS="docker.ztunnel" \
           TAG="${PRIMARY_TAG}" \
           ./tools/docker --push --ztunnel-version="${ZTUNNEL_REPO_SHA}"
+
+      - name: Build and push Agentio images
+        run: |
+          DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
+          DOCKER_BUILD_VARIANTS=default \
+          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni" \
+          make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
 
       - name: Push extra tags (latest, dev, alpha)
         if: env.EXTRA_TAGS != ''
