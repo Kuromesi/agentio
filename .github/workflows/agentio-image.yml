@@ -14,6 +14,14 @@ on:
   push:
     branches:
       - "release-*"
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "logo/**"
+      - "releasenotes/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs-lint.yml"
   workflow_call:
     inputs:
       tag:

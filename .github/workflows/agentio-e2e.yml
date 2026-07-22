@@ -17,6 +17,14 @@ on:
     branches:
       - master
       - "release-*"
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "logo/**"
+      - "releasenotes/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs-lint.yml"
 
 permissions:
   contents: read
