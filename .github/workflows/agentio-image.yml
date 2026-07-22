@@ -2,8 +2,8 @@ name: agentio-image
 
 # Build and push Agentio, CNI, and ztunnel container images to Docker Hub.
 # Follows Istio's release-commit.sh tag strategy:
-# - pushes to protected release-* branches publish development images;
-# - agentio-release calls this workflow for trusted semantic-version tags.
+# - pushes to versioned release-* branches publish development images;
+# - agentio-release calls this workflow with a trusted semantic release version.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
@@ -29,6 +29,10 @@ on:
         required: false
         default: ''
         type: string
+    secrets:
+      HUB_KRUISE:
+        description: 'Docker Hub access token'
+        required: true
 
 permissions:
   contents: read
@@ -39,8 +43,8 @@ env:
   HUB: docker.io/openkruise
 
 concurrency:
-  group: agentio-image-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/release-') }}
+  group: agentio-image-${{ inputs.tag != '' && format('release-{0}', inputs.tag) || github.ref }}
+  cancel-in-progress: ${{ inputs.tag == '' && startsWith(github.ref, 'refs/heads/release-') }}
 
 jobs:
   build-ztunnel:
@@ -112,7 +116,7 @@ jobs:
     needs: build-ztunnel
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    environment: ${{ startsWith(github.ref, 'refs/heads/release-') && 'development' || 'release' }}
+    environment: ${{ inputs.tag != '' && 'release' || 'development' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -167,9 +171,26 @@ jobs:
             exit 1
           fi
 
-          if [[ "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
-            if [[ -n "$INPUT_TAG" ]]; then
-              echo "Development image builds must derive tags from the release branch commit" >&2
+          if [[ "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+)\.([0-9]+)(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?$ ]]; then
+            if [[ -z "$INPUT_TAG" ]]; then
+              exit 0
+            fi
+            branch_major="${BASH_REMATCH[1]}"
+            branch_minor="${BASH_REMATCH[2]}"
+            if [[ ! "$INPUT_TAG" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+              echo "Release image builds require a semantic version" >&2
+              exit 1
+            fi
+            if [[ "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" != "${branch_major}.${branch_minor}" ]]; then
+              echo "Release version does not match release branch" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [[ "${GITHUB_REF}" == refs/heads/master ]]; then
+            if [[ ! "$INPUT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+              echo "Release image builds from master require a semantic version" >&2
               exit 1
             fi
             exit 0
@@ -224,15 +245,11 @@ jobs:
               exit 1
             fi
             echo "PRIMARY_TAG=${INPUT_TAG}" >> "$GITHUB_ENV"
-            if [[ "$INPUT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "EXTRA_TAGS=latest" >> "$GITHUB_ENV"
-            else
-              echo "EXTRA_TAGS=" >> "$GITHUB_ENV"
-            fi
+            echo "EXTRA_TAGS=" >> "$GITHUB_ENV"
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
             echo "PRIMARY_TAG=${VERSION}" >> "$GITHUB_ENV"
-            echo "EXTRA_TAGS=latest" >> "$GITHUB_ENV"
+            echo "EXTRA_TAGS=" >> "$GITHUB_ENV"
           else
             SHA="${GITHUB_SHA}"
             if [[ ! "${GITHUB_REF}" =~ ^refs/heads/release-([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
@@ -260,7 +277,7 @@ jobs:
           DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni" \
           make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
 
-      - name: Push extra tags (latest, dev, alpha)
+      - name: Push extra tags (dev and alpha)
         if: env.EXTRA_TAGS != ''
         run: |
           # Install a version pinned through Go module verification.

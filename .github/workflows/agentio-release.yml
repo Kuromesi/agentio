@@ -1,6 +1,8 @@
 name: agentio-release
 
-# Release pipeline: build pilot, proxy-init, CNI, and ztunnel; sync proxy; and publish the Helm chart.
+# Manually release the selected master or release branch commit. The workflow
+# creates the Agentio tag, builds and publishes all artifacts, tags the pinned
+# ztunnel commit, and creates the GitHub Release last.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
 # traffic-extension remains versioned and published independently.
@@ -8,7 +10,8 @@ name: agentio-release
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
 # Store the Docker Hub credential and, when required, the ACR credential pair in
-# a protected `release` Environment with deployment restricted to protected SemVer tags.
+# the `release` Environment. Protect that Environment with reviewers and branch
+# restrictions in repository settings.
 #   secrets.HUB_KRUISE      — Docker Hub access token
 #   secrets.ACR_USERNAME    — optional read-only account for the proxy registry
 #   secrets.ACR_TOKEN       — optional read-only token for the proxy registry
@@ -17,9 +20,12 @@ name: agentio-release
 #                           — GitHub App with contents:write on openkruise/ztunnel
 
 on:
-  push:
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to release (for example, 0.1.0 or 0.1.0-rc.1)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -31,7 +37,8 @@ env:
   ZTUNNEL_REPOSITORY: openkruise/ztunnel
 
 concurrency:
-  group: agentio-release-${{ github.ref }}
+  # Stable releases update shared latest tags, so serialize all releases.
+  group: agentio-release
   cancel-in-progress: false
 
 jobs:
@@ -44,14 +51,77 @@ jobs:
 
       - name: Validate release ref
         run: |
-          if [[ ! "${GITHUB_REF}" =~ ^refs/heads/(master|release-[A-Za-z0-9._/-]+)$ && ! "${GITHUB_REF}" =~ ^refs/tags/[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-            echo "Releases are restricted to master, release branches, and semantic version tags" >&2
+          if [[ ! "${GITHUB_REF}" =~ ^refs/heads/(master|release-[0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Releases are restricted to master and versioned release branches" >&2
             exit 1
+          fi
+
+      - name: Validate release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          version_major="${BASH_REMATCH[1]}"
+          version_minor="${BASH_REMATCH[2]}"
+          if [[ "$GITHUB_REF" =~ ^refs/heads/release-([0-9]+)\.([0-9]+) ]]; then
+            if [[ "${version_major}.${version_minor}" != "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" ]]; then
+              echo "Version ${VERSION} does not match branch ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
+            existing_sha=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${existing_sha}" >&2
+              exit 1
+            fi
+            echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${GITHUB_SHA}; resuming release."
+          fi
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REPOSITORY}@${VERSION} already exists" >&2
+            exit 1
+          fi
+
+          ztunnel_repository=$(jq -er \
+            '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .repoName' agentio.deps)
+          ztunnel_sha=$(jq -er \
+            '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
+          proxy_digest=$(jq -er \
+            '.[] | select(.name == "PROXY_IMAGE_DIGEST") | .digest' agentio.deps)
+          if [[ "$ztunnel_repository" != "$ZTUNNEL_REPOSITORY" ]]; then
+            echo "Unexpected ztunnel repository: $ztunnel_repository" >&2
+            exit 1
+          fi
+          if [[ ! "$ztunnel_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid ZTUNNEL_REPO_SHA: $ztunnel_sha" >&2
+            exit 1
+          fi
+          if [[ ! "$proxy_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid PROXY_IMAGE_DIGEST: $proxy_digest" >&2
+            exit 1
+          fi
+          if [[ "$(gh api "repos/${ZTUNNEL_REPOSITORY}/commits/${ztunnel_sha}" --jq .sha)" != "$ztunnel_sha" ]]; then
+            echo "Unable to resolve ${ZTUNNEL_REPOSITORY}@${ztunnel_sha}" >&2
+            exit 1
+          fi
+          if gh api "repos/${ZTUNNEL_REPOSITORY}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
+            existing_ztunnel_sha=$(gh api \
+              "repos/${ZTUNNEL_REPOSITORY}/commits/${VERSION}" --jq .sha)
+            if [[ "$existing_ztunnel_sha" != "$ztunnel_sha" ]]; then
+              echo "Tag ${ZTUNNEL_REPOSITORY}@${VERSION} already points to ${existing_ztunnel_sha}" >&2
+              exit 1
+            fi
+            echo "Tag ${ZTUNNEL_REPOSITORY}@${VERSION} already points to ${ztunnel_sha}; resuming release."
           fi
 
       - name: Validate release notes override
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
           notes_file="docs/releases/${VERSION}.md"
           if [[ -e "$notes_file" ]]; then
@@ -68,12 +138,50 @@ jobs:
             echo "No release notes override; GitHub generated notes will be used."
           fi
 
-  build-images:
+  tag-agentio:
     needs: validate-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Create Agentio tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
+            existing_sha=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${existing_sha}" >&2
+              exit 1
+            fi
+            echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${GITHUB_SHA}; skipping."
+            exit 0
+          fi
+
+          tag_object_sha=$(gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f tag="$VERSION" \
+            -f message="Agentio release ${VERSION}" \
+            -f object="$GITHUB_SHA" \
+            -f type=commit \
+            --jq .sha)
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${VERSION}" \
+            -f sha="$tag_object_sha" >/dev/null
+          echo "Created ${GITHUB_REPOSITORY}@${VERSION} at ${GITHUB_SHA}."
+
+  build-images:
+    needs: tag-agentio
     uses: ./.github/workflows/agentio-image.yml
-    secrets: inherit
     with:
-      tag: ${{ github.ref_name }}
+      tag: ${{ inputs.version }}
+    secrets:
+      HUB_KRUISE: ${{ secrets.HUB_KRUISE }}
 
   sync-images:
     needs: build-images
@@ -94,8 +202,10 @@ jobs:
         run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
 
       - name: Compute version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="$RELEASE_VERSION"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Invalid release version: $VERSION" >&2
             exit 1
@@ -145,9 +255,6 @@ jobs:
           DST="${DOCKER_HUB}/proxyv2:${VERSION}"
           echo "Syncing ${SRC} -> ${DST}"
           crane copy "${SRC}" "${DST}"
-          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            crane tag "${DST}" "latest"
-          fi
 
   publish-chart:
     needs: sync-images
@@ -164,8 +271,10 @@ jobs:
           version: v3.16.2
 
       - name: Compute version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="$RELEASE_VERSION"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Invalid release version: $VERSION" >&2
             exit 1
@@ -217,7 +326,6 @@ jobs:
 
   tag-ztunnel:
     needs: publish-chart
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -239,7 +347,7 @@ jobs:
       - name: Create matching ztunnel tag
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Invalid release version: $VERSION" >&2
@@ -291,9 +399,54 @@ jobs:
             -f sha="$tag_object_sha" >/dev/null
           echo "Created ${ZTUNNEL_REPOSITORY}@${VERSION} at ${ztunnel_sha}."
 
-  create-release:
+  promote-latest:
     needs: tag-ztunnel
-    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.9'
+          cache: false
+
+      - name: Promote stable images to latest
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "${VERSION} is a prerelease; latest tags will not be updated."
+            exit 0
+          fi
+
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+          echo "$HUB_TOKEN" | crane auth login docker.io \
+            -u "$HUB_USERNAME" --password-stdin
+
+          declare -A version_digests
+          for image in pilot proxy-init proxyv2 install-cni ztunnel; do
+            version_digests[$image]=$(crane digest \
+              "${DOCKER_HUB}/${image}:${VERSION}")
+            echo "Verified ${DOCKER_HUB}/${image}:${VERSION}@${version_digests[$image]}"
+          done
+
+          for image in pilot proxy-init proxyv2 install-cni ztunnel; do
+            echo "Tagging ${DOCKER_HUB}/${image}:${VERSION} -> latest"
+            crane tag "${DOCKER_HUB}/${image}:${VERSION}" latest
+          done
+
+          for image in pilot proxy-init proxyv2 install-cni ztunnel; do
+            latest_digest=$(crane digest "${DOCKER_HUB}/${image}:latest")
+            if [[ "$latest_digest" != "${version_digests[$image]}" ]]; then
+              echo "latest digest mismatch for ${image}: ${latest_digest}" >&2
+              exit 1
+            fi
+          done
+
+  create-release:
+    needs: promote-latest
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -308,23 +461,19 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION already exists; skipping."
-          else
-            release_flags=()
-            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              release_flags+=(--prerelease)
-            fi
-            notes_flags=(--generate-notes)
-            notes_file="docs/releases/${VERSION}.md"
-            if [[ -s "$notes_file" ]]; then
-              notes_flags=(--notes-file "$notes_file")
-            fi
-            gh release create "$VERSION" \
-              --title "Agentio ${VERSION}" \
-              "${notes_flags[@]}" \
-              "${release_flags[@]}" \
-              --verify-tag
+          release_flags=()
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            release_flags+=(--prerelease)
           fi
+          notes_flags=(--generate-notes)
+          notes_file="docs/releases/${VERSION}.md"
+          if [[ -s "$notes_file" ]]; then
+            notes_flags=(--notes-file "$notes_file")
+          fi
+          gh release create "$VERSION" \
+            --title "Agentio ${VERSION}" \
+            "${notes_flags[@]}" \
+            "${release_flags[@]}" \
+            --verify-tag
