@@ -37,6 +37,23 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
+      - name: Validate ztunnel tag access
+        if: inputs.dry_run == true
+        id: ztunnel-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AGENTIO_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIO_SYNC_APP_PRIVATE_KEY }}
+          owner: openkruise
+          repositories: ztunnel
+          permission-contents: write
+
+      - name: Verify ztunnel repository access
+        if: inputs.dry_run == true
+        env:
+          GH_TOKEN: ${{ steps.ztunnel-app-token.outputs.token }}
+        run: test "$(gh api "repos/${ZTUNNEL_REPOSITORY}" --jq .full_name)" = "$ZTUNNEL_REPOSITORY"
+
       - name: Resolve Agentio default branch
         id: agentio
         env:
@@ -117,7 +134,8 @@ jobs:
           delete-branch: true
           add-paths: agentio.deps
           commit-message: "chore: update ztunnel dependency to ${{ steps.update.outputs.short_sha }}"
-          title: "chore: update ztunnel dependency to ${{ steps.update.outputs.short_sha }}"
+          title: "Automator: update ztunnel@${{ steps.update.outputs.branch }} in ${{ env.AGENTIO_REPOSITORY }}@${{ steps.agentio.outputs.branch }}"
+          labels: skip-changelog
           body: |
             Updates `agentio.deps` to track
             [`${{ env.ZTUNNEL_REPOSITORY }}@${{ steps.update.outputs.sha }}`](https://github.com/${{ env.ZTUNNEL_REPOSITORY }}/commit/${{ steps.update.outputs.sha }})
