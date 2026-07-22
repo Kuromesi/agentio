@@ -72,7 +72,7 @@ agentiod:
 proxy:
   image:
     hub: ""
-    name: proxy
+    name: proxyv2
     tag: latest
 
 # -- Lightweight image used only by the istio-init/istio-validation containers
@@ -132,7 +132,7 @@ egressPolicies: []
 egressGateway:
   image:
     hub: ""
-    name: proxy
+    name: proxyv2
     tag: latest
   # -- Default replicas when a gateway's autoscaling is disabled.
   replicas: 2
