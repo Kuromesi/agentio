@@ -150,9 +150,8 @@ func TestBuildStatusMessageCitesField(t *testing.T) {
 }
 
 // LastTransitionTime is preserved while the status value is unchanged and
-// refreshed when it flips. kstatus.UpdateConditionIfChanged owns this rule
-// (pilot/pkg/model/kstatus/helper.go:60-68); BuildStatus must feed it the live
-// conditions so it can apply it.
+// refreshed when it flips. BuildStatus carries the live timestamp forward only
+// when the live condition of the same type has a matching Status.
 func TestBuildStatusPreservesLastTransitionTime(t *testing.T) {
 	old := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
 	existing := []metav1.Condition{

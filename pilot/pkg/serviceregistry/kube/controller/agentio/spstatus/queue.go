@@ -139,8 +139,9 @@ var ownedConditionTypes = []string{
 // desired (owned-only) status never contains, so wholesale comparison would
 // never suppress and every resync would enqueue a redundant PATCH. Compare
 // only what this controller owns: observedGeneration plus the three owned
-// condition types. LastTransitionTime is deliberately excluded — it is
-// regenerated per build, so including it would defeat suppression entirely.
+// condition types. LastTransitionTime is excluded because it is redundant:
+// BuildStatus carries the live timestamp forward whenever Status matches, and
+// when Status differs the Status comparison already forces a write.
 func ownedStatusEqual(live, desired agentsv1alpha1.SecurityProfileStatus) bool {
 	if live.ObservedGeneration != desired.ObservedGeneration {
 		return false
