@@ -1,6 +1,4 @@
-# Traffic Extension
-
-## SecurityProfile status
+# SecurityProfile status
 
 agentiod writes `.status` on every SecurityProfile. Only the elected leader for
 a revision writes, and writing can be turned off entirely with
@@ -12,7 +10,7 @@ a revision writes, and writing can be turned off entirely with
 | `ResolvedRefs` | Every `credentialRef` with `kind: Secret` points at a Secret that exists in the profile's own namespace. |
 | `Programmed` | The profile was accepted. This follows `Accepted` only and is not a confirmation that the data plane has loaded the profile. |
 
-Known limitations:
+## Known limitations
 
 - An unresolved `credentialRef` sets `ResolvedRefs=False` but leaves
   `Programmed=True`. `ResolvedRefs` carries reference problems on its own.
