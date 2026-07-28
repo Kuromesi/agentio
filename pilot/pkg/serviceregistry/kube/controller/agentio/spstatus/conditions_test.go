@@ -179,6 +179,51 @@ func TestBuildStatusPreservesLastTransitionTime(t *testing.T) {
 	}
 }
 
+// A condition written by a different fieldManager must never appear in the
+// output: declaring it in our SSA apply body would seize ownership of it.
+func TestBuildStatusDropsForeignConditions(t *testing.T) {
+	owned := BuildStatus(profileGen(1), nil, nil)
+	foreign := metav1.Condition{
+		Type:               "SomeOtherController",
+		Status:             metav1.ConditionTrue,
+		Reason:             "External",
+		Message:            "written by someone else",
+		ObservedGeneration: 1,
+		LastTransitionTime: metav1.Now(),
+	}
+	existing := append([]metav1.Condition{foreign}, owned.Conditions...)
+
+	st := BuildStatus(profileGen(1, existing...), nil, nil)
+
+	assert.Equal(t, len(st.Conditions), 3)
+	for _, c := range st.Conditions {
+		if c.Type == "SomeOtherController" {
+			t.Errorf("foreign condition %q leaked into the output", c.Type)
+		}
+	}
+}
+
+// BuildStatus must never mutate the live object it reads from: that slice
+// belongs to the shared informer cache.
+func TestBuildStatusDoesNotMutateInput(t *testing.T) {
+	owned := BuildStatus(profileGen(1), nil, nil)
+	// Seed the live conditions in an order that differs from the emitted one.
+	existing := []metav1.Condition{owned.Conditions[2], owned.Conditions[1], owned.Conditions[0]}
+	sp := profileGen(1, existing...)
+
+	before := make([]metav1.Condition, len(sp.Status.Conditions))
+	for i := range sp.Status.Conditions {
+		before[i] = *sp.Status.Conditions[i].DeepCopy()
+	}
+
+	BuildStatus(sp, nil, nil)
+
+	assert.Equal(t, len(sp.Status.Conditions), len(before))
+	for i := range before {
+		assert.Equal(t, sp.Status.Conditions[i], before[i])
+	}
+}
+
 // Conditions must come out in a stable order so the SSA patch body is
 // byte-identical across reconciles when nothing changed.
 func TestBuildStatusConditionOrderIsStable(t *testing.T) {

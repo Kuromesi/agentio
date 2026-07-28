@@ -21,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"istio.io/istio/pilot/pkg/model/kstatus"
-	"istio.io/istio/pkg/slices"
 )
 
 // ConditionResolvedRefs reports whether every credentialRef resolves. The
@@ -56,7 +55,6 @@ func BuildStatus(
 	refErrs []RefError,
 ) agentsv1alpha1.SecurityProfileStatus {
 	gen := sp.Generation
-	conds := sp.Status.Conditions
 
 	accepted := metav1.Condition{
 		Type:               agentsv1alpha1.SecurityProfileConditionAccepted,
@@ -102,15 +100,20 @@ func BuildStatus(
 		programmed.Message = "Profile was not accepted"
 	}
 
-	// UpdateConditionIfChanged preserves LastTransitionTime while the status
-	// value is unchanged (pilot/pkg/model/kstatus/helper.go:60-68).
+	// Build a NEW slice holding exactly the three owned conditions, in a fixed
+	// deterministic order (byte-identical SSA patch bodies across reconciles).
+	// Never start from or touch sp.Status.Conditions: it belongs to the shared
+	// informer cache, and carrying a foreign condition into the apply body
+	// would seize SSA ownership of it with Force:true.
+	conds := make([]metav1.Condition, 0, 3)
 	for _, c := range []metav1.Condition{accepted, programmed, resolved} {
-		conds = kstatus.UpdateConditionIfChanged(conds, c)
+		// The timestamp only advances when Status flips. GetCondition returns
+		// EmptyCondition (Status "") when absent, which never matches.
+		if live := kstatus.GetCondition(sp.Status.Conditions, c.Type); live.Status == c.Status {
+			c.LastTransitionTime = live.LastTransitionTime
+		}
+		conds = append(conds, c)
 	}
-
-	// Sort by type so the SSA patch body is byte-identical across reconciles
-	// when nothing changed.
-	conds = slices.SortBy(conds, func(c metav1.Condition) string { return c.Type })
 
 	return agentsv1alpha1.SecurityProfileStatus{
 		ObservedGeneration: gen,

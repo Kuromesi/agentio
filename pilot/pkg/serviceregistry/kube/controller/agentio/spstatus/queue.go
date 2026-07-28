@@ -17,11 +17,13 @@ package spstatus
 import (
 	"strconv"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	apitypes "k8s.io/apimachinery/pkg/types"
 
+	"istio.io/istio/pilot/pkg/model/kstatus"
 	"istio.io/istio/pilot/pkg/status"
 	"istio.io/istio/pkg/kube/controllers"
 	"istio.io/istio/pkg/kube/kclient"
@@ -123,6 +125,37 @@ func (q *Queue) reconcile(raw any) error {
 
 var _ status.Queue = &Queue{}
 
+// ownedConditionTypes are the only condition types this controller declares
+// and reconciles.
+var ownedConditionTypes = []string{
+	agentsv1alpha1.SecurityProfileConditionAccepted,
+	agentsv1alpha1.SecurityProfileConditionProgrammed,
+	ConditionResolvedRefs,
+}
+
+// ownedStatusEqual reports whether a status write is needed. A wholesale
+// krt.Equal over the two statuses would be wrong: the live status may
+// legitimately carry conditions written by other fieldManagers that the
+// desired (owned-only) status never contains, so wholesale comparison would
+// never suppress and every resync would enqueue a redundant PATCH. Compare
+// only what this controller owns: observedGeneration plus the three owned
+// condition types. LastTransitionTime is deliberately excluded — it is
+// regenerated per build, so including it would defeat suppression entirely.
+func ownedStatusEqual(live, desired agentsv1alpha1.SecurityProfileStatus) bool {
+	if live.ObservedGeneration != desired.ObservedGeneration {
+		return false
+	}
+	for _, typ := range ownedConditionTypes {
+		l := kstatus.GetCondition(live.Conditions, typ)
+		d := kstatus.GetCondition(desired.Conditions, typ)
+		if l.Status != d.Status || l.Reason != d.Reason ||
+			l.Message != d.Message || l.ObservedGeneration != d.ObservedGeneration {
+			return false
+		}
+	}
+	return true
+}
+
 // Register wires the status collection into the StatusCollections container so
 // leader election can turn writing on and off.
 //
@@ -143,7 +176,7 @@ func Register(sc *status.StatusCollections, col krt.Collection[ProfileStatus], t
 				// The object is gone; do not resurrect its status.
 				return
 			}
-			if krt.Equal(l.Obj.Status, l.Status) {
+			if ownedStatusEqual(l.Obj.Status, l.Status) {
 				// Already what we want. Skipping avoids rewriting every object
 				// on every resync, which matters because LastTransitionTime
 				// would otherwise make each write look like a change.

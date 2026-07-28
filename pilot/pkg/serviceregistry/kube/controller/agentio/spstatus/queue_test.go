@@ -197,6 +197,41 @@ func TestRegisterSuppressesNoOpWrites(t *testing.T) {
 	assert.EventuallyEqual(t, fp.count, 0)
 }
 
+// A foreign condition on the live object (written by another fieldManager)
+// must not defeat suppression: only the conditions this controller owns decide
+// whether a write is needed.
+func TestRegisterSuppressesWithForeignCondition(t *testing.T) {
+	stop := test.NewStop(t)
+	fp := &fakePatcher{}
+
+	sp := &agentsv1alpha1.SecurityProfile{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-a", Name: "sp", Generation: 1},
+	}
+	desired := BuildStatus(sp, nil, nil)
+	live := *desired.DeepCopy()
+	live.Conditions = append(live.Conditions, metav1.Condition{
+		Type:               "SomeOtherController",
+		Status:             metav1.ConditionTrue,
+		Reason:             "External",
+		Message:            "written by someone else",
+		ObservedGeneration: 1,
+		LastTransitionTime: metav1.Now(),
+	})
+	sp.Status = live
+
+	col := krt.NewStaticCollection(nil, []ProfileStatus{{Obj: sp, Status: desired}}, krt.WithStop(stop))
+	q := NewQueue(fp, col)
+	go q.Run(stop)
+
+	sc := &status.StatusCollections{}
+	Register(sc, col, revisions.NewTagWatcher(kube.NewFakeClient(), "", "istio-system"))
+	sc.SetQueue(q)
+
+	// Everything we own already matches; the foreign condition is not ours to
+	// reconcile, so no write may happen.
+	assert.Consistently(t, fp.count, 0, 100*time.Millisecond)
+}
+
 func TestRegisterWritesWhenStatusDiffers(t *testing.T) {
 	stop := test.NewStop(t)
 	fp := &fakePatcher{}
