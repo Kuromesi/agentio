@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -146,7 +147,7 @@ func TestQueueTreats404AsSuccess(t *testing.T) {
 
 	// Exactly one attempt; no retries.
 	assert.EventuallyEqual(t, fp.count, 1)
-	assert.Equal(t, fp.count(), 1)
+	assert.Consistently(t, fp.count, 1, 100*time.Millisecond)
 }
 
 // 403 will not heal on its own; retrying five times only spams the log.
@@ -157,7 +158,7 @@ func TestQueueDoesNotRetryForbidden(t *testing.T) {
 	q.EnqueueStatusUpdateResource(nil, resourceFor("ns-a", "sp"))
 
 	assert.EventuallyEqual(t, fp.count, 1)
-	assert.Equal(t, fp.count(), 1)
+	assert.Consistently(t, fp.count, 1, 100*time.Millisecond)
 }
 
 // A conflict is transient and must be retried.
@@ -243,5 +244,5 @@ func TestUnsetQueueStopsWrites(t *testing.T) {
 	col.UpdateObject(ProfileStatus{Obj: sp2, Status: BuildStatus(sp2, nil, nil)})
 
 	// No further writes after the handler was unregistered.
-	assert.Equal(t, fp.count(), before)
+	assert.Consistently(t, fp.count, before, 100*time.Millisecond)
 }
