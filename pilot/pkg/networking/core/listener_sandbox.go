@@ -20,12 +20,10 @@ import (
 	"time"
 
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
-	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbacconfig "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	dfp "github.com/envoyproxy/go-control-plane/envoy/extensions/common/dynamic_forward_proxy/v3"
 	ratelimitv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/ratelimit/v3"
 	sfsvalue "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
@@ -66,6 +64,7 @@ const (
 	forwardHttpFilterChain  = "forward-http"
 	forwardTcpFilterChain   = "forward-tcp"
 	tlsTerminateFilterChain = "tls-terminate"
+	httpForwardCluster      = "http_dynamic_forward_proxy"
 	tlsOriginateCluster     = "tls_connect_originate"
 	// agentioDFPCacheName is the dynamic_forward_proxy DNS cache name shared by
 	// the HTTP filter in buildWaypointInboundHTTPFilters and the upstream
@@ -274,7 +273,7 @@ func buildSNIHostMatchRBACFilter() *hcm.HttpFilter {
 	}
 }
 
-func (lb *ListenerBuilder) buildMainForwardFilters(cluster string, inner bool) []*listener.FilterChain {
+func (lb *ListenerBuilder) buildMainForwardFilters(httpCluster, tcpCluster string, inner bool) []*listener.FilterChain {
 	// The inner main_forward HCM (called with inner=true) sits one hop after the
 	// tls-terminate chain. It therefore needs both: (1) :scheme rewritten back to
 	// https since the inner request is plaintext; (2) downstream h2 codec enabled
@@ -291,7 +290,7 @@ func (lb *ListenerBuilder) buildMainForwardFilters(cluster string, inner bool) [
 	catchallHTTP := &listener.FilterChain{
 		Name: forwardHttpFilterChain,
 		Filters: lb.buildWaypointInboundHTTPFilters(nil, inboundChainConfig{
-			clusterName: cluster,
+			clusterName: httpCluster,
 			port: model.ServiceInstancePort{
 				ServicePort: &model.Port{
 					Name:     "unknown",
@@ -309,7 +308,7 @@ func (lb *ListenerBuilder) buildMainForwardFilters(cluster string, inner bool) [
 	catchallTCP := &listener.FilterChain{
 		Name: forwardTcpFilterChain,
 		Filters: lb.buildWaypointNetworkFilters(nil, inboundChainConfig{
-			clusterName: cluster,
+			clusterName: tcpCluster,
 			port: model.ServiceInstancePort{
 				ServicePort: &model.Port{
 					Name:     "unknown",
@@ -391,7 +390,7 @@ func (lb *ListenerBuilder) buildTlsTerminateFilterChain(connPool *extensions.Con
 // buildMainForwardListener builds an internal listener for sandbox catchall traffic.
 // It performs protocol sniffing: HTTP traffic goes to the HTTP filter chain,
 // everything else (on_no_match) goes to the TCP filter chain.
-// Both chains route to PassthroughCluster.
+// Both chains route to the TLS-origination DFP cluster.
 func (lb *ListenerBuilder) buildMainForwardListener() *listener.Listener {
 	l := &listener.Listener{
 		Name:              MainForwardName,
@@ -402,7 +401,7 @@ func (lb *ListenerBuilder) buildMainForwardListener() *listener.Listener {
 			xdsfilters.HTTPInspector,
 		},
 		TrafficDirection: core.TrafficDirection_INBOUND,
-		FilterChains:     lb.buildMainForwardFilters(tlsOriginateCluster, true),
+		FilterChains:     lb.buildMainForwardFilters(tlsOriginateCluster, tlsOriginateCluster, true),
 		FilterChainMatcher: match.ToMatcher(match.NewTransportProtocol(match.TransportProtocolMatch{
 			TLS: match.ToChain(forwardTcpFilterChain),
 			Other: match.NewAppProtocol(match.ProtocolMatch{
@@ -508,7 +507,7 @@ func applySandboxInternalChains(
 		return chains
 	}
 	// catchall-main-forward: forwards unmatched traffic to the main_forward internal listener.
-	chains = append(chains, lb.buildMainForwardFilters(util.PassthroughCluster, false)...)
+	chains = append(chains, lb.buildMainForwardFilters(httpForwardCluster, util.PassthroughCluster, false)...)
 
 	target := deepestOnNoMatchTarget(primaryMatcher)
 	protocolFallback := buildSandboxProtocolMatcher()
@@ -533,10 +532,7 @@ func buildSandboxDFPFilter() *hcm.HttpFilter {
 		Name: "envoy.filters.http.dynamic_forward_proxy",
 		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&dfphttp.FilterConfig{
 			ImplementationSpecifier: &dfphttp.FilterConfig_DnsCacheConfig{
-				DnsCacheConfig: &dfp.DnsCacheConfig{
-					Name:            agentioDFPCacheName,
-					DnsLookupFamily: cluster.Cluster_AUTO,
-				},
+				DnsCacheConfig: sandboxDFPDNSCacheConfig(),
 			},
 		})},
 	}
