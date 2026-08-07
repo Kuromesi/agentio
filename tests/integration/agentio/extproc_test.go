@@ -18,6 +18,8 @@ package agentio
 
 import (
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -149,11 +151,21 @@ data:
 			ctx.NewSubTest("grpc traffic").
 				Run(func(ctx framework.TestContext) {
 					retry.UntilSuccessOrFail(ctx, func() error {
+						// The catch-all DFP path derives the upstream port from
+						// :authority. Echo defaults the Host header to the FQDN
+						// without a port, which DFP resolves to the scheme default
+						// (80) and misroutes gRPC. Carry the service port in the
+						// authority so the request reaches the gRPC workload port.
+						headers := http.Header{}
+						headers.Set("Host", net.JoinHostPort(dst.Config().ClusterLocalFQDN(), "7070"))
 						_, err := src.Call(echo.CallOptions{
 							To: dst,
 							Port: echo.Port{
 								Name:     "grpc",
 								Protocol: protocol.GRPC,
+							},
+							HTTP: echo.HTTP{
+								Headers: headers,
 							},
 							Check: check.OK(),
 						})
@@ -167,13 +179,19 @@ data:
 			ctx.NewSubTest("http2 (h2c) traffic").
 				Run(func(ctx framework.TestContext) {
 					retry.UntilSuccessOrFail(ctx, func() error {
+						// Same authority requirement as grpc traffic above: the
+						// service port must be present in :authority or the DFP
+						// path resolves the scheme default (80) instead of 85.
+						headers := http.Header{}
+						headers.Set("Host", net.JoinHostPort(dst.Config().ClusterLocalFQDN(), "85"))
 						_, err := src.Call(echo.CallOptions{
 							To: dst,
 							Port: echo.Port{
 								Name: "http2",
 							},
 							HTTP: echo.HTTP{
-								HTTP2: true,
+								HTTP2:   true,
+								Headers: headers,
 							},
 							Check: check.OK(),
 						})
