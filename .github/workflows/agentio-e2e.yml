@@ -3,16 +3,28 @@ name: agentio-e2e
 # KinD-based end-to-end tests for the Agentio data plane.
 #
 # Agentio control-plane, CNI, and test components are built from this checkout.
-# The patched ztunnel source and closed-source proxy image are pinned by
-# agentio.deps. All images are pushed only to the KinD-local registry.
-# Set the repository variable PROXY_SOURCE_IMAGE to the proxy repository without
-# a tag or digest; the immutable digest remains in agentio.deps.
+# The patched ztunnel source and the proxy image are pinned by agentio.deps.
+# All images are pushed only to the KinD-local registry.
+#
+# The proxy is pulled from the public Docker Hub mirror that agentio-release.yml
+# publishes, so this workflow needs no registry credentials and runs unchanged on
+# pull requests from forks. Bumping PROXY_IMAGE_DIGEST ahead of a release makes
+# the mirror lag the pin and turns this workflow red until the release lands.
 #
 # Failures are intentional signal: registry access and cluster setup are part of
 # the end-to-end contract and must not be reported as a successful check.
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "logo/**"
+      - "releasenotes/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs-lint.yml"
   push:
     branches:
       - master
@@ -28,6 +40,12 @@ on:
 
 permissions:
   contents: read
+
+# Drop superseded pull request runs, but let every branch run finish so each
+# merged commit reports an end-to-end result.
+concurrency:
+  group: agentio-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-ztunnel:
@@ -58,7 +76,20 @@ jobs:
           echo "repository=$repository" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      # ZTUNNEL_REPO_SHA only moves through the nightly sync-ztunnel-deps pull
+      # request, so pull requests restore the binary that the last push run on
+      # master or on their base branch built instead of rebuilding it. Pull
+      # request runs cannot seed this cache for other pull requests; the push
+      # runs on master and release-* do that.
+      - name: Restore pinned ztunnel binary
+        id: ztunnel-cache
+        uses: actions/cache@v6
+        with:
+          path: ztunnel-artifact/ztunnel
+          key: agentio-e2e-ztunnel-amd64-${{ steps.ztunnel.outputs.sha }}
+
       - name: Checkout ztunnel
+        if: steps.ztunnel-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v5
         with:
           repository: ${{ steps.ztunnel.outputs.repository }}
@@ -67,14 +98,18 @@ jobs:
           persist-credentials: false
 
       - name: Build ztunnel
+        if: steps.ztunnel-cache.outputs.cache-hit != 'true'
         working-directory: ztunnel-src
         run: ./common/scripts/run.sh cargo build --locked --release
 
-      - name: Verify ztunnel architecture
+      - name: Stage ztunnel binary
+        if: steps.ztunnel-cache.outputs.cache-hit != 'true'
         run: |
-          binary=ztunnel-src/out/rust/release/ztunnel
-          file "$binary" | grep -F x86-64
-          install -D -m 0755 "$binary" ztunnel-artifact/ztunnel
+          install -D -m 0755 ztunnel-src/out/rust/release/ztunnel ztunnel-artifact/ztunnel
+
+      # A restored cache is untrusted input, so this also guards the cache hit.
+      - name: Verify ztunnel architecture
+        run: file ztunnel-artifact/ztunnel | grep -F x86-64
 
       - name: Upload ztunnel binary
         uses: actions/upload-artifact@v6
@@ -119,7 +154,11 @@ jobs:
       - name: Run agentio e2e scenarios (KinD)
         env:
           ARTIFACTS: ${{ runner.temp }}/agentio-e2e-artifacts
-          AGENTIO_E2E_PROXY_IMAGE: ${{ vars.PROXY_SOURCE_IMAGE }}
+          # agentio-release.yml mirrors the pinned proxy here with crane copy,
+          # which preserves the manifest digest, so the PROXY_IMAGE_DIGEST in
+          # agentio.deps resolves against this public repository without
+          # credentials.
+          AGENTIO_E2E_PROXY_IMAGE: docker.io/openkruise/proxyv2
           AGENTIO_E2E_ZTUNNEL_BINARY: ${{ runner.temp }}/agentio-e2e-ztunnel/ztunnel
           AGENTIO_E2E_ZTUNNEL_VERSION: ${{ needs.build-ztunnel.outputs.sha }}
         run: prow/integ-suite-agentio-kind.sh
