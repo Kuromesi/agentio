@@ -60,6 +60,7 @@ var GetMainForwardCluster = func() *cluster.Cluster {
 func sandboxClusters(cb *ClusterBuilder) []*cluster.Cluster {
 	return []*cluster.Cluster{
 		buildSandboxPassthroughCluster(cb),
+		buildDefaultHTTPForwardCluster(cb),
 		buildDefaultTLSConnectOriginateCluster(cb),
 		GetMainForwardCluster(),
 	}
@@ -83,12 +84,16 @@ func buildSandboxPassthroughCluster(cb *ClusterBuilder) *cluster.Cluster {
 	return c
 }
 
-// buildDefaultTLSConnectOriginateCluster builds a dynamic forward proxy cluster for
-// the catchall-tls filter chain. Resolves SNI hostnames via DNS and originates TLS
-// connections to upstream services.
-func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
+func sandboxDFPDNSCacheConfig() *dfpcommon.DnsCacheConfig {
+	return &dfpcommon.DnsCacheConfig{
+		Name:            agentioDFPCacheName,
+		DnsLookupFamily: cluster.Cluster_V4_ONLY,
+	}
+}
+
+func buildSandboxDFPCluster(cb *ClusterBuilder, name string, allowInsecureClusterOptions bool) *cluster.Cluster {
 	c := &cluster.Cluster{
-		Name:            tlsOriginateCluster,
+		Name:            name,
 		LbPolicy:        cluster.Cluster_CLUSTER_PROVIDED,
 		ConnectTimeout:  cb.req.Push.Mesh.ConnectTimeout,
 		CircuitBreakers: &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{getDefaultCircuitBreakerThresholds()}},
@@ -97,52 +102,71 @@ func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster
 				Name: "envoy.clusters.dynamic_forward_proxy",
 				TypedConfig: protoconv.MessageToAny(&dfpcluster.ClusterConfig{
 					ClusterImplementationSpecifier: &dfpcluster.ClusterConfig_DnsCacheConfig{
-						DnsCacheConfig: &dfpcommon.DnsCacheConfig{
-							Name:            agentioDFPCacheName,
-							DnsLookupFamily: cluster.Cluster_AUTO,
-						},
+						DnsCacheConfig: sandboxDFPDNSCacheConfig(),
 					},
+					AllowInsecureClusterOptions: allowInsecureClusterOptions,
 				}),
 			},
 		},
-		TypedExtensionProtocolOptions: map[string]*anypb.Any{
-			v3.HttpProtocolOptionsType: protoconv.MessageToAny(&httpupstream.HttpProtocolOptions{
-				CommonHttpProtocolOptions: &core.HttpProtocolOptions{
-					IdleTimeout: durationpb.New(5 * time.Minute),
+	}
+	c.AltStatName = util.DelimitedStatsPrefix(name)
+	return c
+}
+
+// buildDefaultHTTPForwardCluster builds the cleartext dynamic forward proxy
+// cluster used by catch-all HTTP. The DFP filter and this cluster share one DNS
+// cache, so the Host authorized by ext_proc selects the actual upstream address.
+func buildDefaultHTTPForwardCluster(cb *ClusterBuilder) *cluster.Cluster {
+	// Envoy requires this opt-out when a DFP cluster intentionally has no
+	// upstream TLS context and therefore no auto-SNI/SAN validation.
+	c := buildSandboxDFPCluster(cb, httpForwardCluster, true)
+	c.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+		v3.HttpProtocolOptionsType: passthroughHttpProtocolOptions,
+	}
+	return c
+}
+
+// buildDefaultTLSConnectOriginateCluster builds a dynamic forward proxy cluster for
+// the catchall-tls filter chain. Resolves SNI hostnames via DNS and originates TLS
+// connections to upstream services.
+func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
+	c := buildSandboxDFPCluster(cb, tlsOriginateCluster, false)
+	c.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+		v3.HttpProtocolOptionsType: protoconv.MessageToAny(&httpupstream.HttpProtocolOptions{
+			CommonHttpProtocolOptions: &core.HttpProtocolOptions{
+				IdleTimeout: durationpb.New(5 * time.Minute),
+			},
+			UpstreamHttpProtocolOptions: &core.UpstreamHttpProtocolOptions{
+				AutoSni:           true,
+				AutoSanValidation: true,
+			},
+			UpstreamProtocolOptions: &httpupstream.HttpProtocolOptions_AutoConfig{
+				AutoConfig: &httpupstream.HttpProtocolOptions_AutoHttpConfig{
+					HttpProtocolOptions:  &core.Http1ProtocolOptions{},
+					Http2ProtocolOptions: http2ProtocolOptions(),
 				},
-				UpstreamHttpProtocolOptions: &core.UpstreamHttpProtocolOptions{
-					AutoSni:           true,
-					AutoSanValidation: true,
+			},
+		}),
+	}
+	c.TransportSocket = &core.TransportSocket{
+		Name: wellknown.TransportSocketTLS,
+		ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: protoconv.MessageToAny(&tlsv3.UpstreamTlsContext{
+			CommonTlsContext: &tlsv3.CommonTlsContext{
+				TlsParams: &tlsv3.TlsParameters{
+					TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
 				},
-				UpstreamProtocolOptions: &httpupstream.HttpProtocolOptions_AutoConfig{
-					AutoConfig: &httpupstream.HttpProtocolOptions_AutoHttpConfig{
-						HttpProtocolOptions:  &core.Http1ProtocolOptions{},
-						Http2ProtocolOptions: http2ProtocolOptions(),
-					},
-				},
-			}),
-		},
-		TransportSocket: &core.TransportSocket{
-			Name: wellknown.TransportSocketTLS,
-			ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: protoconv.MessageToAny(&tlsv3.UpstreamTlsContext{
-				CommonTlsContext: &tlsv3.CommonTlsContext{
-					TlsParams: &tlsv3.TlsParameters{
-						TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
-					},
-					ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
-						ValidationContext: &tlsv3.CertificateValidationContext{
-							TrustedCa: &core.DataSource{
-								Specifier: &core.DataSource_Filename{
-									Filename: security.GetOSRootFilePath(),
-								},
+				ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
+					ValidationContext: &tlsv3.CertificateValidationContext{
+						TrustedCa: &core.DataSource{
+							Specifier: &core.DataSource_Filename{
+								Filename: security.GetOSRootFilePath(),
 							},
 						},
 					},
-					AlpnProtocols: util.ALPNHttp,
 				},
-			})},
-		},
+				AlpnProtocols: util.ALPNHttp,
+			},
+		})},
 	}
-	c.AltStatName = util.DelimitedStatsPrefix(tlsOriginateCluster)
 	return c
 }

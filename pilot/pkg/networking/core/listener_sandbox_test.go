@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
@@ -32,6 +33,7 @@ import (
 	"istio.io/istio/pkg/config/xds"
 	"istio.io/istio/pkg/spiffe"
 	"istio.io/istio/pkg/test/util/assert"
+	"istio.io/istio/pkg/wellknown"
 )
 
 func sandboxEgressNode() *model.Proxy {
@@ -130,6 +132,92 @@ func testInboundChainConfig(clusterName string) inboundChainConfig {
 				Port:     8080,
 			},
 		},
+	}
+}
+
+func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestination(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+
+	chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+	if len(chains) != 2 {
+		t.Fatalf("catch-all chains = %d, want HTTP and TCP chains", len(chains))
+	}
+
+	httpConfig := &hcm.HttpConnectionManager{}
+	if err := chains[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(httpConfig); err != nil {
+		t.Fatalf("decode HTTP connection manager: %v", err)
+	}
+	httpRoutes := httpConfig.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
+	if got, want := httpRoutes[0].GetRoute().GetCluster(), "http_dynamic_forward_proxy"; got != want {
+		t.Fatalf("HTTP route cluster = %q, want %q", got, want)
+	}
+
+	var tcpConfig *tcp.TcpProxy
+	for _, filter := range chains[1].GetFilters() {
+		if filter.GetName() != wellknown.TCPProxy {
+			continue
+		}
+		tcpConfig = &tcp.TcpProxy{}
+		if err := filter.GetTypedConfig().UnmarshalTo(tcpConfig); err != nil {
+			t.Fatalf("decode TCP proxy: %v", err)
+		}
+		break
+	}
+	if tcpConfig == nil {
+		t.Fatal("TCP proxy filter not found")
+	}
+	if got, want := tcpConfig.GetCluster(), "PassthroughCluster"; got != want {
+		t.Fatalf("TCP route cluster = %q, want %q", got, want)
+	}
+}
+
+func TestBuildWaypointInboundHTTPRouteConfig_SandboxUnboundRespectsConfiguredCluster(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+	cc := testInboundChainConfig(EncapClusterName)
+
+	routeConfig := buildWaypointInboundHTTPRouteConfig(lb, nil, cc)
+	route := routeConfig.GetVirtualHosts()[0].GetRoutes()[0]
+	if got := route.GetRoute().GetCluster(); got != EncapClusterName {
+		t.Fatalf("unbound HTTP route cluster = %q, want configured %q", got, EncapClusterName)
+	}
+}
+
+func TestBuildWaypointInboundHTTPRouteConfig_SandboxServicePreservesServiceRoute(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+	const serviceCluster = "inbound-vip|http|service.default.svc.cluster.local"
+	cc := testInboundChainConfig(serviceCluster)
+	svc := &model.Service{
+		Hostname: "service.default.svc.cluster.local",
+		Attributes: model.ServiceAttributes{
+			Name:      "service",
+			Namespace: "default",
+		},
+	}
+
+	routeConfig := buildWaypointInboundHTTPRouteConfig(lb, svc, cc)
+	checked := 0
+	for _, virtualHost := range routeConfig.GetVirtualHosts() {
+		for _, route := range virtualHost.GetRoutes() {
+			checked++
+			if got := route.GetRoute().GetCluster(); got != serviceCluster {
+				t.Fatalf("sandbox service HTTP route cluster = %q, want %q", got, serviceCluster)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("sandbox service HTTP route config contains no routes")
 	}
 }
 
