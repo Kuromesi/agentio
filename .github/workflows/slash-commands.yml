@@ -12,10 +12,16 @@ permissions:
 
 jobs:
   handle:
-    # Only run on PR comments that start with /
+    # Prow (kruise-bot) owns the slash command namespace on this repository and
+    # answers /approve, /lgtm, /hold and the rest. Wake only for the commands
+    # implemented below so this workflow never reports a Prow command as
+    # unknown; anything else is silently left to Prow.
     if: |
       github.event.issue.pull_request != null &&
-      startsWith(github.event.comment.body, '/')
+      (startsWith(github.event.comment.body, '/retest') ||
+      startsWith(github.event.comment.body, '/assign') ||
+      startsWith(github.event.comment.body, '/close') ||
+      startsWith(github.event.comment.body, '/reopen'))
     runs-on: ubuntu-latest
     env:
       GH_REPO: ${{ github.repository }}
@@ -133,23 +139,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HAS_WRITE: ${{ steps.parse.outputs.has_write }}
-          PR_NUM: ${{ steps.parse.outputs.pr_num }}
-
-      - name: Unknown command
-        if: |
-          steps.parse.outputs.cmd != 'retest' &&
-          steps.parse.outputs.cmd != 'assign' &&
-          steps.parse.outputs.cmd != 'close' &&
-          steps.parse.outputs.cmd != 'reopen'
-        run: |
-          gh pr comment "$PR_NUM" \
-            --body "❓ Unknown command \`/$CMD\`.
-
-          Available commands:
-          - \`/retest\` — re-run failed CI
-          - \`/assign @user\` — assign reviewer
-          - \`/close\` / \`/reopen\` — close/reopen PR"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CMD: ${{ steps.parse.outputs.cmd }}
           PR_NUM: ${{ steps.parse.outputs.pr_num }}
