@@ -18,11 +18,19 @@ metadata:
     {{- include "agentio.commonLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["agents.kruise.io"]
-    resources: ["securityprofiles"]
+    resources: ["securityprofiles", "globalsecurityprofiles"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["agents.kruise.io"]
-    resources: ["securityprofiles/status"]
+    resources: ["securityprofiles/status", "globalsecurityprofiles/status"]
     verbs: ["get"]
+  # The profile collections are delayed informers, so the process starts a CRD
+  # watcher to learn when the profile CRDs appear (cmd/epe/main.go). Without this
+  # rule that watcher never syncs, both profile informers block, and the process
+  # exits on "Kube client cache sync interrupted" — a CrashLoopBackOff, not a
+  # degraded mode.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "watch"]

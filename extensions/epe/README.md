@@ -80,4 +80,6 @@ The complete Agentio KinD E2E package and scenario matrix can be run with:
 make test.e2e.agentio
 ```
 
-This product-level validation exercises EPE through the ext-proc E2E tests in `tests/integration/agentio` alongside the other Agentio E2E packages and scenarios.
+That suite validates the mesh side of the ext_proc contract — `tests/integration/agentio/extproc_test.go` deploys the stub server from `pkg/test/extproc` (`testdata/ext-proc.yaml:31`) and asserts Envoy is configured to call it. It does not run the `agentio-epe` image, and no scenario sets `epe.enabled=true`; the KinD build list includes `docker.agentio-epe` only so image build regressions surface on presubmit.
+
+EPE's own behavior is covered in-process by the `enginetest` harness, which drives the real `extproc.Server.Process` loop and the production filter chain over a fake Envoy stream (`pkg/testing/enginetest/doc.go`). The boundaries that harness names as out-of-scope — Envoy-authenticated attributes, egress TLS termination, apiserver/CRD deployment consistency, krt watch propagation, cross-pod webhook delivery — have no KinD coverage today.
