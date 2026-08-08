@@ -65,7 +65,14 @@ go test -race -count=1 ./extensions/epe/...
 go build ./extensions/epe/cmd/epe
 ```
 
-The container image is defined by `extensions/epe/docker/Dockerfile`, which expects the `epe` binary under `<TARGETARCH>/`.
+The container image is `agentio-epe`, defined by `extensions/epe/docker/Dockerfile` and registered in `tools/docker.yaml`:
+
+```bash
+make docker.agentio-epe
+DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 make docker.agentio-epe
+```
+
+The Dockerfile expects the `epe` binary under `<TARGETARCH>/`; the docker builder supplies that layout by running `${TARGET_OUT_LINUX}/epe` once per requested architecture, so a multi-architecture build needs no arch-specific wiring beyond `EXTENSION_BINARIES` in `Makefile.core.mk`. The release pipeline builds `linux/amd64,linux/arm64` and publishes the image under the Agentio release version.
 
 The complete Agentio KinD E2E package and scenario matrix can be run with:
 

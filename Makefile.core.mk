@@ -223,7 +223,12 @@ CNI_BINARIES:=./cni/cmd/istio-cni \
 LINUX_AGENT_BINARIES:=$(CNI_BINARIES) \
   $(AGENT_BINARIES)
 
-BINARIES:=$(STANDARD_BINARIES) $(AGENT_BINARIES) $(LINUX_AGENT_BINARIES)
+# Agentio traffic extensions. These are separate deployables that ship as their own
+# images, so they are grouped apart from the mesh binaries above. They build with
+# STANDARD_TAGS: like pilot-discovery, they need XDS and k8s.
+EXTENSION_BINARIES:=./extensions/epe/cmd/epe
+
+BINARIES:=$(STANDARD_BINARIES) $(AGENT_BINARIES) $(LINUX_AGENT_BINARIES) $(EXTENSION_BINARIES)
 
 # List of binaries that have their size tested
 RELEASE_SIZE_TEST_BINARIES:=pilot-discovery pilot-agent istioctl envoy ztunnel client server
@@ -241,6 +246,7 @@ STANDARD_TAGS=vtprotobuf,disable_pgv
 build: depend ## Builds all go binaries.
 	GOOS=$(GOOS_LOCAL) GOARCH=$(GOARCH_LOCAL) LDFLAGS=$(RELEASE_LDFLAGS) bin/retry.sh "$(GO_FETCH_RETRY)" common/scripts/gobuild.sh $(TARGET_OUT)/ -tags=$(STANDARD_TAGS) $(STANDARD_BINARIES)
 	GOOS=$(GOOS_LOCAL) GOARCH=$(GOARCH_LOCAL) LDFLAGS=$(RELEASE_LDFLAGS) bin/retry.sh "$(GO_FETCH_RETRY)" common/scripts/gobuild.sh $(TARGET_OUT)/ -tags=$(AGENT_TAGS) $(AGENT_BINARIES)
+	GOOS=$(GOOS_LOCAL) GOARCH=$(GOARCH_LOCAL) LDFLAGS=$(RELEASE_LDFLAGS) bin/retry.sh "$(GO_FETCH_RETRY)" common/scripts/gobuild.sh $(TARGET_OUT)/ -tags=$(STANDARD_TAGS) $(EXTENSION_BINARIES)
 
 # The build-linux target is responsible for building binaries used within containers.
 # This target should be expanded upon as we add more Linux architectures: i.e. build-arm64.
@@ -250,6 +256,7 @@ build: depend ## Builds all go binaries.
 build-linux: depend
 	GOOS=linux GOARCH=$(GOARCH_LOCAL) LDFLAGS=$(RELEASE_LDFLAGS) bin/retry.sh "$(GO_FETCH_RETRY)" common/scripts/gobuild.sh $(TARGET_OUT_LINUX)/ -tags=$(STANDARD_TAGS) $(STANDARD_BINARIES)
 	GOOS=linux GOARCH=$(GOARCH_LOCAL) LDFLAGS=$(RELEASE_LDFLAGS) bin/retry.sh "$(GO_FETCH_RETRY)" common/scripts/gobuild.sh $(TARGET_OUT_LINUX)/ -tags=$(AGENT_TAGS) $(LINUX_AGENT_BINARIES)
+	GOOS=linux GOARCH=$(GOARCH_LOCAL) LDFLAGS=$(RELEASE_LDFLAGS) bin/retry.sh "$(GO_FETCH_RETRY)" common/scripts/gobuild.sh $(TARGET_OUT_LINUX)/ -tags=$(STANDARD_TAGS) $(EXTENSION_BINARIES)
 
 .PHONY: build-cni
 build-cni: depend
@@ -273,6 +280,7 @@ endef
 
 $(foreach bin,$(STANDARD_BINARIES),$(eval $(call build-linux,$(bin),$(STANDARD_TAGS))))
 $(foreach bin,$(LINUX_AGENT_BINARIES),$(eval $(call build-linux,$(bin),$(AGENT_TAGS))))
+$(foreach bin,$(EXTENSION_BINARIES),$(eval $(call build-linux,$(bin),$(STANDARD_TAGS))))
 
 # Create helper targets for each binary, like "pilot-discovery"
 # As an optimization, these still build everything
