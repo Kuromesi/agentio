@@ -49,7 +49,7 @@ require (
 	github.com/mitchellh/copystructure v1.2.0
 	github.com/moby/buildkit v0.31.0
 	github.com/onsi/gomega v1.42.0
-	github.com/openkruise/agents-api v0.4.0-alpha2.0.20260708105003-23b3956a19ac
+	github.com/openkruise/agents-api v0.4.0-alpha3.0.20260807095135-f68384ece8b6
 	github.com/openshift/api v0.0.0-20250806102053-6a7223edb2fc
 	github.com/pires/go-proxyproto v0.12.0
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240409071808-615f978279ca
@@ -172,6 +172,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lestrrat-go/backoff/v2 v2.0.8 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.3 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect

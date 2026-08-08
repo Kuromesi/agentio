@@ -1,20 +1,20 @@
-{{- if .Values.trafficExtension.enabled }}
+{{- if .Values.epe.enabled }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ .Values.trafficExtension.name }}
+  name: {{ .Values.epe.name }}
   namespace: {{ include "agentio.namespace" . }}
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ .Values.trafficExtension.name }}-role
+  name: {{ .Values.epe.name }}-role
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["agents.kruise.io"]
@@ -23,38 +23,41 @@ rules:
   - apiGroups: ["agents.kruise.io"]
     resources: ["securityprofiles/status"]
     verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ .Values.trafficExtension.name }}-rolebinding
+  name: {{ .Values.epe.name }}-rolebinding
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ .Values.trafficExtension.name }}-role
+  name: {{ .Values.epe.name }}-role
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.trafficExtension.name }}
+    name: {{ .Values.epe.name }}
     namespace: {{ include "agentio.namespace" . }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.trafficExtension.name }}
+  name: {{ .Values.epe.name }}
   namespace: {{ include "agentio.namespace" . }}
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
     app.kubernetes.io/component: extproc
 spec:
   clusterIP: None
   ports:
     - name: extproc
-      port: {{ .Values.trafficExtension.port }}
-      targetPort: {{ .Values.trafficExtension.port }}
+      port: {{ .Values.epe.port }}
+      targetPort: {{ .Values.epe.port }}
       protocol: TCP
     - name: health
       port: 9003
@@ -65,64 +68,58 @@ spec:
       targetPort: 9090
       protocol: TCP
   selector:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.trafficExtension.name }}
+  name: {{ .Values.epe.name }}
   namespace: {{ include "agentio.namespace" . }}
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
 spec:
-  {{- if not .Values.trafficExtension.autoscaling.enabled }}
-  replicas: {{ .Values.trafficExtension.replicas | default 1 }}
+  {{- if not .Values.epe.autoscaling.enabled }}
+  replicas: {{ .Values.epe.replicas | default 1 }}
   {{- end }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+      app.kubernetes.io/name: {{ .Values.epe.name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+        app.kubernetes.io/name: {{ .Values.epe.name }}
       annotations:
         sidecar.istio.io/inject: "false"
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
     spec:
-      serviceAccountName: {{ .Values.trafficExtension.name }}
+      serviceAccountName: {{ .Values.epe.name }}
       containers:
-        - name: {{ .Values.trafficExtension.name }}
-          image: {{ include "agentio.image" (dict "hub" .Values.trafficExtension.image.hub "name" .Values.trafficExtension.image.name "tag" .Values.trafficExtension.image.tag "globalHub" .Values.global.hub) }}
+        - name: {{ .Values.epe.name }}
+          image: {{ include "agentio.image" (dict "hub" .Values.epe.image.hub "name" .Values.epe.image.name "tag" .Values.epe.image.tag "globalHub" .Values.global.hub) }}
           imagePullPolicy: IfNotPresent
           args:
-            - -grpc-port={{ .Values.trafficExtension.port }}
+            - -grpc-port={{ .Values.epe.port }}
             - -grpc-health-port=9003
             - -metrics-port=9090
           env:
             - name: IDENTITY_PROVIDER_URL
-              value: {{ .Values.trafficExtension.identityProviderUrl | quote }}
-            - name: DEFAULT_SANDBOX_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.trafficExtension.name }}-default-token
-                  key: token
-                  optional: true
+              value: {{ .Values.epe.identityProviderUrl | quote }}
             - name: TOKEN_CACHE_TTL
               value: "3h"
             - name: TOKEN_CACHE_MAX_SIZE
               value: "10000"
-            {{- range $key, $val := .Values.trafficExtension.env }}
+            {{- range $key, $val := .Values.epe.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
           volumeMounts:
             - name: mtls-certs
-              mountPath: /etc/zeus/mtls
+              mountPath: /etc/epe/mtls
               readOnly: true
           ports:
-            - containerPort: {{ .Values.trafficExtension.port }}
+            - containerPort: {{ .Values.epe.port }}
               name: extproc
               protocol: TCP
             - containerPort: 9003
@@ -142,8 +139,8 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 5
           resources:
-            {{- if .Values.trafficExtension.resources }}
-            {{- toYaml .Values.trafficExtension.resources | nindent 12 }}
+            {{- if .Values.epe.resources }}
+            {{- toYaml .Values.epe.resources | nindent 12 }}
             {{- else }}
             requests:
               cpu: "2"
@@ -155,71 +152,71 @@ spec:
       volumes:
         - name: mtls-certs
           secret:
-            secretName: {{ .Values.trafficExtension.name }}-mtls-client-cert
+            secretName: {{ .Values.epe.name }}-mtls-client-cert
             optional: true
-      {{- with .Values.trafficExtension.nodeSelector }}
+      {{- with .Values.epe.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.trafficExtension.tolerations }}
+      {{- with .Values.epe.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.trafficExtension.affinity }}
+      {{- with .Values.epe.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-{{- if .Values.trafficExtension.autoscaling.enabled }}
+{{- if .Values.epe.autoscaling.enabled }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ .Values.trafficExtension.name }}
+  name: {{ .Values.epe.name }}
   namespace: {{ include "agentio.namespace" . }}
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
 spec:
-  maxReplicas: {{ .Values.trafficExtension.autoscaling.maxReplicas | default 5 }}
-  minReplicas: {{ .Values.trafficExtension.autoscaling.minReplicas | default 2 }}
+  maxReplicas: {{ .Values.epe.autoscaling.maxReplicas | default 5 }}
+  minReplicas: {{ .Values.epe.autoscaling.minReplicas | default 2 }}
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ .Values.trafficExtension.name }}
+    name: {{ .Values.epe.name }}
   metrics:
-  {{- if .Values.trafficExtension.autoscaling.targetCPUUtilizationPercentage }}
+  {{- if .Values.epe.autoscaling.targetCPUUtilizationPercentage }}
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: {{ .Values.trafficExtension.autoscaling.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ .Values.epe.autoscaling.targetCPUUtilizationPercentage }}
   {{- end }}
-  {{- if .Values.trafficExtension.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- if .Values.epe.autoscaling.targetMemoryUtilizationPercentage }}
   - type: Resource
     resource:
       name: memory
       target:
         type: Utilization
-        averageUtilization: {{ .Values.trafficExtension.autoscaling.targetMemoryUtilizationPercentage }}
+        averageUtilization: {{ .Values.epe.autoscaling.targetMemoryUtilizationPercentage }}
   {{- end }}
-  {{- if .Values.trafficExtension.autoscaling.behavior }}
+  {{- if .Values.epe.autoscaling.behavior }}
   behavior:
-    {{- toYaml .Values.trafficExtension.autoscaling.behavior | nindent 4 }}
+    {{- toYaml .Values.epe.autoscaling.behavior | nindent 4 }}
   {{- end }}
 {{- end }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ .Values.trafficExtension.name }}
+  name: {{ .Values.epe.name }}
   namespace: {{ include "agentio.namespace" . }}
   labels:
-    app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+    app.kubernetes.io/name: {{ .Values.epe.name }}
     {{- include "agentio.commonLabels" . | nindent 4 }}
 spec:
-  minAvailable: {{ .Values.trafficExtension.pdbMinAvailable | default 1 }}
+  minAvailable: {{ .Values.epe.pdbMinAvailable | default 1 }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ .Values.trafficExtension.name }}
+      app.kubernetes.io/name: {{ .Values.epe.name }}
 {{- end }}

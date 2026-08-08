@@ -5,7 +5,7 @@ name: agentio-release
 # ztunnel commit, and creates the GitHub Release last.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
-# traffic-extension remains versioned and published independently.
+# epe (Egress Policy Enforcer, image agentio-epe) remains versioned and published independently.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
@@ -294,7 +294,7 @@ jobs:
           sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
 
           # Pilot, proxy-init, proxy, CNI, and ztunnel follow the Agentio release version.
-          # traffic-extension is independently versioned.
+          # epe (agentio-epe image) is independently versioned.
           sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxy-init/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxyv2/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"

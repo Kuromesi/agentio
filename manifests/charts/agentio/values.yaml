@@ -84,9 +84,9 @@ proxyInit:
     name: proxy-init
     tag: latest
 
-trafficExtension:
+epe:
   enabled: false
-  name: traffic-extension
+  name: agentio-epe
   port: 9002
   env: {}
   # -- Replica count when autoscaling.enabled is false. Ignored when HPA is enabled.
@@ -109,15 +109,15 @@ trafficExtension:
       memory: 2Gi
   image:
     hub: "docker.io/openkruise"
-    name: traffic-extension
+    name: agentio-epe
     tag: latest
-  # -- PDB minAvailable for the traffic extension Deployment.
+  # -- PDB minAvailable for the EPE Deployment.
   pdbMinAvailable: 1
-  # -- Node selector for traffic extension pods.
+  # -- Node selector for EPE pods.
   nodeSelector: { }
-  # -- Tolerations for traffic extension pods.
+  # -- Tolerations for EPE pods.
   tolerations: [ ]
-  # -- Affinity rules for traffic extension pods.
+  # -- Affinity rules for EPE pods.
   affinity: { }
 
 # -- Egress policies applied to agent traffic. Empty by default.

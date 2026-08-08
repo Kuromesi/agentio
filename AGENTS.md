@@ -29,7 +29,7 @@ Repository map (Agentio-relevant paths):
 - `pilot/pkg/serviceregistry/kube/controller/agentio/` — Agentio controllers, policy translation, config sources, extension protobufs, and on-demand certificates.
 - `pilot/pkg/networking/core/` — Envoy cluster, listener, and route generation; Agentio files retain the domain term `sandbox` where appropriate.
 - `pkg/model/`, `pkg/workloadapi/security/` — shared xDS models and workload authorization types.
-- `manifests/charts/agentio/` — Helm chart: control plane, sidecar injection, ambient mode, CRDs, gateways, and optional traffic extension.
+- `manifests/charts/agentio/` — Helm chart: control plane, sidecar injection, ambient mode, CRDs, gateways, and optional EPE (Egress Policy Enforcer) traffic extension.
 - `tests/integration/agentio/` — KinD-based integration and E2E suite.
 - `pilot/docker/Dockerfile.proxy_init` — lightweight init image that programs iptables/nftables rules.
 - `tools/proto/` — protobuf generation, including Agentio extensions.
@@ -75,7 +75,7 @@ Repository map (Agentio-relevant paths):
 
 - The root `VERSION` file is Istio build metadata, not the Agentio product version.
 - Agentio releases are driven by versioned release branches/tags, Chart metadata, and the Agentio release workflows.
-- `pilot`, `proxy-init`, `proxy`, `ztunnel`, traffic extension, and CNI images do not share one build source or release cadence. Check the release workflow and chart values before changing image tags.
+- `pilot`, `proxy-init`, `proxy`, `ztunnel`, EPE, and CNI images do not share one build source or release cadence. Check the release workflow and chart values before changing image tags.
 
 ## Coding Conventions
 

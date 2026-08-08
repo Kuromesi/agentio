@@ -46,7 +46,7 @@
                 <mxCell id="egress-gateway" value="&lt;b&gt;Egress Gateway&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#60a5fa;strokeWidth=2;arcSize=12;fontColor=#1e3a8a;fontSize=15;" parent="1" vertex="1">
                     <mxGeometry x="730" y="305" width="220" height="78" as="geometry"/>
                 </mxCell>
-                <mxCell id="traffic-extension" value="&lt;b&gt;Traffic Extension&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#8b5cf6;strokeWidth=2;arcSize=12;fontColor=#5b21b6;fontSize=15;" parent="1" vertex="1">
+                <mxCell id="agentio-epe" value="&lt;b&gt;EPE&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#8b5cf6;strokeWidth=2;arcSize=12;fontColor=#5b21b6;fontSize=15;" parent="1" vertex="1">
                     <mxGeometry x="730" y="450" width="220" height="72" as="geometry"/>
                 </mxCell>
                 <mxCell id="traffic-junction" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;" parent="1" vertex="1">
@@ -107,14 +107,14 @@
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="gateway-extension" value="Request attributes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;strokeColor=#8b5cf6;strokeWidth=2;endArrow=block;endFill=1;fontColor=#5b21b6;fontSize=12;labelBackgroundColor=#ffffff;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" parent="1" source="egress-gateway" target="traffic-extension" edge="1">
+                <mxCell id="gateway-extension" value="Request attributes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;strokeColor=#8b5cf6;strokeWidth=2;endArrow=block;endFill=1;fontColor=#5b21b6;fontSize=12;labelBackgroundColor=#ffffff;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" parent="1" source="egress-gateway" target="agentio-epe" edge="1">
                     <mxGeometry y="-12" relative="1" as="geometry">
                         <mxPoint as="offset"/>
                         <mxPoint x="800" y="383" as="sourcePoint"/>
                         <mxPoint x="800" y="470" as="targetPoint"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="8" value="Policy enforcement" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;strokeColor=#8b5cf6;strokeWidth=2;endArrow=block;endFill=1;fontColor=#5b21b6;fontSize=12;labelBackgroundColor=#ffffff;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" parent="1" source="traffic-extension" target="egress-gateway" edge="1">
+                <mxCell id="8" value="Policy enforcement" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;strokeColor=#8b5cf6;strokeWidth=2;endArrow=block;endFill=1;fontColor=#5b21b6;fontSize=12;labelBackgroundColor=#ffffff;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" parent="1" source="agentio-epe" target="egress-gateway" edge="1">
                     <mxGeometry y="-12" relative="1" as="geometry">
                         <mxPoint as="offset"/>
                         <mxPoint x="1100" y="497" as="sourcePoint"/>
