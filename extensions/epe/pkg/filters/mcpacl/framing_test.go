@@ -81,26 +81,34 @@ func TestFinalize_FramingViolation_DeniedUnderBlacklist(t *testing.T) {
 	}
 }
 
-// framingViolation is called on partial bodies too, so an incomplete body
-// must never be mistaken for a violation while a genuinely non-compliant
-// prefix must be caught.
-func TestFramingViolation_PartialBody(t *testing.T) {
+// The framing rule is asserted at readBody, the level that decides, rather than
+// against a helper: a batch is refused by the explicit isBatchBody check, and
+// every other violation is refused because json.Unmarshal rejects trailing
+// content after the first document. Both land on statusUnreadable, so this test
+// is what keeps that guarantee from silently disappearing — notably if Unmarshal
+// were ever swapped for a json.Decoder, which does not reject what follows.
+func TestReadBody_Framing(t *testing.T) {
 	tests := []struct {
 		name string
 		body []byte
-		want bool
+		want bodyStatus
 	}{
-		{"top level array from first byte", []byte(`[{"method":"tools/`), true},
-		{"second document begins", []byte(`{"method":"tools/call","params":{"name":"a"}}{`), true},
-		{"truncated single document", []byte(`{"method":"tools/`), false},
-		{"complete single document", []byte(`{"method":"tools/call"}`), false},
-		{"empty", nil, false},
+		{"top level array", []byte(`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"a"}}]`), statusUnreadable},
+		{"top level array truncated", []byte(`[{"method":"tools/`), statusUnreadable},
+		{"second document begins", []byte(`{"method":"tools/call","params":{"name":"a"}}{`), statusUnreadable},
+		{"two complete documents", []byte(`{"method":"tools/call","params":{"name":"a"}}` +
+			`{"method":"tools/call","params":{"name":"b"}}`), statusUnreadable},
+		{"trailing garbage", []byte(`{"jsonrpc":"2.0","method":"initialize","id":1} trailing`), statusUnreadable},
+		{"truncated single document", []byte(`{"method":"tools/`), statusUnreadable},
+		{"complete single document", []byte(`{"method":"tools/call","params":{"name":"a"}}`), statusMessage},
+		{"trailing whitespace is legal", []byte(`{"method":"tools/call","params":{"name":"a"}}` + " \r\n\t"), statusMessage},
+		{"empty", nil, statusAbsent},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := framingViolation(tc.body); got != tc.want {
-				t.Errorf("framingViolation(%q) = %v, want %v", tc.body, got, tc.want)
+			if got := readBody(nil, tc.body).status; got != tc.want {
+				t.Errorf("readBody(%q).status = %v, want %v", tc.body, got, tc.want)
 			}
 		})
 	}

@@ -18,8 +18,6 @@ package mcpacl
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
 )
 
 // mcpProtocolVersionHeader is the HTTP header a Streamable HTTP client MUST send
@@ -232,10 +230,23 @@ func readBody(headers map[string]string, raw []byte) bodyRead {
 	if len(bytes.TrimSpace(body)) == 0 {
 		return bodyRead{status: statusAbsent}
 	}
-	if framingViolation(body) {
+	// A top-level array is JSON-RPC batching, removed in MCP 2025-06-18. It is
+	// checked explicitly because it is valid JSON that a batching-capable
+	// upstream executes while hiding every tool name in it from this ACL, and
+	// because that exposure is documented against defaultAction.
+	if isBatchBody(body) {
 		return bodyRead{status: statusUnreadable}
 	}
 	var req jsonrpcRequest
+	// Unmarshal is also the framing check for everything else the revision
+	// forbids: it rejects a second document, and any non-whitespace trailing
+	// content, after the first ("invalid character ... after top-level value"),
+	// accepting only insignificant whitespace. That rejection is what makes the
+	// tool name returned below the tool name the upstream would execute.
+	//
+	// Do NOT replace this with a json.Decoder. Decoder.Decode stops at the end
+	// of the first value and reports nothing about what follows, which would let
+	// a smuggled second tools/call through unseen.
 	if err := json.Unmarshal(body, &req); err != nil {
 		return bodyRead{status: statusUnreadable}
 	}
@@ -252,33 +263,6 @@ func readBody(headers map[string]string, raw []byte) bodyRead {
 func isBatchBody(body []byte) bool {
 	b := bytes.TrimLeft(body, " \t\r\n")
 	return len(b) > 0 && b[0] == '['
-}
-
-// framingViolation reports whether body breaks the single-JSON-RPC-message
-// framing that MCP 2025-06-18+ mandates for a POST body: either a top-level
-// array (batching, removed in that revision) or anything other than
-// whitespace following the first complete document.
-//
-// Both shapes let a caller park a tools/call where neither parser here looks
-// at it, so they are denied rather than evaluated. A body that is merely
-// incomplete — the normal case while chunks are still arriving — is not a
-// violation, so this is safe to call on a partial body.
-func framingViolation(body []byte) bool {
-	if isBatchBody(body) {
-		return true
-	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	var first json.RawMessage
-	if err := dec.Decode(&first); err != nil {
-		// Empty, truncated, or malformed: nothing is proven about framing.
-		// A malformed body cannot be parsed by a compliant upstream either,
-		// so it keeps flowing and the policy is decided on what parsed.
-		return false
-	}
-	// Only end-of-input may follow. A further token — even an invalid one —
-	// means the first document was not the whole body.
-	_, err := dec.Token()
-	return !errors.Is(err, io.EOF)
 }
 
 // parseJSONRPCBody reads method and tool name out of an already-normalized
