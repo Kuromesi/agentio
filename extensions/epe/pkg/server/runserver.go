@@ -88,9 +88,12 @@ func New(cfg Config, logger logr.Logger) runnable.Runnable {
 				logger.Error(err, "Failed to build server TLS config")
 				return err
 			}
-			srv = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
+			srv = grpc.NewServer(
+				grpc.Creds(credentials.NewTLS(tlsConfig)),
+				grpc.StreamInterceptor(recoverStreamPanic),
+			)
 		} else {
-			srv = grpc.NewServer()
+			srv = grpc.NewServer(grpc.StreamInterceptor(recoverStreamPanic))
 		}
 
 		extProcPb.RegisterExternalProcessorServer(

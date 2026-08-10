@@ -16,6 +16,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -156,22 +157,32 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 		case *extProcPb.ProcessingRequest_ResponseTrailers:
 			responses, err = s.HandleResponseTrailers(ctx, req.GetResponseTrailers())
 		default:
-			logger.V(logging.DEFAULT).Error(nil, "Unknown Request type", "request", v)
+			// The Go type names which oneof arm arrived, which is what says
+			// how processing modes are misconfigured. Its contents are not
+			// logged, for the same reason the failure path below does not.
+			logger.V(logging.DEFAULT).Error(nil, "Unknown Request type",
+				"messageType", fmt.Sprintf("%T", v))
 			return status.Error(codes.Unknown, "unknown request type")
 		}
 
 		if err != nil {
-			if loggerD.Enabled() {
-				loggerD.Error(err, "Failed to process request", "request", req)
-			} else {
-				logger.V(logging.DEFAULT).Error(err, "Failed to process request")
-			}
+			// The failing message type is what triages this. The message itself
+			// is not logged, at any level: request headers carry
+			// x-agentio-sandbox-token, so dumping it wrote a live sandbox
+			// credential into the log whenever debug was enabled.
+			logger.V(logging.DEFAULT).Error(err, "Failed to process request",
+				"messageType", messageTypeName(req))
 			return status.Errorf(status.Code(err), "failed to handle request: %v", err)
 		}
 
 		for _, resp := range responses {
 			if loggerD.Enabled() {
-				loggerD.Info("Response generated", "response", resp)
+				// Header names but not values: a response carries the
+				// credentials tokentransform injected, so the full message is as
+				// sensitive as the request it answers.
+				loggerD.Info("Response generated",
+					"responseType", responseTypeName(resp),
+					"setHeaders", mutatedHeaderNames(resp))
 			}
 			if err := srv.Send(resp); err != nil {
 				logger.V(logging.DEFAULT).Error(err, "Send failed")
@@ -269,4 +280,74 @@ func (s *Server) processRequestBody(ctx context.Context, body *extProcPb.HttpBod
 		"bytes", len(body.GetBody()), "endOfStream", body.EndOfStream)
 
 	return s.HandleRequestBody(ctx, body, state)
+}
+
+// messageTypeName names an ext_proc request message without rendering it. The
+// message is never logged: request headers carry x-agentio-sandbox-token, and a
+// body carries whatever the caller sent.
+func messageTypeName(req *extProcPb.ProcessingRequest) string {
+	switch req.GetRequest().(type) {
+	case *extProcPb.ProcessingRequest_RequestHeaders:
+		return "request_headers"
+	case *extProcPb.ProcessingRequest_RequestBody:
+		return "request_body"
+	case *extProcPb.ProcessingRequest_RequestTrailers:
+		return "request_trailers"
+	case *extProcPb.ProcessingRequest_ResponseHeaders:
+		return "response_headers"
+	case *extProcPb.ProcessingRequest_ResponseBody:
+		return "response_body"
+	case *extProcPb.ProcessingRequest_ResponseTrailers:
+		return "response_trailers"
+	default:
+		return "unknown"
+	}
+}
+
+// responseTypeName names an ext_proc response message, for the same reason.
+func responseTypeName(resp *extProcPb.ProcessingResponse) string {
+	switch resp.GetResponse().(type) {
+	case *extProcPb.ProcessingResponse_RequestHeaders:
+		return "request_headers"
+	case *extProcPb.ProcessingResponse_RequestBody:
+		return "request_body"
+	case *extProcPb.ProcessingResponse_RequestTrailers:
+		return "request_trailers"
+	case *extProcPb.ProcessingResponse_ResponseHeaders:
+		return "response_headers"
+	case *extProcPb.ProcessingResponse_ResponseBody:
+		return "response_body"
+	case *extProcPb.ProcessingResponse_ResponseTrailers:
+		return "response_trailers"
+	case *extProcPb.ProcessingResponse_ImmediateResponse:
+		return "immediate"
+	default:
+		return "unknown"
+	}
+}
+
+// mutatedHeaderNames lists the header names a response sets or removes, so a
+// debug log can show which mutations were rendered. Values are omitted on
+// purpose: the credential tokentransform injects is one of them, and an
+// immediate response's headers are attacker-visible policy output.
+func mutatedHeaderNames(resp *extProcPb.ProcessingResponse) []string {
+	var mut *extProcPb.HeaderMutation
+	switch r := resp.GetResponse().(type) {
+	case *extProcPb.ProcessingResponse_RequestHeaders:
+		mut = r.RequestHeaders.GetResponse().GetHeaderMutation()
+	case *extProcPb.ProcessingResponse_RequestBody:
+		mut = r.RequestBody.GetResponse().GetHeaderMutation()
+	case *extProcPb.ProcessingResponse_ResponseHeaders:
+		mut = r.ResponseHeaders.GetResponse().GetHeaderMutation()
+	case *extProcPb.ProcessingResponse_ImmediateResponse:
+		mut = r.ImmediateResponse.GetHeaders()
+	}
+	if mut == nil {
+		return nil
+	}
+	names := make([]string, 0, len(mut.GetSetHeaders())+len(mut.GetRemoveHeaders()))
+	for _, h := range mut.GetSetHeaders() {
+		names = append(names, h.GetHeader().GetKey())
+	}
+	return append(names, mut.GetRemoveHeaders()...)
 }

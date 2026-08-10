@@ -106,7 +106,11 @@ func main() {
 }
 
 func run() error {
-	opts := zap.Options{Development: true}
+	// Production defaults: JSON encoding and Info level. Development mode also
+	// lowers the stacktrace threshold to Warn, which attached a full stack to
+	// every request-path failure — see initLogging. -zap-devel still turns it on
+	// for local debugging.
+	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 	initLogging(&opts)
@@ -257,6 +261,21 @@ func initLogging(opts *zap.Options) {
 		// See https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/log/zap#Options.Level
 		lvl := -1 * (*logVerbosity)
 		opts.Level = uberzap.NewAtomicLevelAt(zapcore.Level(int8(lvl)))
+	}
+
+	// Keep stacktraces off every level the request path uses. The ext-proc
+	// handlers report broken streams, unreadable bodies and failed credential
+	// fetches through Error, and those are conditions a client or a policy
+	// produced, not defects in this binary: the stack names a fixed, known line,
+	// while the fields that identify the request — requestID, pod, rule — are
+	// already on the line. Such a condition repeats once per request, so a stack
+	// turns one log line into dozens at request rate.
+	//
+	// DPanic and above still carry one, which is where a stack earns its cost.
+	// -zap-stacktrace-level overrides this, and -zap-devel does not: Development
+	// only supplies a default when none is set.
+	if opts.StacktraceLevel == nil {
+		opts.StacktraceLevel = uberzap.NewAtomicLevelAt(zapcore.DPanicLevel)
 	}
 
 	logger := zap.New(zap.UseFlagOptions(opts), zap.RawZapOpts(uberzap.AddCaller()))
