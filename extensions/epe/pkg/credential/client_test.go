@@ -18,10 +18,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -29,6 +33,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+
+	"istio.io/istio/pkg/test"
 )
 
 // generateSelfSignedCert creates a self-signed certificate and private key,
@@ -204,9 +210,9 @@ func TestBuildHTTPClient_FallsBackToDefaultTLS(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cert, key, ca := tc.paths(t)
-			t.Setenv(clientCertEnvVar, cert)
-			t.Setenv(clientKeyEnvVar, key)
-			t.Setenv(caCertEnvVar, ca)
+			test.SetForTest(t, &clientCertPath, cert)
+			test.SetForTest(t, &clientKeyPath, key)
+			test.SetForTest(t, &caCertPath, ca)
 
 			client := buildHTTPClient(nil)
 			if client == nil {
@@ -223,9 +229,9 @@ func TestBuildHTTPClient_ValidCerts_ReturnsMTLSClient(t *testing.T) {
 	certPEM, keyPEM := generateSelfSignedCert(t)
 	caPEM := generateCACert(t)
 
-	t.Setenv(clientCertEnvVar, writeTempFile(t, "mtls-cert-*.pem", certPEM))
-	t.Setenv(clientKeyEnvVar, writeTempFile(t, "mtls-key-*.pem", keyPEM))
-	t.Setenv(caCertEnvVar, writeTempFile(t, "mtls-ca-*.pem", caPEM))
+	test.SetForTest(t, &clientCertPath, writeTempFile(t, "mtls-cert-*.pem", certPEM))
+	test.SetForTest(t, &clientKeyPath, writeTempFile(t, "mtls-key-*.pem", keyPEM))
+	test.SetForTest(t, &caCertPath, writeTempFile(t, "mtls-ca-*.pem", caPEM))
 
 	client := buildHTTPClient(nil)
 	if client == nil {
@@ -233,6 +239,108 @@ func TestBuildHTTPClient_ValidCerts_ReturnsMTLSClient(t *testing.T) {
 	}
 	if client.Transport == nil {
 		t.Fatal("expected non-nil transport")
+	}
+}
+
+// transportTLSConfig returns the TLS config behind an HTTP client's transport.
+func transportTLSConfig(t *testing.T, c *http.Client) *tls.Config {
+	t.Helper()
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", c.Transport)
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatal("expected non-nil TLSClientConfig")
+	}
+	return tr.TLSClientConfig
+}
+
+// TestBuildHTTPClient_InsecureSkipVerify_ReachesUnknownCA is the behavioral
+// contract of insecureSkipVerify: with no mTLS material configured at
+// all, the client completes a handshake against a server whose self-signed
+// certificate is in no trust store, and the same client rejects it when the
+// env var is absent.
+func TestBuildHTTPClient_InsecureSkipVerify_ReachesUnknownCA(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	// No cert, key, or CA anywhere: insecure mode must not need them.
+	setPaths := func(t *testing.T) {
+		t.Helper()
+		test.SetForTest(t, &clientCertPath, "/nonexistent/cert.pem")
+		test.SetForTest(t, &clientKeyPath, "/nonexistent/key.pem")
+		test.SetForTest(t, &caCertPath, "/nonexistent/ca.pem")
+	}
+
+	t.Run("disabled rejects unknown CA", func(t *testing.T) {
+		setPaths(t)
+		test.SetForTest(t, &insecureSkipVerify, false)
+
+		resp, err := buildHTTPClient(nil).Get(srv.URL)
+		if err == nil {
+			resp.Body.Close()
+			t.Fatal("expected the handshake to fail against an untrusted self-signed cert")
+		}
+		// Assert the failure is certificate verification specifically, so the
+		// case cannot pass on an unrelated dial or protocol error.
+		var verifyErr *tls.CertificateVerificationError
+		if !errors.As(err, &verifyErr) {
+			t.Fatalf("expected a tls.CertificateVerificationError, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("enabled reaches server with no certs configured", func(t *testing.T) {
+		setPaths(t)
+		test.SetForTest(t, &insecureSkipVerify, true)
+
+		resp, err := buildHTTPClient(nil).Get(srv.URL)
+		if err != nil {
+			t.Fatalf("expected the request to succeed with insecure skip verify: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", resp.StatusCode)
+		}
+	})
+}
+
+// TestBuildHTTPClient_InsecureSkipVerify_PrecedesMTLS verifies insecure mode
+// short-circuits both mTLS sources: valid file paths and a well-formed Secret
+// are ignored, and no client certificate is presented.
+func TestBuildHTTPClient_InsecureSkipVerify_PrecedesMTLS(t *testing.T) {
+	certPEM, keyPEM := generateSelfSignedCert(t)
+	caPEM := generateCACert(t)
+
+	test.SetForTest(t, &clientCertPath, writeTempFile(t, "insecure-cert-*.pem", certPEM))
+	test.SetForTest(t, &clientKeyPath, writeTempFile(t, "insecure-key-*.pem", keyPEM))
+	test.SetForTest(t, &caCertPath, writeTempFile(t, "insecure-ca-*.pem", caPEM))
+	test.SetForTest(t, &secretNamespace, "epe-system")
+	test.SetForTest(t, &secretName, "epe-mtls")
+	test.SetForTest(t, &insecureSkipVerify, true)
+
+	secrets := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "epe-system", Name: "epe-mtls"},
+		Data: map[string][]byte{
+			secretKeyCACert:     caPEM,
+			secretKeyClientCert: certPEM,
+			secretKeyClientKey:  keyPEM,
+		},
+	})
+
+	cfg := transportTLSConfig(t, buildHTTPClient(secrets))
+	if !cfg.InsecureSkipVerify {
+		t.Error("expected InsecureSkipVerify to be set")
+	}
+	if len(cfg.Certificates) != 0 {
+		t.Errorf("expected no client certificate in insecure mode, got %d", len(cfg.Certificates))
+	}
+	if cfg.RootCAs != nil {
+		t.Error("expected no trust anchors to be loaded in insecure mode")
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Errorf("expected MinVersion TLS 1.2, got %x", cfg.MinVersion)
 	}
 }
 
@@ -279,13 +387,13 @@ func TestNewMTLSClient_MissingFiles(t *testing.T) {
 // --- GetToken ---------------------------------------------------------------
 
 func TestNewClient_DefaultsAndExplicit(t *testing.T) {
-	t.Setenv(identityProviderURLEnvVar, "")
+	test.SetForTest(t, &identityProviderURL, "")
 	c := NewClient()
 	if c == nil || c.providerURL != "" {
 		t.Errorf("expected unset URL, got %q", c.providerURL)
 	}
 
-	t.Setenv(identityProviderURLEnvVar, "http://example.com/")
+	test.SetForTest(t, &identityProviderURL, "http://example.com/")
 	c2 := NewClientWithCache(nil, nil, nil)
 	if c2 == nil || c2.providerURL != "http://example.com/" {
 		t.Errorf("expected explicit URL, got %q", c2.providerURL)
@@ -294,8 +402,8 @@ func TestNewClient_DefaultsAndExplicit(t *testing.T) {
 
 // TestGetToken_BadURL covers http.NewRequestWithContext failure (invalid URL).
 func TestGetToken_BadURL(t *testing.T) {
-	t.Setenv(identityProviderURLEnvVar, "http://[::1") // malformed
-	t.Setenv(clientCertEnvVar, "/nonexistent")
+	test.SetForTest(t, &identityProviderURL, "http://[::1") // malformed
+	test.SetForTest(t, &clientCertPath, "/nonexistent")
 	c := NewClient()
 	if _, err := c.GetToken(context.Background(), "a", "b", "c"); err == nil {
 		t.Fatal("expected error for malformed URL")
@@ -342,8 +450,8 @@ func TestNewMTLSClientFromSecret_Success(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			secrets := buildFakeClientsetWithSecret(t, tc.namespace, tc.secret, certPEM, keyPEM, caPEM)
 
-			t.Setenv(secretNamespaceEnvVar, tc.namespace)
-			t.Setenv(secretNameEnvVar, tc.secret)
+			test.SetForTest(t, &secretNamespace, tc.namespace)
+			test.SetForTest(t, &secretName, tc.secret)
 
 			c, err := newMTLSClientFromSecret(secrets)
 			if err != nil {
@@ -412,8 +520,8 @@ func TestNewMTLSClientFromSecret_Errors(t *testing.T) {
 				})
 			}
 
-			t.Setenv(secretNamespaceEnvVar, tc.namespace)
-			t.Setenv(secretNameEnvVar, tc.secName)
+			test.SetForTest(t, &secretNamespace, tc.namespace)
+			test.SetForTest(t, &secretName, tc.secName)
 
 			if _, err := newMTLSClientFromSecret(secrets); err == nil {
 				t.Fatalf("expected error for %s", tc.name)
@@ -428,11 +536,11 @@ func TestBuildHTTPClient_SecretAvailable_ReturnsMTLSClient(t *testing.T) {
 
 	secrets := buildFakeClientsetWithSecret(t, "default-ns", "default-secret", certPEM, keyPEM, caPEM)
 
-	t.Setenv(secretNamespaceEnvVar, "default-ns")
-	t.Setenv(secretNameEnvVar, "default-secret")
-	t.Setenv(clientCertEnvVar, "/nonexistent")
-	t.Setenv(clientKeyEnvVar, "/nonexistent")
-	t.Setenv(caCertEnvVar, "/nonexistent")
+	test.SetForTest(t, &secretNamespace, "default-ns")
+	test.SetForTest(t, &secretName, "default-secret")
+	test.SetForTest(t, &clientCertPath, "/nonexistent")
+	test.SetForTest(t, &clientKeyPath, "/nonexistent")
+	test.SetForTest(t, &caCertPath, "/nonexistent")
 
 	c := buildHTTPClient(secrets)
 	if c == nil {
@@ -450,11 +558,11 @@ func TestBuildHTTPClient_SecretUnavailable_FallsBackToFilePath(t *testing.T) {
 	// Empty fake clientset (Secret not found) → should fall back to file paths.
 	secrets := k8sfake.NewSimpleClientset()
 
-	t.Setenv(secretNamespaceEnvVar, "")
-	t.Setenv(secretNameEnvVar, "")
-	t.Setenv(clientCertEnvVar, writeTempFile(t, "fallback-cert-*.pem", certPEM))
-	t.Setenv(clientKeyEnvVar, writeTempFile(t, "fallback-key-*.pem", keyPEM))
-	t.Setenv(caCertEnvVar, writeTempFile(t, "fallback-ca-*.pem", caPEM))
+	test.SetForTest(t, &secretNamespace, "")
+	test.SetForTest(t, &secretName, "")
+	test.SetForTest(t, &clientCertPath, writeTempFile(t, "fallback-cert-*.pem", certPEM))
+	test.SetForTest(t, &clientKeyPath, writeTempFile(t, "fallback-key-*.pem", keyPEM))
+	test.SetForTest(t, &caCertPath, writeTempFile(t, "fallback-ca-*.pem", caPEM))
 
 	c := buildHTTPClient(secrets)
 	if c == nil {

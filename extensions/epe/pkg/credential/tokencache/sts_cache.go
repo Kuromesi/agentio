@@ -15,19 +15,33 @@ package tokencache
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+
+	"istio.io/istio/pkg/env"
 )
 
 const (
-	stsMaxSizeEnvVar        = "STS_CACHE_MAX_SIZE"
 	defaultSTSMaxSize       = 100000
 	defaultExpirationMargin = 5 * time.Minute
 )
+
+// stsCacheMaxSize is resolved once at init, as everywhere else in the tree;
+// tests override the value with test.SetForTest.
+var stsCacheMaxSize = env.Register("STS_CACHE_MAX_SIZE", defaultSTSMaxSize,
+	"Maximum number of cached credential provider STS credentials; a non-positive value falls back to the default").Get()
+
+// effectiveSTSMaxSize applies the same non-positive fallback that NewSTSCache
+// applies, so STSCacheConfigInfo reports the value NewSTSCacheFromEnv would
+// actually build rather than the raw env input.
+func effectiveSTSMaxSize() int {
+	if stsCacheMaxSize > 0 {
+		return stsCacheMaxSize
+	}
+	return defaultSTSMaxSize
+}
 
 // STSCacheEntry holds the STS credential triplet returned by the
 // credential provider.
@@ -82,13 +96,7 @@ func (c *STSCache) SetClock(now func() time.Time) {
 // NewSTSCacheFromEnv creates an STS cache configured from environment
 // variables. STS_CACHE_MAX_SIZE overrides the default max size.
 func NewSTSCacheFromEnv() *STSCache {
-	maxSize := defaultSTSMaxSize
-	if v := os.Getenv(stsMaxSizeEnvVar); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			maxSize = parsed
-		}
-	}
-	return NewSTSCache(maxSize)
+	return NewSTSCache(effectiveSTSMaxSize())
 }
 
 // Get retrieves an STS credential from the cache. Returns the entry and
@@ -149,11 +157,5 @@ func (c *STSCache) Len() int {
 // STSCacheConfigInfo returns a human-readable string of STS cache
 // configuration for logging.
 func STSCacheConfigInfo() string {
-	maxSize := defaultSTSMaxSize
-	if v := os.Getenv(stsMaxSizeEnvVar); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			maxSize = parsed
-		}
-	}
-	return fmt.Sprintf("expirationMargin=%s, maxSize=%d", defaultExpirationMargin, maxSize)
+	return fmt.Sprintf("expirationMargin=%s, maxSize=%d", defaultExpirationMargin, effectiveSTSMaxSize())
 }

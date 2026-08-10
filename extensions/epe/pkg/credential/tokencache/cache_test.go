@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"istio.io/istio/pkg/test"
 )
 
 func TestCache_BasicSetGet(t *testing.T) {
@@ -247,44 +249,37 @@ func fillAndVerifyCapacity(t *testing.T, c *Cache, maxSize int) {
 	}
 }
 
-// TestNewCacheFromEnv covers env-driven configuration including invalid
-// values (which should fall back to defaults) and valid overrides.
+// TestNewCacheFromEnv covers env-driven configuration: a valid override is
+// honoured and a non-positive value falls back to the default. Parsing of
+// malformed strings is pkg/env's contract and is covered there.
 func TestNewCacheFromEnv(t *testing.T) {
-	t.Setenv(ttlEnvVar, "")
-	t.Setenv(maxSizeEnvVar, "")
-	c1 := NewCacheFromEnv()
-	if c1.ttl != defaultTTL {
-		t.Errorf("expected default TTL, got %v", c1.ttl)
+	test.SetForTest(t, &cacheTTL, 10*time.Minute)
+	test.SetForTest(t, &cacheMaxSize, 500)
+	if got := NewCacheFromEnv().ttl; got != 10*time.Minute {
+		t.Errorf("expected 10m TTL, got %v", got)
 	}
 
-	t.Setenv(ttlEnvVar, "10m")
-	t.Setenv(maxSizeEnvVar, "500")
-	c2 := NewCacheFromEnv()
-	if c2.ttl != 10*time.Minute {
-		t.Errorf("expected 10m TTL, got %v", c2.ttl)
-	}
-
-	// Invalid values should be ignored.
-	t.Setenv(ttlEnvVar, "not-a-duration")
-	t.Setenv(maxSizeEnvVar, "abc")
-	c3 := NewCacheFromEnv()
-	if c3.ttl != defaultTTL {
-		t.Errorf("expected default TTL when env is bad, got %v", c3.ttl)
+	test.SetForTest(t, &cacheTTL, time.Duration(0))
+	test.SetForTest(t, &cacheMaxSize, -1)
+	if got := NewCacheFromEnv().ttl; got != defaultTTL {
+		t.Errorf("expected default TTL for a non-positive value, got %v", got)
 	}
 }
 
+// TestConfigInfo asserts the logged config reports the values NewCacheFromEnv
+// would actually build. A non-positive value must surface as the default rather
+// than being echoed back raw, or the log misreports the live configuration.
 func TestConfigInfo(t *testing.T) {
-	t.Setenv(ttlEnvVar, "5m")
-	t.Setenv(maxSizeEnvVar, "42")
+	test.SetForTest(t, &cacheTTL, 5*time.Minute)
+	test.SetForTest(t, &cacheMaxSize, 42)
 	if got := ConfigInfo(); got != "TTL=5m0s, maxSize=42" {
 		t.Errorf("unexpected ConfigInfo: %q", got)
 	}
 
-	t.Setenv(ttlEnvVar, "")
-	t.Setenv(maxSizeEnvVar, "")
-	got := ConfigInfo()
-	// Defaults: TTL=1h, maxSize=100000
-	if got == "" {
-		t.Errorf("expected non-empty ConfigInfo with defaults")
+	test.SetForTest(t, &cacheTTL, time.Duration(-1))
+	test.SetForTest(t, &cacheMaxSize, -1)
+	want := fmt.Sprintf("TTL=%s, maxSize=%d", defaultTTL, defaultMaxSize)
+	if got := ConfigInfo(); got != want {
+		t.Errorf("ConfigInfo() = %q, want %q", got, want)
 	}
 }

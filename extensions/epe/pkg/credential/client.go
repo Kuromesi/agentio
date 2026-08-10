@@ -34,19 +34,14 @@ import (
 
 	"istio.io/istio/extensions/epe/pkg/credential/tokencache"
 	"istio.io/istio/extensions/epe/pkg/logging"
+	"istio.io/istio/pkg/env"
 )
 
 const (
-	identityProviderURLEnvVar      = "IDENTITY_PROVIDER_URL"
 	apiActionGetResourceCredential = "GetResourceCredential"
 
 	credentialTypeAPIKey   = "apiKey"
 	credentialTypeStsToken = "stsToken"
-
-	// Environment variables for mTLS certificate and key paths.
-	clientCertEnvVar = "CREDENTIAL_PROVIDER_CLIENT_CERT_PATH"
-	clientKeyEnvVar  = "CREDENTIAL_PROVIDER_CLIENT_KEY_PATH"
-	caCertEnvVar     = "CREDENTIAL_PROVIDER_CA_CERT_PATH"
 
 	// Default HTTP timeout for credential provider calls.
 	defaultHTTPTimeout = 10 * time.Second
@@ -56,14 +51,40 @@ const (
 	defaultClientKeyPath  = "/etc/epe/mtls/client.key"
 	defaultCACertPath     = "/etc/epe/mtls/ca.crt"
 
-	// Environment variables for the K8s Secret holding mTLS material.
-	secretNamespaceEnvVar = "CREDENTIAL_PROVIDER_SECRET_NAMESPACE"
-	secretNameEnvVar      = "CREDENTIAL_PROVIDER_SECRET_NAME"
-
 	// Secret data keys.
 	secretKeyCACert     = "ca.crt"
 	secretKeyClientCert = "client.crt"
 	secretKeyClientKey  = "client.key"
+)
+
+// Environment variables for the credential provider client. Resolved once at
+// init, as everywhere else in the tree; tests override the resulting values
+// directly with test.SetForTest rather than through the environment.
+var (
+	identityProviderURL = env.Register("IDENTITY_PROVIDER_URL", "",
+		"Base URL of the credential provider API. The client fails every credential lookup while it is unset").Get()
+
+	// insecureSkipVerify disables verification of the credential provider's
+	// server certificate. It takes precedence over every mTLS source below, so
+	// no certificate, key, or CA has to be provisioned when it is enabled.
+	insecureSkipVerify = env.Register("CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY", false,
+		"Skip verification of the credential provider's server certificate and present no client certificate. "+
+			"Intended for self-signed providers on trusted networks; any on-path attacker can then read the "+
+			"bearer token and forge the credential response").Get()
+
+	clientCertPath = env.Register("CREDENTIAL_PROVIDER_CLIENT_CERT_PATH", defaultClientCertPath,
+		"Path to the client certificate presented to the credential provider").Get()
+	clientKeyPath = env.Register("CREDENTIAL_PROVIDER_CLIENT_KEY_PATH", defaultClientKeyPath,
+		"Path to the private key for CREDENTIAL_PROVIDER_CLIENT_CERT_PATH").Get()
+	caCertPath = env.Register("CREDENTIAL_PROVIDER_CA_CERT_PATH", defaultCACertPath,
+		"Path to the CA certificate used to verify the credential provider's server certificate").Get()
+
+	// Namespace and name of the K8s Secret holding mTLS material. Both must be
+	// set for the Secret source to be attempted at all.
+	secretNamespace = env.Register("CREDENTIAL_PROVIDER_SECRET_NAMESPACE", "",
+		"Namespace of the Secret holding the credential provider mTLS certificate, key, and CA").Get()
+	secretName = env.Register("CREDENTIAL_PROVIDER_SECRET_NAME", "",
+		"Name of the Secret holding the credential provider mTLS certificate, key, and CA").Get()
 )
 
 // STSToken holds the STS triplet returned by the credential provider.
@@ -120,9 +141,8 @@ func NewClient() *Client {
 // Secret. When secrets is non-nil, the client first tries to read the mTLS
 // cert/key/CA from the configured Secret before falling back to file paths.
 func NewClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache, secrets kubernetes.Interface, opts ...Option) *Client {
-	providerURL := os.Getenv(identityProviderURLEnvVar)
 	c := &Client{
-		providerURL: providerURL,
+		providerURL: identityProviderURL,
 		httpClient:  buildHTTPClient(secrets),
 		cache:       cache,
 		stsCache:    stsCache,
@@ -134,30 +154,25 @@ func NewClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache, 
 }
 
 // buildHTTPClient constructs an HTTP client with the following priority:
-//  1. Read mTLS material from K8s Secret (when secrets is non-nil)
-//  2. Read mTLS material from file paths (env var or defaults)
-//  3. Fall back to default-TLS (no client cert, system trust store)
+//  1. Skip server verification entirely (when insecureSkipVerify is enabled)
+//  2. Read mTLS material from K8s Secret (when secrets is non-nil)
+//  3. Read mTLS material from file paths (env var or defaults)
+//  4. Fall back to default-TLS (no client cert, system trust store)
 func buildHTTPClient(secrets kubernetes.Interface) *http.Client {
+	if insecureSkipVerify {
+		log.Log.WithName("credential").Info(
+			"Credential provider TLS verification is disabled; the bearer token and returned credentials are exposed to any on-path attacker",
+			"envVar", "CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY")
+		return newInsecureTLSClient()
+	}
+
 	if secrets != nil {
 		if c, err := newMTLSClientFromSecret(secrets); err == nil {
 			return c
 		}
 	}
 
-	certPath := os.Getenv(clientCertEnvVar)
-	if certPath == "" {
-		certPath = defaultClientCertPath
-	}
-	keyPath := os.Getenv(clientKeyEnvVar)
-	if keyPath == "" {
-		keyPath = defaultClientKeyPath
-	}
-	caPath := os.Getenv(caCertEnvVar)
-	if caPath == "" {
-		caPath = defaultCACertPath
-	}
-
-	if c, err := newMTLSClient(certPath, keyPath, caPath); err == nil {
+	if c, err := newMTLSClient(clientCertPath, clientKeyPath, caCertPath); err == nil {
 		return c
 	}
 	return newDefaultTLSClient()
@@ -167,11 +182,11 @@ func buildHTTPClient(secrets kubernetes.Interface) *http.Client {
 // Secret and returns a configured HTTP client. The Secret namespace/name come
 // from env vars and both must be set.
 func newMTLSClientFromSecret(secrets kubernetes.Interface) (*http.Client, error) {
-	ns := os.Getenv(secretNamespaceEnvVar)
-	name := os.Getenv(secretNameEnvVar)
+	ns := secretNamespace
+	name := secretName
 	if ns == "" || name == "" {
 		return nil, fmt.Errorf("%s and %s must both be set to read mTLS material from a Secret",
-			secretNamespaceEnvVar, secretNameEnvVar)
+			"CREDENTIAL_PROVIDER_SECRET_NAMESPACE", "CREDENTIAL_PROVIDER_SECRET_NAME")
 	}
 
 	sec, err := secrets.CoreV1().Secrets(ns).Get(context.Background(), name, metav1.GetOptions{})
@@ -262,6 +277,21 @@ func loadCACertPool(caCertPath string) (*x509.CertPool, error) {
 	return caCertPool, nil
 }
 
+// newInsecureTLSClient returns an HTTP client that does not verify the
+// credential provider's certificate and presents no client certificate, so no
+// mTLS material has to be provisioned. Selected by insecureSkipVerify.
+func newInsecureTLSClient() *http.Client {
+	return &http.Client{
+		Timeout: defaultHTTPTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: true, //nolint:gosec // opt-in via insecureSkipVerify
+			},
+		},
+	}
+}
+
 // newDefaultTLSClient returns an HTTP client with a default TLS transport
 // (no client certificate). Server certificates are verified against the
 // system trust store; TLS 1.2 is the minimum version. This is the fallback
@@ -290,7 +320,7 @@ func (c *Client) getCredential(ctx context.Context, accessToken, sandboxClientID
 	logger := log.FromContext(ctx)
 
 	if c.providerURL == "" {
-		return nil, fmt.Errorf("credential provider URL is not configured; set %s", identityProviderURLEnvVar)
+		return nil, fmt.Errorf("credential provider URL is not configured; set %s", "IDENTITY_PROVIDER_URL")
 	}
 
 	reqBody := credentialRequest{

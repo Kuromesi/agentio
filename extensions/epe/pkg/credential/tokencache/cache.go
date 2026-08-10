@@ -19,21 +19,44 @@ package tokencache
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+
+	"istio.io/istio/pkg/env"
 )
 
 const (
-	// Environment variables for cache configuration.
-	ttlEnvVar      = "TOKEN_CACHE_TTL"
-	maxSizeEnvVar  = "TOKEN_CACHE_MAX_SIZE"
 	defaultTTL     = time.Hour
 	defaultMaxSize = 100000
 )
+
+// Environment variables for cache configuration. Resolved once at init, as
+// everywhere else in the tree; tests override the values with test.SetForTest.
+var (
+	cacheTTL = env.Register("TOKEN_CACHE_TTL", defaultTTL,
+		"Time-to-live for cached credential provider API keys; a non-positive value falls back to the default").Get()
+	cacheMaxSize = env.Register("TOKEN_CACHE_MAX_SIZE", defaultMaxSize,
+		"Maximum number of cached credential provider API keys; a non-positive value falls back to the default").Get()
+)
+
+// effectiveTTL and effectiveMaxSize apply the same non-positive fallback that
+// NewCache applies, so ConfigInfo reports the values NewCacheFromEnv would
+// actually build rather than the raw env input.
+func effectiveTTL() time.Duration {
+	if cacheTTL > 0 {
+		return cacheTTL
+	}
+	return defaultTTL
+}
+
+func effectiveMaxSize() int {
+	if cacheMaxSize > 0 {
+		return cacheMaxSize
+	}
+	return defaultMaxSize
+}
 
 // cacheKey is the composite key for a cached token.
 type cacheKey struct {
@@ -92,21 +115,7 @@ func (c *Cache) SetClock(now func() time.Time) {
 // TOKEN_CACHE_TTL overrides the default TTL (parsed via time.ParseDuration).
 // TOKEN_CACHE_MAX_SIZE overrides the default max size.
 func NewCacheFromEnv() *Cache {
-	ttl := defaultTTL
-	if v := os.Getenv(ttlEnvVar); v != "" {
-		if parsed, err := time.ParseDuration(v); err == nil && parsed > 0 {
-			ttl = parsed
-		}
-	}
-
-	maxSize := defaultMaxSize
-	if v := os.Getenv(maxSizeEnvVar); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			maxSize = parsed
-		}
-	}
-
-	return NewCache(ttl, maxSize)
+	return NewCache(effectiveTTL(), effectiveMaxSize())
 }
 
 // Get retrieves a token from the cache by credentialProviderName and resourceID.
@@ -161,17 +170,5 @@ func (c *Cache) Len() int {
 
 // ConfigInfo returns a human-readable string of cache configuration for logging.
 func ConfigInfo() string {
-	ttl := defaultTTL
-	if v := os.Getenv(ttlEnvVar); v != "" {
-		if parsed, err := time.ParseDuration(v); err == nil && parsed > 0 {
-			ttl = parsed
-		}
-	}
-	maxSize := defaultMaxSize
-	if v := os.Getenv(maxSizeEnvVar); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			maxSize = parsed
-		}
-	}
-	return fmt.Sprintf("TTL=%s, maxSize=%d", ttl, maxSize)
+	return fmt.Sprintf("TTL=%s, maxSize=%d", effectiveTTL(), effectiveMaxSize())
 }

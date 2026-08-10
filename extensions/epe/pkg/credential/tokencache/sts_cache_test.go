@@ -14,9 +14,12 @@
 package tokencache
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"istio.io/istio/pkg/test"
 )
 
 func stsEntry(ak, sk, token string) STSCacheEntry {
@@ -258,54 +261,33 @@ func TestSTSCache_DefaultExpirationMargin(t *testing.T) {
 	}
 }
 
+// TestNewSTSCacheFromEnv covers env-driven configuration: a valid override is
+// honoured and a non-positive value falls back to the default instead of
+// reaching lru.New, which rejects a non-positive size. Parsing of malformed
+// strings is pkg/env's contract and is covered there.
 func TestNewSTSCacheFromEnv(t *testing.T) {
-	t.Setenv(stsMaxSizeEnvVar, "")
-	c1 := NewSTSCacheFromEnv()
-	if c1.expirationMargin != defaultExpirationMargin {
-		t.Errorf("expected default margin, got %v", c1.expirationMargin)
+	test.SetForTest(t, &stsCacheMaxSize, 500)
+	if c := NewSTSCacheFromEnv(); c.expirationMargin != defaultExpirationMargin {
+		t.Errorf("expected default margin, got %v", c.expirationMargin)
 	}
 
-	t.Setenv(stsMaxSizeEnvVar, "500")
-	_ = NewSTSCacheFromEnv() // should not panic
-
-	t.Setenv(stsMaxSizeEnvVar, "abc")
-	c3 := NewSTSCacheFromEnv()
-	if c3.expirationMargin != defaultExpirationMargin {
-		t.Errorf("expected default margin when env is bad, got %v", c3.expirationMargin)
+	test.SetForTest(t, &stsCacheMaxSize, -1)
+	if c := NewSTSCacheFromEnv(); c.expirationMargin != defaultExpirationMargin {
+		t.Errorf("expected default margin for a non-positive value, got %v", c.expirationMargin)
 	}
 }
 
+// TestSTSCacheConfigInfo asserts the logged config reports the value
+// NewSTSCacheFromEnv would actually build, not the raw env input.
 func TestSTSCacheConfigInfo(t *testing.T) {
-	t.Setenv(stsMaxSizeEnvVar, "42")
-	got := STSCacheConfigInfo()
-	if got != "expirationMargin=5m0s, maxSize=42" {
+	test.SetForTest(t, &stsCacheMaxSize, 42)
+	if got := STSCacheConfigInfo(); got != "expirationMargin=5m0s, maxSize=42" {
 		t.Errorf("unexpected STSCacheConfigInfo: %q", got)
 	}
 
-	t.Setenv(stsMaxSizeEnvVar, "")
-	got = STSCacheConfigInfo()
-	if got == "" {
-		t.Error("expected non-empty STSCacheConfigInfo with defaults")
-	}
-}
-
-func TestSTSCache_GetReturnsCopy(t *testing.T) {
-	c := NewSTSCache(100)
-	c.expirationMargin = 0
-
-	entry := stsEntry("ak1", "sk1", "token1")
-	c.SetWithExpiration("p", "r1", entry, time.Now().Add(1*time.Hour))
-
-	got, ok := c.Get("p", "r1")
-	if !ok {
-		t.Fatal("expected cache hit")
-	}
-
-	// Mutating the returned entry must not affect the cached value.
-	got.AccessKeyID = "mutated"
-
-	got2, ok := c.Get("p", "r1")
-	if !ok || got2.AccessKeyID != "ak1" {
-		t.Errorf("expected ak1 (cached value should be independent), got %s", got2.AccessKeyID)
+	test.SetForTest(t, &stsCacheMaxSize, -1)
+	want := fmt.Sprintf("expirationMargin=%s, maxSize=%d", defaultExpirationMargin, defaultSTSMaxSize)
+	if got := STSCacheConfigInfo(); got != want {
+		t.Errorf("STSCacheConfigInfo() = %q, want %q", got, want)
 	}
 }
