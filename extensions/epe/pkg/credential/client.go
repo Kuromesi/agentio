@@ -65,12 +65,12 @@ var (
 		"Base URL of the credential provider API. The client fails every credential lookup while it is unset").Get()
 
 	// insecureSkipVerify disables verification of the credential provider's
-	// server certificate. It takes precedence over every mTLS source below, so
-	// no certificate, key, or CA has to be provisioned when it is enabled.
+	// server certificate. It is orthogonal to the mTLS sources below: the client
+	// identity is still whatever they supply — see buildHTTPClient.
 	insecureSkipVerify = env.Register("CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY", false,
-		"Skip verification of the credential provider's server certificate and present no client certificate. "+
-			"Intended for self-signed providers on trusted networks; any on-path attacker can then read the "+
-			"bearer token and forge the credential response").Get()
+		"Skip verification of the credential provider's server certificate. The client certificate, when one is "+
+			"configured, is still presented. Intended for self-signed providers on trusted networks; any on-path "+
+			"attacker can then read the bearer token and forge the credential response").Get()
 
 	clientCertPath = env.Register("CREDENTIAL_PROVIDER_CLIENT_CERT_PATH", defaultClientCertPath,
 		"Path to the client certificate presented to the credential provider").Get()
@@ -153,28 +153,48 @@ func NewClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache, 
 	return c
 }
 
-// buildHTTPClient constructs an HTTP client with the following priority:
-//  1. Skip server verification entirely (when insecureSkipVerify is enabled)
-//  2. Read mTLS material from K8s Secret (when secrets is non-nil)
-//  3. Read mTLS material from file paths (env var or defaults)
-//  4. Fall back to default-TLS (no client cert, system trust store)
+// buildHTTPClient constructs an HTTP client for the credential provider.
+//
+// The client identity comes from the first source that yields one:
+//  1. mTLS material from a K8s Secret (when secrets is non-nil)
+//  2. mTLS material from file paths (env var or defaults)
+//  3. no client certificate, verifying against the system trust store
+//
+// insecureSkipVerify is orthogonal to that choice and governs only whether the
+// provider's server certificate is verified — never whether a client
+// certificate is presented. A provider that serves a self-signed certificate
+// *and* requires mTLS is a common combination, and selecting a separate
+// certificate-less client made it inexpressible: the provider answered
+// 403 "extraMetadata requires an mTLS client". Because the trust anchor is
+// never consulted in that mode, a source is still usable without its CA.
+//
+// A source that fails is skipped rather than fatal, as in traffix-extension,
+// but the reason is logged: a chart mounts the mTLS Secret with
+// optional: true, so a missing Secret degrades to no client identity at all
+// and the 403 above is the only other evidence of it.
 func buildHTTPClient(secrets kubernetes.Interface) *http.Client {
+	logger := log.Log.WithName("credential")
 	if insecureSkipVerify {
-		log.Log.WithName("credential").Info(
-			"Credential provider TLS verification is disabled; the bearer token and returned credentials are exposed to any on-path attacker",
+		logger.Info(
+			"Credential provider server certificate verification is disabled; the bearer token and returned credentials are exposed to any on-path attacker. A configured client certificate is still presented",
 			"envVar", "CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY")
-		return newInsecureTLSClient()
 	}
 
 	if secrets != nil {
-		if c, err := newMTLSClientFromSecret(secrets); err == nil {
+		c, err := newMTLSClientFromSecret(secrets)
+		if err == nil {
 			return c
 		}
+		logger.V(logging.DEFAULT).Info("Not using Secret-based mTLS material", "reason", err.Error())
 	}
 
-	if c, err := newMTLSClient(clientCertPath, clientKeyPath, caCertPath); err == nil {
+	c, err := newMTLSClient(clientCertPath, clientKeyPath, caCertPath)
+	if err == nil {
 		return c
 	}
+	logger.V(logging.DEFAULT).Info(
+		"Not using file-based mTLS material; the credential provider will be called without a client certificate",
+		"reason", err.Error())
 	return newDefaultTLSClient()
 }
 
@@ -194,10 +214,6 @@ func newMTLSClientFromSecret(secrets kubernetes.Interface) (*http.Client, error)
 		return nil, fmt.Errorf("failed to read mTLS secret %s/%s: %w", ns, name, err)
 	}
 
-	caCertPEM, ok := sec.Data[secretKeyCACert]
-	if !ok || len(caCertPEM) == 0 {
-		return nil, fmt.Errorf("mTLS secret %s/%s missing data key %q", ns, name, secretKeyCACert)
-	}
 	certPEM, ok := sec.Data[secretKeyClientCert]
 	if !ok || len(certPEM) == 0 {
 		return nil, fmt.Errorf("mTLS secret %s/%s missing data key %q", ns, name, secretKeyClientCert)
@@ -212,25 +228,18 @@ func newMTLSClientFromSecret(secrets kubernetes.Interface) (*http.Client, error)
 		return nil, fmt.Errorf("failed to parse client certificate from secret: %w", err)
 	}
 
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
-		return nil, fmt.Errorf("failed to parse CA cert from secret %s/%s", ns, name)
+	caCertPool, err := caCertPoolFromPEM(sec.Data[secretKeyCACert],
+		fmt.Sprintf("secret %s/%s", ns, name))
+	if err != nil {
+		return nil, err
 	}
 
-	return &http.Client{
-		Timeout: defaultHTTPTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				Certificates: []tls.Certificate{cert},
-				RootCAs:      caCertPool,
-				MinVersion:   tls.VersionTLS12,
-			},
-		},
-	}, nil
+	return newTLSClient(&cert, caCertPool), nil
 }
 
 // newMTLSClient loads a client certificate, key, and CA cert, then returns an
-// HTTP client configured for mTLS with server CA verification.
+// HTTP client configured for mTLS. The CA verifies the provider's server
+// certificate, except under insecureSkipVerify where it is optional.
 func newMTLSClient(certPath, keyPath, caCertPath string) (*http.Client, error) {
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
@@ -248,63 +257,78 @@ func newMTLSClient(certPath, keyPath, caCertPath string) (*http.Client, error) {
 
 	caCertPool, err := loadCACertPool(caCertPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load CA cert %s: %w", caCertPath, err)
+		return nil, err
 	}
 
-	return &http.Client{
-		Timeout: defaultHTTPTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				Certificates: []tls.Certificate{cert},
-				RootCAs:      caCertPool,
-				MinVersion:   tls.VersionTLS12,
-			},
-		},
-	}, nil
+	return newTLSClient(&cert, caCertPool), nil
 }
 
-// loadCACertPool reads a CA certificate file and returns a CertPool.
+// loadCACertPool reads a CA certificate file and returns a CertPool. An absent
+// or unparseable bundle yields a nil pool rather than an error when
+// insecureSkipVerify is on, per caCertPoolFromPEM.
 func loadCACertPool(caCertPath string) (*x509.CertPool, error) {
 	caCertPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
+		if insecureSkipVerify {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to read CA cert %s: %w", caCertPath, err)
 	}
-
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
-		return nil, fmt.Errorf("failed to parse CA cert from %s", caCertPath)
-	}
-	return caCertPool, nil
+	return caCertPoolFromPEM(caCertPEM, caCertPath)
 }
 
-// newInsecureTLSClient returns an HTTP client that does not verify the
-// credential provider's certificate and presents no client certificate, so no
-// mTLS material has to be provisioned. Selected by insecureSkipVerify.
-func newInsecureTLSClient() *http.Client {
+// caCertPoolFromPEM parses a CA bundle into a pool, naming source in errors.
+//
+// Missing or unparseable material is an error, except under
+// insecureSkipVerify: there the pool is never consulted, so failing here would
+// discard the source's client certificate along with a trust anchor nothing
+// reads. A nil pool means "verify against the system trust store", which is
+// equally inert in that mode.
+func caCertPoolFromPEM(caCertPEM []byte, source string) (*x509.CertPool, error) {
+	if len(caCertPEM) == 0 {
+		if insecureSkipVerify {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("no CA cert in %s", source)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caCertPEM) {
+		if insecureSkipVerify {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to parse CA cert from %s", source)
+	}
+	return pool, nil
+}
+
+// newTLSClient assembles the HTTP client from a client identity and a server
+// trust anchor, either of which may be absent: a nil cert presents no client
+// certificate, and a nil pool verifies against the system trust store.
+//
+// Every source funnels through here so insecureSkipVerify is applied in one
+// place and cannot silently drop the client identity — the failure mode of the
+// separate insecure client this replaced.
+func newTLSClient(cert *tls.Certificate, caCertPool *x509.CertPool) *http.Client {
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    caCertPool,
+		//nolint:gosec // opt-in via CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY, warned about in buildHTTPClient
+		InsecureSkipVerify: insecureSkipVerify,
+	}
+	if cert != nil {
+		cfg.Certificates = []tls.Certificate{*cert}
+	}
 	return &http.Client{
-		Timeout: defaultHTTPTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				MinVersion:         tls.VersionTLS12,
-				InsecureSkipVerify: true, //nolint:gosec // opt-in via insecureSkipVerify
-			},
-		},
+		Timeout:   defaultHTTPTimeout,
+		Transport: &http.Transport{TLSClientConfig: cfg},
 	}
 }
 
-// newDefaultTLSClient returns an HTTP client with a default TLS transport
-// (no client certificate). Server certificates are verified against the
-// system trust store; TLS 1.2 is the minimum version. This is the fallback
-// used when mTLS material is unavailable — it does NOT skip verification.
+// newDefaultTLSClient returns an HTTP client with no client certificate,
+// verifying server certificates against the system trust store. This is the
+// fallback used when no mTLS material is available.
 func newDefaultTLSClient() *http.Client {
-	return &http.Client{
-		Timeout: defaultHTTPTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-			},
-		},
-	}
+	return newTLSClient(nil, nil)
 }
 
 // credentialRequest is the request body for GetResourceCredential.

@@ -32,6 +32,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"istio.io/istio/pkg/test"
@@ -306,41 +307,118 @@ func TestBuildHTTPClient_InsecureSkipVerify_ReachesUnknownCA(t *testing.T) {
 	})
 }
 
-// TestBuildHTTPClient_InsecureSkipVerify_PrecedesMTLS verifies insecure mode
-// short-circuits both mTLS sources: valid file paths and a well-formed Secret
-// are ignored, and no client certificate is presented.
-func TestBuildHTTPClient_InsecureSkipVerify_PrecedesMTLS(t *testing.T) {
+// TestBuildHTTPClient_InsecureSkipVerify_KeepsClientCertificate pins the two
+// axes as orthogonal: insecure mode turns off server verification and leaves
+// every mTLS source in place. A provider serving a self-signed certificate while
+// requiring mTLS is the case that matters — dropping the client identity here
+// made it answer 403 "extraMetadata requires an mTLS client".
+func TestBuildHTTPClient_InsecureSkipVerify_KeepsClientCertificate(t *testing.T) {
 	certPEM, keyPEM := generateSelfSignedCert(t)
 	caPEM := generateCACert(t)
 
-	test.SetForTest(t, &clientCertPath, writeTempFile(t, "insecure-cert-*.pem", certPEM))
-	test.SetForTest(t, &clientKeyPath, writeTempFile(t, "insecure-key-*.pem", keyPEM))
-	test.SetForTest(t, &caCertPath, writeTempFile(t, "insecure-ca-*.pem", caPEM))
-	test.SetForTest(t, &secretNamespace, "epe-system")
-	test.SetForTest(t, &secretName, "epe-mtls")
+	cases := []struct {
+		name   string
+		setup  func(t *testing.T) kubernetes.Interface
+		wantCA bool
+	}{
+		{
+			name: "from secret",
+			setup: func(t *testing.T) kubernetes.Interface {
+				test.SetForTest(t, &secretNamespace, "epe-system")
+				test.SetForTest(t, &secretName, "epe-mtls")
+				return k8sfake.NewSimpleClientset(&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Namespace: "epe-system", Name: "epe-mtls"},
+					Data: map[string][]byte{
+						secretKeyCACert:     caPEM,
+						secretKeyClientCert: certPEM,
+						secretKeyClientKey:  keyPEM,
+					},
+				})
+			},
+			wantCA: true,
+		},
+		{
+			name: "from file paths",
+			setup: func(t *testing.T) kubernetes.Interface {
+				test.SetForTest(t, &clientCertPath, writeTempFile(t, "insecure-cert-*.pem", certPEM))
+				test.SetForTest(t, &clientKeyPath, writeTempFile(t, "insecure-key-*.pem", keyPEM))
+				test.SetForTest(t, &caCertPath, writeTempFile(t, "insecure-ca-*.pem", caPEM))
+				return nil
+			},
+			wantCA: true,
+		},
+		{
+			// The self-signed provider case: there is no CA to provision, which
+			// must not cost the client its certificate.
+			name: "from file paths without a CA",
+			setup: func(t *testing.T) kubernetes.Interface {
+				test.SetForTest(t, &clientCertPath, writeTempFile(t, "insecure-cert-*.pem", certPEM))
+				test.SetForTest(t, &clientKeyPath, writeTempFile(t, "insecure-key-*.pem", keyPEM))
+				test.SetForTest(t, &caCertPath, "/nonexistent/ca.pem")
+				return nil
+			},
+			wantCA: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			test.SetForTest(t, &secretNamespace, "")
+			test.SetForTest(t, &secretName, "")
+			test.SetForTest(t, &clientCertPath, "/nonexistent/cert.pem")
+			test.SetForTest(t, &clientKeyPath, "/nonexistent/key.pem")
+			test.SetForTest(t, &caCertPath, "/nonexistent/ca.pem")
+			test.SetForTest(t, &insecureSkipVerify, true)
+			secrets := tc.setup(t)
+
+			cfg := transportTLSConfig(t, buildHTTPClient(secrets))
+			if !cfg.InsecureSkipVerify {
+				t.Error("expected InsecureSkipVerify to be set")
+			}
+			if len(cfg.Certificates) != 1 {
+				t.Errorf("expected the configured client certificate to be presented, got %d", len(cfg.Certificates))
+			}
+			if gotCA := cfg.RootCAs != nil; gotCA != tc.wantCA {
+				t.Errorf("RootCAs loaded = %v, want %v", gotCA, tc.wantCA)
+			}
+			if cfg.MinVersion != tls.VersionTLS12 {
+				t.Errorf("expected MinVersion TLS 1.2, got %x", cfg.MinVersion)
+			}
+		})
+	}
+}
+
+// TestBuildHTTPClient_InsecureSkipVerify_MTLSHandshake is the end-to-end form of
+// the test above: a server presenting an untrusted certificate *and* demanding a
+// client certificate is reachable only when both axes hold at once.
+func TestBuildHTTPClient_InsecureSkipVerify_MTLSHandshake(t *testing.T) {
+	certPEM, keyPEM := generateSelfSignedCert(t)
+
+	var sawPeerCert bool
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPeerCert = r.TLS != nil && len(r.TLS.PeerCertificates) > 0
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	test.SetForTest(t, &secretNamespace, "")
+	test.SetForTest(t, &secretName, "")
+	test.SetForTest(t, &clientCertPath, writeTempFile(t, "handshake-cert-*.pem", certPEM))
+	test.SetForTest(t, &clientKeyPath, writeTempFile(t, "handshake-key-*.pem", keyPEM))
+	test.SetForTest(t, &caCertPath, "/nonexistent/ca.pem")
 	test.SetForTest(t, &insecureSkipVerify, true)
 
-	secrets := k8sfake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "epe-system", Name: "epe-mtls"},
-		Data: map[string][]byte{
-			secretKeyCACert:     caPEM,
-			secretKeyClientCert: certPEM,
-			secretKeyClientKey:  keyPEM,
-		},
-	})
-
-	cfg := transportTLSConfig(t, buildHTTPClient(secrets))
-	if !cfg.InsecureSkipVerify {
-		t.Error("expected InsecureSkipVerify to be set")
+	resp, err := buildHTTPClient(nil).Get(srv.URL)
+	if err != nil {
+		t.Fatalf("handshake against a self-signed server requiring mTLS failed: %v", err)
 	}
-	if len(cfg.Certificates) != 0 {
-		t.Errorf("expected no client certificate in insecure mode, got %d", len(cfg.Certificates))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
 	}
-	if cfg.RootCAs != nil {
-		t.Error("expected no trust anchors to be loaded in insecure mode")
-	}
-	if cfg.MinVersion != tls.VersionTLS12 {
-		t.Errorf("expected MinVersion TLS 1.2, got %x", cfg.MinVersion)
+	if !sawPeerCert {
+		t.Error("server saw no client certificate")
 	}
 }
 
@@ -382,6 +460,19 @@ func TestNewMTLSClient_MissingFiles(t *testing.T) {
 			}
 		})
 	}
+
+	// The CA is the one piece insecure mode does without: it is never consulted,
+	// so requiring it would cost the source its client certificate.
+	t.Run("nonexistent CA file with insecure skip verify", func(t *testing.T) {
+		test.SetForTest(t, &insecureSkipVerify, true)
+		c, err := newMTLSClient(certPath, keyPath, "/nonexistent/ca.pem")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg := transportTLSConfig(t, c); len(cfg.Certificates) != 1 {
+			t.Errorf("expected the client certificate to be presented, got %d", len(cfg.Certificates))
+		}
+	})
 }
 
 // --- GetToken ---------------------------------------------------------------
@@ -416,6 +507,18 @@ func TestLoadCACertPool_InvalidCA(t *testing.T) {
 	if _, err := loadCACertPool(caPath); err == nil {
 		t.Fatal("expected error for invalid CA cert")
 	}
+
+	// Unparseable material is not an error when nothing will read the pool.
+	t.Run("insecure skip verify", func(t *testing.T) {
+		test.SetForTest(t, &insecureSkipVerify, true)
+		pool, err := loadCACertPool(caPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pool != nil {
+			t.Error("expected a nil pool, which means the system trust store")
+		}
+	})
 }
 
 // --- Secret-based mTLS tests ------------------------------------------------
@@ -471,7 +574,7 @@ func TestNewMTLSClientFromSecret_Success(t *testing.T) {
 // newMTLSClientFromSecret fail: unset env vars, a Secret that does not exist,
 // a Secret missing a required data key, and unparseable certificate data.
 func TestNewMTLSClientFromSecret_Errors(t *testing.T) {
-	_, keyPEM := generateSelfSignedCert(t)
+	certPEM, keyPEM := generateSelfSignedCert(t)
 	caPEM := generateCACert(t)
 
 	cases := []struct {
@@ -497,6 +600,15 @@ func TestNewMTLSClientFromSecret_Errors(t *testing.T) {
 			data: map[string][]byte{
 				secretKeyCACert:    caPEM,
 				secretKeyClientKey: keyPEM,
+			},
+		},
+		{
+			name:      "missing CA cert key",
+			namespace: "default-ns",
+			secName:   "default-secret",
+			data: map[string][]byte{
+				secretKeyClientCert: certPEM,
+				secretKeyClientKey:  keyPEM,
 			},
 		},
 		{
