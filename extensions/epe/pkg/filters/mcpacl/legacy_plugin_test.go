@@ -128,12 +128,12 @@ func TestFinalize_PolicyEvaluation(t *testing.T) {
 		{"whitelist denies unlisted tool", whitelist, "delete_file", legacyImmediate},
 		{"blacklist allows non-blacklisted tool", blacklist, "read_file", legacyContinue},
 		{"blacklist denies blacklisted tool", blacklist, "exec_command", legacyImmediate},
-		// A governed call with no readable tool name is denied rather than
-		// falling through to defaultAction. Under the blacklist policy the
-		// fall-through admitted it, which let a caller evade every
-		// tool-scoped rule by omitting the name a lenient upstream would
-		// still resolve.
-		{"empty tool name denied as unattributable under blacklist", blacklist, "", legacyImmediate},
+		// A governed call with no readable tool name cannot be attributed to a
+		// tool-scoped rule, so defaultAction decides — matching
+		// traffix-extension. The accepted consequence is on the blacklist arm: a
+		// caller evades every tool-scoped rule by omitting the name a lenient
+		// upstream would still resolve. Whitelist policies still deny.
+		{"empty tool name follows defaultAction under blacklist", blacklist, "", legacyContinue},
 		{"empty tool name denied under whitelist", whitelist, "", legacyImmediate},
 	}
 
@@ -280,9 +280,14 @@ func TestParseJSONRPCBody(t *testing.T) {
 }
 
 // JSON-RPC batch (array) bodies are only valid in MCP 2025-03-26, which we do
-// not support. A batch is denied under either policy shape: it is a framing
-// violation, and routing it through defaultAction would let a blacklist be
-// bypassed by wrapping the denied call in an array.
+// not support. A batch is a framing violation, and like every other framing
+// violation it is decided by defaultAction, matching traffix-extension.
+//
+// The blacklist arm below pins the accepted consequence directly: wrapping a
+// denied call in an array admits it, because the ACL never reads the tool name
+// out of a batch. It only becomes an executed call on an upstream that still
+// accepts 2025-03-26 batching; a server implementing only the revisions this
+// ACL polices rejects it. Whitelist policies deny it either way.
 func TestFinalize_BatchBody(t *testing.T) {
 	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"delete_repo"},"id":1}]`)
 
@@ -304,7 +309,7 @@ func TestFinalize_BatchBody(t *testing.T) {
 		}
 	})
 
-	t.Run("blacklist denies batch", func(t *testing.T) {
+	t.Run("blacklist admits batch wrapping a denied tool", func(t *testing.T) {
 		policy := &v1alpha1.MCPToolPolicySpec{
 			DefaultAction: "allow",
 			Rules:         []v1alpha1.MCPToolPolicyRule{{Method: "tools/call", ToolNames: []string{"delete_repo"}, Action: "deny"}},
@@ -317,8 +322,11 @@ func TestFinalize_BatchBody(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if result.Action != legacyImmediate {
-			t.Errorf("batch must be denied even under defaultAction=allow, got %v", result.Action)
+		// delete_repo is denied by rule, yet the array hides it from the ACL and
+		// defaultAction: allow decides. Asserted so the exposure cannot be
+		// removed or reintroduced without this test changing.
+		if result.Action != legacyContinue {
+			t.Errorf("batch under defaultAction=allow must pass through, got %v", result.Action)
 		}
 	})
 }

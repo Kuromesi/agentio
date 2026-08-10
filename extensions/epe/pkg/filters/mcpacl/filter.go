@@ -102,6 +102,29 @@ func denyReply(cfg Config) filter.Reply {
 	return filter.Reply{Status: status, Body: body}
 }
 
+// applyDefaultAction decides a request the ACL could not attribute to a tool by
+// the policy's defaultAction, honoured as an allow only when it is exactly
+// actionAllow. That is the same polarity the evaluate call site uses, so an
+// action value this build does not recognise denies rather than admits.
+//
+// Its callers are the cases where the ACL cannot name what the upstream would
+// execute: a batch or otherwise unreadable body, and a governed call with no
+// readable tool name. They route here rather than denying outright to keep the
+// verdict operators configure in defaultAction authoritative, matching
+// traffix-extension.
+//
+// The residual risk is deliberate and belongs in the release notes: under
+// defaultAction: allow, a body whose first JSON document is not the whole body
+// is admitted even though a lenient upstream may go on to execute a second,
+// uninspected tools/call. Whitelist policies (defaultAction: deny) are
+// unaffected.
+func applyDefaultAction(cfg Config) filter.Action {
+	if cfg.DefaultAction == actionAllow {
+		return filter.Continue()
+	}
+	return filter.Stop(denyReply(cfg))
+}
+
 // Filter evaluates one rule's MCP tool policy.
 type Filter struct {
 	filter.PassThrough
@@ -121,16 +144,18 @@ func (f *Filter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Actio
 func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filter.Body) (filter.Action, error) {
 	read := readBody(st.Request.Headers, body.Bytes)
 
-	// A body the ACL cannot read as one JSON-RPC message hides the tool name
-	// while staying actionable by a lenient upstream parser, so it is denied
-	// outright rather than routed through defaultAction. Checked before the
-	// version header so it cannot be bypassed through it.
+	// A body the ACL cannot read as one JSON-RPC message — a batch, trailing
+	// content after the first document, or an encoding this filter cannot undo —
+	// hides the tool name while staying actionable by a lenient upstream parser,
+	// so the policy's defaultAction decides (see applyDefaultAction). Evaluated
+	// before the version header so the outcome cannot be changed through it.
 	if read.status == statusUnreadable {
-		cfg := f.rule
-		log.FromContext(ctx).Info("MCP request body is not a readable single JSON-RPC message, denying",
-			"rule", cfg.ID.Name,
+		rc := f.rule
+		log.FromContext(ctx).Info("MCP request body is not a readable single JSON-RPC message, applying defaultAction",
+			"rule", rc.ID.Name,
+			"defaultAction", rc.Cfg.DefaultAction,
 			"pod", st.Peer.Pod.String())
-		return filter.Stop(denyReply(cfg.Cfg)), nil
+		return applyDefaultAction(rc.Cfg), nil
 	}
 
 	// Only tool invocations are governed; a body with no message at all, and
@@ -158,13 +183,13 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 	}
 
 	// A governed call whose tool name is absent or not a string cannot be
-	// attributed to a tool-scoped rule. Falling through to defaultAction would
-	// admit it under a blacklist policy, so an unattributable call is denied
-	// for the same reason an unreadable body is.
+	// attributed to a tool-scoped rule, so the policy's defaultAction decides —
+	// the same fallback evaluate reaches when no rule matches a named tool.
 	if !read.hasTool {
-		log.FromContext(ctx).Info("MCP tool call without a readable tool name, denying",
-			"rule", rc.ID.Name, "method", method, "pod", st.Peer.Pod.String())
-		return filter.Stop(denyReply(cfg)), nil
+		log.FromContext(ctx).Info("MCP tool call without a readable tool name, applying defaultAction",
+			"rule", rc.ID.Name, "method", method,
+			"defaultAction", cfg.DefaultAction, "pod", st.Peer.Pod.String())
+		return applyDefaultAction(cfg), nil
 	}
 
 	if decision := evaluate(cfg, method, toolName); decision != actionAllow {

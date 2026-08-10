@@ -23,9 +23,20 @@ import (
 // MCP 2025-06-18 removed JSON-RPC batching and requires the POST body to be a
 // single JSON-RPC message. A body that violates that framing — a top-level
 // array, or a second document after the first — hides tool names from the ACL
-// while remaining actionable by a lenient upstream parser. Such a body is
-// denied unconditionally, independent of defaultAction, because the framing
-// itself is non-compliant rather than merely unrecognized.
+// while remaining actionable by a lenient upstream parser.
+//
+// Such a body is decided by the policy's defaultAction, matching
+// traffix-extension. That is a deliberate compatibility choice with a known
+// consequence, pinned by the blacklist arms below: under defaultAction: allow, a
+// call this ACL is configured to deny is admitted when it is wrapped in an array
+// or hidden behind a second document, because the ACL never sees its tool name.
+// Whitelist policies (defaultAction: deny) remain protected.
+//
+// The bypass needs a lenient upstream to be more than a failed request: array
+// wrapping needs a server that still accepts 2025-03-26 batching, and a second
+// document needs one that reads several JSON documents from one body — behaviour
+// no MCP revision defines. Operators who cannot accept that exposure should run
+// a whitelist policy.
 
 // blacklistPolicy denies exec_command and allows everything else, so a
 // passthrough bug is visible as ActionContinue rather than being masked by a
@@ -39,7 +50,18 @@ func blacklistPolicy() *v1alpha1.MCPToolPolicySpec {
 	}
 }
 
-func TestFinalize_FramingViolation_DeniedUnderBlacklist(t *testing.T) {
+// whitelistPolicy allows only read_file, so a framing violation that reaches
+// defaultAction is denied — the arm that must stay protected.
+func whitelistPolicy() *v1alpha1.MCPToolPolicySpec {
+	return &v1alpha1.MCPToolPolicySpec{
+		DefaultAction: "deny",
+		Rules: []v1alpha1.MCPToolPolicyRule{
+			{Method: "tools/call", ToolNames: []string{"read_file"}, Action: "allow"},
+		},
+	}
+}
+
+func TestFinalize_FramingViolation_FollowsDefaultAction(t *testing.T) {
 	tests := []struct {
 		name string
 		body []byte
@@ -65,7 +87,9 @@ func TestFinalize_FramingViolation_DeniedUnderBlacklist(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+		// Both arms run the same body, so the only difference in outcome is
+		// defaultAction — which is exactly the contract being pinned.
+		t.Run(tc.name+"/blacklist admits it", func(t *testing.T) {
 			p := newLegacyPlugin()
 			rctx := makeRctx("application/json")
 			rctx.RequestBody = tc.body
@@ -74,8 +98,24 @@ func TestFinalize_FramingViolation_DeniedUnderBlacklist(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			// The accepted exposure: exec_command is denied by rule, but the ACL
+			// cannot read its name out of this body, so defaultAction: allow wins.
+			if result.Action != legacyContinue {
+				t.Errorf("framing violation under defaultAction=allow must pass through, got %v", result.Action)
+			}
+		})
+
+		t.Run(tc.name+"/whitelist denies it", func(t *testing.T) {
+			p := newLegacyPlugin()
+			rctx := makeRctx("application/json")
+			rctx.RequestBody = tc.body
+
+			result, err := p.Finalize(context.Background(), rctx, nil, makeRule(whitelistPolicy()))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if result.Action != legacyImmediate {
-				t.Errorf("non-compliant framing must be denied regardless of defaultAction, got %v", result.Action)
+				t.Errorf("framing violation under defaultAction=deny must be denied, got %v", result.Action)
 			}
 		})
 	}
@@ -149,12 +189,15 @@ func TestFinalize_CompliantFraming_NotTreatedAsViolation(t *testing.T) {
 			want: legacyContinue,
 		},
 		{
-			// An unparseable body is denied rather than passed: this filter
-			// failing to read it does not mean the upstream will, and a tool
-			// call the ACL cannot see is a tool call it cannot police.
-			name: "unparseable body denied",
+			// An unparseable body reaches statusUnreadable through the unmarshal
+			// failure rather than the framing check — framingViolation proves
+			// nothing about a body it cannot decode at all — and is then decided
+			// by defaultAction, which is allow in this table's policy.
+			// TestFinalize_FramingViolation_FollowsDefaultAction covers the
+			// whitelist arm, where the same body is denied.
+			name: "unparseable body follows defaultAction",
 			body: []byte(`not json at all`),
-			want: legacyImmediate,
+			want: legacyContinue,
 		},
 	}
 

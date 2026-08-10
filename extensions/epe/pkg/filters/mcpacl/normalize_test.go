@@ -154,11 +154,13 @@ func TestOnRequestBody(t *testing.T) {
 		},
 		{
 			// A BOM must likewise not hide a batch array from the framing
-			// check.
-			name: "BOM-prefixed batch is denied",
+			// check: the BOM is stripped first, so the batch is still detected.
+			// The detected violation is then decided by defaultAction, which is
+			// allow in this arm.
+			name: "BOM-prefixed batch follows defaultAction",
 			cfg:  blacklistCfg(),
 			body: func(*testing.T) []byte { return append([]byte{0xEF, 0xBB, 0xBF}, "["+deniedCall+"]"...) },
-			want: filter.KindStop,
+			want: filter.KindContinue,
 		},
 		{
 			// UTF-16 with a BOM is auto-detected by Jackson byte-based stacks,
@@ -170,12 +172,13 @@ func TestOnRequestBody(t *testing.T) {
 		},
 		{
 			// A governed call whose params.name is absent cannot be attributed
-			// to a tool rule. Falling through to defaultAction admits it under
-			// a blacklist policy, so it is denied as undecidable instead.
-			name: "governed call with absent tool name is denied",
+			// to a tool rule, so defaultAction decides. The accepted
+			// consequence on this arm: omitting the name evades every
+			// tool-scoped rule under a blacklist. whitelistCfg denies it.
+			name: "governed call with absent tool name follows defaultAction",
 			cfg:  blacklistCfg(),
 			body: func(*testing.T) []byte { return []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{}}`) },
-			want: filter.KindStop,
+			want: filter.KindContinue,
 		},
 		{
 			// A non-string params.name used to break the whole unmarshal,
@@ -199,16 +202,19 @@ func TestOnRequestBody(t *testing.T) {
 		},
 		{
 			// Each declared coding is another decompression pass over up to
-			// 8MiB, and the list is client-supplied, so a long chain must be
-			// refused outright rather than executed. The body is denied
-			// because an undecodable body is undecidable. Four nested gzip
-			// layers of 1MiB of zeros is ~115 bytes on the wire but expands to
-			// 1MiB — and nothing bounds how many layers a client may claim.
-			name:    "long coding chain is refused",
+			// 8MiB, and the list is client-supplied, so a long chain is still
+			// refused outright rather than executed: four nested gzip layers of
+			// 1MiB of zeros is ~115 bytes on the wire but expands to 1MiB, and
+			// nothing bounds how many layers a client may claim. That refusal —
+			// the decompression bomb guard — is unchanged; what defaultAction
+			// decides is only the verdict on the request whose body was refused,
+			// so under a blacklist it is forwarded still compressed and the
+			// upstream decides what to do with it.
+			name:    "long coding chain is refused, verdict follows defaultAction",
 			cfg:     blacklistCfg(),
 			headers: map[string]string{"content-encoding": "gzip, gzip, gzip, gzip"},
 			body:    func(t *testing.T) []byte { return nestedGzip(t, make([]byte, 1<<20), 4) },
-			want:    filter.KindStop,
+			want:    filter.KindContinue,
 		},
 		{
 			// A single coding — what real clients send — still works.
