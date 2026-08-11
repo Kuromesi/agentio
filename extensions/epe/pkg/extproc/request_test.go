@@ -497,8 +497,8 @@ func TestHandleRequestHeaders_MountsRecordedProfileInputsForFinalize(t *testing.
 		{"routing": map[string]string{"target": "second"}},
 	}
 	for i := range want {
-		if !reflect.DeepEqual(capture.scopes[i].Inputs, want[i]) {
-			t.Fatalf("captured inputs[%d] = %#v, want %#v", i, capture.scopes[i].Inputs, want[i])
+		if !reflect.DeepEqual(capture.scopes[i].Inputs(), want[i]) {
+			t.Fatalf("captured inputs[%d] = %#v, want %#v", i, capture.scopes[i].Inputs(), want[i])
 		}
 	}
 }

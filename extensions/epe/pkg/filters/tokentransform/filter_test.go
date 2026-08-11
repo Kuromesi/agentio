@@ -49,7 +49,7 @@ func newTestFilter(secret, provider CredentialSource, cfg Config) *Filter {
 	return &Filter{
 		sources: Sources{Secret: secret, Provider: provider},
 		signers: map[string]Signer{TypeAPIKey: apiKeySigner{}},
-		rule:    filter.RuleConfig[Config]{Cfg: cfg, Scope: &inputs.Scope{}},
+		rule:    filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)},
 	}
 }
 
@@ -183,7 +183,7 @@ func TestFilterSecretNamespaceFallback(t *testing.T) {
 	cfg := secretCfg(false)
 	cfg.Source.Namespace = "" // force fallback
 	f := newTestFilter(src, nil, cfg)
-	f.rule.Scope = &inputs.Scope{Profile: inputs.Profile{Namespace: "profilens"}}
+	f.rule.Scope = inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{Namespace: "profilens"}, inputs.Rule{}, nil)
 	_, _ = f.OnRequestHeaders(context.Background(), streamWithPeerToken())
 	if len(src.got) != 1 || src.got[0].Namespace != "profilens" {
 		t.Fatalf("ref = %+v, want profile-namespace fallback", src.got)
@@ -195,7 +195,7 @@ func TestFilterSecretNamespaceFallbackToPod(t *testing.T) {
 	cfg := secretCfg(false)
 	cfg.Source.Namespace = ""
 	f := newTestFilter(src, nil, cfg)
-	f.rule.Scope = &inputs.Scope{} // no profile namespace
+	f.rule.Scope = inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil) // no profile namespace
 	_, _ = f.OnRequestHeaders(context.Background(), streamWithPeerToken())
 	if len(src.got) != 1 || src.got[0].Namespace != "podns" {
 		t.Fatalf("ref = %+v, want pod-namespace fallback", src.got)

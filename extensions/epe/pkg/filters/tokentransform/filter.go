@@ -165,7 +165,7 @@ func (f *Filter) fetchFromSource(ctx context.Context, rc *filter.RuleConfig[Conf
 	case SourceKindSecret:
 		ns := spec.Namespace
 		if ns == "" && rc.Scope != nil {
-			ns = rc.Scope.Profile.Namespace
+			ns = rc.Scope.Profile().Namespace
 		}
 		if ns == "" {
 			ns = st.Peer.Pod.Namespace
@@ -227,7 +227,7 @@ func blockReply(error) filter.Action {
 func (f *Filter) warnNoPermission(ctx context.Context, rc *filter.RuleConfig[Config], st *filter.Stream, err error) {
 	ns := rc.Cfg.Source.Namespace
 	if ns == "" && rc.Scope != nil {
-		ns = rc.Scope.Profile.Namespace
+		ns = rc.Scope.Profile().Namespace
 	}
 	if ns == "" {
 		ns = st.Peer.Pod.Namespace

@@ -130,7 +130,7 @@ func TestBindOrdersUnitsByProfileThenRule(t *testing.T) {
 		if u.Cfgs[0] == nil || u.Cfgs[0].(string) != want[i].Name {
 			t.Errorf("unit %d cfg = %v, want %q", i, u.Cfgs[0], want[i].Name)
 		}
-		if u.Scope == nil || u.Scope.Rule.Name != want[i].Name {
+		if u.Scope == nil || u.Scope.Rule().Name != want[i].Name {
 			t.Errorf("unit %d scope rule = %+v", i, u.Scope)
 		}
 	}

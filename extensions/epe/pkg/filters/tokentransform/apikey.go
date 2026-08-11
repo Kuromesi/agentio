@@ -70,8 +70,8 @@ func (apiKeySigner) Sign(_ context.Context, _ *filter.Stream, _ []byte, scope *i
 	}
 	data := ApiKeyTemplateData{Token: cred.Token}
 	if scope != nil {
-		data.Pod = scope.Pod
-		data.Inputs = scope.Inputs
+		data.Pod = scope.Pod()
+		data.Inputs = scope.Inputs()
 	}
 	var buf bytes.Buffer
 	if err := ac.Template.Execute(&buf, data); err != nil {

@@ -27,7 +27,7 @@ func TestApiKeySignerInjectsRenderedHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := &inputs.Scope{Pod: inputs.Pod{Namespace: "team-a"}}
+	scope := inputs.NewScope(inputs.Request{}, inputs.Pod{Namespace: "team-a"}, inputs.Profile{}, inputs.Rule{}, nil)
 	muts, err := (apiKeySigner{}).Sign(context.Background(), &filter.Stream{}, nil, scope,
 		Credential{Token: "tok-1"}, ApiKeyConfig{TargetHeader: "authorization", Template: tmpl})
 	if err != nil {

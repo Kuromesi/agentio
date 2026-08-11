@@ -14,7 +14,10 @@
 package eval
 
 import (
+	"fmt"
 	"testing"
+
+	"github.com/google/cel-go/cel"
 
 	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
@@ -33,22 +36,23 @@ func benchRequest() inputs.Request {
 	})
 }
 
-func benchActivation(extra map[string]any) map[string]any {
-	return inputs.NewActivationWithInputs(
+func benchActivation(extra map[string]any) cel.Activation {
+	return inputs.NewScope(
 		benchRequest(),
 		inputs.Pod{Namespace: "test-ns", Name: "sandbox-pod", Labels: map[string]string{"app": "sleep"}},
 		inputs.Profile{Name: "profile"},
 		inputs.Rule{Name: "rule"},
 		extra,
-		"blocked",
-	)
+	).Activation()
 }
 
 // BenchmarkEvalBool measures one audit `when` evaluation against an already
 // compiled program and an already built activation — the per-request cost a
-// profile with audit conditions adds. Compilation happens once per profile
-// (BenchmarkCompileBool) and activation construction is charged separately
-// (BenchmarkActivation).
+// profile with audit conditions adds. The activation carries the audit shape:
+// the memoised scope activation with the audit-only variables layered on top,
+// exactly as audit.Scope.Activation builds it. Compilation happens once per
+// profile (BenchmarkCompileBool) and the base activation construction is
+// charged separately (BenchmarkActivation).
 func BenchmarkEvalBool(b *testing.B) {
 	cases := []struct {
 		name string
@@ -65,8 +69,7 @@ func BenchmarkEvalBool(b *testing.B) {
 		if err != nil {
 			b.Fatalf("%s: compile: %v", tc.name, err)
 		}
-		act := benchActivation(nil)
-		defer inputs.ReleaseActivation(act)
+		act := layerAuditOnly(b, benchActivation(nil), map[string]any{"result": "blocked"})
 		// Guard the fixture: every arm must actually evaluate to true, or
 		// the numbers would describe an error path instead.
 		if ok, err := EvalBool(prog, act); err != nil || !ok {
@@ -110,7 +113,6 @@ func BenchmarkEvalValue(b *testing.B) {
 			b.Fatalf("%s: compile: %v", tc.name, err)
 		}
 		act := benchActivation(tc.inputs)
-		defer inputs.ReleaseActivation(act)
 		if v, err := EvalValue(prog, act); err != nil || v == nil {
 			b.Fatalf("%s: fixture yields (%v, %v), want a value", tc.name, v, err)
 		}
@@ -127,14 +129,79 @@ func BenchmarkEvalValue(b *testing.B) {
 	}
 }
 
-// BenchmarkActivation measures building and releasing one pooled activation —
-// the fixed overhead every CEL evaluation pays on top of Eval itself.
+// BenchmarkActivation measures the per-unit projection. The first-call arm is
+// what a request pays once; the memoised arm is what every later evaluation in
+// that unit pays. The sizes are 2, 12 and 40 headers because the cost the
+// pooled implementation paid was linear in header count.
 func BenchmarkActivation(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		act := benchActivation(nil)
-		inputs.ReleaseActivation(act)
+	sizes := []struct {
+		name    string
+		h, q, l int
+	}{
+		{"h2_q0_l2", 2, 0, 2},
+		{"h12_q2_l5", 12, 2, 5},
+		{"h40_q8_l15", 40, 8, 15},
 	}
+	for _, sz := range sizes {
+		req, pod := benchRequestSized(sz.h, sz.q), benchPodSized(sz.l)
+		// Guard the fixture: the projection must actually carry the headers and
+		// labels the size claims, or every arm would measure the same trivial
+		// bag. Checked through CEL so the guard does not depend on the bag's
+		// representation.
+		guardProjectionSize(b, req, pod, sz.h, sz.l)
+		b.Run("first/"+sz.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				benchSink = inputs.NewScope(req, pod, inputs.Profile{Name: "p"}, inputs.Rule{Name: "r"}, nil).Activation()
+			}
+		})
+		b.Run("memoised/"+sz.name, func(b *testing.B) {
+			s := inputs.NewScope(req, pod, inputs.Profile{Name: "p"}, inputs.Rule{Name: "r"}, nil)
+			_ = s.Activation()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				benchSink = s.Activation()
+			}
+		})
+	}
+}
+
+// guardProjectionSize fails the benchmark unless the projected bag really
+// exposes nHeaders headers and nLabels labels, so a fixture that silently
+// stopped varying with size cannot produce believable numbers.
+func guardProjectionSize(b *testing.B, req inputs.Request, pod inputs.Pod, nHeaders, nLabels int) {
+	b.Helper()
+	prog, err := CompileBool(fmt.Sprintf(`size(request.headers) == %d && size(pod.labels) == %d`, nHeaders, nLabels))
+	if err != nil {
+		b.Fatalf("guard: compile: %v", err)
+	}
+	act := inputs.NewScope(req, pod, inputs.Profile{Name: "p"}, inputs.Rule{Name: "r"}, nil).Activation()
+	if ok, err := EvalBool(prog, act); err != nil || !ok {
+		b.Fatalf("guard: projection does not carry %d headers / %d labels: (%v, %v)", nHeaders, nLabels, ok, err)
+	}
+}
+
+func benchRequestSized(nHeaders, nQuery int) inputs.Request {
+	h := make(map[string]string, nHeaders)
+	for i := 0; i < nHeaders; i++ {
+		h[fmt.Sprintf("x-header-%02d", i)] = "some-reasonably-long-header-value"
+	}
+	q := make(map[string][]string, nQuery)
+	for i := 0; i < nQuery; i++ {
+		q[fmt.Sprintf("param%d", i)] = []string{"value"}
+	}
+	return inputs.RequestFrom(httpreq.HTTPRequest{
+		Host: "api.example.com", Port: 443, Path: "/v1/chat/completions",
+		Scheme: "https", Method: "POST", Headers: h, Query: q,
+	})
+}
+
+func benchPodSized(nLabels int) inputs.Pod {
+	l := make(map[string]string, nLabels)
+	for i := 0; i < nLabels; i++ {
+		l[fmt.Sprintf("label-%d", i)] = "value"
+	}
+	return inputs.Pod{Name: "sandbox-pod", Namespace: "ns", IP: "10.0.0.1", Labels: l}
 }
 
 // BenchmarkCompileBool measures one full compile (parse, type-check,

@@ -98,11 +98,11 @@ func CompileBool(expr string) (cel.Program, error) {
 
 // EvalBool evaluates a compiled program against activation. A nil program
 // returns true (the empty-expression "always fire" path).
-func EvalBool(prog cel.Program, activation map[string]any) (bool, error) {
+func EvalBool(prog cel.Program, act cel.Activation) (bool, error) {
 	if prog == nil {
 		return true, nil
 	}
-	val, _, err := prog.Eval(activation)
+	val, _, err := prog.Eval(act)
 	if err != nil {
 		return false, fmt.Errorf("eval when: %w", err)
 	}
@@ -117,8 +117,8 @@ func EvalBool(prog cel.Program, activation map[string]any) (bool, error) {
 // JSON-native Go value: maps become map[string]any, lists become []any, and
 // nothing in the result shares storage with the activation. A null result is
 // reported as an untyped nil.
-func EvalValue(prog cel.Program, activation map[string]any) (any, error) {
-	val, _, err := prog.Eval(activation)
+func EvalValue(prog cel.Program, act cel.Activation) (any, error) {
+	val, _, err := prog.Eval(act)
 	if err != nil {
 		return nil, fmt.Errorf("eval value: %w", err)
 	}
@@ -136,14 +136,12 @@ var anyType = reflect.TypeOf((*any)(nil)).Elem()
 // ownedNative walks a CEL result into a plain Go value. It exists because
 // ref.Val.ConvertToNative is unfit for either of this package's two duties:
 //
-// Ownership. ConvertToNative hands back the underlying container whenever it
-// is already assignable to the requested type — for a value read out of the
-// activation that container is a slot of a pooled map (inputs.activationPool),
-// or the caller's own inputs map. Callers release the activation as soon as
-// EvalValue returns and keep reading the value afterwards, so the next request
-// to take that activation would overwrite it. Guarding here rather than at the
-// call site is deliberate: a returned `any` carries no hint that it belongs to
-// a pool, so every future caller would otherwise have to know to copy first.
+// Ownership. ConvertToNative hands back the underlying container whenever it is
+// already assignable to the requested type — for a value read out of an
+// activation that container belongs to the Scope that built it, or to the
+// caller's own inputs map. Those are immutable for the stream's life, so the
+// alias is stable today; copying keeps the guarantee a property of this
+// function rather than of every producer of a Scope.
 //
 // JSON shape. cel-go converts a map result to map[any]any, which
 // encoding/json rejects outright, so every map-valued expression would fail

@@ -22,14 +22,21 @@
 package audit
 
 import (
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/interpreter"
+
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
 // Scope is the template root passed to URL / header / body renderers and
 // the CEL `when` evaluator. It embeds the shared inputs.Scope, so the
-// promoted Request/Pod/Profile/Rule fields resolve the documented template
-// paths ({{ .Request.* }}, {{ .Pod.* }}, ...). All fields are populated at
-// request-resolution time and are safe for read-only template access.
+// promoted Request/Pod/Profile/Rule accessor methods resolve the documented
+// template paths ({{ .Request.* }}, {{ .Pod.* }}, ...) — text/template treats
+// an exported method exactly as it treats an exported field. Those accessors
+// take value receivers, so they promote through the embedded value whether the
+// render root is a *Scope or a Scope value; TestAuditScopeRendersTemplatePaths
+// pins both. All fields are populated at request-resolution time and are safe
+// for read-only template access.
 type Scope struct {
 	inputs.Scope
 	Result  string
@@ -44,14 +51,35 @@ type Response struct {
 	Status int
 }
 
-// Activation shadows the embedded inputs.Scope.Activation: the audit
-// projection additionally exposes the audit-only `result` variable. The
-// returned map is pooled; the caller must invoke the returned release
-// function when done.
-func (s *Scope) Activation() (map[string]any, func()) {
-	act := inputs.NewActivationWithInputs(s.Request, s.Pod, s.Profile, s.Rule, s.Inputs, s.Result)
-	act["response"] = map[string]any{"status": s.Response.Status}
-	return act, func() { inputs.ReleaseActivation(act) }
+// Activation shadows the embedded inputs.Scope.Activation: the audit projection
+// additionally exposes the audit-only `result` and `response` variables. They
+// are layered as a hierarchical child rather than written into the base, so the
+// base stays immutable and shared with the unit's Scope — which is what makes
+// audit see the request exactly as it was evaluated at request time.
+//
+// This is where every phase-varying variable belongs; the rule is stated on
+// inputs.Scope.buildBag, the site it constrains.
+func (s *Scope) Activation() cel.Activation {
+	top, err := cel.NewActivation(map[string]any{
+		"result":   s.Result,
+		"response": map[string]any{"status": s.Response.Status},
+	})
+	if err != nil {
+		// Unreachable: NewActivation rejects only nil and non-map bindings.
+		panic("audit: activation: " + err.Error())
+	}
+	return layer(s.Scope.Activation(), top)
+}
+
+// layer is the one place the base/child order is written down. Activation goes
+// through it so a test can pin the direction with a deliberately colliding
+// child: the embedded inputs.Scope is a concrete value, so a test cannot reach
+// the collision through Activation itself, and today's two key sets are
+// disjoint, which leaves NewHierarchicalActivation's arguments swappable with
+// every test still green. TestAuditScopeActivationShadowsResult's shadowing
+// subtest calls layer directly to close that.
+func layer(base, child cel.Activation) cel.Activation {
+	return interpreter.NewHierarchicalActivation(base, child)
 }
 
 // MatchedCriteria is a template-compatibility accessor: documented webhook

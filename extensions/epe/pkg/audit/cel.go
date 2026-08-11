@@ -26,9 +26,7 @@ func EvalWhen(prog cel.Program, s *Scope) (bool, error) {
 	if prog == nil {
 		return true, nil
 	}
-	act, release := s.Activation()
-	defer release()
-	return eval.EvalBool(prog, act)
+	return eval.EvalBool(prog, s.Activation())
 }
 
 var (

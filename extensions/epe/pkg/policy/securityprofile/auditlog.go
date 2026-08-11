@@ -96,16 +96,19 @@ func profileNN(p *Profile) types.NamespacedName {
 
 // buildScope assembles the CEL/template evaluation scope for one unit from
 // its immutable per-unit Scope, the stream, and the final result.
+// The embedded Scope is copied unconditionally: a nil u.Scope is not a case to
+// paper over. A unit that reaches audit without one is a programming error, and
+// guarding it here would substitute a zero-value inputs.Scope whose memoisation
+// cache is nil — inputs.Scope.Activation panics on exactly that (inputs/scope.go:90),
+// so the nil check would create the crash it looks like it prevents. The only
+// caller already guards on u.HasAudits, which implies a resolved unit.
 func buildScope(u *unit, st *filter.Stream, result string) audit.Scope {
-	s := audit.Scope{
+	return audit.Scope{
+		Scope:    *u.Scope,
 		Result:   result,
 		Matched:  buildMatch(u, &st.Request),
 		Response: audit.Response{Status: st.Response.Status},
 	}
-	if u.Scope != nil {
-		s.Scope = *u.Scope
-	}
-	return s
 }
 
 // buildMatch reports the RuleMatch clause that fired, populated only with

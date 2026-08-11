@@ -61,7 +61,7 @@ var (
 	metricsPort = flag.Int(
 		"metrics-port", 9090, "The metrics port")
 	observeResponses = flag.Bool(
-		"observe-responses", true,
+		"observe-responses", false,
 		"Open the response-headers phase via ModeOverride so the accesslog and audit record the upstream status; adds one ext_proc message per forwarded request")
 	pluginBudget = flag.Duration(
 		"plugin-budget", 4500*time.Millisecond,

@@ -21,8 +21,15 @@ import (
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
+// baseScope builds the zero-valued inputs.Scope every audit fixture here needs:
+// audit.Scope embeds it by value, and inputs.Scope must come from NewScope for
+// Activation() to work.
+func baseScope() inputs.Scope {
+	return *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
+}
+
 func TestEvalWhen_NilProgReturnsTrue(t *testing.T) {
-	got, err := EvalWhen(nil, &Scope{})
+	got, err := EvalWhen(nil, &Scope{Scope: baseScope()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -36,7 +43,7 @@ func TestEvalWhen_TrueExpression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	s := &Scope{Result: "blocked"}
+	s := &Scope{Scope: baseScope(), Result: "blocked"}
 	got, err := EvalWhen(prog, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -51,7 +58,7 @@ func TestEvalWhen_FalseExpression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	s := &Scope{Result: "passthrough"}
+	s := &Scope{Scope: baseScope(), Result: "passthrough"}
 	got, err := EvalWhen(prog, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -71,44 +78,44 @@ func TestEvalWhen_RequestFieldAccess(t *testing.T) {
 		{
 			name:  "request method matches",
 			expr:  `request.method == "POST"`,
-			scope: Scope{Scope: inputs.Scope{Request: inputs.RequestFrom(httpreq.HTTPRequest{Method: "POST"})}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.RequestFrom(httpreq.HTTPRequest{Method: "POST"}), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)},
 			want:  true,
 		},
 		{
 			name:  "request host matches",
 			expr:  `request.host == "example.com"`,
-			scope: Scope{Scope: inputs.Scope{Request: inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com"})}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com"}), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)},
 			want:  true,
 		},
 		{
 			name:  "request port matches",
 			expr:  `request.port == 443`,
-			scope: Scope{Scope: inputs.Scope{Request: inputs.RequestFrom(httpreq.HTTPRequest{Port: 443})}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.RequestFrom(httpreq.HTTPRequest{Port: 443}), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)},
 			want:  true,
 		},
 		{
 			name:  "pod namespace matches",
 			expr:  `pod.namespace == "production"`,
-			scope: Scope{Scope: inputs.Scope{Pod: inputs.Pod{Namespace: "production"}}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{Namespace: "production"}, inputs.Profile{}, inputs.Rule{}, nil)},
 			want:  true,
 		},
 		{
 			name:  "profile name matches",
 			expr:  `profile.name == "strict"`,
-			scope: Scope{Scope: inputs.Scope{Profile: inputs.Profile{Name: "strict"}}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "strict"}, inputs.Rule{}, nil)},
 			want:  true,
 		},
 		{
 			name:  "rule name matches",
 			expr:  `rule.name == "deny-admin"`,
-			scope: Scope{Scope: inputs.Scope{Rule: inputs.Rule{Name: "deny-admin"}}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{Name: "deny-admin"}, nil)},
 			want:  true,
 		},
 		{
 			name: "complex expression with headers",
 			expr: `result == "blocked" && request.headers["x-priority"] == "high"`,
 			scope: Scope{
-				Scope:  inputs.Scope{Request: inputs.RequestFrom(httpreq.HTTPRequest{Headers: map[string]string{"x-priority": "high"}})},
+				Scope:  *inputs.NewScope(inputs.RequestFrom(httpreq.HTTPRequest{Headers: map[string]string{"x-priority": "high"}}), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil),
 				Result: "blocked",
 			},
 			want: true,
@@ -116,7 +123,7 @@ func TestEvalWhen_RequestFieldAccess(t *testing.T) {
 		{
 			name:  "complex expression with labels",
 			expr:  `pod.labels["team"] == "fraud"`,
-			scope: Scope{Scope: inputs.Scope{Pod: inputs.Pod{Labels: map[string]string{"team": "fraud"}}}},
+			scope: Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{Labels: map[string]string{"team": "fraud"}}, inputs.Profile{}, inputs.Rule{}, nil)},
 			want:  true,
 		},
 	}
@@ -143,7 +150,7 @@ func TestEvalWhen_QueryParams(t *testing.T) {
 		t.Fatalf("compile: %v", err)
 	}
 	s := &Scope{
-		Scope: inputs.Scope{Request: inputs.RequestFrom(httpreq.HTTPRequest{Query: map[string][]string{"tag": {"urgent", "extra"}}})},
+		Scope: *inputs.NewScope(inputs.RequestFrom(httpreq.HTTPRequest{Query: map[string][]string{"tag": {"urgent", "extra"}}}), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil),
 	}
 	got, err := EvalWhen(prog, s)
 	if err != nil {
@@ -159,9 +166,9 @@ func TestEvalWhen_ProfileInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	s := &Scope{Scope: inputs.Scope{Inputs: map[string]any{
-		"routing": map[string]string{"tenant-a": "provider-a"},
-	}}}
+	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{},
+		map[string]any{"routing": map[string]string{"tenant-a": "provider-a"}},
+	)}
 	got, err := EvalWhen(prog, s)
 	if err != nil {
 		t.Fatalf("eval: %v", err)

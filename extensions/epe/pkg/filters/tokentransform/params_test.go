@@ -37,7 +37,7 @@ func TestRenderParamsValueAndTemplate(t *testing.T) {
 		"static":   {Value: ptr.To("v1")},
 		"rendered": {Template: tmpl},
 	}
-	scope := &inputs.Scope{Pod: inputs.Pod{Name: "pod-a"}}
+	scope := inputs.NewScope(inputs.Request{}, inputs.Pod{Name: "pod-a"}, inputs.Profile{}, inputs.Rule{}, nil)
 	got, err := renderParams(params, scope)
 	if err != nil {
 		t.Fatal(err)
@@ -54,10 +54,11 @@ func TestRenderParamsCel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := &inputs.Scope{
-		Request: inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/v1/resources", Scheme: "https", Method: "GET", Query: url.Values{}, Headers: map[string]string{"x-scope": "readonly"}}),
-		Inputs:  map[string]any{"routing": map[string]string{"example.com": "kms-name"}},
-	}
+	scope := inputs.NewScope(
+		inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/v1/resources", Scheme: "https", Method: "GET", Query: url.Values{}, Headers: map[string]string{"x-scope": "readonly"}}),
+		inputs.Pod{}, inputs.Profile{}, inputs.Rule{},
+		map[string]any{"routing": map[string]string{"example.com": "kms-name"}},
+	)
 	got, err := renderParams(map[string]ParamSource{"computed": {Cel: prog}}, scope)
 	if err != nil {
 		t.Fatal(err)
@@ -89,11 +90,12 @@ func TestRenderParamsMapResult(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scope := &inputs.Scope{
-				Request: inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/v1/resources", Scheme: "https", Method: "GET", Query: url.Values{}, Headers: map[string]string{"x-scope": "readonly"}}),
-				Pod:     inputs.Pod{Labels: map[string]string{"tenant": "a"}},
-				Inputs:  map[string]any{"routing": map[string]string{"example.com": "kms-name"}},
-			}
+			scope := inputs.NewScope(
+				inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/v1/resources", Scheme: "https", Method: "GET", Query: url.Values{}, Headers: map[string]string{"x-scope": "readonly"}}),
+				inputs.Pod{Labels: map[string]string{"tenant": "a"}},
+				inputs.Profile{}, inputs.Rule{},
+				map[string]any{"routing": map[string]string{"example.com": "kms-name"}},
+			)
 			got, err := renderParams(map[string]ParamSource{"computed": {Cel: prog}}, scope)
 			if err != nil {
 				t.Fatalf("renderParams: %v", err)
@@ -105,11 +107,12 @@ func TestRenderParamsMapResult(t *testing.T) {
 	}
 }
 
-// TestRenderParamsConcurrentIsolation guards the production symptom the
-// activation pool can produce: one sandbox's headers rendered into another
-// sandbox's extraMetadata, which the credential provider then hashes into its
-// token cache key, so the mix-up outlives the race by the cache TTL. Each
-// goroutine renders only its own tenant's values.
+// TestRenderParamsConcurrentIsolation is an end-to-end check that two requests
+// rendering the same compiled parameter never see each other's values. Its
+// original subject was contamination of a pooled activation, which no longer
+// exists; it survives because it exercises the whole path — Scope projection,
+// CEL evaluation, ownedNative and the JSON round-trip — under concurrency,
+// which no unit test does.
 func TestRenderParamsConcurrentIsolation(t *testing.T) {
 	prog, err := eval.CompileValue(`{"headers": request.headers, "labels": pod.labels, "profile": profile}`)
 	if err != nil {
@@ -122,14 +125,15 @@ func TestRenderParamsConcurrentIsolation(t *testing.T) {
 		wg.Add(1)
 		go func(tenant string) {
 			defer wg.Done()
-			scope := &inputs.Scope{
-				Request: inputs.RequestFrom(httpreq.HTTPRequest{
+			scope := inputs.NewScope(
+				inputs.RequestFrom(httpreq.HTTPRequest{
 					Host: tenant + ".example.com", Port: 443, Path: "/v1", Scheme: "https", Method: "GET",
 					Query: url.Values{}, Headers: map[string]string{"x-tenant": tenant},
 				}),
-				Pod:     inputs.Pod{Name: tenant, Namespace: tenant, Labels: map[string]string{"tenant": tenant}},
-				Profile: inputs.Profile{Name: tenant, Namespace: tenant},
-			}
+				inputs.Pod{Name: tenant, Namespace: tenant, Labels: map[string]string{"tenant": tenant}},
+				inputs.Profile{Name: tenant, Namespace: tenant},
+				inputs.Rule{}, nil,
+			)
 			want := map[string]any{
 				"headers": map[string]any{"x-tenant": tenant},
 				"labels":  map[string]any{"tenant": tenant},
@@ -162,14 +166,14 @@ func TestRenderParamsNullResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = renderParams(map[string]ParamSource{"nothing": {Cel: prog}}, &inputs.Scope{})
+	_, err = renderParams(map[string]ParamSource{"nothing": {Cel: prog}}, inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil))
 	if err == nil || !strings.Contains(err.Error(), "result is null") {
 		t.Fatalf("err = %v, want result-is-null error", err)
 	}
 }
 
 func TestRenderParamsUnsetSource(t *testing.T) {
-	_, err := renderParams(map[string]ParamSource{"empty": {}}, &inputs.Scope{})
+	_, err := renderParams(map[string]ParamSource{"empty": {}}, inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil))
 	if err == nil || !strings.Contains(err.Error(), "exactly one of value, cel or template") {
 		t.Fatalf("err = %v, want exactly-one-source error", err)
 	}

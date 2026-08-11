@@ -14,128 +14,211 @@
 package audit
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 
+	"github.com/google/cel-go/cel"
+
+	"istio.io/istio/extensions/epe/pkg/eval"
 	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
+// mustActivation builds a cel.Activation from a variable bag, failing the test
+// on the error NewActivation only returns for a nil or non-map binding.
+func mustActivation(tb testing.TB, vars map[string]any) cel.Activation {
+	tb.Helper()
+	act, err := cel.NewActivation(vars)
+	if err != nil {
+		tb.Fatalf("cel.NewActivation: %v", err)
+	}
+	return act
+}
+
 // TestAuditScopeActivationShadowsResult is the shadow guard: audit.Scope
 // MUST override the embedded inputs.Scope.Activation so the audit-only
-// `result` variable is exposed to CEL. The current audit activation does
-// NOT expose a `matched` variable (the CEL when-env only declares
-// result/request/pod/profile/rule), so this guard also pins its absence.
+// `result` variable is exposed to CEL, and the base variables must survive the
+// layering rather than being replaced by it.
+//
+// Asserted through CEL rather than through act.ResolveName so it pins what
+// expressions observe, not how the bag is represented. Presence is expressed as
+// has() on a field of the slot: a slot that failed to resolve makes has() error,
+// which is exactly the production symptom (an erroring audit `when` silently
+// drops the event).
 func TestAuditScopeActivationShadowsResult(t *testing.T) {
-	s := &Scope{Result: "blocked"}
-	act, release := s.Activation()
-	defer release()
+	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil), Result: "blocked"}
 	tests := []struct {
-		name    string
-		key     string
-		present bool
-		want    any
+		name string
+		expr string
 	}{
-		{name: "result present", key: "result", present: true, want: "blocked"},
-		{name: "matched absent", key: "matched", present: false},
-		{name: "request present", key: "request", present: true},
-		{name: "pod present", key: "pod", present: true},
-		{name: "profile present", key: "profile", present: true},
-		{name: "rule present", key: "rule", present: true},
+		// The audit-only variable the shadowing exists to add.
+		{name: "result present and carries the value", expr: `result == "blocked"`},
+		// The base variables the layering must not shadow away. has() on a
+		// known field resolves the slot without depending on its contents.
+		{name: "request survives layering", expr: `has(request.host)`},
+		{name: "pod survives layering", expr: `has(pod.name)`},
+		{name: "profile survives layering", expr: `has(profile.name)`},
+		{name: "rule survives layering", expr: `has(rule.name)`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, ok := act[tt.key]
-			if ok != tt.present {
-				t.Fatalf("key %q presence: want %v, got %v", tt.key, tt.present, ok)
+			got, err := evalBoolOnAuditScope(t, s, tt.expr)
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v", tt.expr, err)
 			}
-			if tt.want != nil && v != tt.want {
-				t.Errorf("key %q: want %v, got %v", tt.key, tt.want, v)
+			if !got {
+				t.Errorf("%s = false, want true", tt.expr)
 			}
 		})
 	}
+
+	// The base/child order is unpinned by everything above, because the two key
+	// sets are disjoint today: swapping layer's arguments keeps every arm green.
+	// The extension plan has children shadowing base variables eventually, so
+	// pin the direction now with a child that deliberately collides with a base
+	// slot. This calls layer, the helper Activation delegates to, because the
+	// embedded inputs.Scope is a concrete value and cannot be made to bind a
+	// colliding name through Activation itself.
+	t.Run("child shadows the base on collision", func(t *testing.T) {
+		base := inputs.NewScope(
+			inputs.RequestFrom(httpreq.HTTPRequest{Host: "base.example.com", Port: 443, Path: "/", Scheme: "https", Method: "GET"}),
+			inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+		)
+		act := layer(
+			base.Activation(),
+			mustActivation(t, map[string]any{"request": map[string]any{"host": "child.example.com"}}),
+		)
+		prog, err := eval.CompileBool(`request.host == "child.example.com"`)
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		got, err := eval.EvalBool(prog, act)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !got {
+			t.Error("the child must shadow the base on a name collision: NewHierarchicalActivation takes (parent, child), so layer must pass base first and child second")
+		}
+	})
+
+	// `matched` is deliberately not a CEL variable: the when-env declares only
+	// result/response/request/pod/profile/rule, so an expression referencing it
+	// fails to compile. That is a stronger guarantee than the old
+	// ResolveName("matched") check, which only proved the bag lacked the key --
+	// this proves no profile can even reference it. Match reaches templates via
+	// the MatchedCriteria accessor instead.
+	if _, err := eval.CompileBool(`matched.host == "x"`); err == nil {
+		t.Error("`matched` must not be a declared CEL variable")
+	}
 }
 
-// TestScopeActivation_AllFieldsPopulated proves Scope.Activation carries
-// the expected variable shapes for every scope field.
-func TestScopeActivation_AllFieldsPopulated(t *testing.T) {
-	s := &Scope{
-		Scope: inputs.Scope{
-			Request: inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/api/v1/data", Scheme: "https", Method: "POST", Query: map[string][]string{"tag": {"urgent"}}, Headers: map[string]string{"x-request-id": "abc"}}),
-			Pod: inputs.Pod{
+// populatedAuditScope is the fixture with every projected field populated. It is
+// shared by the shape test and the template-render test so both describe the
+// same scope.
+func populatedAuditScope() *Scope {
+	return &Scope{
+		Scope: *inputs.NewScope(
+			inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/api/v1/data", Scheme: "https", Method: "POST", Query: map[string][]string{"tag": {"urgent"}}, Headers: map[string]string{"x-request-id": "abc"}}),
+			inputs.Pod{
 				Name:      "agent-1",
 				Namespace: "default",
 				IP:        "10.0.0.5",
 				Labels:    map[string]string{"app": "ai"},
 			},
-			Profile: inputs.Profile{Name: "p1", Namespace: "ns"},
-			Rule:    inputs.Rule{Name: "r1"},
-		},
+			inputs.Profile{Name: "p1", Namespace: "ns"},
+			inputs.Rule{Name: "r1"},
+			nil,
+		),
 		Result: "blocked",
 	}
+}
 
-	act, release := s.Activation()
-	defer release()
+// TestScopeActivation_AllFieldsPopulated proves the audit activation exposes
+// every projected field with the value and type an expression needs.
+//
+// Every assertion goes through CEL rather than through act.ResolveName plus a
+// concrete type assertion, so a change to the bag's representation — the slot
+// container types, the map key types — does not break it, while a change to what
+// expressions can observe does. That is deliberate about the port arm too: see
+// the comment on it for what it does and does not pin.
+func TestScopeActivation_AllFieldsPopulated(t *testing.T) {
+	s := populatedAuditScope()
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{name: "result", expr: `result == "blocked"`},
 
-	// Verify top-level result.
-	if act["result"] != "blocked" {
-		t.Errorf("result: want blocked, got %v", act["result"])
+		{name: "request scalars", expr: `request.host == "example.com" && request.path == "/api/v1/data" && request.method == "POST" && request.scheme == "https"`},
+		// This pins that `port` is projected as an integer kind at all: a
+		// string or an absent projection fails it. It does not pin the Go
+		// width — cel-go normalises every Go integer kind to types.Int, so
+		// int, int32 and int64 are indistinguishable through CEL. A float64
+		// projection is caught, but by eval's TestEvalValueResultIsJSONNative
+		// (its `int` case expects int64(443) under reflect.DeepEqual), not here.
+		{name: "request port is an integer", expr: `request.port == 443`},
+		{name: "request headers", expr: `request.headers["x-request-id"] == "abc"`},
+		{name: "request queryParams", expr: `request.queryParams["tag"] == "urgent"`},
+
+		{name: "pod scalars", expr: `pod.name == "agent-1" && pod.namespace == "default" && pod.ip == "10.0.0.5"`},
+		{name: "pod labels", expr: `pod.labels["app"] == "ai"`},
+
+		{name: "profile", expr: `profile.name == "p1" && profile.namespace == "ns"`},
+		{name: "rule", expr: `rule.name == "r1"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := evalBoolOnAuditScope(t, s, tt.expr)
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v", tt.expr, err)
+			}
+			if !got {
+				t.Errorf("%s = false, want true", tt.expr)
+			}
+		})
+	}
+}
+
+// TestAuditScopeRendersTemplatePaths pins that the documented template paths
+// resolve against an audit.Scope root, through the embedded inputs.Scope's
+// promoted accessor methods.
+//
+// The value-root arm is the point. inputs.Scope's accessors take value
+// receivers, so they promote through the embedded value on both a *Scope and a
+// Scope value. Switching them to pointer receivers would keep the *Scope arm
+// green and break only the value root — and it would break at render time,
+// where text/template reports a missing field by failing the execute, so the
+// symptom is a webhook body that silently stops carrying its request context.
+func TestAuditScopeRendersTemplatePaths(t *testing.T) {
+	const tmpl = `{{ .Request.Host }}|{{ .Request.Header "X-Request-Id" }}|{{ .Pod.Label "app" }}|{{ .Profile.Name }}|{{ .Rule.Name }}|{{ .Result }}`
+	const want = `example.com|abc|ai|p1|r1|blocked`
+
+	tp, err := eval.CompileTemplate("audit-scope", tmpl)
+	if err != nil {
+		t.Fatalf("CompileTemplate: %v", err)
 	}
 
-	// Verify request map.
-	reqMap := act["request"].(map[string]any)
-	if reqMap["host"] != "example.com" {
-		t.Errorf("request.host: %v", reqMap["host"])
+	ptr := populatedAuditScope()
+	roots := []struct {
+		name string
+		root any
+	}{
+		{name: "pointer root", root: ptr},
+		// The uncovered case: audit renderers receive whatever the caller
+		// passes, and a Scope value is a legitimate root.
+		{name: "value root", root: *ptr},
 	}
-	if reqMap["port"] != int64(443) {
-		t.Errorf("request.port: %v", reqMap["port"])
-	}
-	if reqMap["path"] != "/api/v1/data" {
-		t.Errorf("request.path: %v", reqMap["path"])
-	}
-	if reqMap["method"] != "POST" {
-		t.Errorf("request.method: %v", reqMap["method"])
-	}
-	if reqMap["scheme"] != "https" {
-		t.Errorf("request.scheme: %v", reqMap["scheme"])
-	}
-
-	headers := reqMap["headers"].(map[string]string)
-	if headers["x-request-id"] != "abc" {
-		t.Errorf("headers: %v", headers)
-	}
-
-	qp := reqMap["queryParams"].(map[string]string)
-	if qp["tag"] != "urgent" {
-		t.Errorf("queryParams: %v", qp)
-	}
-
-	// Verify pod map.
-	podMap := act["pod"].(map[string]any)
-	if podMap["name"] != "agent-1" {
-		t.Errorf("pod.name: %v", podMap["name"])
-	}
-	if podMap["namespace"] != "default" {
-		t.Errorf("pod.namespace: %v", podMap["namespace"])
-	}
-	if podMap["ip"] != "10.0.0.5" {
-		t.Errorf("pod.ip: %v", podMap["ip"])
-	}
-	labels := podMap["labels"].(map[string]string)
-	if labels["app"] != "ai" {
-		t.Errorf("labels: %v", labels)
-	}
-
-	// Verify profile map.
-	profileMap := act["profile"].(map[string]string)
-	if profileMap["name"] != "p1" || profileMap["namespace"] != "ns" {
-		t.Errorf("profile: %v", profileMap)
-	}
-
-	// Verify rule map.
-	ruleMap := act["rule"].(map[string]string)
-	if ruleMap["name"] != "r1" {
-		t.Errorf("rule: %v", ruleMap)
+	for _, r := range roots {
+		t.Run(r.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := tp.Execute(&buf, r.root); err != nil {
+				t.Fatalf("template Execute on %s: %v", r.name, err)
+			}
+			if buf.String() != want {
+				t.Errorf("render on %s: want %q, got %q", r.name, want, buf.String())
+			}
+		})
 	}
 }
 
@@ -147,5 +230,65 @@ func TestScope_MatchedCriteriaAccessor(t *testing.T) {
 	got := s.MatchedCriteria()
 	if !reflect.DeepEqual(s.Matched, got) {
 		t.Errorf("MatchedCriteria: want %+v, got %+v", s.Matched, got)
+	}
+}
+
+// evalBoolOnAuditScope is the audit-side counterpart of the inputs-side helper:
+// the only place in this file that knows the activation's shape.
+func evalBoolOnAuditScope(t *testing.T, s *Scope, expr string) (bool, error) {
+	t.Helper()
+	prog, err := eval.CompileBool(expr)
+	if err != nil {
+		t.Fatalf("compile %q: %v", expr, err)
+	}
+	return eval.EvalBool(prog, s.Activation())
+}
+
+// TestAuditScopeResolvesAuditOnlyVariables is the positive half of I2 and I9:
+// what a plain inputs.Scope must hide, an audit.Scope must resolve.
+func TestAuditScopeResolvesAuditOnlyVariables(t *testing.T) {
+	s := &Scope{
+		Scope: *inputs.NewScope(
+			inputs.RequestFrom(httpreq.HTTPRequest{Host: "h", Port: 443, Path: "/", Scheme: "https", Method: "GET"}),
+			inputs.Pod{Namespace: "ns"},
+			inputs.Profile{}, inputs.Rule{}, nil,
+		),
+		Result:   "blocked",
+		Response: Response{Status: 503},
+	}
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{name: "I2 result resolves", expr: `result == "blocked"`},
+		{name: "I9 response resolves", expr: `response.status == 503`},
+		{name: "base variables still resolve", expr: `request.host == "h" && pod.namespace == "ns"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := evalBoolOnAuditScope(t, s, tt.expr)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !got {
+				t.Errorf("%s = false, want true", tt.expr)
+			}
+		})
+	}
+}
+
+// TestAuditScopeZeroResponse records that response.status cannot distinguish
+// "no response observed" from "the status really was 0" — st.Response is zero
+// until OnResponseHeaders (engine/filter/stream.go:35-36) and buildScope copies
+// it unconditionally (policy/securityprofile/auditlog.go:110). Running with
+// -observe-responses=false makes status 0 the common case.
+func TestAuditScopeZeroResponse(t *testing.T) {
+	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{Namespace: "ns"}, inputs.Profile{}, inputs.Rule{}, nil), Result: "allowed"}
+	got, err := evalBoolOnAuditScope(t, s, `response.status == 0`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("response.status on an unobserved response should be 0")
 	}
 }
