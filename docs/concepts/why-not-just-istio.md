@@ -65,7 +65,7 @@ The first rule sends every destination selected by clients in `sandbox-a` throug
 
 The current API selects a source namespace rather than an individual Pod, ServiceAccount, or workload label. Deploy a sandbox, or a group of sandboxes with the same egress boundary, in a dedicated namespace when it needs an independent gateway selection policy.
 
-Routing all destinations through a gateway does not mean allowing all destinations. It ensures that even previously unknown destinations reach the gateway, where Traffic Extension and other gateway policy can inspect the request and decide whether it should continue.
+Routing all destinations through a gateway does not mean allowing all destinations. It ensures that even previously unknown destinations reach the gateway, where EPE (the Egress Policy Enforcer) and other gateway policy can inspect the request and decide whether it should continue.
 
 ### Why this matters for sandboxes
 
@@ -124,7 +124,7 @@ This model is valuable for canary releases, traffic splitting, request-based rou
 
 Most sandbox deployments do not need to choose between application versions or maintain different routing behavior for every destination. Their primary requirement is usually simpler: all traffic from an untrusted client must pass through a controlled gateway, where a common policy can decide whether the request is allowed.
 
-The namespace-scoped `egressPolicies` example above establishes that invariant without requiring a `VirtualService` or `DestinationRule` for each service. The destination and request context can remain runtime inputs to Traffic Extension policy enforcement instead of becoming a growing graph of service-specific routing resources.
+The namespace-scoped `egressPolicies` example above establishes that invariant without requiring a `VirtualService` or `DestinationRule` for each service. The destination and request context can remain runtime inputs to EPE policy enforcement instead of becoming a growing graph of service-specific routing resources.
 
 This is a deliberately coarser routing model, not an absence of control. Agentio separates the stable traffic invariant — which clients must traverse which enforcement point — from the dynamic security decision — which requests may continue. Fine-grained service traffic management can still be introduced where it is genuinely needed, but it is not the baseline configuration required to secure a sandbox.
 
@@ -164,7 +164,7 @@ The owner of `reviews` defines who may call it. Other services define their own 
 
 For an untrusted sandbox, the more important boundary is often the inverse: what destinations is this client allowed to reach, even when those destinations do not belong to the same platform or cannot enforce an Istio policy?
 
-Agentio separates client-side authorization into two enforcement layers. `TrafficPolicy` provides Layer 4 controls enforced by ztunnel, while `SecurityProfile` provides Layer 7 controls enforced at the egress gateway through Traffic Extension.
+Agentio separates client-side authorization into two enforcement layers. `TrafficPolicy` provides Layer 4 controls enforced by ztunnel, while `SecurityProfile` provides Layer 7 controls enforced at the egress gateway through EPE.
 
 The `TrafficPolicy` selector identifies the client workload, and its `egress` rules describe the network destinations and ports that workload may reach. The following policy allows the selected sandbox to use cluster DNS and access `api.example.com`; unmatched outbound traffic is rejected by ztunnel:
 
@@ -192,7 +192,7 @@ spec:
 
 This Layer 4 boundary applies before the request reaches the application-aware gateway. It can restrict destination services, CIDRs, FQDNs, ports, and protocols, but it does not interpret HTTP paths, methods, headers, or query parameters.
 
-When traffic is routed through an egress gateway with Traffic Extension enabled, the gateway sends request attributes to the extension for Layer 7 policy enforcement. A `SecurityProfile` selects the same sandbox by label and defines application-level rules. The following example blocks access to the `/admin` path on `api.example.com` while allowing other requests to continue:
+When traffic is routed through an egress gateway with EPE enabled, the gateway sends request attributes to the extension for Layer 7 policy enforcement. A `SecurityProfile` selects the same sandbox by label and defines application-level rules. The following example blocks access to the `/admin` path on `api.example.com` while allowing other requests to continue:
 
 ```yaml
 apiVersion: agents.kruise.io/v1alpha1

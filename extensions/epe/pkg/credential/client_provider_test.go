@@ -1,0 +1,264 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// GetToken / GetSTSCredential behavior against a fake credential provider.
+// This is an external test package on purpose: it shares the fake in
+// credentialtest, which imports credential — an internal test package would
+// form a test import cycle. Tests that poke unexported client internals
+// (URL resolution, mTLS transport construction) stay in client_test.go.
+package credential_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"reflect"
+	"testing"
+	"time"
+
+	"istio.io/istio/extensions/epe/pkg/credential"
+	"istio.io/istio/extensions/epe/pkg/credential/credentialtest"
+	"istio.io/istio/extensions/epe/pkg/credential/tokencache"
+)
+
+func TestGetTokenWithExtraMetadata_SendsMetadata(t *testing.T) {
+	p := credentialtest.NewAPIKeyProvider(t, "k1")
+	metadata := map[string]any{
+		"tenant": "tenant-a",
+		"scopes": []any{"read", "write"},
+	}
+	if _, err := p.Client().GetTokenWithExtraMetadata(context.Background(), "access", "client", "provider", metadata); err != nil {
+		t.Fatalf("GetTokenWithExtraMetadata: %v", err)
+	}
+
+	raw, _ := p.LastRequestBody.Load().([]byte)
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if !reflect.DeepEqual(got["extraMetadata"], metadata) {
+		t.Fatalf("extraMetadata = %#v, want %#v", got["extraMetadata"], metadata)
+	}
+}
+
+func TestGetTokenWithExtraMetadata_PartitionsCache(t *testing.T) {
+	p := credentialtest.NewAPIKeyProvider(t, "k1")
+	c := p.ClientWithCache(tokencache.NewCache(time.Minute, 10), nil)
+
+	for _, metadata := range []map[string]any{
+		{"tenant": "tenant-a"},
+		{"tenant": "tenant-b"},
+		{"tenant": "tenant-a"},
+	} {
+		if _, err := c.GetTokenWithExtraMetadata(context.Background(), "access", "client", "provider", metadata); err != nil {
+			t.Fatalf("GetTokenWithExtraMetadata: %v", err)
+		}
+	}
+	if got := p.Calls.Load(); got != 2 {
+		t.Fatalf("provider calls = %d, want 2 distinct metadata cache entries", got)
+	}
+}
+
+// --- GetToken ---------------------------------------------------------------
+
+func TestGetToken_Success(t *testing.T) {
+	p := credentialtest.NewAPIKeyProvider(t, "k1")
+	c := p.Client()
+
+	tok, err := c.GetToken(context.Background(), "access", "client", "provider")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if tok != "k1" {
+		t.Errorf("expected k1, got %q", tok)
+	}
+	got, _ := p.LastRequestBody.Load().([]byte)
+	if !bytes.Contains(got, []byte(`"resourceId":"client"`)) ||
+		!bytes.Contains(got, []byte(`"credentialProviderName":"provider"`)) {
+		t.Errorf("unexpected request body: %s", got)
+	}
+}
+
+// TestGetToken_Errors covers the response-handling failure modes: a non-OK
+// HTTP status, an unparseable body, and an empty apiKey in a valid response.
+func TestGetToken_Errors(t *testing.T) {
+	cases := []struct {
+		name   string
+		client func(t *testing.T) *credential.Client
+	}{
+		{
+			name: "non-OK status",
+			client: func(t *testing.T) *credential.Client {
+				return credentialtest.NewErrorProvider(t, http.StatusForbidden, `denied`).Client()
+			},
+		},
+		{
+			name: "bad JSON body",
+			client: func(t *testing.T) *credential.Client {
+				return credentialtest.NewErrorProvider(t, http.StatusOK, `not json`).Client()
+			},
+		},
+		{
+			name: "empty apiKey",
+			client: func(t *testing.T) *credential.Client {
+				return credentialtest.NewAPIKeyProvider(t, "").Client()
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.client(t).GetToken(context.Background(), "access", "client", "provider"); err == nil {
+				t.Fatalf("expected error for %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestGetToken_CacheHit verifies the cache short-circuits the HTTP call.
+func TestGetToken_CacheHit(t *testing.T) {
+	p := credentialtest.NewAPIKeyProvider(t, "fresh")
+	c := p.ClientWithCache(tokencache.NewCache(time.Minute, 10), nil)
+
+	for i := 0; i < 3; i++ {
+		tok, err := c.GetToken(context.Background(), "a", "b", "p")
+		if err != nil || tok != "fresh" {
+			t.Fatalf("iter %d: tok=%q err=%v", i, tok, err)
+		}
+	}
+	if called := p.Calls.Load(); called != 1 {
+		t.Errorf("expected upstream to be called once, got %d", called)
+	}
+}
+
+// TestGetToken_NetworkError covers the "request send failed" branch by
+// pointing at a server we've already shut down.
+func TestGetToken_NetworkError(t *testing.T) {
+	p := credentialtest.NewAPIKeyProvider(t, "unreachable")
+	p.Server.Close() // URL stays readable; the client just cannot connect
+	c := p.Client()
+
+	if _, err := c.GetToken(context.Background(), "a", "b", "c"); err == nil {
+		t.Fatal("expected network error")
+	}
+}
+
+// --- GetSTSCredential -------------------------------------------------------
+
+// stsClient wires a fake STS provider to a client with a fresh STS cache.
+func stsClient(p *credentialtest.FakeProvider) *credential.Client {
+	return p.ClientWithCache(nil, tokencache.NewSTSCache(100))
+}
+
+func TestGetSTSCredential_CacheHit(t *testing.T) {
+	exp := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	p := credentialtest.NewSTSProvider(t, "ak", "sk", "st", exp)
+	c := stsClient(p)
+
+	for i := 0; i < 3; i++ {
+		cred, err := c.GetSTSCredential(context.Background(), "access", "client", "provider")
+		if err != nil {
+			t.Fatalf("iter %d: %v", i, err)
+		}
+		if cred.StsToken.AccessKeyID != "ak" || cred.StsToken.AccessKeySecret != "sk" || cred.StsToken.SecurityToken != "st" {
+			t.Fatalf("iter %d: unexpected cred: %+v", i, cred.StsToken)
+		}
+	}
+	if called := p.Calls.Load(); called != 1 {
+		t.Errorf("expected upstream to be called once, got %d", called)
+	}
+}
+
+func TestGetSTSCredentialWithExtraMetadata_PartitionsCache(t *testing.T) {
+	exp := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	p := credentialtest.NewSTSProvider(t, "ak", "sk", "st", exp)
+	c := stsClient(p)
+
+	for _, metadata := range []map[string]any{
+		{"tenant": "tenant-a"},
+		{"tenant": "tenant-b"},
+		{"tenant": "tenant-a"},
+	} {
+		if _, err := c.GetSTSCredentialWithExtraMetadata(context.Background(), "access", "client", "provider", metadata); err != nil {
+			t.Fatalf("GetSTSCredentialWithExtraMetadata: %v", err)
+		}
+	}
+	if got := p.Calls.Load(); got != 2 {
+		t.Fatalf("provider calls = %d, want 2 distinct metadata cache entries", got)
+	}
+}
+
+// TestGetSTSCredential_NotCached verifies every request reaches the provider
+// whenever the response cannot be cached: the expiration falls inside the
+// safety margin, the response carries no expiration, or no STS cache is
+// configured on the client.
+func TestGetSTSCredential_NotCached(t *testing.T) {
+	cases := []struct {
+		name string
+		// expiration returns the expiration string served by the fake provider;
+		// evaluated per subtest so "now"-relative timestamps stay fresh.
+		expiration func() string
+		withCache  bool
+		calls      int
+	}{
+		{
+			// Expiration is 1 second from now; with the default 5min margin,
+			// the effective expiry is already in the past, so caching is skipped.
+			name:       "expiration within margin",
+			expiration: func() string { return time.Now().Add(1 * time.Second).UTC().Format(time.RFC3339) },
+			withCache:  true,
+			calls:      3,
+		},
+		{
+			name:       "no expiration in response",
+			expiration: func() string { return "" },
+			withCache:  true,
+			calls:      2,
+		},
+		{
+			name:       "no STS cache configured",
+			expiration: func() string { return time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339) },
+			withCache:  false,
+			calls:      2,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := credentialtest.NewSTSProvider(t, "ak", "sk", "st", tc.expiration())
+			c := p.Client() // no STS cache
+			if tc.withCache {
+				c = stsClient(p)
+			}
+
+			for i := 0; i < tc.calls; i++ {
+				if _, err := c.GetSTSCredential(context.Background(), "access", "client", "provider"); err != nil {
+					t.Fatalf("iter %d: %v", i, err)
+				}
+			}
+			if called := p.Calls.Load(); called != int64(tc.calls) {
+				t.Errorf("expected upstream to be called %d times (no caching), got %d", tc.calls, called)
+			}
+		})
+	}
+}
+
+func TestGetSTSCredential_IncompleteResponse(t *testing.T) {
+	p := credentialtest.NewSTSProvider(t, "ak", "", "st", "")
+	c := stsClient(p)
+
+	_, err := c.GetSTSCredential(context.Background(), "access", "client", "provider")
+	if err == nil {
+		t.Fatal("expected error for incomplete STS credential")
+	}
+}

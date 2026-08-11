@@ -8,7 +8,7 @@ Review the chart values and security requirements before you use the evaluation 
 
 ![Agentio traffic architecture](images/architecture/agentio-overview.svg)
 
-Agentio supports sidecar and ambient traffic capture. The primary path routes egress traffic through the egress gateway, which calls Traffic Extension for policy enforcement. Traffic that does not require gateway enforcement can use the passthrough path to reach the external service directly.
+Agentio supports sidecar and ambient traffic capture. The primary path routes egress traffic through the egress gateway, which calls EPE (the Egress Policy Enforcer) for policy enforcement. Traffic that does not require gateway enforcement can use the passthrough path to reach the external service directly.
 
 ## Choose a data plane mode
 

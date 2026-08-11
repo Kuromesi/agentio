@@ -330,7 +330,9 @@ run_scenario() {
   run_traced "setup ${scenario} kind registry" setup_kind_registry "${cluster_name}" || return $?
 
   if [[ "${IMAGES_BUILT}" == "false" ]]; then
-    local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc"
+    # agentio-epe is built but never deployed here: no scenario sets epe.enabled=true.
+    # It keeps the image build itself covered on every presubmit.
+    local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc docker.agentio-epe"
     local target_arch
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
       arch=linux/arm64

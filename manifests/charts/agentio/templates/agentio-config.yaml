@@ -1,9 +1,9 @@
 {{- define "agentio.config" }}
-{{- if .Values.trafficExtension.enabled }}
+{{- if .Values.epe.enabled }}
 sandboxExtProc:
-  service: {{ .Values.trafficExtension.name }}.{{ include "agentio.namespace" . }}.svc.cluster.local
-  port: {{ .Values.trafficExtension.port }}
-  messageTimeout: {{ default "5s" .Values.trafficExtension.messageTimeout }}
+  service: {{ .Values.epe.name }}.{{ include "agentio.namespace" . }}.svc.cluster.local
+  port: {{ .Values.epe.port }}
+  messageTimeout: {{ default "5s" .Values.epe.messageTimeout }}
   request:
     headerMode: SEND
     attributes:

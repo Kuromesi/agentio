@@ -72,7 +72,7 @@ This separation is similar to Istio ambient's node-level architecture, while the
 
 ## The egress gateway still uses Envoy
 
-Agentio has not removed Envoy from the data plane. When an `egressPolicies` rule selects `GATEWAY`, ztunnel forwards the connection to an Envoy-based Agentio egress gateway. The gateway can call Traffic Extension through Envoy `ext_proc` for policy enforcement and can apply Agentio-specific TLS termination, timeout, retry, and rate-limit settings.
+Agentio has not removed Envoy from the data plane. When an `egressPolicies` rule selects `GATEWAY`, ztunnel forwards the connection to an Envoy-based Agentio egress gateway. The gateway can call EPE (the Egress Policy Enforcer) through Envoy `ext_proc` for policy enforcement and can apply Agentio-specific TLS termination, timeout, retry, and rate-limit settings.
 
 This creates two distinct proxy roles:
 

@@ -5,7 +5,8 @@ name: agentio-release
 # ztunnel commit, and creates the GitHub Release last.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
-# traffic-extension remains versioned and published independently.
+# epe (Egress Policy Enforcer, image agentio-epe) is built from this repository and
+# follows the Agentio release version like every other in-tree image.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
@@ -293,13 +294,15 @@ jobs:
           sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
           sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
 
-          # Pilot, proxy-init, proxy, CNI, and ztunnel follow the Agentio release version.
-          # traffic-extension is independently versioned.
+          # Pilot, proxy-init, proxy, CNI, ztunnel, and epe follow the Agentio release
+          # version. Each sed matches the image `name:` and rewrites the `tag:` on the
+          # next line, so the key order in values.yaml matters.
           sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxy-init/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: proxyv2/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: install-cni/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: ztunnel/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+          sed -i "/name: agentio-epe/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
 
           echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
@@ -425,19 +428,21 @@ jobs:
           echo "$HUB_TOKEN" | crane auth login docker.io \
             -u "$HUB_USERNAME" --password-stdin
 
+          images=(pilot proxy-init proxyv2 install-cni ztunnel agentio-epe)
+
           declare -A version_digests
-          for image in pilot proxy-init proxyv2 install-cni ztunnel; do
+          for image in "${images[@]}"; do
             version_digests[$image]=$(crane digest \
               "${DOCKER_HUB}/${image}:${VERSION}")
             echo "Verified ${DOCKER_HUB}/${image}:${VERSION}@${version_digests[$image]}"
           done
 
-          for image in pilot proxy-init proxyv2 install-cni ztunnel; do
+          for image in "${images[@]}"; do
             echo "Tagging ${DOCKER_HUB}/${image}:${VERSION} -> latest"
             crane tag "${DOCKER_HUB}/${image}:${VERSION}" latest
           done
 
-          for image in pilot proxy-init proxyv2 install-cni ztunnel; do
+          for image in "${images[@]}"; do
             latest_digest=$(crane digest "${DOCKER_HUB}/${image}:latest")
             if [[ "$latest_digest" != "${version_digests[$image]}" ]]; then
               echo "latest digest mismatch for ${image}: ${latest_digest}" >&2

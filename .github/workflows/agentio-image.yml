@@ -274,7 +274,7 @@ jobs:
         run: |
           DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
           DOCKER_BUILD_VARIANTS=default \
-          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni" \
+          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni docker.agentio-epe" \
           make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
 
       - name: Push extra tags (dev and alpha)
@@ -284,7 +284,7 @@ jobs:
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
 
           IFS=',' read -ra TAGS <<< "${EXTRA_TAGS}"
-          for image in pilot proxy-init install-cni ztunnel; do
+          for image in pilot proxy-init install-cni ztunnel agentio-epe; do
             for tag in "${TAGS[@]}"; do
               echo "Tagging ${HUB}/${image}:${PRIMARY_TAG} -> ${tag}"
               crane tag "${HUB}/${image}:${PRIMARY_TAG}" "${tag}"

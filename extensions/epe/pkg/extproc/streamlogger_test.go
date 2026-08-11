@@ -1,0 +1,202 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+package extproc
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"istio.io/istio/extensions/epe/pkg/engine"
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/extensions/epe/pkg/httpreq"
+	"istio.io/istio/extensions/epe/pkg/inputs"
+)
+
+// recordingStreamLogger stands in for the policy layer's per-stream logger.
+type recordingStreamLogger struct {
+	calls  int
+	result string
+}
+
+func (l *recordingStreamLogger) Log(_ context.Context, _ *filter.Stream, info *filter.StreamInfo) {
+	l.calls++
+	l.result = info.Disposition.String()
+}
+
+// resolveOnce returns a resolver that hands out logger and one unit on its
+// first call and an empty resolution on every later call.
+func resolveOnce(logger filter.StreamLogger, regs int) engine.Resolver {
+	calls := 0
+	return func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		calls++
+		if calls > 1 {
+			return engine.Resolution{}, nil
+		}
+		return engine.Resolution{
+			Units: []engine.Unit{{
+				ID:   filter.UnitID{Scope: "default/p", Name: "r"},
+				Cfgs: make([]any, regs),
+			}},
+			StreamLogger: logger,
+		}, nil
+	}
+}
+
+// A resolver that fails may still hand back a logger for the rules that
+// matched before the failure. Assigning it before honouring the error is what
+// keeps a resolve failure as auditable as an engine-eval failure; skipping it
+// leaves `when: result == "error"` blind to a whole class of errors.
+func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
+	regs := blockRegistrations(t)
+	logger := &recordingStreamLogger{}
+	boom := errors.New("projection failed")
+	srv := NewServer(ServerDeps{
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{StreamLogger: logger}, boom
+		},
+		Registrations: regs,
+	})
+
+	ctx := context.Background()
+	state := newStreamState()
+	_, err := srv.HandleRequestHeaders(ctx,
+		makeRequestHeaders("api.example.com", "/", "GET"),
+		makeAttrsWithLabels("default", "pod", testLabelsB64), state)
+	if !errors.Is(err, boom) {
+		t.Fatalf("HandleRequestHeaders err = %v, want the resolver error", err)
+	}
+	if state.streamLogger != filter.StreamLogger(logger) {
+		t.Fatal("resolve failure dropped the stream logger; the failed stream would never be audited")
+	}
+
+	srv.finishStream(ctx, state, err)
+	if logger.calls != 1 {
+		t.Fatalf("logger invoked %d times, want exactly 1", logger.calls)
+	}
+	if logger.result != "error" {
+		t.Errorf("audited result = %q, want \"error\"", logger.result)
+	}
+}
+
+// A second resolution that matches nothing must not erase the logger the
+// effective resolution installed. state.streamLogger is assigned alongside
+// state.units, after the zero-unit early return, precisely so that it cannot.
+//
+// The old metadata channel got this for free — the adapter merged Resolution
+// keys into StreamInfo.Metadata, so an empty resolution wrote nothing. A plain
+// field assignment is an overwrite, so the assignment point is load-bearing:
+// hoisting it above the early returns silently drops the stream's audit.
+func TestSecondResolutionKeepsFirstStreamLogger(t *testing.T) {
+	regs := blockRegistrations(t)
+	logger := &recordingStreamLogger{}
+	srv := NewServer(ServerDeps{Resolve: resolveOnce(logger, len(regs)), Registrations: regs})
+
+	ctx := context.Background()
+	state := newStreamState()
+	headers := makeRequestHeaders("api.example.com", "/", "GET")
+	attrs := makeAttrsWithLabels("default", "pod", testLabelsB64)
+
+	if _, err := srv.HandleRequestHeaders(ctx, headers, attrs, state); err != nil {
+		t.Fatalf("first HandleRequestHeaders: %v", err)
+	}
+	if state.streamLogger != filter.StreamLogger(logger) {
+		t.Fatalf("after first resolution: stream logger = %v, want the resolver's", state.streamLogger)
+	}
+
+	if _, err := srv.HandleRequestHeaders(ctx, headers, attrs, state); err != nil {
+		t.Fatalf("second HandleRequestHeaders: %v", err)
+	}
+	if state.streamLogger != filter.StreamLogger(logger) {
+		t.Fatal("second resolution matched nothing yet cleared the stream logger; the stream's audit would be lost")
+	}
+
+	srv.finishStream(ctx, state, nil)
+	if logger.calls != 1 {
+		t.Fatalf("logger invoked %d times, want exactly 1 per stream", logger.calls)
+	}
+}
+
+// The per-stream logger runs after finishStream promotes the error, so it sees
+// the disposition the stream actually ended on. Reading it before the promotion
+// reports "passthrough" for a failed stream, which makes any audit entry
+// filtering on result == "error" silently never fire.
+func TestStreamLoggerObservesFinalDisposition(t *testing.T) {
+	regs := blockRegistrations(t)
+	logger := &recordingStreamLogger{}
+	srv := NewServer(ServerDeps{Resolve: resolveOnce(logger, len(regs)), Registrations: regs})
+
+	ctx := context.Background()
+	state := newStreamState()
+	if _, err := srv.HandleRequestHeaders(
+		ctx,
+		makeRequestHeaders("api.example.com", "/", "GET"),
+		makeAttrsWithLabels("default", "pod", testLabelsB64),
+		state,
+	); err != nil {
+		t.Fatalf("HandleRequestHeaders: %v", err)
+	}
+
+	srv.finishStream(ctx, state, context.Canceled)
+
+	if logger.calls != 1 {
+		t.Fatalf("logger invoked %d times, want 1", logger.calls)
+	}
+	if logger.result != "error" {
+		t.Fatalf("logger observed result %q, want %q", logger.result, "error")
+	}
+}
+
+// A successful finishAfterSend is a committed outcome. Later deferred
+// cancellation/error teardown must neither log a second entry nor promote the
+// committed bypass to error.
+func TestFinishAfterSendCommitCannotBeOverwrittenByLaterTeardown(t *testing.T) {
+	accesslog := &capturedAuditLogger{}
+	policyLogger := &recordingStreamLogger{}
+	srv := NewServer(ServerDeps{AuditLogger: accesslog})
+	state := newStreamState()
+	state.sawRequest = true
+	state.streamLogger = policyLogger
+	state.stream.Info.Promote(filter.DispositionBypassed)
+	state.finalizeAfterSend = true
+
+	srv.finishAfterSend(context.Background(), state)
+	srv.finishStream(context.Background(), state, context.Canceled)
+	srv.finishStream(context.Background(), state, errors.New("late receive error"))
+
+	if len(accesslog.entries) != 1 {
+		t.Fatalf("accesslog entries = %d, want exactly 1", len(accesslog.entries))
+	}
+	if got := accesslog.entries[0]; got.Outcome != "bypassed" || got.Error != "" {
+		t.Errorf("accesslog entry = %+v, want committed bypass without error", got)
+	}
+	if policyLogger.calls != 1 {
+		t.Fatalf("policy logger calls = %d, want exactly 1", policyLogger.calls)
+	}
+	if policyLogger.result != "bypassed" {
+		t.Errorf("policy logger result = %q, want bypassed", policyLogger.result)
+	}
+}
+
+// A stream that never resolved carries no logger, and finishStream must not
+// trip over the nil.
+func TestFinishStreamWithoutResolutionDoesNotPanic(t *testing.T) {
+	srv := NewServer(ServerDeps{Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		return engine.Resolution{}, nil
+	}})
+
+	state := newStreamState()
+	state.sawRequest = true
+	srv.finishStream(context.Background(), state, nil)
+}

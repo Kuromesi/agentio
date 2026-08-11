@@ -10,7 +10,7 @@ The sources are applied in this order:
 
 | Priority | Source | Purpose |
 | --- | --- | --- |
-| 1 | `agentio-config` | Contains the configuration generated from `trafficExtension`, `egressPolicies`, and `agentioConfig` chart values. |
+| 1 | `agentio-config` | Contains the configuration generated from `epe`, `egressPolicies`, and `agentioConfig` chart values. |
 | 2 | `agentio-config-primary` | Optionally overrides the base configuration. |
 
 Both ConfigMaps are watched. A valid update is applied and distributed without restarting `agentiod`. If a layer cannot be parsed, Agentio logs a warning and retains the successfully applied lower-priority configuration for that reconciliation.
@@ -163,7 +163,7 @@ An `ExtProcProvider` can be set globally at `sandboxExtProc` or per gateway at `
 
 If an egress gateway has no `extProc` field, it inherits `sandboxExtProc`. A gateway-level provider replaces the global provider. A gateway-level `extProc: {}` has an empty `service` and disables external processing for that gateway.
 
-The chart generates `sandboxExtProc` automatically when `trafficExtension.enabled` is `true`. Its generated `messageTimeout` is `5s`, rather than the raw API default of `200ms`; set `trafficExtension.messageTimeout` or use `agentioConfig.sandboxExtProc` to override it.
+The chart generates `sandboxExtProc` automatically when `epe.enabled` is `true`. Its generated `messageTimeout` is `5s`, rather than the raw API default of `200ms`; set `epe.messageTimeout` or use `agentioConfig.sandboxExtProc` to override it.
 
 ## Egress gateway settings
 
