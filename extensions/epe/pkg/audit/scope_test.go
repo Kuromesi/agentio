@@ -18,23 +18,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/google/cel-go/cel"
-
 	"istio.io/istio/extensions/epe/pkg/eval"
 	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
-
-// mustActivation builds a cel.Activation from a variable bag, failing the test
-// on the error NewActivation only returns for a nil or non-map binding.
-func mustActivation(tb testing.TB, vars map[string]any) cel.Activation {
-	tb.Helper()
-	act, err := cel.NewActivation(vars)
-	if err != nil {
-		tb.Fatalf("cel.NewActivation: %v", err)
-	}
-	return act
-}
 
 // TestAuditScopeActivationShadowsResult is the shadow guard: audit.Scope
 // MUST override the embedded inputs.Scope.Activation so the audit-only
@@ -73,34 +60,13 @@ func TestAuditScopeActivationShadowsResult(t *testing.T) {
 		})
 	}
 
-	// The base/child order is unpinned by everything above, because the two key
-	// sets are disjoint today: swapping layer's arguments keeps every arm green.
-	// The extension plan has children shadowing base variables eventually, so
-	// pin the direction now with a child that deliberately collides with a base
-	// slot. This calls layer, the helper Activation delegates to, because the
-	// embedded inputs.Scope is a concrete value and cannot be made to bind a
-	// colliding name through Activation itself.
-	t.Run("child shadows the base on collision", func(t *testing.T) {
-		base := inputs.NewScope(
-			inputs.RequestFrom(httpreq.HTTPRequest{Host: "base.example.com", Port: 443, Path: "/", Scheme: "https", Method: "GET"}),
-			inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
-		)
-		act := layer(
-			base.Activation(),
-			mustActivation(t, map[string]any{"request": map[string]any{"host": "child.example.com"}}),
-		)
-		prog, err := eval.CompileBool(`request.host == "child.example.com"`)
-		if err != nil {
-			t.Fatalf("compile: %v", err)
-		}
-		got, err := eval.EvalBool(prog, act)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !got {
-			t.Error("the child must shadow the base on a name collision: NewHierarchicalActivation takes (parent, child), so layer must pass base first and child second")
-		}
-	})
+	// Deliberately not covered here: that the child wins a name collision with
+	// the base. No collision is reachable through Activation — the base's keys
+	// come from inputs.buildBag, which this package cannot influence — so a test
+	// would have to build its own NewHierarchicalActivation call, which asserts
+	// cel-go's documented semantics rather than this code's use of them and
+	// keeps passing when Activation's own arguments are swapped. The ordering
+	// constraint is recorded at the call site instead.
 
 	// `matched` is deliberately not a CEL variable: the when-env declares only
 	// result/response/request/pod/profile/rule, so an expression referencing it

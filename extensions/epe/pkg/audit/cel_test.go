@@ -21,20 +21,27 @@ import (
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
-// baseScope builds the zero-valued inputs.Scope every audit fixture here needs:
-// audit.Scope embeds it by value, and inputs.Scope must come from NewScope for
-// Activation() to work.
+// baseScope builds an empty inputs.Scope for the fixtures that need a working
+// Activation: audit.Scope embeds it by value, and inputs.Scope must come from
+// NewScope for Activation() not to panic. TestEvalWhen_NilProgSkipsActivation
+// deliberately uses a literal instead, because the panic is what it detects.
 func baseScope() inputs.Scope {
 	return *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
 }
 
-func TestEvalWhen_NilProgReturnsTrue(t *testing.T) {
-	got, err := EvalWhen(nil, &Scope{Scope: baseScope()})
+// TestEvalWhen_NilProgSkipsActivation pins what EvalWhen's nil check is for.
+// The Scope is deliberately a literal rather than a NewScope result, so its
+// memoisation cache is nil and Activation panics: this passes only if the nil
+// program returns before the activation is touched. Asserting the `true` alone
+// would prove nothing — eval.EvalBool returns true for a nil program too, so
+// the assertion would survive deleting the check this test exists to protect.
+func TestEvalWhen_NilProgSkipsActivation(t *testing.T) {
+	got, err := EvalWhen(nil, &Scope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !got {
-		t.Error("nil program should return true")
+		t.Error("an entry with no when should fire")
 	}
 }
 

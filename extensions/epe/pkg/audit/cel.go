@@ -21,7 +21,16 @@ import (
 	"istio.io/istio/extensions/epe/pkg/metrics"
 )
 
-// EvalWhen evaluates a compiled when expression against the Scope.
+// EvalWhen evaluates a compiled when expression against the Scope. An audit
+// entry with no `when` has no condition and always fires.
+//
+// The nil check is not a copy of the one eval.EvalBool already performs; it is
+// here for its other effect. Go evaluates s.Activation() before entering
+// EvalBool, so without this return the variable bag is built even for an entry
+// that never had a condition — roughly 700 ns for the memoised base plus 225 ns
+// for the audit child, and buildScope's caller loops over every entry of the
+// unit. A when-less audit is the ordinary configuration, so this is the common
+// path, not the edge case.
 func EvalWhen(prog cel.Program, s *Scope) (bool, error) {
 	if prog == nil {
 		return true, nil

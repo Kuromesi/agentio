@@ -68,18 +68,14 @@ func (s *Scope) Activation() cel.Activation {
 		// Unreachable: NewActivation rejects only nil and non-map bindings.
 		panic("audit: activation: " + err.Error())
 	}
-	return layer(s.Scope.Activation(), top)
-}
-
-// layer is the one place the base/child order is written down. Activation goes
-// through it so a test can pin the direction with a deliberately colliding
-// child: the embedded inputs.Scope is a concrete value, so a test cannot reach
-// the collision through Activation itself, and today's two key sets are
-// disjoint, which leaves NewHierarchicalActivation's arguments swappable with
-// every test still green. TestAuditScopeActivationShadowsResult's shadowing
-// subtest calls layer directly to close that.
-func layer(base, child cel.Activation) cel.Activation {
-	return interpreter.NewHierarchicalActivation(base, child)
+	// (parent, child): NewHierarchicalActivation resolves the child first and
+	// falls back to the parent, so the base goes first and the audit-only
+	// bindings second. Swapping them is currently unobservable — the two key
+	// sets are disjoint, so nothing shadows anything and no test can tell the
+	// difference. Whoever adds the first child that deliberately overrides a
+	// base variable has to check this line by hand: the base's keys come from
+	// inputs.buildBag, and a test in this package cannot make one collide.
+	return interpreter.NewHierarchicalActivation(s.Scope.Activation(), top)
 }
 
 // MatchedCriteria is a template-compatibility accessor: documented webhook
