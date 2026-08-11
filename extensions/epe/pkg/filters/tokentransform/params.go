@@ -59,6 +59,9 @@ func renderParamSource(source ParamSource, scope *inputs.Scope) (any, error) {
 	case source.Template != nil:
 		return eval.RenderToString(source.Template, scope)
 	case source.Cel != nil:
+		// Releasing the pooled activation here while the caller goes on to
+		// marshal the result is safe only because EvalValue guarantees an
+		// owned value; see its ownership note before adding a call site.
 		activation, release := scope.Activation()
 		defer release()
 		return eval.EvalValue(source.Cel, activation)

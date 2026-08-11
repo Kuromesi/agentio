@@ -100,6 +100,9 @@ func BenchmarkEvalValue(b *testing.B) {
 		{"string-field", `pod.namespace`, nil},
 		{"inputs-lookup", `inputs["routing"][request.host]`, routing},
 		{"list-literal", `[request.host, request.path]`, nil},
+		// A map result is the shape that pays for the JSON-native rebuild:
+		// EvalValue cannot hand back the activation's own map.
+		{"map-slot", `pod.labels`, nil},
 	}
 	for _, tc := range cases {
 		prog, err := CompileValue(tc.expr)

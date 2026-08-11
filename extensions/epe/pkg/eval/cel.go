@@ -14,12 +14,15 @@
 package eval
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"sync"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
+	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/common/types/traits"
 	"github.com/google/cel-go/ext"
 )
 
@@ -110,19 +113,101 @@ func EvalBool(prog cel.Program, activation map[string]any) (bool, error) {
 	return bool(b), nil
 }
 
-// EvalValue evaluates a CEL program and converts the result to its native Go
-// representation for JSON normalization.
+// EvalValue evaluates a CEL program and converts the result into an owned,
+// JSON-native Go value: maps become map[string]any, lists become []any, and
+// nothing in the result shares storage with the activation. A null result is
+// reported as an untyped nil.
 func EvalValue(prog cel.Program, activation map[string]any) (any, error) {
 	val, _, err := prog.Eval(activation)
 	if err != nil {
 		return nil, fmt.Errorf("eval value: %w", err)
 	}
-	if val.Type() == types.NullType {
-		return nil, nil
-	}
-	native, err := val.ConvertToNative(reflect.TypeOf((*any)(nil)).Elem())
+	native, err := ownedNative(val)
 	if err != nil {
 		return nil, fmt.Errorf("convert value: %w", err)
 	}
 	return native, nil
+}
+
+// anyType is the reflect.Type of the empty interface, the conversion target
+// for CEL scalars.
+var anyType = reflect.TypeOf((*any)(nil)).Elem()
+
+// ownedNative walks a CEL result into a plain Go value. It exists because
+// ref.Val.ConvertToNative is unfit for either of this package's two duties:
+//
+// Ownership. ConvertToNative hands back the underlying container whenever it
+// is already assignable to the requested type — for a value read out of the
+// activation that container is a slot of a pooled map (inputs.activationPool),
+// or the caller's own inputs map. Callers release the activation as soon as
+// EvalValue returns and keep reading the value afterwards, so the next request
+// to take that activation would overwrite it. Guarding here rather than at the
+// call site is deliberate: a returned `any` carries no hint that it belongs to
+// a pool, so every future caller would otherwise have to know to copy first.
+//
+// JSON shape. cel-go converts a map result to map[any]any, which
+// encoding/json rejects outright, so every map-valued expression would fail
+// the caller's marshalling step. Rebuilding maps as map[string]any keys them
+// the way JSON requires.
+//
+// Scalars are immutable and pass through ConvertToNative unchanged.
+func ownedNative(val ref.Val) (any, error) {
+	switch v := val.(type) {
+	case types.Null:
+		return nil, nil
+	case types.Bytes:
+		return bytes.Clone(v), nil
+	case traits.Mapper:
+		out := make(map[string]any, sizeOf(v))
+		for it := v.Iterator(); it.HasNext() == types.True; {
+			k := it.Next()
+			key, err := jsonKey(k)
+			if err != nil {
+				return nil, err
+			}
+			elem, found := v.Find(k)
+			if !found {
+				return nil, fmt.Errorf("map key %q disappeared during iteration", key)
+			}
+			if out[key], err = ownedNative(elem); err != nil {
+				return nil, err
+			}
+		}
+		return out, nil
+	case traits.Lister:
+		out := make([]any, 0, sizeOf(v))
+		for it := v.Iterator(); it.HasNext() == types.True; {
+			elem, err := ownedNative(it.Next())
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, elem)
+		}
+		return out, nil
+	default:
+		return val.ConvertToNative(anyType)
+	}
+}
+
+// jsonKey renders a CEL map key as a JSON object key. CEL permits int, uint
+// and bool keys; JSON objects are string-keyed, so those are stringified the
+// same way encoding/json stringifies an integer-keyed Go map.
+func jsonKey(k ref.Val) (string, error) {
+	if s, ok := k.(types.String); ok {
+		return string(s), nil
+	}
+	s, ok := k.ConvertToType(types.StringType).(types.String)
+	if !ok {
+		return "", fmt.Errorf("map key of type %s is not JSON-compatible", k.Type().TypeName())
+	}
+	return string(s), nil
+}
+
+// sizeOf reports a container's length as an allocation hint, falling back to
+// zero for an implementation that does not report a plain int size.
+func sizeOf(v traits.Sizer) int {
+	if n, ok := v.Size().(types.Int); ok {
+		return int(n)
+	}
+	return 0
 }
