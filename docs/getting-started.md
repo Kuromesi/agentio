@@ -1,6 +1,6 @@
 # Getting started
 
-This guide helps you evaluate Agentio on an existing Kubernetes cluster. Start by choosing how Agentio captures workload traffic, then follow the shared egress gateway and `TrafficPolicy` tasks.
+This guide helps you evaluate Agentio on an existing Kubernetes cluster. Start by choosing how Agentio captures workload traffic, then follow the shared egress gateway, `TrafficPolicy`, and optional EPE tasks.
 
 Review the chart values and security requirements before you use the evaluation configuration in production.
 
@@ -34,8 +34,11 @@ After the workload is enrolled, follow the same Agentio workflow for every onboa
 
 1. [Route traffic through an egress gateway](tasks/route-traffic-through-egress-gateway.md).
 2. [Apply a `TrafficPolicy`](tasks/configure-traffic-policy.md).
+3. [Enable EPE and apply a `SecurityProfile`](getting-started/epe.md).
 
 ## See also
 
 - [Sidecar mode](getting-started/sidecar-mode.md)
 - [Ambient mode](getting-started/ambient-mode.md)
+- [EPE overview](concepts/epe-overview.md)
+- [Get started with EPE](getting-started/epe.md)

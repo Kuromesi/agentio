@@ -165,6 +165,8 @@ If an egress gateway has no `extProc` field, it inherits `sandboxExtProc`. A gat
 
 The chart generates `sandboxExtProc` automatically when `epe.enabled` is `true`. Its generated `messageTimeout` is `5s`, rather than the raw API default of `200ms`; set `epe.messageTimeout` or use `agentioConfig.sandboxExtProc` to override it.
 
+See [EPE configuration](epe-configuration.md) for the deployed EPE service, listeners, Helm values, and process settings.
+
 ## Egress gateway settings
 
 Each entry in `egressGateways` matches a running gateway by verified workload identity: `name` must equal its ServiceAccount name and `namespace` must match exactly.
@@ -179,7 +181,36 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `connectionPool` | `ConnectionPoolSettings` | See below | TCP and HTTP connection and route timeouts. |
 | `connectRateLimit` | `LocalRateLimitSettings` | Unset | Local token-bucket limit for new HTTP/2 CONNECT streams. |
 
-TLS termination also requires `ENABLE_ON_DEMAND_CERTS=true`. See [On-demand TLS certificate environment variables](agentiod-environment-variables.md#on-demand-tls-certificates).
+### TLS termination for HTTPS inspection
+
+An HTTPS connection reaches gateway HTTP filters such as EPE only when its SNI host is selected for TLS termination. A routed HTTPS connection that is not terminated stays on the TCP forwarding chain and bypasses request-level `SecurityProfile` evaluation.
+
+Configure all three parts of the trust boundary:
+
+1. Add each inspected hostname to the `tlsTermination.includeHosts` of the `egressGateways` entry whose `name` and `namespace` match the gateway ServiceAccount.
+2. Enable on-demand signing. The chart value `agentiod.enableTlsTermination: true` renders `ENABLE_ON_DEMAND_CERTS=true`. For production, select `SECRET` mode and provide a Secret containing `ca.crt` and `ca.key`; the default `SELF_SIGN` mode creates an ephemeral CA and is intended only for testing.
+3. Distribute that same `ca.crt` to each calling workload and configure its HTTP/TLS client or operating-system trust store to trust it. Agentio mounts CA material into its own data-plane components, but does not automatically add the TLS-termination CA to an application's trust store. Do not disable certificate verification as a production workaround.
+
+For example, after creating `agentio-mitm-ca` in `agentio-system` from an operator-managed CA, these values enable inspection of two hosts:
+
+```yaml
+agentiod:
+  enableTlsTermination: true
+  onDemandCertSignMode: SECRET
+  env:
+    ON_DEMAND_SECRET_NAMESPACE: agentio-system
+    ON_DEMAND_SECRET_NAME: agentio-mitm-ca
+agentioConfig:
+  egressGateways:
+  - name: agentio-egress
+    namespace: agentio-system
+    tlsTermination:
+      includeHosts:
+      - api.example.com
+      - mcp.example.com
+```
+
+The Secret coordinates, restricted Secret scope, and gateway namespace must be consistent. See [On-demand TLS certificate environment variables](agentiod-environment-variables.md#on-demand-tls-certificates) for the complete signing settings.
 
 ### Connection pool and route settings
 
@@ -235,3 +266,5 @@ $ kubectl logs deployment/agentiod \
 
 - [Route traffic through an egress gateway](../tasks/route-traffic-through-egress-gateway.md)
 - [Configure a TrafficPolicy](../tasks/configure-traffic-policy.md)
+- [Get started with EPE](../getting-started/epe.md)
+- [EPE configuration](epe-configuration.md)
