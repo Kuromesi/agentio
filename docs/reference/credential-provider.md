@@ -7,6 +7,8 @@ The credential provider is an **extension point, not a fixed backend**.
 Any service that implements the contract below works; integrations that target a specific cloud vendor (for example an Alibaba Cloud-backed provider) are implementations of this same contract.
 EPE ships the client side only (`extensions/epe/pkg/credential`).
 
+Configure a policy consumer with [Transform outbound credentials](../tasks/transform-outbound-credentials.md). For the `SecurityProfile` action fields, credential-reference forms, and provider parameter expressions, see the [SecurityProfile reference](security-profile.md).
+
 ## Request flow
 
 ```text
@@ -83,7 +85,9 @@ EPE presents a client certificate when mTLS material is available, in this prior
 
 1. Kubernetes Secret named by `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `CREDENTIAL_PROVIDER_SECRET_NAME` with data keys `ca.crt`, `client.crt`, `client.key` (the chart mounts `<name>-mtls-client-cert`).
 2. File paths from `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `CREDENTIAL_PROVIDER_CLIENT_KEY_PATH` / `CREDENTIAL_PROVIDER_CA_CERT_PATH` (defaults: `/etc/epe/mtls/{client.crt,client.key,ca.crt}`).
-3. Fallback: TLS without a client certificate, verified against the system trust store. Verification is never skipped; TLS 1.2 is the minimum.
+3. Fallback: TLS without a client certificate, verified against the system trust store. TLS 1.2 is the minimum.
+
+`CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY=true` is an explicit exception for trusted test environments: it disables provider server-certificate verification while retaining any configured client certificate. It exposes the bearer token and returned credentials to an on-path attacker and must not be used in production.
 
 Providers should require the client certificate and treat the bearer `accessToken` as the per-sandbox authorization, not as the only authentication factor.
 

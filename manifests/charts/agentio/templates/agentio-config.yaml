@@ -12,7 +12,6 @@ sandboxExtProc:
     - filter_state['sandbox.labels']
     - filter_state['downstream_peer'].name
     - filter_state['downstream_peer'].namespace
-    - filter_state['downstream_peer'].labels_str
     - destination.port
     - source.address
   response:

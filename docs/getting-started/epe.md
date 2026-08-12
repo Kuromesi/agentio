@@ -1,0 +1,154 @@
+# Get started with EPE
+
+This guide enables the Egress Policy Enforcer (EPE), applies a minimal `SecurityProfile`, and verifies that EPE blocks a gateway-routed request. The example uses the `curl` workload created by the sidecar onboarding guide; adapt the namespace and selector if you use ambient mode or a different workload.
+
+## Before you begin
+
+You need:
+
+- A Kubernetes cluster that you can administer.
+- `kubectl` configured for that cluster.
+- Helm 3 and a local clone of this repository.
+- An enrolled workload and an Agentio egress route that sends `www.example.com` through an egress gateway.
+
+Complete one onboarding guide, then [route traffic through an egress gateway](../tasks/route-traffic-through-egress-gateway.md). The onboarding guide exports `AGENTIO_DEMO_NAMESPACE`, `AGENTIO_WORKLOAD_LABEL`, and `AGENTIO_WORKLOAD_CONTAINER`, which the egress-route task consumes. This guide assumes the sidecar guide's `curl` example in the `agentio-demo` namespace. Do not use the direct passthrough path for this verification: EPE is invoked only on the gateway-routed path.
+
+Confirm the sample workload is ready and record its Pod name:
+
+```console
+$ kubectl wait pod \
+    --namespace agentio-demo \
+    --selector app=curl \
+    --for=condition=Ready \
+    --timeout=2m
+
+$ AGENTIO_EPE_DEMO_POD=$(kubectl get pod \
+    --namespace agentio-demo \
+    --selector app=curl \
+    --output jsonpath='{.items[0].metadata.name}')
+$ test -n "$AGENTIO_EPE_DEMO_POD"
+```
+
+## Enable EPE
+
+Create an explicit values file. `epe.enabled: true` is the chart switch that renders and wires EPE into the Agentio configuration:
+
+```console
+$ cat >/tmp/agentio-epe-values.yaml <<'EOF'
+epe:
+  enabled: true
+EOF
+```
+
+Update the existing Agentio release while preserving the egress-gateway and route values you configured earlier:
+
+```console
+$ helm upgrade --install agentio ./manifests/charts/agentio \
+    --namespace agentio-system \
+    --create-namespace \
+    --reuse-values \
+    --values /tmp/agentio-epe-values.yaml \
+    --wait \
+    --timeout 5m
+```
+
+By default, this renders the `agentio-epe` Deployment and headless Service in `agentio-system`. The Service exposes the `extproc` port `9002`, health port `9003`, and metrics port `9090`; Agentio configures gateway Envoy to call `agentio-epe.agentio-system.svc.cluster.local:9002`.
+
+## Verify the EPE workload and Service
+
+Wait for the Deployment and inspect the Service ports:
+
+```console
+$ kubectl rollout status deployment/agentio-epe \
+    --namespace agentio-system \
+    --timeout=5m
+
+$ kubectl get service/agentio-epe \
+    --namespace agentio-system \
+    --output wide
+```
+
+Confirm that the Helm-managed configuration contains the ext_proc service endpoint:
+
+```console
+$ kubectl get configmap agentio-config \
+    --namespace agentio-system \
+    --output jsonpath='{.data.config}'
+```
+
+The output includes `sandboxExtProc` with the EPE Service address and port. It is control-plane configuration; the traffic test below is the enforcement check.
+
+## Apply a minimal profile
+
+Apply this complete namespaced `SecurityProfile`. It selects the curl sample and blocks only the `/epe-denied` path at the already gateway-routed host:
+
+```console
+$ kubectl apply -f - <<'EOF'
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: block-epe-demo
+  namespace: agentio-demo
+spec:
+  selector:
+    matchLabels:
+      app: curl
+  rules:
+  - name: block-epe-denied-path
+    match:
+    - domains:
+      - www.example.com
+      paths:
+      - type: Exact
+        value: /epe-denied
+    actions:
+      block:
+        statusCode: 403
+        body: blocked by the EPE demo profile
+EOF
+```
+
+## Send a request and verify the decision
+
+The request should receive EPE's configured `403` response before it reaches the external service:
+
+```console
+$ kubectl exec "$AGENTIO_EPE_DEMO_POD" \
+    --namespace agentio-demo \
+    --container curl -- \
+    curl --silent --show-error --include http://www.example.com/epe-denied
+HTTP/1.1 403 Forbidden
+
+blocked by the EPE demo profile
+```
+
+Policy propagation can take a few seconds. Retry the request before investigating an unexpected response. A `404` or a successful upstream response instead of the configured `403` usually means that the host is not using the egress-gateway route, EPE is not ready, or the profile selector does not match the calling Pod.
+
+## Clean up
+
+Delete the profile:
+
+```console
+$ kubectl delete securityprofile block-epe-demo \
+    --namespace agentio-demo
+```
+
+To disable EPE after removing profiles that require it, update the release:
+
+```console
+$ helm upgrade agentio ./manifests/charts/agentio \
+    --namespace agentio-system \
+    --reuse-values \
+    --set epe.enabled=false \
+    --wait \
+    --timeout 5m
+```
+
+Do not disable EPE while egress routes still depend on its policy decisions; gateway requests that need EPE can fail or lose enforcement during the change.
+
+## See also
+
+- [Egress Policy Enforcer overview](../concepts/epe-overview.md)
+- [EPE policy evaluation](../concepts/epe-policy-evaluation.md)
+- [Configure a SecurityProfile](../tasks/configure-security-profile.md)
+- [Agentio Helm values](../../manifests/charts/agentio/values.yaml)
