@@ -59,7 +59,7 @@ EPE registers actions in this fixed order within each matched rule:
 
 An unavailable signer type or malformed credential reference fails during lazy action projection and produces an ext_proc processing error governed by the provider's `failureModeAllow`, as described above. After projection succeeds, an unavailable credential, bad provider response, invalid header value, or signing error uses the token transformation's `failStrategy`. Provider details, TLS, and cache semantics are in [Credential provider](credential-provider.md).
 
-`AliyunSTS` detects ACS3/V3, V1-ROA, and OSS V4 from the trimmed `Authorization` header. Their required prefixes are `ACS3-HMAC-SHA256 `, `acs ` (also requiring a `:`), and `OSS4-HMAC-SHA256 `, respectively. When none matches, V1-RPC is detected from a parseable raw query containing non-empty `Signature` and `AccessKeyId` parameters and exactly `SignatureMethod=HMAC-SHA1`. A request that meets none of these requirements is unsupported; detection fails and the action follows its configured `failStrategy` (`Block` by default, or unmodified forwarding for `Allow`/`Ignore`).
+`AliyunSTS` detects ACS3/V3, V1-ROA, and OSS V4 from the trimmed `Authorization` header. Their required prefixes are `ACS3-HMAC-SHA256`, `acs` (also requiring a `:`), and `OSS4-HMAC-SHA256`, respectively, each followed by a space. When none matches, V1-RPC is detected from a parseable raw query containing non-empty `Signature` and `AccessKeyId` parameters and exactly `SignatureMethod=HMAC-SHA1`. A request that meets none of these requirements is unsupported; detection fails and the action follows its configured `failStrategy` (`Block` by default, or unmodified forwarding for `Allow`/`Ignore`).
 
 ## Audit configuration
 

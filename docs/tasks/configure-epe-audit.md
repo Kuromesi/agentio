@@ -159,4 +159,3 @@ $ kubectl delete securityprofile audit-blocked-admin \
 - [EPE observability](../reference/epe-observability.md)
 - [EPE configuration](../reference/epe-configuration.md)
 - [EPE admin API](../reference/epe-admin-api.md)
-- [Troubleshoot EPE](troubleshoot-epe.md)

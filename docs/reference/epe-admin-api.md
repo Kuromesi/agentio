@@ -97,4 +97,3 @@ The API is read-only, but it exposes profile selectors, ordering, and, in full m
 
 - [EPE configuration](epe-configuration.md)
 - [EPE observability](epe-observability.md)
-- [Troubleshoot EPE](../tasks/troubleshoot-epe.md)

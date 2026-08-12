@@ -83,4 +83,3 @@ Webhook rendering or transport failures produce audit-webhook log records at ver
 - [EPE configuration](epe-configuration.md)
 - [EPE admin API](epe-admin-api.md)
 - [Configure EPE audit events](../tasks/configure-epe-audit.md)
-- [Troubleshoot EPE](../tasks/troubleshoot-epe.md)
