@@ -174,8 +174,9 @@ func TestEngineClosureFreeOfExtProcProtos(t *testing.T) {
 	}
 }
 
-// Header-only control actions stay capability-deprived: block and bypass do
-// not need network clients and should remain cheap and side-effect free.
+// Header-only actions that need no external data stay capability-deprived:
+// block, bypass, and generic header mutation should remain cheap and
+// side-effect free.
 func TestHeaderOnlyControlFiltersCannotReachNetworkClients(t *testing.T) {
 	forbidden := []string{
 		modPrefix + "pkg/credential",
@@ -185,6 +186,7 @@ func TestHeaderOnlyControlFiltersCannotReachNetworkClients(t *testing.T) {
 	for _, pkg := range []string{
 		"pkg/filters/block",
 		"pkg/filters/bypass",
+		"pkg/filters/headermutation",
 	} {
 		out := deps(t, pkg)
 		for _, dep := range forbidden {
@@ -212,6 +214,7 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 	srcDirs := map[string]string{
 		"bypass":         "../filters/bypass",
 		"block":          "../filters/block",
+		"headermutation": "../filters/headermutation",
 		"mcpacl":         "../filters/mcpacl",
 		"tokentransform": "../filters/tokentransform",
 	}
