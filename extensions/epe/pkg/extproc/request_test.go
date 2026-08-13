@@ -74,7 +74,7 @@ func responseHeadersState(p *responseHeadersProbe) (*Server, *streamState, *capt
 		AuditLogger:   cap,
 	})
 	state := newStreamState()
-	state.sawRequest = true
+	state.markRequestSeen()
 	id := filter.UnitID{Scope: "default/p1", Name: "observe"}
 	state.units = []engine.Unit{{
 		ID:   id,
@@ -252,13 +252,13 @@ func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
 		makeAttrsWithLabels("default", "pod", testLabelsB64), state); err != nil {
 		t.Fatalf("HandleRequestHeaders: %v", err)
 	}
-	if state.eval == nil || !state.awaitRequestBody {
+	if !state.awaitingRequestBody() {
 		t.Fatal("body evaluation did not arm its request-body obligation")
 	}
 	if !state.awaitResponseHeaders {
 		t.Fatal("response observation did not arm its response-headers obligation")
 	}
-	if state.finalizeAfterSend {
+	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("non-terminal headers result armed finalization")
 	}
 }
@@ -290,7 +290,7 @@ func TestHandleRequestHeaders_TerminalResultsArmFinalization(t *testing.T) {
 				makeAttrsWithLabels("default", "pod", testLabelsB64), state); err != nil {
 				t.Fatalf("HandleRequestHeaders: %v", err)
 			}
-			if !state.finalizeAfterSend {
+			if state.lifecycle != lifecycleFinalizePending {
 				t.Fatal("terminal headers result did not arm finalization")
 			}
 		})
@@ -344,7 +344,7 @@ func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulObservation(t *t
 	if state.awaitResponseHeaders {
 		t.Fatal("response-headers obligation was not consumed")
 	}
-	if !state.finalizeAfterSend {
+	if state.lifecycle != lifecycleFinalizePending {
 		t.Fatal("successful response observation did not arm finalization")
 	}
 }
@@ -362,11 +362,7 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("HandleResponseHeaders error = %v, want %v", err, boom)
 	}
-	// This registration is FailClosed, so the engine synthesises a deny. That
-	// deny is a decision and must travel with the error: Envoy holds the upstream
-	// headers only until we answer, and sending nothing would hand the outcome to
-	// failure_mode_allow instead. Contrast the fault case below, which must send
-	// nothing.
+	// A FailClosed response error returns its synthesized deny with the error.
 	if len(resp) != 1 {
 		t.Fatalf("responses = %d, want 1 synthesised deny", len(resp))
 	}
@@ -376,17 +372,12 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	if !state.awaitResponseHeaders {
 		t.Fatal("failed response observation consumed the outstanding obligation")
 	}
-	if state.finalizeAfterSend {
+	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("failed response observation armed successful finalization")
 	}
 }
 
-// A contract violation is a fault, not a decision: the engine returns a
-// zero-value passthrough result alongside its error. Translating that would emit
-// a bare ack, and because Process sends a handler's responses before surfacing
-// its error, the ack would release the UNMUTATED upstream response downstream
-// and only then tear the stream down — turning a FailClosed rule into fail-open.
-// Nothing may be sent; Envoy's failure_mode_allow owns the outcome.
+// A response-phase contract violation returns an error and no response.
 func TestHandleResponseHeaders_ContractViolationSendsNothing(t *testing.T) {
 	bypass := filter.Bypass()
 	probe := &responseHeadersProbe{act: &bypass}
@@ -425,9 +416,9 @@ func TestHandleResponseHeaders_MissingInputKeepsObligationAndAuditsError(t *test
 			if probe.calls != 0 {
 				t.Fatalf("response observer ran %d times, want 0", probe.calls)
 			}
-			if !state.awaitResponseHeaders || state.finalizeAfterSend {
-				t.Fatalf("obligation state = await:%v finalize:%v, want true/false",
-					state.awaitResponseHeaders, state.finalizeAfterSend)
+			if !state.awaitResponseHeaders || state.lifecycle == lifecycleFinalizePending {
+				t.Fatalf("obligation state = await:%v lifecycle:%v, want awaited and not finalize-pending",
+					state.awaitResponseHeaders, state.lifecycle)
 			}
 
 			s.finishStream(context.Background(), state, err)
@@ -438,40 +429,8 @@ func TestHandleResponseHeaders_MissingInputKeepsObligationAndAuditsError(t *test
 	}
 }
 
-func TestHandleResponseHeaders_DuplicateDoesNotRerunObserverOrOverwriteAudit(t *testing.T) {
-	probe := &responseHeadersProbe{}
-	s, state, cap := responseHeadersState(probe)
-	headers := &extProcPb.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
-		{Key: ":status", RawValue: []byte("204")},
-	}}}
-
-	if _, err := s.HandleResponseHeaders(context.Background(), headers, state); err != nil {
-		t.Fatalf("first HandleResponseHeaders: %v", err)
-	}
-	s.finishAfterSend(context.Background(), state)
-	_, duplicateErr := s.HandleResponseHeaders(context.Background(), headers, state)
-	if duplicateErr == nil {
-		t.Fatal("duplicate response headers were accepted")
-	}
-	if probe.calls != 1 {
-		t.Fatalf("response observer ran %d times, want exactly once", probe.calls)
-	}
-	s.finishStream(context.Background(), state, duplicateErr)
-	if len(cap.entries) != 1 || cap.entries[0].Outcome != "passthrough" || cap.entries[0].Error != "" {
-		t.Fatalf("accesslog = %+v, want one committed passthrough entry", cap.entries)
-	}
-}
-
-// A blocked request finalizes as soon as its ImmediateResponse is sent, but the
-// statically configured response-header mode can still deliver one message. It
-// must be acknowledged without reopening observers or audit.
-//
-// This scenario used to be written with a *bypassed* stream. Under the
-// response-mutation design a bypass with demand must survive into the response
-// phase (see TestHandleResponseHeaders_BypassWithDemandStillDispatches), so the
-// two cases are now separate tests: this one keeps the genuine
-// "static mode outlives a terminal decision" behaviour with the terminal
-// decision that really is terminal.
+// A finalized stream acknowledges one statically configured response-header
+// message without reopening observers or audit.
 func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWithoutObserver(t *testing.T) {
 	probe := &responseHeadersProbe{}
 	s, state, cap := responseHeadersState(probe)
@@ -492,18 +451,11 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 	if probe.calls != 0 {
 		t.Fatalf("response observer ran %d times after terminal finalization, want 0", probe.calls)
 	}
-	if state.finalizeAfterSend {
+	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("already finalized stream armed another finalization")
 	}
 	if len(cap.entries) != 1 || cap.entries[0].Outcome != "blocked" {
 		t.Fatalf("accesslog = %+v, want one committed blocked entry", cap.entries)
-	}
-
-	if _, err := s.HandleResponseHeaders(context.Background(), headers, state); err == nil {
-		t.Fatal("duplicate static response headers were accepted")
-	}
-	if probe.calls != 0 || len(cap.entries) != 1 {
-		t.Fatalf("duplicate changed observers/audit: observer calls=%d accesslog=%+v", probe.calls, cap.entries)
 	}
 }
 

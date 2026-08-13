@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Adapter-side tests for the per-rule response-headers want set: how it is
-// carried across phases, how it decides the single ModeOverride, and where a
+// Adapter-side tests for the per-rule response-headers subscription: how the
+// config-derived demand decides the single ModeOverride, how the response phase
+// dispatches to exactly the subscribed pairs (bounded by a bypass), and where a
 // demand that can no longer be honoured must fail loudly.
 package extproc
 
@@ -145,19 +146,8 @@ func runRequestHeaders(t *testing.T, s *Server, state *streamState, endOfStream 
 	return resp
 }
 
-// Config-derived demand alone must open the response-headers phase, with
-// --observe-responses off.
-// A rule ordered AFTER one that pauses for the request body must still get the
-// response-headers phase opened. This is the adapter-level pin for the bug that
-// motivated moving subscription off the action path: subscription used to be
-// discovered by running the filter, so a pause at an earlier registration
-// deferred this rule's declaration past the single ModeOverride — and the
-// production order (bypass, block, mcpacl, headermutation, tokentransform) makes
-// that reachable, because mcpacl always pauses for the body and headermutation
-// follows it. Every request carrying a body failed with an internal error.
-//
-// Deliberately single-stream: the failure is a pure ordering bug, not a race, so
-// concurrency is not needed to expose it and would only obscure the diagnosis.
+// A response subscription after a body-pausing rule must still open and run the
+// response-header phase.
 func TestHandleRequestHeaders_SubscriptionSurvivesAnEarlierPause(t *testing.T) {
 	resp := &wantRespFilter{requestAct: filter.Continue()}
 	regs := []filter.Registration{
@@ -183,9 +173,7 @@ func TestHandleRequestHeaders_SubscriptionSurvivesAnEarlierPause(t *testing.T) {
 			"mutation would never reach the wire", mode.GetResponseHeaderMode())
 	}
 
-	// And the body message must not be rejected — the old design raised a loud
-	// error here, so the same policy failed for requests with a body and
-	// succeeded for those without.
+	// The separately delivered body must be accepted before response dispatch.
 	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
 		Body: []byte("payload"), EndOfStream: true,
 	}, state); err != nil {
@@ -267,21 +255,14 @@ func (f *plainRespFilter) OnResponseHeaders(ctx context.Context, st *filter.Stre
 	return f.inner.OnResponseHeaders(ctx, st)
 }
 
-// The bodyless resume is a distinct code path from the real-body one: the body
-// phase runs synchronously inside the headers exchange, through
-// mergeBodylessRequestResults, rather than as its own Envoy message. A rule
-// ordered after the pauser must still get the phase opened and be dispatched to.
+// The bodyless resume must preserve subscriptions declared after the pausing filter.
 func TestHandleRequestHeaders_BodylessResumeKeepsAPostPauseSubscription(t *testing.T) {
 	resp := &wantRespFilter{requestAct: filter.Continue()}
 	regs := []filter.Registration{
 		pauseReg("pause", &pauseFilter{}),
 		respReg("resp", resp),
 	}
-	// One unit, two registrations: this is about action order within a rule —
-	// registration 0 pauses, so registration 1 is reached only by the resumed walk.
-	// A second unit would only multiply the dispatch count (wantsServer gives every
-	// unit a config for every registration, and respReg hands out one shared filter
-	// instance), which says nothing about the resume path.
+	// Registration 1 is reached only after registration 0 resumes.
 	s, _ := wantsServer(t, regs, []string{"r"}, false)
 	state := newStreamState()
 
@@ -301,10 +282,7 @@ func TestHandleRequestHeaders_BodylessResumeKeepsAPostPauseSubscription(t *testi
 	}
 }
 
-// The same policy must not behave differently based on body presence. This was
-// the second production symptom: subscription and body handling were entangled,
-// so a request with a body and one without took different paths to the same
-// answer.
+// Response subscription and dispatch are identical with and without a request body.
 func TestHandleRequestHeaders_SubscriptionIndependentOfBodyPresence(t *testing.T) {
 	for _, endOfStream := range []bool{false, true} {
 		name := "with body"
@@ -360,9 +338,7 @@ func (pauseAndWantFilter) OnResponseHeaders(context.Context, *filter.Stream) (fi
 	return filter.Continue(), nil
 }
 
-// A bypassed stream carrying a want must still reach EvalResponseHeaders: the
-// bypassing rule's own response operations apply. Bypass suppresses following
-// rules, not itself.
+// A bypass preserves its own response operations.
 func TestHandleResponseHeaders_BypassWithDemandStillDispatches(t *testing.T) {
 	f := &wantRespFilter{
 		requestAct: filter.Bypass(),
@@ -378,13 +354,13 @@ func TestHandleResponseHeaders_BypassWithDemandStillDispatches(t *testing.T) {
 		mode.GetResponseHeaderMode() != extProcV3.ProcessingMode_SEND {
 		t.Fatalf("ModeOverride = %v, want a bypass with demand to still open the phase", mode)
 	}
-	if state.finalizeAfterSend {
+	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("bypass finalized the stream before the response phase could run")
 	}
 	// Commit whatever finalization the headers reply armed, exactly as Process
 	// does after Send.
 	s.finishAfterSend(context.Background(), state)
-	if state.finalized {
+	if state.lifecycle == lifecycleFinalized {
 		t.Fatal("stream finalized after the headers send; the response phase can no longer run")
 	}
 
@@ -399,6 +375,44 @@ func TestHandleResponseHeaders_BypassWithDemandStillDispatches(t *testing.T) {
 	if hm == nil || len(hm.GetSetHeaders()) != 1 ||
 		hm.GetSetHeaders()[0].GetHeader().GetKey() != "x-epe-policy" {
 		t.Fatalf("response HeaderMutation = %v, want x-epe-policy set", hm)
+	}
+}
+
+// A bypass suppresses response operations from later pairs.
+func TestHandleResponseHeaders_BypassSuppressesLaterRulesResponseOps(t *testing.T) {
+	bypasser := &wantRespFilter{requestAct: filter.Bypass()}
+	later := &wantRespFilter{
+		requestAct: filter.Continue(),
+		responseOp: []filter.Mutation{{HeaderOps: []filter.HeaderOp{
+			{Kind: filter.HeaderSet, Name: "x-epe-late", Value: "must-not-apply"},
+		}}},
+	}
+	regs := []filter.Registration{
+		respReg("bypass", bypasser),
+		respReg("later", later),
+	}
+	s, _ := wantsServer(t, regs, []string{"r"}, false)
+	state := newStreamState()
+
+	responses := runRequestHeaders(t, s, state, false)
+	if mode := responses[0].GetModeOverride(); mode == nil ||
+		mode.GetResponseHeaderMode() != extProcV3.ProcessingMode_SEND {
+		t.Fatalf("ModeOverride = %v, want the phase opened for the bypassing rule's own subscription", mode)
+	}
+	s.finishAfterSend(context.Background(), state)
+
+	respMsgs, err := s.HandleResponseHeaders(context.Background(), responseHeaderMsg("200"), state)
+	if err != nil {
+		t.Fatalf("HandleResponseHeaders: %v", err)
+	}
+	if bypasser.respCalls != 1 {
+		t.Errorf("bypassing rule's response phase ran %d times, want 1: bypass does not suppress itself", bypasser.respCalls)
+	}
+	if later.respCalls != 0 {
+		t.Fatalf("suppressed rule's response phase ran %d times, want 0: bypass skips all following rules", later.respCalls)
+	}
+	if hm := respMsgs[0].GetResponseHeaders().GetResponse().GetHeaderMutation(); len(hm.GetSetHeaders()) != 0 {
+		t.Fatalf("response HeaderMutation = %v, want none: the suppressed rule's ops reached the wire", hm)
 	}
 }
 
@@ -421,7 +435,7 @@ func TestHandleRequestHeaders_BlockedOpensNothing(t *testing.T) {
 	if responses[0].GetModeOverride() != nil {
 		t.Fatal("ModeOverride combined with an ImmediateResponse: Envoy applies it before closing")
 	}
-	if !state.finalizeAfterSend {
+	if state.lifecycle != lifecycleFinalizePending {
 		t.Fatal("a blocked request must finalize after send")
 	}
 	if state.awaitResponseHeaders {
@@ -488,10 +502,7 @@ type errRespBoomType struct{}
 
 func (errRespBoomType) Error() string { return "response render failed" }
 
-// The Process loop must actually put the fail-closed ImmediateResponse on the
-// wire. Envoy holds the upstream response headers only until we answer; erroring
-// without sending would fall back to Envoy's own failure_mode_allow handling and
-// lose the policy's status and details.
+// Process sends the FailClosed ImmediateResponse before returning the error.
 func TestProcess_FailClosedResponsePhaseSendsImmediateResponse(t *testing.T) {
 	f := &wantRespFilter{requestAct: filter.Continue(), respErr: errRespBoom}
 	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"}, false)

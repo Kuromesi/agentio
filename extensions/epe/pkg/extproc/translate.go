@@ -42,27 +42,27 @@ var routeAffectingHeaders = map[string]bool{
 
 // translateRequestHeadersResult maps an RequestHeadersResult to the headers-phase response
 // list.
-func translateRequestHeadersResult(er *engine.RequestHeadersResult, loggerD logr.Logger, peer filter.Peer) []*extProcPb.ProcessingResponse {
-	if er.Disposition == engine.DispositionBlocked {
-		return []*extProcPb.ProcessingResponse{immediateFromReply(er.Reply)}
+func translateRequestHeadersResult(reqHeadersRes *engine.RequestHeadersResult, loggerD logr.Logger, peer filter.Peer) []*extProcPb.ProcessingResponse {
+	if reqHeadersRes.Disposition == engine.DispositionBlocked {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(reqHeadersRes.Reply)}
 	}
-	if len(er.HeaderOps) == 0 && er.Body == nil {
-		if er.Disposition == engine.DispositionPassthrough {
+	if len(reqHeadersRes.HeaderOps) == 0 && reqHeadersRes.Body == nil {
+		if reqHeadersRes.Disposition == engine.DispositionPassthrough {
 			loggerD.Info("No filter produced mutations; passthrough", "pod", peer.Pod.String())
 		}
 		return defaultPassThrough
 	}
-	mut, clear := headerMutationFromOps(er.HeaderOps)
+	mut, clear := headerMutationFromOps(reqHeadersRes.HeaderOps)
 	common := &extProcPb.CommonResponse{
 		HeaderMutation:  mut,
-		ClearRouteCache: clear || er.ClearRouteCache,
+		ClearRouteCache: clear || reqHeadersRes.ClearRouteCache,
 	}
-	if er.Body != nil {
+	if reqHeadersRes.Body != nil {
 		// A headers-phase body mutation is silently dropped under plain
 		// CONTINUE; Envoy only honors it with CONTINUE_AND_REPLACE.
 		common.Status = extProcPb.CommonResponse_CONTINUE_AND_REPLACE
 		common.BodyMutation = &extProcPb.BodyMutation{
-			Mutation: &extProcPb.BodyMutation_Body{Body: er.Body},
+			Mutation: &extProcPb.BodyMutation_Body{Body: reqHeadersRes.Body},
 		}
 	}
 	return []*extProcPb.ProcessingResponse{{
@@ -75,23 +75,23 @@ func translateRequestHeadersResult(er *engine.RequestHeadersResult, loggerD logr
 }
 
 // translateRequestBodyResult maps a RequestBodyResult to the body-phase response list.
-func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.ProcessingResponse {
-	if br.Disposition == engine.DispositionBlocked {
-		return []*extProcPb.ProcessingResponse{immediateFromReply(br.Reply)}
+func translateRequestBodyResult(reqBodyRes *engine.RequestBodyResult) []*extProcPb.ProcessingResponse {
+	if reqBodyRes.Disposition == engine.DispositionBlocked {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(reqBodyRes.Reply)}
 	}
-	if len(br.HeaderOps) == 0 && br.Body == nil {
+	if len(reqBodyRes.HeaderOps) == 0 && reqBodyRes.Body == nil {
 		return defaultPassThroughBody
 	}
-	mut, clear := headerMutationFromOps(br.HeaderOps)
+	mut, clear := headerMutationFromOps(reqBodyRes.HeaderOps)
 	common := &extProcPb.CommonResponse{
 		HeaderMutation:  mut,
-		ClearRouteCache: clear || br.ClearRouteCache,
+		ClearRouteCache: clear || reqBodyRes.ClearRouteCache,
 	}
-	if br.Body != nil {
+	if reqBodyRes.Body != nil {
 		// Rewriting a BUFFERED body without a matching content-length is a
 		// hard error (500), so the adapter sets both together.
 		common.BodyMutation = &extProcPb.BodyMutation{
-			Mutation: &extProcPb.BodyMutation_Body{Body: br.Body},
+			Mutation: &extProcPb.BodyMutation_Body{Body: reqBodyRes.Body},
 		}
 		if common.HeaderMutation == nil {
 			common.HeaderMutation = &extProcPb.HeaderMutation{}
@@ -99,7 +99,7 @@ func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.Proce
 		common.HeaderMutation.SetHeaders = append(common.HeaderMutation.SetHeaders, &corev3.HeaderValueOption{
 			Header: &corev3.HeaderValue{
 				Key:      "content-length",
-				RawValue: []byte(strconv.Itoa(len(br.Body))),
+				RawValue: []byte(strconv.Itoa(len(reqBodyRes.Body))),
 			},
 			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 		})
@@ -113,31 +113,20 @@ func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.Proce
 	}}
 }
 
-// translateResponseHeadersResult maps a ResponseHeadersResult to the
-// response-headers-phase response list.
-//
-// Three deliberate asymmetries with the request path:
-//
-//   - headerMutationFromOps's route-affecting bool is discarded.
-//     clear_route_cache is a documented no-op in the response direction (only
-//     the decoding state overrides the empty virtual base), and routing is long
-//     decided by the time response headers exist, so routeAffectingHeaders is
-//     meaningless here.
-//   - CommonResponse_CONTINUE_AND_REPLACE is never emitted: on the response path
-//     it force-disables all further response processing.
-//   - No BodyMutation: the extension never rewrites a response body, and a
-//     mismatched content-length would corrupt framing.
-func translateResponseHeadersResult(rr *engine.ResponseHeadersResult) []*extProcPb.ProcessingResponse {
-	if rr.Disposition == engine.DispositionBlocked {
+// translateResponseHeadersResult emits a blocking reply, a response-header
+// mutation, or a bare acknowledgement. It never clears route cache or mutates
+// the response body.
+func translateResponseHeadersResult(respHeadersRes *engine.ResponseHeadersResult) []*extProcPb.ProcessingResponse {
+	if respHeadersRes.Disposition == engine.DispositionBlocked {
 		// Envoy holds the upstream response headers while awaiting our reply, so
 		// this local reply genuinely replaces them. HeaderOps are ignored: the
 		// response being mutated no longer goes downstream.
-		return []*extProcPb.ProcessingResponse{immediateFromReply(rr.Reply)}
+		return []*extProcPb.ProcessingResponse{immediateFromReply(respHeadersRes.Reply)}
 	}
-	if len(rr.HeaderOps) == 0 {
+	if len(respHeadersRes.HeaderOps) == 0 {
 		return emptyResponseHeadersAck
 	}
-	mut, _ := headerMutationFromOps(rr.HeaderOps)
+	mut, _ := headerMutationFromOps(respHeadersRes.HeaderOps)
 	return []*extProcPb.ProcessingResponse{{
 		Response: &extProcPb.ProcessingResponse_ResponseHeaders{
 			ResponseHeaders: &extProcPb.HeadersResponse{
@@ -147,12 +136,7 @@ func translateResponseHeadersResult(rr *engine.ResponseHeadersResult) []*extProc
 	}}
 }
 
-// emptyResponseHeadersAck is the bare acknowledgement for the response-headers
-// phase. Shared rather than rebuilt per call, matching defaultPassThrough and
-// defaultPassThroughBody: immutable and safe across goroutines, because gRPC
-// serializes but does not mutate the proto. Nothing may attach a ModeOverride to
-// it — mode_override belongs to a request-headers reply, and cloneResponse exists
-// for the one site that needs a mutable copy.
+// emptyResponseHeadersAck is the immutable bare acknowledgement for response headers.
 var emptyResponseHeadersAck = []*extProcPb.ProcessingResponse{{
 	Response: &extProcPb.ProcessingResponse_ResponseHeaders{
 		ResponseHeaders: &extProcPb.HeadersResponse{},

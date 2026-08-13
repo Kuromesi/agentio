@@ -196,7 +196,7 @@ func TestEvalResponseHeaders_BudgetInstallsDeadline(t *testing.T) {
 	e := NewEngine(regs, time.Minute)
 
 	units := unitsFor([][]string{{"cfg"}})
-	if _, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, units); err != nil {
+	if _, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, units, ResponseScope{}); err != nil {
 		t.Fatalf("response phase: %v", err)
 	}
 	if !hadDeadline {

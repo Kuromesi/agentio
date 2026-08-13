@@ -174,9 +174,8 @@ func TestEngineClosureFreeOfExtProcProtos(t *testing.T) {
 	}
 }
 
-// Header-only actions that need no external data stay capability-deprived:
-// block, bypass, and generic header mutation should remain cheap and
-// side-effect free.
+// Block, bypass, and header mutation must not depend on credential, Kubernetes,
+// or HTTP clients.
 func TestHeaderOnlyControlFiltersCannotReachNetworkClients(t *testing.T) {
 	forbidden := []string{
 		modPrefix + "pkg/credential",

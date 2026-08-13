@@ -36,7 +36,6 @@ import (
 // https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ext_proc/v3/external_processor.proto
 type Server struct {
 	observeResponses bool
-	pluginBudget     time.Duration
 	resolve          engine.Resolver
 	eng              *engine.Engine
 	loggers          []filter.StreamLogger
@@ -71,7 +70,6 @@ func NewServer(deps ServerDeps) *Server {
 	loggers = append(loggers, deps.StreamLoggers...)
 	return &Server{
 		observeResponses: deps.ObserveResponses,
-		pluginBudget:     deps.PluginBudget,
 		resolve:          deps.Resolve,
 		eng:              engine.NewEngine(deps.Registrations, deps.PluginBudget),
 		loggers:          loggers,
@@ -172,13 +170,8 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 			// credential into the log whenever debug was enabled.
 			logger.V(logging.DEFAULT).Error(err, "Failed to process request",
 				"messageType", messageTypeName(req))
-			// A handler may pair its error with a reply that must still reach
-			// Envoy — the response-headers phase under FailClosed synthesises an
-			// ImmediateResponse that replaces the upstream response, and Envoy
-			// holds those headers only until we answer. Erroring without sending
-			// would fall back to Envoy's own failure_mode_allow handling and lose
-			// the policy's status and details. Send failures are subordinate: the
-			// original error is what terminates the stream.
+			// Send any policy response returned with the handler error, then return
+			// the original error.
 			for _, resp := range responses {
 				if sendErr := srv.Send(resp); sendErr != nil {
 					logger.V(logging.DEFAULT).Error(sendErr, "Send failed while surfacing a handler error")
@@ -209,10 +202,10 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 // finishStream invokes the stream loggers exactly once per stream, after a
 // request was actually observed. Idempotent: the first caller wins.
 func (s *Server) finishStream(ctx context.Context, state *streamState, err error) {
-	if state == nil || !state.sawRequest || state.finalized {
+	if state == nil || state.lifecycle == lifecycleIdle || state.lifecycle == lifecycleFinalized {
 		return
 	}
-	state.finalized = true
+	state.lifecycle = lifecycleFinalized
 	info := state.stream.Info
 	if err != nil {
 		info.Error = err.Error()
@@ -231,17 +224,37 @@ func (s *Server) finishStream(ctx context.Context, state *streamState, err error
 // finishAfterSend commits a pending finalization only after Envoy accepted the
 // complete response slice for the current processing request.
 func (s *Server) finishAfterSend(ctx context.Context, state *streamState) {
-	if state == nil || !state.finalizeAfterSend {
+	if state == nil || state.lifecycle != lifecycleFinalizePending {
 		return
 	}
-	state.finalizeAfterSend = false
 	s.finishStream(context.WithoutCancel(ctx), state, nil)
 }
 
-// streamState carries per-stream state between the phases: the Stream and
-// its StreamInfo (owned by this stream, written by the engine), the
-// resolved policy units, and the pending body-phase eval.
+// streamLifecycle tracks whether the stream is idle, active, awaiting
+// post-send finalization, or finalized.
+type streamLifecycle uint8
+
+const (
+	// lifecycleIdle: no request observed yet; a stream that ends here
+	// produces no log entry.
+	lifecycleIdle streamLifecycle = iota
+	// lifecycleActive: request headers were processed; the stream loggers
+	// are owed exactly one entry at stream end.
+	lifecycleActive
+	// lifecycleFinalizePending: a terminal response was produced; the
+	// finalization commits only after Envoy accepted the send.
+	lifecycleFinalizePending
+	// lifecycleFinalized: the stream loggers fired; later messages get a
+	// bare ack and must not reopen observers or audit.
+	lifecycleFinalized
+)
+
+// streamState carries per-stream state between the phases. Fields are grouped
+// by writer: the resolution pin is written once by HandleRequestHeaders; the
+// phase fields follow the ext_proc message flow; the lifecycle field belongs to
+// finalization and audit.
 type streamState struct {
+	// Resolution pin — written once by HandleRequestHeaders, read-only after.
 	stream *filter.Stream
 	units  []engine.Unit
 	// streamLogger is the per-stream logger the resolver supplied, if any.
@@ -249,15 +262,20 @@ type streamState struct {
 	// the resolution that took effect, so a later resolution returning
 	// nothing must leave both untouched rather than clear them.
 	streamLogger filter.StreamLogger
-	eval         *engine.RequestHeadersResult
-	// sawRequest is set once request headers were processed, so streams
-	// that never carried a request do not produce empty log entries.
-	sawRequest           bool
-	finalized            bool
-	awaitRequestBody     bool
+
+	// Request phase — the headers walk's paused continuation, consumed exactly
+	// once by the body phase. Non-nil is what "a request body is owed" means;
+	// there is deliberately no separate flag that could drift from it.
+	bodyContinuation *engine.RequestHeadersResult
+
+	// Response phase — the walk's bypass point plus the protocol obligations.
+	// responseScope is zero until a walk bypasses; a bypass can happen in the
+	// headers walk or the resumed body walk, so both handlers write it.
+	responseScope        engine.ResponseScope
 	awaitResponseHeaders bool
-	responseHeadersSeen  bool
-	finalizeAfterSend    bool
+
+	// Lifecycle / audit — see streamLifecycle.
+	lifecycle streamLifecycle
 }
 
 func newStreamState() *streamState {
@@ -266,28 +284,43 @@ func newStreamState() *streamState {
 	}
 }
 
+// markRequestSeen moves an idle stream to active. It never moves the machine
+// backwards: a request-headers message on a finalized stream must not resurrect
+// the logging obligation.
+func (st *streamState) markRequestSeen() {
+	if st.lifecycle == lifecycleIdle {
+		st.lifecycle = lifecycleActive
+	}
+}
+
 // engineUnits returns the engine-facing units; the resolver already hands
 // them over in neutral form.
 func (st *streamState) engineUnits() []engine.Unit { return st.units }
 
+// awaitingRequestBody reports whether the headers walk paused for the request
+// body and the body message has not been consumed yet.
+func (st *streamState) awaitingRequestBody() bool { return st.bodyContinuation != nil }
+
 func (st *streamState) awaitingInput() bool {
-	return st != nil && (st.awaitRequestBody || st.awaitResponseHeaders)
+	return st != nil && (st.awaitingRequestBody() || st.awaitResponseHeaders)
 }
 
-// processRequestBody runs the body phase on the message Envoy delivered.
-//
-// A body message always carries the complete body. The headers phase pins
-// ModeOverride to BUFFERED, and BUFFERED emits the whole body at once: either
-// with EndOfStream set, or — when the request carries HTTP trailers — as the
-// leftover-buffer flush Envoy sends from onTrailers with EndOfStream clear.
-// Envoy never splits a body across messages in that mode.
-//
-// EndOfStream therefore deliberately does not gate the dispatch. Waiting for
-// an end-of-stream message that a trailer-carrying request never sends would
-// acknowledge the body instead, and acknowledging is what releases it toward
-// the upstream — the verdict would go unrendered on bytes already gone.
-// Judging what arrived is also the safe reading if a short message ever shows
-// up: the filters decide on a truncated body rather than letting it pass.
+// armFinalization records when a terminal request result may be committed.
+// Block retires response obligations; bypass waits for a subscribed response phase.
+func (st *streamState) armFinalization(d engine.Disposition) {
+	switch d {
+	case engine.DispositionBlocked:
+		st.awaitResponseHeaders = false
+		st.lifecycle = lifecycleFinalizePending
+	case engine.DispositionBypassed:
+		if !st.awaitResponseHeaders {
+			st.lifecycle = lifecycleFinalizePending
+		}
+	}
+}
+
+// processRequestBody dispatches the complete buffered body. BUFFERED may flush
+// before trailers with EndOfStream unset, so delivery is not gated on that flag.
 func (s *Server) processRequestBody(ctx context.Context, body *extProcPb.HttpBody, state *streamState, logger logr.Logger) ([]*extProcPb.ProcessingResponse, error) {
 	logger.V(logging.DEBUG).Info("Dispatching request body",
 		"bytes", len(body.GetBody()), "endOfStream", body.EndOfStream)

@@ -29,10 +29,7 @@ func setOpt(key, value string, action corev3.HeaderValueOption_HeaderAppendActio
 	}
 }
 
-// A response-phase HeaderMutation must be visible to tests, and separately from
-// the request phase: the two directions carry different names for different
-// reasons, and merging them would let a request-phase assertion pass on a
-// response-phase mutation.
+// Request and response mutations are recorded separately.
 func TestParseVerdict_ResponseHeaderOpsArePhaseDistinct(t *testing.T) {
 	responses := []*extProcPb.ProcessingResponse{
 		{Response: &extProcPb.ProcessingResponse_RequestHeaders{
@@ -75,10 +72,7 @@ func TestParseVerdict_ResponseHeaderOpsArePhaseDistinct(t *testing.T) {
 	v.RequireResponseHeaderRemoved(t, "server")
 }
 
-// The two directions share one op type and one lookup implementation, so the
-// only thing keeping a request assertion from passing on a response mutation is
-// which slice each wrapper reads. Pin that wiring: these are the pure predicates
-// every Require* helper is built on, so an inverted slice fails here.
+// Direction-specific lookups do not return operations from the other direction.
 func TestVerdictLookups_DoNotCrossDirections(t *testing.T) {
 	v := &Verdict{
 		RequestHeaderOps:  []HeaderOp{{Kind: HeaderSet, Name: "x-req", Value: "1"}, {Kind: HeaderRemove, Name: "x-gone-req"}},
@@ -104,9 +98,7 @@ func TestVerdictLookups_DoNotCrossDirections(t *testing.T) {
 	}
 }
 
-// set-cookie is legitimately multi-valued and order-sensitive, which a
-// map[string]string cannot express. The response-side representation must keep
-// every line, in order, and distinguish an append from an overwrite.
+// Response set-cookie mutations preserve values, order, and append semantics.
 func TestParseVerdict_ResponseSetCookieKeepsEveryLineInOrder(t *testing.T) {
 	responses := []*extProcPb.ProcessingResponse{
 		{Response: &extProcPb.ProcessingResponse_ResponseHeaders{

@@ -40,7 +40,7 @@ func TestFinishStream_IsIdempotent(t *testing.T) {
 	cap := &captureLogger{}
 	s := NewServer(ServerDeps{AuditLogger: cap})
 	state := newStreamState()
-	state.sawRequest = true
+	state.markRequestSeen()
 
 	s.finishStream(context.Background(), state, nil)
 	s.finishStream(context.Background(), state, nil)

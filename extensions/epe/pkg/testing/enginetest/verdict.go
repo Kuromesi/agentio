@@ -56,10 +56,7 @@ const (
 	HeaderRemove HeaderOpKind = "remove"
 )
 
-// HeaderOp is one header operation as it appeared on the wire, with the name
-// lowercased. One type serves both directions: nothing about a request
-// operation differs in shape from its response counterpart, and the direction
-// is carried by which Verdict field holds it.
+// HeaderOp records one normalized header operation decoded from an ext_proc response.
 type HeaderOp struct {
 	Kind  HeaderOpKind
 	Name  string
@@ -74,20 +71,9 @@ type Verdict struct {
 	ImmediateStatus int
 	ImmediateBody   string
 
-	// RequestHeaderOps and ResponseHeaderOps are the header mutations observed on
-	// the wire in each direction, in the order the protos listed them.
-	// RequestHeaderOps spans every request-direction response — the headers phase
-	// and the body phase both emit one.
-	//
-	// The two directions are kept in separate fields rather than merged: they
-	// carry different names for different reasons, so merging would let a
-	// request-phase assertion be satisfied by a response-phase mutation.
-	//
-	// Both are op slices rather than a map[string]string because a map can
-	// neither hold the several set-cookie (or cookie, or via) lines a message
-	// legitimately carries, nor distinguish an append from an overwrite, nor
-	// preserve the order Envoy applies them in. That was true of the request
-	// direction as much as the response one.
+	// RequestHeaderOps and ResponseHeaderOps record decoded wire operations by
+	// direction and in protobuf order. RequestHeaderOps includes mutations from
+	// both request-header and request-body responses.
 	RequestHeaderOps  []HeaderOp
 	ResponseHeaderOps []HeaderOp
 
@@ -143,10 +129,7 @@ func ParseVerdict(responses []*extProcPb.ProcessingResponse, procErr error) *Ver
 	return v
 }
 
-// appendOps decodes one HeaderMutation onto ops. Envoy applies all removes
-// before all sets within a single HeaderMutation; the ops are kept in the order
-// the proto lists them instead, so a test can assert on exactly what was emitted
-// rather than on the effective order.
+// appendOps appends one HeaderMutation in protobuf field order.
 func appendOps(ops []HeaderOp, hm *extProcPb.HeaderMutation) []HeaderOp {
 	if hm == nil {
 		return ops
@@ -184,10 +167,7 @@ func headerValues(ops []HeaderOp, name string) []string {
 	return out
 }
 
-// requireHeader asserts ops produced exactly one value for name, equal to want.
-// dir names the direction in failure messages; without it the two wrappers
-// produce identical output and a failure does not say which direction it is
-// about.
+// requireHeader asserts a single value and includes dir in failures.
 func requireHeader(t *testing.T, ops []HeaderOp, dir, name, want string) {
 	t.Helper()
 	got := headerValues(ops, name)

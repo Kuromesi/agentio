@@ -134,10 +134,8 @@ func TestFilterDeclaresResponseWantFromConfig(t *testing.T) {
 			f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
 				inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
 			)})
-			// Subscription is declared from the config, not returned from the
-			// action: Envoy accepts a mode_override only on a header-phase reply,
-			// and this filter is ordered after one that pauses for the request
-			// body, so an action-borne subscription would arrive too late.
+			// Response operations subscribe to response headers; empty response
+			// operations do not.
 			wantPhase := filter.Phase(0)
 			if tc.ruleWants {
 				wantPhase = filter.PhaseResponseHeaders

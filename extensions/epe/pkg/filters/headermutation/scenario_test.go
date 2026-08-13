@@ -25,9 +25,8 @@ import (
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
-// This scenario exercises the policy-neutral boundary a future SecurityProfile
-// field will use: payload projection, filter construction, engine invocation,
-// and folding all run without importing a policy API.
+// Projects request header mutations through filter construction and engine
+// evaluation without importing a policy API.
 func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 	regs, err := filter.Build(headermutation.Definition())
 	if err != nil {
@@ -70,8 +69,7 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 	if res.Disposition != engine.DispositionMutated {
 		t.Errorf("Disposition = %v, want mutated", res.Disposition)
 	}
-	// A request-only payload must not open the response-headers phase: that would
-	// cost an Envoy round trip that dispatches to nobody.
+	// Request-only payloads do not subscribe to response headers.
 	wantsResponse, err := e.WantsResponseHeaders(units)
 	if err != nil {
 		t.Fatalf("WantsResponseHeaders: %v", err)
@@ -81,9 +79,7 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 	}
 }
 
-// A response payload must reach the engine as declared demand: without it the
-// adapter never sends Envoy the ModeOverride, and the configured response
-// mutations are silently dropped.
+// Response payloads subscribe to response headers.
 func TestProjectedResponsePayloadDeclaresDemand(t *testing.T) {
 	regs, err := filter.Build(headermutation.Definition())
 	if err != nil {
@@ -133,10 +129,7 @@ func TestProjectedResponsePayloadDeclaresDemand(t *testing.T) {
 			if err != nil {
 				t.Fatalf("evaluate request headers: %v", err)
 			}
-			// Subscription comes from the config via Descriptor().SubscribesOf,
-			// never from the action the filter returns: Envoy accepts a
-			// mode_override only on a header-phase reply, and this filter is
-			// ordered after one that pauses for the request body.
+			// Response demand comes from the compiled config.
 			gotWants, subErr := engine.NewEngine(regs, 0).WantsResponseHeaders(
 				[]engine.Unit{{ID: id, Scope: scope, Cfgs: cfgs}},
 			)

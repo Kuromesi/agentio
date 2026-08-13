@@ -30,19 +30,11 @@ const (
 	PhaseResponseHeaders
 )
 
-// DispatchedPhases is the set of phases the engine invokes. Build
-// rejects descriptors declaring anything outside it, so a filter can never
-// be silently inert. Engine dispatch and this mask must be widened
-// together.
+// DispatchedPhases is the set of phases the engine can invoke. Build rejects
+// descriptors that declare unsupported phases.
 //
-// Declaring PhaseResponseHeaders only grants the capability to run there. A
-// stream reaches that phase solely for the (rule, filter) pairs whose config
-// subscribed via Descriptor.SubscribesOf. Subscription is config-derived rather
-// than returned from an action because Envoy confines mode_override to
-// header-phase replies and response_header_mode is only useful on the
-// request-headers one, while the ordered walk may suspend waiting for a request
-// body — so a subscription raised by a filter that runs after the pause would
-// arrive after that reply was already sent.
+// PhaseResponseHeaders grants capability; each config must also subscribe
+// through Descriptor.SubscribesOf before its pair is dispatched.
 const DispatchedPhases = PhaseRequestHeaders | PhaseRequestBody | PhaseResponseHeaders
 
 // Filter is the engine's three-phase contract. Capability is expressed by

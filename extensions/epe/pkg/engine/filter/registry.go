@@ -50,34 +50,9 @@ type Descriptor[C any] struct {
 	// means FailClosed. The mapping from CRD FailStrategy to FailurePolicy
 	// lives in the filter's own parse, never here.
 	OnError FailurePolicyOf[C]
-	// SubscribesOf reports which phases this config needs Envoy to deliver, as
-	// opposed to Phases, which reports where the filter is merely able to run.
-	// nil means "only the phases that arrive unconditionally".
-	//
-	// It takes the compiled config and nothing else — deliberately no Stream, no
-	// context, no dependencies. Subscription must be settled before the ordered
-	// walk begins, because Envoy honours mode_override only on a header-phase reply
-	// and the walk may suspend mid-sequence waiting for a body; a want discovered by
-	// running a filter can therefore arrive after the request-headers reply was
-	// already sent. Handing this function no capabilities is also what makes it
-	// side-effect-free structurally rather than by convention.
-	//
-	// Only the response-headers phase needs this. Request headers arrive
-	// unconditionally, so nothing subscribes to them. The request body is
-	// subscribed at runtime instead, via a NeedBody action, and that asymmetry is
-	// deliberate rather than historical: a body want discovered late is still
-	// satisfiable, because once any rule has asked, the body is in hand and the
-	// engine satisfies a later NeedBody inline. Response headers have no such
-	// recovery — response_header_mode is only useful on the request-headers reply, so
-	// once that reply is out the phase can no longer be opened. Do not "unify" the
-	// two: moving the body want here would mean buffering speculatively on every
-	// request whose config merely might need it, and would strand the failure
-	// policy that a runtime body decision can route an error through
-	// (see tokentransform's failEligible path).
-	//
-	// Do not generalise "one shot" from this. The response-headers reply is itself a
-	// header-phase reply and can carry an override, which is how a response *body*
-	// want would stay recoverable. See engine.SubscribablePhases.
+	// SubscribesOf reports the conditional phases required by cfg. It is
+	// evaluated before request filters and must be deterministic and
+	// side-effect-free. nil means no conditional phase subscription.
 	SubscribesOf func(cfg C) Phase
 	// New builds one filter invocation from one rule's projected config.
 	// Rules are never aggregated: the engine constructs and runs them in
@@ -175,11 +150,7 @@ func buildRegistration[C any](d Descriptor[C], parse func(raw json.RawMessage) (
 			if d.SubscribesOf == nil {
 				return 0
 			}
-			// Narrowed to declared capability: subscribing to a phase the
-			// filter cannot run in would open an Envoy round trip that
-			// dispatches to nobody. Silently narrowing rather than erroring
-			// keeps this a pure function; Build already rejects a Phases mask
-			// outside DispatchedPhases, so the intersection is meaningful.
+			// A config can subscribe only to phases the filter supports.
 			return d.SubscribesOf(cfg.(C)) & d.Phases
 		},
 	}, nil

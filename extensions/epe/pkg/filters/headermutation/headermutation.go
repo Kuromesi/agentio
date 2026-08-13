@@ -13,13 +13,7 @@
 // limitations under the License.
 
 // Package headermutation applies policy-defined request and response header
-// changes.
-//
-// Response values render against the request-time scope; there is no .Response
-// accessor. Note the audience this creates: a response value is delivered to
-// the sandbox workload itself, so echoing control-plane metadata such as
-// .Rule.Name or .Pod.Label discloses it to the sandboxed principal, a recipient
-// the request path never exposed it to.
+// changes. Response templates use request-time scope and cannot access response data.
 package headermutation
 
 import (
@@ -56,20 +50,13 @@ type OpSet struct {
 // than as "the response phase is requested".
 func (o OpSet) empty() bool { return len(o.Set)+len(o.Add)+len(o.Remove) == 0 }
 
-// Config is the compiled mutation set for one matched rule, one OpSet per
-// phase. The two phases are deliberately symmetric: they carry identical
-// operation kinds, and nothing about a request operation differs in shape from
-// its response counterpart, so anything that treats them asymmetrically would
-// be encoding a distinction that does not exist.
+// Config contains compiled mutations for each header phase.
 type Config struct {
 	Request  OpSet
 	Response OpSet
 }
 
-// HasResponseOps reports whether the response phase carries any operation. The
-// filter uses it to decide whether OnRequestHeaders must ask the framework for
-// the response-headers phase, so a config with only an empty `response: {}`
-// object must not open that phase.
+// HasResponseOps reports whether response-header mutations are configured.
 func (c Config) HasResponseOps() bool { return !c.Response.empty() }
 
 // Filter applies one rule's compiled header mutations.
@@ -89,11 +76,7 @@ func New(rule filter.RuleConfig[Config]) filter.Filter {
 // explicit check it would reach the wire as a real header value.
 const missingKeySentinel = "<no value>"
 
-// OnRequestHeaders renders the request phase. It does NOT declare the response
-// phase: that is SubscribesOf's job, because Envoy accepts a mode_override only
-// on a header-phase reply and this filter is ordered after mcpacl, which pauses
-// for the request body — so a subscription raised here would arrive too late on
-// every request that carries one.
+// OnRequestHeaders renders configured request-header mutations.
 func (f *Filter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
 	mutations, err := f.mutationsFor(f.cfg.Request)
 	if err != nil {
@@ -102,10 +85,7 @@ func (f *Filter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Actio
 	return filter.Continue(mutations...), nil
 }
 
-// OnResponseHeaders renders the response phase. The engine builds a fresh
-// filter for this phase, so it deliberately reads only cfg and scope and never
-// request-phase instance state. Response values render against the request-time
-// scope: Stream.Response is intentionally not consulted.
+// OnResponseHeaders renders configured response-header mutations.
 func (f *Filter) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
 	mutations, err := f.mutationsFor(f.cfg.Response)
 	if err != nil {
@@ -166,18 +146,12 @@ func (f *Filter) mutationsFor(ops OpSet) ([]filter.Mutation, error) {
 	return mutations, nil
 }
 
-// Descriptor declares a fail-closed filter over both header phases. Phases is
-// the compile-time capability; whether a given rule actually needs the response
-// phase is a runtime signal derived from its config in OnRequestHeaders.
+// Descriptor declares a fail-closed filter for request and response headers.
 func Descriptor() filter.Descriptor[Config] {
 	return filter.Descriptor[Config]{
 		Name:    FilterName,
 		Phases:  filter.PhaseRequestHeaders | filter.PhaseResponseHeaders,
 		OnError: filter.Always[Config](filter.FailClosed),
-		// Subscription is a pure function of the config — HasResponseOps reads no
-		// stream — so it is declared here rather than discovered by running the
-		// filter. An empty `response: {}` yields no ops and therefore no
-		// subscription, so it costs no extra Envoy round trip.
 		SubscribesOf: func(c Config) filter.Phase {
 			if !c.HasResponseOps() {
 				return 0

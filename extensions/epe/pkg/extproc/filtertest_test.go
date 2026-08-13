@@ -76,7 +76,7 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 	s := NewServer(deps)
 
 	state := newStreamState()
-	state.sawRequest = true
+	state.markRequestSeen()
 	unit := engine.Unit{
 		ID:   filter.UnitID{Scope: "default/p1", Name: "r", Ordinal: 0},
 		Cfgs: make([]any, len(regs)),
@@ -91,6 +91,6 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 	if !er.NeedsBody() {
 		t.Fatal("test setup: engine did not register a body need")
 	}
-	state.eval = er
+	state.bodyContinuation = er
 	return s, state
 }

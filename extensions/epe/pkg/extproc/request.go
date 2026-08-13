@@ -67,7 +67,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 
 	st := state.stream
 	st.RequestID = requestID
-	state.sawRequest = true
+	state.markRequestSeen()
 
 	peer, req := attributes.Extract(ctx, headers, attrs)
 	st.Peer = peer
@@ -123,80 +123,40 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	// already installed above, before the resolve error was honoured.
 	state.units = res.Units
 
-	// End-of-stream headers can synchronously resume an empty-body continuation,
-	// but both engine entries still answer one Envoy ProcessingRequest. Give
-	// them one outer deadline so the body phase cannot refresh the message budget.
-	evalCtx := ctx
-	cancel := func() {}
-	if headers.GetEndOfStream() && s.pluginBudget > 0 {
-		evalCtx, cancel = context.WithTimeout(ctx, s.pluginBudget)
-	}
-	defer cancel()
-
-	// Ask before evaluating, not after. The walk may suspend waiting for a request
-	// body, and this reply is the only one whose override can still open the
-	// response-headers phase, so a subscription discovered by running a filter
-	// arrives too late whenever an earlier rule paused. Deriving it from the matched
-	// configs makes it independent of how far the walk got.
-	//
-	// Nothing is stored for the response phase: the same predicate is a pure
-	// function of the units pinned on this stream, so EvalResponseHeaders
-	// recomputes it and cannot disagree with what this reply promised.
+	// Determine response-header demand before evaluation because a body pause may
+	// defer later rules past this ModeOverride.
 	ruleWants, subErr := s.eng.WantsResponseHeaders(state.engineUnits())
 	if subErr != nil {
-		// A policy that asks for a phase the engine cannot open is malformed, not
-		// a runtime fault. Failing here — before the walk — also keeps a malformed
-		// policy from triggering the side effects an executed rule has, such as
-		// tokentransform fetching a Secret and minting a credential.
+		// Reject invalid subscriptions before invoking request filters.
 		return nil, subErr
 	}
 
-	er, evalErr := s.eng.EvalRequestHeaders(evalCtx, st, state.engineUnits())
+	// End-of-stream headers mean no body will follow: the empty body is final,
+	// so hand it to the walk up front and body requests are satisfied inline
+	// instead of pausing.
+	var evalOpts []engine.RequestOption
+	if headers.GetEndOfStream() {
+		evalOpts = append(evalOpts, engine.WithAvailableBody(filter.Body{Complete: true}))
+	}
+	reqHeadersRes, evalErr := s.eng.EvalRequestHeaders(ctx, st, state.engineUnits(), evalOpts...)
 	if evalErr != nil {
 		return nil, evalErr
 	}
-	if er.NeedsBody() && headers.GetEndOfStream() {
-		br, bodyErr := s.eng.EvalRequestBody(evalCtx, st, er, filter.Body{Complete: true})
-		if bodyErr != nil {
-			return nil, bodyErr
-		}
-		er = mergeBodylessRequestResults(er, br)
-	}
+	// A bypass in this walk bounds the response-phase dispatch;
+	// HandleRequestBody records the asynchronous case.
+	state.responseScope = reqHeadersRes.ResponseScope
 
-	responses := translateRequestHeadersResult(er, loggerD, peer)
+	responses := translateRequestHeadersResult(reqHeadersRes, loggerD, peer)
 
-	// Assemble this reply's ModeOverride. mode_override is only honoured on
-	// header-phase replies, and every override must restate both body modes: Envoy
-	// copies body modes unconditionally while treating a DEFAULT header or trailer
-	// mode as unset, so a body mode left out silently becomes NONE.
-	//
-	// A blocked request opens nothing: after an ImmediateResponse Envoy marks
-	// processing complete and ignores everything further. A ModeOverride must
-	// also never share a reply with an ImmediateResponse, since Envoy applies
-	// the override before dispatching the oneof.
-	//
-	// This is the only override the stream sends today, but not the only one it
-	// could: the response-headers reply is also a header-phase reply, and its
-	// override is what would open a response *body* phase. Adding that means a
-	// second assembly site with the same restate-every-body-mode obligation, which
-	// is the seam to extract when it happens — the two sites must not diverge on
-	// which fields they restate. Deliberately not extracted now: there is one caller.
-	//
-	// Envoy can also refuse the override outright, for reasons invisible here:
-	// allow_mode_override=false, send_body_without_waiting_for_header_response=true,
-	// a FULL_DUPLEX_STREAMED body mode in the static config, or an
-	// allowed_override_modes allow-list that excludes what we asked for. Every one of
-	// those surfaces as a stream that ends while state.awaitResponseHeaders is still
-	// set, which Process reports as an outstanding processing obligation.
+	// ModeOverride must restate both body modes because Envoy copies them
+	// unconditionally. A blocked result must not carry an override.
 	wantResponse := false
-	if er.Disposition != engine.DispositionBlocked {
-		// Per-rule subscription survives a Bypass: the bypassing rule's own
-		// response operations still apply; bypass suppresses following rules, not
-		// itself. Observation, by contrast, is a stream-level concern and a
-		// bypassed stream deliberately opts out of it.
-		observeResponse := s.observeResponses && er.Disposition != engine.DispositionBypassed
+	if reqHeadersRes.Disposition != engine.DispositionBlocked {
+		// Bypass preserves the bypassing pair's response subscription but disables
+		// stream-level response observation.
+		observeResponse := s.observeResponses && reqHeadersRes.Disposition != engine.DispositionBypassed
 		wantResponse = ruleWants || observeResponse
-		wantBody := er.NeedsBody()
+		wantBody := reqHeadersRes.NeedsBody()
 		if wantBody || wantResponse {
 			override := &extProcV3.ProcessingMode{
 				RequestBodyMode:  extProcV3.ProcessingMode_NONE,
@@ -213,76 +173,32 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 			responses = append([]*extProcPb.ProcessingResponse{resp}, responses[1:]...)
 		}
 		if wantBody {
-			state.eval = er
-			state.awaitRequestBody = true
+			state.bodyContinuation = reqHeadersRes
 		}
 		if wantResponse {
 			state.awaitResponseHeaders = true
 		}
 	}
 
-	// Finalization is armed only when nothing further is expected. A bypass that
-	// opened the response-headers phase must not finalize here: the stream would
-	// then answer Envoy's response-headers message with a bare ack and never run
-	// the response phase, silently dropping the mutations the bypass preserves.
-	// Mirrors the body phase's finalizeAfterSend = !state.awaitResponseHeaders.
-	switch er.Disposition {
-	case engine.DispositionBlocked:
-		state.finalizeAfterSend = true
-	case engine.DispositionBypassed:
-		state.finalizeAfterSend = !state.awaitResponseHeaders
-	}
+	// Finalization for terminal dispositions lives in armFinalization; the
+	// no-op it performs for a passthrough or mutated result leaves teardown to
+	// stream end, mirroring the body phase.
+	state.armFinalization(reqHeadersRes.Disposition)
 	return responses, nil
-}
-
-// mergeBodylessRequestResults renders the resumed empty-body continuation in
-// the current request-headers phase. Header operations are folded again across
-// the phase boundary because Envoy applies removals before sets within one
-// HeaderMutation, and the later continuation must retain normal last-writer
-// semantics.
-//
-// It carries no response-headers subscription: that is derived from the matched
-// configs by Engine.Subscribe before either phase runs, so neither phase's result
-// can add to or drop from it.
-func mergeBodylessRequestResults(er *engine.RequestHeadersResult, br *engine.RequestBodyResult) *engine.RequestHeadersResult {
-	headerOps := engine.Fold([]filter.Mutation{
-		{HeaderOps: er.HeaderOps},
-		{HeaderOps: br.HeaderOps},
-	})
-	body := er.Body
-	if br.Body != nil {
-		body = br.Body
-	}
-	disposition := br.Disposition
-	if disposition == engine.DispositionPassthrough &&
-		(er.Disposition == engine.DispositionMutated || len(headerOps) > 0 || body != nil) {
-		disposition = engine.DispositionMutated
-	}
-	return &engine.RequestHeadersResult{
-		Disposition:     disposition,
-		Reply:           br.Reply,
-		HeaderOps:       headerOps,
-		ClearRouteCache: er.ClearRouteCache || br.ClearRouteCache,
-		Body:            body,
-	}
 }
 
 // HandleResponseHeaders records the upstream status into the stream and
 // dispatches the response-headers phase.
 func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.HttpHeaders, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
-	if state == nil || !state.sawRequest {
+	if state == nil || state.lifecycle == lifecycleIdle {
 		return nil, status.Error(codes.FailedPrecondition,
 			"received response headers before request headers")
-	}
-	if state.responseHeadersSeen {
-		return nil, status.Error(codes.FailedPrecondition, "received duplicate response headers")
 	}
 	if headers == nil || headers.GetHeaders() == nil {
 		return nil, status.Error(codes.InvalidArgument, "response headers are missing")
 	}
-	state.responseHeadersSeen = true
 
-	if state.finalized {
+	if state.lifecycle == lifecycleFinalized {
 		// A static response-header mode can outlive a terminal request decision.
 		// Acknowledge the first valid message without reopening observers or audit.
 		state.awaitResponseHeaders = false
@@ -302,32 +218,19 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 		}
 	}
 	state.stream.Response = httpreq.HTTPResponse{Status: responseStatus, Headers: respHeaders}
-	// Dispatch is driven by which configs subscribed, never by what opened the
-	// phase: --observe-responses may have opened it so the stream loggers see the
-	// upstream status, and no rule is invoked in that case. The engine recomputes
-	// that predicate from the units pinned on this stream, which is the same input
-	// the headers-phase ModeOverride was decided from. It bounds itself with the
-	// plugin budget, so no outer deadline is added here.
-	rr, evalErr := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits())
+	// Dispatch only to subscribed pairs within the request walk's response scope.
+	respHeadersRes, evalErr := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits(), state.responseScope)
 	if evalErr != nil {
-		if rr.Disposition == engine.DispositionBlocked {
-			// A synthesised FailClosed deny is a decision, and Envoy holds the
-			// upstream headers only until we answer, so it must reach the wire.
-			// Process sends it and still terminates the stream on the error.
-			return translateResponseHeadersResult(rr), evalErr
+		if respHeadersRes.Disposition == engine.DispositionBlocked {
+			// Return the FailClosed reply with the error so Process can send it.
+			return translateResponseHeadersResult(respHeadersRes), evalErr
 		}
-		// Every other error is a fault, not a decision, and leaves a zero-value
-		// passthrough result — a filter returning Stop from the response phase,
-		// say. Translating that emits a bare ack, which releases the UNMUTATED
-		// upstream response downstream and only then tears the stream down: a
-		// fail-open wearing an error's clothes. Send nothing and let Envoy's
-		// failure_mode_allow make that call, as it did before this phase could
-		// carry mutations.
+		// Contract and protocol errors return no acknowledgement.
 		return nil, evalErr
 	}
 	state.awaitResponseHeaders = false
-	state.finalizeAfterSend = true
-	return translateResponseHeadersResult(rr), nil
+	state.lifecycle = lifecycleFinalizePending
+	return translateResponseHeadersResult(respHeadersRes), nil
 }
 
 // cloneResponse copies a ProcessingResponse so ModeOverride can be set

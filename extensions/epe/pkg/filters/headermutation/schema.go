@@ -26,11 +26,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
-// spec is symmetric on purpose: both phases take the same opSpec under their
-// own key. An earlier draft embedded opSpec so the request operations stayed at
-// the top level, but that only bought back-compatibility with a payload shape
-// nothing consumes yet — the filter is not wired into the SecurityProfile
-// adapter — while permanently making the two phases read as if they differed.
+// spec uses the same operation shape for request and response headers.
 type spec struct {
 	Request  opSpec `json:"request,omitempty"`
 	Response opSpec `json:"response,omitempty"`
@@ -49,11 +45,10 @@ type valueSpec struct {
 	Value string `json:"value"`
 }
 
-// hopByHopResponseNames are rejected on the response phase because Envoy owns
-// connection semantics itself (RFC 9110 §7.6.1); content-encoding is rejected
-// because we never touch the response body, so changing it misinforms the
-// client.
-var hopByHopResponseNames = map[string]struct{}{
+// hopByHopNames are rejected on both phases because Envoy owns connection
+// semantics itself (RFC 9110 §7.6.1); content-encoding is rejected because this
+// filter never touches a body, so changing it misinforms the recipient.
+var hopByHopNames = map[string]struct{}{
 	"connection":         {},
 	"keep-alive":         {},
 	"proxy-connection":   {},
@@ -64,21 +59,15 @@ var hopByHopResponseNames = map[string]struct{}{
 	"content-encoding":   {},
 }
 
-// framingResponseNames may be REMOVEd on the response phase — the codec falls
-// back to chunked or connection-close — but never SET or ADDed: Envoy applies
-// them blindly at body mode NONE, corrupting HTTP/1 framing.
-var framingResponseNames = map[string]struct{}{
+// framingNames may be removed but not set or added because mutations run
+// without body updates and could corrupt HTTP/1 framing.
+var framingNames = map[string]struct{}{
 	"content-length":    {},
 	"transfer-encoding": {},
 }
 
-// probeScope is the zero scope every compiled template is rendered against at
-// parse time. text/template resolves nothing at parse time, so an unknown
-// struct field such as {{ .Response.Status }} would otherwise only fail at
-// execute time, once per stream. Unknown fields are type-level and fail
-// deterministically here, while missingkey=zero keeps data-dependent probes
-// (an absent .Inputs key, an empty pod label) silent — so there are no false
-// positives.
+// probeScope validates template field access during compilation while allowing
+// missing dynamic map keys.
 func probeScope() *inputs.Scope {
 	return inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
 }
@@ -103,36 +92,20 @@ func parse(raw json.RawMessage) (Config, error) {
 	return Config{Request: request, Response: response}, nil
 }
 
-// headerPhase carries everything phase-dependent about compilation: the
-// human-facing message prefix, and whether the response-only name restrictions
-// apply.
-//
-// The two travel together rather than one being derived from the other.
-// restrictNames stays an explicit field so that rewording prefix can never
-// change which header names are legal; bundling them additionally makes the
-// nonsensical combination — a request phase with response restrictions —
-// unconstructible at the call sites.
-type headerPhase struct {
-	prefix        string
-	restrictNames bool
-}
-
-var (
-	requestPhase  = headerPhase{prefix: "request."}
-	responsePhase = headerPhase{prefix: "response.", restrictNames: true}
+// Phase prefixes qualify error messages; the name restrictions themselves are
+// identical on both phases — see hopByHopNames and framingNames.
+const (
+	requestPhase  = "request."
+	responsePhase = "response."
 )
 
-// compilePhase validates and compiles one phase's operations. Duplicate
-// detection is scoped to the phase: the same header name in the request and in
-// the response is legitimate. Within a phase a name may still appear in only
-// one of set/add/remove, because Envoy applies all removes before all sets
-// inside one HeaderMutation, so `set x-a` plus `remove x-a` reads as "remove
-// wins" but actually sets.
-func compilePhase(phase headerPhase, s opSpec) (OpSet, error) {
+// compilePhase validates and compiles one phase. A header name may appear in
+// only one operation kind within that phase.
+func compilePhase(prefix string, s opSpec) (OpSet, error) {
 	seen := make(map[string]string, len(s.Set)+len(s.Add)+len(s.Remove))
 
 	validateName := func(kind, name string) (string, error) {
-		qualified := phase.prefix + kind
+		qualified := prefix + kind
 		if !httpguts.ValidHeaderFieldName(name) {
 			return "", fmt.Errorf("%s header %q has an invalid name", qualified, name)
 		}
@@ -140,32 +113,25 @@ func compilePhase(phase headerPhase, s opSpec) (OpSet, error) {
 		if normalized == "host" {
 			return "", fmt.Errorf("%s header %q cannot modify Host", qualified, name)
 		}
-		// Bare prefix, deliberately: Envoy gates on
-		// absl::StartsWith(name, Http::Headers::get().prefix()) with the default
-		// prefix "x-envoy" (mutation_rules.cc:97), so even an unrelated-looking
-		// "x-envoyer" is silently ignored by the data plane. Narrowing this to
-		// "x-envoy-" would accept such a name here and let it vanish at runtime,
-		// which is the exact "configured but inert" failure this check prevents.
+		// Envoy ignores all names with the reserved "x-envoy" prefix.
 		if strings.HasPrefix(normalized, "x-envoy") {
 			return "", fmt.Errorf("%s header %q is reserved by Envoy and would be ignored", qualified, name)
 		}
-		if phase.restrictNames {
-			if _, forbidden := hopByHopResponseNames[normalized]; forbidden {
-				return "", fmt.Errorf("%s header %q is connection-scoped and cannot be mutated", qualified, name)
-			}
-			if _, framing := framingResponseNames[normalized]; framing && kind != "remove" {
-				return "", fmt.Errorf("%s header %q controls response framing and can only be removed", qualified, name)
-			}
+		if _, forbidden := hopByHopNames[normalized]; forbidden {
+			return "", fmt.Errorf("%s header %q is connection-scoped and cannot be mutated", qualified, name)
+		}
+		if _, framing := framingNames[normalized]; framing && kind != "remove" {
+			return "", fmt.Errorf("%s header %q controls message framing and can only be removed", qualified, name)
 		}
 		if previous, exists := seen[normalized]; exists {
-			return "", fmt.Errorf("%s header %q duplicates %s%s header %q", qualified, name, phase.prefix, previous, normalized)
+			return "", fmt.Errorf("%s header %q duplicates %s%s header %q", qualified, name, prefix, previous, normalized)
 		}
 		seen[normalized] = kind
 		return normalized, nil
 	}
 
 	compile := func(kind string, ops []valueSpec) ([]ValueOp, error) {
-		qualified := phase.prefix + kind
+		qualified := prefix + kind
 		out := make([]ValueOp, 0, len(ops))
 		for _, op := range ops {
 			name, err := validateName(kind, op.Name)

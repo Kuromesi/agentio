@@ -109,8 +109,13 @@ func NewStreamInfo() *StreamInfo {
 }
 
 // RecordUnitAction appends one "<filter>:<kind>" action to the unit's
-// record, creating it on first touch.
+// record, creating it on first touch. A nil *StreamInfo is a no-op: a Stream
+// may carry no info (filters and tests build one without), and every call
+// site would otherwise restate that guard.
 func (i *StreamInfo) RecordUnitAction(id UnitID, filterName, kind string) {
+	if i == nil {
+		return
+	}
 	action := filterName + ":" + kind
 	for idx := range i.Matched {
 		if i.Matched[idx].ID == id {
@@ -121,8 +126,21 @@ func (i *StreamInfo) RecordUnitAction(id UnitID, filterName, kind string) {
 	i.Matched = append(i.Matched, UnitRecord{ID: id, FilterActions: []string{action}})
 }
 
-// Promote raises the disposition, never lowers it.
+// RecordFilter appends one filter invocation record. A nil *StreamInfo is a
+// no-op, as for RecordUnitAction.
+func (i *StreamInfo) RecordFilter(rec FilterRecord) {
+	if i == nil {
+		return
+	}
+	i.Filters = append(i.Filters, rec)
+}
+
+// Promote raises the disposition, never lowers it. A nil *StreamInfo is a
+// no-op, as for RecordUnitAction.
 func (i *StreamInfo) Promote(d Disposition) {
+	if i == nil {
+		return
+	}
 	i.Disposition = PromoteDisposition(i.Disposition, d)
 }
 

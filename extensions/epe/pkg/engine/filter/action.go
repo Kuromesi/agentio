@@ -25,28 +25,11 @@ const (
 	// KindStop terminates the request and discards pending mutations
 	// (block semantics).
 	KindStop
-	// KindBypass skips all following actions and rules while preserving work
-	// already performed by earlier rules.
+	// KindBypass skips following actions and rules in every phase while
+	// preserving earlier work and the bypassing pair itself.
 	KindBypass
-	// KindNeedBody asks the framework to deliver the request body before this
-	// filter can decide, and suspends the walk here so no later rule acts before
-	// this one's verdict. Only legal from request headers.
-	//
-	// Body subscription stays a runtime action, unlike the response-headers phase
-	// which is declared from config by Descriptor.SubscribesOf. The reason is
-	// recoverability, not history: once any rule has asked for the body it is in
-	// hand, so a later filter's NeedBody is satisfied inline and nothing is lost by
-	// discovering the need late. A response-headers subscription discovered late is
-	// unsatisfiable, because Envoy honours mode_override only on a header-phase reply
-	// and response_header_mode is only useful on the request-headers one. Keeping
-	// this runtime is also what lets a body decision fail through the rule's own
-	// failure policy, which a pure config function cannot express.
-	//
-	// These two are not the whole space. A response *body* want would be a third
-	// case: recoverable like the request body, but from the response-headers reply
-	// rather than inline, since that reply is also a header-phase reply and can carry
-	// an override. Adding it should relax "only legal from request headers" here
-	// rather than widen engine.SubscribablePhases.
+	// KindNeedBody pauses request evaluation until the request body is available.
+	// It is valid only from request headers.
 	KindNeedBody
 )
 

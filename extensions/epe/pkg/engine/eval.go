@@ -92,11 +92,13 @@ func (e *Engine) withBudget(ctx context.Context) (context.Context, context.Cance
 }
 
 type pausedInvocation struct {
-	regIdx int
-	reg    filter.Registration
-	f      filter.Filter
-	id     filter.UnitID
-	cfg    any
+	// f is the live instance that already ran OnRequestHeaders; the body call
+	// MUST reuse it, not rebuild via reg.New, or header-phase instance state is
+	// lost (tokentransform's OnRequestBody reads f.pending set on headers).
+	f filter.Filter
+	// at is the paused pair's own cursor, so a Bypass returned from its
+	// resumed body invocation records the right response scope.
+	at evalCursor
 }
 
 type evalCursor struct {
@@ -104,29 +106,62 @@ type evalCursor struct {
 	reg  int
 }
 
+// next advances past this pair: the following registration, or the first
+// registration of the following unit. It is only needed to resume a paused
+// walk; the ordinary walk advances inside the pairs iterator.
+func (c evalCursor) next(regs int) evalCursor {
+	c.reg++
+	if c.reg == regs {
+		c.unit++
+		c.reg = 0
+	}
+	return c
+}
+
+// pair is one (unit, registration) coordinate plus everything dispatch needs.
+type pair struct {
+	at   evalCursor
+	reg  filter.Registration
+	unit Unit
+	cfg  any
+}
+
+// pairs yields every (unit, registration) pair that carries a config for
+// phase, in policy order, starting at start.
+func (e *Engine) pairs(units []Unit, start evalCursor, phase filter.Phase) func(func(pair) bool) {
+	return func(yield func(pair) bool) {
+		for u := start.unit; u < len(units); u++ {
+			regStart := 0
+			if u == start.unit {
+				regStart = start.reg
+			}
+			for regIdx := regStart; regIdx < len(e.regs); regIdx++ {
+				reg := e.regs[regIdx]
+				cfg := units[u].Cfgs[regIdx]
+				if cfg == nil || reg.Phases&phase == 0 {
+					continue
+				}
+				if !yield(pair{at: evalCursor{unit: u, reg: regIdx}, reg: reg, unit: units[u], cfg: cfg}) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// pairAt builds the pair at one cursor, for callers that already know the
+// coordinate (the resumed body invocation, the response-phase targets).
+func (e *Engine) pairAt(units []Unit, at evalCursor) pair {
+	return pair{at: at, reg: e.regs[at.reg], unit: units[at.unit], cfg: units[at.unit].Cfgs[at.reg]}
+}
+
 type requestContinuation struct {
 	units  []Unit
-	next   evalCursor
 	paused pausedInvocation
 }
 
-// SubscribablePhases is the set of phases a config may ask Envoy to deliver.
-//
-// It is deliberately narrower than DispatchedPhases. Request headers arrive
-// unconditionally, so nothing subscribes to them. The request body is subscribed at
-// runtime through a NeedBody action instead, because a body want discovered late is
-// still satisfiable while a response-headers want is not — see Descriptor.SubscribesOf
-// for why that asymmetry must not be unified away.
-//
-// Response headers are the only phase with no late recovery, and that is a property
-// of what a mode_override can still change rather than of the response direction.
-// Envoy honours mode_override on any header-phase reply: the gate is
-// inHeaderProcessState(), true when EITHER direction is awaiting a headers reply, so
-// the response-headers reply is a second override opportunity. Setting
-// response_header_mode there is pointless — that phase has already begun — but
-// response_body_mode is not. So do NOT widen this constant to cover a response body:
-// that want is recoverable at response-headers time and belongs closer to NeedBody.
-// Response trailers are unverified; check the gate before assuming either way.
+// SubscribablePhases contains phases that configs may request from Envoy.
+// Request bodies are requested dynamically through NeedBody.
 const SubscribablePhases = filter.PhaseResponseHeaders
 
 // responseTarget names one (rule, registration) pair the response-headers phase
@@ -136,70 +171,62 @@ type responseTarget struct {
 	regIdx int
 }
 
-// responseTargets is the shared subscription predicate: it answers, for one set
-// of units, which pairs need the response-headers phase.
-//
-// Nothing carries the answer between phases. Subscription is a pure function of
-// the projected config — Registration.Subscribes is handed a config and nothing
-// else, no stream, no context, no dependencies — and the adapter pins the
-// resolved units on the stream for its whole lifetime. Recomputing over pinned
-// inputs therefore cannot disagree with the answer the ModeOverride was built
-// from, which is why WantsResponseHeaders and EvalResponseHeaders can both just
-// call this instead of one handing a set to the other.
-//
-// That purity is also what makes config-derived subscription correct in the
-// first place. Envoy honours mode_override only on a header-phase reply, and
-// response_header_mode is only useful on the request-headers one, so that reply is
-// this phase's single opportunity. The ordered walk may suspend mid-sequence
-// waiting for a request body, so a want derived by *executing* a filter arrives
-// after that reply was already sent whenever an earlier rule paused — reachable in
-// the production order (bypass, block, mcpacl, headermutation, tokentransform),
-// since mcpacl pauses for the body and headermutation follows it.
-//
-// "Single opportunity" is specific to response headers, not a property of the
-// protocol: the response-headers reply can carry an override too. See
-// SubscribablePhases.
-func (e *Engine) responseTargets(units []Unit) ([]responseTarget, error) {
-	var targets []responseTarget
-	for u := range units {
-		for regIdx, reg := range e.regs {
-			cfg := units[u].Cfgs[regIdx]
-			if cfg == nil || reg.Subscribes == nil {
-				continue
-			}
-			declared := reg.Subscribes(cfg)
-			// Phase is a bitmask, so a config can declare more than the engine
-			// currently knows how to open. Reject the surplus rather than ignore
-			// it: a declaration that compiles, survives the intersection with
-			// Phases, and is then silently dropped is exactly the "configured but
-			// inert" failure this mechanism exists to prevent.
-			if surplus := declared &^ SubscribablePhases; surplus != 0 {
-				return nil, fmt.Errorf("filter %q subscribes to phases %08b the engine cannot open; "+
-					"widen engine.SubscribablePhases when it learns to", reg.Name, surplus)
-			}
-			if declared&filter.PhaseResponseHeaders != 0 {
-				targets = append(targets, responseTarget{unit: u, regIdx: regIdx})
-			}
-		}
-	}
-	return targets, nil
+// ResponseScope bounds response-header dispatch after a request-phase bypass.
+// The zero value is unbounded; last includes the bypassing pair.
+type ResponseScope struct {
+	bounded bool
+	last evalCursor
 }
 
-// WantsResponseHeaders reports whether any matched config needs the
-// response-headers phase, from the configs alone — it runs no filter.
-//
-// The adapter calls it before EvalRequestHeaders, and that position is
-// load-bearing in one direction only: the returned error means a policy declared
-// a phase the engine cannot open, and failing there keeps a malformed policy from
-// triggering the side effects an executed walk has (tokentransform fetches
-// Secrets and mints credentials). The boolean itself could be computed any time
-// before the reply is assembled.
+// excludes reports whether the pair at (unit, regIdx) lies strictly after the
+// bypass point and is therefore suppressed.
+func (s ResponseScope) excludes(unit, regIdx int) bool {
+	if !s.bounded {
+		return false
+	}
+	return unit > s.last.unit || (unit == s.last.unit && regIdx > s.last.reg)
+}
+
+// validateSubscriptions rejects phases the engine cannot open. Validation is
+// independent of ResponseScope, so bypass cannot hide invalid config.
+func (e *Engine) validateSubscriptions(units []Unit) error {
+	for p := range e.pairs(units, evalCursor{}, filter.DispatchedPhases) {
+		if p.reg.Subscribes == nil {
+			continue
+		}
+		if surplus := p.reg.Subscribes(p.cfg) &^ SubscribablePhases; surplus != 0 {
+			return fmt.Errorf("filter %q subscribes to phases %08b the engine cannot open; "+
+				"widen engine.SubscribablePhases when it learns to", p.reg.Name, surplus)
+		}
+	}
+	return nil
+}
+
+// responseTargets returns subscribed response-header pairs within scope.
+// Callers must validate subscriptions first.
+func (e *Engine) responseTargets(units []Unit, scope ResponseScope) []responseTarget {
+	var targets []responseTarget
+	for p := range e.pairs(units, evalCursor{}, filter.PhaseResponseHeaders) {
+		if p.reg.Subscribes == nil || scope.excludes(p.at.unit, p.at.reg) {
+			continue
+		}
+		if p.reg.Subscribes(p.cfg)&filter.PhaseResponseHeaders != 0 {
+			targets = append(targets, responseTarget{unit: p.at.unit, regIdx: p.at.reg})
+		}
+	}
+	return targets
+}
+
+// WantsResponseHeaders reports whether any matched config subscribes to
+// response headers without invoking filters.
 func (e *Engine) WantsResponseHeaders(units []Unit) (bool, error) {
 	if err := e.validateUnits(units); err != nil {
 		return false, err
 	}
-	targets, err := e.responseTargets(units)
-	return len(targets) > 0, err
+	if err := e.validateSubscriptions(units); err != nil {
+		return false, err
+	}
+	return len(e.responseTargets(units, ResponseScope{})) > 0, nil
 }
 
 // RequestHeadersResult is the outcome of the headers phase.
@@ -218,6 +245,9 @@ type RequestHeadersResult struct {
 	// sentinel as filter.Mutation.Body. The last executed action to set one
 	// wins.
 	Body []byte
+	// ResponseScope bounds response-phase dispatch when this walk bypassed;
+	// the zero value is unbounded. The adapter carries it to EvalResponseHeaders.
+	ResponseScope ResponseScope
 	// needsBody is true when evaluation paused for the request body. The
 	// adapter maps it to the buffered ext_proc body delivery mode.
 	needsBody bool
@@ -236,6 +266,9 @@ type RequestBodyResult struct {
 	ClearRouteCache bool
 	// Body: nil = unchanged; non-nil (including empty) = replace.
 	Body []byte
+	// ResponseScope bounds response-phase dispatch when the resumed walk
+	// bypassed; the zero value is unbounded.
+	ResponseScope ResponseScope
 }
 
 // ResponseHeadersResult is the outcome of the response-headers phase.
@@ -252,140 +285,177 @@ type ResponseHeadersResult struct {
 	HeaderOps []filter.HeaderOp
 }
 
-// record writes a unit action into the stream's info, when one is attached.
-func record(st *filter.Stream, id filter.UnitID, filterName, kind string) {
-	if st.Info != nil {
-		st.Info.RecordUnitAction(id, filterName, kind)
-	}
+// RequestOption configures one request-headers evaluation.
+type RequestOption func(*requestOptions)
+
+type requestOptions struct {
+	body *filter.Body
 }
 
-func promote(st *filter.Stream, d Disposition) {
-	if st.Info != nil {
-		st.Info.Promote(d)
+// WithAvailableBody tells the walk the request body is already in hand, so a
+// NeedBody action is satisfied inline instead of suspending the walk. Pass it
+// when Envoy set end_of_stream on the headers message: no body will follow, so
+// the empty body is final rather than merely not-yet-arrived.
+func WithAvailableBody(b filter.Body) RequestOption {
+	return func(o *requestOptions) {
+		o.body = &b
 	}
 }
 
 // EvalRequestHeaders walks (rule, action) pairs in order. The first body
 // request pauses the cursor; EvalRequestBody resumes at exactly that point.
-func (e *Engine) EvalRequestHeaders(ctx context.Context, st *filter.Stream, units []Unit) (*RequestHeadersResult, error) {
+// With WithAvailableBody, body requests are satisfied inline and the walk
+// never pauses.
+func (e *Engine) EvalRequestHeaders(ctx context.Context, st *filter.Stream, units []Unit, opts ...RequestOption) (*RequestHeadersResult, error) {
 	if err := e.validateUnits(units); err != nil {
 		return &RequestHeadersResult{}, err
 	}
+	var o requestOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	ctx, cancel := e.withBudget(ctx)
 	defer cancel()
-	walk, err := e.walkRequestHeaders(ctx, st, units, evalCursor{}, nil)
+	walk, err := e.walkRequest(ctx, st, units, evalCursor{}, o.body)
 	res := &RequestHeadersResult{
-		Disposition:  walk.disposition,
-		Reply:        walk.reply,
-		needsBody:    walk.needsBody,
-		continuation: walk.continuation,
+		Reply:         walk.reply,
+		ResponseScope: walk.scope,
+		needsBody:     walk.needsBody,
+		continuation:  walk.continuation,
 	}
-	foldRequestHeaders(res, walk.pending)
-	if res.Disposition == DispositionPassthrough && len(walk.pending) > 0 {
-		res.Disposition = DispositionMutated
-		promote(st, DispositionMutated)
-	}
+	res.HeaderOps, res.ClearRouteCache, res.Body = foldPending(walk.pending)
+	res.Disposition = walk.resolved()
 	return res, err
 }
 
 type requestWalk struct {
+	st           *filter.Stream
 	disposition  Disposition
 	reply        filter.Reply
 	pending      []filter.Mutation
+	scope        ResponseScope
 	needsBody    bool
 	continuation *requestContinuation
 }
 
-func (e *Engine) walkRequestHeaders(ctx context.Context, st *filter.Stream, units []Unit, start evalCursor, body *filter.Body) (requestWalk, error) {
-	walk := requestWalk{disposition: DispositionPassthrough}
-	for u := start.unit; u < len(units); u++ {
-		regStart := 0
-		if u == start.unit {
-			regStart = start.reg
+// record and promote save every request-phase call site from restating the
+// unit ID and filter name it already has in hand as a pair. StreamInfo's
+// mutators tolerate a nil receiver, so no guard is needed here.
+func (w *requestWalk) record(p pair, kind string) {
+	w.st.Info.RecordUnitAction(p.unit.ID, p.reg.Name, kind)
+}
+
+func (w *requestWalk) promote(d Disposition) {
+	w.st.Info.Promote(d)
+}
+
+// resolved reports the disposition a finished walk settles on: a walk that
+// accumulated mutations but reached no verdict is Mutated. It promotes into
+// StreamInfo as a side effect, so call it exactly once per walk.
+func (w *requestWalk) resolved() Disposition {
+	if w.disposition == DispositionPassthrough && len(w.pending) > 0 {
+		w.promote(DispositionMutated)
+		return DispositionMutated
+	}
+	return w.disposition
+}
+
+// halted reports whether the walk stopped. These three dispositions are the
+// complete set that ends a walk; nothing else may.
+func (w *requestWalk) halted() bool {
+	switch w.disposition {
+	case DispositionBlocked, DispositionBypassed, DispositionError:
+		return true
+	}
+	return false
+}
+
+// walkRequest is the request-direction walk: it dispatches the request-headers
+// phase and, when the body is already in hand, the request-body phase inline.
+func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Unit, start evalCursor, body *filter.Body) (requestWalk, error) {
+	walk := requestWalk{st: st, disposition: DispositionPassthrough}
+	for p := range e.pairs(units, start, filter.PhaseRequestHeaders) {
+		erased := filter.ErasedRuleConfig{ID: p.unit.ID, Cfg: p.cfg, Scope: p.unit.Scope}
+		f := p.reg.New(erased)
+		act, invokeErr := e.invoke(ctx, st, e.metrics[p.at.reg].requestHeaders, func(ctx context.Context) (filter.Action, error) {
+			return f.OnRequestHeaders(ctx, st)
+		})
+		if invokeErr != nil {
+			if ferr := walk.filterFailed(p, invokeErr); ferr != nil {
+				return walk, ferr
+			}
+			continue
 		}
-		for regIdx := regStart; regIdx < len(e.regs); regIdx++ {
-			reg := e.regs[regIdx]
-			cfg := units[u].Cfgs[regIdx]
-			if cfg == nil || reg.Phases&filter.PhaseRequestHeaders == 0 {
-				continue
-			}
-			erased := filter.ErasedRuleConfig{ID: units[u].ID, Cfg: cfg, Scope: units[u].Scope}
-			f := reg.New(erased)
-			act, invokeErr := e.invoke(ctx, st, e.metrics[regIdx].requestHeaders, func(ctx context.Context) (filter.Action, error) {
-				return f.OnRequestHeaders(ctx, st)
-			})
-			if invokeErr != nil {
-				if open, err := e.resolveFailure(st, reg, cfg, units[u].ID, &walk.disposition, invokeErr); !open {
-					return walk, err
-				}
-				continue
-			}
-			next := nextCursor(evalCursor{unit: u, reg: regIdx}, len(e.regs))
-			if act.Kind() == filter.KindNeedBody {
-				if err := validateBodyRequest(reg); err != nil {
-					return walk, err
-				}
-				walk.pending = append(walk.pending, act.Mutations()...)
-				record(st, units[u].ID, reg.Name, ActionNeedBody)
-				if body == nil {
-					walk.needsBody = true
-					walk.continuation = &requestContinuation{
-						units:  append([]Unit(nil), units...),
-						next:   next,
-						paused: pausedInvocation{regIdx: regIdx, reg: reg, f: f, id: units[u].ID, cfg: cfg},
-					}
-					return walk, nil
-				}
-				bodyAct, bodyErr := e.invoke(ctx, st, e.metrics[regIdx].requestBody, func(ctx context.Context) (filter.Action, error) {
-					return f.OnRequestBody(ctx, st, *body)
-				})
-				stop, err := e.applyRequestAction(st, reg, regIdx, cfg, units[u].ID, bodyAct, bodyErr, &walk)
-				if err != nil || stop {
-					return walk, err
-				}
-				continue
-			}
-			stop, err := e.applyRequestAction(st, reg, regIdx, cfg, units[u].ID, act, nil, &walk)
-			if err != nil || stop {
+		if act.Kind() == filter.KindNeedBody {
+			if err := validateBodyRequest(p.reg); err != nil {
 				return walk, err
 			}
+			walk.pending = append(walk.pending, act.Mutations()...)
+			walk.record(p, ActionNeedBody)
+			if body == nil {
+				walk.needsBody = true
+				walk.continuation = &requestContinuation{
+					units:  append([]Unit(nil), units...),
+					paused: pausedInvocation{f: f, at: p.at},
+				}
+				return walk, nil
+			}
+			bodyAct, bodyErr := e.invoke(ctx, st, e.metrics[p.at.reg].requestBody, func(ctx context.Context) (filter.Action, error) {
+				return f.OnRequestBody(ctx, st, *body)
+			})
+			if bodyErr != nil {
+				if ferr := walk.filterFailed(p, bodyErr); ferr != nil {
+					return walk, ferr
+				}
+				continue
+			}
+			if err := walk.apply(p, bodyAct); err != nil {
+				return walk, err
+			}
+			if walk.halted() {
+				return walk, nil
+			}
+			continue
 		}
-	}
-	if len(walk.pending) > 0 {
-		walk.disposition = DispositionMutated
-		promote(st, DispositionMutated)
+		if err := walk.apply(p, act); err != nil {
+			return walk, err
+		}
+		if walk.halted() {
+			return walk, nil
+		}
 	}
 	return walk, nil
 }
 
-func (e *Engine) applyRequestAction(st *filter.Stream, reg filter.Registration, regIdx int, cfg any, id filter.UnitID, act filter.Action, invokeErr error, walk *requestWalk) (bool, error) {
-	if invokeErr != nil {
-		open, err := e.resolveFailure(st, reg, cfg, id, &walk.disposition, invokeErr)
-		return !open, err
-	}
+// apply folds one filter's verdict into the walk. A nil error does not mean
+// the walk continues — check halted().
+func (w *requestWalk) apply(p pair, act filter.Action) error {
 	switch act.Kind() {
 	case filter.KindStop:
-		walk.reply, _ = act.Reply()
-		walk.disposition = DispositionBlocked
-		walk.pending = nil
-		promote(st, DispositionBlocked)
-		record(st, id, reg.Name, ActionBlock)
-		return true, nil
+		w.reply, _ = act.Reply()
+		w.disposition = DispositionBlocked
+		w.pending = nil
+		w.promote(DispositionBlocked)
+		w.record(p, ActionBlock)
+		return nil
 	case filter.KindBypass:
-		walk.disposition = DispositionBypassed
-		promote(st, DispositionBypassed)
-		record(st, id, reg.Name, ActionBypass)
-		return true, nil
+		w.disposition = DispositionBypassed
+		// The pairs after this one are skipped in this walk AND in the
+		// response phase; the scope is how the suppression reaches there.
+		w.scope = ResponseScope{bounded: true, last: p.at}
+		w.promote(DispositionBypassed)
+		w.record(p, ActionBypass)
+		return nil
 	case filter.KindNeedBody:
-		return true, fmt.Errorf("filter %q returned NeedBody from the body phase; NeedBody is only legal on request headers", reg.Name)
+		return fmt.Errorf("filter %q returned NeedBody from the body phase; NeedBody is only legal on request headers", p.reg.Name)
 	case filter.KindContinue:
 		if len(act.Mutations()) > 0 {
-			walk.pending = append(walk.pending, act.Mutations()...)
-			record(st, id, reg.Name, ActionMutate)
+			w.pending = append(w.pending, act.Mutations()...)
+			w.record(p, ActionMutate)
 		}
-		return false, nil
+		return nil
 	default:
-		return true, fmt.Errorf("filter %q returned unknown action kind %d", reg.Name, act.Kind())
+		return fmt.Errorf("filter %q returned unknown action kind %d", p.reg.Name, act.Kind())
 	}
 }
 
@@ -400,27 +470,30 @@ func (e *Engine) EvalRequestBody(ctx context.Context, st *filter.Stream, prior *
 	}
 	cont := prior.continuation
 	paused := cont.paused
-	walk := requestWalk{disposition: DispositionPassthrough}
-	act, invokeErr := e.invoke(ctx, st, e.metrics[paused.regIdx].requestBody, func(ctx context.Context) (filter.Action, error) {
+	p := e.pairAt(cont.units, paused.at)
+	walk := requestWalk{st: st, disposition: DispositionPassthrough}
+	act, invokeErr := e.invoke(ctx, st, e.metrics[p.at.reg].requestBody, func(ctx context.Context) (filter.Action, error) {
 		return paused.f.OnRequestBody(ctx, st, body)
 	})
-	stop, err := e.applyRequestAction(st, paused.reg, paused.regIdx, paused.cfg, paused.id, act, invokeErr, &walk)
-	if err == nil && !stop {
-		remaining, walkErr := e.walkRequestHeaders(ctx, st, cont.units, cont.next, &body)
+	var err error
+	if invokeErr != nil {
+		err = walk.filterFailed(p, invokeErr)
+	} else {
+		err = walk.apply(p, act)
+	}
+	if err == nil && !walk.halted() {
+		remaining, walkErr := e.walkRequest(ctx, st, cont.units, paused.at.next(len(e.regs)), &body)
 		if remaining.disposition == DispositionBlocked {
 			walk.pending = nil
 		} else {
 			walk.pending = append(walk.pending, remaining.pending...)
 		}
-		walk.disposition, walk.reply = remaining.disposition, remaining.reply
+		walk.disposition, walk.reply, walk.scope = remaining.disposition, remaining.reply, remaining.scope
 		err = walkErr
 	}
-	res.Disposition, res.Reply = walk.disposition, walk.reply
-	foldRequestBody(res, walk.pending)
-	if res.Disposition == DispositionPassthrough && len(walk.pending) > 0 {
-		res.Disposition = DispositionMutated
-		promote(st, DispositionMutated)
-	}
+	res.Reply, res.ResponseScope = walk.reply, walk.scope
+	res.HeaderOps, res.ClearRouteCache, res.Body = foldPending(walk.pending)
+	res.Disposition = walk.resolved()
 	return res, err
 }
 
@@ -434,35 +507,18 @@ const (
 	responseFailClosedDetails = "epe_response_headers_failed_closed"
 )
 
-// EvalResponseHeaders dispatches the response-headers phase to exactly the
-// (rule, registration) pairs whose config subscribed to it — a rule that did not
-// subscribe is never invoked, whatever else opened the phase (e.g. a stream
-// logger observing upstream status). Dispatch and subscription are separate
-// concerns even though both read the same predicate.
-//
-// Each call uses a fresh filter instance; response-header filters therefore
-// must not depend on request-phase instance state. They also may only return
-// Continue — see validateResponseAction — and only the engine's failure policy
-// synthesises a blocked response result.
-//
-// There is deliberately no walkResponseHeaders to match walkRequestHeaders. That
-// helper exists because the request walk is resumable: it takes a cursor and is
-// called twice, once from EvalRequestHeaders and once from EvalRequestBody after a
-// pause. This phase cannot pause — NeedBody is illegal here and no verdict can
-// suspend the sequence — so there is no cursor, no second caller, and nothing to
-// extract. The loop below is the whole walk.
-func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, units []Unit) (*ResponseHeadersResult, error) {
+// EvalResponseHeaders invokes subscribed response-header filters within scope
+// and folds their header mutations in policy order.
+func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, units []Unit, scope ResponseScope) (*ResponseHeadersResult, error) {
 	res := &ResponseHeadersResult{Disposition: DispositionPassthrough}
 	if err := e.validateUnits(units); err != nil {
 		return res, err
 	}
-	targets, err := e.responseTargets(units)
-	if err != nil {
+	if err := e.validateSubscriptions(units); err != nil {
 		return res, err
 	}
-	// Nothing subscribed: the phase was opened by something stream-level, such as
-	// --observe-responses wanting the upstream status in the logs. Return before
-	// arming the budget so that path costs no timer.
+	targets := e.responseTargets(units, scope)
+	// A stream-level observer may open the phase without subscribing any pair.
 	if len(targets) == 0 {
 		return res, nil
 	}
@@ -470,38 +526,32 @@ func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, uni
 	defer cancel()
 	var pending []filter.Mutation
 	for _, target := range targets {
-		reg := e.regs[target.regIdx]
-		unit := units[target.unit]
-		// responseTargets only yields pairs whose config is non-nil and whose
-		// Subscribes survived the intersection with Phases in buildRegistration,
-		// so a target always has a config and a metrics child. The Phases term is
-		// restated anyway: without it, a subscription that somehow escaped that
-		// intersection would reach a nil metrics child and panic in invoke.
-		if reg.Phases&filter.PhaseResponseHeaders == 0 {
+		p := e.pairAt(units, evalCursor{unit: target.unit, reg: target.regIdx})
+		// responseTargets returns only configured response-capable pairs.
+		if p.reg.Phases&filter.PhaseResponseHeaders == 0 {
 			continue
 		}
-		cfg := filter.ErasedRuleConfig{
-			ID:    unit.ID,
-			Cfg:   unit.Cfgs[target.regIdx],
-			Scope: unit.Scope,
-		}
-		f := reg.New(cfg)
-		act, invokeErr := e.invoke(ctx, st, e.metrics[target.regIdx].responseHeaders, func(ctx context.Context) (filter.Action, error) {
+		f := p.reg.New(filter.ErasedRuleConfig{
+			ID:    p.unit.ID,
+			Cfg:   p.cfg,
+			Scope: p.unit.Scope,
+		})
+		act, invokeErr := e.invoke(ctx, st, e.metrics[p.at.reg].responseHeaders, func(ctx context.Context) (filter.Action, error) {
 			return f.OnResponseHeaders(ctx, st)
 		})
 		if invokeErr != nil {
-			open, tErr := e.resolveResponseFailure(st, reg, cfg.Cfg, unit.ID, res, invokeErr)
+			open, tErr := e.resolveResponseFailure(st, p.reg, p.cfg, p.unit.ID, res, invokeErr)
 			if !open {
 				return res, tErr
 			}
 			continue
 		}
-		if err := validateResponseAction(reg, act); err != nil {
+		if err := validateResponseAction(p.reg, act); err != nil {
 			return res, err
 		}
 		if len(act.Mutations()) > 0 {
 			pending = append(pending, act.Mutations()...)
-			record(st, unit.ID, reg.Name, ActionMutate)
+			st.Info.RecordUnitAction(p.unit.ID, p.reg.Name, ActionMutate)
 		}
 	}
 	// Fold resolves Envoy's removes-before-sets ordering; nothing in it is
@@ -509,49 +559,30 @@ func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, uni
 	res.HeaderOps = Fold(pending)
 	if len(pending) > 0 {
 		res.Disposition = DispositionMutated
-		promote(st, DispositionMutated)
+		st.Info.Promote(DispositionMutated)
 	}
 	return res, nil
 }
 
-// resolveResponseFailure runs a response-phase filter error through its declared
-// failure policy. It is the response-side counterpart of resolveFailure, and the
-// one difference is the point of the phase: fail-closed does not merely resolve the
-// stream as an error, it synthesises a blocking Reply. Envoy holds the upstream
-// response headers while awaiting our answer, so that reply genuinely replaces
-// them rather than arriving after the response already went downstream.
-//
-// Fail-open records the skip, exactly as resolveFailure does, so an error that was
-// swallowed by policy is still visible to audit.
+// resolveResponseFailure applies the filter's response-phase failure policy.
+// FailClosed synthesizes a blocking reply; FailOpen records the error and continues.
 func (e *Engine) resolveResponseFailure(st *filter.Stream, reg filter.Registration, cfg any,
 	id filter.UnitID, res *ResponseHeadersResult, err error) (open bool, tErr error) {
-	open, tErr = e.translate(reg, cfg, err)
-	if !open {
-		res.Disposition = DispositionBlocked
-		res.Reply = filter.Reply{
-			Status:  responseFailClosedStatus,
-			Details: responseFailClosedDetails,
-		}
-		promote(st, DispositionBlocked)
-		record(st, id, reg.Name, ActionBlock)
-		return false, tErr
+	if failurePolicy(reg, cfg) == filter.FailOpen {
+		st.Info.RecordUnitAction(id, reg.Name, ActionErrorOpen)
+		return true, nil
 	}
-	record(st, id, reg.Name, ActionErrorOpen)
-	return true, nil
+	res.Disposition = DispositionBlocked
+	res.Reply = filter.Reply{
+		Status:  responseFailClosedStatus,
+		Details: responseFailClosedDetails,
+	}
+	st.Info.Promote(DispositionBlocked)
+	st.Info.RecordUnitAction(id, reg.Name, ActionBlock)
+	return false, fmt.Errorf("filter %q: %w", reg.Name, err)
 }
 
-// validateResponseAction rejects everything a response-headers filter may not
-// return. Unlike applyRequestAction, which must be a stateful switch because Stop
-// and Bypass change the walk, the only legal kind here is Continue — so there is no
-// state to touch and the whole check is a predicate on the action.
-//
-// Stop, Bypass and NeedBody have no meaning once the upstream response exists.
-// ClearRouteCache and Body carry none either: Envoy documents clear_route_cache as
-// ignored in the response direction, and a response body mutation would require
-// CONTINUE_AND_REPLACE, which disables all further response processing. Every one
-// of these is rejected rather than ignored — the adapter drops these fields on this
-// path, and a mutation that disappears without a word is exactly the failure mode
-// this phase was designed to avoid.
+// validateResponseAction accepts Continue actions containing only response-header mutations.
 func validateResponseAction(reg filter.Registration, act filter.Action) error {
 	if act.Kind() != filter.KindContinue {
 		return fmt.Errorf("filter %q returned action kind %d from the response-headers phase; "+
@@ -580,15 +611,6 @@ func (e *Engine) validateUnits(units []Unit) error {
 	return nil
 }
 
-func nextCursor(cur evalCursor, regs int) evalCursor {
-	cur.reg++
-	if cur.reg == regs {
-		cur.unit++
-		cur.reg = 0
-	}
-	return cur
-}
-
 func validateBodyRequest(reg filter.Registration) error {
 	if reg.Phases&filter.PhaseRequestBody == 0 {
 		return fmt.Errorf("filter %q returned NeedBody without declaring request-body support", reg.Name)
@@ -596,16 +618,11 @@ func validateBodyRequest(reg filter.Registration) error {
 	return nil
 }
 
-func foldRequestHeaders(res *RequestHeadersResult, pending []filter.Mutation) {
-	res.HeaderOps = Fold(pending)
-	res.ClearRouteCache = anyClearRouteCache(pending)
-	res.Body = lastBodyMutation(pending)
-}
-
-func foldRequestBody(res *RequestBodyResult, pending []filter.Mutation) {
-	res.HeaderOps = Fold(pending)
-	res.ClearRouteCache = anyClearRouteCache(pending)
-	res.Body = lastBodyMutation(pending)
+// foldPending computes the net effect of one walk's accumulated mutations: the
+// folded header ops, whether any asked to clear the route cache, and the last
+// body replacement (nil = unchanged).
+func foldPending(pending []filter.Mutation) (ops []filter.HeaderOp, clearRouteCache bool, body []byte) {
+	return Fold(pending), anyClearRouteCache(pending), lastBodyMutation(pending)
 }
 
 func anyClearRouteCache(muts []filter.Mutation) bool {
@@ -629,36 +646,24 @@ func lastBodyMutation(muts []filter.Mutation) []byte {
 	return body
 }
 
-// translate resolves a filter error against its failure policy. Returns
-// open=true when evaluation should continue (FailOpen), otherwise the error
-// to surface (FailClosed). cfg may be nil when no config is at hand;
-// Registration.OnError handles that case internally.
-//
-// A nil OnError is FailClosed. Build always installs a non-nil one, but
-// Registration is an exported struct with exported fields, so a hand-built value
-// (test helpers, anything bypassing Build) has a nil func — and this runs on the
-// request path, where the alternative to defaulting is a panic. Defaulting to
-// FailClosed also preserves what the field's zero value meant while it was a
-// FailurePolicy rather than a function. Mirrors the reg.Subscribes nil check in
-// responseTargets.
-func (e *Engine) translate(reg filter.Registration, cfg any, err error) (open bool, out error) {
-	if reg.OnError != nil && reg.OnError(cfg) == filter.FailOpen {
-		return true, nil
+// failurePolicy applies the registration's error policy. A nil OnError defaults
+// to FailClosed.
+func failurePolicy(reg filter.Registration, cfg any) filter.FailurePolicy {
+	if reg.OnError == nil {
+		return filter.FailClosed
 	}
-	return false, fmt.Errorf("filter %q: %w", reg.Name, err)
+	return reg.OnError(cfg)
 }
 
-// resolveFailure runs a filter error through its failure policy: fail-open
-// records the skip and lets the walk continue; fail-closed resolves the
-// stream as an error via the given disposition slot.
-func (e *Engine) resolveFailure(st *filter.Stream, reg filter.Registration, cfg any,
-	id filter.UnitID, d *Disposition, err error) (open bool, tErr error) {
-	open, tErr = e.translate(reg, cfg, err)
-	if !open {
-		*d = DispositionError
-		promote(st, DispositionError)
-		return false, tErr
+// filterFailed routes a filter error through its policy. A nil return means
+// fail-open: the skip was recorded and the walk continues. Fail-closed resolves
+// the walk as an error and surfaces the wrapped error.
+func (w *requestWalk) filterFailed(p pair, err error) error {
+	if failurePolicy(p.reg, p.cfg) == filter.FailOpen {
+		w.record(p, ActionErrorOpen)
+		return nil
 	}
-	record(st, id, reg.Name, ActionErrorOpen)
-	return true, nil
+	w.disposition = DispositionError
+	w.promote(DispositionError)
+	return fmt.Errorf("filter %q: %w", p.reg.Name, err)
 }

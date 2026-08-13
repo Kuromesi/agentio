@@ -216,12 +216,16 @@ func TestParseRejectsForbiddenNames(t *testing.T) {
 		{name: "request x-envoy set", raw: `{"request":{"set":[{"name":"X-Envoy-Foo","value":"v"}]}}`},
 		{name: "request x-envoy remove", raw: `{"request":{"remove":["x-envoy-decorator-operation"]}}`},
 		{name: "request exact x-envoy", raw: `{"request":{"remove":["X-Envoy"]}}`},
-		// Envoy's own gate is a bare StartsWith on the "x-envoy" prefix
-		// (mutation_rules.cc:97), so a name that merely begins with it — no
-		// hyphen — is also silently ignored by the data plane and must be
-		// rejected here rather than accepted and lost at runtime.
+		// Reject the reserved x-envoy prefix with or without a following hyphen.
 		{name: "request x-envoy bare prefix no hyphen", raw: `{"request":{"remove":["x-envoyer"]}}`},
 		{name: "response x-envoy bare prefix no hyphen", raw: `{"response":{"add":[{"name":"X-Envoyer","value":"v"}]}}`},
+		// Apply framing and hop-by-hop restrictions in both directions.
+		{name: "request content-length set", raw: `{"request":{"set":[{"name":"Content-Length","value":"5"}]}}`},
+		{name: "request content-length add", raw: `{"request":{"add":[{"name":"content-length","value":"5"}]}}`},
+		{name: "request transfer-encoding set", raw: `{"request":{"set":[{"name":"Transfer-Encoding","value":"chunked"}]}}`},
+		{name: "request connection", raw: `{"request":{"set":[{"name":"Connection","value":"close"}]}}`},
+		{name: "request te", raw: `{"request":{"remove":["TE"]}}`},
+		{name: "request content-encoding", raw: `{"request":{"set":[{"name":"Content-Encoding","value":"gzip"}]}}`},
 		{name: "response host set", raw: `{"response":{"set":[{"name":"Host","value":"example.com"}]}}`},
 		{name: "response host remove", raw: `{"response":{"remove":["host"]}}`},
 		{name: "response x-envoy add", raw: `{"response":{"add":[{"name":"x-envoy-bar","value":"v"}]}}`},
@@ -259,6 +263,8 @@ func TestParseAllowsResponseNames(t *testing.T) {
 		{name: "location", raw: `{"response":{"set":[{"name":"Location","value":"https://example.com"}]}}`},
 		{name: "content-length remove", raw: `{"response":{"remove":["Content-Length"]}}`},
 		{name: "transfer-encoding remove", raw: `{"response":{"remove":["Transfer-Encoding"]}}`},
+		{name: "request content-length remove", raw: `{"request":{"remove":["Content-Length"]}}`},
+		{name: "request transfer-encoding remove", raw: `{"request":{"remove":["transfer-encoding"]}}`},
 		{name: "server remove", raw: `{"response":{"remove":["Server"]}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
