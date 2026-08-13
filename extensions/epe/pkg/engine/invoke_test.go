@@ -186,15 +186,17 @@ func TestEvalResponseHeaders_BudgetInstallsDeadline(t *testing.T) {
 	pluginCallsTotal.Reset()
 	var hadDeadline bool
 	regs := buildRegs(t, []regSpec{{
-		name:   "probe",
-		phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody | filter.PhaseResponseHeaders,
+		name:       "probe",
+		phases:     filter.PhaseRequestHeaders | filter.PhaseRequestBody | filter.PhaseResponseHeaders,
+		subscribes: subscribesTo(filter.PhaseResponseHeaders),
 		make: func(filter.RuleConfig[string]) filter.Filter {
 			return phaseProbe{probe: func(ctx context.Context) { _, hadDeadline = ctx.Deadline() }}
 		},
 	}})
 	e := NewEngine(regs, time.Minute)
 
-	if err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}})); err != nil {
+	units := unitsFor([][]string{{"cfg"}})
+	if _, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, units); err != nil {
 		t.Fatalf("response phase: %v", err)
 	}
 	if !hadDeadline {

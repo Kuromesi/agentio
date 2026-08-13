@@ -35,18 +35,15 @@ const (
 // be silently inert. Engine dispatch and this mask must be widened
 // together.
 //
-// Response headers are dispatched for observation only — returning
-// mutations from that phase is an error, see engine.EvalResponseHeaders.
+// Declaring PhaseResponseHeaders only grants the capability to run there. A
+// stream reaches that phase solely for the (rule, filter) pairs whose config
+// subscribed via Descriptor.SubscribesOf. Subscription is config-derived rather
+// than returned from an action because Envoy confines mode_override to
+// header-phase replies and response_header_mode is only useful on the
+// request-headers one, while the ordered walk may suspend waiting for a request
+// body — so a subscription raised by a filter that runs after the pause would
+// arrive after that reply was already sent.
 const DispatchedPhases = PhaseRequestHeaders | PhaseRequestBody | PhaseResponseHeaders
-
-// BodyNeed declares whether a filter requires the complete request body.
-type BodyNeed uint8
-
-const (
-	BodyNone BodyNeed = iota
-	// BodyComplete means the filter can only decide on the full body.
-	BodyComplete
-)
 
 // Filter is the engine's three-phase contract. Capability is expressed by
 // overriding methods over an embedded PassThrough — never by type assertion.

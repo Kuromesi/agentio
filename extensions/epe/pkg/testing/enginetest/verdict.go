@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc/codes"
@@ -38,6 +39,33 @@ const (
 	VerdictPassthrough VerdictKind = "passthrough"
 )
 
+// HeaderOpKind names what a header operation does. It mirrors filter.HeaderOp's
+// kinds but is a distinct type because it is derived from the wire proto: a
+// verdict assertion therefore cannot be satisfied by an engine result that never
+// reached a ProcessingResponse.
+type HeaderOpKind string
+
+const (
+	// HeaderSet is OVERWRITE_IF_EXISTS_OR_ADD: it replaces every existing line
+	// for the name.
+	HeaderSet HeaderOpKind = "set"
+	// HeaderAppend is APPEND_IF_EXISTS_OR_ADD: it adds one more line, which is
+	// the only way to emit several set-cookie headers.
+	HeaderAppend HeaderOpKind = "append"
+	// HeaderRemove is a remove_headers entry.
+	HeaderRemove HeaderOpKind = "remove"
+)
+
+// HeaderOp is one header operation as it appeared on the wire, with the name
+// lowercased. One type serves both directions: nothing about a request
+// operation differs in shape from its response counterpart, and the direction
+// is carried by which Verdict field holds it.
+type HeaderOp struct {
+	Kind  HeaderOpKind
+	Name  string
+	Value string
+}
+
 // Verdict reduces the response sequence of one request to assertable facts.
 type Verdict struct {
 	Kind VerdictKind
@@ -46,10 +74,22 @@ type Verdict struct {
 	ImmediateStatus int
 	ImmediateBody   string
 
-	// SetHeaders and RemovedHeaders merge every header mutation across the
-	// headers-phase responses and the body-phase merged mutation.
-	SetHeaders     map[string]string
-	RemovedHeaders []string
+	// RequestHeaderOps and ResponseHeaderOps are the header mutations observed on
+	// the wire in each direction, in the order the protos listed them.
+	// RequestHeaderOps spans every request-direction response — the headers phase
+	// and the body phase both emit one.
+	//
+	// The two directions are kept in separate fields rather than merged: they
+	// carry different names for different reasons, so merging would let a
+	// request-phase assertion be satisfied by a response-phase mutation.
+	//
+	// Both are op slices rather than a map[string]string because a map can
+	// neither hold the several set-cookie (or cookie, or via) lines a message
+	// legitimately carries, nor distinguish an append from an overwrite, nor
+	// preserve the order Envoy applies them in. That was true of the request
+	// direction as much as the response one.
+	RequestHeaderOps  []HeaderOp
+	ResponseHeaderOps []HeaderOp
 
 	// ModeOverride is the ProcessingMode set on the first headers-phase
 	// response; non-nil proves the NeedsBody signalling fired.
@@ -73,10 +113,9 @@ type Verdict struct {
 // ParseVerdict classifies a response sequence.
 func ParseVerdict(responses []*extProcPb.ProcessingResponse, procErr error) *Verdict {
 	v := &Verdict{
-		Kind:       VerdictPassthrough,
-		SetHeaders: map[string]string{},
-		Raw:        responses,
-		Err:        procErr,
+		Kind: VerdictPassthrough,
+		Raw:  responses,
+		Err:  procErr,
 	}
 	for i, resp := range responses {
 		if i == 0 && resp.ModeOverride != nil {
@@ -89,20 +128,28 @@ func ParseVerdict(responses []*extProcPb.ProcessingResponse, procErr error) *Ver
 			v.ImmediateBody = string(r.ImmediateResponse.GetBody())
 			return v
 		case *extProcPb.ProcessingResponse_RequestHeaders:
-			v.mergeMutation(r.RequestHeaders.GetResponse().GetHeaderMutation())
+			v.RequestHeaderOps = appendOps(v.RequestHeaderOps, r.RequestHeaders.GetResponse().GetHeaderMutation())
 		case *extProcPb.ProcessingResponse_RequestBody:
-			v.mergeMutation(r.RequestBody.GetResponse().GetHeaderMutation())
+			v.RequestHeaderOps = appendOps(v.RequestHeaderOps, r.RequestBody.GetResponse().GetHeaderMutation())
+		case *extProcPb.ProcessingResponse_ResponseHeaders:
+			v.ResponseHeaderOps = appendOps(v.ResponseHeaderOps, r.ResponseHeaders.GetResponse().GetHeaderMutation())
 		}
 	}
-	if len(v.SetHeaders) > 0 || len(v.RemovedHeaders) > 0 {
+	// Kind describes the *request* verdict, so a response-only mutation leaves
+	// it at passthrough: nothing about the forwarded request changed.
+	if len(v.RequestHeaderOps) > 0 {
 		v.Kind = VerdictMutated
 	}
 	return v
 }
 
-func (v *Verdict) mergeMutation(hm *extProcPb.HeaderMutation) {
+// appendOps decodes one HeaderMutation onto ops. Envoy applies all removes
+// before all sets within a single HeaderMutation; the ops are kept in the order
+// the proto lists them instead, so a test can assert on exactly what was emitted
+// rather than on the effective order.
+func appendOps(ops []HeaderOp, hm *extProcPb.HeaderMutation) []HeaderOp {
 	if hm == nil {
-		return
+		return ops
 	}
 	for _, h := range hm.GetSetHeaders() {
 		header := h.GetHeader()
@@ -113,9 +160,100 @@ func (v *Verdict) mergeMutation(hm *extProcPb.HeaderMutation) {
 		if value == "" {
 			value = header.GetValue()
 		}
-		v.SetHeaders[strings.ToLower(header.GetKey())] = value
+		kind := HeaderSet
+		if h.GetAppendAction() == corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD {
+			kind = HeaderAppend
+		}
+		ops = append(ops, HeaderOp{Kind: kind, Name: strings.ToLower(header.GetKey()), Value: value})
 	}
-	v.RemovedHeaders = append(v.RemovedHeaders, hm.GetRemoveHeaders()...)
+	for _, name := range hm.GetRemoveHeaders() {
+		ops = append(ops, HeaderOp{Kind: HeaderRemove, Name: strings.ToLower(name)})
+	}
+	return ops
+}
+
+// headerValues returns every value ops set or appended for name, in wire order.
+func headerValues(ops []HeaderOp, name string) []string {
+	want := strings.ToLower(name)
+	var out []string
+	for _, op := range ops {
+		if op.Name == want && op.Kind != HeaderRemove {
+			out = append(out, op.Value)
+		}
+	}
+	return out
+}
+
+// requireHeader asserts ops produced exactly one value for name, equal to want.
+// dir names the direction in failure messages; without it the two wrappers
+// produce identical output and a failure does not say which direction it is
+// about.
+func requireHeader(t *testing.T, ops []HeaderOp, dir, name, want string) {
+	t.Helper()
+	got := headerValues(ops, name)
+	if len(got) != 1 {
+		t.Fatalf("%s header %q values = %v, want exactly [%q] (ops=%+v)", dir, name, got, want, ops)
+	}
+	if got[0] != want {
+		t.Fatalf("%s header %q = %q, want %q", dir, name, got[0], want)
+	}
+}
+
+// headerRemoved reports whether ops removed name.
+func headerRemoved(ops []HeaderOp, name string) bool {
+	want := strings.ToLower(name)
+	for _, op := range ops {
+		if op.Kind == HeaderRemove && op.Name == want {
+			return true
+		}
+	}
+	return false
+}
+
+func requireHeaderRemoved(t *testing.T, ops []HeaderOp, dir, name string) {
+	t.Helper()
+	if !headerRemoved(ops, name) {
+		t.Fatalf("%s header %q not removed (ops=%+v)", dir, name, ops)
+	}
+}
+
+// RequestHeaderValues returns every value the request direction set or appended
+// for name, in wire order. Several values mean several header lines.
+func (v *Verdict) RequestHeaderValues(name string) []string {
+	return headerValues(v.RequestHeaderOps, name)
+}
+
+// ResponseHeaderValues returns every value the response phase set or appended
+// for name, in wire order. Several values mean several header lines, which is
+// how multi-valued set-cookie is expressed.
+func (v *Verdict) ResponseHeaderValues(name string) []string {
+	return headerValues(v.ResponseHeaderOps, name)
+}
+
+// RequireHeader asserts the request direction produced exactly one value for
+// name, equal to want.
+func (v *Verdict) RequireHeader(t *testing.T, name, want string) {
+	t.Helper()
+	requireHeader(t, v.RequestHeaderOps, "request", name, want)
+}
+
+// RequireResponseHeader asserts the response phase produced exactly one value
+// for name, equal to want.
+func (v *Verdict) RequireResponseHeader(t *testing.T, name, want string) {
+	t.Helper()
+	requireHeader(t, v.ResponseHeaderOps, "response", name, want)
+}
+
+// RequireHeaderRemoved asserts the request direction removed name.
+func (v *Verdict) RequireHeaderRemoved(t *testing.T, name string) {
+	t.Helper()
+	requireHeaderRemoved(t, v.RequestHeaderOps, "request", name)
+}
+
+// RequireResponseHeaderRemoved asserts the response phase removed name.
+func (v *Verdict) RequireResponseHeaderRemoved(t *testing.T, name string) {
+	t.Helper()
+	requireHeaderRemoved(t, v.ResponseHeaderOps, "response", name)
 }
 
 // RequireBlocked asserts an ImmediateResponse with the given status.
@@ -165,18 +303,6 @@ func (v *Verdict) RequireBypassed(t *testing.T) {
 	}
 	if v.Info.Disposition.String() != "bypassed" {
 		t.Fatalf("disposition = %q, want bypassed", v.Info.Disposition)
-	}
-}
-
-// RequireHeader asserts a merged header mutation set key to want.
-func (v *Verdict) RequireHeader(t *testing.T, key, want string) {
-	t.Helper()
-	got, ok := v.SetHeaders[strings.ToLower(key)]
-	if !ok {
-		t.Fatalf("header %q not set (set=%v)", key, v.SetHeaders)
-	}
-	if got != want {
-		t.Fatalf("header %q = %q, want %q", key, got, want)
 	}
 }
 

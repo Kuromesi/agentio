@@ -41,7 +41,7 @@ func Descriptor() filter.Descriptor[Config] {
 	return filter.Descriptor[Config]{
 		Name:    FilterName,
 		Phases:  filter.PhaseRequestHeaders,
-		OnError: filter.FailClosed,
+		OnError: filter.Always[Config](filter.FailClosed),
 		New:     New,
 	}
 }

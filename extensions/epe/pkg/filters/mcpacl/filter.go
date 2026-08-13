@@ -201,13 +201,12 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 	return filter.Continue(), nil
 }
 
-// Descriptor declares mcpacl's complete-body contract.
+// Descriptor declares mcpacl's phases and failure policy.
 func Descriptor() filter.Descriptor[Config] {
 	return filter.Descriptor[Config]{
 		Name:    FilterName,
 		Phases:  filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:    filter.BodyComplete,
-		OnError: filter.FailClosed,
+		OnError: filter.Always[Config](filter.FailClosed),
 		New:     New,
 	}
 }

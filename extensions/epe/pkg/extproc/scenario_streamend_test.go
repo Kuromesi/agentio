@@ -71,8 +71,7 @@ func bodyBypassRegistration() filter.Registration {
 	return filter.Registration{
 		Name:    bypass.FilterName,
 		Phases:  filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:    filter.BodyComplete,
-		OnError: filter.FailClosed,
+		OnError: func(any) filter.FailurePolicy { return filter.FailClosed },
 		Parse:   func(json.RawMessage) (any, error) { return struct{}{}, nil },
 		New:     func(filter.ErasedRuleConfig) filter.Filter { return bodyBypassFilter{} },
 	}

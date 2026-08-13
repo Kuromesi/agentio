@@ -81,7 +81,6 @@ func tokenClaimReg(f filter.Filter) filter.Registration {
 	return filter.Registration{
 		Name:   tokentransform.FilterName,
 		Phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:   filter.BodyComplete,
 		Parse:  func(json.RawMessage) (any, error) { return struct{}{}, nil },
 		New:    func(filter.ErasedRuleConfig) filter.Filter { return f },
 	}

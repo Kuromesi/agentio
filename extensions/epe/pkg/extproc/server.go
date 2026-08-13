@@ -172,6 +172,19 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 			// credential into the log whenever debug was enabled.
 			logger.V(logging.DEFAULT).Error(err, "Failed to process request",
 				"messageType", messageTypeName(req))
+			// A handler may pair its error with a reply that must still reach
+			// Envoy — the response-headers phase under FailClosed synthesises an
+			// ImmediateResponse that replaces the upstream response, and Envoy
+			// holds those headers only until we answer. Erroring without sending
+			// would fall back to Envoy's own failure_mode_allow handling and lose
+			// the policy's status and details. Send failures are subordinate: the
+			// original error is what terminates the stream.
+			for _, resp := range responses {
+				if sendErr := srv.Send(resp); sendErr != nil {
+					logger.V(logging.DEFAULT).Error(sendErr, "Send failed while surfacing a handler error")
+					break
+				}
+			}
 			return status.Errorf(status.Code(err), "failed to handle request: %v", err)
 		}
 

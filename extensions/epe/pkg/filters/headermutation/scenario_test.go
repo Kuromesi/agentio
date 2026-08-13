@@ -35,9 +35,11 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 	}
 	cfgs, errs := filter.Project(regs, map[string]json.RawMessage{
 		headermutation.FilterName: json.RawMessage(`{
-			"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
-			"add":[{"name":"X-Tag","value":"{{ index .Inputs \"tag\" }}"}],
-			"remove":["X-Legacy"]
+			"request": {
+				"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
+				"add":[{"name":"X-Tag","value":"{{ index .Inputs \"tag\" }}"}],
+				"remove":["X-Legacy"]
+			}
 		}`),
 	})
 	if errs[0] != nil {
@@ -47,10 +49,12 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 		inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"},
 		map[string]any{"tag": "trusted"},
 	)
-	res, err := engine.NewEngine(regs, 0).EvalRequestHeaders(
+	units := []engine.Unit{{ID: filter.UnitID{Scope: "default/profile", Name: "mutate"}, Scope: scope, Cfgs: cfgs}}
+	e := engine.NewEngine(regs, 0)
+	res, err := e.EvalRequestHeaders(
 		context.Background(),
 		&filter.Stream{Info: filter.NewStreamInfo()},
-		[]engine.Unit{{ID: filter.UnitID{Scope: "default/profile", Name: "mutate"}, Scope: scope, Cfgs: cfgs}},
+		units,
 	)
 	if err != nil {
 		t.Fatalf("evaluate request headers: %v", err)
@@ -65,5 +69,89 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 	}
 	if res.Disposition != engine.DispositionMutated {
 		t.Errorf("Disposition = %v, want mutated", res.Disposition)
+	}
+	// A request-only payload must not open the response-headers phase: that would
+	// cost an Envoy round trip that dispatches to nobody.
+	wantsResponse, err := e.WantsResponseHeaders(units)
+	if err != nil {
+		t.Fatalf("WantsResponseHeaders: %v", err)
+	}
+	if wantsResponse {
+		t.Error("a request-only payload opened the response-headers phase")
+	}
+}
+
+// A response payload must reach the engine as declared demand: without it the
+// adapter never sends Envoy the ModeOverride, and the configured response
+// mutations are silently dropped.
+func TestProjectedResponsePayloadDeclaresDemand(t *testing.T) {
+	regs, err := filter.Build(headermutation.Definition())
+	if err != nil {
+		t.Fatalf("build registration: %v", err)
+	}
+	for _, tc := range []struct {
+		name      string
+		payload   string
+		ruleWants bool
+		wantOps   []filter.HeaderOp
+	}{
+		{
+			name:      "response only",
+			payload:   `{"response":{"add":[{"name":"X-Epe","value":"{{ .Rule.Name }}"}],"remove":["Server"]}}`,
+			ruleWants: true,
+		},
+		{
+			name:      "request with empty response object",
+			payload:   `{"request":{"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}]},"response":{}}`,
+			ruleWants: false,
+			wantOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-policy", Value: "outbound"}},
+		},
+		{
+			name:      "both phases",
+			payload:   `{"request":{"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}]},"response":{"remove":["Server"]}}`,
+			ruleWants: true,
+			wantOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-policy", Value: "outbound"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfgs, errs := filter.Project(regs, map[string]json.RawMessage{
+				headermutation.FilterName: json.RawMessage(tc.payload),
+			})
+			if errs[0] != nil {
+				t.Fatalf("project payload: %v", errs[0])
+			}
+			scope := inputs.NewScope(
+				inputs.Request{}, inputs.Pod{},
+				inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"}, nil,
+			)
+			id := filter.UnitID{Scope: "default/profile", Name: "mutate"}
+			res, err := engine.NewEngine(regs, 0).EvalRequestHeaders(
+				context.Background(),
+				&filter.Stream{Info: filter.NewStreamInfo()},
+				[]engine.Unit{{ID: id, Scope: scope, Cfgs: cfgs}},
+			)
+			if err != nil {
+				t.Fatalf("evaluate request headers: %v", err)
+			}
+			// Subscription comes from the config via Descriptor().SubscribesOf,
+			// never from the action the filter returns: Envoy accepts a
+			// mode_override only on a header-phase reply, and this filter is
+			// ordered after one that pauses for the request body.
+			gotWants, subErr := engine.NewEngine(regs, 0).WantsResponseHeaders(
+				[]engine.Unit{{ID: id, Scope: scope, Cfgs: cfgs}},
+			)
+			if subErr != nil {
+				t.Fatalf("WantsResponseHeaders: %v", subErr)
+			}
+			if gotWants != tc.ruleWants {
+				t.Errorf("subscribed = %v, want %v", gotWants, tc.ruleWants)
+			}
+			if len(tc.wantOps) == 0 && len(res.HeaderOps) != 0 {
+				t.Errorf("HeaderOps = %+v, want none", res.HeaderOps)
+			}
+			if len(tc.wantOps) > 0 && !reflect.DeepEqual(res.HeaderOps, tc.wantOps) {
+				t.Errorf("HeaderOps = %+v, want %+v", res.HeaderOps, tc.wantOps)
+			}
+		})
 	}
 }

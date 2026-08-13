@@ -42,11 +42,9 @@ type Filter struct {
 // change an already-built chain.
 func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 	return filter.Descriptor[Config]{
-		Name:    FilterName,
-		Phases:  filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:    filter.BodyComplete,
-		OnError: filter.FromRule,
-		OnErrorOf: func(cfg Config) filter.FailurePolicy {
+		Name:   FilterName,
+		Phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
+		OnError: func(cfg Config) filter.FailurePolicy {
 			if cfg.FailBlock {
 				return filter.FailClosed
 			}

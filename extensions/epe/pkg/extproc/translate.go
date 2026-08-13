@@ -113,6 +113,52 @@ func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.Proce
 	}}
 }
 
+// translateResponseHeadersResult maps a ResponseHeadersResult to the
+// response-headers-phase response list.
+//
+// Three deliberate asymmetries with the request path:
+//
+//   - headerMutationFromOps's route-affecting bool is discarded.
+//     clear_route_cache is a documented no-op in the response direction (only
+//     the decoding state overrides the empty virtual base), and routing is long
+//     decided by the time response headers exist, so routeAffectingHeaders is
+//     meaningless here.
+//   - CommonResponse_CONTINUE_AND_REPLACE is never emitted: on the response path
+//     it force-disables all further response processing.
+//   - No BodyMutation: the extension never rewrites a response body, and a
+//     mismatched content-length would corrupt framing.
+func translateResponseHeadersResult(rr *engine.ResponseHeadersResult) []*extProcPb.ProcessingResponse {
+	if rr.Disposition == engine.DispositionBlocked {
+		// Envoy holds the upstream response headers while awaiting our reply, so
+		// this local reply genuinely replaces them. HeaderOps are ignored: the
+		// response being mutated no longer goes downstream.
+		return []*extProcPb.ProcessingResponse{immediateFromReply(rr.Reply)}
+	}
+	if len(rr.HeaderOps) == 0 {
+		return emptyResponseHeadersAck
+	}
+	mut, _ := headerMutationFromOps(rr.HeaderOps)
+	return []*extProcPb.ProcessingResponse{{
+		Response: &extProcPb.ProcessingResponse_ResponseHeaders{
+			ResponseHeaders: &extProcPb.HeadersResponse{
+				Response: &extProcPb.CommonResponse{HeaderMutation: mut},
+			},
+		},
+	}}
+}
+
+// emptyResponseHeadersAck is the bare acknowledgement for the response-headers
+// phase. Shared rather than rebuilt per call, matching defaultPassThrough and
+// defaultPassThroughBody: immutable and safe across goroutines, because gRPC
+// serializes but does not mutate the proto. Nothing may attach a ModeOverride to
+// it — mode_override belongs to a request-headers reply, and cloneResponse exists
+// for the one site that needs a mutable copy.
+var emptyResponseHeadersAck = []*extProcPb.ProcessingResponse{{
+	Response: &extProcPb.ProcessingResponse_ResponseHeaders{
+		ResponseHeaders: &extProcPb.HeadersResponse{},
+	},
+}}
+
 // headerMutationFromOps renders folded ops as one proto HeaderMutation and
 // reports whether a route-affecting header was touched.
 func headerMutationFromOps(ops []filter.HeaderOp) (*extProcPb.HeaderMutation, bool) {

@@ -57,6 +57,12 @@ func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody
 	if err != nil {
 		return nil, err
 	}
+	// No late-subscription check is needed or possible here. The response-headers
+	// subscription is derived from the matched configs by Engine.Subscribe before
+	// the headers walk begins, so the resumed walk cannot add to it — which is
+	// exactly why the subscription was moved off the action path: Envoy ignores
+	// mode_override on a body reply, so anything discovered here would already be
+	// too late to honour.
 	switch br.Disposition {
 	case engine.DispositionBlocked:
 		state.awaitResponseHeaders = false

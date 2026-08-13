@@ -43,10 +43,16 @@ type responseHeadersProbe struct {
 	filter.PassThrough
 	calls int
 	err   error
+	// act overrides the returned action. The zero value is Continue; set it to a
+	// kind the response phase forbids to exercise the engine's contract check.
+	act *filter.Action
 }
 
 func (p *responseHeadersProbe) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
 	p.calls++
+	if p.act != nil {
+		return *p.act, p.err
+	}
 	return filter.Continue(), p.err
 }
 
@@ -55,9 +61,13 @@ func responseHeadersState(p *responseHeadersProbe) (*Server, *streamState, *capt
 	reg := filter.Registration{
 		Name:    "response-observer",
 		Phases:  filter.PhaseResponseHeaders,
-		OnError: filter.FailClosed,
+		OnError: func(any) filter.FailurePolicy { return filter.FailClosed },
 		Parse:   func(json.RawMessage) (any, error) { return struct{}{}, nil },
 		New:     func(filter.ErasedRuleConfig) filter.Filter { return p },
+		// The response phase dispatches to subscribing configs only, recomputed
+		// from the units pinned on the stream; these tests stand in for a request
+		// phase whose config subscribed.
+		Subscribes: func(any) filter.Phase { return filter.PhaseResponseHeaders },
 	}
 	s := NewServer(ServerDeps{
 		Registrations: []filter.Registration{reg},
@@ -65,8 +75,9 @@ func responseHeadersState(p *responseHeadersProbe) (*Server, *streamState, *capt
 	})
 	state := newStreamState()
 	state.sawRequest = true
+	id := filter.UnitID{Scope: "default/p1", Name: "observe"}
 	state.units = []engine.Unit{{
-		ID:   filter.UnitID{Scope: "default/p1", Name: "observe"},
+		ID:   id,
 		Cfgs: []any{struct{}{}},
 	}}
 	state.awaitResponseHeaders = true
@@ -343,7 +354,7 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	probe := &responseHeadersProbe{err: boom}
 	s, state, _ := responseHeadersState(probe)
 
-	_, err := s.HandleResponseHeaders(context.Background(), &extProcPb.HttpHeaders{
+	resp, err := s.HandleResponseHeaders(context.Background(), &extProcPb.HttpHeaders{
 		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 			{Key: ":status", RawValue: []byte("500")},
 		}},
@@ -351,11 +362,46 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("HandleResponseHeaders error = %v, want %v", err, boom)
 	}
+	// This registration is FailClosed, so the engine synthesises a deny. That
+	// deny is a decision and must travel with the error: Envoy holds the upstream
+	// headers only until we answer, and sending nothing would hand the outcome to
+	// failure_mode_allow instead. Contrast the fault case below, which must send
+	// nothing.
+	if len(resp) != 1 {
+		t.Fatalf("responses = %d, want 1 synthesised deny", len(resp))
+	}
+	if resp[0].GetImmediateResponse() == nil {
+		t.Fatalf("response = %T, want an ImmediateResponse carrying the deny", resp[0].GetResponse())
+	}
 	if !state.awaitResponseHeaders {
 		t.Fatal("failed response observation consumed the outstanding obligation")
 	}
 	if state.finalizeAfterSend {
 		t.Fatal("failed response observation armed successful finalization")
+	}
+}
+
+// A contract violation is a fault, not a decision: the engine returns a
+// zero-value passthrough result alongside its error. Translating that would emit
+// a bare ack, and because Process sends a handler's responses before surfacing
+// its error, the ack would release the UNMUTATED upstream response downstream
+// and only then tear the stream down — turning a FailClosed rule into fail-open.
+// Nothing may be sent; Envoy's failure_mode_allow owns the outcome.
+func TestHandleResponseHeaders_ContractViolationSendsNothing(t *testing.T) {
+	bypass := filter.Bypass()
+	probe := &responseHeadersProbe{act: &bypass}
+	s, state, _ := responseHeadersState(probe)
+
+	resp, err := s.HandleResponseHeaders(context.Background(), &extProcPb.HttpHeaders{
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: ":status", RawValue: []byte("200")},
+		}},
+	}, state)
+	if err == nil {
+		t.Fatal("HandleResponseHeaders succeeded, want the response phase to reject a Bypass action")
+	}
+	if len(resp) != 0 {
+		t.Fatalf("responses = %d, want none: a fault must not release the upstream response", len(resp))
 	}
 }
 
@@ -416,11 +462,21 @@ func TestHandleResponseHeaders_DuplicateDoesNotRerunObserverOrOverwriteAudit(t *
 	}
 }
 
+// A blocked request finalizes as soon as its ImmediateResponse is sent, but the
+// statically configured response-header mode can still deliver one message. It
+// must be acknowledged without reopening observers or audit.
+//
+// This scenario used to be written with a *bypassed* stream. Under the
+// response-mutation design a bypass with demand must survive into the response
+// phase (see TestHandleResponseHeaders_BypassWithDemandStillDispatches), so the
+// two cases are now separate tests: this one keeps the genuine
+// "static mode outlives a terminal decision" behaviour with the terminal
+// decision that really is terminal.
 func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWithoutObserver(t *testing.T) {
 	probe := &responseHeadersProbe{}
 	s, state, cap := responseHeadersState(probe)
 	state.awaitResponseHeaders = false
-	state.stream.Info.Promote(filter.DispositionBypassed)
+	state.stream.Info.Promote(filter.DispositionBlocked)
 	s.finishStream(context.Background(), state, nil)
 	headers := &extProcPb.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 		{Key: ":status", RawValue: []byte("204")},
@@ -439,8 +495,8 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 	if state.finalizeAfterSend {
 		t.Fatal("already finalized stream armed another finalization")
 	}
-	if len(cap.entries) != 1 || cap.entries[0].Outcome != "bypassed" {
-		t.Fatalf("accesslog = %+v, want one committed bypass entry", cap.entries)
+	if len(cap.entries) != 1 || cap.entries[0].Outcome != "blocked" {
+		t.Fatalf("accesslog = %+v, want one committed blocked entry", cap.entries)
 	}
 
 	if _, err := s.HandleResponseHeaders(context.Background(), headers, state); err == nil {

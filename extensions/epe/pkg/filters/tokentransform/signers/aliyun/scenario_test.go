@@ -82,12 +82,12 @@ func TestScenario_V3ResignFromSecret(t *testing.T) {
 	verdict := h.Run(t, v3Request())
 	verdict.RequireOutcome(t, "mutated")
 	verdict.RequireHeader(t, "x-acs-security-token", "NEWTOKEN")
-	authorization, ok := verdict.SetHeaders["authorization"]
-	if !ok {
-		t.Fatalf("authorization not mutated (set=%v)", verdict.SetHeaders)
+	authorization := verdict.RequestHeaderValues("authorization")
+	if len(authorization) != 1 {
+		t.Fatalf("authorization values = %v, want exactly one (ops=%+v)", authorization, verdict.RequestHeaderOps)
 	}
-	if !strings.Contains(authorization, "STS.NEWAK") || strings.Contains(authorization, "OLDAK") {
-		t.Errorf("authorization = %q, want new access key and no old one", authorization)
+	if !strings.Contains(authorization[0], "STS.NEWAK") || strings.Contains(authorization[0], "OLDAK") {
+		t.Errorf("authorization = %q, want new access key and no old one", authorization[0])
 	}
 }
 
@@ -108,12 +108,12 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 	if verdict.ModeOverride != nil {
 		t.Fatalf("query-only V1-RPC POST requested body delivery: %v", verdict.ModeOverride)
 	}
-	newPath, ok := verdict.SetHeaders[":path"]
-	if !ok {
-		t.Fatalf(":path not rewritten (set=%v)", verdict.SetHeaders)
+	newPath := verdict.RequestHeaderValues(":path")
+	if len(newPath) != 1 {
+		t.Fatalf(":path values = %v, want exactly one rewrite (ops=%+v)", newPath, verdict.RequestHeaderOps)
 	}
-	if !strings.Contains(newPath, "AccessKeyId=STS.NEWAK") || strings.Contains(newPath, "oldSignature") {
-		t.Errorf(":path = %q, want re-signed query with new access key", newPath)
+	if !strings.Contains(newPath[0], "AccessKeyId=STS.NEWAK") || strings.Contains(newPath[0], "oldSignature") {
+		t.Errorf(":path = %q, want re-signed query with new access key", newPath[0])
 	}
 }
 

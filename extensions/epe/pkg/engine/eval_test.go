@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -84,12 +85,23 @@ func (f *errFilter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Ac
 // --- registration helpers ----------------------------------------------
 
 type regSpec struct {
-	name     string
-	onError  filter.FailurePolicy
-	policyOf func(cfg string) filter.FailurePolicy
-	make     func(cfg filter.RuleConfig[string]) filter.Filter
+	name    string
+	onError func(cfg string) filter.FailurePolicy
+	make    func(cfg filter.RuleConfig[string]) filter.Filter
 	// phases overrides the default request-headers|request-body mask.
 	phases filter.Phase
+	// subscribes declares which phases Envoy must deliver, for a given config.
+	// Subscription is config-derived, never returned from an action, so this is a
+	// function of the config rather than a constant: it is the only way to express
+	// "this filter, subscribed under rule A but not under rule B", which is
+	// precisely what the dispatch predicate must get right.
+	subscribes func(cfg string) filter.Phase
+}
+
+// subscribesTo returns a config-independent subscription, for the common case
+// where every rule carrying the filter needs the same phases.
+func subscribesTo(p filter.Phase) func(string) filter.Phase {
+	return func(string) filter.Phase { return p }
 }
 
 func buildRegs(t testing.TB, specs []regSpec) []filter.Registration {
@@ -100,17 +112,12 @@ func buildRegs(t testing.TB, specs []regSpec) []filter.Registration {
 		if phases == 0 {
 			phases = filter.PhaseRequestHeaders | filter.PhaseRequestBody
 		}
-		body := filter.BodyNone
-		if phases&filter.PhaseRequestBody != 0 {
-			body = filter.BodyComplete
-		}
 		d := filter.Descriptor[string]{
-			Name:      sp.name,
-			Phases:    phases,
-			Body:      body,
-			OnError:   sp.onError,
-			OnErrorOf: sp.policyOf,
-			New:       sp.make,
+			Name:         sp.name,
+			Phases:       phases,
+			OnError:      sp.onError,
+			SubscribesOf: sp.subscribes,
+			New:          sp.make,
 		}
 		// Parse is never invoked: engine tests build units with pre-parsed
 		// configs (unitsFor), so the JSON seam stays a stub.
@@ -184,6 +191,40 @@ func TestEvalRejectsMisalignedUnitConfigs(t *testing.T) {
 	}})
 	if err == nil || !strings.Contains(err.Error(), "config") {
 		t.Fatalf("misaligned configs error = %v", err)
+	}
+}
+
+// Every entry point that indexes Unit.Cfgs by registration must validate first.
+// WantsResponseHeaders is the one the adapter calls BEFORE EvalRequestHeaders, so it
+// cannot rely on the walk having rejected the unit: without its own check a short
+// Cfgs slice is an index-out-of-range panic on the request path rather than an error.
+func TestSubscriptionEntryPointsRejectMisalignedUnitConfigs(t *testing.T) {
+	regs := buildRegs(t, []regSpec{{
+		name:       "one",
+		phases:     bothHeaderPhases,
+		subscribes: subscribesTo(filter.PhaseResponseHeaders),
+		make:       func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+	}})
+	e := NewEngine(regs, 0)
+	// Cfgs is nil where the engine has one registration, so any Cfgs[0] read panics.
+	bad := []Unit{{ID: filter.UnitID{Scope: "ns/p", Name: "r"}, Cfgs: nil}}
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"WantsResponseHeaders", func() error { _, err := e.WantsResponseHeaders(bad); return err }},
+		{"EvalResponseHeaders", func() error {
+			_, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, bad)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil || !strings.Contains(err.Error(), "config") {
+				t.Fatalf("misaligned configs error = %v, want one naming the config count", err)
+			}
+		})
 	}
 }
 
@@ -537,7 +578,7 @@ func TestEvalBody_NeedRejected(t *testing.T) {
 func TestInvoke_FailOpenSkips(t *testing.T) {
 	mutC := &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "flaky", onError: filter.FailOpen, make: func(filter.RuleConfig[string]) filter.Filter {
+		{name: "flaky", onError: filter.Always[string](filter.FailOpen), make: func(filter.RuleConfig[string]) filter.Filter {
 			return &errFilter{err: errors.New("boom")}
 		}},
 		{name: "after", make: func(filter.RuleConfig[string]) filter.Filter {
@@ -569,7 +610,7 @@ func TestInvoke_FailOpenSkips(t *testing.T) {
 
 func TestInvoke_FailClosedErrors(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
-		{name: "strict", onError: filter.FailClosed, make: func(filter.RuleConfig[string]) filter.Filter {
+		{name: "strict", onError: filter.Always[string](filter.FailClosed), make: func(filter.RuleConfig[string]) filter.Filter {
 			return &errFilter{err: errors.New("boom")}
 		}},
 	})
@@ -581,7 +622,7 @@ func TestInvoke_FailClosedErrors(t *testing.T) {
 	requireDisposition(t, res.Disposition, DispositionError)
 }
 
-func TestInvoke_FromRuleConsultsPolicy(t *testing.T) {
+func TestInvoke_OnErrorConsultsConfig(t *testing.T) {
 	mk := func(filter.RuleConfig[string]) filter.Filter { return &errFilter{err: errors.New("boom")} }
 	policy := func(cfg string) filter.FailurePolicy {
 		if cfg == "open" {
@@ -589,7 +630,7 @@ func TestInvoke_FromRuleConsultsPolicy(t *testing.T) {
 		}
 		return filter.FailClosed
 	}
-	regs := buildRegs(t, []regSpec{{name: "fr", onError: filter.FromRule, policyOf: policy, make: mk}})
+	regs := buildRegs(t, []regSpec{{name: "fr", onError: policy, make: mk}})
 	e := NewEngine(regs, 0)
 
 	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"open"}})); err != nil {
@@ -614,11 +655,11 @@ func (f *bodyErrFilter) OnRequestBody(context.Context, *filter.Stream, filter.Bo
 	return filter.Continue(), f.err
 }
 
-// A FromRule filter that fails in the body phase must consult its config's
-// policy, exactly as the headers phase does: a nil cfg would fall back to
+// A config-dependent failure policy that fails in the body phase must consult
+// its config, exactly as the headers phase does: a nil cfg would fall back to
 // FailClosed and block a rule declaring failStrategy: Allow. tokentransform
-// is the only FromRule filter in the tree and it is body-phase.
-func TestEvalBody_FromRuleConsultsPolicy(t *testing.T) {
+// is the only config-dependent filter in the tree and it is body-phase.
+func TestEvalBody_OnErrorConsultsConfig(t *testing.T) {
 	mk := func(filter.RuleConfig[string]) filter.Filter {
 		return &bodyErrFilter{err: errors.New("boom")}
 	}
@@ -629,7 +670,7 @@ func TestEvalBody_FromRuleConsultsPolicy(t *testing.T) {
 		return filter.FailClosed
 	}
 	regs := buildRegs(t, []regSpec{{
-		name: "fr-body", onError: filter.FromRule, policyOf: policy, make: mk,
+		name: "fr-body", onError: policy, make: mk,
 	}})
 	e := NewEngine(regs, 0)
 
@@ -663,53 +704,482 @@ func (respMutFilter) OnResponseHeaders(context.Context, *filter.Stream) (filter.
 	return filter.Continue(filter.SetHeader("x-resp", "v")), nil
 }
 
-// TestEvalResponseHeaders pins the response-phase contract: the entry point
-// only returns an error — there is nowhere for mutations to go — so a filter
-// returning response-phase mutations must surface as an error naming the
-// filter instead of being silently dropped, while an observation-only filter
-// (no mutations) stays legal because observation is the supported use.
+// TestEvalResponseHeaders pins the response-phase contract: mutations
+// returned from the response phase are folded into HeaderOps (they used to be
+// a hard error, when the entry point had nowhere to put them), while an
+// observation-only filter stays legal because observation is still supported.
 func TestEvalResponseHeaders(t *testing.T) {
 	tests := []struct {
-		name string
-		make func(filter.RuleConfig[string]) filter.Filter
-		// wantErrContaining non-empty means an error naming the offending
-		// filter is required; empty means the call must succeed.
-		wantErrContaining string
+		name         string
+		make         func(filter.RuleConfig[string]) filter.Filter
+		wantOps      []filter.HeaderOp
+		wantDisp     Disposition
+		wantUnitActs []string
 	}{
 		{
-			name:              "mutations are not silently dropped",
-			make:              func(filter.RuleConfig[string]) filter.Filter { return respMutFilter{} },
-			wantErrContaining: "resp",
+			name:     "mutations are folded into HeaderOps",
+			make:     func(filter.RuleConfig[string]) filter.Filter { return respMutFilter{} },
+			wantOps:  []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-resp", Value: "v"}},
+			wantDisp: DispositionMutated,
+			// Mutating in the response phase is a recordable unit action.
+			wantUnitActs: []string{"resp:mutate"},
 		},
 		{
-			name: "observation-only is fine",
-			make: func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+			name:     "observation-only is fine",
+			make:     func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+			wantDisp: DispositionPassthrough,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			regs := buildRegs(t, []regSpec{{
-				name:   "resp",
-				phases: filter.PhaseRequestHeaders | filter.PhaseResponseHeaders,
-				make:   tc.make,
+				name:       "resp",
+				phases:     filter.PhaseRequestHeaders | filter.PhaseResponseHeaders,
+				subscribes: subscribesTo(filter.PhaseResponseHeaders),
+				make:       tc.make,
 			}})
 			e := NewEngine(regs, 0)
+			st := &filter.Stream{Info: filter.NewStreamInfo()}
+			units := unitsFor([][]string{{"cfg"}})
 
-			err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}))
-			if tc.wantErrContaining == "" {
-				if err != nil {
-					t.Fatalf("observation-only response filter erred: %v", err)
-				}
-				return
+			res, err := e.EvalResponseHeaders(context.Background(), st, units)
+			if err != nil {
+				t.Fatalf("EvalResponseHeaders: %v", err)
 			}
-			if err == nil {
-				t.Fatal("response-phase mutations were dropped without an error")
+			requireDisposition(t, res.Disposition, tc.wantDisp)
+			if !equalOps(res.HeaderOps, tc.wantOps) {
+				t.Errorf("HeaderOps = %+v, want %+v", res.HeaderOps, tc.wantOps)
 			}
-			if !strings.Contains(err.Error(), tc.wantErrContaining) {
-				t.Errorf("err = %v, want it to name the offending filter", err)
+			if got := unitActions(st.Info); !slices.Equal(got, tc.wantUnitActs) {
+				t.Errorf("unit actions = %v, want %v", got, tc.wantUnitActs)
 			}
 		})
+	}
+}
+
+// --- response-phase subscription ---------------------------------------
+
+func unitActions(info *filter.StreamInfo) []string {
+	var out []string
+	for _, u := range info.Matched {
+		out = append(out, u.FilterActions...)
+	}
+	return out
+}
+
+func equalOps(got, want []filter.HeaderOp) bool {
+	return slices.Equal(got, want)
+}
+
+// wantRespFilter asks for the response phase from the request phase, and
+// mutates in the response phase.
+type wantRespFilter struct {
+	filter.PassThrough
+	requestAct filter.Action
+	respValue  string
+}
+
+func (f *wantRespFilter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return f.requestAct, nil
+}
+
+func (f *wantRespFilter) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	if f.respValue == "" {
+		return filter.Continue(), nil
+	}
+	return filter.Continue(filter.SetHeader("x-resp", f.respValue)), nil
+}
+
+const bothHeaderPhases = filter.PhaseRequestHeaders | filter.PhaseResponseHeaders
+
+// A config may declare more phases than the engine knows how to open — Phase is a
+// bitmask and the intersection with Phases does not narrow to what the engine
+// consumes. That surplus must be rejected, not ignored: a declaration that
+// compiles, survives validation and is then silently dropped is the
+// "configured but inert" failure the whole mechanism exists to prevent.
+//
+// Both entry points must reject it. The request-headers one is what fails the
+// request before any rule runs; the response-phase one matters because it
+// recomputes the same predicate and must not quietly dispatch on a declaration
+// the other half refused.
+func TestSubscription_RejectsAPhaseItCannotOpen(t *testing.T) {
+	regs := buildRegs(t, []regSpec{{
+		name:   "greedy",
+		phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
+		// The request body is subscribed at runtime via NeedBody, never from
+		// config, so declaring it here is a filter-authoring error.
+		subscribes: subscribesTo(filter.PhaseRequestBody),
+		make:       func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+	}})
+	e := NewEngine(regs, 0)
+	units := unitsFor([][]string{{"cfg"}})
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"WantsResponseHeaders", func() error { _, err := e.WantsResponseHeaders(units); return err }},
+		{"EvalResponseHeaders", func() error {
+			_, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, units)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil {
+				t.Fatal("accepted a phase the engine cannot open; the declaration would vanish silently")
+			}
+			if !strings.Contains(err.Error(), "greedy") {
+				t.Errorf("err = %q, want it to name the filter", err)
+			}
+		})
+	}
+}
+
+// The honoured set is intentionally narrower than DispatchedPhases, and the
+// difference is load-bearing rather than an oversight.
+func TestSubscribablePhasesIsNarrowerThanDispatched(t *testing.T) {
+	if SubscribablePhases&^filter.DispatchedPhases != 0 {
+		t.Fatal("SubscribablePhases must be a subset of DispatchedPhases")
+	}
+	if SubscribablePhases&filter.PhaseRequestHeaders != 0 {
+		t.Error("request headers arrive unconditionally; nothing should subscribe to them")
+	}
+	if SubscribablePhases&filter.PhaseRequestBody != 0 {
+		t.Error("the request body is subscribed at runtime via NeedBody, not from config")
+	}
+}
+
+// WantsResponseHeaders answers from the matched configs alone. The property that
+// matters is that it never runs a filter: a subscription discovered by executing
+// the ordered walk arrives after the single mode_override was sent whenever an
+// earlier rule paused for the request body, which is reachable in the production
+// order.
+func TestWantsResponseHeaders_DerivesFromConfigWithoutRunningFilters(t *testing.T) {
+	ran := &counters{}
+	regs := buildRegs(t, []regSpec{{
+		name:       "resp",
+		phases:     bothHeaderPhases,
+		subscribes: subscribesTo(filter.PhaseResponseHeaders),
+		make: func(filter.RuleConfig[string]) filter.Filter {
+			ran.constructed++
+			return &actionFilter{act: filter.Continue(), c: ran}
+		},
+	}})
+	e := NewEngine(regs, 0)
+	units := unitsFor([][]string{{"quiet"}, {"want"}})
+
+	want, err := e.WantsResponseHeaders(units)
+	if err != nil {
+		t.Fatalf("WantsResponseHeaders: %v", err)
+	}
+	if !want {
+		t.Fatal("want = false, but both matched configs subscribe")
+	}
+	if ran.constructed != 0 || ran.headerCalls != 0 {
+		t.Fatalf("constructed %d filters and made %d calls; it must run none",
+			ran.constructed, ran.headerCalls)
+	}
+}
+
+// Cases where nothing needs the phase. Opening it costs an extra Envoy round trip
+// per stream, so each of these must answer false.
+func TestWantsResponseHeaders_False(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		spec  regSpec
+		units []Unit
+		why   string
+	}{
+		{
+			name: "config does not ask",
+			spec: regSpec{
+				name:   "resp",
+				phases: bothHeaderPhases,
+				// subscribes left nil: capable of running there, does not need it.
+				make: func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+			},
+			units: unitsFor([][]string{{"cfg"}}),
+			why:   "no config asks",
+		},
+		{
+			name: "unit carries no config for this filter",
+			spec: regSpec{
+				name:       "resp",
+				phases:     bothHeaderPhases,
+				subscribes: subscribesTo(filter.PhaseResponseHeaders),
+				make:       func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+			},
+			units: unitsFor([][]string{{""}}),
+			why:   "the unit does not carry this filter's config",
+		},
+		{
+			name: "subscribes beyond declared capability",
+			spec: regSpec{
+				name:       "reqonly",
+				phases:     filter.PhaseRequestHeaders,
+				subscribes: subscribesTo(filter.PhaseResponseHeaders),
+				make:       func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+			},
+			units: unitsFor([][]string{{"cfg"}}),
+			why:   "the filter cannot run in the response phase, so Build narrows the declaration away",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NewEngine(buildRegs(t, []regSpec{tc.spec}), 0).WantsResponseHeaders(tc.units)
+			if err != nil {
+				t.Fatalf("WantsResponseHeaders: %v", err)
+			}
+			if got {
+				t.Fatalf("want = true, want false: %s", tc.why)
+			}
+		})
+	}
+}
+
+// Subscription is independent of how far the walk gets. This is the regression
+// test for the bug the action-borne want had: a rule ordered after one that pauses
+// for the body declared too late, and every request carrying a body failed.
+func TestWantsResponseHeaders_UnaffectedByAnEarlierPause(t *testing.T) {
+	regs := buildRegs(t, []regSpec{
+		{
+			name:   "pauser",
+			phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &bodyFilter{c: &counters{}, bodyAct: filter.Continue()}
+			},
+		},
+		{
+			name:       "resp",
+			phases:     bothHeaderPhases,
+			subscribes: subscribesTo(filter.PhaseResponseHeaders),
+			make:       func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+		},
+	})
+	e := NewEngine(regs, 0)
+	units := unitsFor([][]string{{"pause", "want"}})
+
+	before, err := e.WantsResponseHeaders(units)
+	if err != nil {
+		t.Fatalf("WantsResponseHeaders: %v", err)
+	}
+	if !before {
+		t.Fatal("the post-pause rule subscribes, so this must be true before the walk")
+	}
+
+	// Running the walk — which pauses at the first registration and never reaches
+	// the second in this phase — must not change the answer.
+	res, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, units)
+	if err != nil {
+		t.Fatalf("EvalRequestHeaders: %v", err)
+	}
+	if !res.NeedsBody() {
+		t.Fatal("expected the walk to pause, so this exercises the old failure")
+	}
+	after, err := e.WantsResponseHeaders(units)
+	if err != nil {
+		t.Fatalf("WantsResponseHeaders after the pause: %v", err)
+	}
+	if after != before {
+		t.Fatalf("answer changed across the pause: %v then %v", before, after)
+	}
+}
+
+// A rule that did not subscribe is never invoked in the response phase, even when
+// a sibling rule carrying the same filter opened it. This is the per-rule
+// precision the phase-opening boolean cannot express, so it is asserted against
+// dispatch rather than against the predicate.
+func TestEvalResponseHeaders_DispatchesOnlySubscribedPairs(t *testing.T) {
+	var invoked []string
+	regs := buildRegs(t, []regSpec{{
+		name:   "resp",
+		phases: bothHeaderPhases,
+		subscribes: func(cfg string) filter.Phase {
+			if cfg == "want" {
+				return filter.PhaseResponseHeaders
+			}
+			return 0
+		},
+		make: func(c filter.RuleConfig[string]) filter.Filter {
+			cfg := c.Cfg
+			return &recordingRespFilter{onResp: func() { invoked = append(invoked, cfg) }}
+		},
+	}})
+	e := NewEngine(regs, 0)
+	units := unitsFor([][]string{{"quiet"}, {"want"}})
+	if _, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, units); err != nil {
+		t.Fatalf("EvalResponseHeaders: %v", err)
+	}
+	if !slices.Equal(invoked, []string{"want"}) {
+		t.Fatalf("invoked = %v, want only the subscribing rule", invoked)
+	}
+}
+
+// The phase can be opened by something stream-level — --observe-responses wanting
+// the upstream status in the logs — with no rule subscribed. Dispatch must then
+// invoke nobody rather than fall back to "everything capable".
+func TestEvalResponseHeaders_InvokesNobodyWhenNothingSubscribed(t *testing.T) {
+	var invoked []string
+	regs := buildRegs(t, []regSpec{{
+		name:   "resp",
+		phases: bothHeaderPhases,
+		make: func(c filter.RuleConfig[string]) filter.Filter {
+			cfg := c.Cfg
+			return &recordingRespFilter{onResp: func() { invoked = append(invoked, cfg) }}
+		},
+	}})
+	res, err := NewEngine(regs, 0).EvalResponseHeaders(context.Background(), &filter.Stream{},
+		unitsFor([][]string{{"cfg"}}))
+	if err != nil {
+		t.Fatalf("EvalResponseHeaders: %v", err)
+	}
+	if len(invoked) != 0 {
+		t.Fatalf("invoked = %v, want none: no config subscribed", invoked)
+	}
+	requireDisposition(t, res.Disposition, DispositionPassthrough)
+}
+
+type recordingRespFilter struct {
+	filter.PassThrough
+	onResp func()
+}
+
+func (f *recordingRespFilter) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	f.onResp()
+	return filter.Continue(), nil
+}
+
+// --- response-phase actions and failure policy -------------------------
+
+type respActFilter struct {
+	filter.PassThrough
+	act filter.Action
+	err error
+}
+
+func (f *respActFilter) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return f.act, f.err
+}
+
+// Only Continue is legal from the response phase; the other kinds have no
+// meaning once the upstream response exists.
+// The last two cases are Continue actions and therefore pass the action-kind
+// check: they exercise the separate per-mutation rejection. A translator test
+// asserting clear_route_cache is never emitted does NOT cover them — the
+// translator never receives such a mutation precisely because this rejection
+// stops it here. wantMsg keeps the two branches distinguishable, so a rejection
+// for the wrong reason cannot pass.
+func TestEvalResponseHeaders_RejectsNonContinueKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		act     filter.Action
+		wantMsg string
+	}{
+		{name: "stop", act: filter.Stop(filter.Reply{Status: 403}), wantMsg: "action kind"},
+		{name: "bypass", act: filter.Bypass(), wantMsg: "action kind"},
+		{name: "needbody", act: filter.NeedBody(), wantMsg: "action kind"},
+		{
+			name:    "continue carrying clear-route-cache",
+			act:     filter.Continue(filter.Mutation{ClearRouteCache: true}),
+			wantMsg: "route cache",
+		},
+		{
+			name:    "continue carrying a body mutation",
+			act:     filter.Continue(filter.Mutation{Body: []byte("replaced")}),
+			wantMsg: "body mutation",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			act := tc.act
+			regs := buildRegs(t, []regSpec{{
+				name:       "resp",
+				phases:     bothHeaderPhases,
+				subscribes: subscribesTo(filter.PhaseResponseHeaders),
+				make: func(filter.RuleConfig[string]) filter.Filter {
+					return &respActFilter{act: act}
+				},
+			}})
+			e := NewEngine(regs, 0)
+			units := unitsFor([][]string{{"cfg"}})
+			res, err := e.EvalResponseHeaders(context.Background(), &filter.Stream{}, units)
+			if err == nil || !strings.Contains(err.Error(), "resp") {
+				t.Fatalf("err = %v, want an error naming the filter", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("err = %q, want it to explain %q", err, tc.wantMsg)
+			}
+			// A rejected action must not leak a partially folded result.
+			if len(res.HeaderOps) != 0 {
+				t.Errorf("HeaderOps = %v, want none from a rejected action", res.HeaderOps)
+			}
+		})
+	}
+}
+
+// Fail-closed in the response phase synthesises a blocked result with a
+// Reply, which the adapter turns into an ImmediateResponse replacing the
+// upstream response.
+func TestEvalResponseHeaders_FailClosedSynthesisesBlocked(t *testing.T) {
+	regs := buildRegs(t, []regSpec{{
+		name:       "strict",
+		phases:     bothHeaderPhases,
+		subscribes: subscribesTo(filter.PhaseResponseHeaders),
+		onError:    filter.Always[string](filter.FailClosed),
+		make: func(filter.RuleConfig[string]) filter.Filter {
+			return &respActFilter{act: filter.Continue(), err: errors.New("boom")}
+		},
+	}})
+	e := NewEngine(regs, 0)
+	st := &filter.Stream{Info: filter.NewStreamInfo()}
+	units := unitsFor([][]string{{"cfg"}})
+	res, err := e.EvalResponseHeaders(context.Background(), st, units)
+	if err == nil {
+		t.Fatal("want an error from the fail-closed filter")
+	}
+	requireDisposition(t, res.Disposition, DispositionBlocked)
+	if res.Reply.Status == 0 {
+		t.Errorf("Reply = %+v, want a synthesised blocking reply", res.Reply)
+	}
+	if len(res.HeaderOps) != 0 {
+		t.Errorf("HeaderOps = %+v, want none on a blocked response", res.HeaderOps)
+	}
+	if st.Info.Disposition != DispositionBlocked {
+		t.Errorf("stream disposition = %v, want Blocked", st.Info.Disposition)
+	}
+}
+
+// Fail-open in the response phase must be recorded, symmetrically with the
+// request path's resolveFailure, and must not stop the remaining rules.
+func TestEvalResponseHeaders_FailOpenIsRecorded(t *testing.T) {
+	regs := buildRegs(t, []regSpec{{
+		name:       "flaky",
+		phases:     bothHeaderPhases,
+		subscribes: subscribesTo(filter.PhaseResponseHeaders),
+		onError:    filter.Always[string](filter.FailOpen),
+		make: func(c filter.RuleConfig[string]) filter.Filter {
+			if c.Cfg == "boom" {
+				return &respActFilter{act: filter.Continue(), err: errors.New("boom")}
+			}
+			return respMutFilter{}
+		},
+	}})
+	e := NewEngine(regs, 0)
+	st := &filter.Stream{Info: filter.NewStreamInfo()}
+	units := unitsFor([][]string{{"boom"}, {"ok"}})
+	res, err := e.EvalResponseHeaders(context.Background(), st, units)
+	if err != nil {
+		t.Fatalf("EvalResponseHeaders: %v", err)
+	}
+	if len(res.HeaderOps) != 1 {
+		t.Errorf("HeaderOps = %+v; fail-open must not stop the later rule", res.HeaderOps)
+	}
+	acts := unitActions(st.Info)
+	if !slices.Contains(acts, "flaky:error-open") {
+		t.Errorf("unit actions = %v, want the fail-open skip recorded", acts)
+	}
+	if st.Info.Disposition != DispositionMutated {
+		t.Errorf("stream disposition = %v, want Mutated", st.Info.Disposition)
 	}
 }
 
@@ -760,7 +1230,7 @@ func TestEval_BypassDoesNotInvokeOrRecordFollowingBlock(t *testing.T) {
 // error, whose Err must survive the swallow.
 func TestEval_FilterRecordsIncludeFailOpenErr(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
-		{name: "flaky", onError: filter.FailOpen, make: func(filter.RuleConfig[string]) filter.Filter {
+		{name: "flaky", onError: filter.Always[string](filter.FailOpen), make: func(filter.RuleConfig[string]) filter.Filter {
 			return &errFilter{err: errors.New("boom")}
 		}},
 	})
@@ -781,30 +1251,13 @@ func TestEval_FilterRecordsIncludeFailOpenErr(t *testing.T) {
 	}
 }
 
-// The declared BodyNeed drives mode negotiation; a NeedBody from a filter
-// that declared BodyNone would silently default a mode, so it is rejected
-// as a programming error — that keeps Descriptor.Body load-bearing.
-func TestDefinition_RequestBodyContractRejected(t *testing.T) {
-	_, err := filter.Build(filter.Define(filter.Descriptor[string]{
-		Name:   "undeclared",
-		Phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:   filter.BodyNone,
-		New: func(filter.RuleConfig[string]) filter.Filter {
-			return &bodyFilter{c: &counters{}, bodyAct: filter.Continue()}
-		},
-	}, func(json.RawMessage) (string, error) { return "", nil }))
-	if err == nil {
-		t.Fatal("want definition error: request-body phase without a body need")
-	}
-}
-
-// The paused filter's declared complete-body need drives mode negotiation.
-func TestEval_BodyNeedMatchesPausedFilter(t *testing.T) {
+// A filter that pauses for the request body must surface that need on the
+// headers result so the adapter requests the body from Envoy.
+func TestEval_PausedFilterNeedsBody(t *testing.T) {
 	mk := func(name string) filter.Registration {
 		regs, err := filter.Build(filter.Define(filter.Descriptor[string]{
 			Name:   name,
 			Phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-			Body:   filter.BodyComplete,
 			New: func(filter.RuleConfig[string]) filter.Filter {
 				return &bodyFilter{c: &counters{}, bodyAct: filter.Continue()}
 			},
@@ -819,7 +1272,7 @@ func TestEval_BodyNeedMatchesPausedFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Eval: %v", err)
 	}
-	if !res.NeedsBody() || res.BodyNeed != filter.BodyComplete {
-		t.Fatalf("BodyNeed = %v needsBody=%v, want BodyComplete", res.BodyNeed, res.NeedsBody())
+	if !res.NeedsBody() {
+		t.Fatal("NeedsBody = false, want true after a body pause")
 	}
 }
