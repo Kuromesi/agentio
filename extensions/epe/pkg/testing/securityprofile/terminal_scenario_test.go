@@ -17,7 +17,7 @@
 // harness with the production filter chain; see
 // extensions/epe/pkg/testing/enginetest/doc.go for the layering
 // convention.
-package securityprofiletest
+package securityprofile
 
 import (
 	"testing"

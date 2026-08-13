@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package securityprofiletest
+package securityprofile
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/credential"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
+	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 	"istio.io/istio/extensions/epe/pkg/wiring"
 )
@@ -63,7 +63,7 @@ func New(t testing.TB, opts Options) *Harness {
 			CredentialClient: opts.CredentialClient,
 		})
 		if err != nil {
-			t.Fatalf("securityprofiletest: BuildFilters: %v", err)
+			t.Fatalf("securityprofile: BuildFilters: %v", err)
 		}
 	}
 
@@ -73,7 +73,7 @@ func New(t testing.TB, opts Options) *Harness {
 		auditSink = opts.AuditRouter
 	}
 	core := enginetest.New(t, enginetest.Options{
-		Resolve:                securityprofile.NewResolver(fixture.Store, regs, auditSink),
+		Resolve:                policysecurityprofile.NewResolver(fixture.Store, regs, auditSink),
 		Registrations:          regs,
 		StreamLoggers:          opts.StreamLoggers,
 		DisableResolutionProbe: opts.DisableResolutionProbe,

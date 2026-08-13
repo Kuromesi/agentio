@@ -26,7 +26,7 @@
 //     in the owning package's ordinary _test.go files and do not need this
 //     harness.
 //   - API-specific full-chain scenarios live in the owning API's test package.
-//     SecurityProfile fixtures and scenarios live in securityprofiletest;
+//     SecurityProfile fixtures and scenarios live in testing/securityprofile;
 //     another policy API can supply its own resolver without changing this
 //     package.
 //   - The _test.go files inside this package only prove the harness itself

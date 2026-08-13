@@ -14,7 +14,7 @@
 
 // Full-chain audit access-log scenarios: one accesslog.Entry per request,
 // asserted via the harness's capturing audit logger (Verdict.AccessLog).
-package securityprofiletest
+package securityprofile
 
 import (
 	"testing"

@@ -15,7 +15,7 @@
 // The tests here prove the harness itself works: request assembly, verdict
 // parsing, probe capture, access-log capture, and fixture admission. Feature
 // scenarios live next to the behavior they exercise (see doc.go).
-package securityprofiletest
+package securityprofile
 
 import (
 	"fmt"

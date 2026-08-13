@@ -15,7 +15,7 @@
 // Stream-end acceptance invariants plus the
 // response-side observation path — full-chain scenarios through the real
 // Process loop.
-package securityprofiletest
+package securityprofile
 
 import (
 	"context"

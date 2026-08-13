@@ -18,7 +18,7 @@
 // assemble a bespoke chain via Options.Filters: they test how
 // the engine dispatches a specific chain shape, which is exactly the
 // exception to the "always use the production chain" rule.
-package securityprofiletest
+package securityprofile
 
 import (
 	"context"

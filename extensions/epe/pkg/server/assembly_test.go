@@ -32,10 +32,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
+	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	runserver "istio.io/istio/extensions/epe/pkg/server"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
-	"istio.io/istio/extensions/epe/pkg/testing/securityprofiletest"
+	"istio.io/istio/extensions/epe/pkg/testing/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/wiring"
 )
 
@@ -51,7 +51,7 @@ func freePort(t *testing.T) int {
 }
 
 func TestAsRunnable_ServesConfiguredChainOverGRPC(t *testing.T) {
-	fixture := securityprofiletest.NewFixture(t)
+	fixture := securityprofile.NewFixture(t)
 	fixture.ApplyYAML(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile
@@ -83,7 +83,7 @@ spec:
 	}
 	rn := runserver.New(runserver.Config{
 		GrpcPort:      port,
-		Resolve:       securityprofile.NewResolver(fixture.Store, regs, nil),
+		Resolve:       policysecurityprofile.NewResolver(fixture.Store, regs, nil),
 		Registrations: regs,
 	}, logr.Discard())
 

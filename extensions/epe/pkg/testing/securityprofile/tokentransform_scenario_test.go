@@ -17,7 +17,7 @@
 // extensions/epe/pkg/testing/enginetest/doc.go for the test layering
 // convention. They prove the CRD-to-header wiring, defaulting, and
 // wire-level fail strategies. Signer internals stay in apikey_test.go.
-package securityprofiletest
+package securityprofile
 
 import (
 	"fmt"
@@ -30,7 +30,6 @@ import (
 	"istio.io/istio/extensions/epe/pkg/credential/credentialtest"
 	"istio.io/istio/extensions/epe/pkg/credential/tokencache"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
-	"istio.io/istio/extensions/epe/pkg/testing/filtertest"
 )
 
 const injectionPath = "/token/inject"
@@ -74,7 +73,7 @@ func injectionRequest() *enginetest.RequestBuilder {
 // the value template renders the token, and — via CRD defaulting — the
 // mutation lands on the default Authorization header.
 func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
-	kube := k8sfake.NewClientset(filtertest.APIKeySecret("test-ns", "api-cred", "secret-token-123"))
+	kube := k8sfake.NewClientset(newAPIKeySecret("test-ns", "api-cred", "secret-token-123"))
 	h := New(t, Options{Kube: kube})
 	h.Fixture.ApplyYAML(secretInjectionProfileYAML(""))
 
@@ -168,7 +167,7 @@ spec:
 // TestScenario_WhenConditionGatesInjection proves the compiled When regex
 // from the CRD gates injection on the incoming header value.
 func TestScenario_WhenConditionGatesInjection(t *testing.T) {
-	kube := k8sfake.NewClientset(filtertest.APIKeySecret("test-ns", "api-cred", "rotated-token"))
+	kube := k8sfake.NewClientset(newAPIKeySecret("test-ns", "api-cred", "rotated-token"))
 	h := New(t, Options{Kube: kube})
 	h.Fixture.ApplyYAML(fmt.Sprintf(`
 apiVersion: agents.kruise.io/v1alpha1

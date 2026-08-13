@@ -16,7 +16,7 @@
 // extensions/epe/pkg/testing/enginetest/doc.go. These cover the
 // CRD-to-filter wiring and body buffering; decision semantics are tested in
 // the package unit tests.
-package securityprofiletest
+package securityprofile
 
 import (
 	"fmt"

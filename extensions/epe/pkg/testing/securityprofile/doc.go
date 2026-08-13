@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package securityprofiletest contains SecurityProfile-specific fixtures and
+// Package securityprofile contains SecurityProfile-specific fixtures and
 // full-chain scenarios. It is the only test package that combines the CRD,
 // profile store, SecurityProfile resolver, engine, and ext_proc wire harness.
-package securityprofiletest
+package securityprofile

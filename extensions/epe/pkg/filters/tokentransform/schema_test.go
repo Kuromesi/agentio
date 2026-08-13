@@ -22,7 +22,7 @@ import (
 )
 
 // parseSpec exercises the JSON boundary using the filter-owned wire type.
-// Compatibility with concrete policy APIs is tested in securityprofiletest.
+// Compatibility with concrete policy APIs is tested in testing/securityprofile.
 func parseSpec(t *testing.T, tt *spec) (Config, error) {
 	t.Helper()
 	raw, err := json.Marshal(tt)

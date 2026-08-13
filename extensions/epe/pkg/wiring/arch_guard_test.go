@@ -125,8 +125,8 @@ const crdTypes = "github.com/openkruise/agents-api/agents/"
 // entry has to justify itself in review.
 func TestOnlyPolicyLayerNamesTheCRD(t *testing.T) {
 	allowed := map[string]string{
-		"pkg/admin":                       "debug rendering of CRD-typed views",
-		"pkg/testing/securityprofiletest": "authors CRD objects for SecurityProfile scenarios",
+		"pkg/admin":                   "debug rendering of CRD-typed views",
+		"pkg/testing/securityprofile": "authors CRD objects for SecurityProfile scenarios",
 	}
 	for _, pkg := range listPkgs(t, "...", nil) {
 		if strings.HasPrefix(pkg, "pkg/policy/") {
@@ -159,7 +159,7 @@ func TestFrameworkTestClosureFreeOfPolicyAPIs(t *testing.T) {
 		for _, dep := range forbidden {
 			if strings.Contains(out, dep) {
 				t.Errorf("%s test dependency closure contains %s; move API-specific tests to "+
-					"pkg/testing/securityprofiletest or use neutral engine units", pkg, dep)
+					"pkg/testing/securityprofile or use neutral engine units", pkg, dep)
 			}
 		}
 	}

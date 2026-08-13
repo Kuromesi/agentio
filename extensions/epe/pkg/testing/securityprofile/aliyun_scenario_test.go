@@ -18,7 +18,7 @@
 // so the signer's wire-level tests stay with the signer. Signature
 // algorithms and detection branches stay in sign/; signer-level behaviour
 // in aliyun_test.go.
-package securityprofiletest
+package securityprofile
 
 import (
 	"errors"
@@ -31,7 +31,6 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
-	"istio.io/istio/extensions/epe/pkg/testing/filtertest"
 )
 
 const stsProfileYAML = `
@@ -58,7 +57,7 @@ spec:
 `
 
 func stsSecret() *corev1.Secret {
-	return filtertest.STSSecret("test-ns", "sts-creds", "STS.NEWAK", "NEWSECRET", "NEWTOKEN")
+	return newSTSSecret("test-ns", "sts-creds", "STS.NEWAK", "NEWSECRET", "NEWTOKEN")
 }
 
 func v3Request() *enginetest.RequestBuilder {
@@ -124,7 +123,7 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 // under the profile's Block strategy, which stsProfileYAML leaves at the CRD
 // default.
 func TestScenario_ForbiddenSecretHonoursBlockStrategy(t *testing.T) {
-	forbidden := filtertest.SecretGetErrorClientset(
+	forbidden := newSecretGetErrorClientset(
 		apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "sts-creds", errors.New("rbac denied")))
 	h := New(t, Options{Kube: forbidden})
 	h.Fixture.ApplyYAML(stsProfileYAML)

@@ -14,7 +14,7 @@
 
 // Full-chain audit webhook delivery scenarios: profile audit config through
 // the router and webhook sink to an in-process receiver.
-package securityprofiletest
+package securityprofile
 
 import (
 	"fmt"

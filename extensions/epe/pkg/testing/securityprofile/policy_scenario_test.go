@@ -15,7 +15,7 @@
 // Full-chain orchestration scenarios driven through the enginetest
 // harness; see extensions/epe/pkg/testing/enginetest/doc.go for the
 // test layering convention.
-package securityprofiletest
+package securityprofile
 
 import (
 	"fmt"

@@ -17,7 +17,7 @@
 // harness. Typed v1alpha1 profiles are seeded through Fixture.ApplyProfile /
 // ApplyGlobalProfile so CRD defaulting (e.g. spec.priority=1000) applies
 // exactly as a real apiserver would.
-package securityprofiletest
+package securityprofile
 
 import (
 	"testing"

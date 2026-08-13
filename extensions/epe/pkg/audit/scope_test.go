@@ -15,7 +15,6 @@ package audit
 
 import (
 	"bytes"
-	"reflect"
 	"testing"
 
 	"istio.io/istio/extensions/epe/pkg/eval"
@@ -188,14 +187,30 @@ func TestAuditScopeRendersTemplatePaths(t *testing.T) {
 	}
 }
 
-// TestScope_MatchedCriteriaAccessor pins the template-compatibility
-// accessor: documented webhook templates reference {{ .MatchedCriteria.* }},
-// which must keep rendering via MatchedCriteria.
-func TestScope_MatchedCriteriaAccessor(t *testing.T) {
-	s := &Scope{Matched: Match{Host: "example.com", Method: "GET"}}
-	got := s.MatchedCriteria()
-	if !reflect.DeepEqual(s.Matched, got) {
-		t.Errorf("MatchedCriteria: want %+v, got %+v", s.Matched, got)
+// TestScopeMatchedCriteriaRendersTemplatePaths verifies the compatibility
+// accessor through the same template renderer used by webhooks.
+func TestScopeMatchedCriteriaRendersTemplatePaths(t *testing.T) {
+	tmpl, err := eval.CompileTemplate("matched-criteria",
+		`{{ .MatchedCriteria.Host }}|{{ .MatchedCriteria.Method }}|{{ .MatchedCriteria.Path }}|{{ .MatchedCriteria.Port }}|{{ index .MatchedCriteria.Headers "x-user" }}|{{ index .MatchedCriteria.QueryParams "q" }}`)
+	if err != nil {
+		t.Fatalf("CompileTemplate: %v", err)
+	}
+	s := &Scope{Matched: Match{
+		Host:        "example.com",
+		Method:      "GET",
+		Path:        "/v1/items",
+		Port:        443,
+		Headers:     map[string]string{"x-user": "alice"},
+		QueryParams: map[string]string{"q": "agent"},
+	}}
+
+	got, err := eval.RenderToString(tmpl, s)
+	if err != nil {
+		t.Fatalf("RenderToString: %v", err)
+	}
+	const want = "example.com|GET|/v1/items|443|alice|agent"
+	if got != want {
+		t.Errorf("rendered template = %q, want %q", got, want)
 	}
 }
 

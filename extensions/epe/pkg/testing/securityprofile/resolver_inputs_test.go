@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package securityprofiletest
+package securityprofile
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
+	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/wiring"
 )
 
@@ -53,7 +53,7 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
-	resolution, err := securityprofile.NewResolver(store, regs, nil)(
+	resolution, err := policysecurityprofile.NewResolver(store, regs, nil)(
 		context.Background(),
 		inputs.Pod{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
 		&httpreq.HTTPRequest{Host: "api.example.com", Path: "/", Method: "GET"},
@@ -96,7 +96,7 @@ func TestResolverSkipsInitialProfileWithUnresolvedInputs(t *testing.T) {
 	}}
 	store.ProfileSet(profile)
 
-	resolution, err := securityprofile.NewResolver(store, nil, nil)(
+	resolution, err := policysecurityprofile.NewResolver(store, nil, nil)(
 		context.Background(),
 		inputs.Pod{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
 		&httpreq.HTTPRequest{Host: "api.example.com", Path: "/", Method: "GET"},
