@@ -16,7 +16,7 @@
 // extensions/epe/pkg/testing/enginetest/doc.go. These cover the
 // CRD-to-filter wiring and body buffering; decision semantics are tested in
 // the package unit tests.
-package mcpacl_test
+package securityprofiletest
 
 import (
 	"fmt"
@@ -59,7 +59,7 @@ spec:
 `
 
 func TestScenario_WhitelistFromCRDYAML(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
 	request := func(tool string) *enginetest.RequestBuilder {
@@ -86,7 +86,7 @@ func TestScenario_WhitelistFromCRDYAML(t *testing.T) {
 // the stream, so the body phase never runs; handing audit to a phase that
 // never runs would lose the entry entirely.
 func TestScenario_BodylessMCPRequestIsStillAudited(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
 	// No .Body() call, so HeadersMsg sets EndOfStream=true
@@ -106,7 +106,7 @@ func TestScenario_BodylessMCPRequestIsStillAudited(t *testing.T) {
 // they do. A unit test on HandleRequestBody cannot catch this — only driving
 // both messages through Process can.
 func TestScenario_BodyPhaseDenyAuditsExactlyOnce(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
 	body := `{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"unlisted-tool"}}`
@@ -136,7 +136,7 @@ func TestScenario_BodyPhaseDenyAuditsExactlyOnce(t *testing.T) {
 // submits. This is the test that fails if someone deletes that defer as
 // redundant.
 func TestScenario_StreamingHeadersWithoutBodyIsStillAudited(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
 	verdict := h.Run(t, enginetest.NewRequest("POST", "server.example.com", "/mcp").
@@ -155,7 +155,7 @@ func TestScenario_StreamingHeadersWithoutBodyIsStillAudited(t *testing.T) {
 // the extension must still judge, including a cut through the middle of the
 // JSON-RPC "method" key.
 func TestScenario_ChunkedBodyDelivery(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
 	body := `{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"unlisted-tool"}}`

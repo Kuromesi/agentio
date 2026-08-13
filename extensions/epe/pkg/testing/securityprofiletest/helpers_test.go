@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package enginetest
+package securityprofiletest
 
 import (
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
+
+	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
 
 // auditProfileYAML wires an audit webhook (with URL template, header and
@@ -64,16 +66,16 @@ spec:
 }
 
 func TestMetricProbe_WebhookDispatchOutcomes(t *testing.T) {
-	LockMetrics(t)
+	enginetest.LockMetrics(t)
 
-	receiver := NewAuditReceiver(t)
-	wiring := WireAudit(t, AuditOptions{Mode: AuditSync})
+	receiver := enginetest.NewAuditReceiver(t)
+	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditSync})
 	h := New(t, Options{AuditRouter: wiring.Router})
 	h.Fixture.ApplyYAML(auditProfileYAML(receiver.URL("")))
 
-	success := ProbeMetric(t, "epe_audit_webhook_dispatched_total",
+	success := enginetest.ProbeMetric(t, "epe_audit_webhook_dispatched_total",
 		map[string]string{"result": "success"})
-	httpError := ProbeMetric(t, "epe_audit_webhook_dispatched_total",
+	httpError := enginetest.ProbeMetric(t, "epe_audit_webhook_dispatched_total",
 		map[string]string{"result": "http_error"})
 
 	h.Run(t, testRequest("/audited").Header("x-audit-marker", "metric-success")).
@@ -89,13 +91,13 @@ func TestMetricProbe_WebhookDispatchOutcomes(t *testing.T) {
 }
 
 func TestMetricProbe_TransportErrorCounted(t *testing.T) {
-	LockMetrics(t)
+	enginetest.LockMetrics(t)
 
-	wiring := WireAudit(t, AuditOptions{Mode: AuditSync})
+	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditSync})
 	h := New(t, Options{AuditRouter: wiring.Router})
 	h.Fixture.ApplyYAML(auditProfileYAML("http://127.0.0.1:1"))
 
-	transportError := ProbeMetric(t, "epe_audit_webhook_dispatched_total",
+	transportError := enginetest.ProbeMetric(t, "epe_audit_webhook_dispatched_total",
 		map[string]string{"result": "transport_error"})
 
 	h.Run(t, testRequest("/audited").Header("x-audit-marker", "metric-transport")).
@@ -139,19 +141,19 @@ spec:
 `)
 
 	deny := []byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"denied-tool"}}`)
-	DeliverySweep(t, deny, func(t *testing.T, withBody func(*RequestBuilder) *RequestBuilder) {
-		h.Run(t, withBody(NewRequest("POST", "server.example.com", "/mcp").
+	enginetest.DeliverySweep(t, deny, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
+		h.Run(t, withBody(enginetest.NewRequest("POST", "server.example.com", "/mcp").
 			Peer("test-ns", "sandbox-pod", testLabels).
 			Header("mcp-protocol-version", "2025-11-25"))).
 			RequireBlockedBody(t, 452, "denied-sweep")
 	})
 
 	allow := []byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"allowed-tool"}}`)
-	DeliverySweep(t, allow, func(t *testing.T, withBody func(*RequestBuilder) *RequestBuilder) {
-		verdict := h.Run(t, withBody(NewRequest("POST", "server.example.com", "/mcp").
+	enginetest.DeliverySweep(t, allow, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
+		verdict := h.Run(t, withBody(enginetest.NewRequest("POST", "server.example.com", "/mcp").
 			Peer("test-ns", "sandbox-pod", testLabels).
 			Header("mcp-protocol-version", "2025-11-25")))
-		if verdict.Kind == VerdictBlocked {
+		if verdict.Kind == enginetest.VerdictBlocked {
 			t.Fatalf("allowed tool blocked in this delivery shape: %+v", verdict)
 		}
 	})
@@ -162,7 +164,7 @@ func TestRunParallel_ConcurrentRequestsDoNotInterfere(t *testing.T) {
 	h.Fixture.ApplyYAML(blockProfileYAML("parallel-block", "/parallel/blocked", 451, "blocked-parallel", -1))
 
 	const n = 32
-	verdicts := h.RunParallel(t, n, func(i int) *RequestBuilder {
+	verdicts := h.RunParallel(t, n, func(i int) *enginetest.RequestBuilder {
 		if i%2 == 0 {
 			return testRequest("/parallel/blocked")
 		}
@@ -173,10 +175,10 @@ func TestRunParallel_ConcurrentRequestsDoNotInterfere(t *testing.T) {
 			t.Fatalf("request %d: Process error: %v", i, verdict.Err)
 		}
 		if i%2 == 0 {
-			if verdict.Kind != VerdictBlocked || verdict.ImmediateStatus != 451 {
+			if verdict.Kind != enginetest.VerdictBlocked || verdict.ImmediateStatus != 451 {
 				t.Errorf("request %d: verdict = %+v, want blocked 451", i, verdict)
 			}
-		} else if verdict.Kind != VerdictPassthrough {
+		} else if verdict.Kind != enginetest.VerdictPassthrough {
 			t.Errorf("request %d: verdict = %+v, want passthrough", i, verdict)
 		}
 	}
@@ -193,7 +195,7 @@ func TestRunParallel_StoreUpdateDuringTraffic(t *testing.T) {
 			h.Fixture.ApplyYAML(blockProfileYAML("hot-swap", "/hot", 451, "blocked-hot", i%1000))
 		}
 	}()
-	verdicts := h.RunParallel(t, 32, func(int) *RequestBuilder {
+	verdicts := h.RunParallel(t, 32, func(int) *enginetest.RequestBuilder {
 		return testRequest("/hot")
 	})
 	<-done
@@ -203,15 +205,15 @@ func TestRunParallel_StoreUpdateDuringTraffic(t *testing.T) {
 		if verdict.Err != nil {
 			t.Fatalf("request %d: Process error: %v", i, verdict.Err)
 		}
-		if verdict.Kind != VerdictBlocked {
+		if verdict.Kind != enginetest.VerdictBlocked {
 			t.Errorf("request %d: verdict = %s, want blocked", i, verdict.Kind)
 		}
 	}
 }
 
 func TestAudit_BufferedAbsenceAfterDrain(t *testing.T) {
-	receiver := NewAuditReceiver(t)
-	wiring := WireAudit(t, AuditOptions{Mode: AuditBuffered})
+	receiver := enginetest.NewAuditReceiver(t)
+	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditBuffered})
 	h := New(t, Options{AuditRouter: wiring.Router})
 	h.Fixture.ApplyYAML(auditProfileYAML(receiver.URL("")))
 

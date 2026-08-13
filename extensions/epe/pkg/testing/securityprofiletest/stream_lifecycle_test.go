@@ -15,7 +15,7 @@
 // Stream-end acceptance invariants plus the
 // response-side observation path — full-chain scenarios through the real
 // Process loop.
-package extproc_test
+package securityprofiletest
 
 import (
 	"context"
@@ -110,7 +110,7 @@ func (s *failNthSendStream) Send(resp *extProcPb.ProcessingResponse) error {
 // down by a receive failure still produces exactly one entry, marked as an
 // error, or the requests that need auditing most vanish.
 func TestScenario_AbnormalTerminationStillLogged(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyProfile(passthroughProfile())
 
 	msgs := blockedPeerRequest("GET", "api.example.com", "/x").Build()
@@ -134,7 +134,7 @@ func TestScenario_AbnormalTerminationStillLogged(t *testing.T) {
 }
 
 func TestScenario_CommittedBlockIsNotOverwrittenByRecvFailure(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(blockingRuleYAML))
 	stream := enginetest.NewScriptedStream(t.Context(),
 		blockedPeerRequest("GET", "api.example.com", "/deny").Build()...)
@@ -150,7 +150,7 @@ func TestScenario_CommittedBlockIsNotOverwrittenByRecvFailure(t *testing.T) {
 }
 
 func TestScenario_UnsentBlockIsAuditedAsError(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(blockingRuleYAML))
 	stream := enginetest.NewScriptedStream(t.Context(),
 		blockedPeerRequest("GET", "api.example.com", "/deny").Build()...)
@@ -168,7 +168,7 @@ func TestScenario_UnsentBlockIsAuditedAsError(t *testing.T) {
 // server's dynamic ObserveResponses mode. With no matched policy, the first
 // response headers still need a matching acknowledgement and one final audit.
 func TestScenario_StaticResponseHeadersWithoutMatchedPolicyAreAcknowledged(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	msgs := blockedPeerRequest("GET", "api.example.com", "/x").Build()
 	msgs = append(msgs, &extProcPb.ProcessingRequest{
 		Request: &extProcPb.ProcessingRequest_ResponseHeaders{
@@ -195,7 +195,7 @@ func TestScenario_StaticResponseHeadersWithoutMatchedPolicyAreAcknowledged(t *te
 // a response selected by static configuration remains protocol-valid. It must
 // be acknowledged without reopening the already committed audit lifecycle.
 func TestScenario_StaticResponseHeadersAfterHeadersBypassAreAcknowledgedOnce(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: trust-internal
     match:
     - domains:
@@ -226,7 +226,7 @@ func TestScenario_StaticResponseHeadersAfterHeadersBypassAreAcknowledgedOnce(t *
 }
 
 func TestScenario_BodyPhaseBlockWithResponseObservationEndsCleanly(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{ObserveResponses: true})
+	h := New(t, Options{ObserveResponses: true})
 	h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{{
 		Name:  "inspect-body",
 		Match: []v1alpha1.RuleMatch{{Domains: []string{"mcp-server.example.com"}}},
@@ -245,7 +245,7 @@ func TestScenario_BodyPhaseBlockWithResponseObservationEndsCleanly(t *testing.T)
 }
 
 func TestScenario_OutstandingResponseAtEOFIsError(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{ObserveResponses: true})
+	h := New(t, Options{ObserveResponses: true})
 	h.Fixture.ApplyProfile(passthroughProfile())
 
 	verdict := h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x"))
@@ -262,7 +262,7 @@ func TestScenario_OutstandingResponseAtEOFIsError(t *testing.T) {
 // for (here: response headers) truncates the exchange and must be audited
 // as an error, even though the gRPC caller sees a clean return.
 func TestScenario_CanceledReceiveWithOutstandingObligationAuditsError(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{ObserveResponses: true})
+	h := New(t, Options{ObserveResponses: true})
 	h.Fixture.ApplyProfile(passthroughProfile())
 	stream := enginetest.NewScriptedStream(t.Context(),
 		blockedPeerRequest("GET", "api.example.com", "/x").Build()...)
@@ -281,7 +281,7 @@ func TestScenario_CanceledReceiveWithOutstandingObligationAuditsError(t *testing
 // it needs nothing further. With matched policy units but no outstanding
 // obligation, that reset is normal completion, not an error.
 func TestScenario_CanceledReceiveWithMatchedPolicyIsPassthrough(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyProfile(passthroughProfile())
 	stream := enginetest.NewScriptedStream(t.Context(),
 		blockedPeerRequest("GET", "api.example.com", "/x").Build()...)
@@ -300,7 +300,7 @@ func TestScenario_CanceledReceiveWithMatchedPolicyIsPassthrough(t *testing.T) {
 }
 
 func TestScenario_CanceledReceiveWithoutPolicyIsPassthrough(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	stream := enginetest.NewScriptedStream(t.Context(),
 		blockedPeerRequest("GET", "api.example.com", "/x").Build()...)
 	stream.RecvErr = context.Canceled
@@ -322,7 +322,7 @@ func TestScenario_CanceledReceiveWithoutPolicyIsPassthrough(t *testing.T) {
 // otherwise the audit loses the upstream status (or fires twice).
 func TestScenario_BodyBypassWaitsForResponseStatus(t *testing.T) {
 	logger := &responseRecordingStreamLogger{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters:          regsWith(t, nil, bodyBypassRegistration()),
 		StreamLoggers:    []filter.StreamLogger{logger},
 		ObserveResponses: true,
@@ -359,7 +359,7 @@ func TestScenario_BodyBypassWaitsForResponseStatus(t *testing.T) {
 // as error even though the status is already available in the stream view.
 func TestScenario_BodyBypassFinalResponseSendFailureAuditsError(t *testing.T) {
 	logger := &responseRecordingStreamLogger{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters:          regsWith(t, nil, bodyBypassRegistration()),
 		StreamLoggers:    []filter.StreamLogger{logger},
 		ObserveResponses: true,
@@ -410,7 +410,7 @@ func TestScenario_BodyBypassFinalResponseSendFailureAuditsError(t *testing.T) {
 // claim a complete exchange that never happened.
 func TestScenario_BodyBypassWithoutResponseHeadersIsError(t *testing.T) {
 	logger := &responseRecordingStreamLogger{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters:          regsWith(t, nil, bodyBypassRegistration()),
 		StreamLoggers:    []filter.StreamLogger{logger},
 		ObserveResponses: true,
@@ -437,7 +437,7 @@ func TestScenario_BodyBypassWithoutResponseHeadersIsError(t *testing.T) {
 // response observation is on, open the response-headers phase (the merge
 // base is the static config, so an unset mode silently becomes NONE).
 func TestScenario_ObserveResponsesOverrideContent(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{ObserveResponses: true})
+	h := New(t, Options{ObserveResponses: true})
 	h.Fixture.ApplyProfile(passthroughProfile())
 
 	verdict := h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x"))
@@ -458,7 +458,7 @@ func TestScenario_ObserveResponsesOverrideContent(t *testing.T) {
 // The upstream status delivered on the response side must land in the
 // stream view the loggers observe (the first response consumer).
 func TestScenario_ResponseStatusRecorded(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{ObserveResponses: true})
+	h := New(t, Options{ObserveResponses: true})
 	h.Fixture.ApplyProfile(passthroughProfile())
 
 	msgs := blockedPeerRequest("GET", "api.example.com", "/x").Build()

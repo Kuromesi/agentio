@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package enginetest is an in-process test harness for the traffic
-// extension request-handling engine. It drives the real ext_proc
-// extproc.Server.Process loop through a fake Envoy stream, compiles
-// SecurityProfile fixtures through the production pipeline (including CRD
-// structural defaulting and offline CEL validation against the chart's CRD
-// manifests), and reduces the response sequence to a Verdict.
+// Package enginetest is a policy-neutral in-process test harness for the
+// traffic extension request-handling engine. It drives the real
+// extproc.Server.Process loop through a fake Envoy stream and reduces the
+// response sequence to a Verdict. Callers inject an engine.Resolver and the
+// registrations used to evaluate its neutral engine.Unit values.
 //
 // # Where tests live
 //
@@ -26,12 +25,10 @@
 //   - Single-package semantics (matchers, policy evaluation, sorting) stay
 //     in the owning package's ordinary _test.go files and do not need this
 //     harness.
-//   - Full-chain scenarios (CRD YAML -> plugin chain -> verdict) live next
-//     to the behavior they exercise, in an external test package that
-//     imports enginetest: package mcpacl_test for MCP policy wiring,
-//     package extproc_test for orchestration behavior, and so on. The
-//     external package form avoids an import cycle, since enginetest
-//     imports the engine packages.
+//   - API-specific full-chain scenarios live in the owning API's test package.
+//     SecurityProfile fixtures and scenarios live in securityprofiletest;
+//     another policy API can supply its own resolver without changing this
+//     package.
 //   - The _test.go files inside this package only prove the harness itself
 //     works.
 //

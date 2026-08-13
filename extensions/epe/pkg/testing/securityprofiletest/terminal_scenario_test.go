@@ -17,7 +17,7 @@
 // harness with the production filter chain; see
 // extensions/epe/pkg/testing/enginetest/doc.go for the layering
 // convention.
-package extproc_test
+package securityprofiletest
 
 import (
 	"testing"
@@ -65,7 +65,7 @@ func blockedPeerRequest(method, host, path string) *enginetest.RequestBuilder {
 }
 
 func TestHandleRequestHeaders_BlockMatched(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: block-secret-path
     match:
     - domains:
@@ -89,7 +89,7 @@ func TestHandleRequestHeaders_BlockMatched(t *testing.T) {
 }
 
 func TestHandleRequestHeaders_BlockNotMatched_FallsThrough(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: block-admin
     match:
     - domains:
@@ -111,7 +111,7 @@ func TestHandleRequestHeaders_BlockNotMatched_FallsThrough(t *testing.T) {
 // TestHandleRequestHeaders_NoProfileMatch verifies the passthrough path when
 // no profile selector matches the pod labels.
 func TestHandleRequestHeaders_NoProfileMatch(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(otherSelectorProfileYAML)
 
 	h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x")).
@@ -122,7 +122,7 @@ func TestHandleRequestHeaders_NoProfileMatch(t *testing.T) {
 // when a rule matches but its Actions struct is zero-valued (no Block, no
 // Bypass): every filter returns Continue and the request falls through.
 func TestHandleRequestHeaders_RuleWithEmptyActions(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: no-actions
     match:
     - domains:
@@ -138,7 +138,7 @@ func TestHandleRequestHeaders_RuleWithEmptyActions(t *testing.T) {
 // rule short-circuits the chain with a passthrough response (NOT an
 // ImmediateResponse, which would terminate the request).
 func TestHandleRequestHeaders_BypassMatched_ForwardsUnmodified(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: trust-internal
     match:
     - domains:
@@ -155,7 +155,7 @@ func TestHandleRequestHeaders_BypassMatched_ForwardsUnmodified(t *testing.T) {
 // bypass filter only short-circuits when the rule explicitly opts in. A rule
 // that has Block but no Bypass must still produce the Block response.
 func TestHandleRequestHeaders_BypassNotMatched_FallsThroughToBlock(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: block-only
     match:
     - domains:
@@ -173,7 +173,7 @@ func TestHandleRequestHeaders_BypassNotMatched_FallsThroughToBlock(t *testing.T)
 // single rule pathologically declares both Bypass=true and a Block action,
 // Bypass wins because it runs ahead of Block in the production chain.
 func TestHandleRequestHeaders_BypassBeatsBlockSameRule(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: bypass-and-block
     match:
     - domains:
@@ -192,7 +192,7 @@ func TestHandleRequestHeaders_BypassBeatsBlockSameRule(t *testing.T) {
 // short-circuit semantics: an earlier Bypass rule prevents a later Block rule
 // from running, even though the Block rule would otherwise match.
 func TestHandleRequestHeaders_BypassRuleSkipsLaterBlockRule(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: bypass-internal-first
     match:
     - domains:
@@ -216,7 +216,7 @@ func TestHandleRequestHeaders_BypassRuleSkipsLaterBlockRule(t *testing.T) {
 // reverse order: a Block rule that matches first must short-circuit before
 // the engine ever reaches a later Bypass rule.
 func TestHandleRequestHeaders_BlockRuleBeatsLaterBypassRule(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: block-first
     match:
     - domains:

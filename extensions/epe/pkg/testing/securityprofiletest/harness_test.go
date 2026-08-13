@@ -15,7 +15,7 @@
 // The tests here prove the harness itself works: request assembly, verdict
 // parsing, probe capture, access-log capture, and fixture admission. Feature
 // scenarios live next to the behavior they exercise (see doc.go).
-package enginetest
+package securityprofiletest
 
 import (
 	"fmt"
@@ -24,12 +24,14 @@ import (
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc/codes"
+
+	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
 
 var testLabels = map[string]string{"app": "sandbox"}
 
-func testRequest(path string) *RequestBuilder {
-	return NewRequest("GET", "server.example.com", path).
+func testRequest(path string) *enginetest.RequestBuilder {
+	return enginetest.NewRequest("GET", "server.example.com", path).
 		Peer("test-ns", "sandbox-pod", testLabels)
 }
 

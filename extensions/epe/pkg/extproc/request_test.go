@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -25,18 +24,13 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	structpb "google.golang.org/protobuf/types/known/structpb"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
 	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/extproc/attributes"
-	"istio.io/istio/extensions/epe/pkg/filters/block"
 	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
-	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 )
 
 type responseHeadersProbe struct {
@@ -103,44 +97,6 @@ func (p *bodylessDeadlineProbe) OnRequestHeaders(ctx context.Context, _ *filter.
 func (p *bodylessDeadlineProbe) OnRequestBody(ctx context.Context, _ *filter.Stream, _ filter.Body) (filter.Action, error) {
 	p.bodyDeadline, p.bodyHasDeadline = ctx.Deadline()
 	return filter.Continue(), nil
-}
-
-// scopeCaptureFilter records each unit's identity and evaluation scope,
-// standing in for a filter that consumes profile-scoped inputs.
-type scopeCaptureFilter struct {
-	filter.PassThrough
-	profileScopes []string
-	scopes        []inputs.Scope
-}
-
-func (p *scopeCaptureFilter) capture(rule filter.RuleConfig[struct{}]) filter.Filter {
-	p.profileScopes = append(p.profileScopes, rule.ID.Scope)
-	p.scopes = append(p.scopes, *rule.Scope)
-	return p
-}
-
-// scopeCaptureReg registers the capture filter under the block name: the
-// test rule carries a block action, so payloadsFor emits that key and the
-// filter mounts with the unit's scope.
-func scopeCaptureReg(p *scopeCaptureFilter) filter.Registration {
-	return filter.Registration{
-		Name:   block.FilterName,
-		Phases: filter.PhaseRequestHeaders,
-		Parse:  func(json.RawMessage) (any, error) { return struct{}{}, nil },
-		New: func(cfg filter.ErasedRuleConfig) filter.Filter {
-			return p.capture(filter.RuleConfig[struct{}]{ID: cfg.ID, Scope: cfg.Scope})
-		},
-	}
-}
-
-// blockRegistrations builds the production block filter registration set.
-func blockRegistrations(t *testing.T) []filter.Registration {
-	t.Helper()
-	regs, err := filter.Build(block.Definition())
-	if err != nil {
-		t.Fatalf("build block: %v", err)
-	}
-	return regs
 }
 
 // White-box tests for internals that cannot be observed through the
@@ -215,17 +171,6 @@ func makeAttrsWithLabels(namespace, name, labelsB64 string) map[string]*structpb
 	})
 	return map[string]*structpb.Struct{
 		attributes.ExtProcAttrsKey: inner,
-	}
-}
-
-// newProfile builds a SecurityProfile with the given selector and rules.
-func newProfile(name, namespace string, selector map[string]string, rules []v1alpha1.SecurityRule) *v1alpha1.SecurityProfile {
-	return &v1alpha1.SecurityProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1alpha1.SecurityProfileSpec{
-			Selector: metav1.LabelSelector{MatchLabels: selector},
-			Rules:    rules,
-		},
 	}
 }
 
@@ -459,92 +404,6 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 	}
 }
 
-func TestHandleRequestHeaders_MountsRecordedProfileInputsForFinalize(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	for _, tc := range []struct {
-		name  string
-		value string
-	}{
-		{name: "p1", value: "first"},
-		{name: "p2", value: "second"},
-	} {
-		p := newProfile(tc.name, "default", map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{{
-			Name:  "capture",
-			Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-			// The block action is what mounts the capture filter: a rule
-			// with no actions emits no payloads and mounts nothing.
-			Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
-		}})
-		p.Spec.Inputs = []v1alpha1.SecurityProfileInput{{
-			Name:   "routing",
-			Inline: map[string]string{"target": tc.value},
-		}}
-		store.ProfileSet(p)
-	}
-
-	capture := &scopeCaptureFilter{}
-	regs := []filter.Registration{scopeCaptureReg(capture)}
-	srv := NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
-	})
-	if _, err := srv.HandleRequestHeaders(
-		context.Background(),
-		makeRequestHeaders("api.example.com", "/", "GET"),
-		makeAttrsWithLabels("default", "pod", testLabelsB64),
-		newStreamState(),
-	); err != nil {
-		t.Fatalf("HandleRequestHeaders: %v", err)
-	}
-
-	if got := capture.profileScopes; !reflect.DeepEqual(got, []string{"default/p1", "default/p2"}) {
-		t.Fatalf("captured unit scopes = %v, want profile order", got)
-	}
-	want := []map[string]any{
-		{"routing": map[string]string{"target": "first"}},
-		{"routing": map[string]string{"target": "second"}},
-	}
-	for i := range want {
-		if !reflect.DeepEqual(capture.scopes[i].Inputs(), want[i]) {
-			t.Fatalf("captured inputs[%d] = %#v, want %#v", i, capture.scopes[i].Inputs(), want[i])
-		}
-	}
-}
-
-func TestHandleRequestHeaders_SkipsInvalidInitialProfileWithUnresolvedInputs(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	p := newProfile("p1", "default", map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{{
-		Name:    "match",
-		Match:   []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-		Actions: v1alpha1.SecurityRuleActions{},
-	}})
-	p.Spec.Inputs = []v1alpha1.SecurityProfileInput{{
-		Name:      "routing",
-		ConfigMap: &v1alpha1.ConfigMapInputRef{Name: "missing"},
-	}}
-	store.ProfileSet(p)
-
-	_, err := NewServer(ServerDeps{Resolve: securityprofile.NewResolver(store, nil, nil)}).HandleRequestHeaders(
-		context.Background(),
-		makeRequestHeaders("api.example.com", "/", "GET"),
-		makeAttrsWithLabels("default", "pod", testLabelsB64),
-		newStreamState(),
-	)
-	if err != nil {
-		t.Fatalf("invalid initial profile should be absent from the effective snapshot: %v", err)
-	}
-}
-
-// newServerWithBlockOnly constructs a Server wired only with the block filter.
-func newServerWithBlockOnly(t *testing.T, store profilestore.Store) *Server {
-	t.Helper()
-	regs := blockRegistrations(t)
-	return NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
-	})
-}
-
 // capturedAuditLogger collects every audit Entry the handler submits so
 // tests can assert on outcomes without depending on a real worker
 // goroutine. Implements accesslog.Logger.
@@ -572,34 +431,19 @@ func (c *capturedAuditLogger) last(t *testing.T) accesslog.Entry {
 // Compile-time check that capturedAuditLogger implements accesslog.Logger.
 var _ accesslog.Logger = (*capturedAuditLogger)(nil)
 
-// newServerWithAudit returns a Server wired with the supplied registrations
-// and a fresh capturedAuditLogger so the test can inspect the emitted entry.
-func newServerWithAudit(t *testing.T, store profilestore.Store, regs []filter.Registration) (*Server, *capturedAuditLogger) {
-	t.Helper()
-	cap := &capturedAuditLogger{}
-	srv := NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
-		AuditLogger:   cap,
-	})
-	return srv, cap
-}
-
 // TestHandleRequestHeaders_NoPodIdentity verifies that when filter_state
 // does not carry pod identity (e.g. the upstream metadata-exchange filter
 // is misconfigured), the handler passes the request through unmodified
 // instead of falling back to a hardcoded pod or failing the request.
 func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	store.ProfileSet(newProfile("p1", "default", map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
-		{
-			Name:    "block-everything",
-			Match:   []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-			Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
+	cap := &capturedAuditLogger{}
+	srv := NewServer(ServerDeps{
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			t.Fatal("resolver called without a valid pod identity")
+			return engine.Resolution{}, nil
 		},
-	}))
-
-	srv, cap := newServerWithAudit(t, store, blockRegistrations(t))
+		AuditLogger: cap,
+	})
 
 	// attrs with empty pod name + namespace simulates Envoy not populating
 	// filter_state['downstream_peer'].
@@ -630,7 +474,7 @@ func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
 // TestPassThroughHandlers covers the trivial body / trailer / response stubs
 // so they show up in coverage and accidental regressions surface immediately.
 func TestPassThroughHandlers(t *testing.T) {
-	srv := newServerWithBlockOnly(t, profilestore.MakeFakeStore())
+	srv := NewServer(ServerDeps{})
 	ctx := context.Background()
 
 	if r, err := srv.HandleRequestBody(ctx, &extProcPb.HttpBody{EndOfStream: true}, nil); err != nil || len(r) != 1 {
@@ -651,11 +495,10 @@ func TestPassThroughHandlers(t *testing.T) {
 // regressions in NewServer's nil-default: the handler must still produce a
 // passthrough response when ServerDeps.AuditLogger is nil.
 func TestHandleRequestHeaders_AuditEntry_NilLoggerDoesNotPanic(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	regs := blockRegistrations(t)
 	srv := NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{}, nil
+		},
 		// AuditLogger intentionally nil.
 	})
 	if _, err := srv.HandleRequestHeaders(

@@ -15,7 +15,7 @@
 // Full-chain orchestration scenarios driven through the enginetest
 // harness; see extensions/epe/pkg/testing/enginetest/doc.go for the
 // test layering convention.
-package extproc_test
+package securityprofiletest
 
 import (
 	"fmt"
@@ -80,7 +80,7 @@ func guardedMCPRequest() *enginetest.RequestBuilder {
 func TestScenario_LaterBypassCannotSkipEarlierBodyRule(t *testing.T) {
 	// Control: without the bypass rule the MCP policy buffers the body
 	// and denies the unlisted tool.
-	control := enginetest.New(t, enginetest.Options{})
+	control := New(t, Options{})
 	control.Fixture.ApplyYAML(fmt.Sprintf(bypassDropsBodyProfile, ""))
 	verdict := control.Run(t, guardedMCPRequest())
 	verdict.RequireBlockedBody(t, 452, "denied-guarded")
@@ -89,7 +89,7 @@ func TestScenario_LaterBypassCannotSkipEarlierBodyRule(t *testing.T) {
 	}
 
 	// A later bypass cannot retroactively suppress the earlier MCP rule.
-	bypassed := enginetest.New(t, enginetest.Options{})
+	bypassed := New(t, Options{})
 	bypassed.Fixture.ApplyYAML(fmt.Sprintf(bypassDropsBodyProfile, trailingBypassRule))
 	verdict = bypassed.Run(t, guardedMCPRequest())
 	verdict.RequireBlockedBody(t, 452, "denied-guarded")
@@ -102,7 +102,7 @@ func TestScenario_LaterBypassCannotSkipEarlierBodyRule(t *testing.T) {
 // port cannot dodge a port-scoped rule when the Envoy-authenticated
 // destination.port attribute disagrees.
 func TestScenario_DestinationPortOverridesAuthority(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile

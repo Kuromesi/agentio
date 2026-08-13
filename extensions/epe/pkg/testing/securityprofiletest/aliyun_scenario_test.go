@@ -18,7 +18,7 @@
 // so the signer's wire-level tests stay with the signer. Signature
 // algorithms and detection branches stay in sign/; signer-level behaviour
 // in aliyun_test.go.
-package aliyun_test
+package securityprofiletest
 
 import (
 	"errors"
@@ -76,7 +76,7 @@ func v3Request() *enginetest.RequestBuilder {
 // STS triplet is read from the pod-namespace Secret, and the signature
 // headers are rewritten in the response mutation.
 func TestScenario_V3ResignFromSecret(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{Kube: k8sfake.NewClientset(stsSecret())})
+	h := New(t, Options{Kube: k8sfake.NewClientset(stsSecret())})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	verdict := h.Run(t, v3Request())
@@ -95,7 +95,7 @@ func TestScenario_V3ResignFromSecret(t *testing.T) {
 // that a V1-RPC POST with all parameters in the query string is re-signed
 // in the headers phase without requesting body delivery from Envoy.
 func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{Kube: k8sfake.NewClientset(stsSecret())})
+	h := New(t, Options{Kube: k8sfake.NewClientset(stsSecret())})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	verdict := h.Run(t, enginetest.NewRequest("POST", "ecs.cn-hangzhou.aliyuncs.com",
@@ -126,7 +126,7 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 func TestScenario_ForbiddenSecretHonoursBlockStrategy(t *testing.T) {
 	forbidden := filtertest.SecretGetErrorClientset(
 		apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "sts-creds", errors.New("rbac denied")))
-	h := enginetest.New(t, enginetest.Options{Kube: forbidden})
+	h := New(t, Options{Kube: forbidden})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	h.Run(t, v3Request()).RequireBlocked(t, 403)

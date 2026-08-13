@@ -35,6 +35,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	runserver "istio.io/istio/extensions/epe/pkg/server"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
+	"istio.io/istio/extensions/epe/pkg/testing/securityprofiletest"
 	"istio.io/istio/extensions/epe/pkg/wiring"
 )
 
@@ -50,7 +51,7 @@ func freePort(t *testing.T) int {
 }
 
 func TestAsRunnable_ServesConfiguredChainOverGRPC(t *testing.T) {
-	fixture := enginetest.NewFixture(t)
+	fixture := securityprofiletest.NewFixture(t)
 	fixture.ApplyYAML(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile

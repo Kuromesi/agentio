@@ -59,7 +59,7 @@ func resolveOnce(logger filter.StreamLogger, regs int) engine.Resolver {
 // keeps a resolve failure as auditable as an engine-eval failure; skipping it
 // leaves `when: result == "error"` blind to a whole class of errors.
 func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
-	regs := blockRegistrations(t)
+	regs := []filter.Registration{fixedRegHeaders("pass", filter.Continue())}
 	logger := &recordingStreamLogger{}
 	boom := errors.New("projection failed")
 	srv := NewServer(ServerDeps{
@@ -95,7 +95,7 @@ func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
 // reports "passthrough" for a failed stream, which makes any audit entry
 // filtering on result == "error" silently never fire.
 func TestStreamLoggerObservesFinalDisposition(t *testing.T) {
-	regs := blockRegistrations(t)
+	regs := []filter.Registration{fixedRegHeaders("pass", filter.Continue())}
 	logger := &recordingStreamLogger{}
 	srv := NewServer(ServerDeps{Resolve: resolveOnce(logger, len(regs)), Registrations: regs})
 

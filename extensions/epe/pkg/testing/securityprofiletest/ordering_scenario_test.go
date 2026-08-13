@@ -17,7 +17,7 @@
 // harness. Typed v1alpha1 profiles are seeded through Fixture.ApplyProfile /
 // ApplyGlobalProfile so CRD defaulting (e.g. spec.priority=1000) applies
 // exactly as a real apiserver would.
-package extproc_test
+package securityprofiletest
 
 import (
 	"testing"
@@ -92,7 +92,7 @@ func sleepPeerRequest(namespace, pod, host, path string) *enginetest.RequestBuil
 // when multiple profiles match the same pod with equal priority and equal
 // creationTimestamp, profile-name sort order determines which Block fires.
 func TestHandleRequestHeaders_MultipleProfiles_AlphabeticalOrder(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 
 	// Pin identical creationTimestamps so the name tie-breaker (not the
 	// fixture's synthesized creation order) decides. Both profiles omit
@@ -125,7 +125,7 @@ func TestHandleRequestHeaders_MultipleProfiles_AlphabeticalOrder(t *testing.T) {
 }
 
 func TestHandleRequestHeaders_PriorityControlsEvaluationOrder(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 
 	// Low-priority (10) block rule.
 	h.Fixture.ApplyProfile(securityProfile("sp-block", "default", ptr.To[int32](10),
@@ -140,7 +140,7 @@ func TestHandleRequestHeaders_PriorityControlsEvaluationOrder(t *testing.T) {
 }
 
 func TestHandleRequestHeaders_GlobalProfileMatchesAllNamespaces(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyGlobalProfile(globalSecurityProfile("gsp-block", 1,
 		map[string]string{"app": "sleep"}, []v1alpha1.SecurityRule{blockAdminRule("block-admin", 403)}))
 
@@ -154,7 +154,7 @@ func TestHandleRequestHeaders_GlobalProfileMatchesAllNamespaces(t *testing.T) {
 }
 
 func TestHandleRequestHeaders_GlobalAndNamespaceInterleaveByPriority(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 
 	// Global profile with low priority (10).
 	h.Fixture.ApplyGlobalProfile(globalSecurityProfile("gsp-block", 10,
@@ -182,14 +182,14 @@ func TestHandleRequestHeaders_EqualPriorityUsesCreationTimestamp(t *testing.T) {
 	// The block was created first, so it wins the tie despite sorting later
 	// alphabetically. Apply the newer profile first so insertion order
 	// cannot masquerade as the timestamp tie-break.
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyProfile(newer).ApplyProfile(older)
 	h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys")).
 		RequireBlocked(t, 425)
 
 	// Swapping the timestamps exposes the bypass.
 	older.CreationTimestamp, newer.CreationTimestamp = newer.CreationTimestamp, older.CreationTimestamp
-	reversed := enginetest.New(t, enginetest.Options{})
+	reversed := New(t, Options{})
 	reversed.Fixture.ApplyProfile(newer).ApplyProfile(older)
 	reversed.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys")).
 		RequireBypassed(t)

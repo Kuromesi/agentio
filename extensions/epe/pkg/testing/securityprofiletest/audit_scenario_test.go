@@ -14,7 +14,7 @@
 
 // Full-chain audit access-log scenarios: one accesslog.Entry per request,
 // asserted via the harness's capturing audit logger (Verdict.AccessLog).
-package extproc_test
+package securityprofiletest
 
 import (
 	"testing"
@@ -37,7 +37,7 @@ func lastAccessLogEntry(t *testing.T, v *enginetest.Verdict) accesslog.Entry {
 // the passthrough path produces an audit entry with zero profiles and an
 // empty actions list.
 func TestHandleRequestHeaders_AuditEntry_NoProfileMatch_Passthrough(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(otherSelectorProfileYAML)
 
 	verdict := h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x"))
@@ -64,7 +64,7 @@ func TestHandleRequestHeaders_AuditEntry_NoProfileMatch_Passthrough(t *testing.T
 // TestHandleRequestHeaders_AuditEntry_BypassMatched marks the entry as
 // "bypassed" with the bypass action recorded.
 func TestHandleRequestHeaders_AuditEntry_BypassMatched(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: trust-internal
     match:
     - domains:
@@ -91,7 +91,7 @@ func TestHandleRequestHeaders_AuditEntry_BypassMatched(t *testing.T) {
 // TestHandleRequestHeaders_AuditEntry_BlockMatched marks the entry as
 // "blocked".
 func TestHandleRequestHeaders_AuditEntry_BlockMatched(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyYAML(blockedAppProfileYAML(`  - name: block-admin
     match:
     - domains:

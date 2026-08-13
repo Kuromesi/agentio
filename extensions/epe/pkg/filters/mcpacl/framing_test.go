@@ -16,8 +16,6 @@ package mcpacl
 import (
 	"context"
 	"testing"
-
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 // MCP 2025-06-18 removed JSON-RPC batching and requires the POST body to be a
@@ -41,10 +39,10 @@ import (
 // blacklistPolicy denies exec_command and allows everything else, so a
 // passthrough bug is visible as ActionContinue rather than being masked by a
 // deny-by-default.
-func blacklistPolicy() *v1alpha1.MCPToolPolicySpec {
-	return &v1alpha1.MCPToolPolicySpec{
+func blacklistPolicy() *Config {
+	return &Config{
 		DefaultAction: "allow",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"exec_command"}, Action: "deny"},
 		},
 	}
@@ -52,10 +50,10 @@ func blacklistPolicy() *v1alpha1.MCPToolPolicySpec {
 
 // whitelistPolicy allows only read_file, so a framing violation that reaches
 // defaultAction is denied — the arm that must stay protected.
-func whitelistPolicy() *v1alpha1.MCPToolPolicySpec {
-	return &v1alpha1.MCPToolPolicySpec{
+func whitelistPolicy() *Config {
+	return &Config{
 		DefaultAction: "deny",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"read_file"}, Action: "allow"},
 		},
 	}

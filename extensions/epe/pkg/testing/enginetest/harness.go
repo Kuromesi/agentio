@@ -19,37 +19,21 @@ import (
 	"testing"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"k8s.io/client-go/kubernetes"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	"istio.io/istio/extensions/epe/pkg/audit"
-	"istio.io/istio/extensions/epe/pkg/credential"
+	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/extproc"
-	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
-	"istio.io/istio/extensions/epe/pkg/wiring"
 )
 
 // Options configures a Harness.
 type Options struct {
-	// Filters overrides the filter chain. Nil means the production chain
-	// via wiring.BuildFilters with the fake kube client below.
-	Filters []filter.Registration
+	// Resolve supplies the policy-neutral units for each request. Required.
+	Resolve engine.Resolver
+	// Registrations is the action order used to evaluate resolved units.
+	Registrations []filter.Registration
 	// StreamLoggers are extra statically registered stream loggers. The
-	// policy-side audit logger is not one of them: the resolver derives it
-	// per stream from the AuditRouter option.
+	// resolver may also return one policy-owned logger per stream.
 	StreamLoggers []filter.StreamLogger
-	// Kube backs Secret reads in token plugins. Nil means an empty fake
-	// clientset.
-	Kube kubernetes.Interface
-	// AuditRouter routes audit events. Nil means events are discarded
-	// (the resolver falls back to a no-op sink); register a recording sink
-	// to observe them.
-	AuditRouter *audit.Router
-	// CredentialClient overrides the credential client used by internal
-	// token plugins, pointing them at an in-process provider.
-	CredentialClient *credential.Client
 	// DisableResolutionProbe skips appending the info probe, for tests
 	// that assert the exact logger composition.
 	DisableResolutionProbe bool
@@ -58,57 +42,34 @@ type Options struct {
 	ObserveResponses bool
 }
 
-// Harness wires the real extproc.Server with a seedable profile store and
-// capturing observability, mirroring the production assembly in
-// server.New minus the gRPC transport.
+// Harness wires the real extproc.Server to a caller-supplied resolver and
+// captures observability, mirroring the policy-neutral part of production
+// assembly without the gRPC transport.
 type Harness struct {
 	Server    *extproc.Server
-	Fixture   *Fixture
 	AccessLog *CaptureAccessLogger
 
 	probe *InfoProbe
 }
 
-// New builds a Harness. Run resolves the profiles seeded through h.Fixture.
+// New builds a policy-neutral Harness around the supplied resolver.
 func New(t testing.TB, opts Options) *Harness {
 	t.Helper()
-
-	kube := opts.Kube
-	if kube == nil {
-		kube = k8sfake.NewClientset()
-	}
-	deps := wiring.Deps{
-		Kube:             kube,
-		CredentialClient: opts.CredentialClient,
-	}
-	regs := opts.Filters
-	if regs == nil {
-		var err error
-		regs, err = wiring.BuildFilters(deps)
-		if err != nil {
-			t.Fatalf("enginetest: BuildFilters: %v", err)
-		}
+	if opts.Resolve == nil {
+		t.Fatal("enginetest: Resolve is required")
 	}
 	loggers := opts.StreamLoggers
 
 	h := &Harness{
-		Fixture:   NewFixture(t),
 		AccessLog: &CaptureAccessLogger{},
 	}
 	if !opts.DisableResolutionProbe {
 		h.probe = &InfoProbe{}
 		loggers = append(append([]filter.StreamLogger{}, loggers...), h.probe)
 	}
-	// Converting a nil *audit.Router straight to audit.Sink would produce a
-	// non-nil interface holding a nil pointer, which panics on Enqueue rather
-	// than falling back to the no-op sink.
-	var auditSink audit.Sink
-	if opts.AuditRouter != nil {
-		auditSink = opts.AuditRouter
-	}
 	h.Server = extproc.NewServer(extproc.ServerDeps{
-		Resolve:          securityprofile.NewResolver(h.Fixture.Store, regs, auditSink),
-		Registrations:    regs,
+		Resolve:          opts.Resolve,
+		Registrations:    opts.Registrations,
 		StreamLoggers:    loggers,
 		AuditLogger:      h.AccessLog,
 		ObserveResponses: opts.ObserveResponses,
@@ -118,9 +79,6 @@ func New(t testing.TB, opts Options) *Harness {
 
 // Probe exposes the harness's info probe (nil when disabled).
 func (h *Harness) Probe() *InfoProbe { return h.probe }
-
-// Store exposes the seedable profile store.
-func (h *Harness) Store() *profilestore.FakeStore { return h.Fixture.Store }
 
 // Run drives one request through the real Process loop and reduces the
 // response sequence to a Verdict. Process errors land in Verdict.Err.
