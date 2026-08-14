@@ -30,6 +30,7 @@ const (
 	// dashboards.
 	phaseRequestBody     = "body_finalize"
 	phaseResponseHeaders = "response_headers"
+	phaseResponseBody    = "response_body"
 )
 
 // pluginCallsTotal counts every filter invocation the dispatch path makes,
@@ -130,6 +131,7 @@ type regMetrics struct {
 	requestHeaders  *filterMetrics
 	requestBody     *filterMetrics
 	responseHeaders *filterMetrics
+	responseBody    *filterMetrics
 }
 
 // buildMetrics pre-resolves the children for every registration across the
@@ -148,6 +150,9 @@ func buildMetrics(regs []filter.Registration) []regMetrics {
 		}
 		if reg.Phases&filter.PhaseResponseHeaders != 0 {
 			out[i].responseHeaders = newFilterMetrics(reg.Name, phaseResponseHeaders)
+		}
+		if reg.Phases&filter.PhaseResponseBody != 0 {
+			out[i].responseBody = newFilterMetrics(reg.Name, phaseResponseBody)
 		}
 	}
 	return out

@@ -105,10 +105,23 @@ func NewStreamInfo() *StreamInfo {
 	return &StreamInfo{}
 }
 
+// The unit action kinds RecordUnitAction encodes into its "<filter>:<kind>"
+// wire format. They live here rather than in the engine because both ends of
+// that format need them: the engine writes them, and audit sinks match on them
+// when reading a record back.
+const (
+	ActionBlock     = "block"
+	ActionBypass    = "bypass"
+	ActionMutate    = "mutate"
+	ActionNeedBody  = "need-body"
+	ActionErrorOpen = "error-open"
+)
+
 // RecordUnitAction appends one "<filter>:<kind>" action to the unit's
-// record, creating it on first touch. A nil *StreamInfo is a no-op: a Stream
-// may carry no info (filters and tests build one without), and every call
-// site would otherwise restate that guard.
+// record, creating it on first touch. kind should be one of the ActionXxx
+// constants. A nil *StreamInfo is a no-op: a Stream may carry no info (filters
+// and tests build one without), and every call site would otherwise restate
+// that guard.
 func (i *StreamInfo) RecordUnitAction(id UnitID, filterName, kind string) {
 	if i == nil {
 		return

@@ -28,6 +28,7 @@ const (
 	PhaseRequestHeaders Phase = 1 << iota
 	PhaseRequestBody
 	PhaseResponseHeaders
+	PhaseResponseBody
 )
 
 // DispatchedPhases is the set of phases the engine can invoke. Build rejects
@@ -35,14 +36,15 @@ const (
 //
 // PhaseResponseHeaders grants capability; each config must also subscribe
 // through Descriptor.SubscribesOf before its pair is dispatched.
-const DispatchedPhases = PhaseRequestHeaders | PhaseRequestBody | PhaseResponseHeaders
+const DispatchedPhases = PhaseRequestHeaders | PhaseRequestBody | PhaseResponseHeaders | PhaseResponseBody
 
-// Filter is the engine's three-phase contract. Capability is expressed by
+// Filter is the engine's four-phase contract. Capability is expressed by
 // overriding methods over an embedded PassThrough — never by type assertion.
 type Filter interface {
 	OnRequestHeaders(context.Context, *Stream) (Action, error)
 	OnRequestBody(context.Context, *Stream, Body) (Action, error)
 	OnResponseHeaders(context.Context, *Stream) (Action, error)
+	OnResponseBody(context.Context, *Stream, Body) (Action, error)
 }
 
 // PassThrough continues on every phase. Embed it so a filter only overrides
@@ -58,6 +60,10 @@ func (PassThrough) OnRequestBody(context.Context, *Stream, Body) (Action, error)
 }
 
 func (PassThrough) OnResponseHeaders(context.Context, *Stream) (Action, error) {
+	return Continue(), nil
+}
+
+func (PassThrough) OnResponseBody(context.Context, *Stream, Body) (Action, error) {
 	return Continue(), nil
 }
 

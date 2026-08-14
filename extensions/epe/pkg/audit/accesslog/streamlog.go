@@ -38,9 +38,9 @@ var _ filter.StreamLogger = (*StreamLog)(nil)
 
 // committedKinds are the unit actions that count as "the filter acted".
 var committedKinds = map[string]bool{
-	"block":  true,
-	"bypass": true,
-	"mutate": true,
+	filter.ActionBlock:  true,
+	filter.ActionBypass: true,
+	filter.ActionMutate: true,
 }
 
 // Log implements filter.StreamLogger.
@@ -75,9 +75,9 @@ func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.Strea
 			case committedKinds[kind]:
 				entry.Actions = append(entry.Actions, name+":"+u.ID.String())
 				delete(pending, pendingKey{unit: u.ID, filter: name})
-			case kind == "need-body":
+			case kind == filter.ActionNeedBody:
 				pending[pendingKey{unit: u.ID, filter: name}] = true
-			case kind == "error-open":
+			case kind == filter.ActionErrorOpen:
 				entry.Skipped[name]++
 			}
 		}

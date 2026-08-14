@@ -15,6 +15,7 @@
 package enginetest
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -74,12 +75,20 @@ type Verdict struct {
 	// RequestHeaderOps and ResponseHeaderOps record decoded wire operations by
 	// direction and in protobuf order. RequestHeaderOps includes mutations from
 	// both request-header and request-body responses.
-	RequestHeaderOps  []HeaderOp
-	ResponseHeaderOps []HeaderOp
+	RequestHeaderOps    []HeaderOp
+	ResponseHeaderOps   []HeaderOp
+	RequestBodyChanged  bool
+	RequestBody         []byte
+	ResponseBodyChanged bool
+	ResponseBody        []byte
+	ResponseStatus      *int
 
 	// ModeOverride is the ProcessingMode set on the first headers-phase
 	// response; non-nil proves the NeedsBody signalling fired.
 	ModeOverride *extProcV3.ProcessingMode
+	// ResponseModeOverride is the dynamic override emitted from response
+	// headers when a filter requests the buffered response body.
+	ResponseModeOverride *extProcV3.ProcessingMode
 
 	// Info is the authoritative StreamInfo observed by the harness
 	// InfoProbe; nil when the probe was disabled or never invoked.
@@ -103,10 +112,7 @@ func ParseVerdict(responses []*extProcPb.ProcessingResponse, procErr error) *Ver
 		Raw:  responses,
 		Err:  procErr,
 	}
-	for i, resp := range responses {
-		if i == 0 && resp.ModeOverride != nil {
-			v.ModeOverride = resp.ModeOverride
-		}
+	for _, resp := range responses {
 		switch r := resp.GetResponse().(type) {
 		case *extProcPb.ProcessingResponse_ImmediateResponse:
 			v.Kind = VerdictBlocked
@@ -114,19 +120,68 @@ func ParseVerdict(responses []*extProcPb.ProcessingResponse, procErr error) *Ver
 			v.ImmediateBody = string(r.ImmediateResponse.GetBody())
 			return v
 		case *extProcPb.ProcessingResponse_RequestHeaders:
-			v.RequestHeaderOps = appendOps(v.RequestHeaderOps, r.RequestHeaders.GetResponse().GetHeaderMutation())
+			if resp.ModeOverride != nil && v.ModeOverride == nil {
+				v.ModeOverride = resp.ModeOverride
+			}
+			v.consumeCommon(r.RequestHeaders.GetResponse(), true)
 		case *extProcPb.ProcessingResponse_RequestBody:
-			v.RequestHeaderOps = appendOps(v.RequestHeaderOps, r.RequestBody.GetResponse().GetHeaderMutation())
+			v.consumeCommon(r.RequestBody.GetResponse(), true)
 		case *extProcPb.ProcessingResponse_ResponseHeaders:
-			v.ResponseHeaderOps = appendOps(v.ResponseHeaderOps, r.ResponseHeaders.GetResponse().GetHeaderMutation())
+			if resp.ModeOverride != nil {
+				v.ResponseModeOverride = resp.ModeOverride
+			}
+			v.consumeCommon(r.ResponseHeaders.GetResponse(), false)
+		case *extProcPb.ProcessingResponse_ResponseBody:
+			v.consumeCommon(r.ResponseBody.GetResponse(), false)
 		}
 	}
 	// Kind describes the *request* verdict, so a response-only mutation leaves
 	// it at passthrough: nothing about the forwarded request changed.
-	if len(v.RequestHeaderOps) > 0 {
+	if len(v.RequestHeaderOps) > 0 || v.RequestBodyChanged {
 		v.Kind = VerdictMutated
 	}
 	return v
+}
+
+func (v *Verdict) consumeCommon(common *extProcPb.CommonResponse, request bool) {
+	if common == nil {
+		return
+	}
+	mutation := common.GetHeaderMutation()
+	if request {
+		v.RequestHeaderOps = appendOps(v.RequestHeaderOps, mutation)
+	} else {
+		v.ResponseHeaderOps = appendOps(v.ResponseHeaderOps, mutation)
+		for _, h := range mutation.GetSetHeaders() {
+			if !strings.EqualFold(h.GetHeader().GetKey(), ":status") {
+				continue
+			}
+			value := string(h.GetHeader().GetRawValue())
+			if value == "" {
+				value = h.GetHeader().GetValue()
+			}
+			if code, err := strconv.Atoi(value); err == nil {
+				v.ResponseStatus = &code
+			}
+		}
+	}
+	bodyMutation := common.GetBodyMutation()
+	if bodyMutation == nil {
+		return
+	}
+	body, ok := bodyMutation.GetMutation().(*extProcPb.BodyMutation_Body)
+	if !ok {
+		return
+	}
+	copyBody := make([]byte, len(body.Body))
+	copy(copyBody, body.Body)
+	if request {
+		v.RequestBodyChanged = true
+		v.RequestBody = copyBody
+	} else {
+		v.ResponseBodyChanged = true
+		v.ResponseBody = copyBody
+	}
 }
 
 // appendOps appends one HeaderMutation in protobuf field order.

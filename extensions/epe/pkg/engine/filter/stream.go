@@ -15,7 +15,8 @@ package filter
 
 import "istio.io/istio/extensions/epe/pkg/httpreq"
 
-// Body is the complete buffered request-body view.
+// Body is the complete buffered view of one direction's body; both
+// OnRequestBody and OnResponseBody receive it.
 type Body struct {
 	Bytes []byte
 	// Complete reports that Bytes is the whole body. The adapter only ever

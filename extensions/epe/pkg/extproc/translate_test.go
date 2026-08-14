@@ -44,6 +44,9 @@ func TestTranslate_HeadersBodyMutationUsesContinueAndReplace(t *testing.T) {
 	if string(common.GetBodyMutation().GetBody()) != "replaced" {
 		t.Errorf("BodyMutation = %q", common.GetBodyMutation().GetBody())
 	}
+	if got, ok := mutationSetValue(common.GetHeaderMutation(), "content-length"); !ok || got != "8" {
+		t.Errorf("content-length = %q present=%v, want 8", got, ok)
+	}
 }
 
 func TestTranslate_ResponseHeadersBodyMutationUsesContinueAndReplace(t *testing.T) {
@@ -65,8 +68,87 @@ func TestTranslate_ResponseHeadersBodyMutationUsesContinueAndReplace(t *testing.
 	if string(common.GetBodyMutation().GetBody()) != "replaced" {
 		t.Errorf("BodyMutation = %q", common.GetBodyMutation().GetBody())
 	}
-	if len(common.GetHeaderMutation().GetSetHeaders()) != 1 {
-		t.Errorf("HeaderMutation = %v, want the response header mutation preserved", common.GetHeaderMutation())
+	if got, ok := mutationSetValue(common.GetHeaderMutation(), "x-response"); !ok || got != "mutated" {
+		t.Errorf("x-response = %q present=%v, want mutated", got, ok)
+	}
+	if got, ok := mutationSetValue(common.GetHeaderMutation(), "content-length"); !ok || got != "8" {
+		t.Errorf("content-length = %q present=%v, want 8", got, ok)
+	}
+}
+
+func TestTranslate_ResponseBodyCarriesHeadersBodyStatusAndLength(t *testing.T) {
+	status := 202
+	result := &engine.ResponseBodyResult{
+		Disposition: engine.DispositionMutated,
+		HeaderOps: []filter.HeaderOp{
+			{Kind: filter.HeaderSet, Name: "x-result", Value: "ok"},
+		},
+		Body:       []byte("rewritten"),
+		StatusCode: &status,
+	}
+	responses := translateResponseBodyResult(result)
+	if len(responses) != 1 {
+		t.Fatalf("responses = %d, want 1", len(responses))
+	}
+	common := responses[0].GetResponseBody().GetResponse()
+	if common == nil {
+		t.Fatal("missing ResponseBody CommonResponse")
+	}
+	if string(common.GetBodyMutation().GetBody()) != "rewritten" {
+		t.Fatalf("BodyMutation = %q", common.GetBodyMutation().GetBody())
+	}
+	for name, want := range map[string]string{
+		"x-result":       "ok",
+		"content-length": "9",
+		":status":        "202",
+	} {
+		if got, ok := mutationSetValue(common.GetHeaderMutation(), name); !ok || got != want {
+			t.Errorf("%s = %q present=%v, want %q", name, got, ok, want)
+		}
+	}
+}
+
+func TestTranslate_ResponseHeadersStatusWithoutBody(t *testing.T) {
+	status := 204
+	responses := translateResponseHeadersResult(&engine.ResponseHeadersResult{
+		Disposition: engine.DispositionMutated,
+		StatusCode:  &status,
+	})
+	common := responses[0].GetResponseHeaders().GetResponse()
+	if got, ok := mutationSetValue(common.GetHeaderMutation(), ":status"); !ok || got != "204" {
+		t.Fatalf(":status = %q present=%v, want 204", got, ok)
+	}
+}
+
+func TestTranslate_ExplicitEmptyResponseBodySetsZeroLength(t *testing.T) {
+	responses := translateResponseBodyResult(&engine.ResponseBodyResult{
+		Disposition: engine.DispositionMutated,
+		Body:        []byte{},
+	})
+	common := responses[0].GetResponseBody().GetResponse()
+	if common.GetBodyMutation() == nil {
+		t.Fatal("explicit empty body was treated as unchanged")
+	}
+	if got, ok := mutationSetValue(common.GetHeaderMutation(), "content-length"); !ok || got != "0" {
+		t.Fatalf("content-length = %q present=%v, want 0", got, ok)
+	}
+}
+
+func TestTranslate_BlockedResponseBodyUsesReplyAndDiscardsMutations(t *testing.T) {
+	status := 202
+	responses := translateResponseBodyResult(&engine.ResponseBodyResult{
+		Disposition: engine.DispositionBlocked,
+		Reply:       filter.Reply{Status: 500, Details: "failed-closed"},
+		HeaderOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-leak", Value: "bad"}},
+		Body:        []byte("leak"),
+		StatusCode:  &status,
+	})
+	immediate := responses[0].GetImmediateResponse()
+	if immediate.GetStatus().GetCode() != 500 || immediate.GetDetails() != "failed-closed" {
+		t.Fatalf("ImmediateResponse = %+v", immediate)
+	}
+	if immediate.GetHeaders() != nil || len(immediate.GetBody()) != 0 {
+		t.Fatalf("blocked result leaked pending mutations: %+v", immediate)
 	}
 }
 
@@ -142,6 +224,15 @@ func fixedRegHeaders(name string, act filter.Action) filter.Registration {
 			return &actionFilter{act: act}
 		},
 	}
+}
+
+func mutationSetValue(mutation *extProcPb.HeaderMutation, name string) (string, bool) {
+	for _, h := range mutation.GetSetHeaders() {
+		if h.GetHeader().GetKey() == name {
+			return string(h.GetHeader().GetRawValue()), true
+		}
+	}
+	return "", false
 }
 
 type actionFilter struct {

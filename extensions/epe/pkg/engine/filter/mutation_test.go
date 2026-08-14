@@ -42,6 +42,22 @@ func TestHeaderHelpers(t *testing.T) {
 	}
 }
 
+func TestMutationEqualComparesStatusValueAndPresence(t *testing.T) {
+	statusOK := 200
+	statusOKAgain := 200
+	statusAccepted := 202
+
+	if !((Mutation{StatusCode: &statusOK}).equal(Mutation{StatusCode: &statusOKAgain})) {
+		t.Fatal("equal status values at different addresses must compare equal")
+	}
+	if (Mutation{StatusCode: &statusOK}).equal(Mutation{StatusCode: &statusAccepted}) {
+		t.Fatal("different status values must not compare equal")
+	}
+	if (Mutation{StatusCode: &statusOK}).equal(Mutation{}) {
+		t.Fatal("present and absent status values must not compare equal")
+	}
+}
+
 func TestUnitIDString(t *testing.T) {
 	id := UnitID{Scope: "ns/prof", Name: "rule", Ordinal: 2}
 	if got := id.String(); got != "ns/prof/rule#2" {

@@ -19,7 +19,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
 
-// Fold computes the net effect of mutations applied in execution order.
+// fold computes the net effect of mutations applied in execution order.
 //
 // Envoy executes all remove_headers before all set_headers within a single
 // HeaderMutation, so "a later action removes a header an earlier action set"
@@ -35,7 +35,7 @@ import (
 // Keys fold case-insensitively: HTTP header names are case-insensitive and
 // Envoy lower-cases them, so X-Foo and x-foo are one header. The first-seen
 // spelling is preserved in the output.
-func Fold(muts []filter.Mutation) []filter.HeaderOp {
+func fold(muts []filter.Mutation) []filter.HeaderOp {
 	type keyState struct {
 		name    string            // first-seen spelling, used for output
 		ops     []filter.HeaderOp // pending Set/Add ops, in order

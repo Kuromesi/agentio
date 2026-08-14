@@ -67,6 +67,9 @@ func TestStopDiscardsMutationsByConstruction(t *testing.T) {
 
 func TestActionEqual(t *testing.T) {
 	m := SetHeader("k", "v")
+	statusAccepted := 202
+	statusAcceptedAgain := 202
+	statusCreated := 201
 	cases := []struct {
 		name string
 		a, b Action
@@ -78,6 +81,9 @@ func TestActionEqual(t *testing.T) {
 		{"same stop", Stop(Reply{Status: 403}), Stop(Reply{Status: 403}), true},
 		{"different status", Stop(Reply{Status: 403}), Stop(Reply{Status: 451}), false},
 		{"same need", NeedBody(), NeedBody(), true},
+		{"same mutation status", Continue(Mutation{StatusCode: &statusAccepted}), Continue(Mutation{StatusCode: &statusAcceptedAgain}), true},
+		{"different mutation status", Continue(Mutation{StatusCode: &statusAccepted}), Continue(Mutation{StatusCode: &statusCreated}), false},
+		{"missing mutation status", Continue(Mutation{StatusCode: &statusAccepted}), Continue(Mutation{}), false},
 	}
 	for _, tc := range cases {
 		if got := tc.a.Equal(tc.b); got != tc.want {
@@ -100,6 +106,7 @@ func TestPassThroughSupportedPhasesContinue(t *testing.T) {
 		{"OnRequestHeaders", func() (Action, error) { return pt.OnRequestHeaders(ctx, st) }},
 		{"OnRequestBody", func() (Action, error) { return pt.OnRequestBody(ctx, st, Body{}) }},
 		{"OnResponseHeaders", func() (Action, error) { return pt.OnResponseHeaders(ctx, st) }},
+		{"OnResponseBody", func() (Action, error) { return pt.OnResponseBody(ctx, st, Body{}) }},
 	}
 	for _, c := range calls {
 		a, err := c.call()

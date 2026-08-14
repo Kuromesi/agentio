@@ -146,7 +146,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 		case *extProcPb.ProcessingRequest_ResponseHeaders:
 			responses, err = s.HandleResponseHeaders(ctx, req.GetResponseHeaders(), state)
 		case *extProcPb.ProcessingRequest_ResponseBody:
-			responses, err = s.HandleResponseBody(ctx, req.GetResponseBody())
+			responses, err = s.HandleResponseBody(ctx, req.GetResponseBody(), state)
 		case *extProcPb.ProcessingRequest_ResponseTrailers:
 			responses, err = s.HandleResponseTrailers(ctx, req.GetResponseTrailers())
 		default:
@@ -261,13 +261,16 @@ type streamState struct {
 	// Request phase — the headers walk's paused continuation, consumed exactly
 	// once by the body phase. Non-nil is what "a request body is owed" means;
 	// there is deliberately no separate flag that could drift from it.
-	bodyContinuation *engine.RequestHeadersResult
+	requestBodyContinuation *engine.RequestHeadersResult
 
 	// Response phase — the walk's bypass point plus the protocol obligations.
 	// responseScope is zero until a walk bypasses; a bypass can happen in the
 	// headers walk or the resumed body walk, so both handlers write it.
 	responseScope        engine.ResponseScope
 	awaitResponseHeaders bool
+	// responseBodyContinuation is the response walk paused at NeedBody. Its
+	// presence is the response-body protocol obligation.
+	responseBodyContinuation *engine.ResponseHeadersResult
 
 	// Lifecycle / audit — see streamLifecycle.
 	lifecycle streamLifecycle
@@ -294,10 +297,12 @@ func (st *streamState) engineUnits() []engine.Unit { return st.units }
 
 // awaitingRequestBody reports whether the headers walk paused for the request
 // body and the body message has not been consumed yet.
-func (st *streamState) awaitingRequestBody() bool { return st.bodyContinuation != nil }
+func (st *streamState) awaitingRequestBody() bool { return st.requestBodyContinuation != nil }
+
+func (st *streamState) awaitingResponseBody() bool { return st.responseBodyContinuation != nil }
 
 func (st *streamState) awaitingInput() bool {
-	return st != nil && (st.awaitingRequestBody() || st.awaitResponseHeaders)
+	return st != nil && (st.awaitingRequestBody() || st.awaitingResponseBody() || st.awaitResponseHeaders)
 }
 
 // armFinalization records when a terminal request result may be committed.
@@ -305,6 +310,8 @@ func (st *streamState) awaitingInput() bool {
 func (st *streamState) armFinalization(d engine.Disposition) {
 	switch d {
 	case engine.DispositionBlocked:
+		st.requestBodyContinuation = nil
+		st.responseBodyContinuation = nil
 		st.awaitResponseHeaders = false
 		st.lifecycle = lifecycleFinalizePending
 	case engine.DispositionBypassed:
@@ -380,6 +387,8 @@ func mutatedHeaderNames(resp *extProcPb.ProcessingResponse) []string {
 		mut = r.RequestBody.GetResponse().GetHeaderMutation()
 	case *extProcPb.ProcessingResponse_ResponseHeaders:
 		mut = r.ResponseHeaders.GetResponse().GetHeaderMutation()
+	case *extProcPb.ProcessingResponse_ResponseBody:
+		mut = r.ResponseBody.GetResponse().GetHeaderMutation()
 	case *extProcPb.ProcessingResponse_ImmediateResponse:
 		mut = r.ImmediateResponse.GetHeaders()
 	}

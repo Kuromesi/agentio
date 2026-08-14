@@ -24,6 +24,8 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 
 	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
@@ -343,8 +345,8 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 			{Key: ":status", RawValue: []byte("500")},
 		}},
 	}, state)
-	if !errors.Is(err, boom) {
-		t.Fatalf("HandleResponseHeaders error = %v, want %v", err, boom)
+	if err != nil {
+		t.Fatalf("configured FailClosed returned handler error: %v", err)
 	}
 	// A FailClosed response error returns its synthesized deny with the error.
 	if len(resp) != 1 {
@@ -353,11 +355,11 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	if resp[0].GetImmediateResponse() == nil {
 		t.Fatalf("response = %T, want an ImmediateResponse carrying the deny", resp[0].GetResponse())
 	}
-	if !state.awaitResponseHeaders {
-		t.Fatal("failed response dispatch consumed the outstanding obligation")
+	if state.awaitResponseHeaders {
+		t.Fatal("handled FailClosed left the response-headers obligation open")
 	}
-	if state.lifecycle == lifecycleFinalizePending {
-		t.Fatal("failed response dispatch armed successful finalization")
+	if state.lifecycle != lifecycleFinalizePending {
+		t.Fatal("handled FailClosed did not arm post-send finalization")
 	}
 }
 
@@ -530,8 +532,8 @@ func TestPassThroughHandlers(t *testing.T) {
 	if r, err := srv.HandleRequestTrailers(ctx, nil); err != nil || len(r) != 1 {
 		t.Errorf("HandleRequestTrailers: got len=%d err=%v", len(r), err)
 	}
-	if r, err := srv.HandleResponseBody(ctx, nil); err != nil || len(r) != 1 {
-		t.Errorf("HandleResponseBody: got len=%d err=%v", len(r), err)
+	if _, err := srv.HandleResponseBody(ctx, &extProcPb.HttpBody{}, nil); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("HandleResponseBody without state: err=%v, want FailedPrecondition", err)
 	}
 	if r, err := srv.HandleResponseTrailers(ctx, nil); err != nil || len(r) != 1 {
 		t.Errorf("HandleResponseTrailers: got len=%d err=%v", len(r), err)

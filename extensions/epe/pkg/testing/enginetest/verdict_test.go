@@ -72,6 +72,36 @@ func TestParseVerdict_ResponseHeaderOpsArePhaseDistinct(t *testing.T) {
 	v.RequireResponseHeaderRemoved(t, "server")
 }
 
+func TestParseVerdict_BodyMutationsAndResponseStatusKeepDirectionAndPresence(t *testing.T) {
+	responses := []*extProcPb.ProcessingResponse{
+		{Response: &extProcPb.ProcessingResponse_RequestBody{
+			RequestBody: &extProcPb.BodyResponse{Response: &extProcPb.CommonResponse{
+				BodyMutation: &extProcPb.BodyMutation{Mutation: &extProcPb.BodyMutation_Body{Body: []byte("request rewritten")}},
+			}},
+		}},
+		{Response: &extProcPb.ProcessingResponse_ResponseBody{
+			ResponseBody: &extProcPb.BodyResponse{Response: &extProcPb.CommonResponse{
+				HeaderMutation: &extProcPb.HeaderMutation{SetHeaders: []*corev3.HeaderValueOption{
+					setOpt(":status", "202", corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD),
+					setOpt("x-response", "body-phase", corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD),
+				}},
+				BodyMutation: &extProcPb.BodyMutation{Mutation: &extProcPb.BodyMutation_Body{Body: []byte{}}},
+			}},
+		}},
+	}
+	v := ParseVerdict(responses, nil)
+	if !v.RequestBodyChanged || string(v.RequestBody) != "request rewritten" {
+		t.Fatalf("request body changed=%v body=%q", v.RequestBodyChanged, v.RequestBody)
+	}
+	if !v.ResponseBodyChanged || v.ResponseBody == nil || len(v.ResponseBody) != 0 {
+		t.Fatalf("response body changed=%v body=%#v, want explicit empty replacement", v.ResponseBodyChanged, v.ResponseBody)
+	}
+	if v.ResponseStatus == nil || *v.ResponseStatus != 202 {
+		t.Fatalf("ResponseStatus = %v, want 202", v.ResponseStatus)
+	}
+	v.RequireResponseHeader(t, "x-response", "body-phase")
+}
+
 // Direction-specific lookups do not return operations from the other direction.
 func TestVerdictLookups_DoNotCrossDirections(t *testing.T) {
 	v := &Verdict{

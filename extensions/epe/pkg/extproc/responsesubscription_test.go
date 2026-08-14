@@ -27,6 +27,8 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
@@ -457,8 +459,8 @@ func TestHandleResponseHeaders_FailClosedEmitsImmediateResponse(t *testing.T) {
 	runRequestHeaders(t, s, state, false)
 
 	responses, err := s.HandleResponseHeaders(context.Background(), responseHeaderMsg("200"), state)
-	if err == nil {
-		t.Fatal("fail-closed response failure was swallowed")
+	if err != nil {
+		t.Fatalf("configured FailClosed returned handler error: %v", err)
 	}
 	if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
 		t.Fatalf("responses = %+v, want a single ImmediateResponse", responses)
@@ -478,7 +480,7 @@ type errRespBoomType struct{}
 
 func (errRespBoomType) Error() string { return "response render failed" }
 
-// Process sends the FailClosed ImmediateResponse before returning the error.
+// Process sends the FailClosed ImmediateResponse as a handled policy result.
 func TestProcess_FailClosedResponsePhaseSendsImmediateResponse(t *testing.T) {
 	f := &wantRespFilter{requestAct: filter.Continue(), respErr: errRespBoom}
 	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"})
@@ -497,8 +499,8 @@ func TestProcess_FailClosedResponsePhaseSendsImmediateResponse(t *testing.T) {
 			}},
 		},
 	}
-	if err := s.Process(stream); err == nil {
-		t.Fatal("Process swallowed the fail-closed response error")
+	if err := s.Process(stream); err != nil {
+		t.Fatalf("Process returned a gRPC error for configured FailClosed: %v", err)
 	}
 	if len(stream.sent) == 0 {
 		t.Fatal("Process sent nothing")
@@ -511,6 +513,42 @@ func TestProcess_FailClosedResponsePhaseSendsImmediateResponse(t *testing.T) {
 	if im.GetStatus().GetCode() != 500 || im.GetDetails() != "epe_response_headers_failed_closed" {
 		t.Fatalf("immediate = status %v details %q, want 500 / epe_response_headers_failed_closed",
 			im.GetStatus().GetCode(), im.GetDetails())
+	}
+}
+
+// A filter contract violation is not a configured failure-policy decision.
+// Keep surfacing it as a gRPC error so Envoy's failure_mode_allow still owns
+// the compatibility behavior for engine/protocol faults.
+func TestProcess_ResponseContractFaultRemainsGRPCError(t *testing.T) {
+	invalidStatus := 199
+	f := &wantRespFilter{
+		requestAct: filter.Continue(),
+		responseOp: []filter.Mutation{{StatusCode: &invalidStatus}},
+	}
+	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"})
+
+	headers := makeRequestHeaders("api.example.com", "/x", "GET")
+	headers.EndOfStream = true
+	stream := &collectingStream{
+		ctx: context.Background(),
+		msgs: []*extProcPb.ProcessingRequest{
+			{
+				Request:    &extProcPb.ProcessingRequest_RequestHeaders{RequestHeaders: headers},
+				Attributes: makeAttrsWithLabels("default", "pod", testLabelsB64),
+			},
+			{Request: &extProcPb.ProcessingRequest_ResponseHeaders{
+				ResponseHeaders: responseHeaderMsg("200"),
+			}},
+		},
+	}
+	err := s.Process(stream)
+	if status.Code(err) != codes.Unknown {
+		t.Fatalf("Process error = %v (code %v), want a gRPC Unknown contract error", err, status.Code(err))
+	}
+	for _, response := range stream.sent {
+		if response.GetImmediateResponse() != nil {
+			t.Fatalf("contract fault sent ImmediateResponse: %+v", response.GetImmediateResponse())
+		}
 	}
 }
 

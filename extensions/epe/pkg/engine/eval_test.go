@@ -73,6 +73,32 @@ func (f *bodyFilter) OnRequestBody(context.Context, *filter.Stream, filter.Body)
 	return f.bodyAct, nil
 }
 
+type observingBodyFilter struct {
+	filter.PassThrough
+	c         *counters
+	headerAct filter.Action
+	bodyAct   filter.Action
+	seen      *[]filter.Body
+	prepared  bool
+}
+
+func (f *observingBodyFilter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	f.c.headerCalls++
+	f.prepared = true
+	return f.headerAct, nil
+}
+
+func (f *observingBodyFilter) OnRequestBody(_ context.Context, _ *filter.Stream, body filter.Body) (filter.Action, error) {
+	f.c.bodyCalls++
+	if f.seen != nil {
+		*f.seen = append(*f.seen, body)
+	}
+	if !f.prepared {
+		return filter.Continue(), errors.New("body callback used a different filter instance")
+	}
+	return f.bodyAct, nil
+}
+
 type errFilter struct {
 	filter.PassThrough
 	err error
@@ -551,6 +577,109 @@ func TestEvalBody_LaterBypassPreservesEarlierMutationAndSkipsFollowingRule(t *te
 	}
 }
 
+func TestEvalRequestBody_FoldsAllPendingMutationsAfterResume(t *testing.T) {
+	pausedCounters := &counters{}
+	laterCounters := &counters{}
+	var pausedBodies, laterBodies []filter.Body
+	regs := buildRegs(t, []regSpec{
+		{name: "before", make: func(filter.RuleConfig[string]) filter.Filter {
+			return &mutatingFilter{c: &counters{}, muts: []filter.Mutation{filter.SetHeader("x-before", "1")}}
+		}},
+		{name: "paused", make: func(filter.RuleConfig[string]) filter.Filter {
+			pausedCounters.constructed++
+			return &observingBodyFilter{
+				c:         pausedCounters,
+				headerAct: filter.NeedBody(filter.SetHeader("x-paused-header", "1")),
+				bodyAct: filter.Continue(
+					filter.SetHeader("x-paused-body", "1"),
+					filter.Mutation{Body: []byte("paused replacement")},
+				),
+				seen: &pausedBodies,
+			}
+		}},
+		{name: "later-body", make: func(filter.RuleConfig[string]) filter.Filter {
+			laterCounters.constructed++
+			return &observingBodyFilter{
+				c:         laterCounters,
+				headerAct: filter.NeedBody(filter.SetHeader("x-later-header", "1")),
+				bodyAct: filter.Continue(
+					filter.SetHeader("x-later-body", "1"),
+					filter.Mutation{Body: []byte("final replacement")},
+				),
+				seen: &laterBodies,
+			}
+		}},
+		{name: "after", make: func(filter.RuleConfig[string]) filter.Filter {
+			return &mutatingFilter{c: &counters{}, muts: []filter.Mutation{filter.SetHeader("x-after", "1")}}
+		}},
+	})
+	e := NewEngine(regs, 0)
+	st := &filter.Stream{Info: filter.NewStreamInfo()}
+	units := unitsFor([][]string{{"before", "paused", "later", "after"}})
+
+	headersResult, err := e.EvalRequestHeaders(context.Background(), st, units)
+	if err != nil {
+		t.Fatalf("EvalRequestHeaders: %v", err)
+	}
+	if !headersResult.NeedsBody() {
+		t.Fatal("request headers did not request a body")
+	}
+	if headersResult.Disposition != DispositionPassthrough || len(headersResult.HeaderOps) != 0 || headersResult.Body != nil {
+		t.Fatalf("suspended headers leaked a result: %+v", headersResult)
+	}
+
+	original := filter.Body{Bytes: []byte("original"), Complete: true}
+	bodyResult, err := e.EvalRequestBody(context.Background(), st, headersResult, original)
+	if err != nil {
+		t.Fatalf("EvalRequestBody: %v", err)
+	}
+	requireDisposition(t, bodyResult.Disposition, DispositionMutated)
+	wantNames := []string{"x-before", "x-paused-header", "x-paused-body", "x-later-header", "x-later-body", "x-after"}
+	gotNames := make([]string, 0, len(bodyResult.HeaderOps))
+	for _, op := range bodyResult.HeaderOps {
+		gotNames = append(gotNames, op.Name)
+	}
+	if !slices.Equal(gotNames, wantNames) {
+		t.Fatalf("header mutation order = %v, want %v", gotNames, wantNames)
+	}
+	if string(bodyResult.Body) != "final replacement" {
+		t.Fatalf("Body = %q, want last replacement", bodyResult.Body)
+	}
+	if pausedCounters.constructed != 1 || pausedCounters.headerCalls != 1 || pausedCounters.bodyCalls != 1 {
+		t.Fatalf("paused calls = %+v, want one instance and one call per phase", *pausedCounters)
+	}
+	if laterCounters.constructed != 1 || laterCounters.headerCalls != 1 || laterCounters.bodyCalls != 1 {
+		t.Fatalf("later calls = %+v, want inline body evaluation once", *laterCounters)
+	}
+	if len(pausedBodies) != 1 || len(laterBodies) != 1 ||
+		!slices.Equal(pausedBodies[0].Bytes, original.Bytes) ||
+		!slices.Equal(laterBodies[0].Bytes, original.Bytes) {
+		t.Fatalf("observed bodies: paused=%+v later=%+v, want original %+v", pausedBodies, laterBodies, original)
+	}
+}
+
+func TestEvalRequestHeaders_WithAvailableRequestBodyRunsInline(t *testing.T) {
+	c := &counters{}
+	regs := buildRegs(t, []regSpec{{
+		name: "body",
+		make: func(filter.RuleConfig[string]) filter.Filter {
+			return &bodyFilter{c: c, bodyAct: filter.Continue(filter.SetHeader("x-inline", "1"))}
+		},
+	}})
+	res, err := NewEngine(regs, 0).EvalRequestHeaders(
+		context.Background(),
+		&filter.Stream{},
+		unitsFor([][]string{{"body"}}),
+		WithAvailableRequestBody(filter.Body{Complete: true}),
+	)
+	if err != nil {
+		t.Fatalf("EvalRequestHeaders: %v", err)
+	}
+	if res.NeedsBody() || c.bodyCalls != 1 || len(res.HeaderOps) != 1 {
+		t.Fatalf("inline result = %+v, body calls = %d", res, c.bodyCalls)
+	}
+}
+
 func TestEvalBody_NeedRejected(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
 		{name: "greedy", make: func(filter.RuleConfig[string]) filter.Filter {
@@ -601,7 +730,7 @@ func TestInvoke_FailOpenSkips(t *testing.T) {
 	}
 }
 
-func TestInvoke_FailClosedErrors(t *testing.T) {
+func TestInvoke_FailClosedSynthesizesBlocked(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
 		{name: "strict", onError: filter.Always[string](filter.FailClosed), make: func(filter.RuleConfig[string]) filter.Filter {
 			return &errFilter{err: errors.New("boom")}
@@ -609,10 +738,13 @@ func TestInvoke_FailClosedErrors(t *testing.T) {
 	})
 	e := NewEngine(regs, 0)
 	res, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"s"}}))
-	if err == nil {
-		t.Fatal("want error from fail-closed filter")
+	if err != nil {
+		t.Fatalf("configured FailClosed returned engine error: %v", err)
 	}
-	requireDisposition(t, res.Disposition, DispositionError)
+	requireDisposition(t, res.Disposition, DispositionBlocked)
+	if res.Reply.Status != 500 || res.Reply.Details != "epe_request_headers_failed_closed" {
+		t.Fatalf("Reply = %+v, want phase-specific local 500", res.Reply)
+	}
 }
 
 func TestInvoke_OnErrorConsultsConfig(t *testing.T) {
@@ -629,9 +761,11 @@ func TestInvoke_OnErrorConsultsConfig(t *testing.T) {
 	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"open"}})); err != nil {
 		t.Fatalf("open policy: Eval err = %v, want fail-open", err)
 	}
-	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"closed"}})); err == nil {
-		t.Fatal("closed policy: want error")
+	closed, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"closed"}}))
+	if err != nil {
+		t.Fatalf("closed policy: Eval err = %v, want handled block", err)
 	}
+	requireDisposition(t, closed.Disposition, DispositionBlocked)
 }
 
 // bodyErrFilter asks for the body on headers, then fails in the body phase.
@@ -664,7 +798,7 @@ func TestEvalBody_OnErrorConsultsConfig(t *testing.T) {
 	}})
 	e := NewEngine(regs, 0)
 
-	run := func(cfg string) error {
+	run := func(cfg string) (*RequestBodyResult, error) {
 		st := &filter.Stream{}
 		res, err := e.EvalRequestHeaders(context.Background(), st, unitsFor([][]string{{cfg}}))
 		if err != nil {
@@ -673,15 +807,19 @@ func TestEvalBody_OnErrorConsultsConfig(t *testing.T) {
 		if !res.NeedsBody() {
 			t.Fatal("filter did not request the body")
 		}
-		_, err = e.EvalRequestBody(context.Background(), st, res, filter.Body{Bytes: []byte("x"), Complete: true})
-		return err
+		return e.EvalRequestBody(context.Background(), st, res, filter.Body{Bytes: []byte("x"), Complete: true})
 	}
 
-	if err := run("open"); err != nil {
+	if _, err := run("open"); err != nil {
 		t.Errorf("FailOpen policy: EvalRequestBody err = %v, want fail-open (nil)", err)
 	}
-	if err := run("closed"); err == nil {
-		t.Error("FailClosed policy: want an error")
+	closed, err := run("closed")
+	if err != nil {
+		t.Fatalf("FailClosed policy returned engine error: %v", err)
+	}
+	requireDisposition(t, closed.Disposition, DispositionBlocked)
+	if closed.Reply.Status != 500 || closed.Reply.Details != "epe_request_body_failed_closed" {
+		t.Fatalf("Reply = %+v, want request-body local 500", closed.Reply)
 	}
 }
 
@@ -1123,6 +1261,57 @@ func TestEvalResponseHeaders_BodyPhaseBypassSuppressesLaterPairs(t *testing.T) {
 	}
 }
 
+// The inline body phase must bound the response scope exactly as the resumed
+// one does. This is the WithAvailableRequestBody path, where the body action
+// runs inside walkRequest instead of through EvalRequestBody — a separate call
+// site, and the one that folds through requestWalk.apply rather than the base
+// actionWalk.apply.
+func TestEvalRequestHeaders_InlineBodyBypassBoundsResponseScope(t *testing.T) {
+	var invoked []string
+	regs := buildRegs(t, []regSpec{
+		{
+			name: "pauser",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &bodyFilter{c: &counters{}, bodyAct: filter.Bypass()}
+			},
+		},
+		{
+			name:       "resp",
+			phases:     bothHeaderPhases,
+			subscribes: subscribesTo(filter.PhaseResponseHeaders),
+			make: func(c filter.RuleConfig[string]) filter.Filter {
+				cfg := c.Cfg
+				return &recordingRespFilter{onResp: func() { invoked = append(invoked, cfg) }}
+			},
+		},
+	})
+	e := NewEngine(regs, 0)
+	st := &filter.Stream{Info: filter.NewStreamInfo()}
+	units := unitsFor([][]string{{"pause", "later"}})
+
+	// No continuation: the body is in hand, so NeedBody is satisfied inline and
+	// the Bypass is returned from inside walkRequest.
+	hr, err := e.EvalRequestHeaders(context.Background(), st, units,
+		WithAvailableRequestBody(filter.Body{Bytes: []byte("b"), Complete: true}))
+	if err != nil {
+		t.Fatalf("EvalRequestHeaders: %v", err)
+	}
+	if hr.NeedsBody() {
+		t.Fatal("the walk paused despite an available body")
+	}
+	requireDisposition(t, hr.Disposition, DispositionBypassed)
+	if !hr.ResponseScope.bounded {
+		t.Fatal("the inline body-phase bypass did not bound the response scope")
+	}
+
+	if _, err := e.EvalResponseHeaders(context.Background(), st, units, hr.ResponseScope); err != nil {
+		t.Fatalf("EvalResponseHeaders: %v", err)
+	}
+	if len(invoked) != 0 {
+		t.Fatalf("invoked = %v, want none: the inline body-phase bypass suppressed the later pair", invoked)
+	}
+}
+
 // --- response-phase actions and failure policy -------------------------
 
 type respActFilter struct {
@@ -1135,15 +1324,15 @@ func (f *respActFilter) OnResponseHeaders(context.Context, *filter.Stream) (filt
 	return f.act, f.err
 }
 
-// Response headers cannot request a body phase that the engine does not
-// implement or clear a request-side route cache.
+// Response headers cannot request an undeclared body phase or clear a
+// request-side route cache.
 func TestEvalResponseHeaders_RejectsUnsupportedActions(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		act     filter.Action
 		wantMsg string
 	}{
-		{name: "needbody", act: filter.NeedBody(), wantMsg: "action kind"},
+		{name: "needbody", act: filter.NeedBody(), wantMsg: "response-body support"},
 		{
 			name:    "continue carrying clear-route-cache",
 			act:     filter.Continue(filter.Mutation{ClearRouteCache: true}),
@@ -1320,12 +1509,12 @@ func TestEvalResponseHeaders_FailClosedSynthesisesBlocked(t *testing.T) {
 	st := &filter.Stream{Info: filter.NewStreamInfo()}
 	units := unitsFor([][]string{{"cfg"}})
 	res, err := e.EvalResponseHeaders(context.Background(), st, units, ResponseScope{})
-	if err == nil {
-		t.Fatal("want an error from the fail-closed filter")
+	if err != nil {
+		t.Fatalf("configured FailClosed returned engine error: %v", err)
 	}
 	requireDisposition(t, res.Disposition, DispositionBlocked)
-	if res.Reply.Status == 0 {
-		t.Errorf("Reply = %+v, want a synthesised blocking reply", res.Reply)
+	if res.Reply.Status != 500 || res.Reply.Details != "epe_response_headers_failed_closed" {
+		t.Errorf("Reply = %+v, want response-headers local 500", res.Reply)
 	}
 	if len(res.HeaderOps) != 0 {
 		t.Errorf("HeaderOps = %+v, want none on a blocked response", res.HeaderOps)

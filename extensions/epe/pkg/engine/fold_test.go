@@ -20,10 +20,10 @@ import (
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
 
-// TestFold drives Fold through a net-effect table: each case is one ordered
+// TestFold drives fold through a net-effect table: each case is one ordered
 // mutation list and the exact op sequence it must fold to. Header names are
 // compared case-insensitively because HTTP header names are case-insensitive
-// and Envoy lower-cases them; the spelling Fold preserves is not part of the
+// and Envoy lower-cases them; the spelling fold preserves is not part of the
 // contract.
 func TestFold(t *testing.T) {
 	tests := []struct {
@@ -58,7 +58,7 @@ func TestFold(t *testing.T) {
 			// value, then add v". Emitting the add alone makes Envoy append
 			// to the inbound value instead, yielding "inbound, v".
 			//
-			// Note the "never both" invariant in Fold's doc is only required
+			// Note the "never both" invariant in fold's doc is only required
 			// in the Set->Remove direction; this direction genuinely needs
 			// both ops.
 			name: "add after remove keeps the remove",
@@ -142,13 +142,13 @@ func TestFold(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out := Fold(tc.in)
+			out := fold(tc.in)
 			if len(out) != len(tc.want) {
-				t.Fatalf("Fold = %+v, want %+v", out, tc.want)
+				t.Fatalf("fold = %+v, want %+v", out, tc.want)
 			}
 			for i, w := range tc.want {
 				if out[i].Kind != w.Kind || !strings.EqualFold(out[i].Name, w.Name) || out[i].Value != w.Value {
-					t.Errorf("Fold[%d] = %+v, want %+v (name compared case-insensitively)", i, out[i], w)
+					t.Errorf("fold[%d] = %+v, want %+v (name compared case-insensitively)", i, out[i], w)
 				}
 			}
 		})

@@ -91,6 +91,6 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 	if !er.NeedsBody() {
 		t.Fatal("test setup: engine did not register a body need")
 	}
-	state.bodyContinuation = er
+	state.requestBodyContinuation = er
 	return s, state
 }

@@ -57,6 +57,7 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 		{name: "no phase", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = 0; return d }()},
 		{name: "undispatched phase", desc: func() Descriptor[testCfg] { d := testDescriptor("ghost"); d.Phases |= Phase(1 << 7); return d }()},
 		{name: "body phase without request headers", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = PhaseRequestBody; return d }()},
+		{name: "response body phase without response headers", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = PhaseResponseBody; return d }()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +65,14 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 				t.Fatal("Build accepted an invalid descriptor")
 			}
 		})
+	}
+}
+
+func TestDefinitionAcceptsMatchingResponsePhases(t *testing.T) {
+	d := testDescriptor("response")
+	d.Phases = PhaseResponseHeaders | PhaseResponseBody
+	if _, err := Build(Define(d, testProject)); err != nil {
+		t.Fatalf("Build matching response phases: %v", err)
 	}
 }
 

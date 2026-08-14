@@ -33,17 +33,17 @@ var defaultPassThroughBody = []*extProcPb.ProcessingResponse{
 // HandleRequestBody handles the complete request body delivered by Envoy
 // after the headers phase set ModeOverride to BUFFERED. It resumes the
 // paused rule/action cursor. When no filter needs the body (state is nil or
-// carries no body continuation), it returns a passthrough.
+// carries no request-body continuation), it returns a passthrough.
 func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
-	if state == nil || state.bodyContinuation == nil || !state.bodyContinuation.NeedsBody() {
+	if state == nil || state.requestBodyContinuation == nil || !state.requestBodyContinuation.NeedsBody() {
 		return defaultPassThroughBody, nil
 	}
 
 	loggerD := log.FromContext(ctx).V(logging.DEBUG)
 	loggerD.Info("Running deferred body-phase filters", "bodyLen", len(body.Body))
 
-	prior := state.bodyContinuation
-	state.bodyContinuation = nil
+	prior := state.requestBodyContinuation
+	state.requestBodyContinuation = nil
 	reqBodyRes, err := s.eng.EvalRequestBody(ctx, state.stream, prior, filter.Body{
 		Bytes: body.Body,
 		// Deliberately not body.EndOfStream. BUFFERED — the only body mode the

@@ -125,6 +125,9 @@ func buildRegistration[C any](d Descriptor[C], parse func(raw json.RawMessage) (
 	if d.Phases&PhaseRequestBody != 0 && d.Phases&PhaseRequestHeaders == 0 {
 		return Registration{}, fmt.Errorf("filter definition %q: request-body phase requires request headers", d.Name)
 	}
+	if d.Phases&PhaseResponseBody != 0 && d.Phases&PhaseResponseHeaders == 0 {
+		return Registration{}, fmt.Errorf("filter definition %q: response-body phase requires response headers", d.Name)
+	}
 	return Registration{
 		Name:   d.Name,
 		Phases: d.Phases,

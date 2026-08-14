@@ -123,20 +123,23 @@ func TestStreamEnd_BodyPhaseMutateIsAudited(t *testing.T) {
 	}
 }
 
-// An error in the body phase must still produce exactly one entry, marked
-// as an error.
+// A FailClosed error in the body phase is a blocked policy result on the wire,
+// while the original failure remains in the audit error field.
 func TestStreamEnd_BodyPhaseErrorIsAudited(t *testing.T) {
 	cap := &captureLogger{}
 	fp := &bodyProbe{bodyErr: errors.New("boom")}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-err-test", fp)}, cap)
 
-	_, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	responses, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
 		Body: []byte(`{}`), EndOfStream: true,
 	}, state)
-	if err == nil {
-		t.Fatal("want the body-phase error to propagate to Envoy")
+	if err != nil {
+		t.Fatalf("configured FailClosed returned handler error: %v", err)
 	}
-	s.finishStream(context.Background(), state, err)
+	if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("responses = %+v, want local FailClosed response", responses)
+	}
+	s.finishStream(context.Background(), state, nil)
 
 	if len(cap.entries) != 1 {
 		t.Fatalf("want exactly 1 accesslog entry on the error path, got %d", len(cap.entries))
@@ -145,7 +148,7 @@ func TestStreamEnd_BodyPhaseErrorIsAudited(t *testing.T) {
 	if got.Error == "" {
 		t.Errorf("Error is empty; the body-phase failure must be recorded, entry = %+v", got)
 	}
-	if got.Outcome != "error" {
-		t.Errorf("Outcome = %q, want error", got.Outcome)
+	if got.Outcome != "blocked" {
+		t.Errorf("Outcome = %q, want blocked", got.Outcome)
 	}
 }

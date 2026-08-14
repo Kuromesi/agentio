@@ -47,6 +47,9 @@ type Mutation struct {
 	HeaderOps []HeaderOp
 	// Body: nil = unchanged; non-nil (including empty) = replace.
 	Body []byte
+	// StatusCode is a response-only status replacement. nil leaves the
+	// upstream status unchanged.
+	StatusCode *int
 	// ClearRouteCache must be set when :path/:authority/:method/:scheme/
 	// host change, or an earlier filter's cached route silently wins. The
 	// helpers below set it for you; the adapter also forces it for those
@@ -56,8 +59,16 @@ type Mutation struct {
 
 func (m Mutation) equal(o Mutation) bool {
 	return m.ClearRouteCache == o.ClearRouteCache &&
+		equalIntPointer(m.StatusCode, o.StatusCode) &&
 		slices.Equal(m.Body, o.Body) &&
 		slices.Equal(m.HeaderOps, o.HeaderOps)
+}
+
+func equalIntPointer(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // SetHeader builds a single-op mutation overwriting name with value.

@@ -92,7 +92,7 @@ func TestHandleRequestBody_ConsumesPendingEvaluationOnce(t *testing.T) {
 	}, state); err != nil {
 		t.Fatalf("first body: %v", err)
 	}
-	if state.bodyContinuation != nil {
+	if state.requestBodyContinuation != nil {
 		t.Fatal("pending header evaluation was not cleared")
 	}
 	if state.awaitingRequestBody() {
