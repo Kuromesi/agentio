@@ -143,7 +143,7 @@ func buildMetrics(regs []filter.Registration) []regMetrics {
 		if reg.Phases&filter.PhaseRequestHeaders != 0 {
 			out[i].requestHeaders = newFilterMetrics(reg.Name, phaseRequestHeaders)
 		}
-		if reg.Body != filter.BodyNone {
+		if reg.Phases&filter.PhaseRequestBody != 0 {
 			out[i].requestBody = newFilterMetrics(reg.Name, phaseRequestBody)
 		}
 		if reg.Phases&filter.PhaseResponseHeaders != 0 {

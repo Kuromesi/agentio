@@ -52,6 +52,7 @@ func TestCompileBool(t *testing.T) {
 		{"valid bool", `pod.namespace == "ns"`, false, ""},
 		{"non-bool", `pod.namespace`, false, "must return bool"},
 		{"syntax error", `pod.`, false, "compile when"},
+		{"unsupported response", `response.status == 503`, false, "undeclared reference to 'response'"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

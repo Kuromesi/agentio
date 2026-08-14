@@ -12,12 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package block
-
-import "testing"
-
-func TestParseRejectsMalformedPayload(t *testing.T) {
-	if _, err := parse([]byte(`{"statusCode":"nope"}`)); err == nil {
-		t.Fatal("parse accepted a non-numeric statusCode")
-	}
-}
+// Package securityprofile contains SecurityProfile-specific fixtures and
+// full-chain scenarios. It is the only test package that combines the CRD,
+// profile store, SecurityProfile resolver, engine, and ext_proc wire harness.
+package securityprofile

@@ -37,9 +37,9 @@ func (e *Engine) invoke(
 	elapsed := time.Since(start)
 	oc := classifyOutcome(act, err)
 	m.observe(elapsed, oc)
-	if st != nil && st.Info != nil {
+	if st != nil {
 		// Err is recorded even when a fail-open policy later swallows it.
-		st.Info.Filters = append(st.Info.Filters, filter.FilterRecord{
+		st.Info.RecordFilter(filter.FilterRecord{
 			Filter:   m.filter,
 			Phase:    m.phase,
 			Outcome:  oc.String(),

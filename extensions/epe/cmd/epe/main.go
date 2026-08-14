@@ -60,9 +60,6 @@ var (
 		"The port used for gRPC liveness and readiness probes")
 	metricsPort = flag.Int(
 		"metrics-port", 9090, "The metrics port")
-	observeResponses = flag.Bool(
-		"observe-responses", false,
-		"Open the response-headers phase via ModeOverride so the accesslog and audit record the upstream status; adds one ext_proc message per forwarded request")
 	pluginBudget = flag.Duration(
 		"plugin-budget", 4500*time.Millisecond,
 		"Maximum duration of one evaluation phase (one ext_proc message), shared by every filter invocation in that phase; 0 disables. Must stay below Envoy's ext_proc message_timeout (shipped default 5s) so the plugin is cancelled before Envoy gives up. Lower it only with the failure-mode change in mind: a fetch that exceeds the budget becomes a fetch error, which the rule's failStrategy (CRD default Block) turns into a 403.")
@@ -203,15 +200,14 @@ func run() error {
 		return err
 	}
 	group.Add(runserver.New(runserver.Config{
-		GrpcPort:         *grpcPort,
-		PluginBudget:     *pluginBudget,
-		SecureServing:    servingTLS.Secure,
-		CertProvider:     servingTLS.Provider,
-		TLSOptions:       servingTLS.Options,
-		Resolve:          securityprofile.NewResolver(store, registrations, auditRouter),
-		AuditLogger:      auditLogger,
-		Registrations:    registrations,
-		ObserveResponses: *observeResponses,
+		GrpcPort:      *grpcPort,
+		PluginBudget:  *pluginBudget,
+		SecureServing: servingTLS.Secure,
+		CertProvider:  servingTLS.Provider,
+		TLSOptions:    servingTLS.Options,
+		Resolve:       securityprofile.NewResolver(store, registrations, auditRouter),
+		AuditLogger:   auditLogger,
+		Registrations: registrations,
 	}, ctrllog.Log.WithName("ext-proc")))
 
 	// Start pprof server if enabled.

@@ -30,6 +30,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/filters/block"
 	"istio.io/istio/extensions/epe/pkg/filters/bypass"
+	"istio.io/istio/extensions/epe/pkg/filters/headermutation"
 	"istio.io/istio/extensions/epe/pkg/filters/mcpacl"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
 	_ "istio.io/istio/extensions/epe/pkg/filters/tokentransform/signers/aliyun" // registers the AliyunSTS signer
@@ -67,10 +68,12 @@ func credClientFor(deps Deps) *credential.Client {
 
 // BuildFilters returns the production action order used inside every rule.
 // Rules themselves always run in policy order. Bypass precedes block so a
-// malformed rule carrying both bypasses; body enforcement and token
-// transformation follow the cheap header-only actions. Which transformation
-// TYPES a rule can use is the tokentransform signer registry's decision;
-// an unregistered type fails closed at projection time.
+// malformed rule carrying both bypasses; body enforcement follows the cheap
+// header-only actions. Generic header mutations precede credential transforms
+// so a credential-derived value wins if two policy sources target the same
+// header. Which transformation TYPES a rule can use is the tokentransform
+// signer registry's decision; an unregistered type fails closed at projection
+// time.
 func BuildFilters(deps Deps) ([]filter.Registration, error) {
 	credClient := credClientFor(deps)
 	ttDeps := tokentransform.Deps{
@@ -83,6 +86,7 @@ func BuildFilters(deps Deps) ([]filter.Registration, error) {
 		bypass.Definition(),
 		block.Definition(),
 		mcpacl.Definition(),
+		headermutation.Definition(),
 		tokentransform.NewDefinition(ttDeps),
 	}
 	return filter.Build(definitions...)

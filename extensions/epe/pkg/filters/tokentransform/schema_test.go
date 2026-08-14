@@ -19,24 +19,11 @@ import (
 	"testing"
 
 	"k8s.io/utils/ptr"
-
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
-// The CRD action and this filter's schema are coupled only by json tag
-// names, which the compiler does not check. parseAction is
-// that check: it marshals the real v1alpha1 action exactly as the
-// SecurityProfile adapter's payloadsFor does and runs the real parse, so
-// every case below is a round-trip test. A renamed tag on either side
-// fails here.
-//
-// This is the one place the filter's tests name the policy API, and only
-// to prove the schemas still line up — schema.go itself imports no API
-// package. The credentialRef is always the typed union, because the
-// deprecated flat spelling is normalized away on the policy side before a
-// document reaches the filter; that normalization is
-// tested in pkg/policy/securityprofile.
-func parseAction(t *testing.T, tt *v1alpha1.TokenTransformationAction) (Config, error) {
+// parseSpec exercises the JSON boundary using the filter-owned wire type.
+// Compatibility with concrete policy APIs is tested in testing/securityprofile.
+func parseSpec(t *testing.T, tt *spec) (Config, error) {
 	t.Helper()
 	raw, err := json.Marshal(tt)
 	if err != nil {
@@ -45,17 +32,17 @@ func parseAction(t *testing.T, tt *v1alpha1.TokenTransformationAction) (Config, 
 	return parse(raw)
 }
 
-func apiKeyTT() *v1alpha1.TokenTransformationAction {
-	return &v1alpha1.TokenTransformationAction{
-		CredentialRef: v1alpha1.CredentialRef{
-			Secret: &v1alpha1.SecretCredentialRef{Name: "s", Namespace: "ns"},
+func apiKeyTT() *spec {
+	return &spec{
+		CredentialRef: credentialRefSpec{
+			Secret: &secretRefSpec{Name: "s", Namespace: "ns"},
 		},
-		ApiKey: &v1alpha1.ApiKeyConfig{TargetHeader: "authorization", ValueTemplate: "Bearer {{ .Token }}"},
+		ApiKey: &apiKeySpec{TargetHeader: "authorization", ValueTemplate: "Bearer {{ .Token }}"},
 	}
 }
 
 func TestParseClaimsApiKeyAction(t *testing.T) {
-	cfg, err := parseAction(t, apiKeyTT())
+	cfg, err := parseSpec(t, apiKeyTT())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +65,7 @@ func TestParseClaimsApiKeyAction(t *testing.T) {
 func TestParseDefaultsEmptyTypeToApiKey(t *testing.T) {
 	tt := apiKeyTT()
 	tt.Type = ""
-	cfg, err := parseAction(t, tt)
+	cfg, err := parseSpec(t, tt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +77,7 @@ func TestParseDefaultsEmptyTypeToApiKey(t *testing.T) {
 func TestParseUnregisteredTypeFailsClosed(t *testing.T) {
 	tt := apiKeyTT()
 	tt.Type = "NoSuchType"
-	_, err := parseAction(t, tt)
+	_, err := parseSpec(t, tt)
 	if err == nil || !strings.Contains(err.Error(), "no signer") {
 		t.Fatalf("err = %v, want unregistered-signer error", err)
 	}
@@ -101,9 +88,9 @@ func TestParseAliyunSTSClaimsWhenRegistered(t *testing.T) {
 		t.Skip("AliyunSTS signer not registered in this build")
 	}
 	tt := apiKeyTT()
-	tt.Type = v1alpha1.TokenTransformationTypeAliyunSTS
+	tt.Type = TypeAliyunSTS
 	tt.ApiKey = nil
-	cfg, err := parseAction(t, tt)
+	cfg, err := parseSpec(t, tt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +104,7 @@ func TestParseAliyunSTSClaimsWhenRegistered(t *testing.T) {
 func TestParseFailsClosedWithEmptySignerRegistry(t *testing.T) {
 	restore := swapSigners()
 	defer restore()
-	_, err := parseAction(t, apiKeyTT())
+	_, err := parseSpec(t, apiKeyTT())
 	if err == nil || !strings.Contains(err.Error(), "no signer") {
 		t.Fatalf("err = %v, want unregistered-signer error", err)
 	}
@@ -125,12 +112,12 @@ func TestParseFailsClosedWithEmptySignerRegistry(t *testing.T) {
 
 func TestParseFailStrategy(t *testing.T) {
 	for _, tc := range []struct {
-		strategy v1alpha1.FailStrategy
+		strategy string
 		want     bool
 	}{
-		{v1alpha1.FailStrategyBlock, true},
-		{v1alpha1.FailStrategyAllow, false},
-		{v1alpha1.FailStrategyIgnore, false},
+		{"Block", true},
+		{"Allow", false},
+		{"Ignore", false},
 		// Only the two explicit open values open. An empty value means the
 		// payload never went through API-server defaulting, and the CRD
 		// defaults this field to Block — so blocking is what the operator
@@ -142,7 +129,7 @@ func TestParseFailStrategy(t *testing.T) {
 		t.Run(string(tc.strategy), func(t *testing.T) {
 			tt := apiKeyTT()
 			tt.FailStrategy = tc.strategy
-			cfg, err := parseAction(t, tt)
+			cfg, err := parseSpec(t, tt)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,8 +142,8 @@ func TestParseFailStrategy(t *testing.T) {
 
 func TestParseWhenCompiled(t *testing.T) {
 	tt := apiKeyTT()
-	tt.ApiKey.When = &v1alpha1.ActionCondition{Header: "X-Guard", Pattern: "^v.*"}
-	cfg, err := parseAction(t, tt)
+	tt.ApiKey.When = &whenSpec{Header: "X-Guard", Pattern: "^v.*"}
+	cfg, err := parseSpec(t, tt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,17 +154,17 @@ func TestParseWhenCompiled(t *testing.T) {
 
 func TestParseProviderParametersCompiled(t *testing.T) {
 	tt := apiKeyTT()
-	tt.CredentialRef = v1alpha1.CredentialRef{
-		CredentialProvider: &v1alpha1.CredentialProviderRef{
+	tt.CredentialRef = credentialRefSpec{
+		CredentialProvider: &providerRefSpec{
 			Name: "prov",
-			Parameters: map[string]v1alpha1.ValueSource{
+			Parameters: map[string]valueSourceSpec{
 				"static":   {Value: ptr.To("x")},
 				"template": {Template: ptr.To("{{ .Pod.Name }}")},
 				"cel":      {Cel: ptr.To("pod.name")},
 			},
 		},
 	}
-	cfg, err := parseAction(t, tt)
+	cfg, err := parseSpec(t, tt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,43 +184,43 @@ func TestParseFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want string
-		mut  func(*v1alpha1.TokenTransformationAction)
+		mut  func(*spec)
 	}{
-		{"nil apiKey while type is ApiKey", "apiKey config is nil", func(tt *v1alpha1.TokenTransformationAction) {
+		{"nil apiKey while type is ApiKey", "apiKey config is nil", func(tt *spec) {
 			tt.ApiKey = nil
 		}},
-		{"bad valueTemplate", "compile valueTemplate", func(tt *v1alpha1.TokenTransformationAction) {
+		{"bad valueTemplate", "compile valueTemplate", func(tt *spec) {
 			tt.ApiKey.ValueTemplate = "Bearer {{ .Token"
 		}},
-		{"bad when pattern", "compile when pattern", func(tt *v1alpha1.TokenTransformationAction) {
-			tt.ApiKey.When = &v1alpha1.ActionCondition{Header: "X-Guard", Pattern: "("}
+		{"bad when pattern", "compile when pattern", func(tt *spec) {
+			tt.ApiKey.When = &whenSpec{Header: "X-Guard", Pattern: "("}
 		}},
-		{"credentialRef with neither branch", "neither secret nor credentialProvider", func(tt *v1alpha1.TokenTransformationAction) {
-			tt.CredentialRef = v1alpha1.CredentialRef{}
+		{"credentialRef with neither branch", "neither secret nor credentialProvider", func(tt *spec) {
+			tt.CredentialRef = credentialRefSpec{}
 		}},
-		{"credentialRef with both branches", "must not set both", func(tt *v1alpha1.TokenTransformationAction) {
-			tt.CredentialRef = v1alpha1.CredentialRef{
-				Secret:             &v1alpha1.SecretCredentialRef{Name: "s"},
-				CredentialProvider: &v1alpha1.CredentialProviderRef{Name: "p"},
+		{"credentialRef with both branches", "must not set both", func(tt *spec) {
+			tt.CredentialRef = credentialRefSpec{
+				Secret:             &secretRefSpec{Name: "s"},
+				CredentialProvider: &providerRefSpec{Name: "p"},
 			}
 		}},
-		{"empty secret name", "secret.name is empty", func(tt *v1alpha1.TokenTransformationAction) {
-			tt.CredentialRef = v1alpha1.CredentialRef{Secret: &v1alpha1.SecretCredentialRef{}}
+		{"empty secret name", "secret.name is empty", func(tt *spec) {
+			tt.CredentialRef = credentialRefSpec{Secret: &secretRefSpec{}}
 		}},
-		{"empty provider name", "credentialProvider.name is empty", func(tt *v1alpha1.TokenTransformationAction) {
-			tt.CredentialRef = v1alpha1.CredentialRef{CredentialProvider: &v1alpha1.CredentialProviderRef{}}
+		{"empty provider name", "credentialProvider.name is empty", func(tt *spec) {
+			tt.CredentialRef = credentialRefSpec{CredentialProvider: &providerRefSpec{}}
 		}},
-		{"ambiguous provider parameter", "exactly one of value, cel or template", func(tt *v1alpha1.TokenTransformationAction) {
-			tt.CredentialRef = v1alpha1.CredentialRef{CredentialProvider: &v1alpha1.CredentialProviderRef{
+		{"ambiguous provider parameter", "exactly one of value, cel or template", func(tt *spec) {
+			tt.CredentialRef = credentialRefSpec{CredentialProvider: &providerRefSpec{
 				Name:       "prov",
-				Parameters: map[string]v1alpha1.ValueSource{"both": {Value: ptr.To("x"), Cel: ptr.To("pod.name")}},
+				Parameters: map[string]valueSourceSpec{"both": {Value: ptr.To("x"), Cel: ptr.To("pod.name")}},
 			}}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tt := apiKeyTT()
 			tc.mut(tt)
-			_, err := parseAction(t, tt)
+			_, err := parseSpec(t, tt)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
 			}

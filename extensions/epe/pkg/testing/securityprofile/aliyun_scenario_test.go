@@ -18,7 +18,7 @@
 // so the signer's wire-level tests stay with the signer. Signature
 // algorithms and detection branches stay in sign/; signer-level behaviour
 // in aliyun_test.go.
-package aliyun_test
+package securityprofile
 
 import (
 	"errors"
@@ -31,7 +31,6 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
-	"istio.io/istio/extensions/epe/pkg/testing/filtertest"
 )
 
 const stsProfileYAML = `
@@ -58,7 +57,7 @@ spec:
 `
 
 func stsSecret() *corev1.Secret {
-	return filtertest.STSSecret("test-ns", "sts-creds", "STS.NEWAK", "NEWSECRET", "NEWTOKEN")
+	return newSTSSecret("test-ns", "sts-creds", "STS.NEWAK", "NEWSECRET", "NEWTOKEN")
 }
 
 func v3Request() *enginetest.RequestBuilder {
@@ -76,18 +75,18 @@ func v3Request() *enginetest.RequestBuilder {
 // STS triplet is read from the pod-namespace Secret, and the signature
 // headers are rewritten in the response mutation.
 func TestScenario_V3ResignFromSecret(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{Kube: k8sfake.NewClientset(stsSecret())})
+	h := New(t, Options{Kube: k8sfake.NewClientset(stsSecret())})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	verdict := h.Run(t, v3Request())
 	verdict.RequireOutcome(t, "mutated")
 	verdict.RequireHeader(t, "x-acs-security-token", "NEWTOKEN")
-	authorization, ok := verdict.SetHeaders["authorization"]
-	if !ok {
-		t.Fatalf("authorization not mutated (set=%v)", verdict.SetHeaders)
+	authorization := verdict.RequestHeaderValues("authorization")
+	if len(authorization) != 1 {
+		t.Fatalf("authorization values = %v, want exactly one (ops=%+v)", authorization, verdict.RequestHeaderOps)
 	}
-	if !strings.Contains(authorization, "STS.NEWAK") || strings.Contains(authorization, "OLDAK") {
-		t.Errorf("authorization = %q, want new access key and no old one", authorization)
+	if !strings.Contains(authorization[0], "STS.NEWAK") || strings.Contains(authorization[0], "OLDAK") {
+		t.Errorf("authorization = %q, want new access key and no old one", authorization[0])
 	}
 }
 
@@ -95,7 +94,7 @@ func TestScenario_V3ResignFromSecret(t *testing.T) {
 // that a V1-RPC POST with all parameters in the query string is re-signed
 // in the headers phase without requesting body delivery from Envoy.
 func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{Kube: k8sfake.NewClientset(stsSecret())})
+	h := New(t, Options{Kube: k8sfake.NewClientset(stsSecret())})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	verdict := h.Run(t, enginetest.NewRequest("POST", "ecs.cn-hangzhou.aliyuncs.com",
@@ -108,12 +107,12 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 	if verdict.ModeOverride != nil {
 		t.Fatalf("query-only V1-RPC POST requested body delivery: %v", verdict.ModeOverride)
 	}
-	newPath, ok := verdict.SetHeaders[":path"]
-	if !ok {
-		t.Fatalf(":path not rewritten (set=%v)", verdict.SetHeaders)
+	newPath := verdict.RequestHeaderValues(":path")
+	if len(newPath) != 1 {
+		t.Fatalf(":path values = %v, want exactly one rewrite (ops=%+v)", newPath, verdict.RequestHeaderOps)
 	}
-	if !strings.Contains(newPath, "AccessKeyId=STS.NEWAK") || strings.Contains(newPath, "oldSignature") {
-		t.Errorf(":path = %q, want re-signed query with new access key", newPath)
+	if !strings.Contains(newPath[0], "AccessKeyId=STS.NEWAK") || strings.Contains(newPath[0], "oldSignature") {
+		t.Errorf(":path = %q, want re-signed query with new access key", newPath[0])
 	}
 }
 
@@ -124,9 +123,9 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 // under the profile's Block strategy, which stsProfileYAML leaves at the CRD
 // default.
 func TestScenario_ForbiddenSecretHonoursBlockStrategy(t *testing.T) {
-	forbidden := filtertest.SecretGetErrorClientset(
+	forbidden := newSecretGetErrorClientset(
 		apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "sts-creds", errors.New("rbac denied")))
-	h := enginetest.New(t, enginetest.Options{Kube: forbidden})
+	h := New(t, Options{Kube: forbidden})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	h.Run(t, v3Request()).RequireBlocked(t, 403)

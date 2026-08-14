@@ -59,7 +59,6 @@ func fixedReg(name string, f filter.Filter) filter.Registration {
 	return filter.Registration{
 		Name:   name,
 		Phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:   filter.BodyComplete,
 		Parse:  func(json.RawMessage) (any, error) { return struct{}{}, nil },
 		New:    func(filter.ErasedRuleConfig) filter.Filter { return f },
 	}
@@ -77,7 +76,7 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 	s := NewServer(deps)
 
 	state := newStreamState()
-	state.sawRequest = true
+	state.markRequestSeen()
 	unit := engine.Unit{
 		ID:   filter.UnitID{Scope: "default/p1", Name: "r", Ordinal: 0},
 		Cfgs: make([]any, len(regs)),
@@ -92,6 +91,6 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 	if !er.NeedsBody() {
 		t.Fatal("test setup: engine did not register a body need")
 	}
-	state.eval = er
+	state.bodyContinuation = er
 	return s, state
 }

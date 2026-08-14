@@ -42,27 +42,27 @@ var routeAffectingHeaders = map[string]bool{
 
 // translateRequestHeadersResult maps an RequestHeadersResult to the headers-phase response
 // list.
-func translateRequestHeadersResult(er *engine.RequestHeadersResult, loggerD logr.Logger, peer filter.Peer) []*extProcPb.ProcessingResponse {
-	if er.Disposition == engine.DispositionBlocked {
-		return []*extProcPb.ProcessingResponse{immediateFromReply(er.Reply)}
+func translateRequestHeadersResult(reqHeadersRes *engine.RequestHeadersResult, loggerD logr.Logger, peer filter.Peer) []*extProcPb.ProcessingResponse {
+	if reqHeadersRes.Disposition == engine.DispositionBlocked {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(reqHeadersRes.Reply)}
 	}
-	if len(er.HeaderOps) == 0 && er.Body == nil {
-		if er.Disposition == engine.DispositionPassthrough {
+	if len(reqHeadersRes.HeaderOps) == 0 && reqHeadersRes.Body == nil {
+		if reqHeadersRes.Disposition == engine.DispositionPassthrough {
 			loggerD.Info("No filter produced mutations; passthrough", "pod", peer.Pod.String())
 		}
 		return defaultPassThrough
 	}
-	mut, clear := headerMutationFromOps(er.HeaderOps)
+	mut, clear := headerMutationFromOps(reqHeadersRes.HeaderOps)
 	common := &extProcPb.CommonResponse{
 		HeaderMutation:  mut,
-		ClearRouteCache: clear || er.ClearRouteCache,
+		ClearRouteCache: clear || reqHeadersRes.ClearRouteCache,
 	}
-	if er.Body != nil {
+	if reqHeadersRes.Body != nil {
 		// A headers-phase body mutation is silently dropped under plain
 		// CONTINUE; Envoy only honors it with CONTINUE_AND_REPLACE.
 		common.Status = extProcPb.CommonResponse_CONTINUE_AND_REPLACE
 		common.BodyMutation = &extProcPb.BodyMutation{
-			Mutation: &extProcPb.BodyMutation_Body{Body: er.Body},
+			Mutation: &extProcPb.BodyMutation_Body{Body: reqHeadersRes.Body},
 		}
 	}
 	return []*extProcPb.ProcessingResponse{{
@@ -75,23 +75,23 @@ func translateRequestHeadersResult(er *engine.RequestHeadersResult, loggerD logr
 }
 
 // translateRequestBodyResult maps a RequestBodyResult to the body-phase response list.
-func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.ProcessingResponse {
-	if br.Disposition == engine.DispositionBlocked {
-		return []*extProcPb.ProcessingResponse{immediateFromReply(br.Reply)}
+func translateRequestBodyResult(reqBodyRes *engine.RequestBodyResult) []*extProcPb.ProcessingResponse {
+	if reqBodyRes.Disposition == engine.DispositionBlocked {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(reqBodyRes.Reply)}
 	}
-	if len(br.HeaderOps) == 0 && br.Body == nil {
+	if len(reqBodyRes.HeaderOps) == 0 && reqBodyRes.Body == nil {
 		return defaultPassThroughBody
 	}
-	mut, clear := headerMutationFromOps(br.HeaderOps)
+	mut, clear := headerMutationFromOps(reqBodyRes.HeaderOps)
 	common := &extProcPb.CommonResponse{
 		HeaderMutation:  mut,
-		ClearRouteCache: clear || br.ClearRouteCache,
+		ClearRouteCache: clear || reqBodyRes.ClearRouteCache,
 	}
-	if br.Body != nil {
+	if reqBodyRes.Body != nil {
 		// Rewriting a BUFFERED body without a matching content-length is a
 		// hard error (500), so the adapter sets both together.
 		common.BodyMutation = &extProcPb.BodyMutation{
-			Mutation: &extProcPb.BodyMutation_Body{Body: br.Body},
+			Mutation: &extProcPb.BodyMutation_Body{Body: reqBodyRes.Body},
 		}
 		if common.HeaderMutation == nil {
 			common.HeaderMutation = &extProcPb.HeaderMutation{}
@@ -99,7 +99,7 @@ func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.Proce
 		common.HeaderMutation.SetHeaders = append(common.HeaderMutation.SetHeaders, &corev3.HeaderValueOption{
 			Header: &corev3.HeaderValue{
 				Key:      "content-length",
-				RawValue: []byte(strconv.Itoa(len(br.Body))),
+				RawValue: []byte(strconv.Itoa(len(reqBodyRes.Body))),
 			},
 			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 		})
@@ -112,6 +112,42 @@ func translateRequestBodyResult(br *engine.RequestBodyResult) []*extProcPb.Proce
 		},
 	}}
 }
+
+// translateResponseHeadersResult emits a blocking reply, response mutations,
+// or a bare acknowledgement. It never clears the request-side route cache.
+func translateResponseHeadersResult(respHeadersRes *engine.ResponseHeadersResult) []*extProcPb.ProcessingResponse {
+	if respHeadersRes.Disposition == engine.DispositionBlocked {
+		// Envoy holds the upstream response headers while awaiting our reply, so
+		// this local reply genuinely replaces them. HeaderOps are ignored: the
+		// response being mutated no longer goes downstream.
+		return []*extProcPb.ProcessingResponse{immediateFromReply(respHeadersRes.Reply)}
+	}
+	if len(respHeadersRes.HeaderOps) == 0 && respHeadersRes.Body == nil {
+		return emptyResponseHeadersAck
+	}
+	mut, _ := headerMutationFromOps(respHeadersRes.HeaderOps)
+	common := &extProcPb.CommonResponse{HeaderMutation: mut}
+	if respHeadersRes.Body != nil {
+		common.Status = extProcPb.CommonResponse_CONTINUE_AND_REPLACE
+		common.BodyMutation = &extProcPb.BodyMutation{
+			Mutation: &extProcPb.BodyMutation_Body{Body: respHeadersRes.Body},
+		}
+	}
+	return []*extProcPb.ProcessingResponse{{
+		Response: &extProcPb.ProcessingResponse_ResponseHeaders{
+			ResponseHeaders: &extProcPb.HeadersResponse{
+				Response: common,
+			},
+		},
+	}}
+}
+
+// emptyResponseHeadersAck is the immutable bare acknowledgement for response headers.
+var emptyResponseHeadersAck = []*extProcPb.ProcessingResponse{{
+	Response: &extProcPb.ProcessingResponse_ResponseHeaders{
+		ResponseHeaders: &extProcPb.HeadersResponse{},
+	},
+}}
 
 // headerMutationFromOps renders folded ops as one proto HeaderMutation and
 // reports whether a route-affecting header was touched.
@@ -128,7 +164,7 @@ func headerMutationFromOps(ops []filter.HeaderOp) (*extProcPb.HeaderMutation, bo
 				Header:       &corev3.HeaderValue{Key: op.Name, RawValue: []byte(op.Value)},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			})
-		case filter.HeaderAppend:
+		case filter.HeaderAdd:
 			mut.SetHeaders = append(mut.SetHeaders, &corev3.HeaderValueOption{
 				Header:       &corev3.HeaderValue{Key: op.Name, RawValue: []byte(op.Value)},
 				AppendAction: corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,

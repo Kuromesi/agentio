@@ -18,12 +18,9 @@ package mcpacl
 
 import (
 	"context"
-	"encoding/json"
 
-	"istio.io/istio/extensions/epe/pkg/httpreq"
-
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/extensions/epe/pkg/httpreq"
 )
 
 type legacyAction int
@@ -65,27 +62,14 @@ func makeRctx(contentType string) *legacyRctx {
 // type so the tests do not name the policy layer.
 type legacyRule struct {
 	Name   string
-	Policy *v1alpha1.MCPToolPolicySpec
+	Policy *Config
 }
 
-func makeRule(policy *v1alpha1.MCPToolPolicySpec) *legacyRule {
+func makeRule(policy *Config) *legacyRule {
 	return &legacyRule{Name: "test-rule", Policy: policy}
 }
 
-// cfgFromPolicy round-trips a CRD policy through the payload wire form:
-// marshal, then run this package's parse, so the tests exercise the same
-// path a real payload takes.
-func cfgFromPolicy(policy *v1alpha1.MCPToolPolicySpec) Config {
-	raw, err := json.Marshal(policy)
-	if err != nil {
-		panic(err) // marshaling a CRD value cannot fail
-	}
-	cfg, err := parse(raw)
-	if err != nil {
-		panic(err) // the schema test proves parse accepts CRD-shaped documents
-	}
-	return cfg
-}
+func configOf(policy *Config) Config { return *policy }
 
 type legacyPlugin struct{}
 
@@ -105,7 +89,7 @@ func (p *legacyPlugin) OnRequestHeaders(_ context.Context, _ *legacyRctx, _ any,
 func (p *legacyPlugin) Finalize(ctx context.Context, rctx *legacyRctx, _ any, rule *legacyRule) (legacyResult, error) {
 	f := New(filter.RuleConfig[Config]{
 		ID:  filter.UnitID{Scope: "test/p", Name: rule.Name},
-		Cfg: cfgFromPolicy(rule.Policy),
+		Cfg: configOf(rule.Policy),
 	})
 	st := &filter.Stream{Request: rctx.Request}
 	act, err := f.OnRequestBody(ctx, st, filter.Body{Bytes: rctx.RequestBody, Complete: true})

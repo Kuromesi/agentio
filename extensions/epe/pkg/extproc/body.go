@@ -19,7 +19,6 @@ import (
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/logging"
 )
@@ -34,19 +33,18 @@ var defaultPassThroughBody = []*extProcPb.ProcessingResponse{
 // HandleRequestBody handles the complete request body delivered by Envoy
 // after the headers phase set ModeOverride to BUFFERED. It resumes the
 // paused rule/action cursor. When no filter needs the body (state is nil or
-// carries no pending eval), it returns a passthrough.
+// carries no body continuation), it returns a passthrough.
 func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
-	if state == nil || state.eval == nil || !state.eval.NeedsBody() {
+	if state == nil || state.bodyContinuation == nil || !state.bodyContinuation.NeedsBody() {
 		return defaultPassThroughBody, nil
 	}
 
 	loggerD := log.FromContext(ctx).V(logging.DEBUG)
 	loggerD.Info("Running deferred body-phase filters", "bodyLen", len(body.Body))
 
-	prior := state.eval
-	state.eval = nil
-	state.awaitRequestBody = false
-	br, err := s.eng.EvalRequestBody(ctx, state.stream, prior, filter.Body{
+	prior := state.bodyContinuation
+	state.bodyContinuation = nil
+	reqBodyRes, err := s.eng.EvalRequestBody(ctx, state.stream, prior, filter.Body{
 		Bytes: body.Body,
 		// Deliberately not body.EndOfStream. BUFFERED — the only body mode the
 		// headers phase requests — delivers the whole body in one message, and
@@ -57,12 +55,9 @@ func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody
 	if err != nil {
 		return nil, err
 	}
-	switch br.Disposition {
-	case engine.DispositionBlocked:
-		state.awaitResponseHeaders = false
-		state.finalizeAfterSend = true
-	case engine.DispositionBypassed:
-		state.finalizeAfterSend = !state.awaitResponseHeaders
-	}
-	return translateRequestBodyResult(br), nil
+	// Response-header demand is fixed before request evaluation; the resumed walk
+	// can only narrow dispatch through ResponseScope.
+	state.responseScope = reqBodyRes.ResponseScope
+	state.armFinalization(reqBodyRes.Disposition)
+	return translateRequestBodyResult(reqBodyRes), nil
 }

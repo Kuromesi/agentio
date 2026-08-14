@@ -14,7 +14,7 @@
 
 // Full-chain audit webhook delivery scenarios: profile audit config through
 // the router and webhook sink to an in-process receiver.
-package extproc_test
+package securityprofile
 
 import (
 	"fmt"
@@ -73,11 +73,11 @@ func auditedRequest(path string) *enginetest.RequestBuilder {
 		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})
 }
 
-func newWebhookAuditHarness(t *testing.T, mode enginetest.AuditMode) (*enginetest.Harness, *enginetest.AuditReceiver) {
+func newWebhookAuditHarness(t *testing.T, mode enginetest.AuditMode) (*Harness, *enginetest.AuditReceiver) {
 	t.Helper()
 	receiver := enginetest.NewAuditReceiver(t)
 	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: mode})
-	h := enginetest.New(t, enginetest.Options{AuditRouter: wiring.Router})
+	h := New(t, Options{AuditRouter: wiring.Router})
 	h.Fixture.ApplyYAML(webhookAuditProfileYAML(receiver.URL("")))
 	return h, receiver
 }
@@ -151,7 +151,7 @@ func TestScenario_AuditReceiverErrorDoesNotAffectBlockResponse(t *testing.T) {
 
 func TestScenario_AuditUnreachableSinkDoesNotAffectBlockResponse(t *testing.T) {
 	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditSync})
-	h := enginetest.New(t, enginetest.Options{AuditRouter: wiring.Router})
+	h := New(t, Options{AuditRouter: wiring.Router})
 	// 127.0.0.1:1 refuses connections: transport_error path.
 	h.Fixture.ApplyYAML(webhookAuditProfileYAML("http://127.0.0.1:1"))
 

@@ -229,36 +229,26 @@ func TestScopeInvariants(t *testing.T) {
 	}
 }
 
-// TestScopeHidesAuditOnlyVariables pins I2 and I9: `result` and `response` are
-// declared in the shared env (eval/cel.go), so expressions referencing them
-// compile on any path, but a non-audit scope must fail to resolve them at
-// evaluation time.
+// TestScopeHidesAuditResult verifies that `result` is declared in the shared
+// environment but only an audit scope provides its value.
 //
-// The layering arm matters most. Audit exposes `result` and `response` by
-// wrapping the base activation in a hierarchical child (audit/scope.go), so
-// their absence from a plain scope is structural: nothing is written into the
+// The layering arm matters most. Audit exposes `result` by wrapping the base
+// activation in a hierarchical child (audit/scope.go), so
+// its absence from a plain scope is structural: nothing is written into the
 // shared base and therefore nothing has to be deleted from it.
-func TestScopeHidesAuditOnlyVariables(t *testing.T) {
-	for _, expr := range []string{`result == "blocked"`, `response.status == 503`} {
-		t.Run("plain scope "+expr, func(t *testing.T) {
-			_, err := evalBoolOnScope(t, invariantScope(), expr)
-			if err == nil || !strings.Contains(err.Error(), "no such attribute") {
-				t.Fatalf("err = %v, want a no-such-attribute error", err)
-			}
-		})
+func TestScopeHidesAuditResult(t *testing.T) {
+	const expr = `result == "blocked"`
+	if _, err := evalBoolOnScope(t, invariantScope(), expr); err == nil || !strings.Contains(err.Error(), "no such attribute") {
+		t.Fatalf("err = %v, want a no-such-attribute error", err)
+	}
 
-		t.Run("audit layering does not contaminate the base "+expr, func(t *testing.T) {
-			base := invariantScope()
-			as := &audit.Scope{Scope: *base, Result: "blocked", Response: audit.Response{Status: 503}}
-			if got, err := evalBoolOnAuditScope(t, as, expr); err != nil || !got {
-				t.Fatalf("audit scope must resolve %s: (%v, %v)", expr, got, err)
-			}
-			// The same base, evaluated as a plain scope, must still hide it:
-			// the error must be the same no-such-attribute failure the plain
-			// subtest asserts, not any error.
-			if _, err := evalBoolOnScope(t, base, expr); err == nil || !strings.Contains(err.Error(), "no such attribute") {
-				t.Fatalf("audit layering contaminated the shared base: err = %v, want a no-such-attribute error", err)
-			}
-		})
+	base := invariantScope()
+	as := &audit.Scope{Scope: *base, Result: "blocked"}
+	if got, err := evalBoolOnAuditScope(t, as, expr); err != nil || !got {
+		t.Fatalf("audit scope must resolve %s: (%v, %v)", expr, got, err)
+	}
+	// The audit layer must not write the result into the shared base.
+	if _, err := evalBoolOnScope(t, base, expr); err == nil || !strings.Contains(err.Error(), "no such attribute") {
+		t.Fatalf("audit layering contaminated the shared base: err = %v, want a no-such-attribute error", err)
 	}
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package extproc_test
+package securityprofile
 
 import (
 	"fmt"
@@ -136,7 +136,7 @@ func benchRequest(path string) *enginetest.RequestBuilder {
 type benchArm struct {
 	name string
 	// setup seeds the profile that decides this arm's outcome.
-	setup func(h *enginetest.Harness)
+	setup func(h *Harness)
 	path  string
 	// disposition is the engine outcome, verified before timing. Asserting
 	// on the wire verdict alone would not do: bypassed and passthrough share
@@ -148,13 +148,13 @@ type benchArm struct {
 var benchArms = []benchArm{
 	{
 		name:        "passthrough",
-		setup:       func(*enginetest.Harness) {},
+		setup:       func(*Harness) {},
 		path:        "/v1/chat/completions?stream=true",
 		disposition: "passthrough",
 	},
 	{
 		name: "blocked",
-		setup: func(h *enginetest.Harness) {
+		setup: func(h *Harness) {
 			h.Fixture.ApplyYAML(benchBlockProfileYAML("block", "/blocked", 451, "blocked-by-bench"))
 		},
 		path:        "/blocked",
@@ -162,7 +162,7 @@ var benchArms = []benchArm{
 	},
 	{
 		name: "bypassed",
-		setup: func(h *enginetest.Harness) {
+		setup: func(h *Harness) {
 			h.Fixture.ApplyYAML(benchBypassProfileYAML("bypass", "/bypassed"))
 		},
 		path:        "/bypassed",
@@ -174,9 +174,9 @@ var benchArms = []benchArm{
 // plus the arm's own. The resolution probe is off so a test-only stream
 // logger stays out of the measurement; verifyArm re-checks the outcome
 // through a probe-enabled harness instead.
-func benchHarness(b testing.TB, nProfiles int, arm benchArm) *enginetest.Harness {
+func benchHarness(b testing.TB, nProfiles int, arm benchArm) *Harness {
 	b.Helper()
-	h := enginetest.New(b, enginetest.Options{DisableResolutionProbe: true})
+	h := New(b, Options{DisableResolutionProbe: true})
 	for i := 0; i < nProfiles; i++ {
 		h.Fixture.ApplyYAML(benchPassthroughProfileYAML("filler" + strconv.Itoa(i)))
 	}
@@ -189,7 +189,7 @@ func benchHarness(b testing.TB, nProfiles int, arm benchArm) *enginetest.Harness
 // so the probe's cost is not measured.
 func verifyArm(b testing.TB, nProfiles int, arm benchArm) {
 	b.Helper()
-	h := enginetest.New(b, enginetest.Options{})
+	h := New(b, Options{})
 	for i := 0; i < nProfiles; i++ {
 		h.Fixture.ApplyYAML(benchPassthroughProfileYAML("filler" + strconv.Itoa(i)))
 	}

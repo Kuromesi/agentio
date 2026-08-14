@@ -30,24 +30,30 @@ const (
 	FailClosed FailurePolicy = iota
 	// FailOpen skips this filter and continues.
 	FailOpen
-	// FromRule consults the policy's declared failure behavior via
-	// Descriptor.OnErrorOf. The mapping from CRD FailStrategy to
-	// FailurePolicy lives in the filter's own parse, never here.
-	FromRule
 )
 
 // FailurePolicyOf resolves the failure policy from one projected config.
 type FailurePolicyOf[C any] func(cfg C) FailurePolicy
 
+// Always returns a FailurePolicyOf that reports p regardless of config, for
+// filters whose failure policy is static.
+func Always[C any](p FailurePolicy) FailurePolicyOf[C] {
+	return func(C) FailurePolicy { return p }
+}
+
 // Descriptor declares one filter to the framework. C is the filter's own
 // config type; filter authors never write a type assertion.
 type Descriptor[C any] struct {
-	Name    string
-	Phases  Phase
-	Body    BodyNeed
-	OnError FailurePolicy
-	// OnErrorOf is consulted when OnError == FromRule; nil means FailClosed.
-	OnErrorOf FailurePolicyOf[C]
+	Name   string
+	Phases Phase
+	// OnError resolves the failure policy from one projected config. nil
+	// means FailClosed. The mapping from CRD FailStrategy to FailurePolicy
+	// lives in the filter's own parse, never here.
+	OnError FailurePolicyOf[C]
+	// SubscribesOf reports the conditional phases required by cfg. It is
+	// evaluated before request filters and must be deterministic and
+	// side-effect-free. nil means no conditional phase subscription.
+	SubscribesOf func(cfg C) Phase
 	// New builds one filter invocation from one rule's projected config.
 	// Rules are never aggregated: the engine constructs and runs them in
 	// policy order.
@@ -65,10 +71,12 @@ type ErasedRuleConfig struct {
 // slice — position in the slice is the within-rule action order, which is
 // static, written in code, and load-bearing.
 type Registration struct {
-	Name    string
-	Phases  Phase
-	Body    BodyNeed
-	OnError FailurePolicy
+	Name   string
+	Phases Phase
+	// OnError resolves the failure policy for one erased config. Always
+	// non-nil after Build; returns FailClosed when the filter declared no
+	// policy or cfg is nil.
+	OnError func(cfg any) FailurePolicy
 	// Parse turns this filter's payload document into its config. It is
 	// only called when the unit carries a payload under this filter's
 	// name; "not mine" is the absence of the key, not an error value.
@@ -76,8 +84,10 @@ type Registration struct {
 	Parse func(raw json.RawMessage) (any, error)
 	// New builds the filter from exactly one erased rule config.
 	New func(cfg ErasedRuleConfig) Filter
-	// PolicyFor resolves FromRule for one erased config.
-	PolicyFor func(cfg any) FailurePolicy
+	// Subscribes reports, for one erased config, which phases Envoy must be
+	// asked to deliver. Always non-nil after Build; returns 0 when the filter
+	// declared no SubscribesOf. Already intersected with Phases.
+	Subscribes func(cfg any) Phase
 }
 
 // Definition owns the typed descriptor and parser until the composition
@@ -112,24 +122,18 @@ func buildRegistration[C any](d Descriptor[C], parse func(raw json.RawMessage) (
 		return Registration{}, fmt.Errorf("filter definition %q: declares phases %08b the engine does not dispatch; "+
 			"widen filter.DispatchedPhases when the engine learns to dispatch them", d.Name, undispatched)
 	}
-	if d.Body > BodyComplete {
-		return Registration{}, fmt.Errorf("filter definition %q: invalid body need %d", d.Name, d.Body)
-	}
-	hasBodyPhase := d.Phases&PhaseRequestBody != 0
-	if hasBodyPhase != (d.Body != BodyNone) {
-		return Registration{}, fmt.Errorf("filter definition %q: request-body phase and body need must be declared together", d.Name)
-	}
-	if hasBodyPhase && d.Phases&PhaseRequestHeaders == 0 {
+	if d.Phases&PhaseRequestBody != 0 && d.Phases&PhaseRequestHeaders == 0 {
 		return Registration{}, fmt.Errorf("filter definition %q: request-body phase requires request headers", d.Name)
 	}
-	if d.OnError < FailClosed || d.OnError > FromRule {
-		return Registration{}, fmt.Errorf("filter definition %q: invalid failure policy %d", d.Name, d.OnError)
-	}
 	return Registration{
-		Name:    d.Name,
-		Phases:  d.Phases,
-		Body:    d.Body,
-		OnError: d.OnError,
+		Name:   d.Name,
+		Phases: d.Phases,
+		OnError: func(cfg any) FailurePolicy {
+			if cfg == nil || d.OnError == nil {
+				return FailClosed
+			}
+			return d.OnError(cfg.(C))
+		},
 		Parse: func(raw json.RawMessage) (any, error) {
 			cfg, err := parse(raw)
 			if err != nil {
@@ -142,11 +146,12 @@ func buildRegistration[C any](d Descriptor[C], parse func(raw json.RawMessage) (
 			// instantiation wrote the value in Parse above.
 			return d.New(RuleConfig[C]{ID: cfg.ID, Cfg: cfg.Cfg.(C), Scope: cfg.Scope})
 		},
-		PolicyFor: func(cfg any) FailurePolicy {
-			if d.OnErrorOf == nil {
-				return FailClosed
+		Subscribes: func(cfg any) Phase {
+			if d.SubscribesOf == nil {
+				return 0
 			}
-			return d.OnErrorOf(cfg.(C))
+			// A config can subscribe only to phases the filter supports.
+			return d.SubscribesOf(cfg.(C)) & d.Phases
 		},
 	}, nil
 }

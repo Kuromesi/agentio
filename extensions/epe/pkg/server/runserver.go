@@ -55,9 +55,6 @@ type Config struct {
 	Registrations []filter.Registration
 	// StreamLoggers are invoked once per stream at stream end (audit).
 	StreamLoggers []filter.StreamLogger
-	// ObserveResponses opens the response-headers phase so stream loggers
-	// record the upstream status.
-	ObserveResponses bool
 	// AuditLogger is the per-request audit sink. nil is replaced with a
 	// no-op logger inside extproc.NewServer.
 	AuditLogger accesslog.Logger
@@ -99,12 +96,11 @@ func New(cfg Config, logger logr.Logger) runnable.Runnable {
 		extProcPb.RegisterExternalProcessorServer(
 			srv,
 			extproc.NewServer(extproc.ServerDeps{
-				Resolve:          cfg.Resolve,
-				Registrations:    cfg.Registrations,
-				StreamLoggers:    cfg.StreamLoggers,
-				AuditLogger:      cfg.AuditLogger,
-				PluginBudget:     cfg.PluginBudget,
-				ObserveResponses: cfg.ObserveResponses,
+				Resolve:       cfg.Resolve,
+				Registrations: cfg.Registrations,
+				StreamLoggers: cfg.StreamLoggers,
+				AuditLogger:   cfg.AuditLogger,
+				PluginBudget:  cfg.PluginBudget,
 			}),
 		)
 

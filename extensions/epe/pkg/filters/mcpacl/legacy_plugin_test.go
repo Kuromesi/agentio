@@ -17,8 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 func jsonRPCBody(method, toolName string) []byte {
@@ -35,9 +33,9 @@ func jsonRPCBody(method, toolName string) []byte {
 // skippable via the client-controlled version header, so the body is requested
 // regardless of its value or absence; the version is checked in Finalize.
 func TestOnRequestHeaders(t *testing.T) {
-	governed := makeRule(&v1alpha1.MCPToolPolicySpec{
+	governed := makeRule(&Config{
 		DefaultAction: "deny",
-		Rules:         []v1alpha1.MCPToolPolicyRule{{Method: "tools/call", Action: "allow"}},
+		Rules:         []RuleEntry{{Method: "tools/call", Action: "allow"}},
 	})
 
 	tests := []struct {
@@ -105,22 +103,22 @@ func TestOnRequestHeaders(t *testing.T) {
 // for a governed tools/call through one table: policy shape + tool name in the
 // body -> allow or deny.
 func TestFinalize_PolicyEvaluation(t *testing.T) {
-	whitelist := &v1alpha1.MCPToolPolicySpec{
+	whitelist := &Config{
 		DefaultAction: "deny",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"read_file"}, Action: "allow"},
 		},
 	}
-	blacklist := &v1alpha1.MCPToolPolicySpec{
+	blacklist := &Config{
 		DefaultAction: "allow",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"exec_command"}, Action: "deny"},
 		},
 	}
 
 	tests := []struct {
 		name   string
-		policy *v1alpha1.MCPToolPolicySpec
+		policy *Config
 		tool   string
 		want   legacyAction
 	}{
@@ -158,9 +156,9 @@ func TestFinalize_PolicyEvaluation(t *testing.T) {
 // resources/*, prompts/*, tasks/*, logging/* — passes through even under a
 // strict whitelist, so no per-version allow-list is needed.
 func TestFinalize_NonToolMethodsPassThrough(t *testing.T) {
-	policy := &v1alpha1.MCPToolPolicySpec{
+	policy := &Config{
 		DefaultAction: "deny",
-		Rules:         []v1alpha1.MCPToolPolicyRule{},
+		Rules:         []RuleEntry{},
 	}
 	p := newLegacyPlugin()
 	rule := makeRule(policy)
@@ -189,9 +187,9 @@ func TestFinalize_NonToolMethodsPassThrough(t *testing.T) {
 // an empty body and a method-less message have nothing to enforce and skip,
 // while malformed JSON is denied as unreadable.
 func TestFinalize_BodyParsing(t *testing.T) {
-	policy := &v1alpha1.MCPToolPolicySpec{
+	policy := &Config{
 		DefaultAction: "deny",
-		Rules:         []v1alpha1.MCPToolPolicyRule{},
+		Rules:         []RuleEntry{},
 	}
 
 	tests := []struct {
@@ -222,9 +220,9 @@ func TestFinalize_BodyParsing(t *testing.T) {
 }
 
 func TestEvaluate(t *testing.T) {
-	policy := &v1alpha1.MCPToolPolicySpec{
+	policy := &Config{
 		DefaultAction: "deny",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"read_file", "write_file"}, Action: "allow"},
 			{Method: "tools/list", Action: "allow"},
 			{Method: "tools/call", ToolNames: []string{"exec_command"}, Action: "deny"},
@@ -248,7 +246,7 @@ func TestEvaluate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := evaluate(cfgFromPolicy(policy), tc.method, tc.toolName)
+			got := evaluate(configOf(policy), tc.method, tc.toolName)
 			if got != tc.want {
 				t.Errorf("evaluate(%q, %q) = %q, want %q", tc.method, tc.toolName, got, tc.want)
 			}
@@ -292,9 +290,9 @@ func TestFinalize_BatchBody(t *testing.T) {
 	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"delete_repo"},"id":1}]`)
 
 	t.Run("whitelist denies batch", func(t *testing.T) {
-		policy := &v1alpha1.MCPToolPolicySpec{
+		policy := &Config{
 			DefaultAction: "deny",
-			Rules:         []v1alpha1.MCPToolPolicyRule{{Method: "tools/call", ToolNames: []string{"safe"}, Action: "allow"}},
+			Rules:         []RuleEntry{{Method: "tools/call", ToolNames: []string{"safe"}, Action: "allow"}},
 		}
 		p := newLegacyPlugin()
 		rctx := makeRctx("application/json")
@@ -310,9 +308,9 @@ func TestFinalize_BatchBody(t *testing.T) {
 	})
 
 	t.Run("blacklist admits batch wrapping a denied tool", func(t *testing.T) {
-		policy := &v1alpha1.MCPToolPolicySpec{
+		policy := &Config{
 			DefaultAction: "allow",
-			Rules:         []v1alpha1.MCPToolPolicyRule{{Method: "tools/call", ToolNames: []string{"delete_repo"}, Action: "deny"}},
+			Rules:         []RuleEntry{{Method: "tools/call", ToolNames: []string{"delete_repo"}, Action: "deny"}},
 		}
 		p := newLegacyPlugin()
 		rctx := makeRctx("application/json")
@@ -334,10 +332,10 @@ func TestFinalize_BatchBody(t *testing.T) {
 // When unsupportedVersionAction=passthrough, tools/call with an unsupported or
 // missing version header skips ACL and passes through instead of being denied.
 func TestFinalize_VersionGate_Passthrough(t *testing.T) {
-	policy := &v1alpha1.MCPToolPolicySpec{
+	policy := &Config{
 		DefaultAction:            "deny",
 		UnsupportedVersionAction: "passthrough",
-		Rules:                    []v1alpha1.MCPToolPolicyRule{{Method: "tools/call", ToolNames: []string{"safe"}, Action: "allow"}},
+		Rules:                    []RuleEntry{{Method: "tools/call", ToolNames: []string{"safe"}, Action: "allow"}},
 	}
 	p := newLegacyPlugin()
 
@@ -389,9 +387,9 @@ func TestFinalize_VersionGate_Passthrough(t *testing.T) {
 // methods are unaffected (they pass regardless — see NonToolMethodsPassThrough).
 func TestFinalize_VersionGate(t *testing.T) {
 	// Whitelist that allows the "safe" tool; "delete_repo" would be denied.
-	policy := &v1alpha1.MCPToolPolicySpec{
+	policy := &Config{
 		DefaultAction: "deny",
-		Rules:         []v1alpha1.MCPToolPolicyRule{{Method: "tools/call", ToolNames: []string{"safe"}, Action: "allow"}},
+		Rules:         []RuleEntry{{Method: "tools/call", ToolNames: []string{"safe"}, Action: "allow"}},
 	}
 	p := newLegacyPlugin()
 

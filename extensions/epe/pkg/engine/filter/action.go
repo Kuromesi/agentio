@@ -22,14 +22,13 @@ type ActionKind uint8
 const (
 	// KindContinue lets the chain proceed, optionally with mutations.
 	KindContinue ActionKind = iota
-	// KindStop terminates the request and discards pending mutations
-	// (block semantics).
+	// KindStop terminates the HTTP exchange and discards pending mutations.
 	KindStop
-	// KindBypass skips all following actions and rules while preserving work
-	// already performed by earlier rules.
+	// KindBypass skips following actions and rules in every phase while
+	// preserving earlier work and the bypassing pair itself.
 	KindBypass
-	// KindNeedBody asks the framework to deliver the request body before this
-	// filter can decide. Only legal from request headers.
+	// KindNeedBody pauses request evaluation until the request body is available.
+	// It is valid only from request headers.
 	KindNeedBody
 )
 

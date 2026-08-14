@@ -15,7 +15,6 @@ package audit
 
 import (
 	"bytes"
-	"reflect"
 	"testing"
 
 	"istio.io/istio/extensions/epe/pkg/eval"
@@ -69,7 +68,7 @@ func TestAuditScopeActivationShadowsResult(t *testing.T) {
 	// constraint is recorded at the call site instead.
 
 	// `matched` is deliberately not a CEL variable: the when-env declares only
-	// result/response/request/pod/profile/rule, so an expression referencing it
+	// result/request/pod/profile/rule, so an expression referencing it
 	// fails to compile. That is a stronger guarantee than the old
 	// ResolveName("matched") check, which only proved the bag lacked the key --
 	// this proves no profile can even reference it. Match reaches templates via
@@ -188,14 +187,30 @@ func TestAuditScopeRendersTemplatePaths(t *testing.T) {
 	}
 }
 
-// TestScope_MatchedCriteriaAccessor pins the template-compatibility
-// accessor: documented webhook templates reference {{ .MatchedCriteria.* }},
-// which must keep rendering via MatchedCriteria.
-func TestScope_MatchedCriteriaAccessor(t *testing.T) {
-	s := &Scope{Matched: Match{Host: "example.com", Method: "GET"}}
-	got := s.MatchedCriteria()
-	if !reflect.DeepEqual(s.Matched, got) {
-		t.Errorf("MatchedCriteria: want %+v, got %+v", s.Matched, got)
+// TestScopeMatchedCriteriaRendersTemplatePaths verifies the compatibility
+// accessor through the same template renderer used by webhooks.
+func TestScopeMatchedCriteriaRendersTemplatePaths(t *testing.T) {
+	tmpl, err := eval.CompileTemplate("matched-criteria",
+		`{{ .MatchedCriteria.Host }}|{{ .MatchedCriteria.Method }}|{{ .MatchedCriteria.Path }}|{{ .MatchedCriteria.Port }}|{{ index .MatchedCriteria.Headers "x-user" }}|{{ index .MatchedCriteria.QueryParams "q" }}`)
+	if err != nil {
+		t.Fatalf("CompileTemplate: %v", err)
+	}
+	s := &Scope{Matched: Match{
+		Host:        "example.com",
+		Method:      "GET",
+		Path:        "/v1/items",
+		Port:        443,
+		Headers:     map[string]string{"x-user": "alice"},
+		QueryParams: map[string]string{"q": "agent"},
+	}}
+
+	got, err := eval.RenderToString(tmpl, s)
+	if err != nil {
+		t.Fatalf("RenderToString: %v", err)
+	}
+	const want = "example.com|GET|/v1/items|443|alice|agent"
+	if got != want {
+		t.Errorf("rendered template = %q, want %q", got, want)
 	}
 }
 
@@ -210,24 +225,22 @@ func evalBoolOnAuditScope(t *testing.T, s *Scope, expr string) (bool, error) {
 	return eval.EvalBool(prog, s.Activation())
 }
 
-// TestAuditScopeResolvesAuditOnlyVariables is the positive half of I2 and I9:
-// what a plain inputs.Scope must hide, an audit.Scope must resolve.
-func TestAuditScopeResolvesAuditOnlyVariables(t *testing.T) {
+// TestAuditScopeResolvesResult verifies that the audit-only result variable is
+// layered over the base request scope.
+func TestAuditScopeResolvesResult(t *testing.T) {
 	s := &Scope{
 		Scope: *inputs.NewScope(
 			inputs.RequestFrom(httpreq.HTTPRequest{Host: "h", Port: 443, Path: "/", Scheme: "https", Method: "GET"}),
 			inputs.Pod{Namespace: "ns"},
 			inputs.Profile{}, inputs.Rule{}, nil,
 		),
-		Result:   "blocked",
-		Response: Response{Status: 503},
+		Result: "blocked",
 	}
 	tests := []struct {
 		name string
 		expr string
 	}{
-		{name: "I2 result resolves", expr: `result == "blocked"`},
-		{name: "I9 response resolves", expr: `response.status == 503`},
+		{name: "result resolves", expr: `result == "blocked"`},
 		{name: "base variables still resolve", expr: `request.host == "h" && pod.namespace == "ns"`},
 	}
 	for _, tt := range tests {
@@ -240,21 +253,5 @@ func TestAuditScopeResolvesAuditOnlyVariables(t *testing.T) {
 				t.Errorf("%s = false, want true", tt.expr)
 			}
 		})
-	}
-}
-
-// TestAuditScopeZeroResponse records that response.status cannot distinguish
-// "no response observed" from "the status really was 0" — st.Response is zero
-// until OnResponseHeaders (engine/filter/stream.go:35-36) and buildScope copies
-// it unconditionally (policy/securityprofile/auditlog.go:110). Running with
-// -observe-responses=false makes status 0 the common case.
-func TestAuditScopeZeroResponse(t *testing.T) {
-	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{Namespace: "ns"}, inputs.Profile{}, inputs.Rule{}, nil), Result: "allowed"}
-	got, err := evalBoolOnAuditScope(t, s, `response.status == 0`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("response.status on an unobserved response should be 0")
 	}
 }

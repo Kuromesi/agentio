@@ -17,7 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,48 +25,63 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	structpb "google.golang.org/protobuf/types/known/structpb"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
 	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/extproc/attributes"
-	"istio.io/istio/extensions/epe/pkg/filters/block"
 	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
-	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 )
 
 type responseHeadersProbe struct {
 	filter.PassThrough
 	calls int
 	err   error
+	// act overrides the returned action. The zero value is Continue.
+	act *filter.Action
+}
+
+type requestHeadersProbe struct {
+	filter.PassThrough
+	calls int
+}
+
+func (p *requestHeadersProbe) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	p.calls++
+	return filter.Continue(), nil
 }
 
 func (p *responseHeadersProbe) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
 	p.calls++
+	if p.act != nil {
+		return *p.act, p.err
+	}
 	return filter.Continue(), p.err
 }
 
 func responseHeadersState(p *responseHeadersProbe) (*Server, *streamState, *captureLogger) {
 	cap := &captureLogger{}
 	reg := filter.Registration{
-		Name:    "response-observer",
+		Name:    "response-filter",
 		Phases:  filter.PhaseResponseHeaders,
-		OnError: filter.FailClosed,
+		OnError: func(any) filter.FailurePolicy { return filter.FailClosed },
 		Parse:   func(json.RawMessage) (any, error) { return struct{}{}, nil },
 		New:     func(filter.ErasedRuleConfig) filter.Filter { return p },
+		// The response phase dispatches to subscribing configs only, recomputed
+		// from the units pinned on the stream; these tests stand in for a request
+		// phase whose config subscribed.
+		Subscribes: func(any) filter.Phase { return filter.PhaseResponseHeaders },
 	}
 	s := NewServer(ServerDeps{
 		Registrations: []filter.Registration{reg},
 		AuditLogger:   cap,
 	})
 	state := newStreamState()
-	state.sawRequest = true
+	state.markRequestSeen()
+	id := filter.UnitID{Scope: "default/p1", Name: "response"}
 	state.units = []engine.Unit{{
-		ID:   filter.UnitID{Scope: "default/p1", Name: "observe"},
+		ID:   id,
 		Cfgs: []any{struct{}{}},
 	}}
 	state.awaitResponseHeaders = true
@@ -92,44 +107,6 @@ func (p *bodylessDeadlineProbe) OnRequestHeaders(ctx context.Context, _ *filter.
 func (p *bodylessDeadlineProbe) OnRequestBody(ctx context.Context, _ *filter.Stream, _ filter.Body) (filter.Action, error) {
 	p.bodyDeadline, p.bodyHasDeadline = ctx.Deadline()
 	return filter.Continue(), nil
-}
-
-// scopeCaptureFilter records each unit's identity and evaluation scope,
-// standing in for a filter that consumes profile-scoped inputs.
-type scopeCaptureFilter struct {
-	filter.PassThrough
-	profileScopes []string
-	scopes        []inputs.Scope
-}
-
-func (p *scopeCaptureFilter) capture(rule filter.RuleConfig[struct{}]) filter.Filter {
-	p.profileScopes = append(p.profileScopes, rule.ID.Scope)
-	p.scopes = append(p.scopes, *rule.Scope)
-	return p
-}
-
-// scopeCaptureReg registers the capture filter under the block name: the
-// test rule carries a block action, so payloadsFor emits that key and the
-// filter mounts with the unit's scope.
-func scopeCaptureReg(p *scopeCaptureFilter) filter.Registration {
-	return filter.Registration{
-		Name:   block.FilterName,
-		Phases: filter.PhaseRequestHeaders,
-		Parse:  func(json.RawMessage) (any, error) { return struct{}{}, nil },
-		New: func(cfg filter.ErasedRuleConfig) filter.Filter {
-			return p.capture(filter.RuleConfig[struct{}]{ID: cfg.ID, Scope: cfg.Scope})
-		},
-	}
-}
-
-// blockRegistrations builds the production block filter registration set.
-func blockRegistrations(t *testing.T) []filter.Registration {
-	t.Helper()
-	regs, err := filter.Build(block.Definition())
-	if err != nil {
-		t.Fatalf("build block: %v", err)
-	}
-	return regs
 }
 
 // White-box tests for internals that cannot be observed through the
@@ -207,23 +184,12 @@ func makeAttrsWithLabels(namespace, name, labelsB64 string) map[string]*structpb
 	}
 }
 
-// newProfile builds a SecurityProfile with the given selector and rules.
-func newProfile(name, namespace string, selector map[string]string, rules []v1alpha1.SecurityRule) *v1alpha1.SecurityProfile {
-	return &v1alpha1.SecurityProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1alpha1.SecurityProfileSpec{
-			Selector: metav1.LabelSelector{MatchLabels: selector},
-			Rules:    rules,
-		},
-	}
-}
-
 // "app=blocked" base64-encoded, matching the format labels.ParseSandboxLabels expects.
 const testLabelsB64 = "YXBwPWJsb2NrZWQ="
 
-func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
+func TestHandleRequestHeaders_ArmsOnlyRequestBodyObligation(t *testing.T) {
 	probe := &bodyProbe{}
-	regs := []filter.Registration{fixedReg("body-observer", probe)}
+	regs := []filter.Registration{fixedReg("body-filter", probe)}
 	s := NewServer(ServerDeps{
 		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: []engine.Unit{{
@@ -231,8 +197,7 @@ func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
 				Cfgs: []any{struct{}{}},
 			}}}, nil
 		},
-		Registrations:    regs,
-		ObserveResponses: true,
+		Registrations: regs,
 	})
 	state := newStreamState()
 
@@ -241,14 +206,44 @@ func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
 		makeAttrsWithLabels("default", "pod", testLabelsB64), state); err != nil {
 		t.Fatalf("HandleRequestHeaders: %v", err)
 	}
-	if state.eval == nil || !state.awaitRequestBody {
+	if !state.awaitingRequestBody() {
 		t.Fatal("body evaluation did not arm its request-body obligation")
 	}
-	if !state.awaitResponseHeaders {
-		t.Fatal("response observation did not arm its response-headers obligation")
+	if state.awaitResponseHeaders {
+		t.Fatal("request-body demand unexpectedly armed a response-headers obligation")
 	}
-	if state.finalizeAfterSend {
+	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("non-terminal headers result armed finalization")
+	}
+}
+
+func TestHandleRequestHeaders_ValidatesSubscriptionsBeforeEvaluation(t *testing.T) {
+	probe := &requestHeadersProbe{}
+	reg := filter.Registration{
+		Name:       "invalid-subscription",
+		Phases:     filter.PhaseRequestHeaders | filter.PhaseRequestBody,
+		Parse:      func(json.RawMessage) (any, error) { return struct{}{}, nil },
+		New:        func(filter.ErasedRuleConfig) filter.Filter { return probe },
+		Subscribes: func(any) filter.Phase { return filter.PhaseRequestBody },
+	}
+	s := NewServer(ServerDeps{
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{Units: []engine.Unit{{
+				ID:   filter.UnitID{Scope: "default/p1", Name: "invalid"},
+				Cfgs: []any{struct{}{}},
+			}}}, nil
+		},
+		Registrations: []filter.Registration{reg},
+	})
+
+	_, err := s.HandleRequestHeaders(context.Background(),
+		makeRequestHeaders("api.example.com", "/x", "GET"),
+		makeAttrsWithLabels("default", "pod", testLabelsB64), newStreamState())
+	if err == nil || !strings.Contains(err.Error(), "invalid-subscription") {
+		t.Fatalf("subscription validation error = %v", err)
+	}
+	if probe.calls != 0 {
+		t.Fatalf("request filter ran %d times before subscription validation", probe.calls)
 	}
 }
 
@@ -279,7 +274,7 @@ func TestHandleRequestHeaders_TerminalResultsArmFinalization(t *testing.T) {
 				makeAttrsWithLabels("default", "pod", testLabelsB64), state); err != nil {
 				t.Fatalf("HandleRequestHeaders: %v", err)
 			}
-			if !state.finalizeAfterSend {
+			if state.lifecycle != lifecycleFinalizePending {
 				t.Fatal("terminal headers result did not arm finalization")
 			}
 		})
@@ -316,7 +311,7 @@ func TestHandleRequestHeaders_BodylessContinuationSharesMessageDeadline(t *testi
 	}
 }
 
-func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulObservation(t *testing.T) {
+func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulDispatch(t *testing.T) {
 	probe := &responseHeadersProbe{}
 	s, state, _ := responseHeadersState(probe)
 
@@ -328,22 +323,22 @@ func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulObservation(t *t
 		t.Fatalf("HandleResponseHeaders: %v", err)
 	}
 	if probe.calls != 1 {
-		t.Fatalf("response observer ran %d times, want 1", probe.calls)
+		t.Fatalf("response filter ran %d times, want 1", probe.calls)
 	}
 	if state.awaitResponseHeaders {
 		t.Fatal("response-headers obligation was not consumed")
 	}
-	if !state.finalizeAfterSend {
-		t.Fatal("successful response observation did not arm finalization")
+	if state.lifecycle != lifecycleFinalizePending {
+		t.Fatal("successful response dispatch did not arm finalization")
 	}
 }
 
 func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
-	boom := errors.New("observe failed")
+	boom := errors.New("response filter failed")
 	probe := &responseHeadersProbe{err: boom}
 	s, state, _ := responseHeadersState(probe)
 
-	_, err := s.HandleResponseHeaders(context.Background(), &extProcPb.HttpHeaders{
+	resp, err := s.HandleResponseHeaders(context.Background(), &extProcPb.HttpHeaders{
 		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 			{Key: ":status", RawValue: []byte("500")},
 		}},
@@ -351,11 +346,45 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("HandleResponseHeaders error = %v, want %v", err, boom)
 	}
-	if !state.awaitResponseHeaders {
-		t.Fatal("failed response observation consumed the outstanding obligation")
+	// A FailClosed response error returns its synthesized deny with the error.
+	if len(resp) != 1 {
+		t.Fatalf("responses = %d, want 1 synthesised deny", len(resp))
 	}
-	if state.finalizeAfterSend {
-		t.Fatal("failed response observation armed successful finalization")
+	if resp[0].GetImmediateResponse() == nil {
+		t.Fatalf("response = %T, want an ImmediateResponse carrying the deny", resp[0].GetResponse())
+	}
+	if !state.awaitResponseHeaders {
+		t.Fatal("failed response dispatch consumed the outstanding obligation")
+	}
+	if state.lifecycle == lifecycleFinalizePending {
+		t.Fatal("failed response dispatch armed successful finalization")
+	}
+}
+
+func TestHandleResponseHeaders_BypassAcknowledgesAndFinalizes(t *testing.T) {
+	bypass := filter.Bypass()
+	probe := &responseHeadersProbe{act: &bypass}
+	s, state, _ := responseHeadersState(probe)
+
+	resp, err := s.HandleResponseHeaders(context.Background(), &extProcPb.HttpHeaders{
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: ":status", RawValue: []byte("200")},
+		}},
+	}, state)
+	if err != nil {
+		t.Fatalf("HandleResponseHeaders: %v", err)
+	}
+	if len(resp) != 1 || resp[0].GetResponseHeaders() == nil {
+		t.Fatalf("responses = %v, want one response-headers acknowledgement", resp)
+	}
+	if state.awaitResponseHeaders {
+		t.Fatal("successful Bypass did not consume the response-headers obligation")
+	}
+	if state.lifecycle != lifecycleFinalizePending {
+		t.Fatal("successful Bypass did not arm finalization")
+	}
+	if state.stream.Info.Disposition != filter.DispositionBypassed {
+		t.Errorf("stream disposition = %v, want Bypassed", state.stream.Info.Disposition)
 	}
 }
 
@@ -377,11 +406,11 @@ func TestHandleResponseHeaders_MissingInputKeepsObligationAndAuditsError(t *test
 				t.Fatal("missing response headers were accepted")
 			}
 			if probe.calls != 0 {
-				t.Fatalf("response observer ran %d times, want 0", probe.calls)
+				t.Fatalf("response filter ran %d times, want 0", probe.calls)
 			}
-			if !state.awaitResponseHeaders || state.finalizeAfterSend {
-				t.Fatalf("obligation state = await:%v finalize:%v, want true/false",
-					state.awaitResponseHeaders, state.finalizeAfterSend)
+			if !state.awaitResponseHeaders || state.lifecycle == lifecycleFinalizePending {
+				t.Fatalf("obligation state = await:%v lifecycle:%v, want awaited and not finalize-pending",
+					state.awaitResponseHeaders, state.lifecycle)
 			}
 
 			s.finishStream(context.Background(), state, err)
@@ -392,35 +421,13 @@ func TestHandleResponseHeaders_MissingInputKeepsObligationAndAuditsError(t *test
 	}
 }
 
-func TestHandleResponseHeaders_DuplicateDoesNotRerunObserverOrOverwriteAudit(t *testing.T) {
-	probe := &responseHeadersProbe{}
-	s, state, cap := responseHeadersState(probe)
-	headers := &extProcPb.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
-		{Key: ":status", RawValue: []byte("204")},
-	}}}
-
-	if _, err := s.HandleResponseHeaders(context.Background(), headers, state); err != nil {
-		t.Fatalf("first HandleResponseHeaders: %v", err)
-	}
-	s.finishAfterSend(context.Background(), state)
-	_, duplicateErr := s.HandleResponseHeaders(context.Background(), headers, state)
-	if duplicateErr == nil {
-		t.Fatal("duplicate response headers were accepted")
-	}
-	if probe.calls != 1 {
-		t.Fatalf("response observer ran %d times, want exactly once", probe.calls)
-	}
-	s.finishStream(context.Background(), state, duplicateErr)
-	if len(cap.entries) != 1 || cap.entries[0].Outcome != "passthrough" || cap.entries[0].Error != "" {
-		t.Fatalf("accesslog = %+v, want one committed passthrough entry", cap.entries)
-	}
-}
-
-func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWithoutObserver(t *testing.T) {
+// A finalized stream acknowledges one statically configured response-header
+// message without reopening filter dispatch or audit.
+func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWithoutDispatch(t *testing.T) {
 	probe := &responseHeadersProbe{}
 	s, state, cap := responseHeadersState(probe)
 	state.awaitResponseHeaders = false
-	state.stream.Info.Promote(filter.DispositionBypassed)
+	state.stream.Info.Promote(filter.DispositionBlocked)
 	s.finishStream(context.Background(), state, nil)
 	headers := &extProcPb.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 		{Key: ":status", RawValue: []byte("204")},
@@ -434,107 +441,14 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 		t.Fatalf("responses = %+v, want one response-headers acknowledgement", responses)
 	}
 	if probe.calls != 0 {
-		t.Fatalf("response observer ran %d times after terminal finalization, want 0", probe.calls)
+		t.Fatalf("response filter ran %d times after terminal finalization, want 0", probe.calls)
 	}
-	if state.finalizeAfterSend {
+	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("already finalized stream armed another finalization")
 	}
-	if len(cap.entries) != 1 || cap.entries[0].Outcome != "bypassed" {
-		t.Fatalf("accesslog = %+v, want one committed bypass entry", cap.entries)
+	if len(cap.entries) != 1 || cap.entries[0].Outcome != "blocked" {
+		t.Fatalf("accesslog = %+v, want one committed blocked entry", cap.entries)
 	}
-
-	if _, err := s.HandleResponseHeaders(context.Background(), headers, state); err == nil {
-		t.Fatal("duplicate static response headers were accepted")
-	}
-	if probe.calls != 0 || len(cap.entries) != 1 {
-		t.Fatalf("duplicate changed observers/audit: observer calls=%d accesslog=%+v", probe.calls, cap.entries)
-	}
-}
-
-func TestHandleRequestHeaders_MountsRecordedProfileInputsForFinalize(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	for _, tc := range []struct {
-		name  string
-		value string
-	}{
-		{name: "p1", value: "first"},
-		{name: "p2", value: "second"},
-	} {
-		p := newProfile(tc.name, "default", map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{{
-			Name:  "capture",
-			Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-			// The block action is what mounts the capture filter: a rule
-			// with no actions emits no payloads and mounts nothing.
-			Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
-		}})
-		p.Spec.Inputs = []v1alpha1.SecurityProfileInput{{
-			Name:   "routing",
-			Inline: map[string]string{"target": tc.value},
-		}}
-		store.ProfileSet(p)
-	}
-
-	capture := &scopeCaptureFilter{}
-	regs := []filter.Registration{scopeCaptureReg(capture)}
-	srv := NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
-	})
-	if _, err := srv.HandleRequestHeaders(
-		context.Background(),
-		makeRequestHeaders("api.example.com", "/", "GET"),
-		makeAttrsWithLabels("default", "pod", testLabelsB64),
-		newStreamState(),
-	); err != nil {
-		t.Fatalf("HandleRequestHeaders: %v", err)
-	}
-
-	if got := capture.profileScopes; !reflect.DeepEqual(got, []string{"default/p1", "default/p2"}) {
-		t.Fatalf("captured unit scopes = %v, want profile order", got)
-	}
-	want := []map[string]any{
-		{"routing": map[string]string{"target": "first"}},
-		{"routing": map[string]string{"target": "second"}},
-	}
-	for i := range want {
-		if !reflect.DeepEqual(capture.scopes[i].Inputs(), want[i]) {
-			t.Fatalf("captured inputs[%d] = %#v, want %#v", i, capture.scopes[i].Inputs(), want[i])
-		}
-	}
-}
-
-func TestHandleRequestHeaders_SkipsInvalidInitialProfileWithUnresolvedInputs(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	p := newProfile("p1", "default", map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{{
-		Name:    "match",
-		Match:   []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-		Actions: v1alpha1.SecurityRuleActions{},
-	}})
-	p.Spec.Inputs = []v1alpha1.SecurityProfileInput{{
-		Name:      "routing",
-		ConfigMap: &v1alpha1.ConfigMapInputRef{Name: "missing"},
-	}}
-	store.ProfileSet(p)
-
-	_, err := NewServer(ServerDeps{Resolve: securityprofile.NewResolver(store, nil, nil)}).HandleRequestHeaders(
-		context.Background(),
-		makeRequestHeaders("api.example.com", "/", "GET"),
-		makeAttrsWithLabels("default", "pod", testLabelsB64),
-		newStreamState(),
-	)
-	if err != nil {
-		t.Fatalf("invalid initial profile should be absent from the effective snapshot: %v", err)
-	}
-}
-
-// newServerWithBlockOnly constructs a Server wired only with the block filter.
-func newServerWithBlockOnly(t *testing.T, store profilestore.Store) *Server {
-	t.Helper()
-	regs := blockRegistrations(t)
-	return NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
-	})
 }
 
 // capturedAuditLogger collects every audit Entry the handler submits so
@@ -564,34 +478,19 @@ func (c *capturedAuditLogger) last(t *testing.T) accesslog.Entry {
 // Compile-time check that capturedAuditLogger implements accesslog.Logger.
 var _ accesslog.Logger = (*capturedAuditLogger)(nil)
 
-// newServerWithAudit returns a Server wired with the supplied registrations
-// and a fresh capturedAuditLogger so the test can inspect the emitted entry.
-func newServerWithAudit(t *testing.T, store profilestore.Store, regs []filter.Registration) (*Server, *capturedAuditLogger) {
-	t.Helper()
-	cap := &capturedAuditLogger{}
-	srv := NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
-		AuditLogger:   cap,
-	})
-	return srv, cap
-}
-
 // TestHandleRequestHeaders_NoPodIdentity verifies that when filter_state
 // does not carry pod identity (e.g. the upstream metadata-exchange filter
 // is misconfigured), the handler passes the request through unmodified
 // instead of falling back to a hardcoded pod or failing the request.
 func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	store.ProfileSet(newProfile("p1", "default", map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
-		{
-			Name:    "block-everything",
-			Match:   []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-			Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
+	cap := &capturedAuditLogger{}
+	srv := NewServer(ServerDeps{
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			t.Fatal("resolver called without a valid pod identity")
+			return engine.Resolution{}, nil
 		},
-	}))
-
-	srv, cap := newServerWithAudit(t, store, blockRegistrations(t))
+		AuditLogger: cap,
+	})
 
 	// attrs with empty pod name + namespace simulates Envoy not populating
 	// filter_state['downstream_peer'].
@@ -622,7 +521,7 @@ func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
 // TestPassThroughHandlers covers the trivial body / trailer / response stubs
 // so they show up in coverage and accidental regressions surface immediately.
 func TestPassThroughHandlers(t *testing.T) {
-	srv := newServerWithBlockOnly(t, profilestore.MakeFakeStore())
+	srv := NewServer(ServerDeps{})
 	ctx := context.Background()
 
 	if r, err := srv.HandleRequestBody(ctx, &extProcPb.HttpBody{EndOfStream: true}, nil); err != nil || len(r) != 1 {
@@ -643,11 +542,10 @@ func TestPassThroughHandlers(t *testing.T) {
 // regressions in NewServer's nil-default: the handler must still produce a
 // passthrough response when ServerDeps.AuditLogger is nil.
 func TestHandleRequestHeaders_AuditEntry_NilLoggerDoesNotPanic(t *testing.T) {
-	store := profilestore.MakeFakeStore()
-	regs := blockRegistrations(t)
 	srv := NewServer(ServerDeps{
-		Resolve:       securityprofile.NewResolver(store, regs, nil),
-		Registrations: regs,
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{}, nil
+		},
 		// AuditLogger intentionally nil.
 	})
 	if _, err := srv.HandleRequestHeaders(

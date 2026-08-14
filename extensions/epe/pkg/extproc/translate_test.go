@@ -46,6 +46,30 @@ func TestTranslate_HeadersBodyMutationUsesContinueAndReplace(t *testing.T) {
 	}
 }
 
+func TestTranslate_ResponseHeadersBodyMutationUsesContinueAndReplace(t *testing.T) {
+	er := &engine.ResponseHeadersResult{
+		Disposition: engine.DispositionMutated,
+		HeaderOps: []filter.HeaderOp{
+			{Kind: filter.HeaderSet, Name: "x-response", Value: "mutated"},
+		},
+		Body: []byte("replaced"),
+	}
+	resp := translateResponseHeadersResult(er)
+	if len(resp) != 1 {
+		t.Fatalf("responses = %d, want 1", len(resp))
+	}
+	common := resp[0].GetResponseHeaders().GetResponse()
+	if common.GetStatus() != extProcPb.CommonResponse_CONTINUE_AND_REPLACE {
+		t.Errorf("Status = %v, want CONTINUE_AND_REPLACE", common.GetStatus())
+	}
+	if string(common.GetBodyMutation().GetBody()) != "replaced" {
+		t.Errorf("BodyMutation = %q", common.GetBodyMutation().GetBody())
+	}
+	if len(common.GetHeaderMutation().GetSetHeaders()) != 1 {
+		t.Errorf("HeaderMutation = %v, want the response header mutation preserved", common.GetHeaderMutation())
+	}
+}
+
 // A BUFFERED body rewrite with a stale content-length is a hard 500; the
 // adapter must set a matching content-length with the mutation.
 func TestTranslate_BodyPhaseRewriteSetsContentLength(t *testing.T) {

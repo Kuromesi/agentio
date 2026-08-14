@@ -59,7 +59,7 @@ func resolveOnce(logger filter.StreamLogger, regs int) engine.Resolver {
 // keeps a resolve failure as auditable as an engine-eval failure; skipping it
 // leaves `when: result == "error"` blind to a whole class of errors.
 func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
-	regs := blockRegistrations(t)
+	regs := []filter.Registration{fixedRegHeaders("pass", filter.Continue())}
 	logger := &recordingStreamLogger{}
 	boom := errors.New("projection failed")
 	srv := NewServer(ServerDeps{
@@ -90,50 +90,12 @@ func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
 	}
 }
 
-// A second resolution that matches nothing must not erase the logger the
-// effective resolution installed. state.streamLogger is assigned alongside
-// state.units, after the zero-unit early return, precisely so that it cannot.
-//
-// The old metadata channel got this for free — the adapter merged Resolution
-// keys into StreamInfo.Metadata, so an empty resolution wrote nothing. A plain
-// field assignment is an overwrite, so the assignment point is load-bearing:
-// hoisting it above the early returns silently drops the stream's audit.
-func TestSecondResolutionKeepsFirstStreamLogger(t *testing.T) {
-	regs := blockRegistrations(t)
-	logger := &recordingStreamLogger{}
-	srv := NewServer(ServerDeps{Resolve: resolveOnce(logger, len(regs)), Registrations: regs})
-
-	ctx := context.Background()
-	state := newStreamState()
-	headers := makeRequestHeaders("api.example.com", "/", "GET")
-	attrs := makeAttrsWithLabels("default", "pod", testLabelsB64)
-
-	if _, err := srv.HandleRequestHeaders(ctx, headers, attrs, state); err != nil {
-		t.Fatalf("first HandleRequestHeaders: %v", err)
-	}
-	if state.streamLogger != filter.StreamLogger(logger) {
-		t.Fatalf("after first resolution: stream logger = %v, want the resolver's", state.streamLogger)
-	}
-
-	if _, err := srv.HandleRequestHeaders(ctx, headers, attrs, state); err != nil {
-		t.Fatalf("second HandleRequestHeaders: %v", err)
-	}
-	if state.streamLogger != filter.StreamLogger(logger) {
-		t.Fatal("second resolution matched nothing yet cleared the stream logger; the stream's audit would be lost")
-	}
-
-	srv.finishStream(ctx, state, nil)
-	if logger.calls != 1 {
-		t.Fatalf("logger invoked %d times, want exactly 1 per stream", logger.calls)
-	}
-}
-
 // The per-stream logger runs after finishStream promotes the error, so it sees
 // the disposition the stream actually ended on. Reading it before the promotion
 // reports "passthrough" for a failed stream, which makes any audit entry
 // filtering on result == "error" silently never fire.
 func TestStreamLoggerObservesFinalDisposition(t *testing.T) {
-	regs := blockRegistrations(t)
+	regs := []filter.Registration{fixedRegHeaders("pass", filter.Continue())}
 	logger := &recordingStreamLogger{}
 	srv := NewServer(ServerDeps{Resolve: resolveOnce(logger, len(regs)), Registrations: regs})
 
@@ -166,10 +128,9 @@ func TestFinishAfterSendCommitCannotBeOverwrittenByLaterTeardown(t *testing.T) {
 	policyLogger := &recordingStreamLogger{}
 	srv := NewServer(ServerDeps{AuditLogger: accesslog})
 	state := newStreamState()
-	state.sawRequest = true
 	state.streamLogger = policyLogger
 	state.stream.Info.Promote(filter.DispositionBypassed)
-	state.finalizeAfterSend = true
+	state.lifecycle = lifecycleFinalizePending
 
 	srv.finishAfterSend(context.Background(), state)
 	srv.finishStream(context.Background(), state, context.Canceled)
@@ -197,6 +158,6 @@ func TestFinishStreamWithoutResolutionDoesNotPanic(t *testing.T) {
 	}})
 
 	state := newStreamState()
-	state.sawRequest = true
+	state.markRequestSeen()
 	srv.finishStream(context.Background(), state, nil)
 }

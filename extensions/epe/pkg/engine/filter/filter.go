@@ -30,23 +30,12 @@ const (
 	PhaseResponseHeaders
 )
 
-// DispatchedPhases is the set of phases the engine invokes. Build
-// rejects descriptors declaring anything outside it, so a filter can never
-// be silently inert. Engine dispatch and this mask must be widened
-// together.
+// DispatchedPhases is the set of phases the engine can invoke. Build rejects
+// descriptors that declare unsupported phases.
 //
-// Response headers are dispatched for observation only — returning
-// mutations from that phase is an error, see engine.EvalResponseHeaders.
+// PhaseResponseHeaders grants capability; each config must also subscribe
+// through Descriptor.SubscribesOf before its pair is dispatched.
 const DispatchedPhases = PhaseRequestHeaders | PhaseRequestBody | PhaseResponseHeaders
-
-// BodyNeed declares whether a filter requires the complete request body.
-type BodyNeed uint8
-
-const (
-	BodyNone BodyNeed = iota
-	// BodyComplete means the filter can only decide on the full body.
-	BodyComplete
-)
 
 // Filter is the engine's three-phase contract. Capability is expressed by
 // overriding methods over an embedded PassThrough — never by type assertion.

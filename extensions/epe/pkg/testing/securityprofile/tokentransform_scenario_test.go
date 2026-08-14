@@ -17,7 +17,7 @@
 // extensions/epe/pkg/testing/enginetest/doc.go for the test layering
 // convention. They prove the CRD-to-header wiring, defaulting, and
 // wire-level fail strategies. Signer internals stay in apikey_test.go.
-package tokentransform_test
+package securityprofile
 
 import (
 	"fmt"
@@ -30,7 +30,6 @@ import (
 	"istio.io/istio/extensions/epe/pkg/credential/credentialtest"
 	"istio.io/istio/extensions/epe/pkg/credential/tokencache"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
-	"istio.io/istio/extensions/epe/pkg/testing/filtertest"
 )
 
 const injectionPath = "/token/inject"
@@ -74,8 +73,8 @@ func injectionRequest() *enginetest.RequestBuilder {
 // the value template renders the token, and — via CRD defaulting — the
 // mutation lands on the default Authorization header.
 func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
-	kube := k8sfake.NewClientset(filtertest.APIKeySecret("test-ns", "api-cred", "secret-token-123"))
-	h := enginetest.New(t, enginetest.Options{Kube: kube})
+	kube := k8sfake.NewClientset(newAPIKeySecret("test-ns", "api-cred", "secret-token-123"))
+	h := New(t, Options{Kube: kube})
 	h.Fixture.ApplyYAML(secretInjectionProfileYAML(""))
 
 	verdict := h.Run(t, injectionRequest())
@@ -93,7 +92,7 @@ func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
 // proves the CRD default (Block) reaches the filter.
 func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 	t.Run("default strategy blocks with 403", func(t *testing.T) {
-		h := enginetest.New(t, enginetest.Options{Kube: k8sfake.NewClientset()})
+		h := New(t, Options{Kube: k8sfake.NewClientset()})
 		h.Fixture.ApplyYAML(secretInjectionProfileYAML(""))
 
 		verdict := h.Run(t, injectionRequest())
@@ -104,7 +103,7 @@ func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 	})
 
 	t.Run("allow strategy passes through", func(t *testing.T) {
-		h := enginetest.New(t, enginetest.Options{Kube: k8sfake.NewClientset()})
+		h := New(t, Options{Kube: k8sfake.NewClientset()})
 		h.Fixture.ApplyYAML(secretInjectionProfileYAML("        failStrategy: Allow\n"))
 
 		h.Run(t, injectionRequest()).RequirePassthrough(t)
@@ -118,7 +117,7 @@ func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 func TestScenario_CredentialProviderInjectsAndCaches(t *testing.T) {
 	provider := credentialtest.NewAPIKeyProvider(t, "provider-token")
 	client := provider.ClientWithCache(tokencache.NewCache(time.Hour, 16), nil)
-	h := enginetest.New(t, enginetest.Options{CredentialClient: client})
+	h := New(t, Options{CredentialClient: client})
 	h.Fixture.ApplyYAML(fmt.Sprintf(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile
@@ -168,8 +167,8 @@ spec:
 // TestScenario_WhenConditionGatesInjection proves the compiled When regex
 // from the CRD gates injection on the incoming header value.
 func TestScenario_WhenConditionGatesInjection(t *testing.T) {
-	kube := k8sfake.NewClientset(filtertest.APIKeySecret("test-ns", "api-cred", "rotated-token"))
-	h := enginetest.New(t, enginetest.Options{Kube: kube})
+	kube := k8sfake.NewClientset(newAPIKeySecret("test-ns", "api-cred", "rotated-token"))
+	h := New(t, Options{Kube: kube})
 	h.Fixture.ApplyYAML(fmt.Sprintf(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile

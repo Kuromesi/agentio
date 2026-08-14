@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 // Streaming-mode correctness and performance tests.
@@ -331,15 +329,15 @@ func TestStreaming_Correctness_ChunkBoundaryOnKey(t *testing.T) {
 // output fed into evaluate() produces identical decisions to the buffered
 // path.
 func TestStreaming_Correctness_FullPluginDecision(t *testing.T) {
-	whitelistPolicy := &v1alpha1.MCPToolPolicySpec{
+	whitelistPolicy := &Config{
 		DefaultAction: "deny",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"read_file", "write_file"}, Action: "allow"},
 		},
 	}
-	blacklistPolicy := &v1alpha1.MCPToolPolicySpec{
+	blacklistPolicy := &Config{
 		DefaultAction: "allow",
-		Rules: []v1alpha1.MCPToolPolicyRule{
+		Rules: []RuleEntry{
 			{Method: "tools/call", ToolNames: []string{"exec_command"}, Action: "deny"},
 		},
 	}
@@ -348,7 +346,7 @@ func TestStreaming_Correctness_FullPluginDecision(t *testing.T) {
 	tests := []struct {
 		name       string
 		body       []byte
-		policy     *v1alpha1.MCPToolPolicySpec
+		policy     *Config
 		wantAction legacyAction
 	}{
 		{"whitelist allow", buildLargeToolsCallBody("read_file", 10*1024), whitelistPolicy, legacyContinue},
@@ -402,7 +400,7 @@ func TestStreaming_Correctness_FullPluginDecision(t *testing.T) {
 					} else if !governedMethods[method] {
 						streamAction = legacyContinue
 					} else {
-						decision := evaluate(cfgFromPolicy(tc.policy), method, toolName)
+						decision := evaluate(configOf(tc.policy), method, toolName)
 						if decision == "deny" {
 							streamAction = legacyImmediate
 						} else {
@@ -449,9 +447,9 @@ func buildLargeToolsCallBody(toolName string, argumentsSize int) []byte {
 	return b
 }
 
-var benchPolicy = &v1alpha1.MCPToolPolicySpec{
+var benchPolicy = &Config{
 	DefaultAction: "deny",
-	Rules: []v1alpha1.MCPToolPolicyRule{
+	Rules: []RuleEntry{
 		{Method: "tools/call", ToolNames: []string{"read_file", "write_file"}, Action: "allow"},
 	},
 }
@@ -469,7 +467,7 @@ var bodySizes = []struct {
 
 // Approach A: buffered — the full body arrives as one piece and
 // json.Unmarshal extracts the fields.
-func bufferedDecide(body []byte, policy *v1alpha1.MCPToolPolicySpec) string {
+func bufferedDecide(body []byte, policy *Config) string {
 	if isBatchBody(body) {
 		return policy.DefaultAction
 	}
@@ -477,13 +475,13 @@ func bufferedDecide(body []byte, policy *v1alpha1.MCPToolPolicySpec) string {
 	if !governedMethods[method] {
 		return "allow"
 	}
-	return evaluate(cfgFromPolicy(policy), method, toolName)
+	return evaluate(configOf(policy), method, toolName)
 }
 
 // Approach B: streamed — the body arrives in chunks and StreamingParser
 // decides as early as possible, parsing only the minimal prefix needed for
 // method and params.name.
-func streamedDecide(body []byte, chunkSize int, policy *v1alpha1.MCPToolPolicySpec) (decision string, bytesProcessed int) {
+func streamedDecide(body []byte, chunkSize int, policy *Config) (decision string, bytesProcessed int) {
 	sp := &StreamingParser{}
 	chunks := splitIntoChunks(body, chunkSize)
 
@@ -514,7 +512,7 @@ func streamedDecide(body []byte, chunkSize int, policy *v1alpha1.MCPToolPolicySp
 	if !governedMethods[method] {
 		return "allow", bytesProcessed
 	}
-	return evaluate(cfgFromPolicy(policy), method, toolName), bytesProcessed
+	return evaluate(configOf(policy), method, toolName), bytesProcessed
 }
 
 // BenchmarkBuffered measures the buffered approach: full-body parse.
@@ -604,7 +602,7 @@ func BenchmarkStreamed_FullDecision(b *testing.B) {
 				}
 				method, toolName := sp.Result()
 				if governedMethods[method] {
-					evaluate(cfgFromPolicy(benchPolicy), method, toolName)
+					evaluate(configOf(benchPolicy), method, toolName)
 				}
 			}
 		})

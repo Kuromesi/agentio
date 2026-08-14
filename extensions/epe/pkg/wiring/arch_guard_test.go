@@ -44,6 +44,18 @@ func deps(t *testing.T, pkg string) string {
 	return string(out)
 }
 
+// depsWithTests returns the dependency closure of a package plus its internal
+// and external test packages. Production-only guards cannot see an API coupled
+// through a shared test harness, which is the boundary this helper protects.
+func depsWithTests(t *testing.T, pkg string) string {
+	t.Helper()
+	out, err := exec.Command("go", "list", "-deps", "-test", modPrefix+pkg).CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps -test %s: %v\n%s", pkg, err, out)
+	}
+	return string(out)
+}
+
 // listPkgs enumerates the extension's packages under the given pattern,
 // stripped of the module prefix. Every guard below derives its subject list
 // this way rather than enumerating it: a hand-written list is a silent
@@ -113,8 +125,8 @@ const crdTypes = "github.com/openkruise/agents-api/agents/"
 // entry has to justify itself in review.
 func TestOnlyPolicyLayerNamesTheCRD(t *testing.T) {
 	allowed := map[string]string{
-		"pkg/admin":              "debug rendering of CRD-typed views",
-		"pkg/testing/enginetest": "authors CRD objects for tests",
+		"pkg/admin":                   "debug rendering of CRD-typed views",
+		"pkg/testing/securityprofile": "authors CRD objects for SecurityProfile scenarios",
 	}
 	for _, pkg := range listPkgs(t, "...", nil) {
 		if strings.HasPrefix(pkg, "pkg/policy/") {
@@ -126,6 +138,28 @@ func TestOnlyPolicyLayerNamesTheCRD(t *testing.T) {
 		for _, imp := range directImports(t, pkg) {
 			if strings.HasPrefix(imp, crdTypes) {
 				t.Errorf("%s directly imports %s; move the CRD knowledge into pkg/policy/", pkg, imp)
+			}
+		}
+	}
+}
+
+// Framework tests must prove the same policy-neutral contract as production.
+// A direct test import and a transitive import through enginetest are equally
+// coupling: both prevent another policy API from reusing the framework test
+// substrate without compiling SecurityProfile and agents-api.
+func TestFrameworkTestClosureFreeOfPolicyAPIs(t *testing.T) {
+	subjects := append(enginePkgs(t), listPkgs(t, "pkg/extproc/...", nil)...)
+	subjects = append(subjects, "pkg/testing/enginetest")
+	forbidden := []string{
+		modPrefix + "pkg/policy/",
+		"github.com/openkruise/agents-api/agents/",
+	}
+	for _, pkg := range subjects {
+		out := depsWithTests(t, pkg)
+		for _, dep := range forbidden {
+			if strings.Contains(out, dep) {
+				t.Errorf("%s test dependency closure contains %s; move API-specific tests to "+
+					"pkg/testing/securityprofile or use neutral engine units", pkg, dep)
 			}
 		}
 	}
@@ -174,8 +208,8 @@ func TestEngineClosureFreeOfExtProcProtos(t *testing.T) {
 	}
 }
 
-// Header-only control actions stay capability-deprived: block and bypass do
-// not need network clients and should remain cheap and side-effect free.
+// Block, bypass, and header mutation must not depend on credential, Kubernetes,
+// or HTTP clients.
 func TestHeaderOnlyControlFiltersCannotReachNetworkClients(t *testing.T) {
 	forbidden := []string{
 		modPrefix + "pkg/credential",
@@ -185,6 +219,7 @@ func TestHeaderOnlyControlFiltersCannotReachNetworkClients(t *testing.T) {
 	for _, pkg := range []string{
 		"pkg/filters/block",
 		"pkg/filters/bypass",
+		"pkg/filters/headermutation",
 	} {
 		out := deps(t, pkg)
 		for _, dep := range forbidden {
@@ -212,6 +247,7 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 	srcDirs := map[string]string{
 		"bypass":         "../filters/bypass",
 		"block":          "../filters/block",
+		"headermutation": "../filters/headermutation",
 		"mcpacl":         "../filters/mcpacl",
 		"tokentransform": "../filters/tokentransform",
 	}

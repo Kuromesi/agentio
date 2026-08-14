@@ -86,17 +86,16 @@ func TestHandleRequestBody_SetsBodyAndRunsBodyPhase(t *testing.T) {
 func TestHandleRequestBody_ConsumesPendingEvaluationOnce(t *testing.T) {
 	fp := &bodyProbe{}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("fake-body", fp)}, nil)
-	state.awaitRequestBody = true
 
 	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
 		Body: []byte("data"), EndOfStream: true,
 	}, state); err != nil {
 		t.Fatalf("first body: %v", err)
 	}
-	if state.eval != nil {
+	if state.bodyContinuation != nil {
 		t.Fatal("pending header evaluation was not cleared")
 	}
-	if state.awaitRequestBody {
+	if state.awaitingRequestBody() {
 		t.Fatal("request-body obligation was not consumed")
 	}
 
@@ -123,18 +122,18 @@ func TestHandleRequestBody_ArmsOnlyTerminalFinalization(t *testing.T) {
 			wantFinalize: true,
 		},
 		{
-			name:          "blocked retires response observation",
+			name:          "blocked retires response obligation",
 			action:        filter.Stop(filter.Reply{Status: 403}),
 			awaitResponse: true,
 			wantFinalize:  true,
 		},
 		{
-			name:         "bypassed without response observation",
+			name:         "bypassed without response obligation",
 			action:       filter.Bypass(),
 			wantFinalize: true,
 		},
 		{
-			name:          "bypassed while awaiting response observation",
+			name:          "bypassed while awaiting response headers",
 			action:        filter.Bypass(),
 			awaitResponse: true,
 			wantFinalize:  false,
@@ -149,7 +148,6 @@ func TestHandleRequestBody_ArmsOnlyTerminalFinalization(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := &bodyProbe{bodyAct: tt.action}
 			s, state := pendingBodyState(t, []filter.Registration{fixedReg("fake-body", fp)}, nil)
-			state.awaitRequestBody = true
 			state.awaitResponseHeaders = tt.awaitResponse
 
 			if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
@@ -157,8 +155,8 @@ func TestHandleRequestBody_ArmsOnlyTerminalFinalization(t *testing.T) {
 			}, state); err != nil {
 				t.Fatalf("HandleRequestBody: %v", err)
 			}
-			if state.finalizeAfterSend != tt.wantFinalize {
-				t.Fatalf("finalizeAfterSend = %v, want %v", state.finalizeAfterSend, tt.wantFinalize)
+			if got := state.lifecycle == lifecycleFinalizePending; got != tt.wantFinalize {
+				t.Fatalf("finalize pending = %v (lifecycle %v), want %v", got, state.lifecycle, tt.wantFinalize)
 			}
 			if tt.action.Kind() == filter.KindStop && state.awaitResponseHeaders {
 				t.Fatal("blocked body result left an impossible response obligation")

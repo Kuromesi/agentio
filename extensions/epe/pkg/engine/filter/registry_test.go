@@ -56,14 +56,7 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 		{name: "nil New", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.New = nil; return d }()},
 		{name: "no phase", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = 0; return d }()},
 		{name: "undispatched phase", desc: func() Descriptor[testCfg] { d := testDescriptor("ghost"); d.Phases |= Phase(1 << 7); return d }()},
-		{name: "body phase without need", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases |= PhaseRequestBody; return d }()},
-		{name: "body need without phase", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Body = BodyComplete; return d }()},
-		{name: "unknown body need", desc: func() Descriptor[testCfg] {
-			d := testDescriptor("f")
-			d.Phases |= PhaseRequestBody
-			d.Body = BodyNeed(2)
-			return d
-		}()},
+		{name: "body phase without request headers", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = PhaseRequestBody; return d }()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,10 +126,9 @@ func TestBuildPreservesOrderAndReturnsFreshSlice(t *testing.T) {
 	}
 }
 
-func TestPolicyFor(t *testing.T) {
+func TestOnError(t *testing.T) {
 	d := testDescriptor("f")
-	d.OnError = FromRule
-	d.OnErrorOf = func(cfg testCfg) FailurePolicy {
+	d.OnError = func(cfg testCfg) FailurePolicy {
 		if cfg.V == "open" {
 			return FailOpen
 		}
@@ -146,8 +138,8 @@ func TestPolicyFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := regs[0].PolicyFor(testCfg{V: "open"}); got != FailOpen {
-		t.Fatalf("PolicyFor(open) = %v", got)
+	if got := regs[0].OnError(testCfg{V: "open"}); got != FailOpen {
+		t.Fatalf("OnError(open) = %v", got)
 	}
 	if _, err := Build(Define(Descriptor[testCfg]{Name: "ghost", Phases: Phase(1 << 7), New: d.New}, testProject)); err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("undispatched phase error = %v", err)

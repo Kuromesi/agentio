@@ -27,10 +27,10 @@ var benchSink any
 // BenchmarkAuditActivation charges the audit projection's two halves separately:
 // the memoised base, which every evaluation after the first gets for a map
 // lookup, and the full audit.Scope.Activation, which additionally builds the
-// hierarchical child holding `result` and `response`.
+// hierarchical child holding `result`.
 //
 // The child is the interesting number, because it is rebuilt on every call even
-// though Result and Response are fixed once buildScope has run
+// though Result is fixed once buildScope has run
 // (policy/securityprofile/auditlog.go:105). That caller builds one scope per unit
 // and then loops over N audit entries, calling EvalWhen on each, so the child's
 // cost is paid N times per matched unit for a value that never changes — i.e.
@@ -79,8 +79,7 @@ func benchAuditScope() *Scope {
 			inputs.Rule{Name: "rule"},
 			nil,
 		),
-		Result:   "blocked",
-		Response: Response{Status: 503},
+		Result: "blocked",
 	}
 }
 
@@ -109,7 +108,7 @@ func guardBase(b *testing.B, base *inputs.Scope) {
 // audit-only child variables and the base ones.
 func guardFull(b *testing.B, s *Scope) {
 	b.Helper()
-	prog, err := eval.CompileBool(`result == "blocked" && response.status == 503 && request.host == "api.example.com"`)
+	prog, err := eval.CompileBool(`result == "blocked" && request.host == "api.example.com"`)
 	if err != nil {
 		b.Fatalf("guard: compile: %v", err)
 	}

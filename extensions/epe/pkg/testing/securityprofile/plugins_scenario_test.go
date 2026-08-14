@@ -15,10 +15,10 @@
 // Full-chain scenarios that verify engine mechanics (ordered rules,
 // stream-end error isolation, body-mode selection) using fake filters.
 // Unlike the other scenario files, most of these tests intentionally
-// assemble a bespoke chain via enginetest.Options.Filters: they test how
+// assemble a bespoke chain via Options.Filters: they test how
 // the engine dispatches a specific chain shape, which is exactly the
 // exception to the "always use the production chain" rule.
-package extproc_test
+package securityprofile
 
 import (
 	"context"
@@ -81,7 +81,6 @@ func tokenClaimReg(f filter.Filter) filter.Registration {
 	return filter.Registration{
 		Name:   tokentransform.FilterName,
 		Phases: filter.PhaseRequestHeaders | filter.PhaseRequestBody,
-		Body:   filter.BodyComplete,
 		Parse:  func(json.RawMessage) (any, error) { return struct{}{}, nil },
 		New:    func(filter.ErasedRuleConfig) filter.Filter { return f },
 	}
@@ -132,7 +131,7 @@ func TestHandleRequestHeaders_PostResolutionErrorDoesNotAffectBlockResponse(t *t
 	// Bespoke chain: the real block filter plus a stream logger standing in
 	// for an audit sink whose delivery problems must not leak into the
 	// response.
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters:       regsWith(t, []filter.Definition{block.Definition()}),
 		StreamLoggers: []filter.StreamLogger{failing},
 	})
@@ -164,7 +163,7 @@ func TestHandleRequestHeaders_PostResolutionErrorDoesNotAffectBlockResponse(t *t
 // the token transformation does NOT run because bypass skips later rules.
 func TestHandleRequestHeaders_BypassBeforeTokenTransformation(t *testing.T) {
 	fake := &fakeTokenFilter{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters: regsWith(t, []filter.Definition{bypass.Definition()}, tokenClaimReg(fake)),
 	})
 	h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
@@ -190,7 +189,7 @@ func TestHandleRequestHeaders_BypassBeforeTokenTransformation(t *testing.T) {
 // mutation work.
 func TestHandleRequestHeaders_TokenTransformationBeforeBypass(t *testing.T) {
 	fake := &fakeTokenFilter{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters: regsWith(t, []filter.Definition{bypass.Definition()}, tokenClaimReg(fake)),
 	})
 	h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
@@ -213,7 +212,7 @@ func TestHandleRequestHeaders_TokenTransformationBeforeBypass(t *testing.T) {
 // earlier transformation runs before the later block decides the request.
 func TestHandleRequestHeaders_TokenTransformationBeforeBlock(t *testing.T) {
 	fake := &fakeTokenFilter{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters: regsWith(t,
 			[]filter.Definition{bypass.Definition(), block.Definition()},
 			tokenClaimReg(fake)),
@@ -239,7 +238,7 @@ func TestHandleRequestHeaders_TokenTransformationBeforeBlock(t *testing.T) {
 // The engine constructs one filter invocation per matching rule.
 func TestHandleRequestHeaders_MutationFilterRunsOncePerRule(t *testing.T) {
 	fake := &fakeTokenFilter{}
-	h := enginetest.New(t, enginetest.Options{
+	h := New(t, Options{
 		Filters: regsWith(t, nil, tokenClaimReg(fake)),
 	})
 	h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
@@ -275,7 +274,7 @@ func mcpRequest(host string, body []byte) *enginetest.RequestBuilder {
 }
 
 func TestHandleRequestHeaders_BodylessRequestResumesBeforeLaterBlock(t *testing.T) {
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
 		{
 			Name:  "inspect-body",
@@ -308,7 +307,7 @@ func TestHandleRequestHeaders_BodylessRequestResumesBeforeLaterBlock(t *testing.
 // been inspected, so it is the only safe mode for an enforcing handler.
 func TestHandleRequestHeaders_EnforcingBodyHandlerNeverStreamed(t *testing.T) {
 	// Production chain: mcpacl is the only body handler.
-	h := enginetest.New(t, enginetest.Options{})
+	h := New(t, Options{})
 	h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
 		{
 			Name:  "body-rule",
@@ -372,7 +371,7 @@ func TestHandleRequestHeaders_BodyModeSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := enginetest.New(t, enginetest.Options{Filters: tt.filters(t)})
+			h := New(t, Options{Filters: tt.filters(t)})
 			h.Fixture.ApplyProfile(securityProfile("p1", "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{
 				{
 					Name:    "body-rule",
@@ -418,7 +417,7 @@ func TestHandleRequestBody_MCPACLWildcardAllowSpecificDomainDeny(t *testing.T) {
 	})
 
 	t.Run("specific domain runs wildcard allow then specific deny", func(t *testing.T) {
-		h := enginetest.New(t, enginetest.Options{})
+		h := New(t, Options{})
 		h.Fixture.ApplyProfile(profile)
 
 		verdict := h.Run(t, mcpRequest("mcp-server.example.com", callSafeTool))
@@ -431,7 +430,7 @@ func TestHandleRequestBody_MCPACLWildcardAllowSpecificDomainDeny(t *testing.T) {
 	})
 
 	t.Run("other domain only runs wildcard allow", func(t *testing.T) {
-		h := enginetest.New(t, enginetest.Options{})
+		h := New(t, Options{})
 		h.Fixture.ApplyProfile(profile)
 
 		verdict := h.Run(t, mcpRequest("other.example.com", callSafeTool))

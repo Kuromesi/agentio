@@ -67,7 +67,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 
 	st := state.stream
 	st.RequestID = requestID
-	state.sawRequest = true
+	state.markRequestSeen()
 
 	peer, req := attributes.Extract(ctx, headers, attrs)
 	st.Peer = peer
@@ -122,43 +122,34 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	// that yields nothing cannot erase a previous one. The stream logger was
 	// already installed above, before the resolve error was honoured.
 	state.units = res.Units
-
-	// End-of-stream headers can synchronously resume an empty-body continuation,
-	// but both engine entries still answer one Envoy ProcessingRequest. Give
-	// them one outer deadline so the body phase cannot refresh the message budget.
-	evalCtx := ctx
-	cancel := func() {}
-	if headers.GetEndOfStream() && s.pluginBudget > 0 {
-		evalCtx, cancel = context.WithTimeout(ctx, s.pluginBudget)
+	subscriptions, err := s.eng.ValidateSubscriptions(state.engineUnits())
+	if err != nil {
+		return nil, err
 	}
-	defer cancel()
 
-	er, evalErr := s.eng.EvalRequestHeaders(evalCtx, st, state.engineUnits())
+	// End-of-stream headers mean no body will follow: the empty body is final,
+	// so hand it to the walk up front and body requests are satisfied inline
+	// instead of pausing.
+	var evalOpts []engine.RequestOption
+	if headers.GetEndOfStream() {
+		evalOpts = append(evalOpts, engine.WithAvailableBody(filter.Body{Complete: true}))
+	}
+	reqHeadersRes, evalErr := s.eng.EvalRequestHeaders(ctx, st, state.engineUnits(), evalOpts...)
 	if evalErr != nil {
 		return nil, evalErr
 	}
-	if er.NeedsBody() && headers.GetEndOfStream() {
-		br, bodyErr := s.eng.EvalRequestBody(evalCtx, st, er, filter.Body{Complete: true})
-		if bodyErr != nil {
-			return nil, bodyErr
-		}
-		er = mergeBodylessRequestResults(er, br)
-	}
+	// A bypass in this walk bounds the response-phase dispatch;
+	// HandleRequestBody records the asynchronous case.
+	state.responseScope = reqHeadersRes.ResponseScope
 
-	responses := translateRequestHeadersResult(er, loggerD, peer)
-	if er.Disposition == engine.DispositionBlocked ||
-		er.Disposition == engine.DispositionBypassed {
-		state.finalizeAfterSend = true
-	}
+	responses := translateRequestHeadersResult(reqHeadersRes, loggerD, peer)
 
-	// Assemble the single headers-phase ModeOverride. mode_override is only
-	// accepted on header-phase responses, and each override must restate
-	// both body modes: the merge base is the static config, so a missing
-	// mode silently becomes NONE.
-	if er.Disposition != engine.DispositionBlocked {
-		wantBody := er.NeedsBody()
-		observeResponse := s.observeResponses && er.Disposition != engine.DispositionBypassed
-		if wantBody || observeResponse {
+	// ModeOverride must restate both body modes because Envoy copies them
+	// unconditionally. A blocked result must not carry an override.
+	if reqHeadersRes.Disposition != engine.DispositionBlocked {
+		wantResponse := subscriptions&filter.PhaseResponseHeaders != 0
+		wantBody := reqHeadersRes.NeedsBody()
+		if wantBody || wantResponse {
 			override := &extProcV3.ProcessingMode{
 				RequestBodyMode:  extProcV3.ProcessingMode_NONE,
 				ResponseBodyMode: extProcV3.ProcessingMode_NONE,
@@ -166,7 +157,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 			if wantBody {
 				override.RequestBodyMode = requestBodyMode
 			}
-			if observeResponse {
+			if wantResponse {
 				override.ResponseHeaderMode = extProcV3.ProcessingMode_SEND
 			}
 			resp := cloneResponse(responses[0])
@@ -174,71 +165,36 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 			responses = append([]*extProcPb.ProcessingResponse{resp}, responses[1:]...)
 		}
 		if wantBody {
-			state.eval = er
-			state.awaitRequestBody = true
+			state.bodyContinuation = reqHeadersRes
 		}
-		if observeResponse {
+		if wantResponse {
 			state.awaitResponseHeaders = true
 		}
 	}
-	return responses, nil
-}
 
-// mergeBodylessRequestResults renders the resumed empty-body continuation in
-// the current request-headers phase. Header operations are folded again across
-// the phase boundary because Envoy applies removals before sets within one
-// HeaderMutation, and the later continuation must retain normal last-writer
-// semantics.
-func mergeBodylessRequestResults(er *engine.RequestHeadersResult, br *engine.RequestBodyResult) *engine.RequestHeadersResult {
-	headerOps := engine.Fold([]filter.Mutation{
-		{HeaderOps: er.HeaderOps},
-		{HeaderOps: br.HeaderOps},
-	})
-	body := er.Body
-	if br.Body != nil {
-		body = br.Body
-	}
-	disposition := br.Disposition
-	if disposition == engine.DispositionPassthrough &&
-		(er.Disposition == engine.DispositionMutated || len(headerOps) > 0 || body != nil) {
-		disposition = engine.DispositionMutated
-	}
-	return &engine.RequestHeadersResult{
-		Disposition:     disposition,
-		Reply:           br.Reply,
-		HeaderOps:       headerOps,
-		ClearRouteCache: er.ClearRouteCache || br.ClearRouteCache,
-		Body:            body,
-	}
+	// Finalization for terminal dispositions lives in armFinalization; the
+	// no-op it performs for a passthrough or mutated result leaves teardown to
+	// stream end, mirroring the body phase.
+	state.armFinalization(reqHeadersRes.Disposition)
+	return responses, nil
 }
 
 // HandleResponseHeaders records the upstream status into the stream and
 // dispatches the response-headers phase.
 func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.HttpHeaders, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
-	if state == nil || !state.sawRequest {
+	if state == nil || state.lifecycle == lifecycleIdle {
 		return nil, status.Error(codes.FailedPrecondition,
 			"received response headers before request headers")
-	}
-	if state.responseHeadersSeen {
-		return nil, status.Error(codes.FailedPrecondition, "received duplicate response headers")
 	}
 	if headers == nil || headers.GetHeaders() == nil {
 		return nil, status.Error(codes.InvalidArgument, "response headers are missing")
 	}
-	state.responseHeadersSeen = true
 
-	response := []*extProcPb.ProcessingResponse{
-		{
-			Response: &extProcPb.ProcessingResponse_ResponseHeaders{
-				ResponseHeaders: &extProcPb.HeadersResponse{},
-			},
-		},
-	}
-	if state.finalized {
+	if state.lifecycle == lifecycleFinalized {
 		// A static response-header mode can outlive a terminal request decision.
-		// Acknowledge the first valid message without reopening observers or audit.
+		// Acknowledge the first valid message without reopening filter dispatch or audit.
 		state.awaitResponseHeaders = false
-		return response, nil
+		return emptyResponseHeadersAck, nil
 	}
 
 	respHeaders := make(map[string]string, len(headers.GetHeaders().GetHeaders()))
@@ -254,12 +210,19 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 		}
 	}
 	state.stream.Response = httpreq.HTTPResponse{Status: responseStatus, Headers: respHeaders}
-	if err := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits()); err != nil {
-		return nil, err
+	// Dispatch only to subscribed pairs within the request walk's response scope.
+	respHeadersRes, evalErr := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits(), state.responseScope)
+	if evalErr != nil {
+		if respHeadersRes.Disposition == engine.DispositionBlocked {
+			// Return the FailClosed reply with the error so Process can send it.
+			return translateResponseHeadersResult(respHeadersRes), evalErr
+		}
+		// Contract and protocol errors return no acknowledgement.
+		return nil, evalErr
 	}
 	state.awaitResponseHeaders = false
-	state.finalizeAfterSend = true
-	return response, nil
+	state.lifecycle = lifecycleFinalizePending
+	return translateResponseHeadersResult(respHeadersRes), nil
 }
 
 // cloneResponse copies a ProcessingResponse so ModeOverride can be set
