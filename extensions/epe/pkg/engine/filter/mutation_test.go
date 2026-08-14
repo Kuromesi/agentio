@@ -58,6 +58,33 @@ func TestMutationEqualComparesStatusValueAndPresence(t *testing.T) {
 	}
 }
 
+// Ops are ordered, so equal must be order-sensitive: a set/append pair
+// reversed is a different header outcome, not the same reply.
+func TestReplyEqualComparesHeaderOpsInOrder(t *testing.T) {
+	setCookieA := HeaderOp{Kind: HeaderAdd, Name: "set-cookie", Value: "a=1"}
+	setCookieB := HeaderOp{Kind: HeaderAdd, Name: "set-cookie", Value: "b=2"}
+
+	base := Reply{Status: 403, HeaderOps: []HeaderOp{setCookieA, setCookieB}}
+	if !base.equal(Reply{Status: 403, HeaderOps: []HeaderOp{setCookieA, setCookieB}}) {
+		t.Fatal("identical op sequences must compare equal")
+	}
+	if base.equal(Reply{Status: 403, HeaderOps: []HeaderOp{setCookieB, setCookieA}}) {
+		t.Fatal("reordered op sequences must not compare equal")
+	}
+	if base.equal(Reply{Status: 403, HeaderOps: []HeaderOp{setCookieA}}) {
+		t.Fatal("op sequences of different length must not compare equal")
+	}
+	if base.equal(Reply{Status: 403}) {
+		t.Fatal("present and absent ops must not compare equal")
+	}
+	if !(Reply{Status: 403}).equal(Reply{Status: 403, HeaderOps: []HeaderOp{}}) {
+		t.Fatal("nil and empty op lists both mean no headers")
+	}
+	if base.equal(Reply{Status: 403, HeaderOps: []HeaderOp{{Kind: HeaderSet, Name: "set-cookie", Value: "a=1"}, setCookieB}}) {
+		t.Fatal("differing op kinds must not compare equal")
+	}
+}
+
 func TestUnitIDString(t *testing.T) {
 	id := UnitID{Scope: "ns/prof", Name: "rule", Ordinal: 2}
 	if got := id.String(); got != "ns/prof/rule#2" {

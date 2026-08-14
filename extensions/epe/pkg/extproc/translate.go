@@ -214,14 +214,10 @@ func immediateFromReply(r filter.Reply) *extProcPb.ProcessingResponse {
 		Body:    r.Body,
 		Details: r.Details,
 	}
-	if len(r.Headers) > 0 {
-		hm := &extProcPb.HeaderMutation{}
-		for k, v := range r.Headers {
-			hm.SetHeaders = append(hm.SetHeaders, &corev3.HeaderValueOption{
-				Header: &corev3.HeaderValue{Key: k, RawValue: []byte(v)},
-			})
-		}
-		immediate.Headers = hm
+	if len(r.HeaderOps) > 0 {
+		// The route-affecting flag is discarded: an immediate response has no
+		// route left to invalidate.
+		immediate.Headers, _ = headerMutationFromOps(r.HeaderOps)
 	}
 	return &extProcPb.ProcessingResponse{
 		Response: &extProcPb.ProcessingResponse_ImmediateResponse{

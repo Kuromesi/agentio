@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-logr/logr"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"istio.io/istio/extensions/epe/pkg/engine"
@@ -149,6 +150,59 @@ func TestTranslate_BlockedResponseBodyUsesReplyAndDiscardsMutations(t *testing.T
 	}
 	if immediate.GetHeaders() != nil || len(immediate.GetBody()) != 0 {
 		t.Fatalf("blocked result leaked pending mutations: %+v", immediate)
+	}
+}
+
+// Envoy applies ImmediateResponse.Headers as a HeaderMutation to the response
+// it synthesizes, so each op kind must survive the crossing intact — an
+// unset AppendAction would silently append where the filter asked to overwrite.
+func TestTranslate_ImmediateReplyRendersHeaderOpsInOrder(t *testing.T) {
+	response := immediateFromReply(filter.Reply{
+		Status: 403,
+		HeaderOps: []filter.HeaderOp{
+			{Kind: filter.HeaderSet, Name: "content-type", Value: "application/json"},
+			{Kind: filter.HeaderAdd, Name: "set-cookie", Value: "a=1"},
+			{Kind: filter.HeaderAdd, Name: "set-cookie", Value: "b=2"},
+			{Kind: filter.HeaderRemove, Name: "x-upstream"},
+		},
+	})
+	headers := response.GetImmediateResponse().GetHeaders()
+	set := headers.GetSetHeaders()
+	if len(set) != 3 {
+		t.Fatalf("SetHeaders = %d, want 3", len(set))
+	}
+	wantSet := []struct {
+		name   string
+		value  string
+		action corev3.HeaderValueOption_HeaderAppendAction
+	}{
+		{"content-type", "application/json", corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD},
+		{"set-cookie", "a=1", corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD},
+		{"set-cookie", "b=2", corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD},
+	}
+	for i, want := range wantSet {
+		got := set[i]
+		if got.GetHeader().GetKey() != want.name || string(got.GetHeader().GetRawValue()) != want.value {
+			t.Errorf("SetHeaders[%d] = %s: %q, want %s: %q", i,
+				got.GetHeader().GetKey(), got.GetHeader().GetRawValue(), want.name, want.value)
+		}
+		if got.GetAppendAction() != want.action {
+			t.Errorf("SetHeaders[%d] AppendAction = %v, want %v", i, got.GetAppendAction(), want.action)
+		}
+	}
+	if remove := headers.GetRemoveHeaders(); len(remove) != 1 || remove[0] != "x-upstream" {
+		t.Errorf("RemoveHeaders = %v, want [x-upstream]", remove)
+	}
+}
+
+func TestTranslate_ImmediateReplyWithoutHeaderOpsOmitsHeaders(t *testing.T) {
+	response := immediateFromReply(filter.Reply{Status: 403, Details: "denied"})
+	if got := response.GetImmediateResponse().GetHeaders(); got != nil {
+		t.Fatalf("Headers = %+v, want nil for an op-free reply", got)
+	}
+	response = immediateFromReply(filter.Reply{Status: 403, HeaderOps: []filter.HeaderOp{}})
+	if got := response.GetImmediateResponse().GetHeaders(); got != nil {
+		t.Fatalf("Headers = %+v, want nil for an empty op list", got)
 	}
 }
 

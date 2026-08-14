@@ -13,10 +13,7 @@
 // limitations under the License.
 package filter
 
-import (
-	"maps"
-	"slices"
-)
+import "slices"
 
 // HeaderOpKind distinguishes the three header operations. HeaderOps is an
 // ordered list, not a map, because ordered multi-value headers
@@ -99,14 +96,23 @@ func SetPath(path string) Mutation {
 // Reply is a blocking local response, translated to an ext_proc
 // ImmediateResponse by the adapter.
 type Reply struct {
-	Status  int
-	Headers map[string]string
-	Body    []byte
+	Status int
+	// HeaderOps are applied to the response Envoy synthesizes. Ordered ops
+	// rather than map[string]string for the reason given above: a map cannot
+	// express two values of one header, nor set versus append.
+	//
+	// HeaderRemove is inert here. Envoy applies these mutations while the local
+	// reply holds only :status, which is unremovable, and adds content-type and
+	// content-length afterwards, so a removal has nothing to hit. Whoever
+	// validates untrusted ops should reject a removal rather than let it look
+	// effective.
+	HeaderOps []HeaderOp
+	Body      []byte
 	// Details feeds RESPONSE_CODE_DETAILS; the framework may synthesize it.
 	Details string
 }
 
 func (r Reply) equal(o Reply) bool {
 	return r.Status == o.Status && r.Details == o.Details &&
-		slices.Equal(r.Body, o.Body) && maps.Equal(r.Headers, o.Headers)
+		slices.Equal(r.Body, o.Body) && slices.Equal(r.HeaderOps, o.HeaderOps)
 }
