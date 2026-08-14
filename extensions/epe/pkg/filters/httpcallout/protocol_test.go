@@ -220,8 +220,10 @@ func TestDecisionMarshalsRequestContinueContract(t *testing.T) {
 	body := `{"input":"rewritten"}`
 	value := "true"
 	decision := Decision{
-		Version: ProtocolVersion,
-		Action:  ActionContinue,
+		Version:   ProtocolVersion,
+		Phase:     PhaseRequest,
+		RequestID: "req-123",
+		Action:    ActionContinue,
 		Request: &RequestMutation{
 			Headers: []HeaderMutation{{
 				Operation: HeaderSet,
@@ -235,6 +237,8 @@ func TestDecisionMarshalsRequestContinueContract(t *testing.T) {
 	got := marshalJSONObject(t, decision)
 	want := unmarshalJSONObject(t, `{
 		"version":"0.1",
+		"phase":"request",
+		"requestId":"req-123",
 		"action":"continue",
 		"request":{
 			"headers":[
@@ -253,8 +257,10 @@ func TestDecisionMarshalsRequestRespondContract(t *testing.T) {
 	contentType := "application/json"
 	body := `{"error":"denied"}`
 	got := marshalJSONObject(t, Decision{
-		Version: ProtocolVersion,
-		Action:  ActionRespond,
+		Version:   ProtocolVersion,
+		Phase:     PhaseRequest,
+		RequestID: "req-123",
+		Action:    ActionRespond,
 		Response: &ResponseMutation{
 			StatusCode: &status,
 			Headers: []HeaderMutation{{
@@ -267,6 +273,8 @@ func TestDecisionMarshalsRequestRespondContract(t *testing.T) {
 	})
 	want := unmarshalJSONObject(t, `{
 		"version":"0.1",
+		"phase":"request",
+		"requestId":"req-123",
 		"action":"respond",
 		"response":{
 			"statusCode":403,
@@ -278,6 +286,28 @@ func TestDecisionMarshalsRequestRespondContract(t *testing.T) {
 	}`)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("marshaled decision = %#v, want %#v", got, want)
+	}
+}
+
+func TestDecisionOmitsEmptyReason(t *testing.T) {
+	status := 403
+	withReason := marshalJSONObject(t, Decision{
+		Version:  ProtocolVersion,
+		Action:   ActionRespond,
+		Reason:   "secret detected",
+		Response: &ResponseMutation{StatusCode: &status},
+	})
+	if withReason["reason"] != "secret detected" {
+		t.Fatalf("reason = %#v, want it serialized", withReason["reason"])
+	}
+
+	withoutReason := marshalJSONObject(t, Decision{
+		Version:  ProtocolVersion,
+		Action:   ActionRespond,
+		Response: &ResponseMutation{StatusCode: &status},
+	})
+	if _, found := withoutReason["reason"]; found {
+		t.Fatal("empty reason was serialized instead of omitted")
 	}
 }
 
@@ -303,10 +333,25 @@ func TestDecisionDistinguishesOmittedAndEmptyBody(t *testing.T) {
 	}
 }
 
+// invocationFor builds a minimal valid invocation for the phase, so decision
+// tests exercise the echo rules against something Invocation.Validate accepts.
+func invocationFor(phase Phase, requestID string) Invocation {
+	inv := Invocation{
+		Version: ProtocolVersion,
+		Phase:   phase,
+		Request: &HTTPRequest{ID: requestID, Body: "request"},
+	}
+	if phase == PhaseResponse {
+		inv.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: "response"}
+	}
+	return inv
+}
+
 func TestDecisionValidateAcceptsPhaseContracts(t *testing.T) {
 	headerValue := "value"
 	status := 201
 	empty := ""
+	const requestID = "req-123"
 	tests := []struct {
 		name     string
 		phase    Phase
@@ -316,16 +361,20 @@ func TestDecisionValidateAcceptsPhaseContracts(t *testing.T) {
 			name:  "request no-op",
 			phase: PhaseRequest,
 			decision: Decision{
-				Version: ProtocolVersion,
-				Action:  ActionContinue,
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionContinue,
 			},
 		},
 		{
 			name:  "request mutation",
 			phase: PhaseRequest,
 			decision: Decision{
-				Version: ProtocolVersion,
-				Action:  ActionContinue,
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionContinue,
 				Request: &RequestMutation{
 					Headers: []HeaderMutation{
 						{Operation: HeaderSet, Name: "x-a", Value: &headerValue},
@@ -337,28 +386,120 @@ func TestDecisionValidateAcceptsPhaseContracts(t *testing.T) {
 			},
 		},
 		{
+			name:  "request mutation removing a framing header",
+			phase: PhaseRequest,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionContinue,
+				Request: &RequestMutation{Headers: []HeaderMutation{
+					{Operation: HeaderRemove, Name: "Content-Length"},
+					{Operation: HeaderRemove, Name: "transfer-encoding"},
+				}},
+			},
+		},
+		{
+			name:  "response mutation setting set-cookie",
+			phase: PhaseResponse,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseResponse,
+				RequestID: requestID,
+				Action:    ActionContinue,
+				Response: &ResponseMutation{Headers: []HeaderMutation{
+					{Operation: HeaderSet, Name: "Set-Cookie", Value: &headerValue},
+				}},
+			},
+		},
+		{
 			name:  "request respond",
 			phase: PhaseRequest,
 			decision: Decision{
-				Version:  ProtocolVersion,
-				Action:   ActionRespond,
-				Response: &ResponseMutation{StatusCode: &status},
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Response:  &ResponseMutation{StatusCode: &status},
+			},
+		},
+		{
+			name:  "request respond with reason",
+			phase: PhaseRequest,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Reason:    "secret detected in prompt",
+				Response:  &ResponseMutation{StatusCode: &status},
+			},
+		},
+		{
+			name:  "response respond",
+			phase: PhaseResponse,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseResponse,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Response:  &ResponseMutation{StatusCode: &status},
+			},
+		},
+		{
+			name:  "response respond with non-ascii reason",
+			phase: PhaseResponse,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseResponse,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Reason:    "检测到 泄露 secret",
+				Response:  &ResponseMutation{StatusCode: &status},
+			},
+		},
+		{
+			name:  "reason at the byte cap",
+			phase: PhaseRequest,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Reason:    strings.Repeat("a", 256),
+				Response:  &ResponseMutation{StatusCode: &status},
+			},
+		},
+		{
+			name:  "response respond with empty reason",
+			phase: PhaseResponse,
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseResponse,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Reason:    "",
+				Response:  &ResponseMutation{StatusCode: &status},
 			},
 		},
 		{
 			name:  "response no-op",
 			phase: PhaseResponse,
 			decision: Decision{
-				Version: ProtocolVersion,
-				Action:  ActionContinue,
+				Version:   ProtocolVersion,
+				Phase:     PhaseResponse,
+				RequestID: requestID,
+				Action:    ActionContinue,
 			},
 		},
 		{
 			name:  "response mutation",
 			phase: PhaseResponse,
 			decision: Decision{
-				Version: ProtocolVersion,
-				Action:  ActionContinue,
+				Version:   ProtocolVersion,
+				Phase:     PhaseResponse,
+				RequestID: requestID,
+				Action:    ActionContinue,
 				Response: &ResponseMutation{
 					StatusCode: &status,
 					Headers:    []HeaderMutation{{Operation: HeaderSet, Name: "x-reviewed", Value: &headerValue}},
@@ -370,10 +511,36 @@ func TestDecisionValidateAcceptsPhaseContracts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.decision.Validate(tt.phase); err != nil {
+			if err := tt.decision.Validate(invocationFor(tt.phase, requestID)); err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
 		})
+	}
+}
+
+func TestDecisionValidateAcceptsEmptyRequestIDEcho(t *testing.T) {
+	decision := Decision{
+		Version: ProtocolVersion,
+		Phase:   PhaseRequest,
+		Action:  ActionContinue,
+	}
+	if err := decision.Validate(invocationFor(PhaseRequest, "")); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestDecisionMarshalsRequestIDEvenWhenEmpty(t *testing.T) {
+	got := marshalJSONObject(t, Decision{
+		Version: ProtocolVersion,
+		Phase:   PhaseRequest,
+		Action:  ActionContinue,
+	})
+	value, found := got["requestId"]
+	if !found || value != "" {
+		t.Fatalf("requestId = (%#v, %v), want a present empty string", value, found)
+	}
+	if got["phase"] != string(PhaseRequest) {
+		t.Fatalf("phase = %#v, want %q", got["phase"], PhaseRequest)
 	}
 }
 
@@ -384,222 +551,470 @@ func TestDecisionValidateRejectsInvalidContract(t *testing.T) {
 	statusHigh := 600
 	nonUTF8 := string([]byte{0xff})
 	invalidHeaderValue := "safe\r\nx-injected: value"
+	const requestID = "req-123"
+
+	// echo fills in the correlation fields a well-behaved callout returns, so
+	// each case below isolates the one thing it means to break.
+	echo := func(phase Phase, d Decision) Decision {
+		d.Phase = phase
+		d.RequestID = requestID
+		return d
+	}
+
 	tests := []struct {
 		name     string
-		phase    Phase
+		inv      Invocation
 		decision Decision
 		wantErr  string
 	}{
 		{
 			name:     "unknown phase",
-			phase:    Phase("trailers"),
-			decision: Decision{Version: ProtocolVersion, Action: ActionContinue},
+			inv:      Invocation{Version: ProtocolVersion, Phase: Phase("trailers"), Request: &HTTPRequest{ID: requestID}},
+			decision: echo(Phase("trailers"), Decision{Version: ProtocolVersion, Action: ActionContinue}),
 			wantErr:  "phase",
 		},
 		{
 			name:     "wrong version",
-			phase:    PhaseRequest,
-			decision: Decision{Version: "v2", Action: ActionContinue},
+			inv:      invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{Version: "v2", Action: ActionContinue}),
 			wantErr:  "version",
 		},
 		{
 			name:     "unknown action",
-			phase:    PhaseRequest,
-			decision: Decision{Version: ProtocolVersion, Action: Action("allow")},
+			inv:      invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{Version: ProtocolVersion, Action: Action("allow")}),
 			wantErr:  "action",
 		},
 		{
-			name:  "response object on request continue",
-			phase: PhaseRequest,
+			name:     "mismatched phase echo",
+			inv:      invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseResponse, Decision{Version: ProtocolVersion, Action: ActionContinue}),
+			wantErr:  "phase",
+		},
+		{
+			name:     "mismatched response phase echo",
+			inv:      invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseRequest, Decision{Version: ProtocolVersion, Action: ActionContinue}),
+			wantErr:  "phase",
+		},
+		{
+			name:     "missing phase echo",
+			inv:      invocationFor(PhaseRequest, requestID),
+			decision: echo(Phase(""), Decision{Version: ProtocolVersion, Action: ActionContinue}),
+			wantErr:  "phase",
+		},
+		{
+			name: "mismatched request id echo",
+			inv:  invocationFor(PhaseRequest, requestID),
 			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: "req-999",
+				Action:    ActionContinue,
+			},
+			wantErr: "request id",
+		},
+		{
+			name: "missing request id echo",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: Decision{
+				Version: ProtocolVersion,
+				Phase:   PhaseRequest,
+				Action:  ActionContinue,
+			},
+			wantErr: "request id",
+		},
+		{
+			name: "request id echoed when the request had none",
+			inv:  invocationFor(PhaseRequest, ""),
+			decision: Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionContinue,
+			},
+			wantErr: "request id",
+		},
+		{
+			name: "response object on request continue",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Response: &ResponseMutation{
 					StatusCode: &statusOK,
 				},
-			},
+			}),
 			wantErr: "response",
 		},
 		{
-			name:  "request object on response continue",
-			phase: PhaseResponse,
-			decision: Decision{
+			name: "request object on response continue",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{},
-			},
+			}),
 			wantErr: "request",
 		},
 		{
-			name:  "respond during response phase",
-			phase: PhaseResponse,
-			decision: Decision{
-				Version:  ProtocolVersion,
-				Action:   ActionRespond,
-				Response: &ResponseMutation{StatusCode: &statusOK},
-			},
-			wantErr: "response phase",
-		},
-		{
 			name:     "respond without response",
-			phase:    PhaseRequest,
-			decision: Decision{Version: ProtocolVersion, Action: ActionRespond},
+			inv:      invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{Version: ProtocolVersion, Action: ActionRespond}),
 			wantErr:  "response",
 		},
 		{
-			name:  "respond without status",
-			phase: PhaseRequest,
-			decision: Decision{
+			name:     "response-phase respond without response",
+			inv:      invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{Version: ProtocolVersion, Action: ActionRespond}),
+			wantErr:  "response",
+		},
+		{
+			name: "respond without status",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version:  ProtocolVersion,
 				Action:   ActionRespond,
 				Response: &ResponseMutation{},
-			},
+			}),
 			wantErr: "status",
 		},
 		{
-			name:  "respond with request mutation",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "response-phase respond without status",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
+				Version:  ProtocolVersion,
+				Action:   ActionRespond,
+				Response: &ResponseMutation{},
+			}),
+			wantErr: "status",
+		},
+		{
+			name: "respond with request mutation",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version:  ProtocolVersion,
 				Action:   ActionRespond,
 				Request:  &RequestMutation{},
 				Response: &ResponseMutation{StatusCode: &statusOK},
-			},
+			}),
 			wantErr: "request",
 		},
 		{
-			name:  "status below final response range",
-			phase: PhaseResponse,
-			decision: Decision{
+			name: "response-phase respond with request mutation",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
+				Version:  ProtocolVersion,
+				Action:   ActionRespond,
+				Request:  &RequestMutation{},
+				Response: &ResponseMutation{StatusCode: &statusOK},
+			}),
+			wantErr: "request",
+		},
+		{
+			name: "request-phase continue with reason",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
+				Version: ProtocolVersion,
+				Action:  ActionContinue,
+				Reason:  "just so you know",
+			}),
+			wantErr: "reason",
+		},
+		{
+			name: "response-phase continue with reason",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
+				Version: ProtocolVersion,
+				Action:  ActionContinue,
+				Reason:  "just so you know",
+			}),
+			wantErr: "reason",
+		},
+		{
+			name: "reason over the byte cap",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
+				Version:  ProtocolVersion,
+				Action:   ActionRespond,
+				Reason:   strings.Repeat("a", 257),
+				Response: &ResponseMutation{StatusCode: &statusOK},
+			}),
+			wantErr: "reason",
+		},
+		{
+			name: "reason with a control byte",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
+				Version:  ProtocolVersion,
+				Action:   ActionRespond,
+				Reason:   "blocked\nby policy",
+				Response: &ResponseMutation{StatusCode: &statusOK},
+			}),
+			wantErr: "control",
+		},
+		{
+			name: "reason with delete",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
+				Version:  ProtocolVersion,
+				Action:   ActionRespond,
+				Reason:   "blocked\x7fby policy",
+				Response: &ResponseMutation{StatusCode: &statusOK},
+			}),
+			wantErr: "control",
+		},
+		{
+			name: "reason not valid utf8",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
+				Version:  ProtocolVersion,
+				Action:   ActionRespond,
+				Reason:   nonUTF8,
+				Response: &ResponseMutation{StatusCode: &statusOK},
+			}),
+			wantErr: "utf-8",
+		},
+		{
+			name: "status below final response range",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
 				Version:  ProtocolVersion,
 				Action:   ActionContinue,
 				Response: &ResponseMutation{StatusCode: &statusLow},
-			},
+			}),
 			wantErr: "status",
 		},
 		{
-			name:  "status above response range",
-			phase: PhaseResponse,
-			decision: Decision{
+			name: "status above response range",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
 				Version:  ProtocolVersion,
 				Action:   ActionContinue,
 				Response: &ResponseMutation{StatusCode: &statusHigh},
-			},
+			}),
 			wantErr: "status",
 		},
 		{
-			name:  "invalid header name",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "invalid header name",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderSet, Name: "bad header", Value: &value,
 				}}},
-			},
-			wantErr: "header name",
+			}),
+			wantErr: "invalid name",
 		},
 		{
-			name:  "pseudo header",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "pseudo header",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderSet, Name: ":path", Value: &value,
 				}}},
-			},
-			wantErr: "header name",
+			}),
+			wantErr: "invalid name",
 		},
 		{
-			name:  "host header",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "host header",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderSet, Name: "Host", Value: &value,
 				}}},
-			},
+			}),
 			wantErr: "host",
 		},
 		{
-			name:  "unknown header operation",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "unknown header operation",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderOperation("replace"), Name: "x-a", Value: &value,
 				}}},
-			},
+			}),
 			wantErr: "operation",
 		},
 		{
-			name:  "set without value",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "set without value",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderSet, Name: "x-a",
 				}}},
-			},
+			}),
 			wantErr: "value",
 		},
 		{
-			name:  "remove with value",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "remove with value",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderRemove, Name: "x-a", Value: &value,
 				}}},
-			},
+			}),
 			wantErr: "value",
 		},
 		{
-			name:  "invalid header value",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "invalid header value",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Headers: []HeaderMutation{{
 					Operation: HeaderSet, Name: "x-a", Value: &invalidHeaderValue,
 				}}},
-			},
+			}),
 			wantErr: "header value",
 		},
 		{
-			name:  "non utf8 request replacement",
-			phase: PhaseRequest,
-			decision: Decision{
+			name: "non utf8 request replacement",
+			inv:  invocationFor(PhaseRequest, requestID),
+			decision: echo(PhaseRequest, Decision{
 				Version: ProtocolVersion,
 				Action:  ActionContinue,
 				Request: &RequestMutation{Body: &nonUTF8},
-			},
+			}),
 			wantErr: "utf-8",
 		},
 		{
-			name:  "non utf8 response replacement",
-			phase: PhaseResponse,
-			decision: Decision{
+			name: "non utf8 response replacement",
+			inv:  invocationFor(PhaseResponse, requestID),
+			decision: echo(PhaseResponse, Decision{
 				Version:  ProtocolVersion,
 				Action:   ActionContinue,
 				Response: &ResponseMutation{Body: &nonUTF8},
-			},
+			}),
 			wantErr: "utf-8",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.decision.Validate(tt.phase); err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
+			if err := tt.decision.Validate(tt.inv); err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
 				t.Fatalf("Validate error = %v, want one containing %q", err, tt.wantErr)
 			}
 		})
 	}
+}
+
+// TestDecisionValidateRejectsForbiddenHeaderNames covers the shared name policy
+// a remote callout must obey, mirroring what headermutation enforces locally.
+func TestDecisionValidateRejectsForbiddenHeaderNames(t *testing.T) {
+	value := "value"
+	const requestID = "req-123"
+	for _, tc := range []struct {
+		name      string
+		operation HeaderOperation
+		header    string
+		wantErr   string
+	}{
+		{name: "x-envoy set", operation: HeaderSet, header: "X-Envoy-Foo", wantErr: "reserved by envoy"},
+		{name: "x-envoy append", operation: HeaderAppend, header: "x-envoy-bar", wantErr: "reserved by envoy"},
+		{name: "x-envoy remove", operation: HeaderRemove, header: "X-Envoy", wantErr: "reserved by envoy"},
+		{name: "x-envoy no hyphen remove", operation: HeaderRemove, header: "x-envoyer", wantErr: "reserved by envoy"},
+		{name: "connection set", operation: HeaderSet, header: "Connection", wantErr: "connection-scoped"},
+		{name: "keep-alive append", operation: HeaderAppend, header: "Keep-Alive", wantErr: "connection-scoped"},
+		{name: "proxy-connection remove", operation: HeaderRemove, header: "proxy-connection", wantErr: "connection-scoped"},
+		{name: "upgrade remove", operation: HeaderRemove, header: "Upgrade", wantErr: "connection-scoped"},
+		{name: "te remove", operation: HeaderRemove, header: "TE", wantErr: "connection-scoped"},
+		{name: "trailer remove", operation: HeaderRemove, header: "Trailer", wantErr: "connection-scoped"},
+		{name: "proxy-authenticate remove", operation: HeaderRemove, header: "Proxy-Authenticate", wantErr: "connection-scoped"},
+		{name: "content-encoding remove", operation: HeaderRemove, header: "Content-Encoding", wantErr: "connection-scoped"},
+		{name: "content-length set", operation: HeaderSet, header: "Content-Length", wantErr: "message framing"},
+		{name: "content-length append", operation: HeaderAppend, header: "content-length", wantErr: "message framing"},
+		{name: "transfer-encoding set", operation: HeaderSet, header: "Transfer-Encoding", wantErr: "message framing"},
+		{name: "transfer-encoding append", operation: HeaderAppend, header: "transfer-encoding", wantErr: "message framing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutation := HeaderMutation{Operation: tc.operation, Name: tc.header}
+			if tc.operation != HeaderRemove {
+				mutation.Value = &value
+			}
+			decision := Decision{
+				Version:   ProtocolVersion,
+				Phase:     PhaseRequest,
+				RequestID: requestID,
+				Action:    ActionContinue,
+				Request:   &RequestMutation{Headers: []HeaderMutation{mutation}},
+			}
+			err := decision.Validate(invocationFor(PhaseRequest, requestID))
+			if err == nil {
+				t.Fatal("Validate succeeded, want an error")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), tc.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), "header mutation 0") {
+				t.Errorf("error = %q, want it to name the offending index", err.Error())
+			}
+		})
+	}
+}
+
+// A respond decision is rendered as an ext_proc ImmediateResponse, and Envoy
+// applies those header mutations while the local reply holds only :status, which
+// is itself unremovable; content-type and content-length arrive afterwards. A
+// removal there can never reach a header, so it is rejected rather than accepted
+// and silently ignored. A response-phase continue mutates the real upstream
+// response, where removal works — that is the discriminator below.
+func TestDecisionValidateRejectsRemovalsOnLocalResponses(t *testing.T) {
+	status := 403
+	const requestID = "req-123"
+	removal := HeaderMutation{Operation: HeaderRemove, Name: "x-upstream"}
+
+	for _, tc := range []struct {
+		name  string
+		phase Phase
+	}{
+		{name: "request-phase respond", phase: PhaseRequest},
+		{name: "response-phase respond", phase: PhaseResponse},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := Decision{
+				Version:   ProtocolVersion,
+				Phase:     tc.phase,
+				RequestID: requestID,
+				Action:    ActionRespond,
+				Response:  &ResponseMutation{StatusCode: &status, Headers: []HeaderMutation{removal}},
+			}
+			err := decision.Validate(invocationFor(tc.phase, requestID))
+			if err == nil {
+				t.Fatal("Validate succeeded, want an error")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "local response") {
+				t.Errorf("error = %q, want it to say the removal cannot reach a local response", err.Error())
+			}
+			if !strings.Contains(err.Error(), "header mutation 0") {
+				t.Errorf("error = %q, want it to name the offending index", err.Error())
+			}
+		})
+	}
+
+	t.Run("response-phase continue keeps removals", func(t *testing.T) {
+		decision := Decision{
+			Version:   ProtocolVersion,
+			Phase:     PhaseResponse,
+			RequestID: requestID,
+			Action:    ActionContinue,
+			Response:  &ResponseMutation{Headers: []HeaderMutation{removal}},
+		}
+		if err := decision.Validate(invocationFor(PhaseResponse, requestID)); err != nil {
+			t.Fatalf("Validate on an upstream response removal = %v, want nil", err)
+		}
+	})
 }
 
 func marshalJSONObject(t *testing.T, value any) map[string]any {

@@ -175,6 +175,38 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 			},
 			wantErr: "allowlist",
 		},
+		{
+			name: "allowlist naming authorization",
+			mutate: func(c *Config) {
+				c.RequestHeaders.Mode = RequestHeadersAllowlist
+				c.RequestHeaders.Allowlist = []string{"x-tenant", "authorization"}
+			},
+			wantErr: "never forwarded",
+		},
+		{
+			name: "allowlist naming proxy-authorization",
+			mutate: func(c *Config) {
+				c.RequestHeaders.Mode = RequestHeadersAllowlist
+				c.RequestHeaders.Allowlist = []string{"proxy-authorization"}
+			},
+			wantErr: "never forwarded",
+		},
+		{
+			name: "allowlist naming cookie",
+			mutate: func(c *Config) {
+				c.RequestHeaders.Mode = RequestHeadersAllowlist
+				c.RequestHeaders.Allowlist = []string{"cookie"}
+			},
+			wantErr: "never forwarded",
+		},
+		{
+			name: "allowlist naming mixed-case authorization",
+			mutate: func(c *Config) {
+				c.RequestHeaders.Mode = RequestHeadersAllowlist
+				c.RequestHeaders.Allowlist = []string{"Authorization"}
+			},
+			wantErr: "never forwarded",
+		},
 	}
 
 	for _, tt := range tests {
@@ -183,6 +215,32 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 			tt.mutate(&cfg)
 			if _, err := cfg.Effective(); err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
 				t.Fatalf("Effective error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNeverForwardHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "authorization", in: "authorization", want: true},
+		{name: "mixed-case authorization", in: "Authorization", want: true},
+		{name: "proxy-authorization", in: "proxy-authorization", want: true},
+		{name: "mixed-case proxy-authorization", in: "Proxy-Authorization", want: true},
+		{name: "cookie", in: "cookie", want: true},
+		{name: "mixed-case cookie", in: "Cookie", want: true},
+		{name: "ordinary header", in: "x-tenant", want: false},
+		{name: "content-type", in: "Content-Type", want: false},
+		// set-cookie is a response header; RequestHeadersConfig governs only
+		// request headers, so it is not part of the set.
+		{name: "set-cookie", in: "set-cookie", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := neverForwardHeader(tc.in); got != tc.want {
+				t.Errorf("neverForwardHeader(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}

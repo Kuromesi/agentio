@@ -15,10 +15,11 @@ package httpcallout
 
 import (
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"golang.org/x/net/http/httpguts"
+
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
 
 // ProtocolVersion is the callout wire-contract version implemented by this
@@ -137,7 +138,10 @@ type Action string
 const (
 	// ActionContinue applies phase-appropriate mutations and continues.
 	ActionContinue Action = "continue"
-	// ActionRespond short-circuits a request with a local response.
+	// ActionRespond terminates the exchange with a local response instead of
+	// the message in flight: in the request phase the upstream is never
+	// called, in the response phase the buffered upstream response is
+	// discarded.
 	ActionRespond Action = "respond"
 )
 
@@ -179,28 +183,58 @@ type ResponseMutation struct {
 
 // Decision is the versioned callout result.
 type Decision struct {
-	Version  string            `json:"version"`
-	Action   Action            `json:"action"`
+	Version string `json:"version"`
+	// Phase and RequestID echo the invocation being answered, so a response
+	// meant for another exchange or the other phase cannot validate. Neither is
+	// omitempty: an empty echo of an empty ID is the correct wire form, and
+	// omitting it would make the absent and empty cases indistinguishable.
+	Phase     Phase  `json:"phase"`
+	RequestID string `json:"requestId"`
+	Action    Action `json:"action"`
+	// Reason is an optional audit note, legal only with respond. It feeds
+	// RESPONSE_CODE_DETAILS, which lands in one access log line per blocked
+	// request; reasonMaxBytes bounds it because nothing downstream does.
+	Reason   string            `json:"reason,omitempty"`
 	Request  *RequestMutation  `json:"request,omitempty"`
 	Response *ResponseMutation `json:"response,omitempty"`
 }
 
-// Validate enforces the result shape allowed by phase.
-func (d Decision) Validate(phase Phase) error {
+// reasonMaxBytes caps Reason. Envoy imposes no limit of its own on
+// ImmediateResponse.details.
+const reasonMaxBytes = 256
+
+// Validate enforces the result shape allowed by the invocation being answered.
+// The expected phase and correlation ID come from inv rather than the caller, so
+// they cannot disagree with the exchange. inv is assumed already checked by
+// Invocation.Validate; the unknown-phase guard stays as cheap insurance.
+//
+// The normalized header names ValidateHeaderName returns are discarded here: a
+// value receiver cannot rewrite the decision, so case folding happens where
+// filter.HeaderOp values are built. Rejection is unaffected — every check runs
+// against the lower-cased form.
+func (d Decision) Validate(inv Invocation) error {
+	phase := inv.Phase
 	if phase != PhaseRequest && phase != PhaseResponse {
 		return fmt.Errorf("unknown callout phase %q", phase)
 	}
 	if d.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported callout protocol version %q", d.Version)
 	}
+	if d.Phase != phase {
+		return fmt.Errorf("callout decision phase %q does not answer the %q phase", d.Phase, phase)
+	}
+	expectedID := ""
+	if inv.Request != nil {
+		expectedID = inv.Request.ID
+	}
+	if d.RequestID != expectedID {
+		return fmt.Errorf("callout decision request id %q does not echo %q", d.RequestID, expectedID)
+	}
 	if d.Action != ActionContinue && d.Action != ActionRespond {
 		return fmt.Errorf("unknown callout action %q", d.Action)
 	}
 
 	if d.Action == ActionRespond {
-		if phase == PhaseResponse {
-			return fmt.Errorf("respond action is not valid in the response phase")
-		}
 		if d.Request != nil {
 			return fmt.Errorf("respond action must not contain a request mutation")
 		}
@@ -210,9 +244,15 @@ func (d Decision) Validate(phase Phase) error {
 		if d.Response.StatusCode == nil {
 			return fmt.Errorf("respond action has no response status")
 		}
-		return validateResponseMutation(d.Response)
+		if err := validateReason(d.Reason); err != nil {
+			return err
+		}
+		return validateLocalResponse(d.Response)
 	}
 
+	if d.Reason != "" {
+		return fmt.Errorf("continue action must not contain a reason")
+	}
 	if phase == PhaseRequest {
 		if d.Response != nil {
 			return fmt.Errorf("request-phase continue action contains a response mutation")
@@ -225,11 +265,34 @@ func (d Decision) Validate(phase Phase) error {
 	return validateResponseMutation(d.Response)
 }
 
+// validateReason enforces what the value can survive on the way to
+// RESPONSE_CODE_DETAILS. Invalid UTF-8 fails the proto3 marshaller and would
+// destroy the whole ProcessingResponse rather than this one field, so it is a
+// harder requirement than the body checks. Control bytes are checked byte-wise
+// because every byte of a valid multi-byte UTF-8 sequence is 0x80 or above.
+func validateReason(reason string) error {
+	if reason == "" {
+		return nil
+	}
+	if len(reason) > reasonMaxBytes {
+		return fmt.Errorf("callout reason is longer than %d bytes", reasonMaxBytes)
+	}
+	if !utf8.ValidString(reason) {
+		return fmt.Errorf("callout reason is not valid UTF-8")
+	}
+	for idx := 0; idx < len(reason); idx++ {
+		if reason[idx] < 0x20 || reason[idx] == 0x7f {
+			return fmt.Errorf("callout reason contains a control byte at offset %d", idx)
+		}
+	}
+	return nil
+}
+
 func validateRequestMutation(m *RequestMutation) error {
 	if m == nil {
 		return nil
 	}
-	if err := validateHeaderMutations(m.Headers); err != nil {
+	if err := validateHeaderMutations(m.Headers, removalApplies); err != nil {
 		return err
 	}
 	if m.Body != nil && !utf8.ValidString(*m.Body) {
@@ -238,14 +301,28 @@ func validateRequestMutation(m *RequestMutation) error {
 	return nil
 }
 
+// validateResponseMutation checks a change to the upstream response, which is a
+// real message: every header operation reaches it.
 func validateResponseMutation(m *ResponseMutation) error {
+	return validateResponse(m, removalApplies)
+}
+
+// validateLocalResponse checks the response a respond action synthesizes. Envoy
+// applies these mutations to a local reply that holds only :status — itself
+// unremovable — and adds content-type and content-length afterwards, so a
+// removal can never reach a header. Rejecting beats accepting and ignoring.
+func validateLocalResponse(m *ResponseMutation) error {
+	return validateResponse(m, removalIgnored)
+}
+
+func validateResponse(m *ResponseMutation, removal removalMode) error {
 	if m == nil {
 		return nil
 	}
 	if m.StatusCode != nil && (*m.StatusCode < 200 || *m.StatusCode > 599) {
 		return fmt.Errorf("callout response status %d is outside 200..599", *m.StatusCode)
 	}
-	if err := validateHeaderMutations(m.Headers); err != nil {
+	if err := validateHeaderMutations(m.Headers, removal); err != nil {
 		return err
 	}
 	if m.Body != nil && !utf8.ValidString(*m.Body) {
@@ -254,28 +331,49 @@ func validateResponseMutation(m *ResponseMutation) error {
 	return nil
 }
 
-func validateHeaderMutations(mutations []HeaderMutation) error {
+// opKinds maps wire operations to the engine kinds the shared name policy is
+// expressed over. The append/Add asymmetry stays: one is a wire contract, the
+// other is internal.
+var opKinds = map[HeaderOperation]filter.HeaderOpKind{
+	HeaderSet:    filter.HeaderSet,
+	HeaderAppend: filter.HeaderAdd,
+	HeaderRemove: filter.HeaderRemove,
+}
+
+// removalMode says whether a header removal in this position reaches a message
+// that already has headers. Only a local response answers no.
+type removalMode bool
+
+const (
+	removalApplies removalMode = true
+	removalIgnored removalMode = false
+)
+
+func validateHeaderMutations(mutations []HeaderMutation, removal removalMode) error {
 	for idx, mutation := range mutations {
-		if !httpguts.ValidHeaderFieldName(mutation.Name) {
-			return fmt.Errorf("header mutation %d has invalid header name %q", idx, mutation.Name)
+		kind, known := opKinds[mutation.Operation]
+		if !known {
+			return fmt.Errorf("header mutation %d has unknown operation %q", idx, mutation.Operation)
 		}
-		if strings.EqualFold(mutation.Name, "host") {
-			return fmt.Errorf("header mutation %d cannot modify host", idx)
+		// A remote service gets no more mutation power than a local policy
+		// author: the same name policy headermutation enforces applies here.
+		if _, err := filter.ValidateHeaderName(kind, mutation.Name); err != nil {
+			return fmt.Errorf("header mutation %d: %w", idx, err)
 		}
-		switch mutation.Operation {
-		case HeaderSet, HeaderAppend:
-			if mutation.Value == nil {
-				return fmt.Errorf("header mutation %d operation %q requires a value", idx, mutation.Operation)
+		if mutation.Operation == HeaderRemove {
+			if removal == removalIgnored {
+				return fmt.Errorf("header mutation %d cannot remove a header from a local response", idx)
 			}
-			if !httpguts.ValidHeaderFieldValue(*mutation.Value) {
-				return fmt.Errorf("header mutation %d contains an invalid header value", idx)
-			}
-		case HeaderRemove:
 			if mutation.Value != nil {
 				return fmt.Errorf("header mutation %d remove operation must not contain a value", idx)
 			}
-		default:
-			return fmt.Errorf("header mutation %d has unknown operation %q", idx, mutation.Operation)
+			continue
+		}
+		if mutation.Value == nil {
+			return fmt.Errorf("header mutation %d operation %q requires a value", idx, mutation.Operation)
+		}
+		if !httpguts.ValidHeaderFieldValue(*mutation.Value) {
+			return fmt.Errorf("header mutation %d contains an invalid header value", idx)
 		}
 	}
 	return nil

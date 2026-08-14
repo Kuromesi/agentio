@@ -54,6 +54,28 @@ const (
 	RequestHeadersAllowlist RequestHeaderMode = "allowlist"
 )
 
+// neverForwardNames must not reach a third-party callout under any mode: they
+// carry caller credentials, and the endpoint is outside the mesh trust
+// boundary. set-cookie is absent on purpose — it is a response header, and
+// RequestHeadersConfig governs only request headers.
+var neverForwardNames = map[string]struct{}{
+	"authorization":       {},
+	"proxy-authorization": {},
+	"cookie":              {},
+}
+
+// neverForwardHeader reports whether name is a credential header the callout
+// must never see. It lower-cases before testing so it holds for any casing the
+// wire or an operator uses.
+//
+// Enforcement for RequestHeadersAll belongs to the code that builds an
+// Invocation, which does not exist yet; until it calls this, all mode still
+// forwards credentials.
+func neverForwardHeader(name string) bool {
+	_, found := neverForwardNames[strings.ToLower(name)]
+	return found
+}
+
 // RequestHeadersConfig controls request-header disclosure to the callout service.
 type RequestHeadersConfig struct {
 	Mode      RequestHeaderMode
@@ -151,6 +173,11 @@ func effectiveRequestHeaders(in RequestHeadersConfig) (RequestHeadersConfig, err
 		name := strings.ToLower(raw)
 		if !httpguts.ValidHeaderFieldName(name) {
 			return RequestHeadersConfig{}, fmt.Errorf("invalid request header name %q", raw)
+		}
+		// Reject rather than drop silently: an operator who wrote the name
+		// deserves an error, not a surprise.
+		if neverForwardHeader(name) {
+			return RequestHeadersConfig{}, fmt.Errorf("request header %q is never forwarded to a callout", raw)
 		}
 		if _, found := seen[name]; found {
 			continue
