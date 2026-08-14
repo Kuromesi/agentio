@@ -41,7 +41,7 @@ func TestInvocationMarshalsRequestContract(t *testing.T) {
 			RawQuery:    "debug=true",
 			ContentType: "application/json",
 			Headers:     map[string]string{"x-tenant": "demo"},
-			Body:        `{"input":"hi"}`,
+			Body:        stringPointer(`{"input":"hi"}`),
 		},
 	}
 
@@ -95,7 +95,6 @@ func TestInvocationOmitsHiddenRequestHeadersButKeepsContentType(t *testing.T) {
 		Phase:   PhaseResponse,
 		Request: &HTTPRequest{
 			ContentType: "application/json; charset=utf-8",
-			Body:        "request",
 		},
 		Response: &HTTPResponse{
 			StatusCode:  200,
@@ -117,17 +116,49 @@ func TestInvocationOmitsHiddenRequestHeadersButKeepsContentType(t *testing.T) {
 	}
 }
 
+// TestInvocationRequestBodyPresenceIsExplicit pins the pointer contract: the
+// request phase always carries a body key, including for an empty body, while
+// the response phase omits it so the correlation view cannot be mistaken for a
+// request that happened to have no body.
+func TestInvocationRequestBodyPresenceIsExplicit(t *testing.T) {
+	empty := marshalJSONObject(t, Invocation{
+		Version: ProtocolVersion,
+		Phase:   PhaseRequest,
+		Request: &HTTPRequest{Body: stringPointer("")},
+	})
+	body, found := empty["request"].(map[string]any)["body"]
+	if !found || body != "" {
+		t.Fatalf("request-phase empty body = (%#v, %v), want a present empty string", body, found)
+	}
+
+	correlation := marshalJSONObject(t, Invocation{
+		Version:  ProtocolVersion,
+		Phase:    PhaseResponse,
+		Request:  &HTTPRequest{},
+		Response: &HTTPResponse{StatusCode: 200, Headers: map[string]string{}},
+	})
+	if _, found := correlation["request"].(map[string]any)["body"]; found {
+		t.Fatal("response-phase request view carried a body key")
+	}
+}
+
 func TestInvocationValidateAcceptsPhaseShapes(t *testing.T) {
 	tests := []Invocation{
 		{
 			Version: ProtocolVersion,
 			Phase:   PhaseRequest,
-			Request: &HTTPRequest{Body: "request"},
+			Request: &HTTPRequest{Body: stringPointer("request")},
+		},
+		{
+			// An empty request body is a present body, not an absent one.
+			Version: ProtocolVersion,
+			Phase:   PhaseRequest,
+			Request: &HTTPRequest{Body: stringPointer("")},
 		},
 		{
 			Version:  ProtocolVersion,
 			Phase:    PhaseResponse,
-			Request:  &HTTPRequest{Body: "request"},
+			Request:  &HTTPRequest{},
 			Response: &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: "response"},
 		},
 	}
@@ -138,11 +169,39 @@ func TestInvocationValidateAcceptsPhaseShapes(t *testing.T) {
 	}
 }
 
+// TestInvocationValidateEnforcesResponsePhaseRequestView pins the correlation
+// view: a response-phase invocation must not carry the request body or request
+// headers, so the response half never depends on EPE retaining them.
+func TestInvocationValidateEnforcesResponsePhaseRequestView(t *testing.T) {
+	base := func() Invocation {
+		return Invocation{
+			Version:  ProtocolVersion,
+			Phase:    PhaseResponse,
+			Request:  &HTTPRequest{ID: "req-1", Method: "POST"},
+			Response: &HTTPResponse{StatusCode: 200, Headers: map[string]string{}},
+		}
+	}
+	t.Run("body present", func(t *testing.T) {
+		inv := base()
+		inv.Request.Body = stringPointer("")
+		if err := inv.Validate(); err == nil || !strings.Contains(err.Error(), "body") {
+			t.Fatalf("Validate error = %v, want one naming the body", err)
+		}
+	})
+	t.Run("headers present", func(t *testing.T) {
+		inv := base()
+		inv.Request.Headers = map[string]string{"x-tenant": "demo"}
+		if err := inv.Validate(); err == nil || !strings.Contains(err.Error(), "header") {
+			t.Fatalf("Validate error = %v, want one naming the headers", err)
+		}
+	})
+}
+
 func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 	valid := Invocation{
 		Version: ProtocolVersion,
 		Phase:   PhaseRequest,
-		Request: &HTTPRequest{Body: "request"},
+		Request: &HTTPRequest{Body: stringPointer("request")},
 	}
 	tests := []struct {
 		name    string
@@ -175,13 +234,19 @@ func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 			name: "response missing in response phase",
 			mutate: func(i *Invocation) {
 				i.Phase = PhaseResponse
+				i.Request.Body = nil
 			},
 			wantErr: "response",
 		},
 		{
+			name:    "missing request body in request phase",
+			mutate:  func(i *Invocation) { i.Request.Body = nil },
+			wantErr: "body",
+		},
+		{
 			name: "non utf8 request body",
 			mutate: func(i *Invocation) {
-				i.Request.Body = string([]byte{0xff})
+				i.Request.Body = stringPointer(string([]byte{0xff}))
 			},
 			wantErr: "utf-8",
 		},
@@ -189,6 +254,7 @@ func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 			name: "non utf8 response body",
 			mutate: func(i *Invocation) {
 				i.Phase = PhaseResponse
+				i.Request.Body = nil
 				i.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: string([]byte{0xff})}
 			},
 			wantErr: "utf-8",
@@ -197,6 +263,7 @@ func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 			name: "nil response headers",
 			mutate: func(i *Invocation) {
 				i.Phase = PhaseResponse
+				i.Request.Body = nil
 				i.Response = &HTTPResponse{StatusCode: 200}
 			},
 			wantErr: "headers",
@@ -339,13 +406,17 @@ func invocationFor(phase Phase, requestID string) Invocation {
 	inv := Invocation{
 		Version: ProtocolVersion,
 		Phase:   phase,
-		Request: &HTTPRequest{ID: requestID, Body: "request"},
+		Request: &HTTPRequest{ID: requestID, Body: stringPointer("request")},
 	}
 	if phase == PhaseResponse {
+		// The response phase sees the correlation view only.
+		inv.Request.Body = nil
 		inv.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: "response"}
 	}
 	return inv
 }
+
+func stringPointer(value string) *string { return &value }
 
 func TestDecisionValidateAcceptsPhaseContracts(t *testing.T) {
 	headerValue := "value"

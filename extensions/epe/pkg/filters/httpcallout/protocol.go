@@ -85,7 +85,12 @@ type HTTPRequest struct {
 	RawQuery    string            `json:"rawQuery"`
 	ContentType string            `json:"contentType"`
 	Headers     map[string]string `json:"headers,omitempty"`
-	Body        string            `json:"body"`
+	// Body is a pointer so the two phases have different shapes rather than one
+	// ambiguous shape: the request phase always sends a body, including a
+	// pointer to "" for an empty one, while the response phase sends none at
+	// all. Without the distinction an omitted body and an empty body would look
+	// identical, and the response-phase correlation view could not be enforced.
+	Body *string `json:"body,omitempty"`
 }
 
 // HTTPResponse is the original upstream response view delivered during the
@@ -97,7 +102,10 @@ type HTTPResponse struct {
 	Body        string            `json:"body"`
 }
 
-// Validate checks the version, phase shape, and UTF-8 body contract.
+// Validate checks the version, phase shape, and UTF-8 body contract. Each phase
+// owns exactly one body: the request phase must carry a request body and no
+// response, the response phase must carry a response and only the request
+// correlation view.
 func (i Invocation) Validate() error {
 	if i.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported callout protocol version %q", i.Version)
@@ -108,18 +116,30 @@ func (i Invocation) Validate() error {
 	if i.Request == nil {
 		return fmt.Errorf("callout invocation request is nil")
 	}
-	if !utf8.ValidString(i.Request.Body) {
-		return fmt.Errorf("callout request body is not valid UTF-8")
-	}
 
 	switch i.Phase {
 	case PhaseRequest:
 		if i.Response != nil {
 			return fmt.Errorf("request-phase callout invocation contains a response")
 		}
+		if i.Request.Body == nil {
+			return fmt.Errorf("request-phase callout invocation has no request body")
+		}
+		if !utf8.ValidString(*i.Request.Body) {
+			return fmt.Errorf("callout request body is not valid UTF-8")
+		}
 	case PhaseResponse:
 		if i.Response == nil {
 			return fmt.Errorf("response-phase callout invocation has no response")
+		}
+		// The response-phase request object is a correlation view. Enforcing its
+		// emptiness here is what lets EPE drop the request body at the end of
+		// the request direction instead of retaining it across the exchange.
+		if i.Request.Body != nil {
+			return fmt.Errorf("response-phase callout invocation contains a request body")
+		}
+		if i.Request.Headers != nil {
+			return fmt.Errorf("response-phase callout invocation contains request headers")
 		}
 		if i.Response.Headers == nil {
 			return fmt.Errorf("response-phase callout invocation has nil response headers")

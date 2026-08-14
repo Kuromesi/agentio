@@ -68,9 +68,9 @@ var neverForwardNames = map[string]struct{}{
 // must never see. It lower-cases before testing so it holds for any casing the
 // wire or an operator uses.
 //
-// Enforcement for RequestHeadersAll belongs to the code that builds an
-// Invocation, which does not exist yet; until it calls this, all mode still
-// forwards credentials.
+// Two callers enforce it: Effective rejects an allowlist naming one of these,
+// and forwardedRequestHeaders drops them under RequestHeadersAll, which is the
+// only mode where a name the operator never wrote can reach the endpoint.
 func neverForwardHeader(name string) bool {
 	_, found := neverForwardNames[strings.ToLower(name)]
 	return found
