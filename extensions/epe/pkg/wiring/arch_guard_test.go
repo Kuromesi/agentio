@@ -237,6 +237,7 @@ var phaseOfMethod = map[string]filter.Phase{
 	"OnRequestHeaders":  filter.PhaseRequestHeaders,
 	"OnRequestBody":     filter.PhaseRequestBody,
 	"OnResponseHeaders": filter.PhaseResponseHeaders,
+	"OnResponseBody":    filter.PhaseResponseBody,
 }
 
 // Descriptor.Phases must match the methods the filter actually overrides,
@@ -248,6 +249,7 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 		"bypass":         "../filters/bypass",
 		"block":          "../filters/block",
 		"headermutation": "../filters/headermutation",
+		"httpcallout":    "../filters/httpcallout",
 		"mcpacl":         "../filters/mcpacl",
 		"tokentransform": "../filters/tokentransform",
 	}
