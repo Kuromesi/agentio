@@ -53,7 +53,7 @@ func TestScenario_RequestHeaderMutationsReachExtProcWire(t *testing.T) {
 	}
 	want := []enginetest.HeaderOp{
 		{Kind: enginetest.HeaderSet, Name: "x-policy", Value: "outbound"},
-		{Kind: enginetest.HeaderAppend, Name: "x-pod", Value: "sandbox-a"},
+		{Kind: enginetest.HeaderAdd, Name: "x-pod", Value: "sandbox-a"},
 		{Kind: enginetest.HeaderRemove, Name: "x-legacy"},
 	}
 	if !reflect.DeepEqual(verdict.RequestHeaderOps, want) {
@@ -104,7 +104,7 @@ func TestScenario_ResponseHeaderMutationsReachExtProcWire(t *testing.T) {
 	}
 	want := []enginetest.HeaderOp{
 		{Kind: enginetest.HeaderSet, Name: "x-policy", Value: "outbound"},
-		{Kind: enginetest.HeaderAppend, Name: "set-cookie", Value: "trace=abc123"},
+		{Kind: enginetest.HeaderAdd, Name: "set-cookie", Value: "trace=abc123"},
 		{Kind: enginetest.HeaderRemove, Name: "server"},
 	}
 	if !reflect.DeepEqual(verdict.ResponseHeaderOps, want) {

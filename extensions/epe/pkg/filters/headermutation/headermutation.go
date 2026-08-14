@@ -32,7 +32,7 @@ import (
 // FilterName is the registry name used for policy payloads and attribution.
 const FilterName = "headermutation"
 
-// ValueOp is one compiled set or append operation.
+// ValueOp is one compiled set or add operation.
 type ValueOp struct {
 	Name  string
 	Value *template.Template
@@ -126,7 +126,7 @@ func (f *Filter) mutationsFor(ops OpSet) ([]filter.Mutation, error) {
 		}
 	}
 	for _, op := range ops.Add {
-		if err := render(filter.HeaderAppend, op); err != nil {
+		if err := render(filter.HeaderAdd, op); err != nil {
 			return nil, err
 		}
 	}
@@ -136,8 +136,8 @@ func (f *Filter) mutationsFor(ops OpSet) ([]filter.Mutation, error) {
 		switch op.kind {
 		case filter.HeaderSet:
 			mutations = append(mutations, filter.SetHeader(op.name, op.value))
-		case filter.HeaderAppend:
-			mutations = append(mutations, filter.AppendHeader(op.name, op.value))
+		case filter.HeaderAdd:
+			mutations = append(mutations, filter.AddHeader(op.name, op.value))
 		}
 	}
 	for _, name := range ops.Remove {

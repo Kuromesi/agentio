@@ -61,6 +61,21 @@ func (benchStop) OnRequestHeaders(context.Context, *filter.Stream) (filter.Actio
 	return filter.Stop(filter.Reply{Status: 403}), nil
 }
 
+type benchResponseMutate struct {
+	filter.PassThrough
+	mut filter.Mutation
+}
+
+func (f *benchResponseMutate) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return filter.Continue(f.mut), nil
+}
+
+type benchResponseStop struct{ filter.PassThrough }
+
+func (benchResponseStop) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return filter.Stop(filter.Reply{Status: 403}), nil
+}
+
 // benchNeedBody defers to the body phase and continues once it arrives.
 type benchNeedBody struct{ filter.PassThrough }
 
@@ -120,6 +135,38 @@ func benchChain(b testing.TB, shape benchShape, nFilters int) []filter.Registrat
 	return buildRegs(b, specs)
 }
 
+func benchResponseChain(b testing.TB, shape benchShape, nFilters int) []filter.Registration {
+	b.Helper()
+	specs := make([]regSpec, 0, nFilters+1)
+	if shape == shapeBlocked {
+		specs = append(specs, regSpec{
+			name:       "block",
+			phases:     filter.PhaseResponseHeaders,
+			subscribes: subscribesTo(filter.PhaseResponseHeaders),
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return benchResponseStop{}
+			},
+		})
+	}
+	for i := 0; i < nFilters; i++ {
+		spec := regSpec{
+			name:       "f" + strconv.Itoa(i),
+			phases:     filter.PhaseResponseHeaders,
+			subscribes: subscribesTo(filter.PhaseResponseHeaders),
+		}
+		if shape == shapeMutated {
+			mut := filter.SetHeader("x-bench-"+strconv.Itoa(i), "v")
+			spec.make = func(filter.RuleConfig[string]) filter.Filter {
+				return &benchResponseMutate{mut: mut}
+			}
+		} else {
+			spec.make = func(filter.RuleConfig[string]) filter.Filter { return benchNoop{} }
+		}
+		specs = append(specs, spec)
+	}
+	return buildRegs(b, specs)
+}
+
 // benchUnits builds nUnits units that each carry a config for every
 // registration — the shape that maximizes dispatch work, since no unit is
 // skipped for any filter.
@@ -169,6 +216,32 @@ func BenchmarkEvalRequestHeaders(b *testing.B) {
 					// and report a quadratic cost the engine does not have.
 					st := &filter.Stream{Info: filter.NewStreamInfo()}
 					res, err := e.EvalRequestHeaders(ctx, st, units)
+					if err != nil {
+						b.Fatal(err)
+					}
+					benchSink = res
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkEvalResponseHeaders(b *testing.B) {
+	for _, shape := range []benchShape{shapePassthrough, shapeMutated, shapeBlocked} {
+		for _, a := range benchAxes {
+			regs := benchResponseChain(b, shape, a.filters)
+			units := benchUnits(a.units, len(regs))
+			name := "units=" + strconv.Itoa(a.units) +
+				"/filters=" + strconv.Itoa(a.filters) +
+				"/" + string(shape)
+			b.Run(name, func(b *testing.B) {
+				e := NewEngine(regs, 0)
+				ctx := context.Background()
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					st := &filter.Stream{Info: filter.NewStreamInfo()}
+					res, err := e.EvalResponseHeaders(ctx, st, units, ResponseScope{})
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -302,7 +375,7 @@ func BenchmarkFold(b *testing.B) {
 		// Alternating append and remove on one key is the case that cannot
 		// collapse to a single op, so the keyState bookkeeping is exercised.
 		if i%2 == 0 {
-			sameKey[i] = filter.AppendHeader("x-bench", strconv.Itoa(i))
+			sameKey[i] = filter.AddHeader("x-bench", strconv.Itoa(i))
 		} else {
 			sameKey[i] = filter.RemoveHeader("x-bench")
 		}

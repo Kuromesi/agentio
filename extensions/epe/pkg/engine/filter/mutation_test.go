@@ -31,8 +31,8 @@ func TestHeaderHelpers(t *testing.T) {
 	if op := SetHeader("a", "1").HeaderOps[0]; op != (HeaderOp{Kind: HeaderSet, Name: "a", Value: "1"}) {
 		t.Errorf("SetHeader op = %+v", op)
 	}
-	if op := AppendHeader("a", "2").HeaderOps[0]; op != (HeaderOp{Kind: HeaderAppend, Name: "a", Value: "2"}) {
-		t.Errorf("AppendHeader op = %+v", op)
+	if op := AddHeader("a", "2").HeaderOps[0]; op != (HeaderOp{Kind: HeaderAdd, Name: "a", Value: "2"}) {
+		t.Errorf("AddHeader op = %+v", op)
 	}
 	if op := RemoveHeader("a").HeaderOps[0]; op != (HeaderOp{Kind: HeaderRemove, Name: "a"}) {
 		t.Errorf("RemoveHeader op = %+v", op)

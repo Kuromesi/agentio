@@ -122,18 +122,18 @@ func TestHandleRequestBody_ArmsOnlyTerminalFinalization(t *testing.T) {
 			wantFinalize: true,
 		},
 		{
-			name:          "blocked retires response observation",
+			name:          "blocked retires response obligation",
 			action:        filter.Stop(filter.Reply{Status: 403}),
 			awaitResponse: true,
 			wantFinalize:  true,
 		},
 		{
-			name:         "bypassed without response observation",
+			name:         "bypassed without response obligation",
 			action:       filter.Bypass(),
 			wantFinalize: true,
 		},
 		{
-			name:          "bypassed while awaiting response observation",
+			name:          "bypassed while awaiting response headers",
 			action:        filter.Bypass(),
 			awaitResponse: true,
 			wantFinalize:  false,

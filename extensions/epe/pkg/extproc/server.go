@@ -35,10 +35,9 @@ import (
 // Server implements the Envoy external processing server.
 // https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ext_proc/v3/external_processor.proto
 type Server struct {
-	observeResponses bool
-	resolve          engine.Resolver
-	eng              *engine.Engine
-	loggers          []filter.StreamLogger
+	resolve engine.Resolver
+	eng     *engine.Engine
+	loggers []filter.StreamLogger
 }
 
 // ServerDeps holds the dependencies needed by the ext-proc server.
@@ -59,9 +58,6 @@ type ServerDeps struct {
 	// Should be set below Envoy's message_timeout so the filter is
 	// cancelled before Envoy gives up.
 	PluginBudget time.Duration
-	// ObserveResponses opens the response-headers phase via ModeOverride
-	// so stream loggers can record the upstream status.
-	ObserveResponses bool
 }
 
 // NewServer builds the ext-proc server from deps.
@@ -69,10 +65,9 @@ func NewServer(deps ServerDeps) *Server {
 	loggers := []filter.StreamLogger{accesslog.NewStreamLog(deps.AuditLogger)}
 	loggers = append(loggers, deps.StreamLoggers...)
 	return &Server{
-		observeResponses: deps.ObserveResponses,
-		resolve:          deps.Resolve,
-		eng:              engine.NewEngine(deps.Registrations, deps.PluginBudget),
-		loggers:          loggers,
+		resolve: deps.Resolve,
+		eng:     engine.NewEngine(deps.Registrations, deps.PluginBudget),
+		loggers: loggers,
 	}
 }
 

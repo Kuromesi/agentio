@@ -68,7 +68,7 @@ func TestAuditScopeActivationShadowsResult(t *testing.T) {
 	// constraint is recorded at the call site instead.
 
 	// `matched` is deliberately not a CEL variable: the when-env declares only
-	// result/response/request/pod/profile/rule, so an expression referencing it
+	// result/request/pod/profile/rule, so an expression referencing it
 	// fails to compile. That is a stronger guarantee than the old
 	// ResolveName("matched") check, which only proved the bag lacked the key --
 	// this proves no profile can even reference it. Match reaches templates via
@@ -225,24 +225,22 @@ func evalBoolOnAuditScope(t *testing.T, s *Scope, expr string) (bool, error) {
 	return eval.EvalBool(prog, s.Activation())
 }
 
-// TestAuditScopeResolvesAuditOnlyVariables is the positive half of I2 and I9:
-// what a plain inputs.Scope must hide, an audit.Scope must resolve.
-func TestAuditScopeResolvesAuditOnlyVariables(t *testing.T) {
+// TestAuditScopeResolvesResult verifies that the audit-only result variable is
+// layered over the base request scope.
+func TestAuditScopeResolvesResult(t *testing.T) {
 	s := &Scope{
 		Scope: *inputs.NewScope(
 			inputs.RequestFrom(httpreq.HTTPRequest{Host: "h", Port: 443, Path: "/", Scheme: "https", Method: "GET"}),
 			inputs.Pod{Namespace: "ns"},
 			inputs.Profile{}, inputs.Rule{}, nil,
 		),
-		Result:   "blocked",
-		Response: Response{Status: 503},
+		Result: "blocked",
 	}
 	tests := []struct {
 		name string
 		expr string
 	}{
-		{name: "I2 result resolves", expr: `result == "blocked"`},
-		{name: "I9 response resolves", expr: `response.status == 503`},
+		{name: "result resolves", expr: `result == "blocked"`},
 		{name: "base variables still resolve", expr: `request.host == "h" && pod.namespace == "ns"`},
 	}
 	for _, tt := range tests {
@@ -255,21 +253,5 @@ func TestAuditScopeResolvesAuditOnlyVariables(t *testing.T) {
 				t.Errorf("%s = false, want true", tt.expr)
 			}
 		})
-	}
-}
-
-// TestAuditScopeZeroResponse records that response.status cannot distinguish
-// "no response observed" from "the status really was 0" — st.Response is zero
-// until OnResponseHeaders (engine/filter/stream.go:35-36) and buildScope copies
-// it unconditionally (policy/securityprofile/auditlog.go:110). Running with
-// -observe-responses=false makes status 0 the common case.
-func TestAuditScopeZeroResponse(t *testing.T) {
-	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{Namespace: "ns"}, inputs.Profile{}, inputs.Rule{}, nil), Result: "allowed"}
-	got, err := evalBoolOnAuditScope(t, s, `response.status == 0`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("response.status on an unobserved response should be 0")
 	}
 }

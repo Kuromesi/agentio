@@ -53,7 +53,7 @@ func TestFilterRendersHeaderMutations(t *testing.T) {
 	want := filter.Continue(
 		filter.SetHeader("x-tenant", "payments:sandbox"),
 		filter.SetHeader("x-policy", "outbound/inject-context"),
-		filter.AppendHeader("x-tag", "trusted"),
+		filter.AddHeader("x-tag", "trusted"),
 		filter.RemoveHeader("x-legacy"),
 	)
 	if !got.Equal(want) {
@@ -86,7 +86,7 @@ func TestFilterRendersResponseHeaderMutations(t *testing.T) {
 	}
 	want := filter.Continue(
 		filter.SetHeader("x-policy", "outbound/inject-context"),
-		filter.AppendHeader("x-tag", "trusted"),
+		filter.AddHeader("x-tag", "trusted"),
 		filter.RemoveHeader("server"),
 	)
 	if !got.Equal(want) {

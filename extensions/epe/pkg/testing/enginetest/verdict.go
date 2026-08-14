@@ -49,9 +49,9 @@ const (
 	// HeaderSet is OVERWRITE_IF_EXISTS_OR_ADD: it replaces every existing line
 	// for the name.
 	HeaderSet HeaderOpKind = "set"
-	// HeaderAppend is APPEND_IF_EXISTS_OR_ADD: it adds one more line, which is
+	// HeaderAdd is APPEND_IF_EXISTS_OR_ADD: it adds one more line, which is
 	// the only way to emit several set-cookie headers.
-	HeaderAppend HeaderOpKind = "append"
+	HeaderAdd HeaderOpKind = "add"
 	// HeaderRemove is a remove_headers entry.
 	HeaderRemove HeaderOpKind = "remove"
 )
@@ -145,7 +145,7 @@ func appendOps(ops []HeaderOp, hm *extProcPb.HeaderMutation) []HeaderOp {
 		}
 		kind := HeaderSet
 		if h.GetAppendAction() == corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD {
-			kind = HeaderAppend
+			kind = HeaderAdd
 		}
 		ops = append(ops, HeaderOp{Kind: kind, Name: strings.ToLower(header.GetKey()), Value: value})
 	}
@@ -155,7 +155,7 @@ func appendOps(ops []HeaderOp, hm *extProcPb.HeaderMutation) []HeaderOp {
 	return ops
 }
 
-// headerValues returns every value ops set or appended for name, in wire order.
+// headerValues returns every value ops set or added for name, in wire order.
 func headerValues(ops []HeaderOp, name string) []string {
 	want := strings.ToLower(name)
 	var out []string
@@ -197,13 +197,13 @@ func requireHeaderRemoved(t *testing.T, ops []HeaderOp, dir, name string) {
 	}
 }
 
-// RequestHeaderValues returns every value the request direction set or appended
+// RequestHeaderValues returns every value the request direction set or added
 // for name, in wire order. Several values mean several header lines.
 func (v *Verdict) RequestHeaderValues(name string) []string {
 	return headerValues(v.RequestHeaderOps, name)
 }
 
-// ResponseHeaderValues returns every value the response phase set or appended
+// ResponseHeaderValues returns every value the response phase set or added
 // for name, in wire order. Several values mean several header lines, which is
 // how multi-valued set-cookie is expressed.
 func (v *Verdict) ResponseHeaderValues(name string) []string {

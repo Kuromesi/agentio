@@ -38,7 +38,6 @@ type Options struct {
 	AuditRouter            *audit.Router
 	CredentialClient       *credential.Client
 	DisableResolutionProbe bool
-	ObserveResponses       bool
 }
 
 // Harness adds a SecurityProfile fixture to the policy-neutral wire harness.
@@ -77,7 +76,6 @@ func New(t testing.TB, opts Options) *Harness {
 		Registrations:          regs,
 		StreamLoggers:          opts.StreamLoggers,
 		DisableResolutionProbe: opts.DisableResolutionProbe,
-		ObserveResponses:       opts.ObserveResponses,
 	})
 	return &Harness{Harness: core, Fixture: fixture}
 }

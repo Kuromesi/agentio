@@ -52,37 +52,37 @@ func TestFold(t *testing.T) {
 			want: []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-a", Value: "v"}},
 		},
 		{
-			// Remove-then-Append must keep the remove. Envoy runs all removes
-			// before all sets/appends inside one HeaderMutation, so
-			// [Remove, Append] is expressible and means "drop the inbound
-			// value, then add v". Emitting the append alone makes Envoy append
+			// Remove-then-Add must keep the remove. Envoy runs all removes
+			// before all set/add operations inside one HeaderMutation, so
+			// [Remove, Add] is expressible and means "drop the inbound
+			// value, then add v". Emitting the add alone makes Envoy append
 			// to the inbound value instead, yielding "inbound, v".
 			//
 			// Note the "never both" invariant in Fold's doc is only required
 			// in the Set->Remove direction; this direction genuinely needs
 			// both ops.
-			name: "append after remove keeps the remove",
+			name: "add after remove keeps the remove",
 			in: []filter.Mutation{
 				filter.RemoveHeader("x-a"),
-				filter.AppendHeader("x-a", "v"),
+				filter.AddHeader("x-a", "v"),
 			},
 			want: []filter.HeaderOp{
 				{Kind: filter.HeaderRemove, Name: "x-a"},
-				{Kind: filter.HeaderAppend, Name: "x-a", Value: "v"},
+				{Kind: filter.HeaderAdd, Name: "x-a", Value: "v"},
 			},
 		},
 		{
-			// Set-then-Remove-then-Append: the set is discarded by the remove,
-			// and the remove must still be materialized ahead of the append.
-			name: "set remove append keeps the remove",
+			// Set-then-Remove-then-Add: the set is discarded by the remove,
+			// and the remove must still be materialized ahead of the add.
+			name: "set remove add keeps the remove",
 			in: []filter.Mutation{
 				filter.SetHeader("x-a", "old"),
 				filter.RemoveHeader("x-a"),
-				filter.AppendHeader("x-a", "v"),
+				filter.AddHeader("x-a", "v"),
 			},
 			want: []filter.HeaderOp{
 				{Kind: filter.HeaderRemove, Name: "x-a"},
-				{Kind: filter.HeaderAppend, Name: "x-a", Value: "v"},
+				{Kind: filter.HeaderAdd, Name: "x-a", Value: "v"},
 			},
 		},
 		{
@@ -99,7 +99,7 @@ func TestFold(t *testing.T) {
 		},
 		{
 			// The reverse order must also collapse to one key.
-			name: "header name case folds across set and append",
+			name: "header name case folds across set and add",
 			in: []filter.Mutation{
 				filter.SetHeader("Authorization", "Bearer a"),
 				filter.SetHeader("authorization", "Bearer b"),
@@ -109,20 +109,20 @@ func TestFold(t *testing.T) {
 		{
 			// map[string]string cannot express two set-cookie values; the
 			// ordered op list must.
-			name: "append preserves ordered multi-value",
+			name: "add preserves ordered multi-value",
 			in: []filter.Mutation{
-				filter.AppendHeader("set-cookie", "a=1"),
-				filter.AppendHeader("set-cookie", "b=2"),
+				filter.AddHeader("set-cookie", "a=1"),
+				filter.AddHeader("set-cookie", "b=2"),
 			},
 			want: []filter.HeaderOp{
-				{Kind: filter.HeaderAppend, Name: "set-cookie", Value: "a=1"},
-				{Kind: filter.HeaderAppend, Name: "set-cookie", Value: "b=2"},
+				{Kind: filter.HeaderAdd, Name: "set-cookie", Value: "a=1"},
+				{Kind: filter.HeaderAdd, Name: "set-cookie", Value: "b=2"},
 			},
 		},
 		{
-			name: "set overrides earlier appends",
+			name: "set overrides earlier adds",
 			in: []filter.Mutation{
-				filter.AppendHeader("x-a", "1"),
+				filter.AddHeader("x-a", "1"),
 				filter.SetHeader("x-a", "final"),
 			},
 			want: []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-a", Value: "final"}},

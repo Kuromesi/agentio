@@ -122,13 +122,9 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	// that yields nothing cannot erase a previous one. The stream logger was
 	// already installed above, before the resolve error was honoured.
 	state.units = res.Units
-
-	// Determine response-header demand before evaluation because a body pause may
-	// defer later rules past this ModeOverride.
-	ruleWants, subErr := s.eng.WantsResponseHeaders(state.engineUnits())
-	if subErr != nil {
-		// Reject invalid subscriptions before invoking request filters.
-		return nil, subErr
+	subscriptions, err := s.eng.ValidateSubscriptions(state.engineUnits())
+	if err != nil {
+		return nil, err
 	}
 
 	// End-of-stream headers mean no body will follow: the empty body is final,
@@ -150,12 +146,8 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 
 	// ModeOverride must restate both body modes because Envoy copies them
 	// unconditionally. A blocked result must not carry an override.
-	wantResponse := false
 	if reqHeadersRes.Disposition != engine.DispositionBlocked {
-		// Bypass preserves the bypassing pair's response subscription but disables
-		// stream-level response observation.
-		observeResponse := s.observeResponses && reqHeadersRes.Disposition != engine.DispositionBypassed
-		wantResponse = ruleWants || observeResponse
+		wantResponse := subscriptions&filter.PhaseResponseHeaders != 0
 		wantBody := reqHeadersRes.NeedsBody()
 		if wantBody || wantResponse {
 			override := &extProcV3.ProcessingMode{
@@ -200,7 +192,7 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 
 	if state.lifecycle == lifecycleFinalized {
 		// A static response-header mode can outlive a terminal request decision.
-		// Acknowledge the first valid message without reopening observers or audit.
+		// Acknowledge the first valid message without reopening filter dispatch or audit.
 		state.awaitResponseHeaders = false
 		return emptyResponseHeadersAck, nil
 	}

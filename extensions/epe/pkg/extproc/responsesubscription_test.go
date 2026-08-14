@@ -100,7 +100,7 @@ func pauseReg(name string, f filter.Filter) filter.Registration {
 
 // wantsServer builds a Server whose resolver yields one unit per name, each
 // carrying a config for every registration.
-func wantsServer(t *testing.T, regs []filter.Registration, names []string, observe bool) (*Server, []filter.UnitID) {
+func wantsServer(t *testing.T, regs []filter.Registration, names []string) (*Server, []filter.UnitID) {
 	t.Helper()
 	ids := make([]filter.UnitID, 0, len(names))
 	units := make([]engine.Unit, 0, len(names))
@@ -121,8 +121,7 @@ func wantsServer(t *testing.T, regs []filter.Registration, names []string, obser
 		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: units}, nil
 		},
-		Registrations:    regs,
-		ObserveResponses: observe,
+		Registrations: regs,
 	})
 	return s, ids
 }
@@ -154,7 +153,7 @@ func TestHandleRequestHeaders_SubscriptionSurvivesAnEarlierPause(t *testing.T) {
 		pauseReg("pause", &pauseFilter{}),
 		respReg("resp", resp),
 	}
-	s, _ := wantsServer(t, regs, []string{"r"}, false)
+	s, _ := wantsServer(t, regs, []string{"r"})
 	state := newStreamState()
 
 	// endOfStream=false: the body arrives as its own message, so the walk really
@@ -187,9 +186,9 @@ func TestHandleRequestHeaders_SubscriptionSurvivesAnEarlierPause(t *testing.T) {
 	}
 }
 
-func TestHandleRequestHeaders_DemandOpensResponsePhaseWithoutObserver(t *testing.T) {
+func TestHandleRequestHeaders_SubscriptionOpensResponsePhase(t *testing.T) {
 	f := &wantRespFilter{requestAct: filter.Continue()}
-	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"}, false)
+	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"})
 	state := newStreamState()
 
 	resp := runRequestHeaders(t, s, state, false)
@@ -222,29 +221,6 @@ func TestHandleRequestHeaders_DemandOpensResponsePhaseWithoutObserver(t *testing
 	}
 }
 
-// --observe-responses alone opens the phase but dispatches to no rule.
-func TestHandleResponseHeaders_ObserverOpensPhaseWithoutDispatch(t *testing.T) {
-	f := &wantRespFilter{requestAct: filter.Continue()}
-	// Capable of running in the response phase, but its config subscribes to
-	// nothing — so only --observe-responses can open the phase, and no rule may
-	// be dispatched there.
-	reg := respReg("resp", f)
-	reg.Subscribes = func(any) filter.Phase { return 0 }
-	s, _ := wantsServer(t, []filter.Registration{reg}, []string{"r"}, true)
-	state := newStreamState()
-
-	resp := runRequestHeaders(t, s, state, false)
-	if resp[0].GetModeOverride().GetResponseHeaderMode() != extProcV3.ProcessingMode_SEND {
-		t.Fatal("--observe-responses did not open the response-headers phase")
-	}
-	if _, err := s.HandleResponseHeaders(context.Background(), responseHeaderMsg("204"), state); err != nil {
-		t.Fatalf("HandleResponseHeaders: %v", err)
-	}
-	if f.respCalls != 0 {
-		t.Fatalf("response phase dispatched %d times, want 0: subscription is not dispatch", f.respCalls)
-	}
-}
-
 // plainRespFilter implements the response phase without declaring demand.
 type plainRespFilter struct {
 	filter.PassThrough
@@ -263,7 +239,7 @@ func TestHandleRequestHeaders_BodylessResumeKeepsAPostPauseSubscription(t *testi
 		respReg("resp", resp),
 	}
 	// Registration 1 is reached only after registration 0 resumes.
-	s, _ := wantsServer(t, regs, []string{"r"}, false)
+	s, _ := wantsServer(t, regs, []string{"r"})
 	state := newStreamState()
 
 	responses := runRequestHeaders(t, s, state, true)
@@ -296,7 +272,7 @@ func TestHandleRequestHeaders_SubscriptionIndependentOfBodyPresence(t *testing.T
 				respReg("resp", resp),
 				pauseReg("pause", &pauseFilter{}),
 			}
-			s, _ := wantsServer(t, regs, []string{"r"}, false)
+			s, _ := wantsServer(t, regs, []string{"r"})
 			state := newStreamState()
 
 			responses := runRequestHeaders(t, s, state, endOfStream)
@@ -346,7 +322,7 @@ func TestHandleResponseHeaders_BypassWithDemandStillDispatches(t *testing.T) {
 			{Kind: filter.HeaderSet, Name: "x-epe-policy", Value: "kept"},
 		}}},
 	}
-	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"}, false)
+	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"})
 	state := newStreamState()
 
 	responses := runRequestHeaders(t, s, state, false)
@@ -391,7 +367,7 @@ func TestHandleResponseHeaders_BypassSuppressesLaterRulesResponseOps(t *testing.
 		respReg("bypass", bypasser),
 		respReg("later", later),
 	}
-	s, _ := wantsServer(t, regs, []string{"r"}, false)
+	s, _ := wantsServer(t, regs, []string{"r"})
 	state := newStreamState()
 
 	responses := runRequestHeaders(t, s, state, false)
@@ -425,7 +401,7 @@ func TestHandleRequestHeaders_BlockedOpensNothing(t *testing.T) {
 		respReg("resp", f),
 		respReg("block", blocker),
 	}
-	s, _ := wantsServer(t, regs, []string{"r"}, true)
+	s, _ := wantsServer(t, regs, []string{"r"})
 	state := newStreamState()
 
 	responses := runRequestHeaders(t, s, state, false)
@@ -455,7 +431,7 @@ func (stopFilter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Acti
 // one, because Envoy ignores it there.
 func TestHandleRequestBody_NeverCarriesModeOverride(t *testing.T) {
 	regs := []filter.Registration{pauseReg("pause", &pauseFilter{})}
-	s, _ := wantsServer(t, regs, []string{"r"}, true)
+	s, _ := wantsServer(t, regs, []string{"r"})
 	state := newStreamState()
 
 	runRequestHeaders(t, s, state, false)
@@ -476,7 +452,7 @@ func TestHandleRequestBody_NeverCarriesModeOverride(t *testing.T) {
 // an ImmediateResponse; Envoy holds the response headers while awaiting us.
 func TestHandleResponseHeaders_FailClosedEmitsImmediateResponse(t *testing.T) {
 	f := &wantRespFilter{requestAct: filter.Continue(), respErr: errRespBoom}
-	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"}, false)
+	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"})
 	state := newStreamState()
 	runRequestHeaders(t, s, state, false)
 
@@ -505,7 +481,7 @@ func (errRespBoomType) Error() string { return "response render failed" }
 // Process sends the FailClosed ImmediateResponse before returning the error.
 func TestProcess_FailClosedResponsePhaseSendsImmediateResponse(t *testing.T) {
 	f := &wantRespFilter{requestAct: filter.Continue(), respErr: errRespBoom}
-	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"}, false)
+	s, _ := wantsServer(t, []filter.Registration{respReg("resp", f)}, []string{"r"})
 
 	headers := makeRequestHeaders("api.example.com", "/x", "GET")
 	headers.EndOfStream = true
@@ -571,7 +547,7 @@ func TestTranslateResponseHeadersResult_NeverClearsRouteCache(t *testing.T) {
 		Disposition: engine.DispositionMutated,
 		HeaderOps: []filter.HeaderOp{
 			{Kind: filter.HeaderSet, Name: "host", Value: "elsewhere"},
-			{Kind: filter.HeaderAppend, Name: "set-cookie", Value: "a=1"},
+			{Kind: filter.HeaderAdd, Name: "set-cookie", Value: "a=1"},
 			{Kind: filter.HeaderRemove, Name: "server"},
 		},
 	}

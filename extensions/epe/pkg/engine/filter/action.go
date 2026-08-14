@@ -22,8 +22,7 @@ type ActionKind uint8
 const (
 	// KindContinue lets the chain proceed, optionally with mutations.
 	KindContinue ActionKind = iota
-	// KindStop terminates the request and discards pending mutations
-	// (block semantics).
+	// KindStop terminates the HTTP exchange and discards pending mutations.
 	KindStop
 	// KindBypass skips following actions and rules in every phase while
 	// preserving earlier work and the bypassing pair itself.

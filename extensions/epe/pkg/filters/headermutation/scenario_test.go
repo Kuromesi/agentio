@@ -60,7 +60,7 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 	}
 	want := []filter.HeaderOp{
 		{Kind: filter.HeaderSet, Name: "x-policy", Value: "outbound"},
-		{Kind: filter.HeaderAppend, Name: "x-tag", Value: "trusted"},
+		{Kind: filter.HeaderAdd, Name: "x-tag", Value: "trusted"},
 		{Kind: filter.HeaderRemove, Name: "x-legacy"},
 	}
 	if !reflect.DeepEqual(res.HeaderOps, want) {
@@ -70,11 +70,11 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 		t.Errorf("Disposition = %v, want mutated", res.Disposition)
 	}
 	// Request-only payloads do not subscribe to response headers.
-	wantsResponse, err := e.WantsResponseHeaders(units)
+	subscriptions, err := e.ValidateSubscriptions(units)
 	if err != nil {
-		t.Fatalf("WantsResponseHeaders: %v", err)
+		t.Fatalf("ValidateSubscriptions: %v", err)
 	}
-	if wantsResponse {
+	if subscriptions&filter.PhaseResponseHeaders != 0 {
 		t.Error("a request-only payload opened the response-headers phase")
 	}
 }
@@ -130,12 +130,13 @@ func TestProjectedResponsePayloadDeclaresDemand(t *testing.T) {
 				t.Fatalf("evaluate request headers: %v", err)
 			}
 			// Response demand comes from the compiled config.
-			gotWants, subErr := engine.NewEngine(regs, 0).WantsResponseHeaders(
+			subscriptions, subErr := engine.NewEngine(regs, 0).ValidateSubscriptions(
 				[]engine.Unit{{ID: id, Scope: scope, Cfgs: cfgs}},
 			)
 			if subErr != nil {
-				t.Fatalf("WantsResponseHeaders: %v", subErr)
+				t.Fatalf("ValidateSubscriptions: %v", subErr)
 			}
+			gotWants := subscriptions&filter.PhaseResponseHeaders != 0
 			if gotWants != tc.ruleWants {
 				t.Errorf("subscribed = %v, want %v", gotWants, tc.ruleWants)
 			}

@@ -113,9 +113,8 @@ func translateRequestBodyResult(reqBodyRes *engine.RequestBodyResult) []*extProc
 	}}
 }
 
-// translateResponseHeadersResult emits a blocking reply, a response-header
-// mutation, or a bare acknowledgement. It never clears route cache or mutates
-// the response body.
+// translateResponseHeadersResult emits a blocking reply, response mutations,
+// or a bare acknowledgement. It never clears the request-side route cache.
 func translateResponseHeadersResult(respHeadersRes *engine.ResponseHeadersResult) []*extProcPb.ProcessingResponse {
 	if respHeadersRes.Disposition == engine.DispositionBlocked {
 		// Envoy holds the upstream response headers while awaiting our reply, so
@@ -123,14 +122,21 @@ func translateResponseHeadersResult(respHeadersRes *engine.ResponseHeadersResult
 		// response being mutated no longer goes downstream.
 		return []*extProcPb.ProcessingResponse{immediateFromReply(respHeadersRes.Reply)}
 	}
-	if len(respHeadersRes.HeaderOps) == 0 {
+	if len(respHeadersRes.HeaderOps) == 0 && respHeadersRes.Body == nil {
 		return emptyResponseHeadersAck
 	}
 	mut, _ := headerMutationFromOps(respHeadersRes.HeaderOps)
+	common := &extProcPb.CommonResponse{HeaderMutation: mut}
+	if respHeadersRes.Body != nil {
+		common.Status = extProcPb.CommonResponse_CONTINUE_AND_REPLACE
+		common.BodyMutation = &extProcPb.BodyMutation{
+			Mutation: &extProcPb.BodyMutation_Body{Body: respHeadersRes.Body},
+		}
+	}
 	return []*extProcPb.ProcessingResponse{{
 		Response: &extProcPb.ProcessingResponse_ResponseHeaders{
 			ResponseHeaders: &extProcPb.HeadersResponse{
-				Response: &extProcPb.CommonResponse{HeaderMutation: mut},
+				Response: common,
 			},
 		},
 	}}
@@ -158,7 +164,7 @@ func headerMutationFromOps(ops []filter.HeaderOp) (*extProcPb.HeaderMutation, bo
 				Header:       &corev3.HeaderValue{Key: op.Name, RawValue: []byte(op.Value)},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			})
-		case filter.HeaderAppend:
+		case filter.HeaderAdd:
 			mut.SetHeaders = append(mut.SetHeaders, &corev3.HeaderValueOption{
 				Header:       &corev3.HeaderValue{Key: op.Name, RawValue: []byte(op.Value)},
 				AppendAction: corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,

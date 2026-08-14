@@ -41,19 +41,11 @@ type Scope struct {
 	inputs.Scope
 	Result  string
 	Matched Match
-	// Response carries the upstream response view once the response side
-	// delivered it; zero Status means "no response observed".
-	Response Response
-}
-
-// Response is the response-side view exposed to CEL as `response`.
-type Response struct {
-	Status int
 }
 
 // Activation shadows the embedded inputs.Scope.Activation: the audit projection
-// additionally exposes the audit-only `result` and `response` variables. They
-// are layered as a hierarchical child rather than written into the base, so the
+// additionally exposes the audit-only `result` variable. It is layered as a
+// hierarchical child rather than written into the base, so the
 // base stays immutable and shared with the unit's Scope — which is what makes
 // audit see the request exactly as it was evaluated at request time.
 //
@@ -61,8 +53,7 @@ type Response struct {
 // inputs.Scope.buildBag, the site it constrains.
 func (s *Scope) Activation() cel.Activation {
 	top, err := cel.NewActivation(map[string]any{
-		"result":   s.Result,
-		"response": map[string]any{"status": s.Response.Status},
+		"result": s.Result,
 	})
 	if err != nil {
 		// Unreachable: NewActivation rejects only nil and non-map bindings.

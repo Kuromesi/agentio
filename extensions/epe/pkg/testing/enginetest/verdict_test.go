@@ -98,7 +98,7 @@ func TestVerdictLookups_DoNotCrossDirections(t *testing.T) {
 	}
 }
 
-// Response set-cookie mutations preserve values, order, and append semantics.
+// Response set-cookie mutations preserve values, order, and add semantics.
 func TestParseVerdict_ResponseSetCookieKeepsEveryLineInOrder(t *testing.T) {
 	responses := []*extProcPb.ProcessingResponse{
 		{Response: &extProcPb.ProcessingResponse_ResponseHeaders{
@@ -112,8 +112,8 @@ func TestParseVerdict_ResponseSetCookieKeepsEveryLineInOrder(t *testing.T) {
 	}
 	v := ParseVerdict(responses, nil)
 	want := []HeaderOp{
-		{Kind: HeaderAppend, Name: "set-cookie", Value: "a=1"},
-		{Kind: HeaderAppend, Name: "set-cookie", Value: "b=2"},
+		{Kind: HeaderAdd, Name: "set-cookie", Value: "a=1"},
+		{Kind: HeaderAdd, Name: "set-cookie", Value: "b=2"},
 	}
 	if !reflect.DeepEqual(v.ResponseHeaderOps, want) {
 		t.Fatalf("ResponseHeaderOps = %+v, want both cookie lines in order", v.ResponseHeaderOps)

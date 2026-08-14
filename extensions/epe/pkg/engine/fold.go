@@ -26,11 +26,11 @@ import (
 // is inexpressible by list concatenation — the set would win. Folding in the
 // abstract model resolves that ordering.
 //
-// The "each key ends up as removes or set/appends, never both" shape is only
-// required in the Set->Remove direction. Remove-then-Append is the one case
+// The "each key ends up as removes or set/adds, never both" shape is only
+// required in the Set->Remove direction. Remove-then-Add is the one case
 // that genuinely needs BOTH ops: because Envoy's removes run first,
-// [Remove, Append] correctly means "drop the inbound value, then add this
-// one", whereas the append alone would add to the inbound value.
+// [Remove, Add] correctly means "drop the inbound value, then add this one",
+// whereas the add alone would append to the inbound value.
 //
 // Keys fold case-insensitively: HTTP header names are case-insensitive and
 // Envoy lower-cases them, so X-Foo and x-foo are one header. The first-seen
@@ -38,9 +38,9 @@ import (
 func Fold(muts []filter.Mutation) []filter.HeaderOp {
 	type keyState struct {
 		name    string            // first-seen spelling, used for output
-		ops     []filter.HeaderOp // pending Set/Append ops, in order
+		ops     []filter.HeaderOp // pending Set/Add ops, in order
 		removed bool
-		// removeFirst records that a Remove preceded the pending appends and
+		// removeFirst records that a Remove preceded the pending adds and
 		// must be emitted ahead of them.
 		removeFirst bool
 	}
@@ -67,8 +67,8 @@ func Fold(muts []filter.Mutation) []filter.HeaderOp {
 				s.ops = []filter.HeaderOp{op}
 				s.removed = false
 				s.removeFirst = false
-			case filter.HeaderAppend:
-				// An append adds to whatever is there, so a preceding remove
+			case filter.HeaderAdd:
+				// An add preserves whatever is there, so a preceding remove
 				// still has to happen.
 				if s.removed {
 					s.removeFirst = true

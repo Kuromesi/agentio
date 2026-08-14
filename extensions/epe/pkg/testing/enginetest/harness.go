@@ -37,9 +37,6 @@ type Options struct {
 	// DisableResolutionProbe skips appending the info probe, for tests
 	// that assert the exact logger composition.
 	DisableResolutionProbe bool
-	// ObserveResponses opens the response-headers phase via ModeOverride,
-	// mirroring the production -observe-responses flag.
-	ObserveResponses bool
 }
 
 // Harness wires the real extproc.Server to a caller-supplied resolver and
@@ -68,11 +65,10 @@ func New(t testing.TB, opts Options) *Harness {
 		loggers = append(append([]filter.StreamLogger{}, loggers...), h.probe)
 	}
 	h.Server = extproc.NewServer(extproc.ServerDeps{
-		Resolve:          opts.Resolve,
-		Registrations:    opts.Registrations,
-		StreamLoggers:    loggers,
-		AuditLogger:      h.AccessLog,
-		ObserveResponses: opts.ObserveResponses,
+		Resolve:       opts.Resolve,
+		Registrations: opts.Registrations,
+		StreamLoggers: loggers,
+		AuditLogger:   h.AccessLog,
 	})
 	return h
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,9 +38,18 @@ type responseHeadersProbe struct {
 	filter.PassThrough
 	calls int
 	err   error
-	// act overrides the returned action. The zero value is Continue; set it to a
-	// kind the response phase forbids to exercise the engine's contract check.
+	// act overrides the returned action. The zero value is Continue.
 	act *filter.Action
+}
+
+type requestHeadersProbe struct {
+	filter.PassThrough
+	calls int
+}
+
+func (p *requestHeadersProbe) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	p.calls++
+	return filter.Continue(), nil
 }
 
 func (p *responseHeadersProbe) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
@@ -53,7 +63,7 @@ func (p *responseHeadersProbe) OnResponseHeaders(context.Context, *filter.Stream
 func responseHeadersState(p *responseHeadersProbe) (*Server, *streamState, *captureLogger) {
 	cap := &captureLogger{}
 	reg := filter.Registration{
-		Name:    "response-observer",
+		Name:    "response-filter",
 		Phases:  filter.PhaseResponseHeaders,
 		OnError: func(any) filter.FailurePolicy { return filter.FailClosed },
 		Parse:   func(json.RawMessage) (any, error) { return struct{}{}, nil },
@@ -69,7 +79,7 @@ func responseHeadersState(p *responseHeadersProbe) (*Server, *streamState, *capt
 	})
 	state := newStreamState()
 	state.markRequestSeen()
-	id := filter.UnitID{Scope: "default/p1", Name: "observe"}
+	id := filter.UnitID{Scope: "default/p1", Name: "response"}
 	state.units = []engine.Unit{{
 		ID:   id,
 		Cfgs: []any{struct{}{}},
@@ -177,9 +187,9 @@ func makeAttrsWithLabels(namespace, name, labelsB64 string) map[string]*structpb
 // "app=blocked" base64-encoded, matching the format labels.ParseSandboxLabels expects.
 const testLabelsB64 = "YXBwPWJsb2NrZWQ="
 
-func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
+func TestHandleRequestHeaders_ArmsOnlyRequestBodyObligation(t *testing.T) {
 	probe := &bodyProbe{}
-	regs := []filter.Registration{fixedReg("body-observer", probe)}
+	regs := []filter.Registration{fixedReg("body-filter", probe)}
 	s := NewServer(ServerDeps{
 		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: []engine.Unit{{
@@ -187,8 +197,7 @@ func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
 				Cfgs: []any{struct{}{}},
 			}}}, nil
 		},
-		Registrations:    regs,
-		ObserveResponses: true,
+		Registrations: regs,
 	})
 	state := newStreamState()
 
@@ -200,11 +209,41 @@ func TestHandleRequestHeaders_ArmsBodyAndResponseObligations(t *testing.T) {
 	if !state.awaitingRequestBody() {
 		t.Fatal("body evaluation did not arm its request-body obligation")
 	}
-	if !state.awaitResponseHeaders {
-		t.Fatal("response observation did not arm its response-headers obligation")
+	if state.awaitResponseHeaders {
+		t.Fatal("request-body demand unexpectedly armed a response-headers obligation")
 	}
 	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("non-terminal headers result armed finalization")
+	}
+}
+
+func TestHandleRequestHeaders_ValidatesSubscriptionsBeforeEvaluation(t *testing.T) {
+	probe := &requestHeadersProbe{}
+	reg := filter.Registration{
+		Name:       "invalid-subscription",
+		Phases:     filter.PhaseRequestHeaders | filter.PhaseRequestBody,
+		Parse:      func(json.RawMessage) (any, error) { return struct{}{}, nil },
+		New:        func(filter.ErasedRuleConfig) filter.Filter { return probe },
+		Subscribes: func(any) filter.Phase { return filter.PhaseRequestBody },
+	}
+	s := NewServer(ServerDeps{
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{Units: []engine.Unit{{
+				ID:   filter.UnitID{Scope: "default/p1", Name: "invalid"},
+				Cfgs: []any{struct{}{}},
+			}}}, nil
+		},
+		Registrations: []filter.Registration{reg},
+	})
+
+	_, err := s.HandleRequestHeaders(context.Background(),
+		makeRequestHeaders("api.example.com", "/x", "GET"),
+		makeAttrsWithLabels("default", "pod", testLabelsB64), newStreamState())
+	if err == nil || !strings.Contains(err.Error(), "invalid-subscription") {
+		t.Fatalf("subscription validation error = %v", err)
+	}
+	if probe.calls != 0 {
+		t.Fatalf("request filter ran %d times before subscription validation", probe.calls)
 	}
 }
 
@@ -272,7 +311,7 @@ func TestHandleRequestHeaders_BodylessContinuationSharesMessageDeadline(t *testi
 	}
 }
 
-func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulObservation(t *testing.T) {
+func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulDispatch(t *testing.T) {
 	probe := &responseHeadersProbe{}
 	s, state, _ := responseHeadersState(probe)
 
@@ -284,18 +323,18 @@ func TestHandleResponseHeaders_ConsumesObligationAfterSuccessfulObservation(t *t
 		t.Fatalf("HandleResponseHeaders: %v", err)
 	}
 	if probe.calls != 1 {
-		t.Fatalf("response observer ran %d times, want 1", probe.calls)
+		t.Fatalf("response filter ran %d times, want 1", probe.calls)
 	}
 	if state.awaitResponseHeaders {
 		t.Fatal("response-headers obligation was not consumed")
 	}
 	if state.lifecycle != lifecycleFinalizePending {
-		t.Fatal("successful response observation did not arm finalization")
+		t.Fatal("successful response dispatch did not arm finalization")
 	}
 }
 
 func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
-	boom := errors.New("observe failed")
+	boom := errors.New("response filter failed")
 	probe := &responseHeadersProbe{err: boom}
 	s, state, _ := responseHeadersState(probe)
 
@@ -315,15 +354,14 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 		t.Fatalf("response = %T, want an ImmediateResponse carrying the deny", resp[0].GetResponse())
 	}
 	if !state.awaitResponseHeaders {
-		t.Fatal("failed response observation consumed the outstanding obligation")
+		t.Fatal("failed response dispatch consumed the outstanding obligation")
 	}
 	if state.lifecycle == lifecycleFinalizePending {
-		t.Fatal("failed response observation armed successful finalization")
+		t.Fatal("failed response dispatch armed successful finalization")
 	}
 }
 
-// A response-phase contract violation returns an error and no response.
-func TestHandleResponseHeaders_ContractViolationSendsNothing(t *testing.T) {
+func TestHandleResponseHeaders_BypassAcknowledgesAndFinalizes(t *testing.T) {
 	bypass := filter.Bypass()
 	probe := &responseHeadersProbe{act: &bypass}
 	s, state, _ := responseHeadersState(probe)
@@ -333,11 +371,20 @@ func TestHandleResponseHeaders_ContractViolationSendsNothing(t *testing.T) {
 			{Key: ":status", RawValue: []byte("200")},
 		}},
 	}, state)
-	if err == nil {
-		t.Fatal("HandleResponseHeaders succeeded, want the response phase to reject a Bypass action")
+	if err != nil {
+		t.Fatalf("HandleResponseHeaders: %v", err)
 	}
-	if len(resp) != 0 {
-		t.Fatalf("responses = %d, want none: a fault must not release the upstream response", len(resp))
+	if len(resp) != 1 || resp[0].GetResponseHeaders() == nil {
+		t.Fatalf("responses = %v, want one response-headers acknowledgement", resp)
+	}
+	if state.awaitResponseHeaders {
+		t.Fatal("successful Bypass did not consume the response-headers obligation")
+	}
+	if state.lifecycle != lifecycleFinalizePending {
+		t.Fatal("successful Bypass did not arm finalization")
+	}
+	if state.stream.Info.Disposition != filter.DispositionBypassed {
+		t.Errorf("stream disposition = %v, want Bypassed", state.stream.Info.Disposition)
 	}
 }
 
@@ -359,7 +406,7 @@ func TestHandleResponseHeaders_MissingInputKeepsObligationAndAuditsError(t *test
 				t.Fatal("missing response headers were accepted")
 			}
 			if probe.calls != 0 {
-				t.Fatalf("response observer ran %d times, want 0", probe.calls)
+				t.Fatalf("response filter ran %d times, want 0", probe.calls)
 			}
 			if !state.awaitResponseHeaders || state.lifecycle == lifecycleFinalizePending {
 				t.Fatalf("obligation state = await:%v lifecycle:%v, want awaited and not finalize-pending",
@@ -375,8 +422,8 @@ func TestHandleResponseHeaders_MissingInputKeepsObligationAndAuditsError(t *test
 }
 
 // A finalized stream acknowledges one statically configured response-header
-// message without reopening observers or audit.
-func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWithoutObserver(t *testing.T) {
+// message without reopening filter dispatch or audit.
+func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWithoutDispatch(t *testing.T) {
 	probe := &responseHeadersProbe{}
 	s, state, cap := responseHeadersState(probe)
 	state.awaitResponseHeaders = false
@@ -394,7 +441,7 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 		t.Fatalf("responses = %+v, want one response-headers acknowledgement", responses)
 	}
 	if probe.calls != 0 {
-		t.Fatalf("response observer ran %d times after terminal finalization, want 0", probe.calls)
+		t.Fatalf("response filter ran %d times after terminal finalization, want 0", probe.calls)
 	}
 	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("already finalized stream armed another finalization")

@@ -33,7 +33,7 @@ var (
 )
 
 // WhenEnv returns the shared CEL environment for security `when` expressions.
-// Variables: result (string), request/pod/inputs/response (map), profile/rule (string map).
+// Variables: result (string), request/pod/inputs (map), profile/rule (string map).
 func WhenEnv() (*cel.Env, error) {
 	whenEnvOnce.Do(func() {
 		whenEnv, whenEnvErr = cel.NewEnv(
@@ -43,7 +43,6 @@ func WhenEnv() (*cel.Env, error) {
 			cel.Variable("profile", cel.MapType(cel.StringType, cel.StringType)),
 			cel.Variable("rule", cel.MapType(cel.StringType, cel.StringType)),
 			cel.Variable("inputs", cel.MapType(cel.StringType, cel.DynType)),
-			cel.Variable("response", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Bindings(),
 			ext.Strings(),
 			ext.Sets(),

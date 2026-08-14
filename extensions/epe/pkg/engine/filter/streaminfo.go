@@ -96,9 +96,6 @@ type StreamInfo struct {
 	Matched     []UnitRecord
 	Filters     []FilterRecord
 	Disposition Disposition
-	// BytesForwardedBeforeVerdict is "how much leaked before the verdict"
-	// in observable form; under BUFFERED it stays 0.
-	BytesForwardedBeforeVerdict int
 	// Error records the failure that resolved the stream, when one did.
 	Error string
 }

@@ -26,8 +26,8 @@ type HeaderOpKind uint8
 const (
 	// HeaderSet overwrites all existing values of the header.
 	HeaderSet HeaderOpKind = iota
-	// HeaderAppend adds one value, preserving order.
-	HeaderAppend
+	// HeaderAdd adds one value without replacing existing values.
+	HeaderAdd
 	// HeaderRemove deletes the header. Envoy rejects REMOVE of
 	// pseudo-headers and host unconditionally.
 	HeaderRemove
@@ -65,9 +65,9 @@ func SetHeader(name, value string) Mutation {
 	return Mutation{HeaderOps: []HeaderOp{{Kind: HeaderSet, Name: name, Value: value}}}
 }
 
-// AppendHeader builds a single-op mutation appending one value.
-func AppendHeader(name, value string) Mutation {
-	return Mutation{HeaderOps: []HeaderOp{{Kind: HeaderAppend, Name: name, Value: value}}}
+// AddHeader builds a single-op mutation adding one value.
+func AddHeader(name, value string) Mutation {
+	return Mutation{HeaderOps: []HeaderOp{{Kind: HeaderAdd, Name: name, Value: value}}}
 }
 
 // RemoveHeader builds a single-op mutation removing the header.

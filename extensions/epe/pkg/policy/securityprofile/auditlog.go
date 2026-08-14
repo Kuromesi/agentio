@@ -104,10 +104,9 @@ func profileNN(p *Profile) types.NamespacedName {
 // caller already guards on u.HasAudits, which implies a resolved unit.
 func buildScope(u *unit, st *filter.Stream, result string) audit.Scope {
 	return audit.Scope{
-		Scope:    *u.Scope,
-		Result:   result,
-		Matched:  buildMatch(u, &st.Request),
-		Response: audit.Response{Status: st.Response.Status},
+		Scope:   *u.Scope,
+		Result:  result,
+		Matched: buildMatch(u, &st.Request),
 	}
 }
 
