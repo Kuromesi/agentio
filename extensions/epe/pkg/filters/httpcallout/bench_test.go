@@ -113,6 +113,14 @@ func benchAllowlist(nOperator int) []string {
 	return out
 }
 
+// benchDenylist is the credential set config.go recommends as the baseline for an
+// endpoint outside the trust boundary. It is deliberately short and fixed: the
+// realistic denylist names credentials, not a list that grows with traffic, so
+// the mode's cost comes from walking the caller's headers rather than from this.
+func benchDenylist() []string {
+	return []string{"authorization", "proxy-authorization", "cookie"}
+}
+
 // benchConfig runs Effective the way the engine does at load time, so the
 // benchmarks measure the filter against a config shaped like production's.
 // MaxBodyBytes is raised past DefaultMaxBodyBytes because the largest body size
@@ -223,14 +231,30 @@ func benchFilter(b *testing.B, cfg Config, client Client) filter.Filter {
 	})
 }
 
-// BenchmarkBuildRequestInvocation charges the header disclosure modes against
-// each other at two header counts. forwardedHeaders always builds a new map
-// (invocation.go:137), so this is where a header-heavy request spends its
-// callout budget when no body is collected.
+// BenchmarkBuildRequestInvocation charges the four header disclosure modes
+// against each other at two header counts. forwardedHeaders always builds a new
+// map, so this is where a header-heavy request spends its callout budget when no
+// body is collected.
 //
-// allowlist is bounded by the operator's list and all by what the caller sent,
-// which is the asymmetry worth watching: a caller can grow the all-mode map,
-// not the allowlist one.
+// The asymmetry worth watching is what bounds each mode. allowlist is bounded by
+// the operator's list; all and denylist are bounded by what the caller sent, so a
+// caller can grow those two maps and not the allowlist one. none allocates
+// nothing.
+//
+// denylist is the one to read closely, because it is the recommended baseline and
+// the most expensive mode: about +22% over all at 8 headers and +30% at 32.
+//
+// The reason is not the obvious one. forwardedHeaders rebuilds the `denied` set on
+// every invocation from a cfg.Denylist that Effective already fixed at load time,
+// which reads like a memoisation candidate — but the measurements say it is not
+// worth memoising. The gap over all scales with the header count rather than with
+// the denylist length (about 101ns over 11 headers and 320ns over 35, the same
+// per-header rate), so the fixed set-build is lost in the noise. What costs is the
+// per-header lookup and individual assignment, against all's bulk maps.Copy.
+//
+// Allocations are identical to all, which is the other thing not to misread: the
+// `denied` set never escapes forwardedHeaders, so it stays on the stack and never
+// shows up in B/op. This mode is a CPU cost, not a memory one.
 func BenchmarkBuildRequestInvocation(b *testing.B) {
 	for _, headers := range []int{8, 32} {
 		modes := []struct {
@@ -239,6 +263,7 @@ func BenchmarkBuildRequestInvocation(b *testing.B) {
 		}{
 			{"none", HeadersConfig{Mode: HeaderModeNone}},
 			{"allowlist", HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: benchAllowlist(headers)}},
+			{"denylist", HeadersConfig{Mode: HeaderModeDenylist, Denylist: benchDenylist()}},
 			{"all", HeadersConfig{Mode: HeaderModeAll}},
 		}
 		for _, mode := range modes {
