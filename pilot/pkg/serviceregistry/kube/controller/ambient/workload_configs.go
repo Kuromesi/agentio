@@ -15,8 +15,11 @@
 package ambient
 
 import (
+	"google.golang.org/protobuf/proto"
+
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/util/sets"
 )
 
@@ -45,6 +48,7 @@ func (a *index) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[m
 	}
 	exts := a.workloadConfigs.List()
 	res := make([]model.WorkloadConfig, 0, len(exts))
+	actorContext := a.actorContextForProxy(proxy)
 	for _, ext := range exts {
 		if ext.Namespace != proxy.Metadata.Namespace && ext.Namespace != a.SystemNamespace {
 			continue
@@ -52,7 +56,23 @@ func (a *index) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[m
 		if len(requested) > 0 && !requested.Contains(ext.ConfigKey()) {
 			continue
 		}
+		if ext.Config != nil && ext.Config.GetScope() == extensions.WorkloadConfigScope_WORKLOAD_CONFIG_SCOPE_GLOBAL {
+			ext.Config = proto.Clone(ext.Config).(*extensions.WorkloadConfig)
+			ext.Config.ActorContext = actorContext
+		}
 		res = append(res, ext)
 	}
 	return res
+}
+
+func (a *index) actorContextForProxy(proxy *model.Proxy) *extensions.ActorContext {
+	workloadKey, ok := agentio.BuildProxyWorkloadKey(proxy)
+	if !ok {
+		return nil
+	}
+	workload := a.workloads.GetKey(workloadKey)
+	if workload == nil {
+		return nil
+	}
+	return agentio.ActorContextFromLabels(workload.Labels)
 }

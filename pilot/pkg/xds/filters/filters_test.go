@@ -179,15 +179,16 @@ func TestSandboxConnectAuthorityFilterUsesAgentioHeaders(t *testing.T) {
 	got := make(map[string]string)
 	for _, value := range config.GetOnRequestHeaders() {
 		key := value.GetObjectKey()
-		if key == "sandbox.token" || key == "sandbox.labels" || key == "sandbox.id" {
+		if key == "sandbox.token" || key == "sandbox.labels" || key == "sandbox.id" || key == "sandbox.generation" {
 			got[key] = value.GetFormatString().GetTextFormatSource().GetInlineString()
 		}
 	}
 
 	want := map[string]string{
-		"sandbox.token":  "%REQ(X-AGENTIO-SANDBOX-TOKEN)%",
-		"sandbox.labels": "%REQ(X-AGENTIO-SANDBOX-LABELS)%",
-		"sandbox.id":     "%REQ(X-AGENTIO-SANDBOX-ID)%",
+		"sandbox.token":      "%REQ(X-AGENTIO-SANDBOX-TOKEN)%",
+		"sandbox.labels":     "%REQ(X-AGENTIO-SANDBOX-LABELS)%",
+		"sandbox.id":         "%REQ(X-AGENTIO-SANDBOX-ID)%",
+		"sandbox.generation": "%REQ(X-AGENTIO-SANDBOX-GENERATION)%",
 	}
 	assert.Equal(t, got, want)
 }

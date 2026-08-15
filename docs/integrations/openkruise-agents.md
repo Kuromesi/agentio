@@ -201,5 +201,6 @@ Do not delete `ConfigMap/sandbox-injection-config` or the OpenKruise Agents inst
 
 - [Getting started](../getting-started.md)
 - [Sidecar mode](../getting-started/sidecar-mode.md)
+- [Actor identity over Worker mTLS PoC](actor-identity-worker-mtls-poc.md)
 - [Route traffic through an egress gateway](../tasks/route-traffic-through-egress-gateway.md)
 - [Configure a TrafficPolicy](../tasks/configure-traffic-policy.md)

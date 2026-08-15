@@ -211,11 +211,54 @@ func (this *WorkloadConfig) EqualVT(that *WorkloadConfig) bool {
 			}
 		}
 	}
+	if !this.ActorContext.EqualVT(that.ActorContext) {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
 func (this *WorkloadConfig) EqualMessageVT(thatMsg proto.Message) bool {
 	that, ok := thatMsg.(*WorkloadConfig)
+	if !ok {
+		return false
+	}
+	return this.EqualVT(that)
+}
+func (this *ActorContext) EqualVT(that *ActorContext) bool {
+	if this == that {
+		return true
+	} else if this == nil || that == nil {
+		return false
+	}
+	if this.ActorUid != that.ActorUid {
+		return false
+	}
+	if this.ActorName != that.ActorName {
+		return false
+	}
+	if this.Atespace != that.Atespace {
+		return false
+	}
+	if this.Generation != that.Generation {
+		return false
+	}
+	if len(this.Labels) != len(that.Labels) {
+		return false
+	}
+	for i, vx := range this.Labels {
+		vy, ok := that.Labels[i]
+		if !ok {
+			return false
+		}
+		if vx != vy {
+			return false
+		}
+	}
+	return string(this.unknownFields) == string(that.unknownFields)
+}
+
+func (this *ActorContext) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*ActorContext)
 	if !ok {
 		return false
 	}
@@ -960,6 +1003,16 @@ func (m *WorkloadConfig) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) 
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.ActorContext != nil {
+		size, err := m.ActorContext.MarshalToSizedBufferVTStrict(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x1a
+	}
 	if len(m.EgressPolicies) > 0 {
 		for iNdEx := len(m.EgressPolicies) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.EgressPolicies[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
@@ -976,6 +1029,84 @@ func (m *WorkloadConfig) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) 
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Scope))
 		i--
 		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *ActorContext) MarshalVTStrict() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVTStrict(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ActorContext) MarshalToVTStrict(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVTStrict(dAtA[:size])
+}
+
+func (m *ActorContext) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.Labels) > 0 {
+		for k := range m.Labels {
+			v := m.Labels[k]
+			baseI := i
+			i -= len(v)
+			copy(dAtA[i:], v)
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(v)))
+			i--
+			dAtA[i] = 0x12
+			i -= len(k)
+			copy(dAtA[i:], k)
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(k)))
+			i--
+			dAtA[i] = 0xa
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(baseI-i))
+			i--
+			dAtA[i] = 0x2a
+		}
+	}
+	if m.Generation != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Generation))
+		i--
+		dAtA[i] = 0x20
+	}
+	if len(m.Atespace) > 0 {
+		i -= len(m.Atespace)
+		copy(dAtA[i:], m.Atespace)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Atespace)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.ActorName) > 0 {
+		i -= len(m.ActorName)
+		copy(dAtA[i:], m.ActorName)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.ActorName)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.ActorUid) > 0 {
+		i -= len(m.ActorUid)
+		copy(dAtA[i:], m.ActorUid)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.ActorUid)))
+		i--
+		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -1966,6 +2097,43 @@ func (m *WorkloadConfig) SizeVT() (n int) {
 		for _, e := range m.EgressPolicies {
 			l = e.SizeVT()
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	if m.ActorContext != nil {
+		l = m.ActorContext.SizeVT()
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	n += len(m.unknownFields)
+	return n
+}
+
+func (m *ActorContext) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.ActorUid)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	l = len(m.ActorName)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	l = len(m.Atespace)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.Generation != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.Generation))
+	}
+	if len(m.Labels) > 0 {
+		for k, v := range m.Labels {
+			_ = k
+			_ = v
+			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + 1 + len(v) + protohelpers.SizeOfVarint(uint64(len(v)))
+			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
 	}
 	n += len(m.unknownFields)

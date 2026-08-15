@@ -19,6 +19,7 @@ import (
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/config/schema/kind"
@@ -254,7 +255,7 @@ func (e WorkloadConfigGenerator) GenerateDeltas(
 ) (model.Resources, model.DeletedResources, model.XdsLogDetails, bool, error) {
 	var updatedPolicies sets.Set[model.ConfigKey]
 	expected := sets.New[string]()
-	if req.Forced {
+	if req.Forced || workloadConfigNeedsPush(proxy, req) {
 		expected.Merge(w.ResourceNames)
 	} else {
 		updatedPolicies = model.ConfigsOfKind(req.ConfigsUpdated, kind.WorkloadConfig)
@@ -278,6 +279,18 @@ func (e WorkloadConfigGenerator) GenerateDeltas(
 	}
 
 	return resources, sets.SortedList(expected), model.XdsLogDetails{}, true, nil
+}
+
+// workloadConfigNeedsPush reports whether an address update may have changed
+// the Actor bound to this dedicated ztunnel's Worker Pod. ActorContext is
+// derived from the current workload labels rather than the proxy's bootstrap
+// labels, so WCDS must be regenerated when that workload changes.
+func workloadConfigNeedsPush(proxy *model.Proxy, req *model.PushRequest) bool {
+	if proxy == nil || req == nil || !agentio.IsSandboxDedicatedProxy(proxy) || len(req.AddressesUpdated) == 0 {
+		return false
+	}
+	workloadKey, ok := agentio.BuildProxyWorkloadKey(proxy)
+	return ok && req.AddressesUpdated.Contains(workloadKey)
 }
 
 func (e WorkloadConfigGenerator) Generate(proxy *model.Proxy, w *model.WatchedResource, req *model.PushRequest) (model.Resources, model.XdsLogDetails, error) {

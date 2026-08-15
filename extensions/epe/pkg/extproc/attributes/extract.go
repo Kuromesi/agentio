@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -47,9 +48,11 @@ const (
 	// what we want, so callers strip the trailing port. The egress
 	// gateway must list "source.address" in its ext_proc
 	// request_attributes for this to be populated.
-	AttrSourceAddress        = "source.address"
-	FilterStateSandboxLabels = "filter_state['sandbox.labels']"
-	FilterStateSandboxToken  = "filter_state['sandbox.token']"
+	AttrSourceAddress            = "source.address"
+	FilterStateSandboxLabels     = "filter_state['sandbox.labels']"
+	FilterStateSandboxToken      = "filter_state['sandbox.token']"
+	FilterStateSandboxID         = "filter_state['sandbox.id']"
+	FilterStateSandboxGeneration = "filter_state['sandbox.generation']"
 
 	AttrDestinationPort = "destination.port"
 )
@@ -68,8 +71,10 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	podNamespace := extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace)
 	podName := extractFilterStateString(attrs, FilterStateDownstreamPeerName)
 	peer := filter.Peer{
-		Pod: types.NamespacedName{Namespace: podNamespace, Name: podName},
-		IP:  extractPodIP(attrs),
+		Pod:             types.NamespacedName{Namespace: podNamespace, Name: podName},
+		IP:              extractPodIP(attrs),
+		ActorUID:        extractFilterStateString(attrs, FilterStateSandboxID),
+		ActorGeneration: parseActorGeneration(extractFilterStateString(attrs, FilterStateSandboxGeneration)),
 	}
 	sandboxLabelsEncoded := extractFilterStateString(attrs, FilterStateSandboxLabels)
 
@@ -109,6 +114,14 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	}
 
 	return peer, req
+}
+
+func parseActorGeneration(raw string) uint64 {
+	generation, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return generation
 }
 
 // parseSandboxToken parses the raw filter_state['sandbox.token'] string:

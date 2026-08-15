@@ -61,6 +61,17 @@ func (this *WorkloadConfig) UnmarshalJSON(b []byte) error {
 	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
 }
 
+// MarshalJSON is a custom marshaler for ActorContext
+func (this *ActorContext) MarshalJSON() ([]byte, error) {
+	str, err := AgentioconfigMarshaler.MarshalToString(this)
+	return []byte(str), err
+}
+
+// UnmarshalJSON is a custom unmarshaler for ActorContext
+func (this *ActorContext) UnmarshalJSON(b []byte) error {
+	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
+}
+
 // MarshalJSON is a custom marshaler for ExtProcProvider
 func (this *ExtProcProvider) MarshalJSON() ([]byte, error) {
 	str, err := AgentioconfigMarshaler.MarshalToString(this)

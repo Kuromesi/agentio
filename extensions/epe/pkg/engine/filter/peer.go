@@ -40,6 +40,12 @@ type Peer struct {
 	// Token is the parsed filter_state['sandbox.token'], parsed eagerly by
 	// Extract. Nil when the filter state value is absent or malformed.
 	Token *SandboxToken
+	// ActorUID is the Actor identity injected by the source ztunnel. The
+	// transport is still authenticated by the Worker Pod mTLS identity.
+	ActorUID string
+	// ActorGeneration fences sequential Actor assignments on the same Worker.
+	// Zero means the generation was absent or malformed.
+	ActorGeneration uint64
 }
 
 // Valid reports whether filter_state carried a usable pod identity.

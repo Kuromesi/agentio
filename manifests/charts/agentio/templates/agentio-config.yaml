@@ -8,6 +8,7 @@ sandboxExtProc:
     headerMode: SEND
     attributes:
     - filter_state['sandbox.id']
+    - filter_state['sandbox.generation']
     - filter_state['sandbox.token']
     - filter_state['sandbox.labels']
     - filter_state['downstream_peer'].name

@@ -15,6 +15,7 @@
 package agentio
 
 import (
+	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/proto"
@@ -39,10 +40,58 @@ const (
 
 	LabelSandboxProxyType = "networking.agents.kruise.io/proxy-type"
 	LabelSandboxEgress    = "networking.agents.kruise.io/sandbox-egress"
+	LabelActorUID         = "networking.agents.kruise.io/actor-uid"
+	LabelActorName        = "networking.agents.kruise.io/actor-name"
+	LabelActorAtespace    = "networking.agents.kruise.io/actor-atespace"
+	LabelActorGeneration  = "networking.agents.kruise.io/actor-generation"
+	ActorLabelPrefix      = "actor.networking.agents.kruise.io/"
+
+	ActorIdentityLabelUID        = "agentio.io/actor-uid"
+	ActorIdentityLabelName       = "agentio.io/actor-name"
+	ActorIdentityLabelAtespace   = "agentio.io/atespace"
+	ActorIdentityLabelGeneration = "agentio.io/actor-generation"
 
 	MeshInternalTrafficPolicyPassthrough = "PASSTHROUGH"
 	MeshInternalTrafficPolicyPeerAware   = "PEER_AWARE"
 )
+
+// ActorContextFromLabels builds the Actor identity bound to a Worker Pod. A
+// complete, non-zero generation is required so a reused Worker cannot inherit
+// the previous Actor's identity. Arbitrary Actor labels use ActorLabelPrefix on
+// the Worker and are unprefixed before being sent to ztunnel.
+func ActorContextFromLabels(workerLabels map[string]string) *extensions.ActorContext {
+	uid := workerLabels[LabelActorUID]
+	name := workerLabels[LabelActorName]
+	atespace := workerLabels[LabelActorAtespace]
+	generationText := workerLabels[LabelActorGeneration]
+	if uid == "" || name == "" || atespace == "" || generationText == "" {
+		return nil
+	}
+	generation, err := strconv.ParseUint(generationText, 10, 64)
+	if err != nil || generation == 0 {
+		return nil
+	}
+
+	actorLabels := map[string]string{
+		ActorIdentityLabelUID:        uid,
+		ActorIdentityLabelName:       name,
+		ActorIdentityLabelAtespace:   atespace,
+		ActorIdentityLabelGeneration: generationText,
+	}
+	for key, value := range workerLabels {
+		if actorKey, ok := strings.CutPrefix(key, ActorLabelPrefix); ok && actorKey != "" {
+			actorLabels[actorKey] = value
+		}
+	}
+
+	return &extensions.ActorContext{
+		ActorUid:   uid,
+		ActorName:  name,
+		Atespace:   atespace,
+		Generation: generation,
+		Labels:     actorLabels,
+	}
+}
 
 func IsSandboxDedicatedProxy(proxy *model.Proxy) bool {
 	return proxy.Labels[LabelSandboxProxyType] == "ztunnel"

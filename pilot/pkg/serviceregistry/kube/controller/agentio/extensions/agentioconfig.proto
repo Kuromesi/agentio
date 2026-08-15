@@ -94,6 +94,21 @@ enum WorkloadConfigScope {
 message WorkloadConfig {
     WorkloadConfigScope scope = 1;
     repeated EgressPolicy egress_policies = 2;
+    // Actor context bound to the ztunnel receiving this resource. The Worker
+    // Pod identity remains the mTLS identity; this context is carried as
+    // request metadata for Actor-level policy and audit.
+    ActorContext actor_context = 3;
+}
+
+// ActorContext identifies the single Actor currently assigned to a Worker.
+// Generation must change whenever the Worker is assigned a new Actor runtime,
+// including reassignment of the same Actor UID.
+message ActorContext {
+    string actor_uid = 1;
+    string actor_name = 2;
+    string atespace = 3;
+    uint64 generation = 4;
+    map<string, string> labels = 5;
 }
 
 // HeaderSendMode mirrors Envoy's ProcessingMode.HeaderSendMode.

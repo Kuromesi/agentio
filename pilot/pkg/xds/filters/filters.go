@@ -577,7 +577,7 @@ var (
 						// tls-terminate to reach the main_forward RBAC without polluting real pools.
 						SharedWithUpstream: sfsvalue.FilterStateValue_ONCE,
 					},
-					// TODO(workload-discovery): the sandbox.token/labels/id keys below carry
+					// TODO(workload-discovery): the sandbox.token/labels/id/generation keys below carry
 					// sandbox workload-discovery metadata and are currently TRANSITIVE (pass-through) —
 					// they ride along to every upstream hop. They are envoy.string (non-Hashable)
 					// so they don't bloat the socket pool key like the RBAC keys did, but TRANSITIVE
@@ -632,6 +632,24 @@ var (
 									TextFormatSource: &core.DataSource{
 										Specifier: &core.DataSource_InlineString{
 											InlineString: "%REQ(X-AGENTIO-SANDBOX-ID)%",
+										},
+									},
+								},
+							},
+						},
+						FactoryKey:         "envoy.string",
+						SharedWithUpstream: sfsvalue.FilterStateValue_TRANSITIVE,
+					},
+					{
+						Key: &sfsvalue.FilterStateValue_ObjectKey{
+							ObjectKey: "sandbox.generation",
+						},
+						Value: &sfsvalue.FilterStateValue_FormatString{
+							FormatString: &core.SubstitutionFormatString{
+								Format: &core.SubstitutionFormatString_TextFormatSource{
+									TextFormatSource: &core.DataSource{
+										Specifier: &core.DataSource_InlineString{
+											InlineString: "%REQ(X-AGENTIO-SANDBOX-GENERATION)%",
 										},
 									},
 								},
