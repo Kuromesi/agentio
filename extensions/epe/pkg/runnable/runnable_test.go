@@ -24,7 +24,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // freePort returns an OS-assigned free TCP port. The listener is closed
@@ -60,6 +63,63 @@ func TestGRPCServer_StartsAndStopsViaContext(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runnable did not exit within 2s after cancel")
+	}
+}
+
+// TestGRPCServer_WithListenerServesTheGivenSocket covers the pre-bound
+// listener path, which exists so a caller never has to reserve a port by
+// binding and closing it. Reserving that way leaves the port unowned until the
+// runnable binds, and a concurrent process that grabs it in between turns into
+// an impostor the caller then dials — observed as an unexplained connection
+// reset rather than as the address conflict it is.
+//
+// Holding the listener also removes the need to wait before dialing: the socket
+// is already listening, so a connection lands in the accept queue even before
+// Serve runs.
+func TestGRPCServer_WithListenerServesTheGivenSocket(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("pre-bind: %v", err)
+	}
+	srv := grpc.NewServer()
+	r := GRPCServer("listener", srv, 0, WithListener(lis))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	conn, err := grpc.NewClient(lis.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial the pre-bound address: %v", err)
+	}
+	defer conn.Close()
+
+	// A real round trip, because grpc.NewClient connects lazily: an Unimplemented
+	// status is proof that this server answered on that socket, where a bind
+	// elsewhere would leave nothing to answer.
+	rpcCtx, rpcCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer rpcCancel()
+	err = conn.Invoke(rpcCtx, "/probe.Service/Method", &emptypb.Empty{}, &emptypb.Empty{})
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("probe RPC = %v (code %s), want an Unimplemented status from the served listener",
+			err, status.Code(err))
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Start on a pre-bound listener = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runnable did not exit within 2s after cancel")
+	}
+
+	// Serve owns the listener and closes it on return, so the caller must not
+	// have to.
+	if _, err := lis.Accept(); err == nil {
+		t.Error("listener still accepts after Serve returned; ownership did not transfer")
 	}
 }
 
