@@ -26,17 +26,24 @@ import (
 // operator reading either one recognizes the other.
 type spec struct {
 	Endpoint string `json:"endpoint,omitempty"`
-	Request  bool   `json:"request,omitempty"`
-	Response bool   `json:"response,omitempty"`
+	// Request and Response are pointers because presence is enablement: an absent
+	// key disables the direction, while "request": {} enables it with nothing
+	// disclosed and nothing buffered.
+	Request  *phaseSpec `json:"request,omitempty"`
+	Response *phaseSpec `json:"response,omitempty"`
 	// Timeout is a Go duration string ("500ms", "2s") rather than a number: a
 	// bare number would be ambiguous between seconds and milliseconds, and
 	// because zero means "use the default", a wrong guess would be silent
 	// instead of an error.
-	Timeout         string       `json:"timeout,omitempty"`
-	MaxBodyBytes    int64        `json:"maxBodyBytes,omitempty"`
-	FailOpen        bool         `json:"failOpen,omitempty"`
-	RequestHeaders  *headersSpec `json:"requestHeaders,omitempty"`
-	ResponseHeaders *headersSpec `json:"responseHeaders,omitempty"`
+	Timeout      string `json:"timeout,omitempty"`
+	MaxBodyBytes int64  `json:"maxBodyBytes,omitempty"`
+	FailOpen     bool   `json:"failOpen,omitempty"`
+}
+
+// phaseSpec is the wire form of PhaseConfig.
+type phaseSpec struct {
+	Headers *headersSpec `json:"headers,omitempty"`
+	Body    bool         `json:"body,omitempty"`
 }
 
 // headersSpec is the wire form of HeadersConfig, shared by both directions
@@ -49,8 +56,12 @@ type headersSpec struct {
 // empty reports whether the document says nothing at all. A payload under this
 // filter's name that carries no fields is an authoring mistake, not a request for
 // every default: there is no default endpoint to call.
+//
+// Compared field by field rather than against a zero spec because the phase
+// pointers make the struct incomparable.
 func (s spec) empty() bool {
-	return s == spec{}
+	return s.Endpoint == "" && s.Request == nil && s.Response == nil &&
+		s.Timeout == "" && s.MaxBodyBytes == 0 && !s.FailOpen
 }
 
 func parse(raw json.RawMessage) (Config, error) {
@@ -74,27 +85,31 @@ func parse(raw json.RawMessage) (Config, error) {
 	}
 	cfg := Config{
 		Endpoint:     s.Endpoint,
-		Request:      s.Request,
-		Response:     s.Response,
+		Request:      phaseFromSpec(s.Request),
+		Response:     phaseFromSpec(s.Response),
 		Timeout:      timeout,
 		MaxBodyBytes: s.MaxBodyBytes,
 		FailOpen:     s.FailOpen,
 	}
-	if s.RequestHeaders != nil {
-		cfg.RequestHeaders = HeadersConfig{
-			Mode:      HeaderMode(s.RequestHeaders.Mode),
-			Allowlist: s.RequestHeaders.Allowlist,
-		}
-	}
-	if s.ResponseHeaders != nil {
-		cfg.ResponseHeaders = HeadersConfig{
-			Mode:      HeaderMode(s.ResponseHeaders.Mode),
-			Allowlist: s.ResponseHeaders.Allowlist,
-		}
-	}
 	// Effective owns validation and defaulting, so a hand-built Config and a
 	// parsed one cannot drift.
 	return cfg.Effective()
+}
+
+// phaseFromSpec maps one direction, preserving the absent-versus-empty
+// distinction the wire draws: nil in stays nil out, so the phase stays disabled.
+func phaseFromSpec(s *phaseSpec) *PhaseConfig {
+	if s == nil {
+		return nil
+	}
+	phase := &PhaseConfig{Body: s.Body}
+	if s.Headers != nil {
+		phase.Headers = HeadersConfig{
+			Mode:      HeaderMode(s.Headers.Mode),
+			Allowlist: s.Headers.Allowlist,
+		}
+	}
+	return phase
 }
 
 // parseTimeout maps an absent or empty value to zero, which Effective turns into

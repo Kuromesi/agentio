@@ -21,52 +21,79 @@ import (
 )
 
 func TestParseAppliesDefaults(t *testing.T) {
-	cfg, err := parse([]byte(`{"endpoint":"https://scanner.example.com/inspect","request":true}`))
+	cfg, err := parse([]byte(`{"endpoint":"https://scanner.example.com/inspect","request":{}}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	want := Config{
-		Endpoint:        "https://scanner.example.com/inspect",
-		Request:         true,
-		Timeout:         DefaultTimeout,
-		MaxBodyBytes:    DefaultMaxBodyBytes,
-		RequestHeaders:  HeadersConfig{Mode: HeaderModeNone},
-		ResponseHeaders: HeadersConfig{Mode: HeaderModeNone},
+		Endpoint:     "https://scanner.example.com/inspect",
+		Request:      &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeNone}},
+		Timeout:      DefaultTimeout,
+		MaxBodyBytes: DefaultMaxBodyBytes,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("parse = %#v, want %#v", cfg, want)
 	}
 }
 
+// TestParsePhasePresenceIsEnablement pins the wire rule that makes a header mode
+// on a disabled phase unrepresentable: an absent key disables the direction, and
+// an empty object enables it with nothing disclosed and nothing buffered.
+func TestParsePhasePresenceIsEnablement(t *testing.T) {
+	t.Run("an absent key disables the phase", func(t *testing.T) {
+		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{}}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if cfg.Response != nil {
+			t.Errorf("Response = %#v, want nil for an absent key", cfg.Response)
+		}
+	})
+
+	t.Run("an empty object is the cheapest useful callout", func(t *testing.T) {
+		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","response":{}}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if cfg.Response == nil {
+			t.Fatal("Response = nil, want an enabled phase for a present empty object")
+		}
+		if cfg.Response.Headers.Mode != HeaderModeNone || cfg.Response.Body {
+			t.Errorf("Response = %#v, want no disclosure and no body", *cfg.Response)
+		}
+	})
+}
+
 func TestParseReadsEveryField(t *testing.T) {
 	cfg, err := parse([]byte(`{
 		"endpoint":"https://scanner.example.com/inspect",
-		"request":true,
-		"response":true,
+		"request":{"headers":{"mode":"allowlist","allowlist":["X-Tenant","x-tenant","X-Trace"]},"body":true},
+		"response":{"headers":{"mode":"allowlist","allowlist":["X-Upstream","x-upstream","X-Trace"]}},
 		"timeout":"2s",
 		"maxBodyBytes":4096,
-		"failOpen":true,
-		"requestHeaders":{"mode":"allowlist","allowlist":["X-Tenant","x-tenant","X-Trace"]},
-		"responseHeaders":{"mode":"allowlist","allowlist":["X-Upstream","x-upstream","X-Trace"]}
+		"failOpen":true
 	}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	want := Config{
 		Endpoint:     "https://scanner.example.com/inspect",
-		Request:      true,
-		Response:     true,
 		Timeout:      2 * time.Second,
 		MaxBodyBytes: 4096,
 		FailOpen:     true,
-		RequestHeaders: HeadersConfig{
-			Mode: HeaderModeAllowlist,
-			// Effective lower-cases and de-duplicates.
-			Allowlist: []string{"x-tenant", "x-trace"},
+		Request: &PhaseConfig{
+			Headers: HeadersConfig{
+				Mode: HeaderModeAllowlist,
+				// Effective lower-cases and de-duplicates.
+				Allowlist: []string{"x-tenant", "x-trace"},
+			},
+			Body: true,
 		},
-		ResponseHeaders: HeadersConfig{
-			Mode:      HeaderModeAllowlist,
-			Allowlist: []string{"x-upstream", "x-trace"},
+		Response: &PhaseConfig{
+			Headers: HeadersConfig{
+				Mode:      HeaderModeAllowlist,
+				Allowlist: []string{"x-upstream", "x-trace"},
+			},
 		},
 	}
 	if !reflect.DeepEqual(cfg, want) {
@@ -87,7 +114,7 @@ func TestParseTimeoutIsADurationString(t *testing.T) {
 		{raw: `"1m"`, want: time.Minute},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
-			cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":true,"timeout":` + tc.raw + `}`))
+			cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{},"timeout":` + tc.raw + `}`))
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -98,7 +125,7 @@ func TestParseTimeoutIsADurationString(t *testing.T) {
 	}
 
 	t.Run("empty string means the default", func(t *testing.T) {
-		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":true,"timeout":""}`))
+		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{},"timeout":""}`))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -108,7 +135,7 @@ func TestParseTimeoutIsADurationString(t *testing.T) {
 	})
 
 	t.Run("a bare number is rejected rather than guessed", func(t *testing.T) {
-		if _, err := parse([]byte(`{"endpoint":"https://x.example.com","request":true,"timeout":500}`)); err == nil {
+		if _, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{},"timeout":500}`)); err == nil {
 			t.Fatal("parse accepted a unitless timeout, want an error naming the unit requirement")
 		}
 	})
@@ -127,7 +154,7 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 		},
 		{
 			name:    "unknown field",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"retries":3}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{},"retries":3}`,
 			wantErr: "retries",
 		},
 		{
@@ -144,58 +171,77 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 		},
 		{
 			name:    "missing endpoint",
-			raw:     `{"request":true}`,
+			raw:     `{"request":{}}`,
 			wantErr: "endpoint",
 		},
 		{
 			name:    "relative endpoint",
-			raw:     `{"endpoint":"/inspect","request":true}`,
+			raw:     `{"endpoint":"/inspect","request":{}}`,
 			wantErr: "absolute",
 		},
 		{
 			name:    "malformed timeout",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"timeout":"soon"}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{},"timeout":"soon"}`,
 			wantErr: "timeout",
 		},
 		{
 			name:    "negative timeout",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"timeout":"-1s"}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{},"timeout":"-1s"}`,
 			wantErr: "negative",
 		},
 		{
 			name:    "negative body limit",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"maxBodyBytes":-1}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{},"maxBodyBytes":-1}`,
 			wantErr: "negative",
 		},
 		{
 			name:    "allowlist naming a credential header",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"requestHeaders":{"mode":"allowlist","allowlist":["Authorization"]}}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"allowlist","allowlist":["Authorization"]}}}`,
 			wantErr: "never forwarded",
 		},
 		{
 			name:    "unknown header mode",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"requestHeaders":{"mode":"some"}}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"some"}}}`,
 			wantErr: "mode",
 		},
 		{
 			name:    "allowlist without allowlist mode",
-			raw:     `{"endpoint":"https://x.example.com","request":true,"requestHeaders":{"mode":"all","allowlist":["x-a"]}}`,
+			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"all","allowlist":["x-a"]}}}`,
 			wantErr: "allowlist",
 		},
 		{
 			name:    "response allowlist naming an upstream credential",
-			raw:     `{"endpoint":"https://x.example.com","response":true,"responseHeaders":{"mode":"allowlist","allowlist":["Set-Cookie"]}}`,
+			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"allowlist","allowlist":["Set-Cookie"]}}}`,
 			wantErr: "never forwarded",
 		},
 		{
 			name:    "unknown response header mode",
-			raw:     `{"endpoint":"https://x.example.com","response":true,"responseHeaders":{"mode":"some"}}`,
+			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"some"}}}`,
 			wantErr: "mode",
 		},
 		{
-			name:    "unknown field inside responseHeaders",
-			raw:     `{"endpoint":"https://x.example.com","response":true,"responseHeaders":{"mode":"all","denylist":["x-a"]}}`,
+			name:    "unknown field inside a phase's headers",
+			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"all","denylist":["x-a"]}}}`,
 			wantErr: "denylist",
+		},
+		{
+			// The nested objects must reject typos as firmly as the top level, or
+			// "bodies":true would silently leave body collection off.
+			name:    "unknown field inside a phase",
+			raw:     `{"endpoint":"https://x.example.com","request":{"bodies":true}}`,
+			wantErr: "bodies",
+		},
+		{
+			// The flat shape is what this change replaced; accepting it would let a
+			// stale payload enable a phase the new parser never sees.
+			name:    "the old flat boolean phase",
+			raw:     `{"endpoint":"https://x.example.com","request":true}`,
+			wantErr: "cannot unmarshal",
+		},
+		{
+			name:    "the old flat header field",
+			raw:     `{"endpoint":"https://x.example.com","request":{},"requestHeaders":{"mode":"all"}}`,
+			wantErr: "requestheaders",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

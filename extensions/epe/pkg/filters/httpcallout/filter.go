@@ -25,8 +25,12 @@ import (
 // It holds no phase state. The engine builds a fresh Filter per direction
 // (eval.go calls reg.New inside each walk), so nothing could cross from the
 // request phase to the response phase anyway, and the body callbacks are only
-// invoked on the instance that returned NeedBody. cfg.Request and cfg.Response
-// are therefore the only guards needed.
+// invoked on the instance that returned NeedBody. The presence of cfg.Request and
+// cfg.Response is therefore the only guard needed.
+//
+// Each direction's PhaseConfig.Body decides where its callout runs: with a body
+// the headers phase asks for one and the callout runs in the body phase, without
+// it the callout runs in the headers phase and nothing is buffered.
 type Filter struct {
 	filter.PassThrough
 	cfg    Config
@@ -56,7 +60,7 @@ func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 		// config is equally load-bearing — it keeps those requests from paying
 		// ResponseHeaderMode SEND for a phase that would do nothing.
 		SubscribesOf: func(cfg Config) filter.Phase {
-			if !cfg.Response {
+			if cfg.Response == nil {
 				return 0
 			}
 			return filter.PhaseResponseHeaders
@@ -67,28 +71,51 @@ func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 	}
 }
 
-// OnRequestHeaders defers to the body: a callout inspecting a request needs the
-// whole message, and the invocation contract carries the body explicitly.
-func (f *Filter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
-	if !f.cfg.Request {
+// OnRequestHeaders asks for the body only when the request phase collects one.
+// Otherwise it calls out here: returning NeedBody for a callout that never reads
+// the body would make Envoy buffer the whole message for nothing, and a
+// short-circuit from this phase happens before the body is ever read.
+func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filter.Action, error) {
+	if f.cfg.Request == nil {
 		return filter.Continue(), nil
 	}
-	return filter.NeedBody(), nil
+	if f.cfg.Request.Body {
+		return filter.NeedBody(), nil
+	}
+	return f.requestCallout(ctx, st, filter.Body{})
 }
 
-// OnResponseHeaders defers to the response body for the same reason.
-func (f *Filter) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
-	if !f.cfg.Response {
+// OnResponseHeaders is the response-direction counterpart.
+func (f *Filter) OnResponseHeaders(ctx context.Context, st *filter.Stream) (filter.Action, error) {
+	if f.cfg.Response == nil {
 		return filter.Continue(), nil
 	}
-	return filter.NeedBody(), nil
+	if f.cfg.Response.Body {
+		return filter.NeedBody(), nil
+	}
+	return f.responseCallout(ctx, st, filter.Body{})
 }
 
-// OnRequestBody performs the request-phase callout.
+// OnRequestBody performs the request-phase callout for a body-collecting phase.
 func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filter.Body) (filter.Action, error) {
-	if !f.cfg.Request {
+	if f.cfg.Request == nil || !f.cfg.Request.Body {
 		return filter.Continue(), nil
 	}
+	return f.requestCallout(ctx, st, body)
+}
+
+// OnResponseBody performs the response-phase callout for a body-collecting phase.
+func (f *Filter) OnResponseBody(ctx context.Context, st *filter.Stream, body filter.Body) (filter.Action, error) {
+	if f.cfg.Response == nil || !f.cfg.Response.Body {
+		return filter.Continue(), nil
+	}
+	return f.responseCallout(ctx, st, body)
+}
+
+// requestCallout is shared by the two dispatch points so the phase runs
+// identically wherever it was reached from. body is the zero Body in the headers
+// phase, which the builder ignores because that phase collects none.
+func (f *Filter) requestCallout(ctx context.Context, st *filter.Stream, body filter.Body) (filter.Action, error) {
 	inv, err := buildRequestInvocation(f.cfg, f.id, st, body)
 	if err != nil {
 		return filter.Action{}, err
@@ -96,11 +123,7 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 	return f.callout(ctx, PhaseRequest, inv)
 }
 
-// OnResponseBody performs the response-phase callout.
-func (f *Filter) OnResponseBody(ctx context.Context, st *filter.Stream, body filter.Body) (filter.Action, error) {
-	if !f.cfg.Response {
-		return filter.Continue(), nil
-	}
+func (f *Filter) responseCallout(ctx context.Context, st *filter.Stream, body filter.Body) (filter.Action, error) {
 	inv, err := buildResponseInvocation(f.cfg, f.id, st, body)
 	if err != nil {
 		return filter.Action{}, err

@@ -102,27 +102,38 @@ type HeadersConfig struct {
 	Allowlist []string
 }
 
+// PhaseConfig is one direction's settings. Its presence enables the phase, which
+// makes a header mode on a disabled phase unrepresentable rather than merely
+// discouraged.
+type PhaseConfig struct {
+	// Headers defaults to none: disclosure is opt-in in either direction.
+	Headers HeadersConfig
+	// Body opts into buffering. It also moves the callout's dispatch point —
+	// false runs it in the headers phase, so Envoy buffers nothing for a
+	// header-only callout. See Filter.
+	Body bool
+}
+
 // Config is the CRD-free configuration for one policy unit's callout.
 // Endpoint is shared by the enabled request and response phases.
 type Config struct {
 	Endpoint string
-	Request  bool
-	Response bool
 
 	Timeout      time.Duration
 	MaxBodyBytes int64
 	FailOpen     bool
 
-	// RequestHeaders and ResponseHeaders both default to none: disclosure is
-	// opt-in in either direction.
-	RequestHeaders  HeadersConfig
-	ResponseHeaders HeadersConfig
+	// Request and Response are nil when that phase is disabled.
+	Request  *PhaseConfig
+	Response *PhaseConfig
 }
 
 // Effective validates c, applies zero-value defaults, and returns an owned
-// copy safe for the filter to retain.
+// copy safe for the filter to retain. The phase configs are freshly allocated
+// rather than shared: a shallow struct copy of a pointer field would leave the
+// filter holding whatever the caller edits next.
 func (c Config) Effective() (Config, error) {
-	if !c.Request && !c.Response {
+	if c.Request == nil && c.Response == nil {
 		return Config{}, fmt.Errorf("callout config must enable at least one phase")
 	}
 	if err := validateEndpoint(c.Endpoint); err != nil {
@@ -141,17 +152,31 @@ func (c Config) Effective() (Config, error) {
 		c.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 
-	requestHeaders, err := effectiveHeaders(c.RequestHeaders, "request", neverForwardRequestHeader)
+	request, err := effectivePhase(c.Request, "request", neverForwardRequestHeader)
 	if err != nil {
 		return Config{}, err
 	}
-	responseHeaders, err := effectiveHeaders(c.ResponseHeaders, "response", neverForwardResponseHeader)
+	response, err := effectivePhase(c.Response, "response", neverForwardResponseHeader)
 	if err != nil {
 		return Config{}, err
 	}
-	c.RequestHeaders = requestHeaders
-	c.ResponseHeaders = responseHeaders
+	c.Request = request
+	c.Response = response
 	return c, nil
+}
+
+// effectivePhase validates one direction and returns a phase config the caller
+// cannot reach. A nil input stays nil: presence is what enables the phase, so
+// defaulting a disabled direction into an enabled one would invent a callout.
+func effectivePhase(in *PhaseConfig, direction string, neverForward func(string) bool) (*PhaseConfig, error) {
+	if in == nil {
+		return nil, nil
+	}
+	headers, err := effectiveHeaders(in.Headers, direction, neverForward)
+	if err != nil {
+		return nil, err
+	}
+	return &PhaseConfig{Headers: headers, Body: in.Body}, nil
 }
 
 func validateEndpoint(endpoint string) error {

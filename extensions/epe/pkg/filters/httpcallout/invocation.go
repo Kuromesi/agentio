@@ -26,15 +26,18 @@ import (
 const headerContentType = "content-type"
 
 // buildRequestInvocation renders the request-phase view. It is a free function
-// rather than a method so the field mapping is testable without a Filter.
+// rather than a method so the field mapping is testable without a Filter. What
+// the invocation carries is entirely cfg.Request's business, including whether a
+// body is attached at all.
 func buildRequestInvocation(cfg Config, id filter.UnitID, st *filter.Stream, body filter.Body) (Invocation, error) {
-	text, err := bodyText(cfg, body, "request")
+	phase := phaseConfig(cfg.Request)
+	text, err := bodyText(cfg, phase, body, "request")
 	if err != nil {
 		return Invocation{}, err
 	}
 	request := correlationView(st)
-	request.Headers = forwardedRequestHeaders(cfg.RequestHeaders, st.Request.Headers)
-	request.Body = &text
+	request.Headers = forwardedRequestHeaders(phase.Headers, st.Request.Headers)
+	request.Body = text
 	return Invocation{
 		Version: ProtocolVersion,
 		Phase:   PhaseRequest,
@@ -49,12 +52,13 @@ func buildRequestInvocation(cfg Config, id filter.UnitID, st *filter.Stream, bod
 // are deliberately absent, which is what frees EPE from retaining a request body
 // across directions.
 func buildResponseInvocation(cfg Config, id filter.UnitID, st *filter.Stream, body filter.Body) (Invocation, error) {
-	text, err := bodyText(cfg, body, "response")
+	phase := phaseConfig(cfg.Response)
+	text, err := bodyText(cfg, phase, body, "response")
 	if err != nil {
 		return Invocation{}, err
 	}
 	request := correlationView(st)
-	forwarded := forwardedResponseHeaders(cfg.ResponseHeaders, st.Response.Headers)
+	forwarded := forwardedResponseHeaders(phase.Headers, st.Response.Headers)
 	return Invocation{
 		Version: ProtocolVersion,
 		Phase:   PhaseResponse,
@@ -71,6 +75,16 @@ func buildResponseInvocation(cfg Config, id filter.UnitID, st *filter.Stream, bo
 			Body:        text,
 		},
 	}, nil
+}
+
+// phaseConfig dereferences one direction, treating a nil as the all-off phase.
+// The filter guards on presence before dispatching, so this only keeps a builder
+// called out of order from panicking rather than papering over a disabled phase.
+func phaseConfig(p *PhaseConfig) PhaseConfig {
+	if p == nil {
+		return PhaseConfig{}
+	}
+	return *p
 }
 
 // correlationView is the request metadata both phases share.
@@ -149,15 +163,25 @@ func forwardedHeaders(cfg HeadersConfig, headers map[string]string, neverForward
 	}
 }
 
-// bodyText converts one direction's buffered body. An oversized body is a
-// failure rather than a truncation: handing a scanner a prefix and treating its
-// verdict as covering the whole body is a hole, not a degradation.
-func bodyText(cfg Config, body filter.Body, direction string) (string, error) {
+// bodyText converts one direction's buffered body, or returns nil when the phase
+// did not ask for one. nil and a pointer to "" are two different facts on the
+// wire, so a phase that collects nothing must send nothing rather than an empty
+// string a scanner would read as an empty message.
+//
+// An oversized body is a failure rather than a truncation: handing a scanner a
+// prefix and treating its verdict as covering the whole body is a hole, not a
+// degradation. The limit bounds what EPE sends, so it applies only when the body
+// is actually collected.
+func bodyText(cfg Config, phase PhaseConfig, body filter.Body, direction string) (*string, error) {
+	if !phase.Body {
+		return nil, nil
+	}
 	if int64(len(body.Bytes)) > cfg.MaxBodyBytes {
-		return "", fmt.Errorf("callout %s body is %d bytes, over the %d byte limit", direction, len(body.Bytes), cfg.MaxBodyBytes)
+		return nil, fmt.Errorf("callout %s body is %d bytes, over the %d byte limit", direction, len(body.Bytes), cfg.MaxBodyBytes)
 	}
 	if !utf8.Valid(body.Bytes) {
-		return "", fmt.Errorf("callout %s body is not valid UTF-8", direction)
+		return nil, fmt.Errorf("callout %s body is not valid UTF-8", direction)
 	}
-	return string(body.Bytes), nil
+	text := string(body.Bytes)
+	return &text, nil
 }

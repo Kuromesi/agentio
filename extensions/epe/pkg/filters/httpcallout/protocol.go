@@ -85,11 +85,11 @@ type HTTPRequest struct {
 	RawQuery    string            `json:"rawQuery"`
 	ContentType string            `json:"contentType"`
 	Headers     map[string]string `json:"headers,omitempty"`
-	// Body is a pointer so the two phases have different shapes rather than one
-	// ambiguous shape: the request phase always sends a body, including a
-	// pointer to "" for an empty one, while the response phase sends none at
-	// all. Without the distinction an omitted body and an empty body would look
-	// identical, and the response-phase correlation view could not be enforced.
+	// Body is a pointer because there are three states, not two: nil means the
+	// phase's config did not collect a body, a pointer to "" means it did and the
+	// message had none, and anything else is the body. A scanner must never read
+	// "never saw it" as "saw it and it was empty". The response phase always
+	// sends nil here, which is what frees EPE from retaining a request body.
 	Body *string `json:"body,omitempty"`
 }
 
@@ -102,13 +102,17 @@ type HTTPResponse struct {
 	StatusCode  int               `json:"statusCode"`
 	ContentType string            `json:"contentType"`
 	Headers     map[string]string `json:"headers,omitempty"`
-	Body        string            `json:"body"`
+	// Body is a pointer for the same three-state reason as HTTPRequest.Body: a
+	// plain string cannot express "not collected" apart from "collected and
+	// empty".
+	Body *string `json:"body,omitempty"`
 }
 
-// Validate checks the version, phase shape, and UTF-8 body contract. Each phase
-// owns exactly one body: the request phase must carry a request body and no
-// response, the response phase must carry a response and only the request
-// correlation view.
+// Validate checks the version, phase shape, and UTF-8 body contract. It holds
+// only what is unconditionally true: body collection is opt-in per phase, so
+// whether a body should be present is the config's business, not this contract's.
+// What survives is that the response phase carries a response and nothing but the
+// request correlation view, and that any body present is valid UTF-8.
 func (i Invocation) Validate() error {
 	if i.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported callout protocol version %q", i.Version)
@@ -125,10 +129,7 @@ func (i Invocation) Validate() error {
 		if i.Response != nil {
 			return fmt.Errorf("request-phase callout invocation contains a response")
 		}
-		if i.Request.Body == nil {
-			return fmt.Errorf("request-phase callout invocation has no request body")
-		}
-		if !utf8.ValidString(*i.Request.Body) {
+		if i.Request.Body != nil && !utf8.ValidString(*i.Request.Body) {
 			return fmt.Errorf("callout request body is not valid UTF-8")
 		}
 	case PhaseResponse:
@@ -144,7 +145,7 @@ func (i Invocation) Validate() error {
 		if i.Request.Headers != nil {
 			return fmt.Errorf("response-phase callout invocation contains request headers")
 		}
-		if !utf8.ValidString(i.Response.Body) {
+		if i.Response.Body != nil && !utf8.ValidString(*i.Response.Body) {
 			return fmt.Errorf("callout response body is not valid UTF-8")
 		}
 	}

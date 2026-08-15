@@ -133,7 +133,7 @@ func newWireServer(t *testing.T, payload string) *extproc.Server {
 
 // requestPayload renders a request-phase config pointed at endpoint.
 func requestPayload(endpoint string, failOpen bool) string {
-	return fmt.Sprintf(`{"endpoint":%q,"request":true,"timeout":"5s","failOpen":%t}`, endpoint, failOpen)
+	return fmt.Sprintf(`{"endpoint":%q,"request":{"body":true},"timeout":"5s","failOpen":%t}`, endpoint, failOpen)
 }
 
 // run drives one request through server and reduces the wire responses.
@@ -202,6 +202,58 @@ func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
 	})
 }
 
+// TestScenario_BodylessRequestCalloutBuffersNothing is the buffering bite on the
+// wire. A header-only callout must cost no body buffering at all, so the adapter
+// must emit no BUFFERED request-body mode for it — and the callout must still
+// happen, from the headers phase, with no body attached to the invocation.
+func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
+	endpoint := newEndpoint(t, func(t *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+		if inv.Phase != httpcallout.PhaseRequest {
+			t.Errorf("phase = %q, want request", inv.Phase)
+		}
+		// nil rather than a pointer to "": the phase never collected a body, and
+		// a scanner must be able to tell that from an empty one.
+		if inv.Request.Body != nil {
+			t.Errorf("request body = %q, want it absent for a bodyless phase", *inv.Request.Body)
+		}
+		if inv.Request.Method != "POST" || inv.Request.Path != "/v1/chat" {
+			t.Errorf("request view = %+v, want the metadata a bodyless callout still sees", inv.Request)
+		}
+		return httpcallout.Decision{
+			Version:   httpcallout.ProtocolVersion,
+			Phase:     inv.Phase,
+			RequestID: inv.Request.ID,
+			Action:    httpcallout.ActionContinue,
+			Request: &httpcallout.RequestMutation{
+				Headers: []httpcallout.HeaderMutation{
+					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
+				},
+			},
+		}
+	})
+
+	server := newWireServer(t, fmt.Sprintf(
+		`{"endpoint":%q,"request":{},"timeout":"5s"}`, endpoint.URL))
+	// StreamingHeaders leaves EndOfStream clear and sends no body message, so a
+	// filter that still asked for the body would stall here instead of deciding.
+	msgs := enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
+		RequestID("req-6").
+		Header("Content-Type", "application/json").
+		Peer("default", "sandbox-a", nil).
+		StreamingHeaders().
+		Build()
+
+	verdict := run(t, server, msgs)
+	if verdict.Err != nil {
+		t.Fatalf("Process: %v", verdict.Err)
+	}
+	verdict.RequireHeader(t, "x-scan-verdict", "clean")
+	if verdict.ModeOverride != nil &&
+		verdict.ModeOverride.GetRequestBodyMode() == extProcV3.ProcessingMode_BUFFERED {
+		t.Fatalf("ModeOverride = %v, want no buffered request body for a header-only callout", verdict.ModeOverride)
+	}
+}
+
 func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
 	endpoint := newEndpoint(t, func(_ *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
 		return httpcallout.Decision{
@@ -240,8 +292,8 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 		if inv.Response.StatusCode != http.StatusOK {
 			t.Errorf("upstream status = %d, want 200", inv.Response.StatusCode)
 		}
-		if inv.Response.Body != `{"answer":"42"}` {
-			t.Errorf("upstream body = %q, want the served document", inv.Response.Body)
+		if inv.Response.Body == nil || *inv.Response.Body != `{"answer":"42"}` {
+			t.Errorf("upstream body = %v, want the served document", inv.Response.Body)
 		}
 		if inv.Response.Headers["server"] != "upstream" {
 			t.Errorf("upstream headers = %+v, want server=upstream", inv.Response.Headers)
@@ -260,10 +312,10 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 		}
 	})
 
-	// responseHeaders is explicit because disclosure is opt-in in both
+	// The header mode is explicit because disclosure is opt-in in both
 	// directions: without it the callout would see status and body only.
 	server := newWireServer(t, fmt.Sprintf(
-		`{"endpoint":%q,"response":true,"timeout":"5s","responseHeaders":{"mode":"all"}}`, endpoint.URL))
+		`{"endpoint":%q,"response":{"headers":{"mode":"all"},"body":true},"timeout":"5s"}`, endpoint.URL))
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		RequestID("req-3").
 		Peer("default", "sandbox-a", nil).

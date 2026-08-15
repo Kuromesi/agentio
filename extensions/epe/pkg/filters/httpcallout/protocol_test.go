@@ -100,7 +100,7 @@ func TestInvocationOmitsHiddenRequestHeadersButKeepsContentType(t *testing.T) {
 			StatusCode:  200,
 			ContentType: "text/plain",
 			Headers:     map[string]string{"x-upstream": "demo"},
-			Body:        "response",
+			Body:        stringPointer("response"),
 		},
 	})
 	request := got["request"].(map[string]any)
@@ -130,7 +130,7 @@ func TestInvocationOmitsHiddenResponseHeadersButKeepsStatusAndContentType(t *tes
 		Response: &HTTPResponse{
 			StatusCode:  503,
 			ContentType: "text/plain; charset=utf-8",
-			Body:        "upstream down",
+			Body:        stringPointer("upstream down"),
 		},
 	})
 	response := got["response"].(map[string]any)
@@ -171,6 +171,60 @@ func TestInvocationRequestBodyPresenceIsExplicit(t *testing.T) {
 	}
 }
 
+// TestInvocationBodyPresenceIsThreeStatedOnTheWire pins that the pointer carries
+// a distinction JSON cannot otherwise express. A scanner reading "collected and
+// empty" as "never collected" — or the reverse — would be reasoning about a
+// message it never saw, so the two must not render alike in either direction.
+func TestInvocationBodyPresenceIsThreeStatedOnTheWire(t *testing.T) {
+	t.Run("request", func(t *testing.T) {
+		collected := marshalJSONObject(t, Invocation{
+			Version: ProtocolVersion,
+			Phase:   PhaseRequest,
+			Request: &HTTPRequest{Body: stringPointer("")},
+		})["request"].(map[string]any)
+		notCollected := marshalJSONObject(t, Invocation{
+			Version: ProtocolVersion,
+			Phase:   PhaseRequest,
+			Request: &HTTPRequest{},
+		})["request"].(map[string]any)
+
+		body, found := collected["body"]
+		if !found {
+			t.Error("a collected empty body was omitted from the document")
+		} else if body != "" {
+			t.Errorf("collected body = %#v, want a present empty string", body)
+		}
+		if _, found := notCollected["body"]; found {
+			t.Errorf("an uncollected body rendered as %#v, want the key absent", notCollected["body"])
+		}
+	})
+
+	t.Run("response", func(t *testing.T) {
+		collected := marshalJSONObject(t, Invocation{
+			Version:  ProtocolVersion,
+			Phase:    PhaseResponse,
+			Request:  &HTTPRequest{},
+			Response: &HTTPResponse{StatusCode: 200, Body: stringPointer("")},
+		})["response"].(map[string]any)
+		notCollected := marshalJSONObject(t, Invocation{
+			Version:  ProtocolVersion,
+			Phase:    PhaseResponse,
+			Request:  &HTTPRequest{},
+			Response: &HTTPResponse{StatusCode: 200},
+		})["response"].(map[string]any)
+
+		body, found := collected["body"]
+		if !found {
+			t.Error("a collected empty response body was omitted from the document")
+		} else if body != "" {
+			t.Errorf("collected response body = %#v, want a present empty string", body)
+		}
+		if _, found := notCollected["body"]; found {
+			t.Errorf("an uncollected response body rendered as %#v, want the key absent", notCollected["body"])
+		}
+	})
+}
+
 func TestInvocationValidateAcceptsPhaseShapes(t *testing.T) {
 	tests := []Invocation{
 		{
@@ -185,10 +239,25 @@ func TestInvocationValidateAcceptsPhaseShapes(t *testing.T) {
 			Request: &HTTPRequest{Body: stringPointer("")},
 		},
 		{
+			// No body at all is legal too, now that collection is opt-in per
+			// phase. Whether EPE should have attached one is the config's
+			// business, not this contract's.
+			Version: ProtocolVersion,
+			Phase:   PhaseRequest,
+			Request: &HTTPRequest{},
+		},
+		{
+			// The same third state on the response side.
 			Version:  ProtocolVersion,
 			Phase:    PhaseResponse,
 			Request:  &HTTPRequest{},
-			Response: &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: "response"},
+			Response: &HTTPResponse{StatusCode: 200},
+		},
+		{
+			Version:  ProtocolVersion,
+			Phase:    PhaseResponse,
+			Request:  &HTTPRequest{},
+			Response: &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: stringPointer("response")},
 		},
 		{
 			// Hidden response headers are the default, so a nil map is a valid
@@ -196,7 +265,7 @@ func TestInvocationValidateAcceptsPhaseShapes(t *testing.T) {
 			Version:  ProtocolVersion,
 			Phase:    PhaseResponse,
 			Request:  &HTTPRequest{},
-			Response: &HTTPResponse{StatusCode: 200, Body: "response"},
+			Response: &HTTPResponse{StatusCode: 200, Body: stringPointer("response")},
 		},
 	}
 	for _, invocation := range tests {
@@ -276,11 +345,6 @@ func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 			wantErr: "response",
 		},
 		{
-			name:    "missing request body in request phase",
-			mutate:  func(i *Invocation) { i.Request.Body = nil },
-			wantErr: "body",
-		},
-		{
 			name: "non utf8 request body",
 			mutate: func(i *Invocation) {
 				i.Request.Body = stringPointer(string([]byte{0xff}))
@@ -292,7 +356,7 @@ func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 			mutate: func(i *Invocation) {
 				i.Phase = PhaseResponse
 				i.Request.Body = nil
-				i.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: string([]byte{0xff})}
+				i.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: stringPointer(string([]byte{0xff}))}
 			},
 			wantErr: "utf-8",
 		},
@@ -439,7 +503,7 @@ func invocationFor(phase Phase, requestID string) Invocation {
 	if phase == PhaseResponse {
 		// The response phase sees the correlation view only.
 		inv.Request.Body = nil
-		inv.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: "response"}
+		inv.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: stringPointer("response")}
 	}
 	return inv
 }

@@ -82,7 +82,7 @@ func testConfig(t *testing.T, cfg Config) Config {
 }
 
 func TestBuildRequestInvocationMapsEveryField(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
 	st := testStream()
 
 	inv, err := buildRequestInvocation(cfg, testUnitID(), st, filter.Body{Bytes: []byte(`{"input":"hi"}`), Complete: true})
@@ -134,10 +134,10 @@ func TestBuildRequestInvocationMapsEveryField(t *testing.T) {
 }
 
 // TestBuildRequestInvocationSendsAPresentEmptyBody pins that a bodyless request
-// still carries a body pointer: Invocation.Validate requires one, and the
-// callout must be able to tell "no body" from "field absent".
+// under a body-collecting phase still carries a body pointer, so the callout can
+// tell "the message had no body" from "the phase never collected one".
 func TestBuildRequestInvocationSendsAPresentEmptyBody(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
 	inv, err := buildRequestInvocation(cfg, testUnitID(), testStream(), filter.Body{Complete: true})
 	if err != nil {
 		t.Fatalf("buildRequestInvocation: %v", err)
@@ -180,7 +180,7 @@ func TestBuildRequestInvocationHeaderModes(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := testConfig(t, Config{Request: true, RequestHeaders: tc.cfg})
+			cfg := testConfig(t, Config{Request: &PhaseConfig{Headers: tc.cfg, Body: true}})
 			inv, err := buildRequestInvocation(cfg, testUnitID(), testStream(), filter.Body{Complete: true})
 			if err != nil {
 				t.Fatalf("buildRequestInvocation: %v", err)
@@ -195,7 +195,7 @@ func TestBuildRequestInvocationHeaderModes(t *testing.T) {
 // TestBuildRequestInvocationNeverAliasesStreamHeaders pins that the builder owns
 // its map: st.Request.Headers is shared with every other filter on the path.
 func TestBuildRequestInvocationNeverAliasesStreamHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true, RequestHeaders: HeadersConfig{Mode: HeaderModeAll}})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true}})
 	st := testStream()
 	before := maps.Clone(st.Request.Headers)
 
@@ -211,9 +211,8 @@ func TestBuildRequestInvocationNeverAliasesStreamHeaders(t *testing.T) {
 
 func TestBuildResponseInvocationOmitsTheRequestBodyAndHeaders(t *testing.T) {
 	cfg := testConfig(t, Config{
-		Response:        true,
-		RequestHeaders:  HeadersConfig{Mode: HeaderModeAll},
-		ResponseHeaders: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"x-upstream"}},
+		Request:  &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true},
+		Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"x-upstream"}}, Body: true},
 	})
 	st := testStream()
 
@@ -243,15 +242,102 @@ func TestBuildResponseInvocationOmitsTheRequestBodyAndHeaders(t *testing.T) {
 		StatusCode:  201,
 		ContentType: "text/plain",
 		Headers:     map[string]string{"x-upstream": "demo"},
-		Body:        "response text",
+		Body:        stringPointer("response text"),
 	}
 	if !reflect.DeepEqual(*inv.Response, want) {
 		t.Errorf("response view = %#v, want %#v", *inv.Response, want)
 	}
 }
 
+// TestBuildInvocationBodyPresenceFollowsThePhaseConfig is the collapse bite. A
+// scanner must not read "never collected" as "collected and empty", so the two
+// states are asserted as distinct rather than merely both falsy.
+func TestBuildInvocationBodyPresenceFollowsThePhaseConfig(t *testing.T) {
+	empty := filter.Body{Complete: true}
+
+	t.Run("request phase", func(t *testing.T) {
+		collected := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
+		notCollected := testConfig(t, Config{Request: &PhaseConfig{}})
+
+		with, err := buildRequestInvocation(collected, testUnitID(), testStream(), empty)
+		if err != nil {
+			t.Fatalf("buildRequestInvocation: %v", err)
+		}
+		without, err := buildRequestInvocation(notCollected, testUnitID(), testStream(), empty)
+		if err != nil {
+			t.Fatalf("buildRequestInvocation: %v", err)
+		}
+		if with.Request.Body == nil {
+			t.Fatal("a collected empty body was omitted, so the callout cannot tell it from an uncollected one")
+		}
+		if *with.Request.Body != "" {
+			t.Errorf("collected body = %q, want the empty string", *with.Request.Body)
+		}
+		if without.Request.Body != nil {
+			t.Errorf("an uncollected body was sent as %#v, want it absent", *without.Request.Body)
+		}
+		if err := with.Validate(); err != nil {
+			t.Errorf("collected-body invocation failed Validate: %v", err)
+		}
+		if err := without.Validate(); err != nil {
+			t.Errorf("uncollected-body invocation failed Validate: %v", err)
+		}
+	})
+
+	t.Run("response phase", func(t *testing.T) {
+		collected := testConfig(t, Config{Response: &PhaseConfig{Body: true}})
+		notCollected := testConfig(t, Config{Response: &PhaseConfig{}})
+
+		with, err := buildResponseInvocation(collected, testUnitID(), testStream(), empty)
+		if err != nil {
+			t.Fatalf("buildResponseInvocation: %v", err)
+		}
+		without, err := buildResponseInvocation(notCollected, testUnitID(), testStream(), empty)
+		if err != nil {
+			t.Fatalf("buildResponseInvocation: %v", err)
+		}
+		if with.Response.Body == nil {
+			t.Fatal("a collected empty response body was omitted")
+		}
+		if *with.Response.Body != "" {
+			t.Errorf("collected response body = %q, want the empty string", *with.Response.Body)
+		}
+		if without.Response.Body != nil {
+			t.Errorf("an uncollected response body was sent as %#v, want it absent", *without.Response.Body)
+		}
+		if err := without.Validate(); err != nil {
+			t.Errorf("uncollected-body invocation failed Validate: %v", err)
+		}
+	})
+}
+
+// TestBuildInvocationIgnoresTheBodyWhenThePhaseDidNotAskForIt pins that a body
+// the adapter still delivered — an end-of-stream inline body, say — is not
+// smuggled into an invocation whose config asked for none.
+func TestBuildInvocationIgnoresTheBodyWhenThePhaseDidNotAskForIt(t *testing.T) {
+	body := filter.Body{Bytes: []byte("delivered anyway"), Complete: true}
+
+	request, err := buildRequestInvocation(
+		testConfig(t, Config{Request: &PhaseConfig{}}), testUnitID(), testStream(), body)
+	if err != nil {
+		t.Fatalf("buildRequestInvocation: %v", err)
+	}
+	if request.Request.Body != nil {
+		t.Errorf("request body = %q, want it absent for a bodyless phase", *request.Request.Body)
+	}
+
+	response, err := buildResponseInvocation(
+		testConfig(t, Config{Response: &PhaseConfig{}}), testUnitID(), testStream(), body)
+	if err != nil {
+		t.Fatalf("buildResponseInvocation: %v", err)
+	}
+	if response.Response.Body != nil {
+		t.Errorf("response body = %q, want it absent for a bodyless phase", *response.Response.Body)
+	}
+}
+
 func TestBuildResponseInvocationNeverAliasesStreamHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Response: true, ResponseHeaders: HeadersConfig{Mode: HeaderModeAll}})
+	cfg := testConfig(t, Config{Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true}})
 	st := testStream()
 	before := maps.Clone(st.Response.Headers)
 
@@ -298,7 +384,7 @@ func TestBuildResponseInvocationHeaderModes(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := testConfig(t, Config{Response: true, ResponseHeaders: tc.cfg})
+			cfg := testConfig(t, Config{Response: &PhaseConfig{Headers: tc.cfg, Body: true}})
 			inv, err := buildResponseInvocation(cfg, testUnitID(), testStream(), filter.Body{Complete: true})
 			if err != nil {
 				t.Fatalf("buildResponseInvocation: %v", err)
@@ -320,7 +406,7 @@ func TestBuildResponseInvocationHeaderModes(t *testing.T) {
 func TestBuildResponseInvocationKeepsStatusAndContentTypeUnderEveryMode(t *testing.T) {
 	for _, mode := range []HeaderMode{"", HeaderModeNone, HeaderModeAll} {
 		t.Run(string(mode), func(t *testing.T) {
-			cfg := testConfig(t, Config{Response: true, ResponseHeaders: HeadersConfig{Mode: mode}})
+			cfg := testConfig(t, Config{Response: &PhaseConfig{Headers: HeadersConfig{Mode: mode}, Body: true}})
 			inv, err := buildResponseInvocation(cfg, testUnitID(), testStream(), filter.Body{Complete: true})
 			if err != nil {
 				t.Fatalf("buildResponseInvocation: %v", err)
@@ -339,7 +425,7 @@ func TestBuildResponseInvocationKeepsStatusAndContentTypeUnderEveryMode(t *testi
 // map is a valid invocation: the never-nil rule that used to force disclosure is
 // gone, so nil is indistinguishable from "the upstream sent none" by design.
 func TestBuildResponseInvocationAcceptsAnUpstreamWithNoHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Response: true, ResponseHeaders: HeadersConfig{Mode: HeaderModeAll}})
+	cfg := testConfig(t, Config{Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true}})
 	st := testStream()
 	st.Response.Headers = nil
 
@@ -359,7 +445,7 @@ func TestBuildResponseInvocationAcceptsAnUpstreamWithNoHeaders(t *testing.T) {
 // a truncation: asking a scanner to approve content it never saw is worse than
 // failing the callout and letting FailOpen decide.
 func TestBuildInvocationRejectsOversizedBody(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true, Response: true, MaxBodyBytes: 8})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}, Response: &PhaseConfig{Body: true}, MaxBodyBytes: 8})
 	body := filter.Body{Bytes: []byte("123456789"), Complete: true}
 
 	for _, tc := range []struct {
@@ -398,10 +484,24 @@ func TestBuildInvocationRejectsOversizedBody(t *testing.T) {
 			t.Fatalf("body = %q, want it intact", *inv.Request.Body)
 		}
 	})
+
+	// The limit bounds what EPE sends. A phase that collects nothing sends
+	// nothing, so an oversized buffer the adapter happened to deliver is not a
+	// failure — but the check must not be lost for the phases that do collect,
+	// which the subtests above are.
+	t.Run("not enforced when the phase collects no body", func(t *testing.T) {
+		bodyless := testConfig(t, Config{Request: &PhaseConfig{}, Response: &PhaseConfig{}, MaxBodyBytes: 8})
+		if _, err := buildRequestInvocation(bodyless, testUnitID(), testStream(), body); err != nil {
+			t.Errorf("buildRequestInvocation: %v", err)
+		}
+		if _, err := buildResponseInvocation(bodyless, testUnitID(), testStream(), body); err != nil {
+			t.Errorf("buildResponseInvocation: %v", err)
+		}
+	})
 }
 
 func TestBuildInvocationRejectsNonUTF8Body(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true, Response: true})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}, Response: &PhaseConfig{Body: true}})
 	body := filter.Body{Bytes: []byte{0xff, 0xfe}, Complete: true}
 
 	if _, err := buildRequestInvocation(cfg, testUnitID(), testStream(), body); err == nil ||
@@ -418,7 +518,7 @@ func TestBuildInvocationRejectsNonUTF8Body(t *testing.T) {
 // than a behaviour test: SourceContext has no token field today, and this fails
 // loudly if one is ever added and populated.
 func TestBuildInvocationNeverForwardsTheSandboxToken(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true, RequestHeaders: HeadersConfig{Mode: HeaderModeAll}})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true}})
 	st := testStream()
 
 	inv, err := buildRequestInvocation(cfg, testUnitID(), st, filter.Body{Complete: true})

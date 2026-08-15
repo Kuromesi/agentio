@@ -23,15 +23,18 @@ import (
 func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 	original := Config{
 		Endpoint: "https://callout.example.test/v1/check?tenant=a",
-		Request:  true,
-		Response: true,
-		RequestHeaders: HeadersConfig{
-			Mode:      HeaderModeAllowlist,
-			Allowlist: []string{"X-Tenant", "x-tenant", "X-Trace-ID"},
+		Request: &PhaseConfig{
+			Headers: HeadersConfig{
+				Mode:      HeaderModeAllowlist,
+				Allowlist: []string{"X-Tenant", "x-tenant", "X-Trace-ID"},
+			},
+			Body: true,
 		},
-		ResponseHeaders: HeadersConfig{
-			Mode:      HeaderModeAllowlist,
-			Allowlist: []string{"X-Upstream", "x-upstream", "X-Trace-ID"},
+		Response: &PhaseConfig{
+			Headers: HeadersConfig{
+				Mode:      HeaderModeAllowlist,
+				Allowlist: []string{"X-Upstream", "x-upstream", "X-Trace-ID"},
+			},
 		},
 	}
 
@@ -45,24 +48,71 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 	if got.MaxBodyBytes != 1<<20 {
 		t.Errorf("MaxBodyBytes = %d, want %d", got.MaxBodyBytes, 1<<20)
 	}
-	wantHeaders := HeadersConfig{
-		Mode:      HeaderModeAllowlist,
-		Allowlist: []string{"x-tenant", "x-trace-id"},
+	wantRequest := PhaseConfig{
+		Headers: HeadersConfig{
+			Mode:      HeaderModeAllowlist,
+			Allowlist: []string{"x-tenant", "x-trace-id"},
+		},
+		Body: true,
 	}
-	if !reflect.DeepEqual(got.RequestHeaders, wantHeaders) {
-		t.Errorf("RequestHeaders = %#v, want %#v", got.RequestHeaders, wantHeaders)
+	if !reflect.DeepEqual(*got.Request, wantRequest) {
+		t.Errorf("Request = %#v, want %#v", *got.Request, wantRequest)
 	}
-	wantResponseHeaders := HeadersConfig{
-		Mode:      HeaderModeAllowlist,
-		Allowlist: []string{"x-upstream", "x-trace-id"},
+	wantResponse := PhaseConfig{
+		Headers: HeadersConfig{
+			Mode:      HeaderModeAllowlist,
+			Allowlist: []string{"x-upstream", "x-trace-id"},
+		},
 	}
-	if !reflect.DeepEqual(got.ResponseHeaders, wantResponseHeaders) {
-		t.Errorf("ResponseHeaders = %#v, want %#v", got.ResponseHeaders, wantResponseHeaders)
+	if !reflect.DeepEqual(*got.Response, wantResponse) {
+		t.Errorf("Response = %#v, want %#v", *got.Response, wantResponse)
+	}
+}
+
+// TestConfigEffectiveReturnsADeepCopy is the aliasing bite. With pointer phase
+// fields a shallow struct copy would hand the filter the caller's PhaseConfig,
+// so a later edit to the config the operator built would reach into a running
+// filter and break the "owned copy safe to retain" promise.
+func TestConfigEffectiveReturnsADeepCopy(t *testing.T) {
+	in := Config{
+		Endpoint: "https://callout.example.test/check",
+		Request: &PhaseConfig{
+			Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"X-Tenant"}},
+			Body:    true,
+		},
+		Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}},
 	}
 
-	got.RequestHeaders.Allowlist[0] = "changed"
-	if original.RequestHeaders.Allowlist[0] != "X-Tenant" {
-		t.Fatal("Effective mutated or aliased the caller-owned allowlist")
+	got, err := in.Effective()
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if got.Request == in.Request {
+		t.Error("Effective returned the caller's request PhaseConfig pointer")
+	}
+	if got.Response == in.Response {
+		t.Error("Effective returned the caller's response PhaseConfig pointer")
+	}
+
+	// Mutate everything reachable through the input after the call. Nothing the
+	// filter now holds may move.
+	in.Request.Body = false
+	in.Request.Headers.Mode = HeaderModeNone
+	in.Request.Headers.Allowlist[0] = "x-hijacked"
+	in.Response.Headers.Mode = HeaderModeNone
+
+	if !got.Request.Body {
+		t.Error("mutating the caller's Request.Body changed the effective copy")
+	}
+	if got.Request.Headers.Mode != HeaderModeAllowlist {
+		t.Errorf("request header mode = %q, want it unaffected by the caller's edit", got.Request.Headers.Mode)
+	}
+	wantAllowlist := []string{"x-tenant"}
+	if !reflect.DeepEqual(got.Request.Headers.Allowlist, wantAllowlist) {
+		t.Errorf("request allowlist = %v, want %v: the slice is shared with the caller", got.Request.Headers.Allowlist, wantAllowlist)
+	}
+	if got.Response.Headers.Mode != HeaderModeAll {
+		t.Errorf("response header mode = %q, want it unaffected by the caller's edit", got.Response.Headers.Mode)
 	}
 }
 
@@ -72,39 +122,75 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 func TestConfigEffectiveDefaultsBothDirectionsToNone(t *testing.T) {
 	got, err := (Config{
 		Endpoint: "http://callout.default.svc/check",
-		Request:  true,
-		Response: true,
+		Request:  &PhaseConfig{},
+		Response: &PhaseConfig{},
 	}).Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
 	}
-	if got.RequestHeaders.Mode != HeaderModeNone {
-		t.Errorf("request header mode = %q, want %q", got.RequestHeaders.Mode, HeaderModeNone)
+	if got.Request.Headers.Mode != HeaderModeNone {
+		t.Errorf("request header mode = %q, want %q", got.Request.Headers.Mode, HeaderModeNone)
 	}
-	if len(got.RequestHeaders.Allowlist) != 0 {
-		t.Errorf("request header allowlist = %v, want empty", got.RequestHeaders.Allowlist)
+	if len(got.Request.Headers.Allowlist) != 0 {
+		t.Errorf("request header allowlist = %v, want empty", got.Request.Headers.Allowlist)
 	}
-	if got.ResponseHeaders.Mode != HeaderModeNone {
-		t.Errorf("response header mode = %q, want %q", got.ResponseHeaders.Mode, HeaderModeNone)
+	if got.Request.Body {
+		t.Error("an empty PhaseConfig collected a body, want body collection opt-in")
 	}
-	if len(got.ResponseHeaders.Allowlist) != 0 {
-		t.Errorf("response header allowlist = %v, want empty", got.ResponseHeaders.Allowlist)
+	if got.Response.Headers.Mode != HeaderModeNone {
+		t.Errorf("response header mode = %q, want %q", got.Response.Headers.Mode, HeaderModeNone)
 	}
+	if len(got.Response.Headers.Allowlist) != 0 {
+		t.Errorf("response header allowlist = %v, want empty", got.Response.Headers.Allowlist)
+	}
+	if got.Response.Body {
+		t.Error("an empty PhaseConfig collected a body, want body collection opt-in")
+	}
+}
+
+// TestConfigEffectiveAcceptsEitherPhaseAlone pins that presence is enablement:
+// the disabled direction stays nil rather than becoming a defaulted phase.
+func TestConfigEffectiveAcceptsEitherPhaseAlone(t *testing.T) {
+	t.Run("request only", func(t *testing.T) {
+		got, err := (Config{
+			Endpoint: "https://callout.example.test/check",
+			Request:  &PhaseConfig{},
+		}).Effective()
+		if err != nil {
+			t.Fatalf("Effective: %v", err)
+		}
+		if got.Request == nil {
+			t.Fatal("the enabled request phase was dropped")
+		}
+		if got.Response != nil {
+			t.Errorf("Response = %#v, want nil for a disabled phase", got.Response)
+		}
+	})
+
+	t.Run("response only", func(t *testing.T) {
+		got, err := (Config{
+			Endpoint: "https://callout.example.test/check",
+			Response: &PhaseConfig{},
+		}).Effective()
+		if err != nil {
+			t.Fatalf("Effective: %v", err)
+		}
+		if got.Response == nil {
+			t.Fatal("the enabled response phase was dropped")
+		}
+		if got.Request != nil {
+			t.Errorf("Request = %#v, want nil for a disabled phase", got.Request)
+		}
+	})
 }
 
 func TestConfigEffectivePreservesExplicitOverrides(t *testing.T) {
 	got, err := (Config{
 		Endpoint:     "https://callout.example.test/check",
-		Response:     true,
+		Response:     &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true},
 		Timeout:      2 * time.Second,
 		MaxBodyBytes: 8 << 20,
 		FailOpen:     true,
-		RequestHeaders: HeadersConfig{
-			Mode: HeaderModeAll,
-		},
-		ResponseHeaders: HeadersConfig{
-			Mode: HeaderModeAll,
-		},
 	}).Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
@@ -112,10 +198,13 @@ func TestConfigEffectivePreservesExplicitOverrides(t *testing.T) {
 	if got.Timeout != 2*time.Second || got.MaxBodyBytes != 8<<20 || !got.FailOpen {
 		t.Errorf("explicit settings were not preserved: %+v", got)
 	}
+	if !got.Response.Body {
+		t.Error("Response.Body was not preserved")
+	}
 }
 
 func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
-	valid := Config{Endpoint: "https://callout.example.test/check", Request: true}
+	valid := Config{Endpoint: "https://callout.example.test/check", Request: &PhaseConfig{}}
 	tests := []struct {
 		name    string
 		mutate  func(*Config)
@@ -123,7 +212,7 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 	}{
 		{
 			name:    "no phase",
-			mutate:  func(c *Config) { c.Request = false },
+			mutate:  func(c *Config) { c.Request = nil },
 			wantErr: "phase",
 		},
 		{
@@ -186,12 +275,12 @@ func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T)
 	}{
 		{
 			name:       "request",
-			field:      func(c *Config) *HeadersConfig { return &c.RequestHeaders },
+			field:      func(c *Config) *HeadersConfig { return &c.Request.Headers },
 			credential: "authorization",
 		},
 		{
 			name:       "response",
-			field:      func(c *Config) *HeadersConfig { return &c.ResponseHeaders },
+			field:      func(c *Config) *HeadersConfig { return &c.Response.Headers },
 			credential: "set-cookie",
 		},
 	}
@@ -256,7 +345,11 @@ func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T)
 		t.Run(direction.name, func(t *testing.T) {
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
-					cfg := Config{Endpoint: "https://callout.example.test/check", Request: true, Response: true}
+					cfg := Config{
+						Endpoint: "https://callout.example.test/check",
+						Request:  &PhaseConfig{},
+						Response: &PhaseConfig{},
+					}
 					tt.mutate(direction.field(&cfg), direction.credential)
 					_, err := cfg.Effective()
 					if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
@@ -283,29 +376,27 @@ func TestConfigEffectiveKeepsTheNeverForwardSetsPerDirection(t *testing.T) {
 
 	t.Run("a request allowlist may name response credentials", func(t *testing.T) {
 		got, err := (Config{
-			Endpoint:       "https://callout.example.test/check",
-			Request:        true,
-			RequestHeaders: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: responseNames},
+			Endpoint: "https://callout.example.test/check",
+			Request:  &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: responseNames}},
 		}).Effective()
 		if err != nil {
 			t.Fatalf("Effective rejected %v in a request allowlist: %v", responseNames, err)
 		}
-		if !reflect.DeepEqual(got.RequestHeaders.Allowlist, responseNames) {
-			t.Errorf("request allowlist = %v, want %v", got.RequestHeaders.Allowlist, responseNames)
+		if !reflect.DeepEqual(got.Request.Headers.Allowlist, responseNames) {
+			t.Errorf("request allowlist = %v, want %v", got.Request.Headers.Allowlist, responseNames)
 		}
 	})
 
 	t.Run("a response allowlist may name request credentials", func(t *testing.T) {
 		got, err := (Config{
-			Endpoint:        "https://callout.example.test/check",
-			Response:        true,
-			ResponseHeaders: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: requestNames},
+			Endpoint: "https://callout.example.test/check",
+			Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: requestNames}},
 		}).Effective()
 		if err != nil {
 			t.Fatalf("Effective rejected %v in a response allowlist: %v", requestNames, err)
 		}
-		if !reflect.DeepEqual(got.ResponseHeaders.Allowlist, requestNames) {
-			t.Errorf("response allowlist = %v, want %v", got.ResponseHeaders.Allowlist, requestNames)
+		if !reflect.DeepEqual(got.Response.Headers.Allowlist, requestNames) {
+			t.Errorf("response allowlist = %v, want %v", got.Response.Headers.Allowlist, requestNames)
 		}
 	})
 }

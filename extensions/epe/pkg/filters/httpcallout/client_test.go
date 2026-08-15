@@ -31,7 +31,7 @@ import (
 // calloutInvocation builds a valid request-phase invocation for client tests.
 func calloutInvocation(t *testing.T) Invocation {
 	t.Helper()
-	cfg := testConfig(t, Config{Request: true})
+	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
 	inv, err := buildRequestInvocation(cfg, testUnitID(), testStream(), filter.Body{Bytes: []byte("body"), Complete: true})
 	if err != nil {
 		t.Fatalf("buildRequestInvocation: %v", err)
@@ -62,7 +62,7 @@ func serveDecision(t *testing.T, handler http.HandlerFunc) (Config, *HTTPClient)
 	// Done would deadlock Close unless this releases it first.
 	t.Cleanup(func() { close(done) })
 
-	cfg, err := Config{Endpoint: server.URL, Request: true}.Effective()
+	cfg, err := Config{Endpoint: server.URL, Request: &PhaseConfig{Body: true}}.Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestHTTPClientReportsATransportFailureWithoutTheEndpoint(t *testing.T) {
 	endpoint := server.URL
 	server.Close()
 
-	cfg, err := Config{Endpoint: endpoint, Request: true}.Effective()
+	cfg, err := Config{Endpoint: endpoint, Request: &PhaseConfig{Body: true}}.Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
 	}
