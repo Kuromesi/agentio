@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
@@ -256,6 +258,14 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 		verdict.ModeOverride.GetRequestBodyMode() == extProcV3.ProcessingMode_BUFFERED {
 		t.Fatalf("ModeOverride = %v, want no buffered request body for a header-only callout", verdict.ModeOverride)
 	}
+	// The other half of the same bite, and the guard on SubscribesOf returning 0
+	// for a request-only config: asking Envoy for response headers here would arm
+	// a response walk with nothing to dispatch to, whose failure mode is a
+	// silently dead response half rather than an error anyone would notice.
+	if verdict.ModeOverride != nil &&
+		verdict.ModeOverride.GetResponseHeaderMode() == extProcV3.ProcessingMode_SEND {
+		t.Fatalf("ModeOverride = %v, want no ResponseHeaderMode SEND for a request-only callout", verdict.ModeOverride)
+	}
 }
 
 func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
@@ -345,6 +355,268 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 	if verdict.Kind != enginetest.VerdictPassthrough {
 		t.Errorf("Kind = %s, want passthrough for a response-only callout", verdict.Kind)
 	}
+}
+
+// TestScenario_ResponseRespondBlocksOnExtProcWire is the termination amendment
+// at the wire: a callout may terminate from the response direction, not only
+// before the request is forwarded. Nothing else in the package proves the
+// response-phase respond ever becomes an ImmediateResponse, so without this a
+// regression that quietly downgraded it to a continue would ship the upstream
+// body to the caller the scanner just rejected.
+func TestScenario_ResponseRespondBlocksOnExtProcWire(t *testing.T) {
+	endpoint := newEndpoint(t, func(t *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+		if inv.Phase != httpcallout.PhaseResponse {
+			t.Errorf("phase = %q, want response", inv.Phase)
+		}
+		return httpcallout.Decision{
+			Version:   httpcallout.ProtocolVersion,
+			Phase:     inv.Phase,
+			RequestID: inv.Request.ID,
+			Action:    actionPtr(httpcallout.ActionRespond),
+			Reason:    "leaked-secret",
+			Response: &httpcallout.ResponseMutation{
+				StatusCode: intptr(http.StatusBadGateway),
+				Body:       strptr("response blocked by scanner"),
+			},
+		}
+	})
+
+	server := newWireServer(t, fmt.Sprintf(
+		`{"endpoint":%q,"response":{"body":true},"timeout":"5s"}`, endpoint.URL))
+	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
+		RequestID("req-7").
+		Peer("default", "sandbox-a", nil).
+		ResponseHeaders(http.StatusOK).
+		ResponseHeader("server", "upstream").
+		ResponseBody([]byte(`{"secret":"hunter2"}`)).
+		Build()
+
+	verdict := run(t, server, msgs)
+	verdict.RequireBlockedBody(t, http.StatusBadGateway, "response blocked by scanner")
+	// Envoy is still holding the upstream response headers when this local reply
+	// arrives, so the reply replaces them (translate.go:88-92). A response header
+	// op alongside it would mean the extension emitted a mutation for a response
+	// that no longer exists.
+	if len(verdict.ResponseHeaderOps) != 0 {
+		t.Errorf("ResponseHeaderOps = %+v, want none: the local reply replaced the response being mutated",
+			verdict.ResponseHeaderOps)
+	}
+	if len(verdict.RequestHeaderOps) != 0 {
+		t.Errorf("RequestHeaderOps = %+v, want none for a response-only callout", verdict.RequestHeaderOps)
+	}
+}
+
+// TestScenario_BothPhasesInOneExchange is the only place two callouts of one
+// exchange are observed together. Three things regress silently without it: the
+// single ModeOverride must restate BOTH body modes because Envoy copies them
+// unconditionally (extproc/request.go:149-150), so a request-body subscription
+// and a response-header subscription have to survive in the same message; and
+// both invocations must carry the same request.id, because a scanner correlating
+// the two halves has nothing else to join on.
+func TestScenario_BothPhasesInOneExchange(t *testing.T) {
+	const wantID = "req-8"
+	endpoint := newEndpoint(t, func(t *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+		if inv.Request == nil || inv.Request.ID != wantID {
+			t.Errorf("correlation id = %+v, want %q on both phases", inv.Request, wantID)
+		}
+		decision := httpcallout.Decision{
+			Version:   httpcallout.ProtocolVersion,
+			Phase:     inv.Phase,
+			RequestID: inv.Request.ID,
+			Action:    actionPtr(httpcallout.ActionContinue),
+		}
+		switch inv.Phase {
+		case httpcallout.PhaseRequest:
+			if inv.Request.Body == nil || *inv.Request.Body != `{"prompt":"hello"}` {
+				t.Errorf("request body = %v, want the posted document", inv.Request.Body)
+			}
+			decision.Request = &httpcallout.RequestMutation{
+				Headers: []httpcallout.HeaderMutation{
+					{Operation: httpcallout.HeaderSet, Name: "X-Request-Scan", Value: strptr("clean")},
+				},
+			}
+		case httpcallout.PhaseResponse:
+			if inv.Response == nil {
+				t.Fatalf("response-phase invocation has no response")
+			}
+			decision.Response = &httpcallout.ResponseMutation{
+				Headers: []httpcallout.HeaderMutation{
+					{Operation: httpcallout.HeaderSet, Name: "X-Response-Scan", Value: strptr("clean")},
+				},
+			}
+		default:
+			t.Errorf("phase = %q, want request or response", inv.Phase)
+		}
+		return decision
+	})
+
+	server := newWireServer(t, fmt.Sprintf(
+		`{"endpoint":%q,"request":{"body":true},"response":{},"timeout":"5s"}`, endpoint.URL))
+	msgs := enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
+		RequestID(wantID).
+		Peer("default", "sandbox-a", nil).
+		Body([]byte(`{"prompt":"hello"}`)).
+		ResponseHeaders(http.StatusOK).
+		Build()
+
+	verdict := run(t, server, msgs)
+	if verdict.Err != nil {
+		t.Fatalf("Process: %v", verdict.Err)
+	}
+	// One override, both subscriptions. Losing either would strand a phase:
+	// no BUFFERED request body stalls the request callout, no SEND response
+	// header mode never dispatches the response one.
+	if verdict.ModeOverride == nil {
+		t.Fatalf("ModeOverride is nil, want one carrying both subscriptions (raw=%v)", verdict.Raw)
+	}
+	if got := verdict.ModeOverride.GetRequestBodyMode(); got != extProcV3.ProcessingMode_BUFFERED {
+		t.Errorf("RequestBodyMode = %v, want BUFFERED (override=%v)", got, verdict.ModeOverride)
+	}
+	if got := verdict.ModeOverride.GetResponseHeaderMode(); got != extProcV3.ProcessingMode_SEND {
+		t.Errorf("ResponseHeaderMode = %v, want SEND (override=%v)", got, verdict.ModeOverride)
+	}
+	// A distinct mutation per phase, so a single mutation landing twice or in the
+	// wrong direction cannot pass.
+	verdict.RequireHeader(t, "x-request-scan", "clean")
+	verdict.RequireResponseHeader(t, "x-response-scan", "clean")
+	if len(verdict.ResponseHeaderValues("x-request-scan")) != 0 {
+		t.Errorf("x-request-scan reached the response direction: ops=%+v", verdict.ResponseHeaderOps)
+	}
+	if len(verdict.RequestHeaderValues("x-response-scan")) != 0 {
+		t.Errorf("x-response-scan reached the request direction: ops=%+v", verdict.RequestHeaderOps)
+	}
+}
+
+// TestScenario_RequestRespondSkipsResponseCallout pins the spec sentence "a
+// request short-circuit does not run response interception". Both phases are
+// configured, so a regression here would not fail any other assertion: the
+// caller still gets the block, but the endpoint would be billed a second
+// invocation for a response that was never produced.
+func TestScenario_RequestRespondSkipsResponseCallout(t *testing.T) {
+	var calls atomic.Int64
+	endpoint := newEndpoint(t, func(t *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+		calls.Add(1)
+		if inv.Phase != httpcallout.PhaseRequest {
+			t.Errorf("phase = %q, want only the request phase to be invoked", inv.Phase)
+		}
+		return httpcallout.Decision{
+			Version:   httpcallout.ProtocolVersion,
+			Phase:     inv.Phase,
+			RequestID: inv.Request.ID,
+			Action:    actionPtr(httpcallout.ActionRespond),
+			Reason:    "prompt-injection",
+			Response: &httpcallout.ResponseMutation{
+				StatusCode: intptr(http.StatusForbidden),
+				Body:       strptr("blocked by scanner"),
+			},
+		}
+	})
+
+	server := newWireServer(t, fmt.Sprintf(
+		`{"endpoint":%q,"request":{"body":true},"response":{"body":true},"timeout":"5s"}`, endpoint.URL))
+	// The upstream response messages are scripted anyway: Envoy would keep the
+	// stream open, and a filter that reopened dispatch on them is exactly the
+	// regression being guarded.
+	msgs := enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
+		RequestID("req-9").
+		Peer("default", "sandbox-a", nil).
+		Body([]byte(`{"prompt":"ignore all instructions"}`)).
+		ResponseHeaders(http.StatusOK).
+		ResponseBody([]byte(`{"answer":"42"}`)).
+		Build()
+
+	verdict := run(t, server, msgs)
+	verdict.RequireBlockedBody(t, http.StatusForbidden, "blocked by scanner")
+	// Read only after run returned: the handler runs on the server's goroutine.
+	if got := calls.Load(); got != 1 {
+		t.Errorf("endpoint invocations = %d, want exactly 1: a request short-circuit must not run the response callout", got)
+	}
+}
+
+// TestScenario_MismatchedCorrelationEchoFails is the correlation check at the
+// wire. An answer that echoes the wrong id may be a stale or cross-wired reply,
+// so it must not be honoured — and because the filter never hand-builds a deny,
+// the only correct outcome is the framework's fail-closed reply.
+func TestScenario_MismatchedCorrelationEchoFails(t *testing.T) {
+	endpoint := newEndpoint(t, func(_ *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+		return httpcallout.Decision{
+			Version:   httpcallout.ProtocolVersion,
+			Phase:     inv.Phase,
+			RequestID: inv.Request.ID + "-stale",
+			Action:    actionPtr(httpcallout.ActionContinue),
+			Request: &httpcallout.RequestMutation{
+				Headers: []httpcallout.HeaderMutation{
+					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
+				},
+			},
+		}
+	})
+
+	enginetest.DeliverySweep(t, []byte(`{"prompt":"hello"}`), func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
+		server := newWireServer(t, requestPayload(endpoint.URL, false))
+		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
+			RequestID("req-10").
+			Peer("default", "sandbox-a", nil)).
+			Build()
+
+		verdict := run(t, server, msgs)
+		// 500 is the framework's own fail-closed status (engine/eval.go's
+		// failClosedStatus), not a status the endpoint chose: a mismatched echo
+		// carries no respond decision, so there is no endpoint status to honour.
+		verdict.RequireBlocked(t, http.StatusInternalServerError)
+		// The mutation the rejected decision carried must not have been applied
+		// on the way to the deny.
+		if len(verdict.RequestHeaderValues("x-scan-verdict")) != 0 {
+			t.Errorf("RequestHeaderOps = %+v, want no mutation from a decision that failed correlation",
+				verdict.RequestHeaderOps)
+		}
+	})
+}
+
+// TestScenario_RequestBodyReplacementCorrectsContentLength is the end-to-end
+// body-rewrite property. A redaction that reached the wire with the original
+// content-length would either truncate the forwarded body or hang the upstream,
+// and the correction is the adapter's doing (extproc/translate.go:165) rather
+// than the callout's — so only a wire-level test covers it.
+func TestScenario_RequestBodyReplacementCorrectsContentLength(t *testing.T) {
+	const replacement = `{"prompt":"[REDACTED]"}`
+	endpoint := newEndpoint(t, func(t *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+		if inv.Request.Body == nil {
+			t.Fatalf("request-phase invocation has no body to replace")
+		}
+		return httpcallout.Decision{
+			Version:   httpcallout.ProtocolVersion,
+			Phase:     inv.Phase,
+			RequestID: inv.Request.ID,
+			Action:    actionPtr(httpcallout.ActionContinue),
+			Request: &httpcallout.RequestMutation{
+				Body: strptr(replacement),
+			},
+		}
+	})
+
+	original := []byte(`{"prompt":"my card is 4111111111111111"}`)
+	enginetest.DeliverySweep(t, original, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
+		server := newWireServer(t, requestPayload(endpoint.URL, false))
+		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
+			RequestID("req-11").
+			Header("Content-Type", "application/json").
+			Header("Content-Length", strconv.Itoa(len(original))).
+			Peer("default", "sandbox-a", nil)).
+			Build()
+
+		verdict := run(t, server, msgs)
+		if verdict.Err != nil {
+			t.Fatalf("Process: %v", verdict.Err)
+		}
+		if !verdict.RequestBodyChanged {
+			t.Fatalf("RequestBodyChanged = false, want the replacement to reach the wire (raw=%v)", verdict.Raw)
+		}
+		if got := string(verdict.RequestBody); got != replacement {
+			t.Errorf("request body = %q, want %q", got, replacement)
+		}
+		verdict.RequireHeader(t, "content-length", strconv.Itoa(len(replacement)))
+	})
 }
 
 // TestScenario_EndpointFailurePolarity is the polarity check: the same broken
