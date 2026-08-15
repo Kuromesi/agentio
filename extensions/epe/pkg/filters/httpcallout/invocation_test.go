@@ -500,17 +500,33 @@ func TestBuildInvocationRejectsOversizedBody(t *testing.T) {
 	})
 }
 
-func TestBuildInvocationRejectsNonUTF8Body(t *testing.T) {
+// TestBuildInvocationLeavesTheUTF8ContractToValidate pins where the invariant
+// lives rather than that some layer holds it. bodyText no longer scans the body:
+// filter.callout validates every invocation before spending a round trip
+// (filter.go:142), so checking in both places walked a large body twice for one
+// contract. What must stay true is that a non-UTF-8 body cannot reach the
+// endpoint, which is asserted here against the layer that now owns it.
+func TestBuildInvocationLeavesTheUTF8ContractToValidate(t *testing.T) {
 	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}, Response: &PhaseConfig{Body: true}})
 	body := filter.Body{Bytes: []byte{0xff, 0xfe}, Complete: true}
 
-	if _, err := buildRequestInvocation(cfg, testUnitID(), testStream(), body); err == nil ||
-		!strings.Contains(strings.ToLower(err.Error()), "utf-8") {
-		t.Errorf("request build error = %v, want one naming UTF-8", err)
-	}
-	if _, err := buildResponseInvocation(cfg, testUnitID(), testStream(), body); err == nil ||
-		!strings.Contains(strings.ToLower(err.Error()), "utf-8") {
-		t.Errorf("response build error = %v, want one naming UTF-8", err)
+	for _, tc := range []struct {
+		name  string
+		build func() (Invocation, error)
+	}{
+		{"request", func() (Invocation, error) { return buildRequestInvocation(cfg, testUnitID(), testStream(), body) }},
+		{"response", func() (Invocation, error) { return buildResponseInvocation(cfg, testUnitID(), testStream(), body) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv, err := tc.build()
+			if err != nil {
+				t.Fatalf("the builder rejected the body itself: %v", err)
+			}
+			err = inv.Validate()
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "utf-8") {
+				t.Errorf("Validate error = %v, want one naming UTF-8", err)
+			}
+		})
 	}
 }
 

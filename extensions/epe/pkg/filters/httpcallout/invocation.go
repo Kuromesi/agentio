@@ -15,7 +15,6 @@ package httpcallout
 
 import (
 	"fmt"
-	"unicode/utf8"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
@@ -172,15 +171,20 @@ func forwardedHeaders(cfg HeadersConfig, headers map[string]string, neverForward
 // prefix and treating its verdict as covering the whole body is a hole, not a
 // degradation. The limit bounds what EPE sends, so it applies only when the body
 // is actually collected.
+//
+// The UTF-8 contract is not checked here. Invocation.Validate is the one place
+// that enforces it, and filter.callout runs it on every invocation before the
+// round trip, so scanning here as well walked a 1 MiB body twice for one
+// invariant. Validate has to keep the check regardless of what this function
+// does: json.Marshal does not reject invalid UTF-8, it silently replaces each
+// bad byte with U+FFFD, so dropping it there would send a scanner a mangled body
+// and treat its verdict as covering the real one.
 func bodyText(cfg Config, phase PhaseConfig, body filter.Body, direction string) (*string, error) {
 	if !phase.Body {
 		return nil, nil
 	}
 	if int64(len(body.Bytes)) > cfg.MaxBodyBytes {
 		return nil, fmt.Errorf("callout %s body is %d bytes, over the %d byte limit", direction, len(body.Bytes), cfg.MaxBodyBytes)
-	}
-	if !utf8.Valid(body.Bytes) {
-		return nil, fmt.Errorf("callout %s body is not valid UTF-8", direction)
 	}
 	text := string(body.Bytes)
 	return &text, nil
