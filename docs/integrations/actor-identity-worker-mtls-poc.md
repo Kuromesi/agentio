@@ -208,6 +208,36 @@ $ cargo test --lib test_policy_watcher_closes_connections_on_actor_generation_ch
     --no-default-features -F tls-boring
 ```
 
+## KinD PoC result
+
+The contract was also exercised on the `substrate-poc` KinD cluster on
+2026-08-15 with these images:
+
+```text
+localhost:5000/pilot:actor-context-poc
+localhost:5000/ztunnel:actor-context-poc
+```
+
+One `ate-demo-egress` Worker was labeled as `actor-poc-001`, generation 7.
+Its ztunnel admin config dump received a per-proxy WCDS value containing the
+Actor UID, name, atespace, canonical labels, `role=reader`, `team=search`, and
+generation 7. The other Worker had no ActorContext, confirming that the value
+was not leaked through the shared global WorkloadConfig object.
+
+Updating only the first Worker's generation to 8 changed its live config dump
+to generation 8. ztunnel recorded the expected fencing event:
+
+```text
+previous_actor_binding=Some(("actor-poc-001", 7))
+next_actor_binding=Some(("actor-poc-001", 8))
+all connections closed because the actor binding changed
+```
+
+The cluster did not mount an Actor token directory, so the optional file-token
+path was validated by the focused ztunnel test rather than this cluster run.
+That test used two token files and verified that the HBONE request selected
+only the file whose name matched the WCDS Actor UID.
+
 ## PoC limitations
 
 - Multiple simultaneous Actors in one Worker network namespace need an
