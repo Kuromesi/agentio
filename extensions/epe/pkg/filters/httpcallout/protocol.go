@@ -211,7 +211,13 @@ type Decision struct {
 	// omitting it would make the absent and empty cases indistinguishable.
 	Phase     Phase  `json:"phase"`
 	RequestID string `json:"requestId"`
-	Action    Action `json:"action"`
+	// Action is optional: an absent action means continue. The endpoint is a
+	// third-party service, and its ergonomics outrank strictness we can afford
+	// internally — an observing callout should not have to restate the only
+	// answer it ever gives. Omission can only ever reach the permissive outcome:
+	// respond still requires an explicit action plus a status, so nothing is
+	// denied, mutated, or terminated by silence.
+	Action *Action `json:"action,omitempty"`
 	// Reason is an optional audit note, legal only with respond. It feeds
 	// RESPONSE_CODE_DETAILS, which lands in one access log line per blocked
 	// request; reasonMaxBytes bounds it because nothing downstream does.
@@ -223,6 +229,15 @@ type Decision struct {
 // reasonMaxBytes caps Reason. Envoy imposes no limit of its own on
 // ImmediateResponse.details.
 const reasonMaxBytes = 256
+
+// action resolves the optional field. Every reader must go through this rather
+// than dereferencing, so the absent-means-continue rule lives in one place.
+func (d Decision) action() Action {
+	if d.Action == nil {
+		return ActionContinue
+	}
+	return *d.Action
+}
 
 // Validate enforces the result shape allowed by the invocation being answered.
 // The expected phase and correlation ID come from inv rather than the caller, so
@@ -251,11 +266,12 @@ func (d Decision) Validate(inv Invocation) error {
 	if d.RequestID != expectedID {
 		return fmt.Errorf("callout decision request id %q does not echo %q", d.RequestID, expectedID)
 	}
-	if d.Action != ActionContinue && d.Action != ActionRespond {
-		return fmt.Errorf("unknown callout action %q", d.Action)
+	action := d.action()
+	if action != ActionContinue && action != ActionRespond {
+		return fmt.Errorf("unknown callout action %q", action)
 	}
 
-	if d.Action == ActionRespond {
+	if action == ActionRespond {
 		if d.Request != nil {
 			return fmt.Errorf("respond action must not contain a request mutation")
 		}

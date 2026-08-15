@@ -27,13 +27,14 @@ func decisionAction(phase Phase, d Decision) (filter.Action, error) {
 		return filter.Action{}, fmt.Errorf("unknown callout phase %q", phase)
 	}
 
-	switch d.Action {
+	// An absent action is a continue; d.action is the one place that rule lives.
+	switch action := d.action(); action {
 	case ActionRespond:
 		return respondAction(d)
 	case ActionContinue:
 		return continueAction(phase, d)
 	default:
-		return filter.Action{}, fmt.Errorf("unknown callout action %q", d.Action)
+		return filter.Action{}, fmt.Errorf("unknown callout action %q", action)
 	}
 }
 

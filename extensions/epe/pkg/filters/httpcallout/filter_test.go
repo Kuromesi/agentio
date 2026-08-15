@@ -38,7 +38,7 @@ func (f *fakeClient) Call(_ context.Context, _ Config, inv Invocation) (Decision
 			Version:   ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    ActionContinue,
+			Action:    actionPtr(ActionContinue),
 		}, nil
 	}
 	return f.decide(inv)
@@ -180,7 +180,7 @@ func TestFilterBodylessPhaseCallsOutFromTheHeadersPhase(t *testing.T) {
 				Version:   ProtocolVersion,
 				Phase:     inv.Phase,
 				RequestID: inv.Request.ID,
-				Action:    ActionContinue,
+				Action:    actionPtr(ActionContinue),
 				Request: &RequestMutation{Headers: []HeaderMutation{
 					{Operation: HeaderSet, Name: "X-Reviewed", Value: &value},
 				}},
@@ -238,7 +238,7 @@ func TestFilterHeadersPhaseRespondBlocks(t *testing.T) {
 			Version:   ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    ActionRespond,
+			Action:    actionPtr(ActionRespond),
 			Reason:    "denied at headers",
 			Response:  &ResponseMutation{StatusCode: &status},
 		}, nil
@@ -364,7 +364,7 @@ func TestFilterRequestBodyCallsOutAndAppliesTheDecision(t *testing.T) {
 			Version:   ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    ActionContinue,
+			Action:    actionPtr(ActionContinue),
 			Request: &RequestMutation{Headers: []HeaderMutation{
 				{Operation: HeaderSet, Name: "X-Reviewed", Value: &value},
 			}},
@@ -403,7 +403,7 @@ func TestFilterResponseBodyCallsOutAndAppliesTheDecision(t *testing.T) {
 			Version:   ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    ActionRespond,
+			Action:    actionPtr(ActionRespond),
 			Reason:    "secret in response",
 			Response:  &ResponseMutation{StatusCode: &status},
 		}, nil
@@ -468,7 +468,7 @@ func TestFilterReturnsAnErrorForEveryFailureMode(t *testing.T) {
 					Version:   ProtocolVersion,
 					Phase:     inv.Phase,
 					RequestID: "req-999",
-					Action:    ActionContinue,
+					Action:    actionPtr(ActionContinue),
 				}, nil
 			}},
 			body:    filter.Body{Complete: true},
@@ -482,7 +482,7 @@ func TestFilterReturnsAnErrorForEveryFailureMode(t *testing.T) {
 					Version:   ProtocolVersion,
 					Phase:     PhaseResponse,
 					RequestID: inv.Request.ID,
-					Action:    ActionContinue,
+					Action:    actionPtr(ActionContinue),
 				}, nil
 			}},
 			body:    filter.Body{Complete: true},
@@ -497,7 +497,7 @@ func TestFilterReturnsAnErrorForEveryFailureMode(t *testing.T) {
 					Version:   ProtocolVersion,
 					Phase:     inv.Phase,
 					RequestID: inv.Request.ID,
-					Action:    ActionContinue,
+					Action:    actionPtr(ActionContinue),
 					Request: &RequestMutation{Headers: []HeaderMutation{
 						{Operation: HeaderSet, Name: "Content-Length", Value: &value},
 					}},

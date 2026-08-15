@@ -27,7 +27,7 @@ func TestDecisionActionContinueWithoutMutations(t *testing.T) {
 			act, err := decisionAction(phase, Decision{
 				Version: ProtocolVersion,
 				Phase:   phase,
-				Action:  ActionContinue,
+				Action:  actionPtr(ActionContinue),
 			})
 			if err != nil {
 				t.Fatalf("decisionAction: %v", err)
@@ -46,7 +46,7 @@ func TestDecisionActionEmptyMutationObjectIsStillANoOp(t *testing.T) {
 	act, err := decisionAction(PhaseRequest, Decision{
 		Version: ProtocolVersion,
 		Phase:   PhaseRequest,
-		Action:  ActionContinue,
+		Action:  actionPtr(ActionContinue),
 		Request: &RequestMutation{},
 	})
 	if err != nil {
@@ -63,7 +63,7 @@ func TestDecisionActionRequestContinueMutates(t *testing.T) {
 	act, err := decisionAction(PhaseRequest, Decision{
 		Version: ProtocolVersion,
 		Phase:   PhaseRequest,
-		Action:  ActionContinue,
+		Action:  actionPtr(ActionContinue),
 		Request: &RequestMutation{
 			Headers: []HeaderMutation{
 				{Operation: HeaderSet, Name: "X-Reviewed", Value: &value},
@@ -99,7 +99,7 @@ func TestDecisionActionBodyPointerSemantics(t *testing.T) {
 		act, err := decisionAction(PhaseRequest, Decision{
 			Version: ProtocolVersion,
 			Phase:   PhaseRequest,
-			Action:  ActionContinue,
+			Action:  actionPtr(ActionContinue),
 			Request: &RequestMutation{Headers: []HeaderMutation{{Operation: HeaderSet, Name: "x-a", Value: &value}}},
 		})
 		if err != nil {
@@ -115,7 +115,7 @@ func TestDecisionActionBodyPointerSemantics(t *testing.T) {
 		act, err := decisionAction(PhaseRequest, Decision{
 			Version: ProtocolVersion,
 			Phase:   PhaseRequest,
-			Action:  ActionContinue,
+			Action:  actionPtr(ActionContinue),
 			Request: &RequestMutation{Body: &empty},
 		})
 		if err != nil {
@@ -134,7 +134,7 @@ func TestDecisionActionResponseContinueCarriesStatus(t *testing.T) {
 	act, err := decisionAction(PhaseResponse, Decision{
 		Version: ProtocolVersion,
 		Phase:   PhaseResponse,
-		Action:  ActionContinue,
+		Action:  actionPtr(ActionContinue),
 		Response: &ResponseMutation{
 			StatusCode: &status,
 			Headers:    []HeaderMutation{{Operation: HeaderSet, Name: "X-Reviewed", Value: &value}},
@@ -163,7 +163,7 @@ func TestDecisionActionStatusOnlyResponseContinue(t *testing.T) {
 	act, err := decisionAction(PhaseResponse, Decision{
 		Version:  ProtocolVersion,
 		Phase:    PhaseResponse,
-		Action:   ActionContinue,
+		Action:   actionPtr(ActionContinue),
 		Response: &ResponseMutation{StatusCode: &status},
 	})
 	if err != nil {
@@ -187,7 +187,7 @@ func TestDecisionActionRespondStopsWithTheReason(t *testing.T) {
 			act, err := decisionAction(phase, Decision{
 				Version: ProtocolVersion,
 				Phase:   phase,
-				Action:  ActionRespond,
+				Action:  actionPtr(ActionRespond),
 				Reason:  "secret detected in prompt",
 				Response: &ResponseMutation{
 					StatusCode: &status,
@@ -226,7 +226,7 @@ func TestDecisionActionRespondWithoutOptionalFields(t *testing.T) {
 	act, err := decisionAction(PhaseRequest, Decision{
 		Version:  ProtocolVersion,
 		Phase:    PhaseRequest,
-		Action:   ActionRespond,
+		Action:   actionPtr(ActionRespond),
 		Response: &ResponseMutation{StatusCode: &status},
 	})
 	if err != nil {
@@ -249,31 +249,31 @@ func TestDecisionActionRejectsUntranslatableDecisions(t *testing.T) {
 		{
 			name:     "respond without a response",
 			phase:    PhaseRequest,
-			decision: Decision{Action: ActionRespond},
+			decision: Decision{Action: actionPtr(ActionRespond)},
 			wantErr:  "response",
 		},
 		{
 			name:     "respond without a status",
 			phase:    PhaseRequest,
-			decision: Decision{Action: ActionRespond, Response: &ResponseMutation{}},
+			decision: Decision{Action: actionPtr(ActionRespond), Response: &ResponseMutation{}},
 			wantErr:  "status",
 		},
 		{
 			name:     "unknown action",
 			phase:    PhaseRequest,
-			decision: Decision{Action: Action("allow")},
+			decision: Decision{Action: actionPtr(Action("allow"))},
 			wantErr:  "action",
 		},
 		{
 			name:     "unknown phase",
 			phase:    Phase("trailers"),
-			decision: Decision{Action: ActionContinue},
+			decision: Decision{Action: actionPtr(ActionContinue)},
 			wantErr:  "phase",
 		},
 		{
 			name:  "unknown header operation",
 			phase: PhaseRequest,
-			decision: Decision{Action: ActionContinue, Request: &RequestMutation{Headers: []HeaderMutation{
+			decision: Decision{Action: actionPtr(ActionContinue), Request: &RequestMutation{Headers: []HeaderMutation{
 				{Operation: HeaderOperation("replace"), Name: "x-a", Value: &value},
 			}}},
 			wantErr: "operation",

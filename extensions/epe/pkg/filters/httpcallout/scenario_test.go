@@ -42,6 +42,10 @@ import (
 // concurrently, so it must not close over mutable state.
 type decisionFunc func(t *testing.T, inv httpcallout.Invocation) httpcallout.Decision
 
+// actionPtr spells out an action the wire contract lets a callout omit. These
+// scenarios state it so the endpoint's answer stays legible at the call site.
+func actionPtr(a httpcallout.Action) *httpcallout.Action { return &a }
+
 // newEndpoint starts a callout endpoint that decodes each invocation, hands it
 // to decide, and writes the returned decision. Assertions happen per
 // invocation: the harness may drive several requests through one endpoint, and
@@ -168,7 +172,7 @@ func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
 			Version:   httpcallout.ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    httpcallout.ActionContinue,
+			Action:    actionPtr(httpcallout.ActionContinue),
 			Request: &httpcallout.RequestMutation{
 				Headers: []httpcallout.HeaderMutation{
 					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
@@ -223,7 +227,7 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 			Version:   httpcallout.ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    httpcallout.ActionContinue,
+			Action:    actionPtr(httpcallout.ActionContinue),
 			Request: &httpcallout.RequestMutation{
 				Headers: []httpcallout.HeaderMutation{
 					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
@@ -260,7 +264,7 @@ func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
 			Version:   httpcallout.ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    httpcallout.ActionRespond,
+			Action:    actionPtr(httpcallout.ActionRespond),
 			Reason:    "prompt-injection",
 			Response: &httpcallout.ResponseMutation{
 				StatusCode: intptr(http.StatusForbidden),
@@ -302,7 +306,7 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 			Version:   httpcallout.ProtocolVersion,
 			Phase:     inv.Phase,
 			RequestID: inv.Request.ID,
-			Action:    httpcallout.ActionContinue,
+			Action:    actionPtr(httpcallout.ActionContinue),
 			Response: &httpcallout.ResponseMutation{
 				Headers: []httpcallout.HeaderMutation{
 					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},

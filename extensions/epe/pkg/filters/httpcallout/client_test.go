@@ -45,7 +45,7 @@ func decisionFor(inv Invocation) Decision {
 		Version:   ProtocolVersion,
 		Phase:     inv.Phase,
 		RequestID: inv.Request.ID,
-		Action:    ActionContinue,
+		Action:    actionPtr(ActionContinue),
 	}
 }
 
@@ -200,7 +200,7 @@ func TestHTTPClientRejectsAnOversizedDecision(t *testing.T) {
 	inv := calloutInvocation(t)
 	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		decision := decisionFor(inv)
-		decision.Action = ActionRespond
+		decision.Action = actionPtr(ActionRespond)
 		status := 403
 		padding := strings.Repeat("a", 4096)
 		decision.Response = &ResponseMutation{StatusCode: &status, Body: &padding}
