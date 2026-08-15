@@ -78,9 +78,10 @@ func BuildExtProcClusters(proxy *model.Proxy, config *model.AgentioConfig) []*cl
 		// dead replica was hit on every round_robin tick. consecutive_gateway_failure
 		// covers connect timeouts / 5xx from the upstream, which is what we expect
 		// when a replica is unhealthy. base_ejection_time keeps the host out long
-		// enough for k8s to drop it from the Endpoint slice. max_ejection_percent=100
-		// is safe here because the ext_proc filter is configured with
-		// failure_mode_allow so a fully-ejected cluster still lets traffic through.
+		// enough for k8s to drop it from the Endpoint slice. Limit ejection to 34%
+		// so one bad replica can be removed without ejecting every endpoint. If the
+		// remaining endpoints still fail, FailureModeAllow controls whether traffic
+		// continues or Envoy returns a local error.
 		OutlierDetection: &cluster.OutlierDetection{
 			ConsecutiveGatewayFailure:          &wrapperspb.UInt32Value{Value: 20},
 			EnforcingConsecutiveGatewayFailure: &wrapperspb.UInt32Value{Value: 100},
