@@ -260,8 +260,10 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 		}
 	})
 
+	// responseHeaders is explicit because disclosure is opt-in in both
+	// directions: without it the callout would see status and body only.
 	server := newWireServer(t, fmt.Sprintf(
-		`{"endpoint":%q,"response":true,"timeout":"5s"}`, endpoint.URL))
+		`{"endpoint":%q,"response":true,"timeout":"5s","responseHeaders":{"mode":"all"}}`, endpoint.URL))
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		RequestID("req-3").
 		Peer("default", "sandbox-a", nil).

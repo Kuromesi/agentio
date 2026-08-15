@@ -32,13 +32,16 @@ type spec struct {
 	// bare number would be ambiguous between seconds and milliseconds, and
 	// because zero means "use the default", a wrong guess would be silent
 	// instead of an error.
-	Timeout        string              `json:"timeout,omitempty"`
-	MaxBodyBytes   int64               `json:"maxBodyBytes,omitempty"`
-	FailOpen       bool                `json:"failOpen,omitempty"`
-	RequestHeaders *requestHeadersSpec `json:"requestHeaders,omitempty"`
+	Timeout         string       `json:"timeout,omitempty"`
+	MaxBodyBytes    int64        `json:"maxBodyBytes,omitempty"`
+	FailOpen        bool         `json:"failOpen,omitempty"`
+	RequestHeaders  *headersSpec `json:"requestHeaders,omitempty"`
+	ResponseHeaders *headersSpec `json:"responseHeaders,omitempty"`
 }
 
-type requestHeadersSpec struct {
+// headersSpec is the wire form of HeadersConfig, shared by both directions
+// because the modes mean the same thing in each.
+type headersSpec struct {
 	Mode      string   `json:"mode,omitempty"`
 	Allowlist []string `json:"allowlist,omitempty"`
 }
@@ -78,9 +81,15 @@ func parse(raw json.RawMessage) (Config, error) {
 		FailOpen:     s.FailOpen,
 	}
 	if s.RequestHeaders != nil {
-		cfg.RequestHeaders = RequestHeadersConfig{
-			Mode:      RequestHeaderMode(s.RequestHeaders.Mode),
+		cfg.RequestHeaders = HeadersConfig{
+			Mode:      HeaderMode(s.RequestHeaders.Mode),
 			Allowlist: s.RequestHeaders.Allowlist,
+		}
+	}
+	if s.ResponseHeaders != nil {
+		cfg.ResponseHeaders = HeadersConfig{
+			Mode:      HeaderMode(s.ResponseHeaders.Mode),
+			Allowlist: s.ResponseHeaders.Allowlist,
 		}
 	}
 	// Effective owns validation and defaulting, so a hand-built Config and a

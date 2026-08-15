@@ -26,11 +26,12 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	want := Config{
-		Endpoint:       "https://scanner.example.com/inspect",
-		Request:        true,
-		Timeout:        DefaultTimeout,
-		MaxBodyBytes:   DefaultMaxBodyBytes,
-		RequestHeaders: RequestHeadersConfig{Mode: RequestHeadersNone},
+		Endpoint:        "https://scanner.example.com/inspect",
+		Request:         true,
+		Timeout:         DefaultTimeout,
+		MaxBodyBytes:    DefaultMaxBodyBytes,
+		RequestHeaders:  HeadersConfig{Mode: HeaderModeNone},
+		ResponseHeaders: HeadersConfig{Mode: HeaderModeNone},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("parse = %#v, want %#v", cfg, want)
@@ -45,7 +46,8 @@ func TestParseReadsEveryField(t *testing.T) {
 		"timeout":"2s",
 		"maxBodyBytes":4096,
 		"failOpen":true,
-		"requestHeaders":{"mode":"allowlist","allowlist":["X-Tenant","x-tenant","X-Trace"]}
+		"requestHeaders":{"mode":"allowlist","allowlist":["X-Tenant","x-tenant","X-Trace"]},
+		"responseHeaders":{"mode":"allowlist","allowlist":["X-Upstream","x-upstream","X-Trace"]}
 	}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -57,10 +59,14 @@ func TestParseReadsEveryField(t *testing.T) {
 		Timeout:      2 * time.Second,
 		MaxBodyBytes: 4096,
 		FailOpen:     true,
-		RequestHeaders: RequestHeadersConfig{
-			Mode: RequestHeadersAllowlist,
+		RequestHeaders: HeadersConfig{
+			Mode: HeaderModeAllowlist,
 			// Effective lower-cases and de-duplicates.
 			Allowlist: []string{"x-tenant", "x-trace"},
+		},
+		ResponseHeaders: HeadersConfig{
+			Mode:      HeaderModeAllowlist,
+			Allowlist: []string{"x-upstream", "x-trace"},
 		},
 	}
 	if !reflect.DeepEqual(cfg, want) {
@@ -175,6 +181,21 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 			name:    "allowlist without allowlist mode",
 			raw:     `{"endpoint":"https://x.example.com","request":true,"requestHeaders":{"mode":"all","allowlist":["x-a"]}}`,
 			wantErr: "allowlist",
+		},
+		{
+			name:    "response allowlist naming an upstream credential",
+			raw:     `{"endpoint":"https://x.example.com","response":true,"responseHeaders":{"mode":"allowlist","allowlist":["Set-Cookie"]}}`,
+			wantErr: "never forwarded",
+		},
+		{
+			name:    "unknown response header mode",
+			raw:     `{"endpoint":"https://x.example.com","response":true,"responseHeaders":{"mode":"some"}}`,
+			wantErr: "mode",
+		},
+		{
+			name:    "unknown field inside responseHeaders",
+			raw:     `{"endpoint":"https://x.example.com","response":true,"responseHeaders":{"mode":"all","denylist":["x-a"]}}`,
+			wantErr: "denylist",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

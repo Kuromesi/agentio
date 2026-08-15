@@ -25,9 +25,13 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 		Endpoint: "https://callout.example.test/v1/check?tenant=a",
 		Request:  true,
 		Response: true,
-		RequestHeaders: RequestHeadersConfig{
-			Mode:      RequestHeadersAllowlist,
+		RequestHeaders: HeadersConfig{
+			Mode:      HeaderModeAllowlist,
 			Allowlist: []string{"X-Tenant", "x-tenant", "X-Trace-ID"},
+		},
+		ResponseHeaders: HeadersConfig{
+			Mode:      HeaderModeAllowlist,
+			Allowlist: []string{"X-Upstream", "x-upstream", "X-Trace-ID"},
 		},
 	}
 
@@ -41,12 +45,19 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 	if got.MaxBodyBytes != 1<<20 {
 		t.Errorf("MaxBodyBytes = %d, want %d", got.MaxBodyBytes, 1<<20)
 	}
-	wantHeaders := RequestHeadersConfig{
-		Mode:      RequestHeadersAllowlist,
+	wantHeaders := HeadersConfig{
+		Mode:      HeaderModeAllowlist,
 		Allowlist: []string{"x-tenant", "x-trace-id"},
 	}
 	if !reflect.DeepEqual(got.RequestHeaders, wantHeaders) {
 		t.Errorf("RequestHeaders = %#v, want %#v", got.RequestHeaders, wantHeaders)
+	}
+	wantResponseHeaders := HeadersConfig{
+		Mode:      HeaderModeAllowlist,
+		Allowlist: []string{"x-upstream", "x-trace-id"},
+	}
+	if !reflect.DeepEqual(got.ResponseHeaders, wantResponseHeaders) {
+		t.Errorf("ResponseHeaders = %#v, want %#v", got.ResponseHeaders, wantResponseHeaders)
 	}
 
 	got.RequestHeaders.Allowlist[0] = "changed"
@@ -55,19 +66,29 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 	}
 }
 
-func TestConfigEffectiveDefaultsRequestHeadersToNone(t *testing.T) {
+// TestConfigEffectiveDefaultsBothDirectionsToNone pins that disclosure is opt-in
+// in both directions: response headers carry upstream-minted credentials such as
+// set-cookie, so they are no more forwardable by default than request headers.
+func TestConfigEffectiveDefaultsBothDirectionsToNone(t *testing.T) {
 	got, err := (Config{
 		Endpoint: "http://callout.default.svc/check",
 		Request:  true,
+		Response: true,
 	}).Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
 	}
-	if got.RequestHeaders.Mode != RequestHeadersNone {
-		t.Errorf("request header mode = %q, want %q", got.RequestHeaders.Mode, RequestHeadersNone)
+	if got.RequestHeaders.Mode != HeaderModeNone {
+		t.Errorf("request header mode = %q, want %q", got.RequestHeaders.Mode, HeaderModeNone)
 	}
 	if len(got.RequestHeaders.Allowlist) != 0 {
 		t.Errorf("request header allowlist = %v, want empty", got.RequestHeaders.Allowlist)
+	}
+	if got.ResponseHeaders.Mode != HeaderModeNone {
+		t.Errorf("response header mode = %q, want %q", got.ResponseHeaders.Mode, HeaderModeNone)
+	}
+	if len(got.ResponseHeaders.Allowlist) != 0 {
+		t.Errorf("response header allowlist = %v, want empty", got.ResponseHeaders.Allowlist)
 	}
 }
 
@@ -78,8 +99,11 @@ func TestConfigEffectivePreservesExplicitOverrides(t *testing.T) {
 		Timeout:      2 * time.Second,
 		MaxBodyBytes: 8 << 20,
 		FailOpen:     true,
-		RequestHeaders: RequestHeadersConfig{
-			Mode: RequestHeadersAll,
+		RequestHeaders: HeadersConfig{
+			Mode: HeaderModeAll,
+		},
+		ResponseHeaders: HeadersConfig{
+			Mode: HeaderModeAll,
 		},
 	}).Effective()
 	if err != nil {
@@ -137,76 +161,6 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 			mutate:  func(c *Config) { c.MaxBodyBytes = -1 },
 			wantErr: "body",
 		},
-		{
-			name: "unknown request header mode",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeaderMode("unknown")
-			},
-			wantErr: "header mode",
-		},
-		{
-			name: "empty allowlist",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAllowlist
-			},
-			wantErr: "allowlist",
-		},
-		{
-			name: "invalid allowlist name",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAllowlist
-				c.RequestHeaders.Allowlist = []string{"bad header"}
-			},
-			wantErr: "header name",
-		},
-		{
-			name: "allowlist entries in none mode",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersNone
-				c.RequestHeaders.Allowlist = []string{"x-tenant"}
-			},
-			wantErr: "allowlist",
-		},
-		{
-			name: "allowlist entries in all mode",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAll
-				c.RequestHeaders.Allowlist = []string{"x-tenant"}
-			},
-			wantErr: "allowlist",
-		},
-		{
-			name: "allowlist naming authorization",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAllowlist
-				c.RequestHeaders.Allowlist = []string{"x-tenant", "authorization"}
-			},
-			wantErr: "never forwarded",
-		},
-		{
-			name: "allowlist naming proxy-authorization",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAllowlist
-				c.RequestHeaders.Allowlist = []string{"proxy-authorization"}
-			},
-			wantErr: "never forwarded",
-		},
-		{
-			name: "allowlist naming cookie",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAllowlist
-				c.RequestHeaders.Allowlist = []string{"cookie"}
-			},
-			wantErr: "never forwarded",
-		},
-		{
-			name: "allowlist naming mixed-case authorization",
-			mutate: func(c *Config) {
-				c.RequestHeaders.Mode = RequestHeadersAllowlist
-				c.RequestHeaders.Allowlist = []string{"Authorization"}
-			},
-			wantErr: "never forwarded",
-		},
 	}
 
 	for _, tt := range tests {
@@ -220,27 +174,169 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+// TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections runs one table
+// against both directions: the modes are identical in semantics, so a rule that
+// holds for the request side and not the response side would be a bug rather
+// than a design.
+func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T) {
+	directions := []struct {
+		name       string
+		field      func(*Config) *HeadersConfig
+		credential string
+	}{
+		{
+			name:       "request",
+			field:      func(c *Config) *HeadersConfig { return &c.RequestHeaders },
+			credential: "authorization",
+		},
+		{
+			name:       "response",
+			field:      func(c *Config) *HeadersConfig { return &c.ResponseHeaders },
+			credential: "set-cookie",
+		},
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*HeadersConfig, string)
+		wantErr string
+	}{
+		{
+			name:    "unknown mode",
+			mutate:  func(h *HeadersConfig, _ string) { h.Mode = HeaderMode("unknown") },
+			wantErr: "header mode",
+		},
+		{
+			name:    "empty allowlist",
+			mutate:  func(h *HeadersConfig, _ string) { h.Mode = HeaderModeAllowlist },
+			wantErr: "allowlist",
+		},
+		{
+			name: "invalid allowlist name",
+			mutate: func(h *HeadersConfig, _ string) {
+				h.Mode = HeaderModeAllowlist
+				h.Allowlist = []string{"bad header"}
+			},
+			wantErr: "header name",
+		},
+		{
+			name: "allowlist entries in none mode",
+			mutate: func(h *HeadersConfig, _ string) {
+				h.Mode = HeaderModeNone
+				h.Allowlist = []string{"x-tenant"}
+			},
+			wantErr: "allowlist",
+		},
+		{
+			name: "allowlist entries in all mode",
+			mutate: func(h *HeadersConfig, _ string) {
+				h.Mode = HeaderModeAll
+				h.Allowlist = []string{"x-tenant"}
+			},
+			wantErr: "allowlist",
+		},
+		{
+			name: "allowlist naming a credential",
+			mutate: func(h *HeadersConfig, credential string) {
+				h.Mode = HeaderModeAllowlist
+				h.Allowlist = []string{"x-tenant", credential}
+			},
+			wantErr: "never forwarded",
+		},
+		{
+			name: "allowlist naming a mixed-case credential",
+			mutate: func(h *HeadersConfig, credential string) {
+				h.Mode = HeaderModeAllowlist
+				h.Allowlist = []string{strings.ToUpper(credential)}
+			},
+			wantErr: "never forwarded",
+		},
+	}
+
+	for _, direction := range directions {
+		t.Run(direction.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					cfg := Config{Endpoint: "https://callout.example.test/check", Request: true, Response: true}
+					tt.mutate(direction.field(&cfg), direction.credential)
+					_, err := cfg.Effective()
+					if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
+						t.Fatalf("Effective error = %v, want one containing %q", err, tt.wantErr)
+					}
+					// The message must name the direction, or an operator with
+					// both fields set cannot tell which one is wrong.
+					if !strings.Contains(strings.ToLower(err.Error()), direction.name) {
+						t.Errorf("error = %q, want it to name the %s direction", err.Error(), direction.name)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestConfigEffectiveKeepsTheNeverForwardSetsPerDirection is the leak bite. The
+// two sets protect different secrets: cookie is a credential the caller sent,
+// set-cookie one the upstream minted. Sharing one set would forbid names that are
+// harmless in the other direction.
+func TestConfigEffectiveKeepsTheNeverForwardSetsPerDirection(t *testing.T) {
+	requestNames := []string{"authorization", "proxy-authorization", "cookie"}
+	responseNames := []string{"set-cookie", "www-authenticate", "proxy-authenticate"}
+
+	t.Run("a request allowlist may name response credentials", func(t *testing.T) {
+		got, err := (Config{
+			Endpoint:       "https://callout.example.test/check",
+			Request:        true,
+			RequestHeaders: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: responseNames},
+		}).Effective()
+		if err != nil {
+			t.Fatalf("Effective rejected %v in a request allowlist: %v", responseNames, err)
+		}
+		if !reflect.DeepEqual(got.RequestHeaders.Allowlist, responseNames) {
+			t.Errorf("request allowlist = %v, want %v", got.RequestHeaders.Allowlist, responseNames)
+		}
+	})
+
+	t.Run("a response allowlist may name request credentials", func(t *testing.T) {
+		got, err := (Config{
+			Endpoint:        "https://callout.example.test/check",
+			Response:        true,
+			ResponseHeaders: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: requestNames},
+		}).Effective()
+		if err != nil {
+			t.Fatalf("Effective rejected %v in a response allowlist: %v", requestNames, err)
+		}
+		if !reflect.DeepEqual(got.ResponseHeaders.Allowlist, requestNames) {
+			t.Errorf("response allowlist = %v, want %v", got.ResponseHeaders.Allowlist, requestNames)
+		}
+	})
+}
+
 func TestNeverForwardHeader(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		in   string
-		want bool
+		name        string
+		in          string
+		wantRequest bool
+		wantRespond bool
 	}{
-		{name: "authorization", in: "authorization", want: true},
-		{name: "mixed-case authorization", in: "Authorization", want: true},
-		{name: "proxy-authorization", in: "proxy-authorization", want: true},
-		{name: "mixed-case proxy-authorization", in: "Proxy-Authorization", want: true},
-		{name: "cookie", in: "cookie", want: true},
-		{name: "mixed-case cookie", in: "Cookie", want: true},
-		{name: "ordinary header", in: "x-tenant", want: false},
-		{name: "content-type", in: "Content-Type", want: false},
-		// set-cookie is a response header; RequestHeadersConfig governs only
-		// request headers, so it is not part of the set.
-		{name: "set-cookie", in: "set-cookie", want: false},
+		{name: "authorization", in: "authorization", wantRequest: true},
+		{name: "mixed-case authorization", in: "Authorization", wantRequest: true},
+		{name: "proxy-authorization", in: "proxy-authorization", wantRequest: true},
+		{name: "mixed-case proxy-authorization", in: "Proxy-Authorization", wantRequest: true},
+		{name: "cookie", in: "cookie", wantRequest: true},
+		{name: "mixed-case cookie", in: "Cookie", wantRequest: true},
+		{name: "set-cookie", in: "set-cookie", wantRespond: true},
+		{name: "mixed-case set-cookie", in: "Set-Cookie", wantRespond: true},
+		{name: "www-authenticate", in: "www-authenticate", wantRespond: true},
+		{name: "mixed-case www-authenticate", in: "WWW-Authenticate", wantRespond: true},
+		{name: "proxy-authenticate", in: "proxy-authenticate", wantRespond: true},
+		{name: "ordinary header", in: "x-tenant"},
+		{name: "content-type", in: "Content-Type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := neverForwardHeader(tc.in); got != tc.want {
-				t.Errorf("neverForwardHeader(%q) = %v, want %v", tc.in, got, tc.want)
+			if got := neverForwardRequestHeader(tc.in); got != tc.wantRequest {
+				t.Errorf("neverForwardRequestHeader(%q) = %v, want %v", tc.in, got, tc.wantRequest)
+			}
+			if got := neverForwardResponseHeader(tc.in); got != tc.wantRespond {
+				t.Errorf("neverForwardResponseHeader(%q) = %v, want %v", tc.in, got, tc.wantRespond)
 			}
 		})
 	}

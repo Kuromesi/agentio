@@ -20,8 +20,9 @@ import (
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
 
-// headerContentType is the one request header the callout always sees, because
-// it is carried as its own field rather than through header forwarding.
+// headerContentType is the one header of either direction the callout always
+// sees, because it is carried as its own field rather than through header
+// forwarding.
 const headerContentType = "content-type"
 
 // buildRequestInvocation renders the request-phase view. It is a free function
@@ -53,10 +54,7 @@ func buildResponseInvocation(cfg Config, id filter.UnitID, st *filter.Stream, bo
 		return Invocation{}, err
 	}
 	request := correlationView(st)
-	headers := make(map[string]string, len(st.Response.Headers))
-	for name, value := range st.Response.Headers {
-		headers[name] = value
-	}
+	forwarded := forwardedResponseHeaders(cfg.ResponseHeaders, st.Response.Headers)
 	return Invocation{
 		Version: ProtocolVersion,
 		Phase:   PhaseResponse,
@@ -64,12 +62,13 @@ func buildResponseInvocation(cfg Config, id filter.UnitID, st *filter.Stream, bo
 		Policy:  policyContext(id),
 		Request: &request,
 		Response: &HTTPResponse{
-			StatusCode:  st.Response.Status,
+			StatusCode: st.Response.Status,
+			// Read from the raw upstream headers, not the forwarded map: hiding
+			// headers must not blank the content type a scanner needs to
+			// interpret the body.
 			ContentType: st.Response.Headers[headerContentType],
-			// Never nil: Invocation.Validate rejects nil response headers, and
-			// an upstream that sent none is a real case.
-			Headers: headers,
-			Body:    text,
+			Headers:     forwarded,
+			Body:        text,
 		},
 	}, nil
 }
@@ -106,13 +105,24 @@ func policyContext(id filter.UnitID) PolicyContext {
 	return PolicyContext{Scope: id.Scope, Rule: id.Name, Ordinal: id.Ordinal}
 }
 
-// forwardedRequestHeaders applies the disclosure mode. It always builds a new
-// map: st.Request.Headers is the single shared holder of the request headers for
-// the whole request path, so aliasing it would let a callout view mutate what
-// every later filter reads.
-func forwardedRequestHeaders(cfg RequestHeadersConfig, headers map[string]string) map[string]string {
+// forwardedRequestHeaders applies the request-direction disclosure mode, dropping
+// the caller's credentials.
+func forwardedRequestHeaders(cfg HeadersConfig, headers map[string]string) map[string]string {
+	return forwardedHeaders(cfg, headers, neverForwardRequestHeader)
+}
+
+// forwardedResponseHeaders applies the response-direction disclosure mode,
+// dropping the credentials the upstream minted in this response.
+func forwardedResponseHeaders(cfg HeadersConfig, headers map[string]string) map[string]string {
+	return forwardedHeaders(cfg, headers, neverForwardResponseHeader)
+}
+
+// forwardedHeaders applies the disclosure mode. It always builds a new map: the
+// stream header map is the single shared holder for the whole path, so aliasing it
+// would let a callout view mutate what every later filter reads.
+func forwardedHeaders(cfg HeadersConfig, headers map[string]string, neverForward func(string) bool) map[string]string {
 	switch cfg.Mode {
-	case RequestHeadersAllowlist:
+	case HeaderModeAllowlist:
 		out := make(map[string]string, len(cfg.Allowlist))
 		for _, name := range cfg.Allowlist {
 			if value, found := headers[name]; found {
@@ -120,14 +130,14 @@ func forwardedRequestHeaders(cfg RequestHeadersConfig, headers map[string]string
 			}
 		}
 		return out
-	case RequestHeadersAll:
+	case HeaderModeAll:
 		out := make(map[string]string, len(headers))
 		for name, value := range headers {
-			// "all" means all of the operator's headers, not the caller's
-			// credentials: the endpoint is a third party outside the mesh.
-			// Effective already rejects an allowlist naming these, so this is
-			// the only mode where the filter has to apply the rule.
-			if neverForwardHeader(name) {
+			// "all" means all of the operator's headers, not credentials: the
+			// endpoint is a third party outside the mesh. Effective already
+			// rejects an allowlist naming these, so this is the only mode where
+			// the filter has to apply the rule.
+			if neverForward(name) {
 				continue
 			}
 			out[name] = value

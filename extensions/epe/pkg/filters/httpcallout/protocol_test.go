@@ -99,7 +99,7 @@ func TestInvocationOmitsHiddenRequestHeadersButKeepsContentType(t *testing.T) {
 		Response: &HTTPResponse{
 			StatusCode:  200,
 			ContentType: "text/plain",
-			Headers:     map[string]string{},
+			Headers:     map[string]string{"x-upstream": "demo"},
 			Body:        "response",
 		},
 	})
@@ -110,9 +110,38 @@ func TestInvocationOmitsHiddenRequestHeadersButKeepsContentType(t *testing.T) {
 	if got := request["contentType"]; got != "application/json; charset=utf-8" {
 		t.Errorf("request contentType = %#v, want it preserved independently of headers", got)
 	}
+	// The two directions are independent: hiding request headers must not hide
+	// response headers the operator did ask for.
 	response := got["response"].(map[string]any)
 	if _, found := response["headers"]; !found {
-		t.Fatal("response headers field was omitted")
+		t.Fatal("disclosed response headers were omitted")
+	}
+}
+
+// TestInvocationOmitsHiddenResponseHeadersButKeepsStatusAndContentType is the
+// wire bite for the response direction: under the default mode the header map is
+// absent from the document rather than present and empty, while the two fields a
+// scanner needs survive.
+func TestInvocationOmitsHiddenResponseHeadersButKeepsStatusAndContentType(t *testing.T) {
+	got := marshalJSONObject(t, Invocation{
+		Version: ProtocolVersion,
+		Phase:   PhaseResponse,
+		Request: &HTTPRequest{},
+		Response: &HTTPResponse{
+			StatusCode:  503,
+			ContentType: "text/plain; charset=utf-8",
+			Body:        "upstream down",
+		},
+	})
+	response := got["response"].(map[string]any)
+	if _, found := response["headers"]; found {
+		t.Fatalf("hidden response headers were disclosed as %#v instead of omitted", response["headers"])
+	}
+	if response["contentType"] != "text/plain; charset=utf-8" {
+		t.Errorf("response contentType = %#v, want it preserved independently of headers", response["contentType"])
+	}
+	if response["statusCode"] != float64(503) {
+		t.Errorf("response statusCode = %#v, want 503 preserved independently of headers", response["statusCode"])
 	}
 }
 
@@ -160,6 +189,14 @@ func TestInvocationValidateAcceptsPhaseShapes(t *testing.T) {
 			Phase:    PhaseResponse,
 			Request:  &HTTPRequest{},
 			Response: &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: "response"},
+		},
+		{
+			// Hidden response headers are the default, so a nil map is a valid
+			// invocation rather than an incomplete one.
+			Version:  ProtocolVersion,
+			Phase:    PhaseResponse,
+			Request:  &HTTPRequest{},
+			Response: &HTTPResponse{StatusCode: 200, Body: "response"},
 		},
 	}
 	for _, invocation := range tests {
@@ -258,15 +295,6 @@ func TestInvocationValidateRejectsInvalidContract(t *testing.T) {
 				i.Response = &HTTPResponse{StatusCode: 200, Headers: map[string]string{}, Body: string([]byte{0xff})}
 			},
 			wantErr: "utf-8",
-		},
-		{
-			name: "nil response headers",
-			mutate: func(i *Invocation) {
-				i.Phase = PhaseResponse
-				i.Request.Body = nil
-				i.Response = &HTTPResponse{StatusCode: 200}
-			},
-			wantErr: "headers",
 		},
 	}
 

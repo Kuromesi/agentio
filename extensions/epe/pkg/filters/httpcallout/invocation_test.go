@@ -61,8 +61,11 @@ func testStream() *filter.Stream {
 		Response: httpreq.HTTPResponse{
 			Status: 201,
 			Headers: map[string]string{
-				"content-type": "text/plain",
-				"x-upstream":   "demo",
+				"content-type":       "text/plain",
+				"x-upstream":         "demo",
+				"set-cookie":         "session=upstream-minted",
+				"www-authenticate":   `Bearer realm="upstream"`,
+				"proxy-authenticate": `Basic realm="proxy"`,
 			},
 		},
 	}
@@ -150,17 +153,17 @@ func TestBuildRequestInvocationSendsAPresentEmptyBody(t *testing.T) {
 func TestBuildRequestInvocationHeaderModes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		cfg  RequestHeadersConfig
+		cfg  HeadersConfig
 		want map[string]string
 	}{
 		{
 			name: "none omits every header",
-			cfg:  RequestHeadersConfig{Mode: RequestHeadersNone},
+			cfg:  HeadersConfig{Mode: HeaderModeNone},
 			want: nil,
 		},
 		{
 			name: "allowlist forwards only the named headers",
-			cfg:  RequestHeadersConfig{Mode: RequestHeadersAllowlist, Allowlist: []string{"X-Tenant", "x-absent"}},
+			cfg:  HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"X-Tenant", "x-absent"}},
 			want: map[string]string{"x-tenant": "demo"},
 		},
 		{
@@ -168,7 +171,7 @@ func TestBuildRequestInvocationHeaderModes(t *testing.T) {
 			// third-party endpoint outside the mesh must not receive the
 			// caller's credentials just because the operator asked for "all".
 			name: "all forwards everything except credentials",
-			cfg:  RequestHeadersConfig{Mode: RequestHeadersAll},
+			cfg:  HeadersConfig{Mode: HeaderModeAll},
 			want: map[string]string{
 				"content-type": "application/json",
 				"x-tenant":     "demo",
@@ -192,7 +195,7 @@ func TestBuildRequestInvocationHeaderModes(t *testing.T) {
 // TestBuildRequestInvocationNeverAliasesStreamHeaders pins that the builder owns
 // its map: st.Request.Headers is shared with every other filter on the path.
 func TestBuildRequestInvocationNeverAliasesStreamHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true, RequestHeaders: RequestHeadersConfig{Mode: RequestHeadersAll}})
+	cfg := testConfig(t, Config{Request: true, RequestHeaders: HeadersConfig{Mode: HeaderModeAll}})
 	st := testStream()
 	before := maps.Clone(st.Request.Headers)
 
@@ -207,7 +210,11 @@ func TestBuildRequestInvocationNeverAliasesStreamHeaders(t *testing.T) {
 }
 
 func TestBuildResponseInvocationOmitsTheRequestBodyAndHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Response: true, RequestHeaders: RequestHeadersConfig{Mode: RequestHeadersAll}})
+	cfg := testConfig(t, Config{
+		Response:        true,
+		RequestHeaders:  HeadersConfig{Mode: HeaderModeAll},
+		ResponseHeaders: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"x-upstream"}},
+	})
 	st := testStream()
 
 	inv, err := buildResponseInvocation(cfg, testUnitID(), st, filter.Body{Bytes: []byte("response text"), Complete: true})
@@ -235,7 +242,7 @@ func TestBuildResponseInvocationOmitsTheRequestBodyAndHeaders(t *testing.T) {
 	want := HTTPResponse{
 		StatusCode:  201,
 		ContentType: "text/plain",
-		Headers:     map[string]string{"content-type": "text/plain", "x-upstream": "demo"},
+		Headers:     map[string]string{"x-upstream": "demo"},
 		Body:        "response text",
 	}
 	if !reflect.DeepEqual(*inv.Response, want) {
@@ -244,7 +251,7 @@ func TestBuildResponseInvocationOmitsTheRequestBodyAndHeaders(t *testing.T) {
 }
 
 func TestBuildResponseInvocationNeverAliasesStreamHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Response: true})
+	cfg := testConfig(t, Config{Response: true, ResponseHeaders: HeadersConfig{Mode: HeaderModeAll}})
 	st := testStream()
 	before := maps.Clone(st.Response.Headers)
 
@@ -258,10 +265,81 @@ func TestBuildResponseInvocationNeverAliasesStreamHeaders(t *testing.T) {
 	}
 }
 
-// TestBuildResponseInvocationAlwaysCarriesResponseHeaders pins the never-nil
-// contract Invocation.Validate enforces, for an upstream that sent none.
-func TestBuildResponseInvocationAlwaysCarriesResponseHeaders(t *testing.T) {
-	cfg := testConfig(t, Config{Response: true})
+func TestBuildResponseInvocationHeaderModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  HeadersConfig
+		want map[string]string
+	}{
+		{
+			name: "unset mode omits every header",
+			cfg:  HeadersConfig{},
+			want: nil,
+		},
+		{
+			name: "none omits every header",
+			cfg:  HeadersConfig{Mode: HeaderModeNone},
+			want: nil,
+		},
+		{
+			name: "allowlist forwards only the named headers",
+			cfg:  HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"X-Upstream", "x-absent"}},
+			want: map[string]string{"x-upstream": "demo"},
+		},
+		{
+			// set-cookie is a session credential the upstream minted in this very
+			// response, so "all" must not hand it to a third-party endpoint.
+			name: "all forwards everything except upstream credentials",
+			cfg:  HeadersConfig{Mode: HeaderModeAll},
+			want: map[string]string{
+				"content-type": "text/plain",
+				"x-upstream":   "demo",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig(t, Config{Response: true, ResponseHeaders: tc.cfg})
+			inv, err := buildResponseInvocation(cfg, testUnitID(), testStream(), filter.Body{Complete: true})
+			if err != nil {
+				t.Fatalf("buildResponseInvocation: %v", err)
+			}
+			if !reflect.DeepEqual(inv.Response.Headers, tc.want) {
+				t.Fatalf("response headers = %#v, want %#v", inv.Response.Headers, tc.want)
+			}
+			if err := inv.Validate(); err != nil {
+				t.Fatalf("built invocation failed Validate: %v", err)
+			}
+		})
+	}
+}
+
+// TestBuildResponseInvocationKeepsStatusAndContentTypeUnderEveryMode mirrors
+// TestInvocationOmitsHiddenRequestHeadersButKeepsContentType on the response
+// side: ContentType must be read from the raw upstream headers, not the filtered
+// map, or hiding headers would blank the one field a scanner needs.
+func TestBuildResponseInvocationKeepsStatusAndContentTypeUnderEveryMode(t *testing.T) {
+	for _, mode := range []HeaderMode{"", HeaderModeNone, HeaderModeAll} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := testConfig(t, Config{Response: true, ResponseHeaders: HeadersConfig{Mode: mode}})
+			inv, err := buildResponseInvocation(cfg, testUnitID(), testStream(), filter.Body{Complete: true})
+			if err != nil {
+				t.Fatalf("buildResponseInvocation: %v", err)
+			}
+			if inv.Response.StatusCode != 201 {
+				t.Errorf("statusCode = %d, want 201 under mode %q", inv.Response.StatusCode, mode)
+			}
+			if inv.Response.ContentType != "text/plain" {
+				t.Errorf("contentType = %q, want it preserved independently of headers under mode %q", inv.Response.ContentType, mode)
+			}
+		})
+	}
+}
+
+// TestBuildResponseInvocationAcceptsAnUpstreamWithNoHeaders pins that a hidden
+// map is a valid invocation: the never-nil rule that used to force disclosure is
+// gone, so nil is indistinguishable from "the upstream sent none" by design.
+func TestBuildResponseInvocationAcceptsAnUpstreamWithNoHeaders(t *testing.T) {
+	cfg := testConfig(t, Config{Response: true, ResponseHeaders: HeadersConfig{Mode: HeaderModeAll}})
 	st := testStream()
 	st.Response.Headers = nil
 
@@ -269,8 +347,8 @@ func TestBuildResponseInvocationAlwaysCarriesResponseHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildResponseInvocation: %v", err)
 	}
-	if inv.Response.Headers == nil {
-		t.Fatal("response headers were nil, which Invocation.Validate rejects")
+	if len(inv.Response.Headers) != 0 {
+		t.Errorf("response headers = %#v, want none", inv.Response.Headers)
 	}
 	if err := inv.Validate(); err != nil {
 		t.Fatalf("built invocation failed Validate: %v", err)
@@ -340,7 +418,7 @@ func TestBuildInvocationRejectsNonUTF8Body(t *testing.T) {
 // than a behaviour test: SourceContext has no token field today, and this fails
 // loudly if one is ever added and populated.
 func TestBuildInvocationNeverForwardsTheSandboxToken(t *testing.T) {
-	cfg := testConfig(t, Config{Request: true, RequestHeaders: RequestHeadersConfig{Mode: RequestHeadersAll}})
+	cfg := testConfig(t, Config{Request: true, RequestHeaders: HeadersConfig{Mode: HeaderModeAll}})
 	st := testStream()
 
 	inv, err := buildRequestInvocation(cfg, testUnitID(), st, filter.Body{Complete: true})

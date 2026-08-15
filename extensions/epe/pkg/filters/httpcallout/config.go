@@ -41,44 +41,64 @@ const (
 	DefaultMaxBodyBytes int64 = 1 << 20
 )
 
-// RequestHeaderMode selects which original request headers enter an
-// callout invocation.
-type RequestHeaderMode string
+// HeaderMode selects which original headers of one direction enter a callout
+// invocation. The three modes mean the same thing for requests and responses, so
+// one type serves both.
+type HeaderMode string
 
 const (
-	// RequestHeadersNone hides all request headers. It is the default.
-	RequestHeadersNone RequestHeaderMode = "none"
-	// RequestHeadersAll includes all request headers.
-	RequestHeadersAll RequestHeaderMode = "all"
-	// RequestHeadersAllowlist includes only explicitly named request headers.
-	RequestHeadersAllowlist RequestHeaderMode = "allowlist"
+	// HeaderModeNone hides all headers of the direction. It is the default in
+	// both directions.
+	HeaderModeNone HeaderMode = "none"
+	// HeaderModeAll includes all headers of the direction except that
+	// direction's credentials.
+	HeaderModeAll HeaderMode = "all"
+	// HeaderModeAllowlist includes only explicitly named headers.
+	HeaderModeAllowlist HeaderMode = "allowlist"
 )
 
-// neverForwardNames must not reach a third-party callout under any mode: they
-// carry caller credentials, and the endpoint is outside the mesh trust
-// boundary. set-cookie is absent on purpose — it is a response header, and
-// RequestHeadersConfig governs only request headers.
-var neverForwardNames = map[string]struct{}{
+// neverForwardRequestNames are credentials the caller sent. They must not reach a
+// third-party callout under any mode, because the endpoint is outside the mesh
+// trust boundary.
+var neverForwardRequestNames = map[string]struct{}{
 	"authorization":       {},
 	"proxy-authorization": {},
 	"cookie":              {},
 }
 
-// neverForwardHeader reports whether name is a credential header the callout
-// must never see. It lower-cases before testing so it holds for any casing the
-// wire or an operator uses.
+// neverForwardResponseNames are credentials the upstream minted in the response
+// itself. They are a separate set from the request one because the two directions
+// protect different secrets: cookie is what the caller sent, set-cookie is what
+// the upstream issued, and each is an ordinary header in the other direction.
+var neverForwardResponseNames = map[string]struct{}{
+	"set-cookie":         {},
+	"www-authenticate":   {},
+	"proxy-authenticate": {},
+}
+
+// neverForwardRequestHeader reports whether name is a request credential the
+// callout must never see. It lower-cases before testing so it holds for any
+// casing the wire or an operator uses.
 //
-// Two callers enforce it: Effective rejects an allowlist naming one of these,
-// and forwardedRequestHeaders drops them under RequestHeadersAll, which is the
+// Two callers enforce it: Effective rejects a request allowlist naming one of
+// these, and forwardedRequestHeaders drops them under HeaderModeAll, which is the
 // only mode where a name the operator never wrote can reach the endpoint.
-func neverForwardHeader(name string) bool {
-	_, found := neverForwardNames[strings.ToLower(name)]
+func neverForwardRequestHeader(name string) bool {
+	_, found := neverForwardRequestNames[strings.ToLower(name)]
 	return found
 }
 
-// RequestHeadersConfig controls request-header disclosure to the callout service.
-type RequestHeadersConfig struct {
-	Mode      RequestHeaderMode
+// neverForwardResponseHeader is the response-direction counterpart, enforced by
+// Effective and forwardedResponseHeaders.
+func neverForwardResponseHeader(name string) bool {
+	_, found := neverForwardResponseNames[strings.ToLower(name)]
+	return found
+}
+
+// HeadersConfig controls header disclosure to the callout service for one
+// direction.
+type HeadersConfig struct {
+	Mode      HeaderMode
 	Allowlist []string
 }
 
@@ -93,7 +113,10 @@ type Config struct {
 	MaxBodyBytes int64
 	FailOpen     bool
 
-	RequestHeaders RequestHeadersConfig
+	// RequestHeaders and ResponseHeaders both default to none: disclosure is
+	// opt-in in either direction.
+	RequestHeaders  HeadersConfig
+	ResponseHeaders HeadersConfig
 }
 
 // Effective validates c, applies zero-value defaults, and returns an owned
@@ -118,11 +141,16 @@ func (c Config) Effective() (Config, error) {
 		c.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 
-	headers, err := effectiveRequestHeaders(c.RequestHeaders)
+	requestHeaders, err := effectiveHeaders(c.RequestHeaders, "request", neverForwardRequestHeader)
 	if err != nil {
 		return Config{}, err
 	}
-	c.RequestHeaders = headers
+	responseHeaders, err := effectiveHeaders(c.ResponseHeaders, "response", neverForwardResponseHeader)
+	if err != nil {
+		return Config{}, err
+	}
+	c.RequestHeaders = requestHeaders
+	c.ResponseHeaders = responseHeaders
 	return c, nil
 }
 
@@ -149,22 +177,26 @@ func validateEndpoint(endpoint string) error {
 	return nil
 }
 
-func effectiveRequestHeaders(in RequestHeadersConfig) (RequestHeadersConfig, error) {
+// effectiveHeaders validates and normalizes one direction's disclosure config.
+// direction appears in every message so an operator with both fields set can tell
+// which one is wrong, and neverForward is passed in rather than looked up here so
+// the two credential sets cannot leak into each other's direction.
+func effectiveHeaders(in HeadersConfig, direction string, neverForward func(string) bool) (HeadersConfig, error) {
 	mode := in.Mode
 	if mode == "" {
-		mode = RequestHeadersNone
+		mode = HeaderModeNone
 	}
-	if mode != RequestHeadersNone && mode != RequestHeadersAll && mode != RequestHeadersAllowlist {
-		return RequestHeadersConfig{}, fmt.Errorf("unknown request header mode %q", in.Mode)
+	if mode != HeaderModeNone && mode != HeaderModeAll && mode != HeaderModeAllowlist {
+		return HeadersConfig{}, fmt.Errorf("unknown %s header mode %q", direction, in.Mode)
 	}
-	if mode != RequestHeadersAllowlist {
+	if mode != HeaderModeAllowlist {
 		if len(in.Allowlist) != 0 {
-			return RequestHeadersConfig{}, fmt.Errorf("request header allowlist requires allowlist mode")
+			return HeadersConfig{}, fmt.Errorf("%s header allowlist requires allowlist mode", direction)
 		}
-		return RequestHeadersConfig{Mode: mode}, nil
+		return HeadersConfig{Mode: mode}, nil
 	}
 	if len(in.Allowlist) == 0 {
-		return RequestHeadersConfig{}, fmt.Errorf("request header allowlist is empty")
+		return HeadersConfig{}, fmt.Errorf("%s header allowlist is empty", direction)
 	}
 
 	seen := make(map[string]struct{}, len(in.Allowlist))
@@ -172,12 +204,12 @@ func effectiveRequestHeaders(in RequestHeadersConfig) (RequestHeadersConfig, err
 	for _, raw := range in.Allowlist {
 		name := strings.ToLower(raw)
 		if !httpguts.ValidHeaderFieldName(name) {
-			return RequestHeadersConfig{}, fmt.Errorf("invalid request header name %q", raw)
+			return HeadersConfig{}, fmt.Errorf("invalid %s header name %q", direction, raw)
 		}
 		// Reject rather than drop silently: an operator who wrote the name
 		// deserves an error, not a surprise.
-		if neverForwardHeader(name) {
-			return RequestHeadersConfig{}, fmt.Errorf("request header %q is never forwarded to a callout", raw)
+		if neverForward(name) {
+			return HeadersConfig{}, fmt.Errorf("%s header %q is never forwarded to a callout", direction, raw)
 		}
 		if _, found := seen[name]; found {
 			continue
@@ -185,5 +217,5 @@ func effectiveRequestHeaders(in RequestHeadersConfig) (RequestHeadersConfig, err
 		seen[name] = struct{}{}
 		out = append(out, name)
 	}
-	return RequestHeadersConfig{Mode: mode, Allowlist: out}, nil
+	return HeadersConfig{Mode: mode, Allowlist: out}, nil
 }

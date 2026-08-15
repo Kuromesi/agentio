@@ -94,11 +94,14 @@ type HTTPRequest struct {
 }
 
 // HTTPResponse is the original upstream response view delivered during the
-// response phase.
+// response phase. Headers is omitted when response-header forwarding is disabled,
+// matching HTTPRequest: an absent map and an upstream that sent no headers are
+// deliberately indistinguishable, because under none the callout learns nothing
+// either way and under all an absent map means an absent header.
 type HTTPResponse struct {
 	StatusCode  int               `json:"statusCode"`
 	ContentType string            `json:"contentType"`
-	Headers     map[string]string `json:"headers"`
+	Headers     map[string]string `json:"headers,omitempty"`
 	Body        string            `json:"body"`
 }
 
@@ -140,9 +143,6 @@ func (i Invocation) Validate() error {
 		}
 		if i.Request.Headers != nil {
 			return fmt.Errorf("response-phase callout invocation contains request headers")
-		}
-		if i.Response.Headers == nil {
-			return fmt.Errorf("response-phase callout invocation has nil response headers")
 		}
 		if !utf8.ValidString(i.Response.Body) {
 			return fmt.Errorf("callout response body is not valid UTF-8")
