@@ -49,8 +49,12 @@ type phaseSpec struct {
 // headersSpec is the wire form of HeadersConfig, shared by both directions
 // because the modes mean the same thing in each.
 type headersSpec struct {
-	Mode      string   `json:"mode,omitempty"`
+	Mode string `json:"mode,omitempty"`
+	// Allowlist and Denylist are separate keys because the mode they belong to
+	// is what they mean: one list whose sense flipped with the mode string would
+	// turn a typo into an inverted disclosure control.
 	Allowlist []string `json:"allowlist,omitempty"`
+	Denylist  []string `json:"denylist,omitempty"`
 }
 
 // empty reports whether the document says nothing at all. A payload under this
@@ -107,6 +111,7 @@ func phaseFromSpec(s *phaseSpec) *PhaseConfig {
 		phase.Headers = HeadersConfig{
 			Mode:      HeaderMode(s.Headers.Mode),
 			Allowlist: s.Headers.Allowlist,
+			Denylist:  s.Headers.Denylist,
 		}
 	}
 	return phase

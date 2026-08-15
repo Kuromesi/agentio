@@ -101,6 +101,40 @@ func TestParseReadsEveryField(t *testing.T) {
 	}
 }
 
+// TestParseReadsADenylist pins the wire contract for the mode that replaces the
+// old hardcoded credential rule: the recommended baseline for an endpoint outside
+// the trust boundary has to be writable in the payload an operator reviews.
+func TestParseReadsADenylist(t *testing.T) {
+	cfg, err := parse([]byte(`{
+		"endpoint":"https://scanner.example.com/inspect",
+		"request":{"headers":{"mode":"denylist","denylist":["Authorization","authorization","Proxy-Authorization","Cookie"]}},
+		"response":{"headers":{"mode":"denylist","denylist":["Set-Cookie"]}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := Config{
+		Endpoint:     "https://scanner.example.com/inspect",
+		Timeout:      DefaultTimeout,
+		MaxBodyBytes: DefaultMaxBodyBytes,
+		Request: &PhaseConfig{
+			Headers: HeadersConfig{
+				Mode:     HeaderModeDenylist,
+				Denylist: []string{"authorization", "proxy-authorization", "cookie"},
+			},
+		},
+		Response: &PhaseConfig{
+			Headers: HeadersConfig{
+				Mode:     HeaderModeDenylist,
+				Denylist: []string{"set-cookie"},
+			},
+		},
+	}
+	if !reflect.DeepEqual(cfg, want) {
+		t.Fatalf("parse = %#v, want %#v", cfg, want)
+	}
+}
+
 // TestParseTimeoutIsADurationString pins the wire representation. A bare JSON
 // number would be ambiguous between seconds, milliseconds, and nanoseconds, and
 // the zero-means-default rule makes a wrong guess silent.
@@ -195,11 +229,6 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 			wantErr: "negative",
 		},
 		{
-			name:    "allowlist naming a credential header",
-			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"allowlist","allowlist":["Authorization"]}}}`,
-			wantErr: "never forwarded",
-		},
-		{
 			name:    "unknown header mode",
 			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"some"}}}`,
 			wantErr: "mode",
@@ -210,9 +239,9 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 			wantErr: "allowlist",
 		},
 		{
-			name:    "response allowlist naming an upstream credential",
-			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"allowlist","allowlist":["Set-Cookie"]}}}`,
-			wantErr: "never forwarded",
+			name:    "denylist without denylist mode",
+			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"allowlist","allowlist":["x-a"],"denylist":["x-b"]}}}`,
+			wantErr: "denylist",
 		},
 		{
 			name:    "unknown response header mode",
@@ -221,8 +250,8 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 		},
 		{
 			name:    "unknown field inside a phase's headers",
-			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"all","denylist":["x-a"]}}}`,
-			wantErr: "denylist",
+			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"all","blocklist":["x-a"]}}}`,
+			wantErr: "blocklist",
 		},
 		{
 			// The nested objects must reject typos as firmly as the top level, or

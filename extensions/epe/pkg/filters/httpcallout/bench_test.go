@@ -66,7 +66,7 @@ var benchBodySizes = []int{1 << 10, 64 << 10, 1 << 20}
 // benchStream builds the stream the engine would hand a filter, carrying
 // nOperator ordinary headers per direction on top of the credentials a real
 // request and a real upstream response always include. The credentials are
-// present so HeaderModeAll pays for the neverForward check that drops them.
+// present so HeaderModeAll copies them like any other header.
 func benchStream(nOperator int) *filter.Stream {
 	reqHeaders := map[string]string{
 		"content-type":  "application/json",

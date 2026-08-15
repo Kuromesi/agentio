@@ -42,7 +42,7 @@ const (
 )
 
 // HeaderMode selects which original headers of one direction enter a callout
-// invocation. The three modes mean the same thing for requests and responses, so
+// invocation. The four modes mean the same thing for requests and responses, so
 // one type serves both.
 type HeaderMode string
 
@@ -50,56 +50,31 @@ const (
 	// HeaderModeNone hides all headers of the direction. It is the default in
 	// both directions.
 	HeaderModeNone HeaderMode = "none"
-	// HeaderModeAll includes all headers of the direction except that
-	// direction's credentials.
+	// HeaderModeAll includes every header of the direction, credentials
+	// included: authorization and cookie on the request side, set-cookie and
+	// the authenticate challenges on the response side. The endpoint sits
+	// outside the mesh trust boundary, so this mode hands a third party
+	// whatever the caller sent and whatever the upstream minted.
 	HeaderModeAll HeaderMode = "all"
 	// HeaderModeAllowlist includes only explicitly named headers.
 	HeaderModeAllowlist HeaderMode = "allowlist"
+	// HeaderModeDenylist includes every header of the direction except the
+	// named ones. It is how an operator writes the credential rule this
+	// package once hardcoded — denylist: [authorization, proxy-authorization,
+	// cookie] — and is the recommended baseline for an endpoint outside the
+	// trust boundary, because it appears where it can be reviewed.
+	HeaderModeDenylist HeaderMode = "denylist"
 )
 
-// neverForwardRequestNames are credentials the caller sent. They must not reach a
-// third-party callout under any mode, because the endpoint is outside the mesh
-// trust boundary.
-var neverForwardRequestNames = map[string]struct{}{
-	"authorization":       {},
-	"proxy-authorization": {},
-	"cookie":              {},
-}
-
-// neverForwardResponseNames are credentials the upstream minted in the response
-// itself. They are a separate set from the request one because the two directions
-// protect different secrets: cookie is what the caller sent, set-cookie is what
-// the upstream issued, and each is an ordinary header in the other direction.
-var neverForwardResponseNames = map[string]struct{}{
-	"set-cookie":         {},
-	"www-authenticate":   {},
-	"proxy-authenticate": {},
-}
-
-// neverForwardRequestHeader reports whether name is a request credential the
-// callout must never see. It lower-cases before testing so it holds for any
-// casing the wire or an operator uses.
-//
-// Two callers enforce it: Effective rejects a request allowlist naming one of
-// these, and forwardedRequestHeaders drops them under HeaderModeAll, which is the
-// only mode where a name the operator never wrote can reach the endpoint.
-func neverForwardRequestHeader(name string) bool {
-	_, found := neverForwardRequestNames[strings.ToLower(name)]
-	return found
-}
-
-// neverForwardResponseHeader is the response-direction counterpart, enforced by
-// Effective and forwardedResponseHeaders.
-func neverForwardResponseHeader(name string) bool {
-	_, found := neverForwardResponseNames[strings.ToLower(name)]
-	return found
-}
-
 // HeadersConfig controls header disclosure to the callout service for one
-// direction.
+// direction. Allowlist and Denylist are separate fields rather than one list the
+// mode reinterprets: a shared field would let a one-word mode edit silently
+// invert "only these" into "all but these", which is the worst possible failure
+// for a disclosure control.
 type HeadersConfig struct {
 	Mode      HeaderMode
 	Allowlist []string
+	Denylist  []string
 }
 
 // PhaseConfig is one direction's settings. Its presence enables the phase, which
@@ -152,11 +127,11 @@ func (c Config) Effective() (Config, error) {
 		c.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 
-	request, err := effectivePhase(c.Request, "request", neverForwardRequestHeader)
+	request, err := effectivePhase(c.Request, "request")
 	if err != nil {
 		return Config{}, err
 	}
-	response, err := effectivePhase(c.Response, "response", neverForwardResponseHeader)
+	response, err := effectivePhase(c.Response, "response")
 	if err != nil {
 		return Config{}, err
 	}
@@ -168,11 +143,11 @@ func (c Config) Effective() (Config, error) {
 // effectivePhase validates one direction and returns a phase config the caller
 // cannot reach. A nil input stays nil: presence is what enables the phase, so
 // defaulting a disabled direction into an enabled one would invent a callout.
-func effectivePhase(in *PhaseConfig, direction string, neverForward func(string) bool) (*PhaseConfig, error) {
+func effectivePhase(in *PhaseConfig, direction string) (*PhaseConfig, error) {
 	if in == nil {
 		return nil, nil
 	}
-	headers, err := effectiveHeaders(in.Headers, direction, neverForward)
+	headers, err := effectiveHeaders(in.Headers, direction)
 	if err != nil {
 		return nil, err
 	}
@@ -204,37 +179,67 @@ func validateEndpoint(endpoint string) error {
 
 // effectiveHeaders validates and normalizes one direction's disclosure config.
 // direction appears in every message so an operator with both fields set can tell
-// which one is wrong, and neverForward is passed in rather than looked up here so
-// the two credential sets cannot leak into each other's direction.
-func effectiveHeaders(in HeadersConfig, direction string, neverForward func(string) bool) (HeadersConfig, error) {
+// which one is wrong.
+//
+// The list a mode does not own must be empty rather than ignored: silently
+// dropping it would let a config that reads like "all but these" behave like
+// "everything".
+func effectiveHeaders(in HeadersConfig, direction string) (HeadersConfig, error) {
 	mode := in.Mode
 	if mode == "" {
 		mode = HeaderModeNone
 	}
-	if mode != HeaderModeNone && mode != HeaderModeAll && mode != HeaderModeAllowlist {
-		return HeadersConfig{}, fmt.Errorf("unknown %s header mode %q", direction, in.Mode)
-	}
-	if mode != HeaderModeAllowlist {
+	switch mode {
+	case HeaderModeNone, HeaderModeAll:
 		if len(in.Allowlist) != 0 {
 			return HeadersConfig{}, fmt.Errorf("%s header allowlist requires allowlist mode", direction)
 		}
-		return HeadersConfig{Mode: mode}, nil
-	}
-	if len(in.Allowlist) == 0 {
-		return HeadersConfig{}, fmt.Errorf("%s header allowlist is empty", direction)
-	}
-
-	seen := make(map[string]struct{}, len(in.Allowlist))
-	out := make([]string, 0, len(in.Allowlist))
-	for _, raw := range in.Allowlist {
-		name := strings.ToLower(raw)
-		if !httpguts.ValidHeaderFieldName(name) {
-			return HeadersConfig{}, fmt.Errorf("invalid %s header name %q", direction, raw)
+		if len(in.Denylist) != 0 {
+			return HeadersConfig{}, fmt.Errorf("%s header denylist requires denylist mode", direction)
 		}
-		// Reject rather than drop silently: an operator who wrote the name
-		// deserves an error, not a surprise.
-		if neverForward(name) {
-			return HeadersConfig{}, fmt.Errorf("%s header %q is never forwarded to a callout", direction, raw)
+		return HeadersConfig{Mode: mode}, nil
+	case HeaderModeAllowlist:
+		if len(in.Denylist) != 0 {
+			return HeadersConfig{}, fmt.Errorf("%s header denylist requires denylist mode", direction)
+		}
+		// An empty owned list is an error rather than a synonym for a mode that
+		// already exists: it is what a half-finished config looks like.
+		if len(in.Allowlist) == 0 {
+			return HeadersConfig{}, fmt.Errorf("%s header allowlist is empty", direction)
+		}
+		names, err := normalizeHeaderNames(in.Allowlist, direction)
+		if err != nil {
+			return HeadersConfig{}, err
+		}
+		return HeadersConfig{Mode: mode, Allowlist: names}, nil
+	case HeaderModeDenylist:
+		if len(in.Allowlist) != 0 {
+			return HeadersConfig{}, fmt.Errorf("%s header allowlist requires allowlist mode", direction)
+		}
+		if len(in.Denylist) == 0 {
+			return HeadersConfig{}, fmt.Errorf("%s header denylist is empty", direction)
+		}
+		names, err := normalizeHeaderNames(in.Denylist, direction)
+		if err != nil {
+			return HeadersConfig{}, err
+		}
+		return HeadersConfig{Mode: mode, Denylist: names}, nil
+	default:
+		return HeadersConfig{}, fmt.Errorf("unknown %s header mode %q", direction, in.Mode)
+	}
+}
+
+// normalizeHeaderNames lower-cases and deduplicates one list, so a match at
+// forwarding time never depends on the casing an operator wrote. Any valid header
+// name is accepted, credentials included: a name written in a reviewed CRD is a
+// decision, not an accident.
+func normalizeHeaderNames(raw []string, direction string) ([]string, error) {
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		name := strings.ToLower(entry)
+		if !httpguts.ValidHeaderFieldName(name) {
+			return nil, fmt.Errorf("invalid %s header name %q", direction, entry)
 		}
 		if _, found := seen[name]; found {
 			continue
@@ -242,5 +247,5 @@ func effectiveHeaders(in HeadersConfig, direction string, neverForward func(stri
 		seen[name] = struct{}{}
 		out = append(out, name)
 	}
-	return HeadersConfig{Mode: mode, Allowlist: out}, nil
+	return out, nil
 }

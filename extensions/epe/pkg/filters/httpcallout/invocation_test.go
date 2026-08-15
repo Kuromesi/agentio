@@ -167,11 +167,25 @@ func TestBuildRequestInvocationHeaderModes(t *testing.T) {
 			want: map[string]string{"x-tenant": "demo"},
 		},
 		{
-			// The never-forward rule is the whole point of this mode: a
-			// third-party endpoint outside the mesh must not receive the
-			// caller's credentials just because the operator asked for "all".
-			name: "all forwards everything except credentials",
+			// "all" means all, credentials included: authorization and cookie
+			// are named in the expectation so the reversal of the old
+			// never-forward rule is visible rather than implied by an absence.
+			name: "all forwards every header including the caller's credentials",
 			cfg:  HeadersConfig{Mode: HeaderModeAll},
+			want: map[string]string{
+				"content-type":  "application/json",
+				"x-tenant":      "demo",
+				"authorization": "Bearer caller-credential",
+				"cookie":        "session=abc",
+				"x-request-id":  "req-123",
+			},
+		},
+		{
+			// The denylist is how an operator writes the old hardcoded rule.
+			// x-request-id is unnamed and survives, which is what separates a
+			// denylist from an allowlist.
+			name: "denylist drops the named headers and keeps the rest",
+			cfg:  HeadersConfig{Mode: HeaderModeDenylist, Denylist: []string{"Authorization", "cookie"}},
 			want: map[string]string{
 				"content-type": "application/json",
 				"x-tenant":     "demo",
@@ -373,13 +387,29 @@ func TestBuildResponseInvocationHeaderModes(t *testing.T) {
 			want: map[string]string{"x-upstream": "demo"},
 		},
 		{
-			// set-cookie is a session credential the upstream minted in this very
-			// response, so "all" must not hand it to a third-party endpoint.
-			name: "all forwards everything except upstream credentials",
+			// set-cookie is the credential the previous amendment stripped here.
+			// It is named in the expectation so the reversal is explicit: "all"
+			// now discloses what the upstream minted, and the endpoint sits
+			// outside the mesh trust boundary.
+			name: "all forwards every header including the upstream's credentials",
 			cfg:  HeadersConfig{Mode: HeaderModeAll},
 			want: map[string]string{
-				"content-type": "text/plain",
-				"x-upstream":   "demo",
+				"content-type":       "text/plain",
+				"x-upstream":         "demo",
+				"set-cookie":         "session=upstream-minted",
+				"www-authenticate":   `Bearer realm="upstream"`,
+				"proxy-authenticate": `Basic realm="proxy"`,
+			},
+		},
+		{
+			// www-authenticate is a credential the operator did not name, so it
+			// survives. A denylist drops exactly what it lists.
+			name: "denylist drops the named headers and keeps an unnamed credential",
+			cfg:  HeadersConfig{Mode: HeaderModeDenylist, Denylist: []string{"Set-Cookie", "proxy-authenticate"}},
+			want: map[string]string{
+				"content-type":     "text/plain",
+				"x-upstream":       "demo",
+				"www-authenticate": `Bearer realm="upstream"`,
 			},
 		},
 	} {

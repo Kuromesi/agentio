@@ -15,6 +15,7 @@ package httpcallout
 
 import (
 	"fmt"
+	"maps"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
@@ -118,22 +119,22 @@ func policyContext(id filter.UnitID) PolicyContext {
 	return PolicyContext{Scope: id.Scope, Rule: id.Name, Ordinal: id.Ordinal}
 }
 
-// forwardedRequestHeaders applies the request-direction disclosure mode, dropping
-// the caller's credentials.
+// forwardedRequestHeaders applies the request-direction disclosure mode.
 func forwardedRequestHeaders(cfg HeadersConfig, headers map[string]string) map[string]string {
-	return forwardedHeaders(cfg, headers, neverForwardRequestHeader)
+	return forwardedHeaders(cfg, headers)
 }
 
-// forwardedResponseHeaders applies the response-direction disclosure mode,
-// dropping the credentials the upstream minted in this response.
+// forwardedResponseHeaders applies the response-direction disclosure mode. The
+// modes are direction-neutral, so both wrappers exist only to name the caller's
+// direction at the two build sites.
 func forwardedResponseHeaders(cfg HeadersConfig, headers map[string]string) map[string]string {
-	return forwardedHeaders(cfg, headers, neverForwardResponseHeader)
+	return forwardedHeaders(cfg, headers)
 }
 
 // forwardedHeaders applies the disclosure mode. It always builds a new map: the
 // stream header map is the single shared holder for the whole path, so aliasing it
 // would let a callout view mutate what every later filter reads.
-func forwardedHeaders(cfg HeadersConfig, headers map[string]string, neverForward func(string) bool) map[string]string {
+func forwardedHeaders(cfg HeadersConfig, headers map[string]string) map[string]string {
 	switch cfg.Mode {
 	case HeaderModeAllowlist:
 		out := make(map[string]string, len(cfg.Allowlist))
@@ -143,18 +144,27 @@ func forwardedHeaders(cfg HeadersConfig, headers map[string]string, neverForward
 			}
 		}
 		return out
-	case HeaderModeAll:
+	case HeaderModeDenylist:
+		denied := make(map[string]struct{}, len(cfg.Denylist))
+		for _, name := range cfg.Denylist {
+			denied[name] = struct{}{}
+		}
 		out := make(map[string]string, len(headers))
 		for name, value := range headers {
-			// "all" means all of the operator's headers, not credentials: the
-			// endpoint is a third party outside the mesh. Effective already
-			// rejects an allowlist naming these, so this is the only mode where
-			// the filter has to apply the rule.
-			if neverForward(name) {
+			// Effective lower-cased the config names, and the stream map is
+			// already lower-cased, so a direct lookup is the whole match.
+			if _, found := denied[name]; found {
 				continue
 			}
 			out[name] = value
 		}
+		return out
+	case HeaderModeAll:
+		// All means all, credentials included. The endpoint is outside the mesh
+		// trust boundary, so an operator who wants a credential withheld says so
+		// with a denylist rather than relying on a hidden rule here.
+		out := make(map[string]string, len(headers))
+		maps.Copy(out, headers)
 		return out
 	default:
 		// none, including an unset mode that never reached Effective.

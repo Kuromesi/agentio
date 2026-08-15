@@ -80,7 +80,7 @@ func TestConfigEffectiveReturnsADeepCopy(t *testing.T) {
 			Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"X-Tenant"}},
 			Body:    true,
 		},
-		Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}},
+		Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeDenylist, Denylist: []string{"Authorization"}}},
 	}
 
 	got, err := in.Effective()
@@ -100,6 +100,7 @@ func TestConfigEffectiveReturnsADeepCopy(t *testing.T) {
 	in.Request.Headers.Mode = HeaderModeNone
 	in.Request.Headers.Allowlist[0] = "x-hijacked"
 	in.Response.Headers.Mode = HeaderModeNone
+	in.Response.Headers.Denylist[0] = "x-hijacked"
 
 	if !got.Request.Body {
 		t.Error("mutating the caller's Request.Body changed the effective copy")
@@ -111,8 +112,12 @@ func TestConfigEffectiveReturnsADeepCopy(t *testing.T) {
 	if !reflect.DeepEqual(got.Request.Headers.Allowlist, wantAllowlist) {
 		t.Errorf("request allowlist = %v, want %v: the slice is shared with the caller", got.Request.Headers.Allowlist, wantAllowlist)
 	}
-	if got.Response.Headers.Mode != HeaderModeAll {
+	if got.Response.Headers.Mode != HeaderModeDenylist {
 		t.Errorf("response header mode = %q, want it unaffected by the caller's edit", got.Response.Headers.Mode)
+	}
+	wantDenylist := []string{"authorization"}
+	if !reflect.DeepEqual(got.Response.Headers.Denylist, wantDenylist) {
+		t.Errorf("response denylist = %v, want %v: the slice is shared with the caller", got.Response.Headers.Denylist, wantDenylist)
 	}
 }
 
@@ -134,6 +139,9 @@ func TestConfigEffectiveDefaultsBothDirectionsToNone(t *testing.T) {
 	if len(got.Request.Headers.Allowlist) != 0 {
 		t.Errorf("request header allowlist = %v, want empty", got.Request.Headers.Allowlist)
 	}
+	if len(got.Request.Headers.Denylist) != 0 {
+		t.Errorf("request header denylist = %v, want empty", got.Request.Headers.Denylist)
+	}
 	if got.Request.Body {
 		t.Error("an empty PhaseConfig collected a body, want body collection opt-in")
 	}
@@ -142,6 +150,9 @@ func TestConfigEffectiveDefaultsBothDirectionsToNone(t *testing.T) {
 	}
 	if len(got.Response.Headers.Allowlist) != 0 {
 		t.Errorf("response header allowlist = %v, want empty", got.Response.Headers.Allowlist)
+	}
+	if len(got.Response.Headers.Denylist) != 0 {
+		t.Errorf("response header denylist = %v, want empty", got.Response.Headers.Denylist)
 	}
 	if got.Response.Body {
 		t.Error("an empty PhaseConfig collected a body, want body collection opt-in")
@@ -269,47 +280,57 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 // than a design.
 func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T) {
 	directions := []struct {
-		name       string
-		field      func(*Config) *HeadersConfig
-		credential string
+		name  string
+		field func(*Config) *HeadersConfig
 	}{
 		{
-			name:       "request",
-			field:      func(c *Config) *HeadersConfig { return &c.Request.Headers },
-			credential: "authorization",
+			name:  "request",
+			field: func(c *Config) *HeadersConfig { return &c.Request.Headers },
 		},
 		{
-			name:       "response",
-			field:      func(c *Config) *HeadersConfig { return &c.Response.Headers },
-			credential: "set-cookie",
+			name:  "response",
+			field: func(c *Config) *HeadersConfig { return &c.Response.Headers },
 		},
 	}
 	tests := []struct {
 		name    string
-		mutate  func(*HeadersConfig, string)
+		mutate  func(*HeadersConfig)
 		wantErr string
 	}{
 		{
 			name:    "unknown mode",
-			mutate:  func(h *HeadersConfig, _ string) { h.Mode = HeaderMode("unknown") },
+			mutate:  func(h *HeadersConfig) { h.Mode = HeaderMode("unknown") },
 			wantErr: "header mode",
 		},
 		{
 			name:    "empty allowlist",
-			mutate:  func(h *HeadersConfig, _ string) { h.Mode = HeaderModeAllowlist },
+			mutate:  func(h *HeadersConfig) { h.Mode = HeaderModeAllowlist },
 			wantErr: "allowlist",
 		},
 		{
+			name:    "empty denylist",
+			mutate:  func(h *HeadersConfig) { h.Mode = HeaderModeDenylist },
+			wantErr: "denylist",
+		},
+		{
 			name: "invalid allowlist name",
-			mutate: func(h *HeadersConfig, _ string) {
+			mutate: func(h *HeadersConfig) {
 				h.Mode = HeaderModeAllowlist
 				h.Allowlist = []string{"bad header"}
 			},
 			wantErr: "header name",
 		},
 		{
+			name: "invalid denylist name",
+			mutate: func(h *HeadersConfig) {
+				h.Mode = HeaderModeDenylist
+				h.Denylist = []string{"bad header"}
+			},
+			wantErr: "header name",
+		},
+		{
 			name: "allowlist entries in none mode",
-			mutate: func(h *HeadersConfig, _ string) {
+			mutate: func(h *HeadersConfig) {
 				h.Mode = HeaderModeNone
 				h.Allowlist = []string{"x-tenant"}
 			},
@@ -317,27 +338,48 @@ func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T)
 		},
 		{
 			name: "allowlist entries in all mode",
-			mutate: func(h *HeadersConfig, _ string) {
+			mutate: func(h *HeadersConfig) {
 				h.Mode = HeaderModeAll
 				h.Allowlist = []string{"x-tenant"}
 			},
 			wantErr: "allowlist",
 		},
 		{
-			name: "allowlist naming a credential",
-			mutate: func(h *HeadersConfig, credential string) {
-				h.Mode = HeaderModeAllowlist
-				h.Allowlist = []string{"x-tenant", credential}
+			name: "denylist entries in none mode",
+			mutate: func(h *HeadersConfig) {
+				h.Mode = HeaderModeNone
+				h.Denylist = []string{"x-tenant"}
 			},
-			wantErr: "never forwarded",
+			wantErr: "denylist",
 		},
 		{
-			name: "allowlist naming a mixed-case credential",
-			mutate: func(h *HeadersConfig, credential string) {
-				h.Mode = HeaderModeAllowlist
-				h.Allowlist = []string{strings.ToUpper(credential)}
+			name: "denylist entries in all mode",
+			mutate: func(h *HeadersConfig) {
+				h.Mode = HeaderModeAll
+				h.Denylist = []string{"x-tenant"}
 			},
-			wantErr: "never forwarded",
+			wantErr: "denylist",
+		},
+		{
+			// The two fields exist so that a one-word mode edit cannot silently
+			// invert "only these" into "all but these". These two cases are that
+			// guarantee: a list under the mode that does not own it is an error.
+			name: "allowlist under denylist mode",
+			mutate: func(h *HeadersConfig) {
+				h.Mode = HeaderModeDenylist
+				h.Denylist = []string{"authorization"}
+				h.Allowlist = []string{"x-tenant"}
+			},
+			wantErr: "allowlist",
+		},
+		{
+			name: "denylist under allowlist mode",
+			mutate: func(h *HeadersConfig) {
+				h.Mode = HeaderModeAllowlist
+				h.Allowlist = []string{"x-tenant"}
+				h.Denylist = []string{"authorization"}
+			},
+			wantErr: "denylist",
 		},
 	}
 
@@ -350,7 +392,7 @@ func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T)
 						Request:  &PhaseConfig{},
 						Response: &PhaseConfig{},
 					}
-					tt.mutate(direction.field(&cfg), direction.credential)
+					tt.mutate(direction.field(&cfg))
 					_, err := cfg.Effective()
 					if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
 						t.Fatalf("Effective error = %v, want one containing %q", err, tt.wantErr)
@@ -366,69 +408,75 @@ func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T)
 	}
 }
 
-// TestConfigEffectiveKeepsTheNeverForwardSetsPerDirection is the leak bite. The
-// two sets protect different secrets: cookie is a credential the caller sent,
-// set-cookie one the upstream minted. Sharing one set would forbid names that are
-// harmless in the other direction.
-func TestConfigEffectiveKeepsTheNeverForwardSetsPerDirection(t *testing.T) {
-	requestNames := []string{"authorization", "proxy-authorization", "cookie"}
-	responseNames := []string{"set-cookie", "www-authenticate", "proxy-authenticate"}
+// TestConfigEffectiveAcceptsCredentialsInEitherList pins the reversal. A name
+// written in a reviewed CRD is a decision, not an accident: a callout that
+// inspects or transforms credentials needs to see them, and rejecting the name
+// made a legitimate setup inexpressible.
+func TestConfigEffectiveAcceptsCredentialsInEitherList(t *testing.T) {
+	credentials := []string{
+		"authorization", "proxy-authorization", "cookie",
+		"set-cookie", "www-authenticate", "proxy-authenticate",
+	}
 
-	t.Run("a request allowlist may name response credentials", func(t *testing.T) {
-		got, err := (Config{
-			Endpoint: "https://callout.example.test/check",
-			Request:  &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: responseNames}},
-		}).Effective()
-		if err != nil {
-			t.Fatalf("Effective rejected %v in a request allowlist: %v", responseNames, err)
-		}
-		if !reflect.DeepEqual(got.Request.Headers.Allowlist, responseNames) {
-			t.Errorf("request allowlist = %v, want %v", got.Request.Headers.Allowlist, responseNames)
-		}
-	})
-
-	t.Run("a response allowlist may name request credentials", func(t *testing.T) {
-		got, err := (Config{
-			Endpoint: "https://callout.example.test/check",
-			Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: requestNames}},
-		}).Effective()
-		if err != nil {
-			t.Fatalf("Effective rejected %v in a response allowlist: %v", requestNames, err)
-		}
-		if !reflect.DeepEqual(got.Response.Headers.Allowlist, requestNames) {
-			t.Errorf("response allowlist = %v, want %v", got.Response.Headers.Allowlist, requestNames)
-		}
-	})
-}
-
-func TestNeverForwardHeader(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		in          string
-		wantRequest bool
-		wantRespond bool
-	}{
-		{name: "authorization", in: "authorization", wantRequest: true},
-		{name: "mixed-case authorization", in: "Authorization", wantRequest: true},
-		{name: "proxy-authorization", in: "proxy-authorization", wantRequest: true},
-		{name: "mixed-case proxy-authorization", in: "Proxy-Authorization", wantRequest: true},
-		{name: "cookie", in: "cookie", wantRequest: true},
-		{name: "mixed-case cookie", in: "Cookie", wantRequest: true},
-		{name: "set-cookie", in: "set-cookie", wantRespond: true},
-		{name: "mixed-case set-cookie", in: "Set-Cookie", wantRespond: true},
-		{name: "www-authenticate", in: "www-authenticate", wantRespond: true},
-		{name: "mixed-case www-authenticate", in: "WWW-Authenticate", wantRespond: true},
-		{name: "proxy-authenticate", in: "proxy-authenticate", wantRespond: true},
-		{name: "ordinary header", in: "x-tenant"},
-		{name: "content-type", in: "Content-Type"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := neverForwardRequestHeader(tc.in); got != tc.wantRequest {
-				t.Errorf("neverForwardRequestHeader(%q) = %v, want %v", tc.in, got, tc.wantRequest)
+	for _, mode := range []HeaderMode{HeaderModeAllowlist, HeaderModeDenylist} {
+		t.Run(string(mode), func(t *testing.T) {
+			headers := HeadersConfig{Mode: mode}
+			if mode == HeaderModeAllowlist {
+				headers.Allowlist = credentials
+			} else {
+				headers.Denylist = credentials
 			}
-			if got := neverForwardResponseHeader(tc.in); got != tc.wantRespond {
-				t.Errorf("neverForwardResponseHeader(%q) = %v, want %v", tc.in, got, tc.wantRespond)
+			got, err := (Config{
+				Endpoint: "https://callout.example.test/check",
+				Request:  &PhaseConfig{Headers: headers},
+				Response: &PhaseConfig{Headers: headers},
+			}).Effective()
+			if err != nil {
+				t.Fatalf("Effective rejected %v under %q: %v", credentials, mode, err)
+			}
+			for _, direction := range []struct {
+				name  string
+				phase *PhaseConfig
+			}{{"request", got.Request}, {"response", got.Response}} {
+				list := direction.phase.Headers.Allowlist
+				if mode == HeaderModeDenylist {
+					list = direction.phase.Headers.Denylist
+				}
+				if !reflect.DeepEqual(list, credentials) {
+					t.Errorf("%s %s = %v, want %v", direction.name, mode, list, credentials)
+				}
 			}
 		})
+	}
+}
+
+// TestConfigEffectiveNormalizesTheDenylist mirrors the allowlist normalization:
+// whichever list the mode owns is lower-cased and deduplicated, so a match at
+// forwarding time never depends on the casing an operator happened to write.
+func TestConfigEffectiveNormalizesTheDenylist(t *testing.T) {
+	got, err := (Config{
+		Endpoint: "https://callout.example.test/check",
+		Request: &PhaseConfig{Headers: HeadersConfig{
+			Mode:     HeaderModeDenylist,
+			Denylist: []string{"Authorization", "authorization", "Cookie"},
+		}},
+		Response: &PhaseConfig{Headers: HeadersConfig{
+			Mode:     HeaderModeDenylist,
+			Denylist: []string{"Set-Cookie", "set-cookie"},
+		}},
+	}).Effective()
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	wantRequest := []string{"authorization", "cookie"}
+	if !reflect.DeepEqual(got.Request.Headers.Denylist, wantRequest) {
+		t.Errorf("request denylist = %v, want %v", got.Request.Headers.Denylist, wantRequest)
+	}
+	if len(got.Request.Headers.Allowlist) != 0 {
+		t.Errorf("request allowlist = %v, want empty under denylist mode", got.Request.Headers.Allowlist)
+	}
+	wantResponse := []string{"set-cookie"}
+	if !reflect.DeepEqual(got.Response.Headers.Denylist, wantResponse) {
+		t.Errorf("response denylist = %v, want %v", got.Response.Headers.Denylist, wantResponse)
 	}
 }
