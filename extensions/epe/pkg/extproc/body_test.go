@@ -18,33 +18,26 @@ import (
 	"testing"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
 
-func TestHandleRequestBody_PassthroughByDefault(t *testing.T) {
-	s := NewServer(ServerDeps{})
-	res, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{Body: []byte("x"), EndOfStream: true}, nil)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if len(res) == 0 {
-		t.Fatalf("expected non-empty passthrough response")
-	}
-	if res[0].GetRequestBody() == nil {
-		t.Fatalf("expected RequestBody response variant, got %T", res[0].Response)
-	}
-}
-
-func TestHandleRequestBody_NoPendingEval(t *testing.T) {
+func TestHandleRequestBody_ValidatesMessageOrderAndInput(t *testing.T) {
 	s := NewServer(ServerDeps{})
 	state := newStreamState()
-	res, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{Body: []byte("x"), EndOfStream: true}, state)
-	if err != nil {
-		t.Fatalf("err: %v", err)
+	state.markRequestSeen()
+	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{}, state); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("body without continuation error = %v, want FailedPrecondition", err)
 	}
-	if res[0].GetRequestBody() == nil {
-		t.Fatalf("expected passthrough body response")
+
+	s, state = pendingBodyState(t, []filter.Registration{fixedReg("fake-body", &bodyProbe{})}, nil)
+	if _, err := s.HandleRequestBody(context.Background(), nil, state); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("nil body error = %v, want InvalidArgument", err)
+	}
+	if state.requestBodyContinuation == nil || !state.awaitingInput() {
+		t.Fatal("invalid body input consumed the outstanding obligation")
 	}
 }
 
@@ -101,8 +94,8 @@ func TestHandleRequestBody_ConsumesPendingEvaluationOnce(t *testing.T) {
 
 	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
 		Body: []byte("duplicate"), EndOfStream: true,
-	}, state); err != nil {
-		t.Fatalf("duplicate body: %v", err)
+	}, state); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("duplicate body error = %v, want FailedPrecondition", err)
 	}
 	if fp.bodyCalls != 1 {
 		t.Fatalf("body phase ran %d times, want exactly once", fp.bodyCalls)

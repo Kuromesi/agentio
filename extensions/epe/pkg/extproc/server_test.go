@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
@@ -134,8 +136,8 @@ func TestProcessRequestBody_SingleChunk_NonStreamingServer(t *testing.T) {
 	}
 }
 
-// When no filter needs the body, passthrough still works.
-func TestProcessRequestBody_NoBodyHandlers(t *testing.T) {
+// A body message without an outstanding body obligation is a protocol error.
+func TestProcessRequestBody_RejectsWithoutObligation(t *testing.T) {
 	state := newStreamState()
 	s := NewServer(ServerDeps{})
 	logger := log.FromContext(context.Background())
@@ -144,13 +146,10 @@ func TestProcessRequestBody_NoBodyHandlers(t *testing.T) {
 		Body:        []byte("data"),
 		EndOfStream: true,
 	}, state, logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("error = %v, want FailedPrecondition", err)
 	}
-	if len(resp) == 0 {
-		t.Fatal("expected passthrough response")
-	}
-	if resp[0].GetRequestBody() == nil {
-		t.Fatalf("expected passthrough body response, got %T", resp[0].Response)
+	if len(resp) != 0 {
+		t.Fatalf("responses = %v, want none", resp)
 	}
 }

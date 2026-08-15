@@ -520,14 +520,14 @@ func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
 	}
 }
 
-// TestPassThroughHandlers covers the trivial body / trailer / response stubs
-// so they show up in coverage and accidental regressions surface immediately.
-func TestPassThroughHandlers(t *testing.T) {
+// TestTrailerPassThroughAndBodyOrderValidation covers the trailer stubs and
+// verifies that body handlers reject messages they did not request.
+func TestTrailerPassThroughAndBodyOrderValidation(t *testing.T) {
 	srv := NewServer(ServerDeps{})
 	ctx := context.Background()
 
-	if r, err := srv.HandleRequestBody(ctx, &extProcPb.HttpBody{EndOfStream: true}, nil); err != nil || len(r) != 1 {
-		t.Errorf("HandleRequestBody: got len=%d err=%v", len(r), err)
+	if _, err := srv.HandleRequestBody(ctx, &extProcPb.HttpBody{EndOfStream: true}, nil); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("HandleRequestBody without state: err=%v, want FailedPrecondition", err)
 	}
 	if r, err := srv.HandleRequestTrailers(ctx, nil); err != nil || len(r) != 1 {
 		t.Errorf("HandleRequestTrailers: got len=%d err=%v", len(r), err)
