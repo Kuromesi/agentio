@@ -128,6 +128,16 @@ func buildRegistration[C any](d Descriptor[C], parse func(raw json.RawMessage) (
 	if d.Phases&PhaseResponseBody != 0 && d.Phases&PhaseResponseHeaders == 0 {
 		return Registration{}, fmt.Errorf("filter definition %q: response-body phase requires response headers", d.Name)
 	}
+	// A nil SubscribesOf subscribes nothing, and the response walk dispatches
+	// only subscribed pairs, so declaring the phase without it yields a response
+	// half that never runs. That is the same "declared but unreachable" defect
+	// the two implications above reject, and it is the one that would otherwise
+	// fail silently: no error, no metric, and no test to notice. A filter that
+	// always wants the phase says so with a closure returning it.
+	if d.Phases&PhaseResponseHeaders != 0 && d.SubscribesOf == nil {
+		return Registration{}, fmt.Errorf("filter definition %q: response-headers phase requires SubscribesOf; "+
+			"without it no config subscribes and the response phase never runs", d.Name)
+	}
 	return Registration{
 		Name:   d.Name,
 		Phases: d.Phases,

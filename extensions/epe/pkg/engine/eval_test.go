@@ -1009,8 +1009,12 @@ func TestValidateSubscriptions_NoDemand(t *testing.T) {
 			spec: regSpec{
 				name:   "resp",
 				phases: bothHeaderPhases,
-				// subscribes left nil: capable of running there, does not need it.
-				make: func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
+				// Capable of running there, this config does not need it. Zero
+				// rather than nil, because Build rejects a nil SubscribesOf on a
+				// filter declaring the phase; zero is also the shape production
+				// takes, where a request-only config returns it.
+				subscribes: subscribesTo(0),
+				make:       func(filter.RuleConfig[string]) filter.Filter { return filter.PassThrough{} },
 			},
 			units: unitsFor([][]string{{"cfg"}}),
 			why:   "no config asks",
@@ -1129,6 +1133,9 @@ func TestEvalResponseHeaders_InvokesNobodyWhenNothingSubscribed(t *testing.T) {
 	regs := buildRegs(t, []regSpec{{
 		name:   "resp",
 		phases: bothHeaderPhases,
+		// Zero demand, not a nil SubscribesOf: Build rejects nil on a filter that
+		// declares the phase, and zero is what a request-only config returns.
+		subscribes: subscribesTo(0),
 		make: func(c filter.RuleConfig[string]) filter.Filter {
 			cfg := c.Cfg
 			return &recordingRespFilter{onResp: func() { invoked = append(invoked, cfg) }}
