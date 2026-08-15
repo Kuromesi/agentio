@@ -292,6 +292,13 @@ func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
 
 		verdict := run(t, server, msgs)
 		verdict.RequireBlockedBody(t, http.StatusForbidden, "blocked by scanner")
+		// The reason exists only to reach RESPONSE_CODE_DETAILS, which is the
+		// operator's channel: the body above goes to the untrusted caller, this
+		// goes to the access log. Nothing else proves the value survives the
+		// crossing into the ImmediateResponse.
+		if got := verdict.ImmediateDetails; got != "prompt-injection" {
+			t.Errorf("immediate details = %q, want the decision's reason", got)
+		}
 	})
 }
 
@@ -393,6 +400,11 @@ func TestScenario_ResponseRespondBlocksOnExtProcWire(t *testing.T) {
 
 	verdict := run(t, server, msgs)
 	verdict.RequireBlockedBody(t, http.StatusBadGateway, "response blocked by scanner")
+	// The reason has to survive from the response direction too: respond is legal
+	// in both phases, and both render through the same ImmediateResponse.
+	if got := verdict.ImmediateDetails; got != "leaked-secret" {
+		t.Errorf("immediate details = %q, want the decision's reason", got)
+	}
 	// Envoy is still holding the upstream response headers when this local reply
 	// arrives, so the reply replaces them (translate.go:88-92). A response header
 	// op alongside it would mean the extension emitted a mutation for a response
@@ -645,6 +657,13 @@ func TestScenario_EndpointFailurePolarity(t *testing.T) {
 			if body := verdict.ImmediateBody; body != "" {
 				t.Errorf("immediate body = %q, want empty: neither the endpoint nor the "+
 					"remote's text may reach an untrusted caller", body)
+			}
+			// The positive half of that proof: the details carry the framework's
+			// marker for the phase, which is what tells this apart from the
+			// endpoint's own 500 being forwarded verbatim.
+			if got := verdict.ImmediateDetails; got != "epe_request_body_failed_closed" {
+				t.Errorf("immediate details = %q, want the framework's fail-closed marker "+
+					"for the request-body phase", got)
 			}
 		})
 	})

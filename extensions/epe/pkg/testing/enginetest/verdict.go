@@ -71,6 +71,11 @@ type Verdict struct {
 	// ImmediateStatus and ImmediateBody are set when Kind is VerdictBlocked.
 	ImmediateStatus int
 	ImmediateBody   string
+	// ImmediateDetails is the block's RESPONSE_CODE_DETAILS. It is the operator's
+	// channel rather than the client's — the body reaches the caller, this reaches
+	// the access log — so it is the only place a reason for the block, or the
+	// framework's own fail-closed marker, is observable.
+	ImmediateDetails string
 
 	// RequestHeaderOps and ResponseHeaderOps record decoded wire operations by
 	// direction and in protobuf order. RequestHeaderOps includes mutations from
@@ -118,6 +123,7 @@ func ParseVerdict(responses []*extProcPb.ProcessingResponse, procErr error) *Ver
 			v.Kind = VerdictBlocked
 			v.ImmediateStatus = int(r.ImmediateResponse.GetStatus().GetCode())
 			v.ImmediateBody = string(r.ImmediateResponse.GetBody())
+			v.ImmediateDetails = r.ImmediateResponse.GetDetails()
 			return v
 		case *extProcPb.ProcessingResponse_RequestHeaders:
 			if resp.ModeOverride != nil && v.ModeOverride == nil {
