@@ -19,14 +19,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"istio.io/istio/extensions/epe/pkg/certs/certstest"
 )
 
 // chainsFor builds the [][]*x509.Certificate shape crypto/tls hands to
 // VerifyPeerCertificate for a leaf issued by the test CA.
-func chainsFor(t *testing.T, ca *testCA, spec leafSpec) [][]*x509.Certificate {
+func chainsFor(t *testing.T, ca *certstest.CA, spec certstest.LeafSpec) [][]*x509.Certificate {
 	t.Helper()
-	_, leaf := ca.issue(t, spec)
-	return [][]*x509.Certificate{{leaf, ca.cert}}
+	_, leaf := ca.Issue(t, spec)
+	return [][]*x509.Certificate{{leaf, ca.Cert}}
 }
 
 func TestSPIFFEAllowListValidation(t *testing.T) {
@@ -93,7 +95,7 @@ func TestSPIFFEAllowListValidation(t *testing.T) {
 }
 
 func TestSPIFFEAllowListVerifyPeer(t *testing.T) {
-	ca := newTestCA(t)
+	ca := certstest.New(t)
 	const envoyID = "spiffe://cluster.local/ns/default/sa/envoy"
 	const otherID = "spiffe://cluster.local/ns/other/sa/other"
 
@@ -106,41 +108,41 @@ func TestSPIFFEAllowListVerifyPeer(t *testing.T) {
 		{
 			name:    "matching SPIFFE ID is accepted",
 			allowed: []string{envoyID},
-			chains:  chainsFor(t, ca, leafSpec{serial: 300, uris: []string{envoyID}}),
+			chains:  chainsFor(t, ca, certstest.LeafSpec{Serial: 300, URIs: []string{envoyID}}),
 		},
 		{
 			name:    "match against multi-entry allow-list is accepted",
 			allowed: []string{otherID, envoyID},
-			chains:  chainsFor(t, ca, leafSpec{serial: 301, uris: []string{envoyID}}),
+			chains:  chainsFor(t, ca, certstest.LeafSpec{Serial: 301, URIs: []string{envoyID}}),
 		},
 		{
 			name:    "match on second URI SAN is accepted",
 			allowed: []string{envoyID},
-			chains:  chainsFor(t, ca, leafSpec{serial: 302, uris: []string{otherID, envoyID}}),
+			chains:  chainsFor(t, ca, certstest.LeafSpec{Serial: 302, URIs: []string{otherID, envoyID}}),
 		},
 		{
 			// An upper-case scheme in the configuration must still match the
 			// peer's canonical uri.String() form.
 			name:    "upper-case scheme is normalized and accepted",
 			allowed: []string{"SPIFFE://cluster.local/ns/default/sa/envoy"},
-			chains:  chainsFor(t, ca, leafSpec{serial: 340, uris: []string{envoyID}}),
+			chains:  chainsFor(t, ca, certstest.LeafSpec{Serial: 340, URIs: []string{envoyID}}),
 		},
 		{
 			name:        "non-matching SPIFFE ID is rejected",
 			allowed:     []string{envoyID},
-			chains:      chainsFor(t, ca, leafSpec{serial: 303, uris: []string{otherID}}),
+			chains:      chainsFor(t, ca, certstest.LeafSpec{Serial: 303, URIs: []string{otherID}}),
 			expectError: "not in allow-list",
 		},
 		{
 			name:        "leaf without URI SANs is rejected",
 			allowed:     []string{envoyID},
-			chains:      chainsFor(t, ca, leafSpec{serial: 304, dnsNames: []string{"envoy.local"}}),
+			chains:      chainsFor(t, ca, certstest.LeafSpec{Serial: 304, DNSNames: []string{"envoy.local"}}),
 			expectError: "no URI SANs",
 		},
 		{
 			name:        "empty allow-list rejects every peer",
 			allowed:     nil,
-			chains:      chainsFor(t, ca, leafSpec{serial: 305, uris: []string{envoyID}}),
+			chains:      chainsFor(t, ca, certstest.LeafSpec{Serial: 305, URIs: []string{envoyID}}),
 			expectError: "not in allow-list",
 		},
 		{
@@ -175,11 +177,11 @@ func TestSPIFFEAllowListVerifyPeer(t *testing.T) {
 }
 
 func TestSPIFFEAllowListSet(t *testing.T) {
-	ca := newTestCA(t)
+	ca := certstest.New(t)
 	const oldID = "spiffe://cluster.local/ns/default/sa/old"
 	const newID = "spiffe://cluster.local/ns/default/sa/new"
-	oldChains := chainsFor(t, ca, leafSpec{serial: 310, uris: []string{oldID}})
-	newChains := chainsFor(t, ca, leafSpec{serial: 311, uris: []string{newID}})
+	oldChains := chainsFor(t, ca, certstest.LeafSpec{Serial: 310, URIs: []string{oldID}})
+	newChains := chainsFor(t, ca, certstest.LeafSpec{Serial: 311, URIs: []string{newID}})
 
 	list, err := NewSPIFFEAllowList(oldID)
 	if err != nil {
@@ -214,9 +216,9 @@ func TestSPIFFEAllowListSet(t *testing.T) {
 }
 
 func TestSPIFFEAllowListConcurrency(t *testing.T) {
-	ca := newTestCA(t)
+	ca := certstest.New(t)
 	const id = "spiffe://cluster.local/ns/default/sa/envoy"
-	chains := chainsFor(t, ca, leafSpec{serial: 320, uris: []string{id}})
+	chains := chainsFor(t, ca, certstest.LeafSpec{Serial: 320, URIs: []string{id}})
 
 	list, err := NewSPIFFEAllowList(id)
 	if err != nil {
@@ -251,9 +253,9 @@ func TestSPIFFEAllowListConcurrency(t *testing.T) {
 }
 
 func TestSPIFFEAllowListZeroValueFailsClosed(t *testing.T) {
-	ca := newTestCA(t)
+	ca := certstest.New(t)
 	const id = "spiffe://cluster.local/ns/default/sa/envoy"
-	chains := chainsFor(t, ca, leafSpec{serial: 341, uris: []string{id}})
+	chains := chainsFor(t, ca, certstest.LeafSpec{Serial: 341, URIs: []string{id}})
 
 	var list SPIFFEAllowList
 	err := list.VerifyPeer(chains)
@@ -288,12 +290,12 @@ func TestSPIFFEHandshake(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ca := newTestCA(t)
-			serverCert, serverLeaf := ca.issue(t, leafSpec{serial: 330})
-			clientCert, _ := ca.issue(t, leafSpec{
-				serial:      331,
-				uris:        []string{tt.clientID},
-				extKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			ca := certstest.New(t)
+			serverCert, serverLeaf := ca.Issue(t, certstest.LeafSpec{Serial: 330})
+			clientCert, _ := ca.Issue(t, certstest.LeafSpec{
+				Serial:      331,
+				URIs:        []string{tt.clientID},
+				ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 			})
 
 			list, err := NewSPIFFEAllowList(envoyID)
@@ -301,7 +303,7 @@ func TestSPIFFEHandshake(t *testing.T) {
 				t.Fatalf("NewSPIFFEAllowList: %v", err)
 			}
 			serverCfg, err := ServerTLSConfig(
-				&staticProvider{cert: &serverCert, roots: ca.pool},
+				&staticProvider{cert: &serverCert, roots: ca.Pool},
 				WithClientAuth(tls.RequireAndVerifyClientCert),
 				WithPeerVerifier(list.VerifyPeer),
 			)
@@ -309,7 +311,7 @@ func TestSPIFFEHandshake(t *testing.T) {
 				t.Fatalf("ServerTLSConfig: %v", err)
 			}
 			clientCfg, err := ClientTLSConfig(
-				&staticProvider{cert: &clientCert, roots: ca.pool},
+				&staticProvider{cert: &clientCert, roots: ca.Pool},
 				WithPeerVerifier(pinLeaf(serverLeaf)),
 			)
 			if err != nil {

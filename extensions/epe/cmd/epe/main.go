@@ -171,7 +171,7 @@ func run() error {
 	// Setup the ext-proc server config. Without --tls-* flags the listener
 	// stays plaintext, delegating transport security to the service mesh
 	// sidecar.
-	servingTLS, err := buildExtProcTLS(*tlsCertPath, *tlsKeyPath, *tlsCAPath, *peerSPIFFEIDs)
+	servingTLS, err := buildExtProcTLS(*tlsCertPath, *tlsKeyPath, *tlsCAPath, *peerSPIFFEIDs, ctx.Done())
 	if err != nil {
 		setupLog.Error(err, "Invalid ext-proc TLS flags")
 		return err
@@ -193,7 +193,7 @@ func run() error {
 
 	// Assemble the ext-proc gRPC server; filters come from the shared chain
 	// builder — see wiring.BuildFilters for ordering semantics.
-	chainDeps := wiring.Deps{Kube: client.Kube()}
+	chainDeps := wiring.Deps{Kube: client, Stop: ctx.Done()}
 	registrations, err := wiring.BuildFilters(chainDeps)
 	if err != nil {
 		setupLog.Error(err, "Failed to build filter chain")

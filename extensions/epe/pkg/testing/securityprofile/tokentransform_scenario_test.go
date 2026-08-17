@@ -25,11 +25,10 @@ import (
 	"testing"
 	"time"
 
-	k8sfake "k8s.io/client-go/kubernetes/fake"
-
 	"istio.io/istio/extensions/epe/pkg/credential/credentialtest"
 	"istio.io/istio/extensions/epe/pkg/credential/tokencache"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
+	"istio.io/istio/pkg/kube"
 )
 
 const injectionPath = "/token/inject"
@@ -73,8 +72,8 @@ func injectionRequest() *enginetest.RequestBuilder {
 // the value template renders the token, and — via CRD defaulting — the
 // mutation lands on the default Authorization header.
 func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
-	kube := k8sfake.NewClientset(newAPIKeySecret("test-ns", "api-cred", "secret-token-123"))
-	h := New(t, Options{Kube: kube})
+	kubeClient := kube.NewFakeClient(newAPIKeySecret("test-ns", "api-cred", "secret-token-123"))
+	h := New(t, Options{Kube: kubeClient})
 	h.Fixture.ApplyYAML(secretInjectionProfileYAML(""))
 
 	verdict := h.Run(t, injectionRequest())
@@ -92,7 +91,7 @@ func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
 // proves the CRD default (Block) reaches the filter.
 func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 	t.Run("default strategy blocks with 403", func(t *testing.T) {
-		h := New(t, Options{Kube: k8sfake.NewClientset()})
+		h := New(t, Options{Kube: kube.NewFakeClient()})
 		h.Fixture.ApplyYAML(secretInjectionProfileYAML(""))
 
 		verdict := h.Run(t, injectionRequest())
@@ -103,7 +102,7 @@ func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 	})
 
 	t.Run("allow strategy passes through", func(t *testing.T) {
-		h := New(t, Options{Kube: k8sfake.NewClientset()})
+		h := New(t, Options{Kube: kube.NewFakeClient()})
 		h.Fixture.ApplyYAML(secretInjectionProfileYAML("        failStrategy: Allow\n"))
 
 		h.Run(t, injectionRequest()).RequirePassthrough(t)
@@ -167,8 +166,8 @@ spec:
 // TestScenario_WhenConditionGatesInjection proves the compiled When regex
 // from the CRD gates injection on the incoming header value.
 func TestScenario_WhenConditionGatesInjection(t *testing.T) {
-	kube := k8sfake.NewClientset(newAPIKeySecret("test-ns", "api-cred", "rotated-token"))
-	h := New(t, Options{Kube: kube})
+	kubeClient := kube.NewFakeClient(newAPIKeySecret("test-ns", "api-cred", "rotated-token"))
+	h := New(t, Options{Kube: kubeClient})
 	h.Fixture.ApplyYAML(fmt.Sprintf(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile

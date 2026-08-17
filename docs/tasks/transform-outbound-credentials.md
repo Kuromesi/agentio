@@ -6,13 +6,14 @@ This task configures the built-in `ApiKey` signer with a credential provider. Th
 
 ## Before you begin
 
-Enable EPE and configure `epe.identityProviderUrl` with the provider's single HTTPS endpoint. This task assumes Agentio is already installed for the selected workload, so update that release with `--reuse-values`; without it, Helm can replace the release's routing, gateway, data-plane, and image settings with chart defaults. From the repository root:
+Enable EPE and configure `epe.credentialProvider.url` with the provider's single HTTPS endpoint. This task assumes Agentio is already installed for the selected workload, so update that release with `--reuse-values`; without it, Helm can replace the release's routing, gateway, data-plane, and image settings with chart defaults. From the repository root:
 
 ```console
 $ tee epe-provider-values.yaml >/dev/null <<'EOF'
 epe:
   enabled: true
-  identityProviderUrl: https://credentials.example.net/v1/resource-credential
+  credentialProvider:
+    url: https://credentials.example.net/v1/resource-credential
   env:
     STS_CACHE_MAX_SIZE: "100000"
 EOF
@@ -108,7 +109,7 @@ EPE trims surrounding whitespace from credential fields and rejects embedded con
 
 ## Provider transport, caching, and secret boundaries
 
-The credential provider client uses TLS 1.2 or later and normally verifies the provider certificate. It looks first for Secret-based mTLS material, then `/etc/epe/mtls/{client.crt,client.key,ca.crt}` (or the corresponding environment overrides), and finally uses system trust without a client certificate. `CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY=true` disables server-certificate verification; it is unsafe because an on-path attacker can read the sandbox bearer token and forge credentials. Do not use it outside tightly controlled test environments.
+The credential provider client uses TLS 1.2 or later and normally verifies the provider certificate. `CREDENTIAL_PROVIDER_MTLS_SOURCE` selects exactly one source of mTLS material — `files` (the default, reading `/etc/epe/credential-provider/{client.crt,client.key,ca.crt}` or the corresponding environment overrides), `secret`, or `none` — with no fallback between them. The selected source is watched, so material that appears or rotates later takes effect without a restart; while it is absent or unusable EPE presents no client certificate and verifies the provider against the system trust store. `CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY=true` disables server-certificate verification; it is unsafe because an on-path attacker can read the sandbox bearer token and forge credentials. Do not use it outside tightly controlled test environments.
 
 API keys are cached by provider name plus a hash of evaluated metadata and sandbox resource ID. EPE's Helm deployment sets `TOKEN_CACHE_TTL=3h` and `TOKEN_CACHE_MAX_SIZE=10000`; invalid or non-positive direct environment values fall back to the process defaults (one hour and 100000). Provider-side rotation is visible after expiry or eviction.
 

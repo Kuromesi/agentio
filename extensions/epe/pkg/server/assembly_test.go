@@ -30,13 +30,14 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	runserver "istio.io/istio/extensions/epe/pkg/server"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 	"istio.io/istio/extensions/epe/pkg/testing/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/wiring"
+	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/test"
 )
 
 func freePort(t *testing.T) int {
@@ -77,7 +78,7 @@ spec:
 `)
 
 	port := freePort(t)
-	regs, err := wiring.BuildFilters(wiring.Deps{Kube: k8sfake.NewClientset()})
+	regs, err := wiring.BuildFilters(wiring.Deps{Kube: kube.NewFakeClient(), Stop: test.NewStop(t)})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

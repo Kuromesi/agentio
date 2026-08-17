@@ -92,6 +92,59 @@ app: {{ include "agentio.cni.name" . }}
 {{- end -}}
 
 {{/*
+EPE credential-provider mTLS helpers
+*/}}
+
+{{/*
+The credential-provider mTLS source that will actually take effect.
+
+epe.env is rendered after the chart's own env entries, so a key set there wins
+at runtime. Both the validation below and the conditional rendering in epe.yaml
+resolve the source through this helper so they agree with what the container
+will really see — otherwise setting the source via epe.env would trip the
+validation or mount the wrong volume.
+*/}}
+{{- define "agentio.epe.credProviderMtlsSource" -}}
+{{- $env := .Values.epe.env | default dict -}}
+{{- $typed := .Values.epe.credentialProvider.mtls.source | default "files" -}}
+{{- get $env "CREDENTIAL_PROVIDER_MTLS_SOURCE" | default $typed -}}
+{{- end -}}
+
+{{/*
+Fail rendering on a credential-provider mTLS configuration the process would
+reject at startup, so the feedback arrives from `helm template` rather than
+from a CrashLoopBackOff.
+
+Mirrors credProviderFor in extensions/epe/pkg/wiring/credprovider.go: an
+unrecognized source is a startup error, and so is source=secret without both a
+namespace and a name. Absent or unusable *material* is deliberately NOT checked
+here — that is a valid degraded mode, not a misconfiguration.
+*/}}
+{{- define "agentio.epe.validateCredProviderMtls" -}}
+{{- $env := .Values.epe.env | default dict -}}
+{{- $mtls := .Values.epe.credentialProvider.mtls -}}
+{{- $source := include "agentio.epe.credProviderMtlsSource" . -}}
+{{- if not (has $source (list "files" "secret" "none")) -}}
+{{- fail (printf "epe.credentialProvider.mtls.source must be one of \"files\", \"secret\", or \"none\", got %q" $source) -}}
+{{- end -}}
+{{- if eq $source "secret" -}}
+{{- $ns := $mtls.secret.namespace | default (get $env "CREDENTIAL_PROVIDER_SECRET_NAMESPACE") -}}
+{{- $name := $mtls.secret.name | default (get $env "CREDENTIAL_PROVIDER_SECRET_NAME") -}}
+{{- if not $ns -}}
+{{- fail "epe.credentialProvider.mtls.source=secret requires epe.credentialProvider.mtls.secret.namespace (or CREDENTIAL_PROVIDER_SECRET_NAMESPACE in epe.env)" -}}
+{{- end -}}
+{{- if not $name -}}
+{{- fail "epe.credentialProvider.mtls.source=secret requires epe.credentialProvider.mtls.secret.name (or CREDENTIAL_PROVIDER_SECRET_NAME in epe.env)" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Secret backing the source=files mount. The chart does not create it. */}}
+{{- define "agentio.epe.credProviderMtlsFilesSecretName" -}}
+{{- .Values.epe.credentialProvider.mtls.secretName | default (printf "%s-mtls-client-cert" .Values.epe.name) -}}
+{{- end -}}
+
+{{/*
 Ztunnel helpers
 */}}
 

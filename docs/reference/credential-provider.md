@@ -29,7 +29,7 @@ sandbox ──> egress gateway ──ext_proc──> EPE ──HTTPS/mTLS──>
 
 ## Wire contract
 
-One endpoint, configured by the `IDENTITY_PROVIDER_URL` environment variable (chart value `epe.identityProviderUrl`).
+One endpoint, configured by the `IDENTITY_PROVIDER_URL` environment variable (chart value `epe.credentialProvider.url`). The environment variable's name predates the credential-provider naming and is retained for compatibility.
 EPE sends:
 
 ```text
@@ -81,11 +81,17 @@ EPE does not retry; the failure resolves through the matched rule's `failStrateg
 
 ## Transport security
 
-EPE presents a client certificate when mTLS material is available, in this priority order:
+`CREDENTIAL_PROVIDER_MTLS_SOURCE` names the single source of EPE's mTLS material. There is deliberately no fallback between sources: a Secret missing its CA does not borrow the CA from disk.
 
-1. Kubernetes Secret named by `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `CREDENTIAL_PROVIDER_SECRET_NAME` with data keys `ca.crt`, `client.crt`, `client.key` (the chart mounts `<name>-mtls-client-cert`).
-2. File paths from `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `CREDENTIAL_PROVIDER_CLIENT_KEY_PATH` / `CREDENTIAL_PROVIDER_CA_CERT_PATH` (defaults: `/etc/epe/mtls/{client.crt,client.key,ca.crt}`).
-3. Fallback: TLS without a client certificate, verified against the system trust store. TLS 1.2 is the minimum.
+| Source | Where the material comes from |
+| --- | --- |
+| `files` (default) | `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `CREDENTIAL_PROVIDER_CLIENT_KEY_PATH` / `CREDENTIAL_PROVIDER_CA_CERT_PATH` (defaults `/etc/epe/credential-provider/{client.crt,client.key,ca.crt}`, where the chart mounts the optional `<name>-mtls-client-cert` Secret). |
+| `secret` | The Secret named by `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `CREDENTIAL_PROVIDER_SECRET_NAME`, data keys `ca.crt`, `client.crt`, `client.key`. Both variables are required. |
+| `none` | No material at all. |
+
+Within the chosen source the client identity and the trust anchors are independent: a source may supply anchors without an identity, or an identity without anchors. Material that is absent or unusable means EPE presents no client certificate and verifies the provider against the system trust store; it is never a startup failure. Only a misconfigured source is — an unrecognized `CREDENTIAL_PROVIDER_MTLS_SOURCE` value, or `secret` without both a namespace and a name.
+
+The chosen source is watched for the lifetime of the process, so material that appears or rotates after startup takes effect without a restart. A Secret that does not exist yet, or that the ServiceAccount may not read, degrades to no client identity while EPE keeps waiting for it. TLS 1.2 is the minimum in every case.
 
 `CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY=true` is an explicit exception for trusted test environments: it disables provider server-certificate verification while retaining any configured client certificate. It exposes the bearer token and returned credentials to an on-path attacker and must not be used in production.
 
@@ -110,8 +116,9 @@ Practical consequences:
 | Variable | Meaning |
 | --- | --- |
 | `IDENTITY_PROVIDER_URL` | Provider endpoint; unset means provider-backed rules fail through `failStrategy` |
-| `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `_NAME` | Secret holding mTLS material |
-| `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `_KEY_PATH` / `_CA_CERT_PATH` | File fallbacks for mTLS material |
+| `CREDENTIAL_PROVIDER_MTLS_SOURCE` | The single source of mTLS material: `files` (default), `secret`, or `none` |
+| `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `_NAME` | Secret holding mTLS material; both required by the `secret` source |
+| `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `_KEY_PATH` / `_CA_CERT_PATH` | Paths read by the `files` source |
 | `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE` | API-key cache tuning |
 | `STS_CACHE_MAX_SIZE` | STS cache tuning |
 

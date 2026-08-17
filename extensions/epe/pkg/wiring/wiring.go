@@ -23,10 +23,8 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"istio.io/istio/extensions/epe/pkg/credential"
-	"istio.io/istio/extensions/epe/pkg/credential/tokencache"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/filters/block"
 	"istio.io/istio/extensions/epe/pkg/filters/bypass"
@@ -34,36 +32,36 @@ import (
 	"istio.io/istio/extensions/epe/pkg/filters/mcpacl"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
 	_ "istio.io/istio/extensions/epe/pkg/filters/tokentransform/signers/aliyun" // registers the AliyunSTS signer
+	"istio.io/istio/pkg/kube"
 )
 
-// Deps carries what plugin builders may need. Kube is the typed Kubernetes
-// clientset for one-shot reads (e.g. Secret reads) that must not spin up
-// cluster-wide informers; tests may pass a fake clientset.
+// Deps carries what plugin builders may need.
 type Deps struct {
-	Kube kubernetes.Interface
+	// Kube is the Istio Kubernetes client. It backs the token filters' one-shot
+	// Secret reads (via its typed clientset) and, when
+	// CREDENTIAL_PROVIDER_MTLS_SOURCE is "secret", the scoped watch behind the
+	// credential provider's mTLS material. Tests may pass kube.NewFakeClient,
+	// or leave it nil to build a chain with no cluster.
+	Kube kube.Client
+	// Stop bounds the lifetime of the certificate reload machinery Deps starts.
+	// A nil channel never closes, which is the right lifetime for a
+	// process-long provider and is what a zero-value Deps in tests gets.
+	Stop <-chan struct{}
 	// CredentialClient, when non-nil, is used as-is; tests use it to point
 	// token plugins at an in-process provider. When nil, BuildFilters
 	// builds a token-cache-backed client from the environment and Kube.
 	CredentialClient *credential.Client
 }
 
-var wiringLog = ctrllog.Log.WithName("plugin-wiring")
-
-// credClientFor returns the caller-supplied credential client or builds a
-// token-cache-backed one. It uses the typed clientset for the one-shot
-// Secret read so no informer attempts a cluster-wide List on Secrets — the
-// ServiceAccount only has namespace-scoped read access. When the provider
-// URL is not configured, provider-backed fetches fail through each rule's
-// FailStrategy.
-func credClientFor(deps Deps) *credential.Client {
-	if deps.CredentialClient != nil {
-		return deps.CredentialClient
+// typedClientset returns the typed clientset for filters that do one-shot
+// reads, or nil when no cluster is wired. A nil kube.Client cannot be
+// dereferenced, and those filters already treat a nil clientset as
+// "no Secret source configured".
+func typedClientset(deps Deps) kubernetes.Interface {
+	if deps.Kube == nil {
+		return nil
 	}
-	tokenCache := tokencache.NewCacheFromEnv()
-	wiringLog.Info("Token cache configured", "config", tokencache.ConfigInfo())
-	stsTokenCache := tokencache.NewSTSCacheFromEnv()
-	wiringLog.Info("STS token cache configured", "config", tokencache.STSCacheConfigInfo())
-	return credential.NewClientWithCache(tokenCache, stsTokenCache, deps.Kube)
+	return deps.Kube.Kube()
 }
 
 // BuildFilters returns the production action order used inside every rule.
@@ -75,9 +73,12 @@ func credClientFor(deps Deps) *credential.Client {
 // signer registry's decision; an unregistered type fails closed at projection
 // time.
 func BuildFilters(deps Deps) ([]filter.Registration, error) {
-	credClient := credClientFor(deps)
+	credClient, err := credClientFor(deps)
+	if err != nil {
+		return nil, err
+	}
 	ttDeps := tokentransform.Deps{
-		Kube:    deps.Kube,
+		Kube:    typedClientset(deps),
 		Limiter: tokentransform.NewLimiter(time.Minute, nil),
 		Tokens:  credClient,
 		STS:     credClient,
