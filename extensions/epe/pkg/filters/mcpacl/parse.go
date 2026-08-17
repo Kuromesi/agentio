@@ -21,9 +21,24 @@ import (
 )
 
 // mcpProtocolVersionHeader is the HTTP header a Streamable HTTP client MUST send
-// on every request after initialization (MCP 2025-06-18+). Header map keys are
-// lowercased by the request handler.
+// on every request (MCP 2025-06-18+). Since MCP 2026-07-28 the initialize
+// handshake has been removed, so the header is required unconditionally on
+// every request. Header map keys are lowercased by the request handler.
 const mcpProtocolVersionHeader = "mcp-protocol-version"
+
+// mcpMethodHeader and mcpNameHeader are the mandatory routing headers
+// introduced in MCP 2026-07-28 (SEP-2243). Mcp-Method carries the JSON-RPC
+// method on every request; Mcp-Name carries the tool/resource name only for
+// methods that reference one (tools/call, resources/read, prompts/get).
+// Header map keys are lowercased by the request handler.
+const (
+	mcpMethodHeader = "mcp-method"
+	mcpNameHeader   = "mcp-name"
+)
+
+// gaMCPVersion is the MCP 2026-07-28 GA revision, which made Mcp-Method and
+// Mcp-Name headers mandatory on every Streamable HTTP request.
+const gaMCPVersion = "2026-07-28"
 
 // supportedMCPVersions is the set of MCP revisions this ACL enforces. Traffic
 // declaring any other version (or no identifiable supported version) is ignored
@@ -31,6 +46,7 @@ const mcpProtocolVersionHeader = "mcp-protocol-version"
 var supportedMCPVersions = map[string]bool{
 	"2025-06-18": true,
 	"2025-11-25": true,
+	"2026-07-28": true,
 }
 
 // governedMethods are the JSON-RPC methods this ACL evaluates. This is a *tool*
@@ -259,7 +275,7 @@ func readBody(headers map[string]string, raw []byte) bodyRead {
 
 // isBatchBody reports whether the JSON body is a top-level array, i.e. a
 // JSON-RPC batch. Only the 2025-03-26 revision allowed batching; the versions
-// we support (2025-06-18, 2025-11-25) require a single JSON-RPC object.
+// we support (2025-06-18, 2025-11-25, 2026-07-28) require a single JSON-RPC object.
 func isBatchBody(body []byte) bool {
 	b := bytes.TrimLeft(body, " \t\r\n")
 	return len(b) > 0 && b[0] == '['
