@@ -21,8 +21,11 @@
 - Gateway/EPE 可以同时看到经过 mTLS 认证的 Worker Pod 身份和 Actor 身份元数据。
 - 现有 `SecurityProfile` 标签选择器可以直接匹配 Actor labels。
 - 没有 ActorContext 的旧 Sandbox/Worker 继续使用原有 Worker labels，保持向后兼容。
+- Substrate Actor 通过 `ateom0` 发送的流量可以由原生 Ambient CNI 重定向到 Worker netns 内的 ztunnel socket，并执行 Agentio egress policy。
 
 本方案当前面向“一个 Worker Pod 同时只运行一个 Actor”的模型。一个网络命名空间内并发运行多个 Actor 不在本 PoC 范围内。
+
+需要区分两个已经验证的边界：sidecar 测试验证了 WCDS ActorContext 和 HBONE Actor 元数据；Ambient 测试验证了 Actor 流量捕获、原始目标恢复和 egress policy。当前 node-level ztunnel 仍把源 workload 识别为 Worker Pod，本次 Ambient 测试没有证明共享 node ztunnel 已经能够按 Actor 下发或携带 ActorContext。
 
 ## 2. 架构与数据流
 
@@ -329,7 +332,7 @@ RTNETLINK answers: Operation not permitted
 
 ## 11. substrate-poc KinD 实测记录
 
-验证时间：2026-08-15。
+验证时间：2026-08-15（sidecar/WCDS）及 2026-08-17（Ambient）。
 
 验证集群：`my-ecs` 上的 `substrate-poc` KinD 集群。
 
@@ -402,6 +405,174 @@ token 精确选择通过 ztunnel 单元测试验证：测试目录同时放置 `
 
 本次集群实测覆盖了 WCDS 定向下发、per-Worker 隔离和 generation drain；HBONE Actor headers、token 精确选择及 EPE Actor 字段通过聚焦测试覆盖。集群当前使用 passthrough egress policy，未在本次运行中执行真实的 Actor SecurityProfile 拦截决策。
 
+### 11.4 Ambient 模式 Actor 流量捕获与 egress policy
+
+2026-08-17 在同一个 `substrate-poc` KinD 集群重新验证了原生 Ambient 模式。结论是 Ambient 可以捕获从 Actor 内部网络命名空间进入 Worker Pod 的流量；此前 PoC 失败是因为手工尝试了跨 netns DNAT/TPROXY，没有启用 Agentio CNI 已有的虚拟接口重定向能力，并不是因为 ztunnel 无法在 Worker Pod netns 内建立 socket。
+
+#### 11.4.1 Ambient Worker 配置
+
+验证用 Worker 不注入 sidecar，只加入 Ambient 数据面，并显式声明 Substrate 创建的虚拟网卡：
+
+```yaml
+metadata:
+  labels:
+    istio.io/dataplane-mode: ambient
+  annotations:
+    sidecar.istio.io/inject: "false"
+    istio.io/reroute-virtual-interfaces: ateom0
+    ambient.istio.io/dns-capture: "false"
+```
+
+`istio.io/reroute-virtual-interfaces=ateom0` 是这条链路的关键配置。Actor 恢复后，Substrate 在 Worker Pod netns 和 Actor gVisor netns 之间建立 veth：
+
+```text
+Worker Pod netns: ateom0 169.254.17.1/30
+Actor gVisor netns: eth0 169.254.17.2/30
+```
+
+Actor 的默认路由指向 `169.254.17.1`，因此 Actor egress 首先从 Worker 一侧的 `ateom0` 进入 Worker Pod netns。
+
+#### 11.4.2 ztunnel socket 与重定向规则
+
+ztunnel 进程仍运行在 node-level DaemonSet 中。Agentio CNI node agent 通过 ZDS 把 Worker Pod 的 netns FD 交给 ztunnel；ztunnel 进入该 netns 并创建监听 socket。实测 Worker Pod netns 内的 listener 为：
+
+```text
+*:15001  ztunnel outbound
+*:15006  ztunnel inbound plaintext
+*:15008  ztunnel inbound HBONE
+```
+
+CNI 在同一个 Worker Pod netns 中生成以下规则：
+
+```text
+-A ISTIO_PRERT -i ateom0 -p tcp -j REDIRECT --to-ports 15001
+-A ISTIO_PRERT -i ateom0 -p tcp -j RETURN
+```
+
+所以实际数据路径是：
+
+```mermaid
+flowchart LR
+    A["Actor gVisor netns\neth0 169.254.17.2"]
+    V["Worker Pod netns\nateom0 169.254.17.1"]
+    I["CNI ISTIO_PRERT\nREDIRECT 15001"]
+    S["Worker netns 内的\nztunnel socket"]
+    Z["node-level ztunnel\nDaemonSet process"]
+    P["Agentio egress policy"]
+    T["目标 10.96.35.182:80"]
+
+    A --> V --> I --> S --> Z --> P --> T
+```
+
+这也解释了 sidecar 和 Ambient 的差异：sidecar ztunnel 的进程和 socket 都在 Worker Pod 内；Ambient ztunnel 的进程在 DaemonSet Pod 中，但监听 socket 通过 `setns` 建在 Worker Pod netns 内。两种模式最终都在 Worker netns 内接收被重定向的连接。
+
+#### 11.4.3 PASSTHROUGH 正向验证
+
+创建并恢复 Actor 后，从 Actor 发起：
+
+```text
+GET http://10.96.35.182:80/ambient-reroute-allow
+```
+
+通过 `atenet-router` 调用 Actor 的外层 HTTP 状态码为 `200`，Actor 返回的目标响应同样为 `statusCode: 200`。目标服务观察到：
+
+```text
+RemoteAddr: 10.244.1.82:<port>
+GET /ambient-reroute-allow HTTP/1.1
+Host: 10.96.35.182:80
+```
+
+`ISTIO_PRERT` 中 `ateom0 -> 15001` 规则的包计数从 `0` 增加到 `1`，证明业务连接确实经过 Ambient ztunnel，而不是从 Actor/Worker 直接绕过。
+
+连接关闭后，ztunnel 记录了 Actor 内部地址和原始目标：
+
+```text
+src.addr=169.254.17.2:<port>
+src.workload=egress-ambient-poc
+src.namespace=ate-demo-egress
+dst.addr=10.96.35.182:80
+direction=outbound
+```
+
+其中 `src.addr=169.254.17.2` 来自 Actor gVisor netns，但 `src.workload` 仍是 Kubernetes Worker Pod。这是当前 Ambient 身份边界的重要证据。
+
+#### 11.4.4 目标 CIDR DENY 验证
+
+将 Agentio 配置临时改为只拒绝测试目标，其余流量继续 PASSTHROUGH：
+
+```yaml
+egressPolicies:
+- matchCidrs: ["10.96.35.182/32"]
+  matchPorts: ["80"]
+  policy: DENY
+- policy: PASSTHROUGH
+```
+
+为了排除旧 keep-alive 连接复用，使用新的测试 Actor 建立新连接。相同请求返回：
+
+```text
+HTTP 502
+request failed: Get "http://10.96.35.182:80/ambient-reroute-deny": EOF
+```
+
+ztunnel 同时记录：
+
+```text
+src.addr=169.254.17.2:<port>
+dst.addr=10.96.35.182:80
+direction=outbound
+error="denied by egress policy, dest: 10.96.35.182:80"
+```
+
+对应的 `ateom0` 重定向计数从 `0` 增加到 `1`。这证明拒绝发生在 Ambient ztunnel 的 Agentio egress policy 中，而不是目标服务或 `atenet-router`。
+
+#### 11.4.5 策略恢复验证
+
+把配置恢复为：
+
+```yaml
+egressPolicies:
+- policy: PASSTHROUGH
+```
+
+相同 Actor 再次访问同一目标，外层 HTTP 和目标响应均恢复为 `200`，目标服务看到 Worker Pod IP `10.244.1.84`。`ateom0 -> 15001` 规则计数从 `1` 增加到 `2`。
+
+最终独立复核结果为：
+
+```text
+responses=200/502/200
+redirect_packets=0/1/2
+deny_log=present
+helm=deployed
+cni=2/2
+ztunnel=2/2
+egress=2/2
+policy=PASSTHROUGH
+test_resources=removed
+```
+
+#### 11.4.6 过程问题与边界
+
+验证中还发现两个与 Ambient 捕获结论分离的问题：
+
+1. `atenet-router` 运行超过证书有效期后仍使用旧的 projected PodCertificate，Worker 入口 TLS 拒绝该证书。滚动重启 `atenet-router` 后获取新证书，请求恢复。这说明 router/Envoy 的证书热加载或生命周期需要单独验证。
+2. 一个已经建立过长连接的 Actor 在 checkpoint 后恢复时，`169.254.17.2:80/readyz` 没有回包并停在 `STATUS_RESUMING`。重建测试 Worker、使用全新 Actor 后恢复成功，随后 DENY 和恢复测试均通过。这更像 Substrate/gVisor checkpoint 网络状态竞态，不是新建 Actor 的 Ambient 捕获失败。
+
+本轮没有验证以下内容：
+
+- node-level ztunnel 上的 ActorContext 定向下发；
+- Ambient HBONE 请求携带 Actor UID、generation、labels 或 token；
+- Actor selector 驱动的 `SecurityProfile`；
+- 同一个 Worker Pod netns 内多个 Actor 的 per-flow 身份区分。
+
+本轮远端证据保存在：
+
+```text
+my-ecs:/opt/substrate-poc/agentio-ambient-reroute-poc/evidence/
+```
+
+测试结束后已经删除临时 Actor 和独立 Ambient Worker，原 `ate-demo-egress/egress` Deployment 恢复为 2/2，Agentio 配置恢复 PASSTHROUGH；Ambient CNI 和 ztunnel DaemonSet 保持启用，便于后续复测。
+
 ## 12. 代码与分支
 
 Agentio 工作树：
@@ -435,6 +606,8 @@ ztunnel 变更已经通过测试并用于构建集群 PoC 镜像，目前保留�
 ## 13. PoC 限制与后续演进
 
 - 当前只支持一个 Worker 网络命名空间内同时运行一个 Actor。
+- Ambient 已经能够通过 `ateom0` 捕获 Actor egress，但 node-level ztunnel 是节点共享 proxy，不能直接复用“每个 sidecar proxy 只有一个 ActorContext”的假设。
+- 要在 Ambient 中实现 Actor 级身份，需要把 Actor 绑定建模为按 Worker UID/IP 或虚拟接口定位的 workload 数据，并在接受 `ateom0` 连接时把该映射附加到 flow；不能把一个 ActorContext 直接绑定到整个 node ztunnel。
 - 多 Actor 并发需要额外的 per-flow Actor 判定机制，例如独立网络命名空间、cgroup/socket cookie、显式本地代理协议或 Actor 专属 listener。
 - `actor-atespace` 不会改变 Worker 的 Kubernetes namespace 或 mTLS principal。
 - Actor labels 是由可信 Worker ztunnel 携带的 ActorContext 元数据；除非验证签名 token，否则它们不是独立的密码学身份证明。
