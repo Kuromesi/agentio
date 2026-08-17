@@ -171,10 +171,8 @@ func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
 			t.Errorf("policy = %+v, want %s/%s", inv.Policy, testScope, testRule)
 		}
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionContinue),
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionContinue),
 			Request: &httpcallout.RequestMutation{
 				Headers: []httpcallout.HeaderMutation{
 					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
@@ -226,10 +224,8 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 			t.Errorf("request view = %+v, want the metadata a bodyless callout still sees", inv.Request)
 		}
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionContinue),
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionContinue),
 			Request: &httpcallout.RequestMutation{
 				Headers: []httpcallout.HeaderMutation{
 					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
@@ -269,13 +265,11 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 }
 
 func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
-	endpoint := newEndpoint(t, func(_ *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
+	endpoint := newEndpoint(t, func(_ *testing.T, _ httpcallout.Invocation) httpcallout.Decision {
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionRespond),
-			Reason:    "prompt-injection",
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionRespond),
+			Reason:  "prompt-injection",
 			Response: &httpcallout.ResponseMutation{
 				StatusCode: intptr(http.StatusForbidden),
 				Body:       strptr("blocked by scanner"),
@@ -320,10 +314,8 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 			t.Errorf("upstream headers = %+v, want server=upstream", inv.Response.Headers)
 		}
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionContinue),
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionContinue),
 			Response: &httpcallout.ResponseMutation{
 				Headers: []httpcallout.HeaderMutation{
 					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
@@ -376,11 +368,9 @@ func TestScenario_ResponseRespondBlocksOnExtProcWire(t *testing.T) {
 			t.Errorf("phase = %q, want response", inv.Phase)
 		}
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionRespond),
-			Reason:    "leaked-secret",
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionRespond),
+			Reason:  "leaked-secret",
 			Response: &httpcallout.ResponseMutation{
 				StatusCode: intptr(http.StatusBadGateway),
 				Body:       strptr("response blocked by scanner"),
@@ -432,10 +422,8 @@ func TestScenario_BothPhasesInOneExchange(t *testing.T) {
 			t.Errorf("correlation id = %+v, want %q on both phases", inv.Request, wantID)
 		}
 		decision := httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionContinue),
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionContinue),
 		}
 		switch inv.Phase {
 		case httpcallout.PhaseRequest:
@@ -512,11 +500,9 @@ func TestScenario_RequestRespondSkipsResponseCallout(t *testing.T) {
 			t.Errorf("phase = %q, want only the request phase to be invoked", inv.Phase)
 		}
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionRespond),
-			Reason:    "prompt-injection",
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionRespond),
+			Reason:  "prompt-injection",
 			Response: &httpcallout.ResponseMutation{
 				StatusCode: intptr(http.StatusForbidden),
 				Body:       strptr("blocked by scanner"),
@@ -545,46 +531,6 @@ func TestScenario_RequestRespondSkipsResponseCallout(t *testing.T) {
 	}
 }
 
-// TestScenario_MismatchedCorrelationEchoFails is the correlation check at the
-// wire. An answer that echoes the wrong id may be a stale or cross-wired reply,
-// so it must not be honoured — and because the filter never hand-builds a deny,
-// the only correct outcome is the framework's fail-closed reply.
-func TestScenario_MismatchedCorrelationEchoFails(t *testing.T) {
-	endpoint := newEndpoint(t, func(_ *testing.T, inv httpcallout.Invocation) httpcallout.Decision {
-		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID + "-stale",
-			Action:    actionPtr(httpcallout.ActionContinue),
-			Request: &httpcallout.RequestMutation{
-				Headers: []httpcallout.HeaderMutation{
-					{Operation: httpcallout.HeaderSet, Name: "X-Scan-Verdict", Value: strptr("clean")},
-				},
-			},
-		}
-	})
-
-	enginetest.DeliverySweep(t, []byte(`{"prompt":"hello"}`), func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		server := newWireServer(t, requestPayload(endpoint.URL, false))
-		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
-			RequestID("req-10").
-			Peer("default", "sandbox-a", nil)).
-			Build()
-
-		verdict := run(t, server, msgs)
-		// 500 is the framework's own fail-closed status (engine/eval.go's
-		// failClosedStatus), not a status the endpoint chose: a mismatched echo
-		// carries no respond decision, so there is no endpoint status to honour.
-		verdict.RequireBlocked(t, http.StatusInternalServerError)
-		// The mutation the rejected decision carried must not have been applied
-		// on the way to the deny.
-		if len(verdict.RequestHeaderValues("x-scan-verdict")) != 0 {
-			t.Errorf("RequestHeaderOps = %+v, want no mutation from a decision that failed correlation",
-				verdict.RequestHeaderOps)
-		}
-	})
-}
-
 // TestScenario_RequestBodyReplacementCorrectsContentLength is the end-to-end
 // body-rewrite property. A redaction that reached the wire with the original
 // content-length would either truncate the forwarded body or hang the upstream,
@@ -597,10 +543,8 @@ func TestScenario_RequestBodyReplacementCorrectsContentLength(t *testing.T) {
 			t.Fatalf("request-phase invocation has no body to replace")
 		}
 		return httpcallout.Decision{
-			Version:   httpcallout.ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(httpcallout.ActionContinue),
+			Version: httpcallout.ProtocolVersion,
+			Action:  actionPtr(httpcallout.ActionContinue),
 			Request: &httpcallout.RequestMutation{
 				Body: strptr(replacement),
 			},

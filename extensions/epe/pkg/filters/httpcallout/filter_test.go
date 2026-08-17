@@ -35,10 +35,8 @@ func (f *fakeClient) Call(_ context.Context, _ Config, inv Invocation) (Decision
 	f.callCount++
 	if f.decide == nil {
 		return Decision{
-			Version:   ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(ActionContinue),
+			Version: ProtocolVersion,
+			Action:  actionPtr(ActionContinue),
 		}, nil
 	}
 	return f.decide(inv)
@@ -175,12 +173,10 @@ func TestFilterBodylessPhaseCallsOutFromTheHeadersPhase(t *testing.T) {
 
 	t.Run("request", func(t *testing.T) {
 		value := "true"
-		client := &fakeClient{decide: func(inv Invocation) (Decision, error) {
+		client := &fakeClient{decide: func(Invocation) (Decision, error) {
 			return Decision{
-				Version:   ProtocolVersion,
-				Phase:     inv.Phase,
-				RequestID: inv.Request.ID,
-				Action:    actionPtr(ActionContinue),
+				Version: ProtocolVersion,
+				Action:  actionPtr(ActionContinue),
 				Request: &RequestMutation{Headers: []HeaderMutation{
 					{Operation: HeaderSet, Name: "X-Reviewed", Value: &value},
 				}},
@@ -233,14 +229,12 @@ func TestFilterBodylessPhaseCallsOutFromTheHeadersPhase(t *testing.T) {
 func TestFilterHeadersPhaseRespondBlocks(t *testing.T) {
 	ctx := context.Background()
 	status := 403
-	respond := func(inv Invocation) (Decision, error) {
+	respond := func(Invocation) (Decision, error) {
 		return Decision{
-			Version:   ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(ActionRespond),
-			Reason:    "denied at headers",
-			Response:  &ResponseMutation{StatusCode: &status},
+			Version:  ProtocolVersion,
+			Action:   actionPtr(ActionRespond),
+			Reason:   "denied at headers",
+			Response: &ResponseMutation{StatusCode: &status},
 		}, nil
 	}
 
@@ -359,12 +353,10 @@ func TestFilterBodyPhasesAreGuardedByConfig(t *testing.T) {
 
 func TestFilterRequestBodyCallsOutAndAppliesTheDecision(t *testing.T) {
 	value := "true"
-	client := &fakeClient{decide: func(inv Invocation) (Decision, error) {
+	client := &fakeClient{decide: func(Invocation) (Decision, error) {
 		return Decision{
-			Version:   ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(ActionContinue),
+			Version: ProtocolVersion,
+			Action:  actionPtr(ActionContinue),
 			Request: &RequestMutation{Headers: []HeaderMutation{
 				{Operation: HeaderSet, Name: "X-Reviewed", Value: &value},
 			}},
@@ -398,14 +390,12 @@ func TestFilterRequestBodyCallsOutAndAppliesTheDecision(t *testing.T) {
 
 func TestFilterResponseBodyCallsOutAndAppliesTheDecision(t *testing.T) {
 	status := 403
-	client := &fakeClient{decide: func(inv Invocation) (Decision, error) {
+	client := &fakeClient{decide: func(Invocation) (Decision, error) {
 		return Decision{
-			Version:   ProtocolVersion,
-			Phase:     inv.Phase,
-			RequestID: inv.Request.ID,
-			Action:    actionPtr(ActionRespond),
-			Reason:    "secret in response",
-			Response:  &ResponseMutation{StatusCode: &status},
+			Version:  ProtocolVersion,
+			Action:   actionPtr(ActionRespond),
+			Reason:   "secret in response",
+			Response: &ResponseMutation{StatusCode: &status},
 		}, nil
 	}}
 	f := newFilter(t, Config{Response: &PhaseConfig{Body: true}}, client)
@@ -462,42 +452,37 @@ func TestFilterReturnsAnErrorForEveryFailureMode(t *testing.T) {
 		{
 			name: "decision that fails Validate",
 			cfg:  Config{Request: &PhaseConfig{Body: true}},
-			client: &fakeClient{decide: func(inv Invocation) (Decision, error) {
-				// The echo names another exchange.
-				return Decision{
-					Version:   ProtocolVersion,
-					Phase:     inv.Phase,
-					RequestID: "req-999",
-					Action:    actionPtr(ActionContinue),
-				}, nil
+			client: &fakeClient{decide: func(Invocation) (Decision, error) {
+				return Decision{Version: "v2", Action: actionPtr(ActionContinue)}, nil
 			}},
 			body:    filter.Body{Complete: true},
-			wantErr: "request id",
+			wantErr: "version",
 		},
 		{
-			name: "decision for the wrong phase",
+			// The only proof that callout hands Validate the phase it is running
+			// in: this same decision is legal in the response direction, so a
+			// filter passing the wrong phase would accept it here.
+			name: "decision mutating the wrong direction for this phase",
 			cfg:  Config{Request: &PhaseConfig{Body: true}},
-			client: &fakeClient{decide: func(inv Invocation) (Decision, error) {
+			client: &fakeClient{decide: func(Invocation) (Decision, error) {
+				status := 200
 				return Decision{
-					Version:   ProtocolVersion,
-					Phase:     PhaseResponse,
-					RequestID: inv.Request.ID,
-					Action:    actionPtr(ActionContinue),
+					Version:  ProtocolVersion,
+					Action:   actionPtr(ActionContinue),
+					Response: &ResponseMutation{StatusCode: &status},
 				}, nil
 			}},
 			body:    filter.Body{Complete: true},
-			wantErr: "phase",
+			wantErr: "request-phase continue action contains a response mutation",
 		},
 		{
 			name: "decision mutating a forbidden header",
 			cfg:  Config{Request: &PhaseConfig{Body: true}},
-			client: &fakeClient{decide: func(inv Invocation) (Decision, error) {
+			client: &fakeClient{decide: func(Invocation) (Decision, error) {
 				value := "0"
 				return Decision{
-					Version:   ProtocolVersion,
-					Phase:     inv.Phase,
-					RequestID: inv.Request.ID,
-					Action:    actionPtr(ActionContinue),
+					Version: ProtocolVersion,
+					Action:  actionPtr(ActionContinue),
 					Request: &RequestMutation{Headers: []HeaderMutation{
 						{Operation: HeaderSet, Name: "Content-Length", Value: &value},
 					}},

@@ -39,13 +39,12 @@ func calloutInvocation(t *testing.T) Invocation {
 	return inv
 }
 
-// decisionFor is what a well-behaved endpoint answers with.
-func decisionFor(inv Invocation) Decision {
+// decisionFor is what a well-behaved endpoint answers with. It takes no
+// invocation: a decision restates nothing from the exchange it answers.
+func decisionFor() Decision {
 	return Decision{
-		Version:   ProtocolVersion,
-		Phase:     inv.Phase,
-		RequestID: inv.Request.ID,
-		Action:    actionPtr(ActionContinue),
+		Version: ProtocolVersion,
+		Action:  actionPtr(ActionContinue),
 	}
 }
 
@@ -99,15 +98,15 @@ func TestHTTPClientPostsTheInvocationAsJSON(t *testing.T) {
 		gotPath = r.URL.Path
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
-		_ = json.NewEncoder(w).Encode(decisionFor(inv))
+		_ = json.NewEncoder(w).Encode(decisionFor())
 	})
 
 	got, err := client.Call(context.Background(), cfg, inv)
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
-	if !reflect.DeepEqual(got, decisionFor(inv)) {
-		t.Errorf("decision = %#v, want %#v", got, decisionFor(inv))
+	if !reflect.DeepEqual(got, decisionFor()) {
+		t.Errorf("decision = %#v, want %#v", got, decisionFor())
 	}
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
@@ -199,7 +198,7 @@ func TestHTTPClientRejectsUnparseableBody(t *testing.T) {
 func TestHTTPClientRejectsAnOversizedDecision(t *testing.T) {
 	inv := calloutInvocation(t)
 	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
-		decision := decisionFor(inv)
+		decision := decisionFor()
 		decision.Action = actionPtr(ActionRespond)
 		status := 403
 		padding := strings.Repeat("a", 4096)
@@ -243,7 +242,7 @@ func TestHTTPClientDoesNotFollowRedirects(t *testing.T) {
 	var elsewhere atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		elsewhere.Add(1)
-		_ = json.NewEncoder(w).Encode(decisionFor(inv))
+		_ = json.NewEncoder(w).Encode(decisionFor())
 	}))
 	t.Cleanup(target.Close)
 

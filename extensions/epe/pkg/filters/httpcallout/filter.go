@@ -152,9 +152,9 @@ func (f *Filter) callout(ctx context.Context, phase Phase, inv Invocation) (filt
 		// framework generates the deny from OnError.
 		return filter.Action{}, fmt.Errorf("%s-phase callout failed: %w", phase, err)
 	}
-	// Validate against this invocation, not in isolation: that is what ties the
-	// answer to the exchange it claims to answer.
-	if err := decision.Validate(inv); err != nil {
+	// The phase is what the answer's shape is judged against: which object it
+	// may mutate depends on the direction being intercepted.
+	if err := decision.Validate(phase); err != nil {
 		return filter.Action{}, err
 	}
 	return decisionAction(phase, decision)

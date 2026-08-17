@@ -55,8 +55,8 @@ var (
 	benchErr     error
 )
 
-// benchRequestID is fixed so a pre-encoded decision can echo it without the
-// client having to build one inside the timed loop.
+// benchRequestID is the correlation id the benchmark stream carries, so the
+// invocation the builder produces is priced with one present.
 const benchRequestID = "req-bench"
 
 // benchBodySizes spans a header-sized payload, a typical agent request, and
@@ -188,10 +188,8 @@ func newBenchClient(b *testing.B, phase Phase, mutate, serialize bool) *benchCli
 // Response in the response phase, and Decision.Validate rejects the other.
 func (c *benchClient) decision(phase Phase) Decision {
 	d := Decision{
-		Version:   ProtocolVersion,
-		Phase:     phase,
-		RequestID: benchRequestID,
-		Action:    actionPtr(ActionContinue),
+		Version: ProtocolVersion,
+		Action:  actionPtr(ActionContinue),
 	}
 	if !c.mutate {
 		return d
@@ -410,25 +408,22 @@ func BenchmarkMarshalInvocation(b *testing.B) {
 }
 
 // BenchmarkDecisionValidate prices the answer-side check, which runs per callout
-// against the invocation it claims to answer (filter.go:157). The mutation count
-// axis matters because every header mutation is name-validated here and then
-// name-validated again in headerOps (apply.go:114).
+// against the phase being answered (filter.go:157). The mutation count axis
+// matters because every header mutation is name-validated here and then
+// name-validated again in headerOps (apply.go:114). No invocation is built:
+// Validate reads nothing but the phase, so its cost is independent of the
+// exchange size.
 func BenchmarkDecisionValidate(b *testing.B) {
-	cfg := benchConfig(b, Config{Request: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}}})
-	inv, err := buildRequestInvocation(cfg, testUnitID(), benchStream(8), filter.Body{})
-	if err != nil {
-		b.Fatalf("buildRequestInvocation: %v", err)
-	}
 	for _, mutations := range []int{0, 1, 8} {
 		b.Run("mutations="+strconv.Itoa(mutations), func(b *testing.B) {
 			d := benchContinueDecision(PhaseRequest, mutations)
-			if err := d.Validate(inv); err != nil {
+			if err := d.Validate(PhaseRequest); err != nil {
 				b.Fatalf("Validate: %v", err)
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchErr = d.Validate(inv)
+				benchErr = d.Validate(PhaseRequest)
 			}
 		})
 	}
@@ -436,20 +431,18 @@ func BenchmarkDecisionValidate(b *testing.B) {
 		status := 403
 		body := "blocked by policy"
 		d := Decision{
-			Version:   ProtocolVersion,
-			Phase:     PhaseRequest,
-			RequestID: benchRequestID,
-			Action:    actionPtr(ActionRespond),
-			Reason:    "callout denied the request",
-			Response:  &ResponseMutation{StatusCode: &status, Body: &body},
+			Version:  ProtocolVersion,
+			Action:   actionPtr(ActionRespond),
+			Reason:   "callout denied the request",
+			Response: &ResponseMutation{StatusCode: &status, Body: &body},
 		}
-		if err := d.Validate(inv); err != nil {
+		if err := d.Validate(PhaseRequest); err != nil {
 			b.Fatalf("Validate: %v", err)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			benchErr = d.Validate(inv)
+			benchErr = d.Validate(PhaseRequest)
 		}
 	})
 }
@@ -540,10 +533,8 @@ func benchHeadersPath(b *testing.B, ctx context.Context, client Client) {
 // each with a distinct name so headerOps cannot benefit from repetition.
 func benchContinueDecision(phase Phase, n int) Decision {
 	d := Decision{
-		Version:   ProtocolVersion,
-		Phase:     phase,
-		RequestID: benchRequestID,
-		Action:    actionPtr(ActionContinue),
+		Version: ProtocolVersion,
+		Action:  actionPtr(ActionContinue),
 	}
 	if n == 0 {
 		return d

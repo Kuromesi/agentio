@@ -26,7 +26,6 @@ func TestDecisionActionContinueWithoutMutations(t *testing.T) {
 		t.Run(string(phase), func(t *testing.T) {
 			act, err := decisionAction(phase, Decision{
 				Version: ProtocolVersion,
-				Phase:   phase,
 				Action:  actionPtr(ActionContinue),
 			})
 			if err != nil {
@@ -45,7 +44,6 @@ func TestDecisionActionContinueWithoutMutations(t *testing.T) {
 func TestDecisionActionEmptyMutationObjectIsStillANoOp(t *testing.T) {
 	act, err := decisionAction(PhaseRequest, Decision{
 		Version: ProtocolVersion,
-		Phase:   PhaseRequest,
 		Action:  actionPtr(ActionContinue),
 		Request: &RequestMutation{},
 	})
@@ -62,7 +60,6 @@ func TestDecisionActionRequestContinueMutates(t *testing.T) {
 	body := `{"input":"rewritten"}`
 	act, err := decisionAction(PhaseRequest, Decision{
 		Version: ProtocolVersion,
-		Phase:   PhaseRequest,
 		Action:  actionPtr(ActionContinue),
 		Request: &RequestMutation{
 			Headers: []HeaderMutation{
@@ -98,7 +95,6 @@ func TestDecisionActionBodyPointerSemantics(t *testing.T) {
 	t.Run("omitted body leaves the message unchanged", func(t *testing.T) {
 		act, err := decisionAction(PhaseRequest, Decision{
 			Version: ProtocolVersion,
-			Phase:   PhaseRequest,
 			Action:  actionPtr(ActionContinue),
 			Request: &RequestMutation{Headers: []HeaderMutation{{Operation: HeaderSet, Name: "x-a", Value: &value}}},
 		})
@@ -114,7 +110,6 @@ func TestDecisionActionBodyPointerSemantics(t *testing.T) {
 		empty := ""
 		act, err := decisionAction(PhaseRequest, Decision{
 			Version: ProtocolVersion,
-			Phase:   PhaseRequest,
 			Action:  actionPtr(ActionContinue),
 			Request: &RequestMutation{Body: &empty},
 		})
@@ -133,7 +128,6 @@ func TestDecisionActionResponseContinueCarriesStatus(t *testing.T) {
 	value := "demo"
 	act, err := decisionAction(PhaseResponse, Decision{
 		Version: ProtocolVersion,
-		Phase:   PhaseResponse,
 		Action:  actionPtr(ActionContinue),
 		Response: &ResponseMutation{
 			StatusCode: &status,
@@ -162,7 +156,6 @@ func TestDecisionActionStatusOnlyResponseContinue(t *testing.T) {
 	status := 503
 	act, err := decisionAction(PhaseResponse, Decision{
 		Version:  ProtocolVersion,
-		Phase:    PhaseResponse,
 		Action:   actionPtr(ActionContinue),
 		Response: &ResponseMutation{StatusCode: &status},
 	})
@@ -186,7 +179,6 @@ func TestDecisionActionRespondStopsWithTheReason(t *testing.T) {
 		t.Run(string(phase), func(t *testing.T) {
 			act, err := decisionAction(phase, Decision{
 				Version: ProtocolVersion,
-				Phase:   phase,
 				Action:  actionPtr(ActionRespond),
 				Reason:  "secret detected in prompt",
 				Response: &ResponseMutation{
@@ -225,7 +217,6 @@ func TestDecisionActionRespondWithoutOptionalFields(t *testing.T) {
 	status := 429
 	act, err := decisionAction(PhaseRequest, Decision{
 		Version:  ProtocolVersion,
-		Phase:    PhaseRequest,
 		Action:   actionPtr(ActionRespond),
 		Response: &ResponseMutation{StatusCode: &status},
 	})

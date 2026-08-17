@@ -204,13 +204,10 @@ type ResponseMutation struct {
 
 // Decision is the versioned callout result.
 type Decision struct {
+	// Version is the only required field. It is not an echo but the contract
+	// guard: if an absent version meant "assume current", an endpoint written
+	// against 0.1 would keep working silently after 0.2 changes a meaning.
 	Version string `json:"version"`
-	// Phase and RequestID echo the invocation being answered, so a response
-	// meant for another exchange or the other phase cannot validate. Neither is
-	// omitempty: an empty echo of an empty ID is the correct wire form, and
-	// omitting it would make the absent and empty cases indistinguishable.
-	Phase     Phase  `json:"phase"`
-	RequestID string `json:"requestId"`
 	// Action is optional: an absent action means continue. The endpoint is a
 	// third-party service, and its ergonomics outrank strictness we can afford
 	// internally — an observing callout should not have to restate the only
@@ -239,32 +236,20 @@ func (d Decision) action() Action {
 	return *d.Action
 }
 
-// Validate enforces the result shape allowed by the invocation being answered.
-// The expected phase and correlation ID come from inv rather than the caller, so
-// they cannot disagree with the exchange. inv is assumed already checked by
-// Invocation.Validate; the unknown-phase guard stays as cheap insurance.
+// Validate enforces the result shape allowed by the phase being answered. The
+// phase comes from the caller because a decision no longer restates it; the
+// unknown-phase guard stays as cheap insurance for a caller that forgot.
 //
 // The normalized header names ValidateHeaderName returns are discarded here: a
 // value receiver cannot rewrite the decision, so case folding happens where
 // filter.HeaderOp values are built. Rejection is unaffected — every check runs
 // against the lower-cased form.
-func (d Decision) Validate(inv Invocation) error {
-	phase := inv.Phase
+func (d Decision) Validate(phase Phase) error {
 	if phase != PhaseRequest && phase != PhaseResponse {
 		return fmt.Errorf("unknown callout phase %q", phase)
 	}
 	if d.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported callout protocol version %q", d.Version)
-	}
-	if d.Phase != phase {
-		return fmt.Errorf("callout decision phase %q does not answer the %q phase", d.Phase, phase)
-	}
-	expectedID := ""
-	if inv.Request != nil {
-		expectedID = inv.Request.ID
-	}
-	if d.RequestID != expectedID {
-		return fmt.Errorf("callout decision request id %q does not echo %q", d.RequestID, expectedID)
 	}
 	action := d.action()
 	if action != ActionContinue && action != ActionRespond {
