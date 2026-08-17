@@ -251,8 +251,8 @@ func newDelayedCASecretSingleton(kc kube.Client, opt OnDemandCertControllerOptio
 		return !errors.IsForbidden(err)
 	}
 
-	syncer := NewPollingSyncer("MITM_Secret", waitRbacReady, 30*time.Second)
-	delayedSecretSingleton := NewDelayedSingleton(syncer, callback, opt.KrtOptions.Stop())
+	syncer := krt.NewPollingSyncer("MITM_Secret", waitRbacReady, 30*time.Second)
+	delayedSecretSingleton := krt.NewDelayedSingleton(syncer, callback, opt.KrtOptions.Stop())
 	return delayedSecretSingleton
 }
 

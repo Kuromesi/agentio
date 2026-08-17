@@ -1,4 +1,8 @@
 {{- if .Values.epe.enabled }}
+{{- include "agentio.epe.validateCredProviderMtls" . }}
+{{- $epeEnv := .Values.epe.env | default dict }}
+{{- $credMtls := .Values.epe.credentialProvider.mtls }}
+{{- $credMtlsSource := include "agentio.epe.credProviderMtlsSource" . }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -112,20 +116,49 @@ spec:
             - -grpc-health-port=9003
             - -metrics-port=9090
           env:
+            # Named IDENTITY_PROVIDER_URL for compatibility; it is the
+            # credential provider's base URL, hence the values location.
             - name: IDENTITY_PROVIDER_URL
-              value: {{ .Values.epe.identityProviderUrl | quote }}
+              value: {{ .Values.epe.credentialProvider.url | quote }}
             - name: TOKEN_CACHE_TTL
               value: "3h"
             - name: TOKEN_CACHE_MAX_SIZE
               value: "10000"
+            {{- /*
+            The source is rendered explicitly rather than left to the binary's
+            own default, so an existing release keeps its source if that default
+            ever changes. Every entry here is skipped when epe.env already
+            carries the same key, because the range below would then emit a
+            second env entry with the same name.
+            */}}
+            {{- if not (get $epeEnv "CREDENTIAL_PROVIDER_MTLS_SOURCE") }}
+            - name: CREDENTIAL_PROVIDER_MTLS_SOURCE
+              value: {{ $credMtlsSource | quote }}
+            {{- end }}
+            {{- if eq $credMtlsSource "secret" }}
+            {{- if not (get $epeEnv "CREDENTIAL_PROVIDER_SECRET_NAMESPACE") }}
+            - name: CREDENTIAL_PROVIDER_SECRET_NAMESPACE
+              value: {{ $credMtls.secret.namespace | quote }}
+            {{- end }}
+            {{- if not (get $epeEnv "CREDENTIAL_PROVIDER_SECRET_NAME") }}
+            - name: CREDENTIAL_PROVIDER_SECRET_NAME
+              value: {{ $credMtls.secret.name | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if and $credMtls.insecureSkipVerify (not (get $epeEnv "CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY")) }}
+            - name: CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY
+              value: "true"
+            {{- end }}
             {{- range $key, $val := .Values.epe.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
+          {{- if eq $credMtlsSource "files" }}
           volumeMounts:
-            - name: mtls-certs
-              mountPath: /etc/epe/mtls
+            - name: credential-provider-mtls
+              mountPath: /etc/epe/credential-provider
               readOnly: true
+          {{- end }}
           ports:
             - containerPort: {{ .Values.epe.port }}
               name: extproc
@@ -157,11 +190,15 @@ spec:
               cpu: "2"
               memory: 1Gi
             {{- end }}
+      {{- if eq $credMtlsSource "files" }}
       volumes:
-        - name: mtls-certs
+        # optional: the source treats absent material as a resting state and
+        # watches for it, so the Secret may be created after this Deployment.
+        - name: credential-provider-mtls
           secret:
-            secretName: {{ .Values.epe.name }}-mtls-client-cert
+            secretName: {{ include "agentio.epe.credProviderMtlsFilesSecretName" . }}
             optional: true
+      {{- end }}
       {{- with .Values.epe.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

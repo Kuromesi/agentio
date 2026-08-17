@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"istio.io/istio/extensions/epe/pkg/certs"
+	"istio.io/istio/pkg/test"
 )
 
 // writeSelfSignedPEM writes a throwaway self-signed cert/key (and the cert
@@ -78,6 +79,11 @@ func writeSelfSignedPEM(t *testing.T, dir string) (certPath, keyPath, caPath str
 func TestBuildExtProcTLS(t *testing.T) {
 	certPath, keyPath, caPath := writeSelfSignedPEM(t, t.TempDir())
 	const spiffeID = "spiffe://cluster.local/ns/istio-system/sa/istio-ingressgateway"
+
+	garbageCA := filepath.Join(t.TempDir(), "garbage-ca.pem")
+	if err := os.WriteFile(garbageCA, []byte("not a pem"), 0o600); err != nil {
+		t.Fatalf("writing garbage CA bundle: %v", err)
+	}
 
 	tests := []struct {
 		name            string
@@ -138,11 +144,21 @@ func TestBuildExtProcTLS(t *testing.T) {
 			expectError: "no such file",
 		},
 		{
+			// An unreadable bundle now resolves to "use the system trust store"
+			// rather than an error, so the startup probe asserts the resulting
+			// pool instead of the error. The rejection itself is unchanged.
 			name:        "missing CA bundle file is rejected at startup",
 			certPath:    certPath,
 			keyPath:     keyPath,
 			caPath:      filepath.Join(t.TempDir(), "missing-ca.pem"),
-			expectError: "reading CA bundle",
+			expectError: "no usable CA certificates",
+		},
+		{
+			name:        "unparseable CA bundle is rejected at startup",
+			certPath:    certPath,
+			keyPath:     keyPath,
+			caPath:      garbageCA,
+			expectError: "no usable CA certificates",
 		},
 		{
 			name:         "cert and key enable server TLS",
@@ -171,7 +187,7 @@ func TestBuildExtProcTLS(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildExtProcTLS(tt.certPath, tt.keyPath, tt.caPath, tt.spiffeIDs)
+			result, err := buildExtProcTLS(tt.certPath, tt.keyPath, tt.caPath, tt.spiffeIDs, test.NewStop(t))
 			if tt.expectError != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.expectError)

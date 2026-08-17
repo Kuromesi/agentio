@@ -89,6 +89,7 @@ func ServerTLSConfig(p Provider, opts ...Option) (*tls.Config, error) {
 		return nil, err
 	}
 	cfg := &tls.Config{
+		MinVersion:     tls.VersionTLS12,
 		GetCertificate: p.GetCertificate,
 		ClientAuth:     o.clientAuth,
 	}
@@ -154,6 +155,7 @@ func ClientTLSConfig(p Provider, opts ...Option) (*tls.Config, error) {
 		return nil, errors.New("certs: ClientTLSConfig requires exactly one of WithServerName or WithPeerVerifier")
 	}
 	return &tls.Config{
+		MinVersion:           tls.VersionTLS12,
 		GetClientCertificate: p.GetClientCertificate,
 		ServerName:           o.serverName,
 		// Verification is NOT skipped: it is performed by the unconditional

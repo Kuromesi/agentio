@@ -28,9 +28,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
+	"istio.io/istio/pkg/kube"
 )
 
 const stsProfileYAML = `
@@ -75,7 +75,7 @@ func v3Request() *enginetest.RequestBuilder {
 // STS triplet is read from the pod-namespace Secret, and the signature
 // headers are rewritten in the response mutation.
 func TestScenario_V3ResignFromSecret(t *testing.T) {
-	h := New(t, Options{Kube: k8sfake.NewClientset(stsSecret())})
+	h := New(t, Options{Kube: kube.NewFakeClient(stsSecret())})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	verdict := h.Run(t, v3Request())
@@ -94,7 +94,7 @@ func TestScenario_V3ResignFromSecret(t *testing.T) {
 // that a V1-RPC POST with all parameters in the query string is re-signed
 // in the headers phase without requesting body delivery from Envoy.
 func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
-	h := New(t, Options{Kube: k8sfake.NewClientset(stsSecret())})
+	h := New(t, Options{Kube: kube.NewFakeClient(stsSecret())})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	verdict := h.Run(t, enginetest.NewRequest("POST", "ecs.cn-hangzhou.aliyuncs.com",
@@ -123,7 +123,7 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 // under the profile's Block strategy, which stsProfileYAML leaves at the CRD
 // default.
 func TestScenario_ForbiddenSecretHonoursBlockStrategy(t *testing.T) {
-	forbidden := newSecretGetErrorClientset(
+	forbidden := newSecretGetErrorClient(
 		apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "sts-creds", errors.New("rbac denied")))
 	h := New(t, Options{Kube: forbidden})
 	h.Fixture.ApplyYAML(stsProfileYAML)

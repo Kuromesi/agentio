@@ -10,8 +10,12 @@ The Egress Policy Enforcer (EPE) is deployed by the Agentio chart as `agentio-ep
 | `epe.name` | `agentio-epe` | Names the Kubernetes objects and the generated ext_proc Service hostname. |
 | `epe.port` | `9002` | Service, container, EPE `-grpc-port`, and `sandboxExtProc.port`. |
 | `epe.image.hub`, `.name`, `.tag` | `docker.io/openkruise`, `agentio-epe`, `latest` | EPE container image. The non-empty component hub wins; clear `epe.image.hub` to use `global.hub` as its fallback. |
-| `epe.identityProviderUrl` | empty | Sets `IDENTITY_PROVIDER_URL`. Credential lookups fail while it is empty. |
-| `epe.env` | `{}` | Adds arbitrary string environment variables to the container after the chart-managed variables. |
+| `epe.credentialProvider.url` | empty | Credential provider base URL, rendered as `IDENTITY_PROVIDER_URL`. Credential lookups fail while it is empty. |
+| `epe.credentialProvider.mtls.source` | `files` | The one source of credential-provider mTLS material: `files`, `secret`, or `none`. Always rendered as `CREDENTIAL_PROVIDER_MTLS_SOURCE`. Any other value fails rendering. |
+| `epe.credentialProvider.mtls.secretName` | empty | `source=files` only. Secret mounted at `/etc/epe/credential-provider`; empty means `<epe.name>-mtls-client-cert`. The chart never creates it. |
+| `epe.credentialProvider.mtls.secret.namespace`, `.name` | empty | `source=secret` only. The Secret EPE watches directly. Both are required for that source; rendering fails if either is missing. |
+| `epe.credentialProvider.mtls.insecureSkipVerify` | `false` | Rendered only when `true`. Disables provider server-certificate verification — exposes the bearer token to an on-path attacker. |
+| `epe.env` | `{}` | Adds arbitrary string environment variables to the container after the chart-managed variables, so a key set here overrides the same chart-managed variable. |
 | `epe.replicas` | `1` | Deployment replica count when autoscaling is disabled. |
 | `epe.autoscaling.enabled` | `false` | Creates an HPA instead of setting Deployment replicas. |
 | `epe.autoscaling.minReplicas`, `.maxReplicas` | `2`, `50` | HPA bounds when enabled. |
@@ -31,7 +35,7 @@ The Service is headless (`clusterIP: None`) and exposes TCP ports named `extproc
 
 The chart grants the ServiceAccount `get/list/watch` on `SecurityProfile` and `GlobalSecurityProfile`, but only `get` on their status subresources. It also grants `get/list/watch` on CRDs, ConfigMaps, and Secrets. EPE needs the CRD watch before its delayed profile informers can synchronize; without it the process cannot complete startup.
 
-The Pod mounts an optional Secret named `<epe.name>-mtls-client-cert` at `/etc/epe/mtls`. That mount is for the credential-provider client; it does not enable TLS on the ext_proc listener. Missing optional Secret data leaves the credential client to use its other configured sources or no client certificate.
+With the default `epe.credentialProvider.mtls.source=files`, the Pod mounts an optional Secret at `/etc/epe/credential-provider` — `epe.credentialProvider.mtls.secretName`, defaulting to `<epe.name>-mtls-client-cert`. The chart does not create that Secret. That mount is for the credential-provider client; it does not enable TLS on the ext_proc listener. An empty mount leaves the credential client with no client certificate, verifying the provider against the system trust store; because the mount is watched, the Secret appearing later takes effect without a restart. Setting the source to `secret` or `none` omits the volume and its mount entirely.
 
 ## Agentio ext_proc wiring
 
@@ -98,15 +102,16 @@ Invalid combinations, unreadable initial certificate/key files, or an invalid in
 
 ## Credential-provider and webhook environment variables
 
-`IDENTITY_PROVIDER_URL`, `TOKEN_CACHE_TTL=3h`, and `TOKEN_CACHE_MAX_SIZE=10000` are set by the chart. The remaining controls use `epe.env` (or a non-chart deployment):
+`IDENTITY_PROVIDER_URL`, `TOKEN_CACHE_TTL=3h`, and `TOKEN_CACHE_MAX_SIZE=10000` are set by the chart. The `CREDENTIAL_PROVIDER_*` mTLS variables come from the typed `epe.credentialProvider.mtls` values described below. Everything else uses `epe.env` (or a non-chart deployment):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY` | `false` | Disables credential-provider server certificate verification; an on-path attacker can read the bearer token and forge a response. |
-| `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` | `/etc/epe/mtls/client.crt` | Credential-provider client certificate path. |
-| `CREDENTIAL_PROVIDER_CLIENT_KEY_PATH` | `/etc/epe/mtls/client.key` | Credential-provider private key path. |
-| `CREDENTIAL_PROVIDER_CA_CERT_PATH` | `/etc/epe/mtls/ca.crt` | Credential-provider server CA path. |
-| `CREDENTIAL_PROVIDER_SECRET_NAMESPACE`, `CREDENTIAL_PROVIDER_SECRET_NAME` | empty | Secret source for credential-provider mTLS material; both are needed to attempt this source. |
+| `CREDENTIAL_PROVIDER_MTLS_SOURCE` | `files` | The single source of credential-provider mTLS material: `files`, `secret`, or `none`. There is no fallback between sources. An unrecognized value fails startup, and the chart rejects one at `helm template` time. Set through `epe.credentialProvider.mtls.source`, which the chart always renders explicitly. |
+| `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` | `/etc/epe/credential-provider/client.crt` | Credential-provider client certificate path; read by the `files` source. |
+| `CREDENTIAL_PROVIDER_CLIENT_KEY_PATH` | `/etc/epe/credential-provider/client.key` | Credential-provider private key path; read by the `files` source. |
+| `CREDENTIAL_PROVIDER_CA_CERT_PATH` | `/etc/epe/credential-provider/ca.crt` | Credential-provider server CA path; read by the `files` source. |
+| `CREDENTIAL_PROVIDER_SECRET_NAMESPACE`, `CREDENTIAL_PROVIDER_SECRET_NAME` | empty | Secret holding the credential-provider mTLS material, from `epe.credentialProvider.mtls.secret.namespace` / `.name`. Both are required when the source is `secret` — rendering fails if either is missing, as does startup; ignored otherwise. |
 | `STS_CACHE_MAX_SIZE` | `100000` | Maximum cached STS credentials; non-positive values use the default. |
 | `AUDIT_WEBHOOK_MAX_IDLE_CONNS` | `256` | Maximum idle audit-webhook connections across hosts. |
 | `AUDIT_WEBHOOK_MAX_IDLE_CONNS_PER_HOST` | `64` | Maximum idle audit-webhook connections per host. |
@@ -118,7 +123,7 @@ Invalid combinations, unreadable initial certificate/key files, or an invalid in
 | `AUDIT_WEBHOOK_DIAL_TIMEOUT` | `5s` | Audit-webhook TCP dial timeout. |
 | `AUDIT_WEBHOOK_DIAL_KEEPALIVE` | `30s` | Audit-webhook TCP keepalive interval. |
 
-The credential client first tries the configured Kubernetes Secret when a Kubernetes client and both Secret coordinates are supplied, then its file paths, and finally no client certificate with system trust. See the [credential provider contract](credential-provider.md) for its request and caching behavior.
+The credential client draws its mTLS material from the one source named by `CREDENTIAL_PROVIDER_MTLS_SOURCE`, never from a chain of them; whenever that source has no usable material the client presents no certificate and verifies the provider against the system trust store. See the [credential provider contract](credential-provider.md) for its request and caching behavior.
 
 ## Scaling and availability
 

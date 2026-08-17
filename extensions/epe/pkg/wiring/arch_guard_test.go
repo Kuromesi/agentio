@@ -27,9 +27,9 @@ import (
 	"strings"
 	"testing"
 
-	k8sfake "k8s.io/client-go/kubernetes/fake"
-
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/test"
 )
 
 const modPrefix = "istio.io/istio/extensions/epe/"
@@ -251,7 +251,7 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 		"mcpacl":         "../filters/mcpacl",
 		"tokentransform": "../filters/tokentransform",
 	}
-	regs, err := BuildFilters(Deps{Kube: k8sfake.NewClientset()})
+	regs, err := BuildFilters(Deps{Kube: kube.NewFakeClient(), Stop: test.NewStop(t)})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

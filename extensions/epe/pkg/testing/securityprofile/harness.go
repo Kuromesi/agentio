@@ -17,9 +17,6 @@ package securityprofile
 import (
 	"testing"
 
-	"k8s.io/client-go/kubernetes"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
-
 	"istio.io/istio/extensions/epe/pkg/audit"
 	"istio.io/istio/extensions/epe/pkg/credential"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
@@ -27,17 +24,26 @@ import (
 	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 	"istio.io/istio/extensions/epe/pkg/wiring"
+	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/test"
 )
 
 // Options configures the SecurityProfile-specific test harness.
 type Options struct {
 	// Filters overrides the production filter chain.
-	Filters                []filter.Registration
-	StreamLoggers          []filter.StreamLogger
-	Kube                   kubernetes.Interface
-	AuditRouter            *audit.Router
-	CredentialClient       *credential.Client
+	Filters          []filter.Registration
+	StreamLoggers    []filter.StreamLogger
+	AuditRouter      *audit.Router
+	CredentialClient *credential.Client
+	// Kube backs Secret reads in token plugins and, when the mTLS source is
+	// "secret", the credential provider's certificate material. Nil means an
+	// empty fake cluster.
+	Kube                   kube.Client
 	DisableResolutionProbe bool
+	// Stop bounds the certificate-reload machinery BuildFilters starts. Nil
+	// means a stop channel tied to the test's lifetime, so the file watcher
+	// and its backstop ticker do not outlive the test.
+	Stop <-chan struct{}
 }
 
 // Harness adds a SecurityProfile fixture to the policy-neutral wire harness.
@@ -50,15 +56,20 @@ type Harness struct {
 // enginetest.
 func New(t testing.TB, opts Options) *Harness {
 	t.Helper()
-	kube := opts.Kube
-	if kube == nil {
-		kube = k8sfake.NewClientset()
+	kubeClient := opts.Kube
+	if kubeClient == nil {
+		kubeClient = kube.NewFakeClient()
+	}
+	stop := opts.Stop
+	if stop == nil {
+		stop = test.NewStop(t)
 	}
 	regs := opts.Filters
 	if regs == nil {
 		var err error
 		regs, err = wiring.BuildFilters(wiring.Deps{
-			Kube:             kube,
+			Kube:             kubeClient,
+			Stop:             stop,
 			CredentialClient: opts.CredentialClient,
 		})
 		if err != nil {

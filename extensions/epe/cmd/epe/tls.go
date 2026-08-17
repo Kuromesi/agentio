@@ -16,9 +16,11 @@ package main
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"strings"
 
 	"istio.io/istio/extensions/epe/pkg/certs"
+	"istio.io/istio/extensions/epe/pkg/certs/certsource"
 )
 
 // extProcTLS is the serving material built from the --tls-* flags for the
@@ -37,8 +39,9 @@ type extProcTLS struct {
 }
 
 // buildExtProcTLS validates the TLS flag combination and builds the ext-proc
-// serving material. All-empty inputs mean plaintext serving.
-func buildExtProcTLS(certPath, keyPath, caPath, spiffeIDs string) (*extProcTLS, error) {
+// serving material. All-empty inputs mean plaintext serving. stop bounds the
+// certificate reload machinery.
+func buildExtProcTLS(certPath, keyPath, caPath, spiffeIDs string, stop <-chan struct{}) (*extProcTLS, error) {
 	if certPath == "" && keyPath == "" && caPath == "" && spiffeIDs == "" {
 		return &extProcTLS{}, nil
 	}
@@ -67,16 +70,25 @@ func buildExtProcTLS(certPath, keyPath, caPath, spiffeIDs string) (*extProcTLS, 
 		result.Options = append(result.Options, certs.WithPeerVerifier(list.VerifyPeer))
 	}
 
-	provider, err := certs.FromFiles(certPath, keyPath, caPath)
+	provider, err := certsource.FromFiles(certPath, keyPath, caPath, stop)
 	if err != nil {
 		return nil, err
 	}
-	// FromFiles loads only cert/key eagerly; the CA bundle is read lazily on
-	// each handshake. Probe it once so a missing or invalid --tls-ca-path
-	// fails at startup instead of failing every handshake at runtime.
+	// Probe the CA bundle once so a missing or invalid --tls-ca-path fails at
+	// startup instead of failing every handshake at runtime.
+	//
+	// The probe checks the pool, not just the error: an unreadable or
+	// unparseable bundle resolves to nil, meaning "use the system trust store",
+	// so an error alone no longer detects it. A nil pool is still refused
+	// per-connection by ServerTLSConfig when client certificates are verified —
+	// this only moves that refusal back to startup, where it is actionable.
 	if caPath != "" {
-		if _, err := provider.RootCAs(); err != nil {
+		pool, err := provider.RootCAs()
+		if err != nil {
 			return nil, err
+		}
+		if pool == nil {
+			return nil, fmt.Errorf("no usable CA certificates in %s", caPath)
 		}
 	}
 	result.Provider = provider
