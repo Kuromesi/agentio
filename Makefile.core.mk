@@ -1,4 +1,5 @@
 ## Copyright Istio Authors
+## Modifications Copyright 2026 The Kruise Authors
 ##
 ## Licensed under the Apache License, Version 2.0 (the "License");
 ## you may not use this file except in compliance with the License.
@@ -227,6 +228,12 @@ LINUX_AGENT_BINARIES:=$(CNI_BINARIES) \
 # images, so they are grouped apart from the mesh binaries above. They build with
 # STANDARD_TAGS: like pilot-discovery, they need XDS and k8s.
 EXTENSION_BINARIES:=./extensions/epe/cmd/epe
+
+# The Docker builder requests absolute output paths and copies each target into
+# its staging context. Wasm is architecture-neutral, but keep its staged output
+# beside the other Linux artifacts for the dedicated Wasm OCI image plan.
+$(TARGET_OUT_LINUX)/sni-policy.wasm:
+	@AGENTIO_WASM_OUTPUT="$@" extensions/wasm/snitrafficpolicy/scripts/build.sh
 
 BINARIES:=$(STANDARD_BINARIES) $(AGENT_BINARIES) $(LINUX_AGENT_BINARIES) $(EXTENSION_BINARIES)
 

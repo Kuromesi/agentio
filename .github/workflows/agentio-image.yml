@@ -1,6 +1,7 @@
 name: agentio-image
 
-# Build and push Agentio, CNI, and ztunnel container images to Docker Hub.
+# Build and push Agentio, CNI, traffic-extension, and ztunnel container images
+# to Docker Hub.
 # Follows Istio's release-commit.sh tag strategy:
 # - pushes to versioned release-* branches publish development images;
 # - agentio-release calls this workflow with a trusted semantic release version.
@@ -274,7 +275,7 @@ jobs:
         run: |
           DOCKER_ARCHITECTURES=linux/amd64,linux/arm64 \
           DOCKER_BUILD_VARIANTS=default \
-          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni docker.agentio-epe" \
+          DOCKER_TARGETS="docker.pilot docker.proxy-init docker.install-cni docker.agentio-epe docker.agentio-sni-policy-wasm" \
           make docker.push HUB="${HUB}" TAG="${PRIMARY_TAG}"
 
       - name: Push extra tags (dev and alpha)
@@ -284,7 +285,7 @@ jobs:
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
 
           IFS=',' read -ra TAGS <<< "${EXTRA_TAGS}"
-          for image in pilot proxy-init install-cni ztunnel agentio-epe; do
+          for image in pilot proxy-init install-cni ztunnel agentio-epe agentio-sni-policy-wasm; do
             for tag in "${TAGS[@]}"; do
               echo "Tagging ${HUB}/${image}:${PRIMARY_TAG} -> ${tag}"
               crane tag "${HUB}/${image}:${PRIMARY_TAG}" "${tag}"

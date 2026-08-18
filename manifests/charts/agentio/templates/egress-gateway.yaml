@@ -115,6 +115,10 @@ spec:
           value: "true"
         - name: ISTIO_META_ENABLE_HBONE
           value: "true"
+        {{- if $.Values.sniTrafficPolicy.enabled }}
+        - name: POLICY_BINDING_DISCOVERY
+          value: "true"
+        {{- end }}
         - name: GOMEMLIMIT
           valueFrom:
             resourceFieldRef:

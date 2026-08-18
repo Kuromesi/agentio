@@ -56,6 +56,7 @@ import (
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	xdsfilters "istio.io/istio/pilot/pkg/xds/filters"
 	"istio.io/istio/pkg/config/protocol"
+	"istio.io/istio/pkg/config/xds"
 	"istio.io/istio/pkg/proto"
 	"istio.io/istio/pkg/wellknown"
 )
@@ -98,7 +99,84 @@ const (
 	// the downstream peer / RBAC keys ONCE on the tls-terminate chain so they
 	// reach main_forward. Custom (non-canonical) for readable config dumps.
 	connectDownstreamFilterName = "connect_downstream_peer"
+
+	sniPolicyIntakeFilterChain       = "sni-policy-intake"
+	policyBindingsFilterName         = "envoy.filters.network.agentio_policy_bindings"
+	policyBindingsFilterTypeURL      = "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.PolicyBindingsFilterConfig"
+	sniPolicyWasmExtensionName       = agentio.SniPolicyWasmExtensionName
+	sniPolicyTerminationCluster      = agentio.SniPolicyTerminationClusterName
+	sniPolicyTerminationListenerName = agentio.SniPolicyTerminationClusterName
 )
+
+func sniTrafficPolicyEnabled(metadata *model.NodeMetadata) bool {
+	return features.EnableSniTrafficPolicy && metadata != nil &&
+		metadata.PolicyBindingDiscovery != nil && bool(*metadata.PolicyBindingDiscovery)
+}
+
+func buildPolicyBindingsFilter() *listener.Filter {
+	return &listener.Filter{
+		Name: policyBindingsFilterName,
+		ConfigType: &listener.Filter_TypedConfig{TypedConfig: protoconv.TypedStructWithFields(
+			policyBindingsFilterTypeURL,
+			map[string]any{},
+		)},
+	}
+}
+
+func (lb *ListenerBuilder) buildSniPolicyWasmFilter() *listener.Filter {
+	// Agentio owns this ECDS resource and inserts it only on the SNI intake chain.
+	// The zero initial fetch timeout deliberately blocks listener readiness if
+	// the fail-closed plugin cannot be delivered.
+	return &listener.Filter{
+		Name: sniPolicyWasmExtensionName,
+		ConfigType: &listener.Filter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
+			ConfigSource: &core.ConfigSource{
+				ConfigSourceSpecifier: &core.ConfigSource_Ads{Ads: &core.AggregatedConfigSource{}},
+				ResourceApiVersion:    core.ApiVersion_V3,
+				InitialFetchTimeout:   durationpb.New(0),
+			},
+			TypeUrls: []string{xds.WasmNetworkFilterType, xds.RBACNetworkFilterType},
+		}},
+	}
+}
+
+func (lb *ListenerBuilder) buildSniPolicyIntakeFilterChain(_ *extensions.ConnectionPoolSettings) *listener.FilterChain {
+	filters := lb.buildWaypointNetworkFilters(nil, inboundChainConfig{
+		clusterName: util.PassthroughCluster,
+		port: model.ServiceInstancePort{ServicePort: &model.Port{
+			Name:     "sni-policy-intake",
+			Protocol: protocol.TCP,
+		}},
+		bind:                               "0.0.0.0",
+		hbone:                              true,
+		applySandboxConnectionPoolSettings: true,
+	})
+	// This Agentio-owned extension is referenced explicitly only by this chain,
+	// so the standard filter builder retains every existing custom
+	// authz/authn/RBAC/stats filter without inserting it into unrelated chains.
+	filters = append([]*listener.Filter{
+		buildPolicyBindingsFilter(),
+		lb.buildSniPolicyWasmFilter(),
+		buildSandboxConnectDownstreamFilter(),
+	}, filters...)
+	return &listener.FilterChain{
+		Name:    sniPolicyIntakeFilterChain,
+		Filters: filters,
+	}
+}
+
+func (lb *ListenerBuilder) buildSniPolicyTerminationListener(connPool *extensions.ConnectionPoolSettings) *listener.Listener {
+	l := &listener.Listener{
+		Name: sniPolicyTerminationListenerName,
+		ListenerSpecifier: &listener.Listener_InternalListener{
+			InternalListener: &listener.Listener_InternalListenerConfig{},
+		},
+		TrafficDirection: core.TrafficDirection_INBOUND,
+		FilterChains:     []*listener.FilterChain{lb.buildTlsTerminateFilterChain(connPool)},
+	}
+	accessLogBuilder.setListenerAccessLog(lb.push, lb.node, l, istionetworking.ListenerClassSidecarInbound)
+	return l
+}
 
 // buildCaptureSNIFilter returns a network filter that captures the downstream
 // ClientHello SNI into shared filter state. Placed BEFORE the TCP proxy on
@@ -162,14 +240,13 @@ var sandboxRelayKeys = []struct {
 
 // buildSandboxConnectDownstreamFilter returns a network set_filter_state filter that re-declares each
 // sandboxRelayKeys entry ONCE, reading the value the previous hop left via %FILTER_STATE(k:PLAIN)%.
-// It MUST run on_new_connection and BEFORE the tcp_proxy on the tls-terminate chain so the
-// keys propagate one more hop to main_forward.
+// It MUST run on_new_connection and BEFORE the tcp_proxy so the keys propagate to whichever
+// upstream cluster the chain selects.
 //
 // Each value is SkipIfEmpty + OmitEmptyValues: on the plaintext catchall path the principals
 // are absent, and an empty AddressObject would fail to parse — skipping avoids writing junk.
-// The ONCE here pollutes only the immediate upstream (the main_forward internal cluster, a
-// cheap userspace hop); it arrives at main_forward as None and so never enters the real
-// tls_connect_originate pool key.
+// Each value retains the source object's type so existing routing, RBAC, and connection-pool
+// isolation semantics remain unchanged.
 func buildSandboxConnectDownstreamFilter() *listener.Filter {
 	values := make([]*sfsvalue.FilterStateValue, 0, len(sandboxRelayKeys))
 	for _, k := range sandboxRelayKeys {
@@ -418,7 +495,12 @@ func (lb *ListenerBuilder) buildMainForwardListener() *listener.Listener {
 // sandboxListeners returns sandbox-egress-specific listeners appended to the
 // waypoint listener list.
 func sandboxListeners(lb *ListenerBuilder) []*listener.Listener {
-	return []*listener.Listener{lb.buildMainForwardListener()}
+	listeners := []*listener.Listener{lb.buildMainForwardListener()}
+	if sniTrafficPolicyEnabled(lb.node.Metadata) {
+		gateway := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
+		listeners = append(listeners, lb.buildSniPolicyTerminationListener(gateway.GetConnectionPool()))
+	}
+	return listeners
 }
 
 // connectAuthorityFilter returns the HTTP filter used on the HCM
@@ -465,14 +547,14 @@ func deepestOnNoMatchTarget(primaryMatcher *matcher.Matcher) *matcher.Matcher {
 
 // buildSandboxProtocolMatcher builds the matcher used when no SNI rule matches:
 // TLS → forward-tcp, HTTP → forward-http, TCP → forward-tcp.
-func buildSandboxProtocolMatcher() *matcher.Matcher_OnMatch {
-	return match.ToMatcher(match.NewTransportProtocol(match.TransportProtocolMatch{
+func buildSandboxProtocolMatcher() *matcher.Matcher {
+	return match.NewTransportProtocol(match.TransportProtocolMatch{
 		TLS: match.ToChain(forwardTcpFilterChain),
 		Other: match.NewAppProtocol(match.ProtocolMatch{
 			TCP:  match.ToChain(forwardTcpFilterChain),
 			HTTP: match.ToChain(forwardHttpFilterChain),
 		}),
-	}))
+	})
 }
 
 // buildSandboxSNIMatcher builds the three-tier SNI matcher used when TLS
@@ -485,6 +567,22 @@ func buildSandboxSNIMatcher(tlsTermCfg sandboxTLSTermination, protocolFallback *
 		{Domains: tlsTermCfg.GetExcludeHosts(), OnMatch: match.ToChain(forwardTcpFilterChain)},
 		{Domains: tlsTermCfg.GetIncludeHosts(), OnMatch: match.ToChain(tlsTerminateFilterChain)},
 	}, protocolFallback))
+}
+
+// buildSandboxSNIPolicyMatcher keeps the legacy tls_termination.exclude_hosts
+// bypass ahead of SNI policy evaluation. Every remaining TLS connection enters
+// the policy intake chain; non-TLS traffic retains protocol-based routing.
+func buildSandboxSNIPolicyMatcher(excludeHosts []string, protocolFallback *matcher.Matcher) *matcher.Matcher_OnMatch {
+	policyFallback := match.ToMatcher(match.NewTransportProtocol(match.TransportProtocolMatch{
+		TLS:   match.ToChain(sniPolicyIntakeFilterChain),
+		Other: protocolFallback,
+	}))
+	if len(excludeHosts) == 0 {
+		return policyFallback
+	}
+	return match.ToMatcher(match.NewSNIMatcher([]match.SNIDomainMatch{
+		{Domains: excludeHosts, OnMatch: match.ToChain(forwardTcpFilterChain)},
+	}, policyFallback))
 }
 
 // sandboxTLSTermination is the minimal interface satisfied by the sandbox
@@ -514,12 +612,19 @@ func applySandboxInternalChains(
 
 	gateway := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
 	tlsTermCfg := gateway.GetTlsTermination()
-	if features.EnableOnDemandCerts && tlsTermCfg != nil {
+	if sniTrafficPolicyEnabled(lb.node.Metadata) {
+		chains = append(chains, lb.buildSniPolicyIntakeFilterChain(gateway.GetConnectionPool()))
+		var excludeHosts []string
+		if tlsTermCfg != nil {
+			excludeHosts = tlsTermCfg.GetExcludeHosts()
+		}
+		target.OnNoMatch = buildSandboxSNIPolicyMatcher(excludeHosts, protocolFallback)
+	} else if features.EnableOnDemandCerts && tlsTermCfg != nil {
 		// catchall-tls: terminates TLS with on-demand certs.
 		chains = append(chains, lb.buildTlsTerminateFilterChain(gateway.GetConnectionPool()))
-		target.OnNoMatch = buildSandboxSNIMatcher(tlsTermCfg, protocolFallback)
+		target.OnNoMatch = buildSandboxSNIMatcher(tlsTermCfg, match.ToMatcher(protocolFallback))
 	} else {
-		target.OnNoMatch = protocolFallback
+		target.OnNoMatch = match.ToMatcher(protocolFallback)
 	}
 	return chains
 }

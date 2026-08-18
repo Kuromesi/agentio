@@ -381,14 +381,6 @@ func (sd *ServiceDiscovery) PoliciesForProxy(_ *model.Proxy, _ sets.Set[model.Co
 	return nil
 }
 
-func (sd *ServiceDiscovery) WorkloadConfigs(sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	return nil
-}
-
-func (sd *ServiceDiscovery) WorkloadConfigsForProxy(_ *model.Proxy, _ sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	return nil
-}
-
 func (sd *ServiceDiscovery) ServicesForWaypoint(model.WaypointKey) []model.ServiceInfo {
 	return nil
 }

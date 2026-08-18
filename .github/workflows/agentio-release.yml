@@ -5,8 +5,9 @@ name: agentio-release
 # ztunnel commit, and creates the GitHub Release last.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
-# epe (Egress Policy Enforcer, image agentio-epe) is built from this repository and
-# follows the Agentio release version like every other in-tree image.
+# Traffic extensions (including agentio-epe and agentio-sni-policy-wasm) are
+# built from this repository and follow the Agentio release version like every
+# other in-tree image.
 #
 # Auth (set in repo Settings → Actions):
 #   vars.DOCKERHUB_USERNAME — Docker Hub account name (repository Variable)
@@ -428,7 +429,7 @@ jobs:
           echo "$HUB_TOKEN" | crane auth login docker.io \
             -u "$HUB_USERNAME" --password-stdin
 
-          images=(pilot proxy-init proxyv2 install-cni ztunnel agentio-epe)
+          images=(pilot proxy-init proxyv2 install-cni ztunnel agentio-epe agentio-sni-policy-wasm)
 
           declare -A version_digests
           for image in "${images[@]}"; do

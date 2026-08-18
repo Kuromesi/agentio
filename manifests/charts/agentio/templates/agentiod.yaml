@@ -91,6 +91,12 @@ spec:
           value: "true"
         - name: ENABLE_ON_DEMAND_CERTS
           value: "{{ .Values.agentiod.enableTlsTermination }}"
+        {{- if .Values.sniTrafficPolicy.enabled }}
+        - name: ENABLE_SNI_TRAFFIC_POLICY
+          value: "true"
+        - name: SNI_TRAFFIC_POLICY_WASM_IMAGE
+          value: {{ required "sniTrafficPolicy.wasm.image is required when sniTrafficPolicy.enabled=true" .Values.sniTrafficPolicy.wasm.image | quote }}
+        {{- end }}
         {{- if .Values.global.enableClusterTrustBundle }}
         - name: ENABLE_CLUSTER_TRUST_BUNDLE_API
           value: "true"

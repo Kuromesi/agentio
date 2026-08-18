@@ -50,6 +50,18 @@
     ]
   },
   "bootstrap_extensions": [
+    {{- if .policy_binding_discovery }}
+    {
+      "name": "envoy.bootstrap.agentio_gateway_policy_store",
+      "typed_config": {
+        "@type": "type.googleapis.com/udpa.type.v1.TypedStruct",
+        "type_url": "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.GatewayPolicyStoreConfig",
+        "value": {
+          "config_source": { "ads": {} }
+        }
+      }
+    },
+    {{- end }}
     {{- if .metadata_discovery }}
     {
       "name": "metadata_discovery",
@@ -165,6 +177,11 @@
           {{- if .metadata_discovery }}
           {
           "prefix": "workload_discovery"
+          },
+          {{- end }}
+          {{- if .policy_binding_discovery }}
+          {
+          "prefix": "agentio.gateway_policy_store"
           },
           {{- end }}
           {{- range $a, $s := .inclusionPrefix }}

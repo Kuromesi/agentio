@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -112,6 +113,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		// Not supported on legacy SotW protocol
 		mDiscovery = false
 	}
+	policyBindingDiscovery := cfg.Metadata.PolicyBindingDiscovery != nil && *cfg.Metadata.PolicyBindingDiscovery
 	customSDSPath := ""
 	if _, f := cfg.RawMetadata[security.CredentialFileMetaDataName]; f {
 		customSDSPath = security.FileCredentialNameSocketPath
@@ -127,6 +129,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		option.Metadata(cfg.Metadata),
 		option.XdsType(xdsType),
 		option.MetadataDiscovery(mDiscovery),
+		option.PolicyBindingDiscovery(policyBindingDiscovery),
 		option.MetricsLocalhostAccessOnly(cfg.Metadata.ProxyConfig.ProxyMetadata),
 	)
 
@@ -649,6 +652,7 @@ type MetadataOptions struct {
 	EnvoyPrometheusPort         int
 	ExitOnZeroActiveConnections bool
 	MetadataDiscovery           *bool
+	PolicyBindingDiscovery      *bool
 	EnvoySkipDeprecatedLogs     bool
 	WorkloadIdentitySocketFile  string
 }
@@ -710,6 +714,11 @@ func GetNodeMetaData(options MetadataOptions) (*model.Node, error) {
 		meta.MetadataDiscovery = nil
 	} else {
 		meta.MetadataDiscovery = ptr.Of(model.StringBool(*options.MetadataDiscovery))
+	}
+	if options.PolicyBindingDiscovery == nil {
+		meta.PolicyBindingDiscovery = nil
+	} else {
+		meta.PolicyBindingDiscovery = ptr.Of(model.StringBool(*options.PolicyBindingDiscovery))
 	}
 	meta.EnvoySkipDeprecatedLogs = model.StringBool(options.EnvoySkipDeprecatedLogs)
 

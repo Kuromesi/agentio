@@ -30,9 +30,52 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// registerTypes registers the agents-api TrafficPolicy and
-// GlobalTrafficPolicy types with the kubeclient informer mechanism so that
-// NewDelayedInformer can use typed List/Watch instead of unstructured.
+var (
+	securityProfileGVR = schema.GroupVersionResource{
+		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "securityprofiles",
+	}
+	securityProfileGVK = schema.GroupVersionKind{
+		Group: "agents.kruise.io", Version: "v1alpha1", Kind: "SecurityProfile",
+	}
+	globalSecurityProfileGVR = schema.GroupVersionResource{
+		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "globalsecurityprofiles",
+	}
+	globalSecurityProfileGVK = schema.GroupVersionKind{
+		Group: "agents.kruise.io", Version: "v1alpha1", Kind: "GlobalSecurityProfile",
+	}
+)
+
+// registerSecurityProfileType registers the typed SecurityProfile List/Watch
+// path used by the optional SNI-policy pipeline.
+func registerSecurityProfileType(agentsCS agentsclient.Interface) {
+	kubeclient.Register[*agentsv1alpha1.SecurityProfile](securityProfileGVR, securityProfileGVK,
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (runtime.Object, error) {
+			return agentsCS.AgentsV1alpha1().SecurityProfiles(ns).List(context.Background(), opts)
+		},
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (watch.Interface, error) {
+			return agentsCS.AgentsV1alpha1().SecurityProfiles(ns).Watch(context.Background(), opts)
+		},
+		nil,
+	)
+}
+
+// registerGlobalSecurityProfileType registers the typed GlobalSecurityProfile
+// List/Watch path used by the optional SNI-policy pipeline.
+func registerGlobalSecurityProfileType(agentsCS agentsclient.Interface) {
+	kubeclient.Register[*agentsv1alpha1.GlobalSecurityProfile](globalSecurityProfileGVR, globalSecurityProfileGVK,
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (runtime.Object, error) {
+			return agentsCS.AgentsV1alpha1().GlobalSecurityProfiles().List(context.Background(), opts)
+		},
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (watch.Interface, error) {
+			return agentsCS.AgentsV1alpha1().GlobalSecurityProfiles().Watch(context.Background(), opts)
+		},
+		nil,
+	)
+}
+
+// registerTypes registers the always-on agents-api policy types with the
+// kubeclient informer mechanism so NewDelayedInformer can use typed List/Watch
+// instead of unstructured objects.
 func registerTypes(agentsCS agentsclient.Interface) {
 	tpGVR := schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "trafficpolicies"}
 	tpGVK := schema.GroupVersionKind{Group: "agents.kruise.io", Version: "v1alpha1", Kind: "TrafficPolicy"}
@@ -57,6 +100,19 @@ func registerTypes(agentsCS agentsclient.Interface) {
 		},
 		nil,
 	)
+
+	kubeclient.Register[*agentsv1alpha1.GlobalSecurityProfile](globalSecurityProfileGVR, globalSecurityProfileGVK,
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (runtime.Object, error) {
+			return agentsCS.AgentsV1alpha1().GlobalSecurityProfiles().List(context.Background(), opts)
+		},
+		func(c kubeclient.ClientGetter, ns string, opts metav1.ListOptions) (watch.Interface, error) {
+			return agentsCS.AgentsV1alpha1().GlobalSecurityProfiles().Watch(context.Background(), opts)
+		},
+		nil,
+	)
+
+	registerSecurityProfileType(agentsCS)
+	registerGlobalSecurityProfileType(agentsCS)
 }
 
 func newTrafficPoliciesCollection(client kube.Client, stop <-chan struct{}, opts krt.OptionsBuilder) krt.Collection[*agentsv1alpha1.TrafficPolicy] {
@@ -73,4 +129,26 @@ func newGlobalTrafficPoliciesCollection(client kube.Client, stop <-chan struct{}
 		kubetypes.StandardInformer, kclient.Filter{ObjectFilter: client.ObjectFilter()})
 	inf.Start(stop)
 	return krt.WrapClient(inf, opts.WithName("GlobalTrafficPolicies")...)
+}
+
+func newSecurityProfilesCollection(
+	client kube.Client,
+	stop <-chan struct{},
+	opts krt.OptionsBuilder,
+) krt.Collection[*agentsv1alpha1.SecurityProfile] {
+	inf := kclient.NewDelayedInformer[*agentsv1alpha1.SecurityProfile](client,
+		securityProfileGVR, kubetypes.StandardInformer, kclient.Filter{ObjectFilter: client.ObjectFilter()})
+	inf.Start(stop)
+	return krt.WrapClient(inf, opts.WithName("SecurityProfilesForSniPolicy")...)
+}
+
+func newGlobalSecurityProfilesCollection(
+	client kube.Client,
+	stop <-chan struct{},
+	opts krt.OptionsBuilder,
+) krt.Collection[*agentsv1alpha1.GlobalSecurityProfile] {
+	inf := kclient.NewDelayedInformer[*agentsv1alpha1.GlobalSecurityProfile](client,
+		globalSecurityProfileGVR, kubetypes.StandardInformer, kclient.Filter{ObjectFilter: client.ObjectFilter()})
+	inf.Start(stop)
+	return krt.WrapClient(inf, opts.WithName("GlobalSecurityProfilesForSniPolicy")...)
 }

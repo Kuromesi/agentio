@@ -65,6 +65,10 @@ images:
   dockerfile: extensions/epe/docker/Dockerfile
   targets:
   - ${TARGET_OUT_LINUX}/epe
+- name: agentio-sni-policy-wasm
+  dockerfile: extensions/wasm/snitrafficpolicy/docker/Dockerfile
+  targets:
+  - ${TARGET_OUT_LINUX}/sni-policy.wasm
 
   # Test images
 - name: app

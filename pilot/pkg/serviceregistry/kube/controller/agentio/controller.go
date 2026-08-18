@@ -82,6 +82,14 @@ type Controller struct {
 
 	workloadConfigs krt.Singleton[model.WorkloadConfig]
 
+	// bindablePolicies and policyBindings are nil unless
+	// features.EnableSniTrafficPolicy is set. policyBindings is built later,
+	// after ambient supplies its normalized Workloads collection.
+	bindablePolicies       krt.Collection[BindablePolicy]
+	policyBindings         krt.Collection[model.PolicyBinding]
+	securityProfiles       krt.Collection[*agentsv1alpha1.SecurityProfile]
+	globalSecurityProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+
 	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
 	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
 
@@ -104,18 +112,33 @@ func NewController(options Options) (*Controller, error) {
 	opts := krt.NewOptionsBuilder(stop, "agentio-controller", options.Debugger)
 	TrafficPolicies := newTrafficPoliciesCollection(options.KubeClient, stop, opts)
 	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop, opts)
+	SecurityProfiles := newSecurityProfilesCollection(options.KubeClient, stop, opts)
+	GlobalSecurityProfiles := newGlobalSecurityProfilesCollection(options.KubeClient, stop, opts)
 
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
+	if features.EnableSniTrafficPolicy {
+		if err := registerSniPolicyWasmExtension(
+			store,
+			options.MeshConfig.Get().RootNamespace,
+			features.SniTrafficPolicyWasmImage,
+		); err != nil {
+			return nil, err
+		}
+	}
 	agentioConfig := newAgentioConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)
 
 	c := &Controller{
-		ConfigStoreController: store,
-		stop:                  stop,
-		trafficPolicies:       TrafficPolicies,
-		meshConfig:            options.MeshConfig,
-		globalTrafficPolicies: GlobalTrafficPolicies,
-		agentioConfig:         agentioConfig,
+		ConfigStoreController:  store,
+		stop:                   stop,
+		trafficPolicies:        TrafficPolicies,
+		meshConfig:             options.MeshConfig,
+		globalTrafficPolicies:  GlobalTrafficPolicies,
+		securityProfiles:       SecurityProfiles,
+		globalSecurityProfiles: GlobalSecurityProfiles,
+		agentioConfig:          agentioConfig,
 	}
+
+	c.initBindablePolicies(opts)
 
 	if features.EnableOnDemandCerts {
 		if err := c.initOnDemandController(options.KubeClient, opts); err != nil {
@@ -244,6 +267,18 @@ func (c *Controller) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {
 	return c.workloadConfigs.AsCollection()
 }
 
+// BindablePolicies returns the Agentio policies that are both published over
+// xDS and referenced by per-workload PolicyBinding resources.
+func (c *Controller) BindablePolicies() krt.Collection[BindablePolicy] {
+	return c.bindablePolicies
+}
+
+// PolicyBindings returns the final per-workload PolicyBinding xDS resources.
+// It is nil until BuildPolicyBindingCollection has been called successfully.
+func (c *Controller) PolicyBindings() krt.Collection[model.PolicyBinding] {
+	return c.policyBindings
+}
+
 // unreachableCIDR is the IANA IPv4 Dummy Address (RFC 7600). Used as a
 // sentinel when all match_hosts fail to resolve — ensures the policy
 // cannot accidentally wildcard-match all traffic.
@@ -296,6 +331,20 @@ func (c *Controller) BuildPolicyCollection(
 		c.meshConfig.Get().RootNamespace,
 	)
 	return c.authorizationController.AsCollection()
+}
+
+// BuildPolicyBindingCollection joins the controller's bindable policies with
+// ambient's normalized workload collection and records the final per-workload
+// PolicyBinding resources on the controller.
+func (c *Controller) BuildPolicyBindingCollection(
+	workloads krt.Collection[model.WorkloadInfo],
+	opts krt.OptionsBuilder,
+) krt.Collection[model.PolicyBinding] {
+	if c.bindablePolicies == nil {
+		return nil
+	}
+	c.policyBindings = newPolicyBindingCollection(workloads, c.bindablePolicies, opts)
+	return c.policyBindings
 }
 
 // extractHostname returns all FQDN hostnames referenced in the policy's

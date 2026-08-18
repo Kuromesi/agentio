@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -222,6 +223,8 @@ type AgentOptions struct {
 
 	// Enable metadata discovery bootstrap extension
 	MetadataDiscovery *bool
+	// Enable the Agentio policy binding discovery bootstrap extension.
+	PolicyBindingDiscovery *bool
 
 	SDSFactory func(options *security.Options, workloadSecretCache security.SecretManager, pkpConf *mesh.PrivateKeyProvider) SDSService
 
@@ -288,6 +291,7 @@ func (a *Agent) generateNodeMetadata() (*model.Node, error) {
 		ExitOnZeroActiveConnections: a.cfg.ExitOnZeroActiveConnections,
 		XDSRootCert:                 a.cfg.XDSRootCerts,
 		MetadataDiscovery:           a.cfg.MetadataDiscovery,
+		PolicyBindingDiscovery:      a.cfg.PolicyBindingDiscovery,
 		EnvoySkipDeprecatedLogs:     a.cfg.EnvoySkipDeprecatedLogs,
 		WorkloadIdentitySocketFile:  a.cfg.WorkloadIdentitySocketFile,
 	})

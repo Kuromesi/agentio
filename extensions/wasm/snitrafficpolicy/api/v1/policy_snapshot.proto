@@ -1,0 +1,71 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package kruise.networking.gateway_policy.v1;
+
+// BoundPolicySnapshot is the policy-type-neutral value stored under
+// filter_state["agentio.bound_policies"]. The native policy discovery
+// component resolves PolicyBinding references, but deliberately leaves each
+// policy payload opaque for policy-specific Wasm filters to decode.
+message BoundPolicySnapshot {
+  uint64 generation = 1;
+  PolicySnapshotStatus status = 2;
+  repeated BoundPolicyGroup groups = 3;
+}
+
+message BoundPolicyGroup {
+  string type_url = 1;
+  PolicySnapshotStatus status = 2;
+  // Preserves the resource order from PolicyBinding.
+  repeated BoundPolicy policies = 3;
+}
+
+message BoundPolicy {
+  string resource_name = 1;
+  // Serialized protobuf payload for type_url on the containing group.
+  bytes resource = 2;
+}
+
+enum PolicySnapshotStatus {
+  POLICY_SNAPSHOT_STATUS_UNSPECIFIED = 0;
+  POLICY_SNAPSHOT_STATUS_READY = 1;
+  POLICY_SNAPSHOT_STATUS_BINDING_MISS = 2;
+  POLICY_SNAPSHOT_STATUS_PENDING_REFERENCES = 3;
+  POLICY_SNAPSHOT_STATUS_NOT_READY = 4;
+}
+
+// The messages below mirror the SniTrafficPolicy wire contract published by
+// Agentio. They are decoded only by the SNI Wasm filter; the native discovery
+// component treats the resource bytes above as opaque.
+message SniTrafficPolicy {
+  repeated SniRule rules = 1;
+}
+
+message SniRule {
+  SniMatch match = 1;
+  SniAction action = 2;
+}
+
+message SniMatch {
+  repeated string sni = 1;
+}
+
+enum SniAction {
+  SNI_ACTION_UNSPECIFIED = 0;
+  SNI_ACTION_TLS_TERMINATION = 1;
+  SNI_ACTION_PASSTHROUGH = 2;
+  SNI_ACTION_DENY = 3;
+}

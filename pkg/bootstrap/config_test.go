@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +21,7 @@ import (
 	"regexp"
 	"testing"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	. "github.com/onsi/gomega"
 	"k8s.io/kubectl/pkg/util/fieldpath"
 
@@ -27,6 +29,7 @@ import (
 	"istio.io/istio/pkg/bootstrap/option"
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/model"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/version"
 )
@@ -198,5 +201,28 @@ func TestRequiredEnvoyStatsMatcherInclusionRegexes(t *testing.T) {
 	ok, _ := regexp.MatchString(requiredEnvoyStatsMatcherInclusionRegexes, "vhost.default.local:18000.route.routev1.upstream_rq_200")
 	if !ok {
 		t.Fatal("requiredEnvoyStatsMatcherInclusionRegexes doesn't match the route's stat_prefix")
+	}
+}
+
+func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
+	proxyConfig := model.NodeMetaProxyConfig(v1alpha1.ProxyConfig{
+		DiscoveryAddress: "agentiod.istio-system.svc:15012",
+		ProxyMetadata:    map[string]string{},
+	})
+	node := &model.Node{
+		ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
+		Locality: &core.Locality{},
+		Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
+			ProxyConfig:            &proxyConfig,
+			PolicyBindingDiscovery: ptr.Of(model.StringBool(true)),
+		}},
+		RawMetadata: map[string]any{},
+	}
+	params, err := (Config{Node: node}).toTemplateParams()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := params["policy_binding_discovery"].(bool); !ok || !enabled {
+		t.Fatalf("policy_binding_discovery template option = %#v, want true", params["policy_binding_discovery"])
 	}
 }

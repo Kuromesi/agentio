@@ -23,7 +23,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pkg/ptr"
 )
 
 func TestSandboxClusters_RegistersPlaintextHTTPDynamicForwardProxy(t *testing.T) {
@@ -82,5 +84,25 @@ func TestSandboxClusters_TLSOriginationRequiresSecureClusterOptions(t *testing.T
 	}
 	if dfpConfig.GetAllowInsecureClusterOptions() {
 		t.Fatal("TLS-origination dynamic forward proxy must require secure cluster options")
+	}
+}
+
+func TestSandboxClusters_SniTrafficPolicyFeatureAddsTerminationInternalCluster(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+
+	cb := &ClusterBuilder{
+		proxyMetadata: &model.NodeMetadata{PolicyBindingDiscovery: ptr.Of(model.StringBool(true))},
+		req: &model.PushRequest{Push: &model.PushContext{
+			Mesh: &meshconfig.MeshConfig{ConnectTimeout: durationpb.New(time.Second)},
+		}},
+	}
+	found := map[string]bool{}
+	for _, c := range sandboxClusters(cb) {
+		found[c.GetName()] = true
+	}
+	if !found[sniPolicyTerminationCluster] {
+		t.Errorf("feature-enabled sandbox cluster %q was not generated", sniPolicyTerminationCluster)
 	}
 }

@@ -66,9 +66,13 @@ type Index interface {
 	Run(stop <-chan struct{})
 	HasSynced() bool
 	model.AmbientIndexes
+	model.AgentioResourceDiscovery
 }
 
-var _ Index = &index{}
+var (
+	_ Index                          = &index{}
+	_ model.AgentioResourceDiscovery = &index{}
+)
 
 type NamespaceHostname struct {
 	Namespace string
@@ -120,7 +124,6 @@ type index struct {
 	namespaces krt.Collection[model.NamespaceInfo]
 
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization]
-	workloadConfigs       krt.Collection[model.WorkloadConfig]
 
 	statusQueue *statusqueue.StatusQueue
 
@@ -143,6 +146,11 @@ type index struct {
 	builder                     Builder
 
 	agentioController *agentio.Controller
+	workloadConfigs   krt.Collection[model.WorkloadConfig]
+	// Both are nil unless features.EnableSniTrafficPolicy is set; the providers
+	// in agentio_resources.go guard on nil.
+	policyBindings   krt.Collection[model.PolicyBinding]
+	bindablePolicies krt.Collection[agentio.BindablePolicy]
 }
 
 type FeatureFlags struct {
@@ -280,7 +288,6 @@ func New(options Options) Index {
 	)...)
 
 	var sandboxConfig krt.Singleton[model.AgentioConfig]
-	var workloadConfigs krt.Collection[model.WorkloadConfig]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
 	if options.AgentioController != nil {
 		TrafficPolicyDerivedPolicies = options.AgentioController.BuildPolicyCollection(
@@ -292,7 +299,6 @@ func New(options Options) Index {
 			})
 		a.agentioController = options.AgentioController
 		sandboxConfig = a.agentioController.AgentioConfig()
-		workloadConfigs = a.agentioController.WorkloadConfigs()
 	}
 
 	a.builder = Builder{
@@ -583,12 +589,34 @@ func New(options Options) Index {
 	}
 	a.authorizationPolicies = AllPolicies
 
-	if workloadConfigs != nil {
-		a.workloadConfigs = workloadConfigs
-		workloadConfigs.RegisterBatch(PushXds(a.XDSUpdater,
-			func(i model.WorkloadConfig) model.ConfigKey {
-				return model.ConfigKey{Kind: kind.WorkloadConfig, Name: i.Name, Namespace: i.Namespace}
-			}), false)
+	if a.agentioController != nil {
+		workloadConfigs := a.agentioController.WorkloadConfigs()
+		if workloadConfigs != nil {
+			a.workloadConfigs = workloadConfigs
+			workloadConfigs.RegisterBatch(PushXds(a.XDSUpdater,
+				func(i model.WorkloadConfig) model.ConfigKey {
+					return i.ConfigKey()
+				}), false)
+		}
+
+		// One binding per workload, including workloads no policy selects.
+		policyBindings := a.agentioController.BuildPolicyBindingCollection(Workloads, opts)
+		if policyBindings != nil {
+			a.policyBindings = policyBindings
+			policyBindings.RegisterBatch(PushXds(a.XDSUpdater,
+				func(i model.PolicyBinding) model.ConfigKey {
+					return i.ConfigKey()
+				}), false)
+		}
+
+		bindablePolicies := a.agentioController.BindablePolicies()
+		if bindablePolicies != nil {
+			a.bindablePolicies = bindablePolicies
+			bindablePolicies.RegisterBatch(PushXds(a.XDSUpdater,
+				func(i agentio.BindablePolicy) model.ConfigKey {
+					return i.ConfigKey()
+				}), false)
+		}
 	}
 
 	return a

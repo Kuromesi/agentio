@@ -58,12 +58,18 @@ var GetMainForwardCluster = func() *cluster.Cluster {
 // sandboxClusters returns the sandbox-egress-specific clusters appended to the
 // waypoint cluster list.
 func sandboxClusters(cb *ClusterBuilder) []*cluster.Cluster {
-	return []*cluster.Cluster{
+	clusters := []*cluster.Cluster{
 		buildSandboxPassthroughCluster(cb),
 		buildDefaultHTTPForwardCluster(cb),
 		buildDefaultTLSConnectOriginateCluster(cb),
 		GetMainForwardCluster(),
 	}
+	if sniTrafficPolicyEnabled(cb.proxyMetadata) {
+		clusters = append(clusters, buildInternalUpstreamCluster(
+			sniPolicyTerminationCluster, sniPolicyTerminationListenerName, false,
+		))
+	}
+	return clusters
 }
 
 // buildSandboxPassthroughCluster builds a passthrough cluster for the sandbox catchall

@@ -15,22 +15,28 @@
 package core
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	sfsnetwork "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
 	tcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	networking "istio.io/api/networking/v1alpha3"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+	xdsfilters "istio.io/istio/pilot/pkg/xds/filters"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/config/xds"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/spiffe"
 	"istio.io/istio/pkg/test/util/assert"
 	"istio.io/istio/pkg/wellknown"
@@ -44,7 +50,8 @@ func sandboxEgressNode() *model.Proxy {
 		ID:              "egress-gw-0.istio-system",
 		ConfigNamespace: "istio-system",
 		Metadata: &model.NodeMetadata{
-			Namespace: "istio-system",
+			Namespace:              "istio-system",
+			PolicyBindingDiscovery: ptr.Of(model.StringBool(true)),
 		},
 		VerifiedIdentity: &spiffe.Identity{
 			ServiceAccount: "egress-gw",
@@ -172,6 +179,146 @@ func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestinat
 	}
 	if got, want := tcpConfig.GetCluster(), "PassthroughCluster"; got != want {
 		t.Fatalf("TCP route cluster = %q, want %q", got, want)
+	}
+}
+
+func TestSniTrafficPolicyIntakeIsFailClosedAndOrdered(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+
+	chain := lb.buildSniPolicyIntakeFilterChain(nil)
+	if got := len(chain.GetFilters()); got < 4 {
+		t.Fatalf("SNI policy intake filters = %d, want policy writer, Wasm, relay, and complete TCP stack", got)
+	}
+	filters := chain.GetFilters()
+	if got := []string{
+		chain.GetFilters()[0].GetName(),
+		chain.GetFilters()[1].GetName(),
+		chain.GetFilters()[2].GetName(),
+		chain.GetFilters()[len(filters)-1].GetName(),
+	}; got[0] != policyBindingsFilterName ||
+		got[1] != sniPolicyWasmExtensionName ||
+		got[2] != connectDownstreamFilterName ||
+		got[3] != wellknown.TCPProxy {
+		t.Fatalf("SNI policy intake boundary order = %v, want policy writer, Wasm, relay metadata, ..., TCP proxy", got)
+	}
+	relayConfig := &sfsnetwork.Config{}
+	if err := filters[2].GetTypedConfig().UnmarshalTo(relayConfig); err != nil {
+		t.Fatalf("decode SNI policy FilterState relay: %v", err)
+	}
+	hashableStringKeys := 0
+	for _, value := range relayConfig.GetOnNewConnection() {
+		switch value.GetObjectKey() {
+		case "io.istio.peer_principal", "io.istio.local_principal", xdsfilters.AuthorityFilterStateKey:
+			hashableStringKeys++
+			if got, want := value.GetFactoryKey(), "istio.hashable_string"; got != want {
+				t.Errorf("FilterState %q factory = %q, want %q", value.GetObjectKey(), got, want)
+			}
+		}
+	}
+	if got, want := hashableStringKeys, 3; got != want {
+		t.Errorf("hashable string FilterState relay keys = %d, want %d", got, want)
+	}
+
+	discovery := chain.GetFilters()[1].GetConfigDiscovery()
+	if discovery == nil {
+		t.Fatal("SNI policy Wasm filter must use ECDS")
+	}
+	if got, want := discovery.GetTypeUrls(), []string{xds.WasmNetworkFilterType, xds.RBACNetworkFilterType}; !slices.Equal(got, want) {
+		t.Fatalf("SNI policy ECDS type URLs = %v, want %v", got, want)
+	}
+	if timeout := discovery.GetConfigSource().GetInitialFetchTimeout(); timeout == nil || timeout.AsDuration() != 0 {
+		t.Fatalf("SNI policy ECDS initial fetch timeout = %v, want zero (block until ready)", timeout)
+	}
+
+	tcpConfig := &tcp.TcpProxy{}
+	if err := filters[len(filters)-1].GetTypedConfig().UnmarshalTo(tcpConfig); err != nil {
+		t.Fatalf("decode SNI policy TCP proxy: %v", err)
+	}
+	if got, want := tcpConfig.GetCluster(), util.PassthroughCluster; got != want {
+		t.Fatalf("default SNI policy cluster = %q, want fail-closed Wasm override from %q", got, want)
+	}
+	if got, want := tcpConfig.GetUpstreamConnectMode(), tcp.UpstreamConnectMode_IMMEDIATE; got != want {
+		t.Fatalf("SNI policy upstream connect mode = %v, want %v", got, want)
+	}
+	if got := tcpConfig.GetMaxEarlyDataBytes(); got != nil {
+		t.Fatalf("SNI policy max early data bytes = %v, want nil", got)
+	}
+}
+
+func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
+	const excluded = "*.legacy.example.com"
+	result := buildSandboxSNIPolicyMatcher([]string{excluded}, buildSandboxProtocolMatcher())
+
+	sniMatcher := &matcher.ServerNameMatcher{}
+	typedConfig := result.GetMatcher().GetMatcherTree().GetCustomMatch().GetTypedConfig()
+	if typedConfig == nil {
+		t.Fatal("SNI policy matcher must check legacy exclude_hosts first")
+	}
+	if err := typedConfig.UnmarshalTo(sniMatcher); err != nil {
+		t.Fatalf("decode SNI matcher: %v", err)
+	}
+	domainMatchers := sniMatcher.GetDomainMatchers()
+	if got, want := len(domainMatchers), 1; got != want {
+		t.Fatalf("exclude host matchers = %d, want %d", got, want)
+	}
+	assert.Equal(t, domainMatchers[0].GetDomains(), []string{excluded})
+	if got, want := domainMatchers[0].GetOnMatch().GetAction().GetName(), forwardTcpFilterChain; got != want {
+		t.Fatalf("exclude_hosts route = %q, want %q", got, want)
+	}
+
+	transportMatcher := result.GetMatcher().GetOnNoMatch().GetMatcher()
+	tlsRoute := transportMatcher.GetMatcherTree().GetExactMatchMap().GetMap()["tls"]
+	if got, want := tlsRoute.GetAction().GetName(), sniPolicyIntakeFilterChain; got != want {
+		t.Fatalf("non-excluded TLS route = %q, want %q", got, want)
+	}
+}
+
+func TestSniTrafficPolicyFeatureAddsIntakeAndInternalListeners(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+	chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+	if got, want := len(chains), 3; got != want {
+		t.Fatalf("feature-enabled catch-all chains = %d, want HTTP, TCP, and SNI policy intake", got)
+	}
+	if got, want := chains[2].GetName(), sniPolicyIntakeFilterChain; got != want {
+		t.Fatalf("feature-enabled chain name = %q, want %q", got, want)
+	}
+
+	listeners := sandboxListeners(lb)
+	if got, want := len(listeners), 2; got != want {
+		t.Fatalf("feature-enabled sandbox listeners = %d, want main and termination", got)
+	}
+	if got, want := listeners[1].GetName(), sniPolicyTerminationListenerName; got != want {
+		t.Fatalf("termination listener = %q, want %q", got, want)
+	}
+}
+
+func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+
+	cg := NewConfigGenTest(t, TestOptions{})
+	node := sandboxEgressNode()
+	node.Metadata.PolicyBindingDiscovery = ptr.Of(model.StringBool(false))
+	lb := &ListenerBuilder{node: cg.SetupProxy(node), push: cg.PushContext()}
+	chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+	if got, want := len(chains), 2; got != want {
+		t.Fatalf("capability-disabled catch-all chains = %d, want HTTP and TCP only", got)
+	}
+	if got, want := len(sandboxListeners(lb)), 1; got != want {
+		t.Fatalf("capability-disabled sandbox listeners = %d, want main-forward only", got)
 	}
 }
 
