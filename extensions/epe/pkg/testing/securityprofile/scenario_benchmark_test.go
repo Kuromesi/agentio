@@ -52,9 +52,8 @@ func TestMain(m *testing.M) {
 //     alloc counters just before calling the benchmark function, so seeding
 //     profiles (YAML parse, CRD validation, compilation) would otherwise be
 //     charged to the loop and divided by b.N.
-//   - CaptureAccessLogger accumulates one entry per request and RunMessages
-//     copies the whole slice out on every call, so without a Reset per
-//     iteration the loop is quadratic in b.N.
+//   - RunMessages resets CaptureAccessLogger per call, so the audit log stays
+//     one entry deep and its copy-out does not grow with b.N.
 
 // benchSink defeats dead-code elimination.
 var benchSink any
@@ -138,35 +137,35 @@ type benchArm struct {
 	// setup seeds the profile that decides this arm's outcome.
 	setup func(h *Harness)
 	path  string
-	// disposition is the engine outcome, verified before timing. Asserting
+	// outcome is the derived audit outcome, verified before timing. Asserting
 	// on the wire verdict alone would not do: bypassed and passthrough share
 	// the same wire shape, so a mis-seeded bypass profile would silently be
 	// measured as a passthrough under the "bypassed" label.
-	disposition string
+	outcome string
 }
 
 var benchArms = []benchArm{
 	{
-		name:        "passthrough",
-		setup:       func(*Harness) {},
-		path:        "/v1/chat/completions?stream=true",
-		disposition: "passthrough",
+		name:    "passthrough",
+		setup:   func(*Harness) {},
+		path:    "/v1/chat/completions?stream=true",
+		outcome: "passthrough",
 	},
 	{
 		name: "blocked",
 		setup: func(h *Harness) {
 			h.Fixture.ApplyYAML(benchBlockProfileYAML("block", "/blocked", 451, "blocked-by-bench"))
 		},
-		path:        "/blocked",
-		disposition: "blocked",
+		path:    "/blocked",
+		outcome: "blocked",
 	},
 	{
 		name: "bypassed",
 		setup: func(h *Harness) {
 			h.Fixture.ApplyYAML(benchBypassProfileYAML("bypass", "/bypassed"))
 		},
-		path:        "/bypassed",
-		disposition: "bypassed",
+		path:    "/bypassed",
+		outcome: "bypassed",
 	},
 }
 
@@ -184,7 +183,7 @@ func benchHarness(b testing.TB, nProfiles int, arm benchArm) *Harness {
 	return h
 }
 
-// verifyArm asserts the arm really reaches the disposition it claims, on a
+// verifyArm asserts the arm really reaches the outcome it claims, on a
 // throwaway harness with the probe enabled. This runs outside the timed loop,
 // so the probe's cost is not measured.
 func verifyArm(b testing.TB, nProfiles int, arm benchArm) {
@@ -199,10 +198,10 @@ func verifyArm(b testing.TB, nProfiles int, arm benchArm) {
 		b.Fatalf("%s: Process returned error: %v", arm.name, v.Err)
 	}
 	if v.Info == nil {
-		b.Fatalf("%s: no resolution captured, cannot verify disposition", arm.name)
+		b.Fatalf("%s: no resolution captured, cannot verify outcome", arm.name)
 	}
-	if got := v.Info.Disposition.String(); got != arm.disposition {
-		b.Fatalf("%s: disposition = %q, want %q", arm.name, got, arm.disposition)
+	if got := v.Info.Outcome.String(); got != arm.outcome {
+		b.Fatalf("%s: outcome = %q, want %q", arm.name, got, arm.outcome)
 	}
 }
 
@@ -222,7 +221,6 @@ func BenchmarkRequest(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					h.AccessLog.Reset()
 					benchSink = h.RunMessages(b, msgs)
 				}
 			})
@@ -243,7 +241,6 @@ func BenchmarkRequest_NoIdentity(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		h.AccessLog.Reset()
 		benchSink = h.RunMessages(b, msgs)
 	}
 }
@@ -267,18 +264,17 @@ func BenchmarkRequest_Headers(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				h.AccessLog.Reset()
 				benchSink = h.RunMessages(b, msgs)
 			}
 		})
 	}
 }
 
-// TestBenchArmsReachTheirDisposition guards the benchmark fixtures under
+// TestBenchArmsReachTheirOutcome guards the benchmark fixtures under
 // plain `go test`: if a filler profile ever started matching the benchmark
 // path, or an arm's profile stopped applying, the benchmarks would keep
 // reporting numbers for the wrong path.
-func TestBenchArmsReachTheirDisposition(t *testing.T) {
+func TestBenchArmsReachTheirOutcome(t *testing.T) {
 	for _, arm := range benchArms {
 		t.Run(arm.name, func(t *testing.T) {
 			verifyArm(t, 10, arm)

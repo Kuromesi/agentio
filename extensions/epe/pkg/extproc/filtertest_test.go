@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
 	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
@@ -91,6 +93,24 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 	if !er.NeedsBody() {
 		t.Fatal("test setup: engine did not register a body need")
 	}
-	state.bodyContinuation = er
+	state.requestBodyContinuation = er
 	return s, state
+}
+
+// sendRequestBody calls HandleRequestBody and performs the observation the
+// Process send loop would have performed, as one step.
+//
+// The two are fused deliberately. The audit outcome is derived from what was
+// sent, so a test that drives the handler directly and forgets the observation
+// audits as inert — and still passes, because effectNone makes the derivation
+// report passthrough rather than fail. A green test asserting an outcome the
+// product never produced is exactly the false enforcement claim the derived
+// outcome exists to prevent, so the observation is not left to the caller.
+func sendRequestBody(t *testing.T, s *Server, state *streamState, body *extProcPb.HttpBody) ([]*extProcPb.ProcessingResponse, error) {
+	t.Helper()
+	responses, err := s.HandleRequestBody(context.Background(), body, state)
+	for _, resp := range responses {
+		state.effect.observe(classifyResponse(resp))
+	}
+	return responses, err
 }

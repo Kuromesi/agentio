@@ -29,6 +29,7 @@ import (
 	"istio.io/istio/extensions/epe/pkg/filters/block"
 	"istio.io/istio/extensions/epe/pkg/filters/bypass"
 	"istio.io/istio/extensions/epe/pkg/filters/headermutation"
+	"istio.io/istio/extensions/epe/pkg/filters/httpcallout"
 	"istio.io/istio/extensions/epe/pkg/filters/mcpacl"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
 	_ "istio.io/istio/extensions/epe/pkg/filters/tokentransform/signers/aliyun" // registers the AliyunSTS signer
@@ -51,6 +52,10 @@ type Deps struct {
 	// token plugins at an in-process provider. When nil, BuildFilters
 	// builds a token-cache-backed client from the environment and Kube.
 	CredentialClient *credential.Client
+	// CalloutClient, when non-nil, is used as-is; tests use it to point the
+	// callout filter at an in-process endpoint. When nil, BuildFilters builds
+	// the shared HTTP client whose connection pool serves the whole process.
+	CalloutClient httpcallout.Client
 }
 
 // typedClientset returns the typed clientset for filters that do one-shot
@@ -64,6 +69,18 @@ func typedClientset(deps Deps) kubernetes.Interface {
 	return deps.Kube.Kube()
 }
 
+// calloutClientFor returns the caller-supplied callout client or builds the
+// shared HTTP one. It branches on the field rather than assigning it
+// unconditionally: a nil concrete pointer stored in an interface compares
+// non-nil, which would hand the filter a client that panics instead of the
+// default (the same trap tokentransform's Limiter documents).
+func calloutClientFor(deps Deps) httpcallout.Client {
+	if deps.CalloutClient != nil {
+		return deps.CalloutClient
+	}
+	return httpcallout.NewHTTPClient()
+}
+
 // BuildFilters returns the production action order used inside every rule.
 // Rules themselves always run in policy order. Bypass precedes block so a
 // malformed rule carrying both bypasses; body enforcement follows the cheap
@@ -72,6 +89,13 @@ func typedClientset(deps Deps) kubernetes.Interface {
 // header. Which transformation TYPES a rule can use is the tokentransform
 // signer registry's decision; an unregistered type fails closed at projection
 // time.
+//
+// The callout sits between header mutation and credential transforms. It
+// follows every local, cheap decision so a request a local rule already blocks
+// never costs a network round trip, and it follows generic header mutations so
+// the remote service can override a statically set header. It precedes
+// credential transforms so credential injection stays the last word and the
+// callout is never positioned downstream of a secret-bearing mutation.
 func BuildFilters(deps Deps) ([]filter.Registration, error) {
 	credClient, err := credClientFor(deps)
 	if err != nil {
@@ -88,6 +112,7 @@ func BuildFilters(deps Deps) ([]filter.Registration, error) {
 		block.Definition(),
 		mcpacl.Definition(),
 		headermutation.Definition(),
+		httpcallout.NewDefinition(httpcallout.Deps{Client: calloutClientFor(deps)}),
 		tokentransform.NewDefinition(ttDeps),
 	}
 	return filter.Build(definitions...)

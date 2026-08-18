@@ -11,10 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// Peer and SandboxToken are the downstream caller identity types. They
-// live in the contract package itself because Stream embeds Peer, so
-// anything imported here lands in every filter's dependency closure (see
-// the arch guards).
 package filter
 
 import (
@@ -25,6 +21,10 @@ import (
 // resolved from filter_state and source.address. Mirrors the source/Peer
 // half of Envoy's AttributeContext. Never expression-visible; the
 // expression vocabulary lives in the inputs package.
+//
+// Peer and SandboxToken live in the contract package itself because Stream
+// embeds Peer, so anything imported here lands in every filter's dependency
+// closure (see the arch guards).
 type Peer struct {
 	// Pod identifies the source pod resolved from
 	// filter_state['downstream_peer']. Either half may be empty when Envoy

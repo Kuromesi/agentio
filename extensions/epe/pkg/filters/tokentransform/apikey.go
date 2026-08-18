@@ -32,10 +32,10 @@ func init() { RegisterSigner(TypeAPIKey, apiKeySigner{}) }
 //
 // Spelled lower-case even though the CRD default reads "Authorization":
 // header names are case-insensitive and Envoy lower-cases them anyway, while
-// engine.Fold lower-cases every key it folds — and strings.ToLower only
-// allocates when the input is not already lower-case. Emitting the canonical
-// spelling keeps that fold allocation-free on every request that injects a
-// token.
+// the engine's mutation fold lower-cases every key it folds — and
+// strings.ToLower only allocates when the input is not already lower-case.
+// Emitting the canonical spelling keeps that fold allocation-free on every
+// request that injects a token.
 const DefaultTargetHeader = "authorization"
 
 // ApiKeyConfig is the projected per-unit config of the built-in ApiKey

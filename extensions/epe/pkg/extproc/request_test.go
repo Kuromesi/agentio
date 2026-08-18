@@ -24,6 +24,8 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 
 	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
@@ -343,8 +345,8 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 			{Key: ":status", RawValue: []byte("500")},
 		}},
 	}, state)
-	if !errors.Is(err, boom) {
-		t.Fatalf("HandleResponseHeaders error = %v, want %v", err, boom)
+	if err != nil {
+		t.Fatalf("configured FailClosed returned handler error: %v", err)
 	}
 	// A FailClosed response error returns its synthesized deny with the error.
 	if len(resp) != 1 {
@@ -353,11 +355,11 @@ func TestHandleResponseHeaders_ErrorKeepsObligationUncommitted(t *testing.T) {
 	if resp[0].GetImmediateResponse() == nil {
 		t.Fatalf("response = %T, want an ImmediateResponse carrying the deny", resp[0].GetResponse())
 	}
-	if !state.awaitResponseHeaders {
-		t.Fatal("failed response dispatch consumed the outstanding obligation")
+	if state.awaitResponseHeaders {
+		t.Fatal("handled FailClosed left the response-headers obligation open")
 	}
-	if state.lifecycle == lifecycleFinalizePending {
-		t.Fatal("failed response dispatch armed successful finalization")
+	if state.lifecycle != lifecycleFinalizePending {
+		t.Fatal("handled FailClosed did not arm post-send finalization")
 	}
 }
 
@@ -383,8 +385,11 @@ func TestHandleResponseHeaders_BypassAcknowledgesAndFinalizes(t *testing.T) {
 	if state.lifecycle != lifecycleFinalizePending {
 		t.Fatal("successful Bypass did not arm finalization")
 	}
-	if state.stream.Info.Disposition != filter.DispositionBypassed {
-		t.Errorf("stream disposition = %v, want Bypassed", state.stream.Info.Disposition)
+	// The bypass must leave a matched unit behind: that record, plus an
+	// acknowledgement that changed nothing, is what makes finishStream derive
+	// "bypassed" rather than "passthrough".
+	if len(state.stream.Info.Matched) == 0 {
+		t.Error("bypass recorded no matched unit; the audit outcome would collapse to passthrough")
 	}
 }
 
@@ -427,7 +432,9 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 	probe := &responseHeadersProbe{}
 	s, state, cap := responseHeadersState(probe)
 	state.awaitResponseHeaders = false
-	state.stream.Info.Promote(filter.DispositionBlocked)
+	// An ImmediateResponse already went out, which is what makes the committed
+	// entry "blocked".
+	state.effect = effectBlocked
 	s.finishStream(context.Background(), state, nil)
 	headers := &extProcPb.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 		{Key: ":status", RawValue: []byte("204")},
@@ -518,20 +525,20 @@ func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
 	}
 }
 
-// TestPassThroughHandlers covers the trivial body / trailer / response stubs
-// so they show up in coverage and accidental regressions surface immediately.
-func TestPassThroughHandlers(t *testing.T) {
+// TestTrailerPassThroughAndBodyOrderValidation covers the trailer stubs and
+// verifies that body handlers reject messages they did not request.
+func TestTrailerPassThroughAndBodyOrderValidation(t *testing.T) {
 	srv := NewServer(ServerDeps{})
 	ctx := context.Background()
 
-	if r, err := srv.HandleRequestBody(ctx, &extProcPb.HttpBody{EndOfStream: true}, nil); err != nil || len(r) != 1 {
-		t.Errorf("HandleRequestBody: got len=%d err=%v", len(r), err)
+	if _, err := srv.HandleRequestBody(ctx, &extProcPb.HttpBody{EndOfStream: true}, nil); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("HandleRequestBody without state: err=%v, want FailedPrecondition", err)
 	}
 	if r, err := srv.HandleRequestTrailers(ctx, nil); err != nil || len(r) != 1 {
 		t.Errorf("HandleRequestTrailers: got len=%d err=%v", len(r), err)
 	}
-	if r, err := srv.HandleResponseBody(ctx, nil); err != nil || len(r) != 1 {
-		t.Errorf("HandleResponseBody: got len=%d err=%v", len(r), err)
+	if _, err := srv.HandleResponseBody(ctx, &extProcPb.HttpBody{}, nil); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("HandleResponseBody without state: err=%v, want FailedPrecondition", err)
 	}
 	if r, err := srv.HandleResponseTrailers(ctx, nil); err != nil || len(r) != 1 {
 		t.Errorf("HandleResponseTrailers: got len=%d err=%v", len(r), err)

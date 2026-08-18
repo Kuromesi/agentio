@@ -13,12 +13,13 @@
 // limitations under the License.
 
 // Package engine evaluates rules in policy order and actions within each
-// rule in registration order. It owns body-phase cursor continuation, the
-// per-invocation budget/metrics wrapper, and net-effect mutation folding.
-// It knows the filter contract and nothing else — no policy API, no
-// ext_proc protos; assembly lives in pkg/wiring.
+// rule in registration order. It owns request and response body continuation,
+// the per-phase evaluation budget, the per-invocation metrics wrapper,
+// failure-policy reduction, and net-effect mutation folding. It knows the
+// filter contract and nothing else — no policy API, no ext_proc protos;
+// assembly lives in pkg/wiring.
 //
-// # Phase subscription: response headers from config, the request body from an action
+// # Phase subscription and body continuation
 //
 // A filter can need a phase delivered in two ways, and the split between them
 // is deliberate, not historical. It falls out of two facts about Envoy:
@@ -26,15 +27,10 @@
 //  1. Envoy honours mode_override only on a header-phase reply, and
 //     response_header_mode is only useful on the request-headers reply. The
 //     request-headers reply is therefore the response-headers phase's single
-//     opportunity to be opened. "Single opportunity" is specific to response
-//     headers, not a property of the protocol: the response-headers reply is
-//     itself a header-phase reply and can carry an override too — that is how a
-//     future response-body phase would be opened — but it cannot open a phase
-//     that needed the earlier reply. (The gate is Envoy's inHeaderProcessState(),
-//     true when EITHER direction is awaiting a headers reply; setting
-//     response_header_mode on the response-headers reply is pointless — that
-//     phase has already begun — but response_body_mode is not.)
-//  2. The ordered walk may suspend mid-sequence waiting for a request body.
+//     opportunity to be opened. The response-headers reply can in turn open
+//     response_body_mode, because that future phase has not begun yet.
+//  2. Either direction's ordered walk may suspend mid-sequence waiting for its
+//     complete buffered body.
 //
 // Together these mean a phase-want discovered by *executing* a filter arrives
 // after the request-headers reply was already sent whenever an earlier rule
@@ -44,18 +40,20 @@
 // action; it is declared from the projected config up front
 // (filter.Registration.Subscribes), before the walk runs.
 //
-// The request body is the opposite case and stays a runtime NeedBody action:
-// once any rule has asked for the body it is in hand, so a later filter's
-// NeedBody is satisfied inline and nothing is lost by discovering the need
-// late. Keeping it runtime is also what lets a body decision fail through its
-// rule's own failure policy, which a pure config function cannot express.
-// Moving the body want into config would mean buffering speculatively on every
-// request whose config merely might need it, and would strand that failure
-// policy (see tokentransform's failEligible path).
+// Request and response bodies stay runtime NeedBody actions. Once a direction
+// has its body, every later NeedBody is satisfied inline with that same original
+// Body. If headers are end-of-stream, the adapter supplies an empty complete
+// Body inline and no continuation is created. This avoids speculative buffering
+// for filters whose header decision does not need the body.
 //
-// These two are not the whole space. A response *body* want would be a third
-// case: recoverable like the request body, but from the response-headers reply
-// rather than inline, since that reply can also carry an override. Adding it
-// relaxes "NeedBody is only legal on request headers" rather than widening
-// SubscribablePhases.
+// A suspended continuation owns all pending mutations. The headers reply emits
+// none of them; after the body callback and all later pairs finish, the engine
+// folds the complete direction result once. Pending mutations are never applied
+// back to Stream or to the Body passed to a later filter, so every filter sees
+// the original phase headers and bytes.
+//
+// Invocation errors are resolved through the registration's FailurePolicy.
+// FailOpen records and skips the failed invocation. FailClosed returns a local
+// 500 blocked result without an engine error. Contract and protocol faults stay
+// on the error channel for the ext_proc adapter and Envoy failure mode.
 package engine

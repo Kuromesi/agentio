@@ -17,9 +17,6 @@ package headermutation
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
-
-	"golang.org/x/net/http/httpguts"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/eval"
@@ -45,25 +42,13 @@ type valueSpec struct {
 	Value string `json:"value"`
 }
 
-// hopByHopNames are rejected on both phases because Envoy owns connection
-// semantics itself (RFC 9110 §7.6.1); content-encoding is rejected because this
-// filter never touches a body, so changing it misinforms the recipient.
-var hopByHopNames = map[string]struct{}{
-	"connection":         {},
-	"keep-alive":         {},
-	"proxy-connection":   {},
-	"upgrade":            {},
-	"te":                 {},
-	"trailer":            {},
-	"proxy-authenticate": {},
-	"content-encoding":   {},
-}
-
-// framingNames may be removed but not set or added because mutations run
-// without body updates and could corrupt HTTP/1 framing.
-var framingNames = map[string]struct{}{
-	"content-length":    {},
-	"transfer-encoding": {},
+// opKinds maps this filter's spec keys to the engine kinds the shared name
+// policy is expressed over. The name restrictions themselves live in
+// filter.ValidateHeaderName so a remote callout obeys exactly the same rules.
+var opKinds = map[string]filter.HeaderOpKind{
+	"set":    filter.HeaderSet,
+	"add":    filter.HeaderAdd,
+	"remove": filter.HeaderRemove,
 }
 
 // probeScope validates template field access during compilation while allowing
@@ -93,7 +78,7 @@ func parse(raw json.RawMessage) (Config, error) {
 }
 
 // Phase prefixes qualify error messages; the name restrictions themselves are
-// identical on both phases — see hopByHopNames and framingNames.
+// identical on both phases — see filter.ValidateHeaderName.
 const (
 	requestPhase  = "request."
 	responsePhase = "response."
@@ -106,23 +91,12 @@ func compilePhase(prefix string, s opSpec) (OpSet, error) {
 
 	validateName := func(kind, name string) (string, error) {
 		qualified := prefix + kind
-		if !httpguts.ValidHeaderFieldName(name) {
-			return "", fmt.Errorf("%s header %q has an invalid name", qualified, name)
+		normalized, err := filter.ValidateHeaderName(opKinds[kind], name)
+		if err != nil {
+			return "", fmt.Errorf("%s %w", qualified, err)
 		}
-		normalized := strings.ToLower(name)
-		if normalized == "host" {
-			return "", fmt.Errorf("%s header %q cannot modify Host", qualified, name)
-		}
-		// Envoy ignores all names with the reserved "x-envoy" prefix.
-		if strings.HasPrefix(normalized, "x-envoy") {
-			return "", fmt.Errorf("%s header %q is reserved by Envoy and would be ignored", qualified, name)
-		}
-		if _, forbidden := hopByHopNames[normalized]; forbidden {
-			return "", fmt.Errorf("%s header %q is connection-scoped and cannot be mutated", qualified, name)
-		}
-		if _, framing := framingNames[normalized]; framing && kind != "remove" {
-			return "", fmt.Errorf("%s header %q controls message framing and can only be removed", qualified, name)
-		}
+		// Duplicate detection stays here: it is config state, not a property
+		// of a name.
 		if previous, exists := seen[normalized]; exists {
 			return "", fmt.Errorf("%s header %q duplicates %s%s header %q", qualified, name, prefix, previous, normalized)
 		}

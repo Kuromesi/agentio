@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package-level projection: the generic half of turning a policy unit into
-// per-filter configs. It knows nothing about any policy API — a payload map
-// keyed by registered filter name is the whole contract, so any policy
-// source reuses this unchanged.
 package filter
 
 import "encoding/json"
@@ -23,6 +19,10 @@ import "encoding/json"
 // Project maps one unit's payload documents onto the registration set. The
 // returned slices are parallel to regs, so a config's index is its chain
 // position — the shape engine.Unit.Cfgs already expects.
+//
+// This is the generic half of turning a policy unit into per-filter configs. It
+// knows nothing about any policy API — a payload map keyed by registered filter
+// name is the whole contract, so any policy source reuses it unchanged.
 //
 // A registration whose name has no payload gets a nil config and a nil
 // error: the unit does not mount that filter. A registration whose payload

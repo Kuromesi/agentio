@@ -32,7 +32,7 @@ type recordingStreamLogger struct {
 
 func (l *recordingStreamLogger) Log(_ context.Context, _ *filter.Stream, info *filter.StreamInfo) {
 	l.calls++
-	l.result = info.Disposition.String()
+	l.result = info.Outcome.String()
 }
 
 // resolveOnce returns a resolver that hands out logger and one unit on its
@@ -90,11 +90,11 @@ func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
 	}
 }
 
-// The per-stream logger runs after finishStream promotes the error, so it sees
-// the disposition the stream actually ended on. Reading it before the promotion
+// The per-stream logger runs after finishStream derives the outcome, so it sees
+// the outcome the stream actually ended on. Reading it before the derivation
 // reports "passthrough" for a failed stream, which makes any audit entry
 // filtering on result == "error" silently never fire.
-func TestStreamLoggerObservesFinalDisposition(t *testing.T) {
+func TestStreamLoggerObservesFinalOutcome(t *testing.T) {
 	regs := []filter.Registration{fixedRegHeaders("pass", filter.Continue())}
 	logger := &recordingStreamLogger{}
 	srv := NewServer(ServerDeps{Resolve: resolveOnce(logger, len(regs)), Registrations: regs})
@@ -121,15 +121,17 @@ func TestStreamLoggerObservesFinalDisposition(t *testing.T) {
 }
 
 // A successful finishAfterSend is a committed outcome. Later deferred
-// cancellation/error teardown must neither log a second entry nor promote the
-// committed bypass to error.
+// cancellation/error teardown must neither log a second entry nor re-derive the
+// committed bypass into an error.
 func TestFinishAfterSendCommitCannotBeOverwrittenByLaterTeardown(t *testing.T) {
 	accesslog := &capturedAuditLogger{}
 	policyLogger := &recordingStreamLogger{}
 	srv := NewServer(ServerDeps{AuditLogger: accesslog})
 	state := newStreamState()
 	state.streamLogger = policyLogger
-	state.stream.Info.Promote(filter.DispositionBypassed)
+	// A matched unit whose responses changed nothing is what "bypassed" now
+	// means, so set up that shape rather than asserting an outcome directly.
+	state.stream.Info.Matched = []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}}
 	state.lifecycle = lifecycleFinalizePending
 
 	srv.finishAfterSend(context.Background(), state)

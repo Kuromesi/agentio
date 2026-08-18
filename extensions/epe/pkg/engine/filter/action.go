@@ -27,8 +27,8 @@ const (
 	// KindBypass skips following actions and rules in every phase while
 	// preserving earlier work and the bypassing pair itself.
 	KindBypass
-	// KindNeedBody pauses request evaluation until the request body is available.
-	// It is valid only from request headers.
+	// KindNeedBody pauses headers evaluation until the corresponding body is
+	// available. It is valid only from request or response headers.
 	KindNeedBody
 )
 
@@ -55,8 +55,8 @@ func Stop(r Reply) Action {
 // effects are preserved.
 func Bypass() Action { return Action{kind: KindBypass} }
 
-// NeedBody asks for the request body, optionally carrying mutations
-// accumulated so far.
+// NeedBody asks for the request or response body, optionally carrying
+// mutations accumulated so far.
 func NeedBody(m ...Mutation) Action { return Action{kind: KindNeedBody, mutations: m} }
 
 // Kind reports what the filter decided.

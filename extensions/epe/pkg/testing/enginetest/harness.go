@@ -90,6 +90,9 @@ func (h *Harness) RunMessages(t testing.TB, msgs []*extProcPb.ProcessingRequest)
 	if h.probe != nil {
 		h.probe.Reset()
 	}
+	// Both observability sinks are scoped to this run, so a test asserting the
+	// second request's outcome cannot read the first request's entry.
+	h.AccessLog.Reset()
 	stream := NewScriptedStream(context.Background(), msgs...)
 	err := h.Server.Process(stream)
 	verdict := ParseVerdict(stream.Responses(), err)

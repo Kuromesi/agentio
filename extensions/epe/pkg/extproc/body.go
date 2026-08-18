@@ -17,6 +17,8 @@ import (
 	"context"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
@@ -32,18 +34,22 @@ var defaultPassThroughBody = []*extProcPb.ProcessingResponse{
 
 // HandleRequestBody handles the complete request body delivered by Envoy
 // after the headers phase set ModeOverride to BUFFERED. It resumes the
-// paused rule/action cursor. When no filter needs the body (state is nil or
-// carries no body continuation), it returns a passthrough.
+// paused rule/action cursor.
 func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
-	if state == nil || state.bodyContinuation == nil || !state.bodyContinuation.NeedsBody() {
-		return defaultPassThroughBody, nil
+	if state == nil || state.lifecycle == lifecycleIdle ||
+		state.requestBodyContinuation == nil || !state.requestBodyContinuation.NeedsBody() {
+		return nil, status.Error(codes.FailedPrecondition,
+			"received request body without an outstanding request-body obligation")
+	}
+	if body == nil {
+		return nil, status.Error(codes.InvalidArgument, "request body is missing")
 	}
 
 	loggerD := log.FromContext(ctx).V(logging.DEBUG)
 	loggerD.Info("Running deferred body-phase filters", "bodyLen", len(body.Body))
 
-	prior := state.bodyContinuation
-	state.bodyContinuation = nil
+	prior := state.requestBodyContinuation
+	state.requestBodyContinuation = nil
 	reqBodyRes, err := s.eng.EvalRequestBody(ctx, state.stream, prior, filter.Body{
 		Bytes: body.Body,
 		// Deliberately not body.EndOfStream. BUFFERED — the only body mode the

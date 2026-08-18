@@ -135,8 +135,11 @@ func TestHandleRequestHeaders_PriorityControlsEvaluationOrder(t *testing.T) {
 		map[string]string{"app": "sleep"}, []v1alpha1.SecurityRule{bypassAdminRule("bypass-admin")}))
 
 	// Bypass (priority 1) wins over block (priority 10) — request passes through.
-	h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys")).
-		RequireBypassed(t)
+	verdict := h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys"))
+	verdict.RequireBypassed(t)
+	// Which rule won is the point, so assert the bypass action fired rather
+	// than only that the wire is unchanged.
+	verdict.RequireAction(t, ":bypass:")
 }
 
 func TestHandleRequestHeaders_GlobalProfileMatchesAllNamespaces(t *testing.T) {
@@ -164,8 +167,9 @@ func TestHandleRequestHeaders_GlobalAndNamespaceInterleaveByPriority(t *testing.
 		map[string]string{"app": "sleep"}, []v1alpha1.SecurityRule{bypassAdminRule("bypass-admin")}))
 
 	// Namespace bypass (priority 1) wins over global block (priority 10).
-	h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys")).
-		RequireBypassed(t)
+	verdict := h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys"))
+	verdict.RequireBypassed(t)
+	verdict.RequireAction(t, ":bypass:")
 }
 
 // TestHandleRequestHeaders_EqualPriorityUsesCreationTimestamp verifies the
@@ -191,6 +195,7 @@ func TestHandleRequestHeaders_EqualPriorityUsesCreationTimestamp(t *testing.T) {
 	older.CreationTimestamp, newer.CreationTimestamp = newer.CreationTimestamp, older.CreationTimestamp
 	reversed := New(t, Options{})
 	reversed.Fixture.ApplyProfile(newer).ApplyProfile(older)
-	reversed.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys")).
-		RequireBypassed(t)
+	verdict := reversed.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys"))
+	verdict.RequireBypassed(t)
+	verdict.RequireAction(t, ":bypass:")
 }

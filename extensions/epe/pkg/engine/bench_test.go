@@ -44,7 +44,7 @@ var benchSink any
 // returns Continue() on every phase, so no override is needed.
 type benchNoop struct{ filter.PassThrough }
 
-// benchMutate emits one header op, so Fold has real work to fold.
+// benchMutate emits one header op, so fold has real work to fold.
 type benchMutate struct {
 	filter.PassThrough
 	mut filter.Mutation
@@ -87,13 +87,23 @@ func (benchNeedBody) OnRequestBody(context.Context, *filter.Stream, filter.Body)
 	return filter.Continue(), nil
 }
 
+type benchResponseNeedBody struct{ filter.PassThrough }
+
+func (benchResponseNeedBody) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return filter.NeedBody(), nil
+}
+
+func (benchResponseNeedBody) OnResponseBody(context.Context, *filter.Stream, filter.Body) (filter.Action, error) {
+	return filter.Continue(), nil
+}
+
 // --- chain shapes ------------------------------------------------------
 
 // benchShape names the disposition the chain is rigged to produce. Each one
 // walks a different amount of the engine:
 //
-//   - passthrough: no mutations, so Fold folds an empty list — the cost floor.
-//   - mutated: every filter emits a distinct header and Fold does real work.
+//   - passthrough: no mutations, so fold folds an empty list — the cost floor.
+//   - mutated: every filter emits a distinct header and fold does real work.
 //   - blocked: the first action blocks, measuring the short-circuit floor.
 //   - needbody: the first body-needing action pauses and resumes the cursor.
 type benchShape string
@@ -149,17 +159,24 @@ func benchResponseChain(b testing.TB, shape benchShape, nFilters int) []filter.R
 		})
 	}
 	for i := 0; i < nFilters; i++ {
+		phases := filter.PhaseResponseHeaders
+		if shape == shapeNeedBody {
+			phases |= filter.PhaseResponseBody
+		}
 		spec := regSpec{
 			name:       "f" + strconv.Itoa(i),
-			phases:     filter.PhaseResponseHeaders,
+			phases:     phases,
 			subscribes: subscribesTo(filter.PhaseResponseHeaders),
 		}
-		if shape == shapeMutated {
+		switch shape {
+		case shapeMutated:
 			mut := filter.SetHeader("x-bench-"+strconv.Itoa(i), "v")
 			spec.make = func(filter.RuleConfig[string]) filter.Filter {
 				return &benchResponseMutate{mut: mut}
 			}
-		} else {
+		case shapeNeedBody:
+			spec.make = func(filter.RuleConfig[string]) filter.Filter { return benchResponseNeedBody{} }
+		default:
 			spec.make = func(filter.RuleConfig[string]) filter.Filter { return benchNoop{} }
 		}
 		specs = append(specs, spec)
@@ -359,10 +376,39 @@ func BenchmarkEvalRequestBody(b *testing.B) {
 	}
 }
 
-// --- Fold --------------------------------------------------------------
+// BenchmarkEvalResponseBody measures the symmetric response continuation. The
+// response-headers result is prepared outside the timed loop.
+func BenchmarkEvalResponseBody(b *testing.B) {
+	for _, a := range benchAxes {
+		regs := benchResponseChain(b, shapeNeedBody, a.filters)
+		units := benchUnits(a.units, len(regs))
+		name := "units=" + strconv.Itoa(a.units) + "/filters=" + strconv.Itoa(a.filters)
+		b.Run(name, func(b *testing.B) {
+			e := NewEngine(regs, 0)
+			ctx := context.Background()
+			prior, err := e.EvalResponseHeaders(ctx, &filter.Stream{Info: filter.NewStreamInfo()}, units, ResponseScope{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			body := filter.Body{Bytes: []byte(`{"result":{"content":"ok"}}`), Complete: true}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				st := &filter.Stream{Info: filter.NewStreamInfo()}
+				res, err := e.EvalResponseBody(ctx, st, prior, body)
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchSink = res
+			}
+		})
+	}
+}
+
+// --- fold --------------------------------------------------------------
 
 // BenchmarkFold covers the mutation net-effect fold. The empty case is not
-// a degenerate input: EvalRequestHeaders calls Fold unconditionally, so every
+// a degenerate input: EvalRequestHeaders calls fold unconditionally, so every
 // passthrough request in production walks it with nothing to fold.
 func BenchmarkFold(b *testing.B) {
 	distinct := make([]filter.Mutation, 8)
@@ -383,7 +429,7 @@ func BenchmarkFold(b *testing.B) {
 
 	// upperDistinct pairs with distinct: same key count and shape, differing
 	// only in case. Envoy lowercases inbound header names, but a filter is
-	// free to emit "X-Foo", and Fold lowercases every key it sees — so this
+	// free to emit "X-Foo", and fold lowercases every key it sees — so this
 	// arm isolates whether that costs an allocation per op.
 	upperDistinct := make([]filter.Mutation, 8)
 	for i := range upperDistinct {
@@ -412,7 +458,7 @@ func BenchmarkFold(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = Fold(bc.muts)
+				benchSink = fold(bc.muts)
 			}
 		})
 	}

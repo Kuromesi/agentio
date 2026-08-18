@@ -57,6 +57,16 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 		{name: "no phase", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = 0; return d }()},
 		{name: "undispatched phase", desc: func() Descriptor[testCfg] { d := testDescriptor("ghost"); d.Phases |= Phase(1 << 7); return d }()},
 		{name: "body phase without request headers", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = PhaseRequestBody; return d }()},
+		{name: "response body phase without response headers", desc: func() Descriptor[testCfg] { d := testDescriptor("f"); d.Phases = PhaseResponseBody; return d }()},
+		// A nil SubscribesOf means no config ever subscribes, so the response
+		// pair is skipped at dispatch and the declared phase is unreachable. That
+		// is the same defect as the two implications above, and it used to be the
+		// only one that failed silently instead of here.
+		{name: "response headers phase without SubscribesOf", desc: func() Descriptor[testCfg] {
+			d := testDescriptor("f")
+			d.Phases = PhaseRequestHeaders | PhaseResponseHeaders
+			return d
+		}()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +74,16 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 				t.Fatal("Build accepted an invalid descriptor")
 			}
 		})
+	}
+}
+
+func TestDefinitionAcceptsMatchingResponsePhases(t *testing.T) {
+	d := testDescriptor("response")
+	d.Phases = PhaseResponseHeaders | PhaseResponseBody
+	// Declaring the phase obliges the descriptor to say when a config wants it.
+	d.SubscribesOf = func(testCfg) Phase { return PhaseResponseHeaders }
+	if _, err := Build(Define(d, testProject)); err != nil {
+		t.Fatalf("Build matching response phases: %v", err)
 	}
 }
 

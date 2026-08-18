@@ -97,9 +97,12 @@ func TestEvalRequestHeaders_BudgetCancelsOverrunningFilter(t *testing.T) {
 	}})
 	e := NewEngine(regs, 50*time.Millisecond)
 
-	_, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}))
-	if err == nil {
-		t.Fatal("want the deadline error surfaced to the caller, got nil")
+	res, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}))
+	if err != nil {
+		t.Fatalf("default FailClosed should resolve the deadline into a local reply: %v", err)
+	}
+	if res.Disposition != DispositionBlocked || res.Reply.Status != 500 {
+		t.Fatalf("deadline result = %+v, want local 500 block", res)
 	}
 	select {
 	case obsErr := <-observed:
@@ -139,6 +142,20 @@ func TestEvalRequestHeaders_ZeroBudgetImposesNoDeadline(t *testing.T) {
 type phaseProbe struct {
 	filter.PassThrough
 	probe func(ctx context.Context)
+}
+
+type responseBodyPhaseProbe struct {
+	filter.PassThrough
+	probe func(ctx context.Context)
+}
+
+func (p responseBodyPhaseProbe) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return filter.NeedBody(), nil
+}
+
+func (p responseBodyPhaseProbe) OnResponseBody(ctx context.Context, _ *filter.Stream, _ filter.Body) (filter.Action, error) {
+	p.probe(ctx)
+	return filter.Continue(), nil
 }
 
 func (p phaseProbe) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
@@ -201,5 +218,34 @@ func TestEvalResponseHeaders_BudgetInstallsDeadline(t *testing.T) {
 	}
 	if !hadDeadline {
 		t.Error("the response phase must run under its own budget deadline")
+	}
+}
+
+func TestEvalResponseBody_BudgetInstallsDeadline(t *testing.T) {
+	pluginCallsTotal.Reset()
+	var hadDeadline bool
+	regs := buildRegs(t, []regSpec{{
+		name:       "probe",
+		phases:     filter.PhaseResponseHeaders | filter.PhaseResponseBody,
+		subscribes: subscribesTo(filter.PhaseResponseHeaders),
+		make: func(filter.RuleConfig[string]) filter.Filter {
+			return responseBodyPhaseProbe{probe: func(ctx context.Context) { _, hadDeadline = ctx.Deadline() }}
+		},
+	}})
+	e := NewEngine(regs, time.Minute)
+	units := unitsFor([][]string{{"cfg"}})
+	st := &filter.Stream{}
+	hr, err := e.EvalResponseHeaders(context.Background(), st, units, ResponseScope{})
+	if err != nil {
+		t.Fatalf("response headers phase: %v", err)
+	}
+	if !hr.NeedsBody() {
+		t.Fatal("probe should have deferred to the response body phase")
+	}
+	if _, err := e.EvalResponseBody(context.Background(), st, hr, filter.Body{Complete: true}); err != nil {
+		t.Fatalf("response body phase: %v", err)
+	}
+	if !hadDeadline {
+		t.Error("the response body phase must run under its own budget deadline")
 	}
 }

@@ -33,6 +33,27 @@ type GRPCOption func(*grpcOptions)
 
 type grpcOptions struct {
 	gracefulStopTimeout time.Duration
+	listener            net.Listener
+}
+
+// WithListener serves an already-bound listener instead of binding the port
+// itself, and makes the port argument unused.
+//
+// It exists because the alternative — asking the OS for a free port by binding
+// and immediately closing it — leaves that port unowned until this runnable
+// binds, a window that spans TLS config construction and server registration.
+// Anything else on the machine can take it in between, and the caller then dials
+// an impostor: the observed symptom is an unexplained connection reset rather
+// than the address conflict it really is. Handing over a listener that was never
+// released closes the window entirely.
+//
+// Ownership transfers: Serve closes the listener when it returns.
+func WithListener(l net.Listener) GRPCOption {
+	return func(o *grpcOptions) {
+		if l != nil {
+			o.listener = l
+		}
+	}
 }
 
 // WithGracefulStopTimeout overrides DefaultGracefulStopTimeout. A
@@ -56,13 +77,17 @@ func GRPCServer(name string, srv *grpc.Server, port int, opts ...GRPCOption) Run
 		log := ctrllog.Log.WithValues("name", name)
 		log.Info("gRPC server starting")
 
-		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		if err != nil {
-			log.Error(err, "gRPC server failed to listen")
-			return err
+		lis := cfg.listener
+		if lis == nil {
+			var err error
+			lis, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
+			if err != nil {
+				log.Error(err, "gRPC server failed to listen")
+				return err
+			}
 		}
 
-		log.Info("gRPC server listening", "port", port)
+		log.Info("gRPC server listening", "address", lis.Addr().String())
 
 		// Terminate the server on context cancellation. The done channel
 		// guarantees the goroutine does not leak after Serve returns.

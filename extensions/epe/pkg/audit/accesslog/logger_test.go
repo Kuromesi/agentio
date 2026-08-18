@@ -87,8 +87,7 @@ func sampleEntry(suffix string) Entry {
 		Path:    "/v1/chat/completions",
 		Units:   1,
 		Outcome: "mutated",
-		Actions: []string{"mutator:default/p/r"},
-		Skipped: map[string]int{},
+		Actions: []string{"mutator:mutate:default/p/r#0"},
 	}
 }
 
@@ -143,7 +142,7 @@ func TestBufferedLogger_SubmitAndEmit(t *testing.T) {
 		Host:    "h",
 		Path:    "/p",
 		Outcome: "error",
-		Skipped: map[string]int{"mutator": 1},
+		Skipped: []string{"mutator:error-open:ns/p/r#0"},
 		Error:   "boom",
 	})
 
@@ -169,8 +168,11 @@ func TestBufferedLogger_SubmitAndEmit(t *testing.T) {
 	if second["error"] != "boom" {
 		t.Errorf("error field = %v, want boom", second["error"])
 	}
-	if got, ok := second["skipped"].(map[string]int); !ok || got["mutator"] != 1 {
-		t.Errorf("skipped field = %#v, want {mutator:1}", second["skipped"])
+	// The skipped element names the filter, why the rule went unenforced, and
+	// which rule it was — all three, in the same shape as an actions element.
+	if got, ok := second["skipped"].([]string); !ok ||
+		len(got) != 1 || got[0] != "mutator:error-open:ns/p/r#0" {
+		t.Errorf("skipped field = %#v, want [mutator:error-open:ns/p/r#0]", second["skipped"])
 	}
 }
 

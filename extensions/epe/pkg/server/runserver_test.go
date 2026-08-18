@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"math/big"
 	"net"
 	"net/url"
@@ -41,22 +40,26 @@ func resolveNone(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Reso
 	return engine.Resolution{}, nil
 }
 
-func freePort(t *testing.T) int {
+// listenLocal binds a loopback socket and keeps it, for handing to Config.Listener.
+//
+// Deliberately not the usual bind-then-close port reservation: that leaves the
+// port unowned until the server binds it, and anything else on the machine can
+// take it in the meantime. The test then dials an impostor and sees a bare
+// connection reset — which is exactly how this suite once flaked.
+func listenLocal(t *testing.T) net.Listener {
 	t.Helper()
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port
+	return l
 }
 
 // TestNew_PlainServingStartsAndStops covers the non-TLS branch end to
 // end (no cert generation cost) and the cancel-driven shutdown.
 func TestNew_PlainServingStartsAndStops(t *testing.T) {
 	rn := New(Config{
-		GrpcPort: freePort(t),
+		Listener: listenLocal(t),
 		Resolve:  resolveNone,
 	}, logr.Discard())
 
@@ -236,9 +239,14 @@ func TestNew_SecureServing(t *testing.T) {
 			ca := newTestCA(t)
 			serverCert := ca.issueLeaf(t, 10, "", x509.ExtKeyUsageServerAuth)
 
-			port := freePort(t)
+			// Hand the server a listener this test still holds rather than a
+			// port number obtained by binding and closing: the latter leaves the
+			// port unowned until the server binds, and a concurrent process that
+			// takes it in between becomes an impostor this test then dials,
+			// reporting a bare connection reset instead of the conflict.
+			lis := listenLocal(t)
 			rn := New(Config{
-				GrpcPort:      port,
+				Listener:      lis,
 				SecureServing: true,
 				Resolve:       resolveNone,
 				CertProvider:  &staticProvider{cert: &serverCert, roots: ca.pool},
@@ -246,16 +254,30 @@ func TestNew_SecureServing(t *testing.T) {
 			}, logr.Discard())
 
 			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- rn.Start(ctx) }()
-			time.Sleep(100 * time.Millisecond)
+			// A startup failure must never be swallowed. Reporting it from a
+			// cleanup covers the paths where an assertion below fatals first,
+			// which is how a listen error used to hide behind a dial symptom.
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Errorf("server Start: %v", err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Error("runnable did not stop within 2s")
+				}
+			})
+			// No wait before dialing: the socket is already listening, so the
+			// connection sits in the accept queue until Serve picks it up.
 
 			clientCfg := &tls.Config{RootCAs: ca.pool}
 			if cert := tt.clientCert(t, ca); cert != nil {
 				clientCfg.Certificates = []tls.Certificate{*cert}
 			}
-			conn, err := tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), clientCfg)
+			conn, err := tls.Dial("tcp", lis.Addr().String(), clientCfg)
 			if err == nil {
 				if tt.expectError != "" {
 					// In TLS 1.3 the server verifies the client certificate
@@ -286,13 +308,7 @@ func TestNew_SecureServing(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-
-			cancel()
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				t.Fatal("runnable did not stop within 2s")
-			}
+			// Shutdown and the Start error are asserted by the cleanup above.
 		})
 	}
 }

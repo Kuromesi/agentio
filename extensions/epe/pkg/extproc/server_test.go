@@ -15,9 +15,12 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
@@ -134,8 +137,8 @@ func TestProcessRequestBody_SingleChunk_NonStreamingServer(t *testing.T) {
 	}
 }
 
-// When no filter needs the body, passthrough still works.
-func TestProcessRequestBody_NoBodyHandlers(t *testing.T) {
+// A body message without an outstanding body obligation is a protocol error.
+func TestProcessRequestBody_RejectsWithoutObligation(t *testing.T) {
 	state := newStreamState()
 	s := NewServer(ServerDeps{})
 	logger := log.FromContext(context.Background())
@@ -144,13 +147,106 @@ func TestProcessRequestBody_NoBodyHandlers(t *testing.T) {
 		Body:        []byte("data"),
 		EndOfStream: true,
 	}, state, logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("error = %v, want FailedPrecondition", err)
 	}
-	if len(resp) == 0 {
-		t.Fatal("expected passthrough response")
+	if len(resp) != 0 {
+		t.Fatalf("responses = %v, want none", resp)
 	}
-	if resp[0].GetRequestBody() == nil {
-		t.Fatalf("expected passthrough body response, got %T", resp[0].Response)
+}
+
+// The audit outcome must come from what was sent, not from what the engine
+// intended: a stream whose units matched but whose responses changed nothing
+// is bypassed, and one where no unit matched at all is passthrough.
+func TestFinishStream_OutcomeIsDerivedFromSentResponses(t *testing.T) {
+	tests := []struct {
+		name    string
+		effect  messageEffect
+		matched []filter.UnitRecord
+		err     error
+		want    string
+	}{
+		{
+			name: "no units matched",
+			want: "passthrough",
+		},
+		{
+			name:    "units matched but nothing was modified",
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			want:    "bypassed",
+		},
+		{
+			name:    "a mutation was sent",
+			effect:  effectMutated,
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			want:    "mutated",
+		},
+		{
+			name:    "an immediate response was sent",
+			effect:  effectBlocked,
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			want:    "blocked",
+		},
+		{
+			name:    "an error outranks a block",
+			effect:  effectBlocked,
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			err:     errors.New("send failed"),
+			want:    "error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newStreamState()
+			state.lifecycle = lifecycleActive
+			state.effect = tt.effect
+			state.stream.Info.Matched = tt.matched
+
+			s := &Server{}
+			s.finishStream(context.Background(), state, tt.err)
+
+			if got := state.stream.Info.Outcome.String(); got != tt.want {
+				t.Errorf("Outcome = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A filter that failed closed already recorded why the request was denied. A
+// transport error arriving afterwards used to overwrite it, erasing the only
+// account of why anything was blocked and leaving the far less useful "the
+// stream died" in its place.
+func TestFinishStream_StreamErrorDoesNotEraseTheFilterReason(t *testing.T) {
+	state := newStreamState()
+	state.lifecycle = lifecycleActive
+	state.effect = effectBlocked
+	state.stream.Info.Matched = []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}}
+	state.stream.Info.Error = "authz: upstream unreachable"
+
+	s := &Server{}
+	s.finishStream(context.Background(), state, errors.New("stream reset"))
+
+	if got := state.stream.Info.Error; got != "authz: upstream unreachable" {
+		t.Errorf("Info.Error = %q, want the filter's reason preserved", got)
+	}
+	// The stream still ended in an error, so the outcome reports that — only the
+	// explanation is the filter's.
+	if got := state.stream.Info.Outcome.String(); got != "error" {
+		t.Errorf("Outcome = %q, want error", got)
+	}
+}
+
+// With no filter reason recorded, the stream error is the only explanation there
+// is, so it must still be reported.
+func TestFinishStream_StreamErrorIsRecordedWhenNothingElseExplains(t *testing.T) {
+	state := newStreamState()
+	state.lifecycle = lifecycleActive
+
+	s := &Server{}
+	s.finishStream(context.Background(), state, errors.New("stream reset"))
+
+	if got := state.stream.Info.Error; got != "stream reset" {
+		t.Errorf("Info.Error = %q, want \"stream reset\"", got)
 	}
 }

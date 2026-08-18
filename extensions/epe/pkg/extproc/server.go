@@ -146,7 +146,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 		case *extProcPb.ProcessingRequest_ResponseHeaders:
 			responses, err = s.HandleResponseHeaders(ctx, req.GetResponseHeaders(), state)
 		case *extProcPb.ProcessingRequest_ResponseBody:
-			responses, err = s.HandleResponseBody(ctx, req.GetResponseBody())
+			responses, err = s.HandleResponseBody(ctx, req.GetResponseBody(), state)
 		case *extProcPb.ProcessingRequest_ResponseTrailers:
 			responses, err = s.HandleResponseTrailers(ctx, req.GetResponseTrailers())
 		default:
@@ -166,7 +166,9 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 			logger.V(logging.DEFAULT).Error(err, "Failed to process request",
 				"messageType", messageTypeName(req))
 			// Send any policy response returned with the handler error, then return
-			// the original error.
+			// the original error. The effect is deliberately not observed here:
+			// this path always returns an error, and error outranks every effect
+			// in deriveOutcome, so observing could not change the outcome.
 			for _, resp := range responses {
 				if sendErr := srv.Send(resp); sendErr != nil {
 					logger.V(logging.DEFAULT).Error(sendErr, "Send failed while surfacing a handler error")
@@ -189,6 +191,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 				logger.V(logging.DEFAULT).Error(err, "Send failed")
 				return status.Errorf(codes.Unknown, "failed to send response back to Envoy: %v", err)
 			}
+			state.effect.observe(classifyResponse(resp))
 		}
 		s.finishAfterSend(ctx, state)
 	}
@@ -202,15 +205,19 @@ func (s *Server) finishStream(ctx context.Context, state *streamState, err error
 	}
 	state.lifecycle = lifecycleFinalized
 	info := state.stream.Info
-	if err != nil {
+	// A filter that failed closed already recorded why this request was denied.
+	// A transport error arriving afterwards must not overwrite that: the stream
+	// dying is the less useful of the two explanations, and it used to erase the
+	// only account of why the request was blocked at all.
+	if err != nil && info.Error == "" {
 		info.Error = err.Error()
-		info.Promote(filter.DispositionError)
 	}
+	info.Outcome = deriveOutcome(state.effect, err != nil, len(info.Matched))
 	for _, l := range s.loggers {
 		l.Log(ctx, state.stream, info)
 	}
 	// The resolver's per-stream logger runs last: after the static list, and
-	// after the error promotion above, so it observes the final disposition.
+	// after the outcome derivation above, so it observes the final outcome.
 	if state.streamLogger != nil {
 		state.streamLogger.Log(ctx, state.stream, info)
 	}
@@ -261,16 +268,23 @@ type streamState struct {
 	// Request phase — the headers walk's paused continuation, consumed exactly
 	// once by the body phase. Non-nil is what "a request body is owed" means;
 	// there is deliberately no separate flag that could drift from it.
-	bodyContinuation *engine.RequestHeadersResult
+	requestBodyContinuation *engine.RequestHeadersResult
 
 	// Response phase — the walk's bypass point plus the protocol obligations.
 	// responseScope is zero until a walk bypasses; a bypass can happen in the
 	// headers walk or the resumed body walk, so both handlers write it.
 	responseScope        engine.ResponseScope
 	awaitResponseHeaders bool
+	// responseBodyContinuation is the response walk paused at NeedBody. Its
+	// presence is the response-body protocol obligation.
+	responseBodyContinuation *engine.ResponseHeadersResult
 
 	// Lifecycle / audit — see streamLifecycle.
 	lifecycle streamLifecycle
+	// effect is the strongest message effect actually sent to Envoy on this
+	// stream, and the audit outcome's main input. Observed after each Send so a
+	// response Envoy never accepted is never reported as enforcement.
+	effect messageEffect
 }
 
 func newStreamState() *streamState {
@@ -294,10 +308,12 @@ func (st *streamState) engineUnits() []engine.Unit { return st.units }
 
 // awaitingRequestBody reports whether the headers walk paused for the request
 // body and the body message has not been consumed yet.
-func (st *streamState) awaitingRequestBody() bool { return st.bodyContinuation != nil }
+func (st *streamState) awaitingRequestBody() bool { return st.requestBodyContinuation != nil }
+
+func (st *streamState) awaitingResponseBody() bool { return st.responseBodyContinuation != nil }
 
 func (st *streamState) awaitingInput() bool {
-	return st != nil && (st.awaitingRequestBody() || st.awaitResponseHeaders)
+	return st != nil && (st.awaitingRequestBody() || st.awaitingResponseBody() || st.awaitResponseHeaders)
 }
 
 // armFinalization records when a terminal request result may be committed.
@@ -305,6 +321,8 @@ func (st *streamState) awaitingInput() bool {
 func (st *streamState) armFinalization(d engine.Disposition) {
 	switch d {
 	case engine.DispositionBlocked:
+		st.requestBodyContinuation = nil
+		st.responseBodyContinuation = nil
 		st.awaitResponseHeaders = false
 		st.lifecycle = lifecycleFinalizePending
 	case engine.DispositionBypassed:
@@ -380,6 +398,8 @@ func mutatedHeaderNames(resp *extProcPb.ProcessingResponse) []string {
 		mut = r.RequestBody.GetResponse().GetHeaderMutation()
 	case *extProcPb.ProcessingResponse_ResponseHeaders:
 		mut = r.ResponseHeaders.GetResponse().GetHeaderMutation()
+	case *extProcPb.ProcessingResponse_ResponseBody:
+		mut = r.ResponseBody.GetResponse().GetHeaderMutation()
 	case *extProcPb.ProcessingResponse_ImmediateResponse:
 		mut = r.ImmediateResponse.GetHeaders()
 	}

@@ -19,133 +19,132 @@ import (
 	"reflect"
 	"testing"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
+	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
 	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/extensions/epe/pkg/extproc"
 	"istio.io/istio/extensions/epe/pkg/filters/headermutation"
+	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
+	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
 
-// Projects request header mutations through filter construction and engine
-// evaluation without importing a policy API.
-func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
+// Scenario tests drive the real extproc.Server over a scripted Envoy stream, so
+// they assert on the proto responses that actually reach Envoy. The engine-level
+// half — projection and evaluation with no wire — is projection_test.go.
+
+func TestScenario_RequestHeaderMutationsReachExtProcWire(t *testing.T) {
+	server := newWireServer(t, `{
+		"request": {
+			"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
+			"add":[{"name":"X-Pod","value":"{{ .Pod.Name }}"}],
+			"remove":["X-Legacy"]
+		}
+	}`)
+	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
+		Header("X-Legacy", "old").
+		Peer("default", "sandbox-a", map[string]string{"app": "demo"}).
+		Build()
+
+	stream := enginetest.NewScriptedStream(t.Context(), msgs...)
+	processErr := server.Process(stream)
+	verdict := enginetest.ParseVerdict(stream.Responses(), processErr)
+	if verdict.Err != nil {
+		t.Fatalf("Process: %v", verdict.Err)
+	}
+	want := []enginetest.HeaderOp{
+		{Kind: enginetest.HeaderSet, Name: "x-policy", Value: "outbound"},
+		{Kind: enginetest.HeaderAdd, Name: "x-pod", Value: "sandbox-a"},
+		{Kind: enginetest.HeaderRemove, Name: "x-legacy"},
+	}
+	if !reflect.DeepEqual(verdict.RequestHeaderOps, want) {
+		t.Errorf("RequestHeaderOps = %+v, want %+v", verdict.RequestHeaderOps, want)
+	}
+	if verdict.Kind != enginetest.VerdictMutated {
+		t.Errorf("Kind = %s, want mutated", verdict.Kind)
+	}
+	if verdict.ModeOverride != nil {
+		t.Errorf("ModeOverride = %v, want nil for request-only mutations", verdict.ModeOverride)
+	}
+}
+
+func TestScenario_ResponseHeaderMutationsReachExtProcWire(t *testing.T) {
+	server := newWireServer(t, `{
+		"response": {
+			"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
+			"add":[{"name":"Set-Cookie","value":"trace={{ .Request.Header \"X-Trace\" }}"}],
+			"remove":["Server"]
+		}
+	}`)
+	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
+		Header("X-Trace", "abc123").
+		Peer("default", "sandbox-a", map[string]string{"app": "demo"}).
+		Build()
+	msgs = append(msgs, &extProcPb.ProcessingRequest{
+		Request: &extProcPb.ProcessingRequest_ResponseHeaders{
+			ResponseHeaders: &extProcPb.HttpHeaders{
+				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+					{Key: ":status", RawValue: []byte("200")},
+					{Key: "server", RawValue: []byte("upstream")},
+				}},
+			},
+		},
+	})
+
+	stream := enginetest.NewScriptedStream(t.Context(), msgs...)
+	processErr := server.Process(stream)
+	verdict := enginetest.ParseVerdict(stream.Responses(), processErr)
+	if verdict.Err != nil {
+		t.Fatalf("Process: %v", verdict.Err)
+	}
+	if verdict.ModeOverride == nil || verdict.ModeOverride.GetResponseHeaderMode() != extProcV3.ProcessingMode_SEND {
+		t.Fatalf("ModeOverride = %v, want ResponseHeaderMode SEND", verdict.ModeOverride)
+	}
+	if len(verdict.RequestHeaderOps) != 0 {
+		t.Errorf("RequestHeaderOps = %+v, want none for response-only mutations", verdict.RequestHeaderOps)
+	}
+	want := []enginetest.HeaderOp{
+		{Kind: enginetest.HeaderSet, Name: "x-policy", Value: "outbound"},
+		{Kind: enginetest.HeaderAdd, Name: "set-cookie", Value: "trace=abc123"},
+		{Kind: enginetest.HeaderRemove, Name: "server"},
+	}
+	if !reflect.DeepEqual(verdict.ResponseHeaderOps, want) {
+		t.Errorf("ResponseHeaderOps = %+v, want %+v", verdict.ResponseHeaderOps, want)
+	}
+	if verdict.Kind != enginetest.VerdictPassthrough {
+		t.Errorf("Kind = %s, want passthrough for a response-only mutation", verdict.Kind)
+	}
+}
+
+func newWireServer(t *testing.T, payload string) *extproc.Server {
+	t.Helper()
 	regs, err := filter.Build(headermutation.Definition())
 	if err != nil {
 		t.Fatalf("build registration: %v", err)
 	}
 	cfgs, errs := filter.Project(regs, map[string]json.RawMessage{
-		headermutation.FilterName: json.RawMessage(`{
-			"request": {
-				"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
-				"add":[{"name":"X-Tag","value":"{{ index .Inputs \"tag\" }}"}],
-				"remove":["X-Legacy"]
-			}
-		}`),
+		headermutation.FilterName: json.RawMessage(payload),
 	})
 	if errs[0] != nil {
 		t.Fatalf("project payload: %v", errs[0])
 	}
-	scope := inputs.NewScope(
-		inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"},
-		map[string]any{"tag": "trusted"},
-	)
-	units := []engine.Unit{{ID: filter.UnitID{Scope: "default/profile", Name: "mutate"}, Scope: scope, Cfgs: cfgs}}
-	e := engine.NewEngine(regs, 0)
-	res, err := e.EvalRequestHeaders(
-		context.Background(),
-		&filter.Stream{Info: filter.NewStreamInfo()},
-		units,
-	)
-	if err != nil {
-		t.Fatalf("evaluate request headers: %v", err)
+	resolve := func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
+		scope := inputs.NewScope(
+			inputs.RequestFrom(*req), pod,
+			inputs.Profile{Name: "outbound", Namespace: "default"},
+			inputs.Rule{Name: "mutate-headers"}, nil,
+		)
+		return engine.Resolution{Units: []engine.Unit{{
+			ID:    filter.UnitID{Scope: "default/outbound", Name: "mutate-headers"},
+			Scope: scope,
+			Cfgs:  cfgs,
+		}}}, nil
 	}
-	want := []filter.HeaderOp{
-		{Kind: filter.HeaderSet, Name: "x-policy", Value: "outbound"},
-		{Kind: filter.HeaderAdd, Name: "x-tag", Value: "trusted"},
-		{Kind: filter.HeaderRemove, Name: "x-legacy"},
-	}
-	if !reflect.DeepEqual(res.HeaderOps, want) {
-		t.Errorf("HeaderOps = %+v, want %+v", res.HeaderOps, want)
-	}
-	if res.Disposition != engine.DispositionMutated {
-		t.Errorf("Disposition = %v, want mutated", res.Disposition)
-	}
-	// Request-only payloads do not subscribe to response headers.
-	subscriptions, err := e.ValidateSubscriptions(units)
-	if err != nil {
-		t.Fatalf("ValidateSubscriptions: %v", err)
-	}
-	if subscriptions&filter.PhaseResponseHeaders != 0 {
-		t.Error("a request-only payload opened the response-headers phase")
-	}
-}
-
-// Response payloads subscribe to response headers.
-func TestProjectedResponsePayloadDeclaresDemand(t *testing.T) {
-	regs, err := filter.Build(headermutation.Definition())
-	if err != nil {
-		t.Fatalf("build registration: %v", err)
-	}
-	for _, tc := range []struct {
-		name      string
-		payload   string
-		ruleWants bool
-		wantOps   []filter.HeaderOp
-	}{
-		{
-			name:      "response only",
-			payload:   `{"response":{"add":[{"name":"X-Epe","value":"{{ .Rule.Name }}"}],"remove":["Server"]}}`,
-			ruleWants: true,
-		},
-		{
-			name:      "request with empty response object",
-			payload:   `{"request":{"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}]},"response":{}}`,
-			ruleWants: false,
-			wantOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-policy", Value: "outbound"}},
-		},
-		{
-			name:      "both phases",
-			payload:   `{"request":{"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}]},"response":{"remove":["Server"]}}`,
-			ruleWants: true,
-			wantOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "x-policy", Value: "outbound"}},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfgs, errs := filter.Project(regs, map[string]json.RawMessage{
-				headermutation.FilterName: json.RawMessage(tc.payload),
-			})
-			if errs[0] != nil {
-				t.Fatalf("project payload: %v", errs[0])
-			}
-			scope := inputs.NewScope(
-				inputs.Request{}, inputs.Pod{},
-				inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"}, nil,
-			)
-			id := filter.UnitID{Scope: "default/profile", Name: "mutate"}
-			res, err := engine.NewEngine(regs, 0).EvalRequestHeaders(
-				context.Background(),
-				&filter.Stream{Info: filter.NewStreamInfo()},
-				[]engine.Unit{{ID: id, Scope: scope, Cfgs: cfgs}},
-			)
-			if err != nil {
-				t.Fatalf("evaluate request headers: %v", err)
-			}
-			// Response demand comes from the compiled config.
-			subscriptions, subErr := engine.NewEngine(regs, 0).ValidateSubscriptions(
-				[]engine.Unit{{ID: id, Scope: scope, Cfgs: cfgs}},
-			)
-			if subErr != nil {
-				t.Fatalf("ValidateSubscriptions: %v", subErr)
-			}
-			gotWants := subscriptions&filter.PhaseResponseHeaders != 0
-			if gotWants != tc.ruleWants {
-				t.Errorf("subscribed = %v, want %v", gotWants, tc.ruleWants)
-			}
-			if len(tc.wantOps) == 0 && len(res.HeaderOps) != 0 {
-				t.Errorf("HeaderOps = %+v, want none", res.HeaderOps)
-			}
-			if len(tc.wantOps) > 0 && !reflect.DeepEqual(res.HeaderOps, tc.wantOps) {
-				t.Errorf("HeaderOps = %+v, want %+v", res.HeaderOps, tc.wantOps)
-			}
-		})
-	}
+	return extproc.NewServer(extproc.ServerDeps{
+		Resolve:       resolve,
+		Registrations: regs,
+	})
 }

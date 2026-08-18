@@ -45,6 +45,8 @@ const (
 	// requestBodyMode must stay BUFFERED: STREAMED releases acknowledged chunks
 	// upstream before the verdict and prevents body-phase header mutations.
 	requestBodyMode = extProcV3.ProcessingMode_BUFFERED
+	// responseBodyMode has the same constraint in the response direction.
+	responseBodyMode = extProcV3.ProcessingMode_BUFFERED
 )
 
 // HandleRequestHeaders resolves the caller identity, matches profiles into
@@ -132,7 +134,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	// instead of pausing.
 	var evalOpts []engine.RequestOption
 	if headers.GetEndOfStream() {
-		evalOpts = append(evalOpts, engine.WithAvailableBody(filter.Body{Complete: true}))
+		evalOpts = append(evalOpts, engine.WithAvailableRequestBody(filter.Body{Complete: true}))
 	}
 	reqHeadersRes, evalErr := s.eng.EvalRequestHeaders(ctx, st, state.engineUnits(), evalOpts...)
 	if evalErr != nil {
@@ -165,7 +167,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 			responses = append([]*extProcPb.ProcessingResponse{resp}, responses[1:]...)
 		}
 		if wantBody {
-			state.bodyContinuation = reqHeadersRes
+			state.requestBodyContinuation = reqHeadersRes
 		}
 		if wantResponse {
 			state.awaitResponseHeaders = true
@@ -210,19 +212,33 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 		}
 	}
 	state.stream.Response = httpreq.HTTPResponse{Status: responseStatus, Headers: respHeaders}
+	// End-of-stream response headers are the complete bodyless response. Satisfy
+	// any NeedBody action inline because no response-body message will follow.
+	var evalOpts []engine.ResponseOption
+	if headers.GetEndOfStream() {
+		evalOpts = append(evalOpts, engine.WithAvailableResponseBody(filter.Body{Complete: true}))
+	}
 	// Dispatch only to subscribed pairs within the request walk's response scope.
-	respHeadersRes, evalErr := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits(), state.responseScope)
+	respHeadersRes, evalErr := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits(), state.responseScope, evalOpts...)
 	if evalErr != nil {
-		if respHeadersRes.Disposition == engine.DispositionBlocked {
-			// Return the FailClosed reply with the error so Process can send it.
-			return translateResponseHeadersResult(respHeadersRes), evalErr
-		}
 		// Contract and protocol errors return no acknowledgement.
 		return nil, evalErr
 	}
 	state.awaitResponseHeaders = false
+	responses := translateResponseHeadersResult(respHeadersRes)
+	if respHeadersRes.NeedsBody() {
+		override := &extProcV3.ProcessingMode{
+			RequestBodyMode:  extProcV3.ProcessingMode_NONE,
+			ResponseBodyMode: responseBodyMode,
+		}
+		resp := cloneResponse(responses[0])
+		resp.ModeOverride = override
+		responses = append([]*extProcPb.ProcessingResponse{resp}, responses[1:]...)
+		state.responseBodyContinuation = respHeadersRes
+		return responses, nil
+	}
 	state.lifecycle = lifecycleFinalizePending
-	return translateResponseHeadersResult(respHeadersRes), nil
+	return responses, nil
 }
 
 // cloneResponse copies a ProcessingResponse so ModeOverride can be set
@@ -264,17 +280,6 @@ func (s *Server) HandleRequestTrailers(ctx context.Context, trailers *extProcPb.
 		{
 			Response: &extProcPb.ProcessingResponse_RequestTrailers{
 				RequestTrailers: &extProcPb.TrailersResponse{},
-			},
-		},
-	}, nil
-}
-
-// HandleResponseBody returns an empty pass-through response.
-func (s *Server) HandleResponseBody(ctx context.Context, body *extProcPb.HttpBody) ([]*extProcPb.ProcessingResponse, error) {
-	return []*extProcPb.ProcessingResponse{
-		{
-			Response: &extProcPb.ProcessingResponse_ResponseBody{
-				ResponseBody: &extProcPb.BodyResponse{},
 			},
 		},
 	}, nil

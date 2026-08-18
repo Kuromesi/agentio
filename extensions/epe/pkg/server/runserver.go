@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -36,6 +37,11 @@ import (
 // must at least be set.
 type Config struct {
 	GrpcPort int
+	// Listener serves an already-bound socket and makes GrpcPort unused. It
+	// lets a caller that needs to know the address up front bind it first
+	// rather than reserving a port by binding and closing one, which leaves the
+	// port unowned until this server binds. See runnable.WithListener.
+	Listener net.Listener
 	// PluginBudget bounds each evaluation phase (one ext_proc message); 0 disables.
 	PluginBudget time.Duration
 
@@ -104,6 +110,7 @@ func New(cfg Config, logger logr.Logger) runnable.Runnable {
 			}),
 		)
 
-		return runnable.GRPCServer("ext-proc", srv, cfg.GrpcPort).Start(ctx)
+		return runnable.GRPCServer("ext-proc", srv, cfg.GrpcPort,
+			runnable.WithListener(cfg.Listener)).Start(ctx)
 	})
 }

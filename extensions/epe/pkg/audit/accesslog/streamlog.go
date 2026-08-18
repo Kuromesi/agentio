@@ -15,7 +15,6 @@ package accesslog
 
 import (
 	"context"
-	"strings"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
@@ -36,11 +35,14 @@ func NewStreamLog(l Logger) *StreamLog {
 
 var _ filter.StreamLogger = (*StreamLog)(nil)
 
-// committedKinds are the unit actions that count as "the filter acted".
-var committedKinds = map[string]bool{
-	"block":  true,
-	"bypass": true,
-	"mutate": true,
+// committedKinds are the unit actions that count as "the filter acted", and so
+// belong in Actions rather than Skipped. error-closed is one of them: the filter
+// broke, but the request was still denied on its behalf.
+var committedKinds = map[filter.UnitActionKind]bool{
+	filter.ActionBlock:       true,
+	filter.ActionBypass:      true,
+	filter.ActionMutate:      true,
+	filter.ActionErrorClosed: true,
 }
 
 // Log implements filter.StreamLogger.
@@ -52,39 +54,46 @@ func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.Strea
 		Host:      st.Request.Host,
 		Path:      st.Request.Path,
 		Units:     len(info.Matched),
-		Outcome:   info.Disposition.String(),
-		Skipped:   map[string]int{},
+		Outcome:   info.Outcome.String(),
 		Error:     info.Error,
 	}
 
-	// A filter that asked for the body counts as skipped unless a later
-	// action committed for the same unit.
+	// A filter that asked for the body is owed an entry until it resolves. Both
+	// committing and erroring resolve it — an error-open filter did get its body
+	// and did run, it just failed — so only a promise that nothing ever answered
+	// survives to be reported.
 	type pendingKey struct {
 		unit   filter.UnitID
 		filter string
 	}
-	pending := map[pendingKey]bool{}
+	pending := map[pendingKey]filter.UnitID{}
 
 	for _, u := range info.Matched {
-		for _, action := range u.FilterActions {
-			name, kind, ok := strings.Cut(action, ":")
-			if !ok {
-				continue
-			}
+		for _, a := range u.FilterActions {
+			key := pendingKey{unit: u.ID, filter: a.Filter}
 			switch {
-			case committedKinds[kind]:
-				entry.Actions = append(entry.Actions, name+":"+u.ID.String())
-				delete(pending, pendingKey{unit: u.ID, filter: name})
-			case kind == "need-body":
-				pending[pendingKey{unit: u.ID, filter: name}] = true
-			case kind == "error-open":
-				entry.Skipped[name]++
+			case committedKinds[a.Kind]:
+				entry.Actions = append(entry.Actions, unitAction(a, u.ID))
+				delete(pending, key)
+			case a.Kind == filter.ActionErrorOpen:
+				entry.Skipped = append(entry.Skipped, unitAction(a, u.ID))
+				delete(pending, key)
+			case a.Kind == filter.ActionNeedBody:
+				pending[key] = u.ID
 			}
 		}
 	}
-	for k := range pending {
-		entry.Skipped[k.filter]++
+	for k, id := range pending {
+		entry.Skipped = append(entry.Skipped,
+			unitAction(filter.UnitAction{Filter: k.filter, Kind: filter.ActionNeedBody}, id))
 	}
 
 	s.l.Submit(entry)
+}
+
+// unitAction renders one recorded action as "<filter>:<kind>:<unit>". Actions
+// and Skipped share this format deliberately: a consumer parses one shape, and
+// the kind alone says whether the filter acted or failed to.
+func unitAction(a filter.UnitAction, id filter.UnitID) string {
+	return a.Filter + ":" + string(a.Kind) + ":" + id.String()
 }

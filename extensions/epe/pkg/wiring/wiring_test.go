@@ -14,8 +14,10 @@
 package wiring
 
 import (
+	"context"
 	"testing"
 
+	"istio.io/istio/extensions/epe/pkg/filters/httpcallout"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/test"
 )
@@ -27,7 +29,7 @@ func TestBuildFiltersOrderIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
-	want := []string{"bypass", "block", "mcpacl", "headermutation", "tokentransform"}
+	want := []string{"bypass", "block", "mcpacl", "headermutation", "httpcallout", "tokentransform"}
 	if len(regs) != len(want) {
 		t.Fatalf("got %d registrations, want %d", len(regs), len(want))
 	}
@@ -35,5 +37,27 @@ func TestBuildFiltersOrderIsExplicit(t *testing.T) {
 		if reg.Name != want[i] {
 			t.Errorf("position %d = %q, want %q", i, reg.Name, want[i])
 		}
+	}
+}
+
+// stubCalloutClient stands in for an in-process endpoint. It is a struct{} so
+// interface values holding it stay comparable.
+type stubCalloutClient struct{}
+
+func (stubCalloutClient) Call(context.Context, httpcallout.Config, httpcallout.Invocation) (httpcallout.Decision, error) {
+	return httpcallout.Decision{}, nil
+}
+
+// CalloutClient is the seam a scenario test uses to aim the callout filter at an
+// in-process endpoint, so the injection itself has to hold: a supplied client
+// must be used as-is, and its absence must still yield a usable client rather
+// than a nil one the filter would reject at request time.
+func TestCalloutClientForPrefersTheSuppliedClient(t *testing.T) {
+	supplied := stubCalloutClient{}
+	if got := calloutClientFor(Deps{CalloutClient: supplied}); got != httpcallout.Client(supplied) {
+		t.Errorf("calloutClientFor(supplied) = %#v, want the supplied client", got)
+	}
+	if got := calloutClientFor(Deps{}); got == nil {
+		t.Error("calloutClientFor(zero Deps) = nil, want the default shared HTTP client")
 	}
 }

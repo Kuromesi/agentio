@@ -181,6 +181,8 @@ func TestHandleRequestHeaders_BypassBeforeTokenTransformation(t *testing.T) {
 	}
 	// Bypassed means passthrough wire shape: no header mutation possible.
 	verdict.RequireBypassed(t)
+	// And it was the bypass rule that got there first.
+	verdict.RequireAction(t, ":bypass:")
 }
 
 // TestHandleRequestHeaders_TokenTransformationBeforeBypass verifies that when
@@ -437,6 +439,9 @@ func TestHandleRequestBody_MCPACLWildcardAllowSpecificDomainDeny(t *testing.T) {
 		if verdict.ModeOverride == nil {
 			t.Fatal("expected ModeOverride requesting the body")
 		}
-		verdict.RequirePassthrough(t)
+		// The wildcard rule did match and allowed the tool, so the request is
+		// bypassed rather than unpoliced: nothing on the wire changed, but a
+		// unit was in force.
+		verdict.RequireBypassed(t)
 	})
 }

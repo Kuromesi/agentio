@@ -23,14 +23,16 @@ import (
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
 
-// lastAccessLogEntry returns the most recent audit entry captured by the
-// harness for this verdict, failing the test when none was submitted.
-func lastAccessLogEntry(t *testing.T, v *enginetest.Verdict) accesslog.Entry {
+// accessLogEntry returns the single audit entry captured for this verdict.
+// One request produces exactly one entry, and Verdict.AccessLog holds this run
+// alone — the harness resets the logger per run — so any other count is a bug
+// worth failing on rather than an index to reach past.
+func accessLogEntry(t *testing.T, v *enginetest.Verdict) accesslog.Entry {
 	t.Helper()
-	if len(v.AccessLog) == 0 {
-		t.Fatal("expected at least one audit entry, got none")
+	if len(v.AccessLog) != 1 {
+		t.Fatalf("want exactly 1 audit entry, got %d: %+v", len(v.AccessLog), v.AccessLog)
 	}
-	return v.AccessLog[len(v.AccessLog)-1]
+	return v.AccessLog[0]
 }
 
 // TestHandleRequestHeaders_AuditEntry_NoProfileMatch_Passthrough verifies
@@ -43,7 +45,7 @@ func TestHandleRequestHeaders_AuditEntry_NoProfileMatch_Passthrough(t *testing.T
 	verdict := h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x"))
 	verdict.RequirePassthrough(t)
 
-	e := lastAccessLogEntry(t, verdict)
+	e := accessLogEntry(t, verdict)
 	if e.Outcome != "passthrough" {
 		t.Errorf("outcome: want passthrough, got %q", e.Outcome)
 	}
@@ -76,12 +78,12 @@ func TestHandleRequestHeaders_AuditEntry_BypassMatched(t *testing.T) {
 	verdict := h.Run(t, blockedPeerRequest("GET", "internal.local", "/anything"))
 	verdict.RequireBypassed(t)
 
-	e := lastAccessLogEntry(t, verdict)
+	e := accessLogEntry(t, verdict)
 	if e.Outcome != "bypassed" {
 		t.Errorf("outcome: want bypassed, got %q", e.Outcome)
 	}
-	if got := e.Actions; len(got) != 1 || got[0] != "bypass:default/p1/trust-internal#0" {
-		t.Errorf("actions: want [bypass:default/p1/trust-internal], got %v", got)
+	if got := e.Actions; len(got) != 1 || got[0] != "bypass:bypass:default/p1/trust-internal#0" {
+		t.Errorf("actions: want [bypass:bypass:default/p1/trust-internal#0], got %v", got)
 	}
 	if len(e.Skipped) != 0 {
 		t.Errorf("skipped: want empty, got %v", e.Skipped)
@@ -107,11 +109,11 @@ func TestHandleRequestHeaders_AuditEntry_BlockMatched(t *testing.T) {
 	verdict := h.Run(t, blockedPeerRequest("GET", "api.example.com", "/admin/keys"))
 	verdict.RequireBlocked(t, 403)
 
-	e := lastAccessLogEntry(t, verdict)
+	e := accessLogEntry(t, verdict)
 	if e.Outcome != "blocked" {
 		t.Errorf("outcome: want blocked, got %q", e.Outcome)
 	}
-	if got := e.Actions; len(got) != 1 || got[0] != "block:default/p1/block-admin#0" {
-		t.Errorf("actions: want [block:default/p1/block-admin], got %v", got)
+	if got := e.Actions; len(got) != 1 || got[0] != "block:block:default/p1/block-admin#0" {
+		t.Errorf("actions: want [block:block:default/p1/block-admin#0], got %v", got)
 	}
 }

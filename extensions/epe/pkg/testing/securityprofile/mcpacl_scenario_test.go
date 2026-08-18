@@ -125,8 +125,8 @@ func TestScenario_BodyPhaseDenyAuditsExactlyOnce(t *testing.T) {
 	if got.Outcome != "blocked" {
 		t.Errorf("Outcome = %q, want \"blocked\" — the body-phase verdict must be what is recorded", got.Outcome)
 	}
-	if n := got.Skipped["mcpacl"]; n != 0 {
-		t.Errorf("Skipped[\"mcpacl\"] = %d, want 0 — the plugin decided, it was not skipped", n)
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want empty — the plugin decided, it was not skipped", got.Skipped)
 	}
 }
 

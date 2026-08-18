@@ -20,7 +20,6 @@ package server_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -40,15 +39,17 @@ import (
 	"istio.io/istio/pkg/test"
 )
 
-func freePort(t *testing.T) int {
+// listenLocal binds a loopback socket and keeps it, for handing to
+// Config.Listener. Reserving a port by binding and closing one instead leaves it
+// unowned until the server binds, so anything else on the machine can take it
+// and this test would then dial an impostor.
+func listenLocal(t *testing.T) net.Listener {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port
+	return l
 }
 
 func TestAsRunnable_ServesConfiguredChainOverGRPC(t *testing.T) {
@@ -77,13 +78,13 @@ spec:
         body: blocked-over-grpc
 `)
 
-	port := freePort(t)
+	lis := listenLocal(t)
 	regs, err := wiring.BuildFilters(wiring.Deps{Kube: kube.NewFakeClient(), Stop: test.NewStop(t)})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
 	rn := runserver.New(runserver.Config{
-		GrpcPort:      port,
+		Listener:      lis,
 		Resolve:       policysecurityprofile.NewResolver(fixture.Store, regs, nil),
 		Registrations: regs,
 	}, logr.Discard())
@@ -106,7 +107,7 @@ spec:
 	})
 
 	conn, err := grpc.NewClient(
-		fmt.Sprintf("127.0.0.1:%d", port),
+		lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
@@ -138,13 +139,21 @@ spec:
 			if time.Now().After(deadline) {
 				t.Fatalf("Process against real gRPC server: %v", err)
 			}
-			// The listener may not be accepting yet right after startup.
+			// The socket is bound before Start runs, so a connection queues
+			// rather than failing; this retry only covers a transient error
+			// during the server's own startup.
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
 	run("/grpc/blocked").RequireBlockedBody(t, 451, "blocked-over-grpc")
-	run("/grpc/open").RequirePassthrough(t)
+	// This drives the real gRPC server rather than enginetest.Harness, so there
+	// is no capturing audit logger and RequirePassthrough (which reads the
+	// logged outcome) has nothing to read. The wire shape is what this test is
+	// about anyway: the open path must come back unmodified.
+	if got := run("/grpc/open"); got.Kind != enginetest.VerdictPassthrough {
+		t.Fatalf("verdict = %s, want passthrough over gRPC (raw=%v)", got.Kind, got.Raw)
+	}
 }
 
 func sendAll(stream extProcPb.ExternalProcessor_ProcessClient, msgs []*extProcPb.ProcessingRequest) error {

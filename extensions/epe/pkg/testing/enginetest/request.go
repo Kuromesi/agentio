@@ -48,6 +48,12 @@ type RequestBuilder struct {
 	bodyChunks       [][]byte
 	streamingHeaders bool
 	trailerFlushed   bool
+
+	responseConfigured bool
+	responseStatus     int
+	responseHeaders    [][2]string
+	responseBodySet    bool
+	responseBody       []byte
 }
 
 // NewRequest starts a builder with GET semantics and no identity. Call Peer
@@ -144,6 +150,29 @@ func (b *RequestBuilder) StreamingHeaders() *RequestBuilder {
 	return b
 }
 
+// ResponseHeaders attaches the upstream response-headers message with status.
+func (b *RequestBuilder) ResponseHeaders(status int) *RequestBuilder {
+	b.responseConfigured = true
+	b.responseStatus = status
+	return b
+}
+
+// ResponseHeader adds one upstream response header.
+func (b *RequestBuilder) ResponseHeader(key, value string) *RequestBuilder {
+	b.responseConfigured = true
+	b.responseHeaders = append(b.responseHeaders, [2]string{key, value})
+	return b
+}
+
+// ResponseBody attaches one complete BUFFERED response-body message. Presence
+// is tracked separately so an explicit empty replacement still emits a body.
+func (b *RequestBuilder) ResponseBody(body []byte) *RequestBuilder {
+	b.responseConfigured = true
+	b.responseBodySet = true
+	b.responseBody = body
+	return b
+}
+
 // HeadersMsg returns just the HttpHeaders message, for tests that call
 // HandleRequestHeaders directly.
 func (b *RequestBuilder) HeadersMsg() *extProcPb.HttpHeaders {
@@ -216,6 +245,31 @@ func (b *RequestBuilder) Build() []*extProcPb.ProcessingRequest {
 				},
 			},
 		})
+	}
+	if b.responseConfigured {
+		status := b.responseStatus
+		if status == 0 {
+			status = 200
+		}
+		headers := []*corev3.HeaderValue{{Key: ":status", RawValue: []byte(fmt.Sprintf("%d", status))}}
+		for _, h := range b.responseHeaders {
+			headers = append(headers, &corev3.HeaderValue{Key: h[0], RawValue: []byte(h[1])})
+		}
+		msgs = append(msgs, &extProcPb.ProcessingRequest{
+			Request: &extProcPb.ProcessingRequest_ResponseHeaders{
+				ResponseHeaders: &extProcPb.HttpHeaders{
+					Headers:     &corev3.HeaderMap{Headers: headers},
+					EndOfStream: !b.responseBodySet,
+				},
+			},
+		})
+		if b.responseBodySet {
+			msgs = append(msgs, &extProcPb.ProcessingRequest{
+				Request: &extProcPb.ProcessingRequest_ResponseBody{
+					ResponseBody: &extProcPb.HttpBody{Body: b.responseBody, EndOfStream: true},
+				},
+			})
+		}
 	}
 	return msgs
 }

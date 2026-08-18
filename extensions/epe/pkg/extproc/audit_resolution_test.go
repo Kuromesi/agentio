@@ -70,10 +70,10 @@ func TestStreamEnd_BodyPhaseDenyIsAudited(t *testing.T) {
 	fp := &bodyProbe{bodyAct: filter.Stop(filter.Reply{Status: 403, Body: []byte("denied in body phase")})}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-deny-test", fp)}, cap)
 
-	resp, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	resp, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
 		Body:        []byte(`{"method":"tools/call"}`),
 		EndOfStream: true,
-	}, state)
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,8 +89,8 @@ func TestStreamEnd_BodyPhaseDenyIsAudited(t *testing.T) {
 	if got.Outcome != "blocked" {
 		t.Errorf("Outcome = %q, want blocked — the body-phase verdict must be what is recorded", got.Outcome)
 	}
-	if n := got.Skipped["body-deny-test"]; n != 0 {
-		t.Errorf("Skipped[%q] = %d, want 0 — the filter decided, it was not skipped", "body-deny-test", n)
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want empty — the filter decided, it was not skipped", got.Skipped)
 	}
 	if len(got.Actions) == 0 {
 		t.Error("Actions is empty; the deciding filter must be attributed")
@@ -104,9 +104,9 @@ func TestStreamEnd_BodyPhaseMutateIsAudited(t *testing.T) {
 	fp := &bodyProbe{bodyAct: filter.Continue(filter.SetHeader("x-body-phase", "1"))}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-mutate-test", fp)}, cap)
 
-	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	if _, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
 		Body: []byte(`{}`), EndOfStream: true,
-	}, state); err != nil {
+	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.finishStream(context.Background(), state, nil)
@@ -118,25 +118,28 @@ func TestStreamEnd_BodyPhaseMutateIsAudited(t *testing.T) {
 	if got.Outcome != "mutated" {
 		t.Errorf("Outcome = %q, want mutated", got.Outcome)
 	}
-	if n := got.Skipped["body-mutate-test"]; n != 0 {
-		t.Errorf("Skipped[%q] = %d, want 0 — the filter mutated, it was not skipped", "body-mutate-test", n)
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want empty — the filter mutated, it was not skipped", got.Skipped)
 	}
 }
 
-// An error in the body phase must still produce exactly one entry, marked
-// as an error.
+// A FailClosed error in the body phase is a blocked policy result on the wire,
+// while the original failure remains in the audit error field.
 func TestStreamEnd_BodyPhaseErrorIsAudited(t *testing.T) {
 	cap := &captureLogger{}
 	fp := &bodyProbe{bodyErr: errors.New("boom")}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-err-test", fp)}, cap)
 
-	_, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	responses, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
 		Body: []byte(`{}`), EndOfStream: true,
-	}, state)
-	if err == nil {
-		t.Fatal("want the body-phase error to propagate to Envoy")
+	})
+	if err != nil {
+		t.Fatalf("configured FailClosed returned handler error: %v", err)
 	}
-	s.finishStream(context.Background(), state, err)
+	if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("responses = %+v, want local FailClosed response", responses)
+	}
+	s.finishStream(context.Background(), state, nil)
 
 	if len(cap.entries) != 1 {
 		t.Fatalf("want exactly 1 accesslog entry on the error path, got %d", len(cap.entries))
@@ -145,7 +148,7 @@ func TestStreamEnd_BodyPhaseErrorIsAudited(t *testing.T) {
 	if got.Error == "" {
 		t.Errorf("Error is empty; the body-phase failure must be recorded, entry = %+v", got)
 	}
-	if got.Outcome != "error" {
-		t.Errorf("Outcome = %q, want error", got.Outcome)
+	if got.Outcome != "blocked" {
+		t.Errorf("Outcome = %q, want blocked", got.Outcome)
 	}
 }

@@ -53,7 +53,7 @@ func BenchmarkRecordUnitAction(b *testing.B) {
 				info := NewStreamInfo()
 				for _, id := range ids {
 					for _, fname := range names {
-						info.RecordUnitAction(id, fname, "mutate")
+						info.RecordUnitAction(id, fname, ActionMutate)
 					}
 				}
 				benchSink = info
