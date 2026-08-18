@@ -205,7 +205,11 @@ func (s *Server) finishStream(ctx context.Context, state *streamState, err error
 	}
 	state.lifecycle = lifecycleFinalized
 	info := state.stream.Info
-	if err != nil {
+	// A filter that failed closed already recorded why this request was denied.
+	// A transport error arriving afterwards must not overwrite that: the stream
+	// dying is the less useful of the two explanations, and it used to erase the
+	// only account of why the request was blocked at all.
+	if err != nil && info.Error == "" {
 		info.Error = err.Error()
 	}
 	info.Outcome = deriveOutcome(state.effect, err != nil, len(info.Matched))

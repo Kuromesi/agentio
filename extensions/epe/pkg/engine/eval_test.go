@@ -729,13 +729,22 @@ func TestInvoke_FailClosedSynthesizesBlocked(t *testing.T) {
 		}},
 	})
 	e := NewEngine(regs, 0)
-	res, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"s"}}))
+	st := &filter.Stream{Info: filter.NewStreamInfo()}
+	res, err := e.EvalRequestHeaders(context.Background(), st, unitsFor([][]string{{"s"}}))
 	if err != nil {
 		t.Fatalf("configured FailClosed returned engine error: %v", err)
 	}
 	requireDisposition(t, res.Disposition, DispositionBlocked)
 	if res.Reply.Status != 500 || res.Reply.Details != "epe_request_headers_failed_closed" {
 		t.Fatalf("Reply = %+v, want phase-specific local 500", res.Reply)
+	}
+	// error-closed, not block: the filter never chose to deny, so an audit that
+	// called this a block would present a broken enforcement path as a working one.
+	if got := unitActions(st.Info); !slices.Equal(got, []string{"strict:error-closed"}) {
+		t.Errorf("unit actions = %v, want [strict:error-closed]", got)
+	}
+	if st.Info.Error != "boom" {
+		t.Errorf("Info.Error = %q, want the filter's error", st.Info.Error)
 	}
 }
 

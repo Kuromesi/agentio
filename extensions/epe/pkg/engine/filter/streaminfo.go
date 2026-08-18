@@ -106,10 +106,20 @@ type UnitActionKind string
 // them to decide which are audit-visible actions and which only mark a filter
 // as skipped.
 const (
-	ActionBlock     UnitActionKind = "block"
-	ActionBypass    UnitActionKind = "bypass"
-	ActionMutate    UnitActionKind = "mutate"
-	ActionNeedBody  UnitActionKind = "need-body"
+	ActionBlock  UnitActionKind = "block"
+	ActionBypass UnitActionKind = "bypass"
+	ActionMutate UnitActionKind = "mutate"
+	// ActionErrorClosed is a block the filter did not choose: it errored and the
+	// rule's FailClosed policy answered for it. Distinct from ActionBlock
+	// because "the policy denied this" and "the enforcement path broke and we
+	// denied to be safe" call for different responses from an operator.
+	ActionErrorClosed UnitActionKind = "error-closed"
+	// ActionNeedBody is a promise, not an act: the filter asked for a body and
+	// deferred its verdict. It only reaches the audit when the promise went
+	// unkept, because a filter that got its body records what it then decided.
+	ActionNeedBody UnitActionKind = "need-body"
+	// ActionErrorOpen is a filter that errored where the rule's FailOpen policy
+	// admitted the request anyway — so the rule was not enforced.
 	ActionErrorOpen UnitActionKind = "error-open"
 )
 

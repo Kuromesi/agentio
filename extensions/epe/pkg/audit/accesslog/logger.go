@@ -40,12 +40,22 @@ const DefaultBufferSize = 4096
 //
 // Outcome takes one of: "passthrough", "mutated", "blocked", "bypassed",
 // "error", and is derived from what EPE actually sent Envoy — see
-// extproc/outcome.go. Actions records every filter that materially acted on
-// the request in the form "<filter>:<kind>:<ns>/<profile>/<rule>#<ordinal>",
-// where kind is block, bypass, or mutate; an explicit bypass is visible only
-// here, never in Outcome. Skipped counts filters that failed open or asked for
-// a body that never resolved. Units counts matched policy units (rules), not
-// profiles.
+// extproc/outcome.go. An explicit bypass is visible only in Actions, never in
+// Outcome.
+//
+// Actions and Skipped share the element format
+// "<filter>:<kind>:<ns>/<profile>/<rule>#<ordinal>", and the kind decides which
+// field an element lands in:
+//
+//	Actions — the filter acted:  block (it denied), bypass (it exempted),
+//	          mutate (it changed the message), error-closed (it broke and the
+//	          rule's FailClosed policy denied on its behalf).
+//	Skipped — the rule went unenforced:  error-open (the filter broke and the
+//	          rule's FailOpen policy admitted the request), need-body (the filter
+//	          asked for a body that never arrived, so its verdict never ran).
+//
+// A filter that ran and simply allowed the request records nothing in either.
+// Units counts matched policy units (rules), not profiles.
 type Entry struct {
 	RequestID string
 	Pod       types.NamespacedName
@@ -55,7 +65,7 @@ type Entry struct {
 	Units     int
 	Outcome   string
 	Actions   []string
-	Skipped   map[string]int
+	Skipped   []string
 	Error     string
 }
 

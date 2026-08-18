@@ -759,11 +759,16 @@ func (w *actionWalk) filterFailed(p pair, phase filter.Phase, err error) {
 	w.disposition = DispositionBlocked
 	w.reply = filter.Reply{Status: failClosedStatus, Details: failClosedDetails(phase)}
 	// Info is a plain field write, so unlike record it cannot lean on
-	// StreamInfo's nil-receiver tolerance.
+	// StreamInfo's nil-receiver tolerance. No first-writer guard is needed: a
+	// block halts the walk (see the halted() check in the pair loop) and
+	// finalizes the stream, so this runs at most once per stream.
 	if w.st.Info != nil {
 		w.st.Info.Error = err.Error()
 	}
-	w.record(p, filter.ActionBlock)
+	// Not ActionBlock: the filter did not choose this block, its failure policy
+	// did. Recording them alike made a broken enforcement path read as a working
+	// one.
+	w.record(p, filter.ActionErrorClosed)
 }
 
 func failClosedDetails(phase filter.Phase) string {

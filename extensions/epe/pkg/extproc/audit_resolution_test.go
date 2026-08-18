@@ -89,8 +89,8 @@ func TestStreamEnd_BodyPhaseDenyIsAudited(t *testing.T) {
 	if got.Outcome != "blocked" {
 		t.Errorf("Outcome = %q, want blocked — the body-phase verdict must be what is recorded", got.Outcome)
 	}
-	if n := got.Skipped["body-deny-test"]; n != 0 {
-		t.Errorf("Skipped[%q] = %d, want 0 — the filter decided, it was not skipped", "body-deny-test", n)
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want empty — the filter decided, it was not skipped", got.Skipped)
 	}
 	if len(got.Actions) == 0 {
 		t.Error("Actions is empty; the deciding filter must be attributed")
@@ -118,8 +118,8 @@ func TestStreamEnd_BodyPhaseMutateIsAudited(t *testing.T) {
 	if got.Outcome != "mutated" {
 		t.Errorf("Outcome = %q, want mutated", got.Outcome)
 	}
-	if n := got.Skipped["body-mutate-test"]; n != 0 {
-		t.Errorf("Skipped[%q] = %d, want 0 — the filter mutated, it was not skipped", "body-mutate-test", n)
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want empty — the filter mutated, it was not skipped", got.Skipped)
 	}
 }
 

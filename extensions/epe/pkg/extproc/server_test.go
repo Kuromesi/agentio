@@ -212,3 +212,41 @@ func TestFinishStream_OutcomeIsDerivedFromSentResponses(t *testing.T) {
 		})
 	}
 }
+
+// A filter that failed closed already recorded why the request was denied. A
+// transport error arriving afterwards used to overwrite it, erasing the only
+// account of why anything was blocked and leaving the far less useful "the
+// stream died" in its place.
+func TestFinishStream_StreamErrorDoesNotEraseTheFilterReason(t *testing.T) {
+	state := newStreamState()
+	state.lifecycle = lifecycleActive
+	state.effect = effectBlocked
+	state.stream.Info.Matched = []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}}
+	state.stream.Info.Error = "authz: upstream unreachable"
+
+	s := &Server{}
+	s.finishStream(context.Background(), state, errors.New("stream reset"))
+
+	if got := state.stream.Info.Error; got != "authz: upstream unreachable" {
+		t.Errorf("Info.Error = %q, want the filter's reason preserved", got)
+	}
+	// The stream still ended in an error, so the outcome reports that — only the
+	// explanation is the filter's.
+	if got := state.stream.Info.Outcome.String(); got != "error" {
+		t.Errorf("Outcome = %q, want error", got)
+	}
+}
+
+// With no filter reason recorded, the stream error is the only explanation there
+// is, so it must still be reported.
+func TestFinishStream_StreamErrorIsRecordedWhenNothingElseExplains(t *testing.T) {
+	state := newStreamState()
+	state.lifecycle = lifecycleActive
+
+	s := &Server{}
+	s.finishStream(context.Background(), state, errors.New("stream reset"))
+
+	if got := state.stream.Info.Error; got != "stream reset" {
+		t.Errorf("Info.Error = %q, want \"stream reset\"", got)
+	}
+}
