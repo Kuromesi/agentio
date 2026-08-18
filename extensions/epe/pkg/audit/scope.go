@@ -39,6 +39,14 @@ import (
 // for read-only template access.
 type Scope struct {
 	inputs.Scope
+	// Result is the stream's derived audit outcome, surfaced to SecurityProfile
+	// authors as the CEL `result` variable (bound in Activation below, declared
+	// in pkg/eval/cel.go). It is one of "error", "blocked", "mutated",
+	// "bypassed", or "passthrough" — a partition, in that precedence — derived
+	// from what EPE actually told Envoy rather than from what the engine
+	// intended; see pkg/extproc/outcome.go for the derivation. Note "bypassed"
+	// means a policy unit matched and the message was not modified, not that an
+	// exemption fired.
 	Result  string
 	Matched Match
 }

@@ -15,6 +15,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -151,5 +152,63 @@ func TestProcessRequestBody_RejectsWithoutObligation(t *testing.T) {
 	}
 	if len(resp) != 0 {
 		t.Fatalf("responses = %v, want none", resp)
+	}
+}
+
+// The audit outcome must come from what was sent, not from what the engine
+// intended: a stream whose units matched but whose responses changed nothing
+// is bypassed, and one where no unit matched at all is passthrough.
+func TestFinishStream_OutcomeIsDerivedFromSentResponses(t *testing.T) {
+	tests := []struct {
+		name    string
+		effect  messageEffect
+		matched []filter.UnitRecord
+		err     error
+		want    string
+	}{
+		{
+			name: "no units matched",
+			want: "passthrough",
+		},
+		{
+			name:    "units matched but nothing was modified",
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			want:    "bypassed",
+		},
+		{
+			name:    "a mutation was sent",
+			effect:  effectMutated,
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			want:    "mutated",
+		},
+		{
+			name:    "an immediate response was sent",
+			effect:  effectBlocked,
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			want:    "blocked",
+		},
+		{
+			name:    "an error outranks a block",
+			effect:  effectBlocked,
+			matched: []filter.UnitRecord{{ID: filter.UnitID{Name: "r1"}}},
+			err:     errors.New("send failed"),
+			want:    "error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newStreamState()
+			state.lifecycle = lifecycleActive
+			state.effect = tt.effect
+			state.stream.Info.Matched = tt.matched
+
+			s := &Server{}
+			s.finishStream(context.Background(), state, tt.err)
+
+			if got := state.stream.Info.Outcome.String(); got != tt.want {
+				t.Errorf("Outcome = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

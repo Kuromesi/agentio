@@ -116,7 +116,7 @@ func TestHarness_ResponseBodyFiltersSeeOriginalInputAndFoldFinalWireResult(t *te
 			t.Errorf("%s observation = %+v, want original response", name, observation)
 		}
 	}
-	if verdict.Info == nil || verdict.Info.Disposition != filter.DispositionMutated {
+	if verdict.Info == nil || verdict.Info.Outcome != filter.DispositionMutated {
 		t.Fatalf("StreamInfo = %+v, want mutated", verdict.Info)
 	}
 	if len(verdict.AccessLog) != 1 || verdict.AccessLog[0].Outcome != "mutated" {

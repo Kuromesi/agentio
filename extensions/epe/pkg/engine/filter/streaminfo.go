@@ -18,8 +18,10 @@ import (
 	"time"
 )
 
-// Disposition is derived by the engine from which Action constructor won;
-// filters never name it.
+// Disposition is both the engine's per-walk control-flow verdict and the
+// vocabulary the audit outcome is rendered in. Filters never name it: the
+// engine derives the walk's own value from which Action constructor won, and
+// extproc derives the stream's audit value from what it actually sent Envoy.
 type Disposition uint8
 
 const (
@@ -46,31 +48,6 @@ func (d Disposition) String() string {
 	}
 }
 
-// PromoteDisposition keeps the higher-precedence disposition. The order —
-// error > bypassed > blocked > mutated > passthrough — is audit-visible
-// behavior, not bookkeeping.
-func PromoteDisposition(a, b Disposition) Disposition {
-	if dispositionRank(b) >= dispositionRank(a) {
-		return b
-	}
-	return a
-}
-
-func dispositionRank(d Disposition) int {
-	switch d {
-	case DispositionError:
-		return 5
-	case DispositionBypassed:
-		return 4
-	case DispositionBlocked:
-		return 3
-	case DispositionMutated:
-		return 2
-	default:
-		return 1
-	}
-}
-
 // UnitRecord is one matched policy unit and what each filter did to it.
 type UnitRecord struct {
 	ID UnitID
@@ -93,9 +70,14 @@ type FilterRecord struct {
 // StreamInfo accumulates what happened to one stream. It holds only what
 // filters cannot provide themselves; Peer/Request/Response live on Stream.
 type StreamInfo struct {
-	Matched     []UnitRecord
-	Filters     []FilterRecord
-	Disposition Disposition
+	Matched []UnitRecord
+	Filters []FilterRecord
+	// Outcome is written exactly once, at stream end, by the ext_proc layer —
+	// derived from the responses it actually sent, the stream's error, and
+	// len(Matched). The engine deliberately does not accumulate it: an outcome
+	// tracked as filters decide would keep claiming enforcement that the
+	// translation layer dropped.
+	Outcome Disposition
 	// Error records the failure that resolved the stream, when one did.
 	Error string
 }
@@ -143,15 +125,6 @@ func (i *StreamInfo) RecordFilter(rec FilterRecord) {
 		return
 	}
 	i.Filters = append(i.Filters, rec)
-}
-
-// Promote raises the disposition, never lowers it. A nil *StreamInfo is a
-// no-op, as for RecordUnitAction.
-func (i *StreamInfo) Promote(d Disposition) {
-	if i == nil {
-		return
-	}
-	i.Disposition = PromoteDisposition(i.Disposition, d)
 }
 
 // StreamLogger observes the completed stream. It is invoked exactly once

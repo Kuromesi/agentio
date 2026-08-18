@@ -385,8 +385,11 @@ func TestHandleResponseHeaders_BypassAcknowledgesAndFinalizes(t *testing.T) {
 	if state.lifecycle != lifecycleFinalizePending {
 		t.Fatal("successful Bypass did not arm finalization")
 	}
-	if state.stream.Info.Disposition != filter.DispositionBypassed {
-		t.Errorf("stream disposition = %v, want Bypassed", state.stream.Info.Disposition)
+	// The bypass must leave a matched unit behind: that record, plus an
+	// acknowledgement that changed nothing, is what makes finishStream derive
+	// "bypassed" rather than "passthrough".
+	if len(state.stream.Info.Matched) == 0 {
+		t.Error("bypass recorded no matched unit; the audit outcome would collapse to passthrough")
 	}
 }
 
@@ -429,7 +432,9 @@ func TestHandleResponseHeaders_FinalizedStreamAcknowledgesFirstStaticMessageWith
 	probe := &responseHeadersProbe{}
 	s, state, cap := responseHeadersState(probe)
 	state.awaitResponseHeaders = false
-	state.stream.Info.Promote(filter.DispositionBlocked)
+	// An ImmediateResponse already went out, which is what makes the committed
+	// entry "blocked".
+	state.effect = effectBlocked
 	s.finishStream(context.Background(), state, nil)
 	headers := &extProcPb.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 		{Key: ":status", RawValue: []byte("204")},

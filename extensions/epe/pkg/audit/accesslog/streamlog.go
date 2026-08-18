@@ -52,7 +52,7 @@ func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.Strea
 		Host:      st.Request.Host,
 		Path:      st.Request.Path,
 		Units:     len(info.Matched),
-		Outcome:   info.Disposition.String(),
+		Outcome:   info.Outcome.String(),
 		Skipped:   map[string]int{},
 		Error:     info.Error,
 	}
@@ -73,7 +73,7 @@ func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.Strea
 			}
 			switch {
 			case committedKinds[kind]:
-				entry.Actions = append(entry.Actions, name+":"+u.ID.String())
+				entry.Actions = append(entry.Actions, name+":"+kind+":"+u.ID.String())
 				delete(pending, pendingKey{unit: u.ID, filter: name})
 			case kind == filter.ActionNeedBody:
 				pending[pendingKey{unit: u.ID, filter: name}] = true

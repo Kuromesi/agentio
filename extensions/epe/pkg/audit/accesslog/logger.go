@@ -39,10 +39,13 @@ const DefaultBufferSize = 4096
 // Entry is the per-request audit payload assembled by the request handler.
 //
 // Outcome takes one of: "passthrough", "mutated", "blocked", "bypassed",
-// "error". Actions records every filter that materially acted on the
-// request in the form "<filter>:<ns>/<profile>/<rule>#<ordinal>" (the
-// UnitID string). Skipped counts filters that failed open or asked for a body
-// that never resolved. Units counts matched policy units (rules), not profiles.
+// "error", and is derived from what EPE actually sent Envoy — see
+// extproc/outcome.go. Actions records every filter that materially acted on
+// the request in the form "<filter>:<kind>:<ns>/<profile>/<rule>#<ordinal>",
+// where kind is block, bypass, or mutate; an explicit bypass is visible only
+// here, never in Outcome. Skipped counts filters that failed open or asked for
+// a body that never resolved. Units counts matched policy units (rules), not
+// profiles.
 type Entry struct {
 	RequestID string
 	Pod       types.NamespacedName

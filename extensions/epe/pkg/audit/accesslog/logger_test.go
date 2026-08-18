@@ -87,7 +87,7 @@ func sampleEntry(suffix string) Entry {
 		Path:    "/v1/chat/completions",
 		Units:   1,
 		Outcome: "mutated",
-		Actions: []string{"mutator:default/p/r"},
+		Actions: []string{"mutator:mutate:default/p/r#0"},
 		Skipped: map[string]int{},
 	}
 }

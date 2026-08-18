@@ -31,7 +31,7 @@ import (
 
 // VerdictKind is the wire-level classification of a response sequence.
 // Bypass and passthrough are indistinguishable on the wire; use
-// Verdict.Info (captured by the harness probe) to tell them apart.
+// Verdict.AccessLog's outcome (see Verdict.outcome) to tell them apart.
 type VerdictKind string
 
 const (
@@ -99,7 +99,9 @@ type Verdict struct {
 	// InfoProbe; nil when the probe was disabled or never invoked.
 	Info *filter.StreamInfo
 
-	// AccessLog holds every entry submitted to the harness audit logger.
+	// AccessLog holds the entries the harness audit logger captured for this
+	// run alone; RunMessages resets the logger first, so earlier requests in
+	// the same test do not leak in.
 	AccessLog []accesslog.Entry
 
 	// Raw preserves the full ordered response sequence (read-only: some
@@ -318,44 +320,71 @@ func (v *Verdict) RequireBlockedBody(t *testing.T, wantStatus int, wantBodyConta
 	}
 }
 
-// RequirePassthrough asserts the request passed through unmodified and, when
-// the probe captured a resolution, that the outcome was "passthrough".
+// singleEntry returns the one accesslog entry this run produced. AccessLog holds
+// this run alone and one request audits exactly once, so any other count is a
+// harness or server bug rather than an index to reach past.
+func (v *Verdict) singleEntry(t *testing.T) accesslog.Entry {
+	t.Helper()
+	if len(v.AccessLog) != 1 {
+		t.Fatalf("want exactly 1 accesslog entry, got %d: %+v", len(v.AccessLog), v.AccessLog)
+	}
+	return v.AccessLog[0]
+}
+
+// outcome returns the outcome the product logged for this stream. The accesslog
+// is EPE's real output, so it is what assertions are worth making against.
+func (v *Verdict) outcome(t *testing.T) string {
+	t.Helper()
+	return v.singleEntry(t).Outcome
+}
+
+// RequirePassthrough asserts the request passed through unmodified and that no
+// policy unit matched it — which is what passthrough now means.
 func (v *Verdict) RequirePassthrough(t *testing.T) {
 	t.Helper()
 	v.requireNoErr(t)
 	if v.Kind != VerdictPassthrough {
 		t.Fatalf("verdict = %s, want passthrough (raw=%v)", v.Kind, v.Raw)
 	}
-	if v.Info != nil && v.Info.Disposition.String() != "passthrough" {
-		t.Fatalf("disposition = %q, want passthrough", v.Info.Disposition)
+	if got := v.outcome(t); got != "passthrough" {
+		t.Fatalf("outcome = %q, want passthrough", got)
 	}
 }
 
-// RequireBypassed asserts the wire shape is passthrough and the resolved
-// outcome is "bypassed" — the only way to distinguish the two.
+// RequireBypassed asserts the wire shape changed nothing while at least one
+// policy unit matched. Note this no longer implies a bypass rule fired: under
+// the derived outcome, "bypassed" means matched-but-unmodified. Assert
+// RequireAction(t, ":bypass:") when the exemption itself is the subject.
 func (v *Verdict) RequireBypassed(t *testing.T) {
 	t.Helper()
 	v.requireNoErr(t)
 	if v.Kind != VerdictPassthrough {
 		t.Fatalf("verdict = %s, want passthrough wire shape for bypass (raw=%v)", v.Kind, v.Raw)
 	}
-	if v.Info == nil {
-		t.Fatal("no resolution captured; bypass cannot be distinguished from passthrough (probe disabled?)")
-	}
-	if v.Info.Disposition.String() != "bypassed" {
-		t.Fatalf("disposition = %q, want bypassed", v.Info.Disposition)
+	if got := v.outcome(t); got != "bypassed" {
+		t.Fatalf("outcome = %q, want bypassed", got)
 	}
 }
 
-// RequireOutcome asserts the resolved outcome string.
+// RequireOutcome asserts the logged outcome string.
 func (v *Verdict) RequireOutcome(t *testing.T, want string) {
 	t.Helper()
-	if v.Info == nil {
-		t.Fatal("no resolution captured (probe disabled?)")
+	if got := v.outcome(t); got != want {
+		t.Fatalf("outcome = %q, want %q", got, want)
 	}
-	if v.Info.Disposition.String() != want {
-		t.Fatalf("disposition = %q, want %q", v.Info.Disposition, want)
+}
+
+// RequireAction asserts some audited action contains want, e.g. ":bypass:" for
+// an explicit exemption or "mcpacl:block:" for a named filter's verdict.
+func (v *Verdict) RequireAction(t *testing.T, want string) {
+	t.Helper()
+	entry := v.singleEntry(t)
+	for _, a := range entry.Actions {
+		if strings.Contains(a, want) {
+			return
+		}
 	}
+	t.Fatalf("no audited action contains %q; actions = %v", want, entry.Actions)
 }
 
 // RequireGRPCCode asserts Process returned an error with the given code.

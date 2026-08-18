@@ -147,8 +147,11 @@ func TestHandleRequestHeaders_BypassMatched_ForwardsUnmodified(t *testing.T) {
       bypass: true
 `))
 
-	h.Run(t, blockedPeerRequest("GET", "internal.local", "/anything")).
-		RequireBypassed(t)
+	verdict := h.Run(t, blockedPeerRequest("GET", "internal.local", "/anything"))
+	verdict.RequireBypassed(t)
+	// The subject is the exemption itself, and "bypassed" alone only means
+	// matched-but-unmodified: name the action that produced it.
+	verdict.RequireAction(t, ":bypass:")
 }
 
 // TestHandleRequestHeaders_BypassNotMatched_FallsThroughToBlock verifies the
@@ -184,8 +187,11 @@ func TestHandleRequestHeaders_BypassBeatsBlockSameRule(t *testing.T) {
         statusCode: 403
 `))
 
-	h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x")).
-		RequireBypassed(t)
+	verdict := h.Run(t, blockedPeerRequest("GET", "api.example.com", "/x"))
+	verdict.RequireBypassed(t)
+	// Bypass beating Block within the rule is the claim, so the bypass action
+	// has to be the one on record.
+	verdict.RequireAction(t, ":bypass:")
 }
 
 // TestHandleRequestHeaders_BypassRuleSkipsLaterBlockRule verifies cross-rule
@@ -208,8 +214,11 @@ func TestHandleRequestHeaders_BypassRuleSkipsLaterBlockRule(t *testing.T) {
         statusCode: 403
 `))
 
-	h.Run(t, blockedPeerRequest("GET", "internal.local", "/anything")).
-		RequireBypassed(t)
+	verdict := h.Run(t, blockedPeerRequest("GET", "internal.local", "/anything"))
+	verdict.RequireBypassed(t)
+	// The earlier bypass rule is what must have fired, not merely some rule
+	// that matched and left the wire alone.
+	verdict.RequireAction(t, ":bypass:")
 }
 
 // TestHandleRequestHeaders_BlockRuleBeatsLaterBypassRule sanity-checks the

@@ -1526,8 +1526,10 @@ func TestEvalResponseHeaders_FailClosedSynthesisesBlocked(t *testing.T) {
 	if len(res.HeaderOps) != 0 {
 		t.Errorf("HeaderOps = %+v, want none on a blocked response", res.HeaderOps)
 	}
-	if st.Info.Disposition != DispositionBlocked {
-		t.Errorf("stream disposition = %v, want Blocked", st.Info.Disposition)
+	// The fail-closed error must also reach the audit record; the outcome
+	// itself is derived by extproc from the response it sends.
+	if st.Info.Error != "boom" {
+		t.Errorf("stream error = %q, want the filter's error retained", st.Info.Error)
 	}
 }
 
@@ -1560,9 +1562,7 @@ func TestEvalResponseHeaders_FailOpenIsRecorded(t *testing.T) {
 	if !slices.Contains(acts, "flaky:error-open") {
 		t.Errorf("unit actions = %v, want the fail-open skip recorded", acts)
 	}
-	if st.Info.Disposition != DispositionMutated {
-		t.Errorf("stream disposition = %v, want Mutated", st.Info.Disposition)
-	}
+	requireDisposition(t, res.Disposition, DispositionMutated)
 }
 
 func TestEval_BypassDoesNotInvokeOrRecordFollowingBlock(t *testing.T) {
@@ -1583,14 +1583,15 @@ func TestEval_BypassDoesNotInvokeOrRecordFollowingBlock(t *testing.T) {
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{Info: filter.NewStreamInfo()}
 	// unit 0: bypass; unit 1: block (skipped, never evaluated)
-	if _, err := e.EvalRequestHeaders(context.Background(), st, unitsFor([][]string{
+	res, err := e.EvalRequestHeaders(context.Background(), st, unitsFor([][]string{
 		{"y", ""},
 		{"", "b"},
-	})); err != nil {
+	}))
+	if err != nil {
 		t.Fatalf("Eval: %v", err)
 	}
-	if st.Info.Disposition != DispositionBypassed {
-		t.Fatalf("Disposition = %v, want Bypassed", st.Info.Disposition)
+	if res.Disposition != DispositionBypassed {
+		t.Fatalf("Disposition = %v, want Bypassed", res.Disposition)
 	}
 	var blockSeen, winner bool
 	for _, u := range st.Info.Matched {
@@ -1618,7 +1619,8 @@ func TestEval_FilterRecordsIncludeFailOpenErr(t *testing.T) {
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{Info: filter.NewStreamInfo()}
-	if _, err := e.EvalRequestHeaders(context.Background(), st, unitsFor([][]string{{"f"}})); err != nil {
+	res, err := e.EvalRequestHeaders(context.Background(), st, unitsFor([][]string{{"f"}}))
+	if err != nil {
 		t.Fatalf("Eval: %v", err)
 	}
 	if len(st.Info.Filters) != 1 {
@@ -1628,8 +1630,8 @@ func TestEval_FilterRecordsIncludeFailOpenErr(t *testing.T) {
 	if rec.Filter != "flaky" || rec.Outcome != "error" || rec.Err == nil {
 		t.Errorf("record = %+v; the swallowed error must be visible", rec)
 	}
-	if st.Info.Disposition != DispositionPassthrough {
-		t.Errorf("Disposition = %v; fail-open must not fail the stream", st.Info.Disposition)
+	if res.Disposition != DispositionPassthrough {
+		t.Errorf("Disposition = %v; fail-open must not fail the stream", res.Disposition)
 	}
 }
 

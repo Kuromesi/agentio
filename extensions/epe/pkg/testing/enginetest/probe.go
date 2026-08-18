@@ -23,8 +23,14 @@ import (
 )
 
 // InfoProbe is appended to the harness's stream loggers to capture the
-// authoritative StreamInfo of each stream. It is the only way a test can
-// distinguish bypassed from passthrough.
+// authoritative StreamInfo of each stream: the matched units and the recorded
+// error, neither of which appears on the wire.
+//
+// It is not how a test should read the audit outcome — Verdict.AccessLog is
+// EPE's real output, and Verdict.outcome reads it. The probe does see
+// Info.Outcome after derivation, because finishStream derives it before running
+// the logger loop, so the few tests that assert Info.Outcome are reading the
+// same derived value the accesslog carries.
 type InfoProbe struct {
 	mu      sync.Mutex
 	infos   []*filter.StreamInfo

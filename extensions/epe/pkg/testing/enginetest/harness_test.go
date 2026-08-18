@@ -50,3 +50,25 @@ func TestHarnessRunsInjectedResolver(t *testing.T) {
 		Peer("test", "pod", map[string]string{"app": "test"})).
 		RequireBlockedBody(t, 451, "blocked-neutral")
 }
+
+// Verdict.AccessLog documents itself as the entries for one run, so a second
+// Run must not still carry the first one's entry. Info is already scoped this
+// way; the audit log has to agree, or every outcome assertion on the second
+// request in a test reads an entry from the first.
+func TestHarness_AccessLogIsScopedToOneRun(t *testing.T) {
+	resolve := func(_ context.Context, _ inputs.Pod, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+		return engine.Resolution{}, nil
+	}
+	h := New(t, Options{Resolve: resolve})
+	req := func() *RequestBuilder {
+		return NewRequest("GET", "server.example.com", "/x").
+			Peer("test", "pod", map[string]string{"app": "test"})
+	}
+
+	if got := h.Run(t, req()); len(got.AccessLog) != 1 {
+		t.Fatalf("first run AccessLog = %+v, want exactly 1 entry", got.AccessLog)
+	}
+	if got := h.Run(t, req()); len(got.AccessLog) != 1 {
+		t.Fatalf("second run AccessLog = %+v, want only its own entry", got.AccessLog)
+	}
+}

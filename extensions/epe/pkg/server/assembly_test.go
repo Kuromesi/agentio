@@ -147,7 +147,13 @@ spec:
 	}
 
 	run("/grpc/blocked").RequireBlockedBody(t, 451, "blocked-over-grpc")
-	run("/grpc/open").RequirePassthrough(t)
+	// This drives the real gRPC server rather than enginetest.Harness, so there
+	// is no capturing audit logger and RequirePassthrough (which reads the
+	// logged outcome) has nothing to read. The wire shape is what this test is
+	// about anyway: the open path must come back unmodified.
+	if got := run("/grpc/open"); got.Kind != enginetest.VerdictPassthrough {
+		t.Fatalf("verdict = %s, want passthrough over gRPC (raw=%v)", got.Kind, got.Raw)
+	}
 }
 
 func sendAll(stream extProcPb.ExternalProcessor_ProcessClient, msgs []*extProcPb.ProcessingRequest) error {

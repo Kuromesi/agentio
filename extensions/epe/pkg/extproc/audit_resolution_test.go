@@ -70,10 +70,10 @@ func TestStreamEnd_BodyPhaseDenyIsAudited(t *testing.T) {
 	fp := &bodyProbe{bodyAct: filter.Stop(filter.Reply{Status: 403, Body: []byte("denied in body phase")})}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-deny-test", fp)}, cap)
 
-	resp, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	resp, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
 		Body:        []byte(`{"method":"tools/call"}`),
 		EndOfStream: true,
-	}, state)
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,9 +104,9 @@ func TestStreamEnd_BodyPhaseMutateIsAudited(t *testing.T) {
 	fp := &bodyProbe{bodyAct: filter.Continue(filter.SetHeader("x-body-phase", "1"))}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-mutate-test", fp)}, cap)
 
-	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	if _, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
 		Body: []byte(`{}`), EndOfStream: true,
-	}, state); err != nil {
+	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.finishStream(context.Background(), state, nil)
@@ -130,9 +130,9 @@ func TestStreamEnd_BodyPhaseErrorIsAudited(t *testing.T) {
 	fp := &bodyProbe{bodyErr: errors.New("boom")}
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-err-test", fp)}, cap)
 
-	responses, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
+	responses, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
 		Body: []byte(`{}`), EndOfStream: true,
-	}, state)
+	})
 	if err != nil {
 		t.Fatalf("configured FailClosed returned handler error: %v", err)
 	}

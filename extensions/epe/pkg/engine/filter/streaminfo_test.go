@@ -15,26 +15,6 @@ package filter
 
 import "testing"
 
-// The promotion order is audit-visible behavior, not bookkeeping.
-func TestPromoteDisposition_RankOrder(t *testing.T) {
-	cases := []struct {
-		a, b, want Disposition
-	}{
-		{DispositionPassthrough, DispositionMutated, DispositionMutated},
-		{DispositionMutated, DispositionBlocked, DispositionBlocked},
-		{DispositionBlocked, DispositionBypassed, DispositionBypassed},
-		{DispositionBypassed, DispositionError, DispositionError},
-		{DispositionError, DispositionPassthrough, DispositionError},
-		{DispositionBlocked, DispositionMutated, DispositionBlocked},
-		{DispositionMutated, DispositionMutated, DispositionMutated},
-	}
-	for _, tc := range cases {
-		if got := PromoteDisposition(tc.a, tc.b); got != tc.want {
-			t.Errorf("Promote(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
-		}
-	}
-}
-
 func TestDispositionStrings(t *testing.T) {
 	want := map[Disposition]string{
 		DispositionPassthrough: "passthrough",

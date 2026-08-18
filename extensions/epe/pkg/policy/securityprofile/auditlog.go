@@ -47,7 +47,7 @@ func newStreamLogger(sink audit.Sink, units []unit) *streamLogger {
 
 // Log implements filter.StreamLogger.
 func (l *streamLogger) Log(_ context.Context, st *filter.Stream, info *filter.StreamInfo) {
-	result := info.Disposition.String()
+	result := info.Outcome.String()
 	for i := range l.units {
 		u := &l.units[i]
 		if !u.HasAudits {

@@ -105,7 +105,11 @@ func TestHarness_BypassDistinguishedFromPassthrough(t *testing.T) {
 	h := New(t, Options{})
 	h.Fixture.ApplyYAML(bypassProfileYAML("bypass", "/bypassed", -1))
 
-	h.Run(t, testRequest("/bypassed")).RequireBypassed(t)
+	bypassed := h.Run(t, testRequest("/bypassed"))
+	bypassed.RequireBypassed(t)
+	// The test's name is about telling bypass from passthrough, which after the
+	// outcome derivation needs the action, not just the outcome.
+	bypassed.RequireAction(t, ":bypass:")
 	h.Run(t, testRequest("/other")).RequirePassthrough(t)
 }
 
@@ -122,16 +126,12 @@ func TestHarness_AccessLogCapturesOutcome(t *testing.T) {
 	verdict := h.Run(t, testRequest("/logged").RequestID("req-123"))
 	verdict.RequireBlocked(t, 451)
 
-	entries := verdict.AccessLog
-	if len(entries) == 0 {
-		t.Fatal("no access log entries captured")
+	e := accessLogEntry(t, verdict)
+	if e.RequestID != "req-123" {
+		t.Errorf("access log request id = %q, want req-123", e.RequestID)
 	}
-	last := entries[len(entries)-1]
-	if last.RequestID != "req-123" {
-		t.Errorf("access log request id = %q, want req-123", last.RequestID)
-	}
-	if last.Outcome != "blocked" {
-		t.Errorf("access log outcome = %q, want blocked", last.Outcome)
+	if e.Outcome != "blocked" {
+		t.Errorf("access log outcome = %q, want blocked", e.Outcome)
 	}
 }
 
@@ -257,8 +257,8 @@ func TestHarness_ProbeCapturesMatchedRules(t *testing.T) {
 	if verdict.Info == nil {
 		t.Fatal("no stream info captured")
 	}
-	if verdict.Info.Disposition.String() != "blocked" {
-		t.Errorf("disposition = %q, want blocked", verdict.Info.Disposition)
+	if verdict.Info.Outcome.String() != "blocked" {
+		t.Errorf("outcome = %q, want blocked", verdict.Info.Outcome)
 	}
 	if len(verdict.Info.Matched) == 0 {
 		t.Error("stream info has no matched units")

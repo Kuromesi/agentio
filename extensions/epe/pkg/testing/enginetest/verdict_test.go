@@ -20,6 +20,8 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
 )
 
 func setOpt(key, value string, action corev3.HeaderValueOption_HeaderAppendAction) *corev3.HeaderValueOption {
@@ -175,4 +177,19 @@ func TestParseVerdict_ResponseOnlyMutationDoesNotChangeRequestKind(t *testing.T)
 	if len(v.ResponseHeaderOps) != 1 {
 		t.Errorf("ResponseHeaderOps = %+v, want the response removal recorded", v.ResponseHeaderOps)
 	}
+}
+
+// The harness must assert the outcome the product actually logs, not the
+// internal field the probe scraped. They agree after derivation; asserting the
+// log is what catches them disagreeing.
+func TestRequireOutcome_ReadsTheAccessLogEntry(t *testing.T) {
+	v := &Verdict{
+		Kind: VerdictPassthrough,
+		AccessLog: []accesslog.Entry{{
+			Outcome: "bypassed",
+			Units:   1,
+		}},
+	}
+	// Passes without failing the test.
+	v.RequireOutcome(t, "bypassed")
 }

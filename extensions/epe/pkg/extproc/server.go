@@ -166,7 +166,9 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 			logger.V(logging.DEFAULT).Error(err, "Failed to process request",
 				"messageType", messageTypeName(req))
 			// Send any policy response returned with the handler error, then return
-			// the original error.
+			// the original error. The effect is deliberately not observed here:
+			// this path always returns an error, and error outranks every effect
+			// in deriveOutcome, so observing could not change the outcome.
 			for _, resp := range responses {
 				if sendErr := srv.Send(resp); sendErr != nil {
 					logger.V(logging.DEFAULT).Error(sendErr, "Send failed while surfacing a handler error")
@@ -189,6 +191,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 				logger.V(logging.DEFAULT).Error(err, "Send failed")
 				return status.Errorf(codes.Unknown, "failed to send response back to Envoy: %v", err)
 			}
+			state.effect.observe(classifyResponse(resp))
 		}
 		s.finishAfterSend(ctx, state)
 	}
@@ -204,13 +207,13 @@ func (s *Server) finishStream(ctx context.Context, state *streamState, err error
 	info := state.stream.Info
 	if err != nil {
 		info.Error = err.Error()
-		info.Promote(filter.DispositionError)
 	}
+	info.Outcome = deriveOutcome(state.effect, err != nil, len(info.Matched))
 	for _, l := range s.loggers {
 		l.Log(ctx, state.stream, info)
 	}
 	// The resolver's per-stream logger runs last: after the static list, and
-	// after the error promotion above, so it observes the final disposition.
+	// after the outcome derivation above, so it observes the final outcome.
 	if state.streamLogger != nil {
 		state.streamLogger.Log(ctx, state.stream, info)
 	}
@@ -274,6 +277,10 @@ type streamState struct {
 
 	// Lifecycle / audit — see streamLifecycle.
 	lifecycle streamLifecycle
+	// effect is the strongest message effect actually sent to Envoy on this
+	// stream, and the audit outcome's main input. Observed after each Send so a
+	// response Envoy never accepted is never reported as enforcement.
+	effect messageEffect
 }
 
 func newStreamState() *streamState {

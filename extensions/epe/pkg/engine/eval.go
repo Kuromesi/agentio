@@ -392,22 +392,16 @@ type responseWalk struct {
 	continuation *responseContinuation
 }
 
-// record and promote keep phase walkers from restating the unit and filter
-// already carried by a pair. StreamInfo's mutators tolerate a nil receiver.
+// record keeps phase walkers from restating the unit and filter already
+// carried by a pair. StreamInfo's mutators tolerate a nil receiver.
 func (w *actionWalk) record(p pair, kind string) {
 	w.st.Info.RecordUnitAction(p.unit.ID, p.reg.Name, kind)
 }
 
-func (w *actionWalk) promote(d Disposition) {
-	w.st.Info.Promote(d)
-}
-
 // resolved reports the disposition a finished walk settles on: a walk that
-// accumulated mutations but reached no verdict is Mutated. It promotes into
-// StreamInfo as a side effect, so call it exactly once per walk.
+// accumulated mutations but reached no verdict is Mutated.
 func (w *actionWalk) resolved() Disposition {
 	if w.disposition == DispositionPassthrough && len(w.pending) > 0 {
-		w.promote(DispositionMutated)
 		return DispositionMutated
 	}
 	return w.disposition
@@ -553,12 +547,10 @@ func (w *actionWalk) apply(p pair, act filter.Action) error {
 		w.reply, _ = act.Reply()
 		w.disposition = DispositionBlocked
 		w.pending = nil
-		w.promote(DispositionBlocked)
 		w.record(p, filter.ActionBlock)
 		return nil
 	case filter.KindBypass:
 		w.disposition = DispositionBypassed
-		w.promote(DispositionBypassed)
 		w.record(p, filter.ActionBypass)
 		return nil
 	case filter.KindContinue:
@@ -766,12 +758,11 @@ func (w *actionWalk) filterFailed(p pair, phase filter.Phase, err error) {
 	w.pending = nil
 	w.disposition = DispositionBlocked
 	w.reply = filter.Reply{Status: failClosedStatus, Details: failClosedDetails(phase)}
-	// Info is a plain field write, so unlike record and promote it cannot lean
-	// on StreamInfo's nil-receiver tolerance.
+	// Info is a plain field write, so unlike record it cannot lean on
+	// StreamInfo's nil-receiver tolerance.
 	if w.st.Info != nil {
 		w.st.Info.Error = err.Error()
 	}
-	w.promote(DispositionBlocked)
 	w.record(p, filter.ActionBlock)
 }
 
