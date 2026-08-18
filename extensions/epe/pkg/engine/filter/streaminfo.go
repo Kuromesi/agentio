@@ -48,12 +48,16 @@ func (d Disposition) String() string {
 	}
 }
 
+// UnitAction is one filter's action on one policy unit.
+type UnitAction struct {
+	Filter string
+	Kind   UnitActionKind
+}
+
 // UnitRecord is one matched policy unit and what each filter did to it.
 type UnitRecord struct {
-	ID UnitID
-	// FilterActions entries are "<filter>:<kind>" strings, e.g.
-	// "block:block", "mcpacl:need-body".
-	FilterActions []string
+	ID            UnitID
+	FilterActions []UnitAction
 }
 
 // FilterRecord is one filter invocation as the framework observed it.
@@ -87,35 +91,44 @@ func NewStreamInfo() *StreamInfo {
 	return &StreamInfo{}
 }
 
-// The unit action kinds RecordUnitAction encodes into its "<filter>:<kind>"
-// wire format. They live here rather than in the engine because both ends of
-// that format need them: the engine writes them, and audit sinks match on them
-// when reading a record back.
+// UnitActionKind names what a filter did to one policy unit, for audit. It is
+// deliberately not ActionKind, which names what a filter *decided*
+// (action.go:20): this vocabulary is a projection of that one onto what an
+// operator can see, and the two differ — error-open has no Action counterpart,
+// and mutate is inferred from pending mutations rather than from any kind.
+//
+// It is a distinct type so a kind outside the vocabulary below cannot be
+// recorded by accident: an unconverted string literal does not compile.
+type UnitActionKind string
+
+// The unit action kinds. They live here rather than in the engine because both
+// ends need them — the engine records them, and the accesslog reader matches on
+// them to decide which are audit-visible actions and which only mark a filter
+// as skipped.
 const (
-	ActionBlock     = "block"
-	ActionBypass    = "bypass"
-	ActionMutate    = "mutate"
-	ActionNeedBody  = "need-body"
-	ActionErrorOpen = "error-open"
+	ActionBlock     UnitActionKind = "block"
+	ActionBypass    UnitActionKind = "bypass"
+	ActionMutate    UnitActionKind = "mutate"
+	ActionNeedBody  UnitActionKind = "need-body"
+	ActionErrorOpen UnitActionKind = "error-open"
 )
 
-// RecordUnitAction appends one "<filter>:<kind>" action to the unit's
-// record, creating it on first touch. kind should be one of the ActionXxx
-// constants. A nil *StreamInfo is a no-op: a Stream may carry no info (filters
-// and tests build one without), and every call site would otherwise restate
-// that guard.
-func (i *StreamInfo) RecordUnitAction(id UnitID, filterName, kind string) {
+// RecordUnitAction appends one action to the unit's record, creating it on first
+// touch. A nil *StreamInfo is a no-op: a Stream may carry no info (filters and
+// tests build one without), and every call site would otherwise restate that
+// guard.
+func (i *StreamInfo) RecordUnitAction(id UnitID, filterName string, kind UnitActionKind) {
 	if i == nil {
 		return
 	}
-	action := filterName + ":" + kind
+	action := UnitAction{Filter: filterName, Kind: kind}
 	for idx := range i.Matched {
 		if i.Matched[idx].ID == id {
 			i.Matched[idx].FilterActions = append(i.Matched[idx].FilterActions, action)
 			return
 		}
 	}
-	i.Matched = append(i.Matched, UnitRecord{ID: id, FilterActions: []string{action}})
+	i.Matched = append(i.Matched, UnitRecord{ID: id, FilterActions: []UnitAction{action}})
 }
 
 // RecordFilter appends one filter invocation record. A nil *StreamInfo is a

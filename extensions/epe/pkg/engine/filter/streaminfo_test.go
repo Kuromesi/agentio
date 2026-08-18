@@ -33,15 +33,18 @@ func TestDispositionStrings(t *testing.T) {
 func TestRecordUnitActionGroupsByUnit(t *testing.T) {
 	info := NewStreamInfo()
 	id := UnitID{Scope: "ns/p", Name: "r"}
-	info.RecordUnitAction(id, "block", "block")
-	info.RecordUnitAction(id, "audit", "observed")
+	info.RecordUnitAction(id, "block", ActionBlock)
+	// A kind outside the vocabulary, explicitly converted: grouping is the
+	// subject here, and the recorder is not the vocabulary's gatekeeper.
+	info.RecordUnitAction(id, "audit", UnitActionKind("observed"))
 	other := UnitID{Scope: "ns/p", Name: "r2", Ordinal: 1}
-	info.RecordUnitAction(other, "tt", "mutate")
+	info.RecordUnitAction(other, "tt", ActionMutate)
 
 	if len(info.Matched) != 2 {
 		t.Fatalf("Matched = %d records, want 2", len(info.Matched))
 	}
-	if len(info.Matched[0].FilterActions) != 2 || info.Matched[0].FilterActions[0] != "block:block" {
+	want := UnitAction{Filter: "block", Kind: ActionBlock}
+	if len(info.Matched[0].FilterActions) != 2 || info.Matched[0].FilterActions[0] != want {
 		t.Errorf("first unit actions = %v", info.Matched[0].FilterActions)
 	}
 }

@@ -717,15 +717,7 @@ func TestInvoke_FailOpenSkips(t *testing.T) {
 	if mutC.headerCalls != 1 {
 		t.Errorf("later filter ran %d times, want 1 — fail-open must not stop the chain", mutC.headerCalls)
 	}
-	foundOpen := false
-	for _, u := range st.Info.Matched {
-		for _, a := range u.FilterActions {
-			if a == "flaky:error-open" {
-				foundOpen = true
-			}
-		}
-	}
-	if !foundOpen {
+	if !slices.Contains(unitActions(st.Info), "flaky:error-open") {
 		t.Error("no error-open record for the failing filter")
 	}
 }
@@ -885,10 +877,14 @@ func TestEvalResponseHeaders(t *testing.T) {
 
 // --- response-phase subscription ---------------------------------------
 
+// unitActions renders every recorded action as "<filter>:<kind>", which is a
+// compact shape to assert against; the recorded form is a struct.
 func unitActions(info *filter.StreamInfo) []string {
 	var out []string
 	for _, u := range info.Matched {
-		out = append(out, u.FilterActions...)
+		for _, a := range u.FilterActions {
+			out = append(out, a.Filter+":"+string(a.Kind))
+		}
 	}
 	return out
 }
@@ -1596,10 +1592,10 @@ func TestEval_BypassDoesNotInvokeOrRecordFollowingBlock(t *testing.T) {
 	var blockSeen, winner bool
 	for _, u := range st.Info.Matched {
 		for _, a := range u.FilterActions {
-			if strings.HasPrefix(a, "block:") {
+			if a.Filter == "block" {
 				blockSeen = true
 			}
-			if a == "bypass:bypass" {
+			if a.Filter == "bypass" && a.Kind == filter.ActionBypass {
 				winner = true
 			}
 		}

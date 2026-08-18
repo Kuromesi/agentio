@@ -15,7 +15,6 @@ package accesslog
 
 import (
 	"context"
-	"strings"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
@@ -37,7 +36,7 @@ func NewStreamLog(l Logger) *StreamLog {
 var _ filter.StreamLogger = (*StreamLog)(nil)
 
 // committedKinds are the unit actions that count as "the filter acted".
-var committedKinds = map[string]bool{
+var committedKinds = map[filter.UnitActionKind]bool{
 	filter.ActionBlock:  true,
 	filter.ActionBypass: true,
 	filter.ActionMutate: true,
@@ -66,19 +65,15 @@ func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.Strea
 	pending := map[pendingKey]bool{}
 
 	for _, u := range info.Matched {
-		for _, action := range u.FilterActions {
-			name, kind, ok := strings.Cut(action, ":")
-			if !ok {
-				continue
-			}
+		for _, a := range u.FilterActions {
 			switch {
-			case committedKinds[kind]:
-				entry.Actions = append(entry.Actions, name+":"+kind+":"+u.ID.String())
-				delete(pending, pendingKey{unit: u.ID, filter: name})
-			case kind == filter.ActionNeedBody:
-				pending[pendingKey{unit: u.ID, filter: name}] = true
-			case kind == filter.ActionErrorOpen:
-				entry.Skipped[name]++
+			case committedKinds[a.Kind]:
+				entry.Actions = append(entry.Actions, a.Filter+":"+string(a.Kind)+":"+u.ID.String())
+				delete(pending, pendingKey{unit: u.ID, filter: a.Filter})
+			case a.Kind == filter.ActionNeedBody:
+				pending[pendingKey{unit: u.ID, filter: a.Filter}] = true
+			case a.Kind == filter.ActionErrorOpen:
+				entry.Skipped[a.Filter]++
 			}
 		}
 	}

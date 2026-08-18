@@ -394,7 +394,7 @@ type responseWalk struct {
 
 // record keeps phase walkers from restating the unit and filter already
 // carried by a pair. StreamInfo's mutators tolerate a nil receiver.
-func (w *actionWalk) record(p pair, kind string) {
+func (w *actionWalk) record(p pair, kind filter.UnitActionKind) {
 	w.st.Info.RecordUnitAction(p.unit.ID, p.reg.Name, kind)
 }
 
