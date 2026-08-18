@@ -15,12 +15,13 @@
 package agentio
 
 import (
+	"encoding/json"
 	"testing"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	networkwasm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/wasm/v3"
 	wasmextensions "github.com/envoyproxy/go-control-plane/envoy/extensions/wasm/v3"
-	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	networking "istio.io/api/networking/v1alpha3"
 	xdsconfig "istio.io/istio/pkg/config/xds"
@@ -34,7 +35,13 @@ func TestBuildSniPolicyWasmEnvoyFilter(t *testing.T) {
 	if cfg.Namespace != "istio-system" {
 		t.Fatalf("EnvoyFilter namespace = %q, want istio-system", cfg.Namespace)
 	}
-	patches := cfg.Spec.(*networking.EnvoyFilter).GetConfigPatches()
+	envoyFilter := cfg.Spec.(*networking.EnvoyFilter)
+	targetRefs := envoyFilter.GetTargetRefs()
+	if len(targetRefs) != 1 || targetRefs[0].GetGroup() != "gateway.networking.k8s.io" ||
+		targetRefs[0].GetKind() != "GatewayClass" || targetRefs[0].GetName() != "istio-waypoint" {
+		t.Fatalf("unexpected SNI Wasm EnvoyFilter targetRefs: %v", targetRefs)
+	}
+	patches := envoyFilter.GetConfigPatches()
 	if len(patches) != 1 || patches[0].GetApplyTo() != networking.EnvoyFilter_EXTENSION_CONFIG ||
 		patches[0].GetPatch().GetOperation() != networking.EnvoyFilter_Patch_ADD {
 		t.Fatalf("unexpected SNI Wasm EnvoyFilter patches: %v", patches)
@@ -62,14 +69,18 @@ func TestBuildSniPolicyWasmEnvoyFilter(t *testing.T) {
 	if got := wasmConfig.GetConfig().GetFailurePolicy(); got != wasmextensions.FailurePolicy_FAIL_CLOSED {
 		t.Fatalf("failure policy = %v, want FAIL_CLOSED", got)
 	}
-	pluginConfig := &structpb.Struct{}
+	pluginConfig := &wrapperspb.StringValue{}
 	if err := wasmConfig.GetConfig().GetConfiguration().UnmarshalTo(pluginConfig); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := pluginConfig.GetFields()["termination_cluster"].GetStringValue(), SniPolicyTerminationClusterName; got != want {
+	routeConfig := map[string]string{}
+	if err := json.Unmarshal([]byte(pluginConfig.GetValue()), &routeConfig); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := routeConfig["termination_cluster"], SniPolicyTerminationClusterName; got != want {
 		t.Fatalf("termination cluster = %q, want %q", got, want)
 	}
-	if got, want := pluginConfig.GetFields()["passthrough_cluster"].GetStringValue(), SniPolicyPassthroughClusterName; got != want {
+	if got, want := routeConfig["passthrough_cluster"], SniPolicyPassthroughClusterName; got != want {
 		t.Fatalf("passthrough cluster = %q, want %q", got, want)
 	}
 }

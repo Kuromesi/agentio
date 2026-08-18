@@ -192,7 +192,7 @@ func TestSniPolicyResources(t *testing.T) {
 		res, removed, _, usedDelta, err := gen.GenerateDeltas(proxy, newSniPolicyPush(true, nil), w)
 		assert.NoError(t, err)
 		assert.Equal(t, usedDelta, true)
-		assert.Equal(t, sets.SortedList(sets.New(names(res)...)), []string{"workload/ns/uid-1", "workload/ns/uid-2"})
+		assert.Equal(t, sets.SortedList(sets.New(names(res)...)), []string{"workload://ns/uid-1", "workload://ns/uid-2"})
 		assert.Equal(t, len(removed), 0)
 		// The payload must be the binding proto, not the wrapper.
 		assert.Equal(t, res[0].Resource.TypeUrl,
@@ -228,9 +228,9 @@ func TestSniPolicyForcedStaleResourceCleanup(t *testing.T) {
 			name:          "PolicyBinding workload reference names",
 			typeURL:       v3.PolicyBindingType,
 			bindings:      []model.PolicyBinding{testBinding("ns-live", "uid-live")},
-			watched:       sets.New("workload/ns-live/uid-z-stale", "workload/ns-live/uid-live", "workload/ns-live/uid-a-stale"),
-			wantResources: []string{"workload/ns-live/uid-live"},
-			wantRemoved:   []string{"workload/ns-live/uid-a-stale", "workload/ns-live/uid-z-stale"},
+			watched:       sets.New("workload://ns-live/uid-z-stale", "workload://ns-live/uid-live", "workload://ns-live/uid-a-stale"),
+			wantResources: []string{"workload://ns-live/uid-live"},
+			wantRemoved:   []string{"workload://ns-live/uid-a-stale", "workload://ns-live/uid-z-stale"},
 		},
 		{
 			name:          "SniTrafficPolicy resource name",
@@ -277,7 +277,7 @@ func TestSniPolicySotWAdapter(t *testing.T) {
 		newSniPolicyPush(true, nil),
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, names(res), []string{"workload/ns/uid-1"})
+	assert.Equal(t, names(res), []string{"workload://ns/uid-1"})
 	assert.Equal(t, details, model.XdsLogDetails{})
 }
 
@@ -349,8 +349,8 @@ func TestPolicyBindingRemovalName(t *testing.T) {
 	gen := agentioResourceGeneratorForType(t, s, v3.PolicyBindingType)
 
 	updated := sets.New(
-		model.PolicyBinding{Name: "workload/ns/gone"}.ConfigKey(),
-		model.PolicyBinding{Name: "workload/ns/live"}.ConfigKey(),
+		model.PolicyBinding{Name: "workload://ns/gone"}.ConfigKey(),
+		model.PolicyBinding{Name: "workload://ns/live"}.ConfigKey(),
 	)
 	// These are xDS resources, so the synthetic key has no Kubernetes namespace.
 	for k := range updated {
@@ -362,8 +362,8 @@ func TestPolicyBindingRemovalName(t *testing.T) {
 	res, removed, _, usedDelta, err := gen.GenerateDeltas(testAgentioProxy(), newSniPolicyPush(false, updated), w)
 	assert.NoError(t, err)
 	assert.Equal(t, usedDelta, true)
-	assert.Equal(t, names(res), []string{"workload/ns/live"})
-	assert.Equal(t, removed, []string{"workload/ns/gone"})
+	assert.Equal(t, names(res), []string{"workload://ns/live"})
+	assert.Equal(t, removed, []string{"workload://ns/gone"})
 
 	// The requested ConfigKey set must be forwarded to the index, not dropped.
 	assert.Equal(t, stub.requests[v3.PolicyBindingType], updated)
@@ -406,7 +406,7 @@ func TestSniPolicyIrrelevantIncrementalPush(t *testing.T) {
 		model.ConfigKey{Kind: kind.Service, Name: "svc", Namespace: "ns-a"},
 	)
 	proxy := testAgentioProxy()
-	held := sets.New("workload/ns/uid-1", "ns-a/live")
+	held := sets.New("workload://ns/uid-1", "ns-a/live")
 
 	for _, sub := range []struct {
 		typeURL string
@@ -425,7 +425,7 @@ func TestSniPolicyIrrelevantIncrementalPush(t *testing.T) {
 
 	// Cross-kind isolation: a PolicyBinding update must not make the SNI policy
 	// generator respond, and vice versa.
-	bindingOnly := sets.New(model.PolicyBinding{Name: "workload/ns/uid-1"}.ConfigKey())
+	bindingOnly := sets.New(model.PolicyBinding{Name: "workload://ns/uid-1"}.ConfigKey())
 	_, _, _, usedDelta, err := agentioResourceGeneratorForType(t, s, v3.SniTrafficPolicyType).GenerateDeltas(
 		proxy, newSniPolicyPush(false, bindingOnly),
 		&model.WatchedResource{TypeUrl: v3.SniTrafficPolicyType, ResourceNames: held})
@@ -453,7 +453,7 @@ func TestSniPolicyFeatureFlagOff(t *testing.T) {
 		[]model.AgentioResource{testPolicy("ns-a", "live")},
 	)
 	s := newSniPolicyServer(t, stub)
-	held := sets.New("workload/ns/uid-1", "ns-a/live")
+	held := sets.New("workload://ns/uid-1", "ns-a/live")
 
 	for _, sub := range []struct {
 		typeURL string
@@ -569,8 +569,8 @@ func TestSniPolicyDescriptors(t *testing.T) {
 		case v3.PolicyBindingType:
 			assert.Equal(t, descriptor.ConfigKind, kind.PolicyBinding)
 			assert.Equal(t, descriptor.ResourceNameFromKey(model.ConfigKey{
-				Name: "workload/ns/uid-1",
-			}), "workload/ns/uid-1")
+				Name: "workload://ns/uid-1",
+			}), "workload://ns/uid-1")
 		case v3.SniTrafficPolicyType:
 			assert.Equal(t, descriptor.ConfigKind, kind.SniTrafficPolicy)
 			assert.Equal(t, descriptor.ResourceNameFromKey(model.ConfigKey{

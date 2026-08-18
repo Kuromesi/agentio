@@ -72,9 +72,9 @@ func TestPolicyBindingResourceName(t *testing.T) {
 		name      string
 		want      string
 	}{
-		{testName: "pod NamespacedName", namespace: "ns", name: "pod-1", want: "workload/ns/pod-1"},
-		{testName: "default namespace", namespace: "default", name: "test", want: "workload/default/test"},
-		{testName: "empty reference", want: "workload//"},
+		{testName: "pod NamespacedName", namespace: "ns", name: "pod-1", want: "workload://ns/pod-1"},
+		{testName: "default namespace", namespace: "default", name: "test", want: "workload://default/test"},
+		{testName: "empty reference", want: "workload:///"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.testName, func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestPolicyBindingResourceNameMatchesHelper(t *testing.T) {
 	if got, want := p.ResourceName(), PolicyBindingResourceName("ns", "pod-1"); got != want {
 		t.Errorf("PolicyBinding.ResourceName() = %q, want %q", got, want)
 	}
-	if got, want := p.ResourceName(), "workload/ns/pod-1"; got != want {
+	if got, want := p.ResourceName(), "workload://ns/pod-1"; got != want {
 		t.Errorf("PolicyBinding.ResourceName() = %q, want %q", got, want)
 	}
 }
@@ -106,7 +106,7 @@ func policyBindingFor(namespace, name string, refs map[string]*extensions.Policy
 
 func TestPolicyBindingEquals(t *testing.T) {
 	base := PolicyBinding{
-		Name: "workload/ns/pod-1",
+		Name: "workload://ns/pod-1",
 		Binding: policyBindingFor("ns", "pod-1", map[string]*extensions.PolicyReference{
 			"type.googleapis.com/A": {ResourceNames: []string{"ns/a"}},
 		}),
@@ -122,7 +122,7 @@ func TestPolicyBindingEquals(t *testing.T) {
 			name: "same content different pointers",
 			a:    base,
 			b: PolicyBinding{
-				Name: "workload/ns/pod-1",
+				Name: "workload://ns/pod-1",
 				Binding: policyBindingFor("ns", "pod-1", map[string]*extensions.PolicyReference{
 					"type.googleapis.com/A": {ResourceNames: []string{"ns/a"}},
 				}),
@@ -132,14 +132,14 @@ func TestPolicyBindingEquals(t *testing.T) {
 		{
 			name:  "different resource name",
 			a:     base,
-			b:     PolicyBinding{Name: "workload/ns/pod-2", Binding: base.Binding},
+			b:     PolicyBinding{Name: "workload://ns/pod-2", Binding: base.Binding},
 			equal: false,
 		},
 		{
 			name: "different proto resource names",
 			a:    base,
 			b: PolicyBinding{
-				Name: "workload/ns/pod-1",
+				Name: "workload://ns/pod-1",
 				Binding: policyBindingFor("ns", "pod-1", map[string]*extensions.PolicyReference{
 					"type.googleapis.com/A": {ResourceNames: []string{"ns/b"}},
 				}),
@@ -150,7 +150,7 @@ func TestPolicyBindingEquals(t *testing.T) {
 			name: "different proto type url",
 			a:    base,
 			b: PolicyBinding{
-				Name: "workload/ns/pod-1",
+				Name: "workload://ns/pod-1",
 				Binding: policyBindingFor("ns", "pod-1", map[string]*extensions.PolicyReference{
 					"type.googleapis.com/B": {ResourceNames: []string{"ns/a"}},
 				}),
@@ -160,13 +160,13 @@ func TestPolicyBindingEquals(t *testing.T) {
 		{
 			name:  "nil vs non-nil proto",
 			a:     base,
-			b:     PolicyBinding{Name: "workload/ns/pod-1"},
+			b:     PolicyBinding{Name: "workload://ns/pod-1"},
 			equal: false,
 		},
 		{
 			name:  "both nil protos",
-			a:     PolicyBinding{Name: "workload/ns/pod-1"},
-			b:     PolicyBinding{Name: "workload/ns/pod-1"},
+			a:     PolicyBinding{Name: "workload://ns/pod-1"},
+			b:     PolicyBinding{Name: "workload://ns/pod-1"},
 			equal: true,
 		},
 	}
@@ -183,8 +183,8 @@ func TestPolicyBindingEquals(t *testing.T) {
 }
 
 func TestPolicyBindingConfigKey(t *testing.T) {
-	p := PolicyBinding{Name: "workload/ns/pod-1", Binding: policyBindingFor("ns", "pod-1", nil)}
-	want := ConfigKey{Kind: kind.PolicyBinding, Name: "workload/ns/pod-1"}
+	p := PolicyBinding{Name: "workload://ns/pod-1", Binding: policyBindingFor("ns", "pod-1", nil)}
+	want := ConfigKey{Kind: kind.PolicyBinding, Name: "workload://ns/pod-1"}
 	if got := p.ConfigKey(); !reflect.DeepEqual(got, want) {
 		t.Errorf("ConfigKey() = %+v, want %+v", got, want)
 	}

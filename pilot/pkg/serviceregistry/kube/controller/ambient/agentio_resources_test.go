@@ -148,7 +148,7 @@ func TestAgentioResourcesForProxy(t *testing.T) {
 	})
 
 	t.Run("unknown requested key returns nothing", func(t *testing.T) {
-		requested := sets.New(model.ConfigKey{Kind: kind.PolicyBinding, Name: "workload/ns/unknown"})
+		requested := sets.New(model.ConfigKey{Kind: kind.PolicyBinding, Name: "workload://ns/unknown"})
 		assert.Equal(t, len(a.AgentioResourcesForProxy(nil, xdsmodel.PolicyBindingType, requested)), 0)
 	})
 

@@ -252,18 +252,18 @@ fn fails_closed_for_sni_and_policy_snapshot_failures() {
 fn fails_closed_for_invalid_sni_and_route_write_failure() {
     let mut invalid_sni_host = host_with_rules(vec![rule("*", SniAction::Passthrough)]);
     invalid_sni_host.requested_server_name = Some("invalid sni".into());
-    let mut engine = engine();
+    let mut invalid_sni_engine = engine();
     assert_eq!(
-        engine.on_new_connection(&mut invalid_sni_host),
+        invalid_sni_engine.on_new_connection(&mut invalid_sni_host),
         EngineAction::Pause
     );
     assert_eq!(invalid_sni_host.closes, 1);
 
     let mut route_host = host_with_rules(vec![rule("*", SniAction::Passthrough)]);
     route_host.fail_set_cluster = true;
-    let mut engine = engine();
+    let mut route_engine = engine();
     assert_eq!(
-        engine.on_new_connection(&mut route_host),
+        route_engine.on_new_connection(&mut route_host),
         EngineAction::Pause
     );
     assert_eq!(route_host.closes, 1);

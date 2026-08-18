@@ -320,6 +320,7 @@ run_scenario() {
   local firewall_backend=$3
   local cluster_name="agentio-${scenario}"
   local arch=linux/amd64
+  local registry_address
 
   export ARTIFACTS="${ROOT_ARTIFACTS}/${scenario}"
   mkdir -p "${ARTIFACTS}"
@@ -328,11 +329,17 @@ run_scenario() {
   run_traced "setup ${scenario} kind cluster" \
     setup_kind_cluster_retry "${cluster_name}" "${NODE_IMAGE}" "" "" false || return $?
   run_traced "setup ${scenario} kind registry" setup_kind_registry "${cluster_name}" || return $?
+  registry_address=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}:5000' "${KIND_REGISTRY_NAME}")
+  if [[ ! "${registry_address}" =~ ^[0-9a-fA-F:.]+:[0-9]+$ ]]; then
+    echo "Unable to determine the in-cluster Agentio Wasm registry address: ${registry_address}" >&2
+    return 1
+  fi
 
   if [[ "${IMAGES_BUILT}" == "false" ]]; then
-    # agentio-epe is built but never deployed here: no scenario sets epe.enabled=true.
-    # It keeps the image build itself covered on every presubmit.
-    local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc docker.agentio-epe"
+    # The EPE and SNI policy suites enable their extensions from their own
+    # TestMain setup. The SNI Wasm image must therefore be available from the
+    # registry address reachable inside gateway pods for ECDS delivery.
+    local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc docker.agentio-epe docker.agentio-sni-policy-wasm"
     local target_arch
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
       arch=linux/arm64
@@ -376,6 +383,8 @@ run_scenario() {
     integration_test_flags="${integration_test_flags:+${integration_test_flags} }--istio.test.kube.agentio.helm.valuesFile=${VALUES_FILE}"
   fi
   env \
+    AGENTIO_E2E_SNI_POLICY_WASM_IMAGE="${registry_address}/agentio-sni-policy-wasm:${TAG}" \
+    AGENTIO_E2E_SNI_POLICY_WASM_INSECURE_REGISTRIES="${registry_address}" \
     AMBIENT_MODE="${ambient_mode}" \
     ENABLE_FIREWALL=true \
     FIREWALL_BACKEND="${firewall_backend}" \

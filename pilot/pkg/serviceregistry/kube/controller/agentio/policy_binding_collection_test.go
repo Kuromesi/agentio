@@ -249,7 +249,7 @@ func TestPolicyBindingCollection(t *testing.T) {
 
 		b, found := got[keyFor("pod", ns)]
 		assert.Equal(t, found, true)
-		assert.Equal(t, b.Name, "workload/ns/pod")
+		assert.Equal(t, b.Name, "workload://ns/pod")
 		assert.Equal(t, b.ResourceName(), model.PolicyBindingResourceName(ns, "pod"))
 	})
 
@@ -262,7 +262,7 @@ func TestPolicyBindingCollection(t *testing.T) {
 		// generator's diff misses updates.
 		assert.Equal(t, b.ConfigKey(), model.ConfigKey{
 			Kind: kind.PolicyBinding,
-			Name: "workload/ns/pod",
+			Name: "workload://ns/pod",
 		})
 	})
 

@@ -113,7 +113,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		// Not supported on legacy SotW protocol
 		mDiscovery = false
 	}
-	policyBindingDiscovery := cfg.Metadata.PolicyBindingDiscovery != nil && *cfg.Metadata.PolicyBindingDiscovery
+	policyBindingDiscovery := cfg.Metadata.PolicyBindingDiscovery != nil && bool(*cfg.Metadata.PolicyBindingDiscovery)
 	customSDSPath := ""
 	if _, f := cfg.RawMetadata[security.CredentialFileMetaDataName]; f {
 		customSDSPath = security.FileCredentialNameSocketPath

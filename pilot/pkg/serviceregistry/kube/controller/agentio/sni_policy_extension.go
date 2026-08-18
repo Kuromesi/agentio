@@ -15,6 +15,7 @@
 package agentio
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -24,13 +25,15 @@ import (
 	networkwasm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/wasm/v3"
 	wasmextensions "github.com/envoyproxy/go-control-plane/envoy/extensions/wasm/v3"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	networking "istio.io/api/networking/v1alpha3"
+	api "istio.io/api/type/v1beta1"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	"istio.io/istio/pkg/config"
+	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/schema/gvk"
 	"istio.io/istio/pkg/util/protomarshal"
 )
@@ -66,15 +69,19 @@ func buildSniPolicyWasmEnvoyFilter(rootNamespace, image string) (config.Config, 
 	if err != nil {
 		return config.Config{}, err
 	}
+	routeConfig, err := json.Marshal(map[string]string{
+		"termination_cluster": SniPolicyTerminationClusterName,
+		"passthrough_cluster": SniPolicyPassthroughClusterName,
+	})
+	if err != nil {
+		return config.Config{}, fmt.Errorf("encode SNI Wasm route config: %w", err)
+	}
 
 	wasmConfig := &networkwasm.Wasm{Config: &wasmextensions.PluginConfig{
 		Name:          sniPolicyWasmRootID,
 		RootId:        sniPolicyWasmRootID,
 		FailurePolicy: wasmextensions.FailurePolicy_FAIL_CLOSED,
-		Configuration: protoconv.MessageToAny(&structpb.Struct{Fields: map[string]*structpb.Value{
-			"termination_cluster": structpb.NewStringValue(SniPolicyTerminationClusterName),
-			"passthrough_cluster": structpb.NewStringValue(SniPolicyPassthroughClusterName),
-		}}),
+		Configuration: protoconv.MessageToAny(&wrapperspb.StringValue{Value: string(routeConfig)}),
 		Vm: &wasmextensions.PluginConfig_VmConfig{VmConfig: &wasmextensions.VmConfig{
 			Runtime: sniPolicyWasmRuntime,
 			Code: &core.AsyncDataSource{Specifier: &core.AsyncDataSource_Remote{Remote: &core.RemoteDataSource{
@@ -106,13 +113,20 @@ func buildSniPolicyWasmEnvoyFilter(rootNamespace, image string) (config.Config, 
 			Name:             sniPolicyWasmEnvoyFilter,
 			Namespace:        rootNamespace,
 		},
-		Spec: &networking.EnvoyFilter{ConfigPatches: []*networking.EnvoyFilter_EnvoyConfigObjectPatch{{
-			ApplyTo: networking.EnvoyFilter_EXTENSION_CONFIG,
-			Patch: &networking.EnvoyFilter_Patch{
-				Operation: networking.EnvoyFilter_Patch_ADD,
-				Value:     patchValue,
-			},
-		}}},
+		Spec: &networking.EnvoyFilter{
+			TargetRefs: []*api.PolicyTargetReference{{
+				Group: "gateway.networking.k8s.io",
+				Kind:  "GatewayClass",
+				Name:  constants.WaypointGatewayClassName,
+			}},
+			ConfigPatches: []*networking.EnvoyFilter_EnvoyConfigObjectPatch{{
+				ApplyTo: networking.EnvoyFilter_EXTENSION_CONFIG,
+				Patch: &networking.EnvoyFilter_Patch{
+					Operation: networking.EnvoyFilter_Patch_ADD,
+					Value:     patchValue,
+				},
+			}},
+		},
 	}, nil
 }
 
