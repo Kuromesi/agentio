@@ -2,7 +2,8 @@ name: agentio-release
 
 # Manually release the selected master or release branch commit. The workflow
 # creates the Agentio tag, builds and publishes all artifacts, tags the pinned
-# ztunnel commit, and creates the GitHub Release last.
+# ztunnel commit, creates the GitHub Release, and then proposes the released
+# chart to openkruise/charts.
 #
 # proxy is the only closed-source component mirrored from the internal ACR.
 # Traffic extensions such as agentio-epe are built from this repository and
@@ -19,6 +20,8 @@ name: agentio-release
 #   vars.PROXY_SOURCE_IMAGE — proxy repository without a tag or digest
 #   vars.AGENTIO_SYNC_APP_CLIENT_ID and secrets.AGENTIO_SYNC_APP_PRIVATE_KEY
 #                           — GitHub App with contents:write on openkruise/ztunnel
+#                             and contents:write + pull_requests:write on
+#                             openkruise/charts
 
 on:
   workflow_dispatch:
@@ -33,6 +36,7 @@ permissions:
 
 env:
   CHART: manifests/charts/agentio
+  CHART_REPOSITORY: openkruise/charts
   DOCKER_HUB: docker.io/openkruise
   PROXY_SOURCE_IMAGE: ${{ vars.PROXY_SOURCE_IMAGE }}
   ZTUNNEL_REPOSITORY: openkruise/ztunnel
@@ -293,6 +297,9 @@ jobs:
           # Update Chart.yaml version and appVersion
           sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
           sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
+          sed -i \
+            "s|See Agentio release notes: .*\"|See Agentio ${VERSION} release notes: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}\"|" \
+            "$CHART_DIR/Chart.yaml"
 
           # Pilot, proxy-init, proxy, CNI, ztunnel, and epe follow the Agentio release
           # version. Each sed matches the image `name:` and rewrites the `tag:` on the
@@ -326,6 +333,159 @@ jobs:
 
       - name: Push chart to Docker Hub
         run: helm push "/tmp/chart-pkg/agentio-${CHART_VERSION}.tgz" "oci://docker.io/openkruise"
+
+      - name: Upload released chart source
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: agentio-chart-${{ inputs.version }}
+          path: /tmp/chart-release/agentio
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  submit-chart-pr:
+    needs: create-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AGENTIO_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIO_SYNC_APP_PRIVATE_KEY }}
+          owner: openkruise
+          repositories: charts
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out OpenKruise charts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.CHART_REPOSITORY }}
+          ref: master
+          path: openkruise-charts
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Download released chart source
+        uses: actions/download-artifact@v7
+        with:
+          name: agentio-chart-${{ inputs.version }}
+          path: ${{ runner.temp }}/agentio-chart
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.16.2
+
+      - name: Publish chart branch and open pull request
+        working-directory: openkruise-charts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASED_CHART: ${{ runner.temp }}/agentio-chart
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+
+          branch="agentio-chart-${VERSION}"
+          version_dir="versions/agentio/${VERSION}"
+          chart_link="charts/agentio"
+          expected_link="../versions/agentio/${VERSION}"
+
+          verify_branch_contents() {
+            if [[ ! -d "$version_dir" || -L "$version_dir" ]]; then
+              echo "Release branch is missing ${version_dir}" >&2
+              return 1
+            fi
+            if ! diff -qr "$RELEASED_CHART" "$version_dir"; then
+              echo "Release branch contains different files for Agentio ${VERSION}" >&2
+              return 1
+            fi
+            if [[ ! -L "$chart_link" || "$(readlink "$chart_link")" != "$expected_link" ]]; then
+              echo "Release branch has an unexpected ${chart_link} target" >&2
+              return 1
+            fi
+          }
+
+          if git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"; then
+            git checkout --detach "refs/remotes/origin/${branch}"
+            verify_branch_contents
+
+            pr_state=$(gh pr list \
+              --repo "$CHART_REPOSITORY" \
+              --head "$branch" \
+              --state all \
+              --json state \
+              --jq '.[0].state // ""')
+            pr_url=$(gh pr list \
+              --repo "$CHART_REPOSITORY" \
+              --head "$branch" \
+              --state all \
+              --json url \
+              --jq '.[0].url // ""')
+            case "$pr_state" in
+              OPEN|MERGED)
+                echo "Chart pull request already exists: ${pr_url}"
+                exit 0
+                ;;
+              CLOSED)
+                echo "Chart pull request was closed without merging: ${pr_url}" >&2
+                exit 1
+                ;;
+            esac
+
+            gh pr create \
+              --repo "$CHART_REPOSITORY" \
+              --base master \
+              --head "$branch" \
+              --title "feat(agentio): release chart ${VERSION}" \
+              --body "Publishes the Agentio ${VERSION} Helm chart. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}. OCI chart: oci://docker.io/openkruise/agentio."
+            exit 0
+          fi
+
+          if [[ -e "$version_dir" || -L "$version_dir" ]]; then
+            if [[ ! -d "$version_dir" || -L "$version_dir" ]]; then
+              echo "Existing ${version_dir} is not a directory" >&2
+              exit 1
+            fi
+            if ! diff -qr "$RELEASED_CHART" "$version_dir"; then
+              echo "Agentio ${VERSION} is already published with different files" >&2
+              exit 1
+            fi
+            echo "Agentio ${VERSION} is already present in ${CHART_REPOSITORY}; skipping."
+            exit 0
+          fi
+
+          if [[ -e "$chart_link" && ! -L "$chart_link" ]]; then
+            echo "Existing ${chart_link} is not a symbolic link" >&2
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$version_dir")"
+          cp -R "$RELEASED_CHART" "$version_dir"
+          ln -sfn "$expected_link" "$chart_link"
+
+          helm lint "$chart_link"
+          helm template agentio "$chart_link" >/dev/null
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$version_dir" "$chart_link"
+          git commit --signoff -m "feat(agentio): release chart ${VERSION}"
+          git push origin "HEAD:refs/heads/${branch}"
+
+          gh pr create \
+            --repo "$CHART_REPOSITORY" \
+            --base master \
+            --head "$branch" \
+            --title "feat(agentio): release chart ${VERSION}" \
+            --body "Publishes the Agentio ${VERSION} Helm chart. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}. OCI chart: oci://docker.io/openkruise/agentio."
 
   tag-ztunnel:
     needs: publish-chart

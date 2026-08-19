@@ -29,3 +29,11 @@ keywords:
   - mesh
   - traffic-governance
   - security
+
+home: https://github.com/openkruise/agentio
+sources:
+  - https://github.com/openkruise/agentio
+
+annotations:
+  artifacthub.io/changes: |
+    - "[Changed]: See Agentio release notes: https://github.com/openkruise/agentio/releases"
