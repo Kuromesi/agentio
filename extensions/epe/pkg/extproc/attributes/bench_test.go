@@ -104,9 +104,10 @@ func BenchmarkExtract(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					peer, req := Extract(ctx, headers, attrs)
+					peer, req, err := Extract(ctx, headers, attrs)
 					benchSink = peer
 					benchSink = req
+					benchSink = err
 				}
 			})
 		}

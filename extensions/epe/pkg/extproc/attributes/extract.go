@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -33,6 +34,8 @@ import (
 	"istio.io/istio/extensions/epe/pkg/labels"
 	"istio.io/istio/extensions/epe/pkg/logging"
 )
+
+var ErrInvalidConnectUDPTarget = errors.New("invalid CONNECT-UDP target")
 
 const (
 	// ExtProcAttrsKey is the top-level key under which Envoy delivers the
@@ -52,6 +55,7 @@ const (
 	FilterStateSandboxToken  = "filter_state['sandbox.token']"
 
 	AttrDestinationPort = "destination.port"
+	AttrRouteName       = "xds.route_name"
 )
 
 // Extract resolves the Envoy ext-proc headers message and its attributes
@@ -59,9 +63,11 @@ const (
 // httpreq.HTTPRequest (with the destination.port override applied). When pod
 // identity is missing from filter_state it returns a partial Peer and a zero
 // HTTPRequest and logs the condition; callers should check Peer.Valid and
-// fail open. A malformed sandbox token leaves Peer.Token nil. Log lines use
-// the logger from ctx, so request-scoped key/values are carried on them.
-func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[string]*structpb.Struct) (filter.Peer, httpreq.HTTPRequest) {
+// fail open. A malformed CONNECT-UDP route target returns
+// ErrInvalidConnectUDPTarget so the adapter can send an immediate rejection;
+// a malformed sandbox token leaves Peer.Token nil. Log lines use the logger
+// from ctx, so request-scoped key/values are carried on them.
+func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[string]*structpb.Struct) (filter.Peer, httpreq.HTTPRequest, error) {
 	logger := log.FromContext(ctx)
 	loggerD := logger.V(logging.DEBUG)
 
@@ -72,6 +78,12 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 		IP:  extractPodIP(attrs),
 	}
 	sandboxLabelsEncoded := extractFilterStateString(attrs, FilterStateSandboxLabels)
+	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
+	routeName := extractAttributeString(attrs, AttrRouteName)
+	connectUDP := normalizeConnectUDPMasqueTarget(&req, routeName)
+	if strings.HasPrefix(routeName, "connect-udp:") && !connectUDP {
+		return peer, req, ErrInvalidConnectUDPTarget
+	}
 
 	if podNamespace == "" || podName == "" {
 		// Operator-visible: the ext-proc filter relies on Envoy populating
@@ -81,7 +93,7 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 		// request through and let the operator find the misconfiguration.
 		logger.Info("Pod identity missing from filter_state; passing request through unmodified",
 			"podNamespace", podNamespace, "podName", podName)
-		return peer, httpreq.HTTPRequest{}
+		return peer, httpreq.HTTPRequest{}, nil
 	}
 
 	// Pod labels come from filter_state['sandbox.labels'], a base64-encoded
@@ -101,14 +113,30 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 
 	peer.Token = parseSandboxToken(ctx, extractFilterStateString(attrs, FilterStateSandboxToken))
 
-	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
-
-	// Override port with the real TCP destination port from envoy if available.
-	if dstPort := extractAttributeInt(attrs, AttrDestinationPort); dstPort > 0 && dstPort <= 65535 {
-		req.Port = int32(dstPort)
+	// For ordinary HTTP, Envoy's socket destination is the authoritative port.
+	// CONNECT-UDP terminates on the Waypoint's HBONE port, so retain the target
+	// port decoded from the RFC 9298 MASQUE path instead of replacing it with 15008.
+	if !connectUDP {
+		if dstPort := extractAttributeInt(attrs, AttrDestinationPort); dstPort > 0 && dstPort <= 65535 {
+			req.Port = int32(dstPort)
+		}
 	}
 
-	return peer, req
+	return peer, req, nil
+}
+
+// extractAttributeString extracts an exact string-valued CEL attribute from
+// the ext_proc attributes struct.
+func extractAttributeString(attrs map[string]*structpb.Struct, key string) string {
+	s := getExtProcStruct(attrs)
+	if s == nil {
+		return ""
+	}
+	v, ok := s.GetFields()[key]
+	if !ok {
+		return ""
+	}
+	return valueToString(v)
 }
 
 // parseSandboxToken parses the raw filter_state['sandbox.token'] string:

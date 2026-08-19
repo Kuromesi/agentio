@@ -320,9 +320,14 @@ func (cb *ClusterBuilder) buildWaypointInboundVIP(proxy *model.Proxy, svcs map[h
 	clusters := []*cluster.Cluster{}
 	for _, svc := range svcs {
 		for _, port := range svc.Ports {
-			// We don't support UDP. And for dynamic DNS (dynamic forward proxy) we only support HTTP and TLS
 			if port.Protocol == protocol.UDP {
-				log.Debugf("skipping waypoint VIP cluster for unsupported protocol %s for service %s", port.Protocol, svc.Hostname)
+				if svc.Resolution == model.DynamicDNS {
+					log.Debugf("skipping waypoint UDP VIP cluster for unsupported DynamicDNS service %s", svc.Hostname)
+					continue
+				}
+				if c := cb.buildWaypointInboundUDPCluster(proxy, svc, *port, mesh); c != nil {
+					clusters = append(clusters, c)
+				}
 				continue
 			}
 			// For dynamic DNS (dynamic forward proxy) resolution protocol other than HTTP and TLS are not supported
@@ -361,6 +366,51 @@ func (cb *ClusterBuilder) buildWaypointInboundVIP(proxy *model.Proxy, svcs map[h
 		}
 	}
 	return clusters
+}
+
+// buildWaypointInboundUDPCluster creates the raw UDP upstream used when the connect-terminate
+// listener terminates a CONNECT-UDP stream. Unlike TCP waypoint VIP clusters, this cluster must
+// not route through the internal TCP listener or install HTTP protocol options.
+func (cb *ClusterBuilder) buildWaypointInboundUDPCluster(
+	proxy *model.Proxy,
+	svc *model.Service,
+	port model.Port,
+	mesh *meshconfig.MeshConfig,
+) *cluster.Cluster {
+	clusterName := model.BuildSubsetKey(model.TrafficDirectionInboundVIP, "udp", svc.Hostname, port.Port)
+	discoveryType := convertResolution(cb.proxyType, svc)
+	var lbEndpoints []*endpoint.LocalityLbEndpoints
+	if discoveryType == cluster.Cluster_STRICT_DNS || discoveryType == cluster.Cluster_LOGICAL_DNS {
+		lbEndpoints = endpoints.NewCDSEndpointBuilder(
+			proxy,
+			cb.req.Push,
+			clusterName,
+			model.TrafficDirectionInboundVIP, "udp", svc.Hostname, port.Port,
+			svc, nil,
+		).FromServiceEndpoints()
+	}
+	localCluster := cb.buildCluster(
+		clusterName,
+		discoveryType,
+		lbEndpoints,
+		model.TrafficDirectionInboundVIP,
+		&port,
+		svc,
+		nil,
+		"udp",
+	)
+	if localCluster == nil {
+		return nil
+	}
+	applyLoadBalancer(svc, localCluster.cluster, nil, &port, cb.locality, cb.proxyLabels, mesh)
+	if localCluster.cluster.GetType() == cluster.Cluster_ORIGINAL_DST {
+		localCluster.cluster.LbPolicy = cluster.Cluster_CLUSTER_PROVIDED
+	}
+	maybeApplyEdsConfig(localCluster.cluster)
+	localCluster.cluster.TransportSocket = nil
+	localCluster.cluster.TransportSocketMatches = nil
+	localCluster.cluster.TypedExtensionProtocolOptions = nil
+	return localCluster.build()
 }
 
 // buildInnerConnectOriginateCluster creates a cluster that innitiate inner HBONE tunnel of double-HBONE.

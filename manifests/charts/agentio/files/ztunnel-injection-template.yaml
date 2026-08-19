@@ -1,5 +1,6 @@
-# ztunnel does not support TPROXY
+# Standard TCP interception remains REDIRECT; experimental UDP HBONE installs separate TPROXY rules.
 {{- $interception := (annotation .ObjectMeta `sidecar.istio.io/interceptionMode` .ProxyConfig.InterceptionMode) -}}
+{{- $udpHBONE := eq (index .ProxyConfig.ProxyMetadata `UNSTABLE_ENABLE_UDP_HBONE`) "true" -}}
 {{- if eq $interception "TPROXY" -}}
   {{- $interception = "REDIRECT" -}}
 {{- end -}}
@@ -210,12 +211,15 @@ spec:
       capabilities:
         drop:
         - ALL
-{{- if .Values.global.proxy_ztunnel.enableFirewallRules }}
+{{- if or .Values.global.proxy_ztunnel.enableFirewallRules $udpHBONE }}
         add:
         - NET_ADMIN
 {{- end }}
       readOnlyRootFilesystem: true
-      runAsUser: {{ if .Values.global.proxy_ztunnel.enableFirewallRules }}0{{ else }}{{ .ProxyUID | default "1337" }}{{ end }}
+      # With allowPrivilegeEscalation=false, containerd clears permitted/effective
+      # capabilities for a non-root UID; the UDP listener then cannot set SO_MARK
+      # or IP_TRANSPARENT. Keep the process non-privileged and capability-bounded.
+      runAsUser: {{ if or .Values.global.proxy_ztunnel.enableFirewallRules $udpHBONE }}0{{ else }}{{ .ProxyUID | default "1337" }}{{ end }}
       runAsGroup: {{ .ProxyGID | default "1337" }}
       runAsNonRoot: false
 {{- if .Values.global.seLinuxOptions }}

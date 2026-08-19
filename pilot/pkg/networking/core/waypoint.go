@@ -52,6 +52,8 @@ const (
 
 	// ConnectUpgradeType is the type of upgrade for HTTP CONNECT.
 	ConnectUpgradeType = "CONNECT"
+	// ConnectUDPUpgradeType is the extended CONNECT protocol used to carry UDP datagrams in capsules.
+	ConnectUDPUpgradeType = "connect-udp"
 )
 
 type waypointServices struct {

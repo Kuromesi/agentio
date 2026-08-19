@@ -196,7 +196,10 @@ func TestExtract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			attrs := makeAttrs(t, tt.attrFields)
-			gotPeer, gotReq := Extract(context.Background(), makeHTTPHeaders(tt.headers), attrs)
+			gotPeer, gotReq, err := Extract(context.Background(), makeHTTPHeaders(tt.headers), attrs)
+			if err != nil {
+				t.Fatalf("Extract() error: %v", err)
+			}
 			if !reflect.DeepEqual(gotPeer, tt.wantPeer) {
 				t.Errorf("Extract() peer = %+v, want %+v", gotPeer, tt.wantPeer)
 			}
@@ -207,6 +210,30 @@ func TestExtract(t *testing.T) {
 				t.Errorf("Valid() = %t, want %t", gotPeer.Valid(), tt.wantValid)
 			}
 		})
+	}
+}
+
+func TestExtractConnectUDPKeepsMasqueDestinationPort(t *testing.T) {
+	headers := map[string]string{
+		":authority":       "10.244.0.9:15008",
+		":path":            "/.well-known/masque/udp/udp-echo.example.com/9000/",
+		":method":          "CONNECT",
+		":scheme":          "https",
+		"capsule-protocol": "?1",
+	}
+	attrs := makeAttrs(t, map[string]any{
+		FilterStateDownstreamPeerNamespace: "default",
+		FilterStateDownstreamPeerName:      "udp-client",
+		AttrDestinationPort:                float64(15008),
+		AttrRouteName:                      "connect-udp:udp-echo.example.com:9000",
+	})
+
+	_, got, err := Extract(context.Background(), makeHTTPHeaders(headers), attrs)
+	if err != nil {
+		t.Fatalf("Extract() error: %v", err)
+	}
+	if got.Host != "udp-echo.example.com" || got.Port != 9000 {
+		t.Fatalf("CONNECT-UDP destination = %s:%d, want udp-echo.example.com:9000", got.Host, got.Port)
 	}
 }
 

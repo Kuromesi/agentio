@@ -20,6 +20,7 @@ import (
 	"time"
 
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
+	extproc "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	sfsnetwork "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
@@ -139,6 +140,65 @@ func testInboundChainConfig(clusterName string) inboundChainConfig {
 				Port:     8080,
 			},
 		},
+	}
+}
+
+func TestConnectTerminateHCMRunsSandboxExtProcBeforeRouter(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+	lb.push.AgentioConfig = &model.AgentioConfig{
+		AgentioConfig: &extensions.AgentioConfig{
+			SandboxExtProc: &extensions.ExtProcProvider{
+				Service: "agentio-epe.agentio-system.svc.cluster.local",
+				Port:    9002,
+			},
+		},
+	}
+
+	filters := lb.buildHCMConnectTerminateChain(nil)
+	if len(filters) != 1 {
+		t.Fatalf("connect terminate network filters = %d, want 1", len(filters))
+	}
+	h := &hcm.HttpConnectionManager{}
+	if err := filters[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+		t.Fatalf("decode connect terminate HCM: %v", err)
+	}
+
+	names := make([]string, 0, len(h.GetHttpFilters()))
+	for _, filter := range h.GetHttpFilters() {
+		names = append(names, filter.GetName())
+	}
+	extProcIndex := slices.Index(names, wellknown.HTTPExternalProcessing)
+	routerIndex := slices.Index(names, wellknown.Router)
+	if extProcIndex < 0 {
+		t.Fatalf("connect terminate HCM filters %v do not include ext_proc", names)
+	}
+	if routerIndex < 0 || extProcIndex >= routerIndex {
+		t.Fatalf("connect terminate HCM filters %v must run ext_proc before router", names)
+	}
+
+	listener := lb.buildWaypointInboundConnectTerminate(nil)
+	h = &hcm.HttpConnectionManager{}
+	if err := listener.GetFilterChains()[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+		t.Fatalf("decode waypoint connect terminate HCM: %v", err)
+	}
+	routes := h.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
+	if len(routes) != 1 {
+		t.Fatalf("fallback CONNECT routes = %d, want 1", len(routes))
+	}
+	perRouteAny := routes[0].GetTypedPerFilterConfig()[wellknown.HTTPExternalProcessing]
+	if perRouteAny == nil {
+		t.Fatal("ordinary CONNECT fallback must explicitly disable the outer ext_proc filter")
+	}
+	perRoute := &extproc.ExtProcPerRoute{}
+	if err := perRouteAny.UnmarshalTo(perRoute); err != nil {
+		t.Fatalf("decode ordinary CONNECT ext_proc route config: %v", err)
+	}
+	if !perRoute.GetDisabled() {
+		t.Fatal("ordinary CONNECT fallback must not run EPE twice")
 	}
 }
 

@@ -203,6 +203,68 @@ func TestParseHTTPRequest_InfersPortFromScheme(t *testing.T) {
 	}
 }
 
+func TestNormalizeConnectUDPMasqueTargetRequiresRouteIdentity(t *testing.T) {
+	headers := map[string]string{
+		":authority":       "10.244.0.9:15008",
+		":path":            "/.well-known/masque/udp/udp-echo.example.com/9000/",
+		":method":          "CONNECT",
+		":scheme":          "https",
+		"capsule-protocol": "?1",
+	}
+	info := parseHTTPRequest(context.Background(), headers)
+	if !normalizeConnectUDPMasqueTarget(&info, "connect-udp:udp-echo.example.com:9000") {
+		t.Fatal("expected trusted CONNECT-UDP route to normalize")
+	}
+
+	if info.Host != "udp-echo.example.com" {
+		t.Errorf("CONNECT-UDP Host = %q, want udp-echo.example.com", info.Host)
+	}
+	if info.Port != 9000 {
+		t.Errorf("CONNECT-UDP Port = %d, want 9000", info.Port)
+	}
+	if info.Scheme != "udp" {
+		t.Errorf("CONNECT-UDP Scheme = %q, want udp", info.Scheme)
+	}
+	if info.Method != "CONNECT" {
+		t.Errorf("CONNECT-UDP Method = %q, want CONNECT", info.Method)
+	}
+	if info.Path != "" {
+		t.Errorf("CONNECT-UDP Path = %q, want empty application path", info.Path)
+	}
+
+	spoofed := parseHTTPRequest(context.Background(), headers)
+	if normalizeConnectUDPMasqueTarget(&spoofed, "default") {
+		t.Fatal("untrusted ordinary HTTP route must not normalize a MASQUE-looking path")
+	}
+	if spoofed.Host != "10.244.0.9" || spoofed.Port != 15008 {
+		t.Fatalf("spoofed destination = %s:%d, want 10.244.0.9:15008", spoofed.Host, spoofed.Port)
+	}
+}
+
+func TestNormalizeConnectUDPMasqueTargetAcceptsEnvoyUpgradeForm(t *testing.T) {
+	headers := map[string]string{
+		":authority":       "10.244.0.9:15008",
+		":path":            "/.well-known/masque/udp/udp-echo.example.com/9000/",
+		":method":          "GET",
+		":scheme":          "https",
+		"upgrade":          "connect-udp",
+		"capsule-protocol": "?1",
+	}
+	info := parseHTTPRequest(context.Background(), headers)
+	if !normalizeConnectUDPMasqueTarget(&info, "connect-udp:udp-echo.example.com:9000") {
+		t.Fatal("expected Envoy's extended-CONNECT upgrade form to normalize")
+	}
+	if info.Method != "CONNECT" || info.Scheme != "udp" || info.Host != "udp-echo.example.com" || info.Port != 9000 {
+		t.Fatalf("normalized request = %+v", info)
+	}
+
+	delete(headers, "upgrade")
+	ordinaryGET := parseHTTPRequest(context.Background(), headers)
+	if normalizeConnectUDPMasqueTarget(&ordinaryGET, "connect-udp:udp-echo.example.com:9000") {
+		t.Fatal("ordinary GET must not normalize as CONNECT-UDP")
+	}
+}
+
 // TestInferPortFromScheme exercises the helper directly.
 func TestInferPortFromScheme(t *testing.T) {
 	cases := map[string]int32{

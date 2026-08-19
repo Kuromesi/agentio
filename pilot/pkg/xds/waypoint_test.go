@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -232,6 +233,77 @@ spec:
 	hasTLSInspector(91, false)
 	hasTLSInspector(90, false)
 	hasTLSInspector(443, true)
+}
+
+func TestWaypointConnectUDPTermination(t *testing.T) {
+	udpService := `apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: udp-echo
+  namespace: default
+  labels:
+    istio.io/use-waypoint: waypoint
+spec:
+  hosts: [udp-echo.example.com]
+  addresses: [10.10.0.10]
+  ports:
+  - number: 9000
+    name: udp
+    protocol: UDP
+  resolution: STATIC
+  workloadSelector:
+    labels:
+      app: app
+`
+
+	d, proxy := setupWaypointTest(t,
+		waypointGateway,
+		waypointSvc,
+		waypointInstance,
+		udpService,
+		appPodNoMesh)
+
+	g := NewWithT(t)
+	l := xdstest.ExtractListener("connect_terminate", d.Listeners(proxy))
+	g.Expect(l).NotTo(BeNil())
+	h := xdstest.ExtractHTTPConnectionManager(t, xdstest.ExtractFilterChain("default", l))
+	g.Expect(h).NotTo(BeNil())
+	g.Expect(h.GetUpgradeConfigs()).To(ContainElement(HaveField("UpgradeType", "connect-udp")))
+
+	const path = "/.well-known/masque/udp/udp-echo.example.com/9000/"
+	var udpRouteFound bool
+	for _, r := range h.GetRouteConfig().GetVirtualHosts()[0].GetRoutes() {
+		if r.GetMatch().GetPath() != path {
+			continue
+		}
+		udpRouteFound = true
+		g.Expect(r.GetRoute().GetCluster()).To(Equal("inbound-vip|9000|udp|udp-echo.example.com"))
+		headerExact := func(name, value string) bool {
+			for _, header := range r.GetMatch().GetHeaders() {
+				if header.GetName() == name && header.GetExactMatch() == value {
+					return true
+				}
+			}
+			return false
+		}
+		g.Expect(headerExact(":method", "GET")).To(BeTrue(), "UDP route must match Envoy's extended-CONNECT upgrade form")
+		g.Expect(headerExact("upgrade", "connect-udp")).To(BeTrue(), "UDP route must reject ordinary GET requests")
+		g.Expect(headerExact("capsule-protocol", "?1")).To(BeTrue(), "UDP route must require Capsule Protocol")
+		g.Expect(r.GetRoute().GetUpgradeConfigs()).To(ContainElement(And(
+			HaveField("UpgradeType", "connect-udp"),
+			HaveField("ConnectConfig", Not(BeNil())),
+		)))
+	}
+	g.Expect(udpRouteFound).To(BeTrue(), "CONNECT-UDP route should be scoped to the attached UDP service path")
+
+	c := xdstest.ExtractCluster("inbound-vip|9000|udp|udp-echo.example.com", d.Clusters(proxy))
+	g.Expect(c).NotTo(BeNil())
+	g.Expect(c.GetType()).To(Equal(clusterv3.Cluster_EDS))
+	g.Expect(c.GetTransportSocket()).To(BeNil(), "CONNECT-UDP termination must use a raw UDP socket upstream")
+	g.Expect(c.GetTypedExtensionProtocolOptions()).To(BeEmpty(), "the UDP upstream is not an HTTP connection pool")
+
+	udpEndpoints := xdstest.ExtractLoadAssignments(d.Endpoints(proxy))[c.GetName()]
+	g.Expect(udpEndpoints).To(ConsistOf("1.1.1.3:9000,[2001:20::3]:9000"))
 }
 
 func TestWaypointTLSInspectorWithOnlyTLSPorts(t *testing.T) {

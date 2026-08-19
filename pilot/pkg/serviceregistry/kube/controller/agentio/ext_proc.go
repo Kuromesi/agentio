@@ -16,6 +16,7 @@ package agentio
 
 import (
 	"math"
+	"slices"
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -40,6 +41,8 @@ import (
 
 var SandboxExtProcName = env.Register("SANDBOX_EXT_PROC_NAME", "sandbox-ext-proc",
 	"External processing cluster name for sandbox.").Get()
+
+const extProcRouteNameAttribute = "xds.route_name"
 
 // resolveExtProc returns the effective ExtProcProvider for the given proxy.
 // Gateway-level ext_proc takes precedence over the global AgentioConfig default.
@@ -177,7 +180,13 @@ func BuildExtProcFilter(proxy *model.Proxy, config *model.AgentioConfig) []*hcm.
 	var requestAttributes, responseAttributes []string
 	if extProc.Request != nil {
 		requestHeaderMode = toEnvoyHeaderSendMode(extProc.Request.HeaderMode, requestHeaderMode)
-		requestAttributes = extProc.Request.Attributes
+		requestAttributes = append([]string(nil), extProc.Request.Attributes...)
+	}
+	// CONNECT-UDP policy normalization is bound to the selected Envoy route so
+	// clients cannot spoof a MASQUE-looking path. Keep this security attribute
+	// even when a user replaces the chart's request.attributes list.
+	if !slices.Contains(requestAttributes, extProcRouteNameAttribute) {
+		requestAttributes = append(requestAttributes, extProcRouteNameAttribute)
 	}
 	if extProc.Response != nil {
 		responseHeaderMode = toEnvoyHeaderSendMode(extProc.Response.HeaderMode, responseHeaderMode)

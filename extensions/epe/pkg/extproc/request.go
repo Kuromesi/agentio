@@ -15,6 +15,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -69,9 +70,20 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	st.RequestID = requestID
 	state.markRequestSeen()
 
-	peer, req := attributes.Extract(ctx, headers, attrs)
+	peer, req, extractErr := attributes.Extract(ctx, headers, attrs)
 	st.Peer = peer
 	st.Request = req
+	if errors.Is(extractErr, attributes.ErrInvalidConnectUDPTarget) {
+		logger.Info("Rejecting malformed CONNECT-UDP target")
+		state.armFinalization(engine.DispositionBlocked)
+		return []*extProcPb.ProcessingResponse{immediateFromReply(filter.Reply{
+			Status:  400,
+			Details: "epe_invalid_connect_udp_target",
+		})}, nil
+	}
+	if extractErr != nil {
+		return nil, extractErr
+	}
 
 	if !peer.Valid() {
 		// Fail open: without a source pod no SecurityProfile can be

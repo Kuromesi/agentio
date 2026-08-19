@@ -268,8 +268,10 @@ func TestBuildExtProcFilter_CustomModes(t *testing.T) {
 	if processor.ProcessingMode.ResponseHeaderMode != extproc.ProcessingMode_SEND {
 		t.Errorf("response header mode: expected SEND, got %v", processor.ProcessingMode.ResponseHeaderMode)
 	}
-	if len(processor.RequestAttributes) != 1 || processor.RequestAttributes[0] != "req-attr-1" {
-		t.Errorf("request attributes: expected [req-attr-1], got %v", processor.RequestAttributes)
+	if len(processor.RequestAttributes) != 2 ||
+		processor.RequestAttributes[0] != "req-attr-1" ||
+		processor.RequestAttributes[1] != "xds.route_name" {
+		t.Errorf("request attributes: expected [req-attr-1 xds.route_name], got %v", processor.RequestAttributes)
 	}
 	if len(processor.ResponseAttributes) != 1 || processor.ResponseAttributes[0] != "resp-attr-1" {
 		t.Errorf("response attributes: expected [resp-attr-1], got %v", processor.ResponseAttributes)

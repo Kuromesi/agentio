@@ -25,6 +25,8 @@ import (
 	"istio.io/istio/extensions/epe/pkg/logging"
 )
 
+const connectUDPMasquePrefix = "/.well-known/masque/udp/"
+
 // splitHostPort extracts (host, port) from a request authority. IPv6
 // authorities in bracket form (e.g. "[::1]:8080") are returned without the
 // brackets and the trailing port. A non-numeric or out-of-range port is
@@ -124,6 +126,57 @@ func parseHTTPRequest(ctx context.Context, headers map[string]string) httpreq.HT
 	}
 
 	return info
+}
+
+// normalizeConnectUDPMasqueTarget projects an RFC 9298 CONNECT-UDP request onto
+// the destination tuple understood by SecurityProfile. The outer HTTP authority
+// names the Waypoint; the actual UDP host and port are carried in the MASQUE
+// path. UDP has no application HTTP path or query to expose to policy.
+func normalizeConnectUDPMasqueTarget(info *httpreq.HTTPRequest, routeName string) bool {
+	// Envoy presents RFC 8441 extended CONNECT to HTTP filters in its internal
+	// HTTP/1 upgrade form (GET + Upgrade: connect-udp). Accept native CONNECT as
+	// well so the policy projection does not depend on that codec detail.
+	methodIsConnect := strings.EqualFold(info.Method, "CONNECT")
+	methodIsEnvoyUpgrade := strings.EqualFold(info.Method, "GET") &&
+		strings.EqualFold(info.Headers["upgrade"], "connect-udp")
+	if !strings.HasPrefix(routeName, "connect-udp:") ||
+		(!methodIsConnect && !methodIsEnvoyUpgrade) ||
+		info.Headers["capsule-protocol"] != "?1" ||
+		!strings.HasPrefix(info.Path, connectUDPMasquePrefix) {
+		return false
+	}
+	tail := strings.TrimPrefix(info.Path, connectUDPMasquePrefix)
+	parts := strings.Split(tail, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] != "" {
+		return false
+	}
+	host, err := url.PathUnescape(parts[0])
+	if err != nil || host == "" || strings.ContainsAny(host, "/\\") {
+		return false
+	}
+	portText, err := url.PathUnescape(parts[1])
+	if err != nil {
+		return false
+	}
+	port := parsePort(portText)
+	if port == 0 {
+		return false
+	}
+	if len(host) > 1 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+	if !strings.EqualFold(routeName, "connect-udp:"+host+":"+strconv.Itoa(int(port))) {
+		return false
+	}
+
+	info.Host = host
+	info.Port = port
+	info.Path = ""
+	info.Query = nil
+	info.RawQuery = ""
+	info.Scheme = "udp"
+	info.Method = "CONNECT"
+	return true
 }
 
 // inferPortFromScheme returns the conventional default port for the scheme,

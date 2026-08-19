@@ -518,6 +518,35 @@ func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
 	}
 }
 
+func TestHandleRequestHeaders_MalformedConnectUDPRouteFailsClosed(t *testing.T) {
+	srv := NewServer(ServerDeps{
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			t.Fatal("resolver called for malformed CONNECT-UDP route")
+			return engine.Resolution{}, nil
+		},
+	})
+	attrs := makeAttrsWithLabels("default", "udp-client", "")
+	attrs[attributes.ExtProcAttrsKey].Fields[attributes.AttrRouteName] = structpb.NewStringValue(
+		"connect-udp:udp-echo.example.com:9000",
+	)
+
+	responses, err := srv.HandleRequestHeaders(
+		context.Background(),
+		makeRequestHeaders("10.244.0.9:15008", "/.well-known/masque/udp/udp-echo.example.com/9000/", "GET"),
+		attrs,
+		newStreamState(),
+	)
+	if err != nil {
+		t.Fatalf("HandleRequestHeaders: %v", err)
+	}
+	if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("responses = %+v, want one fail-closed ImmediateResponse", responses)
+	}
+	if got := responses[0].GetImmediateResponse().GetStatus().GetCode(); got != 400 {
+		t.Fatalf("malformed CONNECT-UDP status = %v, want 400", got)
+	}
+}
+
 // TestPassThroughHandlers covers the trivial body / trailer / response stubs
 // so they show up in coverage and accidental regressions surface immediately.
 func TestPassThroughHandlers(t *testing.T) {

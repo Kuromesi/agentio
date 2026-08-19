@@ -28,6 +28,7 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	sfsvalue "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
+	extproc "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	sfs "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	sfsnetwork "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
@@ -35,6 +36,7 @@ import (
 	celformatter "github.com/envoyproxy/go-control-plane/envoy/extensions/formatter/cel/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	googleproto "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	wrappers "google.golang.org/protobuf/types/known/wrapperspb"
 
@@ -111,7 +113,7 @@ func (lb *ListenerBuilder) buildWaypointInbound() []*listener.Listener {
 	}
 
 	listeners := []*listener.Listener{
-		lb.buildWaypointInboundConnectTerminate(),
+		lb.buildWaypointInboundConnectTerminate(orderedWPS),
 		lb.buildWaypointInternal(wls, orderedWPS),
 	}
 
@@ -163,9 +165,10 @@ func (lb *ListenerBuilder) buildHCMConnectTerminateChain(routes []*route.Route) 
 
 	// Protocol settings
 	h.StreamIdleTimeout = istio_route.Notimeout
-	h.UpgradeConfigs = []*hcm.HttpConnectionManager_UpgradeConfig{{
-		UpgradeType: ConnectUpgradeType,
-	}}
+	h.UpgradeConfigs = []*hcm.HttpConnectionManager_UpgradeConfig{
+		{UpgradeType: ConnectUpgradeType},
+		{UpgradeType: ConnectUDPUpgradeType},
+	}
 	h.Http2ProtocolOptions = &core.Http2ProtocolOptions{
 		AllowConnect: true,
 		// TODO(https://github.com/istio/istio/issues/43443)
@@ -212,6 +215,10 @@ func (lb *ListenerBuilder) buildHCMConnectTerminateChain(routes []*route.Route) 
 	if rlFilter := buildSandboxConnectTerminateRateLimitFilter(lb); rlFilter != nil {
 		filters = append(filters, rlFilter)
 	}
+	// CONNECT-UDP terminates directly into a raw UDP cluster, so it never reaches
+	// the HTTP HCM on main_internal. Run the sandbox EPE filter on this outer HCM
+	// to authorize the UDP session before Envoy opens the upstream socket.
+	filters = append(filters, agentio.BuildExtProcFilter(lb.node, lb.push.AgentioConfig)...)
 
 	// Filters needed to propagate the tunnel metadata to the inner streams.
 	h.HttpFilters = append(filters,
@@ -267,8 +274,52 @@ func (lb *ListenerBuilder) buildConnectTerminateListener(routes []*route.Route) 
 	return l
 }
 
-func (lb *ListenerBuilder) buildWaypointInboundConnectTerminate() *listener.Listener {
-	routes := []*route.Route{{
+func (lb *ListenerBuilder) buildWaypointInboundConnectTerminate(svcs []*model.Service) *listener.Listener {
+	routes := make([]*route.Route, 0, len(svcs)+1)
+	for _, svc := range svcs {
+		if svc.Resolution == model.DynamicDNS {
+			continue
+		}
+		for _, port := range svc.Ports {
+			if port.Protocol != protocol.UDP {
+				continue
+			}
+			path := fmt.Sprintf("/.well-known/masque/udp/%s/%d/", svc.Hostname, port.Port)
+			routes = append(routes, &route.Route{
+				Name: fmt.Sprintf("connect-udp:%s:%d", svc.Hostname, port.Port),
+				Match: &route.RouteMatch{
+					PathSpecifier: &route.RouteMatch_Path{Path: path},
+					Headers: []*route.HeaderMatcher{
+						{
+							Name: ":method",
+							// Envoy's downstream HTTP/2 codec translates an RFC 8441
+							// extended CONNECT into its internal HTTP upgrade form before
+							// route matching.
+							HeaderMatchSpecifier: &route.HeaderMatcher_ExactMatch{ExactMatch: "GET"},
+						},
+						{
+							Name:                 "upgrade",
+							HeaderMatchSpecifier: &route.HeaderMatcher_ExactMatch{ExactMatch: ConnectUDPUpgradeType},
+						},
+						{
+							Name:                 "capsule-protocol",
+							HeaderMatchSpecifier: &route.HeaderMatcher_ExactMatch{ExactMatch: "?1"},
+						},
+					},
+				},
+				Action: &route.Route_Route{Route: &route.RouteAction{
+					UpgradeConfigs: []*route.RouteAction_UpgradeConfig{{
+						UpgradeType:   ConnectUDPUpgradeType,
+						ConnectConfig: &route.RouteAction_UpgradeConfig_ConnectConfig{},
+					}},
+					ClusterSpecifier: &route.RouteAction_Cluster{Cluster: model.BuildSubsetKey(
+						model.TrafficDirectionInboundVIP, "udp", svc.Hostname, port.Port,
+					)},
+				}},
+			})
+		}
+	}
+	fallback := &route.Route{
 		Match: &route.RouteMatch{
 			PathSpecifier: &route.RouteMatch_ConnectMatcher_{ConnectMatcher: &route.RouteMatch_ConnectMatcher{}},
 		},
@@ -279,7 +330,17 @@ func (lb *ListenerBuilder) buildWaypointInboundConnectTerminate() *listener.List
 			}},
 			ClusterSpecifier: &route.RouteAction_Cluster{Cluster: MainInternalName},
 		}},
-	}}
+	}
+	if len(agentio.BuildExtProcFilter(lb.node, lb.push.AgentioConfig)) > 0 {
+		// Ordinary CONNECT traffic is inspected by the service/catch-all HCM after
+		// main_internal. Disable the outer EPE filter to avoid evaluating it twice.
+		fallback.TypedPerFilterConfig = map[string]*anypb.Any{
+			wellknown.HTTPExternalProcessing: protoconv.MessageToAny(&extproc.ExtProcPerRoute{
+				Override: &extproc.ExtProcPerRoute_Disabled{Disabled: true},
+			}),
+		}
+	}
+	routes = append(routes, fallback)
 	return lb.buildConnectTerminateListener(routes)
 }
 

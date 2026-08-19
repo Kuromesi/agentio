@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,6 +38,7 @@ import (
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/host"
 	"istio.io/istio/pkg/config/labels"
+	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/config/schema/kind"
 	istiolog "istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/network"
@@ -141,6 +143,15 @@ func (b *EndpointBuilder) servicePort(port int) *model.Port {
 	if !b.ServiceFound() {
 		log.Debugf("can not find the service %s for cluster %s", b.hostname, b.clusterName)
 		return nil
+	}
+	// PortList.GetByPort intentionally excludes UDP. CONNECT-UDP waypoint clusters are the
+	// exception: their EDS assignment must resolve the attached UDP service port.
+	if b.dir == model.TrafficDirectionInboundVIP && b.subsetName == "udp" {
+		for _, svcPort := range b.service.Ports {
+			if svcPort.Port == port && svcPort.Protocol == protocol.UDP {
+				return svcPort
+			}
+		}
 	}
 	svcPort, f := b.service.Ports.GetByPort(port)
 	if !f {
