@@ -107,10 +107,8 @@ spec:
         - |
           ip route replace local 0.0.0.0/0 dev lo table 100
           ip rule add fwmark 0x111/0xfff pref 32764 lookup 100 || true
-          ip rule add fwmark 0x222/0xfff pref 32763 lookup 100 || true
           iptables -t mangle -I OUTPUT 1 ! -d 127.0.0.1/32 -p udp --dport 9000 -m mark ! --mark 0x539/0xfff -m owner ! --uid-owner 1337 -j MARK --set-xmark 0x111/0xfff
           iptables -t mangle -I PREROUTING 1 -p udp -m mark --mark 0x111/0xfff -j TPROXY --on-port 15002 --tproxy-mark 0x111/0xfff
-          iptables -t mangle -I PREROUTING 1 -p udp --dport 9001 -m mark ! --mark 0x539/0xfff -j TPROXY --on-port 15003 --tproxy-mark 0x222/0xfff
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -123,49 +121,4 @@ spec:
       containers:
       - name: client
         image: alpine:3.20
-        command: ["/bin/sh", "-c", "sleep infinity"]
-      - name: inbound-echo
-        image: alpine/socat:1.8.0.3
-        args:
-        - -v
-        - UDP4-RECVFROM:9001,fork,reuseaddr
-        - EXEC:/bin/cat
-        ports:
-        - name: inbound-udp
-          containerPort: 9001
-          protocol: UDP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: udp-inbound
-  namespace: udp-hbone-poc
-spec:
-  selector:
-    app: udp-client
-  ports:
-  - name: udp
-    port: 9001
-    protocol: UDP
-    targetPort: inbound-udp
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: udp-sender
-  namespace: udp-hbone-poc
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: udp-sender
-  template:
-    metadata:
-      labels:
-        app: udp-sender
-        sidecar.istio.io/inject: "false"
-    spec:
-      containers:
-      - name: sender
-        image: alpine/socat:1.8.0.3
         command: ["/bin/sh", "-c", "sleep infinity"]
