@@ -83,12 +83,12 @@ func (f *fakeTokenProvider) GetTokenWithExtraMetadata(context.Context, string, s
 }
 
 type fakeSTSProvider struct {
-	resp *credential.STSCredentialResponse
+	cred credential.STSCredential
 	err  error
 }
 
-func (f *fakeSTSProvider) GetSTSCredentialWithExtraMetadata(context.Context, string, string, string, map[string]any) (*credential.STSCredentialResponse, error) {
-	return f.resp, f.err
+func (f *fakeSTSProvider) GetSTSCredentialWithExtraMetadata(context.Context, string, string, string, map[string]any) (credential.STSCredential, error) {
+	return f.cred, f.err
 }
 
 func TestProviderSourceTokenKind(t *testing.T) {
@@ -100,8 +100,8 @@ func TestProviderSourceTokenKind(t *testing.T) {
 }
 
 func TestProviderSourceSTSKind(t *testing.T) {
-	resp := &credential.STSCredentialResponse{StsToken: &credential.STSToken{AccessKeyID: "ak", AccessKeySecret: "sk", SecurityToken: "tok"}}
-	src := NewProviderSource(nil, &fakeSTSProvider{resp: resp})
+	sts := credential.STSCredential{AccessKeyID: "ak", AccessKeySecret: "sk", SecurityToken: "tok"}
+	src := NewProviderSource(nil, &fakeSTSProvider{cred: sts})
 	cred, err := src.Fetch(context.Background(), Ref{Kind: CredentialKindSTS, Name: "prov", AccessToken: "at"})
 	if err != nil {
 		t.Fatal(err)

@@ -220,10 +220,10 @@ type TokenProvider interface {
 	GetTokenWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, providerName string, extraMetadata map[string]any) (string, error)
 }
 
-// STSProvider returns the credential client's STS response type directly;
+// STSProvider returns the credential client's STS credential type directly;
 // pkg/credential is agents-api-free, so this does not breach layering.
 type STSProvider interface {
-	GetSTSCredentialWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, providerName string, extraMetadata map[string]any) (*credential.STSCredentialResponse, error)
+	GetSTSCredentialWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, providerName string, extraMetadata map[string]any) (credential.STSCredential, error)
 }
 
 // Deps bundles the filter's external dependencies. Tokens/STS may be nil

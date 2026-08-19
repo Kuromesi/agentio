@@ -69,25 +69,47 @@ var (
 			"attacker can then read the bearer token and forge the credential response").Get()
 )
 
-// STSToken holds the STS triplet returned by the credential provider.
-type STSToken struct {
+// STSCredential is a complete STS triplet. GetSTSCredential returns one only
+// after verifying all three fields are set.
+type STSCredential struct {
+	AccessKeyID     string
+	AccessKeySecret string
+	SecurityToken   string
+}
+
+// stsToken is the STS triplet as the provider sends it.
+type stsToken struct {
 	AccessKeyID     string `json:"accessKeyId"`
 	AccessKeySecret string `json:"accessKeySecret"`
 	SecurityToken   string `json:"securityToken"`
 	Expiration      string `json:"expiration,omitempty"`
 }
 
-// CredentialResponse is the response from GetResourceCredential.
-// Depending on the requested credentialType, either ApiKey or StsToken is set.
-type CredentialResponse struct {
+// credentialResponse is the GetResourceCredential response. Which credential
+// field is set depends on the requested credentialType, so this stays internal
+// and each Get method returns a narrow validated result instead.
+type credentialResponse struct {
 	RequestID string    `json:"requestId"`
 	ApiKey    string    `json:"apiKey,omitempty"`
-	StsToken  *STSToken `json:"stsToken,omitempty"`
+	StsToken  *stsToken `json:"stsToken,omitempty"`
+
+	// CacheExpiresInSeconds is how long this apiKey may be cached, in seconds.
+	// Set only for credentialType=apiKey.
+	CacheExpiresInSeconds int64 `json:"cacheExpiresInSeconds,omitempty"`
 }
 
-// STSCredentialResponse aliases CredentialResponse for callers that use the
-// STS-specific name.
-type STSCredentialResponse = CredentialResponse
+// cacheTTL returns the lifetime the provider declared for this apiKey, or 0 when
+// it declared none.
+func (r *credentialResponse) cacheTTL() time.Duration {
+	if r.CacheExpiresInSeconds <= 0 {
+		return 0
+	}
+	ttl := time.Duration(r.CacheExpiresInSeconds) * time.Second
+	if ttl <= 0 { // overflowed
+		return 0
+	}
+	return ttl
+}
 
 // Client is a thread-safe HTTP client for communicating with the
 // credential provider.
@@ -249,7 +271,7 @@ type credentialRequest struct {
 }
 
 // getCredential calls the GetResourceCredential API.
-func (c *Client) getCredential(ctx context.Context, accessToken, sandboxClientID, credentialProviderName, credentialType string, extraMetadata map[string]any) (*CredentialResponse, error) {
+func (c *Client) getCredential(ctx context.Context, accessToken, sandboxClientID, credentialProviderName, credentialType string, extraMetadata map[string]any) (*credentialResponse, error) {
 	logger := log.FromContext(ctx)
 
 	if c.providerURL == "" {
@@ -296,7 +318,7 @@ func (c *Client) getCredential(ctx context.Context, accessToken, sandboxClientID
 		return nil, fmt.Errorf("credential request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var credResp CredentialResponse
+	var credResp credentialResponse
 	if err := json.Unmarshal(body, &credResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal credential response (body=%s): %w", string(body), err)
 	}
@@ -336,11 +358,12 @@ func (c *Client) GetTokenWithExtraMetadata(ctx context.Context, accessToken, san
 	}
 
 	if c.cache != nil {
-		c.cache.Set(cacheProviderName, sandboxClientID, credResp.ApiKey)
+		c.cache.SetWithTTL(cacheProviderName, sandboxClientID, credResp.ApiKey, credResp.cacheTTL())
 	}
 
 	logger.V(logging.DEBUG).Info("Token retrieved successfully",
-		"credentialProvider", credentialProviderName)
+		"credentialProvider", credentialProviderName,
+		"cacheExpiresInSeconds", credResp.CacheExpiresInSeconds)
 
 	return credResp.ApiKey, nil
 }
@@ -348,49 +371,53 @@ func (c *Client) GetTokenWithExtraMetadata(ctx context.Context, accessToken, san
 // GetSTSCredential retrieves STS credentials (AK/SK/SecurityToken triplet)
 // from the credential provider. Results are cached using the token's own
 // expiration timestamp when an STS cache is configured.
-func (c *Client) GetSTSCredential(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string) (*STSCredentialResponse, error) {
+func (c *Client) GetSTSCredential(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string) (STSCredential, error) {
 	return c.GetSTSCredentialWithExtraMetadata(ctx, accessToken, sandboxClientID, credentialProviderName, nil)
 }
 
 // GetSTSCredentialWithExtraMetadata retrieves STS credentials and sends
 // extraMetadata to the credential provider. Metadata participates in the
 // cache key.
-func (c *Client) GetSTSCredentialWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string, extraMetadata map[string]any) (*STSCredentialResponse, error) {
+func (c *Client) GetSTSCredentialWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string, extraMetadata map[string]any) (STSCredential, error) {
 	logger := log.FromContext(ctx)
 	cacheProviderName, err := providerCacheKey(credentialProviderName, extraMetadata)
 	if err != nil {
-		return nil, err
+		return STSCredential{}, err
 	}
 
 	if c.stsCache != nil {
 		if entry, ok := c.stsCache.Get(cacheProviderName, sandboxClientID); ok {
 			logger.V(logging.DEBUG).Info("STS credential retrieved from cache",
 				"credentialProvider", credentialProviderName)
-			return &CredentialResponse{
-				StsToken: &STSToken{
-					AccessKeyID:     entry.AccessKeyID,
-					AccessKeySecret: entry.AccessKeySecret,
-					SecurityToken:   entry.SecurityToken,
-				},
+			return STSCredential{
+				AccessKeyID:     entry.AccessKeyID,
+				AccessKeySecret: entry.AccessKeySecret,
+				SecurityToken:   entry.SecurityToken,
 			}, nil
 		}
 	}
 
 	credResp, err := c.getCredential(ctx, accessToken, sandboxClientID, credentialProviderName, credentialTypeStsToken, extraMetadata)
 	if err != nil {
-		return nil, err
+		return STSCredential{}, err
 	}
 
-	if credResp.StsToken == nil || credResp.StsToken.AccessKeyID == "" || credResp.StsToken.AccessKeySecret == "" || credResp.StsToken.SecurityToken == "" {
-		return nil, fmt.Errorf("incomplete STS credential from credential provider")
+	tok := credResp.StsToken
+	if tok == nil || tok.AccessKeyID == "" || tok.AccessKeySecret == "" || tok.SecurityToken == "" {
+		return STSCredential{}, fmt.Errorf("incomplete STS credential from credential provider")
+	}
+	cred := STSCredential{
+		AccessKeyID:     tok.AccessKeyID,
+		AccessKeySecret: tok.AccessKeySecret,
+		SecurityToken:   tok.SecurityToken,
 	}
 
-	if c.stsCache != nil && credResp.StsToken.Expiration != "" {
-		if exp, parseErr := time.Parse(time.RFC3339, credResp.StsToken.Expiration); parseErr == nil {
+	if c.stsCache != nil && tok.Expiration != "" {
+		if exp, parseErr := time.Parse(time.RFC3339, tok.Expiration); parseErr == nil {
 			c.stsCache.SetWithExpiration(cacheProviderName, sandboxClientID, tokencache.STSCacheEntry{
-				AccessKeyID:     credResp.StsToken.AccessKeyID,
-				AccessKeySecret: credResp.StsToken.AccessKeySecret,
-				SecurityToken:   credResp.StsToken.SecurityToken,
+				AccessKeyID:     cred.AccessKeyID,
+				AccessKeySecret: cred.AccessKeySecret,
+				SecurityToken:   cred.SecurityToken,
 			}, exp)
 		}
 	}
@@ -398,7 +425,7 @@ func (c *Client) GetSTSCredentialWithExtraMetadata(ctx context.Context, accessTo
 	logger.V(logging.DEBUG).Info("STS credential retrieved successfully",
 		"credentialProvider", credentialProviderName)
 
-	return credResp, nil
+	return cred, nil
 }
 
 func providerCacheKey(providerName string, extraMetadata map[string]any) (string, error) {

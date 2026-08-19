@@ -73,9 +73,9 @@ func newFakeProvider(t testing.TB, status int, body string) *FakeProvider {
 // apiKey credential response.
 func NewAPIKeyProvider(t testing.TB, apiKey string) *FakeProvider {
 	t.Helper()
-	return newFakeProvider(t, http.StatusOK, marshalResponse(t, credential.CredentialResponse{
-		RequestID: "fake-request-id",
-		ApiKey:    apiKey,
+	return newFakeProvider(t, http.StatusOK, mustMarshal(t, map[string]any{
+		"requestId": "fake-request-id",
+		"apiKey":    apiKey,
 	}))
 }
 
@@ -83,14 +83,17 @@ func NewAPIKeyProvider(t testing.TB, apiKey string) *FakeProvider {
 // triplet credential response. expiration may be empty to omit the field.
 func NewSTSProvider(t testing.TB, ak, sk, token, expiration string) *FakeProvider {
 	t.Helper()
-	return newFakeProvider(t, http.StatusOK, marshalResponse(t, credential.CredentialResponse{
-		RequestID: "fake-request-id",
-		StsToken: &credential.STSToken{
-			AccessKeyID:     ak,
-			AccessKeySecret: sk,
-			SecurityToken:   token,
-			Expiration:      expiration,
-		},
+	sts := map[string]any{
+		"accessKeyId":     ak,
+		"accessKeySecret": sk,
+		"securityToken":   token,
+	}
+	if expiration != "" {
+		sts["expiration"] = expiration
+	}
+	return newFakeProvider(t, http.StatusOK, mustMarshal(t, map[string]any{
+		"requestId": "fake-request-id",
+		"stsToken":  sts,
 	}))
 }
 
@@ -99,6 +102,13 @@ func NewSTSProvider(t testing.TB, ak, sk, token, expiration string) *FakeProvide
 func NewErrorProvider(t testing.TB, status int, body string) *FakeProvider {
 	t.Helper()
 	return newFakeProvider(t, status, body)
+}
+
+// NewRawProvider returns a provider answering every request 200 OK with the
+// given body verbatim, for tests that need a specific wire form.
+func NewRawProvider(t testing.TB, body string) *FakeProvider {
+	t.Helper()
+	return newFakeProvider(t, http.StatusOK, body)
 }
 
 // Client returns a cache-less credential.Client pointed at the fake server
@@ -113,9 +123,12 @@ func (p *FakeProvider) ClientWithCache(cache *tokencache.Cache, stsCache *tokenc
 	return credential.NewClientWithCache(cache, stsCache, nil, allOpts...)
 }
 
-func marshalResponse(t testing.TB, resp credential.CredentialResponse) string {
+// mustMarshal renders a response body. The fake builds the wire shape by hand
+// rather than marshalling the client's own struct, so a wrong json tag in the
+// client shows up as a test failure instead of round-tripping unnoticed.
+func mustMarshal(t testing.TB, body map[string]any) string {
 	t.Helper()
-	b, err := json.Marshal(resp)
+	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal fake credential response: %v", err)
 	}

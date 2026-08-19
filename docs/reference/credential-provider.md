@@ -57,8 +57,10 @@ Success response — `200 OK` with a JSON body.
 Exactly one of the credential fields is expected, matching the requested `credentialType`:
 
 ```json
-{ "requestId": "...", "apiKey": "sk-..." }
+{ "requestId": "...", "apiKey": "sk-...", "cacheExpiresInSeconds": 600 }
 ```
+
+`cacheExpiresInSeconds` is optional; see [caching semantics](#caching-semantics).
 
 ```json
 {
@@ -103,12 +105,24 @@ Providers must tolerate credential reuse within a bounded window; EPE caches per
 
 | Credential | Lifetime | Size bound |
 | --- | --- | --- |
-| `apiKey` | `TOKEN_CACHE_TTL` (chart default `3h`) | `TOKEN_CACHE_MAX_SIZE` |
+| `apiKey` | `cacheExpiresInSeconds` when the response carries it, else `TOKEN_CACHE_TTL` (chart default `15m`) | `TOKEN_CACHE_MAX_SIZE` |
 | `stsToken` | until `stsToken.expiration` (uncacheable without it) | `STS_CACHE_MAX_SIZE` |
+
+`cacheExpiresInSeconds` is an optional field on an `apiKey` response naming how many
+seconds that key may be cached. It takes precedence over `TOKEN_CACHE_TTL` and is
+applied verbatim — no safety margin is subtracted, unlike `stsToken.expiration`.
+Absent, `null`, zero, and negative all mean "no opinion" and `TOKEN_CACHE_TTL` applies.
+
+It must be a JSON **integer** (`600`), not a string (`"600"`) and not fractional
+(`600.5`). EPE decodes it as part of the credential response, so a non-integer value
+fails that decode and the `apiKey` becomes unreachable — the request then follows
+`failStrategy` instead of merely losing the caching hint. Providers must not quote
+this field.
 
 Practical consequences:
 
-- Key rotation on the provider side becomes visible to EPE only after the cache entry expires; pick `TOKEN_CACHE_TTL` accordingly.
+- Key rotation on the provider side becomes visible to EPE only after the cache entry expires. Returning `cacheExpiresInSeconds` is the direct way to control this per credential; `TOKEN_CACHE_TTL` is the deployment-wide fallback for providers that do not.
+- A non-positive `TOKEN_CACHE_TTL` is honoured rather than corrected: it disables the fallback lifetime, so responses without `cacheExpiresInSeconds` are not cached at all.
 - Returning `expiration` on STS responses is strongly recommended — it is the only way the provider controls STS reuse.
 
 ## Environment variable reference
@@ -119,7 +133,7 @@ Practical consequences:
 | `CREDENTIAL_PROVIDER_MTLS_SOURCE` | The single source of mTLS material: `files` (default), `secret`, or `none` |
 | `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `_NAME` | Secret holding mTLS material; both required by the `secret` source |
 | `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `_KEY_PATH` / `_CA_CERT_PATH` | Paths read by the `files` source |
-| `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE` | API-key cache tuning |
+| `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE` | API-key cache tuning; `TOKEN_CACHE_TTL` is the fallback lifetime for responses without `cacheExpiresInSeconds` |
 | `STS_CACHE_MAX_SIZE` | STS cache tuning |
 
 ## Implementing a provider

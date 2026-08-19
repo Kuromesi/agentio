@@ -102,7 +102,7 @@ Invalid combinations, unreadable initial certificate/key files, or an invalid in
 
 ## Credential-provider and webhook environment variables
 
-`IDENTITY_PROVIDER_URL`, `TOKEN_CACHE_TTL=3h`, and `TOKEN_CACHE_MAX_SIZE=10000` are set by the chart. The `CREDENTIAL_PROVIDER_*` mTLS variables come from the typed `epe.credentialProvider.mtls` values described below. Everything else uses `epe.env` (or a non-chart deployment):
+`IDENTITY_PROVIDER_URL`, `TOKEN_CACHE_TTL=15m`, and `TOKEN_CACHE_MAX_SIZE=10000` are set by the chart. `TOKEN_CACHE_TTL` applies only to `apiKey` responses that omit `cacheExpiresInSeconds`; see [caching semantics](credential-provider.md#caching-semantics). The `CREDENTIAL_PROVIDER_*` mTLS variables come from the typed `epe.credentialProvider.mtls` values described below. Everything else uses `epe.env` (or a non-chart deployment):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
