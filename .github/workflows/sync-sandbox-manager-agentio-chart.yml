@@ -1,0 +1,213 @@
+name: sync-sandbox-manager-agentio-chart
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Released Agentio chart version to embed'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released Agentio chart version to embed'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CHART_REPOSITORY: openkruise/charts
+  SANDBOX_MANAGER_CHART: versions/kruise-agents-sandbox-manager/next
+
+concurrency:
+  group: sync-sandbox-manager-agentio-chart-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    steps:
+      - name: Check out Agentio
+        uses: actions/checkout@v5
+        with:
+          path: agentio
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.9'
+          cache: false
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.2
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AGENTIO_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIO_SYNC_APP_PRIVATE_KEY }}
+          owner: openkruise
+          repositories: charts
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out OpenKruise charts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.CHART_REPOSITORY }}
+          ref: master
+          path: openkruise-charts
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Pull released Agentio chart
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/released-agentio"
+          helm pull oci://docker.io/openkruise/agentio \
+            --version "$VERSION" \
+            --untar \
+            --untardir "$RUNNER_TEMP/released-agentio"
+
+      - name: Generate sandbox-manager Agentio templates
+        working-directory: agentio
+        run: |
+          go test ./tools/agentio-chart-exporter
+          go run ./tools/agentio-chart-exporter \
+            --source "$RUNNER_TEMP/released-agentio/agentio" \
+            --target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_MANAGER_CHART"
+
+      - name: Verify generated sandbox-manager chart
+        working-directory: openkruise-charts
+        run: |
+          target="$SANDBOX_MANAGER_CHART"
+          disabled="$RUNNER_TEMP/sandbox-manager-disabled.yaml"
+          enabled="$RUNNER_TEMP/sandbox-manager-agentio-enabled.yaml"
+
+          helm lint "$target" \
+            --set e2b.adminApiKey=test \
+            --set ingress.className=test
+          helm template sandbox-manager "$target" \
+            --set e2b.adminApiKey=test \
+            --set ingress.className=test >"$disabled"
+          if grep -q '# Source: .*templates/agentio/' "$disabled"; then
+            echo "Agentio resources rendered while agentio.enabled=false" >&2
+            exit 1
+          fi
+
+          helm template sandbox-manager "$target" \
+            --set e2b.adminApiKey=test \
+            --set ingress.className=test \
+            --set agentio.enabled=true >"$enabled"
+          if ! grep -q '# Source: .*templates/agentio/' "$enabled"; then
+            echo "Agentio resources did not render while agentio.enabled=true" >&2
+            exit 1
+          fi
+
+          if grep -R -E '(^|[[:space:]])(chartVersion|appVersion|sourceCommit):' \
+            "$target/templates/agentio" "$target/values.yaml"; then
+            echo "Generated sandbox-manager chart contains forbidden Agentio version metadata" >&2
+            exit 1
+          fi
+
+          helm template sandbox-manager "$target" \
+            --set e2b.adminApiKey=test \
+            --set ingress.className=test \
+            --set agentio.enabled=true \
+            --set agentio.ambient.enabled=true \
+            --set agentio.sidecarInjector.enabled=true \
+            --set agentio.global.enableClusterTrustBundle=true >/dev/null
+
+          git diff --check
+
+      - name: Publish sync branch and pull request
+        working-directory: openkruise-charts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          branch="sync-agentio-sandbox-manager-${VERSION}"
+          target="$SANDBOX_MANAGER_CHART"
+          generated_paths=(
+            "$target/values.yaml"
+            "$target/templates/agentio"
+            "$target/files/agentio"
+          )
+
+          if [[ -z "$(git status --porcelain -- "${generated_paths[@]}")" ]]; then
+            echo "sandbox-manager already contains the generated Agentio chart; skipping."
+            exit 0
+          fi
+
+          if git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"; then
+            while IFS= read -r changed; do
+              case "$changed" in
+                "$target/values.yaml"|"$target/templates/agentio/"*|"$target/files/agentio/"*) ;;
+                *)
+                  echo "Existing branch contains an unexpected change: $changed" >&2
+                  exit 1
+                  ;;
+              esac
+            done < <(git diff --name-only origin/master..."origin/${branch}")
+
+            if ! git diff --quiet "origin/${branch}" -- "${generated_paths[@]}"; then
+              echo "Existing branch contains different generated Agentio content" >&2
+              exit 1
+            fi
+
+            pr_state=$(gh pr list \
+              --repo "$CHART_REPOSITORY" \
+              --head "$branch" \
+              --state all \
+              --json state \
+              --jq '.[0].state // ""')
+            pr_url=$(gh pr list \
+              --repo "$CHART_REPOSITORY" \
+              --head "$branch" \
+              --state all \
+              --json url \
+              --jq '.[0].url // ""')
+            case "$pr_state" in
+              OPEN|MERGED)
+                echo "sandbox-manager sync pull request already exists: ${pr_url}"
+                exit 0
+                ;;
+              CLOSED)
+                echo "sandbox-manager sync pull request was closed without merging: ${pr_url}" >&2
+                exit 1
+                ;;
+            esac
+
+            gh pr create \
+              --repo "$CHART_REPOSITORY" \
+              --base master \
+              --head "$branch" \
+              --title "feat(kruise-agents-sandbox-manager): sync Agentio ${VERSION}" \
+              --body "Embeds the released Agentio ${VERSION} chart into the sandbox-manager next chart under the agentio values key and templates/agentio. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}."
+            exit 0
+          fi
+
+          git switch -c "$branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${generated_paths[@]}"
+          git commit --signoff -m "feat(kruise-agents-sandbox-manager): sync agentio ${VERSION}"
+          git push origin "HEAD:refs/heads/${branch}"
+
+          gh pr create \
+            --repo "$CHART_REPOSITORY" \
+            --base master \
+            --head "$branch" \
+            --title "feat(kruise-agents-sandbox-manager): sync Agentio ${VERSION}" \
+            --body "Embeds the released Agentio ${VERSION} chart into the sandbox-manager next chart under the agentio values key and templates/agentio. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}."

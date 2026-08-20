@@ -487,6 +487,13 @@ jobs:
             --title "feat(agentio): release chart ${VERSION}" \
             --body "Publishes the Agentio ${VERSION} Helm chart. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}. OCI chart: oci://docker.io/openkruise/agentio."
 
+  sync-sandbox-manager-chart:
+    needs: create-release
+    uses: ./.github/workflows/sync-sandbox-manager-agentio-chart.yml
+    with:
+      version: ${{ inputs.version }}
+    secrets: inherit
+
   tag-ztunnel:
     needs: publish-chart
     runs-on: ubuntu-latest
