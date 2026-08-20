@@ -71,6 +71,75 @@ func TestGetTokenWithExtraMetadata_PartitionsCache(t *testing.T) {
 	}
 }
 
+// TestGetToken_CacheExpiresInSeconds asserts the provider's declared lifetime
+// governs the cache entry, and that absent/null/non-positive falls back to the
+// cache's own TTL. Measured by whether a second GetToken reaches the provider,
+// since the TTL is not observable from outside the cache.
+func TestGetToken_CacheExpiresInSeconds(t *testing.T) {
+	const cacheTTL = time.Hour
+
+	for _, tc := range []struct {
+		name    string
+		field   string        // rendered verbatim into the response JSON
+		wantTTL time.Duration // lifetime the entry should end up with
+	}{
+		{name: "shorter than the fallback", field: `,"cacheExpiresInSeconds":600`, wantTTL: 600 * time.Second},
+		{name: "longer than the fallback", field: `,"cacheExpiresInSeconds":10800`, wantTTL: 3 * time.Hour},
+		{name: "absent", field: ``, wantTTL: cacheTTL},
+		{name: "null", field: `,"cacheExpiresInSeconds":null`, wantTTL: cacheTTL},
+		{name: "zero", field: `,"cacheExpiresInSeconds":0`, wantTTL: cacheTTL},
+		{name: "negative", field: `,"cacheExpiresInSeconds":-5`, wantTTL: cacheTTL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := credentialtest.NewRawProvider(t, `{"requestId":"r","apiKey":"k1"`+tc.field+`}`)
+			cache := tokencache.NewCache(cacheTTL, 10)
+			now := time.Unix(1000, 0)
+			cache.SetClock(func() time.Time { return now })
+			c := p.ClientWithCache(cache, nil)
+
+			// A malformed lifetime must not fail the credential itself.
+			tok, err := c.GetToken(context.Background(), "access", "client", "provider")
+			if err != nil {
+				t.Fatalf("GetToken: %v", err)
+			}
+			if tok != "k1" {
+				t.Fatalf("token = %q, want k1", tok)
+			}
+
+			// Just short of the expected lifetime: still cached.
+			now = now.Add(tc.wantTTL - time.Second)
+			if _, err := c.GetToken(context.Background(), "access", "client", "provider"); err != nil {
+				t.Fatalf("GetToken before expiry: %v", err)
+			}
+			if got := p.Calls.Load(); got != 1 {
+				t.Fatalf("provider calls = %d before %v elapsed, want 1 (entry expired early)", got, tc.wantTTL)
+			}
+
+			// Just past it: refetched.
+			now = now.Add(2 * time.Second)
+			if _, err := c.GetToken(context.Background(), "access", "client", "provider"); err != nil {
+				t.Fatalf("GetToken after expiry: %v", err)
+			}
+			if got := p.Calls.Load(); got != 2 {
+				t.Fatalf("provider calls = %d after %v elapsed, want 2 (entry outlived its TTL)", got, tc.wantTTL)
+			}
+		})
+	}
+}
+
+// TestGetToken_CacheExpiresInSecondsNonNumeric documents that a quoted or
+// fractional value fails the whole response unmarshal, so the apiKey becomes
+// unreachable rather than the lifetime falling back.
+func TestGetToken_CacheExpiresInSecondsNonNumeric(t *testing.T) {
+	for _, field := range []string{`"600"`, `600.5`, `"abc"`} {
+		p := credentialtest.NewRawProvider(t, `{"requestId":"r","apiKey":"k1","cacheExpiresInSeconds":`+field+`}`)
+		_, err := p.Client().GetToken(context.Background(), "access", "client", "provider")
+		if err == nil {
+			t.Errorf("cacheExpiresInSeconds=%s: expected the whole lookup to fail, got a usable token", field)
+		}
+	}
+}
+
 // --- GetToken ---------------------------------------------------------------
 
 func TestGetToken_Success(t *testing.T) {
@@ -171,12 +240,35 @@ func TestGetSTSCredential_CacheHit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iter %d: %v", i, err)
 		}
-		if cred.StsToken.AccessKeyID != "ak" || cred.StsToken.AccessKeySecret != "sk" || cred.StsToken.SecurityToken != "st" {
-			t.Fatalf("iter %d: unexpected cred: %+v", i, cred.StsToken)
+		if cred.AccessKeyID != "ak" || cred.AccessKeySecret != "sk" || cred.SecurityToken != "st" {
+			t.Fatalf("iter %d: unexpected cred: %+v", i, cred)
 		}
 	}
 	if called := p.Calls.Load(); called != 1 {
 		t.Errorf("expected upstream to be called once, got %d", called)
+	}
+}
+
+// TestGetSTSCredential_HitMatchesMiss asserts a cache hit returns the same value
+// as the miss that populated it.
+func TestGetSTSCredential_HitMatchesMiss(t *testing.T) {
+	exp := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	p := credentialtest.NewSTSProvider(t, "ak", "sk", "st", exp)
+	c := stsClient(p)
+
+	miss, err := c.GetSTSCredential(context.Background(), "access", "client", "provider")
+	if err != nil {
+		t.Fatalf("miss: %v", err)
+	}
+	hit, err := c.GetSTSCredential(context.Background(), "access", "client", "provider")
+	if err != nil {
+		t.Fatalf("hit: %v", err)
+	}
+	if p.Calls.Load() != 1 {
+		t.Fatalf("expected the second call to hit the cache, got %d upstream calls", p.Calls.Load())
+	}
+	if miss != hit {
+		t.Errorf("miss = %+v, hit = %+v", miss, hit)
 	}
 }
 

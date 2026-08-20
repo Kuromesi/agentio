@@ -125,8 +125,9 @@ spec:
             # credential provider's base URL, hence the values location.
             - name: IDENTITY_PROVIDER_URL
               value: {{ .Values.epe.credentialProvider.url | quote }}
+            # Fallback for responses without cacheExpiresInSeconds.
             - name: TOKEN_CACHE_TTL
-              value: "3h"
+              value: "15m"
             - name: TOKEN_CACHE_MAX_SIZE
               value: "10000"
             {{- /*

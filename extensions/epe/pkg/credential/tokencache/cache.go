@@ -13,7 +13,8 @@
 // limitations under the License.
 // Package tokencache provides a thread-safe LRU cache for tokens obtained
 // from the credential provider. Tokens are cached by credentialProviderName +
-// resourceId and expire after a configurable TTL. The LRU backing uses
+// resourceId and expire after the TTL supplied per entry, or the cache's
+// configured TTL when none is. The LRU backing uses
 // github.com/hashicorp/golang-lru/v2.
 package tokencache
 
@@ -27,36 +28,18 @@ import (
 	"istio.io/istio/pkg/env"
 )
 
-const (
-	defaultTTL     = time.Hour
-	defaultMaxSize = 100000
-)
+const defaultMaxSize = 100000
 
 // Environment variables for cache configuration. Resolved once at init, as
 // everywhere else in the tree; tests override the values with test.SetForTest.
 var (
-	cacheTTL = env.Register("TOKEN_CACHE_TTL", defaultTTL,
-		"Time-to-live for cached credential provider API keys; a non-positive value falls back to the default").Get()
+	// A non-positive cacheTTL is used as-is and disables caching.
+	cacheTTL = env.Register("TOKEN_CACHE_TTL", 15*time.Minute,
+		"Fallback time-to-live for cached credential provider API keys, used when the provider's response omits "+
+			"cacheExpiresInSeconds; a non-positive value disables caching").Get()
 	cacheMaxSize = env.Register("TOKEN_CACHE_MAX_SIZE", defaultMaxSize,
 		"Maximum number of cached credential provider API keys; a non-positive value falls back to the default").Get()
 )
-
-// effectiveTTL and effectiveMaxSize apply the same non-positive fallback that
-// NewCache applies, so ConfigInfo reports the values NewCacheFromEnv would
-// actually build rather than the raw env input.
-func effectiveTTL() time.Duration {
-	if cacheTTL > 0 {
-		return cacheTTL
-	}
-	return defaultTTL
-}
-
-func effectiveMaxSize() int {
-	if cacheMaxSize > 0 {
-		return cacheMaxSize
-	}
-	return defaultMaxSize
-}
 
 // cacheKey is the composite key for a cached token.
 type cacheKey struct {
@@ -83,11 +66,12 @@ type Cache struct {
 	now func() time.Time
 }
 
-// NewCache creates a new token cache with the given TTL and max size.
-// If ttl or maxSize is zero or negative, defaults are used.
+// NewCache creates a new token cache with the given fallback TTL and max size.
+// A non-positive ttl resolves to cacheTTL; a non-positive maxSize to
+// defaultMaxSize, which lru.New requires.
 func NewCache(ttl time.Duration, maxSize int) *Cache {
 	if ttl <= 0 {
-		ttl = defaultTTL
+		ttl = cacheTTL
 	}
 	if maxSize <= 0 {
 		maxSize = defaultMaxSize
@@ -112,10 +96,10 @@ func (c *Cache) SetClock(now func() time.Time) {
 }
 
 // NewCacheFromEnv creates a token cache configured from environment variables.
-// TOKEN_CACHE_TTL overrides the default TTL (parsed via time.ParseDuration).
+// TOKEN_CACHE_TTL sets the fallback TTL (parsed via time.ParseDuration).
 // TOKEN_CACHE_MAX_SIZE overrides the default max size.
 func NewCacheFromEnv() *Cache {
-	return NewCache(effectiveTTL(), effectiveMaxSize())
+	return NewCache(cacheTTL, cacheMaxSize)
 }
 
 // Get retrieves a token from the cache by credentialProviderName and resourceID.
@@ -141,14 +125,24 @@ func (c *Cache) Get(credentialProviderName, resourceID string) (string, bool) {
 	return entry.token, true
 }
 
-// Set adds or updates a token in the cache.
-// If the cache is at capacity, the least recently used entry is evicted.
+// Set adds or updates a token in the cache, expiring after the cache's
+// configured TTL. If the cache is at capacity, the least recently used entry
+// is evicted.
 func (c *Cache) Set(credentialProviderName, resourceID, token string) {
+	c.SetWithTTL(credentialProviderName, resourceID, token, 0)
+}
+
+// SetWithTTL adds or updates a token that expires after ttl. A non-positive ttl
+// uses the cache's configured TTL. No safety margin is subtracted.
+func (c *Cache) SetWithTTL(credentialProviderName, resourceID, token string, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if ttl <= 0 {
+		ttl = c.ttl
+	}
 	key := cacheKey{credentialProviderName: credentialProviderName, resourceID: resourceID}
-	entry := cacheEntry{token: token, expiresAt: c.now().Add(c.ttl)}
+	entry := cacheEntry{token: token, expiresAt: c.now().Add(ttl)}
 	c.lru.Add(key, entry)
 }
 
@@ -169,6 +163,7 @@ func (c *Cache) Len() int {
 }
 
 // ConfigInfo returns a human-readable string of cache configuration for logging.
+// Values are the raw env input; NewCache clamps a non-positive maxSize.
 func ConfigInfo() string {
-	return fmt.Sprintf("TTL=%s, maxSize=%d", effectiveTTL(), effectiveMaxSize())
+	return fmt.Sprintf("fallbackTTL=%s, maxSize=%d", cacheTTL, cacheMaxSize)
 }

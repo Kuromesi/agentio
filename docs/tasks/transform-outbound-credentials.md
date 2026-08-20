@@ -26,7 +26,7 @@ $ helm upgrade agentio ./manifests/charts/agentio \
 
 For a new installation, provide the complete installation values instead of this EPE-only fragment; [Get started with EPE](../getting-started/epe.md#enable-epe) shows the update path after an Agentio release exists.
 
-Replace the example URL with a provider endpoint reachable from the EPE Pods. The chart maps it to `IDENTITY_PROVIDER_URL`, sets the API-key cache to `TOKEN_CACHE_TTL=3h` and `TOKEN_CACHE_MAX_SIZE=10000`, and the example makes the default STS cache capacity explicit. See [EPE configuration](../reference/epe-configuration.md#credential-provider-and-webhook-environment-variables) for the complete Helm and environment surface.
+Replace the example URL with a provider endpoint reachable from the EPE Pods. The chart maps it to `IDENTITY_PROVIDER_URL`, sets the API-key cache to `TOKEN_CACHE_TTL=15m` and `TOKEN_CACHE_MAX_SIZE=10000`, and the example makes the default STS cache capacity explicit. See [EPE configuration](../reference/epe-configuration.md#credential-provider-and-webhook-environment-variables) for the complete Helm and environment surface.
 
 The provider must authenticate the EPE client and authorize the sandbox identity carried in Envoy `filter_state['sandbox.token']`. A missing or malformed sandbox token cannot serve a provider-backed rule.
 
@@ -92,7 +92,7 @@ $ kubectl get securityprofile example-api-credentials \
 
 Then send a request from a selected sandbox through the egress gateway. Verify on the trusted upstream or a controlled test endpoint that it receives the generated `Authorization` value, not the sandbox's original value. Do not echo credentials in shared logs.
 
-Repeat the request with the same provider name, sandbox client ID, and rendered metadata. An API-key cache hit avoids another provider request until `TOKEN_CACHE_TTL` expires or the bounded LRU evicts the entry. Changing a metadata value changes the cache key.
+Repeat the request with the same provider name, sandbox client ID, and rendered metadata. An API-key cache hit avoids another provider request until the entry's lifetime expires or the bounded LRU evicts it. That lifetime is the response's `cacheExpiresInSeconds` when present, otherwise `TOKEN_CACHE_TTL`. Changing a metadata value changes the cache key.
 
 ## Credential sources, signers, and failure behavior
 
@@ -111,7 +111,7 @@ EPE trims surrounding whitespace from credential fields and rejects embedded con
 
 The credential provider client uses TLS 1.2 or later and normally verifies the provider certificate. `CREDENTIAL_PROVIDER_MTLS_SOURCE` selects exactly one source of mTLS material — `files` (the default, reading `/etc/epe/credential-provider/{client.crt,client.key,ca.crt}` or the corresponding environment overrides), `secret`, or `none` — with no fallback between them. The selected source is watched, so material that appears or rotates later takes effect without a restart; while it is absent or unusable EPE presents no client certificate and verifies the provider against the system trust store. `CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY=true` disables server-certificate verification; it is unsafe because an on-path attacker can read the sandbox bearer token and forge credentials. Do not use it outside tightly controlled test environments.
 
-API keys are cached by provider name plus a hash of evaluated metadata and sandbox resource ID. EPE's Helm deployment sets `TOKEN_CACHE_TTL=3h` and `TOKEN_CACHE_MAX_SIZE=10000`; invalid or non-positive direct environment values fall back to the process defaults (one hour and 100000). Provider-side rotation is visible after expiry or eviction.
+API keys are cached by provider name plus a hash of evaluated metadata and sandbox resource ID. A response that carries `cacheExpiresInSeconds` sets that entry's lifetime directly, overriding the configured TTL. Otherwise EPE's Helm deployment sets `TOKEN_CACHE_TTL=15m` and `TOKEN_CACHE_MAX_SIZE=10000`; unset values use the process defaults of fifteen minutes and 100000. A non-positive `TOKEN_CACHE_TTL` is honoured and disables the fallback lifetime, so every response without `cacheExpiresInSeconds` reaches the provider again; a non-positive `TOKEN_CACHE_MAX_SIZE` falls back to 100000, because a zero-capacity cache cannot be constructed. Provider-side rotation is visible after expiry or eviction.
 
 STS credentials are cached only when the provider supplies an RFC 3339 `expiration`; EPE expires an entry five minutes before that timestamp. `STS_CACHE_MAX_SIZE` bounds this cache. Returned API keys and STS credentials live in EPE process memory for their cache lifetime, so keep credentials short-lived and do not place them in profile inputs, ConfigMaps, logs, policy manifests, or audit templates.
 

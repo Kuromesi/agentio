@@ -128,17 +128,14 @@ func (p *ProviderSource) Fetch(ctx context.Context, ref Ref) (Credential, error)
 		if p.sts == nil {
 			return Credential{}, fmt.Errorf("credential client is not configured")
 		}
-		resp, err := p.sts.GetSTSCredentialWithExtraMetadata(ctx, ref.AccessToken, ref.SandboxClientID, ref.Name, ref.ExtraMetadata)
+		sts, err := p.sts.GetSTSCredentialWithExtraMetadata(ctx, ref.AccessToken, ref.SandboxClientID, ref.Name, ref.ExtraMetadata)
 		if err != nil {
 			return Credential{}, fmt.Errorf("credential provider call failed: %w", err)
 		}
-		if resp == nil || resp.StsToken == nil {
-			return Credential{}, fmt.Errorf("credential provider returned no STS token")
-		}
 		return Credential{
-			AccessKeyID:     resp.StsToken.AccessKeyID,
-			AccessKeySecret: resp.StsToken.AccessKeySecret,
-			SecurityToken:   resp.StsToken.SecurityToken,
+			AccessKeyID:     sts.AccessKeyID,
+			AccessKeySecret: sts.AccessKeySecret,
+			SecurityToken:   sts.SecurityToken,
 		}, nil
 	default:
 		return Credential{}, fmt.Errorf("unsupported credential kind %q", ref.Kind)
