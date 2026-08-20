@@ -40,6 +40,8 @@ const (
 	WorkloadType              = APITypePrefix + "istio.workload.Workload"
 	WorkloadAuthorizationType = APITypePrefix + "istio.security.Authorization"
 	WorkloadConfigType        = APITypePrefix + "kruise.networking.extensions.v1.WorkloadConfig"
+	PolicyBindingType         = APITypePrefix + "kruise.networking.extensions.v1.PolicyBinding"
+	SniTrafficPolicyType      = APITypePrefix + "kruise.networking.extensions.v1.SniTrafficPolicy"
 )
 
 // GetShortType returns an abbreviated form of a type, useful for logging or human friendly messages
@@ -67,6 +69,10 @@ func GetShortType(typeURL string) string {
 		return "WADS"
 	case WorkloadConfigType:
 		return "WCDS"
+	case PolicyBindingType:
+		return "PBDS"
+	case SniTrafficPolicyType:
+		return "STPDS"
 	default:
 		return typeURL
 	}
@@ -99,6 +105,10 @@ func GetMetricType(typeURL string) string {
 		return "wads"
 	case WorkloadConfigType:
 		return "wcds"
+	case PolicyBindingType:
+		return "pbds"
+	case SniTrafficPolicyType:
+		return "stpds"
 	default:
 		return typeURL
 	}
@@ -128,6 +138,10 @@ func GetResourceType(shortType string) string {
 		return AddressType
 	case "WADS":
 		return WorkloadAuthorizationType
+	case "PBDS":
+		return PolicyBindingType
+	case "STPDS":
+		return SniTrafficPolicyType
 	default:
 		return shortType
 	}

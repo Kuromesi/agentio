@@ -75,6 +75,10 @@ proxy:
     name: proxyv2
     tag: latest
 
+# -- Opt-in ClientHello SNI enforcement for sandbox egress gateways.
+sniTrafficPolicy:
+  enabled: false
+
 # -- Lightweight image used only by the istio-init/istio-validation containers
 # to configure pod iptables. It contains pilot-agent and iptables/nftables, but
 # does not contain Envoy.

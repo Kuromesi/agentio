@@ -950,8 +950,6 @@ type AmbientIndexes interface {
 	) sets.String
 	Policies(requested sets.Set[ConfigKey]) []WorkloadAuthorization
 	PoliciesForProxy(proxy *Proxy, requested sets.Set[ConfigKey]) []WorkloadAuthorization
-	WorkloadConfigs(requested sets.Set[ConfigKey]) []WorkloadConfig
-	WorkloadConfigsForProxy(proxy *Proxy, requested sets.Set[ConfigKey]) []WorkloadConfig
 	ServicesForWaypoint(WaypointKey) []ServiceInfo
 	WorkloadsForWaypoint(WaypointKey) []WorkloadInfo
 	// ServiceScope returns service information for services matching the key.
@@ -1038,14 +1036,6 @@ func (u NoopAmbientIndexes) Policies(sets.Set[ConfigKey]) []WorkloadAuthorizatio
 }
 
 func (u NoopAmbientIndexes) PoliciesForProxy(_ *Proxy, _ sets.Set[ConfigKey]) []WorkloadAuthorization {
-	return nil
-}
-
-func (u NoopAmbientIndexes) WorkloadConfigs(sets.Set[ConfigKey]) []WorkloadConfig {
-	return nil
-}
-
-func (u NoopAmbientIndexes) WorkloadConfigsForProxy(_ *Proxy, _ sets.Set[ConfigKey]) []WorkloadConfig {
 	return nil
 }
 

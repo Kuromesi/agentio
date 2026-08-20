@@ -47,6 +47,7 @@ import (
 
 	"istio.io/istio/pilot/cmd/pilot-agent/metrics"
 	"istio.io/istio/pilot/cmd/pilot-agent/status/grpcready"
+	"istio.io/istio/pilot/cmd/pilot-agent/status/policyready"
 	"istio.io/istio/pilot/cmd/pilot-agent/status/ready"
 	dnsProto "istio.io/istio/pkg/dns/proto"
 	"istio.io/istio/pkg/env"
@@ -136,6 +137,10 @@ type Options struct {
 	NoEnvoy             bool
 	GRPCBootstrap       string
 	EnableProfiling     bool
+	// PolicyBindingDiscovery reports whether the Agentio gateway policy store
+	// bootstrap extension is configured on this proxy. When set, readiness also
+	// waits for that store to sync.
+	PolicyBindingDiscovery bool
 	// PrometheusRegistry to use. Just for testing.
 	PrometheusRegistry prometheus.Gatherer
 	Shutdown           context.CancelCauseFunc
@@ -202,6 +207,12 @@ func NewServer(config Options) (*Server, error) {
 			Context:       config.Context,
 			NoEnvoy:       config.NoEnvoy,
 		})
+		// Built here rather than by the caller because the effective localhost is
+		// resolved above, including the dual-stack case, and must match the address
+		// Envoy's admin endpoint is bound to.
+		if config.PolicyBindingDiscovery {
+			probes = append(probes, policyready.New(localhost, config.AdminPort))
+		}
 	}
 
 	if config.GRPCBootstrap != "" {

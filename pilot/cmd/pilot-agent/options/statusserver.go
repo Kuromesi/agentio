@@ -32,8 +32,13 @@ func NewStatusServerOptions(ipv6 bool, t model.NodeType, proxyConfig *meshconfig
 		NodeType:       t,
 		Probes:         []ready.Prober{agent},
 		NoEnvoy:        agent.EnvoyDisabled(),
-		FetchDNS:       agent.GetDNSTable,
-		GRPCBootstrap:  agent.GRPCBootstrapPath(),
+		// Read from the env rather than off `agent`, which does not expose it. This
+		// is the same source the bootstrap template gates on: bootstrap config
+		// overwrites any ISTIO_META_/proxyMetadata value with the agent option, so
+		// the env is the only input and the two gates cannot disagree.
+		PolicyBindingDiscovery: policyBindingDiscoveryEnvWasSet && policyBindingDiscoveryEnv,
+		FetchDNS:               agent.GetDNSTable,
+		GRPCBootstrap:          agent.GRPCBootstrapPath(),
 		TriggerDrain: func() {
 			agent.DrainNow()
 		},

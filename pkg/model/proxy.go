@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -346,6 +347,9 @@ type NodeMetadata struct {
 
 	// Metadata discovery service enablement
 	MetadataDiscovery *StringBool `json:"METADATA_DISCOVERY,omitempty"`
+
+	// Policy binding discovery service enablement.
+	PolicyBindingDiscovery *StringBool `json:"POLICY_BINDING_DISCOVERY,omitempty"`
 
 	// Envoy command line to option to control deprecates=d logs behavior.
 	EnvoySkipDeprecatedLogs StringBool `json:"ENVOY_SKIP_DEPRECATED_LOGS,omitempty"`

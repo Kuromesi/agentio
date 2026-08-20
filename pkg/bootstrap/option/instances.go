@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -274,6 +275,10 @@ func DiscoveryHost(value string) Instance {
 
 func MetadataDiscovery(value bool) Instance {
 	return newOption("metadata_discovery", value)
+}
+
+func PolicyBindingDiscovery(value bool) Instance {
+	return newOption("policy_binding_discovery", value)
 }
 
 func MetricsLocalhostAccessOnly(proxyMetadata map[string]string) Instance {

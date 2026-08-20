@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -72,6 +73,9 @@ func NewAgentOptions(proxy *ProxyArgs, cfg *meshconfig.ProxyConfig, sds istioage
 	}
 	if enableWDSEnvWasSet {
 		o.MetadataDiscovery = ptr.Of(enableWDSEnv)
+	}
+	if policyBindingDiscoveryEnvWasSet {
+		o.PolicyBindingDiscovery = ptr.Of(policyBindingDiscoveryEnv)
 	}
 	extractXDSHeadersFromEnv(o)
 	return o

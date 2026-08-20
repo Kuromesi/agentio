@@ -22,6 +22,7 @@ PROTO_DIR="pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 PROTO_FILES=(
   "${PROTO_DIR}/extensions.proto"
   "${PROTO_DIR}/agentioconfig.proto"
+  "${PROTO_DIR}/snipolicy.proto"
 )
 
 cd "${REPO_ROOT}"

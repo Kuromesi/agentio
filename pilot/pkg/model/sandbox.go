@@ -24,6 +24,7 @@ import (
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/config/schema/kubetypes"
 	"istio.io/istio/pkg/kube/controllers"
+	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/util/sets"
 )
 
@@ -83,6 +84,54 @@ func (w WorkloadConfig) Equals(other WorkloadConfig) bool {
 func (w WorkloadConfig) ConfigKey() ConfigKey {
 	return ConfigKey{Kind: kind.WorkloadConfig, Name: w.Name, Namespace: w.Namespace}
 }
+
+type AgentioResource struct {
+	Name     string
+	Resource proto.Message
+}
+
+type AgentioResourceDiscovery interface {
+	AgentioResourcesForProxy(
+		proxy *Proxy,
+		typeURL string,
+		requested sets.Set[ConfigKey],
+	) []AgentioResource
+}
+
+// PolicyBindingResourceName returns the complete xDS resource name for a
+// workload reference. There is exactly one binding resource per workload.
+func PolicyBindingResourceName(namespace, name string) string {
+	return "workload://" + namespace + "/" + name
+}
+
+// PolicyBinding is the pilot-side wrapper for the PolicyBinding xDS resource.
+// It binds a single workload to the policy resources that apply to it.
+type PolicyBinding struct {
+	// Name is the complete xDS resource name, not a Kubernetes object name.
+	Name    string
+	Binding *extensions.PolicyBinding
+}
+
+func (p PolicyBinding) ResourceName() string {
+	return p.Name
+}
+
+func (p PolicyBinding) Equals(other PolicyBinding) bool {
+	return p.Name == other.Name && proto.Equal(p.Binding, other.Binding)
+}
+
+func (p PolicyBinding) ConfigKey() ConfigKey {
+	return ConfigKey{Kind: kind.PolicyBinding, Name: p.Name}
+}
+
+// Both wrappers are used directly as krt collection value types, which requires
+// ResourceName() for keying and Equals() for equality suppression.
+var (
+	_ krt.ResourceNamer           = WorkloadConfig{}
+	_ krt.Equaler[WorkloadConfig] = WorkloadConfig{}
+	_ krt.ResourceNamer           = PolicyBinding{}
+	_ krt.Equaler[PolicyBinding]  = PolicyBinding{}
+)
 
 func (sc *AgentioConfig) ExtractMatchHosts() sets.String {
 	hosts := sets.New[string]()
