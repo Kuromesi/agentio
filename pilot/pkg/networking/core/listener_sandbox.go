@@ -73,8 +73,9 @@ const (
 	// the cluster connects from, causing intermittent UH/503.
 	agentioDFPCacheName = "agentio_dns_cache"
 	// noSNISentinel is the SDS resource name envoy requests when the client
-	// hello has no SNI. It must be >=1 char (proto min_len) and must not match
-	// any real includeHosts pattern, so SDS denies it and the handshake fails.
+	// hello has no SNI. It must be >=1 char (proto min_len) and must not be a
+	// valid DNS domain, so pilot's SDS rejects it (IsValidOnDemandDomain) and
+	// the handshake fails.
 	noSNISentinel = "_no_sni_"
 
 	// outerSNIFilterStateKey carries the original ClientHello SNI from the
@@ -377,9 +378,9 @@ func (lb *ListenerBuilder) buildTlsTerminateFilterChain(connPool *extensions.Con
 							CertificateMapper: &core.TypedExtensionConfig{
 								Name: "envoy.tls.certificate_mappers.sni",
 								// DefaultValue is required (proto min_len=1). Envoy uses it as
-								// the SDS resource name when SNI is empty; this sentinel won't
-								// match any tlsTermination.includeHosts so SDS will deny it and
-								// the handshake fails — the desired behavior for missing SNI.
+								// the SDS resource name when SNI is empty; this sentinel is not
+								// a valid DNS domain so SDS rejects it and the handshake
+								// fails — the desired behavior for missing SNI.
 								TypedConfig: protoconv.MessageToAny(&sniv3.SNI{DefaultValue: noSNISentinel}),
 							},
 						}),

@@ -175,7 +175,7 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | --- | --- | --- | --- |
 | `name` | String | Empty | Gateway name and expected ServiceAccount name. |
 | `namespace` | String | Empty | Namespace of the gateway workload. Gateways may run outside `agentio-system`. |
-| `tlsTermination.includeHosts` | `string[]` | Empty | SNI host patterns eligible for TLS termination and on-demand certificates. Wildcards such as `*.example.com` are supported. |
+| `tlsTermination.includeHosts` | `string[]` | Empty | SNI host patterns selected for TLS termination. Wildcards such as `*.example.com` are supported. On-demand certificate issuance is authorized by gateway identity, not by this list. |
 | `tlsTermination.excludeHosts` | `string[]` | Empty | SNI host patterns forwarded without TLS termination. Wildcards are supported. |
 | `extProc` | `ExtProcProvider` | Inherit global | Per-gateway external-processing override. An explicitly empty provider disables it for this gateway. |
 | `connectionPool` | `ConnectionPoolSettings` | See below | TCP and HTTP connection and route timeouts. |

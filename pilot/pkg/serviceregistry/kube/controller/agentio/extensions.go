@@ -23,7 +23,6 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/constants"
-	"istio.io/istio/pkg/config/host"
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/workloadapi"
 	"istio.io/istio/pkg/workloadapi/security"
@@ -144,32 +143,6 @@ func ExtractProxyMeta(proxy *model.Proxy) (string, string, bool) {
 		return "", "", false
 	}
 	return parts[0], parts[1], true
-}
-
-// IsAllowedOnDemandDomain reports whether proxy is permitted to pull an
-// on-demand cert for the given SNI domain — i.e. proxy belongs to an
-// EgressGateway whose tls_termination.include_hosts covers domain. Wildcards
-// in include_hosts (e.g. "*.example.com") use the same matching rules as
-// host.Name.SubsetOf.
-func IsAllowedOnDemandDomain(proxy *model.Proxy, push *model.PushContext, domain string) bool {
-	if push == nil || push.AgentioConfig == nil {
-		return false
-	}
-	g := FindEgressGatewayForProxy(proxy, push.AgentioConfig.GetEgressGateways())
-	if g == nil {
-		return false
-	}
-	cfg := g.GetTlsTermination()
-	if cfg == nil {
-		return false
-	}
-	needle := host.Name(domain)
-	for _, h := range cfg.GetIncludeHosts() {
-		if needle.SubsetOf(host.Name(h)) {
-			return true
-		}
-	}
-	return false
 }
 
 // FindEgressGatewayForProxy returns the EgressGateway matching the proxy's
