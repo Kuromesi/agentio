@@ -17,6 +17,7 @@ package agentio
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/api/annotation"
@@ -116,6 +117,7 @@ func TestStripTrafficPolicyUnusedFields(t *testing.T) {
 
 func TestStripSecurityProfileUnusedFields(t *testing.T) {
 	priority := int32(23)
+	created := metav1.NewTime(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC))
 	domains := make([]string, 2, 16)
 	domains[0], domains[1] = "api.example.com", "*.example.com"
 	schemes := make([]string, 1, 8)
@@ -138,15 +140,16 @@ func TestStripSecurityProfileUnusedFields(t *testing.T) {
 	}
 	profile := &agentsv1alpha1.SecurityProfile{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            "api",
-			Namespace:       "sandbox",
-			ResourceVersion: "9",
-			Generation:      3,
-			Labels:          map[string]string{"unused": "label"},
-			Annotations:     map[string]string{"unused": "annotation"},
-			Finalizers:      []string{"unused"},
-			OwnerReferences: []metav1.OwnerReference{{Name: "unused"}},
-			ManagedFields:   []metav1.ManagedFieldsEntry{{Manager: "test"}},
+			Name:              "api",
+			Namespace:         "sandbox",
+			CreationTimestamp: created,
+			ResourceVersion:   "9",
+			Generation:        3,
+			Labels:            map[string]string{"unused": "label"},
+			Annotations:       map[string]string{"unused": "annotation"},
+			Finalizers:        []string{"unused"},
+			OwnerReferences:   []metav1.OwnerReference{{Name: "unused"}},
+			ManagedFields:     []metav1.ManagedFieldsEntry{{Manager: "test"}},
 		},
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}},
@@ -189,7 +192,8 @@ func TestStripSecurityProfileUnusedFields(t *testing.T) {
 	if &profile.Spec.Rules[0] != wantRules {
 		t.Fatal("SecurityProfile spec was copied instead of being preserved as-is")
 	}
-	if profile.Name != "api" || profile.Namespace != "sandbox" || profile.ResourceVersion != "9" || profile.Generation != 3 {
+	if profile.Name != "api" || profile.Namespace != "sandbox" || !profile.CreationTimestamp.Equal(&created) ||
+		profile.ResourceVersion != "9" || profile.Generation != 3 {
 		t.Fatalf("required metadata changed: %+v", profile.ObjectMeta)
 	}
 	if profile.Labels != nil || profile.Annotations != nil || profile.Finalizers != nil ||

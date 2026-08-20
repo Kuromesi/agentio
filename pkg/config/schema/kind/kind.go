@@ -17,8 +17,34 @@ package kind
 
 type Kind uint8
 
+// Kinds defined outside the generated schema. Explicit values keep them clear
+// of the generated iota block, which shifts on upstream rebases.
 const (
 	WorkloadConfig   Kind = 200
 	PolicyBinding    Kind = 201
 	SniTrafficPolicy Kind = 202
 )
+
+// extendedKindNames names the kinds above; the generated String and FromString
+// delegate here for values outside the generated switch.
+var extendedKindNames = map[Kind]string{
+	WorkloadConfig:   "WorkloadConfig",
+	PolicyBinding:    "PolicyBinding",
+	SniTrafficPolicy: "SniTrafficPolicy",
+}
+
+func extendedKindName(k Kind) string {
+	if name, found := extendedKindNames[k]; found {
+		return name
+	}
+	return "Unknown"
+}
+
+func kindFromExtendedName(s string) Kind {
+	for k, name := range extendedKindNames {
+		if name == s {
+			return k
+		}
+	}
+	return Unknown
+}

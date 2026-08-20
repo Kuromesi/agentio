@@ -17,6 +17,7 @@ package agentio
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -245,6 +246,8 @@ func TestNormalizeSniTrafficPolicyDoesNotMutateInput(t *testing.T) {
 }
 
 func TestSortPolicyRefs(t *testing.T) {
+	older := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
 	cases := []struct {
 		name  string
 		input []PolicyRef
@@ -261,7 +264,31 @@ func TestSortPolicyRefs(t *testing.T) {
 			want: []string{"ns/high", "ns/mid", "ns/low"},
 		},
 		{
-			name: "name tie-break ascending",
+			name: "creation time tie-break ascending",
+			input: []PolicyRef{
+				{ResourceName: "ns/a", Priority: 10, CreationTime: newer, SourceName: "a", SourceNamespace: "ns"},
+				{ResourceName: "ns/z", Priority: 10, CreationTime: older, SourceName: "z", SourceNamespace: "ns"},
+			},
+			want: []string{"ns/z", "ns/a"},
+		},
+		{
+			name: "source name before namespace",
+			input: []PolicyRef{
+				{ResourceName: "a/z", Priority: 10, CreationTime: older, SourceName: "z", SourceNamespace: "a"},
+				{ResourceName: "z/a", Priority: 10, CreationTime: older, SourceName: "a", SourceNamespace: "z"},
+			},
+			want: []string{"z/a", "a/z"},
+		},
+		{
+			name: "namespace after source name",
+			input: []PolicyRef{
+				{ResourceName: "z/same", Priority: 10, CreationTime: older, SourceName: "same", SourceNamespace: "z"},
+				{ResourceName: "a/same", Priority: 10, CreationTime: older, SourceName: "same", SourceNamespace: "a"},
+			},
+			want: []string{"a/same", "z/same"},
+		},
+		{
+			name: "resource name is final total tie-break",
 			input: []PolicyRef{
 				{ResourceName: "ns/c", Priority: 10},
 				{ResourceName: "ns/a", Priority: 10},
@@ -307,14 +334,14 @@ func TestSortPolicyRefsIsTotal(t *testing.T) {
 	// The same set in different input orders must produce the same output, i.e.
 	// the ordering does not depend on input order.
 	a := []PolicyRef{
-		{ResourceName: "ns/a", Priority: 10},
-		{ResourceName: "ns/b", Priority: 10},
-		{ResourceName: "ns/c", Priority: 20},
+		{ResourceName: "ns/a", Priority: 10, SourceName: "a", SourceNamespace: "ns"},
+		{ResourceName: "ns/b", Priority: 10, SourceName: "b", SourceNamespace: "ns"},
+		{ResourceName: "ns/c", Priority: 20, SourceName: "c", SourceNamespace: "ns"},
 	}
 	b := []PolicyRef{
-		{ResourceName: "ns/b", Priority: 10},
-		{ResourceName: "ns/c", Priority: 20},
-		{ResourceName: "ns/a", Priority: 10},
+		{ResourceName: "ns/b", Priority: 10, SourceName: "b", SourceNamespace: "ns"},
+		{ResourceName: "ns/c", Priority: 20, SourceName: "c", SourceNamespace: "ns"},
+		{ResourceName: "ns/a", Priority: 10, SourceName: "a", SourceNamespace: "ns"},
 	}
 	want := []string{"ns/c", "ns/a", "ns/b"}
 	if got := sortPolicyRefs(a); !reflect.DeepEqual(got, want) {

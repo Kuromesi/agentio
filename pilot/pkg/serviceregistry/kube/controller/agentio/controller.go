@@ -82,10 +82,12 @@ type Controller struct {
 
 	workloadConfigs krt.Singleton[model.WorkloadConfig]
 
-	// bindablePolicies and policyBindings are nil unless
-	// features.EnableSniTrafficPolicy is set. policyBindings is built later,
-	// after ambient supplies its normalized Workloads collection.
+	// Policy collections are nil unless features.EnableSniTrafficPolicy is set.
+	// policyAttachments excludes protobuf content so resource-only changes do not
+	// invalidate workload bindings. policyBindings is built later, after ambient
+	// supplies its normalized Workloads collection.
 	bindablePolicies       krt.Collection[BindablePolicy]
+	policyAttachments      krt.Collection[PolicyAttachment]
 	policyBindings         krt.Collection[model.PolicyBinding]
 	securityProfiles       krt.Collection[*agentsv1alpha1.SecurityProfile]
 	globalSecurityProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
@@ -331,10 +333,10 @@ func (c *Controller) BuildPolicyBindingCollection(
 	workloads krt.Collection[model.WorkloadInfo],
 	opts krt.OptionsBuilder,
 ) krt.Collection[model.PolicyBinding] {
-	if c.bindablePolicies == nil {
+	if c.policyAttachments == nil {
 		return nil
 	}
-	c.policyBindings = newPolicyBindingCollection(workloads, c.bindablePolicies, opts)
+	c.policyBindings = newPolicyBindingCollection(workloads, c.policyAttachments, opts)
 	return c.policyBindings
 }
 

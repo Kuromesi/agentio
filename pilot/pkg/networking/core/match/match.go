@@ -163,10 +163,16 @@ func NewSNIMatcher(domainMatches []SNIDomainMatch, onNoMatch *matcher.Matcher_On
 	}
 }
 
-// SniPolicyMatcherTypeURL is the Agentio-owned custom matcher that resolves the
-// SNI traffic policy bound to the downstream peer workload. See
-// source/extensions/matching/network/sni_policy in the proxy repository.
-const SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.SniPolicyMatcher"
+const (
+	// SniPolicyMatcherTypeURL is the Agentio-owned custom matcher that resolves the
+	// SNI traffic policy bound to the downstream peer workload. See
+	// source/extensions/matching/network/sni_policy in the proxy repository.
+	SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.SniPolicyMatcher"
+
+	// SniPolicyFailureModeAllowRuntimeKey is the emergency runtime override for
+	// policy-resolution failures. Its configured default remains fail-closed.
+	SniPolicyFailureModeAllowRuntimeKey = "kruise.sni_policy.failure_mode_allow"
+)
 
 // NewSniPolicyMatcher selects a filter chain by evaluating the SNI traffic
 // policy for the connection's peer workload.
@@ -177,10 +183,12 @@ const SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.gateway_p
 // what makes per-client TLS termination expressible here at all -- encoding the
 // table into the listener would re-push all of it on every policy edit.
 //
-// There is no OnNoMatch: the matcher always resolves to one of the three
-// outcomes, and filter chain selection requires matching to complete.
+// OnNoMatch routes to the passthrough chain: an empty ClientHello SNI matches
+// no rule (every rule form requires a non-empty SNI), and the documented
+// contract for no-SNI TLS connections is passthrough, not a closed connection.
 func NewSniPolicyMatcher(terminateChain, passthroughChain, denyChain string) *matcher.Matcher {
 	return &matcher.Matcher{
+		OnNoMatch: ToChain(passthroughChain),
 		MatcherType: &matcher.Matcher_MatcherTree_{
 			MatcherTree: &matcher.Matcher_MatcherTree{
 				// Unused by this matcher, which reads the connection directly, but
@@ -194,6 +202,10 @@ func NewSniPolicyMatcher(terminateChain, passthroughChain, denyChain string) *ma
 								"on_tls_termination": chainActionFields(terminateChain),
 								"on_passthrough":     chainActionFields(passthroughChain),
 								"on_deny":            chainActionFields(denyChain),
+								"failure_mode_allow": map[string]any{
+									"runtime_key":   SniPolicyFailureModeAllowRuntimeKey,
+									"default_value": features.SniTrafficPolicyFailureModeAllow,
+								},
 							}),
 					},
 				},

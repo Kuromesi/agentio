@@ -165,7 +165,7 @@ func (k Kind) String() string {
 	case XListenerSet:
 		return "XListenerSet"
 	default:
-		return "Unknown"
+		return extendedKindName(k)
 	}
 }
 
@@ -276,6 +276,6 @@ func FromString(s string) Kind {
 	case "XListenerSet":
 		return XListenerSet
 	default:
-		return Unknown
+		return kindFromExtendedName(s)
 	}
 }
