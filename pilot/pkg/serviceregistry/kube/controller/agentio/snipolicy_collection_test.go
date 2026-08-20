@@ -23,8 +23,10 @@ import (
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	agentsfake "github.com/openkruise/agents-api/client/clientset/versioned/fake"
+	meshconfig "istio.io/api/mesh/v1alpha1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+	"istio.io/istio/pkg/config/mesh/meshwatcher"
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/kclient/clienttest"
@@ -397,5 +399,20 @@ func TestBindablePoliciesDisabled(t *testing.T) {
 	}
 	if c.PolicyBindings() != nil {
 		t.Errorf("PolicyBindings() = %v, want nil", c.PolicyBindings())
+	}
+}
+
+func TestControllerDoesNotWatchSniPolicySourcesWhenDisabled(t *testing.T) {
+	test.SetForTest(t, &features.EnableSniTrafficPolicy, false)
+	c, err := NewController(Options{
+		KubeClient: kube.NewFakeClient(),
+		MeshConfig: meshwatcher.NewTestWatcher(&meshconfig.MeshConfig{RootNamespace: "istio-system"}),
+		Stop:       test.NewStop(t),
+	})
+	if err != nil {
+		t.Fatalf("NewController() failed: %v", err)
+	}
+	if c.securityProfiles != nil || c.globalSecurityProfiles != nil {
+		t.Fatalf("disabled SNI policy sources = (%v, %v), want both nil", c.securityProfiles, c.globalSecurityProfiles)
 	}
 }

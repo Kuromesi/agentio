@@ -183,6 +183,7 @@ data:
         # SecurityProfiles decide which matching workloads actually terminate.
         includeHosts:
         - "example.com"
+        - "*.example.com"
         excludeHosts:
         - "example.net"
 `).Apply()
