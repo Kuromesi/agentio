@@ -29,13 +29,15 @@ import (
 
 const (
 	terminatedHost = "example.com"
+	wildcardHost   = "www.example.com"
 	excludedHost   = "example.net"
 )
 
 // TestSniTrafficPolicyLifecycle exercises the complete Kubernetes-to-data-plane
 // path. A production regression in policy conversion, selector binding, PBDS or
-// SPDS delivery, the native policy store, the Wasm decision, or listener routing
-// changes the certificate boundary observed by curl and fails this test.
+// STPDS delivery, the native policy store, the custom matcher decision, or
+// listener routing changes the certificate boundary observed by curl and fails
+// this test.
 func TestSniTrafficPolicyLifecycle(t *testing.T) {
 	framework.NewTest(t).
 		Run(func(ctx framework.TestContext) {
@@ -122,44 +124,153 @@ spec:
 		})
 }
 
+// TestSniTrafficPolicyWildcardAndHotUpdate verifies the matching boundary and
+// cache invalidation contract of the native SNI policy matcher. A wildcard
+// matches a subdomain but never the apex; updating the same policy must reverse
+// both decisions for newly established connections without retaining a stale
+// worker-local compiled policy.
+func TestSniTrafficPolicyWildcardAndHotUpdate(t *testing.T) {
+	framework.NewTest(t).
+		Run(func(ctx framework.TestContext) {
+			wildcardPolicy := ctx.ConfigIstio().Eval(localNS.Name(), map[string]any{
+				"Namespace": localNS.Name(),
+			}, `
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: wildcard-hot-update
+  namespace: {{ .Namespace }}
+spec:
+  priority: 10
+  selector:
+    matchLabels:
+      `+policyLabelKey+`: selected
+  rules:
+  - name: wildcard
+    match:
+    - domains:
+      - "*.`+terminatedHost+`"
+      schemes:
+      - https
+    actions:
+      bypass: true
+`)
+			wildcardPolicy.ApplyOrFail(ctx)
+
+			ctx.NewSubTest("wildcard terminates a subdomain but not the apex").
+				Run(func(ctx framework.TestContext) {
+					assertTLSTerminated(ctx, selected, wildcardHost)
+					assertTLSPassthrough(ctx, selected, terminatedHost)
+					assertTLSPassthrough(ctx, unselected, wildcardHost)
+				})
+
+			exactPolicy := ctx.ConfigIstio().Eval(localNS.Name(), map[string]any{
+				"Namespace": localNS.Name(),
+			}, `
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: wildcard-hot-update
+  namespace: {{ .Namespace }}
+spec:
+  priority: 10
+  selector:
+    matchLabels:
+      `+policyLabelKey+`: selected
+  rules:
+  - name: exact
+    match:
+    - domains:
+      - "`+terminatedHost+`"
+      schemes:
+      - https
+    actions:
+      bypass: true
+`)
+			exactPolicy.ApplyOrFail(ctx)
+
+			ctx.NewSubTest("hot update invalidates the previous wildcard decision").
+				Run(func(ctx framework.TestContext) {
+					assertTLSTerminated(ctx, selected, terminatedHost)
+					assertTLSPassthrough(ctx, selected, wildcardHost)
+					assertRepeatedTLSTermination(ctx, selected, terminatedHost, 3)
+					assertRepeatedTLSPassthrough(ctx, selected, wildcardHost, 3)
+				})
+
+			ctx.NewSubTest("deleting the updated policy restores passthrough").
+				Run(func(ctx framework.TestContext) {
+					exactPolicy.DeleteOrFail(ctx)
+					assertTLSPassthrough(ctx, selected, terminatedHost)
+				})
+		})
+}
+
 func assertTLSPassthrough(ctx framework.TestContext, src echo.Instance, host string) {
 	ctx.Helper()
 	retry.UntilSuccessOrFail(ctx, func() error {
-		stdout, stderr, err := curlExternalHTTPS(ctx, src, host, false)
-		if err != nil {
-			return fmt.Errorf("expected %s from %s to use the public certificate: %v\nstdout=%s\nstderr=%s",
-				host, src.Config().Service, err, stdout, stderr)
-		}
-		if strings.TrimSpace(stdout) != "200" {
-			return fmt.Errorf("expected HTTP 200 from %s through TLS passthrough, got %q; stderr=%s", host, stdout, stderr)
-		}
-		return nil
+		return checkTLSPassthrough(ctx, src, host)
 	}, retry.Timeout(3*time.Minute), retry.Delay(5*time.Second))
 }
 
 func assertTLSTerminated(ctx framework.TestContext, src echo.Instance, host string) {
 	ctx.Helper()
 	retry.UntilSuccessOrFail(ctx, func() error {
-		stdout, stderr, err := curlExternalHTTPS(ctx, src, host, false)
-		if err == nil {
-			return fmt.Errorf("expected Sandbox CA trust failure for %s from %s, got HTTP %s",
-				host, src.Config().Service, strings.TrimSpace(stdout))
-		}
-		if !isCertificateTrustError(stderr) {
-			return fmt.Errorf("expected Sandbox CA trust failure for %s from %s: %v\nstderr=%s",
-				host, src.Config().Service, err, stderr)
-		}
-
-		stdout, stderr, err = curlExternalHTTPS(ctx, src, host, true)
-		if err != nil {
-			return fmt.Errorf("TLS-terminated request to %s from %s failed with verification disabled: %v\nstdout=%s\nstderr=%s",
-				host, src.Config().Service, err, stdout, stderr)
-		}
-		if strings.TrimSpace(stdout) != "200" {
-			return fmt.Errorf("expected HTTP 200 after TLS termination for %s, got %q; stderr=%s", host, stdout, stderr)
-		}
-		return nil
+		return checkTLSTerminated(ctx, src, host)
 	}, retry.Timeout(3*time.Minute), retry.Delay(5*time.Second))
+}
+
+func assertRepeatedTLSPassthrough(ctx framework.TestContext, src echo.Instance, host string, count int) {
+	ctx.Helper()
+	for connection := 1; connection <= count; connection++ {
+		if err := checkTLSPassthrough(ctx, src, host); err != nil {
+			ctx.Fatalf("passthrough connection %d/%d failed: %v", connection, count, err)
+		}
+	}
+}
+
+func assertRepeatedTLSTermination(ctx framework.TestContext, src echo.Instance, host string, count int) {
+	ctx.Helper()
+	for connection := 1; connection <= count; connection++ {
+		if err := checkTLSTerminated(ctx, src, host); err != nil {
+			ctx.Fatalf("TLS termination connection %d/%d failed: %v", connection, count, err)
+		}
+	}
+}
+
+func checkTLSPassthrough(ctx framework.TestContext, src echo.Instance, host string) error {
+	ctx.Helper()
+	stdout, stderr, err := curlExternalHTTPS(ctx, src, host, false)
+	if err != nil {
+		return fmt.Errorf("expected %s from %s to use the public certificate: %v\nstdout=%s\nstderr=%s",
+			host, src.Config().Service, err, stdout, stderr)
+	}
+	if strings.TrimSpace(stdout) != "200" {
+		return fmt.Errorf("expected HTTP 200 from %s through TLS passthrough, got %q; stderr=%s", host, stdout, stderr)
+	}
+	return nil
+}
+
+func checkTLSTerminated(ctx framework.TestContext, src echo.Instance, host string) error {
+	ctx.Helper()
+	stdout, stderr, err := curlExternalHTTPS(ctx, src, host, false)
+	if err == nil {
+		return fmt.Errorf("expected Sandbox CA trust failure for %s from %s, got HTTP %s",
+			host, src.Config().Service, strings.TrimSpace(stdout))
+	}
+	if !isCertificateTrustError(stderr) {
+		return fmt.Errorf("expected Sandbox CA trust failure for %s from %s: %v\nstderr=%s",
+			host, src.Config().Service, err, stderr)
+	}
+
+	stdout, stderr, err = curlExternalHTTPS(ctx, src, host, true)
+	if err != nil {
+		return fmt.Errorf("TLS-terminated request to %s from %s failed with verification disabled: %v\nstdout=%s\nstderr=%s",
+			host, src.Config().Service, err, stdout, stderr)
+	}
+	if strings.TrimSpace(stdout) != "200" {
+		return fmt.Errorf("expected HTTP 200 after TLS termination for %s, got %q; stderr=%s", host, stdout, stderr)
+	}
+	return nil
 }
 
 func curlExternalHTTPS(ctx framework.TestContext, src echo.Instance, host string, insecure bool) (string, string, error) {

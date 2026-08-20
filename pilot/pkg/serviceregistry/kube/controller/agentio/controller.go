@@ -114,8 +114,12 @@ func NewController(options Options) (*Controller, error) {
 	opts := krt.NewOptionsBuilder(stop, "agentio-controller", options.Debugger)
 	TrafficPolicies := newTrafficPoliciesCollection(options.KubeClient, stop, opts)
 	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop, opts)
-	SecurityProfiles := newSecurityProfilesCollection(options.KubeClient, stop, opts)
-	GlobalSecurityProfiles := newGlobalSecurityProfilesCollection(options.KubeClient, stop, opts)
+	var SecurityProfiles krt.Collection[*agentsv1alpha1.SecurityProfile]
+	var GlobalSecurityProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+	if features.EnableSniTrafficPolicy {
+		SecurityProfiles = newSecurityProfilesCollection(options.KubeClient, stop, opts)
+		GlobalSecurityProfiles = newGlobalSecurityProfilesCollection(options.KubeClient, stop, opts)
+	}
 
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
 	agentioConfig := newAgentioConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)

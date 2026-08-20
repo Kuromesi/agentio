@@ -14,7 +14,6 @@ rules:
   - get
   - list
   - watch
-{{- if .Values.sniTrafficPolicy.enabled }}
 - apiGroups:
   - agents.kruise.io
   resources:
@@ -24,7 +23,6 @@ rules:
   - get
   - list
   - watch
-{{- end }}
 - apiGroups:
   - networking.k8s.io
   resources:
