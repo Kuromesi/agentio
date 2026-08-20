@@ -147,7 +147,8 @@ data:
         },
         "env": {
           "PILOT_ENABLE_AMBIENT": "true"{{- if .Values.global.enableClusterTrustBundle }},
-          "ENABLE_CLUSTER_TRUST_BUNDLE_API": true{{- end }}
+          "ENABLE_CLUSTER_TRUST_BUNDLE_API": true{{- end }}{{- if .Values.sniTrafficPolicy.enabled }},
+          "ENABLE_SNI_TRAFFIC_POLICY": true{{- end }}
         }
       },
       "revision": "",

@@ -16,6 +16,7 @@ package agentio
 
 import (
 	"testing"
+	"time"
 
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
@@ -56,12 +57,14 @@ func sniBindablePolicy(namespace, name string, priority int32, selector map[stri
 		resourceName = namespace + "/" + name
 	}
 	return BindablePolicy{
-		Name:       resourceName,
-		TypeURL:    xdsmodel.SniTrafficPolicyType,
-		ConfigKind: kind.SniTrafficPolicy,
-		Namespace:  namespace,
-		Priority:   priority,
-		Selector:   metav1.LabelSelector{MatchLabels: selector},
+		Name:            resourceName,
+		TypeURL:         xdsmodel.SniTrafficPolicyType,
+		ConfigKind:      kind.SniTrafficPolicy,
+		Namespace:       namespace,
+		Priority:        priority,
+		SourceName:      name,
+		SourceNamespace: namespace,
+		Selector:        metav1.LabelSelector{MatchLabels: selector},
 		Resource: &extensions.SniTrafficPolicy{
 			Rules: []*extensions.SniRule{sniRule(extensions.SniAction_SNI_ACTION_TLS_TERMINATION, "example.com")},
 		},
@@ -85,7 +88,11 @@ func runPolicyBindingCollection(
 	}
 	mock := krttest.NewMock(t, inputs)
 	opts := krt.NewOptionsBuilder(test.NewStop(t), "", krt.GlobalDebugHandler)
-	c := &Controller{bindablePolicies: krttest.GetMockCollection[BindablePolicy](mock)}
+	bindablePolicies := krttest.GetMockCollection[BindablePolicy](mock)
+	c := &Controller{
+		bindablePolicies:  bindablePolicies,
+		policyAttachments: newPolicyAttachmentsCollection(bindablePolicies, opts),
+	}
 	col := c.BuildPolicyBindingCollection(krttest.GetMockCollection[model.WorkloadInfo](mock), opts)
 	if c.PolicyBindings() != col {
 		t.Fatal("controller did not retain the final PolicyBinding collection")
@@ -146,6 +153,20 @@ func TestPolicyBindingCollection(t *testing.T) {
 
 		b := got[keyFor("pod", ns)]
 		assert.Equal(t, resourceNamesFor(t, b), []string{"ns/alpha", "ns/mango", "ns/zebra"})
+	})
+
+	t.Run("equal priority orders by creation time before name", func(t *testing.T) {
+		older := sniBindablePolicy(ns, "zebra", 7, map[string]string{"app": "a"})
+		older.CreationTime = time.Unix(1, 0)
+		newer := sniBindablePolicy(ns, "alpha", 7, map[string]string{"app": "a"})
+		newer.CreationTime = time.Unix(2, 0)
+
+		_, got := runPolicyBindingCollection(t,
+			[]model.WorkloadInfo{sniTestWorkload("pod", ns, map[string]string{"app": "a"})},
+			[]BindablePolicy{newer, older})
+
+		b := got[keyFor("pod", ns)]
+		assert.Equal(t, resourceNamesFor(t, b), []string{"ns/zebra", "ns/alpha"})
 	})
 
 	t.Run("priority dominates name", func(t *testing.T) {

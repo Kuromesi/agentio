@@ -17,6 +17,7 @@ package agentio
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"google.golang.org/protobuf/proto"
@@ -43,6 +44,12 @@ type BindablePolicy struct {
 	ConfigKind kind.Kind
 	Namespace  string
 	Priority   int32
+	// CreationTime, SourceName, and SourceNamespace preserve the ordering
+	// metadata defined by the source policy API. They are not published in the
+	// policy resource; PolicyBinding uses them only to order resource names.
+	CreationTime    time.Time
+	SourceName      string
+	SourceNamespace string
 	// An empty Namespace applies to every namespace. An empty selector matches
 	// every workload in the policy's namespace scope.
 	Selector metav1.LabelSelector
@@ -72,6 +79,9 @@ func (p BindablePolicy) Equals(other BindablePolicy) bool {
 		p.ConfigKind == other.ConfigKind &&
 		p.Namespace == other.Namespace &&
 		p.Priority == other.Priority &&
+		p.CreationTime.Equal(other.CreationTime) &&
+		p.SourceName == other.SourceName &&
+		p.SourceNamespace == other.SourceNamespace &&
 		apiequality.Semantic.DeepEqual(p.Selector, other.Selector) &&
 		proto.Equal(p.Resource, other.Resource)
 }
@@ -80,18 +90,7 @@ func (p BindablePolicy) Equals(other BindablePolicy) bool {
 // namespace and labels. An empty policy namespace means all namespaces; an
 // empty selector matches every workload in that namespace scope.
 func (p BindablePolicy) Selects(namespace string, workloadLabels map[string]string) bool {
-	if p.Namespace != "" && p.Namespace != namespace {
-		return false
-	}
-	selector := p.selector
-	if selector == nil {
-		var err error
-		selector, err = metav1.LabelSelectorAsSelector(&p.Selector)
-		if err != nil {
-			return false
-		}
-	}
-	return selector.Matches(klabels.Set(workloadLabels))
+	return policySelectsWorkload(p.Namespace, p.Selector, p.selector, namespace, workloadLabels)
 }
 
 // BindablePolicy is used directly as a krt collection value type, which
@@ -118,7 +117,7 @@ func bindablePolicyFromSecurityProfile(policy *agentsv1alpha1.SecurityProfile) (
 		return nil, fmt.Errorf("SecurityProfile is nil")
 	}
 	return bindablePolicyFromSecurityProfileSpec(
-		"SecurityProfile", policy.Namespace+"/"+policy.Name, policy.Namespace, &policy.Spec,
+		"SecurityProfile", policy.ObjectMeta, &policy.Spec,
 	)
 }
 
@@ -126,13 +125,18 @@ func bindablePolicyFromGlobalSecurityProfile(policy *agentsv1alpha1.GlobalSecuri
 	if policy == nil {
 		return nil, fmt.Errorf("GlobalSecurityProfile is nil")
 	}
-	return bindablePolicyFromSecurityProfileSpec("GlobalSecurityProfile", policy.Name, "", &policy.Spec)
+	return bindablePolicyFromSecurityProfileSpec("GlobalSecurityProfile", policy.ObjectMeta, &policy.Spec)
 }
 
 func bindablePolicyFromSecurityProfileSpec(
-	resourceKind, resourceName, namespace string,
+	resourceKind string,
+	metadata metav1.ObjectMeta,
 	spec *agentsv1alpha1.SecurityProfileSpec,
 ) (*BindablePolicy, error) {
+	resourceName := metadata.Name
+	if metadata.Namespace != "" {
+		resourceName = metadata.Namespace + "/" + metadata.Name
+	}
 	selector, err := metav1.LabelSelectorAsSelector(&spec.Selector)
 	if err != nil {
 		return nil, fmt.Errorf("%s %s has invalid selector: %w", resourceKind, resourceName, err)
@@ -182,11 +186,17 @@ func bindablePolicyFromSecurityProfileSpec(
 		Name:       resourceName,
 		TypeURL:    pm.SniTrafficPolicyType,
 		ConfigKind: kind.SniTrafficPolicy,
-		Namespace:  namespace,
-		Priority:   -priority,
-		Selector:   *spec.Selector.DeepCopy(),
-		Resource:   resource,
-		selector:   selector,
+		Namespace:  metadata.Namespace,
+		// SecurityProfile evaluates lower numeric priorities first. BindablePolicy
+		// uses a generic higher-first ordering key, so negate the API value once at
+		// the source boundary.
+		Priority:        -priority,
+		CreationTime:    metadata.CreationTimestamp.Time,
+		SourceName:      metadata.Name,
+		SourceNamespace: metadata.Namespace,
+		Selector:        *spec.Selector.DeepCopy(),
+		Resource:        resource,
+		selector:        selector,
 	}, nil
 }
 
@@ -234,4 +244,5 @@ func (c *Controller) initBindablePolicies(opts krt.OptionsBuilder) {
 	}
 
 	c.bindablePolicies = newBindablePoliciesCollection(c.securityProfiles, c.globalSecurityProfiles, opts)
+	c.policyAttachments = newPolicyAttachmentsCollection(c.bindablePolicies, opts)
 }

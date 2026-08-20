@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -132,21 +133,37 @@ func normalizeSniTrafficPolicy(p *extensions.SniTrafficPolicy) (*extensions.SniT
 	return out, nil
 }
 
-// PolicyRef is a referenced bindable policy together with its ordering priority.
+// PolicyRef is a referenced bindable policy together with the source fields
+// needed to reproduce the policy API's deterministic ordering contract.
 type PolicyRef struct {
-	ResourceName string
-	Priority     int32
+	ResourceName    string
+	Priority        int32
+	CreationTime    time.Time
+	SourceName      string
+	SourceNamespace string
 }
 
 // sortPolicyRefs returns resource names in the control-plane ordering
-// contract: descending priority, then ascending name. The ordering is total, so
-// the result does not depend on the input order.
+// contract: descending internal priority, then ascending source creation time,
+// name, and namespace. SecurityProfile priorities are negated during conversion,
+// so descending internal priority implements its lower-values-first API rule.
+// ResourceName is the final tie-breaker, making the ordering total even for
+// future policy sources whose source identities overlap.
 func sortPolicyRefs(refs []PolicyRef) []string {
 	sorted := make([]PolicyRef, len(refs))
 	copy(sorted, refs)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Priority != sorted[j].Priority {
 			return sorted[i].Priority > sorted[j].Priority
+		}
+		if !sorted[i].CreationTime.Equal(sorted[j].CreationTime) {
+			return sorted[i].CreationTime.Before(sorted[j].CreationTime)
+		}
+		if sorted[i].SourceName != sorted[j].SourceName {
+			return sorted[i].SourceName < sorted[j].SourceName
+		}
+		if sorted[i].SourceNamespace != sorted[j].SourceNamespace {
+			return sorted[i].SourceNamespace < sorted[j].SourceNamespace
 		}
 		return sorted[i].ResourceName < sorted[j].ResourceName
 	})

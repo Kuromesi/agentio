@@ -33,7 +33,8 @@ message WorkloadReference {
 }
 
 message PolicyReference {
-  // Ordered by descending resource priority, then ascending resource name.
+  // Ordered according to the source policy API. The data plane evaluates the
+  // referenced resources in this order and does not apply its own tie-breaks.
   repeated string resource_names = 1;
 }
 

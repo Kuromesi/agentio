@@ -54,12 +54,10 @@ func renderPolicyBindingBootstrap(t *testing.T) string {
 	return buf.String()
 }
 
-// The stats matcher uses an inclusion list, so a prefix that matches nothing
-// causes Envoy to never instantiate those stats. The native extension creates
-// its scope as "policy_store" (and "policy_store.bindings" for the filter), so
-// the prefix must be exactly that -- pilot-agent's readiness probe reads
-// policy_store.initial_sync_ready and would otherwise block readiness forever.
-func TestPolicyStoreStatsPrefixIsRendered(t *testing.T) {
+// The stats matcher uses an inclusion list, so all native policy scopes must be
+// admitted explicitly. policy_store drives readiness, while sni_policy exposes
+// matcher failure reasons and fail-open admissions.
+func TestPolicyStatsPrefixesAreRendered(t *testing.T) {
 	rendered := renderPolicyBindingBootstrap(t)
 
 	var parsed map[string]any
@@ -69,6 +67,9 @@ func TestPolicyStoreStatsPrefixIsRendered(t *testing.T) {
 
 	if !strings.Contains(rendered, `"prefix": "policy_store"`) {
 		t.Error(`rendered bootstrap is missing the stats inclusion prefix "policy_store"`)
+	}
+	if !strings.Contains(rendered, `"prefix": "sni_policy"`) {
+		t.Error(`rendered bootstrap is missing the stats inclusion prefix "sni_policy"`)
 	}
 	if strings.Contains(rendered, "agentio.gateway_policy_store") {
 		t.Error(`rendered bootstrap still carries the stale prefix "agentio.gateway_policy_store", ` +

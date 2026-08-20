@@ -181,6 +181,10 @@ func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestinat
 }
 
 func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
+	previousFailureModeAllow := features.SniTrafficPolicyFailureModeAllow
+	features.SniTrafficPolicyFailureModeAllow = false
+	t.Cleanup(func() { features.SniTrafficPolicyFailureModeAllow = previousFailureModeAllow })
+
 	const excluded = "*.legacy.example.com"
 	result := buildSandboxSNIPolicyMatcher([]string{excluded}, buildSandboxProtocolMatcher())
 
@@ -207,6 +211,9 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 	if policyMatcher == nil {
 		t.Fatal("non-excluded TLS traffic must use the SNI policy matcher")
 	}
+	if got, want := policyMatcher.GetOnNoMatch().GetAction().GetName(), forwardTcpFilterChain; got != want {
+		t.Fatalf("SNI policy matcher on_no_match = %q, want passthrough chain %q for no-SNI connections", got, want)
+	}
 	policyConfig := &typedstruct.TypedStruct{}
 	if err := policyMatcher.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
 		t.Fatalf("decode SNI policy matcher: %v", err)
@@ -223,6 +230,33 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 		if got := action.GetFields()["name"].GetStringValue(); got != want {
 			t.Errorf("SNI policy matcher %s action = %q, want %q", field, got, want)
 		}
+	}
+	failureModeAllow := policyConfig.GetValue().GetFields()["failure_mode_allow"].GetStructValue().GetFields()
+	if got, want := failureModeAllow["runtime_key"].GetStringValue(), match.SniPolicyFailureModeAllowRuntimeKey; got != want {
+		t.Errorf("SNI policy matcher failure_mode_allow runtime key = %q, want %q", got, want)
+	}
+	defaultValue, found := failureModeAllow["default_value"]
+	if !found {
+		t.Fatal("SNI policy matcher failure_mode_allow must set default_value explicitly")
+	}
+	if defaultValue.GetBoolValue() {
+		t.Error("SNI policy matcher failure_mode_allow must default to false")
+	}
+}
+
+func TestSniPolicyMatcherFailureModeAllowDefault(t *testing.T) {
+	previous := features.SniTrafficPolicyFailureModeAllow
+	features.SniTrafficPolicyFailureModeAllow = true
+	t.Cleanup(func() { features.SniTrafficPolicyFailureModeAllow = previous })
+
+	result := match.NewSniPolicyMatcher(tlsTerminateFilterChain, forwardTcpFilterChain, sniPolicyDenyFilterChain)
+	policyConfig := &typedstruct.TypedStruct{}
+	if err := result.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
+		t.Fatalf("decode SNI policy matcher: %v", err)
+	}
+	failureModeAllow := policyConfig.GetValue().GetFields()["failure_mode_allow"].GetStructValue().GetFields()
+	if !failureModeAllow["default_value"].GetBoolValue() {
+		t.Error("SNI policy matcher failure_mode_allow must use the control-plane default")
 	}
 }
 

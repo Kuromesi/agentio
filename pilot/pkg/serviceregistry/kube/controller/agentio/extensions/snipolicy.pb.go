@@ -216,7 +216,8 @@ func (x *WorkloadReference) GetName() string {
 
 type PolicyReference struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Ordered by descending resource priority, then ascending resource name.
+	// Ordered according to the source policy API. The data plane evaluates the
+	// referenced resources in this order and does not apply its own tie-breaks.
 	ResourceNames []string `protobuf:"bytes,1,rep,name=resource_names,json=resourceNames,proto3" json:"resource_names,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

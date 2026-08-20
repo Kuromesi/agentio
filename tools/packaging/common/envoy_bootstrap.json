@@ -183,6 +183,9 @@
           {
           "prefix": "policy_store"
           },
+          {
+          "prefix": "sni_policy"
+          },
           {{- end }}
           {{- range $a, $s := .inclusionPrefix }}
           {

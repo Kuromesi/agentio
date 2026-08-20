@@ -21,17 +21,17 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 )
 
-// buildPolicyRefs selects every bindable policy for a workload, groups
-// them by xDS type, and orders each type's resource names by priority.
+// buildPolicyRefs selects every bindable policy for a workload, groups them by
+// xDS type, and orders each type according to its source policy API contract.
 func buildPolicyRefs(
 	ctx krt.HandlerContext,
-	policies krt.Collection[BindablePolicy],
-	policiesByNamespace krt.Index[string, BindablePolicy],
+	policies krt.Collection[PolicyAttachment],
+	policiesByNamespace krt.Index[string, PolicyAttachment],
 	workloadNamespace string,
 	workloadLabels map[string]string,
 ) map[string]*extensions.PolicyReference {
 	selectorFilter := krt.FilterGeneric(func(a any) bool {
-		return a.(BindablePolicy).Selects(workloadNamespace, workloadLabels)
+		return a.(PolicyAttachment).Selects(workloadNamespace, workloadLabels)
 	})
 	matched := krt.Fetch(ctx, policies,
 		krt.FilterIndex(policiesByNamespace, workloadNamespace), selectorFilter)
@@ -48,12 +48,12 @@ func buildPolicyRefs(
 
 	byType := make(map[string][]PolicyRef)
 	for _, policy := range matched {
-		if policy.TypeURL == "" || policy.Name == "" || policy.Resource == nil {
-			continue
-		}
 		byType[policy.TypeURL] = append(byType[policy.TypeURL], PolicyRef{
-			ResourceName: policy.XDSResourceName(),
-			Priority:     policy.Priority,
+			ResourceName:    policy.XDSResourceName(),
+			Priority:        policy.Priority,
+			CreationTime:    policy.CreationTime,
+			SourceName:      policy.SourceName,
+			SourceNamespace: policy.SourceNamespace,
 		})
 	}
 	if len(byType) == 0 {
@@ -79,13 +79,22 @@ func buildPolicyRefs(
 // so the namespace, name, and labels are exactly those WDS advertises.
 func newPolicyBindingCollection(
 	workloads krt.Collection[model.WorkloadInfo],
-	policies krt.Collection[BindablePolicy],
+	policies krt.Collection[PolicyAttachment],
 	opts krt.OptionsBuilder,
 ) krt.Collection[model.PolicyBinding] {
-	policiesByNamespace := krt.NewIndex(policies, "bindablePoliciesByNamespace", func(policy BindablePolicy) []string {
+	policiesByNamespace := krt.NewIndex(policies, "policyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
 		return []string{policy.Namespace}
 	})
-	return krt.NewManyCollection(workloads, func(ctx krt.HandlerContext, w model.WorkloadInfo) []model.PolicyBinding {
+	return krt.NewManyCollection(workloads, policyBindingTransformation(policies, policiesByNamespace), opts.WithName("PolicyBindings")...)
+}
+
+// policyBindingTransformation is split out so benchmarks can count actual
+// workload recomputations while exercising the production transform.
+func policyBindingTransformation(
+	policies krt.Collection[PolicyAttachment],
+	policiesByNamespace krt.Index[string, PolicyAttachment],
+) krt.TransformationMulti[model.WorkloadInfo, model.PolicyBinding] {
+	return func(ctx krt.HandlerContext, w model.WorkloadInfo) []model.PolicyBinding {
 		if w.Source != kind.Pod {
 			return nil
 		}
@@ -103,5 +112,5 @@ func newPolicyBindingCollection(
 		}
 
 		return []model.PolicyBinding{{Name: model.PolicyBindingResourceName(namespace, name), Binding: binding}}
-	}, opts.WithName("PolicyBindings")...)
+	}
 }

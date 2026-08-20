@@ -176,6 +176,10 @@ spec:
           value: "{{ $value }}"
         {{- end }}
         {{- end }}
+        {{- if and (eq (index .InfrastructureLabels `networking.agents.kruise.io/sandbox-egress`) `true`) (index .Values.pilot.env `ENABLE_SNI_TRAFFIC_POLICY`) }}
+        - name: POLICY_BINDING_DISCOVERY
+          value: "true"
+        {{- end }}
         - name: GOMEMLIMIT
           valueFrom:
             resourceFieldRef:

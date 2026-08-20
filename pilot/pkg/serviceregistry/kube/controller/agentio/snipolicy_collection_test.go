@@ -38,8 +38,9 @@ import (
 
 func TestBindablePolicyFromSecurityProfile(t *testing.T) {
 	priority := int32(17)
+	created := metav1.NewTime(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC))
 	profile := &agentsv1alpha1.SecurityProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "ordered", Namespace: "sandbox"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ordered", Namespace: "sandbox", CreationTimestamp: created},
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Priority: &priority,
 			Selector: metav1.LabelSelector{
@@ -74,6 +75,9 @@ func TestBindablePolicyFromSecurityProfile(t *testing.T) {
 	if got.Name != "sandbox/ordered" || got.TypeURL != xdsmodel.SniTrafficPolicyType ||
 		got.ConfigKind != kind.SniTrafficPolicy || got.Namespace != "sandbox" || got.Priority != -17 {
 		t.Fatalf("unexpected bindable policy metadata: %+v", got)
+	}
+	if !got.CreationTime.Equal(created.Time) || got.SourceName != "ordered" || got.SourceNamespace != "sandbox" {
+		t.Fatalf("unexpected source ordering metadata: %+v", got)
 	}
 	if !reflect.DeepEqual(got.Selector, profile.Spec.Selector) {
 		t.Fatalf("selector = %v, want app=agent", got.Selector)
@@ -355,6 +359,11 @@ func TestBindablePolicyEqualsAndSelects(t *testing.T) {
 	b.Priority++
 	if a.Equals(b) {
 		t.Fatal("different priorities must not be equal")
+	}
+	b = a
+	b.CreationTime = time.Unix(1, 0)
+	if a.Equals(b) {
+		t.Fatal("different source creation times must not be equal")
 	}
 
 	if !a.Selects("ns", map[string]string{"app": "agent", "extra": "x"}) {
