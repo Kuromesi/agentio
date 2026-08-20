@@ -186,8 +186,9 @@ type controllerInterface interface {
 }
 
 var (
-	_ controllerInterface      = &Controller{}
-	_ serviceregistry.Instance = &Controller{}
+	_ controllerInterface            = &Controller{}
+	_ serviceregistry.Instance       = &Controller{}
+	_ model.AgentioResourceDiscovery = &Controller{}
 )
 
 type ambientIndex = ambient.Index

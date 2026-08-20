@@ -18,5 +18,7 @@ package kind
 type Kind uint8
 
 const (
-	WorkloadConfig Kind = 200
+	WorkloadConfig   Kind = 200
+	PolicyBinding    Kind = 201
+	SniTrafficPolicy Kind = 202
 )

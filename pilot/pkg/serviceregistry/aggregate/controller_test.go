@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +24,7 @@ import (
 	"go.uber.org/atomic"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry"
 	"istio.io/istio/pilot/pkg/serviceregistry/memory"
@@ -30,12 +32,37 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/provider"
 	"istio.io/istio/pkg/cluster"
 	"istio.io/istio/pkg/config/host"
+	istiotest "istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/retry"
+	"istio.io/istio/pkg/util/sets"
 )
 
 type mockMeshConfigHolder struct {
 	trustDomainAliases []string
 }
+
+type agentioResourceRegistry struct {
+	serviceregistry.Instance
+	resources    []model.AgentioResource
+	calls        int
+	gotProxy     *model.Proxy
+	gotType      string
+	gotRequested sets.Set[model.ConfigKey]
+}
+
+func (r *agentioResourceRegistry) AgentioResourcesForProxy(
+	proxy *model.Proxy,
+	typeURL string,
+	requested sets.Set[model.ConfigKey],
+) []model.AgentioResource {
+	r.calls++
+	r.gotProxy = proxy
+	r.gotType = typeURL
+	r.gotRequested = requested
+	return r.resources
+}
+
+var _ model.AgentioResourceDiscovery = &agentioResourceRegistry{}
 
 func (mh mockMeshConfigHolder) Mesh() *meshconfig.MeshConfig {
 	return &meshconfig.MeshConfig{
@@ -365,6 +392,70 @@ func TestGetDeleteRegistry(t *testing.T) {
 	// check left registries are orders as before
 	if !reflect.DeepEqual(result[0], wrapRegistry(registries[0])) || !reflect.DeepEqual(result[1], wrapRegistry(registries[2])) {
 		t.Fatal("Expected registries order has been changed")
+	}
+}
+
+func TestAgentioResourcesForProxy(t *testing.T) {
+	istiotest.SetForTest(t, &features.EnableAmbient, true)
+
+	proxy := &model.Proxy{}
+	typeURL := "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"
+	requested := sets.New[model.ConfigKey](model.ConfigKey{Name: "policy", Namespace: "default"})
+	local := &agentioResourceRegistry{
+		Instance: serviceregistry.Simple{
+			ProviderID:          provider.Kubernetes,
+			ClusterID:           "config-cluster",
+			DiscoveryController: memory.NewServiceDiscovery(),
+		},
+		resources: []model.AgentioResource{{Name: "local"}},
+	}
+	remote := &agentioResourceRegistry{
+		Instance: serviceregistry.Simple{
+			ProviderID:          provider.Kubernetes,
+			ClusterID:           "remote-cluster",
+			DiscoveryController: memory.NewServiceDiscovery(),
+		},
+		resources: []model.AgentioResource{{Name: "remote"}},
+	}
+	external := &agentioResourceRegistry{
+		Instance: serviceregistry.Simple{
+			ProviderID:          provider.External,
+			ClusterID:           "remote-cluster",
+			DiscoveryController: memory.NewServiceDiscovery(),
+		},
+		resources: []model.AgentioResource{{Name: "external"}},
+	}
+
+	controller := NewController(Options{ConfigClusterID: "config-cluster"})
+	controller.AddRegistry(serviceregistry.Simple{
+		ProviderID:          "plain",
+		DiscoveryController: memory.NewServiceDiscovery(),
+	})
+	controller.AddRegistry(local)
+	controller.AddRegistry(remote)
+	controller.AddRegistry(external)
+
+	got := controller.AgentioResourcesForProxy(proxy, typeURL, requested)
+	want := []model.AgentioResource{{Name: "local"}, {Name: "external"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got resources %v, want %v", got, want)
+	}
+	if remote.calls != 0 {
+		t.Errorf("remote Kubernetes registry calls = %d, want 0", remote.calls)
+	}
+	for _, registry := range []*agentioResourceRegistry{local, external} {
+		if registry.calls != 1 {
+			t.Errorf("registry %s calls = %d, want 1", registry.Provider(), registry.calls)
+		}
+		if registry.gotProxy != proxy {
+			t.Errorf("registry %s got proxy %p, want %p", registry.Provider(), registry.gotProxy, proxy)
+		}
+		if registry.gotType != typeURL {
+			t.Errorf("registry %s got type URL %q, want %q", registry.Provider(), registry.gotType, typeURL)
+		}
+		if reflect.ValueOf(registry.gotRequested).Pointer() != reflect.ValueOf(requested).Pointer() {
+			t.Errorf("registry %s got a different requested set", registry.Provider())
+		}
 	}
 }
 

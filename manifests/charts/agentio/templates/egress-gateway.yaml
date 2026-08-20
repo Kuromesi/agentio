@@ -115,6 +115,10 @@ spec:
           value: "true"
         - name: ISTIO_META_ENABLE_HBONE
           value: "true"
+        {{- if $.Values.sniTrafficPolicy.enabled }}
+        - name: POLICY_BINDING_DISCOVERY
+          value: "true"
+        {{- end }}
         - name: GOMEMLIMIT
           valueFrom:
             resourceFieldRef:
@@ -186,8 +190,11 @@ spec:
           runAsGroup: 1337
           runAsNonRoot: true
           runAsUser: 1337
+        # When the gateway policy store is enabled, /healthz/ready withholds
+        # readiness until its initial PBDS and referenced policy subscriptions sync.
+        # Keep enough budget for the store's xDS initial_fetch_timeout and startup.
         startupProbe:
-          failureThreshold: 30
+          failureThreshold: 60
           httpGet:
             path: /healthz/ready
             port: 15021

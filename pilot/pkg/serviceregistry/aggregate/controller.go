@@ -35,8 +35,9 @@ import (
 // The aggregate controller does not implement serviceregistry.Instance since it may be comprised of various
 // providers and clusters.
 var (
-	_ model.ServiceDiscovery    = &Controller{}
-	_ model.AggregateController = &Controller{}
+	_ model.ServiceDiscovery         = &Controller{}
+	_ model.AggregateController      = &Controller{}
+	_ model.AgentioResourceDiscovery = &Controller{}
 )
 
 // Controller aggregates data across different registries and monitors for changes
@@ -150,32 +151,30 @@ func (c *Controller) PoliciesForProxy(proxy *model.Proxy, requested sets.Set[mod
 	return res
 }
 
-func (c *Controller) WorkloadConfigs(requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	var res []model.WorkloadConfig
+func (c *Controller) AgentioResourcesForProxy(
+	proxy *model.Proxy,
+	typeURL string,
+	requested sets.Set[model.ConfigKey],
+) []model.AgentioResource {
 	if !features.EnableAmbient {
-		return res
+		return nil
 	}
-	for _, p := range c.GetRegistries() {
-		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+	var resources []model.AgentioResource
+	for _, registry := range c.GetRegistries() {
+		if registry.Cluster() != c.configClusterID && registry.Provider() == provider.Kubernetes {
 			continue
 		}
-		res = append(res, p.WorkloadConfigs(requested)...)
-	}
-	return res
-}
-
-func (c *Controller) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	var res []model.WorkloadConfig
-	if !features.EnableAmbient {
-		return res
-	}
-	for _, p := range c.GetRegistries() {
-		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+		instance := registry
+		if entry, ok := registry.(*registryEntry); ok {
+			instance = entry.Instance
+		}
+		discovery, ok := instance.(model.AgentioResourceDiscovery)
+		if !ok {
 			continue
 		}
-		res = append(res, p.WorkloadConfigsForProxy(proxy, requested)...)
+		resources = append(resources, discovery.AgentioResourcesForProxy(proxy, typeURL, requested)...)
 	}
-	return res
+	return resources
 }
 
 func (c *Controller) AddressInformation(addresses sets.String) ([]model.AddressInfo, sets.String) {

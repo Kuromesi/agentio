@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+	"istio.io/istio/pkg/model"
 )
 
 func TestExtensionProtoPackage(t *testing.T) {
@@ -32,6 +33,8 @@ func TestExtensionProtoPackage(t *testing.T) {
 		{name: "traffic policy", message: &extensions.TrafficPolicyExtension{}},
 		{name: "workload metadata", message: &extensions.WorkloadMetadata{}},
 		{name: "egress policies", message: &extensions.EgressPolicies{}},
+		{name: "policy binding", message: &extensions.PolicyBinding{}},
+		{name: "sni traffic policy", message: &extensions.SniTrafficPolicy{}},
 	}
 
 	for _, tt := range tests {
@@ -58,6 +61,34 @@ func TestExtensionProtoPackage(t *testing.T) {
 		if !strings.HasPrefix(got, wantPrefix) {
 			t.Errorf("%s extension has type URL %q, want prefix %q", name, got, wantPrefix)
 		}
+	}
+
+	policyTypeURLs := []struct {
+		name    string
+		message proto.Message
+		want    string
+	}{
+		{
+			name:    "policy binding",
+			message: &extensions.PolicyBinding{},
+			want:    model.PolicyBindingType,
+		},
+		{
+			name:    "sni traffic policy",
+			message: &extensions.SniTrafficPolicy{},
+			want:    model.SniTrafficPolicyType,
+		},
+	}
+	for _, tt := range policyTypeURLs {
+		t.Run(tt.name+" type URL", func(t *testing.T) {
+			value, err := anypb.New(tt.message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := value.TypeUrl; got != tt.want {
+				t.Fatalf("unexpected type URL: got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

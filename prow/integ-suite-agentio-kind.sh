@@ -320,6 +320,7 @@ run_scenario() {
   local firewall_backend=$3
   local cluster_name="agentio-${scenario}"
   local arch=linux/amd64
+  local registry_address
 
   export ARTIFACTS="${ROOT_ARTIFACTS}/${scenario}"
   mkdir -p "${ARTIFACTS}"
@@ -328,10 +329,14 @@ run_scenario() {
   run_traced "setup ${scenario} kind cluster" \
     setup_kind_cluster_retry "${cluster_name}" "${NODE_IMAGE}" "" "" false || return $?
   run_traced "setup ${scenario} kind registry" setup_kind_registry "${cluster_name}" || return $?
+  registry_address=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}:5000' "${KIND_REGISTRY_NAME}")
+  if [[ ! "${registry_address}" =~ ^[0-9a-fA-F:.]+:[0-9]+$ ]]; then
+    echo "Unable to determine the in-cluster Agentio registry address: ${registry_address}" >&2
+    return 1
+  fi
 
   if [[ "${IMAGES_BUILT}" == "false" ]]; then
-    # agentio-epe is built but never deployed here: no scenario sets epe.enabled=true.
-    # It keeps the image build itself covered on every presubmit.
+    # The EPE suite enables its extension from its own TestMain setup.
     local docker_targets="docker.pilot docker.proxy-init docker.install-cni docker.app docker.ext-proc docker.agentio-epe"
     local target_arch
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then

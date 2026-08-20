@@ -163,6 +163,59 @@ func NewSNIMatcher(domainMatches []SNIDomainMatch, onNoMatch *matcher.Matcher_On
 	}
 }
 
+// SniPolicyMatcherTypeURL is the Agentio-owned custom matcher that resolves the
+// SNI traffic policy bound to the downstream peer workload. See
+// source/extensions/matching/network/sni_policy in the proxy repository.
+const SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.SniPolicyMatcher"
+
+// NewSniPolicyMatcher selects a filter chain by evaluating the SNI traffic
+// policy for the connection's peer workload.
+//
+// Unlike NewSNIMatcher, the domains are not part of this config: the matcher
+// reads them from the gateway policy store, which is fed by delta xDS. Listener
+// size therefore does not grow with the number of clients or policies, which is
+// what makes per-client TLS termination expressible here at all -- encoding the
+// table into the listener would re-push all of it on every policy edit.
+//
+// There is no OnNoMatch: the matcher always resolves to one of the three
+// outcomes, and filter chain selection requires matching to complete.
+func NewSniPolicyMatcher(terminateChain, passthroughChain, denyChain string) *matcher.Matcher {
+	return &matcher.Matcher{
+		MatcherType: &matcher.Matcher_MatcherTree_{
+			MatcherTree: &matcher.Matcher_MatcherTree{
+				// Unused by this matcher, which reads the connection directly, but
+				// MatcherTree requires an input.
+				Input: SNI,
+				TreeType: &matcher.Matcher_MatcherTree_CustomMatch{
+					CustomMatch: &xds.TypedExtensionConfig{
+						Name: "sni-policy",
+						TypedConfig: protoconv.TypedStructWithFields(SniPolicyMatcherTypeURL,
+							map[string]any{
+								"on_tls_termination": chainActionFields(terminateChain),
+								"on_passthrough":     chainActionFields(passthroughChain),
+								"on_deny":            chainActionFields(denyChain),
+							}),
+					},
+				},
+			},
+		},
+	}
+}
+
+// chainActionFields mirrors ToChain as untyped fields, since the matcher's
+// config message is not compiled into this binary.
+func chainActionFields(name string) map[string]any {
+	return map[string]any{
+		"action": map[string]any{
+			"name": name,
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/google.protobuf.StringValue",
+				"value": name,
+			},
+		},
+	}
+}
+
 func ToChain(name string) *matcher.Matcher_OnMatch {
 	return &matcher.Matcher_OnMatch{
 		OnMatch: &matcher.Matcher_OnMatch_Action{

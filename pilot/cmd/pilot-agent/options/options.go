@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -131,6 +132,8 @@ var (
 
 	enableWDSEnv, enableWDSEnvWasSet = env.Register("PEER_METADATA_DISCOVERY", false,
 		"If set to true, enable the peer metadata discovery extension in Envoy").Lookup()
+	policyBindingDiscoveryEnv, policyBindingDiscoveryEnvWasSet = env.Register("POLICY_BINDING_DISCOVERY", false,
+		"If set to true, enable the Agentio policy binding discovery extension in Envoy").Lookup()
 
 	envoyStatusPortEnv = env.Register("ENVOY_STATUS_PORT", 15021,
 		"Envoy health status port value").Get()
