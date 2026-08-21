@@ -167,7 +167,7 @@ const (
 	// SniPolicyMatcherTypeURL is the Agentio-owned custom matcher that resolves the
 	// SNI traffic policy bound to the downstream peer workload. See
 	// source/extensions/matching/network/sni_policy in the proxy repository.
-	SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.SniPolicyMatcher"
+	SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniPolicyMatcher"
 
 	// SniPolicyFailureModeAllowRuntimeKey is the emergency runtime override for
 	// policy-resolution failures. Its configured default remains fail-closed.

@@ -218,7 +218,8 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 	if err := policyMatcher.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
 		t.Fatalf("decode SNI policy matcher: %v", err)
 	}
-	if got, want := policyConfig.GetTypeUrl(), match.SniPolicyMatcherTypeURL; got != want {
+	if got, want := policyConfig.GetTypeUrl(),
+		"type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniPolicyMatcher"; got != want {
 		t.Fatalf("SNI policy matcher type URL = %q, want %q", got, want)
 	}
 	for field, want := range map[string]string{
