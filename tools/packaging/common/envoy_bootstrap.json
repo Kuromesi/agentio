@@ -55,7 +55,7 @@
       "name": "kruise.bootstrap.policy_store",
       "typed_config": {
         "@type": "type.googleapis.com/udpa.type.v1.TypedStruct",
-        "type_url": "type.googleapis.com/kruise.networking.gateway_policy.v1alpha1.GatewayPolicyStoreConfig",
+        "type_url": "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.PolicyStoreConfig",
         "value": {
           "config_source": { "ads": {} }
         }

@@ -238,4 +238,11 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 	if !strings.Contains(rendered.String(), `"name": "kruise.bootstrap.policy_store"`) {
 		t.Fatalf("rendered bootstrap does not contain kruise policy store extension: %s", rendered.String())
 	}
+	if !strings.Contains(rendered.String(),
+		`"type_url": "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.PolicyStoreConfig"`) {
+		t.Fatalf("rendered bootstrap does not use the policy runtime config TypeURL: %s", rendered.String())
+	}
+	if strings.Contains(rendered.String(), "kruise.networking.gateway_policy") {
+		t.Fatalf("rendered bootstrap still uses the gateway-scoped policy package: %s", rendered.String())
+	}
 }
