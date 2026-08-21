@@ -37,6 +37,7 @@ const (
 	trafficPolicyExtension    = extensionPrefix + "TrafficPolicyExtension"
 	workloadMetadataExtension = extensionPrefix + "WorkloadMetadata"
 	egressPoliciesExtension   = extensionPrefix + "EgressPolicies"
+	actorContextExtension     = extensionPrefix + "ActorContext"
 
 	LabelSandboxProxyType = "networking.agents.kruise.io/proxy-type"
 	LabelSandboxEgress    = "networking.agents.kruise.io/sandbox-egress"
@@ -272,6 +273,17 @@ func NewEgressPoliciesExtension(policies []*extensions.EgressPolicy) *workloadap
 		Name: "egress-policies",
 		Config: &anypb.Any{
 			TypeUrl: egressPoliciesExtension,
+			Value:   pbBytes,
+		},
+	}
+}
+
+func NewActorContextExtension(actor *extensions.ActorContext) *workloadapi.Extension {
+	pbBytes, _ := proto.Marshal(actor)
+	return &workloadapi.Extension{
+		Name: "actor-context",
+		Config: &anypb.Any{
+			TypeUrl: actorContextExtension,
 			Value:   pbBytes,
 		},
 	}

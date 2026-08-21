@@ -21,6 +21,7 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/util/sets"
+	"istio.io/istio/pkg/workloadapi"
 )
 
 func (a *index) WorkloadConfigs(requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
@@ -74,6 +75,13 @@ func (a *index) actorContextForProxy(proxy *model.Proxy) *extensions.ActorContex
 	if workload == nil {
 		return nil
 	}
+	return a.actorContextForWorkload(workload)
+}
+
+func (a *index) actorContextForWorkload(workload *model.WorkloadInfo) *extensions.ActorContext {
+	if workload == nil || workload.Workload == nil {
+		return nil
+	}
 	if a.actorContextSource != nil {
 		actor, authoritative := a.actorContextSource.ActorContextForWorker(
 			workload.Workload.GetNamespace(),
@@ -85,4 +93,42 @@ func (a *index) actorContextForProxy(proxy *model.Proxy) *extensions.ActorContex
 		}
 	}
 	return agentio.ActorContextFromLabels(workload.Labels)
+}
+
+func (a *index) attachActorContextsForProxy(proxy *model.Proxy, addresses []model.AddressInfo) []model.AddressInfo {
+	if proxy == nil || !proxy.IsZTunnel() {
+		return addresses
+	}
+	dedicated := agentio.IsSandboxDedicatedProxy(proxy)
+	dedicatedWorkloadKey, dedicatedKeyOK := agentio.BuildProxyWorkloadKey(proxy)
+	proxyNode := proxy.GetNodeName()
+
+	result := make([]model.AddressInfo, 0, len(addresses))
+	for _, address := range addresses {
+		workload := a.workloads.GetKey(address.ResourceName())
+		if workload == nil || workload.Workload == nil {
+			result = append(result, address)
+			continue
+		}
+		if dedicated {
+			if !dedicatedKeyOK || workload.ResourceName() != dedicatedWorkloadKey {
+				result = append(result, address)
+				continue
+			}
+		} else if proxyNode == "" || workload.Workload.GetNode() != proxyNode {
+			result = append(result, address)
+			continue
+		}
+		actor := a.actorContextForWorkload(workload)
+		if actor == nil {
+			result = append(result, address)
+			continue
+		}
+
+		cloned := proto.Clone(address.Address).(*workloadapi.Address)
+		clonedWorkload := cloned.GetWorkload()
+		clonedWorkload.Extensions = append(clonedWorkload.Extensions, agentio.NewActorContextExtension(actor))
+		result = append(result, model.AddressInfo{Address: cloned})
+	}
+	return result
 }

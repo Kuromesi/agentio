@@ -19,8 +19,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"maps"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -112,14 +112,14 @@ type workerPodKey struct {
 type substrateWorkerSource struct {
 	client   listWorkersClient
 	config   substrateWorkerConfig
-	onChange func()
+	onChange func([]workerPodKey)
 	close    func() error
 
 	mu       sync.RWMutex
 	bindings map[workerPodKey]*extensions.ActorContext
 }
 
-func newSubstrateWorkerSource(config substrateWorkerConfig, onChange func()) (*substrateWorkerSource, error) {
+func newSubstrateWorkerSource(config substrateWorkerConfig, onChange func([]workerPodKey)) (*substrateWorkerSource, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
@@ -160,7 +160,11 @@ func newSubstrateWorkerSource(config substrateWorkerConfig, onChange func()) (*s
 	return source, nil
 }
 
-func newSubstrateWorkerSourceForClient(client listWorkersClient, config substrateWorkerConfig, onChange func()) *substrateWorkerSource {
+func newSubstrateWorkerSourceForClient(
+	client listWorkersClient,
+	config substrateWorkerConfig,
+	onChange func([]workerPodKey),
+) *substrateWorkerSource {
 	return &substrateWorkerSource{
 		client:   client,
 		config:   config,
@@ -232,15 +236,38 @@ func (s *substrateWorkerSource) refresh(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
-	changed := !maps.EqualFunc(s.bindings, bindings, func(a, b *extensions.ActorContext) bool {
-		return proto.Equal(a, b)
+	changedSet := make(map[workerPodKey]struct{})
+	for key, oldActor := range s.bindings {
+		newActor, found := bindings[key]
+		if !found || !proto.Equal(oldActor, newActor) {
+			changedSet[key] = struct{}{}
+		}
+	}
+	for key, newActor := range bindings {
+		oldActor, found := s.bindings[key]
+		if !found || !proto.Equal(oldActor, newActor) {
+			changedSet[key] = struct{}{}
+		}
+	}
+	changedKeys := make([]workerPodKey, 0, len(changedSet))
+	for key := range changedSet {
+		changedKeys = append(changedKeys, key)
+	}
+	sort.Slice(changedKeys, func(i, j int) bool {
+		if changedKeys[i].namespace != changedKeys[j].namespace {
+			return changedKeys[i].namespace < changedKeys[j].namespace
+		}
+		if changedKeys[i].name != changedKeys[j].name {
+			return changedKeys[i].name < changedKeys[j].name
+		}
+		return changedKeys[i].uid < changedKeys[j].uid
 	})
-	if changed {
+	if len(changedKeys) > 0 {
 		s.bindings = bindings
 	}
 	s.mu.Unlock()
-	if changed && s.onChange != nil {
-		s.onChange()
+	if len(changedKeys) > 0 && s.onChange != nil {
+		s.onChange(changedKeys)
 	}
 	return nil
 }

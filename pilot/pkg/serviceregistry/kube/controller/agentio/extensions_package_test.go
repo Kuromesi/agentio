@@ -85,3 +85,29 @@ func TestNewWorkloadMetadataExtension(t *testing.T) {
 		t.Fatalf("unexpected internal traffic policy: got %v", metadata.MeshInternalTrafficPolicy)
 	}
 }
+
+func TestNewActorContextExtension(t *testing.T) {
+	actor := &extensions.ActorContext{
+		ActorUid:   "actor-uid-a",
+		ActorName:  "actor-a",
+		Atespace:   "tenant-a",
+		Generation: 7,
+		Labels:     map[string]string{"role": "reader"},
+	}
+	got := NewActorContextExtension(actor)
+
+	if got.Name != "actor-context" {
+		t.Fatalf("extension name = %q, want %q", got.Name, "actor-context")
+	}
+	if got.Config.GetTypeUrl() != actorContextExtension {
+		t.Fatalf("type URL = %q, want %q", got.Config.GetTypeUrl(), actorContextExtension)
+	}
+
+	decoded := &extensions.ActorContext{}
+	if err := got.Config.UnmarshalTo(decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(decoded, actor) {
+		t.Fatalf("decoded ActorContext = %+v, want %+v", decoded, actor)
+	}
+}

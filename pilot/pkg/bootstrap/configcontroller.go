@@ -107,11 +107,16 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		MeshConfig: s.environment.Watcher,
 		Debugger:   s.krtDebugger,
 		Stop:       s.internalStop,
-		ActorBindingsChanged: func() {
+		ActorBindingsChanged: func(workloads []agentio.ActorBindingWorkload) {
+			addressesUpdated := sets.New[string]()
+			for _, workload := range workloads {
+				addressesUpdated.Insert(s.clusterID.String() + "//Pod/" + workload.Namespace + "/" + workload.PodName)
+			}
 			s.XDSServer.ConfigUpdate(&model.PushRequest{
-				Full:   true,
-				Reason: model.NewReasonStats(model.GlobalUpdate),
-				Forced: true,
+				Full:             true,
+				AddressesUpdated: addressesUpdated,
+				Reason:           model.NewReasonStats(model.GlobalUpdate),
+				Forced:           true,
 			})
 		},
 	})

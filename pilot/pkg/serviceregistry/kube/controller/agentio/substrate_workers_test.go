@@ -95,11 +95,11 @@ func TestSubstrateWorkerSourceBuildsActorContextFromAllPages(t *testing.T) {
 			})},
 		},
 	}}
-	changes := 0
+	var changes [][]workerPodKey
 	source := newSubstrateWorkerSourceForClient(client, substrateWorkerConfig{
 		PageSize:   1,
 		RPCTimeout: time.Second,
-	}, func() { changes++ })
+	}, func(keys []workerPodKey) { changes = append(changes, keys) })
 
 	if err := source.refresh(context.Background()); err != nil {
 		t.Fatalf("refresh() failed: %v", err)
@@ -107,8 +107,8 @@ func TestSubstrateWorkerSourceBuildsActorContextFromAllPages(t *testing.T) {
 	if len(client.requests) != 2 || client.requests[0].GetPageSize() != 1 || client.requests[1].GetPageToken() != "page-2" {
 		t.Fatalf("ListWorkers requests = %+v, want two paginated requests", client.requests)
 	}
-	if changes != 1 {
-		t.Fatalf("change notifications = %d, want 1", changes)
+	if len(changes) != 1 || len(changes[0]) != 1 || changes[0][0] != (workerPodKey{namespace: "workers", name: "worker-a", uid: "pod-uid-a"}) {
+		t.Fatalf("change notifications = %+v, want assigned worker-a", changes)
 	}
 
 	actor := source.actorContextForWorker("workers", "worker-a", "pod-uid-a")
@@ -144,11 +144,11 @@ func TestSubstrateWorkerSourcePublishesOnlySuccessfulChanges(t *testing.T) {
 	client := &fakeListWorkersClient{responses: map[string]*substrateapi.ListWorkersResponse{
 		"": {Workers: [][]byte{marshalWorker(t, assignedWorker("worker-a", "pod-uid-a", 9))}},
 	}}
-	changes := 0
+	var changes [][]workerPodKey
 	source := newSubstrateWorkerSourceForClient(client, substrateWorkerConfig{
 		PageSize:   1000,
 		RPCTimeout: time.Second,
-	}, func() { changes++ })
+	}, func(keys []workerPodKey) { changes = append(changes, keys) })
 
 	if err := source.refresh(context.Background()); err != nil {
 		t.Fatalf("first refresh() failed: %v", err)
@@ -156,8 +156,8 @@ func TestSubstrateWorkerSourcePublishesOnlySuccessfulChanges(t *testing.T) {
 	if err := source.refresh(context.Background()); err != nil {
 		t.Fatalf("unchanged refresh() failed: %v", err)
 	}
-	if changes != 1 {
-		t.Fatalf("change notifications after identical snapshot = %d, want 1", changes)
+	if len(changes) != 1 {
+		t.Fatalf("change notifications after identical snapshot = %d, want 1", len(changes))
 	}
 
 	client.err = errors.New("ateapi unavailable")
@@ -167,8 +167,8 @@ func TestSubstrateWorkerSourcePublishesOnlySuccessfulChanges(t *testing.T) {
 	if got := source.actorContextForWorker("workers", "worker-a", "pod-uid-a"); got == nil {
 		t.Fatal("failed refresh discarded the last successful Actor binding")
 	}
-	if changes != 1 {
-		t.Fatalf("change notifications after failed refresh = %d, want 1", changes)
+	if len(changes) != 1 {
+		t.Fatalf("change notifications after failed refresh = %d, want 1", len(changes))
 	}
 
 	client.err = nil
@@ -185,8 +185,8 @@ func TestSubstrateWorkerSourcePublishesOnlySuccessfulChanges(t *testing.T) {
 	if got := source.actorContextForWorker("workers", "worker-a", "pod-uid-a"); got != nil {
 		t.Fatalf("removed Actor binding remained: %+v", got)
 	}
-	if changes != 2 {
-		t.Fatalf("change notifications after removal = %d, want 2", changes)
+	if len(changes) != 2 || len(changes[1]) != 1 || changes[1][0] != (workerPodKey{namespace: "workers", name: "worker-a", uid: "pod-uid-a"}) {
+		t.Fatalf("change notifications after removal = %+v, want removed worker-a", changes)
 	}
 }
 

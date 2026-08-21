@@ -69,7 +69,15 @@ type Options struct {
 	MeshConfig           meshwatcher.WatcherCollection
 	Debugger             *krt.DebugHandler
 	Stop                 <-chan struct{}
-	ActorBindingsChanged func()
+	ActorBindingsChanged func([]ActorBindingWorkload)
+}
+
+// ActorBindingWorkload identifies a Kubernetes Workload whose Actor binding
+// changed. Pod UID is intentionally omitted because the Workload Discovery
+// resource name is stable across Pod recreation.
+type ActorBindingWorkload struct {
+	Namespace string
+	PodName   string
 }
 
 type Controller struct {
@@ -121,7 +129,21 @@ func NewController(options Options) (*Controller, error) {
 
 	substrateConfig := substrateWorkerConfigFromEnv()
 	if substrateConfig.Address != "" {
-		substrateWorkers, err := newSubstrateWorkerSource(substrateConfig, options.ActorBindingsChanged)
+		substrateWorkers, err := newSubstrateWorkerSource(substrateConfig, func(keys []workerPodKey) {
+			if options.ActorBindingsChanged == nil {
+				return
+			}
+			workloads := make([]ActorBindingWorkload, 0, len(keys))
+			seen := sets.New[string]()
+			for _, key := range keys {
+				workloadKey := key.namespace + "/" + key.name
+				if seen.InsertContains(workloadKey) {
+					continue
+				}
+				workloads = append(workloads, ActorBindingWorkload{Namespace: key.namespace, PodName: key.name})
+			}
+			options.ActorBindingsChanged(workloads)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("creating Substrate ListWorkers source: %w", err)
 		}

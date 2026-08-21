@@ -24,6 +24,15 @@ import (
 	"istio.io/istio/pkg/workloadapi"
 )
 
+type mappedActorContextSource struct {
+	actors        map[string]*extensions.ActorContext
+	authoritative bool
+}
+
+func (f *mappedActorContextSource) ActorContextForWorker(namespace, podName, podUID string) (*extensions.ActorContext, bool) {
+	return f.actors[namespace+"/"+podName+"/"+podUID], f.authoritative
+}
+
 type fakeActorContextSource struct {
 	actor         *extensions.ActorContext
 	authoritative bool
@@ -218,4 +227,128 @@ func actorWorkloadConfigTestProxy(namespace, podName string) *model.Proxy {
 		Metadata: &model.NodeMetadata{Namespace: namespace},
 		Labels:   map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
 	}
+}
+
+func TestAddressInformationForNodeZtunnelAttachesActorOnlyToLocalWorker(t *testing.T) {
+	local := actorAddressTestWorkload("workers", "worker-a", "pod-uid-a", "node-a")
+	remote := actorAddressTestWorkload("workers", "worker-b", "pod-uid-b", "node-b")
+	source := &mappedActorContextSource{
+		authoritative: true,
+		actors: map[string]*extensions.ActorContext{
+			"workers/worker-a/pod-uid-a": {
+				ActorUid: "actor-a", ActorName: "a", Atespace: "tenant", Generation: 3,
+			},
+			"workers/worker-b/pod-uid-b": {
+				ActorUid: "actor-b", ActorName: "b", Atespace: "tenant", Generation: 4,
+			},
+		},
+	}
+	a := &index{
+		actorContextSource: source,
+		workloads: workloadsCollection{Collection: krt.NewStaticCollection(
+			nil,
+			[]model.WorkloadInfo{local, remote},
+		)},
+		services: servicesCollection{Collection: krt.NewStaticCollection(nil, []model.ServiceInfo{})},
+	}
+	proxy := &model.Proxy{
+		Type: model.Ztunnel,
+		Metadata: &model.NodeMetadata{
+			NodeName:  "node-a",
+			ClusterID: "cluster-a",
+		},
+	}
+
+	got, removed := a.AddressInformationForProxy(proxy, nil)
+	if len(removed) != 0 || len(got) != 2 {
+		t.Fatalf("AddressInformationForProxy() = %d addresses, %d removed; want 2, 0", len(got), len(removed))
+	}
+	if actor := actorContextFromAddress(t, got, local.ResourceName()); actor == nil || actor.GetActorUid() != "actor-a" {
+		t.Fatalf("local Worker ActorContext = %+v, want actor-a", actor)
+	}
+	if actor := actorContextFromAddress(t, got, remote.ResourceName()); actor != nil {
+		t.Fatalf("remote Worker ActorContext = %+v, want nil", actor)
+	}
+	if len(local.Workload.GetExtensions()) != 0 || len(remote.Workload.GetExtensions()) != 0 {
+		t.Fatal("AddressInformationForProxy() mutated shared Workload extensions")
+	}
+}
+
+func TestAddressInformationForDedicatedZtunnelAttachesOnlyItsOwnActor(t *testing.T) {
+	self := actorAddressTestWorkload("workers", "worker-a", "pod-uid-a", "node-a")
+	peer := actorAddressTestWorkload("workers", "worker-b", "pod-uid-b", "node-a")
+	source := &mappedActorContextSource{
+		authoritative: true,
+		actors: map[string]*extensions.ActorContext{
+			"workers/worker-a/pod-uid-a": {
+				ActorUid: "actor-a", ActorName: "a", Atespace: "tenant", Generation: 3,
+			},
+			"workers/worker-b/pod-uid-b": {
+				ActorUid: "actor-b", ActorName: "b", Atespace: "tenant", Generation: 4,
+			},
+		},
+	}
+	a := &index{
+		actorContextSource: source,
+		workloads: workloadsCollection{Collection: krt.NewStaticCollection(
+			nil,
+			[]model.WorkloadInfo{self, peer},
+		)},
+		services: servicesCollection{Collection: krt.NewStaticCollection(nil, []model.ServiceInfo{})},
+	}
+	proxy := &model.Proxy{
+		ID:   "worker-a.workers",
+		Type: model.Ztunnel,
+		Metadata: &model.NodeMetadata{
+			Namespace: "workers",
+			NodeName:  "node-a",
+			ClusterID: "cluster-a",
+		},
+		Labels: map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
+	}
+
+	got, _ := a.AddressInformationForProxy(proxy, nil)
+	if actor := actorContextFromAddress(t, got, self.ResourceName()); actor == nil || actor.GetActorUid() != "actor-a" {
+		t.Fatalf("self ActorContext = %+v, want actor-a", actor)
+	}
+	if actor := actorContextFromAddress(t, got, peer.ResourceName()); actor != nil {
+		t.Fatalf("peer ActorContext = %+v, want nil", actor)
+	}
+}
+
+func actorAddressTestWorkload(namespace, name, podUID, node string) model.WorkloadInfo {
+	workload := &workloadapi.Workload{
+		Uid:       "cluster-a//Pod/" + namespace + "/" + name,
+		Name:      name,
+		Namespace: namespace,
+		Node:      node,
+	}
+	address := &workloadapi.Address{Type: &workloadapi.Address_Workload{Workload: workload}}
+	return model.WorkloadInfo{
+		Workload:  workload,
+		NativeUID: podUID,
+		AsAddress: model.AddressInfo{Address: address},
+	}
+}
+
+func actorContextFromAddress(t *testing.T, addresses []model.AddressInfo, resourceName string) *extensions.ActorContext {
+	t.Helper()
+	for _, address := range addresses {
+		if address.ResourceName() != resourceName || address.GetWorkload() == nil {
+			continue
+		}
+		for _, extension := range address.GetWorkload().GetExtensions() {
+			if extension.GetName() != "actor-context" {
+				continue
+			}
+			actor := &extensions.ActorContext{}
+			if err := extension.GetConfig().UnmarshalTo(actor); err != nil {
+				t.Fatal(err)
+			}
+			return actor
+		}
+		return nil
+	}
+	t.Fatalf("Workload %q not found", resourceName)
+	return nil
 }

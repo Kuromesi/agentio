@@ -901,12 +901,13 @@ func (a *index) AddressInformationForProxy(
 	addresses sets.String,
 ) ([]model.AddressInfo, sets.String) {
 	if features.MeshInternalTrafficPolicy != agentio.MeshInternalTrafficPolicyPassthrough || !agentio.IsSandboxDedicatedProxy(proxy) {
-		return a.AddressInformation(addresses)
+		infos, removed := a.AddressInformation(addresses)
+		return a.attachActorContextsForProxy(proxy, infos), removed
 	}
 
 	if len(addresses) == 0 {
 		// Full update
-		return a.AllForProxy(proxy), nil
+		return a.attachActorContextsForProxy(proxy, a.AllForProxy(proxy)), nil
 	}
 	var res []model.AddressInfo
 	var removed []string
@@ -923,7 +924,7 @@ func (a *index) AddressInformationForProxy(
 			}
 		}
 	}
-	return res, sets.New(removed...)
+	return a.attachActorContextsForProxy(proxy, res), sets.New(removed...)
 }
 
 func (a *index) ServicesForWaypoint(key model.WaypointKey) []model.ServiceInfo {
