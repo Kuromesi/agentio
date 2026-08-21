@@ -34,7 +34,6 @@ func (f *mappedActorContextSource) ActorContextForWorker(namespace, podName, pod
 }
 
 type fakeActorContextSource struct {
-	actor         *extensions.ActorContext
 	authoritative bool
 	namespace     string
 	podName       string
@@ -45,10 +44,10 @@ func (f *fakeActorContextSource) ActorContextForWorker(namespace, podName, podUI
 	f.namespace = namespace
 	f.podName = podName
 	f.podUID = podUID
-	return f.actor, f.authoritative
+	return nil, f.authoritative
 }
 
-func TestWorkloadConfigsForProxyAttachesCurrentActor(t *testing.T) {
+func TestWorkloadConfigsForProxyDoesNotAttachActorContext(t *testing.T) {
 	const (
 		workerName      = "worker-0"
 		workerNamespace = "substrate-system"
@@ -95,137 +94,11 @@ func TestWorkloadConfigsForProxyAttachesCurrentActor(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("WorkloadConfigsForProxy() returned %d configs, want 1", len(got))
 	}
-	actor := got[0].Config.GetActorContext()
-	if actor == nil {
-		t.Fatal("WorkloadConfigsForProxy() did not attach ActorContext")
-	}
-	if actor.GetActorUid() != "actor-uid-1" || actor.GetGeneration() != 7 {
-		t.Fatalf("unexpected ActorContext: %+v", actor)
-	}
-	if actor.GetLabels()["role"] != "reader" {
-		t.Fatalf("actor labels = %v, want role=reader", actor.GetLabels())
+	if actor := got[0].Config.GetActorContext(); actor != nil {
+		t.Fatalf("WorkloadConfigsForProxy() ActorContext = %+v, want nil because Actor identity uses WDS", actor)
 	}
 	if base.Config.GetActorContext() != nil {
 		t.Fatal("WorkloadConfigsForProxy() mutated the shared WorkloadConfig")
-	}
-}
-
-func TestWorkloadConfigsForProxyOmitsIncompleteActor(t *testing.T) {
-	const (
-		workerName      = "worker-0"
-		workerNamespace = "substrate-system"
-	)
-	base := model.WorkloadConfig{
-		Name:      "default",
-		Namespace: "agentio-system",
-		Config:    &extensions.WorkloadConfig{},
-	}
-	workload := model.WorkloadInfo{
-		Workload: &workloadapi.Workload{
-			Uid:       "//Pod/" + workerNamespace + "/" + workerName,
-			Name:      workerName,
-			Namespace: workerNamespace,
-		},
-		Labels: map[string]string{
-			agentio.LabelActorUID:         "actor-uid-1",
-			agentio.LabelSandboxProxyType: "ztunnel",
-		},
-	}
-	a := &index{
-		SystemNamespace: "agentio-system",
-		workloads: workloadsCollection{Collection: krt.NewStaticCollection(
-			nil,
-			[]model.WorkloadInfo{workload},
-		)},
-		workloadConfigs: krt.NewStaticCollection(nil, []model.WorkloadConfig{base}),
-	}
-	proxy := &model.Proxy{
-		ID:       workerName + "." + workerNamespace,
-		Metadata: &model.NodeMetadata{Namespace: workerNamespace},
-		Labels:   map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
-	}
-
-	got := a.WorkloadConfigsForProxy(proxy, nil)
-	if len(got) != 1 {
-		t.Fatalf("WorkloadConfigsForProxy() returned %d configs, want 1", len(got))
-	}
-	if got[0].Config.GetActorContext() != nil {
-		t.Fatalf("ActorContext = %+v, want nil", got[0].Config.GetActorContext())
-	}
-}
-
-func TestWorkloadConfigsForProxyPrefersAuthoritativeListWorkersBinding(t *testing.T) {
-	const (
-		workerName      = "worker-0"
-		workerNamespace = "workers"
-		workerPodUID    = "pod-uid-1"
-	)
-	source := &fakeActorContextSource{
-		authoritative: true,
-		actor: &extensions.ActorContext{
-			ActorUid:   "api-actor-uid",
-			ActorName:  "api-actor",
-			Atespace:   "tenant-a",
-			Generation: 12,
-		},
-	}
-	a := actorWorkloadConfigTestIndex(source, workerNamespace, workerName, workerPodUID)
-
-	got := a.WorkloadConfigsForProxy(actorWorkloadConfigTestProxy(workerNamespace, workerName), nil)
-	actor := got[0].Config.GetActorContext()
-	if actor == nil || actor.GetActorUid() != "api-actor-uid" || actor.GetGeneration() != 12 {
-		t.Fatalf("ActorContext = %+v, want authoritative ListWorkers Actor", actor)
-	}
-	if source.namespace != workerNamespace || source.podName != workerName || source.podUID != workerPodUID {
-		t.Fatalf("ActorContextForWorker() called with %q/%q uid=%q", source.namespace, source.podName, source.podUID)
-	}
-}
-
-func TestWorkloadConfigsForProxyDoesNotFallBackToLabelsWhenListWorkersIsAuthoritative(t *testing.T) {
-	source := &fakeActorContextSource{authoritative: true}
-	a := actorWorkloadConfigTestIndex(source, "workers", "worker-0", "pod-uid-1")
-
-	got := a.WorkloadConfigsForProxy(actorWorkloadConfigTestProxy("workers", "worker-0"), nil)
-	if actor := got[0].Config.GetActorContext(); actor != nil {
-		t.Fatalf("ActorContext = %+v, want nil for unassigned authoritative Worker", actor)
-	}
-}
-
-func actorWorkloadConfigTestIndex(source actorContextSource, namespace, podName, podUID string) *index {
-	workload := model.WorkloadInfo{
-		Workload: &workloadapi.Workload{
-			Uid:       "//Pod/" + namespace + "/" + podName,
-			Name:      podName,
-			Namespace: namespace,
-		},
-		NativeUID: podUID,
-		Labels: map[string]string{
-			agentio.LabelActorUID:         "spoofed-label-uid",
-			agentio.LabelActorName:        "spoofed-label-actor",
-			agentio.LabelActorAtespace:    "spoofed-tenant",
-			agentio.LabelActorGeneration:  "99",
-			agentio.LabelSandboxProxyType: "ztunnel",
-		},
-	}
-	return &index{
-		SystemNamespace:    "agentio-system",
-		actorContextSource: source,
-		workloads:          workloadsCollection{Collection: krt.NewStaticCollection(nil, []model.WorkloadInfo{workload})},
-		workloadConfigs: krt.NewStaticCollection(nil, []model.WorkloadConfig{{
-			Name:      "default",
-			Namespace: "agentio-system",
-			Config: &extensions.WorkloadConfig{
-				Scope: extensions.WorkloadConfigScope_WORKLOAD_CONFIG_SCOPE_GLOBAL,
-			},
-		}}),
-	}
-}
-
-func actorWorkloadConfigTestProxy(namespace, podName string) *model.Proxy {
-	return &model.Proxy{
-		ID:       podName + "." + namespace,
-		Metadata: &model.NodeMetadata{Namespace: namespace},
-		Labels:   map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
 	}
 }
 
@@ -313,6 +186,43 @@ func TestAddressInformationForDedicatedZtunnelAttachesOnlyItsOwnActor(t *testing
 	}
 	if actor := actorContextFromAddress(t, got, peer.ResourceName()); actor != nil {
 		t.Fatalf("peer ActorContext = %+v, want nil", actor)
+	}
+}
+
+func TestAddressInformationForDedicatedZtunnelDoesNotFallBackToLabelsWhenListWorkersIsAuthoritative(t *testing.T) {
+	self := actorAddressTestWorkload("workers", "worker-a", "pod-uid-a", "node-a")
+	self.Labels = map[string]string{
+		agentio.LabelActorUID:        "spoofed-label-uid",
+		agentio.LabelActorName:       "spoofed-label-actor",
+		agentio.LabelActorAtespace:   "spoofed-tenant",
+		agentio.LabelActorGeneration: "99",
+	}
+	source := &fakeActorContextSource{authoritative: true}
+	a := &index{
+		actorContextSource: source,
+		workloads: workloadsCollection{Collection: krt.NewStaticCollection(
+			nil,
+			[]model.WorkloadInfo{self},
+		)},
+		services: servicesCollection{Collection: krt.NewStaticCollection(nil, []model.ServiceInfo{})},
+	}
+	proxy := &model.Proxy{
+		ID:   "worker-a.workers",
+		Type: model.Ztunnel,
+		Metadata: &model.NodeMetadata{
+			Namespace: "workers",
+			NodeName:  "node-a",
+			ClusterID: "cluster-a",
+		},
+		Labels: map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
+	}
+
+	got, _ := a.AddressInformationForProxy(proxy, nil)
+	if actor := actorContextFromAddress(t, got, self.ResourceName()); actor != nil {
+		t.Fatalf("self ActorContext = %+v, want nil for unassigned authoritative Worker", actor)
+	}
+	if source.namespace != "workers" || source.podName != "worker-a" || source.podUID != "pod-uid-a" {
+		t.Fatalf("ActorContextForWorker() called with %q/%q uid=%q", source.namespace, source.podName, source.podUID)
 	}
 }
 

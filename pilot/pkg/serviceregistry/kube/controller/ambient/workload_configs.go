@@ -49,7 +49,6 @@ func (a *index) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[m
 	}
 	exts := a.workloadConfigs.List()
 	res := make([]model.WorkloadConfig, 0, len(exts))
-	actorContext := a.actorContextForProxy(proxy)
 	for _, ext := range exts {
 		if ext.Namespace != proxy.Metadata.Namespace && ext.Namespace != a.SystemNamespace {
 			continue
@@ -57,25 +56,11 @@ func (a *index) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[m
 		if len(requested) > 0 && !requested.Contains(ext.ConfigKey()) {
 			continue
 		}
-		if ext.Config != nil && ext.Config.GetScope() == extensions.WorkloadConfigScope_WORKLOAD_CONFIG_SCOPE_GLOBAL {
-			ext.Config = proto.Clone(ext.Config).(*extensions.WorkloadConfig)
-			ext.Config.ActorContext = actorContext
-		}
+		// Actor identity is attached to the source Workload in WDS. Keep WCDS
+		// limited to traffic configuration so sidecar and ambient share one path.
 		res = append(res, ext)
 	}
 	return res
-}
-
-func (a *index) actorContextForProxy(proxy *model.Proxy) *extensions.ActorContext {
-	workloadKey, ok := agentio.BuildProxyWorkloadKey(proxy)
-	if !ok {
-		return nil
-	}
-	workload := a.workloads.GetKey(workloadKey)
-	if workload == nil {
-		return nil
-	}
-	return a.actorContextForWorkload(workload)
 }
 
 func (a *index) actorContextForWorkload(workload *model.WorkloadInfo) *extensions.ActorContext {
