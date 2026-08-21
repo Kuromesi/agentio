@@ -16,11 +16,13 @@
 验证结果表明该方案可行：
 
 - 不需要为每个 Actor 签发独立的 SPIFFE/mTLS 证书。
+- `agentiod` 可以直接从社区 Substrate `ListWorkers` 获取 Worker/Actor assignment，不需要在 Actor 更新时修改 Worker Pod labels。
+- ListWorkers 使用 `worker_pod_uid` 与 Kubernetes Pod UID 做精确匹配，同名 Pod 重建后不会继承旧 Actor 身份。
 - ActorContext 只下发给对应 Worker，不会泄漏到其他 Worker。
 - Actor UID 或 generation 变化时，ztunnel 会主动关闭旧连接，防止 Worker 复用导致身份串用。
 - Gateway/EPE 可以同时看到经过 mTLS 认证的 Worker Pod 身份和 Actor 身份元数据。
 - 现有 `SecurityProfile` 标签选择器可以直接匹配 Actor labels。
-- 没有 ActorContext 的旧 Sandbox/Worker 继续使用原有 Worker labels，保持向后兼容。
+- ListWorkers 未启用时，旧 Sandbox/Worker 仍可使用原有 Worker labels，保持向后兼容；启用后 ListWorkers 是权威来源。
 - Substrate Actor 通过 `ateom0` 发送的流量可以由原生 Ambient CNI 重定向到 Worker netns 内的 ztunnel socket，并执行 Agentio egress policy。
 
 本方案当前面向“一个 Worker Pod 同时只运行一个 Actor”的模型。一个网络命名空间内并发运行多个 Actor 不在本 PoC 范围内。
@@ -31,15 +33,15 @@
 
 ```mermaid
 flowchart LR
-    A["Actor Runtime / Worker Supervisor"]
-    K["Worker Pod labels"]
+    A["Substrate Actor lifecycle"]
+    S["ateapi ListWorkers"]
     D["agentiod"]
     Z["Worker Pod 内的 ztunnel sidecar"]
     G["Agentio egress gateway"]
     E["EPE / SecurityProfile"]
 
-    A -->|"更新 Actor UID、generation、labels"| K
-    K -->|"Kubernetes workload watch"| D
+    A -->|"更新 Worker assignment"| S
+    S -->|"mTLS 轮询 Worker/Actor 快照"| D
     D -->|"per-proxy WCDS ActorContext"| Z
     Z -->|"Worker Pod 证书建立 mTLS"| G
     Z -->|"HBONE CONNECT 携带 Actor 元数据"| G
@@ -55,71 +57,76 @@ flowchart LR
 
 Actor 元数据的信任基础是：
 
-- `agentiod` 从 Kubernetes 中当前的 Worker workload 派生 ActorContext。
+- `agentiod` 使用自身 PodIdentity 证书通过 mTLS 调用 Substrate ateapi。
+- `agentiod` 用 ListWorkers 返回的 Worker Pod UID 校验当前 Kubernetes workload，再派生 ActorContext。
 - ActorContext 通过 xDS/WCDS 只发送给目标 Worker 的 ztunnel。
 - Actor 元数据在已经通过 Worker mTLS 认证的 HBONE 连接内传输。
 
 本 PoC 没有给 Actor 分配可独立验证的 SPIFFE 身份。如果需要 Actor 自身的密码学证明，可以由 Actor runtime 提供签名 token，并在 EPE 中验证。
 
-## 3. Worker 与 Actor 的标签契约
+## 3. Actor 绑定数据源
 
-Actor controller 或 Worker supervisor 通过 Pod labels 将 Actor 绑定到 Worker：
+### 3.1 正式路径：Substrate ListWorkers
+
+推荐配置 `agentiod` 直接调用社区 Substrate 的 `ateapi.Control/ListWorkers`：
 
 ```yaml
-metadata:
-  labels:
-    networking.agents.kruise.io/proxy-type: ztunnel
-    networking.agents.kruise.io/actor-uid: actor-7b93d
-    networking.agents.kruise.io/actor-name: crawler
-    networking.agents.kruise.io/actor-atespace: tenant-a
-    networking.agents.kruise.io/actor-generation: "7"
-    actor.networking.agents.kruise.io/role: reader
-    actor.networking.agents.kruise.io/team: search
+agentiod:
+  substrateListWorkers:
+    enabled: true
+    address: dns:///api.ate-system.svc:443
+    serverName: api.ate-system.svc
+    pollInterval: 2s
+    rpcTimeout: 5s
+    pageSize: 1000
+    clientSignerName: podidentity.podcert.ate.dev/identity
+    serverTrustSignerName: servicedns.podcert.ate.dev/identity
 ```
 
-以下四个字段是完整 ActorContext 的必要字段：
+Helm 会给 agentiod 投影 PodIdentity credential bundle 和 ServiceDNS ClusterTrustBundle。数据映射如下：
 
-| Pod label | 含义 | 约束 |
-| --- | --- | --- |
-| `networking.agents.kruise.io/actor-uid` | Actor 唯一标识 | 非空 |
-| `networking.agents.kruise.io/actor-name` | Actor 名称 | 非空 |
-| `networking.agents.kruise.io/actor-atespace` | Actor 所属逻辑空间 | 非空 |
-| `networking.agents.kruise.io/actor-generation` | Worker 绑定代次 | 大于 0 的无符号整数 |
+| ListWorkers 字段 | ActorContext 用途 |
+| --- | --- |
+| `worker_namespace`、`worker_pod`、`worker_pod_uid` | 精确定位当前 Worker Pod，防止同名 Pod 重建后继承旧绑定 |
+| `assignment.actor_uid` | Actor UID |
+| `assignment.actor.atespace`、`assignment.actor.name` | Actor 逻辑空间和名称 |
+| Worker `version` / `metadata.version` | ActorContext generation；assignment 变化时递增 |
+| `assignment.actor_template` | 标准 ActorTemplate labels |
+| `worker_pool` | 标准 WorkerPool label |
 
-任何必要字段缺失或 generation 非法时，`agentiod` 都不会为该 Worker 下发 ActorContext，ztunnel 也不会发送 Actor 身份头。
-
-前缀为 `actor.networking.agents.kruise.io/` 的 Pod label 会被转换成 Actor label。例如：
-
-```text
-actor.networking.agents.kruise.io/role=reader
-```
-
-转换后发送给 EPE 的 Actor label 为：
-
-```text
-role=reader
-```
-
-`agentiod` 还会自动补充以下标准 Actor labels：
+生成的标准 labels 包括：
 
 ```text
 agentio.io/actor-uid
 agentio.io/actor-name
 agentio.io/atespace
 agentio.io/actor-generation
+agentio.io/actor-template-namespace
+agentio.io/actor-template-name
+agentio.io/worker-pool
 ```
 
-每次给 Worker 分配 Actor 时都必须递增 generation，即使重新分配的是同一个 Actor UID，也不能复用旧 generation。
+ListWorkers 启用后是权威来源：Worker 没有 assignment 时，agentiod 明确不下发 ActorContext；轮询临时失败时保留最后一次成功快照，不会回退到可能过期或可被 workload 修改的 Pod Actor labels。
+
+社区 API 没有 Worker watch RPC，因此当前使用轮询。PoC 同时兼容两种已经公开过但 wire 不兼容的 Worker schema：集群使用的 `2b3a4715` 扁平字段版本，以及当前社区 HEAD 的 `ResourceMetadata`/`WorkerStatus` 版本。
+
+### 3.2 兼容路径：Worker Pod labels
+
+只有在 ListWorkers 未启用时，agentiod 才保留原 PoC 的 Pod label 解析路径。该路径要求 Actor UID、name、atespace 和非零 generation 完整存在，`actor.networking.agents.kruise.io/` 前缀可携带自定义 Actor labels。
+
+正式 Substrate ListWorkers assignment 当前不包含 Actor 自定义 labels。若策略需要 `role=reader` 等自定义属性，应后续增加 `GetActor/ListActors` 补充查询、Actor token claims，或由社区 API 扩展；不能把 workload 自行设置的 Pod label 当作 ListWorkers 模式下的可信 Actor 属性。
 
 ## 4. agentiod 与 WCDS 行为
 
 `agentiod` 的 PoC 改造包括：
 
 - 在 Agentio `WorkloadConfig` protobuf 中增加 `ActorContext`。
-- 从当前 Worker workload labels 构建 ActorContext，而不是读取 ztunnel 启动时可能已经过期的 bootstrap labels。
+- 通过 mTLS 分页轮询 ListWorkers，并保存完整成功快照。
+- 使用 Kubernetes 原生 Pod UID 校验 assignment；轮询失败时保留最后成功快照。
+- ListWorkers 快照变化时触发强制 xDS push。
 - 只给 `networking.agents.kruise.io/proxy-type=ztunnel` 的专用 Worker proxy 附加 ActorContext。
 - 复制共享的全局 WorkloadConfig 后再附加 ActorContext，避免修改共享对象并把某个 Actor 泄漏给其他 Worker。
-- Worker workload 地址或 labels 变化时，触发该 Worker 的 WCDS 重新生成。
+- 未启用 ListWorkers 时才从当前 Worker workload labels 构建兼容 ActorContext。
 
 ActorContext 的 protobuf 结构如下：
 
@@ -259,36 +266,16 @@ spec:
 
 ## 9. Actor 切换顺序
 
-Worker 从旧 Actor 切换到新 Actor 时，推荐按照以下顺序操作：
+ListWorkers 模式下不需要、也不应该由 Agent runtime 修改 Worker Pod labels。Worker 从旧 Actor 切换到新 Actor 时，状态链路如下：
 
-1. 停止旧 Actor 产生新流量，并终止旧 Actor 进程。
-2. 原子发布新 Actor token，同时删除旧 token。
-3. 在一次 Kubernetes patch 中更新 Actor UID、name、atespace、labels 和递增后的 generation。
-4. 等待 `agentiod` 下发新的 WCDS ActorContext。
-5. ztunnel 观察到 Actor UID 或 generation 变化后，主动 drain 旧连接。
-6. 启动新 Actor 或允许新 Actor 开始发送流量。
+1. Substrate 停止旧 Actor，并清除旧 Worker assignment。
+2. `ListWorkers` 返回 Worker 未分配状态；`agentiod` 在下一次成功轮询后下发不含 ActorContext 的 WCDS。
+3. ztunnel 发现 Actor 绑定从旧值变为 `None`，立即 drain 旧连接。
+4. Substrate 把新 Actor 分配给 Worker，并递增 Worker version。
+5. `agentiod` 获取新 assignment，使用 Worker namespace、Pod name 和 Pod UID 精确匹配目标 proxy，再下发新 ActorContext。
+6. ztunnel 发现新的 Actor UID/generation，后续连接携带新 Actor 元数据。
 
-设置 Actor 绑定示例：
-
-```console
-$ kubectl label pod "$WORKER_POD" -n "$WORKER_NAMESPACE" --overwrite \
-    networking.agents.kruise.io/actor-uid=actor-7b93d \
-    networking.agents.kruise.io/actor-name=crawler \
-    networking.agents.kruise.io/actor-atespace=tenant-a \
-    networking.agents.kruise.io/actor-generation=7 \
-    actor.networking.agents.kruise.io/role=reader
-```
-
-Worker 空闲时删除 Actor 绑定：
-
-```console
-$ kubectl label pod "$WORKER_POD" -n "$WORKER_NAMESPACE" \
-    networking.agents.kruise.io/actor-uid- \
-    networking.agents.kruise.io/actor-name- \
-    networking.agents.kruise.io/actor-atespace- \
-    networking.agents.kruise.io/actor-generation- \
-    actor.networking.agents.kruise.io/role-
-```
+如果部署了可选 Actor token，应由 runtime 在新 assignment 生效前原子发布新 token，并在旧 Actor 停止后删除旧 token。Pod label 操作只属于 3.2 节的兼容模式。
 
 ## 10. 单元与回归测试
 
@@ -332,7 +319,7 @@ RTNETLINK answers: Operation not permitted
 
 ## 11. substrate-poc KinD 实测记录
 
-验证时间：2026-08-15（sidecar/WCDS）及 2026-08-17（Ambient）。
+验证时间：2026-08-15（sidecar/WCDS）、2026-08-17（Ambient）及 2026-08-21（ListWorkers）。
 
 验证集群：`my-ecs` 上的 `substrate-poc` KinD 集群。
 
@@ -558,6 +545,78 @@ test_resources=removed
 1. `atenet-router` 运行超过证书有效期后仍使用旧的 projected PodCertificate，Worker 入口 TLS 拒绝该证书。滚动重启 `atenet-router` 后获取新证书，请求恢复。这说明 router/Envoy 的证书热加载或生命周期需要单独验证。
 2. 一个已经建立过长连接的 Actor 在 checkpoint 后恢复时，`169.254.17.2:80/readyz` 没有回包并停在 `STATUS_RESUMING`。重建测试 Worker、使用全新 Actor 后恢复成功，随后 DENY 和恢复测试均通过。这更像 Substrate/gVisor checkpoint 网络状态竞态，不是新建 Actor 的 Ambient 捕获失败。
 
+### 11.5 ListWorkers 正式数据源 PoC
+
+2026-08-21 在同一集群完成了不依赖 Worker Actor labels 的端到端验证。服务端是 Substrate 提交 `2b3a4715c6b7af4debe42c32791ae7307f18ca1b`，agentiod 使用提交 `0579375c84` 构建：
+
+```text
+localhost:5000/pilot:listworkers-poc-v2
+sha256:abc166a4798c6d499e4e17ee6a9803b0dc89cb2b7c09f7ac68268b5b71b26a33
+```
+
+Helm release 开启了以下配置：
+
+```yaml
+agentiod:
+  substrateListWorkers:
+    enabled: true
+    address: dns:///api.ate-system.svc:443
+    serverName: api.ate-system.svc
+    pollInterval: 2s
+```
+
+两个 `ate-demo-egress/egress` Worker 都没有 `networking.agents.kruise.io/actor-*` labels。使用与集群服务端同版本的 `kubectl-ate` 创建并启动临时 Actor：
+
+```console
+$ kubectl-ate --kubeconfig /tmp/agentio-kubeconfig-substrate-poc \
+    --atespace agentio-poc create actor listworkers-poc-20260821 \
+    --template ate-demo-egress/egress
+$ kubectl-ate --kubeconfig /tmp/agentio-kubeconfig-substrate-poc \
+    --atespace agentio-poc resume actor listworkers-poc-20260821 --boot
+```
+
+Substrate 将它分配给 Worker `egress-65d5c9bc57-rtz8l`，Actor UID 为 `139bfe52-b74d-46be-8edb-0e4eafdc8c8c`，Worker version 为 `2`。约一个轮询周期后，该 Worker sidecar 的 WCDS 出现：
+
+```json
+{
+  "actor_context": {
+    "actorName": "listworkers-poc-20260821",
+    "actorUid": "139bfe52-b74d-46be-8edb-0e4eafdc8c8c",
+    "atespace": "agentio-poc",
+    "generation": 2,
+    "labels": {
+      "agentio.io/actor-generation": "2",
+      "agentio.io/actor-name": "listworkers-poc-20260821",
+      "agentio.io/actor-uid": "139bfe52-b74d-46be-8edb-0e4eafdc8c8c",
+      "agentio.io/atespace": "agentio-poc",
+      "agentio.io/actor-template-namespace": "ate-demo-egress",
+      "agentio.io/actor-template-name": "egress",
+      "agentio.io/worker-pool": "egress"
+    }
+  }
+}
+```
+
+另一个 Worker `egress-65d5c9bc57-76q8k` 的 WCDS 始终没有 ActorContext，证明 ListWorkers 快照仍然按 Worker 精确隔离。
+
+暂停 Actor 后，ListWorkers assignment 被清除，约一个轮询周期后两个 Worker 的 WCDS 都不含 ActorContext。对应 ztunnel 日志记录了两次预期 drain：
+
+```text
+None -> Some(("139bfe52-b74d-46be-8edb-0e4eafdc8c8c", 2))
+Some(("139bfe52-b74d-46be-8edb-0e4eafdc8c8c", 2)) -> None
+all connections closed because the actor binding changed
+```
+
+ateapi 审计日志确认调用方 mTLS principal 是：
+
+```text
+spiffe://cluster.local/ns/agentio-system/sa/agentiod
+```
+
+验证还暴露了一个真实兼容性问题：该集群的旧 Worker protobuf 与社区 HEAD 复用了字段号但类型不同，直接按新 schema 解码会失败。PoC 因此让 `ListWorkersResponse.workers` 保持原始 protobuf bytes，再显式识别旧扁平 schema 和当前 `ResourceMetadata`/`WorkerStatus` schema；回归测试包含旧版本的精确 wire 编码。
+
+测试结束后已暂停并删除临时 Actor，Worker assignment 均为空。集群保留 ListWorkers 集成和 `listworkers-poc-v2` agentiod 镜像，便于后续复测。
+
 本轮没有验证以下内容：
 
 - node-level ztunnel 上的 ActorContext 定向下发；
@@ -587,6 +646,10 @@ Agentio 分支及提交：
 codex/actor-context-poc
 6538e7270e agentio: carry actor context over worker mtls
 b81d7935be docs: record actor context kind validation
+7658d63986 docs: add Chinese actor context PoC guide
+20a5dae7ee docs: record substrate ambient validation
+2304c7a9e4 agentio: source actor bindings from substrate
+0579375c84 agentio: support legacy substrate worker schema
 ```
 
 ztunnel 工作树：
@@ -595,13 +658,14 @@ ztunnel 工作树：
 /Users/kuromesi/MyCOde/kuromesi.com/ztunnel/.worktrees/actor-context-poc
 ```
 
-ztunnel 分支：
+ztunnel 分支及提交：
 
 ```text
 codex/actor-context-poc
+b6acf65 agentio: propagate actor identity over worker mtls
 ```
 
-ztunnel 变更已经通过测试并用于构建集群 PoC 镜像，目前保留为该分支上的未提交 diff。
+两个分支均已推送到各自远端，工作树没有未提交的代码变更。
 
 ## 13. PoC 限制与后续演进
 
@@ -611,5 +675,9 @@ ztunnel 变更已经通过测试并用于构建集群 PoC 镜像，目前保留�
 - 多 Actor 并发需要额外的 per-flow Actor 判定机制，例如独立网络命名空间、cgroup/socket cookie、显式本地代理协议或 Actor 专属 listener。
 - `actor-atespace` 不会改变 Worker 的 Kubernetes namespace 或 mTLS principal。
 - Actor labels 是由可信 Worker ztunnel 携带的 ActorContext 元数据；除非验证签名 token，否则它们不是独立的密码学身份证明。
-- Actor runtime 仍需实现 Worker labels、generation 和 token 的完整生命周期管理。
+- ListWorkers 已经消除了 Actor runtime 对 Worker Pod labels 和 generation 的管理要求；runtime 只需在需要独立密码学证明时管理可选 token。
+- ListWorkers assignment 当前不包含 Actor 自定义 labels 和完整运行状态；需要按这些属性执行策略时，还要接入 Actor 查询/token claims 或扩展社区 API。
+- 当前 API 没有 watch RPC，默认 2 秒轮询意味着 Actor 绑定变更存在一个轮询周期左右的收敛延迟。
+- Worker version 可能因非 assignment 更新递增，安全上不会串用旧身份，但会造成一次保守的连接 drain。
+- 社区曾发布两种 wire 不兼容的 Worker schema；PoC 已兼容实测旧版本和当前版本，正式维护时仍应推动 API 稳定化并增加版本协商。
 - 如果未来需要零信任级别的 Actor 独立身份，可以在保留 Worker mTLS 的基础上，为 Actor token 增加签名、受众、有效期、Worker UID 和 generation 绑定校验，或者进一步演进到 Actor 独立证书。
