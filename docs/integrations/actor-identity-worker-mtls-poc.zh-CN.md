@@ -11,7 +11,7 @@
 最终方案采用两层身份：
 
 1. ztunnel 到 egress gateway 的 HBONE 连接继续使用 Worker Pod 证书建立 mTLS，Worker Pod 身份是传输层身份。
-2. `agentiod` 将当前 Worker 绑定的 Actor 身份通过 WCDS 定向下发给该 Worker 的 ztunnel；ztunnel 再把 Actor UID、generation、labels 和可选 token 放入 HBONE CONNECT 请求。
+2. `agentiod` 将当前 Worker 绑定的 Actor 身份附加到该 Worker 的 xDS 数据：Ambient 使用 WDS `Workload.extensions`，原 sidecar 模式继续兼容 WCDS `WorkloadConfig.actor_context`。ztunnel 再把 Actor UID、generation、labels 和可选 token 放入 HBONE CONNECT 请求。
 
 验证结果表明该方案可行：
 
@@ -19,15 +19,16 @@
 - `agentiod` 可以直接从社区 Substrate `ListWorkers` 获取 Worker/Actor assignment，不需要在 Actor 更新时修改 Worker Pod labels。
 - ListWorkers 使用 `worker_pod_uid` 与 Kubernetes Pod UID 做精确匹配，同名 Pod 重建后不会继承旧 Actor 身份。
 - ActorContext 只下发给对应 Worker，不会泄漏到其他 Worker。
-- Actor UID 或 generation 变化时，ztunnel 会主动关闭旧连接，防止 Worker 复用导致身份串用。
+- Ambient node ztunnel 可以从源 Worker 的 `Workload` 取得 ActorContext；Actor UID 或 generation 变化时，只关闭属于该 Worker 的旧连接，不影响同节点其他 Worker。
 - Gateway/EPE 可以同时看到经过 mTLS 认证的 Worker Pod 身份和 Actor 身份元数据。
 - 现有 `SecurityProfile` 标签选择器可以直接匹配 Actor labels。
 - ListWorkers 未启用时，旧 Sandbox/Worker 仍可使用原有 Worker labels，保持向后兼容；启用后 ListWorkers 是权威来源。
 - Substrate Actor 通过 `ateom0` 发送的流量可以由原生 Ambient CNI 重定向到 Worker netns 内的 ztunnel socket，并执行 Agentio egress policy。
+- 在真实 Ambient Actor 请求中，egress gateway 已收到正确的 Actor UID；Actor suspend/resume 后 generation 从 `2` 更新为 `4`，后续请求携带新 generation。
 
 本方案当前面向“一个 Worker Pod 同时只运行一个 Actor”的模型。一个网络命名空间内并发运行多个 Actor 不在本 PoC 范围内。
 
-需要区分两个已经验证的边界：sidecar 测试验证了 WCDS ActorContext 和 HBONE Actor 元数据；Ambient 测试验证了 Actor 流量捕获、原始目标恢复和 egress policy。当前 node-level ztunnel 仍把源 workload 识别为 Worker Pod，本次 Ambient 测试没有证明共享 node ztunnel 已经能够按 Actor 下发或携带 ActorContext。
+需要注意身份粒度：Ambient node ztunnel 仍把源 workload 识别为 Kubernetes Worker Pod，ActorContext 是这个 Worker workload 的扩展属性。因此它适用于社区当前“一个 Worker 同时绑定一个 Actor”的模型；如果未来一个 Worker 网络命名空间内并发多个 Actor，仅靠 `Workload.extensions` 无法区分同一 Worker 中的不同 flow。
 
 ## 2. 架构与数据流
 
@@ -36,13 +37,18 @@ flowchart LR
     A["Substrate Actor lifecycle"]
     S["ateapi ListWorkers"]
     D["agentiod"]
-    Z["Worker Pod 内的 ztunnel sidecar"]
+    W["WDS Workload.extensions\nAmbient 主路径"]
+    C["WCDS WorkloadConfig\nsidecar 兼容路径"]
+    Z["node ztunnel / Worker sidecar ztunnel"]
     G["Agentio egress gateway"]
     E["EPE / SecurityProfile"]
 
     A -->|"更新 Worker assignment"| S
     S -->|"mTLS 轮询 Worker/Actor 快照"| D
-    D -->|"per-proxy WCDS ActorContext"| Z
+    D -->|"按节点、按 Worker 附加 ActorContext"| W
+    D -->|"按专用 proxy 附加 ActorContext"| C
+    W --> Z
+    C --> Z
     Z -->|"Worker Pod 证书建立 mTLS"| G
     Z -->|"HBONE CONNECT 携带 Actor 元数据"| G
     G -->|"写入 Envoy filter state"| E
@@ -59,7 +65,7 @@ Actor 元数据的信任基础是：
 
 - `agentiod` 使用自身 PodIdentity 证书通过 mTLS 调用 Substrate ateapi。
 - `agentiod` 用 ListWorkers 返回的 Worker Pod UID 校验当前 Kubernetes workload，再派生 ActorContext。
-- ActorContext 通过 xDS/WCDS 只发送给目标 Worker 的 ztunnel。
+- Ambient 下，ActorContext 作为 typed extension 附加到目标 Worker 的 `istio.workload.Workload.extensions`，只发送给该 Worker 所在节点的 ztunnel；sidecar 下继续通过 per-proxy WCDS 下发。
 - Actor 元数据在已经通过 Worker mTLS 认证的 HBONE 连接内传输。
 
 本 PoC 没有给 Actor 分配可独立验证的 SPIFFE 身份。如果需要 Actor 自身的密码学证明，可以由 Actor runtime 提供签名 token，并在 EPE 中验证。
@@ -116,16 +122,16 @@ ListWorkers 启用后是权威来源：Worker 没有 assignment 时，agentiod �
 
 正式 Substrate ListWorkers assignment 当前不包含 Actor 自定义 labels。若策略需要 `role=reader` 等自定义属性，应后续增加 `GetActor/ListActors` 补充查询、Actor token claims，或由社区 API 扩展；不能把 workload 自行设置的 Pod label 当作 ListWorkers 模式下的可信 Actor 属性。
 
-## 4. agentiod 与 WCDS 行为
+## 4. agentiod 与 xDS 行为
 
 `agentiod` 的 PoC 改造包括：
 
 - 在 Agentio `WorkloadConfig` protobuf 中增加 `ActorContext`。
 - 通过 mTLS 分页轮询 ListWorkers，并保存完整成功快照。
 - 使用 Kubernetes 原生 Pod UID 校验 assignment；轮询失败时保留最后成功快照。
-- ListWorkers 快照变化时触发强制 xDS push。
-- 只给 `networking.agents.kruise.io/proxy-type=ztunnel` 的专用 Worker proxy 附加 ActorContext。
-- 复制共享的全局 WorkloadConfig 后再附加 ActorContext，避免修改共享对象并把某个 Actor 泄漏给其他 Worker。
+- ListWorkers 快照变化时计算精确的 Worker key；新增、更新和删除都会把对应 workload resource name 放入 `PushRequest.AddressesUpdated`，触发 WDS 增量更新。
+- Ambient node ztunnel 只收到本节点 Worker 的 ActorContext；专用 sidecar ztunnel 只收到自己的 ActorContext。
+- 在每个 proxy 的发送路径中 clone `Workload` 或全局 `WorkloadConfig` 后再附加 ActorContext，绝不修改共享缓存对象，避免 Actor 身份泄漏到其他节点或 Worker。
 - 未启用 ListWorkers 时才从当前 Worker workload labels 构建兼容 ActorContext。
 
 ActorContext 的 protobuf 结构如下：
@@ -140,7 +146,16 @@ message ActorContext {
 }
 ```
 
-它作为兼容性新增字段加入 `WorkloadConfig`：
+Ambient 主路径把相同的 protobuf 包装为 typed extension：
+
+```text
+Workload.extensions["actor-context"]
+type_url = type.googleapis.com/kruise.networking.extensions.v1.ActorContext
+```
+
+extension 中不包含 token。token 始终由 Worker runtime 放到 ztunnel 本地只读目录，避免把凭证写入 xDS 和 admin dump。
+
+sidecar 兼容路径则把它作为新增字段加入 `WorkloadConfig`：
 
 ```proto
 message WorkloadConfig {
@@ -152,18 +167,18 @@ message WorkloadConfig {
 
 ## 5. ztunnel 行为
 
-ztunnel 收到 WCDS 后会：
+ztunnel 收到 WDS/WCDS 后会：
 
-1. 校验 Actor UID、name、atespace 和非零 generation。
-2. 保存当前 ActorContext。
+1. 解码 `Workload.extensions["actor-context"]`，并校验 Actor UID、name、atespace 和非零 generation。
+2. 把 ActorContext 保存到对应的源 `Workload`；WCDS 中的全局 ActorContext 仅作为旧 sidecar 的兼容值。
 3. 对 Actor labels 按 key 排序，以 `key=value`、逗号分隔的格式编码，再进行 Base64 编码。
-4. 创建出向 HBONE CONNECT 请求时携带 Actor 身份头。
+4. 创建出向 HBONE CONNECT 请求时优先使用源 `Workload.actor_context`，没有时才回退到 WCDS ActorContext。
 5. 根据 Actor UID 精确读取 `<actor-uid>.token`，不再从目录中任取第一个 token。
-6. Actor UID、generation 增加、ActorContext 创建或删除时，关闭当前已跟踪连接。
+6. Ambient Workload 的 Actor UID、generation 变化或 ActorContext 删除时，仅关闭源 Workload UID 匹配的旧连接；WCDS 全局 ActorContext 变化时保留旧 sidecar 的全量 drain 行为。
 
 只更新 egress policy、但 Actor UID 和 generation 没有变化时，不会误关闭连接。
 
-没有 ActorContext 的 Worker 继续走旧兼容路径：发送原有 workload labels，Actor UID 和 generation 保持为空。
+没有 ActorContext 的 Worker 继续走旧兼容路径：发送原有 workload labels，Actor UID 和 generation 保持为空。ztunnel admin `config_dump` 可以看到每个 Workload 的 ActorContext，但不会暴露 token。
 
 ## 6. Actor token 挂载
 
@@ -269,10 +284,10 @@ spec:
 ListWorkers 模式下不需要、也不应该由 Agent runtime 修改 Worker Pod labels。Worker 从旧 Actor 切换到新 Actor 时，状态链路如下：
 
 1. Substrate 停止旧 Actor，并清除旧 Worker assignment。
-2. `ListWorkers` 返回 Worker 未分配状态；`agentiod` 在下一次成功轮询后下发不含 ActorContext 的 WCDS。
-3. ztunnel 发现 Actor 绑定从旧值变为 `None`，立即 drain 旧连接。
+2. `ListWorkers` 返回 Worker 未分配状态；`agentiod` 在下一次成功轮询后更新对应 Worker 的 xDS 资源。Ambient WDS Workload 不再带 ActorContext，sidecar WCDS 则回到空 ActorContext。
+3. ztunnel 发现 Actor 绑定从旧值变为 `None`，立即 drain 该 Worker 的旧连接。
 4. Substrate 把新 Actor 分配给 Worker，并递增 Worker version。
-5. `agentiod` 获取新 assignment，使用 Worker namespace、Pod name 和 Pod UID 精确匹配目标 proxy，再下发新 ActorContext。
+5. `agentiod` 获取新 assignment，使用 Worker namespace、Pod name 和 Pod UID 精确匹配 Worker，再通过 WDS 或 WCDS 下发新 ActorContext。
 6. ztunnel 发现新的 Actor UID/generation，后续连接携带新 Actor 元数据。
 
 如果部署了可选 Actor token，应由 runtime 在新 assignment 生效前原子发布新 token，并在旧 Actor 停止后删除旧 token。Pod label 操作只属于 3.2 节的兼容模式。
@@ -284,8 +299,9 @@ Agentio 聚焦测试：
 ```console
 $ go test ./pilot/pkg/serviceregistry/kube/controller/agentio/... \
     ./pilot/pkg/serviceregistry/kube/controller/ambient \
-    ./pilot/pkg/xds ./pilot/pkg/xds/filters \
-    ./extensions/epe/pkg/extproc/attributes -count=1
+    ./pilot/pkg/bootstrap -count=1
+$ go test ./pilot/pkg/xds \
+    -run 'TestWorkloadConfigNeedsPush|TestXdsCache' -count=1
 ```
 
 EPE 全包测试：
@@ -297,25 +313,22 @@ $ go test ./extensions/epe/pkg/... -count=1
 ztunnel Actor 聚焦测试：
 
 ```console
-$ cargo test --lib actor_context_is_stored_and_replaced_with_workload_config \
-    --no-default-features -F tls-boring
-$ cargo test --lib actor_context_headers_select_matching_token \
-    --no-default-features -F tls-boring
-$ cargo test --lib test_policy_watcher_closes_connections_on_actor_generation_change \
-    --no-default-features -F tls-boring
+$ cargo test --lib workload_decodes_embedded_actor_context
+$ cargo test --lib workload_actor_context_is_visible_in_admin_dump
+$ cargo test --lib actor_context_headers_select_matching_token
+$ cargo test --lib test_policy_watcher_closes_connections_on_actor_generation_change
+$ cargo test --lib test_policy_watcher_closes_only_connections_for_updated_workload_actor
 ```
 
-ztunnel 在 `my-ecs` 上排除需要额外 netns 权限的 `inpod::*` 后，共有 343 个 lib 测试通过：
+为避免并行测试耗尽本机文件描述符，ztunnel lib 回归使用单线程执行；ActorContext 聚焦测试全部通过，排除一个与本改动无关的 Darwin TLS socket 用例后，344 个测试通过：
 
 ```console
-$ cargo test --lib --no-default-features -F tls-boring -- --skip inpod::
+$ PROTOC=/tmp/agentio-protoc-29.3/bin/protoc \
+    cargo test --lib -- --test-threads=1 \
+    --skip tls::certificate::test::multi_root
 ```
 
-完整 `--lib` 测试中与本改动无关的 `inpod` 用例会因为构建容器无权创建 network namespace/link 而报错：
-
-```text
-RTNETLINK answers: Operation not permitted
-```
+被排除的 `tls::certificate::test::multi_root` 在 macOS 25.6 上稳定报 `Connection reset by peer`：测试服务端写入 4 字节后没有发送 TLS `close_notify` 就结束，同时客户端还有未读数据；这是平台相关的既有测试行为，不经过本次修改的 ActorContext、WDS 或连接 drain 路径。
 
 ## 11. substrate-poc KinD 实测记录
 
@@ -617,12 +630,7 @@ spiffe://cluster.local/ns/agentio-system/sa/agentiod
 
 测试结束后已暂停并删除临时 Actor，Worker assignment 均为空。集群保留 ListWorkers 集成和 `listworkers-poc-v2` agentiod 镜像，便于后续复测。
 
-本轮没有验证以下内容：
-
-- node-level ztunnel 上的 ActorContext 定向下发；
-- Ambient HBONE 请求携带 Actor UID、generation、labels 或 token；
-- Actor selector 驱动的 `SecurityProfile`；
-- 同一个 Worker Pod netns 内多个 Actor 的 per-flow 身份区分。
+11.5 完成时尚未验证 node-level ztunnel 的 ActorContext 和 Ambient HBONE Actor headers；这些项目已由 11.6 的后续实现与实测补齐。Actor selector 驱动的 `SecurityProfile` 和同一个 Worker Pod netns 内多个 Actor 的 per-flow 身份区分仍不在本轮集群验证范围内。
 
 本轮远端证据保存在：
 
@@ -632,6 +640,117 @@ my-ecs:/opt/substrate-poc/agentio-ambient-reroute-poc/evidence/
 
 测试结束后已经删除临时 Actor 和独立 Ambient Worker，原 `ate-demo-egress/egress` Deployment 恢复为 2/2，Agentio 配置恢复 PASSTHROUGH；Ambient CNI 和 ztunnel DaemonSet 保持启用，便于后续复测。
 
+### 11.6 Ambient Workload extension 与网关 Actor 身份验证
+
+2026-08-21 在同一集群继续完成 WDS `Workload.extensions` 方案的端到端验证。使用的镜像为：
+
+```text
+localhost:5000/pilot:actor-workload-poc-v1
+sha256:8e955ce8865bb80fe07ae0c0417ea4abaef69200005b580d21cfb9810dc81624
+
+localhost:5000/ztunnel:actor-workload-poc-v1
+sha256:27d7e6dd875fddea2eb17fb84042b1a0705b10ddb1acc3562ed17fac5a828dc3
+```
+
+验证 Worker 没有注入 sidecar，也没有写入任何 Actor Pod label：
+
+```yaml
+metadata:
+  name: egress-ambient-actorctx
+  namespace: ate-demo-egress
+  annotations:
+    istio.io/dataplane-mode: ambient
+    sidecar.istio.io/inject: "false"
+    istio.io/reroute-virtual-interfaces: ateom0
+    ambient.istio.io/dns-capture: "false"
+```
+
+Substrate assignment 为：
+
+```text
+Worker Pod UID: a7478af9-bd5b-4b83-bfa4-7b9e07ce262d
+Worker Pod IP:  10.244.1.204
+Actor UID:      88fe47fd-a3a2-4612-8b4e-e70d3201f16d
+Actor name:     ambient-actorctx-20260821
+Atespace:       agentio-poc
+```
+
+Worker 所在节点的 ztunnel admin `config_dump` 中只有该 Worker 出现 ActorContext：
+
+```json
+{
+  "actorContext": {
+    "actorName": "ambient-actorctx-20260821",
+    "actorUid": "88fe47fd-a3a2-4612-8b4e-e70d3201f16d",
+    "atespace": "agentio-poc",
+    "generation": 2,
+    "labels": {
+      "agentio.io/actor-generation": "2",
+      "agentio.io/actor-template-name": "egress-ambient-actorctx",
+      "agentio.io/actor-template-namespace": "ate-demo-egress",
+      "agentio.io/worker-pool": "ambient-actorctx-poc"
+    }
+  },
+  "name": "egress-ambient-actorctx",
+  "namespace": "ate-demo-egress",
+  "node": "substrate-poc-worker",
+  "uid": "substrate-poc//Pod/ate-demo-egress/egress-ambient-actorctx"
+}
+```
+
+控制平面节点的 ztunnel 中匹配该 Actor UID 的 Workload 数量为 `0`；Worker 节点上其他 Workload 也没有该 ActorContext。这证明 ActorContext 是按 node、按 Worker 装饰 WDS 响应，没有修改共享的基础 Workload 对象。
+
+为验证真实数据路径，把测试目标 `10.96.35.182:80` 临时配置为 `GATEWAY`，其他目标保持 `PASSTHROUGH`：
+
+```yaml
+egressPolicies:
+- namespaces: [ate-demo-egress]
+  matchCidrs: [10.96.35.182/32]
+  matchPorts: ["80"]
+  policy: GATEWAY
+  gateway:
+    service: agentio-egress.agentio-system.svc.cluster.local
+- policy: PASSTHROUGH
+```
+
+Actor 内访问 `/ambient-actorctx-gateway` 返回 `200`，目标服务看到的源 IP 是当时的 Agentio egress gateway Pod `10.244.1.206`，证明连接确实经过网关。网关 access log 同时记录了 Worker 和 Actor 身份：
+
+```json
+{
+  "actor_generation": "2",
+  "actor_uid": "88fe47fd-a3a2-4612-8b4e-e70d3201f16d",
+  "path": "/ambient-actorctx-gateway",
+  "response_code": 200,
+  "sandbox_name": "egress-ambient-actorctx",
+  "sandbox_namespace": "ate-demo-egress",
+  "upstream_address": "10.96.35.182:80"
+}
+```
+
+随后暂停 Actor，Worker 的 assignment 被清除，节点 ztunnel 中该 ActorContext 数量收敛为 `0`。再次 boot 后 Actor 回到同一个 Worker，WDS Workload 中的 generation 变为 `4`；真实请求 `/ambient-actorctx-generation-4` 仍返回 `200`，网关日志为：
+
+```json
+{
+  "actor_generation": "4",
+  "actor_uid": "88fe47fd-a3a2-4612-8b4e-e70d3201f16d",
+  "path": "/ambient-actorctx-generation-4",
+  "response_code": 200,
+  "sandbox_name": "egress-ambient-actorctx",
+  "sandbox_namespace": "ate-demo-egress"
+}
+```
+
+这条证据链证明了四件事：
+
+1. `ListWorkers` assignment 变化能触发指定 Worker 的 WDS delta，而不需要更新 Worker Pod label。
+2. node ztunnel 根据源 Worker Workload 选择 ActorContext，并通过 Worker mTLS 内的 HBONE headers 传给 gateway。
+3. suspend 清除身份、resume 更新 generation，旧代次不会继续用于新连接。
+4. 同节点其他 Worker 不会收到或使用该 ActorContext。
+
+验证中另发现一个独立问题：修改 `agentio-config` 的 Ambient egress policy 后，现有 node ztunnel 不会立即刷新已经缓存的 Workload 内嵌策略，因为该全量 push 没有携带 `AddressesUpdated`，WDS generator 会跳过地址增量。重启 ztunnel 后新策略生效。Actor assignment 回调已经显式填充 `AddressesUpdated`，不受这个问题影响；通用的 Ambient egress policy 热更新仍需要单独修复。
+
+测试结束后已暂停并删除临时 Actor、ActorTemplate、Worker Pod 和 WorkerPool；`agentio-config` 已恢复为 `PASSTHROUGH`，临时网关 Actor 日志字段已移除，agentio-egress、agentiod 和两个 ztunnel Pod 均恢复 Ready。
+
 ## 12. 代码与分支
 
 Agentio 工作树：
@@ -640,16 +759,14 @@ Agentio 工作树：
 /Users/kuromesi/MyCOde/kuromesi.com/agentio/.worktrees/actor-context-poc
 ```
 
-Agentio 分支及提交：
+Agentio 分支及主要实现提交：
 
 ```text
 codex/actor-context-poc
 6538e7270e agentio: carry actor context over worker mtls
-b81d7935be docs: record actor context kind validation
-7658d63986 docs: add Chinese actor context PoC guide
-20a5dae7ee docs: record substrate ambient validation
 2304c7a9e4 agentio: source actor bindings from substrate
 0579375c84 agentio: support legacy substrate worker schema
+59806d2da3 agentio: attach actor context to ambient workloads
 ```
 
 ztunnel 工作树：
@@ -663,6 +780,7 @@ ztunnel 分支及提交：
 ```text
 codex/actor-context-poc
 b6acf65 agentio: propagate actor identity over worker mtls
+64c1e18 agentio: consume per-workload actor context
 ```
 
 两个分支均已推送到各自远端，工作树没有未提交的代码变更。
@@ -670,8 +788,7 @@ b6acf65 agentio: propagate actor identity over worker mtls
 ## 13. PoC 限制与后续演进
 
 - 当前只支持一个 Worker 网络命名空间内同时运行一个 Actor。
-- Ambient 已经能够通过 `ateom0` 捕获 Actor egress，但 node-level ztunnel 是节点共享 proxy，不能直接复用“每个 sidecar proxy 只有一个 ActorContext”的假设。
-- 要在 Ambient 中实现 Actor 级身份，需要把 Actor 绑定建模为按 Worker UID/IP 或虚拟接口定位的 workload 数据，并在接受 `ateom0` 连接时把该映射附加到 flow；不能把一个 ActorContext 直接绑定到整个 node ztunnel。
+- Ambient 已经能够通过 `ateom0` 捕获 Actor egress，并把 Actor 绑定建模为源 Worker 的 Workload extension。node ztunnel 是节点共享 proxy，但每条 flow 都会先解析其源 Workload，因此不会把一个 ActorContext 绑定到整个 node ztunnel。
 - 多 Actor 并发需要额外的 per-flow Actor 判定机制，例如独立网络命名空间、cgroup/socket cookie、显式本地代理协议或 Actor 专属 listener。
 - `actor-atespace` 不会改变 Worker 的 Kubernetes namespace 或 mTLS principal。
 - Actor labels 是由可信 Worker ztunnel 携带的 ActorContext 元数据；除非验证签名 token，否则它们不是独立的密码学身份证明。
@@ -680,4 +797,5 @@ b6acf65 agentio: propagate actor identity over worker mtls
 - 当前 API 没有 watch RPC，默认 2 秒轮询意味着 Actor 绑定变更存在一个轮询周期左右的收敛延迟。
 - Worker version 可能因非 assignment 更新递增，安全上不会串用旧身份，但会造成一次保守的连接 drain。
 - 社区曾发布两种 wire 不兼容的 Worker schema；PoC 已兼容实测旧版本和当前版本，正式维护时仍应推动 API 稳定化并增加版本协商。
+- 当前通用 AgentioConfig 变更触发的 Ambient egress policy 全量 push 缺少 address delta；已有 node ztunnel 需要重启才能立即取得新的 Workload 内嵌策略。Actor binding 的增量更新不受影响。
 - 如果未来需要零信任级别的 Actor 独立身份，可以在保留 Worker mTLS 的基础上，为 Actor token 增加签名、受众、有效期、Worker UID 和 generation 绑定校验，或者进一步演进到 Actor 独立证书。
