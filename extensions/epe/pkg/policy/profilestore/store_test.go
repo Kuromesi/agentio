@@ -15,6 +15,7 @@ package profilestore
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,6 +144,27 @@ func TestMatches(t *testing.T) {
 				t.Fatalf("expected %d profiles, got %d", tt.want, len(matched))
 			}
 		})
+	}
+}
+
+func TestMatches_IndexedAndFallbackSelectors(t *testing.T) {
+	store := MakeFakeStore()
+	indexed := newTestProfile("indexed", "default", map[string]string{
+		"app": "agent", "sandbox-id": "pod-1",
+	})
+	fallback := newTestProfile("fallback", "default", nil)
+	fallback.Spec.Selector.MatchExpressions = []metav1.LabelSelectorRequirement{{
+		Key: "team", Operator: metav1.LabelSelectorOpExists,
+	}}
+	store.ProfileSet(indexed)
+	store.ProfileSet(fallback)
+
+	got := profileNames(store.Matches("", "default", map[string]string{
+		"app": "agent", "sandbox-id": "pod-1", "team": "core",
+	}))
+	want := []string{"fallback", "indexed"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Matches() = %v, want %v", got, want)
 	}
 }
 

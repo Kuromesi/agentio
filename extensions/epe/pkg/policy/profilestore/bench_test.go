@@ -16,6 +16,11 @@ package profilestore
 import (
 	"strconv"
 	"testing"
+
+	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // benchSink defeats dead-code elimination.
@@ -29,9 +34,7 @@ var benchPodLabels = map[string]string{
 	"app.kubernetes.io/managed-by": "kruise",
 }
 
-// BenchmarkMatches measures the per-request profile lookup: every profile in
-// the pod's namespace, plus every cluster-scoped one, has its selector
-// evaluated on every request.
+// BenchmarkMatches measures the per-request indexed profile lookup.
 //
 // The arms vary what the selectors do rather than only how many there are:
 //   - select=hit: every profile matches, so the result slice grows to full
@@ -39,23 +42,28 @@ var benchPodLabels = map[string]string{
 //   - select=miss: no profile matches, which is the common case for a pod
 //     governed by one profile out of many in a busy namespace.
 func BenchmarkMatches(b *testing.B) {
-	for _, n := range []int{1, 10, 50} {
+	for _, n := range []int{1, 10, 50, 100, 1_000, 10_000} {
 		for _, hit := range []bool{true, false} {
 			outcome := "hit"
 			if !hit {
 				outcome = "miss"
 			}
 			b.Run("profiles="+strconv.Itoa(n)+"/select="+outcome, func(b *testing.B) {
-				store := MakeFakeStore()
+				profiles := make([]*securityprofile.Profile, 0, n)
 				for i := 0; i < n; i++ {
 					sel := map[string]string{"app": "agent"}
 					if !hit {
-						// A key the pod does not carry, so Matches walks the
-						// whole selector before rejecting.
-						sel = map[string]string{"app": "other-" + strconv.Itoa(i)}
+						// The shared app label would create a dense bucket, so
+						// the index should choose the unique identity label. The
+						// benchmark Pod has no sandbox-id and selects no bucket.
+						sel = map[string]string{
+							"app": "agent", "sandbox-id": "other-" + strconv.Itoa(i),
+						}
 					}
-					store.ProfileSet(newTestProfile("p"+strconv.Itoa(i), "default", sel))
+					profiles = append(profiles, mustCompileIndexedProfile(b,
+						"p"+strconv.Itoa(i), "default", metav1.LabelSelector{MatchLabels: sel}))
 				}
+				store := newBenchmarkStore(profiles)
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
@@ -64,6 +72,45 @@ func BenchmarkMatches(b *testing.B) {
 			})
 		}
 	}
+}
+
+// BenchmarkMatches_Fallback records the intentionally linear worst case for
+// selectors that cannot be anchored without risking false negatives.
+func BenchmarkMatches_Fallback(b *testing.B) {
+	for _, n := range []int{100, 1_000, 10_000} {
+		b.Run("profiles="+strconv.Itoa(n)+"/select=miss", func(b *testing.B) {
+			profiles := make([]*securityprofile.Profile, 0, n)
+			for i := 0; i < n; i++ {
+				profiles = append(profiles, mustCompileIndexedProfile(b,
+					"p"+strconv.Itoa(i), "default", metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{{
+							Key: "missing-team", Operator: metav1.LabelSelectorOpExists,
+						}},
+					}))
+			}
+			store := newBenchmarkStore(profiles)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				benchSink = store.Matches("", "default", benchPodLabels)
+			}
+		})
+	}
+}
+
+// newBenchmarkStore installs one immutable snapshot so large read-path
+// benchmarks do not spend O(n²) setup time rebuilding it after every seed.
+func newBenchmarkStore(profiles []*securityprofile.Profile) *store {
+	byKey := make(map[types.NamespacedName]*securityprofile.Profile, len(profiles))
+	for _, profile := range profiles {
+		byKey[types.NamespacedName{
+			Namespace: profile.Meta.Namespace,
+			Name:      profile.Meta.Name,
+		}] = profile
+	}
+	store := NewStore()
+	store.snapshot.Store(buildSnapshot(byKey, nil))
+	return store
 }
 
 // BenchmarkMatches_GlobalAndNamespaced covers the path where both the

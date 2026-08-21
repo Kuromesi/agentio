@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 	"text/template"
+
+	sprig "github.com/Masterminds/sprig/v3"
 )
 
 // bufPool reuses render buffers to reduce GC pressure on the hot path.
@@ -27,6 +29,7 @@ var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 // HelperFuncs returns the standard template helper function map, shared by
 // every template site (audit webhook payloads and token-injection values).
 func HelperFuncs() template.FuncMap {
+	sprigFuncs := sprig.TxtFuncMap()
 	return template.FuncMap{
 		"default": func(fallback, v string) string {
 			if v == "" {
@@ -41,6 +44,13 @@ func HelperFuncs() template.FuncMap {
 			}
 			return string(b), nil
 		},
+		"fromJson":  sprigFuncs["fromJson"],
+		"kindIs":    sprigFuncs["kindIs"],
+		"trim":      sprigFuncs["trim"],
+		"hasPrefix": sprigFuncs["hasPrefix"],
+		"fail":      sprigFuncs["fail"],
+		"values":    sprigFuncs["values"],
+		"first":     sprigFuncs["first"],
 	}
 }
 

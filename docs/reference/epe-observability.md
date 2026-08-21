@@ -50,6 +50,7 @@ $ curl --fail --silent http://127.0.0.1:9090/metrics | grep '^epe_'
 | `epe_profile_compile_failures_total` | Counter; `scope` (`namespaced` or `global`) | Published profile versions that EPE rejected during compilation. |
 | `epe_profile_stale` | Gauge; `namespace`, `name` | A newest profile version was rejected while an earlier version remains active. The series disappears when healthy or deleted. |
 | `epe_profile_unenforced` | Gauge; `namespace`, `name` | A profile exists but no version could be installed, so none of its rules are enforced. The series disappears when healthy or deleted. |
+| `epe_profile_inputs_unavailable` | Gauge; `namespace`, `name` | An installed profile's declared inputs are unresolved (for example a missing ConfigMap). Its rules stay enforced; inputs-dependent evaluations fail per the consuming action's failure policy. The series disappears when healthy or deleted. |
 | `epe_audit_eval_dropped_total` | Counter; `reason` (`when_eval`, `no_sink`) | Audit events dropped before a sink. |
 | `epe_audit_log_dropped_total` | Counter | Access-log entries dropped because their in-memory queue was full. |
 | `epe_audit_webhook_dispatched_total` | Counter; `result` (`success`, `http_error`, `transport_error`, `timeout`) | Post-render audit webhook delivery outcomes. |
@@ -60,7 +61,7 @@ Metric names and labels describe the current implementation; this page does not 
 
 ## Useful operational signals
 
-An increase in `epe_profile_compile_failures_total` means a new policy version did not take effect. `epe_profile_stale == 1` means an older version is still enforced; `epe_profile_unenforced == 1` means the affected selector has no installed policy at all. Inspect EPE logs and the profile's manifest before assuming the Kubernetes object's presence means it is active.
+An increase in `epe_profile_compile_failures_total` means a new policy version did not take effect. `epe_profile_stale == 1` means an older version is still enforced; `epe_profile_unenforced == 1` means the affected selector has no installed policy at all. `epe_profile_inputs_unavailable == 1` means the profile is enforcing but a referenced ConfigMap input is missing, so inputs-dependent actions fail per their failure strategy. Inspect EPE logs and the profile's manifest before assuming the Kubernetes object's presence means it is active.
 
 High or growing `epe_audit_log_dropped_total` indicates saturation of the single-worker access log queue. `epe_audit_webhook_dropped_total` with `buffer_full` indicates webhook admission saturation; `draining`, `stopped`, and `shutdown_timeout` identify shutdown loss. `http_error`, `transport_error`, and `timeout` in dispatched webhooks distinguish receiver responses from network/TLS/request construction failures and deadline expiry. EPE does not retry webhooks, so these counters represent lost audit records rather than delayed retries.
 

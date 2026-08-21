@@ -76,10 +76,24 @@ var (
 		},
 		[]string{"namespace", "name"},
 	)
+
+	// profileInputsUnavailable marks installed profiles whose declared inputs
+	// could not be resolved — typically a referenced ConfigMap that does not
+	// exist (or no longer exists). The profile's rules stay in effect; only
+	// evaluations that read inputs fail, resolved through the consuming
+	// action's failure policy. Alert on `epe_profile_inputs_unavailable == 1`;
+	// absence means healthy, and deleted profiles leave nothing behind.
+	profileInputsUnavailable = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "epe_profile_inputs_unavailable",
+			Help: "Installed profiles whose declared inputs are unresolved, so inputs-dependent evaluations fail per the consuming action's failure policy.",
+		},
+		[]string{"namespace", "name"},
+	)
 )
 
 func init() {
-	metrics.Registry.MustRegister(profileCompileFailuresTotal, profileStale, profileUnenforced)
+	metrics.Registry.MustRegister(profileCompileFailuresTotal, profileStale, profileUnenforced, profileInputsUnavailable)
 }
 
 // profileScope maps a profile's namespace onto the bounded scope label.

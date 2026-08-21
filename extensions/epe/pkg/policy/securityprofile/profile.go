@@ -362,6 +362,14 @@ type Profile struct {
 	// profile's krt collection item is compiled. Each value is a
 	// map[string]string sourced from either inline data or a ConfigMap.
 	Inputs map[string]any
+	// InputsError is set when the declared inputs could not be resolved (for
+	// example a referenced ConfigMap does not exist). Unlike CompileError it
+	// does not reject the profile: rules install and enforce normally, and
+	// only evaluations that read inputs fail — resolved through the consuming
+	// action's failure policy. It also deliberately supersedes any previously
+	// resolved values, so a deleted ConfigMap makes the inputs unavailable
+	// instead of silently serving stale security-sensitive data.
+	InputsError string
 	// CompileError is populated only on identity-bearing invalid collection
 	// items. The profile store uses such items to retain the prior effective
 	// profile instead of treating an invalid update as a deletion.

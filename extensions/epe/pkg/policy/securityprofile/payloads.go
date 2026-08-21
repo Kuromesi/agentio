@@ -23,6 +23,8 @@ import (
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
+
 	// The filter packages are imported for their FilterName
 	// constants only: the payload keys must be the registered names, and
 	// hardcoded strings would drift. This is the one place the policy
@@ -33,6 +35,31 @@ import (
 	"istio.io/istio/extensions/epe/pkg/filters/mcpacl"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
 )
+
+// ValidateProjections builds and parses every rule's per-filter payloads
+// against regs, returning the first failure. Running it at the collection
+// boundary turns a projection error — for example an uncompilable credential
+// parameter CEL expression — into a rejected profile version (retaining any
+// last-known-good one), instead of a lazy first-request failure whose outcome
+// would be decided by the ext_proc provider's global failureModeAllow rather
+// than the action's own failStrategy. The binder still fails a projection
+// error closed as a second line of defense.
+func (sp *Profile) ValidateProjections(regs []filter.Registration) error {
+	for i := range sp.Rules {
+		rule := &sp.Rules[i]
+		payloads, err := payloadsFor(rule)
+		if err != nil {
+			return fmt.Errorf("rule %q: %w", rule.Name, err)
+		}
+		_, errs := filter.Project(regs, payloads)
+		for j, err := range errs {
+			if err != nil {
+				return fmt.Errorf("rule %q: filter %q: %w", rule.Name, regs[j].Name, err)
+			}
+		}
+	}
+	return nil
+}
 
 // payloadsFor turns one rule's actions into the per-filter payload
 // documents filter.Project consumes, keyed by registered filter name. A

@@ -91,7 +91,7 @@ func (s *FakeStore) InlineProfileSet(sandbox metav1.Object) {
 // normally. Tests that need ConfigMap inputs must drive NewCollection.
 func (s *FakeStore) apply(obj metav1.Object, spec *v1alpha1.SecurityProfileSpec) {
 	log := ctrllog.Log.WithName("profile")
-	sp, err := compileProfile(obj, spec, nil, nil)
+	sp, err := compileProfile(obj, spec, nil, nil, nil)
 	if err != nil {
 		log.Error(err, "profile is invalid; retaining last-known-good version",
 			"profile", obj.GetNamespace()+"/"+obj.GetName())

@@ -21,6 +21,7 @@ import (
 )
 
 func TestCompileTemplateAndRender(t *testing.T) {
+	tokenValueTemplate := `{{- $json := fromJson .Token -}}Bearer {{ if kindIs "map" $json }}{{ first (values $json) }}{{ else }}{{ .Token }}{{ end }}`
 	tests := []struct {
 		name        string
 		raw         string
@@ -34,6 +35,13 @@ func TestCompileTemplateAndRender(t *testing.T) {
 		{"missingkey zero", "{{ .Pod.Labels.absent }}", struct{ Pod inputs.Pod }{inputs.Pod{Labels: map[string]string{}}}, "", ""},
 		{"default helper", "{{ default \"fb\" .V }}", struct{ V string }{""}, "fb", ""},
 		{"json helper", "{{ json .V }}", struct{ V []string }{[]string{"a"}}, `["a"]`, ""},
+		{"fromJson map helper", "{{ range fromJson .V }}{{ . }}{{ end }}", struct{ V string }{`{"key":"value"}`}, "value", ""},
+		{"kindIs helper", `{{ kindIs "map" (fromJson .V) }}`, struct{ V string }{`{"key":"value"}`}, "true", ""},
+		{"trim helper", `{{ trim .V }}`, struct{ V string }{"  value\n"}, "value", ""},
+		{"hasPrefix helper", `{{ hasPrefix "Bearer " .V }}`, struct{ V string }{"Bearer value"}, "true", ""},
+		{"values and first helpers", `{{ first (values (fromJson .V)) }}`, struct{ V string }{`{"only":"value"}`}, "value", ""},
+		{"token template with raw value", tokenValueTemplate, struct{ Token string }{"raw-token"}, "Bearer raw-token", ""},
+		{"token template with JSON value", tokenValueTemplate, struct{ Token string }{`{"arbitrary-key":"json-token"}`}, "Bearer json-token", ""},
 		{"syntax error", "{{ .Token", nil, "", "unclosed action"},
 	}
 	for _, tt := range tests {
@@ -56,5 +64,16 @@ func TestCompileTemplateAndRender(t *testing.T) {
 				t.Errorf("render = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTemplateFailHelperReturnsRenderError(t *testing.T) {
+	tmpl, err := CompileTemplate("t", `{{ fail "stop rendering" }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = RenderToString(tmpl, nil)
+	if err == nil || !strings.Contains(err.Error(), "stop rendering") {
+		t.Fatalf("RenderToString() error = %v, want stop rendering", err)
 	}
 }

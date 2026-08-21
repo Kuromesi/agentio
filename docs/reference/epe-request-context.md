@@ -55,11 +55,11 @@ Request and response bodies are not expression-visible. EPE's response-body and 
 - `inline` is a `map<string, string>` stored in the profile.
 - `configMap` reads ConfigMap `data` into a `map<string, string>`. A namespaced `SecurityProfile` defaults the ConfigMap namespace to its own namespace. A `GlobalSecurityProfile` must name a ConfigMap namespace explicitly.
 
-Inputs are configuration, not credentials. EPE resolves them when the profile is compiled; a missing ConfigMap or invalid input rejects the candidate profile. The store retains the last known good version for an invalid update when one exists. Do not put secrets, sandbox identities, or generated credential material in inputs.
+Inputs are configuration, not credentials. EPE resolves them when the profile is compiled. A statically invalid input (zero or two sources, or a global profile's ConfigMap reference without a namespace) rejects the candidate profile, and the store retains the last known good version when one exists. A ConfigMap that does not exist (or no longer exists) does not reject the profile: the version installs and its rules enforce, but the inputs are unavailable — every CEL expression or template whose result depends on `inputs` fails with that reason and resolves through the consuming action's failure policy. Do not put secrets, sandbox identities, or generated credential material in inputs.
 
 ## CEL variables and functions
 
-EPE uses one CEL environment for rule/audit conditions and provider parameter values. `when` expressions must return `bool`; an empty `when` is true. Provider `parameters[].cel` may return any JSON-compatible value other than null.
+EPE compiles audit conditions and provider parameter values in separate CEL environments that share the request-time variables and extensions below. Audit `when` expressions must return `bool`; an empty `when` is true. Provider `parameters[].cel` may return any JSON-compatible value other than null.
 
 | Variable | CEL type | Values |
 | --- | --- | --- |
@@ -67,15 +67,17 @@ EPE uses one CEL environment for rule/audit conditions and provider parameter va
 | `pod` | `map<string, dyn>` | `name`, `namespace`, `ip`, `labels`. |
 | `profile` | `map<string, string>` | `name`, `namespace` (empty for a global profile). |
 | `rule` | `map<string, string>` | `name`. |
-| `inputs` | `map<string, dyn>` | Named inline/ConfigMap input maps; it may be nil when no inputs are configured. |
-| `result` | string | Audit only: final disposition. It is not available to request-time provider parameters. |
+| `inputs` | `map<string, dyn>` | Named inline/ConfigMap input maps; it may be nil when no inputs are configured. When the profile's inputs are unavailable, any read of `inputs` (including `has(inputs.x)`) evaluates to an error. |
+| `result` | string | Audit only: final disposition. A provider parameter that references it is rejected during CEL compilation. |
 | `response` | `map<string, dyn>` | Audit only: `status` (int; `0` if no response observed). |
 
 The CEL environment includes the standard CEL binding, string, set, and list extensions. CEL receives ordinary maps, so direct indexing of a missing header, label, query parameter, or input key raises a `no such key` evaluation error; it does not produce an empty string. Guard membership before indexing, for example, `"content-type" in request.headers && request.headers["content-type"].startsWith("application/json")`. An audit CEL runtime error drops that audit event, while a provider-parameter CEL runtime error follows the matched token transformation's `failStrategy`.
 
 ## Template values and functions
 
-Go templates use `missingkey=zero` and the helper functions `default fallback value` and `json value`. Unlike CEL map indexing, the `.Request.Header` and `.Request.QueryParam` accessors return `""` when the requested key is absent. Request credentials are intentionally unavailable.
+Go templates use `missingkey=zero` and expose only this helper allowlist: `default fallback value`, `json value`, `fromJson value`, `kindIs kind value`, `trim value`, `hasPrefix prefix value`, `fail message`, `values map`, and `first list`. Unlike CEL map indexing, the `.Request.Header` and `.Request.QueryParam` accessors return `""` when the requested key is absent. Request credentials are intentionally unavailable.
+
+`values` follows Go map iteration order. Using `values | first` is deterministic for a single-key object, but templates that need deterministic selection from a multi-key map must address a named key directly.
 
 | Template root | Values |
 | --- | --- |

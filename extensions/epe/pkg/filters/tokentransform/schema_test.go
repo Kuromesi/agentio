@@ -177,6 +177,22 @@ func TestParseProviderParametersCompiled(t *testing.T) {
 	}
 }
 
+func TestParseRejectsAuditOnlyResultInProviderParameter(t *testing.T) {
+	tt := apiKeyTT()
+	tt.CredentialRef = credentialRefSpec{
+		CredentialProvider: &providerRefSpec{
+			Name: "prov",
+			Parameters: map[string]valueSourceSpec{
+				"audit-only": {Cel: ptr.To("result")},
+			},
+		},
+	}
+	_, err := parseSpec(t, tt)
+	if err == nil || !strings.Contains(err.Error(), "undeclared reference to 'result'") {
+		t.Fatalf("parseSpec() error = %v, want undeclared-reference error", err)
+	}
+}
+
 // Every malformed payload must fail closed at parse time: the binder turns
 // these into a denied request, so none of them can degrade into a silently
 // unenforced rule.

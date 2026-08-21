@@ -27,36 +27,55 @@ import (
 )
 
 var (
-	whenEnvOnce sync.Once
-	whenEnv     *cel.Env
-	whenEnvErr  error
+	whenEnvOnce  sync.Once
+	whenEnv      *cel.Env
+	whenEnvErr   error
+	valueEnvOnce sync.Once
+	valueEnv     *cel.Env
+	valueEnvErr  error
 )
 
-// WhenEnv returns the shared CEL environment for security `when` expressions.
-// Variables: result (string), request/pod/inputs (map), profile/rule (string map).
+// commonEnvOptions declares the request-time variables and extensions shared
+// by audit conditions and credential-provider parameter values.
+func commonEnvOptions() []cel.EnvOption {
+	return []cel.EnvOption{
+		cel.Variable("request", cel.MapType(cel.StringType, cel.DynType)),
+		cel.Variable("pod", cel.MapType(cel.StringType, cel.DynType)),
+		cel.Variable("profile", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("rule", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("inputs", cel.MapType(cel.StringType, cel.DynType)),
+		ext.Bindings(),
+		ext.Strings(),
+		ext.Sets(),
+		ext.Lists(),
+	}
+}
+
+// WhenEnv returns the shared CEL environment for audit `when` expressions.
+// It adds audit-only result to the request-time variables shared with provider
+// parameter values.
 func WhenEnv() (*cel.Env, error) {
 	whenEnvOnce.Do(func() {
-		whenEnv, whenEnvErr = cel.NewEnv(
-			cel.Variable("result", cel.StringType),
-			cel.Variable("request", cel.MapType(cel.StringType, cel.DynType)),
-			cel.Variable("pod", cel.MapType(cel.StringType, cel.DynType)),
-			cel.Variable("profile", cel.MapType(cel.StringType, cel.StringType)),
-			cel.Variable("rule", cel.MapType(cel.StringType, cel.StringType)),
-			cel.Variable("inputs", cel.MapType(cel.StringType, cel.DynType)),
-			ext.Bindings(),
-			ext.Strings(),
-			ext.Sets(),
-			ext.Lists(),
-		)
+		options := append([]cel.EnvOption{cel.Variable("result", cel.StringType)}, commonEnvOptions()...)
+		whenEnv, whenEnvErr = cel.NewEnv(options...)
 	})
 	return whenEnv, whenEnvErr
+}
+
+// providerValueEnv omits audit-only variables so invalid provider parameter
+// references fail during compilation instead of at request evaluation.
+func providerValueEnv() (*cel.Env, error) {
+	valueEnvOnce.Do(func() {
+		valueEnv, valueEnvErr = cel.NewEnv(commonEnvOptions()...)
+	})
+	return valueEnv, valueEnvErr
 }
 
 // CompileValue parses and type-checks a CEL expression without constraining
 // its result type. CredentialProvider extraMetadata values may be strings,
 // lists, or any other JSON-compatible value.
 func CompileValue(expr string) (cel.Program, error) {
-	env, err := WhenEnv()
+	env, err := providerValueEnv()
 	if err != nil {
 		return nil, fmt.Errorf("init CEL env: %w", err)
 	}

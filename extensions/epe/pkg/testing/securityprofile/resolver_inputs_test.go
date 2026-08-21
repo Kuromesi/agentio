@@ -74,8 +74,12 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 		if unit.ID.Scope != wantScopes[i] {
 			t.Errorf("unit[%d] scope = %q, want %q", i, unit.ID.Scope, wantScopes[i])
 		}
-		if !reflect.DeepEqual(unit.Scope.Inputs(), wantInputs[i]) {
-			t.Errorf("unit[%d] inputs = %#v, want %#v", i, unit.Scope.Inputs(), wantInputs[i])
+		gotInputs, err := unit.Scope.Inputs()
+		if err != nil {
+			t.Errorf("unit[%d] inputs unavailable: %v", i, err)
+		}
+		if !reflect.DeepEqual(gotInputs, wantInputs[i]) {
+			t.Errorf("unit[%d] inputs = %#v, want %#v", i, gotInputs, wantInputs[i])
 		}
 		if unit.Cfgs[blockIndex] == nil {
 			t.Errorf("unit[%d] did not project the block payload", i)

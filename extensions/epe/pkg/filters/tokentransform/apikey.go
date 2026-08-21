@@ -49,12 +49,22 @@ type ApiKeyConfig struct {
 	Template     *template.Template
 }
 
-// ApiKeyTemplateData is the data visible to value templates. Field names
+// ApiKeyTemplateData is the data visible to value templates. Exported names
 // are policy-visible: existing profiles' templates reference them.
 type ApiKeyTemplateData struct {
-	Token  string
-	Pod    inputs.Pod
-	Inputs map[string]any
+	Token string
+	Pod   inputs.Pod
+	scope *inputs.Scope
+}
+
+// Inputs resolves lazily through the scope so that, like every other
+// template site, only a template that actually reads .Inputs fails when the
+// profile's inputs are unavailable; text/template aborts on the error.
+func (d ApiKeyTemplateData) Inputs() (map[string]any, error) {
+	if d.scope == nil {
+		return nil, nil
+	}
+	return d.scope.Inputs()
 }
 
 // apiKeySigner injects a credential token into one request header — the
@@ -71,7 +81,7 @@ func (apiKeySigner) Sign(_ context.Context, _ *filter.Stream, _ []byte, scope *i
 	data := ApiKeyTemplateData{Token: cred.Token}
 	if scope != nil {
 		data.Pod = scope.Pod()
-		data.Inputs = scope.Inputs()
+		data.scope = scope
 	}
 	var buf bytes.Buffer
 	if err := ac.Template.Execute(&buf, data); err != nil {

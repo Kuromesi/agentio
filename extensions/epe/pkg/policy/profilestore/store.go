@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // Package profilestore provides an in-memory store for SecurityProfiles.
-// Profile matching is performed dynamically at request time using pod labels
-// extracted from Envoy filter_state, rather than maintaining a pre-computed
-// pod-to-profile index.
+// Profile matching uses an immutable label index to select candidates from Pod
+// labels extracted from Envoy filter_state, then evaluates each candidate's
+// complete Kubernetes selector at request time.
 //
 // The store is a materialized view of a krt compiled-profile collection: it
 // uses a copy-on-write strategy with atomic.Pointer for lock-free reads, and
@@ -71,20 +71,19 @@ type Store interface {
 // It is replaced atomically on every write operation (copy-on-write).
 //
 // Selector profiles are indexed by namespace in byNamespace; cluster-scoped
-// GlobalSecurityProfiles use an empty string as the namespace key, and all
-// slices are pre-sorted by the shared profile comparator. Per-Sandbox inline
-// profiles live in inlineByKey, looked up by exact pod identity and never
-// matched by labels.
+// GlobalSecurityProfiles use an empty string as the namespace key. Per-Sandbox
+// inline profiles live in inlineByKey, looked up by exact pod identity and
+// never matched by labels.
 type profileSnapshot struct {
 	byKey       map[types.NamespacedName]*securityprofile.Profile
-	byNamespace map[string][]*securityprofile.Profile
+	byNamespace map[string]profileIndex
 	inlineByKey map[types.NamespacedName]*securityprofile.Profile
 }
 
 func newEmptySnapshot() *profileSnapshot {
 	return &profileSnapshot{
 		byKey:       make(map[types.NamespacedName]*securityprofile.Profile),
-		byNamespace: make(map[string][]*securityprofile.Profile),
+		byNamespace: make(map[string]profileIndex),
 		inlineByKey: make(map[types.NamespacedName]*securityprofile.Profile),
 	}
 }
@@ -141,6 +140,7 @@ func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 			delete(newByKey, key)
 			profileStale.DeleteLabelValues(m.Namespace, m.Name)
 			profileUnenforced.DeleteLabelValues(m.Namespace, m.Name)
+			profileInputsUnavailable.DeleteLabelValues(m.Namespace, m.Name)
 			continue
 		}
 		sp := ev.New
@@ -171,6 +171,18 @@ func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 		}
 		profileStale.DeleteLabelValues(sp.Meta.Namespace, sp.Meta.Name)
 		profileUnenforced.DeleteLabelValues(sp.Meta.Namespace, sp.Meta.Name)
+		// A profile with unavailable inputs installs anyway: its rules enforce
+		// and only inputs-dependent evaluations fail, resolved through the
+		// consuming action's failure policy. The gauge and log are the
+		// operator's signal that a referenced ConfigMap needs attention.
+		if sp.InputsError != "" {
+			profileInputsUnavailable.WithLabelValues(sp.Meta.Namespace, sp.Meta.Name).Set(1)
+			log.Error(nil, "profile installed with unavailable inputs; rules enforce but "+
+				"inputs-dependent evaluations fail per each action's failure strategy",
+				"profile", key.String(), "err", sp.InputsError)
+		} else {
+			profileInputsUnavailable.DeleteLabelValues(sp.Meta.Namespace, sp.Meta.Name)
+		}
 		newByKey[key] = sp
 	}
 
@@ -195,37 +207,17 @@ func (s *store) Matches(podName, podNamespace string, podLabels map[string]strin
 	snap := s.snapshot.Load()
 
 	ls := labels.Set(podLabels)
-	// Cluster-scoped profiles (empty namespace) match pods in every namespace.
-	global := snap.byNamespace[GlobalProfileNamespace]
-
-	// When podNamespace is itself the cluster scope, byNamespace[podNamespace]
-	// aliases the global slice; skip the second pass so global profiles are not
-	// matched and appended twice. Callers currently never pass an empty
-	// namespace, but the guard keeps the function self-consistent regardless.
-	var nsProfiles []*securityprofile.Profile
+	matched := snap.byNamespace[GlobalProfileNamespace].appendMatches(podLabels, ls, nil)
 	if podNamespace != GlobalProfileNamespace {
-		nsProfiles = snap.byNamespace[podNamespace]
+		matched = snap.byNamespace[podNamespace].appendMatches(podLabels, ls, matched)
 	}
-
-	matched := make([]*securityprofile.Profile, 0, len(global)+len(nsProfiles))
-	globalMatches := 0
-	for _, sp := range global {
-		if sp.Selector.Matches(ls) {
-			matched = append(matched, sp)
-			globalMatches++
-		}
+	if len(matched) == 0 {
+		return appendInline(nil, snap, podName, podNamespace)
 	}
-	for _, sp := range nsProfiles {
-		if sp.Selector.Matches(ls) {
-			matched = append(matched, sp)
-		}
-	}
-	// Each snapshot slice is already sorted by securityprofile.SortProfiles, and filtering
-	// preserves that order. Only when both the cluster- and namespace-scoped
-	// runs contribute must the merged set be re-sorted so they interleave by the
-	// shared comparator rather than global-always-first; a single contributing
-	// run is already in evaluation order.
-	if globalMatches > 0 && globalMatches < len(matched) {
+	// Candidate iteration crosses the fallback list and Pod label buckets, whose
+	// order is not the policy evaluation order. Restore the shared precedence
+	// contract after the global and namespaced matches have been merged.
+	if len(matched) > 1 {
 		securityprofile.SortProfiles(matched)
 	}
 	return appendInline(matched, snap, podName, podNamespace)
@@ -249,18 +241,19 @@ func appendInline(matched []*securityprofile.Profile, snap *profileSnapshot, pod
 // inline profile maps. Every selector profile is indexed under its namespace
 // in byNamespace; entries with an empty Namespace are cluster-scoped
 // GlobalSecurityProfiles and land under the "" key, which Matches merges into
-// every namespace's result. Each per-namespace slice is sorted by
-// securityprofile.SortProfiles. Inline profiles are carried as-is; they are
+// every namespace's result. Inline profiles are carried as-is; they are
 // looked up by identity only.
 func buildSnapshot(byKey, inlineByKey map[types.NamespacedName]*securityprofile.Profile) *profileSnapshot {
-	byNamespace := make(map[string][]*securityprofile.Profile)
+	profilesByNamespace := make(map[string][]*securityprofile.Profile)
 
 	for nn, sp := range byKey {
-		byNamespace[nn.Namespace] = append(byNamespace[nn.Namespace], sp)
+		profilesByNamespace[nn.Namespace] = append(profilesByNamespace[nn.Namespace], sp)
 	}
 
-	for _, profiles := range byNamespace {
+	byNamespace := make(map[string]profileIndex, len(profilesByNamespace))
+	for namespace, profiles := range profilesByNamespace {
 		securityprofile.SortProfiles(profiles)
+		byNamespace[namespace] = buildProfileIndex(profiles)
 	}
 
 	return &profileSnapshot{

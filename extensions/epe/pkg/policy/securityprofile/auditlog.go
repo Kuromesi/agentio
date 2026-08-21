@@ -24,10 +24,12 @@ import (
 	"context"
 
 	"k8s.io/apimachinery/pkg/types"
+	log "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"istio.io/istio/extensions/epe/pkg/audit"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/httpreq"
+	"istio.io/istio/extensions/epe/pkg/logging"
 )
 
 // streamLogger evaluates one stream's matched units against their audit
@@ -46,7 +48,7 @@ func newStreamLogger(sink audit.Sink, units []unit) *streamLogger {
 }
 
 // Log implements filter.StreamLogger.
-func (l *streamLogger) Log(_ context.Context, st *filter.Stream, info *filter.StreamInfo) {
+func (l *streamLogger) Log(ctx context.Context, st *filter.Stream, info *filter.StreamInfo) {
 	result := info.Outcome.String()
 	for i := range l.units {
 		u := &l.units[i]
@@ -62,6 +64,13 @@ func (l *streamLogger) Log(_ context.Context, st *filter.Stream, info *filter.St
 			fire, err := audit.EvalWhen(ca.When, &scope)
 			if err != nil {
 				audit.EvalDroppedTotal.WithLabelValues("when_eval").Inc()
+				// Debug rather than error: this fires per request (for
+				// example while a profile's inputs are unavailable), so the
+				// counter is the alerting signal and this line supplies the
+				// attribution an investigation needs.
+				log.FromContext(ctx).V(logging.DEBUG).Info("audit event dropped: when expression failed",
+					"profile", u.Profile.Meta.Namespace+"/"+u.Profile.Meta.Name,
+					"rule", u.Rule.Name, "audit", ca.Name, "err", err.Error())
 				continue
 			}
 			if !fire {

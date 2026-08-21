@@ -109,6 +109,14 @@ func (b *binder) bind(profiles []*Profile, req *httpreq.HTTPRequest, pod inputs.
 	var units []unit
 	for _, profile := range profiles {
 		var entry *cacheEntry
+		// A profile whose declared inputs failed to resolve still installs and
+		// enforces; the scope poisons only the inputs slot, so a Block rule
+		// keeps blocking while an inputs-reading evaluation fails through the
+		// consuming action's failure strategy.
+		var scopeOpts []inputs.ScopeOption
+		if profile.InputsError != "" {
+			scopeOpts = []inputs.ScopeOption{inputs.WithInputsError(profile.InputsError)}
+		}
 		for i := range profile.Rules {
 			rule := &profile.Rules[i]
 			matchIdx := rule.MatchingIndex(req)
@@ -134,6 +142,7 @@ func (b *binder) bind(profiles []*Profile, req *httpreq.HTTPRequest, pod inputs.
 						inputs.Profile{Name: profile.Meta.Name, Namespace: profile.Meta.Namespace},
 						inputs.Rule{Name: rule.Name},
 						profile.Inputs,
+						scopeOpts...,
 					),
 					Cfgs: p.cfgs,
 				},
