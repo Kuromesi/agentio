@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -653,6 +654,7 @@ type MetadataOptions struct {
 	ExitOnZeroActiveConnections bool
 	MetadataDiscovery           *bool
 	PolicyBindingDiscovery      *bool
+	PolicyRuntimeCapabilities   []string
 	EnvoySkipDeprecatedLogs     bool
 	WorkloadIdentitySocketFile  string
 }
@@ -720,6 +722,7 @@ func GetNodeMetaData(options MetadataOptions) (*model.Node, error) {
 	} else {
 		meta.PolicyBindingDiscovery = ptr.Of(model.StringBool(*options.PolicyBindingDiscovery))
 	}
+	meta.PolicyRuntimeCapabilities = slices.Clone(options.PolicyRuntimeCapabilities)
 	meta.EnvoySkipDeprecatedLogs = model.StringBool(options.EnvoySkipDeprecatedLogs)
 
 	meta.WorkloadIdentitySocketFile = options.WorkloadIdentitySocketFile

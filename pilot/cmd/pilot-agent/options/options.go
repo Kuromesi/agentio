@@ -134,6 +134,8 @@ var (
 		"If set to true, enable the peer metadata discovery extension in Envoy").Lookup()
 	policyBindingDiscoveryEnv, policyBindingDiscoveryEnvWasSet = env.Register("POLICY_BINDING_DISCOVERY", false,
 		"If set to true, enable the Agentio policy binding discovery extension in Envoy").Lookup()
+	policyRuntimeCapabilitiesEnv = env.Register("POLICY_RUNTIME_CAPABILITIES", "",
+		"Comma-separated policy runtime capabilities supported by the proxy binary").Get()
 
 	envoyStatusPortEnv = env.Register("ENVOY_STATUS_PORT", 15021,
 		"Envoy health status port value").Get()

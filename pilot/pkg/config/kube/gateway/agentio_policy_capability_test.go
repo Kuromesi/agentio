@@ -123,7 +123,8 @@ pilot:
 	return nil
 }
 
-func TestAgentioWaypointPolicyBindingCapability(t *testing.T) {
+func TestAgentioWaypointPolicyCapabilities(t *testing.T) {
+	const sniTrafficPolicyCapability = "sni_traffic_policy"
 	tests := []struct {
 		name                    string
 		sandboxEgress           bool
@@ -149,20 +150,22 @@ func TestAgentioWaypointPolicyBindingCapability(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deployment := renderAgentioWaypointDeployment(t, tt.sandboxEgress, tt.sniTrafficPolicyEnabled)
-			var capability *corev1.EnvVar
+			capabilities := map[string]*corev1.EnvVar{}
 			for i := range deployment.Spec.Template.Spec.Containers[0].Env {
 				envVar := &deployment.Spec.Template.Spec.Containers[0].Env[i]
-				if envVar.Name == "POLICY_BINDING_DISCOVERY" {
-					capability = envVar
-					break
+				if envVar.Name == "POLICY_BINDING_DISCOVERY" || envVar.Name == "POLICY_RUNTIME_CAPABILITIES" {
+					capabilities[envVar.Name] = envVar
 				}
 			}
 			if tt.want {
-				if capability == nil || capability.Value != "true" {
+				if capability := capabilities["POLICY_BINDING_DISCOVERY"]; capability == nil || capability.Value != "true" {
 					t.Fatalf("POLICY_BINDING_DISCOVERY = %#v, want true", capability)
 				}
-			} else if capability != nil {
-				t.Fatalf("POLICY_BINDING_DISCOVERY = %#v, want absent", capability)
+				if capability := capabilities["POLICY_RUNTIME_CAPABILITIES"]; capability == nil || capability.Value != sniTrafficPolicyCapability {
+					t.Fatalf("POLICY_RUNTIME_CAPABILITIES = %#v, want %q", capability, sniTrafficPolicyCapability)
+				}
+			} else if len(capabilities) != 0 {
+				t.Fatalf("policy capabilities = %#v, want absent", capabilities)
 			}
 		})
 	}

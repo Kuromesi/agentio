@@ -225,6 +225,8 @@ type AgentOptions struct {
 	MetadataDiscovery *bool
 	// Enable the Agentio policy binding discovery bootstrap extension.
 	PolicyBindingDiscovery *bool
+	// Policy runtime capabilities supported by the proxy binary.
+	PolicyRuntimeCapabilities []string
 
 	SDSFactory func(options *security.Options, workloadSecretCache security.SecretManager, pkpConf *mesh.PrivateKeyProvider) SDSService
 
@@ -292,6 +294,7 @@ func (a *Agent) generateNodeMetadata() (*model.Node, error) {
 		XDSRootCert:                 a.cfg.XDSRootCerts,
 		MetadataDiscovery:           a.cfg.MetadataDiscovery,
 		PolicyBindingDiscovery:      a.cfg.PolicyBindingDiscovery,
+		PolicyRuntimeCapabilities:   a.cfg.PolicyRuntimeCapabilities,
 		EnvoySkipDeprecatedLogs:     a.cfg.EnvoySkipDeprecatedLogs,
 		WorkloadIdentitySocketFile:  a.cfg.WorkloadIdentitySocketFile,
 	})

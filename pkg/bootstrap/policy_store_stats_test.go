@@ -55,7 +55,7 @@ func renderPolicyBindingBootstrap(t *testing.T) string {
 }
 
 // The stats matcher uses an inclusion list, so all native policy scopes must be
-// admitted explicitly. policy_store drives readiness, while sni_policy exposes
+// admitted explicitly. policy_store drives readiness, while sni_traffic_policy exposes
 // matcher failure reasons and fail-open admissions.
 func TestPolicyStatsPrefixesAreRendered(t *testing.T) {
 	rendered := renderPolicyBindingBootstrap(t)
@@ -68,8 +68,8 @@ func TestPolicyStatsPrefixesAreRendered(t *testing.T) {
 	if !strings.Contains(rendered, `"prefix": "policy_store"`) {
 		t.Error(`rendered bootstrap is missing the stats inclusion prefix "policy_store"`)
 	}
-	if !strings.Contains(rendered, `"prefix": "sni_policy"`) {
-		t.Error(`rendered bootstrap is missing the stats inclusion prefix "sni_policy"`)
+	if !strings.Contains(rendered, `"prefix": "sni_traffic_policy"`) {
+		t.Error(`rendered bootstrap is missing the stats inclusion prefix "sni_traffic_policy"`)
 	}
 	if strings.Contains(rendered, "agentio.gateway_policy_store") {
 		t.Error(`rendered bootstrap still carries the stale prefix "agentio.gateway_policy_store", ` +
