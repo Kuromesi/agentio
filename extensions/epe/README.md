@@ -83,13 +83,27 @@ make test.e2e.agentio
 
 That suite validates the mesh side of the ext_proc contract — `tests/integration/agentio/extproc_test.go` deploys the stub server from `pkg/test/extproc` (`testdata/ext-proc.yaml:31`) and asserts Envoy is configured to call it. It does not run the `agentio-epe` image, and no scenario sets `epe.enabled=true`; the KinD build list includes `docker.agentio-epe` only so image build regressions surface on presubmit.
 
-EPE's protocol and engine behavior is covered in-process by the policy-neutral `enginetest` harness, which drives the real `extproc.Server.Process` loop over a fake Envoy stream (`pkg/testing/enginetest/doc.go`). SecurityProfile fixtures and full-chain policy scenarios live under `pkg/testing/securityprofile`. The boundaries that harness names as out-of-scope — Envoy-authenticated attributes, egress TLS termination, apiserver/CRD deployment consistency, krt watch propagation, cross-pod webhook delivery — have no KinD coverage today.
+### Test layers
+
+Tests are layered by the contract they guard; each behavior is asserted at exactly one layer.
+
+| Layer | Lives in | Guards |
+| --- | --- | --- |
+| Unit | each package's `_test.go` | single-package semantics (parsing, matching, signing) |
+| Conformance | `pkg/wiring/conformance_test.go` | the `filter.Definition` contract, auto-applied to every filter in the production chain; a new filter must add its `minimalPayloads` entry or the suite fails by name |
+| Filter scenario | `<filter>/scenario_test.go` via `enginetest.NewSingleFilter` | the filter's engine/wire interaction (phases, mutations, failure routing) driven by the filter's **own** payload schema — never a CRD, never importing `pkg/policy` |
+| Policy scenario | `pkg/testing/securityprofile` | the only package combining CRD → store → resolver → engine → wire: CRD-to-payload translation, cross-filter composition (ordering, terminal actions), and the failure semantics (compile-time errors reject a version with last-known-good retention; runtime errors resolve through each action's failure policy) |
+| KinD E2E | `tests/integration/agentio` | only boundaries that cannot exist in-process |
+
+Ownership rule: a filter scenario owns behavior details; the policy layer proves the CRD reaches the same behavior with one golden path and does not restate it. Note the access-log vocabulary: `passthrough` means no policy matched; a matched request left unmodified logs as `bypassed`.
+
+The `enginetest` harness drives the real `extproc.Server.Process` loop over a fake Envoy stream (`pkg/testing/enginetest/doc.go`). The boundaries it names as out-of-scope — Envoy-authenticated attributes, egress TLS termination, apiserver/CRD deployment consistency, krt watch propagation, cross-pod webhook delivery — have no KinD coverage today.
 
 ## Contributor guide
 
 Keep the policy boundary intact: `pkg/policy/` owns the SecurityProfile CRD API. The architecture guard permits only two narrow exceptions: `pkg/admin/` renders CRD-typed debug views, and `pkg/testing/securityprofile/` owns CRD fixtures and scenarios. `pkg/extproc/` translates the external-processing protocol; `pkg/engine/` and `pkg/filters/` remain policy- and ext_proc-proto-free. `pkg/wiring/` is the composition root and its architecture guards enforce these rules.
 
-To add an action/filter, define its schema and descriptor under `pkg/filters/`, register it in `pkg/wiring/`, and map the CRD action to the filter payload in `pkg/policy/securityprofile/payloads.go`. Add the action's CRD/API schema upstream rather than hand-editing generated CRDs. Update `pkg/wiring/arch_guard_test.go` when a new filter needs a source-directory mapping, and cover parsing, action behavior, and a full-chain fixture.
+To add an action/filter, define its schema and descriptor under `pkg/filters/`, register it in `pkg/wiring/`, and map the CRD action to the filter payload in `pkg/policy/securityprofile/payloads.go`. Add the action's CRD/API schema upstream rather than hand-editing generated CRDs. Update `pkg/wiring/arch_guard_test.go` when a new filter needs a source-directory mapping. Test per the layers above: unit tests, a `minimalPayloads` entry for the conformance suite, a filter scenario when the filter touches body/response phases, wire mutations, failure branching, or external IO, and one CRD golden path under `pkg/testing/securityprofile`.
 
 Use focused checks while iterating:
 

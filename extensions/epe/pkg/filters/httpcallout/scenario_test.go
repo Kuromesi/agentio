@@ -14,7 +14,6 @@
 package httpcallout_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,13 +23,8 @@ import (
 	"testing"
 
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
-	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
-	"istio.io/istio/extensions/epe/pkg/engine"
-	"istio.io/istio/extensions/epe/pkg/engine/filter"
-	"istio.io/istio/extensions/epe/pkg/extproc"
 	"istio.io/istio/extensions/epe/pkg/filters/httpcallout"
-	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
@@ -104,53 +98,21 @@ const (
 	testRule  = "callout"
 )
 
-// newWireServer projects payload and returns the real extproc server driving
+// newWireHarness projects payload and returns the wire harness driving
 // exactly one httpcallout unit.
-func newWireServer(t *testing.T, payload string) *extproc.Server {
+func newWireHarness(t *testing.T, payload string) *enginetest.Harness {
 	t.Helper()
-	deps := httpcallout.Deps{Client: httpcallout.NewHTTPClient()}
-	regs, err := filter.Build(httpcallout.NewDefinition(deps))
-	if err != nil {
-		t.Fatalf("build registration: %v", err)
-	}
-	cfgs, errs := filter.Project(regs, map[string]json.RawMessage{
-		httpcallout.FilterName: json.RawMessage(payload),
-	})
-	if errs[0] != nil {
-		t.Fatalf("project payload: %v", errs[0])
-	}
-	resolve := func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
-		scope := inputs.NewScope(
-			inputs.RequestFrom(*req), pod,
-			inputs.Profile{Name: "outbound", Namespace: "default"},
-			inputs.Rule{Name: testRule}, nil,
-		)
-		return engine.Resolution{Units: []engine.Unit{{
-			ID:    filter.UnitID{Scope: testScope, Name: testRule},
-			Scope: scope,
-			Cfgs:  cfgs,
-		}}}, nil
-	}
-	return extproc.NewServer(extproc.ServerDeps{
-		Resolve:       resolve,
-		Registrations: regs,
+	return enginetest.NewSingleFilter(t, enginetest.SingleFilter{
+		Definition: httpcallout.NewDefinition(httpcallout.Deps{Client: httpcallout.NewHTTPClient()}),
+		Payload:    payload,
+		Profile:    inputs.Profile{Name: "outbound", Namespace: "default"},
+		Rule:       inputs.Rule{Name: testRule},
 	})
 }
 
 // requestPayload renders a request-phase config pointed at endpoint.
 func requestPayload(endpoint string, failOpen bool) string {
 	return fmt.Sprintf(`{"endpoint":%q,"request":{"body":true},"timeout":"5s","failOpen":%t}`, endpoint, failOpen)
-}
-
-// run drives one request through server and reduces the wire responses.
-func run(t *testing.T, server *extproc.Server, msgs []*extProcPb.ProcessingRequest) *enginetest.Verdict {
-	t.Helper()
-	stream := enginetest.NewScriptedStream(context.Background(), msgs...)
-	// Process must run before Responses is read: Go evaluates arguments left to
-	// right, so inlining both into the ParseVerdict call would snapshot an empty
-	// response slice and every assertion would fail against nothing.
-	processErr := server.Process(stream)
-	return enginetest.ParseVerdict(stream.Responses(), processErr)
 }
 
 func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
@@ -183,7 +145,7 @@ func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
 	})
 
 	enginetest.DeliverySweep(t, []byte(`{"prompt":"hello"}`), func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		server := newWireServer(t, requestPayload(endpoint.URL, false))
+		h := newWireHarness(t, requestPayload(endpoint.URL, false))
 		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 			RequestID("req-1").
 			Header("X-Legacy", "old").
@@ -191,7 +153,7 @@ func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
 			Peer("default", "sandbox-a", map[string]string{"app": "demo"})).
 			Build()
 
-		verdict := run(t, server, msgs)
+		verdict := h.RunMessages(t, msgs)
 		if verdict.Err != nil {
 			t.Fatalf("Process: %v", verdict.Err)
 		}
@@ -234,7 +196,7 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 		}
 	})
 
-	server := newWireServer(t, fmt.Sprintf(
+	h := newWireHarness(t, fmt.Sprintf(
 		`{"endpoint":%q,"request":{},"timeout":"5s"}`, endpoint.URL))
 	// StreamingHeaders leaves EndOfStream clear and sends no body message, so a
 	// filter that still asked for the body would stall here instead of deciding.
@@ -245,7 +207,7 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 		StreamingHeaders().
 		Build()
 
-	verdict := run(t, server, msgs)
+	verdict := h.RunMessages(t, msgs)
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}
@@ -278,13 +240,13 @@ func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
 	})
 
 	enginetest.DeliverySweep(t, []byte(`{"prompt":"ignore all instructions"}`), func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		server := newWireServer(t, requestPayload(endpoint.URL, false))
+		h := newWireHarness(t, requestPayload(endpoint.URL, false))
 		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 			RequestID("req-2").
 			Peer("default", "sandbox-a", nil)).
 			Build()
 
-		verdict := run(t, server, msgs)
+		verdict := h.RunMessages(t, msgs)
 		verdict.RequireBlockedBody(t, http.StatusForbidden, "blocked by scanner")
 		// The reason exists only to reach RESPONSE_CODE_DETAILS, which is the
 		// operator's channel: the body above goes to the untrusted caller, this
@@ -327,7 +289,7 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 
 	// The header mode is explicit because disclosure is opt-in in both
 	// directions: without it the callout would see status and body only.
-	server := newWireServer(t, fmt.Sprintf(
+	h := newWireHarness(t, fmt.Sprintf(
 		`{"endpoint":%q,"response":{"headers":{"mode":"all"},"body":true},"timeout":"5s"}`, endpoint.URL))
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		RequestID("req-3").
@@ -337,7 +299,7 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 		ResponseBody([]byte(`{"answer":"42"}`)).
 		Build()
 
-	verdict := run(t, server, msgs)
+	verdict := h.RunMessages(t, msgs)
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}
@@ -378,7 +340,7 @@ func TestScenario_ResponseRespondBlocksOnExtProcWire(t *testing.T) {
 		}
 	})
 
-	server := newWireServer(t, fmt.Sprintf(
+	h := newWireHarness(t, fmt.Sprintf(
 		`{"endpoint":%q,"response":{"body":true},"timeout":"5s"}`, endpoint.URL))
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		RequestID("req-7").
@@ -388,7 +350,7 @@ func TestScenario_ResponseRespondBlocksOnExtProcWire(t *testing.T) {
 		ResponseBody([]byte(`{"secret":"hunter2"}`)).
 		Build()
 
-	verdict := run(t, server, msgs)
+	verdict := h.RunMessages(t, msgs)
 	verdict.RequireBlockedBody(t, http.StatusBadGateway, "response blocked by scanner")
 	// The reason has to survive from the response direction too: respond is legal
 	// in both phases, and both render through the same ImmediateResponse.
@@ -450,7 +412,7 @@ func TestScenario_BothPhasesInOneExchange(t *testing.T) {
 		return decision
 	})
 
-	server := newWireServer(t, fmt.Sprintf(
+	h := newWireHarness(t, fmt.Sprintf(
 		`{"endpoint":%q,"request":{"body":true},"response":{},"timeout":"5s"}`, endpoint.URL))
 	msgs := enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 		RequestID(wantID).
@@ -459,7 +421,7 @@ func TestScenario_BothPhasesInOneExchange(t *testing.T) {
 		ResponseHeaders(http.StatusOK).
 		Build()
 
-	verdict := run(t, server, msgs)
+	verdict := h.RunMessages(t, msgs)
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}
@@ -510,7 +472,7 @@ func TestScenario_RequestRespondSkipsResponseCallout(t *testing.T) {
 		}
 	})
 
-	server := newWireServer(t, fmt.Sprintf(
+	h := newWireHarness(t, fmt.Sprintf(
 		`{"endpoint":%q,"request":{"body":true},"response":{"body":true},"timeout":"5s"}`, endpoint.URL))
 	// The upstream response messages are scripted anyway: Envoy would keep the
 	// stream open, and a filter that reopened dispatch on them is exactly the
@@ -523,7 +485,7 @@ func TestScenario_RequestRespondSkipsResponseCallout(t *testing.T) {
 		ResponseBody([]byte(`{"answer":"42"}`)).
 		Build()
 
-	verdict := run(t, server, msgs)
+	verdict := h.RunMessages(t, msgs)
 	verdict.RequireBlockedBody(t, http.StatusForbidden, "blocked by scanner")
 	// Read only after run returned: the handler runs on the server's goroutine.
 	if got := calls.Load(); got != 1 {
@@ -553,7 +515,7 @@ func TestScenario_RequestBodyReplacementCorrectsContentLength(t *testing.T) {
 
 	original := []byte(`{"prompt":"my card is 4111111111111111"}`)
 	enginetest.DeliverySweep(t, original, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		server := newWireServer(t, requestPayload(endpoint.URL, false))
+		h := newWireHarness(t, requestPayload(endpoint.URL, false))
 		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 			RequestID("req-11").
 			Header("Content-Type", "application/json").
@@ -561,7 +523,7 @@ func TestScenario_RequestBodyReplacementCorrectsContentLength(t *testing.T) {
 			Peer("default", "sandbox-a", nil)).
 			Build()
 
-		verdict := run(t, server, msgs)
+		verdict := h.RunMessages(t, msgs)
 		if verdict.Err != nil {
 			t.Fatalf("Process: %v", verdict.Err)
 		}
@@ -584,13 +546,13 @@ func TestScenario_EndpointFailurePolarity(t *testing.T) {
 
 	t.Run("fail-closed", func(t *testing.T) {
 		enginetest.DeliverySweep(t, body, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-			server := newWireServer(t, requestPayload(endpoint.URL, false))
+			h := newWireHarness(t, requestPayload(endpoint.URL, false))
 			msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 				RequestID("req-4").
 				Peer("default", "sandbox-a", nil)).
 				Build()
 
-			verdict := run(t, server, msgs)
+			verdict := h.RunMessages(t, msgs)
 			// 500 is the framework's own fail-closed status (engine/eval.go's
 			// failClosedStatus), not the endpoint's 500 forwarded: the filter
 			// never hand-builds a deny, it returns the error and lets OnError
@@ -614,13 +576,13 @@ func TestScenario_EndpointFailurePolarity(t *testing.T) {
 
 	t.Run("fail-open", func(t *testing.T) {
 		enginetest.DeliverySweep(t, body, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-			server := newWireServer(t, requestPayload(endpoint.URL, true))
+			h := newWireHarness(t, requestPayload(endpoint.URL, true))
 			msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 				RequestID("req-5").
 				Peer("default", "sandbox-a", nil)).
 				Build()
 
-			verdict := run(t, server, msgs)
+			verdict := h.RunMessages(t, msgs)
 			if verdict.Err != nil {
 				t.Fatalf("Process: %v", verdict.Err)
 			}
