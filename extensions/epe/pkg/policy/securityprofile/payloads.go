@@ -65,7 +65,7 @@ type RuleProjection struct {
 // not the action's own failStrategy — would decide the outcome.
 //
 // Both compilers treat the returned error the same way: the CRD and the
-// per-Sandbox inline profile version alike are rejected, retaining any
+// per-Sandbox profile version alike are rejected, retaining any
 // last-known-good version under the same identity. Compile-time errors are
 // uniformly admission failures; only runtime errors (credential fetch,
 // rendering against request data) resolve through per-action failure

@@ -76,25 +76,25 @@ func (s *FakeStore) GlobalProfileSet(profile *v1alpha1.GlobalSecurityProfile) {
 	s.apply(profile, &profile.Spec)
 }
 
-// InlineProfileSet compiles a Sandbox's inline security-rules annotation and
+// SandboxProfileSet compiles a Sandbox's security-rules annotation and
 // installs the resulting profile synchronously. Objects without the
-// annotation are ignored, mirroring the inline collection, which emits
+// annotation are ignored, mirroring the sandbox collection, which emits
 // nothing for them.
 //
 // A compile or projection failure is folded as an identity-bearing
-// CompileError item, again mirroring the inline collection: the store
-// retains any last-known-good inline version instead of installing or
+// CompileError item, again mirroring the sandbox collection: the store
+// retains any last-known-good sandbox version instead of installing or
 // removing anything.
-func (s *FakeStore) InlineProfileSet(sandbox metav1.Object) {
+func (s *FakeStore) SandboxProfileSet(sandbox metav1.Object) {
 	if sandbox.GetAnnotations()[securityprofile.AnnotationSecurityRules] == "" {
 		return
 	}
-	p, err := securityprofile.NewInlineProfile(sandbox)
+	p, err := securityprofile.NewSandboxProfile(sandbox)
 	if err == nil {
 		err = p.Project(s.regs)
 	}
 	if err != nil {
-		p = securityprofile.InvalidInlineProfile(sandbox, err)
+		p = securityprofile.InvalidSandboxProfile(sandbox, err)
 	}
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{New: p, Event: controllers.EventAdd},
@@ -126,7 +126,7 @@ func (s *FakeStore) apply(obj metav1.Object, spec *v1alpha1.SecurityProfileSpec)
 // use an empty Namespace.
 func (s *FakeStore) ProfileGet(namespacedName types.NamespacedName) (*securityprofile.Profile, bool) {
 	snap := s.snapshot.Load()
-	p, ok := snap.byKey[namespacedName]
+	p, ok := snap.installed.selector[namespacedName]
 	return p, ok
 }
 

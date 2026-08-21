@@ -23,7 +23,7 @@ import (
 const (
 	kindSecurityProfile       = "SecurityProfile"
 	kindGlobalSecurityProfile = "GlobalSecurityProfile"
-	// kindSandbox marks profiles compiled from a Sandbox's inline
+	// kindSandbox marks profiles compiled from a Sandbox's
 	// security-rules annotation rather than a profile CRD.
 	kindSandbox = "Sandbox"
 )
@@ -54,7 +54,7 @@ type debugRequest struct {
 	// triggers match mode and returns profiles in evaluation order.
 	PodLabels map[string]string `json:"pod_labels,omitempty"`
 	// PodName is the pod name. When set, match mode also includes the pod's
-	// per-Sandbox inline rule profile, which is keyed by exact identity.
+	// per-Sandbox profile, which is keyed by exact identity.
 	PodName string `json:"pod_name,omitempty"`
 	// Full requests the complete profile spec (fetched live from the
 	// apiserver via the typed clientset) in addition to the identity fields.

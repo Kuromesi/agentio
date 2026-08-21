@@ -153,7 +153,7 @@ func run() error {
 
 	// Create the in-memory config store, materialized from one joined krt
 	// collection of compiled SecurityProfile / GlobalSecurityProfile objects
-	// and per-Sandbox inline rule profiles (agents.kruise.io/security-rules
+	// and per-Sandbox rule profiles (agents.kruise.io/security-rules
 	// annotation, looked up by verified pod identity and evaluated after the
 	// selector-matched profiles). Registration replays current collection
 	// state and then applies every event batch.

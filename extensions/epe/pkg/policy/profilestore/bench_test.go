@@ -21,7 +21,6 @@ import (
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // benchSink defeats dead-code elimination.
@@ -102,15 +101,12 @@ func BenchmarkMatches_Fallback(b *testing.B) {
 // newBenchmarkStore installs one immutable snapshot so large read-path
 // benchmarks do not spend O(n²) setup time rebuilding it after every seed.
 func newBenchmarkStore(profiles []*securityprofile.Profile) *store {
-	byKey := make(map[types.NamespacedName]*securityprofile.Profile, len(profiles))
+	installed := newInstalledSet(len(profiles), 0)
 	for _, profile := range profiles {
-		byKey[types.NamespacedName{
-			Namespace: profile.Meta.Namespace,
-			Name:      profile.Meta.Name,
-		}] = profile
+		installed.put(keyFor(profile.Meta), profile)
 	}
 	store := NewStore()
-	store.snapshot.Store(buildSnapshot(byKey, nil))
+	store.snapshot.Store(buildSnapshot(installed))
 	return store
 }
 

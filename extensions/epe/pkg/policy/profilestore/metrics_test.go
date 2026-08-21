@@ -280,7 +280,7 @@ func TestApplyBatch_DeleteClearsUnenforced(t *testing.T) {
 // invalidInline is the identity-bearing item the inline collection transform
 // produces for an annotation that failed to compile or project.
 func invalidInline(name, namespace, version string) *securityprofile.Profile {
-	return securityprofile.InvalidInlineProfile(&metav1.PartialObjectMetadata{
+	return securityprofile.InvalidSandboxProfile(&metav1.PartialObjectMetadata{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, ResourceVersion: version},
 	}, errors.New("invalid inline action"))
 }
@@ -295,17 +295,17 @@ func TestApplyBatch_InlineRulesMetrics(t *testing.T) {
 	s := NewStore()
 
 	// A bad first version installs nothing: unenforced, not stale.
-	before := testutil.ToFloat64(profileCompileFailuresTotal.WithLabelValues(scopeInline))
+	before := testutil.ToFloat64(profileCompileFailuresTotal.WithLabelValues(scopePod))
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{New: invalidInline(name, ns, "1"), Event: controllers.EventAdd},
 	})
-	if got := testutil.ToFloat64(profileCompileFailuresTotal.WithLabelValues(scopeInline)) - before; got != 1 {
-		t.Errorf("compile failures delta for scope %q = %v, want 1", scopeInline, got)
+	if got := testutil.ToFloat64(profileCompileFailuresTotal.WithLabelValues(scopePod)) - before; got != 1 {
+		t.Errorf("compile failures delta for scope %q = %v, want 1", scopePod, got)
 	}
-	if got := unenforcedCount(t, scopeInline); got != 1 {
+	if got := unenforcedCount(t, scopePod); got != 1 {
 		t.Errorf("inline unenforced count = %v, want 1", got)
 	}
-	if got := staleCount(t, scopeInline); got != 0 {
+	if got := staleCount(t, scopePod); got != 0 {
 		t.Errorf("inline stale count = %v for a Sandbox with nothing installed, want 0", got)
 	}
 	// The CRD scopes must not move: the scope label is what keeps tenant and
@@ -317,7 +317,7 @@ func TestApplyBatch_InlineRulesMetrics(t *testing.T) {
 	// A good version clears it.
 	good := inlineProfile(name, ns, "2")
 	s.applyBatch([]krt.Event[securityprofile.Profile]{{New: good, Event: controllers.EventAdd}})
-	if got := unenforcedCount(t, scopeInline); got != 0 {
+	if got := unenforcedCount(t, scopePod); got != 0 {
 		t.Errorf("inline unenforced count = %v after a good version, want 0", got)
 	}
 
@@ -325,10 +325,10 @@ func TestApplyBatch_InlineRulesMetrics(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: good, New: invalidInline(name, ns, "3"), Event: controllers.EventUpdate},
 	})
-	if got := staleCount(t, scopeInline); got != 1 {
+	if got := staleCount(t, scopePod); got != 1 {
 		t.Errorf("inline stale count = %v, want 1", got)
 	}
-	if got := unenforcedCount(t, scopeInline); got != 0 {
+	if got := unenforcedCount(t, scopePod); got != 0 {
 		t.Errorf("inline unenforced count = %v while the previous version still serves, want 0", got)
 	}
 
@@ -336,10 +336,10 @@ func TestApplyBatch_InlineRulesMetrics(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: good, Event: controllers.EventDelete},
 	})
-	if got := staleCount(t, scopeInline); got != 0 {
+	if got := staleCount(t, scopePod); got != 0 {
 		t.Errorf("inline stale count = %v after the Sandbox was deleted, want 0", got)
 	}
-	if got := unenforcedCount(t, scopeInline); got != 0 {
+	if got := unenforcedCount(t, scopePod); got != 0 {
 		t.Errorf("inline unenforced count = %v after the Sandbox was deleted, want 0", got)
 	}
 }
@@ -395,7 +395,7 @@ func TestDegradedGaugesAreBoundedByScope(t *testing.T) {
 	if got := unenforcedCount(t, scopeNamespaced); got != n {
 		t.Errorf("namespaced unenforced count = %v, want %d", got, n)
 	}
-	if got := unenforcedCount(t, scopeInline); got != n {
+	if got := unenforcedCount(t, scopePod); got != n {
 		t.Errorf("inline unenforced count = %v, want %d", got, n)
 	}
 
@@ -407,7 +407,7 @@ func TestDegradedGaugesAreBoundedByScope(t *testing.T) {
 		})
 	}
 	s.applyBatch(deletes)
-	if got := unenforcedCount(t, scopeNamespaced) + unenforcedCount(t, scopeInline); got != 0 {
+	if got := unenforcedCount(t, scopeNamespaced) + unenforcedCount(t, scopePod); got != 0 {
 		t.Errorf("unenforced counts total = %v after deleting every source, want 0", got)
 	}
 	if got := len(s.degraded.unenforced); got != 0 {

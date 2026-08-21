@@ -338,17 +338,35 @@ type Meta struct {
 	// Version is the source object's resourceVersion, carried for admin
 	// output and for identifying which version of a profile is installed.
 	Version string
-	// Source identifies the object kind the profile was compiled from:
-	// empty for SecurityProfile/GlobalSecurityProfile, SourceInline for
-	// per-Sandbox annotation chains. A Sandbox and a SecurityProfile in one
-	// namespace may share a name and even a resourceVersion, so anything
-	// keyed on namespace/name must include the source to stay collision-free.
-	Source string
+	// Match says how this profile is selected for a Pod. It is the only
+	// difference the store draws between policy sources, and it doubles as a
+	// key discriminator: a Sandbox and a SecurityProfile in one namespace may
+	// share a name and even a resourceVersion, so anything keyed on
+	// namespace/name must include it to stay collision-free.
+	Match MatchMode
 }
 
-// SourceInline marks profiles compiled from the per-Sandbox inline security
-// rules annotation rather than from a SecurityProfile CR.
-const SourceInline = "inline"
+// MatchMode says how the store selects a profile for a Pod. Keep it small: it
+// sits in the snapshot's map key, which is copied whole on every write.
+type MatchMode uint8
+
+const (
+	// MatchSelector matches Pods by label selector — SecurityProfile and
+	// GlobalSecurityProfile.
+	MatchSelector MatchMode = iota
+	// MatchPod matches exactly one Pod by its verified identity: the rules a
+	// Sandbox carries in its annotation. Such a profile is never matched by
+	// labels, which a workload can influence.
+	MatchPod
+)
+
+// String is the wire form used in resource names and log fields.
+func (m MatchMode) String() string {
+	if m == MatchPod {
+		return "pod"
+	}
+	return "selector"
+}
 
 // Profile is the in-memory representation of a Profile or
 // GlobalSecurityProfile with its label selector, rule regexps, and audit
@@ -392,17 +410,17 @@ type Profile struct {
 // ResourceName implements krt.ResourceNamer so compiled profiles can be held
 // in krt collections. Cluster-scoped GlobalSecurityProfiles (empty namespace)
 // key by bare name and namespaced SecurityProfiles key by namespace/name, so
-// the two scopes can never collide inside a joined collection. Inline
-// profiles carry a source prefix on top: a Sandbox and a SecurityProfile in
-// the same namespace can share a name, and without the prefix one would
-// silently replace the other in a joined collection.
+// the two scopes can never collide inside a joined collection. Pod-matched
+// pod-matched profiles carry a mode prefix on top: a Sandbox and a
+// SecurityProfile in the same namespace can share a name, and without the
+// prefix one would silently replace the other in a joined collection.
 func (sp Profile) ResourceName() string {
 	name := sp.Meta.Name
 	if sp.Meta.Namespace != "" {
 		name = sp.Meta.Namespace + "/" + sp.Meta.Name
 	}
-	if sp.Meta.Source != "" {
-		return sp.Meta.Source + "/" + name
+	if sp.Meta.Match != MatchSelector {
+		return sp.Meta.Match.String() + "/" + name
 	}
 	return name
 }

@@ -109,9 +109,8 @@ func RegisterTypes(agentsCS agentsclient.Interface) {
 // here and the store keeps serving the last known good one, instead of
 // surfacing on the first matching request where the ext_proc provider's
 // global failureModeAllow would decide the outcome. The request path reads
-// that projection; it never builds one. Per-Sandbox inline profiles are
-// projected here too but are not rejected by a failure — see
-// newInlineCollection.
+// that projection; it never builds one. Per-Sandbox profiles are projected
+// here too, under the same failure semantics — see newSandboxCollection.
 func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt.DebugHandler, stop <-chan struct{}) krt.Collection[securityprofile.Profile] {
 	opts := krt.NewOptionsBuilder(stop, "epe", debugger)
 	log := ctrllog.Log.WithName("profile")
@@ -156,14 +155,14 @@ func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt
 	// batch per window (KRT_EVENT_DISTRIBUTE_DEBOUNCE[_MAX], default off),
 	// so RegisterCollection's applyBatch rebuilds the snapshot once per
 	// batch instead of once per profile change.
-	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newInlineCollection(client, regs, opts, log)},
+	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newSandboxCollection(client, regs, opts, log)},
 		append(opts.WithName("CompiledProfiles"),
 			krt.WithDebounce(features.KrtEventDistributeDebounce, features.KrtEventDistributeDebounceMax))...)
 }
 
-// newInlineCollection watches Sandbox metadata and compiles the objects
+// newSandboxCollection watches Sandbox metadata and compiles the objects
 // carrying the agents.kruise.io/security-rules annotation into per-Sandbox
-// inline rule profiles. The informer is metadata-only (PartialObjectMetadata):
+// per-Pod rule profiles. The informer is metadata-only (PartialObjectMetadata):
 // the compiler never reads spec or status, and a Sandbox carries a full pod
 // template that would otherwise be transferred and cached for every Sandbox
 // in the cluster. It is also delayed, like the profile informers: the Sandbox
@@ -179,9 +178,9 @@ func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt
 // good version of that Sandbox's rules when one exists and installs nothing
 // otherwise. The rules are authored at Sandbox creation, so a rejected first
 // version not taking effect is the expected authoring feedback — surfaced by
-// the inline stale/unenforced metrics rather than by a partially enforced
+// the stale/unenforced metrics under scope=pod rather than by a partially enforced
 // chain. An empty annotation stays a legitimate removal (nil item).
-func newInlineCollection(client kube.Client, regs []filter.Registration, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
+func newSandboxCollection(client kube.Client, regs []filter.Registration, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
 	sandboxInf := kclient.NewDelayedInformer[*metav1.PartialObjectMetadata](client,
 		sandboxGVR, kubetypes.MetadataInformer,
 		kclient.Filter{ObjectFilter: client.ObjectFilter()})
@@ -192,18 +191,18 @@ func newInlineCollection(client kube.Client, regs []filter.Registration, opts kr
 		if o.GetAnnotations()[securityprofile.AnnotationSecurityRules] == "" {
 			return nil
 		}
-		p, err := securityprofile.NewInlineProfile(o)
+		p, err := securityprofile.NewSandboxProfile(o)
 		if err == nil {
 			err = p.Project(regs)
 		}
 		if err != nil {
 			// Whether an older version is still being served is the store's
 			// knowledge; applyBatch logs and meters that.
-			log.Error(err, "inline security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
-			return securityprofile.InvalidInlineProfile(o, err)
+			log.Error(err, "sandbox security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
+			return securityprofile.InvalidSandboxProfile(o, err)
 		}
 		return p
-	}, opts.WithName("CompiledInlineProfiles")...)
+	}, opts.WithName("CompiledSandboxProfiles")...)
 }
 
 func compileProfile(

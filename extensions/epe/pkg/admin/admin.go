@@ -81,7 +81,7 @@ func (h *handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "  GET|POST /debug/profiles                          list all loaded profiles\n")
 		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>           filter by namespace\n")
 		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>&pod_labels=k=v,k=v  match profiles for pod labels\n")
-		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>&pod_name=<pod>      include the pod's inline rule profile\n")
+		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>&pod_name=<pod>      include the pod's own profile\n")
 		fmt.Fprintf(w, "  add ?full=true (POST: {\"full\":true}) for complete profile spec\n")
 	}
 }
@@ -97,7 +97,7 @@ func enabledText(enabled bool) string {
 func toView(p *securityprofile.Profile) ProfileView {
 	kind := kindSecurityProfile
 	switch {
-	case p.Meta.Source == securityprofile.SourceInline:
+	case p.Meta.Match == securityprofile.MatchPod:
 		kind = kindSandbox
 	case p.Meta.Namespace == "":
 		kind = kindGlobalSecurityProfile
@@ -142,7 +142,7 @@ func (h *handler) enrich(ctx context.Context, v *ProfileView) {
 		}
 		ct := sbx.CreationTimestamp
 		v.CreationTimestamp = &ct
-		// Inline rules have no CRD object; present them through the shared
+		// A Sandbox's rules have no CRD object; present them through the shared
 		// spec shape with no selector (they match by identity only).
 		v.Spec = &v1alpha1.SecurityProfileSpec{Rules: rules}
 	default:

@@ -22,7 +22,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"istio.io/istio/extensions/epe/pkg/metrics"
-	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 )
 
 // Label values for the scope dimension. Bounded on purpose: the reason a
@@ -31,7 +30,7 @@ import (
 const (
 	scopeNamespaced = "namespaced"
 	scopeGlobal     = "global"
-	scopeInline     = "inline"
+	scopePod        = "pod"
 )
 
 var (
@@ -43,7 +42,7 @@ var (
 			Name: "epe_profile_compile_failures_total",
 			Help: "Profile versions rejected because they failed to compile.",
 		},
-		[]string{"scope"}, // namespaced | global
+		[]string{"scope"}, // namespaced | global | pod
 	)
 
 	// profileStale counts sources whose newest published version failed to
@@ -98,29 +97,9 @@ func profileScope(namespace string) string {
 	return scopeNamespaced
 }
 
-// degradedKey identifies one policy source in the degraded-state sets. Source
-// is part of the key because a Sandbox and a SecurityProfile in one namespace
-// may share a name, and each must be able to be degraded independently.
-type degradedKey struct {
-	source    string
-	namespace string
-	name      string
-}
-
-func degradedKeyFor(m securityprofile.Meta) degradedKey {
-	return degradedKey{source: m.Source, namespace: m.Namespace, name: m.Name}
-}
-
-func (k degradedKey) scope() string {
-	if k.source == securityprofile.SourceInline {
-		return scopeInline
-	}
-	return profileScope(k.namespace)
-}
-
 // degradedSets records which policy sources are currently in each degraded
-// state, so the gauges can publish a count per scope instead of one series per
-// object.
+// state, keyed exactly like the snapshot, so the gauges can publish a count per
+// scope instead of one series per object.
 //
 // The identity deliberately does not reach the metric. A cluster can hold tens
 // of thousands of SecurityProfiles and Sandboxes, and the failures these gauges
@@ -134,23 +113,23 @@ func (k degradedKey) scope() string {
 // Memory is bounded by the number of degraded sources, not by the number of
 // profiles: a healthy store holds three empty maps.
 type degradedSets struct {
-	stale             map[degradedKey]struct{}
-	unenforced        map[degradedKey]struct{}
-	inputsUnavailable map[degradedKey]struct{}
+	stale             map[profileKey]struct{}
+	unenforced        map[profileKey]struct{}
+	inputsUnavailable map[profileKey]struct{}
 }
 
 func newDegradedSets() degradedSets {
 	return degradedSets{
-		stale:             map[degradedKey]struct{}{},
-		unenforced:        map[degradedKey]struct{}{},
-		inputsUnavailable: map[degradedKey]struct{}{},
+		stale:             map[profileKey]struct{}{},
+		unenforced:        map[profileKey]struct{}{},
+		inputsUnavailable: map[profileKey]struct{}{},
 	}
 }
 
 // rejected records a version that failed to compile: stale when an earlier
 // version is still installed, unenforced when none is. The inputs state is left
 // alone — whatever is installed keeps serving with the inputs it resolved.
-func (d degradedSets) rejected(k degradedKey, installed bool) {
+func (d degradedSets) rejected(k profileKey, installed bool) {
 	if installed {
 		d.stale[k] = struct{}{}
 		delete(d.unenforced, k)
@@ -162,7 +141,7 @@ func (d degradedSets) rejected(k degradedKey, installed bool) {
 
 // installed records a version that took effect, which clears both rejection
 // states and refreshes the inputs state.
-func (d degradedSets) installed(k degradedKey, inputsUnavailable bool) {
+func (d degradedSets) installed(k profileKey, inputsUnavailable bool) {
 	delete(d.stale, k)
 	delete(d.unenforced, k)
 	if inputsUnavailable {
@@ -173,7 +152,7 @@ func (d degradedSets) installed(k degradedKey, inputsUnavailable bool) {
 }
 
 // removed forgets a source entirely, so a deleted object leaves nothing behind.
-func (d degradedSets) removed(k degradedKey) {
+func (d degradedSets) removed(k profileKey) {
 	delete(d.stale, k)
 	delete(d.unenforced, k)
 	delete(d.inputsUnavailable, k)
@@ -189,8 +168,8 @@ func (d degradedSets) publish() {
 	publishDegraded(profileInputsUnavailable, d.inputsUnavailable)
 }
 
-func publishDegraded(g *prometheus.GaugeVec, set map[degradedKey]struct{}) {
-	counts := map[string]int{scopeNamespaced: 0, scopeGlobal: 0, scopeInline: 0}
+func publishDegraded(g *prometheus.GaugeVec, set map[profileKey]struct{}) {
+	counts := map[string]int{scopeNamespaced: 0, scopeGlobal: 0, scopePod: 0}
 	for k := range set {
 		counts[k.scope()]++
 	}

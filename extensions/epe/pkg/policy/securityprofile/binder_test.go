@@ -287,7 +287,7 @@ func TestInlineAndCRProfilesKeepSeparateProjections(t *testing.T) {
 
 	cr := compile(t, regs, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("cr-rule")})
 	inline := compile(t, regs, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("inline-rule")})
-	inline.Meta.Source = SourceInline
+	inline.Meta.Match = MatchPod
 
 	req := testRequest("example.com")
 	pod := inputs.Pod{Namespace: "ns", Name: "shared"}

@@ -30,7 +30,7 @@ import (
 //
 // ProfilesFor returns every profile that applies to the pod in evaluation
 // order: selector-matched administrator profiles first, then the pod's own
-// inline rule profile (looked up by exact identity, never by labels).
+// own pod-matched profile (looked up by exact identity, never by labels).
 type Matcher interface {
 	ProfilesFor(pod inputs.Pod) []*Profile
 }

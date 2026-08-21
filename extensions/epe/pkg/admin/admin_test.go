@@ -336,7 +336,7 @@ func TestHandleProfiles_InlineProfiles(t *testing.T) {
 
 	store := profilestore.MakeFakeStore()
 	store.ProfileSet(sp)
-	store.InlineProfileSet(sbx)
+	store.SandboxProfileSet(sbx)
 	client := agentsfake.NewSimpleClientset(sp)
 	// NewSimpleClientset seeds objects under a guessed plural ("sandboxs"),
 	// which does not match the typed client's "sandboxes"; seed the tracker

@@ -30,7 +30,7 @@ import (
 )
 
 func inlineProfile(name, ns, version string) *securityprofile.Profile {
-	p, err := securityprofile.NewInlineProfile(&metav1.PartialObjectMetadata{
+	p, err := securityprofile.NewSandboxProfile(&metav1.PartialObjectMetadata{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
@@ -73,7 +73,7 @@ func TestStoreInlineProfiles(t *testing.T) {
 	}
 
 	// Inline profiles appear on the listing surface alongside CRD profiles.
-	if got := s.List(); len(got) != 1 || got[0].Meta.Source != securityprofile.SourceInline {
+	if got := s.List(); len(got) != 1 || got[0].Meta.Match != securityprofile.MatchPod {
 		t.Fatalf("List() = %+v, want the inline profile listed", got)
 	}
 
@@ -123,22 +123,22 @@ func TestStoreInlineAndCRDProfilesShareIdentity(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("Matches = %d profiles, want the CRD match plus the inline profile", len(got))
 	}
-	if got[0].Meta.Source != "" || got[1].Meta.Source != securityprofile.SourceInline {
+	if got[0].Meta.Match != securityprofile.MatchSelector || got[1].Meta.Match != securityprofile.MatchPod {
 		t.Fatalf("order = [%q, %q], want the selector profile before the inline profile",
-			got[0].Meta.Source, got[1].Meta.Source)
+			got[0].Meta.Match, got[1].Meta.Match)
 	}
 
 	// Deleting the inline profile must not disturb the CRD profile.
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Event: controllers.EventDelete, Old: inline},
 	})
-	if got := s.ProfilesFor(inputs.Pod{Name: "shared", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}}); len(got) != 1 || got[0].Meta.Source != "" {
+	if got := s.ProfilesFor(inputs.Pod{Name: "shared", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}}); len(got) != 1 || got[0].Meta.Match != securityprofile.MatchSelector {
 		t.Fatalf("after inline delete = %+v, want only the CRD profile", got)
 	}
 }
 
 // TestStoreInlineBatchReusesLabelIndex pins the write-path optimization: only
-// byKey feeds the label index, so a batch of inline events must carry the
+// only selector profiles feed the label index, so a batch of inline events must carry the
 // previous index forward. Rebuilding it is the expensive part of a write
 // (~9ms and 12MB at 10k profiles) and Sandbox churn is the high-frequency
 // event source, so this must not regress into a full rebuild.
@@ -151,11 +151,11 @@ func TestStoreInlineBatchReusesLabelIndex(t *testing.T) {
 		t.Fatalf("NewProfile: %v", err)
 	}
 	s.applyBatch([]krt.Event[securityprofile.Profile]{{Event: controllers.EventAdd, New: crd}})
-	indexed := s.snapshot.Load().byNamespace
+	indexed := s.snapshot.Load().selectorIndex
 
 	inline := inlineProfile("sbx-1", "sandboxes", "1")
 	s.applyBatch([]krt.Event[securityprofile.Profile]{{Event: controllers.EventAdd, New: inline}})
-	if got := s.snapshot.Load().byNamespace; !sameIndexMap(got, indexed) {
+	if got := s.snapshot.Load().selectorIndex; !sameIndexMap(got, indexed) {
 		t.Error("an inline-only batch rebuilt the label index")
 	}
 	// A delete for a CRD profile that was never installed is equally inert.
@@ -165,20 +165,20 @@ func TestStoreInlineBatchReusesLabelIndex(t *testing.T) {
 		t.Fatalf("NewProfile: %v", err)
 	}
 	s.applyBatch([]krt.Event[securityprofile.Profile]{{Event: controllers.EventDelete, Old: absentCompiled}})
-	if got := s.snapshot.Load().byNamespace; !sameIndexMap(got, indexed) {
+	if got := s.snapshot.Load().selectorIndex; !sameIndexMap(got, indexed) {
 		t.Error("a delete for an uninstalled profile rebuilt the label index")
 	}
 
 	// The reused index must still be the right answer, and the inline profile
 	// must be visible through it.
 	got := s.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}})
-	if len(got) != 2 || got[0].Meta.Source != "" || got[1].Meta.Source != securityprofile.SourceInline {
+	if len(got) != 2 || got[0].Meta.Match != securityprofile.MatchSelector || got[1].Meta.Match != securityprofile.MatchPod {
 		t.Fatalf("Matches = %+v, want the CRD match plus the inline profile", got)
 	}
 
 	// A CRD event does rebuild it.
 	s.applyBatch([]krt.Event[securityprofile.Profile]{{Event: controllers.EventDelete, Old: crd}})
-	if got := s.snapshot.Load().byNamespace; sameIndexMap(got, indexed) {
+	if got := s.snapshot.Load().selectorIndex; sameIndexMap(got, indexed) {
 		t.Error("a CRD delete reused a stale label index")
 	}
 }
@@ -229,27 +229,27 @@ func TestInlineProfileInvalidVersionUsesLastKnownGood(t *testing.T) {
 	}
 
 	// A bad first version installs nothing.
-	store.InlineProfileSet(sandbox("1", string(badRules)))
+	store.SandboxProfileSet(sandbox("1", string(badRules)))
 	if got := store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"}); len(got) != 0 {
 		t.Fatalf("Matches = %+v, want nothing for a bad first version", got)
 	}
 
 	// A good version installs.
-	store.InlineProfileSet(sandbox("2", goodRules))
+	store.SandboxProfileSet(sandbox("2", goodRules))
 	got := store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"})
 	if len(got) != 1 || got[0].Rules[0].Name != "deny-exfil" {
 		t.Fatalf("Matches = %+v, want the good version installed", got)
 	}
 
 	// A bad update retains the last-known-good version.
-	store.InlineProfileSet(sandbox("3", string(badRules)))
+	store.SandboxProfileSet(sandbox("3", string(badRules)))
 	got = store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"})
 	if len(got) != 1 || got[0].Meta.Version != "2" {
 		t.Fatalf("Matches = %+v, want version 2 retained after a bad update", got)
 	}
 
 	// A fixed update replaces it.
-	store.InlineProfileSet(sandbox("4", goodRules))
+	store.SandboxProfileSet(sandbox("4", goodRules))
 	got = store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"})
 	if len(got) != 1 || got[0].Meta.Version != "4" {
 		t.Fatalf("Matches = %+v, want the fixed version 4 installed", got)
