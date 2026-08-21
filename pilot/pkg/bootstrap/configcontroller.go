@@ -107,6 +107,13 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		MeshConfig: s.environment.Watcher,
 		Debugger:   s.krtDebugger,
 		Stop:       s.internalStop,
+		ActorBindingsChanged: func() {
+			s.XDSServer.ConfigUpdate(&model.PushRequest{
+				Full:   true,
+				Reason: model.NewReasonStats(model.GlobalUpdate),
+				Forced: true,
+			})
+		},
 	})
 	if err != nil {
 		return err

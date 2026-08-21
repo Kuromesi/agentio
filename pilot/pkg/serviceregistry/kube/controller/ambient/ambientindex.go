@@ -33,6 +33,7 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/statusqueue"
 	"istio.io/istio/pkg/activenotifier"
@@ -142,7 +143,12 @@ type index struct {
 	remoteClientConfigOverrides []func(*rest.Config)
 	builder                     Builder
 
-	agentioController *agentio.Controller
+	agentioController  *agentio.Controller
+	actorContextSource actorContextSource
+}
+
+type actorContextSource interface {
+	ActorContextForWorker(namespace, podName, podUID string) (*extensions.ActorContext, bool)
 }
 
 type FeatureFlags struct {
@@ -291,6 +297,7 @@ func New(options Options) Index {
 				return convertAuthorizationPolicy(a.meshConfig.Get().RootNamespace, policy)
 			})
 		a.agentioController = options.AgentioController
+		a.actorContextSource = options.AgentioController
 		sandboxConfig = a.agentioController.AgentioConfig()
 		workloadConfigs = a.agentioController.WorkloadConfigs()
 	}

@@ -1305,6 +1305,10 @@ const (
 
 type WorkloadInfo struct {
 	Workload *workloadapi.Workload
+	// NativeUID is the underlying platform resource UID. For Kubernetes Pods,
+	// this is metadata.uid rather than the readable xDS workload resource name.
+	// It is internal-only and allows identity bindings to reject Pod name reuse.
+	NativeUID string
 	// Labels for the workload. Note these are only used internally, not sent over XDS
 	Labels map[string]string
 	// Source is the type that introduced this workload.
@@ -1321,6 +1325,7 @@ type WorkloadInfo struct {
 
 func (i WorkloadInfo) Equals(other WorkloadInfo) bool {
 	return equalUsingPremarshaled(i.Workload, i.MarshaledAddress, other.Workload, other.MarshaledAddress) &&
+		i.NativeUID == other.NativeUID &&
 		maps.Equal(i.Labels, other.Labels) &&
 		i.Source == other.Source &&
 		i.CreationTime == other.CreationTime
@@ -1333,6 +1338,7 @@ func workloadResourceName(w *workloadapi.Workload) string {
 func (i *WorkloadInfo) Clone() *WorkloadInfo {
 	return &WorkloadInfo{
 		Workload:     protomarshal.Clone(i.Workload),
+		NativeUID:    i.NativeUID,
 		Labels:       maps.Clone(i.Labels),
 		Source:       i.Source,
 		CreationTime: i.CreationTime,

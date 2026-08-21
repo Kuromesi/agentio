@@ -911,6 +911,7 @@ func podWorkloadBuilder(
 		setTunnelProtocol(p.Labels, p.Annotations, w, flags)
 		wi := &model.WorkloadInfo{
 			Workload:     w,
+			NativeUID:    string(p.UID),
 			Labels:       p.Labels,
 			Source:       kind.Pod,
 			CreationTime: p.CreationTimestamp.Time,

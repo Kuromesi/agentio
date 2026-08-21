@@ -65,10 +65,11 @@ var (
 )
 
 type Options struct {
-	KubeClient kube.Client
-	MeshConfig meshwatcher.WatcherCollection
-	Debugger   *krt.DebugHandler
-	Stop       <-chan struct{}
+	KubeClient           kube.Client
+	MeshConfig           meshwatcher.WatcherCollection
+	Debugger             *krt.DebugHandler
+	Stop                 <-chan struct{}
+	ActorBindingsChanged func()
 }
 
 type Controller struct {
@@ -80,7 +81,8 @@ type Controller struct {
 	authorizationController *authorizationController
 	onDemandController      *onDemandCertController
 
-	workloadConfigs krt.Singleton[model.WorkloadConfig]
+	workloadConfigs  krt.Singleton[model.WorkloadConfig]
+	substrateWorkers *substrateWorkerSource
 
 	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
 	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
@@ -117,6 +119,17 @@ func NewController(options Options) (*Controller, error) {
 		agentioConfig:         agentioConfig,
 	}
 
+	substrateConfig := substrateWorkerConfigFromEnv()
+	if substrateConfig.Address != "" {
+		substrateWorkers, err := newSubstrateWorkerSource(substrateConfig, options.ActorBindingsChanged)
+		if err != nil {
+			return nil, fmt.Errorf("creating Substrate ListWorkers source: %w", err)
+		}
+		c.substrateWorkers = substrateWorkers
+		go substrateWorkers.Run(stop)
+		log.Infof("Enabled Substrate ListWorkers Actor binding source at %s", substrateConfig.Address)
+	}
+
 	if features.EnableOnDemandCerts {
 		if err := c.initOnDemandController(options.KubeClient, opts); err != nil {
 			log.Errorf("Failed to create on demand cert controller, err: %+v", err)
@@ -127,6 +140,16 @@ func NewController(options Options) (*Controller, error) {
 	c.initExternalNamesController()
 	c.initWorkloadConfigs(opts)
 	return c, nil
+}
+
+// ActorContextForWorker returns the Actor bound to an exact Kubernetes Worker
+// Pod identity. The boolean is true when ListWorkers is enabled and therefore
+// authoritative, including when the Worker currently has no Actor assignment.
+func (c *Controller) ActorContextForWorker(namespace, podName, podUID string) (*extensions.ActorContext, bool) {
+	if c == nil || c.substrateWorkers == nil {
+		return nil, false
+	}
+	return c.substrateWorkers.actorContextForWorker(namespace, podName, podUID), true
 }
 
 func (c *Controller) initOnDemandController(kc kube.Client, opts krt.OptionsBuilder) error {

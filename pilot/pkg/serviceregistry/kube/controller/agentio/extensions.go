@@ -46,10 +46,13 @@ const (
 	LabelActorGeneration  = "networking.agents.kruise.io/actor-generation"
 	ActorLabelPrefix      = "actor.networking.agents.kruise.io/"
 
-	ActorIdentityLabelUID        = "agentio.io/actor-uid"
-	ActorIdentityLabelName       = "agentio.io/actor-name"
-	ActorIdentityLabelAtespace   = "agentio.io/atespace"
-	ActorIdentityLabelGeneration = "agentio.io/actor-generation"
+	ActorIdentityLabelUID               = "agentio.io/actor-uid"
+	ActorIdentityLabelName              = "agentio.io/actor-name"
+	ActorIdentityLabelAtespace          = "agentio.io/atespace"
+	ActorIdentityLabelGeneration        = "agentio.io/actor-generation"
+	ActorIdentityLabelTemplateNamespace = "agentio.io/actor-template-namespace"
+	ActorIdentityLabelTemplateName      = "agentio.io/actor-template-name"
+	ActorIdentityLabelWorkerPool        = "agentio.io/worker-pool"
 
 	MeshInternalTrafficPolicyPassthrough = "PASSTHROUGH"
 	MeshInternalTrafficPolicyPeerAware   = "PEER_AWARE"

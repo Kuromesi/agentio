@@ -44,6 +44,22 @@ agentiod:
     ON_DEMAND_SECRET_NAME: agentio-mitm-ca
 ```
 
+## Substrate Actor bindings
+
+These variables configure the optional community Substrate `ListWorkers` integration. Prefer the matching `agentiod.substrateListWorkers` Helm values, which also project the required PodCertificate and ClusterTrustBundle.
+
+| Variable | Type | Binary default | Description |
+| --- | --- | --- | --- |
+| `SUBSTRATE_LIST_WORKERS_ADDRESS` | String | Empty | Substrate ateapi gRPC target. Empty disables the integration. Use a `dns:///` target for client-side round-robin across the headless API Service. |
+| `SUBSTRATE_LIST_WORKERS_SERVER_NAME` | String | `api.ate-system.svc` | TLS server name used to verify the ateapi server certificate. |
+| `SUBSTRATE_LIST_WORKERS_CA_FILE` | String | `/run/substrate-listworkers/trust-bundle.pem` | PEM CA bundle that signs the ateapi ServiceDNS certificate. |
+| `SUBSTRATE_LIST_WORKERS_CLIENT_CREDENTIAL_BUNDLE` | String | `/run/substrate-listworkers/credential-bundle.pem` | PEM client certificate chain and PKCS8 private key. The file is re-read for each TLS handshake to pick up PodCertificate rotation. |
+| `SUBSTRATE_LIST_WORKERS_POLL_INTERVAL` | Duration | `2s` | Interval between successful ListWorkers snapshots. |
+| `SUBSTRATE_LIST_WORKERS_RPC_TIMEOUT` | Duration | `5s` | Timeout for each paginated ListWorkers RPC. |
+| `SUBSTRATE_LIST_WORKERS_PAGE_SIZE` | Integer | `1000` | Requested page size, from 1 through 1000. |
+
+When this integration is enabled, ListWorkers is authoritative. An unassigned Worker receives no ActorContext, and a transient ateapi failure retains the last successful snapshot rather than accepting Worker Pod identity labels.
+
 ## Inspect the effective Pod environment
 
 Inspect the rendered Deployment rather than relying only on chart defaults:

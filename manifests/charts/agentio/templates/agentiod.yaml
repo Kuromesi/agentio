@@ -125,6 +125,22 @@ spec:
         - name: KRT_EVENT_DISTRIBUTE_DEBOUNCE_MAX
           value: {{ .Values.agentiod.krtEventDistributeDebounceMax | quote }}
         {{- end }}
+        {{- if .Values.agentiod.substrateListWorkers.enabled }}
+        - name: SUBSTRATE_LIST_WORKERS_ADDRESS
+          value: {{ .Values.agentiod.substrateListWorkers.address | quote }}
+        - name: SUBSTRATE_LIST_WORKERS_SERVER_NAME
+          value: {{ .Values.agentiod.substrateListWorkers.serverName | quote }}
+        - name: SUBSTRATE_LIST_WORKERS_CA_FILE
+          value: {{ printf "%s/trust-bundle.pem" (trimSuffix "/" .Values.agentiod.substrateListWorkers.mountPath) | quote }}
+        - name: SUBSTRATE_LIST_WORKERS_CLIENT_CREDENTIAL_BUNDLE
+          value: {{ printf "%s/credential-bundle.pem" (trimSuffix "/" .Values.agentiod.substrateListWorkers.mountPath) | quote }}
+        - name: SUBSTRATE_LIST_WORKERS_POLL_INTERVAL
+          value: {{ .Values.agentiod.substrateListWorkers.pollInterval | quote }}
+        - name: SUBSTRATE_LIST_WORKERS_RPC_TIMEOUT
+          value: {{ .Values.agentiod.substrateListWorkers.rpcTimeout | quote }}
+        - name: SUBSTRATE_LIST_WORKERS_PAGE_SIZE
+          value: {{ .Values.agentiod.substrateListWorkers.pageSize | quote }}
+        {{- end }}
         {{- range $key, $val := .Values.agentiod.env }}
         - name: {{ $key }}
           value: {{ $val | quote }}
@@ -178,6 +194,11 @@ spec:
           readOnly: true
         - mountPath: /var/run/secrets/istio-dns
           name: local-certs
+        {{- if .Values.agentiod.substrateListWorkers.enabled }}
+        - mountPath: {{ .Values.agentiod.substrateListWorkers.mountPath | quote }}
+          name: substrate-listworkers
+          readOnly: true
+        {{- end }}
       serviceAccountName: {{ include "agentio.controller.name" . }}
       {{- with .Values.agentiod.nodeSelector }}
       nodeSelector:
@@ -202,6 +223,21 @@ spec:
               audience: istio-ca
               expirationSeconds: 43200
               path: istio-token
+      {{- if .Values.agentiod.substrateListWorkers.enabled }}
+      - name: substrate-listworkers
+        projected:
+          sources:
+          - podCertificate:
+              signerName: {{ .Values.agentiod.substrateListWorkers.clientSignerName | quote }}
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+          - clusterTrustBundle:
+              signerName: {{ .Values.agentiod.substrateListWorkers.serverTrustSignerName | quote }}
+              labelSelector:
+                matchLabels:
+                  {{- toYaml .Values.agentiod.substrateListWorkers.trustBundleLabels | nindent 18 }}
+              path: trust-bundle.pem
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

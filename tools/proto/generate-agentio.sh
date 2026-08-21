@@ -18,10 +18,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-PROTO_DIR="pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+EXTENSIONS_PROTO_DIR="pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+SUBSTRATE_PROTO_DIR="pilot/pkg/serviceregistry/kube/controller/agentio/substrateapi"
 PROTO_FILES=(
-  "${PROTO_DIR}/extensions.proto"
-  "${PROTO_DIR}/agentioconfig.proto"
+  "${EXTENSIONS_PROTO_DIR}/extensions.proto"
+  "${EXTENSIONS_PROTO_DIR}/agentioconfig.proto"
+  "${SUBSTRATE_PROTO_DIR}/ateapi.proto"
 )
 
 cd "${REPO_ROOT}"
@@ -47,5 +49,9 @@ protoc \
   "${PROTO_FILES[@]}"
 
 buf generate "${TMP_DIR}/agentio.binpb" \
-  --path "${PROTO_DIR}" \
+  --path "${EXTENSIONS_PROTO_DIR}" \
   --template tools/proto/buf.golang-json.yaml
+
+buf generate "${TMP_DIR}/agentio.binpb" \
+  --path "${SUBSTRATE_PROTO_DIR}" \
+  --template tools/proto/buf.golang.yaml

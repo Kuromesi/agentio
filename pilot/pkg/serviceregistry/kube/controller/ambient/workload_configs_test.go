@@ -24,6 +24,21 @@ import (
 	"istio.io/istio/pkg/workloadapi"
 )
 
+type fakeActorContextSource struct {
+	actor         *extensions.ActorContext
+	authoritative bool
+	namespace     string
+	podName       string
+	podUID        string
+}
+
+func (f *fakeActorContextSource) ActorContextForWorker(namespace, podName, podUID string) (*extensions.ActorContext, bool) {
+	f.namespace = namespace
+	f.podName = podName
+	f.podUID = podUID
+	return f.actor, f.authoritative
+}
+
 func TestWorkloadConfigsForProxyAttachesCurrentActor(t *testing.T) {
 	const (
 		workerName      = "worker-0"
@@ -127,5 +142,80 @@ func TestWorkloadConfigsForProxyOmitsIncompleteActor(t *testing.T) {
 	}
 	if got[0].Config.GetActorContext() != nil {
 		t.Fatalf("ActorContext = %+v, want nil", got[0].Config.GetActorContext())
+	}
+}
+
+func TestWorkloadConfigsForProxyPrefersAuthoritativeListWorkersBinding(t *testing.T) {
+	const (
+		workerName      = "worker-0"
+		workerNamespace = "workers"
+		workerPodUID    = "pod-uid-1"
+	)
+	source := &fakeActorContextSource{
+		authoritative: true,
+		actor: &extensions.ActorContext{
+			ActorUid:   "api-actor-uid",
+			ActorName:  "api-actor",
+			Atespace:   "tenant-a",
+			Generation: 12,
+		},
+	}
+	a := actorWorkloadConfigTestIndex(source, workerNamespace, workerName, workerPodUID)
+
+	got := a.WorkloadConfigsForProxy(actorWorkloadConfigTestProxy(workerNamespace, workerName), nil)
+	actor := got[0].Config.GetActorContext()
+	if actor == nil || actor.GetActorUid() != "api-actor-uid" || actor.GetGeneration() != 12 {
+		t.Fatalf("ActorContext = %+v, want authoritative ListWorkers Actor", actor)
+	}
+	if source.namespace != workerNamespace || source.podName != workerName || source.podUID != workerPodUID {
+		t.Fatalf("ActorContextForWorker() called with %q/%q uid=%q", source.namespace, source.podName, source.podUID)
+	}
+}
+
+func TestWorkloadConfigsForProxyDoesNotFallBackToLabelsWhenListWorkersIsAuthoritative(t *testing.T) {
+	source := &fakeActorContextSource{authoritative: true}
+	a := actorWorkloadConfigTestIndex(source, "workers", "worker-0", "pod-uid-1")
+
+	got := a.WorkloadConfigsForProxy(actorWorkloadConfigTestProxy("workers", "worker-0"), nil)
+	if actor := got[0].Config.GetActorContext(); actor != nil {
+		t.Fatalf("ActorContext = %+v, want nil for unassigned authoritative Worker", actor)
+	}
+}
+
+func actorWorkloadConfigTestIndex(source actorContextSource, namespace, podName, podUID string) *index {
+	workload := model.WorkloadInfo{
+		Workload: &workloadapi.Workload{
+			Uid:       "//Pod/" + namespace + "/" + podName,
+			Name:      podName,
+			Namespace: namespace,
+		},
+		NativeUID: podUID,
+		Labels: map[string]string{
+			agentio.LabelActorUID:         "spoofed-label-uid",
+			agentio.LabelActorName:        "spoofed-label-actor",
+			agentio.LabelActorAtespace:    "spoofed-tenant",
+			agentio.LabelActorGeneration:  "99",
+			agentio.LabelSandboxProxyType: "ztunnel",
+		},
+	}
+	return &index{
+		SystemNamespace:    "agentio-system",
+		actorContextSource: source,
+		workloads:          workloadsCollection{Collection: krt.NewStaticCollection(nil, []model.WorkloadInfo{workload})},
+		workloadConfigs: krt.NewStaticCollection(nil, []model.WorkloadConfig{{
+			Name:      "default",
+			Namespace: "agentio-system",
+			Config: &extensions.WorkloadConfig{
+				Scope: extensions.WorkloadConfigScope_WORKLOAD_CONFIG_SCOPE_GLOBAL,
+			},
+		}}),
+	}
+}
+
+func actorWorkloadConfigTestProxy(namespace, podName string) *model.Proxy {
+	return &model.Proxy{
+		ID:       podName + "." + namespace,
+		Metadata: &model.NodeMetadata{Namespace: namespace},
+		Labels:   map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
 	}
 }

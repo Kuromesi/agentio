@@ -37,6 +37,22 @@ sidecarInjector:
 agentiod:
   replicas: 1
   env: {}
+  # -- Read Worker-to-Actor assignments from the community Substrate ateapi
+  # ListWorkers RPC. Requires Kubernetes PodCertificate and ClusterTrustBundle
+  # projected volume support. When enabled, this source is authoritative and
+  # Worker Pod Actor labels are not used as a fallback.
+  substrateListWorkers:
+    enabled: false
+    address: dns:///api.ate-system.svc:443
+    serverName: api.ate-system.svc
+    pollInterval: 2s
+    rpcTimeout: 5s
+    pageSize: 1000
+    mountPath: /run/substrate-listworkers
+    clientSignerName: podidentity.podcert.ate.dev/identity
+    serverTrustSignerName: servicedns.podcert.ate.dev/identity
+    trustBundleLabels:
+      podcert.ate.dev/canarying: live
   krtEventDistributeDebounce: "200ms"
   krtEventDistributeDebounceMax: "10s"
   enableTlsTermination: true

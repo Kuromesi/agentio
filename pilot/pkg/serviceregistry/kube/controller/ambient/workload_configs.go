@@ -74,5 +74,15 @@ func (a *index) actorContextForProxy(proxy *model.Proxy) *extensions.ActorContex
 	if workload == nil {
 		return nil
 	}
+	if a.actorContextSource != nil {
+		actor, authoritative := a.actorContextSource.ActorContextForWorker(
+			workload.Workload.GetNamespace(),
+			workload.Workload.GetName(),
+			workload.NativeUID,
+		)
+		if authoritative {
+			return actor
+		}
+	}
 	return agentio.ActorContextFromLabels(workload.Labels)
 }
