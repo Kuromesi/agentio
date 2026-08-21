@@ -332,7 +332,7 @@ $ PROTOC=/tmp/agentio-protoc-29.3/bin/protoc \
 
 ## 11. substrate-poc KinD 实测记录
 
-验证时间：2026-08-15（sidecar/WCDS）、2026-08-17（Ambient）及 2026-08-21（ListWorkers）。
+验证时间：2026-08-15（sidecar/WCDS）、2026-08-17（Ambient）、2026-08-21（ListWorkers）及 2026-08-21 至 2026-08-22（Sidecar/Ambient 全量回归）。
 
 验证集群：`my-ecs` 上的 `substrate-poc` KinD 集群。
 
@@ -403,7 +403,7 @@ all connections closed because the actor binding changed
 
 token 精确选择通过 ztunnel 单元测试验证：测试目录同时放置 `actor-a.token` 和 `actor-b.token`，WCDS 指定 `actor-b` 后，HBONE 请求只携带 `actor-b.token` 的内容。
 
-本次集群实测覆盖了 WCDS 定向下发、per-Worker 隔离和 generation drain；HBONE Actor headers、token 精确选择及 EPE Actor 字段通过聚焦测试覆盖。集群当前使用 passthrough egress policy，未在本次运行中执行真实的 Actor SecurityProfile 拦截决策。
+该轮集群实测覆盖了 WCDS 定向下发、per-Worker 隔离和 generation drain；HBONE Actor headers、token 精确选择及 EPE Actor 字段当时只通过聚焦测试覆盖。后续 11.7 已在真实 Sidecar 和 Ambient Actor 流量上完成 `SecurityProfile` 拦截与交叉隔离验证。
 
 ### 11.4 Ambient 模式 Actor 流量捕获与 egress policy
 
@@ -630,7 +630,7 @@ spiffe://cluster.local/ns/agentio-system/sa/agentiod
 
 测试结束后已暂停并删除临时 Actor，Worker assignment 均为空。集群保留 ListWorkers 集成和 `listworkers-poc-v2` agentiod 镜像，便于后续复测。
 
-11.5 完成时尚未验证 node-level ztunnel 的 ActorContext 和 Ambient HBONE Actor headers；这些项目已由 11.6 的后续实现与实测补齐。Actor selector 驱动的 `SecurityProfile` 和同一个 Worker Pod netns 内多个 Actor 的 per-flow 身份区分仍不在本轮集群验证范围内。
+11.5 完成时尚未验证 node-level ztunnel 的 ActorContext 和 Ambient HBONE Actor headers；这些项目已由 11.6 的后续实现与实测补齐。Actor selector 驱动的 `SecurityProfile` 已由 11.7 补齐；同一个 Worker Pod netns 内多个 Actor 的 per-flow 身份区分仍不在本 PoC 范围内。
 
 本轮远端证据保存在：
 
@@ -750,6 +750,141 @@ Actor 内访问 `/ambient-actorctx-gateway` 返回 `200`，目标服务看到的
 验证中另发现一个独立问题：修改 `agentio-config` 的 Ambient egress policy 后，现有 node ztunnel 不会立即刷新已经缓存的 Workload 内嵌策略，因为该全量 push 没有携带 `AddressesUpdated`，WDS generator 会跳过地址增量。重启 ztunnel 后新策略生效。Actor assignment 回调已经显式填充 `AddressesUpdated`，不受这个问题影响；通用的 Ambient egress policy 热更新仍需要单独修复。
 
 测试结束后已暂停并删除临时 Actor、ActorTemplate、Worker Pod 和 WorkerPool；`agentio-config` 已恢复为 `PASSTHROUGH`，临时网关 Actor 日志字段已移除，agentio-egress、agentiod 和两个 ztunnel Pod 均恢复 Ready。
+
+### 11.7 Sidecar 与 Ambient 全量回归
+
+2026-08-21 至 2026-08-22 在 `ssh my-ecs` 的 `substrate-poc` KinD 集群上，对 Sidecar 和 Ambient 两种模式执行了同一组完整场景。测试没有依赖 Worker Pod 的 Actor label：Actor assignment 和 generation 均来自 Substrate `ListWorkers`。
+
+测试使用以下两个 Actor：
+
+| 模式 | Actor | Actor UID | Worker | 初始/恢复 generation |
+|---|---|---|---|---|
+| Sidecar | `fulltest-sidecar-20260821` | `9b4bda2c-de29-4fe8-868f-959d4bdd7b77` | `egress-6b9549c9ff-pbfk6` | `2` / `4` |
+| Ambient | `fulltest-ambient-20260821` | `505de271-4956-49a4-b5b4-a1ad5b10b789` | `fulltest-ambient-worker` | `2` / `4` |
+
+Sidecar Worker 使用 native sidecar 形式的 `istio-proxy` init container；Ambient Worker 明确关闭 sidecar 注入，只加入 Ambient 数据面：
+
+```yaml
+metadata:
+  annotations:
+    sidecar.istio.io/inject: "false"
+    istio.io/dataplane-mode: ambient
+    istio.io/reroute-virtual-interfaces: ateom0
+    ambient.istio.io/dns-capture: "false"
+```
+
+#### 11.7.1 xDS 身份下发与隔离
+
+- Sidecar：分配到 Actor 的 Worker sidecar WCDS 中出现 generation `2` 的 ActorContext；同 WorkerPool 的另一个 sidecar 中没有该 ActorContext。
+- Ambient：Worker 节点 ztunnel 的 WDS `Workload.extensions` 中，仅 `fulltest-ambient-worker` 带有 generation `2` 的 ActorContext；控制平面节点 ztunnel 中匹配数量为 `0`。
+- Sidecar WCDS 中没有 Ambient Actor UID；控制平面节点 WDS 中也没有 Sidecar 或 Ambient 测试 Actor UID，证明两种分发路径没有串用身份。
+- Actor suspend 后相应 ActorContext 都收敛为 `0`；resume 后恢复到 generation `4`，未分配的 Sidecar 和其他节点仍然为 `0`。
+
+连接清理行为也符合设计边界：
+
+- Sidecar WCDS 绑定清除时记录 `all connections closed because the actor binding changed`，关闭该专用 sidecar 的旧连接。
+- Ambient WDS 绑定清除时按 Workload UID `substrate-poc//Pod/ate-demo-egress/fulltest-ambient-worker` 定向关闭连接，没有 drain 同节点其他 Workload。
+
+#### 11.7.2 PASSTHROUGH、DENY 与 GATEWAY
+
+测试临时创建两个指向同一 HTTP backend 的 Service IP，使三类策略可以并行存在：
+
+```yaml
+egressPolicies:
+- namespaces: [ate-demo-egress]
+  matchCidrs: [10.96.234.91/32]
+  matchPorts: ["80"]
+  policy: DENY
+- namespaces: [ate-demo-egress]
+  matchCidrs: [10.96.38.220/32]
+  matchPorts: ["80"]
+  policy: GATEWAY
+  gateway:
+    service: agentio-egress.agentio-system.svc.cluster.local
+- policy: PASSTHROUGH
+```
+
+结果如下：
+
+| 场景 | Sidecar | Ambient | 判定依据 |
+|---|---:|---:|---|
+| PASSTHROUGH | `200` | `200` | backend 看到源 IP 分别为对应 Worker Pod IP |
+| DENY | 外层 `502`，内部连接 `EOF` | 外层 `502`，内部连接 `EOF` | TCP 连接在 ztunnel egress policy 中被拒绝 |
+| GATEWAY | `200` | `200` | backend 看到源 IP 为 gateway Pod `10.244.1.211` |
+| GATEWAY generation 2 | UID/generation 正确 | UID/generation 正确 | gateway access log |
+| GATEWAY generation 4 | UID/generation 正确 | UID/generation 正确 | suspend/resume 后 gateway access log |
+
+Ambient Worker netns 中同时验证了真实捕获路径：
+
+```text
+ateom0@if2 UP 169.254.17.1/30
+*:15001, *:15006, *:15008
+-A ISTIO_PRERT -i ateom0 -p tcp -j REDIRECT --to-ports 15001
+```
+
+三次策略请求后，`ateom0 -> 15001` 规则计数从 `[0:0]` 增加到 `[3:180]`。因此 Ambient 的三个结果都来自 node ztunnel 在 Worker netns 内建立的监听 socket，不是 Actor 直连目标。
+
+两个 Actor 在 generation `4` 时又同时访问 GATEWAY 目标：网关分别记录 Ambient UID `505de271-4956-49a4-b5b4-a1ad5b10b789` 和 Sidecar UID `9b4bda2c-de29-4fe8-868f-959d4bdd7b77`，两条记录都没有发生身份串用。
+
+#### 11.7.3 Actor 级 SecurityProfile
+
+本轮临时启用了真实 EPE Deployment，并创建两个只按 Actor name label 匹配的 `SecurityProfile`。策略位于 Worker 所在 namespace `ate-demo-egress`：
+
+```yaml
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: fulltest-sidecar-actor
+  namespace: ate-demo-egress
+spec:
+  selector:
+    matchLabels:
+      agentio.io/actor-name: fulltest-sidecar-20260821
+  rules:
+  - name: block-sidecar-actor
+    match:
+    - domains: ["*"]
+      paths:
+      - type: Exact
+        value: /fulltest-sidecar-epe-block
+      methods: [GET]
+    actions:
+      block:
+        statusCode: 451
+        body: sidecar-actor-block
+```
+
+Ambient 使用相同结构，但 selector 为 `fulltest-ambient-20260821`，路径为 `/fulltest-ambient-epe-block`，返回码为 `452`。验证结果：
+
+| 请求 | HTTP 结果 | 结论 |
+|---|---:|---|
+| Sidecar Actor -> Sidecar block path | `451`，`sidecar-actor-block` | Sidecar Actor labels 命中 |
+| Ambient Actor -> Ambient block path | `452`，`ambient-actor-block` | Ambient Workload Actor labels 命中 |
+| Sidecar Actor -> Ambient block path | `200` | 未误用 Ambient Actor labels |
+| Ambient Actor -> Sidecar block path | `200` | 未误用 Sidecar Actor labels |
+
+这补齐了 ActorContext labels 到 gateway filter state、EPE `Peer.Labels` 和 `SecurityProfile` selector 的真实端到端证据。Worker Pod 不需要随 Actor assignment 修改 label。
+
+#### 11.7.4 恢复状态与证据
+
+测试结束后执行并验证了以下恢复动作：
+
+- suspend 并删除两个测试 Actor；删除临时 SecurityProfile、Ambient ActorTemplate、Worker Pod、WorkerPool 和两个测试 Service。
+- 关闭临时 EPE Deployment。
+- `agentio-config` 与 mesh ConfigMap 内容逐字恢复为测试前备份，egress policy 回到全局 `PASSTHROUGH`。
+- `agentiod=1/1`、`agentio-egress=1/1`、node ztunnel `2/2`、Agentio CNI `2/2`。
+- 原 `ate-demo-egress/egress` Sidecar Worker `2/2` Ready，两个 Worker 均使用 `localhost:5000/ztunnel:actor-workload-poc-v1`。
+- 所有名称包含 `fulltest-` 的测试 Actor 和 Kubernetes 临时资源均已不存在。
+
+本轮原始证据保存在：
+
+```text
+my-ecs:/opt/substrate-poc/agentio-full-mode-validation-20260821/
+```
+
+其中 `sidecar/`、`ambient/`、`epe/` 和 `final/` 分别保存两种模式的 xDS dump、请求响应、gateway/ztunnel 日志、SecurityProfile 结果及恢复后的集群快照。
+
+本轮仍确认一个已知限制：普通 `AgentioConfig` egress policy 修改触发的 Ambient 全量 push 缺少 `AddressesUpdated`，现有 node ztunnel 需要重启才能立即取得新的 Workload 内嵌策略；Actor assignment 的 WDS delta 和本轮 generation 更新不受影响。
 
 ## 12. 代码与分支
 
