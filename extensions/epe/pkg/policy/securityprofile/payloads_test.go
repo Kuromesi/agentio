@@ -15,15 +15,19 @@ package securityprofile
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/filters/block"
 	"istio.io/istio/extensions/epe/pkg/filters/bypass"
 	"istio.io/istio/extensions/epe/pkg/filters/mcpacl"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
+	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
 // registeredNames spells out the registration set wiring.BuildFilters
@@ -176,4 +180,113 @@ func keys(m map[string]json.RawMessage) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestProjectRecordsFailuresPerRule pins what lets an inline per-Sandbox
+// profile survive one bad action. Project returns the first failure for the
+// CRD compiler to reject a version with, but it records failures per rule, so
+// a caller that keeps the profile — the inline collection, which has no
+// last-known-good to fall back to — keeps every other rule enforceable.
+func TestProjectRecordsFailuresPerRule(t *testing.T) {
+	boom := errors.New("malformed")
+	regs, err := filter.Build(filter.Define(filter.Descriptor[string]{
+		Name:   block.FilterName,
+		Phases: filter.PhaseRequestHeaders,
+		New:    func(filter.RuleConfig[string]) filter.Filter { return nopFilter{} },
+	}, func(raw json.RawMessage) (string, error) {
+		var payload struct {
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return "", err
+		}
+		if payload.Body == "bad" {
+			return "", boom
+		}
+		return payload.Body, nil
+	}))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	sp := compile(t, nil, "p", "ns", "1", []v1alpha1.SecurityRule{
+		matchAllRule("good"), matchAllRule("bad"), matchAllRule("also-good"),
+	})
+	if err := sp.Project(regs); !errors.Is(err, boom) {
+		t.Fatalf("Project() = %v, want the wrapped parse error", err)
+	}
+	if len(sp.Projections) != len(sp.Rules) {
+		t.Fatalf("Projections = %d, want one per rule (%d)", len(sp.Projections), len(sp.Rules))
+	}
+	for i, want := range []bool{false, true, false} {
+		got := sp.Projections[i].Errs[0] != nil
+		if got != want {
+			t.Errorf("rule %q recorded error = %v, want %v", sp.Rules[i].Name, got, want)
+		}
+	}
+	if cfg, _ := sp.Projections[2].Cfgs[0].(string); cfg != "also-good" {
+		t.Errorf("rule after the failing one projected %#v, want its own config", sp.Projections[2].Cfgs[0])
+	}
+}
+
+// A profile that never went through Project, or went through it against a
+// different filter chain, must not be evaluated: the projections are indexed
+// by registration position, so binding one would hand a filter another
+// filter's configuration.
+func TestBindRefusesUnprojectedProfile(t *testing.T) {
+	regs := claimAll(t, nil)
+	b := newBinder(regs)
+
+	unprojected := compile(t, nil, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	unprojected.Projections = nil
+	if _, err := b.bind([]*Profile{unprojected}, testRequest("example.com"), inputs.Pod{}); err == nil ||
+		!strings.Contains(err.Error(), "was not projected") {
+		t.Fatalf("bind(unprojected) = %v, want a not-projected error", err)
+	}
+
+	// Projected, but against a chain of a different size.
+	otherChain, err := filter.Build(
+		filter.Define(filter.Descriptor[string]{
+			Name:   block.FilterName,
+			Phases: filter.PhaseRequestHeaders,
+			New:    func(filter.RuleConfig[string]) filter.Filter { return nopFilter{} },
+		}, func(json.RawMessage) (string, error) { return "", nil }),
+		filter.Define(filter.Descriptor[string]{
+			Name:   "extra",
+			Phases: filter.PhaseRequestHeaders,
+			New:    func(filter.RuleConfig[string]) filter.Filter { return nopFilter{} },
+		}, func(json.RawMessage) (string, error) { return "", nil }),
+	)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mismatched := compile(t, otherChain, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	if _, err := b.bind([]*Profile{mismatched}, testRequest("example.com"), inputs.Pod{}); err == nil ||
+		!strings.Contains(err.Error(), "different filter chain") {
+		t.Fatalf("bind(mismatched) = %v, want a chain-mismatch error", err)
+	}
+
+	// Same length, different order: the projections are positional, so this
+	// must be refused too even though the length check would pass.
+	reordered, err := filter.Build(
+		filter.Define(filter.Descriptor[string]{
+			Name:   "extra",
+			Phases: filter.PhaseRequestHeaders,
+			New:    func(filter.RuleConfig[string]) filter.Filter { return nopFilter{} },
+		}, func(json.RawMessage) (string, error) { return "", nil }),
+		filter.Define(filter.Descriptor[string]{
+			Name:   block.FilterName,
+			Phases: filter.PhaseRequestHeaders,
+			New:    func(filter.RuleConfig[string]) filter.Filter { return nopFilter{} },
+		}, func(json.RawMessage) (string, error) { return "", nil }),
+	)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	swapped := compile(t, reordered, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	twoFilterBinder := newBinder(otherChain)
+	if _, err := twoFilterBinder.bind([]*Profile{swapped}, testRequest("example.com"), inputs.Pod{}); err == nil ||
+		!strings.Contains(err.Error(), "different filter chain") {
+		t.Fatalf("bind(reordered chain) = %v, want a chain-mismatch error", err)
+	}
 }

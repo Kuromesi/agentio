@@ -335,14 +335,14 @@ type Meta struct {
 	Namespace         string
 	CreationTimestamp metav1.Time
 	Priority          int32
-	// Version is the source object's resourceVersion, captured so
-	// downstream projection caches can key on (identity, version).
+	// Version is the source object's resourceVersion, carried for admin
+	// output and for identifying which version of a profile is installed.
 	Version string
 	// Source identifies the object kind the profile was compiled from:
 	// empty for SecurityProfile/GlobalSecurityProfile, SourceInline for
 	// per-Sandbox annotation chains. A Sandbox and a SecurityProfile in one
-	// namespace may share a name and even a resourceVersion, so caches keyed
-	// on namespace/name must include the source to stay collision-free.
+	// namespace may share a name and even a resourceVersion, so anything
+	// keyed on namespace/name must include the source to stay collision-free.
 	Source string
 }
 
@@ -358,6 +358,19 @@ type Profile struct {
 	Selector labels.Selector
 	Rules    []Rule         // parallel to the source Spec.Rules
 	Audits   []*audit.Audit // spec-level compiled audit entries
+	// Projections holds each rule's per-filter configuration, parallel to
+	// Rules, built once by Project when the collection item is compiled. It
+	// lives on the profile so the compiled objects a rule needs share the
+	// profile version's lifetime: nothing on the request path compiles a
+	// second copy, and nothing outlives the version it belongs to.
+	//
+	// Never serialized: krt's debug handler marshals collection outputs
+	// verbatim, and these configs hold compiled templates whose parse trees are
+	// exported all the way down.
+	Projections []RuleProjection `json:"-"`
+	// projectedAgainst fingerprints the filter chain Projections was built
+	// against, so the binder can refuse a profile projected against another.
+	projectedAgainst string
 	// Inputs is the immutable, profile-scoped snapshot resolved while the
 	// profile's krt collection item is compiled. Each value is a
 	// map[string]string sourced from either inline data or a ConfigMap.

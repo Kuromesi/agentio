@@ -79,6 +79,10 @@ Go templates use `missingkey=zero` and expose only this helper allowlist: `defau
 
 `values` follows Go map iteration order. Using `values | first` is deterministic for a single-key object, but templates that need deterministic selection from a multi-key map must address a named key directly.
 
+`fromJson` yields nothing when its input is not valid JSON, so guard with `kindIs` before treating the result as a map or list; `first` aborts the render when given something that is not a list. Indexing a key the JSON object does not carry yields an untyped nothing that `default`, `trim`, and `hasPrefix` all reject, so guard the key rather than relying on `default` as a fallback for it.
+
+Use `fail` to abort a render deliberately. What that costs depends on the action: a token transformation follows its `failStrategy`, so `Allow` and `Ignore` forward the request without the mutation, while a header mutation has no fail-open option and returns `500`, discarding any header changes earlier filters had staged for that request. `values` needs a `map<string, dyn>`; `.Pod.Labels` and a single named input are string maps, so `values` accepts `.Inputs` itself and `fromJson` output but not those.
+
 | Template root | Values |
 | --- | --- |
 | Token transformation `apiKey.valueTemplate` | `.Token`, `.Pod`, `.Inputs` only. `.Pod` has `Name`, `Namespace`, `IP`, `Labels`, and `Label key`; `.Inputs` is the profile input map. |

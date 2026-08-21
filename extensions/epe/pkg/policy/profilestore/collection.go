@@ -108,7 +108,10 @@ func RegisterTypes(agentsCS agentsclient.Interface) {
 // parameter CEL expression, a malformed action document — rejects the version
 // here and the store keeps serving the last known good one, instead of
 // surfacing on the first matching request where the ext_proc provider's
-// global failureModeAllow would decide the outcome.
+// global failureModeAllow would decide the outcome. The request path reads
+// that projection; it never builds one. Per-Sandbox inline profiles are
+// projected here too but are not rejected by a failure — see
+// newInlineCollection.
 func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt.DebugHandler, stop <-chan struct{}) krt.Collection[securityprofile.Profile] {
 	opts := krt.NewOptionsBuilder(stop, "epe", debugger)
 	log := ctrllog.Log.WithName("profile")
@@ -153,7 +156,7 @@ func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt
 	// batch per window (KRT_EVENT_DISTRIBUTE_DEBOUNCE[_MAX], default off),
 	// so RegisterCollection's applyBatch rebuilds the snapshot once per
 	// batch instead of once per profile change.
-	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newInlineCollection(client, opts, log)},
+	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newInlineCollection(client, regs, opts, log)},
 		append(opts.WithName("CompiledProfiles"),
 			krt.WithDebounce(features.KrtEventDistributeDebounce, features.KrtEventDistributeDebounceMax))...)
 }
@@ -168,7 +171,17 @@ func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt
 // the 404 list forever, never sync, and wedge startup behind
 // WaitUntilSynced. Objects without the annotation emit nil and contribute no
 // rules.
-func newInlineCollection(client kube.Client, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
+//
+// Rule payloads are projected against regs here as they are for CRD profiles,
+// so the request path compiles nothing. Failure semantics are also the CRD
+// profile's: a version that fails to compile or project becomes an
+// identity-bearing invalid item, so the store keeps serving the last known
+// good version of that Sandbox's rules when one exists and installs nothing
+// otherwise. The rules are authored at Sandbox creation, so a rejected first
+// version not taking effect is the expected authoring feedback — surfaced by
+// the inline stale/unenforced metrics rather than by a partially enforced
+// chain. An empty annotation stays a legitimate removal (nil item).
+func newInlineCollection(client kube.Client, regs []filter.Registration, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
 	sandboxInf := kclient.NewDelayedInformer[*metav1.PartialObjectMetadata](client,
 		sandboxGVR, kubetypes.MetadataInformer,
 		kclient.Filter{ObjectFilter: client.ObjectFilter()})
@@ -180,14 +193,14 @@ func newInlineCollection(client kube.Client, opts krt.OptionsBuilder, log logr.L
 			return nil
 		}
 		p, err := securityprofile.NewInlineProfile(o)
+		if err == nil {
+			err = p.Project(regs)
+		}
 		if err != nil {
-			// The annotation is written by the Sandbox Manager, so a compile
-			// failure indicates a schema disagreement; drop the rules rather
-			// than guessing. Unlike CRD profiles there is no last-known-good:
-			// the pod's own rules cannot be served from a prior version
-			// once the pod moved on.
+			// Whether an older version is still being served is the store's
+			// knowledge; applyBatch logs and meters that.
 			log.Error(err, "inline security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
-			return nil
+			return securityprofile.InvalidInlineProfile(o, err)
 		}
 		return p
 	}, opts.WithName("CompiledInlineProfiles")...)
@@ -204,7 +217,7 @@ func compileProfile(
 	if err != nil {
 		return nil, err
 	}
-	if err := sp.ValidateProjections(regs); err != nil {
+	if err := sp.Project(regs); err != nil {
 		return nil, err
 	}
 	// Static input authoring errors reject the version like any other compile

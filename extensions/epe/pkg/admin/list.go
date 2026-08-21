@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
 	"istio.io/istio/extensions/epe/pkg/labels"
@@ -100,7 +101,7 @@ func (h *handler) handleMatch(w http.ResponseWriter, r *http.Request, podName, n
 		writeError(w, http.StatusBadRequest, "namespace is required when pod_labels or pod_name is provided")
 		return
 	}
-	matched := h.store.Matches(podName, namespace, labels)
+	matched := h.store.ProfilesFor(inputs.Pod{Name: podName, Namespace: namespace, Labels: labels})
 	views := make([]ProfileView, 0, len(matched))
 	for _, p := range matched {
 		v := toView(p)

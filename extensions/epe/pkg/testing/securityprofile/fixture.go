@@ -25,7 +25,10 @@ import (
 	"sigs.k8s.io/yaml"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
+	"istio.io/istio/extensions/epe/pkg/wiring"
+	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/yml"
 )
 
@@ -54,10 +57,27 @@ type Fixture struct {
 }
 
 // NewFixture returns an empty fixture backed by a fresh FakeStore.
-func NewFixture(t testing.TB) *Fixture {
+//
+// Seeded profiles are projected against regs. Pass the registration set the
+// resolver under test uses; with none, the fixture builds the default chain,
+// which is what a test that only seeds and reads profiles wants.
+//
+// The default chain is built with a stop channel tied to the test's lifetime:
+// BuildFilters starts the credential provider's certificate file watcher and
+// its backstop ticker, and a nil stop channel would leave both running for the
+// rest of the test binary. Harness.New passes its own regs, so this path is
+// only for a fixture used on its own.
+func NewFixture(t testing.TB, regs ...filter.Registration) *Fixture {
 	t.Helper()
+	if len(regs) == 0 {
+		built, err := wiring.BuildFilters(wiring.Deps{Stop: test.NewStop(t)})
+		if err != nil {
+			t.Fatalf("securityprofile: BuildFilters: %v", err)
+		}
+		regs = built
+	}
 	return &Fixture{
-		Store: profilestore.MakeFakeStore(),
+		Store: profilestore.MakeFakeStore(regs...),
 		t:     t,
 	}
 }

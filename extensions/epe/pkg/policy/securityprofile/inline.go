@@ -44,8 +44,11 @@ const AnnotationSecurityRules = "agents.kruise.io/security-rules"
 // Profile. It reads only object metadata, so callers can feed it
 // PartialObjectMetadata from a metadata-only informer. The returned profile
 // carries an empty selector (inline rules are looked up by identity, not
-// matched by labels) and the Sandbox's resourceVersion so projection caches
-// can key on it like any CRD profile.
+// matched by labels) and the Sandbox's resourceVersion, so it is identified
+// like any CRD profile version.
+//
+// The returned profile is not yet projected: the caller must call Project
+// before it can be bound, exactly as for a CRD profile.
 //
 // Unknown JSON fields fail the compile: the annotation is a server artifact
 // and anything unrecognized means the writer and reader disagree about the
@@ -82,6 +85,30 @@ func NewInlineProfile(sandbox metav1.Object) (*Profile, error) {
 		Selector: labels.Nothing(),
 		Rules:    rules,
 	}, nil
+}
+
+// InvalidInlineProfile returns an identity-bearing collection item for a
+// Sandbox whose inline rules failed to compile or project — the inline
+// counterpart of InvalidProfile. It is never eligible for matching; the
+// profile store recognizes CompileError and retains any last-known-good
+// inline version under the same identity, so a bad annotation update does
+// not silently remove rules that were enforcing.
+func InvalidInlineProfile(sandbox metav1.Object, err error) *Profile {
+	message := "invalid inline security rules"
+	if err != nil {
+		message = err.Error()
+	}
+	return &Profile{
+		Meta: Meta{
+			Name:              sandbox.GetName(),
+			Namespace:         sandbox.GetNamespace(),
+			CreationTimestamp: sandbox.GetCreationTimestamp(),
+			Version:           sandbox.GetResourceVersion(),
+			Source:            SourceInline,
+		},
+		Selector:     labels.Nothing(),
+		CompileError: message,
+	}
 }
 
 // escapeInlineHeaderValues neutralizes Go template delimiters in inline set

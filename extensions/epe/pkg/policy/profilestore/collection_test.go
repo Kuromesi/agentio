@@ -26,6 +26,7 @@ import (
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/kclient/clienttest"
 	"istio.io/istio/pkg/kube/krt"
@@ -59,7 +60,7 @@ func TestProfileCollection_ConfigMapInputDependency(t *testing.T) {
 	}
 
 	assertState := func(wantInputs map[string]any, wantUnavailable bool) error {
-		matched := store.Matches("", "ns-a", map[string]string{"app": "test"})
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
@@ -153,7 +154,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 
 	// Initial state replay delivers the pre-existing profile.
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-a", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-a, got %d", n)
 		}
 		return nil
@@ -165,7 +166,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-b", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-b, got %d", n)
 		}
 		return nil
@@ -177,7 +178,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-c", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected global profile to match ns-c, got %d", n)
 		}
 		return nil
@@ -197,7 +198,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("compiled collection has not observed invalid update")
 		}
-		matched := store.Matches("", "ns-b", map[string]string{"app": "test"})
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 2 {
 			names := make([]string, 0, len(matched))
 			for _, sp := range matched {
@@ -213,7 +214,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-c", map[string]string{"app": "test"})); n != 0 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 0 {
 			return fmt.Errorf("expected global profile removal, still %d matches", n)
 		}
 		return nil
@@ -253,7 +254,7 @@ func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("collection did not sync while the Sandbox CRD is absent")
 	}
-	if got := store.Matches("sbx-1", "sandboxes", nil); len(got) != 0 {
+	if got := store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"}); len(got) != 0 {
 		t.Fatalf("Matches = %+v, want no profiles without the CRD", got)
 	}
 }
@@ -290,7 +291,7 @@ func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
 	}
 
 	retry.UntilSuccessOrFail(t, func() error {
-		matched := store.Matches("", "ns-a", map[string]string{"app": "test"})
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1 despite the missing ConfigMap", len(matched))
 		}
@@ -317,7 +318,7 @@ func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		matched := store.Matches("", "ns-a", map[string]string{"app": "test"})
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
@@ -370,7 +371,7 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 	}
 
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-a", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected 1 match, got %d", n)
 		}
 		return nil
@@ -395,7 +396,7 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("projection error has not rejected the update")
 		}
-		matched := store.Matches("", "ns-a", map[string]string{"app": "test"})
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 1 {
 			return fmt.Errorf("expected last-known-good version to keep serving, got %d matches", len(matched))
 		}

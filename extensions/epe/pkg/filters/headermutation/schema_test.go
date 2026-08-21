@@ -301,6 +301,45 @@ func TestParseProbeAcceptsDataDependentTemplates(t *testing.T) {
 		{name: "pod label", raw: `{"response":{"set":[{"name":"X-A","value":"{{ .Pod.Label \"app\" }}"}]}}`},
 		{name: "request header", raw: `{"response":{"add":[{"name":"X-A","value":"{{ .Request.Header \"x-id\" }}"}]}}`},
 		{name: "rule name", raw: `{"response":{"add":[{"name":"X-B","value":"{{ .Rule.Name }}"}]}}`},
+		// The probe has no request, so a guard that calls fail and a JSON
+		// extraction chain would both report an authoring error that does not
+		// exist — and here that would unenforce every rule in the profile.
+		{
+			name: "guard that fails closed at request time",
+			raw: `{"request":{"set":[{"name":"X-A","value":` +
+				`"{{ if hasPrefix \"Bearer \" (.Request.Header \"authorization\") }}ok{{ else }}{{ fail \"no bearer\" }}{{ end }}"}]}}`,
+		},
+		{
+			// fromJson yields nil for the probe's empty header, and first
+			// panics on it.
+			name: "json extraction chain",
+			raw: `{"request":{"set":[{"name":"X-A","value":` +
+				`"{{ first (fromJson (.Request.Header \"x-json\")) }}"}]}}`,
+		},
+		// The nil a missing key yields is untyped, so every string-typed helper
+		// downstream of fromJson rejects it under the probe. These four are the
+		// idiomatic shapes, including the one the request-context reference
+		// documents first.
+		{
+			name: "default over a missing json key",
+			raw: `{"request":{"set":[{"name":"X-A","value":` +
+				`"{{ default \"anon\" (index (fromJson (.Request.Header \"x-json\")) \"sub\") }}"}]}}`,
+		},
+		{
+			name: "trim over a missing json key",
+			raw: `{"request":{"set":[{"name":"X-A","value":` +
+				`"{{ trim (index (fromJson (.Request.Header \"x-json\")) \"sub\") }}"}]}}`,
+		},
+		{
+			name: "hasPrefix guard over a missing json key",
+			raw: `{"request":{"set":[{"name":"X-A","value":` +
+				`"{{ if hasPrefix \"Bearer \" (index (fromJson (.Request.Header \"x-json\")) \"a\") }}y{{ end }}"}]}}`,
+		},
+		{
+			name: "index into the values of an empty object",
+			raw: `{"request":{"set":[{"name":"X-A","value":` +
+				`"{{ index (values (fromJson (.Request.Header \"x-json\"))) 0 }}"}]}}`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := parse(json.RawMessage(tc.raw)); err != nil {

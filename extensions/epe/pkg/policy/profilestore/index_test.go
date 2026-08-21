@@ -116,10 +116,7 @@ func TestBuildProfileIndexSelectsLeastPopulatedAnchor(t *testing.T) {
 		t.Fatalf("fallback = %v, want empty", profileNames(index.fallback))
 	}
 
-	matched := index.appendMatches(
-		map[string]string{"app": "agent", "sandbox-id": "two"},
-		labels.Set{"app": "agent", "sandbox-id": "two"}, nil,
-	)
+	matched := index.appendMatches(labels.Set{"app": "agent", "sandbox-id": "two"}, nil)
 	if got := profileNames(matched); !slices.Equal(got, []string{"middle"}) {
 		t.Fatalf("appendMatches() = %v, want [middle]", got)
 	}
@@ -156,8 +153,7 @@ func TestBuildProfileIndexHandlesInAndFallbackSelectors(t *testing.T) {
 		t.Fatalf("fallback = %v, want [all team-exists tenant-not-in]", got)
 	}
 
-	podLabels := map[string]string{"tenant": "b", "team": "core"}
-	matched := index.appendMatches(podLabels, labels.Set(podLabels), nil)
+	matched := index.appendMatches(labels.Set{"tenant": "b", "team": "core"}, nil)
 	securityprofile.SortProfiles(matched)
 	if got := profileNames(matched); !slices.Equal(got, []string{"all", "team-exists", "tenant-in", "tenant-not-in"}) {
 		t.Fatalf("appendMatches() = %v, want every matching profile exactly once", got)
@@ -170,8 +166,7 @@ func TestBuildProfileIndexRechecksCompleteSelector(t *testing.T) {
 	}})
 	index := buildProfileIndex([]*securityprofile.Profile{profile})
 
-	podLabels := map[string]string{"app": "other", "sandbox-id": "pod-1"}
-	if got := index.appendMatches(podLabels, labels.Set(podLabels), nil); len(got) != 0 {
+	if got := index.appendMatches(labels.Set{"app": "other", "sandbox-id": "pod-1"}, nil); len(got) != 0 {
 		t.Fatalf("appendMatches() = %v, want no match when a non-anchor requirement fails", profileNames(got))
 	}
 }

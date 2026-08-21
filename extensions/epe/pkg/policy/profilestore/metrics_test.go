@@ -15,6 +15,7 @@ package profilestore
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -89,19 +90,30 @@ func TestApplyBatch_ValidItemCountsNothing(t *testing.T) {
 	}
 }
 
-// staleValue reports the gauge for one identity and whether the series exists.
-func staleValue(t testing.TB, namespace, name string) (float64, bool) {
+// staleCount reports how many sources in one scope are serving an older
+// version. The gauges carry no identity, so a test asserts the count for its
+// scope; attribution is the log line's job.
+func staleCount(t testing.TB, scope string) float64 {
 	t.Helper()
-	return gaugeValue(t, "epe_profile_stale", namespace, name)
+	return gaugeValue(t, "epe_profile_stale", scope)
 }
 
-// unenforcedValue reports the gauge marking identities with nothing installed.
-func unenforcedValue(t testing.TB, namespace, name string) (float64, bool) {
+// unenforcedCount reports how many sources in one scope have nothing installed.
+func unenforcedCount(t testing.TB, scope string) float64 {
 	t.Helper()
-	return gaugeValue(t, "epe_profile_unenforced", namespace, name)
+	return gaugeValue(t, "epe_profile_unenforced", scope)
 }
 
-func gaugeValue(t testing.TB, metricName, namespace, name string) (float64, bool) {
+// inputsUnavailableCount reports how many installed profiles in one scope are
+// serving with unresolved inputs.
+func inputsUnavailableCount(t testing.TB, scope string) float64 {
+	t.Helper()
+	return gaugeValue(t, "epe_profile_inputs_unavailable", scope)
+}
+
+// gaugeValue reads one scope's series. Every scope is always published, so a
+// missing series is a failure rather than an implicit zero.
+func gaugeValue(t testing.TB, metricName, scope string) float64 {
 	t.Helper()
 	families, err := metrics.Registry.Gather()
 	if err != nil {
@@ -112,16 +124,15 @@ func gaugeValue(t testing.TB, metricName, namespace, name string) (float64, bool
 			continue
 		}
 		for _, m := range f.GetMetric() {
-			got := map[string]string{}
 			for _, l := range m.GetLabel() {
-				got[l.GetName()] = l.GetValue()
-			}
-			if got["namespace"] == namespace && got["name"] == name {
-				return m.GetGauge().GetValue(), true
+				if l.GetName() == "scope" && l.GetValue() == scope {
+					return m.GetGauge().GetValue()
+				}
 			}
 		}
 	}
-	return 0, false
+	t.Fatalf("gauge %s has no series for scope %q", metricName, scope)
+	return 0
 }
 
 func installGood(t testing.TB, s *store, name, namespace string) *securityprofile.Profile {
@@ -145,9 +156,8 @@ func TestApplyBatch_InvalidUpdateMarksProfileStale(t *testing.T) {
 		{Old: good, New: invalidNamespaced("stale-me", "default"), Event: controllers.EventUpdate},
 	})
 
-	v, ok := staleValue(t, "default", "stale-me")
-	if !ok || v != 1 {
-		t.Fatalf("stale gauge = (%v, exists=%v), want (1, true)", v, ok)
+	if got := staleCount(t, scopeNamespaced); got != 1 {
+		t.Fatalf("stale count for scope %q = %v, want 1", scopeNamespaced, got)
 	}
 }
 
@@ -157,14 +167,14 @@ func TestApplyBatch_ValidVersionClearsStale(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: good, New: invalidNamespaced("recover-me", "default"), Event: controllers.EventUpdate},
 	})
-	if _, ok := staleValue(t, "default", "recover-me"); !ok {
-		t.Fatal("precondition: profile should be marked stale")
+	if got := staleCount(t, scopeNamespaced); got != 1 {
+		t.Fatalf("precondition: stale count = %v, want 1", got)
 	}
 
 	installGood(t, s, "recover-me", "default")
 
-	if _, ok := staleValue(t, "default", "recover-me"); ok {
-		t.Fatal("stale series still present after a valid version landed; absence must mean healthy")
+	if got := staleCount(t, scopeNamespaced); got != 0 {
+		t.Fatalf("stale count = %v after a valid version landed, want 0", got)
 	}
 }
 
@@ -174,16 +184,16 @@ func TestApplyBatch_DeleteClearsStale(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: good, New: invalidNamespaced("delete-me", "default"), Event: controllers.EventUpdate},
 	})
-	if _, ok := staleValue(t, "default", "delete-me"); !ok {
-		t.Fatal("precondition: profile should be marked stale")
+	if got := staleCount(t, scopeNamespaced); got != 1 {
+		t.Fatalf("precondition: stale count = %v, want 1", got)
 	}
 
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: good, Event: controllers.EventDelete},
 	})
 
-	if _, ok := staleValue(t, "default", "delete-me"); ok {
-		t.Fatal("stale series leaked after the profile was deleted")
+	if got := staleCount(t, scopeNamespaced); got != 0 {
+		t.Fatalf("stale count = %v after the profile was deleted, want 0", got)
 	}
 }
 
@@ -194,17 +204,16 @@ func TestApplyBatch_RejectedWithNoPriorVersionIsNotStale(t *testing.T) {
 		{New: invalidNamespaced("never-installed", "default"), Event: controllers.EventAdd},
 	})
 
-	if _, ok := staleValue(t, "default", "never-installed"); ok {
-		t.Fatal("nothing is being served for this identity, so it is absent, not stale")
+	if got := staleCount(t, scopeNamespaced); got != 0 {
+		t.Fatalf("stale count = %v, want 0: nothing is being served, so it is unenforced, not stale", got)
 	}
 }
 
 // The dangerous case: a profile whose first published version was rejected.
 // Nothing is installed, so no rule of it is enforced — the pods it targets are
-// unprotected. `stale` deliberately stays absent here (nothing is being
-// served), and the compile counter carries no identity, so without this gauge
-// the operator cannot tell WHICH profile is unenforced, only that some
-// rejection happened somewhere.
+// unprotected. `stale` deliberately stays zero here (nothing is being served),
+// which is what separates "still protected by an older version" from "not
+// protected at all" without either gauge naming an object.
 func TestApplyBatch_RejectedWithNoPriorVersionIsUnenforced(t *testing.T) {
 	s := NewStore()
 
@@ -212,9 +221,8 @@ func TestApplyBatch_RejectedWithNoPriorVersionIsUnenforced(t *testing.T) {
 		{New: invalidNamespaced("never-installed", "default"), Event: controllers.EventAdd},
 	})
 
-	v, ok := unenforcedValue(t, "default", "never-installed")
-	if !ok || v != 1 {
-		t.Fatalf("unenforced gauge = (%v, exists=%v), want (1, true)", v, ok)
+	if got := unenforcedCount(t, scopeNamespaced); got != 1 {
+		t.Fatalf("unenforced count for scope %q = %v, want 1", scopeNamespaced, got)
 	}
 }
 
@@ -229,8 +237,8 @@ func TestApplyBatch_StaleProfileIsNotUnenforced(t *testing.T) {
 		{Old: good, New: invalidNamespaced("still-serving", "default"), Event: controllers.EventUpdate},
 	})
 
-	if _, ok := unenforcedValue(t, "default", "still-serving"); ok {
-		t.Fatal("an installed previous version is still enforcing; this is stale, not unenforced")
+	if got := unenforcedCount(t, scopeNamespaced); got != 0 {
+		t.Fatalf("unenforced count = %v; an installed previous version is still enforcing, so this is stale", got)
 	}
 }
 
@@ -239,14 +247,14 @@ func TestApplyBatch_ValidVersionClearsUnenforced(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{New: invalidNamespaced("recovers", "default"), Event: controllers.EventAdd},
 	})
-	if _, ok := unenforcedValue(t, "default", "recovers"); !ok {
-		t.Fatal("precondition: profile should be marked unenforced")
+	if got := unenforcedCount(t, scopeNamespaced); got != 1 {
+		t.Fatalf("precondition: unenforced count = %v, want 1", got)
 	}
 
 	installGood(t, s, "recovers", "default")
 
-	if _, ok := unenforcedValue(t, "default", "recovers"); ok {
-		t.Fatal("unenforced series still present after a valid version landed")
+	if got := unenforcedCount(t, scopeNamespaced); got != 0 {
+		t.Fatalf("unenforced count = %v after a valid version landed, want 0", got)
 	}
 }
 
@@ -256,15 +264,185 @@ func TestApplyBatch_DeleteClearsUnenforced(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{New: bad, Event: controllers.EventAdd},
 	})
-	if _, ok := unenforcedValue(t, "default", "delete-unenforced"); !ok {
-		t.Fatal("precondition: profile should be marked unenforced")
+	if got := unenforcedCount(t, scopeNamespaced); got != 1 {
+		t.Fatalf("precondition: unenforced count = %v, want 1", got)
 	}
 
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: bad, Event: controllers.EventDelete},
 	})
 
-	if _, ok := unenforcedValue(t, "default", "delete-unenforced"); ok {
-		t.Fatal("unenforced series leaked after the profile was deleted")
+	if got := unenforcedCount(t, scopeNamespaced); got != 0 {
+		t.Fatalf("unenforced count = %v after the profile was deleted, want 0", got)
+	}
+}
+
+// invalidInline is the identity-bearing item the inline collection transform
+// produces for an annotation that failed to compile or project.
+func invalidInline(name, namespace, version string) *securityprofile.Profile {
+	return securityprofile.InvalidInlineProfile(&metav1.PartialObjectMetadata{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, ResourceVersion: version},
+	}, errors.New("invalid inline action"))
+}
+
+// Inline rules obey the same last-known-good contract as CRD profiles, and they
+// report through the same two gauges under scope="inline" — which is what keeps
+// a Sandbox-scale object from minting a time series per identity. The scope is
+// the part that matters operationally: it separates a tenant's own annotation
+// mistake from an operator's profile being unenforced.
+func TestApplyBatch_InlineRulesMetrics(t *testing.T) {
+	const ns, name = "sandboxes", "sbx-metrics"
+	s := NewStore()
+
+	// A bad first version installs nothing: unenforced, not stale.
+	before := testutil.ToFloat64(profileCompileFailuresTotal.WithLabelValues(scopeInline))
+	s.applyBatch([]krt.Event[securityprofile.Profile]{
+		{New: invalidInline(name, ns, "1"), Event: controllers.EventAdd},
+	})
+	if got := testutil.ToFloat64(profileCompileFailuresTotal.WithLabelValues(scopeInline)) - before; got != 1 {
+		t.Errorf("compile failures delta for scope %q = %v, want 1", scopeInline, got)
+	}
+	if got := unenforcedCount(t, scopeInline); got != 1 {
+		t.Errorf("inline unenforced count = %v, want 1", got)
+	}
+	if got := staleCount(t, scopeInline); got != 0 {
+		t.Errorf("inline stale count = %v for a Sandbox with nothing installed, want 0", got)
+	}
+	// The CRD scopes must not move: the scope label is what keeps tenant and
+	// operator failures apart in one gauge.
+	if got := unenforcedCount(t, scopeNamespaced); got != 0 {
+		t.Errorf("namespaced unenforced count = %v, want 0: an inline failure must not read as a profile failure", got)
+	}
+
+	// A good version clears it.
+	good := inlineProfile(name, ns, "2")
+	s.applyBatch([]krt.Event[securityprofile.Profile]{{New: good, Event: controllers.EventAdd}})
+	if got := unenforcedCount(t, scopeInline); got != 0 {
+		t.Errorf("inline unenforced count = %v after a good version, want 0", got)
+	}
+
+	// A bad update is stale, not unenforced: the good version still serves.
+	s.applyBatch([]krt.Event[securityprofile.Profile]{
+		{Old: good, New: invalidInline(name, ns, "3"), Event: controllers.EventUpdate},
+	})
+	if got := staleCount(t, scopeInline); got != 1 {
+		t.Errorf("inline stale count = %v, want 1", got)
+	}
+	if got := unenforcedCount(t, scopeInline); got != 0 {
+		t.Errorf("inline unenforced count = %v while the previous version still serves, want 0", got)
+	}
+
+	// Deleting the Sandbox leaves no series behind.
+	s.applyBatch([]krt.Event[securityprofile.Profile]{
+		{Old: good, Event: controllers.EventDelete},
+	})
+	if got := staleCount(t, scopeInline); got != 0 {
+		t.Errorf("inline stale count = %v after the Sandbox was deleted, want 0", got)
+	}
+	if got := unenforcedCount(t, scopeInline); got != 0 {
+		t.Errorf("inline unenforced count = %v after the Sandbox was deleted, want 0", got)
+	}
+}
+
+// gaugeSeriesCount reports how many time series one gauge family publishes.
+func gaugeSeriesCount(t testing.TB, metricName string) int {
+	t.Helper()
+	families, err := metrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, f := range families {
+		if f.GetName() == metricName {
+			return len(f.GetMetric())
+		}
+	}
+	t.Fatalf("gauge %s is not registered", metricName)
+	return 0
+}
+
+// TestDegradedGaugesAreBoundedByScope is the cardinality contract. These gauges
+// describe failures that arrive in bulk — one bad chart render, one Sandbox
+// Manager schema change — so labelling them by object identity would mint a
+// time series per object in the cluster at exactly the moment the signal
+// matters, on a data-plane process. Whatever the store holds, the metric
+// surface stays one series per scope.
+func TestDegradedGaugesAreBoundedByScope(t *testing.T) {
+	const n = 200
+	s := NewStore()
+
+	events := make([]krt.Event[securityprofile.Profile], 0, 2*n)
+	for i := 0; i < n; i++ {
+		id := strconv.Itoa(i)
+		events = append(events,
+			krt.Event[securityprofile.Profile]{
+				New: invalidNamespaced("p-"+id, "ns-"+id), Event: controllers.EventAdd,
+			},
+			krt.Event[securityprofile.Profile]{
+				New: invalidInline("sbx-"+id, "ns-"+id, "1"), Event: controllers.EventAdd,
+			},
+		)
+	}
+	s.applyBatch(events)
+
+	for _, name := range []string{
+		"epe_profile_stale", "epe_profile_unenforced", "epe_profile_inputs_unavailable",
+	} {
+		if got := gaugeSeriesCount(t, name); got != 3 {
+			t.Errorf("%s publishes %d series for %d degraded sources, want 3 (one per scope)", name, got, 2*n)
+		}
+	}
+	// The counts still carry the whole story, split by who has to act on it.
+	if got := unenforcedCount(t, scopeNamespaced); got != n {
+		t.Errorf("namespaced unenforced count = %v, want %d", got, n)
+	}
+	if got := unenforcedCount(t, scopeInline); got != n {
+		t.Errorf("inline unenforced count = %v, want %d", got, n)
+	}
+
+	// Deleting every source drains the sets, so nothing is retained per object.
+	deletes := make([]krt.Event[securityprofile.Profile], 0, 2*n)
+	for _, ev := range events {
+		deletes = append(deletes, krt.Event[securityprofile.Profile]{
+			Old: ev.New, Event: controllers.EventDelete,
+		})
+	}
+	s.applyBatch(deletes)
+	if got := unenforcedCount(t, scopeNamespaced) + unenforcedCount(t, scopeInline); got != 0 {
+		t.Errorf("unenforced counts total = %v after deleting every source, want 0", got)
+	}
+	if got := len(s.degraded.unenforced); got != 0 {
+		t.Errorf("degraded set retains %d entries after every source was deleted, want 0", got)
+	}
+}
+
+// An installed profile whose declared inputs did not resolve keeps enforcing,
+// so it is neither stale nor unenforced — it needs its own signal.
+func TestApplyBatch_InputsUnavailableCounted(t *testing.T) {
+	s := NewStore()
+	obj := newTestProfile("degraded-inputs", "default", map[string]string{"app": "x"})
+	compiled, err := securityprofile.NewProfile(obj, &obj.Spec)
+	if err != nil {
+		t.Fatalf("NewProfile: %v", err)
+	}
+	compiled.InputsError = `input "routing" from ConfigMap default/missing: not found`
+	s.applyBatch([]krt.Event[securityprofile.Profile]{{New: compiled, Event: controllers.EventAdd}})
+
+	if got := inputsUnavailableCount(t, scopeNamespaced); got != 1 {
+		t.Errorf("inputs-unavailable count = %v, want 1", got)
+	}
+	if got := staleCount(t, scopeNamespaced) + unenforcedCount(t, scopeNamespaced); got != 0 {
+		t.Errorf("stale+unenforced = %v for an installed profile, want 0", got)
+	}
+
+	// The ConfigMap appearing recompiles the same version with inputs resolved.
+	healed, err := securityprofile.NewProfile(obj, &obj.Spec)
+	if err != nil {
+		t.Fatalf("NewProfile: %v", err)
+	}
+	s.applyBatch([]krt.Event[securityprofile.Profile]{
+		{Old: compiled, New: healed, Event: controllers.EventUpdate},
+	})
+	if got := inputsUnavailableCount(t, scopeNamespaced); got != 0 {
+		t.Errorf("inputs-unavailable count = %v after the inputs resolved, want 0", got)
 	}
 }

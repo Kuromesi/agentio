@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
 	"k8s.io/apimachinery/pkg/labels"
@@ -42,7 +43,7 @@ const (
 
 // Store is a thread-safe in-memory store for SecurityProfiles and
 // GlobalSecurityProfiles. It maintains a simple profile index and performs
-// dynamic label-based matching at request time via Matches.
+// dynamic label-based matching at request time via ProfilesFor.
 //
 // Cluster-scoped GlobalSecurityProfiles are stored under an empty-namespace
 // key and, unlike namespace-scoped SecurityProfiles, match pods in every
@@ -56,15 +57,16 @@ type Store interface {
 	// namespace- and cluster-scoped) and per-Sandbox inline profiles.
 	List() []*securityprofile.Profile
 
-	// Matches returns the profiles that apply to the given pod: profiles
-	// whose selectors match the pod labels (cluster-scoped
+	// ProfilesFor returns the complete, ordered policy chain for one pod:
+	// profiles whose selectors match pod.Labels (cluster-scoped
 	// GlobalSecurityProfiles and namespace-scoped SecurityProfiles in
-	// podNamespace, sorted by priority, creation time, name, namespace),
+	// pod.Namespace, sorted by priority, creation time, name, namespace),
 	// followed by the pod's own inline rule profile when one exists.
 	// Inline profiles are keyed by exact identity — the Sandbox name is the
 	// Pod name — and always evaluate after the selector-matched
-	// administrator profiles. An empty podName skips the inline lookup.
-	Matches(podName, podNamespace string, podLabels map[string]string) []*securityprofile.Profile
+	// administrator profiles. A zero pod.Name skips the inline lookup
+	// (admin and debug paths that match by labels only).
+	ProfilesFor(pod inputs.Pod) []*securityprofile.Profile
 }
 
 // profileSnapshot is an immutable point-in-time view of all profiles.
@@ -74,6 +76,10 @@ type Store interface {
 // GlobalSecurityProfiles use an empty string as the namespace key. Per-Sandbox
 // inline profiles live in inlineByKey, looked up by exact pod identity and
 // never matched by labels.
+//
+// byNamespace is immutable once built and may be shared with the preceding
+// snapshot when a batch left byKey untouched: nothing may mutate a
+// profileIndex after buildSnapshot returns it.
 type profileSnapshot struct {
 	byKey       map[types.NamespacedName]*securityprofile.Profile
 	byNamespace map[string]profileIndex
@@ -91,7 +97,7 @@ func newEmptySnapshot() *profileSnapshot {
 // NewStore creates a new in-memory configuration store. Wire it to a
 // compiled-profile collection with RegisterCollection.
 func NewStore() *store {
-	s := &store{}
+	s := &store{degraded: newDegradedSets()}
 	s.snapshot.Store(newEmptySnapshot())
 	return s
 }
@@ -99,6 +105,11 @@ func NewStore() *store {
 type store struct {
 	snapshot atomic.Pointer[profileSnapshot]
 	mu       sync.Mutex // protects write path only
+	// degraded is write-path state, guarded by mu: which sources are currently
+	// stale, unenforced, or serving unresolved inputs. The gauges publish counts
+	// from it, so the metric surface stays three series per gauge no matter how
+	// many profiles the cluster holds.
+	degraded degradedSets
 }
 
 // RegisterCollection materializes the compiled-profile collection into the
@@ -113,13 +124,15 @@ func (s *store) RegisterCollection(profiles krt.Collection[securityprofile.Profi
 
 // applyBatch folds one krt event batch into a new snapshot. Events route on
 // the profile source: inline profiles maintain the identity-keyed map, and
-// CRD profiles maintain the selector index. Invalid CRD profile items carry
-// identity plus CompileError; they leave the prior effective entry untouched,
-// and only a real source delete removes an installed profile. Inline
-// profiles have no invalid form here — a compile failure emits no item.
+// CRD profiles maintain the selector index. Invalid items of either source
+// carry identity plus CompileError; they leave the prior effective entry
+// untouched, and only a real source delete removes an installed profile.
 func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Once per batch, not once per event: the gauges are counts, so only the
+	// state after the whole batch is meaningful.
+	defer s.degraded.publish()
 
 	log := ctrllog.Log.WithName("profile")
 
@@ -128,65 +141,91 @@ func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 	maps.Copy(newByKey, old.byKey)
 	newInline := make(map[types.NamespacedName]*securityprofile.Profile, len(old.inlineByKey))
 	maps.Copy(newInline, old.inlineByKey)
+	// Only byKey feeds the label index, so a batch that touched nothing but
+	// inline profiles can carry the previous index forward instead of
+	// rebuilding an identical one. Sandbox churn is the high-frequency event
+	// source, and the rebuild is the expensive part of a write.
+	selectorsChanged := false
 
 	for _, ev := range events {
 		if ev.Event == controllers.EventDelete {
 			m := ev.Latest().Meta
 			key := types.NamespacedName{Namespace: m.Namespace, Name: m.Name}
+			// A deleted source leaves no degraded state behind, whichever map
+			// it lived in.
+			s.degraded.removed(degradedKeyFor(m))
 			if m.Source == securityprofile.SourceInline {
 				delete(newInline, key)
 				continue
 			}
-			delete(newByKey, key)
-			profileStale.DeleteLabelValues(m.Namespace, m.Name)
-			profileUnenforced.DeleteLabelValues(m.Namespace, m.Name)
-			profileInputsUnavailable.DeleteLabelValues(m.Namespace, m.Name)
+			if _, installed := newByKey[key]; installed {
+				delete(newByKey, key)
+				selectorsChanged = true
+			}
 			continue
 		}
 		sp := ev.New
 		key := types.NamespacedName{Namespace: sp.Meta.Namespace, Name: sp.Meta.Name}
 		if sp.Meta.Source == securityprofile.SourceInline {
-			if sp.CompileError == "" {
-				newInline[key] = sp
+			// Same last-known-good contract as CRD profiles: an invalid
+			// version leaves the prior effective one installed, and a first
+			// version that never compiled installs nothing — the Sandbox
+			// author's rules take effect only as published.
+			if sp.CompileError != "" {
+				profileCompileFailuresTotal.WithLabelValues(scopeInline).Inc()
+				_, installed := newInline[key]
+				s.degraded.rejected(degradedKeyFor(sp.Meta), installed)
+				if installed {
+					log.Error(nil, "inline security rules rejected; retaining last-known-good version",
+						"sandbox", key.String(), "err", sp.CompileError)
+				} else {
+					log.Error(nil, "inline security rules rejected with no previous version installed; "+
+						"none of them are in effect for this sandbox",
+						"sandbox", key.String(), "err", sp.CompileError)
+				}
+				continue
 			}
+			s.degraded.installed(degradedKeyFor(sp.Meta), false)
+			newInline[key] = sp
 			continue
 		}
 		if sp.CompileError != "" {
 			profileCompileFailuresTotal.WithLabelValues(profileScope(sp.Meta.Namespace)).Inc()
-			// The two outcomes differ in severity and get separate series.
+			// The two outcomes differ in severity and get separate gauges.
 			// Stale means an older version is still enforcing; unenforced
 			// means nothing of this profile is in effect at all, so the pods
 			// it targets are unprotected.
-			if _, installed := newByKey[key]; installed {
-				profileStale.WithLabelValues(sp.Meta.Namespace, sp.Meta.Name).Set(1)
+			_, installed := newByKey[key]
+			s.degraded.rejected(degradedKeyFor(sp.Meta), installed)
+			if installed {
 				log.Error(nil, "profile version rejected; retaining last-known-good version",
 					"profile", key.String(), "err", sp.CompileError)
 			} else {
-				profileUnenforced.WithLabelValues(sp.Meta.Namespace, sp.Meta.Name).Set(1)
 				log.Error(nil, "profile rejected with no previous version installed; "+
 					"none of its rules are in effect and the pods it selects are unprotected",
 					"profile", key.String(), "err", sp.CompileError)
 			}
 			continue
 		}
-		profileStale.DeleteLabelValues(sp.Meta.Namespace, sp.Meta.Name)
-		profileUnenforced.DeleteLabelValues(sp.Meta.Namespace, sp.Meta.Name)
+		s.degraded.installed(degradedKeyFor(sp.Meta), sp.InputsError != "")
 		// A profile with unavailable inputs installs anyway: its rules enforce
 		// and only inputs-dependent evaluations fail, resolved through the
 		// consuming action's failure policy. The gauge and log are the
 		// operator's signal that a referenced ConfigMap needs attention.
 		if sp.InputsError != "" {
-			profileInputsUnavailable.WithLabelValues(sp.Meta.Namespace, sp.Meta.Name).Set(1)
 			log.Error(nil, "profile installed with unavailable inputs; rules enforce but "+
 				"inputs-dependent evaluations fail per each action's failure strategy",
 				"profile", key.String(), "err", sp.InputsError)
-		} else {
-			profileInputsUnavailable.DeleteLabelValues(sp.Meta.Namespace, sp.Meta.Name)
 		}
 		newByKey[key] = sp
+		selectorsChanged = true
 	}
 
-	s.snapshot.Store(buildSnapshot(newByKey, newInline))
+	if selectorsChanged {
+		s.snapshot.Store(buildSnapshot(newByKey, newInline))
+		return
+	}
+	s.snapshot.Store(reuseSnapshot(old, newByKey, newInline))
 }
 
 // --- Read path (lock-free) ---
@@ -203,16 +242,13 @@ func (s *store) List() []*securityprofile.Profile {
 	return result
 }
 
-func (s *store) Matches(podName, podNamespace string, podLabels map[string]string) []*securityprofile.Profile {
+func (s *store) ProfilesFor(pod inputs.Pod) []*securityprofile.Profile {
 	snap := s.snapshot.Load()
 
-	ls := labels.Set(podLabels)
-	matched := snap.byNamespace[GlobalProfileNamespace].appendMatches(podLabels, ls, nil)
-	if podNamespace != GlobalProfileNamespace {
-		matched = snap.byNamespace[podNamespace].appendMatches(podLabels, ls, matched)
-	}
-	if len(matched) == 0 {
-		return appendInline(nil, snap, podName, podNamespace)
+	ls := labels.Set(pod.Labels)
+	matched := snap.byNamespace[GlobalProfileNamespace].appendMatches(ls, nil)
+	if pod.Namespace != GlobalProfileNamespace {
+		matched = snap.byNamespace[pod.Namespace].appendMatches(ls, matched)
 	}
 	// Candidate iteration crosses the fallback list and Pod label buckets, whose
 	// order is not the policy evaluation order. Restore the shared precedence
@@ -220,29 +256,39 @@ func (s *store) Matches(podName, podNamespace string, podLabels map[string]strin
 	if len(matched) > 1 {
 		securityprofile.SortProfiles(matched)
 	}
-	return appendInline(matched, snap, podName, podNamespace)
+	return appendInline(matched, snap, pod)
 }
 
 // appendInline adds the pod's own inline rule profile after the
 // selector-matched administrator profiles: tenant rules must never evaluate
-// ahead of them. An empty podName (e.g. the admin listing endpoint) skips
+// ahead of them. A zero pod.Name (e.g. the admin listing endpoint) skips
 // the lookup.
-func appendInline(matched []*securityprofile.Profile, snap *profileSnapshot, podName, podNamespace string) []*securityprofile.Profile {
-	if podName == "" {
+func appendInline(matched []*securityprofile.Profile, snap *profileSnapshot, pod inputs.Pod) []*securityprofile.Profile {
+	if pod.Name == "" {
 		return matched
 	}
-	if p, ok := snap.inlineByKey[types.NamespacedName{Namespace: podNamespace, Name: podName}]; ok {
+	if p, ok := snap.inlineByKey[types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}]; ok {
 		return append(matched, p)
 	}
 	return matched
 }
 
-// buildSnapshot constructs a complete profileSnapshot from the selector and
-// inline profile maps. Every selector profile is indexed under its namespace
-// in byNamespace; entries with an empty Namespace are cluster-scoped
-// GlobalSecurityProfiles and land under the "" key, which Matches merges into
-// every namespace's result. Inline profiles are carried as-is; they are
-// looked up by identity only.
+// reuseSnapshot builds the next snapshot from a batch that left byKey's
+// contents untouched, carrying the label index forward instead of rebuilding an
+// identical one. It exists so buildSnapshot stays the only place that decides
+// what a snapshot is made of: a field added there must be handled here too, and
+// a nil-returning compiler error is easier to notice than a silently zero field.
+func reuseSnapshot(
+	old *profileSnapshot,
+	byKey, inlineByKey map[types.NamespacedName]*securityprofile.Profile,
+) *profileSnapshot {
+	return &profileSnapshot{
+		byKey:       byKey,
+		byNamespace: old.byNamespace,
+		inlineByKey: inlineByKey,
+	}
+}
+
 func buildSnapshot(byKey, inlineByKey map[types.NamespacedName]*securityprofile.Profile) *profileSnapshot {
 	profilesByNamespace := make(map[string][]*securityprofile.Profile)
 

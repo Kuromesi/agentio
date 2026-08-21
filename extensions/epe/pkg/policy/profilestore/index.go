@@ -14,8 +14,8 @@
 package profilestore
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
@@ -61,15 +61,25 @@ func eligibleRequirements(selector labels.Selector) []indexRequirement {
 		}
 		eligible = append(eligible, indexRequirement{key: requirement.Key(), values: values})
 	}
-	sort.Slice(eligible, func(i, j int) bool {
-		if eligible[i].key != eligible[j].key {
-			return eligible[i].key < eligible[j].key
+	// Sorted so anchor selection is a deterministic function of the selector
+	// alone: Requirements() order follows the API object's field order, which
+	// two equivalent selectors need not share.
+	slices.SortFunc(eligible, func(a, b indexRequirement) int {
+		if c := cmp.Compare(a.key, b.key); c != 0 {
+			return c
 		}
-		return slices.Compare(eligible[i].values, eligible[j].values) < 0
+		return slices.Compare(a.values, b.values)
 	})
 	return eligible
 }
 
+// buildProfileIndex assigns each profile to exactly one anchor requirement's
+// buckets, or to the fallback scan when no requirement can anchor it. The
+// two passes exist because the anchor choice is comparative: the first counts
+// how many profiles each candidate bucket could hold, the second picks the
+// least populated candidate per profile. bucketCounts is deliberately not
+// decremented as anchors are assigned — it measures candidate density, which
+// is what makes the choice independent of profile order.
 func buildProfileIndex(sortedProfiles []*securityprofile.Profile) profileIndex {
 	requirementsByProfile := make([][]indexRequirement, len(sortedProfiles))
 	bucketCounts := make(map[labelBucket]int)
@@ -102,6 +112,10 @@ func buildProfileIndex(sortedProfiles []*securityprofile.Profile) profileIndex {
 	return index
 }
 
+// selectAnchor picks the requirement that narrows best: the one whose worst
+// bucket holds the fewest profiles, so a Pod carrying that label scans as few
+// candidates as possible. Any of a selector's eligible requirements would be
+// correct — they are conjunctive — which is what makes this a free choice.
 func selectAnchor(requirements []indexRequirement, bucketCounts map[labelBucket]int) (indexRequirement, bool) {
 	if len(requirements) == 0 {
 		return indexRequirement{}, false
@@ -139,11 +153,15 @@ func maxBucketCount(requirement indexRequirement, bucketCounts map[labelBucket]i
 	return maxCount
 }
 
-// appendMatches filters fallback entries and every bucket hit by podLabels
-// with the complete selector before appending them. Each profile has exactly
-// one anchor requirement, so a Pod can encounter it in at most one bucket.
+// appendMatches filters fallback entries and every bucket hit by the Pod's
+// labels with the complete selector before appending them. Each profile has
+// exactly one anchor requirement, so a Pod can encounter it in at most one
+// bucket.
+//
+// ls is both the bucket probe and the selector input on purpose: taking one
+// labels.Set rather than a map plus its Set view removes the possibility of
+// probing the buckets with different labels than the selector sees.
 func (index profileIndex) appendMatches(
-	podLabels map[string]string,
 	ls labels.Set,
 	matched []*securityprofile.Profile,
 ) []*securityprofile.Profile {
@@ -152,7 +170,7 @@ func (index profileIndex) appendMatches(
 			matched = append(matched, profile)
 		}
 	}
-	for key, value := range podLabels {
+	for key, value := range ls {
 		for _, profile := range index.buckets[labelBucket{key: key, value: value}] {
 			if profile.Selector.Matches(ls) {
 				matched = append(matched, profile)

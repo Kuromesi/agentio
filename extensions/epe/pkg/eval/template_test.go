@@ -67,6 +67,68 @@ func TestCompileTemplateAndRender(t *testing.T) {
 	}
 }
 
+// TestProbeRenderNeutralizesDataDependentHelpers pins the compile-time probe's
+// contract: a template whose helpers only fail because the probe has no request
+// must not read as an authoring error. Rejecting one rejects the whole profile
+// version, so a false positive here unenforces every rule beside it.
+func TestProbeRenderNeutralizesDataDependentHelpers(t *testing.T) {
+	// A guard that calls fail when the request does not carry a bearer token.
+	guard, err := CompileTemplate("guard",
+		`{{ if not (hasPrefix "Bearer " .Token) }}{{ fail "not a bearer token" }}{{ end }}{{ .Token }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProbeRender(guard, struct{ Token string }{}); err != nil {
+		t.Fatalf("ProbeRender(guarded fail) = %v, want no error", err)
+	}
+	// The guard still fires at request time, where the data is real.
+	if _, err := RenderToString(guard, struct{ Token string }{"opaque"}); err == nil ||
+		!strings.Contains(err.Error(), "not a bearer token") {
+		t.Fatalf("RenderToString(guarded fail) = %v, want the fail message", err)
+	}
+	if got, err := RenderToString(guard, struct{ Token string }{"Bearer t"}); err != nil || got != "Bearer t" {
+		t.Fatalf("RenderToString(satisfied guard) = (%q, %v), want Bearer t", got, err)
+	}
+
+	// fromJson yields nil for the probe's empty string, and first panics on a
+	// nil list — a panic text/template turns into a render error whose text
+	// names a nil pointer dereference rather than anything an author can act
+	// on.
+	chain, err := CompileTemplate("chain", `{{ first (fromJson .Token) }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProbeRender(chain, struct{ Token string }{}); err != nil {
+		t.Fatalf("ProbeRender(json chain) = %v, want no error", err)
+	}
+	if got, err := RenderToString(chain, struct{ Token string }{`["a","b"]`}); err != nil || got != "a" {
+		t.Fatalf("RenderToString(json chain) = (%q, %v), want a", got, err)
+	}
+
+	// A missing map key yields an untyped nil, which every string-typed helper
+	// rejects — so the documented default+index+fromJson idiom needs the
+	// string-typed stubs, not just the fromJson one.
+	claim, err := CompileTemplate("claim", `{{ default "anon" (index (fromJson .Token) "sub") }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProbeRender(claim, struct{ Token string }{}); err != nil {
+		t.Fatalf("ProbeRender(default over missing key) = %v, want no error", err)
+	}
+	if got, err := RenderToString(claim, struct{ Token string }{`{"sub":"u-1"}`}); err != nil || got != "u-1" {
+		t.Fatalf("RenderToString(claim) = (%q, %v), want u-1", got, err)
+	}
+
+	// What the probe is for: a field the render scope does not have.
+	missing, err := CompileTemplate("missing", `{{ .Nope }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProbeRender(missing, struct{ Token string }{}); err == nil {
+		t.Fatal("ProbeRender(unknown field) = nil, want an error")
+	}
+}
+
 func TestTemplateFailHelperReturnsRenderError(t *testing.T) {
 	tmpl, err := CompileTemplate("t", `{{ fail "stop rendering" }}`)
 	if err != nil {

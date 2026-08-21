@@ -31,7 +31,13 @@ import (
 )
 
 func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
-	store := profilestore.MakeFakeStore()
+	regs, err := wiring.BuildFilters(wiring.Deps{})
+	if err != nil {
+		t.Fatalf("BuildFilters: %v", err)
+	}
+	// The store must project against the chain the resolver evaluates with,
+	// exactly as the collection does in production.
+	store := profilestore.MakeFakeStore(regs...)
 	for _, tc := range []struct {
 		name  string
 		value string
@@ -48,10 +54,6 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 			Inline: map[string]string{"target": tc.value},
 		}}
 		store.ProfileSet(profile)
-	}
-	regs, err := wiring.BuildFilters(wiring.Deps{})
-	if err != nil {
-		t.Fatalf("BuildFilters: %v", err)
 	}
 	resolution, err := policysecurityprofile.NewResolver(store, regs, nil)(
 		context.Background(),

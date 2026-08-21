@@ -165,9 +165,9 @@ type inlineStore struct {
 	inline   []*Profile
 }
 
-func (s inlineStore) Matches(podName, _ string, _ map[string]string) []*Profile {
+func (s inlineStore) ProfilesFor(pod inputs.Pod) []*Profile {
 	matched := append([]*Profile(nil), s.selector...)
-	if podName != "" {
+	if pod.Name != "" {
 		matched = append(matched, s.inline...)
 	}
 	return matched
@@ -187,6 +187,11 @@ func TestInlineHeaderManipulationBindsThroughRealFilter(t *testing.T) {
 			`{"set":[{"name":"X-E2E-Trace","value":"abc"}],"remove":["X-Carried"]}}}]`))
 	if err != nil {
 		t.Fatalf("NewInlineProfile: %v", err)
+	}
+	// The inline collection projects its profiles like any other; bind reads
+	// that projection rather than building one.
+	if err := inline.Project(regs); err != nil {
+		t.Fatalf("Project: %v", err)
 	}
 	b := newBinder(regs)
 	units, err := b.bind([]*Profile{inline}, testRequest("example.com"), inputs.Pod{Name: "sbx-1", Namespace: "ns"})
@@ -241,11 +246,14 @@ func TestInlineHeaderValuesStayLiteral(t *testing.T) {
 func TestResolverInlineProfilesEvaluateAfterSelectorProfiles(t *testing.T) {
 	regs := claimAll(t, nil)
 
-	selectorProfile := compile(t, "baseline", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("admin-rule")})
+	selectorProfile := compile(t, regs, "baseline", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("admin-rule")})
 	inlineProfile, err := NewInlineProfile(sandboxWithRules("sbx-1", "ns",
 		`[{"name":"tenant-rule","match":[{"domains":["*"]}],"actions":{"block":{"body":"inline"}}}]`))
 	if err != nil {
 		t.Fatalf("NewInlineProfile: %v", err)
+	}
+	if err := inlineProfile.Project(regs); err != nil {
+		t.Fatalf("Project: %v", err)
 	}
 
 	store := inlineStore{selector: []*Profile{selectorProfile}, inline: []*Profile{inlineProfile}}
@@ -269,7 +277,7 @@ func TestResolverInlineProfilesEvaluateAfterSelectorProfiles(t *testing.T) {
 // exactly as before.
 func TestResolverWithoutInlineProfilesIsUnchanged(t *testing.T) {
 	regs := claimAll(t, nil)
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 	res, err := resolve(context.Background(), inputs.Pod{Name: "sbx-1", Namespace: "ns"}, testRequest("example.com"))
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"testing"
 
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,7 +68,7 @@ func BenchmarkMatches(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					benchSink = store.Matches("", "default", benchPodLabels)
+					benchSink = store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: benchPodLabels})
 				}
 			})
 		}
@@ -92,7 +93,7 @@ func BenchmarkMatches_Fallback(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = store.Matches("", "default", benchPodLabels)
+				benchSink = store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: benchPodLabels})
 			}
 		})
 	}
@@ -129,7 +130,7 @@ func BenchmarkMatches_GlobalAndNamespaced(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = store.Matches("", "default", benchPodLabels)
+				benchSink = store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: benchPodLabels})
 			}
 		})
 	}

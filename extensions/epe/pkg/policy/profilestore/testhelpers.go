@@ -14,6 +14,7 @@
 package profilestore
 
 import (
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,11 +45,19 @@ import (
 // applyBatch.
 type FakeStore struct {
 	*store
+	regs []filter.Registration
 }
 
 // MakeFakeStore returns an empty store that supports synchronous test seeding.
-func MakeFakeStore() *FakeStore {
-	return &FakeStore{store: NewStore()}
+//
+// Seeded profiles are projected against regs, exactly as NewCollection does,
+// so a malformed action fails the same way it would in production. Pass the
+// same registration set the resolver under test was built with. Called with
+// none, the store still works for matching tests, and the binder reports the
+// mismatch rather than evaluating a profile projected against a different
+// chain.
+func MakeFakeStore(regs ...filter.Registration) *FakeStore {
+	return &FakeStore{store: NewStore(), regs: regs}
 }
 
 // ProfileSet adds or updates a namespace-scoped profile synchronously.
@@ -69,12 +78,23 @@ func (s *FakeStore) GlobalProfileSet(profile *v1alpha1.GlobalSecurityProfile) {
 
 // InlineProfileSet compiles a Sandbox's inline security-rules annotation and
 // installs the resulting profile synchronously. Objects without the
-// annotation or with an invalid chain are ignored, mirroring the inline
-// collection, which emits nothing for them.
+// annotation are ignored, mirroring the inline collection, which emits
+// nothing for them.
+//
+// A compile or projection failure is folded as an identity-bearing
+// CompileError item, again mirroring the inline collection: the store
+// retains any last-known-good inline version instead of installing or
+// removing anything.
 func (s *FakeStore) InlineProfileSet(sandbox metav1.Object) {
-	p, err := securityprofile.NewInlineProfile(sandbox)
-	if err != nil || p == nil {
+	if sandbox.GetAnnotations()[securityprofile.AnnotationSecurityRules] == "" {
 		return
+	}
+	p, err := securityprofile.NewInlineProfile(sandbox)
+	if err == nil {
+		err = p.Project(s.regs)
+	}
+	if err != nil {
+		p = securityprofile.InvalidInlineProfile(sandbox, err)
 	}
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{New: p, Event: controllers.EventAdd},
@@ -91,7 +111,7 @@ func (s *FakeStore) InlineProfileSet(sandbox metav1.Object) {
 // normally. Tests that need ConfigMap inputs must drive NewCollection.
 func (s *FakeStore) apply(obj metav1.Object, spec *v1alpha1.SecurityProfileSpec) {
 	log := ctrllog.Log.WithName("profile")
-	sp, err := compileProfile(obj, spec, nil, nil, nil)
+	sp, err := compileProfile(obj, spec, s.regs, nil, nil)
 	if err != nil {
 		log.Error(err, "profile is invalid; retaining last-known-good version",
 			"profile", obj.GetNamespace()+"/"+obj.GetName())

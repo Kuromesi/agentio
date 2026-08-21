@@ -33,7 +33,7 @@ import (
 func TestResolverSuppliesStreamLoggerWhenPolicyMatches(t *testing.T) {
 	regs := claimAll(t, nil)
 
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
 	res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))
@@ -64,7 +64,7 @@ func TestResolverSuppliesStreamLoggerWhenProjectionFails(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
 	res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))
@@ -92,7 +92,7 @@ func TestResolverOmitsStreamLoggerWhenNothingMatches(t *testing.T) {
 		{name: "no profiles match the pod", store: benchStore{}},
 		{
 			name:  "profile matches but no rule fires",
-			store: benchStore{profiles: []*Profile{compile(t, "p", "ns", "1", nil)}},
+			store: benchStore{profiles: []*Profile{compile(t, regs, "p", "ns", "1", nil)}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,7 +117,7 @@ func TestResolverOmitsStreamLoggerWhenNothingMatches(t *testing.T) {
 func TestResolverNilSinkBecomesNoop(t *testing.T) {
 	regs := claimAll(t, nil)
 
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
 	res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))

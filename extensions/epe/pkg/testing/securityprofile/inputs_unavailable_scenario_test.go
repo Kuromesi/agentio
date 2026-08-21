@@ -24,6 +24,8 @@ import (
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 	"istio.io/istio/extensions/epe/pkg/wiring"
@@ -34,18 +36,27 @@ import (
 // can install a profile in the degraded inputs-unavailable state directly.
 type staticMatcher []*policysecurityprofile.Profile
 
-func (m staticMatcher) Matches(_, _ string, _ map[string]string) []*policysecurityprofile.Profile {
+func (m staticMatcher) ProfilesFor(inputs.Pod) []*policysecurityprofile.Profile {
 	return m
 }
 
-// compileWithInputsError compiles the CRD object and marks its inputs
-// unavailable, mirroring what the profilestore collection produces when a
-// declared ConfigMap input is missing.
-func compileWithInputsError(t *testing.T, obj *v1alpha1.SecurityProfile, msg string) *policysecurityprofile.Profile {
+// compileWithInputsError compiles and projects the CRD object, then marks its
+// inputs unavailable — exactly what the profilestore collection produces when
+// a declared ConfigMap input is missing: a fully installed, enforcing profile
+// version whose inputs slot is poisoned.
+func compileWithInputsError(
+	t *testing.T,
+	obj *v1alpha1.SecurityProfile,
+	regs []filter.Registration,
+	msg string,
+) *policysecurityprofile.Profile {
 	t.Helper()
 	sp, err := policysecurityprofile.NewProfile(obj, &obj.Spec)
 	if err != nil {
 		t.Fatalf("NewProfile: %v", err)
+	}
+	if err := sp.Project(regs); err != nil {
+		t.Fatalf("Project: %v", err)
 	}
 	sp.InputsError = msg
 	return sp
@@ -61,12 +72,13 @@ func TestScenario_BlockRuleEnforcedWithUnavailableInputs(t *testing.T) {
 		Match:   []v1alpha1.RuleMatch{{Domains: []string{"evil.example.com"}}},
 		Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
 	}})
-	compiled := compileWithInputsError(t, profile, `input "routing" from ConfigMap test-ns/missing: not found`)
-
 	regs, err := wiring.BuildFilters(wiring.Deps{Kube: kube.NewFakeClient()})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
+	compiled := compileWithInputsError(t, profile, regs,
+		`input "routing" from ConfigMap test-ns/missing: not found`)
+
 	h := enginetest.New(t, enginetest.Options{
 		Resolve:       policysecurityprofile.NewResolver(staticMatcher{compiled}, regs, nil),
 		Registrations: regs,
@@ -104,14 +116,14 @@ func TestScenario_TokenTransformFailStrategyWithUnavailableInputs(t *testing.T) 
 	}
 	run := func(t *testing.T, failStrategy v1alpha1.FailStrategy, valueTemplate string) *enginetest.Verdict {
 		t.Helper()
-		compiled := compileWithInputsError(t, transformProfile(failStrategy, valueTemplate),
-			`input "routing" from ConfigMap test-ns/missing: not found`)
 		regs, err := wiring.BuildFilters(wiring.Deps{
 			Kube: kube.NewFakeClient(newAPIKeySecret("test-ns", "api-cred", "secret-token-123")),
 		})
 		if err != nil {
 			t.Fatalf("BuildFilters: %v", err)
 		}
+		compiled := compileWithInputsError(t, transformProfile(failStrategy, valueTemplate), regs,
+			`input "routing" from ConfigMap test-ns/missing: not found`)
 		h := enginetest.New(t, enginetest.Options{
 			Resolve:       policysecurityprofile.NewResolver(staticMatcher{compiled}, regs, nil),
 			Registrations: regs,
