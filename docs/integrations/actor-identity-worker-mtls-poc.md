@@ -52,10 +52,15 @@ without that prefix. `agentiod` also supplies these canonical labels:
 
 ```text
 agentio.io/actor-uid
-agentio.io/actor-name
+kruise.io/actor-name
 agentio.io/atespace
 agentio.io/actor-generation
 ```
+
+For migration compatibility, `agentiod` also writes
+`agentio.io/actor-name` with the same value. New Actor-aware policy should use
+`kruise.io/actor-name`; the compatibility alias can be removed after existing
+policies have migrated.
 
 Use a monotonically increasing generation for every Actor assignment, even if
 the same Actor UID is assigned again. Changing either the Actor UID or the

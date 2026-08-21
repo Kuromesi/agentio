@@ -21,7 +21,8 @@
 - ActorContext 只下发给对应 Worker，不会泄漏到其他 Worker。
 - Ambient node ztunnel 可以从源 Worker 的 `Workload` 取得 ActorContext；Actor UID 或 generation 变化时，只关闭属于该 Worker 的旧连接，不影响同节点其他 Worker。
 - Gateway/EPE 可以同时看到经过 mTLS 认证的 Worker Pod 身份和 Actor 身份元数据。
-- 现有 `SecurityProfile` 标签选择器可以直接匹配 Actor labels。
+- 现有 `SecurityProfile` 标签选择器可以使用 `kruise.io/actor-name` 直接匹配 Actor labels。
+- `TrafficPolicy` 暂按 Kubernetes Worker Pod labels 选择 Workload；它不读取 ActorContext labels。
 - ListWorkers 未启用时，旧 Sandbox/Worker 仍可使用原有 Worker labels，保持向后兼容；启用后 ListWorkers 是权威来源。
 - Substrate Actor 通过 `ateom0` 发送的流量可以由原生 Ambient CNI 重定向到 Worker netns 内的 ztunnel socket，并执行 Agentio egress policy。
 - 在真实 Ambient Actor 请求中，egress gateway 已收到正确的 Actor UID；Actor suspend/resume 后 generation 从 `2` 更新为 `4`，后续请求携带新 generation。
@@ -104,13 +105,15 @@ Helm 会给 agentiod 投影 PodIdentity credential bundle 和 ServiceDNS Cluster
 
 ```text
 agentio.io/actor-uid
-agentio.io/actor-name
+kruise.io/actor-name
 agentio.io/atespace
 agentio.io/actor-generation
 agentio.io/actor-template-namespace
 agentio.io/actor-template-name
 agentio.io/worker-pool
 ```
+
+其中 `kruise.io/actor-name` 是新策略应使用的 Actor name 规范键。迁移期间 `agentiod` 同时写入等值的兼容键 `agentio.io/actor-name`，避免已有 `SecurityProfile` 立即失效；新策略不应再依赖兼容键。
 
 ListWorkers 启用后是权威来源：Worker 没有 assignment 时，agentiod 明确不下发 ActorContext；轮询临时失败时保留最后一次成功快照，不会回退到可能过期或可被 workload 修改的 Pod Actor labels。
 
@@ -828,7 +831,7 @@ ateom0@if2 UP 169.254.17.1/30
 
 #### 11.7.3 Actor 级 SecurityProfile
 
-本轮临时启用了真实 EPE Deployment，并创建两个只按 Actor name label 匹配的 `SecurityProfile`。策略位于 Worker 所在 namespace `ate-demo-egress`：
+本轮临时启用了真实 EPE Deployment，并创建两个只按 Actor name label 匹配的 `SecurityProfile`。策略位于 Worker 所在 namespace `ate-demo-egress`。该轮发生在规范键迁移之前，因此以下记录使用当前仍兼容的旧键；11.9 使用 `kruise.io/actor-name` 完成了新键复测：
 
 ```yaml
 apiVersion: agents.kruise.io/v1alpha1
@@ -977,6 +980,97 @@ my-ecs:/opt/substrate-poc/agentio-sidecar-workload-extension-20260822/
 
 `preflight/`、`sidecar/`、`ambient/` 和 `final/` 分别保存测试前快照、两种模式的 xDS/流量/gateway/ztunnel 证据和恢复后的集群状态。
 
+### 11.9 `kruise.io/actor-name` 与 TrafficPolicy Pod selector 验证
+
+2026-08-22 在同一 `substrate-poc` KinD 集群完成了 Actor name 规范键和 TrafficPolicy Pod label 的真实流量 A/B 验证。本轮 agentiod 使用以下镜像：
+
+```text
+localhost:5000/pilot:kruise-actor-name-poc-v1
+image ID: sha256:67056a53179724554afdd98cc37a51b371d3d3a968e248cb6556ef1f5c7a136c
+registry digest: sha256:c42060d29fd486383f3e98256483146c0be9309203aa9d9ce495ae24b6de4e3d
+```
+
+测试 Actor 为 `kruise-label-20260822`，UID 为 `21032ecf-b175-4337-a731-e293ec295810`，分配到 Sidecar Worker `egress-6b9549c9ff-bw957`。WDS `Workload.extensions["actor-context"]` 中同时出现：
+
+```text
+kruise.io/actor-name=kruise-label-20260822
+agentio.io/actor-name=kruise-label-20260822
+```
+
+对应 Worker Pod 本身不包含这两个 label。这证明 Actor name 来自 ListWorkers 派生的 ActorContext，而不是通过修改 Worker Pod label 注入；旧键只作为迁移兼容副本。
+
+#### 11.9.1 SecurityProfile 使用规范 Actor label
+
+临时启用 EPE 后创建以下 Actor selector：
+
+```yaml
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: kruise-actor-name-poc
+  namespace: ate-demo-egress
+spec:
+  selector:
+    matchLabels:
+      kruise.io/actor-name: kruise-label-20260822
+```
+
+同一 Actor 的普通路径返回 `200`；命中 `/kruise-actor-block` 的规则返回 `453` 和 `kruise-actor-name-block`。实际链路为 Substrate router -> Actor -> Sidecar ztunnel -> HBONE gateway -> EPE -> backend。因此 `kruise.io/actor-name` 可以作为当前 Actor 级七层策略的规范匹配键。
+
+#### 11.9.2 TrafficPolicy 使用 Worker Pod label
+
+TrafficPolicy selector 使用 Worker Pod 已有的 `ate.dev/worker-pool=egress`，不使用 ActorContext 中的 `kruise.io/actor-name`。控制组先切换为不存在的 Pod label `agentio.io/trafficpolicy-poc=not-present`，验证策略不会附加到 Workload；实验组再切换到真实 Pod label，并从 ztunnel config dump 确认 authorization policy 已附加。
+
+出向测试策略拒绝 backend Pod IP `10.244.1.50/32`，同时显式允许 `0.0.0.0/0` 作为回退：
+
+```yaml
+spec:
+  priority: 200
+  selector:
+    matchLabels:
+      ate.dev/worker-pool: egress
+  egress:
+    rules:
+    - action: reject
+      to:
+      - cidr: 10.244.1.50/32
+    - action: allow
+      to:
+      - cidr: 0.0.0.0/0
+```
+
+结果为：
+
+| 场景 | HTTP 结果 | 判定依据 |
+|---|---:|---|
+| selector 不匹配 | `200` | Workload 未附加该 authorization policy |
+| selector 匹配，但复用更新前 TCP 连接 | `200` | 与控制组 backend `RemoteAddr` 完全相同 |
+| suspend/resume 后建立新连接 | 外层 `502` | ztunnel 记录 `explicitly denied by: ate-demo-egress/pod-label-egress-poc-egress` |
+
+入向测试使用相同 Pod selector，拒绝来自 `0.0.0.0/0` 的新连接。每次 selector 变更后滚动 Substrate router，确保建立新的入向 TCP 连接：
+
+```text
+selector 不匹配：200
+selector 匹配：503
+恢复为不匹配：200
+```
+
+匹配阶段 Worker ztunnel 明确记录 `explicitly denied by: ate-demo-egress/pod-label-ingress-poc-ingress`，所以入向和出向 TrafficPolicy 均可按 Worker Pod label 生效。
+
+本轮还确认了三个执行边界：
+
+- TrafficPolicy 在连接建立时执行；更新策略不会主动终止已经存在的 TCP keep-alive 连接。Actor assignment 变化触发的 generation drain 或由调用方重连后，新策略才会作用于新连接。
+- 有优先级的 reject policy 如果没有显式 allow 回退，未命中 reject 条件的目标也会落入默认拒绝；需要保留其余流量时，应增加明确的 allow 规则。
+- 本轮对直连 backend Pod IP 的出向策略可以拒绝，但对配置为 GATEWAY 的 Service VIP 请求仍返回 `200`。这说明当前 GATEWAY 路径没有经过本轮验证的同一源端 TrafficPolicy 目标判断，不能据此宣称 TrafficPolicy 已覆盖网关转发路径；该路径需要单独设计和验证。
+
+测试结束后已删除测试 Actor、TrafficPolicy、SecurityProfile 和临时 EPE Deployment；全局 egress policy 恢复为 `PASSTHROUGH`，mesh 配置保持一致，`agentiod=1/1`、gateway `1/1`、node ztunnel `2/2`、CNI `2/2`、原 Sidecar Worker `2/2`。新版 pilot 保留在集群中。原始证据保存在：
+
+```text
+my-ecs:/opt/substrate-poc/agentio-kruise-actor-trafficpolicy-20260822/
+```
+
+其中 `actor-epe/`、`trafficpolicy/` 和 `final/` 分别保存 WDS labels、EPE 响应、TrafficPolicy A/B、ztunnel 拒绝日志和恢复快照。
+
 ## 12. 代码与分支
 
 Agentio 工作树：
@@ -994,6 +1088,20 @@ codex/actor-context-poc
 0579375c84 agentio: support legacy substrate worker schema
 59806d2da3 agentio: attach actor context to ambient workloads
 7b8088be0c agentio: move sidecar actor context to workload api
+```
+
+本轮规范 label 和 TrafficPolicy 验证使用独立工作树：
+
+```text
+/Users/kuromesi/MyCOde/kuromesi.com/agentio/.worktrees/kruise-actor-name-trafficpolicy-poc
+```
+
+对应分支和提交：
+
+```text
+codex/kruise-actor-name-trafficpolicy-poc
+ab82aac3f5 docs: design kruise actor label traffic policy poc
+3c15fe7470 agentio: add kruise actor name policy label
 ```
 
 ztunnel 工作树：
@@ -1025,5 +1133,7 @@ b6acf65 agentio: propagate actor identity over worker mtls
 - Worker version 可能因非 assignment 更新递增，安全上不会串用旧身份，但会造成一次保守的连接 drain。
 - 社区曾发布两种 wire 不兼容的 Worker schema；PoC 已兼容实测旧版本和当前版本，正式维护时仍应推动 API 稳定化并增加版本协商。
 - `WorkloadConfig.actor_context` 和 ztunnel 的 WCDS fallback 只用于旧控制面回滚。发布 WDS-only agentiod 前必须先确保数据面版本能够解析 `Workload.extensions["actor-context"]`；否则 Actor 流量仍能建立 Worker mTLS，但 gateway 收不到 Actor 身份。本 PoC 使用的 `actor-workload-poc-v1` ztunnel 已具备该能力。
+- `TrafficPolicy.spec.selector` 当前匹配 Kubernetes Workload/Pod labels，不会把 ActorContext labels 合并进 Workload labels；Actor 级七层匹配继续由 EPE `SecurityProfile` 使用 `kruise.io/actor-name` 完成。
+- TrafficPolicy 的连接级授权只影响新连接，不会因 selector 或规则更新主动清理已有 TCP 连接；GATEWAY Service VIP 路径也尚未证明受相同的源端 TrafficPolicy 目标规则覆盖。
 - 当前通用 AgentioConfig 变更触发的 Ambient egress policy 全量 push 缺少 address delta；已有 node ztunnel 需要重启才能立即取得新的 Workload 内嵌策略。Actor binding 的增量更新不受影响。
 - 如果未来需要零信任级别的 Actor 独立身份，可以在保留 Worker mTLS 的基础上，为 Actor token 增加签名、受众、有效期、Worker UID 和 generation 绑定校验，或者进一步演进到 Actor 独立证书。
