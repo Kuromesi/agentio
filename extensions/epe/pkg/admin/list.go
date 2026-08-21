@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
 	"istio.io/istio/extensions/epe/pkg/labels"
@@ -28,7 +29,7 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 // handleList serves two modes based on the presence of pod_labels/pod_name:
 //   - Without them: lists all profiles (optionally filtered by namespace)
 //   - With pod_labels and/or pod_name: returns matched profiles in evaluation
-//     order; pod_name additionally resolves the pod's inline rule profile.
+//     order; pod_name additionally resolves the pod's own profile.
 //
 // Accepts GET with query params or POST with JSON body.
 func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
@@ -94,13 +95,13 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 // handleMatch finds profiles matching the given pod identity and labels and
 // writes the response. Called by both GET (after CSV label parsing) and POST
 // (with pre-parsed map). A non-empty podName also resolves the pod's own
-// inline rule profile, which is looked up by exact identity.
+// own profile, which is looked up by exact identity.
 func (h *handler) handleMatch(w http.ResponseWriter, r *http.Request, podName, namespace string, labels map[string]string, full bool) {
 	if namespace == "" {
 		writeError(w, http.StatusBadRequest, "namespace is required when pod_labels or pod_name is provided")
 		return
 	}
-	matched := h.store.Matches(podName, namespace, labels)
+	matched := h.store.ProfilesFor(inputs.Pod{Name: podName, Namespace: namespace, Labels: labels})
 	views := make([]ProfileView, 0, len(matched))
 	for _, p := range matched {
 		v := toView(p)

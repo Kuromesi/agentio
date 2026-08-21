@@ -31,7 +31,13 @@ import (
 )
 
 func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
-	store := profilestore.MakeFakeStore()
+	regs, err := wiring.BuildFilters(wiring.Deps{})
+	if err != nil {
+		t.Fatalf("BuildFilters: %v", err)
+	}
+	// The store must project against the chain the resolver evaluates with,
+	// exactly as the collection does in production.
+	store := profilestore.MakeFakeStore(regs...)
 	for _, tc := range []struct {
 		name  string
 		value string
@@ -48,10 +54,6 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 			Inline: map[string]string{"target": tc.value},
 		}}
 		store.ProfileSet(profile)
-	}
-	regs, err := wiring.BuildFilters(wiring.Deps{})
-	if err != nil {
-		t.Fatalf("BuildFilters: %v", err)
 	}
 	resolution, err := policysecurityprofile.NewResolver(store, regs, nil)(
 		context.Background(),
@@ -74,8 +76,12 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 		if unit.ID.Scope != wantScopes[i] {
 			t.Errorf("unit[%d] scope = %q, want %q", i, unit.ID.Scope, wantScopes[i])
 		}
-		if !reflect.DeepEqual(unit.Scope.Inputs(), wantInputs[i]) {
-			t.Errorf("unit[%d] inputs = %#v, want %#v", i, unit.Scope.Inputs(), wantInputs[i])
+		gotInputs, err := unit.Scope.Inputs()
+		if err != nil {
+			t.Errorf("unit[%d] inputs unavailable: %v", i, err)
+		}
+		if !reflect.DeepEqual(gotInputs, wantInputs[i]) {
+			t.Errorf("unit[%d] inputs = %#v, want %#v", i, gotInputs, wantInputs[i])
 		}
 		if unit.Cfgs[blockIndex] == nil {
 			t.Errorf("unit[%d] did not project the block payload", i)

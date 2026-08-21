@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/inputs"
 )
 
@@ -30,11 +31,11 @@ var benchSink any
 // clock. profilestore has its own benchmark for that half.
 type benchStore struct{ profiles []*Profile }
 
-func (s benchStore) Matches(string, string, map[string]string) []*Profile { return s.profiles }
+func (s benchStore) ProfilesFor(inputs.Pod) []*Profile { return s.profiles }
 
 // benchProfiles compiles nProfiles profiles of nRules rules each. Every rule
 // matches, which is the worst case: each one becomes a unit.
-func benchProfiles(b testing.TB, nProfiles, nRules int) []*Profile {
+func benchProfiles(b testing.TB, regs []filter.Registration, nProfiles, nRules int) []*Profile {
 	b.Helper()
 	profiles := make([]*Profile, nProfiles)
 	for p := range profiles {
@@ -42,14 +43,14 @@ func benchProfiles(b testing.TB, nProfiles, nRules int) []*Profile {
 		for r := range rules {
 			rules[r] = matchAllRule("r" + strconv.Itoa(r))
 		}
-		profiles[p] = compile(b, "p"+strconv.Itoa(p), "ns", "1", rules)
+		profiles[p] = compile(b, regs, "p"+strconv.Itoa(p), "ns", "1", rules)
 	}
 	return profiles
 }
 
 // benchMissProfiles compiles profiles whose rules match a host the benchmark
 // request never carries, so MatchingIndex walks every clause and returns -1.
-func benchMissProfiles(b testing.TB, nProfiles, nRules int) []*Profile {
+func benchMissProfiles(b testing.TB, regs []filter.Registration, nProfiles, nRules int) []*Profile {
 	b.Helper()
 	profiles := make([]*Profile, nProfiles)
 	for p := range profiles {
@@ -57,7 +58,7 @@ func benchMissProfiles(b testing.TB, nProfiles, nRules int) []*Profile {
 		for r := range rules {
 			rules[r] = matchHostRule("r"+strconv.Itoa(r), "no-such-host-"+strconv.Itoa(r)+".invalid")
 		}
-		profiles[p] = compile(b, "p"+strconv.Itoa(p), "ns", "1", rules)
+		profiles[p] = compile(b, regs, "p"+strconv.Itoa(p), "ns", "1", rules)
 	}
 	return profiles
 }
@@ -69,10 +70,9 @@ var benchPolicyAxes = []struct{ profiles, rules int }{
 	{8, 8},
 }
 
-// BenchmarkBinderBind measures rule matching plus unit construction. The
-// projection cache is warm after the first iteration, which is the steady
-// state in production: a cache miss only happens when a profile's
-// resourceVersion changes.
+// BenchmarkBinderBind measures rule matching plus unit construction against
+// already-projected profiles, which is the whole of what a request pays: the
+// projection itself happens once per profile version, in the compiler.
 func BenchmarkBinderBind(b *testing.B) {
 	regs := claimAll(b, nil)
 
@@ -81,9 +81,9 @@ func BenchmarkBinderBind(b *testing.B) {
 			var profiles []*Profile
 			outcome := "match"
 			if hit {
-				profiles = benchProfiles(b, a.profiles, a.rules)
+				profiles = benchProfiles(b, regs, a.profiles, a.rules)
 			} else {
-				profiles = benchMissProfiles(b, a.profiles, a.rules)
+				profiles = benchMissProfiles(b, regs, a.profiles, a.rules)
 				outcome = "nomatch"
 			}
 			name := "profiles=" + strconv.Itoa(a.profiles) +
@@ -96,10 +96,6 @@ func BenchmarkBinderBind(b *testing.B) {
 					Namespace: "ns",
 					IP:        "10.244.1.37",
 					Labels:    map[string]string{"app": "agent", "tier": "web"},
-				}
-				// Warm the projection cache so the steady state is measured.
-				if _, err := binder.bind(profiles, req, pod); err != nil {
-					b.Fatal(err)
 				}
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -122,7 +118,7 @@ func BenchmarkResolver(b *testing.B) {
 	regs := claimAll(b, nil)
 
 	for _, a := range benchPolicyAxes {
-		profiles := benchProfiles(b, a.profiles, a.rules)
+		profiles := benchProfiles(b, regs, a.profiles, a.rules)
 		name := "profiles=" + strconv.Itoa(a.profiles) + "/rules=" + strconv.Itoa(a.rules)
 		b.Run(name, func(b *testing.B) {
 			resolve := NewResolver(benchStore{profiles: profiles}, regs, nil)
@@ -153,8 +149,9 @@ func BenchmarkResolver(b *testing.B) {
 // BenchmarkMatchingIndex isolates one rule's match evaluation, so the
 // per-rule cost inside the binder's scan is attributable.
 func BenchmarkMatchingIndex(b *testing.B) {
-	hit := compile(b, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r0")})
-	miss := compile(b, "p", "ns", "1", []v1alpha1.SecurityRule{
+	regs := claimAll(b, nil)
+	hit := compile(b, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r0")})
+	miss := compile(b, regs, "p", "ns", "1", []v1alpha1.SecurityRule{
 		matchHostRule("r0", "no-such-host.invalid"),
 	})
 	req := testRequest("api.example.com")

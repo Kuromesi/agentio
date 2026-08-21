@@ -116,7 +116,11 @@ func compilePhase(prefix string, s opSpec) (OpSet, error) {
 			if err != nil {
 				return nil, fmt.Errorf("compile %s header %q: %w", qualified, op.Name, err)
 			}
-			if _, err := eval.RenderToString(tmpl, probeScope()); err != nil {
+			// ProbeRender, not RenderToString: a value template may guard on
+			// request data and call fail, which the empty probe scope would
+			// otherwise trip. Rejecting here rejects the whole profile
+			// version, so a false positive costs every rule in it.
+			if _, err := eval.ProbeRender(tmpl, probeScope()); err != nil {
 				return nil, fmt.Errorf("compile %s header %q: %w", qualified, op.Name, err)
 			}
 			out = append(out, ValueOp{Name: name, Value: tmpl})

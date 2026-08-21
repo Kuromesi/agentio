@@ -73,6 +73,13 @@ func TestCompileBool(t *testing.T) {
 	}
 }
 
+func TestCompileValueRejectsAuditOnlyVariables(t *testing.T) {
+	_, err := CompileValue(`result`)
+	if err == nil || !strings.Contains(err.Error(), "undeclared reference to 'result'") {
+		t.Fatalf("CompileValue(result) error = %v, want undeclared-reference error", err)
+	}
+}
+
 func TestEvalBool(t *testing.T) {
 	if ok, err := EvalBool(nil, nil); err != nil || !ok {
 		t.Fatalf("nil program should return true, got (%v, %v)", ok, err)

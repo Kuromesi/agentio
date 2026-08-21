@@ -139,14 +139,26 @@ func run() error {
 
 	group := &runnable.Group{}
 
+	// Build the shared filter chain first: the profile collection projects
+	// every candidate version's rule payloads against these registrations, so
+	// a static authoring error is rejected at the collection boundary (with
+	// last-known-good retention) instead of on the first matching request.
+	// See wiring.BuildFilters for ordering semantics.
+	chainDeps := wiring.Deps{Kube: client, Stop: ctx.Done()}
+	registrations, err := wiring.BuildFilters(chainDeps)
+	if err != nil {
+		setupLog.Error(err, "Failed to build filter chain")
+		return err
+	}
+
 	// Create the in-memory config store, materialized from one joined krt
 	// collection of compiled SecurityProfile / GlobalSecurityProfile objects
-	// and per-Sandbox inline rule profiles (agents.kruise.io/security-rules
+	// and per-Sandbox rule profiles (agents.kruise.io/security-rules
 	// annotation, looked up by verified pod identity and evaluated after the
 	// selector-matched profiles). Registration replays current collection
 	// state and then applies every event batch.
 	store := profilestore.NewStore()
-	profiles := profilestore.NewCollection(client, nil, ctx.Done())
+	profiles := profilestore.NewCollection(client, registrations, nil, ctx.Done())
 	profileReg := store.RegisterCollection(profiles)
 
 	// Health gRPC server.
@@ -194,14 +206,8 @@ func run() error {
 	auditRouter := audit.NewRouter()
 	auditRouter.Register(audit.SinkKindWebhook, webhookSink)
 
-	// Assemble the ext-proc gRPC server; filters come from the shared chain
-	// builder — see wiring.BuildFilters for ordering semantics.
-	chainDeps := wiring.Deps{Kube: client, Stop: ctx.Done()}
-	registrations, err := wiring.BuildFilters(chainDeps)
-	if err != nil {
-		setupLog.Error(err, "Failed to build filter chain")
-		return err
-	}
+	// Assemble the ext-proc gRPC server around the shared filter chain built
+	// above.
 	group.Add(runserver.New(runserver.Config{
 		GrpcPort:      *grpcPort,
 		PluginBudget:  *pluginBudget,

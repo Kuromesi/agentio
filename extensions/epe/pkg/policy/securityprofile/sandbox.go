@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// inline.go compiles the per-Sandbox inline security rules carried in the
+// sandbox.go compiles the per-Sandbox security rules carried in the
 // agents.kruise.io/security-rules annotation. Only the Sandbox Manager may
 // write that annotation (the tenant-facing metadata key is blacklisted for
 // direct use), and the rules are evaluated under the verified workload
@@ -33,24 +33,27 @@ import (
 )
 
 // AnnotationSecurityRules is the Sandbox annotation that carries the
-// normalized inline rule chain: a JSON array of v1alpha1.SecurityRule.
+// normalized rule chain: a JSON array of v1alpha1.SecurityRule.
 //
 // The literal mirrors the Sandbox Manager's annotation key. It stays a local
 // constant because the agents-api module does not export it yet; switch to
 // v1alpha1.AnnotationSecurityRules once it lands upstream.
 const AnnotationSecurityRules = "agents.kruise.io/security-rules"
 
-// NewInlineProfile compiles the inline rule chain of one Sandbox into a
+// NewSandboxProfile compiles the rule chain of one Sandbox into a
 // Profile. It reads only object metadata, so callers can feed it
 // PartialObjectMetadata from a metadata-only informer. The returned profile
-// carries an empty selector (inline rules are looked up by identity, not
-// matched by labels) and the Sandbox's resourceVersion so projection caches
-// can key on it like any CRD profile.
+// carries an empty selector (these rules are matched by identity, not
+// matched by labels) and the Sandbox's resourceVersion, so it is identified
+// like any CRD profile version.
+//
+// The returned profile is not yet projected: the caller must call Project
+// before it can be bound, exactly as for a CRD profile.
 //
 // Unknown JSON fields fail the compile: the annotation is a server artifact
 // and anything unrecognized means the writer and reader disagree about the
 // schema, which must not degrade into silently dropped rules.
-func NewInlineProfile(sandbox metav1.Object) (*Profile, error) {
+func NewSandboxProfile(sandbox metav1.Object) (*Profile, error) {
 	raw := sandbox.GetAnnotations()[AnnotationSecurityRules]
 	if raw == "" {
 		return nil, nil
@@ -65,7 +68,7 @@ func NewInlineProfile(sandbox metav1.Object) (*Profile, error) {
 		return nil, fmt.Errorf("%s annotation contains no rules", AnnotationSecurityRules)
 	}
 	for i := range specRules {
-		escapeInlineHeaderValues(specRules[i].Actions.HeaderManipulation)
+		escapeSandboxHeaderValues(specRules[i].Actions.HeaderManipulation)
 	}
 	rules, err := compileRules(specRules)
 	if err != nil {
@@ -77,19 +80,43 @@ func NewInlineProfile(sandbox metav1.Object) (*Profile, error) {
 			Namespace:         sandbox.GetNamespace(),
 			CreationTimestamp: sandbox.GetCreationTimestamp(),
 			Version:           sandbox.GetResourceVersion(),
-			Source:            SourceInline,
+			Match:             MatchPod,
 		},
 		Selector: labels.Nothing(),
 		Rules:    rules,
 	}, nil
 }
 
-// escapeInlineHeaderValues neutralizes Go template delimiters in inline set
-// values. The E2B contract defines inline header values as plaintext, and the
+// InvalidSandboxProfile returns an identity-bearing collection item for a
+// Sandbox whose rules failed to compile or project — the
+// counterpart of InvalidProfile. It is never eligible for matching; the
+// profile store recognizes CompileError and retains any last-known-good
+// previous version under the same identity, so a bad annotation update does
+// not silently remove rules that were enforcing.
+func InvalidSandboxProfile(sandbox metav1.Object, err error) *Profile {
+	message := "invalid sandbox security rules"
+	if err != nil {
+		message = err.Error()
+	}
+	return &Profile{
+		Meta: Meta{
+			Name:              sandbox.GetName(),
+			Namespace:         sandbox.GetNamespace(),
+			CreationTimestamp: sandbox.GetCreationTimestamp(),
+			Version:           sandbox.GetResourceVersion(),
+			Match:             MatchPod,
+		},
+		Selector:     labels.Nothing(),
+		CompileError: message,
+	}
+}
+
+// escapeSandboxHeaderValues neutralizes Go template delimiters in annotation
+// set values. The E2B contract defines these header values as plaintext, and the
 // headermutation filter compiles every value as a template; without escaping,
 // a tenant-supplied "{{...}}" would be evaluated against the render scope
 // instead of arriving verbatim on the wire.
-func escapeInlineHeaderValues(hm *v1alpha1.HeaderManipulationAction) {
+func escapeSandboxHeaderValues(hm *v1alpha1.HeaderManipulationAction) {
 	if hm == nil {
 		return
 	}

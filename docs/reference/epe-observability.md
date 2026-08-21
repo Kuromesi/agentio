@@ -46,10 +46,11 @@ $ curl --fail --silent http://127.0.0.1:9090/metrics | grep '^epe_'
 | Metric | Type and labels | Meaning |
 | --- | --- | --- |
 | `epe_plugin_calls_total` | Counter; `plugin`, `phase`, `outcome` | Filter invocations. `phase` is `request_headers`, `body_finalize`, or `response_headers`; `outcome` is `continue`, `immediate`, `mutate`, `record`, or `error`. |
-| `epe_plugin_duration_seconds` | Histogram; `plugin`, `phase` | Filter invocation latency. |
-| `epe_profile_compile_failures_total` | Counter; `scope` (`namespaced` or `global`) | Published profile versions that EPE rejected during compilation. |
-| `epe_profile_stale` | Gauge; `namespace`, `name` | A newest profile version was rejected while an earlier version remains active. The series disappears when healthy or deleted. |
-| `epe_profile_unenforced` | Gauge; `namespace`, `name` | A profile exists but no version could be installed, so none of its rules are enforced. The series disappears when healthy or deleted. |
+| `epe_plugin_duration_seconds` | Histogram; `plugin`, `phase` | Filter invocation latency. Bucket boundaries are `.01`, `.1`, `.5`, `2`, `4.5`, `5` seconds: `4.5` is the default per-phase plugin budget and `5` the chart's ext_proc message timeout, so a filter at its limit stays distinguishable from one the gateway gave up on. |
+| `epe_profile_compile_failures_total` | Counter; `scope` (`namespaced`, `global`, or `pod`) | Published policy versions that EPE rejected during compilation. `pod` counts per-Sandbox annotation rule chains. |
+| `epe_profile_stale` | Gauge; `scope` | How many policy sources in that scope had their newest version rejected while an earlier version remains active. |
+| `epe_profile_unenforced` | Gauge; `scope` | How many policy sources in that scope have no installed version at all, so none of their rules are enforced. For `pod`, that Sandbox's own rules are absent while administrator profiles still apply. |
+| `epe_profile_inputs_unavailable` | Gauge; `scope` | How many installed profiles in that scope have unresolved declared inputs (for example a missing ConfigMap). Their rules stay enforced; inputs-dependent evaluations fail per the consuming action's failure policy. |
 | `epe_audit_eval_dropped_total` | Counter; `reason` (`when_eval`, `no_sink`) | Audit events dropped before a sink. |
 | `epe_audit_log_dropped_total` | Counter | Access-log entries dropped because their in-memory queue was full. |
 | `epe_audit_webhook_dispatched_total` | Counter; `result` (`success`, `http_error`, `transport_error`, `timeout`) | Post-render audit webhook delivery outcomes. |
@@ -58,9 +59,19 @@ $ curl --fail --silent http://127.0.0.1:9090/metrics | grep '^epe_'
 
 Metric names and labels describe the current implementation; this page does not make a stability guarantee for dashboards or alerts.
 
+Every label above is a fixed enum resolved at startup, so the series count does not grow with the number of profiles, Sandboxes, requests, or destinations. A full scrape is roughly 180 `epe_` series, two thirds of it the two plugin metrics. EPE runs on the data path, so a metric earns its place by answering a question someone acts on: request-path outcome and latency per filter, whether published policy is actually enforced, and whether audit records are being lost.
+
+## Dashboard
+
+[`manifests/charts/agentio/addons/dashboards/agentio.json`](../../manifests/charts/agentio/addons/dashboards/agentio.json) is a Grafana dashboard covering the egress gateway, EPE, and Agentiod. Import it directly; the chart does not install it. Its EPE section leads with **Policy Enforcement** and **Rejected Policy Versions**, then covers audit delivery, plugin errors, and resource use.
+
+The enforcement panels aggregate with `max by (scope)` rather than `sum`: every EPE replica watches the same policy and publishes the same counts, so summing would multiply them by the replica count. The request-path panels sum because requests are split across replicas.
+
 ## Useful operational signals
 
-An increase in `epe_profile_compile_failures_total` means a new policy version did not take effect. `epe_profile_stale == 1` means an older version is still enforced; `epe_profile_unenforced == 1` means the affected selector has no installed policy at all. Inspect EPE logs and the profile's manifest before assuming the Kubernetes object's presence means it is active.
+An increase in `epe_profile_compile_failures_total` means a new policy version did not take effect. `epe_profile_stale > 0` means an older version is still enforced; `epe_profile_unenforced > 0` means that many sources have no installed policy at all. `epe_profile_inputs_unavailable > 0` means a profile is enforcing but a referenced ConfigMap input is missing, so inputs-dependent actions fail per their failure strategy.
+
+The `scope` label separates who has to act: `namespaced` and `global` are operator-authored profiles matched by label selector, while `pod` is one tenant's own Sandbox annotation matched by verified Pod identity, so alerts on the two usually route differently. These gauges are counts on purpose — a cluster can hold tens of thousands of profiles and Sandboxes, and labelling by object identity would create a time series for each one exactly when a systematic authoring failure hits. Every transition is also logged with the object and the error, so the logs answer *which*; use `/debug/profiles` on the admin port to see what is currently installed.
 
 High or growing `epe_audit_log_dropped_total` indicates saturation of the single-worker access log queue. `epe_audit_webhook_dropped_total` with `buffer_full` indicates webhook admission saturation; `draining`, `stopped`, and `shutdown_timeout` identify shutdown loss. `http_error`, `transport_error`, and `timeout` in dispatched webhooks distinguish receiver responses from network/TLS/request construction failures and deadline expiry. EPE does not retry webhooks, so these counters represent lost audit records rather than delayed retries.
 

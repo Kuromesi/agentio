@@ -20,8 +20,11 @@ package securityprofile
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 
 	// The filter packages are imported for their FilterName
 	// constants only: the payload keys must be the registered names, and
@@ -33,6 +36,104 @@ import (
 	"istio.io/istio/extensions/epe/pkg/filters/mcpacl"
 	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
 )
+
+// RuleProjection is one rule's projected per-filter configuration. Cfgs and
+// Errs are parallel to the registration slice the projection ran against; Err
+// is a failure to build the rule's payloads at all, which fails the rule
+// closed regardless of which filters it mounts.
+//
+// Failures are recorded as well as returned, because a nil entry in Cfgs is
+// ambiguous: it also means "this rule does not mount that filter", which the
+// engine rightly skips. Both compilers reject a version whose Project fails,
+// so recorded failures should never reach the store — but if a future caller
+// forgets to reject, the recorded error is what makes the binder fail that
+// rule closed instead of silently skipping the broken action as unmounted.
+type RuleProjection struct {
+	Cfgs []any
+	Errs []error
+	Err  error
+}
+
+// Project builds and parses every rule's per-filter payloads against regs,
+// stores the result on the profile, and returns the first failure.
+//
+// It runs once per profile version, at the collection boundary: the compiled
+// templates, CEL programs and regexps a rule needs therefore exist before any
+// request can match it, and an authoring error such as an uncompilable
+// credential parameter CEL expression surfaces there rather than on the first
+// matching request, where the ext_proc provider's global failureModeAllow —
+// not the action's own failStrategy — would decide the outcome.
+//
+// Both compilers treat the returned error the same way: the CRD and the
+// per-Sandbox profile version alike are rejected, retaining any
+// last-known-good version under the same identity. Compile-time errors are
+// uniformly admission failures; only runtime errors (credential fetch,
+// rendering against request data) resolve through per-action failure
+// policies.
+func (sp *Profile) Project(regs []filter.Registration) error {
+	// Always assigned, so len(Projections) == len(Rules) marks a profile as
+	// projected — the binder refuses to evaluate one that is not.
+	sp.Projections = make([]RuleProjection, len(sp.Rules))
+	sp.projectedAgainst = chainFingerprint(regs)
+	var firstErr error
+	for i := range sp.Rules {
+		rule := &sp.Rules[i]
+		payloads, err := payloadsFor(rule)
+		if err != nil {
+			sp.Projections[i] = RuleProjection{Err: err}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("rule %q: %w", rule.Name, err)
+			}
+			continue
+		}
+		cfgs, errs := filter.Project(regs, payloads)
+		sp.Projections[i] = RuleProjection{Cfgs: cfgs, Errs: errs}
+		for j, err := range errs {
+			if err != nil && firstErr == nil {
+				firstErr = fmt.Errorf("rule %q: filter %q: %w", rule.Name, regs[j].Name, err)
+			}
+		}
+	}
+	return firstErr
+}
+
+// chainFingerprint identifies a registration set by its ordered names. A
+// projection's Cfgs are indexed by registration position, so equal lengths are
+// not enough: two chains of the same size in a different order would each
+// receive the other's configuration. NUL separates, because a registered
+// filter name cannot contain one.
+//
+// Names are sufficient only because a filter's Parse is a pure function of its
+// payload — the dependencies a Definition captures are read by New at request
+// time, not by Parse. A Parse that closed over its Deps would make two chains
+// with equal names produce different configs, and this fingerprint would not
+// tell them apart.
+func chainFingerprint(regs []filter.Registration) string {
+	names := make([]string, len(regs))
+	for i, reg := range regs {
+		names[i] = reg.Name
+	}
+	return strings.Join(names, "\x00")
+}
+
+// projection returns rule i's projection for a binder evaluating against
+// chain. A profile reaches the request path only through a compiler that
+// projects it, so a missing projection, or one built against a different
+// chain, means the collection and the resolver were wired differently: that
+// fails the request closed rather than handing one filter another's
+// configuration.
+func (sp *Profile) projection(i int, chain string) (RuleProjection, error) {
+	if len(sp.Projections) != len(sp.Rules) {
+		return RuleProjection{}, fmt.Errorf("profile %q was not projected against the filter chain",
+			sp.ResourceName())
+	}
+	if sp.projectedAgainst != chain {
+		return RuleProjection{}, fmt.Errorf(
+			"profile %q was projected against a different filter chain than the resolver evaluates",
+			sp.ResourceName())
+	}
+	return sp.Projections[i], nil
+}
 
 // payloadsFor turns one rule's actions into the per-filter payload
 // documents filter.Project consumes, keyed by registered filter name. A

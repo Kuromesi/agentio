@@ -24,6 +24,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/extensions/epe/pkg/filters/tokentransform"
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/kclient/clienttest"
 	"istio.io/istio/pkg/kube/krt"
@@ -49,29 +52,32 @@ func TestProfileCollection_ConfigMapInputDependency(t *testing.T) {
 	stop := test.NewStop(t)
 
 	store := NewStore()
-	profiles := NewCollection(c, krt.GlobalDebugHandler, stop)
+	profiles := NewCollection(c, nil, krt.GlobalDebugHandler, stop)
 	reg := store.RegisterCollection(profiles)
 	c.RunAndWait(stop)
 	if !reg.WaitUntilSynced(stop) {
 		t.Fatal("profile collection handler never synced")
 	}
 
-	assertInputs := func(want map[string]any) error {
-		matched := store.Matches("", "ns-a", map[string]string{"app": "test"})
+	assertState := func(wantInputs map[string]any, wantUnavailable bool) error {
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
-		if !reflect.DeepEqual(matched[0].Inputs, want) {
-			return fmt.Errorf("inputs = %#v, want %#v", matched[0].Inputs, want)
+		if !reflect.DeepEqual(matched[0].Inputs, wantInputs) {
+			return fmt.Errorf("inputs = %#v, want %#v", matched[0].Inputs, wantInputs)
+		}
+		if unavailable := matched[0].InputsError != ""; unavailable != wantUnavailable {
+			return fmt.Errorf("InputsError = %q, want unavailable=%v", matched[0].InputsError, wantUnavailable)
 		}
 		return nil
 	}
 
 	retry.UntilSuccessOrFail(t, func() error {
-		return assertInputs(map[string]any{
+		return assertState(map[string]any{
 			"inline":  map[string]string{"region": "cn-hangzhou"},
 			"routing": map[string]string{"tenant-a": "provider-a"},
-		})
+		}, false)
 	}, retry.Timeout(5*time.Second))
 
 	ctx := test.NewContext(t)
@@ -85,24 +91,41 @@ func TestProfileCollection_ConfigMapInputDependency(t *testing.T) {
 	}
 
 	retry.UntilSuccessOrFail(t, func() error {
-		return assertInputs(map[string]any{
+		return assertState(map[string]any{
 			"inline":  map[string]string{"region": "cn-hangzhou"},
 			"routing": map[string]string{"tenant-a": "provider-b"},
-		})
+		}, false)
 	}, retry.Timeout(5*time.Second))
 
+	// Deleting the ConfigMap keeps the profile installed and enforcing, but
+	// the inputs become unavailable rather than silently serving the stale
+	// values; the compiled item is valid (no CompileError).
 	if err := c.Kube().CoreV1().ConfigMaps("ns-a").Delete(ctx, "routing", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
 		compiled := profiles.GetKey("ns-a/with-inputs")
-		if compiled == nil || compiled.CompileError == "" {
-			return fmt.Errorf("profile collection has not observed the missing ConfigMap")
+		if compiled == nil {
+			return fmt.Errorf("profile disappeared from the compiled collection")
 		}
-		return assertInputs(map[string]any{
+		if compiled.CompileError != "" {
+			return fmt.Errorf("missing ConfigMap must not reject the profile, got CompileError %q", compiled.CompileError)
+		}
+		return assertState(nil, true)
+	}, retry.Timeout(5*time.Second))
+
+	// Recreating the ConfigMap heals the inputs.
+	if _, err := c.Kube().CoreV1().ConfigMaps("ns-a").Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "routing", Namespace: "ns-a"},
+		Data:       map[string]string{"tenant-a": "provider-c"},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	retry.UntilSuccessOrFail(t, func() error {
+		return assertState(map[string]any{
 			"inline":  map[string]string{"region": "cn-hangzhou"},
-			"routing": map[string]string{"tenant-a": "provider-b"},
-		})
+			"routing": map[string]string{"tenant-a": "provider-c"},
+		}, false)
 	}, retry.Timeout(5*time.Second))
 }
 
@@ -121,7 +144,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 	c.RunAndWait(stop)
 
 	store := NewStore()
-	profiles := NewCollection(c, krt.GlobalDebugHandler, stop)
+	profiles := NewCollection(c, nil, krt.GlobalDebugHandler, stop)
 	reg := store.RegisterCollection(profiles)
 	if !reg.WaitUntilSynced(stop) {
 		t.Fatal("profile collection handler never synced")
@@ -131,7 +154,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 
 	// Initial state replay delivers the pre-existing profile.
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-a", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-a, got %d", n)
 		}
 		return nil
@@ -143,7 +166,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-b", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-b, got %d", n)
 		}
 		return nil
@@ -155,7 +178,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-c", map[string]string{"app": "test"})); n != 1 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 1 {
 			return fmt.Errorf("expected global profile to match ns-c, got %d", n)
 		}
 		return nil
@@ -175,7 +198,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("compiled collection has not observed invalid update")
 		}
-		matched := store.Matches("", "ns-b", map[string]string{"app": "test"})
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})
 		if len(matched) != 2 {
 			names := make([]string, 0, len(matched))
 			for _, sp := range matched {
@@ -191,7 +214,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry.UntilSuccessOrFail(t, func() error {
-		if n := len(store.Matches("", "ns-c", map[string]string{"app": "test"})); n != 0 {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 0 {
 			return fmt.Errorf("expected global profile removal, still %d matches", n)
 		}
 		return nil
@@ -216,7 +239,7 @@ func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
 	stop := test.NewStop(t)
 
 	store := NewStore()
-	profiles := NewCollection(c, krt.GlobalDebugHandler, stop)
+	profiles := NewCollection(c, nil, krt.GlobalDebugHandler, stop)
 	reg := store.RegisterCollection(profiles)
 	c.RunAndWait(stop)
 
@@ -231,7 +254,155 @@ func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("collection did not sync while the Sandbox CRD is absent")
 	}
-	if got := store.Matches("sbx-1", "sandboxes", nil); len(got) != 0 {
+	if got := store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"}); len(got) != 0 {
 		t.Fatalf("Matches = %+v, want no profiles without the CRD", got)
 	}
+}
+
+// TestProfileCollection_MissingConfigMapOnFirstCreate is the key regression
+// for the inputs-degradation model: a profile created while its ConfigMap
+// input does not exist must still install with all rules in effect — a Block
+// rule keeps protecting the pods it selects — while the inputs are marked
+// unavailable until the ConfigMap appears.
+func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
+	profile := newTestProfile("first-create", "ns-a", map[string]string{"app": "test"})
+	profile.Spec.Inputs = []v1alpha1.SecurityProfileInput{
+		{Name: "routing", ConfigMap: &v1alpha1.ConfigMapInputRef{Name: "missing"}},
+	}
+	profile.Spec.Rules = []v1alpha1.SecurityRule{{
+		Name:    "deny-all",
+		Match:   []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
+		Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
+	}}
+	agentsCS := agentsfake.NewSimpleClientset(profile)
+	RegisterTypes(agentsCS)
+
+	c := kube.NewFakeClient()
+	clienttest.MakeCRD(t, c, securityProfileGVR)
+	clienttest.MakeCRD(t, c, globalSecurityProfileGVR)
+	stop := test.NewStop(t)
+
+	store := NewStore()
+	profiles := NewCollection(c, nil, krt.GlobalDebugHandler, stop)
+	reg := store.RegisterCollection(profiles)
+	c.RunAndWait(stop)
+	if !reg.WaitUntilSynced(stop) {
+		t.Fatal("profile collection handler never synced")
+	}
+
+	retry.UntilSuccessOrFail(t, func() error {
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		if len(matched) != 1 {
+			return fmt.Errorf("matched profiles = %d, want 1 despite the missing ConfigMap", len(matched))
+		}
+		sp := matched[0]
+		if len(sp.Rules) != 1 || sp.Rules[0].Actions.Block == nil {
+			return fmt.Errorf("block rule not installed: %+v", sp.Rules)
+		}
+		if sp.InputsError == "" {
+			return fmt.Errorf("expected InputsError to mark the missing ConfigMap")
+		}
+		if sp.Inputs != nil {
+			return fmt.Errorf("expected no resolved inputs, got %#v", sp.Inputs)
+		}
+		return nil
+	}, retry.Timeout(5*time.Second))
+
+	// The krt dependency registered by the failed fetch recompiles the
+	// profile when the ConfigMap appears.
+	ctx := test.NewContext(t)
+	if _, err := c.Kube().CoreV1().ConfigMaps("ns-a").Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing", Namespace: "ns-a"},
+		Data:       map[string]string{"k": "v"},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	retry.UntilSuccessOrFail(t, func() error {
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		if len(matched) != 1 {
+			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
+		}
+		if matched[0].InputsError != "" {
+			return fmt.Errorf("InputsError not cleared: %q", matched[0].InputsError)
+		}
+		if !reflect.DeepEqual(matched[0].Inputs, map[string]any{"routing": map[string]string{"k": "v"}}) {
+			return fmt.Errorf("inputs = %#v", matched[0].Inputs)
+		}
+		return nil
+	}, retry.Timeout(5*time.Second))
+}
+
+// TestProfileCollection_ProjectionErrorRejectsVersion pins the
+// collection-time half of the credential-parameter failure semantics: an
+// uncompilable parameter CEL expression rejects the profile version at the
+// collection boundary — retaining the last-known-good version — instead of
+// failing lazily on the first matching request, where the ext_proc provider's
+// global failureModeAllow would decide the outcome.
+func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
+	regs, err := filter.Build(tokentransform.NewDefinition(tokentransform.Deps{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	good := newTestProfile("cred", "ns-a", map[string]string{"app": "test"})
+	good.Spec.Rules = []v1alpha1.SecurityRule{{
+		Name:  "sign",
+		Match: []v1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}},
+		Actions: v1alpha1.SecurityRuleActions{TokenTransformation: &v1alpha1.TokenTransformationAction{
+			Type:          v1alpha1.TokenTransformationTypeApiKey,
+			CredentialRef: v1alpha1.CredentialRef{Secret: &v1alpha1.SecretCredentialRef{Name: "creds"}},
+			ApiKey:        &v1alpha1.ApiKeyConfig{ValueTemplate: "Bearer {{ .Token }}"},
+		}},
+	}}
+	agentsCS := agentsfake.NewSimpleClientset(good)
+	RegisterTypes(agentsCS)
+
+	c := kube.NewFakeClient()
+	clienttest.MakeCRD(t, c, securityProfileGVR)
+	clienttest.MakeCRD(t, c, globalSecurityProfileGVR)
+	stop := test.NewStop(t)
+
+	store := NewStore()
+	profiles := NewCollection(c, regs, krt.GlobalDebugHandler, stop)
+	reg := store.RegisterCollection(profiles)
+	c.RunAndWait(stop)
+	if !reg.WaitUntilSynced(stop) {
+		t.Fatal("profile collection handler never synced")
+	}
+
+	retry.UntilSuccessOrFail(t, func() error {
+		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
+			return fmt.Errorf("expected 1 match, got %d", n)
+		}
+		return nil
+	}, retry.Timeout(5*time.Second))
+
+	// An update whose credential parameter CEL does not compile is rejected
+	// at the collection boundary; the store keeps serving the good version.
+	ctx := test.NewContext(t)
+	badCel := "this is not CEL ((("
+	bad := good.DeepCopy()
+	bad.Spec.Rules[0].Actions.TokenTransformation.CredentialRef = v1alpha1.CredentialRef{
+		CredentialProvider: &v1alpha1.CredentialProviderRef{
+			Name:       "provider",
+			Parameters: map[string]v1alpha1.ValueSource{"tenant": {Cel: &badCel}},
+		},
+	}
+	if _, err := agentsCS.AgentsV1alpha1().SecurityProfiles("ns-a").Update(ctx, bad, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	retry.UntilSuccessOrFail(t, func() error {
+		compiled := profiles.GetKey("ns-a/cred")
+		if compiled == nil || compiled.CompileError == "" {
+			return fmt.Errorf("projection error has not rejected the update")
+		}
+		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		if len(matched) != 1 {
+			return fmt.Errorf("expected last-known-good version to keep serving, got %d matches", len(matched))
+		}
+		if matched[0].Rules[0].Actions.TokenTransformation.CredentialRef.Secret == nil {
+			return fmt.Errorf("store is serving the rejected version")
+		}
+		return nil
+	}, retry.Timeout(5*time.Second))
 }

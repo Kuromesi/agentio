@@ -14,8 +14,6 @@
 package headermutation_test
 
 import (
-	"context"
-	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -23,11 +21,7 @@ import (
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
-	"istio.io/istio/extensions/epe/pkg/engine"
-	"istio.io/istio/extensions/epe/pkg/engine/filter"
-	"istio.io/istio/extensions/epe/pkg/extproc"
 	"istio.io/istio/extensions/epe/pkg/filters/headermutation"
-	"istio.io/istio/extensions/epe/pkg/httpreq"
 	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
@@ -37,21 +31,16 @@ import (
 // half — projection and evaluation with no wire — is projection_test.go.
 
 func TestScenario_RequestHeaderMutationsReachExtProcWire(t *testing.T) {
-	server := newWireServer(t, `{
+	h := newWireHarness(t, `{
 		"request": {
 			"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
 			"add":[{"name":"X-Pod","value":"{{ .Pod.Name }}"}],
 			"remove":["X-Legacy"]
 		}
 	}`)
-	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
+	verdict := h.Run(t, enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		Header("X-Legacy", "old").
-		Peer("default", "sandbox-a", map[string]string{"app": "demo"}).
-		Build()
-
-	stream := enginetest.NewScriptedStream(t.Context(), msgs...)
-	processErr := server.Process(stream)
-	verdict := enginetest.ParseVerdict(stream.Responses(), processErr)
+		Peer("default", "sandbox-a", map[string]string{"app": "demo"}))
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}
@@ -72,7 +61,7 @@ func TestScenario_RequestHeaderMutationsReachExtProcWire(t *testing.T) {
 }
 
 func TestScenario_ResponseHeaderMutationsReachExtProcWire(t *testing.T) {
-	server := newWireServer(t, `{
+	h := newWireHarness(t, `{
 		"response": {
 			"set":[{"name":"X-Policy","value":"{{ .Profile.Name }}"}],
 			"add":[{"name":"Set-Cookie","value":"trace={{ .Request.Header \"X-Trace\" }}"}],
@@ -94,9 +83,7 @@ func TestScenario_ResponseHeaderMutationsReachExtProcWire(t *testing.T) {
 		},
 	})
 
-	stream := enginetest.NewScriptedStream(t.Context(), msgs...)
-	processErr := server.Process(stream)
-	verdict := enginetest.ParseVerdict(stream.Responses(), processErr)
+	verdict := h.RunMessages(t, msgs)
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}
@@ -119,32 +106,12 @@ func TestScenario_ResponseHeaderMutationsReachExtProcWire(t *testing.T) {
 	}
 }
 
-func newWireServer(t *testing.T, payload string) *extproc.Server {
+func newWireHarness(t *testing.T, payload string) *enginetest.Harness {
 	t.Helper()
-	regs, err := filter.Build(headermutation.Definition())
-	if err != nil {
-		t.Fatalf("build registration: %v", err)
-	}
-	cfgs, errs := filter.Project(regs, map[string]json.RawMessage{
-		headermutation.FilterName: json.RawMessage(payload),
-	})
-	if errs[0] != nil {
-		t.Fatalf("project payload: %v", errs[0])
-	}
-	resolve := func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
-		scope := inputs.NewScope(
-			inputs.RequestFrom(*req), pod,
-			inputs.Profile{Name: "outbound", Namespace: "default"},
-			inputs.Rule{Name: "mutate-headers"}, nil,
-		)
-		return engine.Resolution{Units: []engine.Unit{{
-			ID:    filter.UnitID{Scope: "default/outbound", Name: "mutate-headers"},
-			Scope: scope,
-			Cfgs:  cfgs,
-		}}}, nil
-	}
-	return extproc.NewServer(extproc.ServerDeps{
-		Resolve:       resolve,
-		Registrations: regs,
+	return enginetest.NewSingleFilter(t, enginetest.SingleFilter{
+		Definition: headermutation.Definition(),
+		Payload:    payload,
+		Profile:    inputs.Profile{Name: "outbound", Namespace: "default"},
+		Rule:       inputs.Rule{Name: "mutate-headers"},
 	})
 }

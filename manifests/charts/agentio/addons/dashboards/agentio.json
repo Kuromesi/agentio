@@ -1409,7 +1409,7 @@
               }
             ]
           },
-          "unit": "ops"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -1418,6 +1418,232 @@
         "w": 12,
         "x": 0,
         "y": 42
+      },
+      "id": 304,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (scope) (epe_profile_unenforced{namespace=\"agentio-system\"})",
+          "legendFormat": "unenforced {{scope}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (scope) (epe_profile_stale{namespace=\"agentio-system\"})",
+          "legendFormat": "stale {{scope}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (scope) (epe_profile_inputs_unavailable{namespace=\"agentio-system\"})",
+          "legendFormat": "inputs unavailable {{scope}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "EPE - Policy Enforcement",
+      "type": "timeseries",
+      "pluginVersion": "11.5.1",
+      "description": "Whether published policy is actually in effect. `unenforced` is the severe one: those sources have no installed version at all, so none of their rules run and the Pods they select are unprotected. `stale` means an older version is still enforcing because the newest one was rejected. `inputs unavailable` means the rules do run, but a referenced ConfigMap input is missing, so inputs-dependent actions fail per their failure strategy. The scope label says who acts: namespaced/global are operator profiles matched by label selector, pod is one tenant's Sandbox annotation matched by Pod identity. These are counts by design — the EPE logs name the object and the error. Aggregated with max, not sum: every EPE replica watches the same policy and publishes the same value, so summing would multiply it by the replica count. The request-path panels sum because requests are split across replicas."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 305,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (scope) (rate(epe_profile_compile_failures_total{namespace=\"agentio-system\"}[$__rate_interval]))",
+          "legendFormat": "{{scope}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "EPE - Rejected Policy Versions",
+      "type": "timeseries",
+      "pluginVersion": "11.5.1",
+      "description": "Rate of published policy versions EPE refused to compile. Use it to confirm a rollout landed: a rejection that was published and then fixed shows here even though the enforcement panel is back to zero. Aggregated with max, not sum: every EPE replica watches the same policy and publishes the same value, so summing would multiply it by the replica count. The request-path panels sum because requests are split across replicas."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
       },
       "id": 300,
       "options": {
@@ -1518,7 +1744,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 42
+        "y": 50
       },
       "id": 301,
       "options": {
@@ -1643,7 +1869,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 58
       },
       "id": 302,
       "options": {
@@ -1768,7 +1994,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 58
       },
       "id": 303,
       "options": {
@@ -1869,7 +2095,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 66
       },
       "id": 29,
       "options": {
@@ -1970,7 +2196,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 66
       },
       "id": 28,
       "options": {
@@ -2071,7 +2297,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 66
+        "y": 74
       },
       "id": 502,
       "options": {
@@ -2172,7 +2398,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 66
+        "y": 74
       },
       "id": 602,
       "options": {
@@ -2273,7 +2499,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 66
+        "y": 74
       },
       "id": 503,
       "options": {
@@ -2374,7 +2600,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 66
+        "y": 74
       },
       "id": 603,
       "options": {
@@ -2416,7 +2642,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 74
+        "y": 82
       },
       "id": 102,
       "panels": [],
@@ -2488,7 +2714,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 75
+        "y": 83
       },
       "id": 9,
       "options": {
@@ -2613,7 +2839,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 75
+        "y": 83
       },
       "id": 11,
       "options": {
@@ -2738,7 +2964,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 83
+        "y": 91
       },
       "id": 25,
       "options": {
@@ -2860,7 +3086,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 83
+        "y": 91
       },
       "id": 204,
       "options": {
@@ -2985,7 +3211,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 91
+        "y": 99
       },
       "id": 7,
       "options": {
@@ -3085,7 +3311,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 91
+        "y": 99
       },
       "id": 5,
       "options": {
@@ -3185,7 +3411,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 99
+        "y": 107
       },
       "id": 504,
       "options": {
@@ -3286,7 +3512,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 99
+        "y": 107
       },
       "id": 604,
       "options": {
@@ -3387,7 +3613,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 99
+        "y": 107
       },
       "id": 505,
       "options": {
@@ -3488,7 +3714,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 99
+        "y": 107
       },
       "id": 605,
       "options": {
@@ -3530,7 +3756,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 107
+        "y": 115
       },
       "id": 103,
       "panels": [],
@@ -3602,7 +3828,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 108
+        "y": 116
       },
       "id": 3,
       "options": {
@@ -3702,7 +3928,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 108
+        "y": 116
       },
       "id": 1,
       "options": {

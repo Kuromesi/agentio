@@ -65,7 +65,10 @@ func New(t testing.TB, opts Options) *Harness {
 		stop = test.NewStop(t)
 	}
 	regs := opts.Filters
-	if regs == nil {
+	// len, not nil: an explicitly empty slice must take the same branch the
+	// fixture does, or the store would project against the default chain while
+	// the resolver evaluates against an empty one.
+	if len(regs) == 0 {
 		var err error
 		regs, err = wiring.BuildFilters(wiring.Deps{
 			Kube:             kubeClient,
@@ -77,7 +80,9 @@ func New(t testing.TB, opts Options) *Harness {
 		}
 	}
 
-	fixture := NewFixture(t)
+	// The fixture projects seeded profiles against the same chain the resolver
+	// evaluates them with; a mismatch fails every request closed.
+	fixture := NewFixture(t, regs...)
 	var auditSink audit.Sink
 	if opts.AuditRouter != nil {
 		auditSink = opts.AuditRouter

@@ -30,6 +30,7 @@ import (
 const (
 	scopeNamespaced = "namespaced"
 	scopeGlobal     = "global"
+	scopePod        = "pod"
 )
 
 var (
@@ -41,45 +42,50 @@ var (
 			Name: "epe_profile_compile_failures_total",
 			Help: "Profile versions rejected because they failed to compile.",
 		},
-		[]string{"scope"}, // namespaced | global
+		[]string{"scope"}, // namespaced | global | pod
 	)
 
-	// profileStale marks identities whose newest published version failed to
-	// compile while an earlier version stays installed. The series exists only
-	// while that is true, so absence means healthy and deleted profiles leave
-	// nothing behind: alert on `epe_profile_stale == 1`.
-	//
-	// Cardinality is one series per stale profile. Profiles are operator
-	// authored and bounded, and only the stale ones are ever present.
+	// profileStale counts sources whose newest published version failed to
+	// compile while an earlier version stays installed. Alert on
+	// `epe_profile_stale > 0`.
 	profileStale = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "epe_profile_stale",
-			Help: "Profiles whose newest version was rejected and whose previous version is still being served.",
+			Help: "Policy sources whose newest version was rejected and whose previous version is still being served.",
 		},
-		[]string{"namespace", "name"},
+		[]string{"scope"},
 	)
 
-	// profileUnenforced marks identities that exist in the API but have no
+	// profileUnenforced counts sources that exist in the API but have no
 	// version installed at all, because the first version published for them
-	// failed to compile. Nothing of the profile is in effect, so the pods it
+	// failed to compile. Nothing of that policy is in effect, so the pods it
 	// targets are unprotected — the severe half of a compile failure, and the
-	// one profileStale deliberately does not cover.
-	//
-	// It is per-identity because the compile counter is not: an operator
-	// seeing that counter move cannot tell which profile stopped enforcing.
-	// Alert on `epe_profile_unenforced == 1`; absence means
-	// healthy, and deleted profiles leave nothing behind.
+	// one profileStale deliberately does not cover. Alert on
+	// `epe_profile_unenforced > 0`.
 	profileUnenforced = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "epe_profile_unenforced",
-			Help: "Profiles that failed to compile with no previous version installed, so none of their rules are in effect.",
+			Help: "Policy sources that failed to compile with no previous version installed, so none of their rules are in effect.",
 		},
-		[]string{"namespace", "name"},
+		[]string{"scope"},
+	)
+
+	// profileInputsUnavailable counts installed profiles whose declared inputs
+	// could not be resolved — typically a referenced ConfigMap that does not
+	// exist (or no longer exists). Their rules stay in effect; only evaluations
+	// that read inputs fail, resolved through the consuming action's failure
+	// policy. Alert on `epe_profile_inputs_unavailable > 0`.
+	profileInputsUnavailable = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "epe_profile_inputs_unavailable",
+			Help: "Installed profiles whose declared inputs are unresolved, so inputs-dependent evaluations fail per the consuming action's failure policy.",
+		},
+		[]string{"scope"},
 	)
 )
 
 func init() {
-	metrics.Registry.MustRegister(profileCompileFailuresTotal, profileStale, profileUnenforced)
+	metrics.Registry.MustRegister(profileCompileFailuresTotal, profileStale, profileUnenforced, profileInputsUnavailable)
 }
 
 // profileScope maps a profile's namespace onto the bounded scope label.
@@ -89,4 +95,85 @@ func profileScope(namespace string) string {
 		return scopeGlobal
 	}
 	return scopeNamespaced
+}
+
+// degradedSets records which policy sources are currently in each degraded
+// state, keyed exactly like the snapshot, so the gauges can publish a count per
+// scope instead of one series per object.
+//
+// The identity deliberately does not reach the metric. A cluster can hold tens
+// of thousands of SecurityProfiles and Sandboxes, and the failures these gauges
+// describe are the systematic kind — one bad chart render, one Sandbox Manager
+// schema change — so a per-identity label would mint a time series for every
+// object in the cluster at exactly the moment the signal matters, multiplying
+// scrape size and TSDB churn on a data-plane process. The counts answer "is
+// anything degraded, and is it tenant or operator policy"; the log lines that
+// accompany every transition name the object and the error.
+//
+// Memory is bounded by the number of degraded sources, not by the number of
+// profiles: a healthy store holds three empty maps.
+type degradedSets struct {
+	stale             map[profileKey]struct{}
+	unenforced        map[profileKey]struct{}
+	inputsUnavailable map[profileKey]struct{}
+}
+
+func newDegradedSets() degradedSets {
+	return degradedSets{
+		stale:             map[profileKey]struct{}{},
+		unenforced:        map[profileKey]struct{}{},
+		inputsUnavailable: map[profileKey]struct{}{},
+	}
+}
+
+// rejected records a version that failed to compile: stale when an earlier
+// version is still installed, unenforced when none is. The inputs state is left
+// alone — whatever is installed keeps serving with the inputs it resolved.
+func (d degradedSets) rejected(k profileKey, installed bool) {
+	if installed {
+		d.stale[k] = struct{}{}
+		delete(d.unenforced, k)
+		return
+	}
+	d.unenforced[k] = struct{}{}
+	delete(d.stale, k)
+}
+
+// installed records a version that took effect, which clears both rejection
+// states and refreshes the inputs state.
+func (d degradedSets) installed(k profileKey, inputsUnavailable bool) {
+	delete(d.stale, k)
+	delete(d.unenforced, k)
+	if inputsUnavailable {
+		d.inputsUnavailable[k] = struct{}{}
+		return
+	}
+	delete(d.inputsUnavailable, k)
+}
+
+// removed forgets a source entirely, so a deleted object leaves nothing behind.
+func (d degradedSets) removed(k profileKey) {
+	delete(d.stale, k)
+	delete(d.unenforced, k)
+	delete(d.inputsUnavailable, k)
+}
+
+// publish republishes all three gauges from the current sets. It runs once per
+// event batch rather than once per event, and it always publishes every scope,
+// including the zeros: a series that vanishes when healthy forces every alert
+// to special-case absence.
+func (d degradedSets) publish() {
+	publishDegraded(profileStale, d.stale)
+	publishDegraded(profileUnenforced, d.unenforced)
+	publishDegraded(profileInputsUnavailable, d.inputsUnavailable)
+}
+
+func publishDegraded(g *prometheus.GaugeVec, set map[profileKey]struct{}) {
+	counts := map[string]int{scopeNamespaced: 0, scopeGlobal: 0, scopePod: 0}
+	for k := range set {
+		counts[k.scope()]++
+	}
+	for scope, n := range counts {
+		g.WithLabelValues(scope).Set(float64(n))
+	}
 }

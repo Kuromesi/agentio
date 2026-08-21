@@ -31,9 +31,13 @@ import (
 
 type nopFilter struct{ filter.PassThrough }
 
-// compile turns a v1alpha1 spec into the compiled model form the store
-// would hand to bind.
-func compile(t testing.TB, name, ns, version string, rules []v1alpha1.SecurityRule) *Profile {
+// compile turns a v1alpha1 spec into the compiled model form the store would
+// hand to bind: projected against regs, which is what makes it bindable.
+//
+// A projection failure is recorded on the profile instead of failing the test.
+// The collection rejects such a version, but the binder's own fail-closed
+// handling of one is what several tests here pin.
+func compile(t testing.TB, regs []filter.Registration, name, ns, version string, rules []v1alpha1.SecurityRule) *Profile {
 	t.Helper()
 	obj := &v1alpha1.SecurityProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, ResourceVersion: version},
@@ -46,6 +50,7 @@ func compile(t testing.TB, name, ns, version string, rules []v1alpha1.SecurityRu
 	if err != nil {
 		t.Fatalf("compile profile %s: %v", name, err)
 	}
+	_ = sp.Project(regs)
 	return sp
 }
 
@@ -106,10 +111,11 @@ func claimAll(t testing.TB, calls *int) []filter.Registration {
 }
 
 func TestBindOrdersUnitsByProfileThenRule(t *testing.T) {
-	b := newBinder(claimAll(t, nil))
+	regs := claimAll(t, nil)
+	b := newBinder(regs)
 
-	p1 := compile(t, "alpha", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r1"), matchAllRule("r2")})
-	p2 := compile(t, "beta", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r3")})
+	p1 := compile(t, regs, "alpha", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r1"), matchAllRule("r2")})
+	p2 := compile(t, regs, "beta", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r3")})
 
 	units, err := b.bind([]*Profile{p1, p2}, testRequest("example.com"), inputs.Pod{Namespace: "ns"})
 	if err != nil {
@@ -137,9 +143,10 @@ func TestBindOrdersUnitsByProfileThenRule(t *testing.T) {
 }
 
 func TestBindSkipsNonMatchingRules(t *testing.T) {
-	b := newBinder(claimAll(t, nil))
+	regs := claimAll(t, nil)
+	b := newBinder(regs)
 
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{
 		matchHostRule("hit", "example.com"),
 		matchHostRule("miss", "other.com"),
 	})
@@ -155,12 +162,11 @@ func TestBindSkipsNonMatchingRules(t *testing.T) {
 func TestBinderCopiesRegistrations(t *testing.T) {
 	regs := claimAll(t, nil)
 	b := newBinder(regs)
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 
-	// Mutating the caller's slice after construction must not change the
-	// registration name Binder uses to project block payloads.
+	// Mutating the caller's slice after construction must not change what the
+	// binder does with a profile already projected against it.
 	regs[0].Name = "mutated"
-
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
@@ -174,14 +180,15 @@ func TestBinderCopiesRegistrations(t *testing.T) {
 	}
 }
 
-// Projection must run once per profile version, not once per request —
-// otherwise the typed-projection design just moved the per-request cost
-// instead of removing it.
+// Projection must run once per profile version, at compile time, and never
+// again — a request reads the result. Otherwise the typed-projection design
+// just moved the per-request cost instead of removing it.
 func TestProjectionRunsOncePerProfileVersion(t *testing.T) {
 	calls := 0
-	b := newBinder(claimAll(t, &calls))
+	regs := claimAll(t, &calls)
+	b := newBinder(regs)
 
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	profiles := []*Profile{p}
 	req := testRequest("example.com")
 
@@ -194,7 +201,7 @@ func TestProjectionRunsOncePerProfileVersion(t *testing.T) {
 		t.Fatalf("project ran %d times for one profile version, want 1", calls)
 	}
 
-	bumped := compile(t, "p", "ns", "2", []v1alpha1.SecurityRule{matchAllRule("r")})
+	bumped := compile(t, regs, "p", "ns", "2", []v1alpha1.SecurityRule{matchAllRule("r")})
 	if _, err := b.bind([]*Profile{bumped}, req, inputs.Pod{}); err != nil {
 		t.Fatalf("bind bumped: %v", err)
 	}
@@ -215,7 +222,7 @@ func TestProjectionRealErrorFailsClosed(t *testing.T) {
 	}
 	b := newBinder(regs)
 
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	if _, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want wrapped projection error", err)
 	}
@@ -238,7 +245,7 @@ func TestUnmountedFilterYieldsNilSlot(t *testing.T) {
 		Name:  "r",
 		Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
 	}
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{rule})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{rule})
 	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
@@ -249,7 +256,8 @@ func TestUnmountedFilterYieldsNilSlot(t *testing.T) {
 }
 
 func TestMatchIndexMatchesRuleMatchingIndex(t *testing.T) {
-	b := newBinder(claimAll(t, nil))
+	regs := claimAll(t, nil)
+	b := newBinder(regs)
 
 	rule := v1alpha1.SecurityRule{
 		Name: "r",
@@ -258,7 +266,7 @@ func TestMatchIndexMatchesRuleMatchingIndex(t *testing.T) {
 			{Domains: []string{"example.com"}},
 		},
 	}
-	p := compile(t, "p", "ns", "1", []v1alpha1.SecurityRule{rule})
+	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{rule})
 	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
@@ -269,15 +277,17 @@ func TestMatchIndexMatchesRuleMatchingIndex(t *testing.T) {
 }
 
 // A Sandbox and a SecurityProfile in one namespace may share a name and even
-// a resourceVersion. The projection cache must keep the two apart; otherwise
-// whichever profile bound last would serve its projections to the other.
-func TestProjectionCacheDoesNotCrossInlineAndCRProfiles(t *testing.T) {
+// a resourceVersion, and both can match the same request. Each must be
+// evaluated with its own configuration — the failure this guards against is
+// one of them serving its projections to the other.
+func TestInlineAndCRProfilesKeepSeparateProjections(t *testing.T) {
 	calls := 0
-	b := newBinder(claimAll(t, &calls))
+	regs := claimAll(t, &calls)
+	b := newBinder(regs)
 
-	cr := compile(t, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("cr-rule")})
-	inline := compile(t, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("inline-rule")})
-	inline.Meta.Source = SourceInline
+	cr := compile(t, regs, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("cr-rule")})
+	inline := compile(t, regs, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("inline-rule")})
+	inline.Meta.Match = MatchPod
 
 	req := testRequest("example.com")
 	pod := inputs.Pod{Namespace: "ns", Name: "shared"}

@@ -15,14 +15,22 @@ package bypass
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 )
 
-// parse accepts any document. bypass carries no configuration; mounting it
-// at all is the entire policy statement (`bypass: true`
-// becomes `bypass: {}`).
-func parse(json.RawMessage) (Config, error) { return Config{}, nil }
+// parse accepts any well-formed document. bypass carries no configuration;
+// mounting it at all is the entire policy statement (`bypass: true` becomes
+// `bypass: {}`). Malformed JSON is still rejected: bypass is the one filter
+// whose accidental mount fails open, so corrupted policy data must not be
+// interpreted as "bypass everything".
+func parse(raw json.RawMessage) (Config, error) {
+	if len(raw) > 0 && !json.Valid(raw) {
+		return Config{}, fmt.Errorf("bypass payload is not valid JSON")
+	}
+	return Config{}, nil
+}
 
 // Definition returns the typed bypass definition.
 func Definition() filter.Definition { return filter.Define(Descriptor(), parse) }

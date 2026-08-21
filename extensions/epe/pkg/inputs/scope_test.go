@@ -252,3 +252,57 @@ func TestScopeHidesAuditResult(t *testing.T) {
 		t.Fatalf("audit layering contaminated the shared base: err = %v, want a no-such-attribute error", err)
 	}
 }
+
+// TestScopeWithInputsErrorPoisonsBothEngines pins the degraded-inputs
+// contract: with WithInputsError set, every CEL expression and template that
+// touches inputs fails with the recorded reason — including has(inputs.x),
+// which would otherwise silently report false — while expressions that never
+// read inputs are unaffected.
+func TestScopeWithInputsErrorPoisonsBothEngines(t *testing.T) {
+	poisoned := inputs.NewScope(
+		inputs.RequestFrom(httpreq.HTTPRequest{Host: "api.example.com"}),
+		inputs.Pod{Namespace: "ns"},
+		inputs.Profile{Name: "sp"},
+		inputs.Rule{Name: "r"},
+		nil,
+		inputs.WithInputsError(`input "routing" from ConfigMap ns/missing: not found`),
+	)
+
+	for _, expr := range []string{
+		`inputs.routing.target == "x"`,
+		`has(inputs.routing)`,
+	} {
+		if _, err := evalBoolOnScope(t, poisoned, expr); err == nil ||
+			!strings.Contains(err.Error(), "inputs unavailable") {
+			t.Errorf("CEL %q: err = %v, want inputs-unavailable error", expr, err)
+		}
+	}
+
+	// Expressions that never read inputs evaluate normally.
+	if got, err := evalBoolOnScope(t, poisoned, `request.host == "api.example.com"`); err != nil || !got {
+		t.Fatalf("non-inputs CEL must be unaffected: (%v, %v)", got, err)
+	}
+
+	// The template accessor errors, aborting execution instead of rendering a
+	// zero value under missingkey=zero.
+	if _, err := poisoned.Inputs(); err == nil || !strings.Contains(err.Error(), "inputs unavailable") {
+		t.Fatalf("Inputs() = %v, want inputs-unavailable error", err)
+	}
+	tmpl, err := eval.CompileTemplate("t", `{{ .Inputs.routing }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, poisoned); err == nil || !strings.Contains(err.Error(), "inputs unavailable") {
+		t.Fatalf("template execute err = %v, want inputs-unavailable error", err)
+	}
+	// A template that never reads inputs renders normally.
+	okTmpl, err := eval.CompileTemplate("t2", `{{ .Request.Host }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	if err := okTmpl.Execute(&buf, poisoned); err != nil || buf.String() != "api.example.com" {
+		t.Fatalf("non-inputs template = (%q, %v), want api.example.com", buf.String(), err)
+	}
+}

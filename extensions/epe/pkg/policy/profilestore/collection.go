@@ -18,6 +18,10 @@
 // fails to compile becomes an identity-bearing item carrying CompileError
 // rather than a nil, so the store can tell "this version is invalid" from
 // "this profile was deleted" and keep serving the last known good one.
+//
+// An absent ConfigMap-backed input is not a compile failure: the profile
+// installs with InputsError set, its rules enforce, and only evaluations that
+// read inputs fail through the consuming action's failure policy.
 
 package profilestore
 
@@ -25,7 +29,9 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 
+	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 
 	"github.com/go-logr/logr"
@@ -95,7 +101,17 @@ func RegisterTypes(agentsCS agentsclient.Interface) {
 // through krt collections built on the given client and returns the joined
 // collection of compiled profiles. RegisterTypes must have been called first.
 // debugger may be nil.
-func NewCollection(client kube.Client, debugger *krt.DebugHandler, stop <-chan struct{}) krt.Collection[securityprofile.Profile] {
+//
+// regs is the filter registration set requests are evaluated against. Every
+// candidate version's rule payloads are projected against it at this
+// boundary, so a static authoring error — an uncompilable credential
+// parameter CEL expression, a malformed action document — rejects the version
+// here and the store keeps serving the last known good one, instead of
+// surfacing on the first matching request where the ext_proc provider's
+// global failureModeAllow would decide the outcome. The request path reads
+// that projection; it never builds one. Per-Sandbox profiles are projected
+// here too, under the same failure semantics — see newSandboxCollection.
+func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt.DebugHandler, stop <-chan struct{}) krt.Collection[securityprofile.Profile] {
 	opts := krt.NewOptionsBuilder(stop, "epe", debugger)
 	log := ctrllog.Log.WithName("profile")
 
@@ -116,7 +132,7 @@ func NewCollection(client kube.Client, debugger *krt.DebugHandler, stop <-chan s
 	gsps := krt.WrapClient(gspInf, opts.WithName("GlobalSecurityProfiles")...)
 
 	compiledSPs := krt.NewCollection(sps, func(ctx krt.HandlerContext, o *agentsv1alpha1.SecurityProfile) *securityprofile.Profile {
-		sp, err := compileProfile(o, &o.Spec, ctx, configMaps)
+		sp, err := compileProfile(o, &o.Spec, regs, ctx, configMaps)
 		if err != nil {
 			// Whether anything is still being served for this identity is the
 			// store's knowledge, not this layer's; applyBatch logs that.
@@ -127,7 +143,7 @@ func NewCollection(client kube.Client, debugger *krt.DebugHandler, stop <-chan s
 	}, opts.WithName("CompiledSecurityProfiles")...)
 
 	compiledGSPs := krt.NewCollection(gsps, func(ctx krt.HandlerContext, o *agentsv1alpha1.GlobalSecurityProfile) *securityprofile.Profile {
-		sp, err := compileProfile(o, &o.Spec, ctx, configMaps)
+		sp, err := compileProfile(o, &o.Spec, regs, ctx, configMaps)
 		if err != nil {
 			log.Error(err, "global profile failed to compile", "profile", o.Name)
 			return securityprofile.InvalidProfile(o, &o.Spec, err)
@@ -139,14 +155,14 @@ func NewCollection(client kube.Client, debugger *krt.DebugHandler, stop <-chan s
 	// batch per window (KRT_EVENT_DISTRIBUTE_DEBOUNCE[_MAX], default off),
 	// so RegisterCollection's applyBatch rebuilds the snapshot once per
 	// batch instead of once per profile change.
-	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newInlineCollection(client, opts, log)},
+	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newSandboxCollection(client, regs, opts, log)},
 		append(opts.WithName("CompiledProfiles"),
 			krt.WithDebounce(features.KrtEventDistributeDebounce, features.KrtEventDistributeDebounceMax))...)
 }
 
-// newInlineCollection watches Sandbox metadata and compiles the objects
+// newSandboxCollection watches Sandbox metadata and compiles the objects
 // carrying the agents.kruise.io/security-rules annotation into per-Sandbox
-// inline rule profiles. The informer is metadata-only (PartialObjectMetadata):
+// per-Pod rule profiles. The informer is metadata-only (PartialObjectMetadata):
 // the compiler never reads spec or status, and a Sandbox carries a full pod
 // template that would otherwise be transferred and cached for every Sandbox
 // in the cluster. It is also delayed, like the profile informers: the Sandbox
@@ -154,7 +170,17 @@ func NewCollection(client kube.Client, debugger *krt.DebugHandler, stop <-chan s
 // the 404 list forever, never sync, and wedge startup behind
 // WaitUntilSynced. Objects without the annotation emit nil and contribute no
 // rules.
-func newInlineCollection(client kube.Client, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
+//
+// Rule payloads are projected against regs here as they are for CRD profiles,
+// so the request path compiles nothing. Failure semantics are also the CRD
+// profile's: a version that fails to compile or project becomes an
+// identity-bearing invalid item, so the store keeps serving the last known
+// good version of that Sandbox's rules when one exists and installs nothing
+// otherwise. The rules are authored at Sandbox creation, so a rejected first
+// version not taking effect is the expected authoring feedback — surfaced by
+// the stale/unenforced metrics under scope=pod rather than by a partially enforced
+// chain. An empty annotation stays a legitimate removal (nil item).
+func newSandboxCollection(client kube.Client, regs []filter.Registration, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
 	sandboxInf := kclient.NewDelayedInformer[*metav1.PartialObjectMetadata](client,
 		sandboxGVR, kubetypes.MetadataInformer,
 		kclient.Filter{ObjectFilter: client.ObjectFilter()})
@@ -165,23 +191,24 @@ func newInlineCollection(client kube.Client, opts krt.OptionsBuilder, log logr.L
 		if o.GetAnnotations()[securityprofile.AnnotationSecurityRules] == "" {
 			return nil
 		}
-		p, err := securityprofile.NewInlineProfile(o)
+		p, err := securityprofile.NewSandboxProfile(o)
+		if err == nil {
+			err = p.Project(regs)
+		}
 		if err != nil {
-			// The annotation is written by the Sandbox Manager, so a compile
-			// failure indicates a schema disagreement; drop the rules rather
-			// than guessing. Unlike CRD profiles there is no last-known-good:
-			// the pod's own rules cannot be served from a prior version
-			// once the pod moved on.
-			log.Error(err, "inline security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
-			return nil
+			// Whether an older version is still being served is the store's
+			// knowledge; applyBatch logs and meters that.
+			log.Error(err, "sandbox security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
+			return securityprofile.InvalidSandboxProfile(o, err)
 		}
 		return p
-	}, opts.WithName("CompiledInlineProfiles")...)
+	}, opts.WithName("CompiledSandboxProfiles")...)
 }
 
 func compileProfile(
 	obj metav1.Object,
 	spec *agentsv1alpha1.SecurityProfileSpec,
+	regs []filter.Registration,
 	ctx krt.HandlerContext,
 	configMaps krt.Collection[*corev1.ConfigMap],
 ) (*securityprofile.Profile, error) {
@@ -189,30 +216,48 @@ func compileProfile(
 	if err != nil {
 		return nil, err
 	}
-	inputs, inputError := resolveInputs(ctx, configMaps, sp.Meta, spec.Inputs)
-	if inputError != "" {
-		return nil, fmt.Errorf("resolve inputs: %s", inputError)
+	if err := sp.Project(regs); err != nil {
+		return nil, err
+	}
+	// Static input authoring errors reject the version like any other compile
+	// error. A ConfigMap that is merely absent must not: the profile's rules
+	// install and enforce, only inputs-dependent evaluations fail — otherwise
+	// a missing ConfigMap on first create would leave the pods this profile
+	// selects with none of its Block rules in effect.
+	inputs, unavailable, err := resolveInputs(ctx, configMaps, sp.Meta, spec.Inputs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve inputs: %w", err)
 	}
 	sp.Inputs = inputs
+	sp.InputsError = unavailable
 	return sp, nil
 }
 
+// resolveInputs resolves every declared input. It returns the resolved
+// values, a non-empty unavailable message when one or more ConfigMap-backed
+// inputs do not (or no longer) exist, and an error for static authoring
+// mistakes that no cluster state can heal.
+//
+// Every ConfigMap is fetched even after a miss, so the krt dependency on each
+// referenced ConfigMap registers and a later create/update/delete of any of
+// them recompiles the profile.
 func resolveInputs(
 	ctx krt.HandlerContext,
 	configMaps krt.Collection[*corev1.ConfigMap],
 	meta securityprofile.Meta,
 	declared []agentsv1alpha1.SecurityProfileInput,
-) (map[string]any, string) {
+) (map[string]any, string, error) {
 	if len(declared) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 
 	resolved := make(map[string]any, len(declared))
+	var missing []string
 	for _, input := range declared {
 		hasInline := input.Inline != nil
 		hasConfigMap := input.ConfigMap != nil
 		if hasInline == hasConfigMap {
-			return nil, fmt.Sprintf("input %q must set exactly one source", input.Name)
+			return nil, "", fmt.Errorf("input %q must set exactly one source", input.Name)
 		}
 		if hasInline {
 			resolved[input.Name] = maps.Clone(input.Inline)
@@ -224,17 +269,24 @@ func resolveInputs(
 			namespace = meta.Namespace
 		}
 		if namespace == "" {
-			return nil, fmt.Sprintf("ConfigMap input %q requires an explicit namespace for a global profile", input.Name)
+			return nil, "", fmt.Errorf("ConfigMap input %q requires an explicit namespace for a global profile", input.Name)
 		}
 		key := namespace + "/" + input.ConfigMap.Name
 		if configMaps == nil || ctx == nil {
-			return nil, fmt.Sprintf("load input %q from ConfigMap %s: ConfigMap collection is not configured", input.Name, key)
+			return nil, "", fmt.Errorf("load input %q from ConfigMap %s: ConfigMap collection is not configured", input.Name, key)
 		}
 		configMap := krt.FetchOne(ctx, configMaps, krt.FilterKey(key))
 		if configMap == nil {
-			return nil, fmt.Sprintf("load input %q from ConfigMap %s: not found", input.Name, key)
+			missing = append(missing, fmt.Sprintf("input %q from ConfigMap %s: not found", input.Name, key))
+			continue
 		}
 		resolved[input.Name] = maps.Clone((*configMap).Data)
 	}
-	return resolved, ""
+	if len(missing) > 0 {
+		// The partial values are discarded on purpose: serving a mixed bag
+		// where some inputs are live and some silently absent is exactly the
+		// ambiguity the unavailable marker exists to prevent.
+		return nil, strings.Join(missing, "; "), nil
+	}
+	return resolved, "", nil
 }

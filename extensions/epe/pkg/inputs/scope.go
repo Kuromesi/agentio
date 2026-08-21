@@ -17,9 +17,11 @@
 package inputs
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types"
 )
 
 // Scope is the unified, read-only evaluation scope shared by the CEL and
@@ -36,6 +38,13 @@ type Scope struct {
 	profile Profile
 	rule    Rule
 	inputs  map[string]any
+	// inputsErr marks the declared inputs as unavailable (for example a
+	// ConfigMap-backed input whose ConfigMap does not exist). It poisons only
+	// the inputs slot: CEL binds `inputs` to an error value and the template
+	// accessor returns an error, so evaluations that never touch inputs are
+	// unaffected while every read of inputs fails closed instead of silently
+	// seeing an absent key.
+	inputsErr string
 
 	cache *activationCache
 }
@@ -46,11 +55,22 @@ type Scope struct {
 // the fields themselves stay unwritable from outside this package. Value
 // receivers, so they promote through audit.Scope's embedded value on both
 // pointer and value roots.
-func (s Scope) Request() Request       { return s.request }
-func (s Scope) Pod() Pod               { return s.pod }
-func (s Scope) Profile() Profile       { return s.profile }
-func (s Scope) Rule() Rule             { return s.rule }
-func (s Scope) Inputs() map[string]any { return s.inputs }
+func (s Scope) Request() Request { return s.request }
+func (s Scope) Pod() Pod         { return s.pod }
+func (s Scope) Profile() Profile { return s.profile }
+func (s Scope) Rule() Rule       { return s.rule }
+
+// Inputs returns the resolved inputs map, or an error when the profile's
+// declared inputs are unavailable. The two-value form is deliberate:
+// text/template aborts execution on a non-nil second return, which is what
+// keeps a template that reads {{ .Inputs.x }} from rendering a zero value
+// (missingkey=zero) while the backing ConfigMap is missing.
+func (s Scope) Inputs() (map[string]any, error) {
+	if s.inputsErr != "" {
+		return nil, fmt.Errorf("profile inputs unavailable: %s", s.inputsErr)
+	}
+	return s.inputs, nil
+}
 
 // activationCache memoises the projected variable bag for one Scope. It is
 // reached through a pointer because audit's buildScope copies inputs.Scope by
@@ -67,14 +87,29 @@ type activationCache struct {
 	act  cel.Activation
 }
 
+// ScopeOption adjusts a Scope during NewScope construction, before the
+// memoised activation freezes it.
+type ScopeOption func(*Scope)
+
+// WithInputsError marks the scope's declared inputs as unavailable. Every
+// CEL or template read of inputs then fails with msg instead of observing an
+// absent key; evaluations that never touch inputs are unaffected.
+func WithInputsError(msg string) ScopeOption {
+	return func(s *Scope) { s.inputsErr = msg }
+}
+
 // NewScope is the only way to obtain a usable Scope. There is deliberately no
 // fallback for a Scope built as a literal: a memoisation that can be silently
 // absent is a second construction path whose failure mode is invisible.
-func NewScope(req Request, pod Pod, profile Profile, rule Rule, in map[string]any) *Scope {
-	return &Scope{
+func NewScope(req Request, pod Pod, profile Profile, rule Rule, in map[string]any, opts ...ScopeOption) *Scope {
+	s := &Scope{
 		request: req, pod: pod, profile: profile, rule: rule, inputs: in,
 		cache: &activationCache{},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Activation projects the Scope into the CEL variable bag (variables `request`,
@@ -130,6 +165,19 @@ func (s *Scope) buildBag() map[string]any {
 		}
 	}
 
+	// Written unconditionally, nil included: with the key absent,
+	// has(inputs.x) errors instead of returning false, which silently drops
+	// an audit event and fails a credential fetch into a 403.
+	//
+	// When the profile's declared inputs failed to resolve, the slot holds a
+	// CEL error value instead: every expression that touches inputs —
+	// including has(inputs.x) — evaluates to this error and resolves through
+	// the consumer's failure policy, never through a silently absent key.
+	var inputsSlot any = s.inputs
+	if s.inputsErr != "" {
+		inputsSlot = types.NewErr("profile inputs unavailable: %s", s.inputsErr)
+	}
+
 	return map[string]any{
 		"request": map[string]any{
 			"host":        s.request.Host,
@@ -150,11 +198,8 @@ func (s *Scope) buildBag() map[string]any {
 			"name":      s.profile.Name,
 			"namespace": s.profile.Namespace,
 		},
-		"rule": map[string]string{"name": s.rule.Name},
-		// Written unconditionally, nil included: with the key absent,
-		// has(inputs.x) errors instead of returning false, which silently drops
-		// an audit event and fails a credential fetch into a 403.
-		"inputs": s.inputs,
+		"rule":   map[string]string{"name": s.rule.Name},
+		"inputs": inputsSlot,
 	}
 }
 

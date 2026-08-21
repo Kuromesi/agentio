@@ -45,15 +45,26 @@ var pluginCallsTotal = prometheus.NewCounterVec(
 )
 
 // pluginDurationSeconds measures how long each filter invocation takes.
+//
+// This is the largest metric EPE publishes — one series per bucket per
+// (plugin, phase) pair — so the buckets are chosen for the questions an
+// operator actually asks, not for uniform resolution:
+//
+//	.01   fast enough to be CPU-only; every in-process filter lands here
+//	.1    a healthy outbound credential or callout round trip
+//	.5    a slow but working dependency
+//	2     slow enough that the caller notices
+//	4.5   the default per-phase plugin budget: at the limit
+//	5     the chart's ext_proc message timeout, so "we exceeded our own
+//	      budget" stays distinguishable from "the gateway gave up first"
+//
+// Sub-millisecond boundaries were removed deliberately: they only resolved
+// filters whose latency nobody tunes, at a quarter of the whole metric surface.
 var pluginDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name: "epe_plugin_duration_seconds",
-		Help: "Plugin invocation latency by plugin and phase.",
-		// 2s is deliberate: for a filter whose cost is an outbound credential
-		// or webhook call, the interesting range is 1s–5s. 4.5s straddles the
-		// default budget so "near the limit" is distinguishable from
-		// "cancelled".
-		Buckets: []float64{.0005, .001, .005, .01, .05, .1, .5, 1, 2, 4.5, 5, 10},
+		Name:    "epe_plugin_duration_seconds",
+		Help:    "Plugin invocation latency by plugin and phase.",
+		Buckets: []float64{.01, .1, .5, 2, 4.5, 5},
 	},
 	[]string{"plugin", "phase"},
 )

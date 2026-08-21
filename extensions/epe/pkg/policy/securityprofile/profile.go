@@ -335,20 +335,38 @@ type Meta struct {
 	Namespace         string
 	CreationTimestamp metav1.Time
 	Priority          int32
-	// Version is the source object's resourceVersion, captured so
-	// downstream projection caches can key on (identity, version).
+	// Version is the source object's resourceVersion, carried for admin
+	// output and for identifying which version of a profile is installed.
 	Version string
-	// Source identifies the object kind the profile was compiled from:
-	// empty for SecurityProfile/GlobalSecurityProfile, SourceInline for
-	// per-Sandbox annotation chains. A Sandbox and a SecurityProfile in one
-	// namespace may share a name and even a resourceVersion, so caches keyed
-	// on namespace/name must include the source to stay collision-free.
-	Source string
+	// Match says how this profile is selected for a Pod. It is the only
+	// difference the store draws between policy sources, and it doubles as a
+	// key discriminator: a Sandbox and a SecurityProfile in one namespace may
+	// share a name and even a resourceVersion, so anything keyed on
+	// namespace/name must include it to stay collision-free.
+	Match MatchMode
 }
 
-// SourceInline marks profiles compiled from the per-Sandbox inline security
-// rules annotation rather than from a SecurityProfile CR.
-const SourceInline = "inline"
+// MatchMode says how the store selects a profile for a Pod. Keep it small: it
+// sits in the snapshot's map key, which is copied whole on every write.
+type MatchMode uint8
+
+const (
+	// MatchSelector matches Pods by label selector — SecurityProfile and
+	// GlobalSecurityProfile.
+	MatchSelector MatchMode = iota
+	// MatchPod matches exactly one Pod by its verified identity: the rules a
+	// Sandbox carries in its annotation. Such a profile is never matched by
+	// labels, which a workload can influence.
+	MatchPod
+)
+
+// String is the wire form used in resource names and log fields.
+func (m MatchMode) String() string {
+	if m == MatchPod {
+		return "pod"
+	}
+	return "selector"
+}
 
 // Profile is the in-memory representation of a Profile or
 // GlobalSecurityProfile with its label selector, rule regexps, and audit
@@ -358,10 +376,31 @@ type Profile struct {
 	Selector labels.Selector
 	Rules    []Rule         // parallel to the source Spec.Rules
 	Audits   []*audit.Audit // spec-level compiled audit entries
+	// Projections holds each rule's per-filter configuration, parallel to
+	// Rules, built once by Project when the collection item is compiled. It
+	// lives on the profile so the compiled objects a rule needs share the
+	// profile version's lifetime: nothing on the request path compiles a
+	// second copy, and nothing outlives the version it belongs to.
+	//
+	// Never serialized: krt's debug handler marshals collection outputs
+	// verbatim, and these configs hold compiled templates whose parse trees are
+	// exported all the way down.
+	Projections []RuleProjection `json:"-"`
+	// projectedAgainst fingerprints the filter chain Projections was built
+	// against, so the binder can refuse a profile projected against another.
+	projectedAgainst string
 	// Inputs is the immutable, profile-scoped snapshot resolved while the
 	// profile's krt collection item is compiled. Each value is a
 	// map[string]string sourced from either inline data or a ConfigMap.
 	Inputs map[string]any
+	// InputsError is set when the declared inputs could not be resolved (for
+	// example a referenced ConfigMap does not exist). Unlike CompileError it
+	// does not reject the profile: rules install and enforce normally, and
+	// only evaluations that read inputs fail — resolved through the consuming
+	// action's failure policy. It also deliberately supersedes any previously
+	// resolved values, so a deleted ConfigMap makes the inputs unavailable
+	// instead of silently serving stale security-sensitive data.
+	InputsError string
 	// CompileError is populated only on identity-bearing invalid collection
 	// items. The profile store uses such items to retain the prior effective
 	// profile instead of treating an invalid update as a deletion.
@@ -371,17 +410,17 @@ type Profile struct {
 // ResourceName implements krt.ResourceNamer so compiled profiles can be held
 // in krt collections. Cluster-scoped GlobalSecurityProfiles (empty namespace)
 // key by bare name and namespaced SecurityProfiles key by namespace/name, so
-// the two scopes can never collide inside a joined collection. Inline
-// profiles carry a source prefix on top: a Sandbox and a SecurityProfile in
-// the same namespace can share a name, and without the prefix one would
-// silently replace the other in a joined collection.
+// the two scopes can never collide inside a joined collection. Pod-matched
+// pod-matched profiles carry a mode prefix on top: a Sandbox and a
+// SecurityProfile in the same namespace can share a name, and without the
+// prefix one would silently replace the other in a joined collection.
 func (sp Profile) ResourceName() string {
 	name := sp.Meta.Name
 	if sp.Meta.Namespace != "" {
 		name = sp.Meta.Namespace + "/" + sp.Meta.Name
 	}
-	if sp.Meta.Source != "" {
-		return sp.Meta.Source + "/" + name
+	if sp.Meta.Match != MatchSelector {
+		return sp.Meta.Match.String() + "/" + name
 	}
 	return name
 }
