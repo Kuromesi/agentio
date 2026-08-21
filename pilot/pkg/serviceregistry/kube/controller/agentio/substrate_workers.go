@@ -208,8 +208,11 @@ func (s *substrateWorkerSource) refresh(ctx context.Context) error {
 		if response == nil {
 			return fmt.Errorf("Substrate ListWorkers returned a nil response")
 		}
-		for _, worker := range response.GetWorkers() {
-			key, actor, ok := actorBindingFromSubstrateWorker(worker)
+		for _, workerWire := range response.GetWorkers() {
+			key, actor, ok, err := actorBindingFromWorkerWire(workerWire)
+			if err != nil {
+				return err
+			}
 			if !ok {
 				continue
 			}
@@ -242,44 +245,123 @@ func (s *substrateWorkerSource) refresh(ctx context.Context) error {
 	return nil
 }
 
+func actorBindingFromWorkerWire(workerWire []byte) (workerPodKey, *extensions.ActorContext, bool, error) {
+	var current substrateapi.Worker
+	currentErr := proto.Unmarshal(workerWire, &current)
+	if currentErr == nil && validWorkerPodIdentity(
+		current.GetWorkerNamespace(),
+		current.GetWorkerPod(),
+		current.GetWorkerPodUid(),
+		current.GetMetadata().GetVersion(),
+	) {
+		key, actor, assigned := actorBindingFromSubstrateWorker(&current)
+		return key, actor, assigned, nil
+	}
+
+	var legacy substrateapi.LegacyWorker
+	legacyErr := proto.Unmarshal(workerWire, &legacy)
+	if legacyErr == nil && validWorkerPodIdentity(
+		legacy.GetWorkerNamespace(),
+		legacy.GetWorkerPod(),
+		legacy.GetWorkerPodUid(),
+		legacy.GetVersion(),
+	) {
+		key, actor, assigned := actorBindingFromLegacySubstrateWorker(&legacy)
+		return key, actor, assigned, nil
+	}
+	return workerPodKey{}, nil, false, fmt.Errorf(
+		"Substrate ListWorkers returned an unsupported Worker wire schema (current decode: %v; legacy decode: %v)",
+		currentErr,
+		legacyErr,
+	)
+}
+
 func actorBindingFromSubstrateWorker(worker *substrateapi.Worker) (workerPodKey, *extensions.ActorContext, bool) {
-	if worker == nil || worker.GetMetadata().GetVersion() <= 0 || worker.GetWorkerNamespace() == "" ||
-		worker.GetWorkerPod() == "" || worker.GetWorkerPodUid() == "" {
+	if worker == nil {
 		return workerPodKey{}, nil, false
 	}
 	assignment := worker.GetStatus().GetAssignment()
-	if assignment == nil || assignment.GetActorUid() == "" || assignment.GetActor().GetName() == "" || assignment.GetActor().GetAtespace() == "" {
+	if assignment == nil {
 		return workerPodKey{}, nil, false
 	}
-	generation := uint64(worker.GetMetadata().GetVersion())
+	templateNamespace, templateName := "", ""
+	if template := assignment.GetActorTemplate(); template != nil {
+		templateNamespace, templateName = template.GetNamespace(), template.GetName()
+	}
+	return buildActorBinding(
+		worker.GetWorkerNamespace(),
+		worker.GetWorkerPod(),
+		worker.GetWorkerPodUid(),
+		worker.GetWorkerPool(),
+		worker.GetMetadata().GetVersion(),
+		templateNamespace,
+		templateName,
+		assignment.GetActor().GetAtespace(),
+		assignment.GetActor().GetName(),
+		assignment.GetActorUid(),
+	)
+}
+
+func actorBindingFromLegacySubstrateWorker(worker *substrateapi.LegacyWorker) (workerPodKey, *extensions.ActorContext, bool) {
+	if worker == nil || worker.GetAssignment() == nil {
+		return workerPodKey{}, nil, false
+	}
+	assignment := worker.GetAssignment()
+	templateNamespace, templateName := "", ""
+	if template := assignment.GetActorTemplate(); template != nil {
+		templateNamespace, templateName = template.GetNamespace(), template.GetName()
+	}
+	return buildActorBinding(
+		worker.GetWorkerNamespace(),
+		worker.GetWorkerPod(),
+		worker.GetWorkerPodUid(),
+		worker.GetWorkerPool(),
+		worker.GetVersion(),
+		templateNamespace,
+		templateName,
+		assignment.GetActor().GetAtespace(),
+		assignment.GetActor().GetName(),
+		assignment.GetActorUid(),
+	)
+}
+
+func buildActorBinding(
+	namespace, podName, podUID, workerPool string,
+	version int64,
+	templateNamespace, templateName, actorAtespace, actorName, actorUID string,
+) (workerPodKey, *extensions.ActorContext, bool) {
+	key := workerPodKey{namespace: namespace, name: podName, uid: podUID}
+	if !validWorkerPodIdentity(namespace, podName, podUID, version) ||
+		actorUID == "" || actorName == "" || actorAtespace == "" {
+		return key, nil, false
+	}
+	generation := uint64(version)
 	labels := map[string]string{
-		ActorIdentityLabelUID:        assignment.GetActorUid(),
-		ActorIdentityLabelName:       assignment.GetActor().GetName(),
-		ActorIdentityLabelAtespace:   assignment.GetActor().GetAtespace(),
+		ActorIdentityLabelUID:        actorUID,
+		ActorIdentityLabelName:       actorName,
+		ActorIdentityLabelAtespace:   actorAtespace,
 		ActorIdentityLabelGeneration: strconv.FormatUint(generation, 10),
 	}
-	if template := assignment.GetActorTemplate(); template != nil {
-		if template.GetNamespace() != "" {
-			labels[ActorIdentityLabelTemplateNamespace] = template.GetNamespace()
-		}
-		if template.GetName() != "" {
-			labels[ActorIdentityLabelTemplateName] = template.GetName()
-		}
+	if templateNamespace != "" {
+		labels[ActorIdentityLabelTemplateNamespace] = templateNamespace
 	}
-	if worker.GetWorkerPool() != "" {
-		labels[ActorIdentityLabelWorkerPool] = worker.GetWorkerPool()
+	if templateName != "" {
+		labels[ActorIdentityLabelTemplateName] = templateName
 	}
-	return workerPodKey{
-			namespace: worker.GetWorkerNamespace(),
-			name:      worker.GetWorkerPod(),
-			uid:       worker.GetWorkerPodUid(),
-		}, &extensions.ActorContext{
-			ActorUid:   assignment.GetActorUid(),
-			ActorName:  assignment.GetActor().GetName(),
-			Atespace:   assignment.GetActor().GetAtespace(),
-			Generation: generation,
-			Labels:     labels,
-		}, true
+	if workerPool != "" {
+		labels[ActorIdentityLabelWorkerPool] = workerPool
+	}
+	return key, &extensions.ActorContext{
+		ActorUid:   actorUID,
+		ActorName:  actorName,
+		Atespace:   actorAtespace,
+		Generation: generation,
+		Labels:     labels,
+	}, true
+}
+
+func validWorkerPodIdentity(namespace, podName, podUID string, version int64) bool {
+	return namespace != "" && podName != "" && podUID != "" && version > 0
 }
 
 func (s *substrateWorkerSource) actorContextForWorker(namespace, podName, podUID string) *extensions.ActorContext {

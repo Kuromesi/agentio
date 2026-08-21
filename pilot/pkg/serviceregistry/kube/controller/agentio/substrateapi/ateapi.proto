@@ -64,12 +64,38 @@ message Worker {
   WorkerStatus status = 11;
 }
 
+// LegacyWorker is the public Worker wire schema used by Substrate commit
+// 2b3a4715 and earlier deployments. It is kept here because the community API
+// changed field numbers while retaining the same ListWorkers RPC.
+message LegacyWorker {
+  string worker_namespace = 1;
+  string worker_pool = 2;
+  string worker_pod = 3;
+  LegacyAssignment assignment = 4;
+  string ip = 5;
+  int64 version = 6;
+  string worker_pod_uid = 7;
+  string node_name = 8;
+  string sandbox_class = 9;
+  map<string, string> labels = 10;
+  int32 state = 11;
+}
+
+message LegacyAssignment {
+  KubeNamespacedObjectRef actor_template = 1;
+  ObjectRef actor = 2;
+  string actor_uid = 3;
+}
+
 message ListWorkersRequest {
   int32 page_size = 1;
   string page_token = 2;
 }
 
 message ListWorkersResponse {
-  repeated Worker workers = 1;
+  // Worker changed incompatibly across community versions while retaining the
+  // same field number and RPC. Decode each length-delimited message explicitly
+  // so agentiod can support both public wire schemas.
+  repeated bytes workers = 1;
   string next_page_token = 2;
 }

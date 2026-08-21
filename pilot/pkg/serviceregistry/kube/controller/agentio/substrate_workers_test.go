@@ -21,8 +21,44 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/substrateapi"
 )
+
+func TestActorBindingFromLegacySubstrateWorkerWire(t *testing.T) {
+	template := appendStringField(nil, 1, "templates")
+	template = appendStringField(template, 2, "python-agent")
+	actorRef := appendStringField(nil, 1, "tenant-a")
+	actorRef = appendStringField(actorRef, 2, "actor-a")
+	assignment := protowire.AppendTag(nil, 1, protowire.BytesType)
+	assignment = protowire.AppendBytes(assignment, template)
+	assignment = protowire.AppendTag(assignment, 2, protowire.BytesType)
+	assignment = protowire.AppendBytes(assignment, actorRef)
+	assignment = appendStringField(assignment, 3, "actor-uid-a")
+	worker := appendStringField(nil, 1, "workers")
+	worker = appendStringField(worker, 2, "pool-a")
+	worker = appendStringField(worker, 3, "worker-a")
+	worker = protowire.AppendTag(worker, 4, protowire.BytesType)
+	worker = protowire.AppendBytes(worker, assignment)
+	worker = protowire.AppendTag(worker, 6, protowire.VarintType)
+	worker = protowire.AppendVarint(worker, 9)
+	worker = appendStringField(worker, 7, "pod-uid-a")
+
+	key, got, assigned, err := actorBindingFromWorkerWire(worker)
+	if err != nil {
+		t.Fatalf("actorBindingFromWorkerWire() failed: %v", err)
+	}
+	if !assigned {
+		t.Fatal("actorBindingFromWorkerWire() did not recognize legacy assignment")
+	}
+	if key != (workerPodKey{namespace: "workers", name: "worker-a", uid: "pod-uid-a"}) {
+		t.Fatalf("Worker key = %+v, want legacy Pod identity", key)
+	}
+	if got.GetActorUid() != "actor-uid-a" || got.GetGeneration() != 9 {
+		t.Fatalf("ActorContext = %+v, want legacy Actor generation 9", got)
+	}
+}
 
 type fakeListWorkersClient struct {
 	responses map[string]*substrateapi.ListWorkersResponse
@@ -45,18 +81,18 @@ func (f *fakeListWorkersClient) ListWorkers(
 func TestSubstrateWorkerSourceBuildsActorContextFromAllPages(t *testing.T) {
 	client := &fakeListWorkersClient{responses: map[string]*substrateapi.ListWorkersResponse{
 		"": {
-			Workers:       []*substrateapi.Worker{assignedWorker("worker-a", "pod-uid-a", 9)},
+			Workers:       [][]byte{marshalWorker(t, assignedWorker("worker-a", "pod-uid-a", 9))},
 			NextPageToken: "page-2",
 		},
 		"page-2": {
-			Workers: []*substrateapi.Worker{{
+			Workers: [][]byte{marshalWorker(t, &substrateapi.Worker{
 				Metadata:        &substrateapi.ResourceMetadata{Version: 4},
 				WorkerNamespace: "workers",
 				WorkerPool:      "pool-b",
 				WorkerPod:       "worker-b",
 				WorkerPodUid:    "pod-uid-b",
 				Status:          &substrateapi.WorkerStatus{},
-			}},
+			})},
 		},
 	}}
 	changes := 0
@@ -106,7 +142,7 @@ func TestSubstrateWorkerSourceBuildsActorContextFromAllPages(t *testing.T) {
 
 func TestSubstrateWorkerSourcePublishesOnlySuccessfulChanges(t *testing.T) {
 	client := &fakeListWorkersClient{responses: map[string]*substrateapi.ListWorkersResponse{
-		"": {Workers: []*substrateapi.Worker{assignedWorker("worker-a", "pod-uid-a", 9)}},
+		"": {Workers: [][]byte{marshalWorker(t, assignedWorker("worker-a", "pod-uid-a", 9))}},
 	}}
 	changes := 0
 	source := newSubstrateWorkerSourceForClient(client, substrateWorkerConfig{
@@ -136,13 +172,13 @@ func TestSubstrateWorkerSourcePublishesOnlySuccessfulChanges(t *testing.T) {
 	}
 
 	client.err = nil
-	client.responses[""] = &substrateapi.ListWorkersResponse{Workers: []*substrateapi.Worker{{
+	client.responses[""] = &substrateapi.ListWorkersResponse{Workers: [][]byte{marshalWorker(t, &substrateapi.Worker{
 		Metadata:        &substrateapi.ResourceMetadata{Version: 10},
 		WorkerNamespace: "workers",
 		WorkerPod:       "worker-a",
 		WorkerPodUid:    "pod-uid-a",
 		Status:          &substrateapi.WorkerStatus{},
-	}}}
+	})}}
 	if err := source.refresh(context.Background()); err != nil {
 		t.Fatalf("unassigned refresh() failed: %v", err)
 	}
@@ -202,4 +238,18 @@ func assignedWorker(podName, podUID string, version int64) *substrateapi.Worker 
 			ActorUid:      "actor-uid-a",
 		}},
 	}
+}
+
+func appendStringField(dst []byte, number protowire.Number, value string) []byte {
+	dst = protowire.AppendTag(dst, number, protowire.BytesType)
+	return protowire.AppendString(dst, value)
+}
+
+func marshalWorker(t *testing.T, worker *substrateapi.Worker) []byte {
+	t.Helper()
+	wire, err := proto.Marshal(worker)
+	if err != nil {
+		t.Fatalf("proto.Marshal(Worker) failed: %v", err)
+	}
+	return wire
 }

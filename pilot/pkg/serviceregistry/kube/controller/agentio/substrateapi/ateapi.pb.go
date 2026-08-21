@@ -400,6 +400,193 @@ func (x *Worker) GetStatus() *WorkerStatus {
 	return nil
 }
 
+// LegacyWorker is the public Worker wire schema used by Substrate commit
+// 2b3a4715 and earlier deployments. It is kept here because the community API
+// changed field numbers while retaining the same ListWorkers RPC.
+type LegacyWorker struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	WorkerNamespace string                 `protobuf:"bytes,1,opt,name=worker_namespace,json=workerNamespace,proto3" json:"worker_namespace,omitempty"`
+	WorkerPool      string                 `protobuf:"bytes,2,opt,name=worker_pool,json=workerPool,proto3" json:"worker_pool,omitempty"`
+	WorkerPod       string                 `protobuf:"bytes,3,opt,name=worker_pod,json=workerPod,proto3" json:"worker_pod,omitempty"`
+	Assignment      *LegacyAssignment      `protobuf:"bytes,4,opt,name=assignment,proto3" json:"assignment,omitempty"`
+	Ip              string                 `protobuf:"bytes,5,opt,name=ip,proto3" json:"ip,omitempty"`
+	Version         int64                  `protobuf:"varint,6,opt,name=version,proto3" json:"version,omitempty"`
+	WorkerPodUid    string                 `protobuf:"bytes,7,opt,name=worker_pod_uid,json=workerPodUid,proto3" json:"worker_pod_uid,omitempty"`
+	NodeName        string                 `protobuf:"bytes,8,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	SandboxClass    string                 `protobuf:"bytes,9,opt,name=sandbox_class,json=sandboxClass,proto3" json:"sandbox_class,omitempty"`
+	Labels          map[string]string      `protobuf:"bytes,10,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	State           int32                  `protobuf:"varint,11,opt,name=state,proto3" json:"state,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *LegacyWorker) Reset() {
+	*x = LegacyWorker{}
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LegacyWorker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LegacyWorker) ProtoMessage() {}
+
+func (x *LegacyWorker) ProtoReflect() protoreflect.Message {
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LegacyWorker.ProtoReflect.Descriptor instead.
+func (*LegacyWorker) Descriptor() ([]byte, []int) {
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *LegacyWorker) GetWorkerNamespace() string {
+	if x != nil {
+		return x.WorkerNamespace
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetWorkerPool() string {
+	if x != nil {
+		return x.WorkerPool
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetWorkerPod() string {
+	if x != nil {
+		return x.WorkerPod
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetAssignment() *LegacyAssignment {
+	if x != nil {
+		return x.Assignment
+	}
+	return nil
+}
+
+func (x *LegacyWorker) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *LegacyWorker) GetWorkerPodUid() string {
+	if x != nil {
+		return x.WorkerPodUid
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetSandboxClass() string {
+	if x != nil {
+		return x.SandboxClass
+	}
+	return ""
+}
+
+func (x *LegacyWorker) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *LegacyWorker) GetState() int32 {
+	if x != nil {
+		return x.State
+	}
+	return 0
+}
+
+type LegacyAssignment struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	ActorTemplate *KubeNamespacedObjectRef `protobuf:"bytes,1,opt,name=actor_template,json=actorTemplate,proto3" json:"actor_template,omitempty"`
+	Actor         *ObjectRef               `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
+	ActorUid      string                   `protobuf:"bytes,3,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LegacyAssignment) Reset() {
+	*x = LegacyAssignment{}
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LegacyAssignment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LegacyAssignment) ProtoMessage() {}
+
+func (x *LegacyAssignment) ProtoReflect() protoreflect.Message {
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LegacyAssignment.ProtoReflect.Descriptor instead.
+func (*LegacyAssignment) Descriptor() ([]byte, []int) {
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *LegacyAssignment) GetActorTemplate() *KubeNamespacedObjectRef {
+	if x != nil {
+		return x.ActorTemplate
+	}
+	return nil
+}
+
+func (x *LegacyAssignment) GetActor() *ObjectRef {
+	if x != nil {
+		return x.Actor
+	}
+	return nil
+}
+
+func (x *LegacyAssignment) GetActorUid() string {
+	if x != nil {
+		return x.ActorUid
+	}
+	return ""
+}
+
 type ListWorkersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PageSize      int32                  `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
@@ -410,7 +597,7 @@ type ListWorkersRequest struct {
 
 func (x *ListWorkersRequest) Reset() {
 	*x = ListWorkersRequest{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[6]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -422,7 +609,7 @@ func (x *ListWorkersRequest) String() string {
 func (*ListWorkersRequest) ProtoMessage() {}
 
 func (x *ListWorkersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[6]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -435,7 +622,7 @@ func (x *ListWorkersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkersRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkersRequest) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescGZIP(), []int{6}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListWorkersRequest) GetPageSize() int32 {
@@ -453,16 +640,19 @@ func (x *ListWorkersRequest) GetPageToken() string {
 }
 
 type ListWorkersResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Workers       []*Worker              `protobuf:"bytes,1,rep,name=workers,proto3" json:"workers,omitempty"`
-	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Worker changed incompatibly across community versions while retaining the
+	// same field number and RPC. Decode each length-delimited message explicitly
+	// so agentiod can support both public wire schemas.
+	Workers       [][]byte `protobuf:"bytes,1,rep,name=workers,proto3" json:"workers,omitempty"`
+	NextPageToken string   `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListWorkersResponse) Reset() {
 	*x = ListWorkersResponse{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[7]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -474,7 +664,7 @@ func (x *ListWorkersResponse) String() string {
 func (*ListWorkersResponse) ProtoMessage() {}
 
 func (x *ListWorkersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[7]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -487,10 +677,10 @@ func (x *ListWorkersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkersResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkersResponse) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescGZIP(), []int{7}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *ListWorkersResponse) GetWorkers() []*Worker {
+func (x *ListWorkersResponse) GetWorkers() [][]byte {
 	if x != nil {
 		return x.Workers
 	}
@@ -536,13 +726,37 @@ const file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi
 	"\n" +
 	"worker_pod\x18\x04 \x01(\tR\tworkerPod\x12$\n" +
 	"\x0eworker_pod_uid\x18\x05 \x01(\tR\fworkerPodUid\x12,\n" +
-	"\x06status\x18\v \x01(\v2\x14.ateapi.WorkerStatusR\x06statusJ\x04\b\x06\x10\v\"P\n" +
+	"\x06status\x18\v \x01(\v2\x14.ateapi.WorkerStatusR\x06statusJ\x04\b\x06\x10\v\"\xd0\x03\n" +
+	"\fLegacyWorker\x12)\n" +
+	"\x10worker_namespace\x18\x01 \x01(\tR\x0fworkerNamespace\x12\x1f\n" +
+	"\vworker_pool\x18\x02 \x01(\tR\n" +
+	"workerPool\x12\x1d\n" +
+	"\n" +
+	"worker_pod\x18\x03 \x01(\tR\tworkerPod\x128\n" +
+	"\n" +
+	"assignment\x18\x04 \x01(\v2\x18.ateapi.LegacyAssignmentR\n" +
+	"assignment\x12\x0e\n" +
+	"\x02ip\x18\x05 \x01(\tR\x02ip\x12\x18\n" +
+	"\aversion\x18\x06 \x01(\x03R\aversion\x12$\n" +
+	"\x0eworker_pod_uid\x18\a \x01(\tR\fworkerPodUid\x12\x1b\n" +
+	"\tnode_name\x18\b \x01(\tR\bnodeName\x12#\n" +
+	"\rsandbox_class\x18\t \x01(\tR\fsandboxClass\x128\n" +
+	"\x06labels\x18\n" +
+	" \x03(\v2 .ateapi.LegacyWorker.LabelsEntryR\x06labels\x12\x14\n" +
+	"\x05state\x18\v \x01(\x05R\x05state\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x01\n" +
+	"\x10LegacyAssignment\x12F\n" +
+	"\x0eactor_template\x18\x01 \x01(\v2\x1f.ateapi.KubeNamespacedObjectRefR\ractorTemplate\x12'\n" +
+	"\x05actor\x18\x02 \x01(\v2\x11.ateapi.ObjectRefR\x05actor\x12\x1b\n" +
+	"\tactor_uid\x18\x03 \x01(\tR\bactorUid\"P\n" +
 	"\x12ListWorkersRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x02 \x01(\tR\tpageToken\"g\n" +
-	"\x13ListWorkersResponse\x12(\n" +
-	"\aworkers\x18\x01 \x03(\v2\x0e.ateapi.WorkerR\aworkers\x12&\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\"W\n" +
+	"\x13ListWorkersResponse\x12\x18\n" +
+	"\aworkers\x18\x01 \x03(\fR\aworkers\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2S\n" +
 	"\aControl\x12H\n" +
 	"\vListWorkers\x12\x1a.ateapi.ListWorkersRequest\x1a\x1b.ateapi.ListWorkersResponse\"\x00BOZMistio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/substrateapib\x06proto3"
@@ -559,7 +773,7 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_
 	return file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDescData
 }
 
-var file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_goTypes = []any{
 	(*ResourceMetadata)(nil),        // 0: ateapi.ResourceMetadata
 	(*ObjectRef)(nil),               // 1: ateapi.ObjectRef
@@ -567,23 +781,29 @@ var file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_p
 	(*ActorAssignment)(nil),         // 3: ateapi.ActorAssignment
 	(*WorkerStatus)(nil),            // 4: ateapi.WorkerStatus
 	(*Worker)(nil),                  // 5: ateapi.Worker
-	(*ListWorkersRequest)(nil),      // 6: ateapi.ListWorkersRequest
-	(*ListWorkersResponse)(nil),     // 7: ateapi.ListWorkersResponse
+	(*LegacyWorker)(nil),            // 6: ateapi.LegacyWorker
+	(*LegacyAssignment)(nil),        // 7: ateapi.LegacyAssignment
+	(*ListWorkersRequest)(nil),      // 8: ateapi.ListWorkersRequest
+	(*ListWorkersResponse)(nil),     // 9: ateapi.ListWorkersResponse
+	nil,                             // 10: ateapi.LegacyWorker.LabelsEntry
 }
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_depIdxs = []int32{
-	2, // 0: ateapi.ActorAssignment.actor_template:type_name -> ateapi.KubeNamespacedObjectRef
-	1, // 1: ateapi.ActorAssignment.actor:type_name -> ateapi.ObjectRef
-	3, // 2: ateapi.WorkerStatus.assignment:type_name -> ateapi.ActorAssignment
-	0, // 3: ateapi.Worker.metadata:type_name -> ateapi.ResourceMetadata
-	4, // 4: ateapi.Worker.status:type_name -> ateapi.WorkerStatus
-	5, // 5: ateapi.ListWorkersResponse.workers:type_name -> ateapi.Worker
-	6, // 6: ateapi.Control.ListWorkers:input_type -> ateapi.ListWorkersRequest
-	7, // 7: ateapi.Control.ListWorkers:output_type -> ateapi.ListWorkersResponse
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	2,  // 0: ateapi.ActorAssignment.actor_template:type_name -> ateapi.KubeNamespacedObjectRef
+	1,  // 1: ateapi.ActorAssignment.actor:type_name -> ateapi.ObjectRef
+	3,  // 2: ateapi.WorkerStatus.assignment:type_name -> ateapi.ActorAssignment
+	0,  // 3: ateapi.Worker.metadata:type_name -> ateapi.ResourceMetadata
+	4,  // 4: ateapi.Worker.status:type_name -> ateapi.WorkerStatus
+	7,  // 5: ateapi.LegacyWorker.assignment:type_name -> ateapi.LegacyAssignment
+	10, // 6: ateapi.LegacyWorker.labels:type_name -> ateapi.LegacyWorker.LabelsEntry
+	2,  // 7: ateapi.LegacyAssignment.actor_template:type_name -> ateapi.KubeNamespacedObjectRef
+	1,  // 8: ateapi.LegacyAssignment.actor:type_name -> ateapi.ObjectRef
+	8,  // 9: ateapi.Control.ListWorkers:input_type -> ateapi.ListWorkersRequest
+	9,  // 10: ateapi.Control.ListWorkers:output_type -> ateapi.ListWorkersResponse
+	10, // [10:11] is the sub-list for method output_type
+	9,  // [9:10] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_init() }
@@ -597,7 +817,7 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_substrateapi_ateapi_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

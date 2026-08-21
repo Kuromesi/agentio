@@ -1,3 +1,14 @@
+{{- $substrateListWorkers := .Values.agentiod.substrateListWorkers | default dict -}}
+{{- $substrateListWorkersEnabled := get $substrateListWorkers "enabled" | default false -}}
+{{- $substrateListWorkersAddress := get $substrateListWorkers "address" | default "dns:///api.ate-system.svc:443" -}}
+{{- $substrateListWorkersServerName := get $substrateListWorkers "serverName" | default "api.ate-system.svc" -}}
+{{- $substrateListWorkersPollInterval := get $substrateListWorkers "pollInterval" | default "2s" -}}
+{{- $substrateListWorkersRPCTimeout := get $substrateListWorkers "rpcTimeout" | default "5s" -}}
+{{- $substrateListWorkersPageSize := get $substrateListWorkers "pageSize" | default 1000 -}}
+{{- $substrateListWorkersMountPath := get $substrateListWorkers "mountPath" | default "/run/substrate-listworkers" -}}
+{{- $substrateListWorkersClientSigner := get $substrateListWorkers "clientSignerName" | default "podidentity.podcert.ate.dev/identity" -}}
+{{- $substrateListWorkersServerTrustSigner := get $substrateListWorkers "serverTrustSignerName" | default "servicedns.podcert.ate.dev/identity" -}}
+{{- $substrateListWorkersTrustBundleLabels := get $substrateListWorkers "trustBundleLabels" | default (dict "podcert.ate.dev/canarying" "live") -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -125,21 +136,21 @@ spec:
         - name: KRT_EVENT_DISTRIBUTE_DEBOUNCE_MAX
           value: {{ .Values.agentiod.krtEventDistributeDebounceMax | quote }}
         {{- end }}
-        {{- if .Values.agentiod.substrateListWorkers.enabled }}
+        {{- if $substrateListWorkersEnabled }}
         - name: SUBSTRATE_LIST_WORKERS_ADDRESS
-          value: {{ .Values.agentiod.substrateListWorkers.address | quote }}
+          value: {{ $substrateListWorkersAddress | quote }}
         - name: SUBSTRATE_LIST_WORKERS_SERVER_NAME
-          value: {{ .Values.agentiod.substrateListWorkers.serverName | quote }}
+          value: {{ $substrateListWorkersServerName | quote }}
         - name: SUBSTRATE_LIST_WORKERS_CA_FILE
-          value: {{ printf "%s/trust-bundle.pem" (trimSuffix "/" .Values.agentiod.substrateListWorkers.mountPath) | quote }}
+          value: {{ printf "%s/trust-bundle.pem" (trimSuffix "/" $substrateListWorkersMountPath) | quote }}
         - name: SUBSTRATE_LIST_WORKERS_CLIENT_CREDENTIAL_BUNDLE
-          value: {{ printf "%s/credential-bundle.pem" (trimSuffix "/" .Values.agentiod.substrateListWorkers.mountPath) | quote }}
+          value: {{ printf "%s/credential-bundle.pem" (trimSuffix "/" $substrateListWorkersMountPath) | quote }}
         - name: SUBSTRATE_LIST_WORKERS_POLL_INTERVAL
-          value: {{ .Values.agentiod.substrateListWorkers.pollInterval | quote }}
+          value: {{ $substrateListWorkersPollInterval | quote }}
         - name: SUBSTRATE_LIST_WORKERS_RPC_TIMEOUT
-          value: {{ .Values.agentiod.substrateListWorkers.rpcTimeout | quote }}
+          value: {{ $substrateListWorkersRPCTimeout | quote }}
         - name: SUBSTRATE_LIST_WORKERS_PAGE_SIZE
-          value: {{ .Values.agentiod.substrateListWorkers.pageSize | quote }}
+          value: {{ $substrateListWorkersPageSize | quote }}
         {{- end }}
         {{- range $key, $val := .Values.agentiod.env }}
         - name: {{ $key }}
@@ -194,8 +205,8 @@ spec:
           readOnly: true
         - mountPath: /var/run/secrets/istio-dns
           name: local-certs
-        {{- if .Values.agentiod.substrateListWorkers.enabled }}
-        - mountPath: {{ .Values.agentiod.substrateListWorkers.mountPath | quote }}
+        {{- if $substrateListWorkersEnabled }}
+        - mountPath: {{ $substrateListWorkersMountPath | quote }}
           name: substrate-listworkers
           readOnly: true
         {{- end }}
@@ -223,19 +234,19 @@ spec:
               audience: istio-ca
               expirationSeconds: 43200
               path: istio-token
-      {{- if .Values.agentiod.substrateListWorkers.enabled }}
+      {{- if $substrateListWorkersEnabled }}
       - name: substrate-listworkers
         projected:
           sources:
           - podCertificate:
-              signerName: {{ .Values.agentiod.substrateListWorkers.clientSignerName | quote }}
+              signerName: {{ $substrateListWorkersClientSigner | quote }}
               keyType: ECDSAP256
               credentialBundlePath: credential-bundle.pem
           - clusterTrustBundle:
-              signerName: {{ .Values.agentiod.substrateListWorkers.serverTrustSignerName | quote }}
+              signerName: {{ $substrateListWorkersServerTrustSigner | quote }}
               labelSelector:
                 matchLabels:
-                  {{- toYaml .Values.agentiod.substrateListWorkers.trustBundleLabels | nindent 18 }}
+                  {{- toYaml $substrateListWorkersTrustBundleLabels | nindent 18 }}
               path: trust-bundle.pem
       {{- end }}
 ---
