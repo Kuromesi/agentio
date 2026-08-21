@@ -120,7 +120,8 @@ func TestSubstrateWorkerSourceBuildsActorContextFromAllPages(t *testing.T) {
 	}
 	wantLabels := map[string]string{
 		ActorIdentityLabelUID:               "actor-uid-a",
-		ActorIdentityLabelName:              "actor-a",
+		"kruise.io/actor-name":              "actor-a",
+		"agentio.io/actor-name":             "actor-a",
 		ActorIdentityLabelAtespace:          "tenant-a",
 		ActorIdentityLabelGeneration:        "9",
 		ActorIdentityLabelTemplateNamespace: "templates",

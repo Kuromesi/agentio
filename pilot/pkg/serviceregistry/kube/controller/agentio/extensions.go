@@ -48,7 +48,8 @@ const (
 	ActorLabelPrefix      = "actor.networking.agents.kruise.io/"
 
 	ActorIdentityLabelUID               = "agentio.io/actor-uid"
-	ActorIdentityLabelName              = "agentio.io/actor-name"
+	ActorIdentityLabelName              = "kruise.io/actor-name"
+	LegacyActorIdentityLabelName        = "agentio.io/actor-name"
 	ActorIdentityLabelAtespace          = "agentio.io/atespace"
 	ActorIdentityLabelGeneration        = "agentio.io/actor-generation"
 	ActorIdentityLabelTemplateNamespace = "agentio.io/actor-template-namespace"
@@ -79,6 +80,7 @@ func ActorContextFromLabels(workerLabels map[string]string) *extensions.ActorCon
 	actorLabels := map[string]string{
 		ActorIdentityLabelUID:        uid,
 		ActorIdentityLabelName:       name,
+		LegacyActorIdentityLabelName: name,
 		ActorIdentityLabelAtespace:   atespace,
 		ActorIdentityLabelGeneration: generationText,
 	}

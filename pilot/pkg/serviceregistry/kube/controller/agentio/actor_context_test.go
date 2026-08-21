@@ -45,7 +45,8 @@ func TestActorContextFromLabels(t *testing.T) {
 		"role":                       "reader",
 		"tenant.example.io":          "tenant-a",
 		ActorIdentityLabelUID:        "actor-uid-1",
-		ActorIdentityLabelName:       "crawler",
+		"kruise.io/actor-name":       "crawler",
+		"agentio.io/actor-name":      "crawler",
 		ActorIdentityLabelAtespace:   "demo",
 		ActorIdentityLabelGeneration: "7",
 	}

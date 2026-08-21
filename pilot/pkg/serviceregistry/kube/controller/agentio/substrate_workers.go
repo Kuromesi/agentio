@@ -366,6 +366,7 @@ func buildActorBinding(
 	labels := map[string]string{
 		ActorIdentityLabelUID:        actorUID,
 		ActorIdentityLabelName:       actorName,
+		LegacyActorIdentityLabelName: actorName,
 		ActorIdentityLabelAtespace:   actorAtespace,
 		ActorIdentityLabelGeneration: strconv.FormatUint(generation, 10),
 	}
