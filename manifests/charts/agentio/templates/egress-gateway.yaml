@@ -118,6 +118,8 @@ spec:
         {{- if $.Values.sniTrafficPolicy.enabled }}
         - name: POLICY_BINDING_DISCOVERY
           value: "true"
+        - name: POLICY_RUNTIME_CAPABILITIES
+          value: "sni_traffic_policy"
         {{- end }}
         - name: GOMEMLIMIT
           valueFrom:

@@ -48,8 +48,9 @@ func sandboxEgressNode() *model.Proxy {
 		ID:              "egress-gw-0.istio-system",
 		ConfigNamespace: "istio-system",
 		Metadata: &model.NodeMetadata{
-			Namespace:              "istio-system",
-			PolicyBindingDiscovery: ptr.Of(model.StringBool(true)),
+			Namespace:                 "istio-system",
+			PolicyBindingDiscovery:    ptr.Of(model.StringBool(true)),
+			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
 		},
 		VerifiedIdentity: &spiffe.Identity{
 			ServiceAccount: "egress-gw",
@@ -180,13 +181,13 @@ func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestinat
 	}
 }
 
-func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
+func TestBuildSandboxSNITrafficPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 	previousFailureModeAllow := features.SniTrafficPolicyFailureModeAllow
 	features.SniTrafficPolicyFailureModeAllow = false
 	t.Cleanup(func() { features.SniTrafficPolicyFailureModeAllow = previousFailureModeAllow })
 
 	const excluded = "*.legacy.example.com"
-	result := buildSandboxSNIPolicyMatcher([]string{excluded}, buildSandboxProtocolMatcher())
+	result := buildSandboxSNITrafficPolicyMatcher([]string{excluded}, buildSandboxProtocolMatcher())
 
 	sniMatcher := &matcher.ServerNameMatcher{}
 	typedConfig := result.GetMatcher().GetMatcherTree().GetCustomMatch().GetTypedConfig()
@@ -211,6 +212,10 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 	if policyMatcher == nil {
 		t.Fatal("non-excluded TLS traffic must use the SNI policy matcher")
 	}
+	if got, want := policyMatcher.GetMatcherTree().GetCustomMatch().GetName(),
+		"kruise.matching.custom_matchers.sni_traffic_policy"; got != want {
+		t.Fatalf("SNI traffic policy matcher name = %q, want %q", got, want)
+	}
 	if got, want := policyMatcher.GetOnNoMatch().GetAction().GetName(), forwardTcpFilterChain; got != want {
 		t.Fatalf("SNI policy matcher on_no_match = %q, want passthrough chain %q for no-SNI connections", got, want)
 	}
@@ -219,13 +224,13 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 		t.Fatalf("decode SNI policy matcher: %v", err)
 	}
 	if got, want := policyConfig.GetTypeUrl(),
-		"type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniPolicyMatcher"; got != want {
+		"type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniTrafficPolicyMatcher"; got != want {
 		t.Fatalf("SNI policy matcher type URL = %q, want %q", got, want)
 	}
 	for field, want := range map[string]string{
 		"on_tls_termination": tlsTerminateFilterChain,
 		"on_passthrough":     forwardTcpFilterChain,
-		"on_deny":            sniPolicyDenyFilterChain,
+		"on_deny":            sniTrafficPolicyDenyFilterChain,
 	} {
 		action := policyConfig.GetValue().GetFields()[field].GetStructValue().GetFields()["action"].GetStructValue()
 		if got := action.GetFields()["name"].GetStringValue(); got != want {
@@ -233,7 +238,8 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 		}
 	}
 	failureModeAllow := policyConfig.GetValue().GetFields()["failure_mode_allow"].GetStructValue().GetFields()
-	if got, want := failureModeAllow["runtime_key"].GetStringValue(), match.SniPolicyFailureModeAllowRuntimeKey; got != want {
+	if got, want := failureModeAllow["runtime_key"].GetStringValue(),
+		"kruise.sni_traffic_policy.failure_mode_allow"; got != want {
 		t.Errorf("SNI policy matcher failure_mode_allow runtime key = %q, want %q", got, want)
 	}
 	defaultValue, found := failureModeAllow["default_value"]
@@ -245,12 +251,13 @@ func TestBuildSandboxSNIPolicyMatcherPreservesExcludeHosts(t *testing.T) {
 	}
 }
 
-func TestSniPolicyMatcherFailureModeAllowDefault(t *testing.T) {
+func TestSniTrafficPolicyMatcherFailureModeAllowDefault(t *testing.T) {
 	previous := features.SniTrafficPolicyFailureModeAllow
 	features.SniTrafficPolicyFailureModeAllow = true
 	t.Cleanup(func() { features.SniTrafficPolicyFailureModeAllow = previous })
 
-	result := match.NewSniPolicyMatcher(tlsTerminateFilterChain, forwardTcpFilterChain, sniPolicyDenyFilterChain)
+	result := match.NewSniTrafficPolicyMatcher(
+		tlsTerminateFilterChain, forwardTcpFilterChain, sniTrafficPolicyDenyFilterChain)
 	policyConfig := &typedstruct.TypedStruct{}
 	if err := result.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
 		t.Fatalf("decode SNI policy matcher: %v", err)
@@ -278,7 +285,7 @@ func TestSniTrafficPolicyFeatureAddsMatcherOutcomeChains(t *testing.T) {
 	if got, want := chains[2].GetName(), tlsTerminateFilterChain; got != want {
 		t.Fatalf("TLS termination chain name = %q, want %q", got, want)
 	}
-	if got, want := chains[3].GetName(), sniPolicyDenyFilterChain; got != want {
+	if got, want := chains[3].GetName(), "sni-traffic-policy-deny"; got != want {
 		t.Fatalf("deny chain name = %q, want %q", got, want)
 	}
 
@@ -293,16 +300,49 @@ func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
 	features.EnableSniTrafficPolicy = true
 	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
 
-	cg := NewConfigGenTest(t, TestOptions{})
-	node := sandboxEgressNode()
-	node.Metadata.PolicyBindingDiscovery = ptr.Of(model.StringBool(false))
-	lb := &ListenerBuilder{node: cg.SetupProxy(node), push: cg.PushContext()}
-	chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
-	if got, want := len(chains), 2; got != want {
-		t.Fatalf("capability-disabled catch-all chains = %d, want HTTP and TCP only", got)
+	tests := []struct {
+		name                string
+		bindingDiscovery    bool
+		runtimeCapabilities []string
+		wantEnabled         bool
+	}{
+		{
+			name:                "binding discovery and matcher capability",
+			bindingDiscovery:    true,
+			runtimeCapabilities: []string{"sni_traffic_policy"},
+			wantEnabled:         true,
+		},
+		{
+			name:                "matcher without policy store",
+			runtimeCapabilities: []string{"sni_traffic_policy"},
+		},
+		{
+			name:             "policy store without matcher",
+			bindingDiscovery: true,
+		},
+		{
+			name:                "unrelated policy matcher",
+			bindingDiscovery:    true,
+			runtimeCapabilities: []string{"type.googleapis.com/example.OtherPolicyMatcher"},
+		},
 	}
-	if got, want := len(sandboxListeners(lb)), 1; got != want {
-		t.Fatalf("capability-disabled sandbox listeners = %d, want main-forward only", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cg := NewConfigGenTest(t, TestOptions{})
+			node := sandboxEgressNode()
+			node.Metadata.PolicyBindingDiscovery = ptr.Of(model.StringBool(tt.bindingDiscovery))
+			node.Metadata.PolicyRuntimeCapabilities = tt.runtimeCapabilities
+			lb := &ListenerBuilder{node: cg.SetupProxy(node), push: cg.PushContext()}
+			chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+			wantChains := 2
+			if tt.wantEnabled {
+				wantChains = 4
+			}
+			if got := len(chains); got != wantChains {
+				t.Fatalf("catch-all chains = %d, want %d", got, wantChains)
+			}
+		})
 	}
 }
 

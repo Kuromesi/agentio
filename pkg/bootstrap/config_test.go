@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -244,5 +245,23 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 	}
 	if strings.Contains(rendered.String(), "kruise.networking.gateway_policy") {
 		t.Fatalf("rendered bootstrap still uses the gateway-scoped policy package: %s", rendered.String())
+	}
+}
+
+func TestPolicyRuntimeCapabilitiesNodeMetadata(t *testing.T) {
+	proxyConfig := &v1alpha1.ProxyConfig{ProxyMetadata: map[string]string{}}
+	want := []string{
+		"sni_traffic_policy",
+		"other_policy",
+	}
+	node, err := GetNodeMetaData(MetadataOptions{
+		ProxyConfig:               proxyConfig,
+		PolicyRuntimeCapabilities: want,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(node.Metadata.PolicyRuntimeCapabilities, want) {
+		t.Fatalf("POLICY_RUNTIME_CAPABILITIES = %v, want %v", node.Metadata.PolicyRuntimeCapabilities, want)
 	}
 }

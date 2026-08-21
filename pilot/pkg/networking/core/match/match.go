@@ -164,17 +164,23 @@ func NewSNIMatcher(domainMatches []SNIDomainMatch, onNoMatch *matcher.Matcher_On
 }
 
 const (
-	// SniPolicyMatcherTypeURL is the Agentio-owned custom matcher that resolves the
+	// SniTrafficPolicyCapability is the stable proxy capability advertised in node metadata.
+	SniTrafficPolicyCapability = "sni_traffic_policy"
+
+	// SniTrafficPolicyMatcherName is the registered Envoy custom matcher factory.
+	SniTrafficPolicyMatcherName = "kruise.matching.custom_matchers.sni_traffic_policy"
+
+	// SniTrafficPolicyMatcherTypeURL is the Agentio-owned custom matcher that resolves the
 	// SNI traffic policy bound to the downstream peer workload. See
 	// source/extensions/matching/network/sni_policy in the proxy repository.
-	SniPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniPolicyMatcher"
+	SniTrafficPolicyMatcherTypeURL = "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniTrafficPolicyMatcher"
 
-	// SniPolicyFailureModeAllowRuntimeKey is the emergency runtime override for
+	// SniTrafficPolicyFailureModeAllowRuntimeKey is the emergency runtime override for
 	// policy-resolution failures. Its configured default remains fail-closed.
-	SniPolicyFailureModeAllowRuntimeKey = "kruise.sni_policy.failure_mode_allow"
+	SniTrafficPolicyFailureModeAllowRuntimeKey = "kruise.sni_traffic_policy.failure_mode_allow"
 )
 
-// NewSniPolicyMatcher selects a filter chain by evaluating the SNI traffic
+// NewSniTrafficPolicyMatcher selects a filter chain by evaluating the SNI traffic
 // policy for the connection's peer workload.
 //
 // Unlike NewSNIMatcher, the domains are not part of this config: the matcher
@@ -186,7 +192,7 @@ const (
 // OnNoMatch routes to the passthrough chain: an empty ClientHello SNI matches
 // no rule (every rule form requires a non-empty SNI), and the documented
 // contract for no-SNI TLS connections is passthrough, not a closed connection.
-func NewSniPolicyMatcher(terminateChain, passthroughChain, denyChain string) *matcher.Matcher {
+func NewSniTrafficPolicyMatcher(terminateChain, passthroughChain, denyChain string) *matcher.Matcher {
 	return &matcher.Matcher{
 		OnNoMatch: ToChain(passthroughChain),
 		MatcherType: &matcher.Matcher_MatcherTree_{
@@ -196,14 +202,14 @@ func NewSniPolicyMatcher(terminateChain, passthroughChain, denyChain string) *ma
 				Input: SNI,
 				TreeType: &matcher.Matcher_MatcherTree_CustomMatch{
 					CustomMatch: &xds.TypedExtensionConfig{
-						Name: "sni-policy",
-						TypedConfig: protoconv.TypedStructWithFields(SniPolicyMatcherTypeURL,
+						Name: SniTrafficPolicyMatcherName,
+						TypedConfig: protoconv.TypedStructWithFields(SniTrafficPolicyMatcherTypeURL,
 							map[string]any{
 								"on_tls_termination": chainActionFields(terminateChain),
 								"on_passthrough":     chainActionFields(passthroughChain),
 								"on_deny":            chainActionFields(denyChain),
 								"failure_mode_allow": map[string]any{
-									"runtime_key":   SniPolicyFailureModeAllowRuntimeKey,
+									"runtime_key":   SniTrafficPolicyFailureModeAllowRuntimeKey,
 									"default_value": features.SniTrafficPolicyFailureModeAllow,
 								},
 							}),

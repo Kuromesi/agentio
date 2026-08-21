@@ -100,12 +100,20 @@ const (
 	// reach main_forward. Custom (non-canonical) for readable config dumps.
 	connectDownstreamFilterName = "connect_downstream_peer"
 
-	sniPolicyDenyFilterChain = "sni-policy-deny"
+	sniTrafficPolicyDenyFilterChain = "sni-traffic-policy-deny"
 )
 
 func sniTrafficPolicyEnabled(metadata *model.NodeMetadata) bool {
-	return features.EnableSniTrafficPolicy && metadata != nil &&
-		metadata.PolicyBindingDiscovery != nil && bool(*metadata.PolicyBindingDiscovery)
+	if !features.EnableSniTrafficPolicy || metadata == nil ||
+		metadata.PolicyBindingDiscovery == nil || !bool(*metadata.PolicyBindingDiscovery) {
+		return false
+	}
+	for _, capability := range metadata.PolicyRuntimeCapabilities {
+		if capability == match.SniTrafficPolicyCapability {
+			return true
+		}
+	}
+	return false
 }
 
 // buildCaptureSNIFilter returns a network filter that captures the downstream
@@ -331,17 +339,17 @@ func (lb *ListenerBuilder) buildMainForwardFilters(httpCluster, tcpCluster strin
 	return []*listener.FilterChain{catchallHTTP, catchallTCP}
 }
 
-// buildSandboxSniPolicyDenyFilterChain builds the chain the SNI policy matcher
+// buildSandboxSniTrafficPolicyDenyFilterChain builds the chain the SNI traffic policy matcher
 // selects for a denied connection. It is raw rather than TLS-terminating, so the
 // client is refused without first being handed a certificate, and the black hole
 // cluster closes the connection instead of forwarding it anywhere.
-func buildSandboxSniPolicyDenyFilterChain() *listener.FilterChain {
+func buildSandboxSniTrafficPolicyDenyFilterChain() *listener.FilterChain {
 	return &listener.FilterChain{
-		Name: sniPolicyDenyFilterChain,
+		Name: sniTrafficPolicyDenyFilterChain,
 		Filters: []*listener.Filter{{
 			Name: wellknown.TCPProxy,
 			ConfigType: &listener.Filter_TypedConfig{TypedConfig: protoconv.MessageToAny(&tcp.TcpProxy{
-				StatPrefix:       sniPolicyDenyFilterChain,
+				StatPrefix:       sniTrafficPolicyDenyFilterChain,
 				ClusterSpecifier: &tcp.TcpProxy_Cluster{Cluster: util.BlackHoleCluster},
 			})},
 		}},
@@ -511,7 +519,7 @@ func buildSandboxSNIMatcher(tlsTermCfg sandboxTLSTermination, protocolFallback *
 	}, protocolFallback))
 }
 
-// buildSandboxSNIPolicyMatcher keeps the legacy tls_termination.exclude_hosts
+// buildSandboxSNITrafficPolicyMatcher keeps the legacy tls_termination.exclude_hosts
 // bypass ahead of SNI policy evaluation. Every remaining TLS connection is routed
 // by the SNI policy custom matcher, which picks between terminating TLS, passing
 // through, and denying; non-TLS traffic retains protocol-based routing.
@@ -519,10 +527,10 @@ func buildSandboxSNIMatcher(tlsTermCfg sandboxTLSTermination, protocolFallback *
 // The transport-protocol gate stays in front of the policy matcher: a plaintext
 // connection carries no SNI, so there is nothing for the policy to evaluate and
 // it must not reach the TLS-terminating chain.
-func buildSandboxSNIPolicyMatcher(excludeHosts []string, protocolFallback *matcher.Matcher) *matcher.Matcher_OnMatch {
+func buildSandboxSNITrafficPolicyMatcher(excludeHosts []string, protocolFallback *matcher.Matcher) *matcher.Matcher_OnMatch {
 	policyFallback := match.ToMatcher(match.NewTransportProtocol(match.TransportProtocolMatch{
-		TLS: match.ToMatcher(match.NewSniPolicyMatcher(
-			tlsTerminateFilterChain, forwardTcpFilterChain, sniPolicyDenyFilterChain)),
+		TLS: match.ToMatcher(match.NewSniTrafficPolicyMatcher(
+			tlsTerminateFilterChain, forwardTcpFilterChain, sniTrafficPolicyDenyFilterChain)),
 		Other: protocolFallback,
 	}))
 	if len(excludeHosts) == 0 {
@@ -565,12 +573,12 @@ func applySandboxInternalChains(
 		// outcomes must be chains on this listener: terminating TLS is a property of
 		// a chain's transport socket, which is fixed before any network filter runs.
 		chains = append(chains, lb.buildTlsTerminateFilterChain(gateway.GetConnectionPool()))
-		chains = append(chains, buildSandboxSniPolicyDenyFilterChain())
+		chains = append(chains, buildSandboxSniTrafficPolicyDenyFilterChain())
 		var excludeHosts []string
 		if tlsTermCfg != nil {
 			excludeHosts = tlsTermCfg.GetExcludeHosts()
 		}
-		target.OnNoMatch = buildSandboxSNIPolicyMatcher(excludeHosts, protocolFallback)
+		target.OnNoMatch = buildSandboxSNITrafficPolicyMatcher(excludeHosts, protocolFallback)
 	} else if features.EnableOnDemandCerts && tlsTermCfg != nil {
 		// catchall-tls: terminates TLS with on-demand certs.
 		chains = append(chains, lb.buildTlsTerminateFilterChain(gateway.GetConnectionPool()))

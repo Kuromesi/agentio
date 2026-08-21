@@ -184,7 +184,7 @@
           "prefix": "policy_store"
           },
           {
-          "prefix": "sni_policy"
+          "prefix": "sni_traffic_policy"
           },
           {{- end }}
           {{- range $a, $s := .inclusionPrefix }}
