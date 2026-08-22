@@ -287,7 +287,14 @@ func BenchmarkPolicyBindingCreateStorm(b *testing.B) {
 			opts := krt.NewOptionsBuilder(stop, benchmark.name, krt.GlobalDebugHandler)
 			workloadSource := krt.NewStaticCollection(nil, workloads, opts.WithName("Workloads")...)
 			seed := sniBindablePolicy("bench", "seed", 1, map[string]string{"app": "agent"})
-			policySource := krt.NewStaticCollection(nil, []BindablePolicy{seed}, opts.WithName("BindablePolicies")...)
+			// Mirror production: the debounce sits on the BindablePolicies join,
+			// upstream of the PolicyAttachments split, not on the attachments.
+			rawPolicySource := krt.NewStaticCollection(nil, []BindablePolicy{seed}, opts.WithName("RawBindablePolicies")...)
+			policyOpts := append(opts.WithName("BindablePolicies"), krt.WithDebounce(
+				features.KrtEventDistributeDebounce,
+				features.KrtEventDistributeDebounceMax,
+			))
+			policySource := krt.JoinCollection([]krt.Collection[BindablePolicy]{rawPolicySource}, policyOpts...)
 			attachments := newPolicyAttachmentsCollection(policySource, opts)
 			byNamespace := krt.NewIndex(attachments, "benchmarkPolicyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
 				return []string{policy.Namespace}
@@ -311,7 +318,7 @@ func BenchmarkPolicyBindingCreateStorm(b *testing.B) {
 			b.ResetTimer()
 			for n := 0; n < b.N; n++ {
 				for i := 0; i < policyCount; i++ {
-					policySource.UpdateObject(sniBindablePolicy(
+					rawPolicySource.UpdateObject(sniBindablePolicy(
 						"bench", fmt.Sprintf("policy-%d-%d", n, i), 1, map[string]string{"app": "agent"},
 					))
 				}

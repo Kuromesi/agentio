@@ -61,6 +61,18 @@ type BindablePolicy struct {
 	selector klabels.Selector
 }
 
+var bindablePolicyConfigKinds = map[string]kind.Kind{
+	pm.SniTrafficPolicyType: kind.SniTrafficPolicy,
+}
+
+// BindablePolicyConfigKind returns the control-plane config kind carried by a
+// bindable policy TypeURL. New bindable policy implementations register here
+// so shared binding push logic remains policy-type agnostic.
+func BindablePolicyConfigKind(typeURL string) (kind.Kind, bool) {
+	configKind, found := bindablePolicyConfigKinds[typeURL]
+	return configKind, found
+}
+
 func (p BindablePolicy) ResourceName() string {
 	return p.TypeURL + "|" + p.Name
 }
@@ -229,10 +241,18 @@ func newBindablePoliciesCollection(
 			return []BindablePolicy{*policy}
 		}, opts.WithName("GlobalSecurityProfileBindablePolicies")...)
 
+	// Debounce once here, before the xDS policy resources and the workload
+	// attachments split into separate branches. Debouncing further downstream
+	// (on PolicyAttachments) coalesces binding recomputes but leaves the policy
+	// xDS branch to fan each event out into its own push.
+	policyOpts := append(opts.WithName("BindablePolicies"), krt.WithDebounce(
+		features.KrtEventDistributeDebounce,
+		features.KrtEventDistributeDebounceMax,
+	))
 	return krt.JoinCollection([]krt.Collection[BindablePolicy]{
 		securityProfilePolicies,
 		globalSecurityProfilePolicies,
-	}, opts.WithName("BindablePolicies")...)
+	}, policyOpts...)
 }
 
 // initBindablePolicies wires Agentio bindable policies. It is a no-op unless

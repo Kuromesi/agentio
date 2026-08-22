@@ -72,6 +72,17 @@ const (
 	// required for metrics based on stat_prefix in virtual service.
 	requiredEnvoyStatsMatcherInclusionRegexes = `vhost\..*\.route\..*`
 
+	// defaultPolicyStoreDeletionGracePeriod bounds how long a READY binding may
+	// retain its last-known-good policy snapshot while independent xDS streams
+	// reconcile a policy deletion. It must exceed the worst-case gap between the
+	// policy push and the binding push; that gap is bounded by PILOT_DEBOUNCE_MAX
+	// (features.DebounceMax, 10s by default), so a smaller value lets the grace
+	// period expire first and fails the binding closed. 15s also matches Envoy's
+	// own initial_fetch_timeout default for the equivalent warming fallback.
+	// Convergence cancels the wait immediately, so this is an upper bound rather
+	// than a fixed delay.
+	defaultPolicyStoreDeletionGracePeriod = 15 * time.Second
+
 	// Prefixes of V2 metrics.
 	// "reporter" prefix is for istio standard metrics.
 	// "component" suffix is for istio_build metric.
@@ -85,6 +96,9 @@ type Config struct {
 	// CompliancePolicy to decouple the environment variable dependency.
 	CompliancePolicy string
 	LogAsJSON        bool
+	// PolicyStoreDeletionGracePeriod is rendered into the native policy store
+	// bootstrap extension. Zero uses the five-second default.
+	PolicyStoreDeletionGracePeriod time.Duration
 }
 
 // toTemplateParams creates a new template configuration for the given configuration.
@@ -115,6 +129,10 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		mDiscovery = false
 	}
 	policyBindingDiscovery := cfg.Metadata.PolicyBindingDiscovery != nil && bool(*cfg.Metadata.PolicyBindingDiscovery)
+	policyStoreDeletionGracePeriod := cfg.PolicyStoreDeletionGracePeriod
+	if policyStoreDeletionGracePeriod <= 0 {
+		policyStoreDeletionGracePeriod = defaultPolicyStoreDeletionGracePeriod
+	}
 	customSDSPath := ""
 	if _, f := cfg.RawMetadata[security.CredentialFileMetaDataName]; f {
 		customSDSPath = security.FileCredentialNameSocketPath
@@ -131,6 +149,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		option.XdsType(xdsType),
 		option.MetadataDiscovery(mDiscovery),
 		option.PolicyBindingDiscovery(policyBindingDiscovery),
+		option.PolicyStoreDeletionGracePeriod(policyStoreDeletionGracePeriod.String()),
 		option.MetricsLocalhostAccessOnly(cfg.Metadata.ProxyConfig.ProxyMetadata),
 	)
 

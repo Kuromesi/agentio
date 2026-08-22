@@ -39,6 +39,7 @@ type agentioResourceProvider func(
 
 func collectAgentioResources[T agentioResourceModel](
 	collection func(*index) krt.Collection[T],
+	lookupKey func(model.ConfigKey) string,
 	name func(T) string,
 	message func(T) proto.Message,
 	visible func(*index, *model.Proxy, T) bool,
@@ -49,7 +50,19 @@ func collectAgentioResources[T agentioResourceModel](
 			return nil
 		}
 
-		items := resources.List()
+		var items []T
+		if len(requested) == 0 {
+			items = resources.List()
+		} else {
+			items = make([]T, 0, len(requested))
+			for key := range requested {
+				item := resources.GetKey(lookupKey(key))
+				if item == nil || (*item).ConfigKey() != key {
+					continue
+				}
+				items = append(items, *item)
+			}
+		}
 		result := make([]model.AgentioResource, 0, len(items))
 		for _, item := range items {
 			if visible != nil && !visible(a, proxy, item) {
@@ -101,12 +114,14 @@ func isNilAgentioResourceMessage(message proto.Message) bool {
 var agentioResourceProviders = map[string]agentioResourceProvider{
 	xdsmodel.PolicyBindingType: collectAgentioResources(
 		func(a *index) krt.Collection[model.PolicyBinding] { return a.policyBindings },
+		func(key model.ConfigKey) string { return key.Name },
 		func(p model.PolicyBinding) string { return p.ResourceName() },
 		func(p model.PolicyBinding) proto.Message { return p.Binding },
 		nil,
 	),
 	xdsmodel.WorkloadConfigType: collectAgentioResources(
 		func(a *index) krt.Collection[model.WorkloadConfig] { return a.workloadConfigs },
+		func(key model.ConfigKey) string { return key.Namespace + "/" + key.Name },
 		func(c model.WorkloadConfig) string { return c.ResourceName() },
 		func(c model.WorkloadConfig) proto.Message { return c.Config },
 		func(a *index, proxy *model.Proxy, c model.WorkloadConfig) bool {
@@ -121,6 +136,7 @@ var agentioResourceProviders = map[string]agentioResourceProvider{
 func bindablePolicyResourceProvider(typeURL string) agentioResourceProvider {
 	return collectAgentioResources(
 		func(a *index) krt.Collection[agentio.BindablePolicy] { return a.bindablePolicies },
+		func(key model.ConfigKey) string { return typeURL + "|" + key.Name },
 		func(p agentio.BindablePolicy) string { return p.XDSResourceName() },
 		func(p agentio.BindablePolicy) proto.Message { return p.Resource },
 		func(_ *index, _ *model.Proxy, p agentio.BindablePolicy) bool {

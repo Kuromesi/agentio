@@ -24,6 +24,7 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pilot/pkg/xds"
 	"istio.io/istio/pkg/config/schema/kind"
+	"istio.io/istio/pkg/kube/controllers"
 	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/kube/krt/krttest"
 	xdsmodel "istio.io/istio/pkg/model"
@@ -37,6 +38,31 @@ type agentioResourceTestModel struct {
 	name     string
 	resource proto.Message
 	visible  bool
+}
+
+type trackingAgentioResourceCollection[T any] struct {
+	krt.Collection[T]
+	listCalls int
+	getKeys   []string
+}
+
+type configUpdateRecorder struct {
+	model.XDSUpdater
+	requests []*model.PushRequest
+}
+
+func (r *configUpdateRecorder) ConfigUpdate(request *model.PushRequest) {
+	r.requests = append(r.requests, request)
+}
+
+func (c *trackingAgentioResourceCollection[T]) List() []T {
+	c.listCalls++
+	return c.Collection.List()
+}
+
+func (c *trackingAgentioResourceCollection[T]) GetKey(key string) *T {
+	c.getKeys = append(c.getKeys, key)
+	return c.Collection.GetKey(key)
 }
 
 func TestAgentioResourceProvidersAndDescriptors(t *testing.T) {
@@ -177,6 +203,7 @@ func TestAgentioResourcesForProxy(t *testing.T) {
 		collection := krttest.GetMockCollection[agentioResourceTestModel](modelMock)
 		provider := collectAgentioResources(
 			func(*index) krt.Collection[agentioResourceTestModel] { return collection },
+			func(key model.ConfigKey) string { return key.Name },
 			func(m agentioResourceTestModel) string { return m.ResourceName() },
 			func(m agentioResourceTestModel) proto.Message { return m.resource },
 			func(_ *index, proxy *model.Proxy, m agentioResourceTestModel) bool {
@@ -190,6 +217,38 @@ func TestAgentioResourcesForProxy(t *testing.T) {
 		if got[0].Resource != valid {
 			t.Error("valid projected payload pointer was not preserved")
 		}
+	})
+
+	t.Run("requested resources use keyed lookup", func(t *testing.T) {
+		wanted := agentioResourceTestModel{
+			key:      model.ConfigKey{Kind: kind.PolicyBinding, Name: "wanted"},
+			name:     "wanted",
+			resource: &extensions.PolicyBinding{},
+			visible:  true,
+		}
+		unrelated := agentioResourceTestModel{
+			key:      model.ConfigKey{Kind: kind.PolicyBinding, Name: "unrelated"},
+			name:     "unrelated",
+			resource: &extensions.PolicyBinding{},
+			visible:  true,
+		}
+		modelMock := krttest.NewMock(t, []any{wanted, unrelated})
+		tracked := &trackingAgentioResourceCollection[agentioResourceTestModel]{
+			Collection: krttest.GetMockCollection[agentioResourceTestModel](modelMock),
+		}
+		provider := collectAgentioResources(
+			func(*index) krt.Collection[agentioResourceTestModel] { return tracked },
+			func(key model.ConfigKey) string { return key.Name },
+			func(m agentioResourceTestModel) string { return m.ResourceName() },
+			func(m agentioResourceTestModel) proto.Message { return m.resource },
+			nil,
+		)
+
+		got := provider(a, nil, sets.New(wanted.ConfigKey()))
+		assert.Equal(t, tracked.listCalls, 0)
+		assert.Equal(t, tracked.getKeys, []string{"wanted"})
+		assert.Equal(t, len(got), 1)
+		assert.Equal(t, got[0].Name, "wanted")
 	})
 }
 
@@ -273,4 +332,33 @@ func TestWorkloadConfigAgentioResourcesForProxy(t *testing.T) {
 			sameNamespace.ResourceName(): sameNamespace.Config,
 		})
 	})
+}
+
+func TestPushPolicyBindingsXdsIncludesNewPolicyReferences(t *testing.T) {
+	oldBinding := model.PolicyBinding{
+		Name: "workload://ns/pod",
+		Binding: &extensions.PolicyBinding{PolicyRefs: map[string]*extensions.PolicyReference{
+			xdsmodel.SniTrafficPolicyType: {ResourceNames: []string{"ns/existing"}},
+		}},
+	}
+	newBinding := model.PolicyBinding{
+		Name: oldBinding.Name,
+		Binding: &extensions.PolicyBinding{PolicyRefs: map[string]*extensions.PolicyReference{
+			xdsmodel.SniTrafficPolicyType: {ResourceNames: []string{"ns/existing", "ns/new"}},
+		}},
+	}
+	recorder := &configUpdateRecorder{}
+
+	PushPolicyBindingsXds(recorder)([]krt.Event[model.PolicyBinding]{
+		{Event: controllers.EventUpdate, Old: &oldBinding, New: &newBinding},
+	})
+
+	if len(recorder.requests) != 1 {
+		t.Fatalf("ConfigUpdate calls = %d, want 1", len(recorder.requests))
+	}
+	want := sets.New(
+		newBinding.ConfigKey(),
+		model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "ns/new"},
+	)
+	assert.Equal(t, recorder.requests[0].ConfigsUpdated, want)
 }
