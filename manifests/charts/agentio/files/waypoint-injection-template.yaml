@@ -181,6 +181,8 @@ spec:
           value: "true"
         - name: POLICY_RUNTIME_CAPABILITIES
           value: "sni_traffic_policy"
+        - name: POLICY_STORE_DELETION_GRACE_PERIOD
+          value: "{{ index .Values.pilot.env `POLICY_STORE_DELETION_GRACE_PERIOD` | default `15s` }}"
         {{- end }}
         - name: GOMEMLIMIT
           valueFrom:

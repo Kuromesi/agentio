@@ -85,4 +85,7 @@ func TestPolicyStoreExtensionNameMatchesFactory(t *testing.T) {
 	if !strings.Contains(rendered, `"name": "kruise.bootstrap.policy_store"`) {
 		t.Error(`rendered bootstrap does not use the registered factory name "kruise.bootstrap.policy_store"`)
 	}
+	if !strings.Contains(rendered, `"policy_deletion_grace_period": "15s"`) {
+		t.Error("rendered bootstrap does not use the default fifteen-second policy deletion grace period")
+	}
 }

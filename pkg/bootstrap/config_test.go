@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	. "github.com/onsi/gomega"
@@ -223,7 +224,11 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 		}},
 		RawMetadata: map[string]any{},
 	}
-	params, err := (Config{Node: node}).toTemplateParams()
+	bootstrapConfig := Config{
+		Node:                           node,
+		PolicyStoreDeletionGracePeriod: 17 * time.Second,
+	}
+	params, err := bootstrapConfig.toTemplateParams()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +238,7 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 
 	var rendered bytes.Buffer
 	templatePath := filepath.Join(testenv.IstioSrc, "tools/packaging/common/envoy_bootstrap.json")
-	if err := New(Config{Node: node}).WriteTo(templatePath, &rendered); err != nil {
+	if err := New(bootstrapConfig).WriteTo(templatePath, &rendered); err != nil {
 		t.Fatalf("render bootstrap template: %v", err)
 	}
 	if !strings.Contains(rendered.String(), `"name": "kruise.bootstrap.policy_store"`) {
@@ -245,6 +250,9 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 	}
 	if strings.Contains(rendered.String(), "kruise.networking.gateway_policy") {
 		t.Fatalf("rendered bootstrap still uses the gateway-scoped policy package: %s", rendered.String())
+	}
+	if !strings.Contains(rendered.String(), `"policy_deletion_grace_period": "17s"`) {
+		t.Fatalf("rendered bootstrap does not contain the configured policy deletion grace period: %s", rendered.String())
 	}
 }
 

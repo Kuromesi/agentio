@@ -17,7 +17,6 @@ package agentio
 import (
 	"time"
 
-	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pkg/kube/krt"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,13 +111,9 @@ func newPolicyAttachmentsCollection(
 	policies krt.Collection[BindablePolicy],
 	opts krt.OptionsBuilder,
 ) krt.Collection[PolicyAttachment] {
-	collectionOpts := append(opts.WithName("PolicyAttachments"), krt.WithDebounce(
-		features.KrtEventDistributeDebounce,
-		features.KrtEventDistributeDebounceMax,
-	))
 	return krt.NewCollection(policies, func(_ krt.HandlerContext, policy BindablePolicy) *PolicyAttachment {
 		return policyAttachmentFromBindablePolicy(policy)
-	}, collectionOpts...)
+	}, opts.WithName("PolicyAttachments")...)
 }
 
 var (

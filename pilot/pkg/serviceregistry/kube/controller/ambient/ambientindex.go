@@ -33,6 +33,7 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	agentioextensions "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/statusqueue"
 	"istio.io/istio/pkg/activenotifier"
@@ -603,10 +604,7 @@ func New(options Options) Index {
 		policyBindings := a.agentioController.BuildPolicyBindingCollection(Workloads, opts)
 		if policyBindings != nil {
 			a.policyBindings = policyBindings
-			policyBindings.RegisterBatch(PushXds(a.XDSUpdater,
-				func(i model.PolicyBinding) model.ConfigKey {
-					return i.ConfigKey()
-				}), false)
+			policyBindings.RegisterBatch(PushPolicyBindingsXds(a.XDSUpdater), false)
 		}
 
 		bindablePolicies := a.agentioController.BindablePolicies()
@@ -1127,6 +1125,52 @@ func PushXds[T any](xds model.XDSUpdater, f func(T) model.ConfigKey) func(events
 		xds.ConfigUpdate(&model.PushRequest{
 			Full:           false,
 			ConfigsUpdated: cu,
+			Reason:         model.NewReasonStats(model.AmbientUpdate),
+		})
+	}
+}
+
+// PushPolicyBindingsXds includes newly referenced policy resources in the same
+// push request as their PolicyBinding. PushOrder can then deliver those policy
+// resources before a binding starts referring to them, even if the two KRT
+// branches are scheduled independently after a shared policy batch.
+func PushPolicyBindingsXds(xds model.XDSUpdater) func(events []krt.Event[model.PolicyBinding]) {
+	return func(events []krt.Event[model.PolicyBinding]) {
+		configsUpdated := sets.New[model.ConfigKey]()
+		for _, event := range events {
+			for _, binding := range event.Items() {
+				configsUpdated.Insert(binding.ConfigKey())
+			}
+			if event.New == nil || event.New.Binding == nil {
+				continue
+			}
+
+			var oldRefs map[string]*agentioextensions.PolicyReference
+			if event.Old != nil && event.Old.Binding != nil {
+				oldRefs = event.Old.Binding.GetPolicyRefs()
+			}
+			for typeURL, reference := range event.New.Binding.GetPolicyRefs() {
+				configKind, found := agentio.BindablePolicyConfigKind(typeURL)
+				if !found || reference == nil {
+					continue
+				}
+				oldNames := sets.New[string]()
+				if oldReference := oldRefs[typeURL]; oldReference != nil {
+					oldNames.InsertAll(oldReference.GetResourceNames()...)
+				}
+				for _, name := range reference.GetResourceNames() {
+					if !oldNames.Contains(name) {
+						configsUpdated.Insert(model.ConfigKey{Kind: configKind, Name: name})
+					}
+				}
+			}
+		}
+		if len(configsUpdated) == 0 {
+			return
+		}
+		xds.ConfigUpdate(&model.PushRequest{
+			Full:           false,
+			ConfigsUpdated: configsUpdated,
 			Reason:         model.NewReasonStats(model.AmbientUpdate),
 		})
 	}

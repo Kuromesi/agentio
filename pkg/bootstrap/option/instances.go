@@ -281,6 +281,10 @@ func PolicyBindingDiscovery(value bool) Instance {
 	return newOption("policy_binding_discovery", value)
 }
 
+func PolicyStoreDeletionGracePeriod(value string) Instance {
+	return newOption("policy_store_deletion_grace_period", value)
+}
+
 func MetricsLocalhostAccessOnly(proxyMetadata map[string]string) Instance {
 	value, ok := proxyMetadata["METRICS_LOCALHOST_ACCESS_ONLY"]
 	if ok && value == "true" {
