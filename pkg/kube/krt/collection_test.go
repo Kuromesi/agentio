@@ -599,6 +599,132 @@ func TestCollectionMultipleFetch(t *testing.T) {
 	assert.EventuallyEqual(t, fetcherSorted(Results), []Result{{NewNamed(pod), nil}})
 }
 
+// TestCollectionMultipleFetchAllAndKey covers fetching the same collection both
+// with and without an index. The reverse-index fast path is keyed per source
+// collection, not per dependency, so an indexable Fetch must not suppress the
+// full-scan fallback that the unindexable Fetch relies on.
+// Ported from istio/istio#59164.
+func TestCollectionMultipleFetchAllAndKey(t *testing.T) {
+	stop := test.NewStop(t)
+	opts := testOptions(t)
+	c := kube.NewFakeClient()
+	kpc := kclient.New[*corev1.Pod](c)
+	pc := clienttest.Wrap(t, kpc)
+	podsCol := krt.WrapClient[*corev1.Pod](kpc, opts.WithName("Pods")...)
+	c.RunAndWait(stop)
+	SimplePods := SimplePodCollection(podsCol, opts)
+
+	pc.Create(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "name1", Namespace: "namespace"},
+		Status:     corev1.PodStatus{PodIP: "1.1.1.1"},
+	})
+	pc.Create(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "name2", Namespace: "namespace"},
+		Status:     corev1.PodStatus{PodIP: "2.2.2.2"},
+	})
+
+	Collection := krt.NewSingleton[SizedPod](func(ctx krt.HandlerContext) *SizedPod {
+		// Fetch with GetKey and without
+		_ = krt.Fetch(ctx, SimplePods, krt.FilterKey("namespace/name1"))
+		all := krt.Fetch(ctx, SimplePods)
+		cnt := 0
+		for _, v := range all {
+			if v.IP[0] == '1' {
+				cnt++
+			}
+		}
+		return ptr.Of(SizedPod{
+			Named: Named{Name: "count"},
+			Size:  fmt.Sprintf("%d", cnt),
+		})
+	}, opts.WithName("Collection")...)
+
+	Collection.AsCollection().WaitUntilSynced(stop)
+	assert.EventuallyEqual(t, func() string {
+		return ptr.OrEmpty(Collection.Get()).Size
+	}, "1")
+	pc.Update(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "name2", Namespace: "namespace"},
+		Status:     corev1.PodStatus{PodIP: "1.2.2.2"},
+	})
+	assert.EventuallyEqual(t, func() string {
+		return ptr.OrEmpty(Collection.Get()).Size
+	}, "2")
+}
+
+// TestCollectionMixedIndexabilityAcrossInputs covers the cross-input variant:
+// one input Fetches the shared collection through an indexable filter while a
+// different input Fetches it through an unindexable one. Before the fix, the
+// first input's index entry suppressed the fallback scan for the second, which
+// was then never recomputed.
+func TestCollectionMixedIndexabilityAcrossInputs(t *testing.T) {
+	stop := test.NewStop(t)
+	opts := testOptions(t)
+
+	primary := krt.NewStaticCollection(nil, []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "indexed", Namespace: "ns"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "generic", Namespace: "ns"}},
+	}, opts.WithName("Primary")...)
+	secondary := krt.NewStaticCollection(nil, []*corev1.ConfigMap{}, opts.WithName("Secondary")...)
+
+	out := krt.NewCollection(primary, func(ctx krt.HandlerContext, p *corev1.Pod) *SizedPod {
+		var n int
+		if p.Name == "indexed" {
+			n = len(krt.Fetch(ctx, secondary, krt.FilterKey("ns/target")))
+		} else {
+			n = len(krt.Fetch(ctx, secondary, krt.FilterGeneric(func(a any) bool {
+				return a.(*corev1.ConfigMap).Name == "target"
+			})))
+		}
+		return ptr.Of(SizedPod{Named: NewNamed(p), Size: fmt.Sprintf("%d", n)})
+	}, opts.WithName("Out")...)
+
+	out.WaitUntilSynced(stop)
+	assert.EventuallyEqual(t, func() int { return len(out.List()) }, 2)
+
+	secondary.UpdateObject(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "ns"}})
+
+	// Both inputs depend on the new ConfigMap and must both be recomputed.
+	assert.EventuallyEqual(t, func() string {
+		return ptr.OrEmpty(out.GetKey("ns/indexed")).Size
+	}, "1")
+	assert.EventuallyEqual(t, func() string {
+		return ptr.OrEmpty(out.GetKey("ns/generic")).Size
+	}, "1")
+}
+
+// TestCollectionMixedIndexabilitySameInput covers the single-input variant where
+// the indexable Fetch registers under a key the event does not carry. The event
+// then resolves to an empty candidate set, and before the fix the suppressed
+// fallback meant the input was not recomputed at all.
+func TestCollectionMixedIndexabilitySameInput(t *testing.T) {
+	stop := test.NewStop(t)
+	opts := testOptions(t)
+
+	primary := krt.NewStaticCollection(nil, []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns"}},
+	}, opts.WithName("Primary")...)
+	secondary := krt.NewStaticCollection(nil, []*corev1.ConfigMap{}, opts.WithName("Secondary")...)
+
+	out := krt.NewCollection(primary, func(ctx krt.HandlerContext, p *corev1.Pod) *SizedPod {
+		byKey := krt.Fetch(ctx, secondary, krt.FilterKey("ns/a"))
+		byGeneric := krt.Fetch(ctx, secondary, krt.FilterGeneric(func(a any) bool {
+			return a.(*corev1.ConfigMap).Name == "b"
+		}))
+		return ptr.Of(SizedPod{Named: NewNamed(p), Size: fmt.Sprintf("%d", len(byKey)+len(byGeneric))})
+	}, opts.WithName("Out")...)
+
+	out.WaitUntilSynced(stop)
+	assert.EventuallyEqual(t, func() int { return len(out.List()) }, 1)
+
+	// "ns/b" is matched only by the generic filter, and is not in the "ns/a"
+	// posting list the indexable filter registered.
+	secondary.UpdateObject(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "ns"}})
+	assert.EventuallyEqual(t, func() string {
+		return ptr.OrEmpty(out.GetKey("ns/pod")).Size
+	}, "1")
+}
+
 func TestCollectionMultipleFetchKeys(t *testing.T) {
 	stop := test.NewStop(t)
 	opts := testOptions(t)
