@@ -41,6 +41,12 @@ const (
 
 	FilterStateDownstreamPeerName      = "filter_state['downstream_peer'].name"
 	FilterStateDownstreamPeerNamespace = "filter_state['downstream_peer'].namespace"
+	// Static Envoy gateways cannot construct Istio's downstream_peer CelState
+	// object with set_filter_state. They publish the same authenticated values
+	// as two string objects instead; retain the native keys above as the primary
+	// contract and use these only as a compatibility fallback.
+	FilterStateDownstreamPeerNameFlat      = "filter_state['downstream_peer.name']"
+	FilterStateDownstreamPeerNamespaceFlat = "filter_state['downstream_peer.namespace']"
 	// AttrSourceAddress is Envoy's standard CEL attribute for the
 	// connection peer (the calling Sandbox pod, from the egress gateway's
 	// perspective). It is delivered as "<ip>:<port>"; only the IP half is
@@ -65,8 +71,14 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	logger := log.FromContext(ctx)
 	loggerD := logger.V(logging.DEBUG)
 
-	podNamespace := extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace)
-	podName := extractFilterStateString(attrs, FilterStateDownstreamPeerName)
+	podNamespace := firstNonEmpty(
+		extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace),
+		extractFilterStateString(attrs, FilterStateDownstreamPeerNamespaceFlat),
+	)
+	podName := firstNonEmpty(
+		extractFilterStateString(attrs, FilterStateDownstreamPeerName),
+		extractFilterStateString(attrs, FilterStateDownstreamPeerNameFlat),
+	)
 	peer := filter.Peer{
 		Pod: types.NamespacedName{Namespace: podNamespace, Name: podName},
 		IP:  extractPodIP(attrs),
@@ -109,6 +121,15 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	}
 
 	return peer, req
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // parseSandboxToken parses the raw filter_state['sandbox.token'] string:

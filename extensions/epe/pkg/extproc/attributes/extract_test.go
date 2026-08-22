@@ -134,6 +134,37 @@ func TestExtract(t *testing.T) {
 			wantValid: true,
 		},
 		{
+			name: "flat downstream peer keys from a static egress gateway",
+			attrFields: map[string]any{
+				FilterStateDownstreamPeerNamespaceFlat: "ate-demo-egress",
+				FilterStateDownstreamPeerNameFlat:      "egress-worker-0",
+				FilterStateSandboxLabels:               b64("kruise.io/actor-name=actor-a"),
+			},
+			headers: fullHeaders,
+			wantPeer: filter.Peer{
+				Pod:    types.NamespacedName{Namespace: "ate-demo-egress", Name: "egress-worker-0"},
+				Labels: map[string]string{"kruise.io/actor-name": "actor-a"},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
+		},
+		{
+			name: "native downstream peer keys take precedence over flat compatibility keys",
+			attrFields: map[string]any{
+				FilterStateDownstreamPeerNamespace:     "native-ns",
+				FilterStateDownstreamPeerName:          "native-pod",
+				FilterStateDownstreamPeerNamespaceFlat: "compat-ns",
+				FilterStateDownstreamPeerNameFlat:      "compat-pod",
+			},
+			headers: fullHeaders,
+			wantPeer: filter.Peer{
+				Pod:    types.NamespacedName{Namespace: "native-ns", Name: "native-pod"},
+				Labels: map[string]string{},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
+		},
+		{
 			name: "unparseable sandbox.token leaves Token nil",
 			attrFields: map[string]any{
 				FilterStateDownstreamPeerNamespace: "default",
