@@ -34,7 +34,7 @@ const (
 )
 
 // TestSniTrafficPolicyLifecycle exercises the complete Kubernetes-to-data-plane
-// path. A production regression in policy conversion, selector binding, PBDS or
+// path. A production regression in policy conversion, selector binding, WDS or
 // STPDS delivery, the native policy store, the custom matcher decision, or
 // listener routing changes the certificate boundary observed by curl and fails
 // this test.

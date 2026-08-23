@@ -112,13 +112,6 @@ func isNilAgentioResourceMessage(message proto.Message) bool {
 }
 
 var agentioResourceProviders = map[string]agentioResourceProvider{
-	xdsmodel.PolicyBindingType: collectAgentioResources(
-		func(a *index) krt.Collection[model.PolicyBinding] { return a.policyBindings },
-		func(key model.ConfigKey) string { return key.Name },
-		func(p model.PolicyBinding) string { return p.ResourceName() },
-		func(p model.PolicyBinding) proto.Message { return p.Binding },
-		nil,
-	),
 	xdsmodel.WorkloadConfigType: collectAgentioResources(
 		func(a *index) krt.Collection[model.WorkloadConfig] { return a.workloadConfigs },
 		func(key model.ConfigKey) string { return key.Namespace + "/" + key.Name },

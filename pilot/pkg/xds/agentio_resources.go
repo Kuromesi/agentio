@@ -63,12 +63,6 @@ func AgentioResourceDescriptors() []AgentioResourceDescriptor {
 			ResourceNameFromKey: func(k model.ConfigKey) string { return k.Name },
 			Enabled:             enabled,
 		},
-		{
-			TypeURL:             v3.PolicyBindingType,
-			ConfigKind:          kind.PolicyBinding,
-			ResourceNameFromKey: func(k model.ConfigKey) string { return k.Name },
-			Enabled:             enabled,
-		},
 	}
 }
 

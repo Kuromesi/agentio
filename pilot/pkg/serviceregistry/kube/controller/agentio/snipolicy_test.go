@@ -15,6 +15,7 @@
 package agentio
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -364,5 +365,27 @@ func TestSortPolicyRefsDoesNotMutateInput(t *testing.T) {
 
 	if !reflect.DeepEqual(input, original) {
 		t.Errorf("SortPolicyRefs mutated its input: got %v, want %v", input, original)
+	}
+}
+
+func BenchmarkSortPolicyRefs(b *testing.B) {
+	for _, count := range []int{10_000, 100_000} {
+		b.Run(fmt.Sprintf("refs-%d", count), func(b *testing.B) {
+			refs := make([]PolicyRef, count)
+			for i := range refs {
+				// The namespace index is map-backed, so large bindings reach this
+				// sort in effectively arbitrary order. 7919 is coprime to both
+				// benchmark sizes and gives a deterministic permutation.
+				order := i * 7919 % count
+				refs[i] = PolicyRef{
+					ResourceName: fmt.Sprintf("ns/policy-%06d", order),
+					SourceName:   fmt.Sprintf("policy-%06d", order),
+				}
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				sortPolicyRefs(refs)
+			}
+		})
 	}
 }

@@ -84,13 +84,13 @@ type Controller struct {
 
 	// Policy collections are nil unless features.EnableSniTrafficPolicy is set.
 	// policyAttachments excludes protobuf content so resource-only changes do not
-	// invalidate workload bindings. policyBindings is built later, after ambient
-	// supplies its normalized Workloads collection.
-	bindablePolicies       krt.Collection[BindablePolicy]
-	policyAttachments      krt.Collection[PolicyAttachment]
-	policyBindings         krt.Collection[model.PolicyBinding]
-	securityProfiles       krt.Collection[*agentsv1alpha1.SecurityProfile]
-	globalSecurityProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+	// invalidate workload references. workloadPolicyReferences is built later,
+	// after ambient supplies its normalized Workloads collection.
+	bindablePolicies         krt.Collection[BindablePolicy]
+	policyAttachments        krt.Collection[PolicyAttachment]
+	workloadPolicyReferences krt.Collection[WorkloadPolicyReferences]
+	securityProfiles         krt.Collection[*agentsv1alpha1.SecurityProfile]
+	globalSecurityProfiles   krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
 
 	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
 	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
@@ -265,15 +265,15 @@ func (c *Controller) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {
 }
 
 // BindablePolicies returns the Agentio policies that are both published over
-// xDS and referenced by per-workload PolicyBinding resources.
+// xDS and referenced from Workload extensions.
 func (c *Controller) BindablePolicies() krt.Collection[BindablePolicy] {
 	return c.bindablePolicies
 }
 
-// PolicyBindings returns the final per-workload PolicyBinding xDS resources.
-// It is nil until BuildPolicyBindingCollection has been called successfully.
-func (c *Controller) PolicyBindings() krt.Collection[model.PolicyBinding] {
-	return c.policyBindings
+// WorkloadPolicyReferences returns the internal index used to enrich Workload
+// WDS resources. It is nil until BuildWorkloadPolicyReferencesCollection runs.
+func (c *Controller) WorkloadPolicyReferences() krt.Collection[WorkloadPolicyReferences] {
+	return c.workloadPolicyReferences
 }
 
 // unreachableCIDR is the IANA IPv4 Dummy Address (RFC 7600). Used as a
@@ -330,18 +330,18 @@ func (c *Controller) BuildPolicyCollection(
 	return c.authorizationController.AsCollection()
 }
 
-// BuildPolicyBindingCollection joins the controller's bindable policies with
-// ambient's normalized workload collection and records the final per-workload
-// PolicyBinding resources on the controller.
-func (c *Controller) BuildPolicyBindingCollection(
+// BuildWorkloadPolicyReferencesCollection joins bindable policy attachments
+// with ambient's normalized workload collection. The result is an internal
+// lookup index; references are serialized inside Workload WDS extensions.
+func (c *Controller) BuildWorkloadPolicyReferencesCollection(
 	workloads krt.Collection[model.WorkloadInfo],
 	opts krt.OptionsBuilder,
-) krt.Collection[model.PolicyBinding] {
+) krt.Collection[WorkloadPolicyReferences] {
 	if c.policyAttachments == nil {
 		return nil
 	}
-	c.policyBindings = newPolicyBindingCollection(workloads, c.policyAttachments, opts)
-	return c.policyBindings
+	c.workloadPolicyReferences = newWorkloadPolicyReferencesCollection(workloads, c.policyAttachments, opts)
+	return c.workloadPolicyReferences
 }
 
 // extractHostname returns all FQDN hostnames referenced in the policy's

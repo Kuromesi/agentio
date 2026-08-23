@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -86,12 +87,12 @@ func benchmarkWaitForRecomputes(b *testing.B, recomputes *atomic.Int64, want int
 	deadline := time.Now().Add(2 * time.Minute)
 	for recomputes.Load() < want {
 		if time.Now().After(deadline) {
-			b.Fatalf("timed out waiting for binding recomputes: got %d, want %d", recomputes.Load(), want)
+			b.Fatalf("timed out waiting for reference recomputes: got %d, want %d", recomputes.Load(), want)
 		}
 		runtime.Gosched()
 	}
 	if got := recomputes.Load(); got != want {
-		b.Fatalf("unexpected binding recomputes: got %d, want %d", got, want)
+		b.Fatalf("unexpected reference recomputes: got %d, want %d", got, want)
 	}
 }
 
@@ -101,7 +102,7 @@ func benchmarkOldPolicyRefs(
 	policiesByNamespace krt.Index[string, BindablePolicy],
 	workloadNamespace string,
 	workloadLabels map[string]string,
-) map[string]*extensions.PolicyReference {
+) []*extensions.PolicyReference {
 	selectorFilter := krt.FilterGeneric(func(a any) bool {
 		return a.(BindablePolicy).Selects(workloadNamespace, workloadLabels)
 	})
@@ -125,43 +126,52 @@ func benchmarkOldPolicyRefs(
 			SourceNamespace: policy.SourceNamespace,
 		})
 	}
-	result := make(map[string]*extensions.PolicyReference, len(byType))
-	for typeURL, refs := range byType {
-		result[typeURL] = &extensions.PolicyReference{ResourceNames: sortPolicyRefs(refs)}
+	typeURLs := make([]string, 0, len(byType))
+	for typeURL := range byType {
+		typeURLs = append(typeURLs, typeURL)
+	}
+	sort.Strings(typeURLs)
+	result := make([]*extensions.PolicyReference, 0, len(typeURLs))
+	for _, typeURL := range typeURLs {
+		result = append(result, &extensions.PolicyReference{
+			TypeUrl:       typeURL,
+			ResourceNames: sortPolicyRefs(byType[typeURL]),
+		})
 	}
 	return result
 }
 
-func benchmarkOldPolicyBindingTransformation(
+func benchmarkOldWorkloadPolicyReferencesTransformation(
 	policies krt.Collection[BindablePolicy],
 	policiesByNamespace krt.Index[string, BindablePolicy],
 	recomputes *atomic.Int64,
-) krt.TransformationMulti[model.WorkloadInfo, model.PolicyBinding] {
-	return func(ctx krt.HandlerContext, workload model.WorkloadInfo) []model.PolicyBinding {
+) krt.TransformationMulti[model.WorkloadInfo, WorkloadPolicyReferences] {
+	return func(ctx krt.HandlerContext, workload model.WorkloadInfo) []WorkloadPolicyReferences {
 		recomputes.Add(1)
-		namespace, name := workload.Workload.GetNamespace(), workload.Workload.GetName()
-		binding := &extensions.PolicyBinding{
-			TargetRef: &extensions.PolicyBinding_Workload{
-				Workload: &extensions.WorkloadReference{Namespace: namespace, Name: name},
-			},
-			PolicyRefs: benchmarkOldPolicyRefs(ctx, policies, policiesByNamespace, namespace, workload.Labels),
+		refs := benchmarkOldPolicyRefs(ctx, policies, policiesByNamespace,
+			workload.Workload.GetNamespace(), workload.Labels)
+		if len(refs) == 0 {
+			return nil
 		}
-		return []model.PolicyBinding{{Name: model.PolicyBindingResourceName(namespace, name), Binding: binding}}
+		return []WorkloadPolicyReferences{{
+			Name:       workload.ResourceName(),
+			References: refs,
+		}}
 	}
 }
 
-// BenchmarkPolicyBindingRulesOnlyUpdate measures the fanout caused by changing
+// BenchmarkWorkloadPolicyReferencesRulesOnlyUpdate measures the fanout caused by changing
 // only a policy protobuf while a catch-all selector matches many workloads.
 //
 // Run the 10k workload case explicitly with one benchmark iteration to avoid
 // queuing an unbounded number of intentionally expensive baseline recomputes:
 //
 //	AGENTIO_BENCH_WORKLOADS=10000 go test ./pilot/pkg/serviceregistry/kube/controller/agentio \
-//	  -run '^$' -bench '^BenchmarkPolicyBindingRulesOnlyUpdate$' -benchtime=1x -benchmem
+//	  -run '^$' -bench '^BenchmarkWorkloadPolicyReferencesRulesOnlyUpdate$' -benchtime=1x -benchmem
 //
-// The primary signal is binding_recomputes/op: direct-bindable should equal the
+// The primary signal is reference_recomputes/op: direct-bindable should equal the
 // workload count, while policy-attachment should remain zero.
-func BenchmarkPolicyBindingRulesOnlyUpdate(b *testing.B) {
+func BenchmarkWorkloadPolicyReferencesRulesOnlyUpdate(b *testing.B) {
 	workloadCount := policyAttachmentBenchWorkloads(b)
 	workloads := benchmarkWorkloads(workloadCount)
 	policyA := benchmarkRulesPolicy("a.example.com")
@@ -169,7 +179,7 @@ func BenchmarkPolicyBindingRulesOnlyUpdate(b *testing.B) {
 
 	for _, benchmark := range []struct {
 		name  string
-		setup func(*testing.B, krt.StaticCollection[model.WorkloadInfo], krt.StaticCollection[BindablePolicy], krt.OptionsBuilder, *atomic.Int64) krt.Collection[model.PolicyBinding]
+		setup func(*testing.B, krt.StaticCollection[model.WorkloadInfo], krt.StaticCollection[BindablePolicy], krt.OptionsBuilder, *atomic.Int64) krt.Collection[WorkloadPolicyReferences]
 	}{
 		{
 			name: "direct-bindable-baseline",
@@ -179,13 +189,13 @@ func BenchmarkPolicyBindingRulesOnlyUpdate(b *testing.B) {
 				policySource krt.StaticCollection[BindablePolicy],
 				opts krt.OptionsBuilder,
 				recomputes *atomic.Int64,
-			) krt.Collection[model.PolicyBinding] {
+			) krt.Collection[WorkloadPolicyReferences] {
 				byNamespace := krt.NewIndex(policySource, "benchmarkBindablePoliciesByNamespace", func(policy BindablePolicy) []string {
 					return []string{policy.Namespace}
 				})
 				return krt.NewManyCollection(workloadSource,
-					benchmarkOldPolicyBindingTransformation(policySource, byNamespace, recomputes),
-					opts.WithName("BenchmarkDirectPolicyBindings")...)
+					benchmarkOldWorkloadPolicyReferencesTransformation(policySource, byNamespace, recomputes),
+					opts.WithName("BenchmarkDirectWorkloadPolicyReferences")...)
 			},
 		},
 		{
@@ -196,17 +206,17 @@ func BenchmarkPolicyBindingRulesOnlyUpdate(b *testing.B) {
 				policySource krt.StaticCollection[BindablePolicy],
 				opts krt.OptionsBuilder,
 				recomputes *atomic.Int64,
-			) krt.Collection[model.PolicyBinding] {
+			) krt.Collection[WorkloadPolicyReferences] {
 				attachments := newPolicyAttachmentsCollection(policySource, opts)
 				byNamespace := krt.NewIndex(attachments, "benchmarkPolicyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
 					return []string{policy.Namespace}
 				})
-				productionTransform := policyBindingTransformation(attachments, byNamespace)
+				productionTransform := workloadPolicyReferencesTransformation(attachments, byNamespace)
 				return krt.NewManyCollection(workloadSource,
-					func(ctx krt.HandlerContext, workload model.WorkloadInfo) []model.PolicyBinding {
+					func(ctx krt.HandlerContext, workload model.WorkloadInfo) []WorkloadPolicyReferences {
 						recomputes.Add(1)
 						return productionTransform(ctx, workload)
-					}, opts.WithName("BenchmarkAttachmentPolicyBindings")...)
+					}, opts.WithName("BenchmarkAttachmentWorkloadPolicyReferences")...)
 			},
 		},
 	} {
@@ -216,9 +226,9 @@ func BenchmarkPolicyBindingRulesOnlyUpdate(b *testing.B) {
 			workloadSource := krt.NewStaticCollection(nil, workloads, opts.WithName("Workloads")...)
 			policySource := krt.NewStaticCollection(nil, []BindablePolicy{policyA}, opts.WithName("BindablePolicies")...)
 			var recomputes atomic.Int64
-			bindings := benchmark.setup(b, workloadSource, policySource, opts, &recomputes)
-			if !bindings.WaitUntilSynced(stop) {
-				b.Fatal("policy bindings did not sync")
+			references := benchmark.setup(b, workloadSource, policySource, opts, &recomputes)
+			if !references.WaitUntilSynced(stop) {
+				b.Fatal("workload policy references did not sync")
 			}
 			benchmarkWaitForRecomputes(b, &recomputes, int64(workloadCount))
 			recomputes.Store(0)
@@ -245,23 +255,23 @@ func BenchmarkPolicyBindingRulesOnlyUpdate(b *testing.B) {
 			b.StopTimer()
 
 			rulesOnlyRecomputes := recomputes.Load() - barrierRecomputes
-			b.ReportMetric(float64(rulesOnlyRecomputes)/float64(b.N), "binding_recomputes/op")
+			b.ReportMetric(float64(rulesOnlyRecomputes)/float64(b.N), "reference_recomputes/op")
 		})
 	}
 }
 
-// BenchmarkPolicyBindingCreateStorm measures the real production path for a
+// BenchmarkWorkloadPolicyReferencesCreateStorm measures the real production path for a
 // burst of selector-based policies that all match the same workloads.
 //
 // Run the 10k-policy case with one iteration:
 //
 //	AGENTIO_BENCH_POLICIES=10000 AGENTIO_BENCH_WORKLOADS=4 \
 //	  go test ./pilot/pkg/serviceregistry/kube/controller/agentio \
-//	  -run '^$' -bench '^BenchmarkPolicyBindingCreateStorm$' -benchtime=1x -benchmem
+//	  -run '^$' -bench '^BenchmarkWorkloadPolicyReferencesCreateStorm$' -benchtime=1x -benchmem
 //
-// The primary signal is binding_recomputes/op. The debounced case uses the
+// The primary signal is reference_recomputes/op. The debounced case uses the
 // chart defaults (200ms quiet window, 10s maximum delay).
-func BenchmarkPolicyBindingCreateStorm(b *testing.B) {
+func BenchmarkWorkloadPolicyReferencesCreateStorm(b *testing.B) {
 	workloadCount := policyAttachmentBenchWorkloads(b)
 	policyCount := policyAttachmentBenchPolicies(b)
 	workloads := benchmarkWorkloads(workloadCount)
@@ -299,15 +309,15 @@ func BenchmarkPolicyBindingCreateStorm(b *testing.B) {
 			byNamespace := krt.NewIndex(attachments, "benchmarkPolicyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
 				return []string{policy.Namespace}
 			})
-			productionTransform := policyBindingTransformation(attachments, byNamespace)
+			productionTransform := workloadPolicyReferencesTransformation(attachments, byNamespace)
 			var recomputes atomic.Int64
-			bindings := krt.NewManyCollection(workloadSource,
-				func(ctx krt.HandlerContext, workload model.WorkloadInfo) []model.PolicyBinding {
+			references := krt.NewManyCollection(workloadSource,
+				func(ctx krt.HandlerContext, workload model.WorkloadInfo) []WorkloadPolicyReferences {
 					recomputes.Add(1)
 					return productionTransform(ctx, workload)
-				}, opts.WithName("PolicyBindings")...)
-			if !bindings.WaitUntilSynced(stop) {
-				b.Fatal("policy bindings did not sync")
+				}, opts.WithName("WorkloadPolicyReferences")...)
+			if !references.WaitUntilSynced(stop) {
+				b.Fatal("workload policy references did not sync")
 			}
 			benchmarkWaitForRecomputes(b, &recomputes, int64(workloadCount))
 			recomputes.Store(0)
@@ -325,10 +335,10 @@ func BenchmarkPolicyBindingCreateStorm(b *testing.B) {
 				wantPolicies += policyCount
 				deadline := time.Now().Add(10 * time.Minute)
 				for {
-					converged := len(bindings.List()) == workloadCount
+					converged := len(references.List()) == workloadCount
 					if converged {
-						for _, binding := range bindings.List() {
-							refs := binding.Binding.GetPolicyRefs()[seed.TypeURL]
+						for _, item := range references.List() {
+							refs := policyReferenceForType(item.References, seed.TypeURL)
 							if refs == nil || len(refs.ResourceNames) != wantPolicies {
 								converged = false
 								break
@@ -355,7 +365,7 @@ func BenchmarkPolicyBindingCreateStorm(b *testing.B) {
 				}
 			}
 			b.StopTimer()
-			b.ReportMetric(float64(recomputes.Load())/float64(b.N), "binding_recomputes/op")
+			b.ReportMetric(float64(recomputes.Load())/float64(b.N), "reference_recomputes/op")
 		})
 	}
 }

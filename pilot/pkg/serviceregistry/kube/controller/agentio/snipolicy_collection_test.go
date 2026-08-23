@@ -394,11 +394,11 @@ func TestBindablePoliciesDisabled(t *testing.T) {
 	if c.BindablePolicies() != nil {
 		t.Errorf("BindablePolicies() = %v, want nil", c.BindablePolicies())
 	}
-	if got := c.BuildPolicyBindingCollection(nil, krttest.Options(t)); got != nil {
-		t.Errorf("BuildPolicyBindingCollection() = %v, want nil", got)
+	if got := c.BuildWorkloadPolicyReferencesCollection(nil, krttest.Options(t)); got != nil {
+		t.Errorf("BuildWorkloadPolicyReferencesCollection() = %v, want nil", got)
 	}
-	if c.PolicyBindings() != nil {
-		t.Errorf("PolicyBindings() = %v, want nil", c.PolicyBindings())
+	if c.WorkloadPolicyReferences() != nil {
+		t.Errorf("WorkloadPolicyReferences() = %v, want nil", c.WorkloadPolicyReferences())
 	}
 }
 

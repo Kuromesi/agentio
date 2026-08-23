@@ -33,7 +33,7 @@ func TestExtensionProtoPackage(t *testing.T) {
 		{name: "traffic policy", message: &extensions.TrafficPolicyExtension{}},
 		{name: "workload metadata", message: &extensions.WorkloadMetadata{}},
 		{name: "egress policies", message: &extensions.EgressPolicies{}},
-		{name: "policy binding", message: &extensions.PolicyBinding{}},
+		{name: "policy reference", message: &extensions.PolicyReference{}},
 		{name: "sni traffic policy", message: &extensions.SniTrafficPolicy{}},
 	}
 
@@ -55,6 +55,7 @@ func TestExtensionProtoPackage(t *testing.T) {
 		"traffic policy":    trafficPolicyExtension,
 		"workload metadata": workloadMetadataExtension,
 		"egress policies":   egressPoliciesExtension,
+		"policy reference":  PolicyReferenceTypeURL,
 	}
 	for name, got := range wantTypeURLs {
 		const wantPrefix = "type.googleapis.com/kruise.networking.extensions.v1."
@@ -68,11 +69,6 @@ func TestExtensionProtoPackage(t *testing.T) {
 		message proto.Message
 		want    string
 	}{
-		{
-			name:    "policy binding",
-			message: &extensions.PolicyBinding{},
-			want:    model.PolicyBindingType,
-		},
 		{
 			name:    "sni traffic policy",
 			message: &extensions.SniTrafficPolicy{},
@@ -89,6 +85,32 @@ func TestExtensionProtoPackage(t *testing.T) {
 				t.Fatalf("unexpected type URL: got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewPolicyReferenceExtension(t *testing.T) {
+	reference := &extensions.PolicyReference{
+		TypeUrl: model.SniTrafficPolicyType, ResourceNames: []string{"ns/policy"},
+	}
+	got := NewPolicyReferenceExtension(SniTrafficPolicyReferenceExtensionName, reference)
+	if got == nil {
+		t.Fatal("expected policy reference extension")
+	}
+	if got.GetName() != SniTrafficPolicyReferenceExtensionName {
+		t.Fatalf("extension name = %q, want %q", got.GetName(), SniTrafficPolicyReferenceExtensionName)
+	}
+	if got.GetConfig().GetTypeUrl() != PolicyReferenceTypeURL {
+		t.Fatalf("extension TypeURL = %q, want %q", got.GetConfig().GetTypeUrl(), PolicyReferenceTypeURL)
+	}
+	decoded := &extensions.PolicyReference{}
+	if err := got.GetConfig().UnmarshalTo(decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(decoded, reference) {
+		t.Fatalf("decoded reference = %v, want %v", decoded, reference)
+	}
+	if got := NewPolicyReferenceExtension(SniTrafficPolicyReferenceExtensionName, &extensions.PolicyReference{}); got != nil {
+		t.Fatalf("empty reference returned extension: %v", got)
 	}
 }
 

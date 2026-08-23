@@ -46,7 +46,7 @@ type BindablePolicy struct {
 	Priority   int32
 	// CreationTime, SourceName, and SourceNamespace preserve the ordering
 	// metadata defined by the source policy API. They are not published in the
-	// policy resource; PolicyBinding uses them only to order resource names.
+	// policy resource; Workload policy references use them only to order names.
 	CreationTime    time.Time
 	SourceName      string
 	SourceNamespace string
@@ -55,7 +55,7 @@ type BindablePolicy struct {
 	Selector metav1.LabelSelector
 	Resource proto.Message
 
-	// selector is the immutable compiled form used on the hot workload-binding
+	// selector is the immutable compiled form used on the hot workload-reference
 	// path. It is intentionally excluded from equality: Selector is its source of
 	// truth and equivalent selectors must not produce spurious krt updates.
 	selector klabels.Selector
@@ -67,7 +67,7 @@ var bindablePolicyConfigKinds = map[string]kind.Kind{
 
 // BindablePolicyConfigKind returns the control-plane config kind carried by a
 // bindable policy TypeURL. New bindable policy implementations register here
-// so shared binding push logic remains policy-type agnostic.
+// so shared reference projection remains policy-type agnostic.
 func BindablePolicyConfigKind(typeURL string) (kind.Kind, bool) {
 	configKind, found := bindablePolicyConfigKinds[typeURL]
 	return configKind, found
@@ -243,7 +243,7 @@ func newBindablePoliciesCollection(
 
 	// Debounce once here, before the xDS policy resources and the workload
 	// attachments split into separate branches. Debouncing further downstream
-	// (on PolicyAttachments) coalesces binding recomputes but leaves the policy
+	// (on PolicyAttachments) coalesces reference recomputes but leaves the policy
 	// xDS branch to fan each event out into its own push.
 	policyOpts := append(opts.WithName("BindablePolicies"), krt.WithDebounce(
 		features.KrtEventDistributeDebounce,

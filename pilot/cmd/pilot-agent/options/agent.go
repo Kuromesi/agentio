@@ -76,9 +76,6 @@ func NewAgentOptions(proxy *ProxyArgs, cfg *meshconfig.ProxyConfig, sds istioage
 	if enableWDSEnvWasSet {
 		o.MetadataDiscovery = ptr.Of(enableWDSEnv)
 	}
-	if policyBindingDiscoveryEnvWasSet {
-		o.PolicyBindingDiscovery = ptr.Of(policyBindingDiscoveryEnv)
-	}
 	extractXDSHeadersFromEnv(o)
 	return o
 }

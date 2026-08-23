@@ -37,22 +37,22 @@ func hasPolicyReadyProbe(s *Server) bool {
 // unready on every start.
 func TestPolicyReadyProbeInjection(t *testing.T) {
 	cases := []struct {
-		name                   string
-		policyBindingDiscovery bool
-		noEnvoy                bool
-		want                   bool
+		name        string
+		policyStore bool
+		noEnvoy     bool
+		want        bool
 	}{
-		{name: "enabled", policyBindingDiscovery: true, want: true},
-		{name: "disabled", policyBindingDiscovery: false, want: false},
-		{name: "enabled but envoy disabled", policyBindingDiscovery: true, noEnvoy: true, want: false},
+		{name: "enabled", policyStore: true, want: true},
+		{name: "disabled", policyStore: false, want: false},
+		{name: "enabled but envoy disabled", policyStore: true, noEnvoy: true, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			server, err := NewServer(Options{
-				PolicyBindingDiscovery: tc.policyBindingDiscovery,
-				NoEnvoy:                tc.noEnvoy,
-				AdminPort:              15000,
-				PrometheusRegistry:     prometheus.NewRegistry(),
+				PolicyStore:        tc.policyStore,
+				NoEnvoy:            tc.noEnvoy,
+				AdminPort:          15000,
+				PrometheusRegistry: prometheus.NewRegistry(),
 			})
 			if err != nil {
 				t.Fatalf("NewServer: %v", err)

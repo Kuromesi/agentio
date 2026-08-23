@@ -277,8 +277,8 @@ func MetadataDiscovery(value bool) Instance {
 	return newOption("metadata_discovery", value)
 }
 
-func PolicyBindingDiscovery(value bool) Instance {
-	return newOption("policy_binding_discovery", value)
+func PolicyStore(value bool) Instance {
+	return newOption("policy_store", value)
 }
 
 func PolicyStoreDeletionGracePeriod(value string) Instance {

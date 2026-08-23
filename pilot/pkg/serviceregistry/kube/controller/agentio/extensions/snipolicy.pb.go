@@ -87,145 +87,22 @@ func (SniAction) EnumDescriptor() ([]byte, []int) {
 	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{0}
 }
 
-type PolicyBinding struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to TargetRef:
-	//
-	//	*PolicyBinding_Workload
-	TargetRef isPolicyBinding_TargetRef `protobuf_oneof:"target_ref"`
-	// Keyed by the full xDS TypeURL of the referenced policy resources.
-	PolicyRefs    map[string]*PolicyReference `protobuf:"bytes,2,rep,name=policy_refs,json=policyRefs,proto3" json:"policy_refs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PolicyBinding) Reset() {
-	*x = PolicyBinding{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PolicyBinding) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PolicyBinding) ProtoMessage() {}
-
-func (x *PolicyBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PolicyBinding.ProtoReflect.Descriptor instead.
-func (*PolicyBinding) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *PolicyBinding) GetTargetRef() isPolicyBinding_TargetRef {
-	if x != nil {
-		return x.TargetRef
-	}
-	return nil
-}
-
-func (x *PolicyBinding) GetWorkload() *WorkloadReference {
-	if x != nil {
-		if x, ok := x.TargetRef.(*PolicyBinding_Workload); ok {
-			return x.Workload
-		}
-	}
-	return nil
-}
-
-func (x *PolicyBinding) GetPolicyRefs() map[string]*PolicyReference {
-	if x != nil {
-		return x.PolicyRefs
-	}
-	return nil
-}
-
-type isPolicyBinding_TargetRef interface {
-	isPolicyBinding_TargetRef()
-}
-
-type PolicyBinding_Workload struct {
-	Workload *WorkloadReference `protobuf:"bytes,1,opt,name=workload,proto3,oneof"`
-}
-
-func (*PolicyBinding_Workload) isPolicyBinding_TargetRef() {}
-
-type WorkloadReference struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WorkloadReference) Reset() {
-	*x = WorkloadReference{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WorkloadReference) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WorkloadReference) ProtoMessage() {}
-
-func (x *WorkloadReference) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WorkloadReference.ProtoReflect.Descriptor instead.
-func (*WorkloadReference) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *WorkloadReference) GetNamespace() string {
-	if x != nil {
-		return x.Namespace
-	}
-	return ""
-}
-
-func (x *WorkloadReference) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
+// PolicyReference is attached to istio.workload.Workload through one generic
+// Extension per policy type. The parent Workload supplies the target identity.
 type PolicyReference struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Full xDS TypeURL used to subscribe to and decode the named resources.
+	TypeUrl string `protobuf:"bytes,1,opt,name=type_url,json=typeUrl,proto3" json:"type_url,omitempty"`
 	// Ordered according to the source policy API. The data plane evaluates the
 	// referenced resources in this order and does not apply its own tie-breaks.
-	ResourceNames []string `protobuf:"bytes,1,rep,name=resource_names,json=resourceNames,proto3" json:"resource_names,omitempty"`
+	ResourceNames []string `protobuf:"bytes,2,rep,name=resource_names,json=resourceNames,proto3" json:"resource_names,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PolicyReference) Reset() {
 	*x = PolicyReference{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[2]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -237,7 +114,7 @@ func (x *PolicyReference) String() string {
 func (*PolicyReference) ProtoMessage() {}
 
 func (x *PolicyReference) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[2]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -250,7 +127,14 @@ func (x *PolicyReference) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyReference.ProtoReflect.Descriptor instead.
 func (*PolicyReference) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{2}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *PolicyReference) GetTypeUrl() string {
+	if x != nil {
+		return x.TypeUrl
+	}
+	return ""
 }
 
 func (x *PolicyReference) GetResourceNames() []string {
@@ -270,7 +154,7 @@ type SniTrafficPolicy struct {
 
 func (x *SniTrafficPolicy) Reset() {
 	*x = SniTrafficPolicy{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[3]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -282,7 +166,7 @@ func (x *SniTrafficPolicy) String() string {
 func (*SniTrafficPolicy) ProtoMessage() {}
 
 func (x *SniTrafficPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[3]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -295,7 +179,7 @@ func (x *SniTrafficPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SniTrafficPolicy.ProtoReflect.Descriptor instead.
 func (*SniTrafficPolicy) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{3}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *SniTrafficPolicy) GetRules() []*SniRule {
@@ -315,7 +199,7 @@ type SniRule struct {
 
 func (x *SniRule) Reset() {
 	*x = SniRule{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[4]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -327,7 +211,7 @@ func (x *SniRule) String() string {
 func (*SniRule) ProtoMessage() {}
 
 func (x *SniRule) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[4]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -340,7 +224,7 @@ func (x *SniRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SniRule.ProtoReflect.Descriptor instead.
 func (*SniRule) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{4}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SniRule) GetMatch() *SniMatch {
@@ -368,7 +252,7 @@ type SniMatch struct {
 
 func (x *SniMatch) Reset() {
 	*x = SniMatch{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[5]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -380,7 +264,7 @@ func (x *SniMatch) String() string {
 func (*SniMatch) ProtoMessage() {}
 
 func (x *SniMatch) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[5]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -393,7 +277,7 @@ func (x *SniMatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SniMatch.ProtoReflect.Descriptor instead.
 func (*SniMatch) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{5}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SniMatch) GetSni() []string {
@@ -407,21 +291,10 @@ var File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_
 
 const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDesc = "" +
 	"\n" +
-	"Lpilot/pkg/serviceregistry/kube/controller/agentio/extensions/snipolicy.proto\x12\x1fkruise.networking.extensions.v1\"\xc1\x02\n" +
-	"\rPolicyBinding\x12P\n" +
-	"\bworkload\x18\x01 \x01(\v22.kruise.networking.extensions.v1.WorkloadReferenceH\x00R\bworkload\x12_\n" +
-	"\vpolicy_refs\x18\x02 \x03(\v2>.kruise.networking.extensions.v1.PolicyBinding.PolicyRefsEntryR\n" +
-	"policyRefs\x1ao\n" +
-	"\x0fPolicyRefsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12F\n" +
-	"\x05value\x18\x02 \x01(\v20.kruise.networking.extensions.v1.PolicyReferenceR\x05value:\x028\x01B\f\n" +
-	"\n" +
-	"target_ref\"E\n" +
-	"\x11WorkloadReference\x12\x1c\n" +
-	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"8\n" +
-	"\x0fPolicyReference\x12%\n" +
-	"\x0eresource_names\x18\x01 \x03(\tR\rresourceNames\"R\n" +
+	"Lpilot/pkg/serviceregistry/kube/controller/agentio/extensions/snipolicy.proto\x12\x1fkruise.networking.extensions.v1\"S\n" +
+	"\x0fPolicyReference\x12\x19\n" +
+	"\btype_url\x18\x01 \x01(\tR\atypeUrl\x12%\n" +
+	"\x0eresource_names\x18\x02 \x03(\tR\rresourceNames\"R\n" +
 	"\x10SniTrafficPolicy\x12>\n" +
 	"\x05rules\x18\x01 \x03(\v2(.kruise.networking.extensions.v1.SniRuleR\x05rules\"\x8e\x01\n" +
 	"\aSniRule\x12?\n" +
@@ -448,29 +321,23 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy
 }
 
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_goTypes = []any{
-	(SniAction)(0),            // 0: kruise.networking.extensions.v1.SniAction
-	(*PolicyBinding)(nil),     // 1: kruise.networking.extensions.v1.PolicyBinding
-	(*WorkloadReference)(nil), // 2: kruise.networking.extensions.v1.WorkloadReference
-	(*PolicyReference)(nil),   // 3: kruise.networking.extensions.v1.PolicyReference
-	(*SniTrafficPolicy)(nil),  // 4: kruise.networking.extensions.v1.SniTrafficPolicy
-	(*SniRule)(nil),           // 5: kruise.networking.extensions.v1.SniRule
-	(*SniMatch)(nil),          // 6: kruise.networking.extensions.v1.SniMatch
-	nil,                       // 7: kruise.networking.extensions.v1.PolicyBinding.PolicyRefsEntry
+	(SniAction)(0),           // 0: kruise.networking.extensions.v1.SniAction
+	(*PolicyReference)(nil),  // 1: kruise.networking.extensions.v1.PolicyReference
+	(*SniTrafficPolicy)(nil), // 2: kruise.networking.extensions.v1.SniTrafficPolicy
+	(*SniRule)(nil),          // 3: kruise.networking.extensions.v1.SniRule
+	(*SniMatch)(nil),         // 4: kruise.networking.extensions.v1.SniMatch
 }
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_depIdxs = []int32{
-	2, // 0: kruise.networking.extensions.v1.PolicyBinding.workload:type_name -> kruise.networking.extensions.v1.WorkloadReference
-	7, // 1: kruise.networking.extensions.v1.PolicyBinding.policy_refs:type_name -> kruise.networking.extensions.v1.PolicyBinding.PolicyRefsEntry
-	5, // 2: kruise.networking.extensions.v1.SniTrafficPolicy.rules:type_name -> kruise.networking.extensions.v1.SniRule
-	6, // 3: kruise.networking.extensions.v1.SniRule.match:type_name -> kruise.networking.extensions.v1.SniMatch
-	0, // 4: kruise.networking.extensions.v1.SniRule.action:type_name -> kruise.networking.extensions.v1.SniAction
-	3, // 5: kruise.networking.extensions.v1.PolicyBinding.PolicyRefsEntry.value:type_name -> kruise.networking.extensions.v1.PolicyReference
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	3, // 0: kruise.networking.extensions.v1.SniTrafficPolicy.rules:type_name -> kruise.networking.extensions.v1.SniRule
+	4, // 1: kruise.networking.extensions.v1.SniRule.match:type_name -> kruise.networking.extensions.v1.SniMatch
+	0, // 2: kruise.networking.extensions.v1.SniRule.action:type_name -> kruise.networking.extensions.v1.SniAction
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_init() }
@@ -478,16 +345,13 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy
 	if File_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto != nil {
 		return
 	}
-	file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_msgTypes[0].OneofWrappers = []any{
-		(*PolicyBinding_Workload)(nil),
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_snipolicy_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

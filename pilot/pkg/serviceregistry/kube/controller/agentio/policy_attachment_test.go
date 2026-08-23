@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestPolicyAttachmentEqualityTracksOnlyBindingFields(t *testing.T) {
+func TestPolicyAttachmentEqualityTracksOnlyReferenceFields(t *testing.T) {
 	policy := sniBindablePolicy("ns", "policy", 1, map[string]string{"app": "agent"})
 	attachment := policyAttachmentFromBindablePolicy(policy)
 	if attachment == nil {
@@ -84,14 +84,14 @@ func TestPolicyAttachmentCollectionSuppressesResourceOnlyUpdates(t *testing.T) {
 	t.Cleanup(registration.UnregisterHandler)
 
 	// The source changes and emits an update, but the projected attachment is
-	// equal, so KRT must stop the event before it reaches binding dependents.
+	// equal, so KRT must stop the event before it reaches reference dependents.
 	rulesOnly := policy
 	rulesOnly.Resource = &extensions.SniTrafficPolicy{Rules: []*extensions.SniRule{
 		sniRule(extensions.SniAction_SNI_ACTION_TLS_TERMINATION, "changed.example.com"),
 	}}
 	source.Reset([]BindablePolicy{rulesOnly})
 
-	// A binding-relevant update is the barrier proving the preceding rules-only
+	// A reference-relevant update is the barrier proving the preceding rules-only
 	// update was suppressed: event ordering is preserved for each handler.
 	priority := rulesOnly
 	priority.Priority++
@@ -107,15 +107,15 @@ func TestPolicyAttachmentCollectionSuppressesResourceOnlyUpdates(t *testing.T) {
 				event.Old.Priority, event.New.Priority)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the binding-relevant attachment update")
+		t.Fatal("timed out waiting for the reference-relevant attachment update")
 	}
 }
 
-// TestBindablePolicyCollectionDebouncesPolicyAndBindingBranches asserts the
+// TestBindablePolicyCollectionDebouncesPolicyAndReferenceBranches asserts the
 // debounce sits upstream of the branch split, so a policy burst produces one
-// merged batch on both the xDS policy branch and the PolicyBinding branch.
+// merged batch on both the xDS policy branch and the workload-reference branch.
 // Debouncing PolicyAttachments instead would only coalesce the latter.
-func TestBindablePolicyCollectionDebouncesPolicyAndBindingBranches(t *testing.T) {
+func TestBindablePolicyCollectionDebouncesPolicyAndReferenceBranches(t *testing.T) {
 	const (
 		debounce    = 200 * time.Millisecond
 		maxDebounce = 2 * time.Second
@@ -150,21 +150,21 @@ func TestBindablePolicyCollectionDebouncesPolicyAndBindingBranches(t *testing.T)
 	workloads := krt.NewStaticCollection(nil, []model.WorkloadInfo{
 		sniTestWorkload("pod", "bench", map[string]string{"app": "agent"}),
 	}, opts.WithName("Workloads")...)
-	bindings := newPolicyBindingCollection(workloads, attachments, opts)
-	if !bindings.WaitUntilSynced(test.NewStop(t)) {
-		t.Fatal("policy bindings did not sync")
+	references := newWorkloadPolicyReferencesCollection(workloads, attachments, opts)
+	if !references.WaitUntilSynced(test.NewStop(t)) {
+		t.Fatal("workload policy references did not sync")
 	}
 
-	var policyBatches, policyEvents, bindingUpdates atomic.Int64
+	var policyBatches, policyEvents, referenceUpdates atomic.Int64
 	policyRegistration := policies.RegisterBatch(func(events []krt.Event[BindablePolicy]) {
 		policyBatches.Add(1)
 		policyEvents.Add(int64(len(events)))
 	}, false)
 	t.Cleanup(policyRegistration.UnregisterHandler)
-	bindingRegistration := bindings.RegisterBatch(func(events []krt.Event[model.PolicyBinding]) {
-		bindingUpdates.Add(int64(len(events)))
+	referenceRegistration := references.RegisterBatch(func(events []krt.Event[WorkloadPolicyReferences]) {
+		referenceUpdates.Add(int64(len(events)))
 	}, false)
-	t.Cleanup(bindingRegistration.UnregisterHandler)
+	t.Cleanup(referenceRegistration.UnregisterHandler)
 
 	for i := 0; i < policyCount; i++ {
 		profiles.UpdateObject(newProfile(i))
@@ -175,9 +175,9 @@ func TestBindablePolicyCollectionDebouncesPolicyAndBindingBranches(t *testing.T)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		items := bindings.List()
+		items := references.List()
 		if len(items) == 1 {
-			refs := items[0].Binding.GetPolicyRefs()[xdsmodel.SniTrafficPolicyType]
+			refs := policyReferenceForType(items[0].References, xdsmodel.SniTrafficPolicyType)
 			if refs != nil && len(refs.ResourceNames) == policyCount {
 				break
 			}
@@ -189,7 +189,7 @@ func TestBindablePolicyCollectionDebouncesPolicyAndBindingBranches(t *testing.T)
 	}
 
 	deadline = time.Now().Add(time.Second)
-	for (policyEvents.Load() < policyCount || bindingUpdates.Load() == 0) && time.Now().Before(deadline) {
+	for (policyEvents.Load() < policyCount || referenceUpdates.Load() == 0) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if got := policyEvents.Load(); got != policyCount {
@@ -198,7 +198,7 @@ func TestBindablePolicyCollectionDebouncesPolicyAndBindingBranches(t *testing.T)
 	if got := policyBatches.Load(); got != 1 {
 		t.Fatalf("policy batches = %d, want 1 merged batch", got)
 	}
-	if got := bindingUpdates.Load(); got != 1 {
-		t.Fatalf("binding updates = %d, want 1 merged update", got)
+	if got := referenceUpdates.Load(); got != 1 {
+		t.Fatalf("workload reference updates = %d, want 1 merged update", got)
 	}
 }

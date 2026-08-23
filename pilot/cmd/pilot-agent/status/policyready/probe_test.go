@@ -97,7 +97,7 @@ func TestCheckLatches(t *testing.T) {
 }
 
 func TestParseGaugeIgnoresOtherPolicyStoreStats(t *testing.T) {
-	body := "policy_store.ready: 1\npolicy_store.pending_bindings: 0\npolicy_store.initial_sync_ready: 1\n"
+	body := "policy_store.ready: 1\npolicy_store.pending_workloads: 0\npolicy_store.initial_sync_ready: 1\n"
 	value, err := parseGauge(body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

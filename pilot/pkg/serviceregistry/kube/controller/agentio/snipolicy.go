@@ -152,7 +152,11 @@ type PolicyRef struct {
 func sortPolicyRefs(refs []PolicyRef) []string {
 	sorted := make([]PolicyRef, len(refs))
 	copy(sorted, refs)
-	sort.SliceStable(sorted, func(i, j int) bool {
+	// The comparator ends with ResourceName, so it defines a total order and
+	// stability cannot affect the output. Avoid SliceStable here: its merge
+	// rotations copy PolicyRef values heavily and become a dominant cost when a
+	// workload is selected by tens of thousands of policies.
+	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].Priority != sorted[j].Priority {
 			return sorted[i].Priority > sorted[j].Priority
 		}

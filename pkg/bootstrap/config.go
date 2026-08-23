@@ -72,12 +72,12 @@ const (
 	// required for metrics based on stat_prefix in virtual service.
 	requiredEnvoyStatsMatcherInclusionRegexes = `vhost\..*\.route\..*`
 
-	// defaultPolicyStoreDeletionGracePeriod bounds how long a READY binding may
+	// defaultPolicyStoreDeletionGracePeriod bounds how long a READY workload may
 	// retain its last-known-good policy snapshot while independent xDS streams
 	// reconcile a policy deletion. It must exceed the worst-case gap between the
-	// policy push and the binding push; that gap is bounded by PILOT_DEBOUNCE_MAX
+	// policy push and the Workload-reference push; that gap is bounded by PILOT_DEBOUNCE_MAX
 	// (features.DebounceMax, 10s by default), so a smaller value lets the grace
-	// period expire first and fails the binding closed. 15s also matches Envoy's
+	// period expire first and fails the workload closed. 15s also matches Envoy's
 	// own initial_fetch_timeout default for the equivalent warming fallback.
 	// Convergence cancels the wait immediately, so this is an upper bound rather
 	// than a fixed delay.
@@ -97,7 +97,7 @@ type Config struct {
 	CompliancePolicy string
 	LogAsJSON        bool
 	// PolicyStoreDeletionGracePeriod is rendered into the native policy store
-	// bootstrap extension. Zero uses the five-second default.
+	// bootstrap extension. Zero uses the fifteen-second default.
 	PolicyStoreDeletionGracePeriod time.Duration
 }
 
@@ -128,7 +128,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		// Not supported on legacy SotW protocol
 		mDiscovery = false
 	}
-	policyBindingDiscovery := cfg.Metadata.PolicyBindingDiscovery != nil && bool(*cfg.Metadata.PolicyBindingDiscovery)
+	policyStore := mDiscovery && len(cfg.Metadata.PolicyRuntimeCapabilities) > 0
 	policyStoreDeletionGracePeriod := cfg.PolicyStoreDeletionGracePeriod
 	if policyStoreDeletionGracePeriod <= 0 {
 		policyStoreDeletionGracePeriod = defaultPolicyStoreDeletionGracePeriod
@@ -148,7 +148,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		option.Metadata(cfg.Metadata),
 		option.XdsType(xdsType),
 		option.MetadataDiscovery(mDiscovery),
-		option.PolicyBindingDiscovery(policyBindingDiscovery),
+		option.PolicyStore(policyStore),
 		option.PolicyStoreDeletionGracePeriod(policyStoreDeletionGracePeriod.String()),
 		option.MetricsLocalhostAccessOnly(cfg.Metadata.ProxyConfig.ProxyMetadata),
 	)
@@ -672,7 +672,6 @@ type MetadataOptions struct {
 	EnvoyPrometheusPort         int
 	ExitOnZeroActiveConnections bool
 	MetadataDiscovery           *bool
-	PolicyBindingDiscovery      *bool
 	PolicyRuntimeCapabilities   []string
 	EnvoySkipDeprecatedLogs     bool
 	WorkloadIdentitySocketFile  string
@@ -735,11 +734,6 @@ func GetNodeMetaData(options MetadataOptions) (*model.Node, error) {
 		meta.MetadataDiscovery = nil
 	} else {
 		meta.MetadataDiscovery = ptr.Of(model.StringBool(*options.MetadataDiscovery))
-	}
-	if options.PolicyBindingDiscovery == nil {
-		meta.PolicyBindingDiscovery = nil
-	} else {
-		meta.PolicyBindingDiscovery = ptr.Of(model.StringBool(*options.PolicyBindingDiscovery))
 	}
 	meta.PolicyRuntimeCapabilities = slices.Clone(options.PolicyRuntimeCapabilities)
 	meta.EnvoySkipDeprecatedLogs = model.StringBool(options.EnvoySkipDeprecatedLogs)

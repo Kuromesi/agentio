@@ -164,9 +164,6 @@ func NewSNIMatcher(domainMatches []SNIDomainMatch, onNoMatch *matcher.Matcher_On
 }
 
 const (
-	// SniTrafficPolicyCapability is the stable proxy capability advertised in node metadata.
-	SniTrafficPolicyCapability = "sni_traffic_policy"
-
 	// SniTrafficPolicyMatcherName is the registered Envoy custom matcher factory.
 	SniTrafficPolicyMatcherName = "kruise.matching.custom_matchers.sni_traffic_policy"
 

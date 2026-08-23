@@ -132,8 +132,6 @@ var (
 
 	enableWDSEnv, enableWDSEnvWasSet = env.Register("PEER_METADATA_DISCOVERY", false,
 		"If set to true, enable the peer metadata discovery extension in Envoy").Lookup()
-	policyBindingDiscoveryEnv, policyBindingDiscoveryEnvWasSet = env.Register("POLICY_BINDING_DISCOVERY", false,
-		"If set to true, enable the Agentio policy binding discovery extension in Envoy").Lookup()
 	policyRuntimeCapabilitiesEnv = env.Register("POLICY_RUNTIME_CAPABILITIES", "",
 		"Comma-separated policy runtime capabilities supported by the proxy binary").Get()
 	policyStoreDeletionGracePeriodEnv = env.Register("POLICY_STORE_DELETION_GRACE_PERIOD",

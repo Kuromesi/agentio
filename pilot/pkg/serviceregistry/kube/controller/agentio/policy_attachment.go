@@ -23,7 +23,7 @@ import (
 	klabels "k8s.io/apimachinery/pkg/labels"
 )
 
-// PolicyAttachment is the binding-relevant projection of a BindablePolicy.
+// PolicyAttachment is the workload-reference projection of a BindablePolicy.
 // It deliberately excludes the protobuf resource so a rules-only policy update
 // does not invalidate every workload that references the policy. The complete
 // BindablePolicy collection remains the source for policy xDS resources.
@@ -33,7 +33,7 @@ type PolicyAttachment struct {
 	Namespace string
 	Priority  int32
 	// Ordering metadata is retained because changing any of these fields changes
-	// the ordered policy_refs emitted for matching workloads.
+	// the ordered policy-reference extension emitted for matching workloads.
 	CreationTime    time.Time
 	SourceName      string
 	SourceNamespace string
@@ -90,7 +90,7 @@ func policySelectsWorkload(
 }
 
 func policyAttachmentFromBindablePolicy(policy BindablePolicy) *PolicyAttachment {
-	// A binding must never refer to a resource the xDS provider would drop.
+	// A Workload extension must never refer to a resource the xDS provider would drop.
 	if policy.Name == "" || policy.TypeURL == "" || policy.Resource == nil {
 		return nil
 	}

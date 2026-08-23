@@ -24,13 +24,6 @@ func TestWorkloadConfigType(t *testing.T) {
 	}
 }
 
-func TestPolicyBindingType(t *testing.T) {
-	const want = "type.googleapis.com/kruise.networking.extensions.v1.PolicyBinding"
-	if PolicyBindingType != want {
-		t.Fatalf("unexpected PBDS resource type: got %q, want %q", PolicyBindingType, want)
-	}
-}
-
 func TestSniTrafficPolicyType(t *testing.T) {
 	const want = "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"
 	if SniTrafficPolicyType != want {
@@ -44,7 +37,6 @@ func TestPolicyTypeShortAndMetricTypes(t *testing.T) {
 		shortType  string
 		metricType string
 	}{
-		{typeURL: PolicyBindingType, shortType: "PBDS", metricType: "pbds"},
 		{typeURL: SniTrafficPolicyType, shortType: "STPDS", metricType: "stpds"},
 	}
 

@@ -35,7 +35,6 @@ const (
 	WorkloadType               = model.WorkloadType
 	WorkloadAuthorizationType  = model.WorkloadAuthorizationType
 	WorkloadConfigType         = model.WorkloadConfigType
-	PolicyBindingType          = model.PolicyBindingType
 	SniTrafficPolicyType       = model.SniTrafficPolicyType
 
 	// nolint

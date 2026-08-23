@@ -504,15 +504,14 @@ var PushOrder = []string{
 	v3.ListenerType,
 	v3.RouteType,
 	v3.SecretType,
+	// Policies before Workloads: a Workload extension may start referencing a
+	// policy in the same incremental push. Deletions remain protected by the
+	// data plane's last-known-good grace period.
+	v3.SniTrafficPolicyType,
 	v3.AddressType,
 	v3.WorkloadType,
 	v3.WorkloadAuthorizationType,
 	v3.WorkloadConfigType,
-	// Policies before bindings: a PolicyBinding references SniTrafficPolicy by name,
-	// so pushing the referenced policies first avoids a window where a gateway holds
-	// a binding pointing at a policy it has not received yet.
-	v3.SniTrafficPolicyType,
-	v3.PolicyBindingType,
 }
 
 // KnownOrderedTypeUrls has typeUrls for which we know the order of push.

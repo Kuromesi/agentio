@@ -348,9 +348,6 @@ type NodeMetadata struct {
 	// Metadata discovery service enablement
 	MetadataDiscovery *StringBool `json:"METADATA_DISCOVERY,omitempty"`
 
-	// Policy binding discovery service enablement.
-	PolicyBindingDiscovery *StringBool `json:"POLICY_BINDING_DISCOVERY,omitempty"`
-
 	// Policy runtime capabilities supported by this proxy binary.
 	PolicyRuntimeCapabilities []string `json:"POLICY_RUNTIME_CAPABILITIES,omitempty"`
 

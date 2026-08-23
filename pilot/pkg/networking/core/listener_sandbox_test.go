@@ -49,7 +49,7 @@ func sandboxEgressNode() *model.Proxy {
 		ConfigNamespace: "istio-system",
 		Metadata: &model.NodeMetadata{
 			Namespace:                 "istio-system",
-			PolicyBindingDiscovery:    ptr.Of(model.StringBool(true)),
+			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
 			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
 		},
 		VerifiedIdentity: &spiffe.Identity{
@@ -302,13 +302,13 @@ func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
 
 	tests := []struct {
 		name                string
-		bindingDiscovery    bool
+		workloadDiscovery   bool
 		runtimeCapabilities []string
 		wantEnabled         bool
 	}{
 		{
-			name:                "binding discovery and matcher capability",
-			bindingDiscovery:    true,
+			name:                "workload discovery and matcher capability",
+			workloadDiscovery:   true,
 			runtimeCapabilities: []string{"sni_traffic_policy"},
 			wantEnabled:         true,
 		},
@@ -317,12 +317,12 @@ func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
 			runtimeCapabilities: []string{"sni_traffic_policy"},
 		},
 		{
-			name:             "policy store without matcher",
-			bindingDiscovery: true,
+			name:              "workload discovery without matcher",
+			workloadDiscovery: true,
 		},
 		{
 			name:                "unrelated policy matcher",
-			bindingDiscovery:    true,
+			workloadDiscovery:   true,
 			runtimeCapabilities: []string{"type.googleapis.com/example.OtherPolicyMatcher"},
 		},
 	}
@@ -331,7 +331,7 @@ func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cg := NewConfigGenTest(t, TestOptions{})
 			node := sandboxEgressNode()
-			node.Metadata.PolicyBindingDiscovery = ptr.Of(model.StringBool(tt.bindingDiscovery))
+			node.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(tt.workloadDiscovery))
 			node.Metadata.PolicyRuntimeCapabilities = tt.runtimeCapabilities
 			lb := &ListenerBuilder{node: cg.SetupProxy(node), push: cg.PushContext()}
 			chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})

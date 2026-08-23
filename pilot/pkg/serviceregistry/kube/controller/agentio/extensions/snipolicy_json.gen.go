@@ -6,28 +6,6 @@ import (
 	jsonpb "github.com/golang/protobuf/jsonpb"
 )
 
-// MarshalJSON is a custom marshaler for PolicyBinding
-func (this *PolicyBinding) MarshalJSON() ([]byte, error) {
-	str, err := SnipolicyMarshaler.MarshalToString(this)
-	return []byte(str), err
-}
-
-// UnmarshalJSON is a custom unmarshaler for PolicyBinding
-func (this *PolicyBinding) UnmarshalJSON(b []byte) error {
-	return SnipolicyUnmarshaler.Unmarshal(bytes.NewReader(b), this)
-}
-
-// MarshalJSON is a custom marshaler for WorkloadReference
-func (this *WorkloadReference) MarshalJSON() ([]byte, error) {
-	str, err := SnipolicyMarshaler.MarshalToString(this)
-	return []byte(str), err
-}
-
-// UnmarshalJSON is a custom unmarshaler for WorkloadReference
-func (this *WorkloadReference) UnmarshalJSON(b []byte) error {
-	return SnipolicyUnmarshaler.Unmarshal(bytes.NewReader(b), this)
-}
-
 // MarshalJSON is a custom marshaler for PolicyReference
 func (this *PolicyReference) MarshalJSON() ([]byte, error) {
 	str, err := SnipolicyMarshaler.MarshalToString(this)

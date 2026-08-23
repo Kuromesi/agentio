@@ -210,7 +210,7 @@ func TestRequiredEnvoyStatsMatcherInclusionRegexes(t *testing.T) {
 	}
 }
 
-func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
+func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 	proxyConfig := model.NodeMetaProxyConfig(v1alpha1.ProxyConfig{
 		DiscoveryAddress: "agentiod.istio-system.svc:15012",
 		ProxyMetadata:    map[string]string{},
@@ -219,8 +219,9 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 		ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
 		Locality: &core.Locality{},
 		Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
-			ProxyConfig:            &proxyConfig,
-			PolicyBindingDiscovery: ptr.Of(model.StringBool(true)),
+			ProxyConfig:               &proxyConfig,
+			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
+			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
 		}},
 		RawMetadata: map[string]any{},
 	}
@@ -232,8 +233,8 @@ func TestPolicyBindingDiscoveryBootstrapOption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if enabled, ok := params["policy_binding_discovery"].(bool); !ok || !enabled {
-		t.Fatalf("policy_binding_discovery template option = %#v, want true", params["policy_binding_discovery"])
+	if enabled, ok := params["policy_store"].(bool); !ok || !enabled {
+		t.Fatalf("policy_store template option = %#v, want true", params["policy_store"])
 	}
 
 	var rendered bytes.Buffer

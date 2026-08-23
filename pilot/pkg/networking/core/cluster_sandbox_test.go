@@ -25,7 +25,6 @@ import (
 	meshconfig "istio.io/api/mesh/v1alpha1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pkg/ptr"
 )
 
 func TestSandboxClusters_RegistersPlaintextHTTPDynamicForwardProxy(t *testing.T) {
@@ -93,7 +92,7 @@ func TestSandboxClusters_SniTrafficPolicyDoesNotAddInternalCluster(t *testing.T)
 	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
 
 	cb := &ClusterBuilder{
-		proxyMetadata: &model.NodeMetadata{PolicyBindingDiscovery: ptr.Of(model.StringBool(true))},
+		proxyMetadata: &model.NodeMetadata{},
 		req: &model.PushRequest{Push: &model.PushContext{
 			Mesh: &meshconfig.MeshConfig{ConnectTimeout: durationpb.New(time.Second)},
 		}},

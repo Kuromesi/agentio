@@ -153,13 +153,13 @@ func TestAgentioWaypointPolicyCapabilities(t *testing.T) {
 			capabilities := map[string]*corev1.EnvVar{}
 			for i := range deployment.Spec.Template.Spec.Containers[0].Env {
 				envVar := &deployment.Spec.Template.Spec.Containers[0].Env[i]
-				if envVar.Name == "POLICY_BINDING_DISCOVERY" || envVar.Name == "POLICY_RUNTIME_CAPABILITIES" {
+				if envVar.Name == "PEER_METADATA_DISCOVERY" || envVar.Name == "POLICY_RUNTIME_CAPABILITIES" {
 					capabilities[envVar.Name] = envVar
 				}
 			}
 			if tt.want {
-				if capability := capabilities["POLICY_BINDING_DISCOVERY"]; capability == nil || capability.Value != "true" {
-					t.Fatalf("POLICY_BINDING_DISCOVERY = %#v, want true", capability)
+				if capability := capabilities["PEER_METADATA_DISCOVERY"]; capability == nil || capability.Value != "true" {
+					t.Fatalf("PEER_METADATA_DISCOVERY = %#v, want true", capability)
 				}
 				if capability := capabilities["POLICY_RUNTIME_CAPABILITIES"]; capability == nil || capability.Value != sniTrafficPolicyCapability {
 					t.Fatalf("POLICY_RUNTIME_CAPABILITIES = %#v, want %q", capability, sniTrafficPolicyCapability)

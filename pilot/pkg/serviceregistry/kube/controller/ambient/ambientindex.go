@@ -148,10 +148,9 @@ type index struct {
 
 	agentioController *agentio.Controller
 	workloadConfigs   krt.Collection[model.WorkloadConfig]
-	// Both are nil unless features.EnableSniTrafficPolicy is set; the providers
-	// in agentio_resources.go guard on nil.
-	policyBindings   krt.Collection[model.PolicyBinding]
-	bindablePolicies krt.Collection[agentio.BindablePolicy]
+	// Both are nil unless features.EnableSniTrafficPolicy is set.
+	workloadPolicyReferences krt.Collection[agentio.WorkloadPolicyReferences]
+	bindablePolicies         krt.Collection[agentio.BindablePolicy]
 }
 
 type FeatureFlags struct {
@@ -600,11 +599,10 @@ func New(options Options) Index {
 				}), false)
 		}
 
-		// One binding per workload, including workloads no policy selects.
-		policyBindings := a.agentioController.BuildPolicyBindingCollection(Workloads, opts)
-		if policyBindings != nil {
-			a.policyBindings = policyBindings
-			policyBindings.RegisterBatch(PushPolicyBindingsXds(a.XDSUpdater), false)
+		workloadPolicyReferences := a.agentioController.BuildWorkloadPolicyReferencesCollection(Workloads, opts)
+		if workloadPolicyReferences != nil {
+			a.workloadPolicyReferences = workloadPolicyReferences
+			workloadPolicyReferences.RegisterBatch(PushWorkloadPolicyReferencesXds(a.XDSUpdater), false)
 		}
 
 		bindablePolicies := a.agentioController.BindablePolicies()
@@ -945,6 +943,24 @@ func (a *index) AddressInformationForProxy(
 	return res, sets.New(removed...)
 }
 
+// WorkloadExtensionsForProxy returns gateway-only extensions added while
+// serializing the direct Workload WDS resource. The globally cached Workload
+// and its pre-marshaled Address remain unchanged for ztunnel consumers.
+func (a *index) WorkloadExtensionsForProxy(
+	proxy *model.Proxy,
+	workload *workloadapi.Workload,
+) []*workloadapi.Extension {
+	if proxy == nil || workload == nil || a.workloadPolicyReferences == nil ||
+		!agentio.SupportsPolicyRuntime(proxy.Metadata) {
+		return nil
+	}
+	references := a.workloadPolicyReferences.GetKey(workload.GetUid())
+	if references == nil {
+		return nil
+	}
+	return agentio.PolicyReferenceExtensionsForProxy(proxy.Metadata, references.References)
+}
+
 func (a *index) ServicesForWaypoint(key model.WaypointKey) []model.ServiceInfo {
 	if key.IsNetworkGateway && features.EnableAmbientMultiNetwork {
 		// If this is a network gateway waypoint, we only return the global services
@@ -1100,7 +1116,22 @@ func (a *index) HasSynced() bool {
 		a.workloads.HasSynced() &&
 		a.waypoints.HasSynced() &&
 		a.authorizationPolicies.HasSynced() &&
-		a.networks.HasSynced()
+		a.networks.HasSynced() &&
+		collectionsSynced(a.bindablePolicies, a.workloadPolicyReferences)
+}
+
+// collectionsSynced treats optional collections as already synced. Agentio's
+// policy collections are nil when the feature is disabled, but when present
+// they must finish their initial projection before discovery is advertised as
+// ready. Otherwise a reconnecting gateway can receive Workload resources
+// without policy references while the reference index is still being derived.
+func collectionsSynced(collections ...krt.Syncer) bool {
+	for _, collection := range collections {
+		if collection != nil && !collection.HasSynced() {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *index) Network(ctx krt.HandlerContext) network.ID {
@@ -1130,26 +1161,36 @@ func PushXds[T any](xds model.XDSUpdater, f func(T) model.ConfigKey) func(events
 	}
 }
 
-// PushPolicyBindingsXds includes newly referenced policy resources in the same
-// push request as their PolicyBinding. PushOrder can then deliver those policy
-// resources before a binding starts referring to them, even if the two KRT
-// branches are scheduled independently after a shared policy batch.
-func PushPolicyBindingsXds(xds model.XDSUpdater) func(events []krt.Event[model.PolicyBinding]) {
-	return func(events []krt.Event[model.PolicyBinding]) {
+// PushWorkloadPolicyReferencesXds sends only Workload WDS resources whose
+// reference extension changed. Newly referenced policy resources join the same
+// push so PushOrder can deliver policy content before Workload starts referring
+// to it.
+func PushWorkloadPolicyReferencesXds(
+	xds model.XDSUpdater,
+) func(events []krt.Event[agentio.WorkloadPolicyReferences]) {
+	return func(events []krt.Event[agentio.WorkloadPolicyReferences]) {
 		configsUpdated := sets.New[model.ConfigKey]()
+		addressesUpdated := sets.New[string]()
 		for _, event := range events {
-			for _, binding := range event.Items() {
-				configsUpdated.Insert(binding.ConfigKey())
+			for _, item := range event.Items() {
+				if item.ResourceName() == "" {
+					continue
+				}
+				addressesUpdated.Insert(item.ResourceName())
+				configsUpdated.Insert(model.ConfigKey{Kind: kind.Address, Name: item.ResourceName()})
 			}
-			if event.New == nil || event.New.Binding == nil {
+			if event.New == nil || len(event.New.References) == 0 {
 				continue
 			}
 
-			var oldRefs map[string]*agentioextensions.PolicyReference
-			if event.Old != nil && event.Old.Binding != nil {
-				oldRefs = event.Old.Binding.GetPolicyRefs()
+			oldRefs := make(map[string]*agentioextensions.PolicyReference)
+			if event.Old != nil {
+				for _, reference := range event.Old.References {
+					oldRefs[reference.GetTypeUrl()] = reference
+				}
 			}
-			for typeURL, reference := range event.New.Binding.GetPolicyRefs() {
+			for _, reference := range event.New.References {
+				typeURL := reference.GetTypeUrl()
 				configKind, found := agentio.BindablePolicyConfigKind(typeURL)
 				if !found || reference == nil {
 					continue
@@ -1165,13 +1206,14 @@ func PushPolicyBindingsXds(xds model.XDSUpdater) func(events []krt.Event[model.P
 				}
 			}
 		}
-		if len(configsUpdated) == 0 {
+		if len(addressesUpdated) == 0 {
 			return
 		}
 		xds.ConfigUpdate(&model.PushRequest{
-			Full:           false,
-			ConfigsUpdated: configsUpdated,
-			Reason:         model.NewReasonStats(model.AmbientUpdate),
+			Full:             false,
+			AddressesUpdated: addressesUpdated,
+			ConfigsUpdated:   configsUpdated,
+			Reason:           model.NewReasonStats(model.AmbientUpdate),
 		})
 	}
 }

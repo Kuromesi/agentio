@@ -223,12 +223,10 @@ type AgentOptions struct {
 
 	// Enable metadata discovery bootstrap extension
 	MetadataDiscovery *bool
-	// Enable the Agentio policy binding discovery bootstrap extension.
-	PolicyBindingDiscovery *bool
 	// Policy runtime capabilities supported by the proxy binary.
 	PolicyRuntimeCapabilities []string
-	// Grace period for an already-ready binding to retain its last-known-good
-	// snapshot while policy and binding deletion deltas reconcile.
+	// Grace period for an already-ready workload to retain its last-known-good
+	// policy snapshot while policy and Workload-reference deletion deltas reconcile.
 	PolicyStoreDeletionGracePeriod time.Duration
 
 	SDSFactory func(options *security.Options, workloadSecretCache security.SecretManager, pkpConf *mesh.PrivateKeyProvider) SDSService
@@ -296,7 +294,6 @@ func (a *Agent) generateNodeMetadata() (*model.Node, error) {
 		ExitOnZeroActiveConnections: a.cfg.ExitOnZeroActiveConnections,
 		XDSRootCert:                 a.cfg.XDSRootCerts,
 		MetadataDiscovery:           a.cfg.MetadataDiscovery,
-		PolicyBindingDiscovery:      a.cfg.PolicyBindingDiscovery,
 		PolicyRuntimeCapabilities:   a.cfg.PolicyRuntimeCapabilities,
 		EnvoySkipDeprecatedLogs:     a.cfg.EnvoySkipDeprecatedLogs,
 		WorkloadIdentitySocketFile:  a.cfg.WorkloadIdentitySocketFile,

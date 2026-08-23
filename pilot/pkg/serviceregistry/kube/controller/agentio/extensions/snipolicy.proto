@@ -18,24 +18,15 @@ package kruise.networking.extensions.v1;
 
 option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
 
-message PolicyBinding {
-  oneof target_ref {
-    WorkloadReference workload = 1;
-  }
-
-  // Keyed by the full xDS TypeURL of the referenced policy resources.
-  map<string, PolicyReference> policy_refs = 2;
-}
-
-message WorkloadReference {
-  string namespace = 1;
-  string name = 2;
-}
-
+// PolicyReference is attached to istio.workload.Workload through one generic
+// Extension per policy type. The parent Workload supplies the target identity.
 message PolicyReference {
+  // Full xDS TypeURL used to subscribe to and decode the named resources.
+  string type_url = 1;
+
   // Ordered according to the source policy API. The data plane evaluates the
   // referenced resources in this order and does not apply its own tie-breaks.
-  repeated string resource_names = 1;
+  repeated string resource_names = 2;
 }
 
 message SniTrafficPolicy {

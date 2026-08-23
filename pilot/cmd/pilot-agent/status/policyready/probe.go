@@ -32,9 +32,9 @@ import (
 
 const (
 	// readyStat is the Envoy gauge published by the native gateway policy store.
-	// It becomes 1 after the first PolicyBinding response and the first response
-	// for every policy TypeURL referenced by those bindings. Missing named policy
-	// resources remain fail-closed per binding, but do not make the whole gateway
+	// It becomes 1 after the first Workload discovery response and the first
+	// response for every policy TypeURL referenced by those workloads. Missing
+	// named policy resources remain fail-closed per workload, but do not make the whole gateway
 	// unavailable indefinitely.
 	readyStat = "policy_store.initial_sync_ready"
 
@@ -51,7 +51,7 @@ type Probe struct {
 	adminPort     uint16
 
 	// Readiness is a startup gate. Once the initial subscriptions have converged,
-	// later policy changes are handled per binding and must not drain the gateway.
+	// later policy changes are handled per workload and must not drain the gateway.
 	ready bool
 }
 

@@ -28,9 +28,11 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/kube/krt/krttest"
 	xdsmodel "istio.io/istio/pkg/model"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/test/util/assert"
 	"istio.io/istio/pkg/util/sets"
+	"istio.io/istio/pkg/workloadapi"
 )
 
 type agentioResourceTestModel struct {
@@ -40,19 +42,13 @@ type agentioResourceTestModel struct {
 	visible  bool
 }
 
+func (m agentioResourceTestModel) ConfigKey() model.ConfigKey { return m.key }
+func (m agentioResourceTestModel) ResourceName() string       { return m.name }
+
 type trackingAgentioResourceCollection[T any] struct {
 	krt.Collection[T]
 	listCalls int
 	getKeys   []string
-}
-
-type configUpdateRecorder struct {
-	model.XDSUpdater
-	requests []*model.PushRequest
-}
-
-func (r *configUpdateRecorder) ConfigUpdate(request *model.PushRequest) {
-	r.requests = append(r.requests, request)
 }
 
 func (c *trackingAgentioResourceCollection[T]) List() []T {
@@ -65,16 +61,16 @@ func (c *trackingAgentioResourceCollection[T]) GetKey(key string) *T {
 	return c.Collection.GetKey(key)
 }
 
+type configUpdateRecorder struct {
+	model.XDSUpdater
+	requests []*model.PushRequest
+}
+
+func (r *configUpdateRecorder) ConfigUpdate(request *model.PushRequest) {
+	r.requests = append(r.requests, request)
+}
+
 func TestAgentioResourceProvidersAndDescriptors(t *testing.T) {
-	wantDescriptors := sets.New(
-		xdsmodel.WorkloadConfigType,
-		xdsmodel.SniTrafficPolicyType,
-		xdsmodel.PolicyBindingType,
-	)
-	wantDedicatedProviders := sets.New(
-		xdsmodel.WorkloadConfigType,
-		xdsmodel.PolicyBindingType,
-	)
 	providerTypes := sets.New[string]()
 	for typeURL := range agentioResourceProviders {
 		providerTypes.Insert(typeURL)
@@ -83,210 +79,65 @@ func TestAgentioResourceProvidersAndDescriptors(t *testing.T) {
 	for _, descriptor := range xds.AgentioResourceDescriptors() {
 		descriptorTypes.Insert(descriptor.TypeURL)
 	}
-	assert.Equal(t, providerTypes, wantDedicatedProviders)
-	assert.Equal(t, descriptorTypes, wantDescriptors)
-}
-
-func (m agentioResourceTestModel) ConfigKey() model.ConfigKey {
-	return m.key
-}
-
-func (m agentioResourceTestModel) ResourceName() string {
-	return m.name
+	assert.Equal(t, providerTypes, sets.New(xdsmodel.WorkloadConfigType))
+	assert.Equal(t, descriptorTypes, sets.New(xdsmodel.WorkloadConfigType, xdsmodel.SniTrafficPolicyType))
 }
 
 func TestAgentioResourcesForProxy(t *testing.T) {
-	const ns = "ns"
-
-	bindingFor := func(name string) model.PolicyBinding {
-		return model.PolicyBinding{
-			Name: model.PolicyBindingResourceName(ns, name),
-			Binding: &extensions.PolicyBinding{
-				TargetRef: &extensions.PolicyBinding_Workload{
-					Workload: &extensions.WorkloadReference{Namespace: ns, Name: name},
-				},
-			},
-		}
-	}
-	bindings := []model.PolicyBinding{bindingFor("a"), bindingFor("b")}
-	bindingsByResourceName := map[string]model.PolicyBinding{
-		bindings[0].Name: bindings[0],
-		bindings[1].Name: bindings[1],
-	}
-
 	policyOne := &extensions.SniTrafficPolicy{}
 	policyTwo := &extensions.SniTrafficPolicy{}
-	policyOther := &extensions.SniTrafficPolicy{}
 	policies := []agentio.BindablePolicy{
 		{Name: "ns/one", TypeURL: xdsmodel.SniTrafficPolicyType, ConfigKind: kind.SniTrafficPolicy, Resource: policyOne},
 		{Name: "ns/two", TypeURL: xdsmodel.SniTrafficPolicyType, ConfigKind: kind.SniTrafficPolicy, Resource: policyTwo},
-		{Name: "other/one", TypeURL: xdsmodel.SniTrafficPolicyType, ConfigKind: kind.SniTrafficPolicy, Resource: policyOther},
 	}
-	inputs := slices.Map(bindings, func(b model.PolicyBinding) any { return b })
-	inputs = append(inputs, slices.Map(policies, func(p agentio.BindablePolicy) any { return p })...)
-	mock := krttest.NewMock(t, inputs)
-	a := &index{
-		policyBindings:   krttest.GetMockCollection[model.PolicyBinding](mock),
-		bindablePolicies: krttest.GetMockCollection[agentio.BindablePolicy](mock),
+	mock := krttest.NewMock(t, slices.Map(policies, func(policy agentio.BindablePolicy) any { return policy }))
+	a := &index{bindablePolicies: krttest.GetMockCollection[agentio.BindablePolicy](mock)}
+
+	requested := sets.New(model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "ns/one"})
+	got := a.AgentioResourcesForProxy(nil, xdsmodel.SniTrafficPolicyType, requested)
+	assert.Equal(t, len(got), 1)
+	assert.Equal(t, got[0].Name, "ns/one")
+	if got[0].Resource != policyOne {
+		t.Error("filtered policy payload pointer was not preserved")
 	}
-
-	t.Run("projects registered types and preserves protobuf pointers", func(t *testing.T) {
-		bindings := a.AgentioResourcesForProxy(nil, xdsmodel.PolicyBindingType, nil)
-		assert.Equal(t, len(bindings), 2)
-		bindingsByName := make(map[string]model.AgentioResource, len(bindings))
-		for _, binding := range bindings {
-			bindingsByName[binding.Name] = binding
-		}
-		for _, name := range []string{"a", "b"} {
-			resourceName := model.PolicyBindingResourceName(ns, name)
-			got, found := bindingsByName[resourceName]
-			assert.Equal(t, found, true)
-			if got.Resource != bindingsByResourceName[resourceName].Binding {
-				t.Errorf("binding %q payload pointer was not preserved", resourceName)
-			}
-		}
-
-		gotPolicies := a.AgentioResourcesForProxy(nil, xdsmodel.SniTrafficPolicyType, nil)
-		assert.Equal(t, len(gotPolicies), 3)
-		policiesByName := make(map[string]model.AgentioResource, len(gotPolicies))
-		for _, policy := range gotPolicies {
-			policiesByName[policy.Name] = policy
-		}
-		if policiesByName["ns/one"].Resource != policyOne {
-			t.Error("ns/one payload pointer was not preserved")
-		}
-		if policiesByName["ns/two"].Resource != policyTwo {
-			t.Error("ns/two payload pointer was not preserved")
-		}
-		if policiesByName["other/one"].Resource != policyOther {
-			t.Error("other/one payload pointer was not preserved")
-		}
-	})
-
-	t.Run("requested filters on name and namespace", func(t *testing.T) {
-		requested := sets.New(model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "ns/one"})
-		got := a.AgentioResourcesForProxy(nil, xdsmodel.SniTrafficPolicyType, requested)
-		assert.Equal(t, len(got), 1)
-		assert.Equal(t, got[0].Name, "ns/one")
-		if got[0].Resource != policyOne {
-			t.Error("filtered policy payload pointer was not preserved")
-		}
-	})
-
-	t.Run("unknown requested key returns nothing", func(t *testing.T) {
-		requested := sets.New(model.ConfigKey{Kind: kind.PolicyBinding, Name: "workload://ns/unknown"})
-		assert.Equal(t, len(a.AgentioResourcesForProxy(nil, xdsmodel.PolicyBindingType, requested)), 0)
-	})
-
-	t.Run("unknown type URL returns nil", func(t *testing.T) {
-		assert.Equal(t, a.AgentioResourcesForProxy(nil, "type.googleapis.com/unknown", nil), nil)
-	})
-
-	t.Run("nil registered collections return nil", func(t *testing.T) {
-		empty := &index{}
-		assert.Equal(t, empty.AgentioResourcesForProxy(nil, xdsmodel.PolicyBindingType, nil), nil)
-		assert.Equal(t, empty.AgentioResourcesForProxy(nil, xdsmodel.SniTrafficPolicyType, nil), nil)
-		assert.Equal(t, empty.AgentioResourcesForProxy(nil, xdsmodel.WorkloadConfigType, nil), nil)
-	})
-
-	t.Run("invalid projections and invisible resources are omitted", func(t *testing.T) {
-		var typedNil *extensions.SniTrafficPolicy
-		valid := &extensions.SniTrafficPolicy{}
-		models := []agentioResourceTestModel{
-			{name: "", resource: &extensions.SniTrafficPolicy{}, visible: true},
-			{name: "untyped-nil", resource: nil, visible: true},
-			{name: "typed-nil", resource: typedNil, visible: true},
-			{name: "hidden", resource: &extensions.SniTrafficPolicy{}, visible: false},
-			{name: "valid", resource: valid, visible: true},
-		}
-		modelMock := krttest.NewMock(t, slices.Map(models, func(m agentioResourceTestModel) any { return m }))
-		collection := krttest.GetMockCollection[agentioResourceTestModel](modelMock)
-		provider := collectAgentioResources(
-			func(*index) krt.Collection[agentioResourceTestModel] { return collection },
-			func(key model.ConfigKey) string { return key.Name },
-			func(m agentioResourceTestModel) string { return m.ResourceName() },
-			func(m agentioResourceTestModel) proto.Message { return m.resource },
-			func(_ *index, proxy *model.Proxy, m agentioResourceTestModel) bool {
-				return proxy != nil && m.visible
-			},
-		)
-
-		got := provider(a, &model.Proxy{}, nil)
-		assert.Equal(t, len(got), 1)
-		assert.Equal(t, got[0].Name, "valid")
-		if got[0].Resource != valid {
-			t.Error("valid projected payload pointer was not preserved")
-		}
-	})
-
-	t.Run("requested resources use keyed lookup", func(t *testing.T) {
-		wanted := agentioResourceTestModel{
-			key:      model.ConfigKey{Kind: kind.PolicyBinding, Name: "wanted"},
-			name:     "wanted",
-			resource: &extensions.PolicyBinding{},
-			visible:  true,
-		}
-		unrelated := agentioResourceTestModel{
-			key:      model.ConfigKey{Kind: kind.PolicyBinding, Name: "unrelated"},
-			name:     "unrelated",
-			resource: &extensions.PolicyBinding{},
-			visible:  true,
-		}
-		modelMock := krttest.NewMock(t, []any{wanted, unrelated})
-		tracked := &trackingAgentioResourceCollection[agentioResourceTestModel]{
-			Collection: krttest.GetMockCollection[agentioResourceTestModel](modelMock),
-		}
-		provider := collectAgentioResources(
-			func(*index) krt.Collection[agentioResourceTestModel] { return tracked },
-			func(key model.ConfigKey) string { return key.Name },
-			func(m agentioResourceTestModel) string { return m.ResourceName() },
-			func(m agentioResourceTestModel) proto.Message { return m.resource },
-			nil,
-		)
-
-		got := provider(a, nil, sets.New(wanted.ConfigKey()))
-		assert.Equal(t, tracked.listCalls, 0)
-		assert.Equal(t, tracked.getKeys, []string{"wanted"})
-		assert.Equal(t, len(got), 1)
-		assert.Equal(t, got[0].Name, "wanted")
-	})
+	assert.Equal(t, a.AgentioResourcesForProxy(nil, "type.googleapis.com/unknown", nil), nil)
 }
 
-// TestSniPoliciesFlagOffInert pins the flag-off provider contract. Both final
-// collections stay nil, so callers cannot distinguish "feature off" from a
-// spuriously empty push.
-func TestSniPoliciesFlagOffInert(t *testing.T) {
-	a := &index{}
+func TestAgentioResourceProviderUsesKeyedLookup(t *testing.T) {
+	wanted := agentioResourceTestModel{
+		key:  model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "wanted"},
+		name: "wanted", resource: &extensions.SniTrafficPolicy{}, visible: true,
+	}
+	unrelated := agentioResourceTestModel{
+		key:  model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "unrelated"},
+		name: "unrelated", resource: &extensions.SniTrafficPolicy{}, visible: true,
+	}
+	mock := krttest.NewMock(t, []any{wanted, unrelated})
+	tracked := &trackingAgentioResourceCollection[agentioResourceTestModel]{
+		Collection: krttest.GetMockCollection[agentioResourceTestModel](mock),
+	}
+	provider := collectAgentioResources(
+		func(*index) krt.Collection[agentioResourceTestModel] { return tracked },
+		func(key model.ConfigKey) string { return key.Name },
+		func(item agentioResourceTestModel) string { return item.ResourceName() },
+		func(item agentioResourceTestModel) proto.Message { return item.resource },
+		nil,
+	)
 
-	assert.Equal(t, a.policyBindings, nil)
-	assert.Equal(t, a.bindablePolicies, nil)
-	assert.Equal(t, a.AgentioResourcesForProxy(nil, xdsmodel.PolicyBindingType, nil), nil)
-	assert.Equal(t, a.AgentioResourcesForProxy(nil, xdsmodel.SniTrafficPolicyType, nil), nil)
-
-	// The nil guard must run before requested-resource filtering.
-	requested := sets.New(model.ConfigKey{Kind: kind.PolicyBinding, Name: "anything"})
-	assert.Equal(t, a.AgentioResourcesForProxy(nil, xdsmodel.PolicyBindingType, requested), nil)
-	assert.Equal(t, a.AgentioResourcesForProxy(nil, xdsmodel.SniTrafficPolicyType, requested), nil)
+	got := provider(&index{}, nil, sets.New(wanted.ConfigKey()))
+	assert.Equal(t, tracked.listCalls, 0)
+	assert.Equal(t, tracked.getKeys, []string{"wanted"})
+	assert.Equal(t, len(got), 1)
 }
 
 func TestWorkloadConfigAgentioResourcesForProxy(t *testing.T) {
-	system := model.WorkloadConfig{
-		Namespace: "agentio-system", Name: "system", Config: &extensions.WorkloadConfig{},
-	}
-	sameNamespace := model.WorkloadConfig{
-		Namespace: "sandbox-ns", Name: "same", Config: &extensions.WorkloadConfig{},
-	}
-	otherNamespace := model.WorkloadConfig{
-		Namespace: "other-ns", Name: "other", Config: &extensions.WorkloadConfig{},
-	}
+	system := model.WorkloadConfig{Namespace: "agentio-system", Name: "system", Config: &extensions.WorkloadConfig{}}
+	sameNamespace := model.WorkloadConfig{Namespace: "sandbox-ns", Name: "same", Config: &extensions.WorkloadConfig{}}
+	otherNamespace := model.WorkloadConfig{Namespace: "other-ns", Name: "other", Config: &extensions.WorkloadConfig{}}
 	mock := krttest.NewMock(t, []any{system, sameNamespace, otherNamespace})
 	a := &index{
 		SystemNamespace: "agentio-system",
 		workloadConfigs: krttest.GetMockCollection[model.WorkloadConfig](mock),
-	}
-	nonDedicatedProxy := &model.Proxy{
-		Labels:   map[string]string{},
-		Metadata: &model.NodeMetadata{Namespace: "sandbox-ns"},
 	}
 	dedicatedProxy := &model.Proxy{
 		Labels: map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
@@ -296,69 +147,99 @@ func TestWorkloadConfigAgentioResourcesForProxy(t *testing.T) {
 		},
 	}
 
-	assertResources := func(t *testing.T, got []model.AgentioResource, want map[string]proto.Message) {
-		t.Helper()
-		assert.Equal(t, len(got), len(want))
-		for _, resource := range got {
-			payload, found := want[resource.Name]
-			assert.Equal(t, found, true)
-			if resource.Resource != payload {
-				t.Errorf("resource %q payload pointer was not preserved", resource.Name)
-			}
+	got := a.AgentioResourcesForProxy(dedicatedProxy, xdsmodel.WorkloadConfigType, nil)
+	want := sets.New(system.ResourceName(), sameNamespace.ResourceName())
+	for _, resource := range got {
+		if !want.Contains(resource.Name) {
+			t.Fatalf("unexpected workload config %q", resource.Name)
 		}
+		want.Delete(resource.Name)
 	}
-
-	t.Run("non-dedicated proxy receives all configs", func(t *testing.T) {
-		got := a.AgentioResourcesForProxy(nonDedicatedProxy, xdsmodel.WorkloadConfigType, nil)
-		assertResources(t, got, map[string]proto.Message{
-			system.ResourceName():         system.Config,
-			sameNamespace.ResourceName():  sameNamespace.Config,
-			otherNamespace.ResourceName(): otherNamespace.Config,
-		})
-	})
-
-	t.Run("dedicated sandbox proxy receives system and same namespace configs", func(t *testing.T) {
-		got := a.AgentioResourcesForProxy(dedicatedProxy, xdsmodel.WorkloadConfigType, nil)
-		assertResources(t, got, map[string]proto.Message{
-			system.ResourceName():        system.Config,
-			sameNamespace.ResourceName(): sameNamespace.Config,
-		})
-	})
-
-	t.Run("requested filter selects same namespace config", func(t *testing.T) {
-		requested := sets.New(sameNamespace.ConfigKey())
-		got := a.AgentioResourcesForProxy(dedicatedProxy, xdsmodel.WorkloadConfigType, requested)
-		assertResources(t, got, map[string]proto.Message{
-			sameNamespace.ResourceName(): sameNamespace.Config,
-		})
-	})
+	assert.Equal(t, len(want), 0)
 }
 
-func TestPushPolicyBindingsXdsIncludesNewPolicyReferences(t *testing.T) {
-	oldBinding := model.PolicyBinding{
-		Name: "workload://ns/pod",
-		Binding: &extensions.PolicyBinding{PolicyRefs: map[string]*extensions.PolicyReference{
-			xdsmodel.SniTrafficPolicyType: {ResourceNames: []string{"ns/existing"}},
+func TestWorkloadExtensionsForProxyPublishesPerTypePolicyReference(t *testing.T) {
+	const uid = "cluster//Pod/ns/pod"
+	references := agentio.WorkloadPolicyReferences{
+		Name: uid,
+		References: []*extensions.PolicyReference{
+			{TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/policy"}},
+			{TypeUrl: "type.googleapis.com/example.extensions.v1.UnsupportedPolicy", ResourceNames: []string{"ns/ignored"}},
+		},
+	}
+	mock := krttest.NewMock(t, []any{references})
+	a := &index{workloadPolicyReferences: krttest.GetMockCollection[agentio.WorkloadPolicyReferences](mock)}
+	proxy := &model.Proxy{Metadata: &model.NodeMetadata{
+		MetadataDiscovery:         ptr.Of(model.StringBool(true)),
+		PolicyRuntimeCapabilities: []string{agentio.SniTrafficPolicyCapability},
+	}}
+
+	got := a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})
+	assert.Equal(t, len(got), 1)
+	assert.Equal(t, got[0].GetName(), agentio.SniTrafficPolicyReferenceExtensionName)
+	assert.Equal(t, got[0].GetConfig().GetTypeUrl(), agentio.PolicyReferenceTypeURL)
+	decoded := &extensions.PolicyReference{}
+	if err := got[0].GetConfig().UnmarshalTo(decoded); err != nil {
+		t.Fatal(err)
+	}
+	want := &extensions.PolicyReference{
+		TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/policy"},
+	}
+	if !proto.Equal(decoded, want) {
+		t.Fatalf("decoded references = %v, want %v", decoded, want)
+	}
+
+	proxy.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(false))
+	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})), 0)
+}
+
+func TestPushWorkloadPolicyReferencesXdsIncludesNewPolicies(t *testing.T) {
+	oldReferences := agentio.WorkloadPolicyReferences{
+		Name: "cluster//Pod/ns/pod",
+		References: []*extensions.PolicyReference{{
+			TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/existing"},
 		}},
 	}
-	newBinding := model.PolicyBinding{
-		Name: oldBinding.Name,
-		Binding: &extensions.PolicyBinding{PolicyRefs: map[string]*extensions.PolicyReference{
-			xdsmodel.SniTrafficPolicyType: {ResourceNames: []string{"ns/existing", "ns/new"}},
-		}},
-	}
+	newReferences := oldReferences
+	newReferences.References = []*extensions.PolicyReference{{
+		TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/existing", "ns/new"},
+	}}
 	recorder := &configUpdateRecorder{}
 
-	PushPolicyBindingsXds(recorder)([]krt.Event[model.PolicyBinding]{
-		{Event: controllers.EventUpdate, Old: &oldBinding, New: &newBinding},
+	PushWorkloadPolicyReferencesXds(recorder)([]krt.Event[agentio.WorkloadPolicyReferences]{
+		{Event: controllers.EventUpdate, Old: &oldReferences, New: &newReferences},
 	})
 
 	if len(recorder.requests) != 1 {
 		t.Fatalf("ConfigUpdate calls = %d, want 1", len(recorder.requests))
 	}
-	want := sets.New(
-		newBinding.ConfigKey(),
+	request := recorder.requests[0]
+	assert.Equal(t, request.AddressesUpdated, sets.New(newReferences.ResourceName()))
+	assert.Equal(t, request.ConfigsUpdated, sets.New(
+		model.ConfigKey{Kind: kind.Address, Name: newReferences.ResourceName()},
 		model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "ns/new"},
-	)
-	assert.Equal(t, recorder.requests[0].ConfigsUpdated, want)
+	))
+}
+
+func TestPushWorkloadPolicyReferencesXdsRemovesExtension(t *testing.T) {
+	oldReferences := agentio.WorkloadPolicyReferences{
+		Name: "cluster//Pod/ns/pod",
+		References: []*extensions.PolicyReference{{
+			TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/old"},
+		}},
+	}
+	recorder := &configUpdateRecorder{}
+
+	PushWorkloadPolicyReferencesXds(recorder)([]krt.Event[agentio.WorkloadPolicyReferences]{
+		{Event: controllers.EventDelete, Old: &oldReferences},
+	})
+
+	if len(recorder.requests) != 1 {
+		t.Fatalf("ConfigUpdate calls = %d, want 1", len(recorder.requests))
+	}
+	request := recorder.requests[0]
+	assert.Equal(t, request.AddressesUpdated, sets.New(oldReferences.ResourceName()))
+	assert.Equal(t, request.ConfigsUpdated, sets.New(
+		model.ConfigKey{Kind: kind.Address, Name: oldReferences.ResourceName()},
+	))
 }

@@ -138,10 +138,10 @@ type Options struct {
 	NoEnvoy             bool
 	GRPCBootstrap       string
 	EnableProfiling     bool
-	// PolicyBindingDiscovery reports whether the Agentio gateway policy store
-	// bootstrap extension is configured on this proxy. When set, readiness also
-	// waits for that store to sync.
-	PolicyBindingDiscovery bool
+	// PolicyStore reports whether the native gateway policy store bootstrap
+	// extension is configured on this proxy. When set, readiness also waits for
+	// that store to sync.
+	PolicyStore bool
 	// PrometheusRegistry to use. Just for testing.
 	PrometheusRegistry prometheus.Gatherer
 	Shutdown           context.CancelCauseFunc
@@ -211,7 +211,7 @@ func NewServer(config Options) (*Server, error) {
 		// Built here rather than by the caller because the effective localhost is
 		// resolved above, including the dual-stack case, and must match the address
 		// Envoy's admin endpoint is bound to.
-		if config.PolicyBindingDiscovery {
+		if config.PolicyStore {
 			probes = append(probes, policyready.New(localhost, config.AdminPort))
 		}
 	}

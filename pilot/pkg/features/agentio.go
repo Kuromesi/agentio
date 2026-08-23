@@ -37,7 +37,7 @@ var (
 
 	EnableSniTrafficPolicy = env.Register("ENABLE_SNI_TRAFFIC_POLICY", false,
 		"If enabled, the agentio controller translates matching SecurityProfile resources into SNI traffic policies "+
-			"and publishes per-workload PolicyBinding resources for fail-closed enforcement in sandbox egress gateways.").Get()
+			"and attaches their references to Workload discovery resources for enforcement in sandbox egress gateways.").Get()
 
 	SniTrafficPolicyFailureModeAllow = env.Register("SNI_TRAFFIC_POLICY_FAILURE_MODE_ALLOW", false,
 		"Default value for the SNI policy matcher's failure_mode_allow runtime flag. "+

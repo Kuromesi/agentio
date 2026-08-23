@@ -21,7 +21,6 @@ type Kind uint8
 // of the generated iota block, which shifts on upstream rebases.
 const (
 	WorkloadConfig   Kind = 200
-	PolicyBinding    Kind = 201
 	SniTrafficPolicy Kind = 202
 )
 
@@ -29,7 +28,6 @@ const (
 // delegate here for values outside the generated switch.
 var extendedKindNames = map[Kind]string{
 	WorkloadConfig:   "WorkloadConfig",
-	PolicyBinding:    "PolicyBinding",
 	SniTrafficPolicy: "SniTrafficPolicy",
 }
 

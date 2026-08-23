@@ -177,7 +177,7 @@ spec:
         {{- end }}
         {{- end }}
         {{- if and (eq (index .InfrastructureLabels `networking.agents.kruise.io/sandbox-egress`) `true`) (index .Values.pilot.env `ENABLE_SNI_TRAFFIC_POLICY`) }}
-        - name: POLICY_BINDING_DISCOVERY
+        - name: PEER_METADATA_DISCOVERY
           value: "true"
         - name: POLICY_RUNTIME_CAPABILITIES
           value: "sni_traffic_policy"

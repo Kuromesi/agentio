@@ -98,39 +98,10 @@ type AgentioResourceDiscovery interface {
 	) []AgentioResource
 }
 
-// PolicyBindingResourceName returns the complete xDS resource name for a
-// workload reference. There is exactly one binding resource per workload.
-func PolicyBindingResourceName(namespace, name string) string {
-	return "workload://" + namespace + "/" + name
-}
-
-// PolicyBinding is the pilot-side wrapper for the PolicyBinding xDS resource.
-// It binds a single workload to the policy resources that apply to it.
-type PolicyBinding struct {
-	// Name is the complete xDS resource name, not a Kubernetes object name.
-	Name    string
-	Binding *extensions.PolicyBinding
-}
-
-func (p PolicyBinding) ResourceName() string {
-	return p.Name
-}
-
-func (p PolicyBinding) Equals(other PolicyBinding) bool {
-	return p.Name == other.Name && proto.Equal(p.Binding, other.Binding)
-}
-
-func (p PolicyBinding) ConfigKey() ConfigKey {
-	return ConfigKey{Kind: kind.PolicyBinding, Name: p.Name}
-}
-
-// Both wrappers are used directly as krt collection value types, which requires
-// ResourceName() for keying and Equals() for equality suppression.
+// WorkloadConfig is used directly as a krt collection value type.
 var (
 	_ krt.ResourceNamer           = WorkloadConfig{}
 	_ krt.Equaler[WorkloadConfig] = WorkloadConfig{}
-	_ krt.ResourceNamer           = PolicyBinding{}
-	_ krt.Equaler[PolicyBinding]  = PolicyBinding{}
 )
 
 func (sc *AgentioConfig) ExtractMatchHosts() sets.String {

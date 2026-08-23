@@ -29,9 +29,9 @@ import (
 	"istio.io/istio/pkg/test/env"
 )
 
-// renderPolicyBindingBootstrap renders the shipped bootstrap template with the
+// renderPolicyStoreBootstrap renders the shipped bootstrap template with the
 // gateway policy store extension enabled.
-func renderPolicyBindingBootstrap(t *testing.T) string {
+func renderPolicyStoreBootstrap(t *testing.T) string {
 	t.Helper()
 	proxyConfig := model.NodeMetaProxyConfig(v1alpha1.ProxyConfig{
 		DiscoveryAddress: "agentiod.istio-system.svc:15012",
@@ -41,8 +41,9 @@ func renderPolicyBindingBootstrap(t *testing.T) string {
 		ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
 		Locality: &core.Locality{},
 		Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
-			ProxyConfig:            &proxyConfig,
-			PolicyBindingDiscovery: ptr.Of(model.StringBool(true)),
+			ProxyConfig:               &proxyConfig,
+			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
+			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
 		}},
 		RawMetadata: map[string]any{},
 	}
@@ -58,7 +59,7 @@ func renderPolicyBindingBootstrap(t *testing.T) string {
 // admitted explicitly. policy_store drives readiness, while sni_traffic_policy exposes
 // matcher failure reasons and fail-open admissions.
 func TestPolicyStatsPrefixesAreRendered(t *testing.T) {
-	rendered := renderPolicyBindingBootstrap(t)
+	rendered := renderPolicyStoreBootstrap(t)
 
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(rendered), &parsed); err != nil {
@@ -81,11 +82,17 @@ func TestPolicyStatsPrefixesAreRendered(t *testing.T) {
 // name is not fatal -- but it is misleading, and the registered factory name is
 // the one a reader will grep for.
 func TestPolicyStoreExtensionNameMatchesFactory(t *testing.T) {
-	rendered := renderPolicyBindingBootstrap(t)
+	rendered := renderPolicyStoreBootstrap(t)
 	if !strings.Contains(rendered, `"name": "kruise.bootstrap.policy_store"`) {
 		t.Error(`rendered bootstrap does not use the registered factory name "kruise.bootstrap.policy_store"`)
 	}
 	if !strings.Contains(rendered, `"policy_deletion_grace_period": "15s"`) {
 		t.Error("rendered bootstrap does not use the default fifteen-second policy deletion grace period")
+	}
+	workloadDiscovery := strings.Index(rendered, `"name": "metadata_discovery"`)
+	policyStore := strings.Index(rendered, `"name": "kruise.bootstrap.policy_store"`)
+	if workloadDiscovery < 0 || policyStore < 0 || workloadDiscovery > policyStore {
+		t.Fatalf("workload discovery must be initialized before policy store: workload=%d store=%d",
+			workloadDiscovery, policyStore)
 	}
 }

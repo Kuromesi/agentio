@@ -50,19 +50,6 @@
     ]
   },
   "bootstrap_extensions": [
-    {{- if .policy_binding_discovery }}
-    {
-      "name": "kruise.bootstrap.policy_store",
-      "typed_config": {
-        "@type": "type.googleapis.com/udpa.type.v1.TypedStruct",
-        "type_url": "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.PolicyStoreConfig",
-        "value": {
-          "config_source": { "ads": {} },
-          "policy_deletion_grace_period": "{{ .policy_store_deletion_grace_period }}"
-        }
-      }
-    },
-    {{- end }}
     {{- if .metadata_discovery }}
     {
       "name": "metadata_discovery",
@@ -71,6 +58,19 @@
         "type_url": "type.googleapis.com/istio.workload.BootstrapExtension",
         "value": {
           "config_source": { "ads": {} }
+        }
+      }
+    },
+    {{- end }}
+    {{- if .policy_store }}
+    {
+      "name": "kruise.bootstrap.policy_store",
+      "typed_config": {
+        "@type": "type.googleapis.com/udpa.type.v1.TypedStruct",
+        "type_url": "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.PolicyStoreConfig",
+        "value": {
+          "config_source": { "ads": {} },
+          "policy_deletion_grace_period": "{{ .policy_store_deletion_grace_period }}"
         }
       }
     },
@@ -180,7 +180,7 @@
           "prefix": "workload_discovery"
           },
           {{- end }}
-          {{- if .policy_binding_discovery }}
+          {{- if .policy_store }}
           {
           "prefix": "policy_store"
           },
