@@ -25,6 +25,13 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 )
 
+// globalPolicyAttachmentIndexKey is deliberately non-empty. Kubernetes
+// namespace names cannot contain '@', so it cannot collide with a namespaced
+// policy. More importantly, using an empty reverse-index key makes live global
+// policy events indistinguishable from a missing index key in some KRT index
+// implementations even though initial Lookup("") succeeds.
+const globalPolicyAttachmentIndexKey = "@global"
+
 // WorkloadPolicyReferences is the control-plane-only index used to enrich a
 // Workload WDS resource. It is not an xDS resource of its own.
 type WorkloadPolicyReferences struct {
@@ -66,7 +73,7 @@ func buildPolicyRefs(
 	// update no longer causes every workload in the cluster to be reconsidered.
 	if workloadNamespace != "" {
 		matched = append(matched, krt.Fetch(ctx, policies,
-			krt.FilterIndex(policiesByNamespace, ""), selectorFilter)...)
+			krt.FilterIndex(policiesByNamespace, globalPolicyAttachmentIndexKey), selectorFilter)...)
 	}
 	if len(matched) == 0 {
 		return nil
@@ -116,6 +123,9 @@ func newWorkloadPolicyReferencesCollection(
 	opts krt.OptionsBuilder,
 ) krt.Collection[WorkloadPolicyReferences] {
 	policiesByNamespace := krt.NewIndex(policies, "policyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
+		if policy.Namespace == "" {
+			return []string{globalPolicyAttachmentIndexKey}
+		}
 		return []string{policy.Namespace}
 	})
 	return krt.NewManyCollection(workloads,

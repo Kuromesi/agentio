@@ -15,9 +15,12 @@
 package agentio
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"istio.io/istio/pilot/pkg/model"
@@ -28,6 +31,7 @@ import (
 	xdsmodel "istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
+	"istio.io/istio/pkg/test/util/retry"
 	"istio.io/istio/pkg/workloadapi"
 )
 
@@ -174,4 +178,65 @@ func TestWorkloadPolicyReferencesCollection(t *testing.T) {
 		assert.Equal(t, refs[0].GetTypeUrl(), other.TypeURL)
 		assert.Equal(t, refs[1].GetTypeUrl(), sni.TypeURL)
 	})
+}
+
+func TestWorkloadPolicyReferencesObserveGlobalPolicyAddedAfterSync(t *testing.T) {
+	stop := test.NewStop(t)
+	opts := krt.NewOptionsBuilder(stop, "", krt.GlobalDebugHandler)
+	workload := sniTestWorkload("pod", "ns", map[string]string{"app": "agent"})
+	workloads := krt.NewStaticCollection(nil, []model.WorkloadInfo{workload}, opts.WithName("Workloads")...)
+	policies := krt.NewStaticCollection(nil, []BindablePolicy{}, opts.WithName("BindablePolicies")...)
+	attachments := newPolicyAttachmentsCollection(policies, opts)
+	references := newWorkloadPolicyReferencesCollection(workloads, attachments, opts)
+	if !references.WaitUntilSynced(stop) {
+		t.Fatal("workload policy references did not sync")
+	}
+
+	policies.UpdateObject(sniBindablePolicy("", "global", 1, map[string]string{"app": "agent"}))
+	retry.UntilSuccessOrFail(t, func() error {
+		item := references.GetKey(workload.ResourceName())
+		if item == nil {
+			return fmt.Errorf("workload policy references not created")
+		}
+		if got := sniReferenceNames(*item); !reflect.DeepEqual(got, []string{"global"}) {
+			return fmt.Errorf("global policy references = %v, want [global]", got)
+		}
+		return nil
+	}, retry.Timeout(5*time.Second))
+}
+
+func TestWorkloadPolicyReferencesObserveGlobalSecurityProfileAddedAfterSync(t *testing.T) {
+	stop := test.NewStop(t)
+	opts := krt.NewOptionsBuilder(stop, "", krt.GlobalDebugHandler)
+	workload := sniTestWorkload("pod", "ns", map[string]string{"app": "agent"})
+	workloads := krt.NewStaticCollection(nil, []model.WorkloadInfo{workload}, opts.WithName("Workloads")...)
+	profiles := krt.NewStaticCollection(nil, []*agentsv1alpha1.SecurityProfile{}, opts.WithName("SecurityProfiles")...)
+	globalProfiles := krt.NewStaticCollection(nil, []*agentsv1alpha1.GlobalSecurityProfile{},
+		opts.WithName("GlobalSecurityProfiles")...)
+	policies := newBindablePoliciesCollection(profiles, globalProfiles, opts)
+	attachments := newPolicyAttachmentsCollection(policies, opts)
+	references := newWorkloadPolicyReferencesCollection(workloads, attachments, opts)
+	if !references.WaitUntilSynced(stop) {
+		t.Fatal("workload policy references did not sync")
+	}
+
+	globalProfiles.UpdateObject(&agentsv1alpha1.GlobalSecurityProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "global"},
+		Spec: agentsv1alpha1.SecurityProfileSpec{
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}},
+			Rules: []agentsv1alpha1.SecurityRule{{
+				Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"example.com"}, Schemes: []string{"https"}}},
+			}},
+		},
+	})
+	retry.UntilSuccessOrFail(t, func() error {
+		item := references.GetKey(workload.ResourceName())
+		if item == nil {
+			return fmt.Errorf("workload policy references not created")
+		}
+		if got := sniReferenceNames(*item); !reflect.DeepEqual(got, []string{"global"}) {
+			return fmt.Errorf("global policy references = %v, want [global]", got)
+		}
+		return nil
+	}, retry.Timeout(15*time.Second))
 }

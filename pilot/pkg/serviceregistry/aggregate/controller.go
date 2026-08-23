@@ -30,6 +30,7 @@ import (
 	"istio.io/istio/pkg/maps"
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
+	"istio.io/istio/pkg/workloadapi"
 )
 
 // The aggregate controller does not implement serviceregistry.Instance since it may be comprised of various
@@ -149,6 +150,37 @@ func (c *Controller) PoliciesForProxy(proxy *model.Proxy, requested sets.Set[mod
 		res = append(res, p.PoliciesForProxy(proxy, requested)...)
 	}
 	return res
+}
+
+func (c *Controller) WorkloadExtensionsForProxy(
+	proxy *model.Proxy,
+	workload *workloadapi.Workload,
+) []*workloadapi.Extension {
+	if !features.EnableAmbient || workload == nil {
+		return nil
+	}
+	var result []*workloadapi.Extension
+	seen := sets.New[string]()
+	for _, registry := range c.GetRegistries() {
+		if registry.Cluster() != c.configClusterID && registry.Provider() == provider.Kubernetes {
+			continue
+		}
+		instance := registry
+		if entry, ok := registry.(*registryEntry); ok {
+			instance = entry.Instance
+		}
+		discovery, ok := instance.(model.WorkloadExtensionDiscovery)
+		if !ok {
+			continue
+		}
+		for _, extension := range discovery.WorkloadExtensionsForProxy(proxy, workload) {
+			if extension == nil || seen.InsertContains(extension.GetName()) {
+				continue
+			}
+			result = append(result, extension)
+		}
+	}
+	return result
 }
 
 func (c *Controller) AgentioResourcesForProxy(

@@ -112,8 +112,11 @@ func (e AgentioResourceGenerator) GenerateDeltas(
 
 	var updated sets.Set[model.ConfigKey]
 	expected := sets.New[string]()
-	if req.Forced {
-		// Full update, expect everything the proxy currently holds.
+	if req.IsRequest() {
+		// Subscription requests need a complete current snapshot and stale
+		// resource cleanup. An unrelated forced push is not a request: sending a
+		// full snapshot for it duplicates every policy immediately after cold
+		// start and amplifies large stores without changing their contents.
 		expected.Merge(w.ResourceNames)
 	} else {
 		updated = model.ConfigsOfKind(req.ConfigsUpdated, e.Descriptor.ConfigKind)

@@ -68,11 +68,13 @@ type Index interface {
 	HasSynced() bool
 	model.AmbientIndexes
 	model.AgentioResourceDiscovery
+	model.WorkloadExtensionDiscovery
 }
 
 var (
-	_ Index                          = &index{}
-	_ model.AgentioResourceDiscovery = &index{}
+	_ Index                            = &index{}
+	_ model.AgentioResourceDiscovery   = &index{}
+	_ model.WorkloadExtensionDiscovery = &index{}
 )
 
 type NamespaceHostname struct {

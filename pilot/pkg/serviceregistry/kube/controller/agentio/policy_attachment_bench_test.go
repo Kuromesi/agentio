@@ -110,7 +110,7 @@ func benchmarkOldPolicyRefs(
 		krt.FilterIndex(policiesByNamespace, workloadNamespace), selectorFilter)
 	if workloadNamespace != "" {
 		matched = append(matched, krt.Fetch(ctx, policies,
-			krt.FilterIndex(policiesByNamespace, ""), selectorFilter)...)
+			krt.FilterIndex(policiesByNamespace, globalPolicyAttachmentIndexKey), selectorFilter)...)
 	}
 
 	byType := make(map[string][]PolicyRef)
@@ -191,6 +191,9 @@ func BenchmarkWorkloadPolicyReferencesRulesOnlyUpdate(b *testing.B) {
 				recomputes *atomic.Int64,
 			) krt.Collection[WorkloadPolicyReferences] {
 				byNamespace := krt.NewIndex(policySource, "benchmarkBindablePoliciesByNamespace", func(policy BindablePolicy) []string {
+					if policy.Namespace == "" {
+						return []string{globalPolicyAttachmentIndexKey}
+					}
 					return []string{policy.Namespace}
 				})
 				return krt.NewManyCollection(workloadSource,
@@ -209,6 +212,9 @@ func BenchmarkWorkloadPolicyReferencesRulesOnlyUpdate(b *testing.B) {
 			) krt.Collection[WorkloadPolicyReferences] {
 				attachments := newPolicyAttachmentsCollection(policySource, opts)
 				byNamespace := krt.NewIndex(attachments, "benchmarkPolicyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
+					if policy.Namespace == "" {
+						return []string{globalPolicyAttachmentIndexKey}
+					}
 					return []string{policy.Namespace}
 				})
 				productionTransform := workloadPolicyReferencesTransformation(attachments, byNamespace)
@@ -307,6 +313,9 @@ func BenchmarkWorkloadPolicyReferencesCreateStorm(b *testing.B) {
 			policySource := krt.JoinCollection([]krt.Collection[BindablePolicy]{rawPolicySource}, policyOpts...)
 			attachments := newPolicyAttachmentsCollection(policySource, opts)
 			byNamespace := krt.NewIndex(attachments, "benchmarkPolicyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
+				if policy.Namespace == "" {
+					return []string{globalPolicyAttachmentIndexKey}
+				}
 				return []string{policy.Namespace}
 			})
 			productionTransform := workloadPolicyReferencesTransformation(attachments, byNamespace)

@@ -957,6 +957,13 @@ type AmbientIndexes interface {
 	ServiceInfo(key string) *ServiceInfo
 }
 
+// WorkloadExtensionDiscovery is an optional registry capability for attaching
+// proxy-specific extensions while serializing a Workload resource.
+// Implementations must not mutate the cached Workload passed by the caller.
+type WorkloadExtensionDiscovery interface {
+	WorkloadExtensionsForProxy(proxy *Proxy, workload *workloadapi.Workload) []*workloadapi.Extension
+}
+
 // WaypointKey is a multi-address extension of NetworkAddress which is commonly used for lookups in AmbientIndex
 // We likely need to consider alternative keying options internally such as hostname as we look to expand beyond istio-waypoint
 // This extension can ideally support that type of lookup in the interface without introducing scope creep into things

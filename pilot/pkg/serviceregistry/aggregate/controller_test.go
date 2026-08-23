@@ -35,6 +35,7 @@ import (
 	istiotest "istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/retry"
 	"istio.io/istio/pkg/util/sets"
+	"istio.io/istio/pkg/workloadapi"
 )
 
 type mockMeshConfigHolder struct {
@@ -43,11 +44,14 @@ type mockMeshConfigHolder struct {
 
 type agentioResourceRegistry struct {
 	serviceregistry.Instance
-	resources    []model.AgentioResource
-	calls        int
-	gotProxy     *model.Proxy
-	gotType      string
-	gotRequested sets.Set[model.ConfigKey]
+	resources     []model.AgentioResource
+	extensions    []*workloadapi.Extension
+	calls         int
+	workloadCalls int
+	gotProxy      *model.Proxy
+	gotWorkload   *workloadapi.Workload
+	gotType       string
+	gotRequested  sets.Set[model.ConfigKey]
 }
 
 func (r *agentioResourceRegistry) AgentioResourcesForProxy(
@@ -60,6 +64,16 @@ func (r *agentioResourceRegistry) AgentioResourcesForProxy(
 	r.gotType = typeURL
 	r.gotRequested = requested
 	return r.resources
+}
+
+func (r *agentioResourceRegistry) WorkloadExtensionsForProxy(
+	proxy *model.Proxy,
+	workload *workloadapi.Workload,
+) []*workloadapi.Extension {
+	r.workloadCalls++
+	r.gotProxy = proxy
+	r.gotWorkload = workload
+	return r.extensions
 }
 
 var _ model.AgentioResourceDiscovery = &agentioResourceRegistry{}
@@ -455,6 +469,62 @@ func TestAgentioResourcesForProxy(t *testing.T) {
 		}
 		if reflect.ValueOf(registry.gotRequested).Pointer() != reflect.ValueOf(requested).Pointer() {
 			t.Errorf("registry %s got a different requested set", registry.Provider())
+		}
+	}
+}
+
+func TestWorkloadExtensionsForProxy(t *testing.T) {
+	istiotest.SetForTest(t, &features.EnableAmbient, true)
+
+	proxy := &model.Proxy{}
+	workload := &workloadapi.Workload{Uid: "cluster/network/default/workload"}
+	local := &agentioResourceRegistry{
+		Instance: serviceregistry.Simple{
+			ProviderID:          provider.Kubernetes,
+			ClusterID:           "config-cluster",
+			DiscoveryController: memory.NewServiceDiscovery(),
+		},
+		extensions: []*workloadapi.Extension{{Name: "sni-traffic-policy"}},
+	}
+	remote := &agentioResourceRegistry{
+		Instance: serviceregistry.Simple{
+			ProviderID:          provider.Kubernetes,
+			ClusterID:           "remote-cluster",
+			DiscoveryController: memory.NewServiceDiscovery(),
+		},
+		extensions: []*workloadapi.Extension{{Name: "remote-policy"}},
+	}
+	external := &agentioResourceRegistry{
+		Instance: serviceregistry.Simple{
+			ProviderID:          provider.External,
+			ClusterID:           "remote-cluster",
+			DiscoveryController: memory.NewServiceDiscovery(),
+		},
+		extensions: []*workloadapi.Extension{
+			{Name: "sni-traffic-policy"},
+			{Name: "other-policy"},
+		},
+	}
+
+	controller := NewController(Options{ConfigClusterID: "config-cluster"})
+	controller.AddRegistry(local)
+	controller.AddRegistry(remote)
+	controller.AddRegistry(external)
+
+	got := controller.WorkloadExtensionsForProxy(proxy, workload)
+	want := []*workloadapi.Extension{{Name: "sni-traffic-policy"}, {Name: "other-policy"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got extensions %v, want %v", got, want)
+	}
+	if remote.workloadCalls != 0 {
+		t.Errorf("remote Kubernetes registry calls = %d, want 0", remote.workloadCalls)
+	}
+	for _, registry := range []*agentioResourceRegistry{local, external} {
+		if registry.workloadCalls != 1 {
+			t.Errorf("registry %s calls = %d, want 1", registry.Provider(), registry.workloadCalls)
+		}
+		if registry.gotProxy != proxy || registry.gotWorkload != workload {
+			t.Errorf("registry %s received different proxy or workload", registry.Provider())
 		}
 	}
 }

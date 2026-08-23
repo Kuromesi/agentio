@@ -35,10 +35,6 @@ type SandboxIndex interface {
 	AddressesForSandbox(proxy *model.Proxy) sets.String
 }
 
-type workloadExtensionProvider interface {
-	WorkloadExtensionsForProxy(proxy *model.Proxy, workload *workloadapi.Workload) []*workloadapi.Extension
-}
-
 var (
 	_ model.XdsResourceGenerator      = &WorkloadGenerator{}
 	_ model.XdsDeltaResourceGenerator = &WorkloadGenerator{}
@@ -105,11 +101,12 @@ func (e WorkloadGenerator) withWorkloadExtensionsForProxy(
 	if typeURL != v3.WorkloadType {
 		return addr
 	}
-	provider, ok := e.Server.Env.ServiceDiscovery.(workloadExtensionProvider)
+	provider, ok := e.Server.Env.ServiceDiscovery.(model.WorkloadExtensionDiscovery)
 	if !ok {
 		return addr
 	}
-	return withWorkloadExtensions(addr, provider.WorkloadExtensionsForProxy(proxy, addr.GetWorkload()))
+	return withWorkloadExtensions(addr,
+		provider.WorkloadExtensionsForProxy(proxy, addr.GetWorkload()))
 }
 
 func withWorkloadExtensions(addr model.AddressInfo, additional []*workloadapi.Extension) model.AddressInfo {

@@ -101,8 +101,13 @@ func agentioResourceGeneratorForType(
 	return AgentioResourceGenerator{}
 }
 
-func newSniPolicyPush(forced bool, updated sets.Set[model.ConfigKey]) *model.PushRequest {
-	return &model.PushRequest{Push: model.NewPushContext(), Forced: forced, ConfigsUpdated: updated}
+func newSniPolicyPush(request bool, updated sets.Set[model.ConfigKey]) *model.PushRequest {
+	req := &model.PushRequest{Push: model.NewPushContext(), ConfigsUpdated: updated}
+	if request {
+		req.Forced = true
+		req.Reason = model.NewReasonStats(model.ProxyRequest)
+	}
+	return req
 }
 
 func testPolicy(namespace, name string) model.AgentioResource {
@@ -157,6 +162,23 @@ func TestSniPolicyForcedStaleResourceCleanup(t *testing.T) {
 	assert.Equal(t, usedDelta, true)
 	assert.Equal(t, names(resources), []string{"ns-live/allow"})
 	assert.Equal(t, removed, []string{"ns-a/removed", "ns-z/removed"})
+}
+
+func TestSniPolicySkipsUnrelatedForcedPush(t *testing.T) {
+	test.SetForTest(t, &features.EnableSniTrafficPolicy, true)
+	stub := newSniPolicyStubDiscovery([]model.AgentioResource{testPolicy("ns-live", "allow")})
+	gen := agentioResourceGeneratorForType(t, newSniPolicyServer(t, stub), v3.SniTrafficPolicyType)
+
+	resources, removed, _, usedDelta, err := gen.GenerateDeltas(
+		&model.Proxy{ID: "proxy"},
+		&model.PushRequest{Push: model.NewPushContext(), Forced: true},
+		&model.WatchedResource{TypeUrl: v3.SniTrafficPolicyType, ResourceNames: sets.New("ns-live/allow")})
+
+	assert.NoError(t, err)
+	assert.Equal(t, usedDelta, false)
+	assert.Equal(t, resources, nil)
+	assert.Equal(t, removed, nil)
+	assert.Equal(t, stub.calls[v3.SniTrafficPolicyType], 0)
 }
 
 func TestSniPolicyDropsInvalidResources(t *testing.T) {
