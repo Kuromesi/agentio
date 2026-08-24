@@ -9,6 +9,6 @@
   {
     "_comment": "Immutable digest of the multi-architecture proxy image.",
     "name": "PROXY_IMAGE_DIGEST",
-    "digest": "sha256:079a0411eca7ea6591770043ce258694796ee49bd0202c25ee51b963f38ae64d"
+    "digest": "sha256:261958bc3728e0f94e07355a161310d19df2c93e8fd598f3e82888e856758830"
   }
 ]
