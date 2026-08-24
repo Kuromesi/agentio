@@ -30,13 +30,15 @@ import (
 	"istio.io/istio/pkg/maps"
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
+	"istio.io/istio/pkg/workloadapi"
 )
 
 // The aggregate controller does not implement serviceregistry.Instance since it may be comprised of various
 // providers and clusters.
 var (
-	_ model.ServiceDiscovery    = &Controller{}
-	_ model.AggregateController = &Controller{}
+	_ model.ServiceDiscovery         = &Controller{}
+	_ model.AggregateController      = &Controller{}
+	_ model.AgentioResourceDiscovery = &Controller{}
 )
 
 // Controller aggregates data across different registries and monitors for changes
@@ -150,32 +152,61 @@ func (c *Controller) PoliciesForProxy(proxy *model.Proxy, requested sets.Set[mod
 	return res
 }
 
-func (c *Controller) WorkloadConfigs(requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	var res []model.WorkloadConfig
-	if !features.EnableAmbient {
-		return res
+func (c *Controller) WorkloadExtensionsForProxy(
+	proxy *model.Proxy,
+	workload *workloadapi.Workload,
+) []*workloadapi.Extension {
+	if !features.EnableAmbient || workload == nil {
+		return nil
 	}
-	for _, p := range c.GetRegistries() {
-		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+	var result []*workloadapi.Extension
+	seen := sets.New[string]()
+	for _, registry := range c.GetRegistries() {
+		if registry.Cluster() != c.configClusterID && registry.Provider() == provider.Kubernetes {
 			continue
 		}
-		res = append(res, p.WorkloadConfigs(requested)...)
+		instance := registry
+		if entry, ok := registry.(*registryEntry); ok {
+			instance = entry.Instance
+		}
+		discovery, ok := instance.(model.WorkloadExtensionDiscovery)
+		if !ok {
+			continue
+		}
+		for _, extension := range discovery.WorkloadExtensionsForProxy(proxy, workload) {
+			if extension == nil || seen.InsertContains(extension.GetName()) {
+				continue
+			}
+			result = append(result, extension)
+		}
 	}
-	return res
+	return result
 }
 
-func (c *Controller) WorkloadConfigsForProxy(proxy *model.Proxy, requested sets.Set[model.ConfigKey]) []model.WorkloadConfig {
-	var res []model.WorkloadConfig
+func (c *Controller) AgentioResourcesForProxy(
+	proxy *model.Proxy,
+	typeURL string,
+	requested sets.Set[model.ConfigKey],
+) []model.AgentioResource {
 	if !features.EnableAmbient {
-		return res
+		return nil
 	}
-	for _, p := range c.GetRegistries() {
-		if p.Cluster() != c.configClusterID && p.Provider() == provider.Kubernetes {
+	var resources []model.AgentioResource
+	for _, registry := range c.GetRegistries() {
+		if registry.Cluster() != c.configClusterID && registry.Provider() == provider.Kubernetes {
 			continue
 		}
-		res = append(res, p.WorkloadConfigsForProxy(proxy, requested)...)
+		instance := registry
+		if entry, ok := registry.(*registryEntry); ok {
+			instance = entry.Instance
+		}
+		discovery, ok := instance.(model.AgentioResourceDiscovery)
+		if !ok {
+			continue
+		}
+		resources = append(resources, discovery.AgentioResourcesForProxy(proxy, typeURL, requested)...)
 	}
-	return res
+	return resources
 }
 
 func (c *Controller) AddressInformation(addresses sets.String) ([]model.AddressInfo, sets.String) {

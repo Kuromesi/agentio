@@ -16,7 +16,7 @@ func (k Kind) String() string {
 		return "{{.Resource.Identifier}}"
 {{- end }}
 	default:
-		return "Unknown"
+		return extendedKindName(k)
 	}
 }
 
@@ -27,7 +27,7 @@ func FromString(s string) Kind {
 		return {{.Resource.Identifier}}
 {{- end }}
 	default:
-		return Unknown
+		return kindFromExtendedName(s)
 	}
 }
 

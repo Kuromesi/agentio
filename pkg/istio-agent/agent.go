@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -222,6 +223,11 @@ type AgentOptions struct {
 
 	// Enable metadata discovery bootstrap extension
 	MetadataDiscovery *bool
+	// Policy runtime capabilities supported by the proxy binary.
+	PolicyRuntimeCapabilities []string
+	// Grace period for an already-ready workload to retain its last-known-good
+	// policy snapshot while policy and Workload-reference deletion deltas reconcile.
+	PolicyStoreReferenceResolutionGracePeriod time.Duration
 
 	SDSFactory func(options *security.Options, workloadSecretCache security.SecretManager, pkpConf *mesh.PrivateKeyProvider) SDSService
 
@@ -288,6 +294,7 @@ func (a *Agent) generateNodeMetadata() (*model.Node, error) {
 		ExitOnZeroActiveConnections: a.cfg.ExitOnZeroActiveConnections,
 		XDSRootCert:                 a.cfg.XDSRootCerts,
 		MetadataDiscovery:           a.cfg.MetadataDiscovery,
+		PolicyRuntimeCapabilities:   a.cfg.PolicyRuntimeCapabilities,
 		EnvoySkipDeprecatedLogs:     a.cfg.EnvoySkipDeprecatedLogs,
 		WorkloadIdentitySocketFile:  a.cfg.WorkloadIdentitySocketFile,
 	})
@@ -313,6 +320,7 @@ func (a *Agent) initializeEnvoyAgent(_ context.Context) error {
 			Node:             node,
 			CompliancePolicy: common_features.CompliancePolicy,
 			LogAsJSON:        a.envoyOpts.LogAsJSON,
+			PolicyStoreReferenceResolutionGracePeriod: a.cfg.PolicyStoreReferenceResolutionGracePeriod,
 		}).CreateFile()
 		if err != nil {
 			return fmt.Errorf("failed to generate bootstrap config: %v", err)

@@ -35,6 +35,15 @@ var (
 
 	ValidateTlsTerminatedSNI = env.Register("VALIDATE_TLS_TERMINATED_SNI", true, "Validate if sni and host header is consistent after tls terminated.").Get()
 
+	EnableSniTrafficPolicy = env.Register("ENABLE_SNI_TRAFFIC_POLICY", false,
+		"If enabled, the agentio controller translates matching SecurityProfile resources into SNI traffic policies "+
+			"and attaches their references to Workload discovery resources for enforcement in sandbox egress gateways.").Get()
+
+	SniTrafficPolicyFailureModeAllow = env.Register("SNI_TRAFFIC_POLICY_FAILURE_MODE_ALLOW", false,
+		"Default value for the SNI policy matcher's failure_mode_allow runtime flag. "+
+			"When enabled, policy-resolution failures use the passthrough chain instead of failing closed. "+
+			"Explicit deny decisions are unaffected.").Get()
+
 	MeshConfigMapName = env.Register("MESH_CONFIG_MAP_NAME", "istio",
 		"Name of the ConfigMap (without revision suffix) that holds the mesh configuration. "+
 			"When a non-default revision is used, the suffix '-<revision>' is still appended to this name.").Get()

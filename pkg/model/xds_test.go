@@ -23,3 +23,37 @@ func TestWorkloadConfigType(t *testing.T) {
 		t.Fatalf("unexpected WCDS resource type: got %q, want %q", WorkloadConfigType, want)
 	}
 }
+
+func TestSniTrafficPolicyType(t *testing.T) {
+	const want = "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"
+	if SniTrafficPolicyType != want {
+		t.Fatalf("unexpected STPDS resource type: got %q, want %q", SniTrafficPolicyType, want)
+	}
+}
+
+func TestPolicyTypeShortAndMetricTypes(t *testing.T) {
+	cases := []struct {
+		typeURL    string
+		shortType  string
+		metricType string
+	}{
+		{typeURL: SniTrafficPolicyType, shortType: "STPDS", metricType: "stpds"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.shortType, func(t *testing.T) {
+			if got := GetShortType(tc.typeURL); got != tc.shortType {
+				t.Errorf("unexpected short type: got %q, want %q", got, tc.shortType)
+			}
+			if got := GetMetricType(tc.typeURL); got != tc.metricType {
+				t.Errorf("unexpected metric type: got %q, want %q", got, tc.metricType)
+			}
+			if got := GetResourceType(tc.shortType); got != tc.typeURL {
+				t.Errorf("unexpected resource type: got %q, want %q", got, tc.typeURL)
+			}
+			if got := GetResourceType(tc.metricType); got != tc.typeURL {
+				t.Errorf("unexpected resource type for lowercase short form: got %q, want %q", got, tc.typeURL)
+			}
+		})
+	}
+}

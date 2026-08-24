@@ -180,7 +180,7 @@ func (s *SecretGen) generateResources(proxy *model.Proxy, req *model.PushRequest
 	// Filter down to resources we can access. We do not return an error if they attempt to access a Secret
 	// they cannot; instead we just exclude it. This ensures that a single bad reference does not break the whole
 	// SDS flow. The pilotSDSCertificateErrors metric and logs handle visibility into invalid references.
-	resources := s.filterAuthorizedResources(s.parseResources(w.ResourceNames.UnsortedList(), proxy), proxy, req.Push, proxyClusterSecrets)
+	resources := s.filterAuthorizedResources(s.parseResources(w.ResourceNames.UnsortedList(), proxy), proxy, proxyClusterSecrets)
 
 	// Eviction push: the on-demand reaper just evicted entries. Read the explicit
 	// evicted set from the controller once; any OnDemand resource in that set
@@ -340,7 +340,7 @@ func recordInvalidCertificate(namespace string, name string, resourceName string
 }
 
 // filterAuthorizedResources takes a list of SecretResource and filters out resources that proxy cannot access
-func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, push *model.PushContext, secrets credscontroller.Controller) []SecretResource {
+func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy *model.Proxy, secrets credscontroller.Controller) []SecretResource {
 	var authzResult *bool
 	var authzError error
 	// isAuthorized is a small wrapper around credscontroller.Authorize so we only call it once instead of each time in the loop
@@ -361,7 +361,7 @@ func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy 
 	// isOnDemandAuthorized memoizes the SA/NS check against the agentio config —
 	// the OnDemand case is hit once per resource but the SA/NS answer is the
 	// same for the whole proxy, so we avoid re-walking egressGateways per
-	// resource. Domain-level scoping is handled separately below.
+	// resource.
 	var onDemandAuthzResult *bool
 	var onDemandAuthzError error
 	isOnDemandAuthorized := func() bool {
@@ -420,18 +420,19 @@ func (s *SecretGen) filterAuthorizedResources(resources []SecretResource, proxy 
 				deniedResources = append(deniedResources, r.Name)
 			}
 		case credentials.OnDemandCertificateType:
-			// On-demand certs are minted by the sandbox CA for any requested SNI; only the
-			// sandbox egress waypoint should be able to request them, AND only for domains
-			// its own EgressGateway has whitelisted via tls_termination.include_hosts.
-			// Two layers of authz here:
-			//   1. isOnDemandAuthorized: the proxy's verified SA/NS must match a configured
-			//      EgressGateway — defense against a non-egress workload requesting certs.
-			//   2. IsAllowedOnDemandDomain: the requested SNI must be whitelisted for that
-			//      proxy's gateway — domain-level scoping.
+			// On-demand certs are minted by the sandbox CA for any requested SNI, so
+			// authorization is identity-based: the proxy's verified SA/NS must match a
+			// configured EgressGateway (isOnDemandAuthorized) — defense against a
+			// non-egress workload requesting certs. Domain-level scoping was
+			// deliberately dropped: gateways may be multi-tenant and per-gateway SNI
+			// allowlists are managed by the SNI traffic policy, not cert issuance.
+			// Requested names must still be valid DNS domains — parseResources only
+			// classifies a name as on-demand when IsValidOnDemandDomain accepts it,
+			// which keeps the no-SNI sentinel ("_no_sni_") fail-closed.
 			// A denied resource is dropped from retained → GenerateDeltas surfaces it as
 			// removed_resources so envoy fails the handshake fast instead of waiting on
 			// TransportSocketConnectTimeout.
-			if isOnDemandAuthorized() && agentio.IsAllowedOnDemandDomain(proxy, push, r.Name) {
+			if isOnDemandAuthorized() {
 				allowedResources = append(allowedResources, r)
 			} else {
 				deniedResources = append(deniedResources, r.Name)

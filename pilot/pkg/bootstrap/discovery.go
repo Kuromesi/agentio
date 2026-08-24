@@ -61,7 +61,15 @@ func InitGenerators(
 	generators[v3.AddressType] = workloadGen
 	generators[v3.WorkloadType] = workloadGen
 	generators[v3.WorkloadAuthorizationType] = &xds.WorkloadRBACGenerator{Server: s}
-	generators[v3.WorkloadConfigType] = &xds.WorkloadConfigGenerator{Server: s}
+	// Registered unconditionally: each descriptor controls its own Enabled and
+	// Authorize behavior. The per-descriptor Enabled gate runs inside the generator
+	// so disabled subscriptions get a well-defined empty response instead of the
+	// unknown-type path.
+	for _, descriptor := range xds.AgentioResourceDescriptors() {
+		generators[descriptor.TypeURL] = &xds.AgentioResourceGenerator{
+			Server: s, Descriptor: descriptor,
+		}
+	}
 
 	generators["grpc"] = &grpcgen.GrpcConfigGenerator{}
 	generators["grpc/"+v3.EndpointType] = edsGen

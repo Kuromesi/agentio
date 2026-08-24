@@ -17,28 +17,19 @@ package xds
 
 import (
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"google.golang.org/protobuf/proto"
 
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/util/sets"
+	"istio.io/istio/pkg/workloadapi"
 )
 
 type WorkloadGenerator struct {
 	Server *DiscoveryServer
 }
-
-const (
-	ZtunnelProxyMode = "ZTUNNEL_PROXY_MODE"
-)
-
-// func should(proxy *model.Proxy) bool {
-// 	if !proxy.IsZTunnel() {
-// 		return false
-// 	}
-
-// }
 
 type SandboxIndex interface {
 	AddressesForSandbox(proxy *model.Proxy) sets.String
@@ -82,6 +73,7 @@ func (e WorkloadGenerator) GenerateDeltas(
 	have := sets.New[string]()
 	resources := make(model.Resources, 0, len(addrs))
 	for _, addr := range addrs {
+		addr = e.withWorkloadExtensionsForProxy(proxy, w.TypeUrl, addr)
 		resources = appendAddress(addr, w.TypeUrl, nil, have, resources)
 	}
 
@@ -99,6 +91,33 @@ func (e WorkloadGenerator) GenerateDeltas(
 	// `req.Delta.Subscribed`.
 
 	return resources, removed.UnsortedList(), model.XdsLogDetails{}, true, nil
+}
+
+func (e WorkloadGenerator) withWorkloadExtensionsForProxy(
+	proxy *model.Proxy,
+	typeURL string,
+	addr model.AddressInfo,
+) model.AddressInfo {
+	if typeURL != v3.WorkloadType {
+		return addr
+	}
+	provider, ok := e.Server.Env.ServiceDiscovery.(model.WorkloadExtensionDiscovery)
+	if !ok {
+		return addr
+	}
+	return withWorkloadExtensions(addr,
+		provider.WorkloadExtensionsForProxy(proxy, addr.GetWorkload()))
+}
+
+func withWorkloadExtensions(addr model.AddressInfo, additional []*workloadapi.Extension) model.AddressInfo {
+	if len(additional) == 0 || addr.GetWorkload() == nil {
+		return addr
+	}
+	workload := proto.Clone(addr.GetWorkload()).(*workloadapi.Workload)
+	workload.Extensions = append(workload.Extensions, additional...)
+	return model.AddressInfo{Address: &workloadapi.Address{
+		Type: &workloadapi.Address_Workload{Workload: workload},
+	}}
 }
 
 func appendAddress(addr model.AddressInfo, requestedType string, aliases []string, have sets.Set[string], resources model.Resources) model.Resources {
@@ -177,6 +196,7 @@ func (e WorkloadGenerator) generateDeltasOndemand(
 	have := sets.New[string]()
 	resources := make(model.Resources, 0, len(addrs))
 	for _, addr := range addrs {
+		addr = e.withWorkloadExtensionsForProxy(proxy, w.TypeUrl, addr)
 		aliases := addr.Aliases()
 		removed.DeleteAll(aliases...)
 		resources = appendAddress(addr, w.TypeUrl, aliases, have, resources)
@@ -241,51 +261,4 @@ func (e WorkloadRBACGenerator) Generate(proxy *model.Proxy, w *model.WatchedReso
 var (
 	_ model.XdsResourceGenerator      = &WorkloadRBACGenerator{}
 	_ model.XdsDeltaResourceGenerator = &WorkloadRBACGenerator{}
-)
-
-type WorkloadConfigGenerator struct {
-	Server *DiscoveryServer
-}
-
-func (e WorkloadConfigGenerator) GenerateDeltas(
-	proxy *model.Proxy,
-	req *model.PushRequest,
-	w *model.WatchedResource,
-) (model.Resources, model.DeletedResources, model.XdsLogDetails, bool, error) {
-	var updatedPolicies sets.Set[model.ConfigKey]
-	expected := sets.New[string]()
-	if req.Forced {
-		expected.Merge(w.ResourceNames)
-	} else {
-		updatedPolicies = model.ConfigsOfKind(req.ConfigsUpdated, kind.WorkloadConfig)
-		if len(updatedPolicies) == 0 {
-			return nil, nil, model.DefaultXdsLogDetails, false, nil
-		}
-		for k := range updatedPolicies {
-			expected.Insert(k.Namespace + "/" + k.Name)
-		}
-	}
-
-	resources := make(model.Resources, 0)
-	policies := e.Server.Env.ServiceDiscovery.WorkloadConfigsForProxy(proxy, updatedPolicies)
-	for _, p := range policies {
-		n := p.ResourceName()
-		expected.Delete(n)
-		resources = append(resources, &discovery.Resource{
-			Name:     n,
-			Resource: protoconv.MessageToAny(p.Config),
-		})
-	}
-
-	return resources, sets.SortedList(expected), model.XdsLogDetails{}, true, nil
-}
-
-func (e WorkloadConfigGenerator) Generate(proxy *model.Proxy, w *model.WatchedResource, req *model.PushRequest) (model.Resources, model.XdsLogDetails, error) {
-	resources, _, details, _, err := e.GenerateDeltas(proxy, req, w)
-	return resources, details, err
-}
-
-var (
-	_ model.XdsResourceGenerator      = &WorkloadConfigGenerator{}
-	_ model.XdsDeltaResourceGenerator = &WorkloadConfigGenerator{}
 )

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	typedstruct "github.com/cncf/xds/go/udpa/type/v1"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -26,11 +27,14 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	networking "istio.io/api/networking/v1alpha3"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/networking/core/match"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/config/xds"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/spiffe"
 	"istio.io/istio/pkg/test/util/assert"
 	"istio.io/istio/pkg/wellknown"
@@ -44,7 +48,9 @@ func sandboxEgressNode() *model.Proxy {
 		ID:              "egress-gw-0.istio-system",
 		ConfigNamespace: "istio-system",
 		Metadata: &model.NodeMetadata{
-			Namespace: "istio-system",
+			Namespace:                 "istio-system",
+			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
+			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
 		},
 		VerifiedIdentity: &spiffe.Identity{
 			ServiceAccount: "egress-gw",
@@ -175,6 +181,171 @@ func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestinat
 	}
 }
 
+func TestBuildSandboxSNITrafficPolicyMatcherPreservesExcludeHosts(t *testing.T) {
+	previousFailureModeAllow := features.SniTrafficPolicyFailureModeAllow
+	features.SniTrafficPolicyFailureModeAllow = false
+	t.Cleanup(func() { features.SniTrafficPolicyFailureModeAllow = previousFailureModeAllow })
+
+	const excluded = "*.legacy.example.com"
+	result := buildSandboxSNITrafficPolicyMatcher([]string{excluded}, buildSandboxProtocolMatcher())
+
+	sniMatcher := &matcher.ServerNameMatcher{}
+	typedConfig := result.GetMatcher().GetMatcherTree().GetCustomMatch().GetTypedConfig()
+	if typedConfig == nil {
+		t.Fatal("SNI policy matcher must check legacy exclude_hosts first")
+	}
+	if err := typedConfig.UnmarshalTo(sniMatcher); err != nil {
+		t.Fatalf("decode SNI matcher: %v", err)
+	}
+	domainMatchers := sniMatcher.GetDomainMatchers()
+	if got, want := len(domainMatchers), 1; got != want {
+		t.Fatalf("exclude host matchers = %d, want %d", got, want)
+	}
+	assert.Equal(t, domainMatchers[0].GetDomains(), []string{excluded})
+	if got, want := domainMatchers[0].GetOnMatch().GetAction().GetName(), forwardTcpFilterChain; got != want {
+		t.Fatalf("exclude_hosts route = %q, want %q", got, want)
+	}
+
+	transportMatcher := result.GetMatcher().GetOnNoMatch().GetMatcher()
+	tlsRoute := transportMatcher.GetMatcherTree().GetExactMatchMap().GetMap()["tls"]
+	policyMatcher := tlsRoute.GetMatcher()
+	if policyMatcher == nil {
+		t.Fatal("non-excluded TLS traffic must use the SNI policy matcher")
+	}
+	if got, want := policyMatcher.GetMatcherTree().GetCustomMatch().GetName(),
+		"kruise.matching.custom_matchers.sni_traffic_policy"; got != want {
+		t.Fatalf("SNI traffic policy matcher name = %q, want %q", got, want)
+	}
+	if got, want := policyMatcher.GetOnNoMatch().GetAction().GetName(), forwardTcpFilterChain; got != want {
+		t.Fatalf("SNI policy matcher on_no_match = %q, want passthrough chain %q for no-SNI connections", got, want)
+	}
+	policyConfig := &typedstruct.TypedStruct{}
+	if err := policyMatcher.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
+		t.Fatalf("decode SNI policy matcher: %v", err)
+	}
+	if got, want := policyConfig.GetTypeUrl(),
+		"type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniTrafficPolicyMatcher"; got != want {
+		t.Fatalf("SNI policy matcher type URL = %q, want %q", got, want)
+	}
+	for field, want := range map[string]string{
+		"on_tls_termination": tlsTerminateFilterChain,
+		"on_passthrough":     forwardTcpFilterChain,
+		"on_deny":            sniTrafficPolicyDenyFilterChain,
+	} {
+		action := policyConfig.GetValue().GetFields()[field].GetStructValue().GetFields()["action"].GetStructValue()
+		if got := action.GetFields()["name"].GetStringValue(); got != want {
+			t.Errorf("SNI policy matcher %s action = %q, want %q", field, got, want)
+		}
+	}
+	failureModeAllow := policyConfig.GetValue().GetFields()["failure_mode_allow"].GetStructValue().GetFields()
+	if got, want := failureModeAllow["runtime_key"].GetStringValue(),
+		"kruise.sni_traffic_policy.failure_mode_allow"; got != want {
+		t.Errorf("SNI policy matcher failure_mode_allow runtime key = %q, want %q", got, want)
+	}
+	defaultValue, found := failureModeAllow["default_value"]
+	if !found {
+		t.Fatal("SNI policy matcher failure_mode_allow must set default_value explicitly")
+	}
+	if defaultValue.GetBoolValue() {
+		t.Error("SNI policy matcher failure_mode_allow must default to false")
+	}
+}
+
+func TestSniTrafficPolicyMatcherFailureModeAllowDefault(t *testing.T) {
+	previous := features.SniTrafficPolicyFailureModeAllow
+	features.SniTrafficPolicyFailureModeAllow = true
+	t.Cleanup(func() { features.SniTrafficPolicyFailureModeAllow = previous })
+
+	result := match.NewSniTrafficPolicyMatcher(
+		tlsTerminateFilterChain, forwardTcpFilterChain, sniTrafficPolicyDenyFilterChain)
+	policyConfig := &typedstruct.TypedStruct{}
+	if err := result.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
+		t.Fatalf("decode SNI policy matcher: %v", err)
+	}
+	failureModeAllow := policyConfig.GetValue().GetFields()["failure_mode_allow"].GetStructValue().GetFields()
+	if !failureModeAllow["default_value"].GetBoolValue() {
+		t.Error("SNI policy matcher failure_mode_allow must use the control-plane default")
+	}
+}
+
+func TestSniTrafficPolicyFeatureAddsMatcherOutcomeChains(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+	chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+	if got, want := len(chains), 4; got != want {
+		t.Fatalf("feature-enabled catch-all chains = %d, want HTTP, TCP, TLS termination, and deny", got)
+	}
+	if got, want := chains[2].GetName(), tlsTerminateFilterChain; got != want {
+		t.Fatalf("TLS termination chain name = %q, want %q", got, want)
+	}
+	if got, want := chains[3].GetName(), "sni-traffic-policy-deny"; got != want {
+		t.Fatalf("deny chain name = %q, want %q", got, want)
+	}
+
+	listeners := sandboxListeners(lb)
+	if got, want := len(listeners), 1; got != want {
+		t.Fatalf("feature-enabled sandbox listeners = %d, want main-forward only", got)
+	}
+}
+
+func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+
+	tests := []struct {
+		name                string
+		workloadDiscovery   bool
+		runtimeCapabilities []string
+		wantEnabled         bool
+	}{
+		{
+			name:                "workload discovery and matcher capability",
+			workloadDiscovery:   true,
+			runtimeCapabilities: []string{"sni_traffic_policy"},
+			wantEnabled:         true,
+		},
+		{
+			name:                "matcher without policy store",
+			runtimeCapabilities: []string{"sni_traffic_policy"},
+		},
+		{
+			name:              "workload discovery without matcher",
+			workloadDiscovery: true,
+		},
+		{
+			name:                "unrelated policy matcher",
+			workloadDiscovery:   true,
+			runtimeCapabilities: []string{"type.googleapis.com/example.OtherPolicyMatcher"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cg := NewConfigGenTest(t, TestOptions{})
+			node := sandboxEgressNode()
+			node.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(tt.workloadDiscovery))
+			node.Metadata.PolicyRuntimeCapabilities = tt.runtimeCapabilities
+			lb := &ListenerBuilder{node: cg.SetupProxy(node), push: cg.PushContext()}
+			chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+			wantChains := 2
+			if tt.wantEnabled {
+				wantChains = 4
+			}
+			if got := len(chains); got != wantChains {
+				t.Fatalf("catch-all chains = %d, want %d", got, wantChains)
+			}
+		})
+	}
+}
+
 func TestBuildWaypointInboundHTTPRouteConfig_SandboxUnboundRespectsConfiguredCluster(t *testing.T) {
 	cg := NewConfigGenTest(t, TestOptions{})
 	lb := &ListenerBuilder{
@@ -224,7 +395,6 @@ func TestBuildWaypointInboundHTTPRouteConfig_SandboxServicePreservesServiceRoute
 // --- buildSandboxHTTPRouteConfig ---
 
 func TestBuildSandboxHTTPRouteConfig_NoOverrides(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 	connPool := makeConnPool()
@@ -237,7 +407,6 @@ func TestBuildSandboxHTTPRouteConfig_NoOverrides(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_WithOverrides(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 	connPool := makeConnPool(
@@ -261,7 +430,6 @@ func TestBuildSandboxHTTPRouteConfig_WithOverrides(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_EmptyHostsSkipped(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 	connPool := makeConnPool()
@@ -279,7 +447,6 @@ func TestBuildSandboxHTTPRouteConfig_EmptyHostsSkipped(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_AppliesInboundEnvoyFilterPatches(t *testing.T) {
-
 	patchValue, err := xds.BuildXDSObjectFromStruct(
 		networking.EnvoyFilter_ROUTE_CONFIGURATION,
 		buildPatchStruct(`{"request_headers_to_remove":["x-sandbox-test"]}`),
@@ -314,7 +481,6 @@ func TestBuildSandboxHTTPRouteConfig_AppliesInboundEnvoyFilterPatches(t *testing
 // --- buildSandboxRoute ---
 
 func TestBuildSandboxRoute_NilSettings(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -324,7 +490,6 @@ func TestBuildSandboxRoute_NilSettings(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_WithTimeout(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -336,7 +501,6 @@ func TestBuildSandboxRoute_WithTimeout(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_WithRetry(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -355,7 +519,6 @@ func TestBuildSandboxRoute_WithRetry(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_RouteMatch(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -366,7 +529,6 @@ func TestBuildSandboxRoute_RouteMatch(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_ClusterMatchesChainConfig(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("tls_connect_originate")
 
@@ -380,7 +542,6 @@ func TestBuildSandboxRoute_ClusterMatchesChainConfig(t *testing.T) {
 // --- applySandboxStreamIdleTimeout ---
 
 func TestApplySandboxStreamIdleTimeout_Default(t *testing.T) {
-
 	lb := &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
@@ -402,7 +563,6 @@ func TestApplySandboxStreamIdleTimeout_Default(t *testing.T) {
 }
 
 func TestApplySandboxStreamIdleTimeout_Configured(t *testing.T) {
-
 	lb := &ListenerBuilder{
 		node: sandboxEgressNode(),
 		push: &model.PushContext{
@@ -427,7 +587,6 @@ func TestApplySandboxStreamIdleTimeout_Configured(t *testing.T) {
 }
 
 func TestApplySandboxStreamIdleTimeout_NonSandboxNoop(t *testing.T) {
-
 	lb := &ListenerBuilder{
 		node: nonSandboxNode(),
 		push: &model.PushContext{},
@@ -486,7 +645,6 @@ func TestApplySandboxTCPTimeouts_EmptyConnPool(t *testing.T) {
 // --- Error state / validation ---
 
 func TestBuildSandboxRoute_DecoratorNonEmpty(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 
 	for _, cluster := range []string{"passthrough", "encap", "tls_connect_originate"} {
@@ -502,7 +660,6 @@ func TestBuildSandboxRoute_DecoratorNonEmpty(t *testing.T) {
 }
 
 func TestBuildSandboxRoute_DecoratorNonEmptyWithSettings(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("encap")
 
@@ -516,7 +673,6 @@ func TestBuildSandboxRoute_DecoratorNonEmptyWithSettings(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_AllRoutesHaveValidDecorator(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("encap")
 	connPool := makeConnPool(
@@ -536,7 +692,6 @@ func TestBuildSandboxHTTPRouteConfig_AllRoutesHaveValidDecorator(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_ValidateClustersDisabled(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -548,7 +703,6 @@ func TestBuildSandboxHTTPRouteConfig_ValidateClustersDisabled(t *testing.T) {
 }
 
 func TestBuildSandboxHTTPRouteConfig_FallbackAlwaysPresent(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("passthrough")
 
@@ -610,7 +764,6 @@ func parseRateLimitFilter(f *hcm.HttpFilter) *localratelimit.LocalRateLimit {
 // --- buildSandboxConnectTerminateRateLimitFilter ---
 
 func TestRateLimit_NilWhenNotConfigured(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(nil)
 
 	f := buildSandboxConnectTerminateRateLimitFilter(lb)
@@ -619,7 +772,6 @@ func TestRateLimit_NilWhenNotConfigured(t *testing.T) {
 }
 
 func TestRateLimit_NilForNonSandbox(t *testing.T) {
-
 	lb := &ListenerBuilder{
 		node: nonSandboxNode(),
 		push: &model.PushContext{},
@@ -631,7 +783,6 @@ func TestRateLimit_NilForNonSandbox(t *testing.T) {
 }
 
 func TestRateLimit_GlobalBucketOnly(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens:     100,
@@ -655,7 +806,6 @@ func TestRateLimit_GlobalBucketOnly(t *testing.T) {
 }
 
 func TestRateLimit_PerDownstreamConnection(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens:     10,
@@ -671,7 +821,6 @@ func TestRateLimit_PerDownstreamConnection(t *testing.T) {
 }
 
 func TestRateLimit_WithDescriptors(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens:     100,
@@ -703,7 +852,6 @@ func TestRateLimit_WithDescriptors(t *testing.T) {
 }
 
 func TestRateLimit_MultipleDescriptorKeys(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		Descriptors: []*extensions.RateLimitDescriptor{
 			{
@@ -729,7 +877,6 @@ func TestRateLimit_MultipleDescriptorKeys(t *testing.T) {
 }
 
 func TestRateLimit_DescriptorWithoutCEL_NoAction(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		TokenBucket: &extensions.TokenBucket{
 			MaxTokens: 100, TokensPerFill: 100,
@@ -755,7 +902,6 @@ func TestRateLimit_DescriptorWithoutCEL_NoAction(t *testing.T) {
 }
 
 func TestRateLimit_CELExpression(t *testing.T) {
-
 	lb := sandboxLBWithRateLimit(&extensions.LocalRateLimitSettings{
 		Descriptors: []*extensions.RateLimitDescriptor{
 			{
@@ -811,7 +957,6 @@ func TestToEnvoyTokenBucket_ZeroTokensPerFill(t *testing.T) {
 // --- Full scenario ---
 
 func TestBuildSandboxHTTPRouteConfig_FullScenario(t *testing.T) {
-
 	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
 	cc := testInboundChainConfig("tls_connect_originate")
 

@@ -33,6 +33,7 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	agentioextensions "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/multicluster"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/ambient/statusqueue"
 	"istio.io/istio/pkg/activenotifier"
@@ -66,9 +67,15 @@ type Index interface {
 	Run(stop <-chan struct{})
 	HasSynced() bool
 	model.AmbientIndexes
+	model.AgentioResourceDiscovery
+	model.WorkloadExtensionDiscovery
 }
 
-var _ Index = &index{}
+var (
+	_ Index                            = &index{}
+	_ model.AgentioResourceDiscovery   = &index{}
+	_ model.WorkloadExtensionDiscovery = &index{}
+)
 
 type NamespaceHostname struct {
 	Namespace string
@@ -120,7 +127,6 @@ type index struct {
 	namespaces krt.Collection[model.NamespaceInfo]
 
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization]
-	workloadConfigs       krt.Collection[model.WorkloadConfig]
 
 	statusQueue *statusqueue.StatusQueue
 
@@ -143,6 +149,10 @@ type index struct {
 	builder                     Builder
 
 	agentioController *agentio.Controller
+	workloadConfigs   krt.Collection[model.WorkloadConfig]
+	// Both are nil unless features.EnableSniTrafficPolicy is set.
+	workloadPolicyReferences krt.Collection[agentio.WorkloadPolicyReferences]
+	bindablePolicies         krt.Collection[agentio.BindablePolicy]
 }
 
 type FeatureFlags struct {
@@ -280,7 +290,6 @@ func New(options Options) Index {
 	)...)
 
 	var sandboxConfig krt.Singleton[model.AgentioConfig]
-	var workloadConfigs krt.Collection[model.WorkloadConfig]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
 	if options.AgentioController != nil {
 		TrafficPolicyDerivedPolicies = options.AgentioController.BuildPolicyCollection(
@@ -292,7 +301,6 @@ func New(options Options) Index {
 			})
 		a.agentioController = options.AgentioController
 		sandboxConfig = a.agentioController.AgentioConfig()
-		workloadConfigs = a.agentioController.WorkloadConfigs()
 	}
 
 	a.builder = Builder{
@@ -583,12 +591,30 @@ func New(options Options) Index {
 	}
 	a.authorizationPolicies = AllPolicies
 
-	if workloadConfigs != nil {
-		a.workloadConfigs = workloadConfigs
-		workloadConfigs.RegisterBatch(PushXds(a.XDSUpdater,
-			func(i model.WorkloadConfig) model.ConfigKey {
-				return model.ConfigKey{Kind: kind.WorkloadConfig, Name: i.Name, Namespace: i.Namespace}
-			}), false)
+	if a.agentioController != nil {
+		workloadConfigs := a.agentioController.WorkloadConfigs()
+		if workloadConfigs != nil {
+			a.workloadConfigs = workloadConfigs
+			workloadConfigs.RegisterBatch(PushXds(a.XDSUpdater,
+				func(i model.WorkloadConfig) model.ConfigKey {
+					return i.ConfigKey()
+				}), false)
+		}
+
+		workloadPolicyReferences := a.agentioController.BuildWorkloadPolicyReferencesCollection(Workloads, opts)
+		if workloadPolicyReferences != nil {
+			a.workloadPolicyReferences = workloadPolicyReferences
+			workloadPolicyReferences.RegisterBatch(PushWorkloadPolicyReferencesXds(a.XDSUpdater), false)
+		}
+
+		bindablePolicies := a.agentioController.BindablePolicies()
+		if bindablePolicies != nil {
+			a.bindablePolicies = bindablePolicies
+			bindablePolicies.RegisterBatch(PushXds(a.XDSUpdater,
+				func(i agentio.BindablePolicy) model.ConfigKey {
+					return i.ConfigKey()
+				}), false)
+		}
 	}
 
 	return a
@@ -919,6 +945,24 @@ func (a *index) AddressInformationForProxy(
 	return res, sets.New(removed...)
 }
 
+// WorkloadExtensionsForProxy returns gateway-only extensions added while
+// serializing the direct Workload WDS resource. The globally cached Workload
+// and its pre-marshaled Address remain unchanged for ztunnel consumers.
+func (a *index) WorkloadExtensionsForProxy(
+	proxy *model.Proxy,
+	workload *workloadapi.Workload,
+) []*workloadapi.Extension {
+	if proxy == nil || workload == nil || a.workloadPolicyReferences == nil ||
+		!agentio.SupportsPolicyRuntime(proxy.Metadata) {
+		return nil
+	}
+	references := a.workloadPolicyReferences.GetKey(workload.GetUid())
+	if references == nil {
+		return nil
+	}
+	return agentio.PolicyReferenceExtensionsForProxy(proxy.Metadata, references.References)
+}
+
 func (a *index) ServicesForWaypoint(key model.WaypointKey) []model.ServiceInfo {
 	if key.IsNetworkGateway && features.EnableAmbientMultiNetwork {
 		// If this is a network gateway waypoint, we only return the global services
@@ -1074,7 +1118,22 @@ func (a *index) HasSynced() bool {
 		a.workloads.HasSynced() &&
 		a.waypoints.HasSynced() &&
 		a.authorizationPolicies.HasSynced() &&
-		a.networks.HasSynced()
+		a.networks.HasSynced() &&
+		collectionsSynced(a.bindablePolicies, a.workloadPolicyReferences)
+}
+
+// collectionsSynced treats optional collections as already synced. Agentio's
+// policy collections are nil when the feature is disabled, but when present
+// they must finish their initial projection before discovery is advertised as
+// ready. Otherwise a reconnecting gateway can receive Workload resources
+// without policy references while the reference index is still being derived.
+func collectionsSynced(collections ...krt.Syncer) bool {
+	for _, collection := range collections {
+		if collection != nil && !collection.HasSynced() {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *index) Network(ctx krt.HandlerContext) network.ID {
@@ -1100,6 +1159,63 @@ func PushXds[T any](xds model.XDSUpdater, f func(T) model.ConfigKey) func(events
 			Full:           false,
 			ConfigsUpdated: cu,
 			Reason:         model.NewReasonStats(model.AmbientUpdate),
+		})
+	}
+}
+
+// PushWorkloadPolicyReferencesXds sends only Workload WDS resources whose
+// reference extension changed. Newly referenced policy resources join the same
+// push so PushOrder can deliver policy content before Workload starts referring
+// to it.
+func PushWorkloadPolicyReferencesXds(
+	xds model.XDSUpdater,
+) func(events []krt.Event[agentio.WorkloadPolicyReferences]) {
+	return func(events []krt.Event[agentio.WorkloadPolicyReferences]) {
+		configsUpdated := sets.New[model.ConfigKey]()
+		addressesUpdated := sets.New[string]()
+		for _, event := range events {
+			for _, item := range event.Items() {
+				if item.ResourceName() == "" {
+					continue
+				}
+				addressesUpdated.Insert(item.ResourceName())
+				configsUpdated.Insert(model.ConfigKey{Kind: kind.Address, Name: item.ResourceName()})
+			}
+			if event.New == nil || len(event.New.References) == 0 {
+				continue
+			}
+
+			oldRefs := make(map[string]*agentioextensions.PolicyReference)
+			if event.Old != nil {
+				for _, reference := range event.Old.References {
+					oldRefs[reference.GetTypeUrl()] = reference
+				}
+			}
+			for _, reference := range event.New.References {
+				typeURL := reference.GetTypeUrl()
+				configKind, found := agentio.BindablePolicyConfigKind(typeURL)
+				if !found || reference == nil {
+					continue
+				}
+				oldNames := sets.New[string]()
+				if oldReference := oldRefs[typeURL]; oldReference != nil {
+					oldNames.InsertAll(oldReference.GetResourceNames()...)
+				}
+				for _, name := range reference.GetResourceNames() {
+					if !oldNames.Contains(name) {
+						configsUpdated.Insert(model.ConfigKey{Kind: configKind, Name: name})
+					}
+				}
+			}
+		}
+		if len(addressesUpdated) == 0 {
+			return
+		}
+		xds.ConfigUpdate(&model.PushRequest{
+			Full:             false,
+			AddressesUpdated: addressesUpdated,
+			ConfigsUpdated:   configsUpdated,
+			Reason:           model.NewReasonStats(model.AmbientUpdate),
 		})
 	}
 }

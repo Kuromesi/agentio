@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -47,6 +48,7 @@ import (
 
 	"istio.io/istio/pilot/cmd/pilot-agent/metrics"
 	"istio.io/istio/pilot/cmd/pilot-agent/status/grpcready"
+	"istio.io/istio/pilot/cmd/pilot-agent/status/policyready"
 	"istio.io/istio/pilot/cmd/pilot-agent/status/ready"
 	dnsProto "istio.io/istio/pkg/dns/proto"
 	"istio.io/istio/pkg/env"
@@ -136,6 +138,10 @@ type Options struct {
 	NoEnvoy             bool
 	GRPCBootstrap       string
 	EnableProfiling     bool
+	// PolicyStore reports whether the native gateway policy store bootstrap
+	// extension is configured on this proxy. When set, readiness also waits for
+	// that store to sync.
+	PolicyStore bool
 	// PrometheusRegistry to use. Just for testing.
 	PrometheusRegistry prometheus.Gatherer
 	Shutdown           context.CancelCauseFunc
@@ -202,6 +208,12 @@ func NewServer(config Options) (*Server, error) {
 			Context:       config.Context,
 			NoEnvoy:       config.NoEnvoy,
 		})
+		// Built here rather than by the caller because the effective localhost is
+		// resolved above, including the dual-stack case, and must match the address
+		// Envoy's admin endpoint is bound to.
+		if config.PolicyStore {
+			probes = append(probes, policyready.New(localhost, config.AdminPort))
+		}
 	}
 
 	if config.GRPCBootstrap != "" {

@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 )
 
@@ -82,5 +83,27 @@ func TestSandboxClusters_TLSOriginationRequiresSecureClusterOptions(t *testing.T
 	}
 	if dfpConfig.GetAllowInsecureClusterOptions() {
 		t.Fatal("TLS-origination dynamic forward proxy must require secure cluster options")
+	}
+}
+
+func TestSandboxClusters_SniTrafficPolicyDoesNotAddInternalCluster(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+
+	cb := &ClusterBuilder{
+		proxyMetadata: &model.NodeMetadata{},
+		req: &model.PushRequest{Push: &model.PushContext{
+			Mesh: &meshconfig.MeshConfig{ConnectTimeout: durationpb.New(time.Second)},
+		}},
+	}
+	clusters := sandboxClusters(cb)
+	if got, want := len(clusters), 4; got != want {
+		t.Fatalf("feature-enabled sandbox clusters = %d, want %d without a policy-only internal hop", got, want)
+	}
+	for _, c := range clusters {
+		if c.GetName() == "agentio-sni-tls-termination" {
+			t.Fatal("SNI policy must select the TLS termination chain directly, not an internal cluster")
+		}
 	}
 }
