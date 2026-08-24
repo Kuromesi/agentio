@@ -53,10 +53,12 @@ const (
 // PodLevelOverrides holds runtime/dynamic pod-level config overrides
 // that may need to be taken into account when injecting pod rules
 type PodLevelOverrides struct {
-	VirtualInterfaces  []string
-	BridgePortPrefixes []string
-	IngressMode        bool
-	DNSProxy           PodDNSOverride
+	VirtualInterfaces       []string
+	BridgePortPrefixes      []string
+	ExcludeOutboundPorts    []uint16
+	ExcludeOutboundIPRanges []netip.Prefix
+	IngressMode             bool
+	DNSProxy                PodDNSOverride
 }
 
 // AmbientConfig represents the "global"/per-instance configuration for Ambient mode traffic management

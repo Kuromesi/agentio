@@ -293,6 +293,28 @@ func (cfg *IptablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 		}
 	}
 
+	// Pod-local infrastructure may need to reach node services or management endpoints without sending those
+	// connections through ztunnel. Keep these pod-scoped exceptions ahead of the catch-all outbound redirect.
+	for _, port := range podOverrides.ExcludeOutboundPorts {
+		iptablesBuilder.AppendRule(ChainInpodOutput, "nat",
+			"-p", "tcp",
+			"--dport", fmt.Sprint(port),
+			"-j", "ACCEPT",
+		)
+	}
+	for _, prefix := range podOverrides.ExcludeOutboundIPRanges {
+		params := []string{
+			"-p", "tcp",
+			"-d", prefix.String(),
+			"-j", "ACCEPT",
+		}
+		if prefix.Addr().Is4() {
+			iptablesBuilder.AppendRuleV4(ChainInpodOutput, "nat", params...)
+		} else {
+			iptablesBuilder.AppendRuleV6(ChainInpodOutput, "nat", params...)
+		}
+	}
+
 	// CLI: -A ISTIO_PRERT -m mark --mark 0x539/0xfff -j CONNMARK --set-xmark 0x111/0xfff
 	//
 	// DESC: If we have a packet mark, set a connmark.

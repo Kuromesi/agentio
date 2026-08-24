@@ -124,7 +124,9 @@ func TestNftablesBridgePortPrefixes(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx, err := iptConfigurator.AppendInpodRules(config.PodLevelOverrides{
-		BridgePortPrefixes: []string{"msb-tap"},
+		BridgePortPrefixes:      []string{"msb-tap"},
+		ExcludeOutboundPorts:    []uint16{9862},
+		ExcludeOutboundIPRanges: []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,13 +136,21 @@ func TestNftablesBridgePortPrefixes(t *testing.T) {
 	redirect := "meta sdifname \"msb-tap*\" meta l4proto tcp counter redirect to :15001"
 	returnRule := "meta sdifname \"msb-tap*\" meta l4proto tcp counter return"
 	inbound := "ip daddr != 127.0.0.1/32 tcp dport != 15008"
-	for _, want := range []string{redirect, returnRule} {
+	excludePort := "meta l4proto tcp tcp dport 9862 counter accept"
+	excludeRange := "meta l4proto tcp ip daddr 169.254.0.21/32 counter accept"
+	outbound := "meta l4proto tcp ip daddr != 127.0.0.1/32 mark and 0xfff != 0x539 counter redirect to :15001"
+	for _, want := range []string{redirect, returnRule, excludePort, excludeRange} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables rules do not contain %q:\n%s", want, got)
 		}
 	}
 	if strings.Index(got, redirect) > strings.Index(got, inbound) {
 		t.Fatalf("bridge redirect must precede ordinary inbound capture:\n%s", got)
+	}
+	for _, exclude := range []string{excludePort, excludeRange} {
+		if strings.Index(got, exclude) > strings.Index(got, outbound) {
+			t.Fatalf("outbound exclusion must precede ordinary outbound capture:\n%s", got)
+		}
 	}
 }
 

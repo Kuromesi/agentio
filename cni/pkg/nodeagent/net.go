@@ -16,6 +16,8 @@
 package nodeagent
 
 import (
+	"net/netip"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,7 +27,11 @@ import (
 	"istio.io/istio/cni/pkg/util"
 )
 
-const bridgePortPrefixesAnnotation = "agentio.io/reroute-bridge-port-prefixes"
+const (
+	bridgePortPrefixesAnnotation      = "agentio.io/reroute-bridge-port-prefixes"
+	excludeOutboundPortsAnnotation    = "agentio.io/exclude-outbound-ports"
+	excludeOutboundIPRangesAnnotation = "agentio.io/exclude-outbound-ip-ranges"
+)
 
 func getPodLevelTrafficOverrides(pod *corev1.Pod) config.PodLevelOverrides {
 	// If true, the pod will run in 'ingress mode'. This is intended to be used for "ingress" type workloads which handle
@@ -66,7 +72,79 @@ func getPodLevelTrafficOverrides(pod *corev1.Pod) config.PodLevelOverrides {
 		}
 	}
 
+	if ports, found := pod.Annotations[excludeOutboundPortsAnnotation]; found {
+		valid, invalid := parseExcludeOutboundPorts(ports)
+		podCfg.ExcludeOutboundPorts = valid
+		logInvalidAnnotationValues(pod, excludeOutboundPortsAnnotation, invalid)
+	}
+
+	if ranges, found := pod.Annotations[excludeOutboundIPRangesAnnotation]; found {
+		valid, invalid := parseExcludeOutboundIPRanges(ranges)
+		podCfg.ExcludeOutboundIPRanges = valid
+		logInvalidAnnotationValues(pod, excludeOutboundIPRangesAnnotation, invalid)
+	}
+
 	return podCfg
+}
+
+func logInvalidAnnotationValues(pod *corev1.Pod, annotationName string, invalid []string) {
+	if len(invalid) == 0 {
+		return
+	}
+	log.WithLabels("namespace", pod.Namespace, "name", pod.Name).Warnf(
+		"ignoring invalid %s values: %s", annotationName, strings.Join(invalid, ","))
+}
+
+func parseExcludeOutboundPorts(raw string) ([]uint16, []string) {
+	valid := make([]uint16, 0)
+	invalid := make([]string, 0)
+	seen := make(map[uint16]struct{})
+	for _, item := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		port, err := strconv.ParseUint(value, 10, 16)
+		if err != nil || port == 0 {
+			invalid = append(invalid, value)
+			continue
+		}
+		normalized := uint16(port)
+		if _, found := seen[normalized]; found {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		valid = append(valid, normalized)
+	}
+	return valid, invalid
+}
+
+func parseExcludeOutboundIPRanges(raw string) ([]netip.Prefix, []string) {
+	valid := make([]netip.Prefix, 0)
+	invalid := make([]string, 0)
+	seen := make(map[netip.Prefix]struct{})
+	for _, item := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			if addr, addrErr := netip.ParseAddr(value); addrErr == nil {
+				prefix = netip.PrefixFrom(addr, addr.BitLen())
+			} else {
+				invalid = append(invalid, value)
+				continue
+			}
+		}
+		prefix = prefix.Masked()
+		if _, found := seen[prefix]; found {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		valid = append(valid, prefix)
+	}
+	return valid, invalid
 }
 
 func parseBridgePortPrefixes(raw string) ([]string, []string) {

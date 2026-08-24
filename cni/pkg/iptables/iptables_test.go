@@ -58,7 +58,9 @@ func TestIptablesBridgePortPrefixes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := iptConfigurator.CreateInpodRules(scopes.CNIAgent, config.PodLevelOverrides{
-		BridgePortPrefixes: []string{"msb-tap"},
+		BridgePortPrefixes:      []string{"msb-tap"},
+		ExcludeOutboundPorts:    []uint16{9862},
+		ExcludeOutboundIPRanges: []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -67,13 +69,21 @@ func TestIptablesBridgePortPrefixes(t *testing.T) {
 	redirect := "-A ISTIO_PRERT -p tcp -m physdev --physdev-in msb-tap+ -j REDIRECT --to-ports 15001"
 	returnRule := "-A ISTIO_PRERT -p tcp -m physdev --physdev-in msb-tap+ -j RETURN"
 	inbound := "-A ISTIO_PRERT ! -d 127.0.0.1/32 -p tcp ! --dport 15008"
-	for _, want := range []string{redirect, returnRule} {
+	excludePort := "-A ISTIO_OUTPUT -p tcp --dport 9862 -j ACCEPT"
+	excludeRange := "-A ISTIO_OUTPUT -p tcp -d 169.254.0.21/32 -j ACCEPT"
+	outbound := "-A ISTIO_OUTPUT ! -d 127.0.0.1/32 -p tcp -m mark ! --mark 0x539/0xfff -j REDIRECT --to-ports 15001"
+	for _, want := range []string{redirect, returnRule, excludePort, excludeRange} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("iptables rules do not contain %q:\n%s", want, got)
 		}
 	}
 	if strings.Index(got, redirect) > strings.Index(got, inbound) {
 		t.Fatalf("bridge redirect must precede ordinary inbound capture:\n%s", got)
+	}
+	for _, exclude := range []string{excludePort, excludeRange} {
+		if strings.Index(got, exclude) > strings.Index(got, outbound) {
+			t.Fatalf("outbound exclusion must precede ordinary outbound capture:\n%s", got)
+		}
 	}
 }
 

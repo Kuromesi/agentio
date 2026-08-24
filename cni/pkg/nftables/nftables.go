@@ -216,6 +216,31 @@ func (cfg *NftablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 		}
 	}
 
+	// Pod-local infrastructure may need to reach node services or management endpoints without sending those
+	// connections through ztunnel. Keep these pod-scoped exceptions ahead of the catch-all outbound redirect.
+	for _, port := range podOverrides.ExcludeOutboundPorts {
+		rb.AppendRule(IstioOutputChain, AmbientNatTable,
+			"meta l4proto tcp",
+			"tcp dport", fmt.Sprint(port), Counter,
+			"accept",
+		)
+	}
+	for _, prefix := range podOverrides.ExcludeOutboundIPRanges {
+		if prefix.Addr().Is4() {
+			rb.AppendRule(IstioOutputChain, AmbientNatTable,
+				"meta l4proto tcp",
+				"ip daddr", prefix.String(), Counter,
+				"accept",
+			)
+		} else {
+			rb.AppendV6RuleIfSupported(IstioOutputChain, AmbientNatTable,
+				"meta l4proto tcp",
+				"ip6 daddr", prefix.String(), Counter,
+				"accept",
+			)
+		}
+	}
+
 	// CLI: nft add rule inet istio-ambient-mangle istio-prerouting meta mark & 0xfff == 0x539 counter ct mark set ct mark & 0xfffff000 | 0x111
 	// DESC: If we have a packet mark, set a connmark.
 	rb.AppendRule(IstioPreroutingChain, AmbientMangleTable,
