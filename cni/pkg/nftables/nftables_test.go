@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -105,6 +106,34 @@ func TestNftablesPodOverrides(t *testing.T) {
 				compareToGolden(t, ipv6, tt.name, mock.GetCapturedRules())
 			})
 		}
+	}
+}
+
+func TestNftablesBridgePortPrefixes(t *testing.T) {
+	cfg := constructTestConfig()
+	ext := &dep.DependenciesStub{}
+	iptConfigurator, _, err := NewNftablesConfigurator(cfg, cfg, ext, ext, iptables.EmptyNlDeps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := iptConfigurator.AppendInpodRules(config.PodLevelOverrides{
+		BridgePortPrefixes: []string{"msb-tap"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := tx.String()
+	redirect := "meta sdifname \"msb-tap*\" meta l4proto tcp counter redirect to :15001"
+	returnRule := "meta sdifname \"msb-tap*\" meta l4proto tcp counter return"
+	inbound := "ip daddr != 127.0.0.1/32 tcp dport != 15008"
+	for _, want := range []string{redirect, returnRule} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables rules do not contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, redirect) > strings.Index(got, inbound) {
+		t.Fatalf("bridge redirect must precede ordinary inbound capture:\n%s", got)
 	}
 }
 

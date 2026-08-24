@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -52,9 +53,10 @@ const (
 // PodLevelOverrides holds runtime/dynamic pod-level config overrides
 // that may need to be taken into account when injecting pod rules
 type PodLevelOverrides struct {
-	VirtualInterfaces []string
-	IngressMode       bool
-	DNSProxy          PodDNSOverride
+	VirtualInterfaces  []string
+	BridgePortPrefixes []string
+	IngressMode        bool
+	DNSProxy           PodDNSOverride
 }
 
 // AmbientConfig represents the "global"/per-instance configuration for Ambient mode traffic management

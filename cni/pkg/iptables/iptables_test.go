@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,6 +47,33 @@ func TestIptablesPodOverrides(t *testing.T) {
 				compareToGolden(t, ipv6, tt.name, ext.ExecutedAll)
 			})
 		}
+	}
+}
+
+func TestIptablesBridgePortPrefixes(t *testing.T) {
+	cfg := constructTestConfig()
+	ext := &dep.DependenciesStub{}
+	iptConfigurator, _, err := NewIptablesConfigurator(cfg, cfg, ext, ext, EmptyNlDeps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := iptConfigurator.CreateInpodRules(scopes.CNIAgent, config.PodLevelOverrides{
+		BridgePortPrefixes: []string{"msb-tap"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.Join(ext.ExecutedAll, "\n")
+	redirect := "-A ISTIO_PRERT -p tcp -m physdev --physdev-in msb-tap+ -j REDIRECT --to-ports 15001"
+	returnRule := "-A ISTIO_PRERT -p tcp -m physdev --physdev-in msb-tap+ -j RETURN"
+	inbound := "-A ISTIO_PRERT ! -d 127.0.0.1/32 -p tcp ! --dport 15008"
+	for _, want := range []string{redirect, returnRule} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("iptables rules do not contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, redirect) > strings.Index(got, inbound) {
+		t.Fatalf("bridge redirect must precede ordinary inbound capture:\n%s", got)
 	}
 }
 

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -570,6 +571,23 @@ var overrideTests = map[string]struct {
 			VirtualInterfaces: []string{"en0ps1", "en1ps1"},
 			IngressMode:       true,
 			DNSProxy:          config.PodDNSEnabled,
+		},
+	},
+	"bridge port prefixes are normalized": {
+		in: corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test",
+				Namespace: "test",
+				UID:       "12345",
+				Annotations: map[string]string{
+					"agentio.io/reroute-bridge-port-prefixes": " msb-tap, vmtap,msb-tap,invalid+, ,0123456789abcde ",
+				},
+			},
+		},
+		out: config.PodLevelOverrides{
+			BridgePortPrefixes: []string{"msb-tap", "vmtap"},
+			IngressMode:        false,
+			DNSProxy:           config.PodDNSUnset,
 		},
 	},
 

@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -246,6 +247,23 @@ func (cfg *IptablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 
 	// To keep things manageable, the first rules in the ISTIO_PRERT chain should be short-circuits, like
 	// virtual interface exclusions/redirects:
+	for _, bridgePortPrefix := range podOverrides.BridgePortPrefixes {
+		bridgePortPattern := bridgePortPrefix + "+"
+		iptablesBuilder.AppendRule(ChainInpodPrerouting, "nat",
+			"-p", "tcp",
+			"-m", "physdev",
+			"--physdev-in", bridgePortPattern,
+			"-j", "REDIRECT",
+			"--to-ports", fmt.Sprint(config.ZtunnelOutboundPort),
+		)
+		iptablesBuilder.AppendRule(ChainInpodPrerouting, "nat",
+			"-p", "tcp",
+			"-m", "physdev",
+			"--physdev-in", bridgePortPattern,
+			"-j", "RETURN",
+		)
+	}
+
 	if len(podOverrides.VirtualInterfaces) != 0 {
 		for _, virtInterface := range podOverrides.VirtualInterfaces {
 			// CLI: -t nat -A ISTIO_PRERT -i virt0 -p tcp -j REDIRECT --to-ports 15001

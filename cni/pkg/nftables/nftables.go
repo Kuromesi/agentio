@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"sigs.k8s.io/knftables"
@@ -178,6 +180,20 @@ func (cfg *NftablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 
 	// To keep things manageable, the first rules in the istio-prerouting chain should be short-circuits, like
 	// virtual interface exclusions/redirects:
+	for _, bridgePortPrefix := range podOverrides.BridgePortPrefixes {
+		bridgePortPattern := strconv.Quote(bridgePortPrefix + "*")
+		rb.AppendRule(IstioPreroutingChain, AmbientNatTable,
+			"meta sdifname", bridgePortPattern,
+			"meta l4proto tcp", Counter,
+			"redirect to", ":"+fmt.Sprint(config.ZtunnelOutboundPort),
+		)
+		rb.AppendRule(IstioPreroutingChain, AmbientNatTable,
+			"meta sdifname", bridgePortPattern,
+			"meta l4proto tcp", Counter,
+			"return",
+		)
+	}
+
 	if len(podOverrides.VirtualInterfaces) != 0 {
 		for _, virtInterface := range podOverrides.VirtualInterfaces {
 			// CLI: nft add rule inet istio-ambient-nat istio-prerouting iifname <iface> meta l4proto tcp counter redirect to :15001
