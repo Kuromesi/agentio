@@ -1,0 +1,53 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package kruise.networking.extensions.v1;
+
+option go_package = "pilot/pkg/serviceregistry/kube/controller/agentio/extensions";
+
+// PolicyReference is attached to istio.workload.Workload through one generic
+// Extension per policy type. The parent Workload supplies the target identity.
+message PolicyReference {
+  // Full xDS TypeURL used to subscribe to and decode the named resources.
+  string type_url = 1;
+
+  // Ordered according to the source policy API. The data plane evaluates the
+  // referenced resources in this order and does not apply its own tie-breaks.
+  repeated string resource_names = 2;
+}
+
+message SniTrafficPolicy {
+  // Evaluated in the order produced by the control plane.
+  repeated SniRule rules = 1;
+}
+
+message SniRule {
+  SniMatch match = 1;
+  SniAction action = 2;
+}
+
+message SniMatch {
+  // Values are ORed. Supported forms are exact names, a leading wildcard,
+  // and "*" for any non-empty SNI.
+  repeated string sni = 1;
+}
+
+enum SniAction {
+  SNI_ACTION_UNSPECIFIED = 0;
+  SNI_ACTION_TLS_TERMINATION = 1;
+  SNI_ACTION_PASSTHROUGH = 2;
+  SNI_ACTION_DENY = 3;
+}
