@@ -1,0 +1,12 @@
+[Unit]
+Description=Agentio Substrate sandbox curl policy POC service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/egress
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
