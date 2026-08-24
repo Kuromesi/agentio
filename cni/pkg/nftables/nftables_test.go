@@ -112,6 +112,13 @@ func TestNftablesPodOverrides(t *testing.T) {
 func TestNftablesBridgePortPrefixes(t *testing.T) {
 	cfg := constructTestConfig()
 	ext := &dep.DependenciesStub{}
+	mock := NewMockNftablesCapture()
+	originalProvider := nftProviderVar
+	nftProviderVar = func(_ knftables.Family, _ string) (builder.NftablesAPI, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { nftProviderVar = originalProvider })
+
 	iptConfigurator, _, err := NewNftablesConfigurator(cfg, cfg, ext, ext, iptables.EmptyNlDeps())
 	if err != nil {
 		t.Fatal(err)
