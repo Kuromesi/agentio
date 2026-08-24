@@ -19,16 +19,17 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+
 	"istio.io/api/label"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/constants"
-	"istio.io/istio/pkg/config/host"
 	"istio.io/istio/pkg/config/schema/kind"
+	xdsmodel "istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/workloadapi"
 	"istio.io/istio/pkg/workloadapi/security"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
 )
 
 const (
@@ -36,6 +37,10 @@ const (
 	trafficPolicyExtension    = extensionPrefix + "TrafficPolicyExtension"
 	workloadMetadataExtension = extensionPrefix + "WorkloadMetadata"
 	egressPoliciesExtension   = extensionPrefix + "EgressPolicies"
+	PolicyReferenceTypeURL    = extensionPrefix + "PolicyReference"
+
+	SniTrafficPolicyReferenceExtensionName = "sni-traffic-policy"
+	SniTrafficPolicyCapability             = "sni_traffic_policy"
 
 	LabelSandboxProxyType = "networking.agents.kruise.io/proxy-type"
 	LabelSandboxEgress    = "networking.agents.kruise.io/sandbox-egress"
@@ -43,6 +48,18 @@ const (
 	MeshInternalTrafficPolicyPassthrough = "PASSTHROUGH"
 	MeshInternalTrafficPolicyPeerAware   = "PEER_AWARE"
 )
+
+type policyReferenceContract struct {
+	capability    string
+	extensionName string
+}
+
+var policyReferenceContractByTypeURL = map[string]policyReferenceContract{
+	xdsmodel.SniTrafficPolicyType: {
+		capability:    SniTrafficPolicyCapability,
+		extensionName: SniTrafficPolicyReferenceExtensionName,
+	},
+}
 
 func IsSandboxDedicatedProxy(proxy *model.Proxy) bool {
 	return proxy.Labels[LabelSandboxProxyType] == "ztunnel"
@@ -146,32 +163,6 @@ func ExtractProxyMeta(proxy *model.Proxy) (string, string, bool) {
 	return parts[0], parts[1], true
 }
 
-// IsAllowedOnDemandDomain reports whether proxy is permitted to pull an
-// on-demand cert for the given SNI domain — i.e. proxy belongs to an
-// EgressGateway whose tls_termination.include_hosts covers domain. Wildcards
-// in include_hosts (e.g. "*.example.com") use the same matching rules as
-// host.Name.SubsetOf.
-func IsAllowedOnDemandDomain(proxy *model.Proxy, push *model.PushContext, domain string) bool {
-	if push == nil || push.AgentioConfig == nil {
-		return false
-	}
-	g := FindEgressGatewayForProxy(proxy, push.AgentioConfig.GetEgressGateways())
-	if g == nil {
-		return false
-	}
-	cfg := g.GetTlsTermination()
-	if cfg == nil {
-		return false
-	}
-	needle := host.Name(domain)
-	for _, h := range cfg.GetIncludeHosts() {
-		if needle.SubsetOf(host.Name(h)) {
-			return true
-		}
-	}
-	return false
-}
-
 // FindEgressGatewayForProxy returns the EgressGateway matching the proxy's
 // verified SPIFFE identity (ServiceAccount + Namespace), or nil if none
 // matches. By convention an EgressGateway's name equals the ServiceAccount
@@ -223,6 +214,66 @@ func NewEgressPoliciesExtension(policies []*extensions.EgressPolicy) *workloadap
 			Value:   pbBytes,
 		},
 	}
+}
+
+func NewPolicyReferenceExtension(name string, reference *extensions.PolicyReference) *workloadapi.Extension {
+	if name == "" || reference == nil || reference.GetTypeUrl() == "" || len(reference.GetResourceNames()) == 0 {
+		return nil
+	}
+	pbBytes, err := proto.Marshal(reference)
+	if err != nil {
+		return nil
+	}
+	return &workloadapi.Extension{
+		Name: name,
+		Config: &anypb.Any{
+			TypeUrl: PolicyReferenceTypeURL,
+			Value:   pbBytes,
+		},
+	}
+}
+
+func SupportsPolicyRuntime(metadata *model.NodeMetadata) bool {
+	if metadata == nil || metadata.MetadataDiscovery == nil || !bool(*metadata.MetadataDiscovery) {
+		return false
+	}
+	return len(metadata.PolicyRuntimeCapabilities) > 0
+}
+
+func SupportsPolicyCapability(metadata *model.NodeMetadata, capability string) bool {
+	if !SupportsPolicyRuntime(metadata) {
+		return false
+	}
+	for _, supported := range metadata.PolicyRuntimeCapabilities {
+		if supported == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// PolicyReferenceExtensionsForProxy emits one Workload extension per policy
+// type implemented by this proxy. Unknown types are omitted rather than making
+// an older runtime subscribe to resources it cannot enforce or wait for them
+// during readiness.
+func PolicyReferenceExtensionsForProxy(
+	metadata *model.NodeMetadata,
+	references []*extensions.PolicyReference,
+) []*workloadapi.Extension {
+	if !SupportsPolicyRuntime(metadata) || len(references) == 0 {
+		return nil
+	}
+	result := make([]*workloadapi.Extension, 0, len(references))
+	for _, reference := range references {
+		contract, found := policyReferenceContractByTypeURL[reference.GetTypeUrl()]
+		if !found || !SupportsPolicyCapability(metadata, contract.capability) {
+			continue
+		}
+		if extension := NewPolicyReferenceExtension(contract.extensionName, reference); extension != nil {
+			result = append(result, extension)
+		}
+	}
+	return result
 }
 
 func MeshInternalTrafficPolicyFromString(s string) extensions.MeshInternalTrafficPolicy {

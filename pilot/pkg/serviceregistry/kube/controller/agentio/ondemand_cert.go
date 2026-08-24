@@ -24,6 +24,10 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"istio.io/istio/pilot/pkg/credentials"
 	"istio.io/istio/pilot/pkg/model"
@@ -34,10 +38,6 @@ import (
 	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/security/pkg/pki/util"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 type OnDemandCertController interface {
@@ -389,8 +389,9 @@ func (c *onDemandCertController) GetDockerCredential(_, _ string) ([]byte, error
 // Authorize gates on-demand cert pulls by ServiceAccount/Namespace. Only
 // proxies whose identity matches a configured EgressGateway are allowed —
 // the convention is SA == Deployment name == EgressGateway.name and the
-// namespace must match exactly. Domain-level scoping (include_hosts) is
-// applied separately by the caller via IsAllowedOnDemandDomain.
+// namespace must match exactly. Identity is the whole authorization: there is
+// deliberately no domain-level scoping, since per-gateway SNI allowlists are
+// managed by the SNI traffic policy rather than certificate issuance.
 func (c *onDemandCertController) Authorize(serviceAccount, namespace string) error {
 	if c.agentioConfig == nil {
 		return fmt.Errorf("on-demand cert controller has no agentio config wired in")
