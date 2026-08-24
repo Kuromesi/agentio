@@ -22,6 +22,9 @@ import (
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	agentsclient "github.com/openkruise/agents-api/client/clientset/versioned"
 	"google.golang.org/protobuf/proto"
+	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
+
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
@@ -34,8 +37,6 @@ import (
 	istiolog "istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/workloadapi/security"
-	corev1 "k8s.io/api/core/v1"
-	discovery "k8s.io/api/discovery/v1"
 )
 
 var (
@@ -82,6 +83,16 @@ type Controller struct {
 
 	workloadConfigs krt.Singleton[model.WorkloadConfig]
 
+	// Policy collections are nil unless features.EnableSniTrafficPolicy is set.
+	// policyAttachments excludes protobuf content so resource-only changes do not
+	// invalidate workload references. workloadPolicyReferences is built later,
+	// after ambient supplies its normalized Workloads collection.
+	bindablePolicies         krt.Collection[BindablePolicy]
+	policyAttachments        krt.Collection[PolicyAttachment]
+	workloadPolicyReferences krt.Collection[WorkloadPolicyReferences]
+	securityProfiles         krt.Collection[*agentsv1alpha1.SecurityProfile]
+	globalSecurityProfiles   krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+
 	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
 	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
 
@@ -104,18 +115,28 @@ func NewController(options Options) (*Controller, error) {
 	opts := krt.NewOptionsBuilder(stop, "agentio-controller", options.Debugger)
 	TrafficPolicies := newTrafficPoliciesCollection(options.KubeClient, stop, opts)
 	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop, opts)
+	var SecurityProfiles krt.Collection[*agentsv1alpha1.SecurityProfile]
+	var GlobalSecurityProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+	if features.EnableSniTrafficPolicy {
+		SecurityProfiles = newSecurityProfilesCollection(options.KubeClient, stop, opts)
+		GlobalSecurityProfiles = newGlobalSecurityProfilesCollection(options.KubeClient, stop, opts)
+	}
 
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
 	agentioConfig := newAgentioConfig(options.KubeClient, options.MeshConfig.Get().RootNamespace, opts)
 
 	c := &Controller{
-		ConfigStoreController: store,
-		stop:                  stop,
-		trafficPolicies:       TrafficPolicies,
-		meshConfig:            options.MeshConfig,
-		globalTrafficPolicies: GlobalTrafficPolicies,
-		agentioConfig:         agentioConfig,
+		ConfigStoreController:  store,
+		stop:                   stop,
+		trafficPolicies:        TrafficPolicies,
+		meshConfig:             options.MeshConfig,
+		globalTrafficPolicies:  GlobalTrafficPolicies,
+		securityProfiles:       SecurityProfiles,
+		globalSecurityProfiles: GlobalSecurityProfiles,
+		agentioConfig:          agentioConfig,
 	}
+
+	c.initBindablePolicies(opts)
 
 	if features.EnableOnDemandCerts {
 		if err := c.initOnDemandController(options.KubeClient, opts); err != nil {
@@ -244,6 +265,18 @@ func (c *Controller) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {
 	return c.workloadConfigs.AsCollection()
 }
 
+// BindablePolicies returns the Agentio policies that are both published over
+// xDS and referenced from Workload extensions.
+func (c *Controller) BindablePolicies() krt.Collection[BindablePolicy] {
+	return c.bindablePolicies
+}
+
+// WorkloadPolicyReferences returns the internal index used to enrich Workload
+// WDS resources. It is nil until BuildWorkloadPolicyReferencesCollection runs.
+func (c *Controller) WorkloadPolicyReferences() krt.Collection[WorkloadPolicyReferences] {
+	return c.workloadPolicyReferences
+}
+
 // unreachableCIDR is the IANA IPv4 Dummy Address (RFC 7600). Used as a
 // sentinel when all match_hosts fail to resolve — ensures the policy
 // cannot accidentally wildcard-match all traffic.
@@ -296,6 +329,20 @@ func (c *Controller) BuildPolicyCollection(
 		c.meshConfig.Get().RootNamespace,
 	)
 	return c.authorizationController.AsCollection()
+}
+
+// BuildWorkloadPolicyReferencesCollection joins bindable policy attachments
+// with ambient's normalized workload collection. The result is an internal
+// lookup index; references are serialized inside Workload WDS extensions.
+func (c *Controller) BuildWorkloadPolicyReferencesCollection(
+	workloads krt.Collection[model.WorkloadInfo],
+	opts krt.OptionsBuilder,
+) krt.Collection[WorkloadPolicyReferences] {
+	if c.policyAttachments == nil {
+		return nil
+	}
+	c.workloadPolicyReferences = newWorkloadPolicyReferencesCollection(workloads, c.policyAttachments, opts)
+	return c.workloadPolicyReferences
 }
 
 // extractHostname returns all FQDN hostnames referenced in the policy's
