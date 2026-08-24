@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,8 +33,12 @@ func NewStatusServerOptions(ipv6 bool, t model.NodeType, proxyConfig *meshconfig
 		NodeType:       t,
 		Probes:         []ready.Prober{agent},
 		NoEnvoy:        agent.EnvoyDisabled(),
-		FetchDNS:       agent.GetDNSTable,
-		GRPCBootstrap:  agent.GRPCBootstrapPath(),
+		// The policy store consumes Workload WDS, so readiness is enabled only when
+		// workload discovery and at least one policy runtime capability are enabled.
+		PolicyStore: enableWDSEnvWasSet && enableWDSEnv &&
+			len(parsePolicyRuntimeCapabilities(policyRuntimeCapabilitiesEnv)) > 0,
+		FetchDNS:      agent.GetDNSTable,
+		GRPCBootstrap: agent.GRPCBootstrapPath(),
 		TriggerDrain: func() {
 			agent.DrainNow()
 		},

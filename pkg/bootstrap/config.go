@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -44,6 +45,7 @@ import (
 	"istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/security"
+	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/version"
 )
@@ -70,6 +72,17 @@ const (
 	// required for metrics based on stat_prefix in virtual service.
 	requiredEnvoyStatsMatcherInclusionRegexes = `vhost\..*\.route\..*`
 
+	// defaultPolicyStoreDeletionGracePeriod bounds how long a READY workload may
+	// retain its last-known-good policy snapshot while independent xDS streams
+	// reconcile a policy deletion. It must exceed the worst-case gap between the
+	// policy push and the Workload-reference push; that gap is bounded by PILOT_DEBOUNCE_MAX
+	// (features.DebounceMax, 10s by default), so a smaller value lets the grace
+	// period expire first and fails the workload closed. 15s also matches Envoy's
+	// own initial_fetch_timeout default for the equivalent warming fallback.
+	// Convergence cancels the wait immediately, so this is an upper bound rather
+	// than a fixed delay.
+	defaultPolicyStoreDeletionGracePeriod = 15 * time.Second
+
 	// Prefixes of V2 metrics.
 	// "reporter" prefix is for istio standard metrics.
 	// "component" suffix is for istio_build metric.
@@ -83,6 +96,9 @@ type Config struct {
 	// CompliancePolicy to decouple the environment variable dependency.
 	CompliancePolicy string
 	LogAsJSON        bool
+	// PolicyStoreDeletionGracePeriod is rendered into the native policy store
+	// bootstrap extension. Zero uses the fifteen-second default.
+	PolicyStoreDeletionGracePeriod time.Duration
 }
 
 // toTemplateParams creates a new template configuration for the given configuration.
@@ -112,6 +128,11 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		// Not supported on legacy SotW protocol
 		mDiscovery = false
 	}
+	policyStore := mDiscovery && len(cfg.Metadata.PolicyRuntimeCapabilities) > 0
+	policyStoreDeletionGracePeriod := cfg.PolicyStoreDeletionGracePeriod
+	if policyStoreDeletionGracePeriod <= 0 {
+		policyStoreDeletionGracePeriod = defaultPolicyStoreDeletionGracePeriod
+	}
 	customSDSPath := ""
 	if _, f := cfg.RawMetadata[security.CredentialFileMetaDataName]; f {
 		customSDSPath = security.FileCredentialNameSocketPath
@@ -127,6 +148,8 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		option.Metadata(cfg.Metadata),
 		option.XdsType(xdsType),
 		option.MetadataDiscovery(mDiscovery),
+		option.PolicyStore(policyStore),
+		option.PolicyStoreDeletionGracePeriod(durationpb.New(policyStoreDeletionGracePeriod)),
 		option.MetricsLocalhostAccessOnly(cfg.Metadata.ProxyConfig.ProxyMetadata),
 	)
 
@@ -649,6 +672,7 @@ type MetadataOptions struct {
 	EnvoyPrometheusPort         int
 	ExitOnZeroActiveConnections bool
 	MetadataDiscovery           *bool
+	PolicyRuntimeCapabilities   []string
 	EnvoySkipDeprecatedLogs     bool
 	WorkloadIdentitySocketFile  string
 }
@@ -711,6 +735,7 @@ func GetNodeMetaData(options MetadataOptions) (*model.Node, error) {
 	} else {
 		meta.MetadataDiscovery = ptr.Of(model.StringBool(*options.MetadataDiscovery))
 	}
+	meta.PolicyRuntimeCapabilities = slices.Clone(options.PolicyRuntimeCapabilities)
 	meta.EnvoySkipDeprecatedLogs = model.StringBool(options.EnvoySkipDeprecatedLogs)
 
 	meta.WorkloadIdentitySocketFile = options.WorkloadIdentitySocketFile

@@ -665,6 +665,25 @@ func TestOptions(t *testing.T) {
 			option:   option.EnvoyStatsEvictionInterval(durationpb.New(time.Second * 120)),
 			expected: "120s",
 		},
+		{
+			testName: "policy store deletion grace period normal",
+			key:      "policy_store_deletion_grace_period",
+			option:   option.PolicyStoreDeletionGracePeriod(durationpb.New(time.Second * 15)),
+			expected: "15s",
+		},
+		{
+			testName: "policy store deletion grace period fractional",
+			key:      "policy_store_deletion_grace_period",
+			option:   option.PolicyStoreDeletionGracePeriod(durationpb.New(time.Second*2 + time.Millisecond*5)),
+			expected: "2.005000000s",
+		},
+		{
+			// Must not render as Go's "1m30s"; the field is a google.protobuf.Duration.
+			testName: "policy store deletion grace period longer than 60s",
+			key:      "policy_store_deletion_grace_period",
+			option:   option.PolicyStoreDeletionGracePeriod(durationpb.New(time.Second * 90)),
+			expected: "90s",
+		},
 	}
 
 	for _, c := range cases {
