@@ -12,10 +12,11 @@ Agentio Ambient 模式可以接管 Substrate Actor 的出口流量，但必须�
 - 2026-08-24 实测的 Microsandbox Worker 使用 `br-msb` 和 `msb-tap*`。Actor 包从 `msb-tap*` 进入 Linux bridge，但 L3 netfilter 看到的逻辑入接口是 `br-msb`。直接把 `br-msb` 配成 reroute 接口会把 Worker 正常入向流量也误判为出向流量，不能作为正式配置。
 - `fork_github` 的 atunnel egress 在提交 `5112cf81` 中已经从 TAP 接口匹配改成 Actor 固定源 IP 匹配。原因是 bridge+TAP 模型执行三层路由后，PREROUTING 看到的逻辑入接口是 `br-msb`，不是 `msb-tapN`。
 - Agentio CNI PoC 分支已经支持 `agentio.io/reroute-source-ip-ranges: 169.254.0.21/32`，会把匹配 Actor 源 CIDR 的 TCP 重定向到 `15001`，并排除原目标端口 `15001` 防止回环。`agentio.io/reroute-bridge-port-prefixes: msb-tap` 保留为兼容条件，不再作为当前 Microsandbox 的首选匹配方法。
-- CNI 还支持 `agentio.io/exclude-outbound-ports: "9862"` 和 `agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32`，用于旁路 Worker 自身的 OverlayBD 和 Actor 管理连接。Worker Pod 重建后，重定向与旁路规则都由 CNI 自动恢复，不再需要运行时手工写 iptables。
+- CNI 新增 Ambient 专用的 `agentio.io/interception-mode: prerouting-only`。该模式只生成显式 Actor `PREROUTING` 重定向，不生成 NAT/MANGLE/RAW `OUTPUT` hook，也不生成普通 Worker 入向 `15006` catch-all。Worker 自身的 OverlayBD、ateom、microsandbox-daemon 和 ztunnel 连接天然绕过，无需再维护 OUTPUT 豁免。
+- 默认 Ambient 模式仍支持 `agentio.io/exclude-outbound-ports` 和 `agentio.io/exclude-outbound-ip-ranges`；它们适用于仍需捕获 Worker OUTPUT 的普通 Pod，不是 Substrate Worker 的首选配置。
 - Worker 中 atunnel 的出口监听端口不能继续使用 `15001`，因为该端口由 Ambient ztunnel 使用。PoC 使用 `127.0.0.1:15099`。
 - Worker 不再注入 Agentio ztunnel sidecar，避免 sidecar 与 Ambient 重复拦截。
-- Agentio CNI 和节点级 ztunnel 正常运行，且 CNI 已为 Worker Pod 编程 Actor 源 CIDR、可选 bridge/TAP、`ateom0` 和 Worker 管理流量旁路规则。
+- Agentio CNI 和节点级 ztunnel 正常运行，且 CNI 已为 Worker Pod 编程 Actor 源 CIDR、可选 bridge/TAP 和 `ateom0` 的 PREROUTING-only 规则。
 
 已有 PoC 证据和本文需要复测的验收项如下：
 
@@ -29,7 +30,7 @@ Agentio Ambient 模式可以接管 Substrate Actor 的出口流量，但必须�
 | `TrafficPolicy` 入向拒绝 | 已在 ACK Microsandbox Ambient Actor 链路完成 selector A/B | selector 不匹配为 400，匹配后为 503，ztunnel 记录明确拒绝 |
 | Actor 级 `SecurityProfile` | 已使用 `kruise.io/actor-name` 实测 | 普通路径返回 200，命中路径返回 453，且 Worker Pod 本身没有 Actor name label |
 
-Ambient 实测的核心证据为：gVisor 链路的 `ateom0 -> 15001` 会随 Actor 新连接增长；当前 Microsandbox 链路应优先匹配 `ip saddr 169.254.0.21/32 -> 15001`。2026-08-24 最终复测创建了 clean-state Worker `agentio-ztunnel-poc-2`，CNI 自动生成全部规则。Sandbox 发起请求后，源 IP 重定向 counter 从 0 增长到 3，而位于其后的 `physdev msb-tap+` counter 保持 0；这与 Substrate `fork_github` 提交 `5112cf81` 的修复结论一致。`9862` 和 `169.254.0.21/32` OUTPUT 旁路 counter 也自动增长。拒绝阶段存在 ztunnel 的策略拒绝日志；GATEWAY 请求的后端来源地址为 Gateway Pod；EPE 能按 ActorContext 中的 `kruise.io/actor-name` 命中策略。
+Ambient 实测的核心证据为：gVisor 链路的 `ateom0 -> 15001` 会随 Actor 新连接增长；当前 Microsandbox 链路应优先匹配 `ip saddr 169.254.0.21/32 -> 15001`。2026-08-24 的 PREROUTING-only 终验创建了 clean-state Worker `agentio-prerouting-only-poc`。实际 Sandbox 请求后，源 IP 重定向 counter 增长到 4，而位于其后的 `physdev msb-tap+` 和 `ateom0` counter 保持 0；NAT OUTPUT、MANGLE ISTIO、RAW ISTIO 和入向 `15006` 规则数均为 0。拒绝阶段存在 ztunnel 的策略拒绝日志；GATEWAY 请求的后端来源地址为 Gateway Pod；EPE 能按 ActorContext 中的 `kruise.io/actor-name` 命中策略。
 
 `egressPolicies` 和 `TrafficPolicy` 的选择边界仍是 **Worker workload**；Actor 级七层选择由 ListWorkers assignment 派生的 `Workload.extensions["actor-context"]` 和 EPE `SecurityProfile` 完成。当前只适用于一个 Worker 同时绑定一个 Actor。多个 Actor 共用同一 Worker netns 时，仍需要可靠的“连接 -> ActorContext”绑定。
 
@@ -1024,6 +1025,62 @@ kubectl --kubeconfig ~/.kube/my-config/substrate-network \
 ```text
 tests/integration/agentio/testdata/substrate-curl-sandbox/
 ```
+
+### 11.9 Ambient PREROUTING-only 实现与终验
+
+Agentio 提交 `d2be35f621` 为 Ambient node agent 新增以下 Pod 注解：
+
+```yaml
+metadata:
+  annotations:
+    agentio.io/interception-mode: prerouting-only
+```
+
+实现只修改 Ambient in-pod 路径：node agent 将注解解析为 `PodLevelOverrides.PreroutingOnly`，iptables 和原生 nftables 两个后端在该模式下只创建 NAT PREROUTING 与显式 Actor selector 规则。Sidecar CNI、Sidecar 注入模板、Substrate 和 ztunnel 协议均未修改。新增测试同时断言源 CIDR redirect 存在，并禁止 OUTPUT hook、DNS OUTPUT、普通入向 `15006` catch-all。
+
+本次只构建并部署了发生变更的 CNI 镜像：
+
+```text
+docker.io/kuromesi/install-cni:actor-context-poc-d2be35f621
+sha256:e861fd4cabdf03d65c10133c25191f9e55aebf61fb521e61aad6628d704ddb93
+```
+
+Gateway、EPE、agentiod 和 ztunnel 均保持原部署。创建带完整注解的 clean-state Worker 后，CNI 日志自动生成：
+
+```iptables
+* nat
+-N ISTIO_PRERT
+-A PREROUTING -j ISTIO_PRERT
+-A ISTIO_PRERT -s 169.254.0.21/32 -p tcp ! --dport 15001 -j REDIRECT --to-ports 15001
+-A ISTIO_PRERT -s 169.254.0.21/32 -p tcp -j RETURN
+-A ISTIO_PRERT -p tcp -m physdev --physdev-in msb-tap+ -j REDIRECT --to-ports 15001
+-A ISTIO_PRERT -p tcp -m physdev --physdev-in msb-tap+ -j RETURN
+-A ISTIO_PRERT -i ateom0 -p tcp -j REDIRECT --to-ports 15001
+-A ISTIO_PRERT -i ateom0 -p tcp -j RETURN
+COMMIT
+```
+
+运行时对象和结果如下：
+
+```text
+Worker Pod:       agentio-substrate-poc/agentio-prerouting-only-poc
+Worker UID:       1af6a13a-59f5-4370-9db9-55d3522af05c
+Actor:            agentio-poc/curl-prerouting-only-poc
+Actor UID:        08e2af6f-d3a8-4441-baaa-55e5506252bb
+Actor state:      ACTOR_STATE_RUNNING
+SecurityProfile:  curl-prerouting-only-security-poc
+```
+
+| 验证项 | 结果 | 证据 |
+| --- | --- | --- |
+| Worker/Actor 生命周期 | 成功 | 没有 OUTPUT 豁免规则，Actor 仍一次恢复到 `RUNNING` |
+| CNI 规则边界 | 成功 | `NAT_OUTPUT_RULES=0`、`MANGLE_ISTIO_RULES=0`、`RAW_ISTIO_RULES=0`、`INBOUND_15006_RULES=0` |
+| Actor 源流量捕获 | 成功 | `169.254.0.21/32 -> 15001` counter 为 4；bridge 和 `ateom0` 兼容规则为 0 |
+| GATEWAY 与 EPE | 200 | Sandbox 内 `/usr/bin/curl` 发起请求，目标 `RemoteAddr=10.240.53.144`，EPE outcome 为 `passthrough` |
+| TrafficPolicy 出向拒绝 | 502 | ztunnel 记录 `explicitly denied by: agentio-substrate-poc/actor-worker-egress-poc-egress` |
+| Actor SecurityProfile | 453 | EPE 命中 `curl-prerouting-only-security-poc/block-curl-actor-path#0`，返回 `blocked-by-sandbox-curl-security-profile` |
+
+注解必须在 Pod 首次进入 Ambient 时已经存在。只给一个已纳管 Pod 追加该注解，不保证 node agent 会重写已有 in-pod 规则；本次终验使用新建 clean-state Worker。如果由 WorkerPool/controller 创建 Worker，应在最终 Pod 模板或准入注入阶段写入注解，然后通过重建 Worker 生效。
 
 ## 12. 关键故障排查
 

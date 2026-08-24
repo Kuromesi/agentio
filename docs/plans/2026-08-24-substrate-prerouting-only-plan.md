@@ -72,6 +72,6 @@
 **Files:** All modified files.
 
 - [x] Run focused Ambient CNI, iptables and nftables Go tests.
-- [ ] Run `gofmt`, `git diff --check`, and inspect the final diff.
-- [ ] Commit only the explicit feature and documentation paths.
-- [ ] Push `codex/actor-context-poc` to its configured origin.
+- [x] Run `gofmt`, `git diff --check`, and inspect the final diff.
+- [x] Commit only the explicit feature and documentation paths.
+- [x] Push `codex/actor-context-poc` to its configured origin.
