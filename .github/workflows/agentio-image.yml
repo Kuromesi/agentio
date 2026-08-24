@@ -1,6 +1,7 @@
 name: agentio-image
 
-# Build and push Agentio, CNI, and ztunnel container images to Docker Hub.
+# Build and push Agentio, CNI, traffic-extension, and ztunnel container images
+# to Docker Hub.
 # Follows Istio's release-commit.sh tag strategy:
 # - pushes to versioned release-* branches publish development images;
 # - agentio-release calls this workflow with a trusted semantic release version.
