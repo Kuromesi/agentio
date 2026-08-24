@@ -73,8 +73,9 @@ const (
 	// the cluster connects from, causing intermittent UH/503.
 	agentioDFPCacheName = "agentio_dns_cache"
 	// noSNISentinel is the SDS resource name envoy requests when the client
-	// hello has no SNI. It must be >=1 char (proto min_len) and must not match
-	// any real includeHosts pattern, so SDS denies it and the handshake fails.
+	// hello has no SNI. It must be >=1 char (proto min_len) and must not be a
+	// valid DNS domain, so pilot's SDS rejects it (IsValidOnDemandDomain) and
+	// the handshake fails.
 	noSNISentinel = "_no_sni_"
 
 	// outerSNIFilterStateKey carries the original ClientHello SNI from the
@@ -98,7 +99,14 @@ const (
 	// the downstream peer / RBAC keys ONCE on the tls-terminate chain so they
 	// reach main_forward. Custom (non-canonical) for readable config dumps.
 	connectDownstreamFilterName = "connect_downstream_peer"
+
+	sniTrafficPolicyDenyFilterChain = "sni-traffic-policy-deny"
 )
+
+func sniTrafficPolicyEnabled(metadata *model.NodeMetadata) bool {
+	return features.EnableSniTrafficPolicy &&
+		agentio.SupportsPolicyCapability(metadata, agentio.SniTrafficPolicyCapability)
+}
 
 // buildCaptureSNIFilter returns a network filter that captures the downstream
 // ClientHello SNI into shared filter state. Placed BEFORE the TCP proxy on
@@ -162,14 +170,13 @@ var sandboxRelayKeys = []struct {
 
 // buildSandboxConnectDownstreamFilter returns a network set_filter_state filter that re-declares each
 // sandboxRelayKeys entry ONCE, reading the value the previous hop left via %FILTER_STATE(k:PLAIN)%.
-// It MUST run on_new_connection and BEFORE the tcp_proxy on the tls-terminate chain so the
-// keys propagate one more hop to main_forward.
+// It MUST run on_new_connection and BEFORE the tcp_proxy so the keys propagate to whichever
+// upstream cluster the chain selects.
 //
 // Each value is SkipIfEmpty + OmitEmptyValues: on the plaintext catchall path the principals
 // are absent, and an empty AddressObject would fail to parse — skipping avoids writing junk.
-// The ONCE here pollutes only the immediate upstream (the main_forward internal cluster, a
-// cheap userspace hop); it arrives at main_forward as None and so never enters the real
-// tls_connect_originate pool key.
+// Each value retains the source object's type so existing routing, RBAC, and connection-pool
+// isolation semantics remain unchanged.
 func buildSandboxConnectDownstreamFilter() *listener.Filter {
 	values := make([]*sfsvalue.FilterStateValue, 0, len(sandboxRelayKeys))
 	for _, k := range sandboxRelayKeys {
@@ -324,6 +331,23 @@ func (lb *ListenerBuilder) buildMainForwardFilters(httpCluster, tcpCluster strin
 	return []*listener.FilterChain{catchallHTTP, catchallTCP}
 }
 
+// buildSandboxSniTrafficPolicyDenyFilterChain builds the chain the SNI traffic policy matcher
+// selects for a denied connection. It is raw rather than TLS-terminating, so the
+// client is refused without first being handed a certificate, and the black hole
+// cluster closes the connection instead of forwarding it anywhere.
+func buildSandboxSniTrafficPolicyDenyFilterChain() *listener.FilterChain {
+	return &listener.FilterChain{
+		Name: sniTrafficPolicyDenyFilterChain,
+		Filters: []*listener.Filter{{
+			Name: wellknown.TCPProxy,
+			ConfigType: &listener.Filter_TypedConfig{TypedConfig: protoconv.MessageToAny(&tcp.TcpProxy{
+				StatPrefix:       sniTrafficPolicyDenyFilterChain,
+				ClusterSpecifier: &tcp.TcpProxy_Cluster{Cluster: util.BlackHoleCluster},
+			})},
+		}},
+	}
+}
+
 // buildTlsTerminateFilterChain builds a TLS termination filter chain with dynamic forward proxy.
 // It matches SNI and forwards traffic to the tls_connect_originate cluster.
 func (lb *ListenerBuilder) buildTlsTerminateFilterChain(connPool *extensions.ConnectionPoolSettings) *listener.FilterChain {
@@ -354,9 +378,9 @@ func (lb *ListenerBuilder) buildTlsTerminateFilterChain(connPool *extensions.Con
 							CertificateMapper: &core.TypedExtensionConfig{
 								Name: "envoy.tls.certificate_mappers.sni",
 								// DefaultValue is required (proto min_len=1). Envoy uses it as
-								// the SDS resource name when SNI is empty; this sentinel won't
-								// match any tlsTermination.includeHosts so SDS will deny it and
-								// the handshake fails — the desired behavior for missing SNI.
+								// the SDS resource name when SNI is empty; this sentinel is not
+								// a valid DNS domain so SDS rejects it and the handshake
+								// fails — the desired behavior for missing SNI.
 								TypedConfig: protoconv.MessageToAny(&sniv3.SNI{DefaultValue: noSNISentinel}),
 							},
 						}),
@@ -465,14 +489,14 @@ func deepestOnNoMatchTarget(primaryMatcher *matcher.Matcher) *matcher.Matcher {
 
 // buildSandboxProtocolMatcher builds the matcher used when no SNI rule matches:
 // TLS → forward-tcp, HTTP → forward-http, TCP → forward-tcp.
-func buildSandboxProtocolMatcher() *matcher.Matcher_OnMatch {
-	return match.ToMatcher(match.NewTransportProtocol(match.TransportProtocolMatch{
+func buildSandboxProtocolMatcher() *matcher.Matcher {
+	return match.NewTransportProtocol(match.TransportProtocolMatch{
 		TLS: match.ToChain(forwardTcpFilterChain),
 		Other: match.NewAppProtocol(match.ProtocolMatch{
 			TCP:  match.ToChain(forwardTcpFilterChain),
 			HTTP: match.ToChain(forwardHttpFilterChain),
 		}),
-	}))
+	})
 }
 
 // buildSandboxSNIMatcher builds the three-tier SNI matcher used when TLS
@@ -485,6 +509,28 @@ func buildSandboxSNIMatcher(tlsTermCfg sandboxTLSTermination, protocolFallback *
 		{Domains: tlsTermCfg.GetExcludeHosts(), OnMatch: match.ToChain(forwardTcpFilterChain)},
 		{Domains: tlsTermCfg.GetIncludeHosts(), OnMatch: match.ToChain(tlsTerminateFilterChain)},
 	}, protocolFallback))
+}
+
+// buildSandboxSNITrafficPolicyMatcher keeps the legacy tls_termination.exclude_hosts
+// bypass ahead of SNI policy evaluation. Every remaining TLS connection is routed
+// by the SNI policy custom matcher, which picks between terminating TLS, passing
+// through, and denying; non-TLS traffic retains protocol-based routing.
+//
+// The transport-protocol gate stays in front of the policy matcher: a plaintext
+// connection carries no SNI, so there is nothing for the policy to evaluate and
+// it must not reach the TLS-terminating chain.
+func buildSandboxSNITrafficPolicyMatcher(excludeHosts []string, protocolFallback *matcher.Matcher) *matcher.Matcher_OnMatch {
+	policyFallback := match.ToMatcher(match.NewTransportProtocol(match.TransportProtocolMatch{
+		TLS: match.ToMatcher(match.NewSniTrafficPolicyMatcher(
+			tlsTerminateFilterChain, forwardTcpFilterChain, sniTrafficPolicyDenyFilterChain)),
+		Other: protocolFallback,
+	}))
+	if len(excludeHosts) == 0 {
+		return policyFallback
+	}
+	return match.ToMatcher(match.NewSNIMatcher([]match.SNIDomainMatch{
+		{Domains: excludeHosts, OnMatch: match.ToChain(forwardTcpFilterChain)},
+	}, policyFallback))
 }
 
 // sandboxTLSTermination is the minimal interface satisfied by the sandbox
@@ -514,12 +560,24 @@ func applySandboxInternalChains(
 
 	gateway := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
 	tlsTermCfg := gateway.GetTlsTermination()
-	if features.EnableOnDemandCerts && tlsTermCfg != nil {
+	if sniTrafficPolicyEnabled(lb.node.Metadata) {
+		// The policy decision is made when the filter chain is selected, so both
+		// outcomes must be chains on this listener: terminating TLS is a property of
+		// a chain's transport socket, which is fixed before any network filter runs.
+		chains = append(chains,
+			lb.buildTlsTerminateFilterChain(gateway.GetConnectionPool()),
+			buildSandboxSniTrafficPolicyDenyFilterChain())
+		var excludeHosts []string
+		if tlsTermCfg != nil {
+			excludeHosts = tlsTermCfg.GetExcludeHosts()
+		}
+		target.OnNoMatch = buildSandboxSNITrafficPolicyMatcher(excludeHosts, protocolFallback)
+	} else if features.EnableOnDemandCerts && tlsTermCfg != nil {
 		// catchall-tls: terminates TLS with on-demand certs.
 		chains = append(chains, lb.buildTlsTerminateFilterChain(gateway.GetConnectionPool()))
-		target.OnNoMatch = buildSandboxSNIMatcher(tlsTermCfg, protocolFallback)
+		target.OnNoMatch = buildSandboxSNIMatcher(tlsTermCfg, match.ToMatcher(protocolFallback))
 	} else {
-		target.OnNoMatch = protocolFallback
+		target.OnNoMatch = match.ToMatcher(protocolFallback)
 	}
 	return chains
 }
