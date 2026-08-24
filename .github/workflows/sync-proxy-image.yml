@@ -1,0 +1,124 @@
+name: sync-proxy-image
+
+# Mirror one immutable proxy image from the configured internal registry to the
+# public repository consumed by Agentio E2E. This intentionally does not create
+# a release, publish a chart, or build any other image.
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: "Proxy manifest digest; defaults to PROXY_IMAGE_DIGEST in agentio.deps"
+        required: false
+        type: string
+  push:
+    branches:
+      - "release-*"
+    paths:
+      - agentio.deps
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_IMAGE: ${{ vars.PROXY_SOURCE_IMAGE }}
+  DESTINATION_IMAGE: docker.io/openkruise/proxyv2
+
+concurrency:
+  group: sync-proxy-image
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - name: Checkout Agentio
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve proxy image
+        env:
+          REQUESTED_DIGEST: ${{ inputs.digest }}
+        run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/heads/(master|release-[0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Proxy synchronization is restricted to master and versioned release branches" >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_IMAGE" =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]]; then
+            echo "Invalid proxy source image: $SOURCE_IMAGE" >&2
+            exit 1
+          fi
+
+          digest="$REQUESTED_DIGEST"
+          if [[ -z "$digest" ]]; then
+            digest=$(jq -er '.[] | select(.name == "PROXY_IMAGE_DIGEST") | .digest' agentio.deps)
+          fi
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid proxy digest: $digest" >&2
+            exit 1
+          fi
+
+          digest_hex="${digest#sha256:}"
+          {
+            echo "PROXY_DIGEST=$digest"
+            echo "SOURCE_REGISTRY=${SOURCE_IMAGE%%/*}"
+            echo "TARGET_TAG=pinned-${digest_hex:0:16}"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+
+      - name: Login to source registry
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_TOKEN: ${{ secrets.ACR_TOKEN }}
+        run: |
+          if [[ -z "$ACR_USERNAME" && -z "$ACR_TOKEN" ]]; then
+            echo "Using anonymous access for $SOURCE_REGISTRY"
+          elif [[ -z "$ACR_USERNAME" || -z "$ACR_TOKEN" ]]; then
+            echo "ACR_USERNAME and ACR_TOKEN must be set together" >&2
+            exit 1
+          else
+            echo "$ACR_TOKEN" | crane auth login "$SOURCE_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+          fi
+
+      - name: Login to Docker Hub
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+        run: |
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "DOCKERHUB_USERNAME and HUB_KRUISE must both be configured" >&2
+            exit 1
+          fi
+          echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
+
+      - name: Sync proxy image
+        run: |
+          source_ref="${SOURCE_IMAGE}@${PROXY_DIGEST}"
+          destination_ref="${DESTINATION_IMAGE}:${TARGET_TAG}"
+          echo "Syncing ${source_ref} -> ${destination_ref}"
+          crane copy "$source_ref" "$destination_ref"
+
+      - name: Verify synchronized digest
+        run: |
+          destination_ref="${DESTINATION_IMAGE}:${TARGET_TAG}"
+          actual_digest=$(crane digest "$destination_ref")
+          if [[ "$actual_digest" != "$PROXY_DIGEST" ]]; then
+            echo "Destination digest $actual_digest does not match requested digest $PROXY_DIGEST" >&2
+            exit 1
+          fi
+          {
+            echo "### Proxy image synchronized"
+            echo
+            echo "- Source: \`${SOURCE_IMAGE}@${PROXY_DIGEST}\`"
+            echo "- Destination: \`${destination_ref}\`"
+            echo "- Digest: \`${actual_digest}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
