@@ -39,6 +39,16 @@ func getPodLevelTrafficOverrides(pod *corev1.Pod) config.PodLevelOverrides {
 	// non-mesh traffic on inbound, and send to the mesh on outbound.
 	// Basically, this just disables inbound redirection.
 	podCfg := config.PodLevelOverrides{IngressMode: false}
+	if mode, found := pod.Annotations[config.InterceptionModeAnnotation]; found {
+		switch strings.TrimSpace(mode) {
+		case config.InterceptionModePreroutingOnly:
+			podCfg.PreroutingOnly = true
+		case "":
+		default:
+			log.WithLabels("namespace", pod.Namespace, "name", pod.Name).Warnf(
+				"ignoring invalid %s value %q", config.InterceptionModeAnnotation, mode)
+		}
+	}
 
 	if ingressMode, present := util.CheckBooleanAnnotation(pod, annotation.AmbientBypassInboundCapture.Name); present {
 		podCfg.IngressMode = ingressMode

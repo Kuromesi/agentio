@@ -83,13 +83,12 @@ Agentio node ztunnel
 ```yaml
 metadata:
   annotations:
+    agentio.io/interception-mode: prerouting-only
     agentio.io/reroute-source-ip-ranges: 169.254.0.21/32
     agentio.io/reroute-bridge-port-prefixes: msb-tap
-    agentio.io/exclude-outbound-ports: "9862"
-    agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32
 ```
 
-Agentio CNI 会在 iptables 后端生成以下规则；源 IP 规则位于 bridge、虚拟接口和普通入向捕获之前：
+`prerouting-only` 只保留显式 Actor 选择条件，不创建 Worker 本地 `OUTPUT` 捕获，也不创建普通 Worker 入向 `15006` catch-all，因此不再需要为 `9862` 和 `169.254.0.21/32` 维护 OUTPUT 豁免。Agentio CNI 会在 iptables 后端生成以下核心规则：
 
 ```bash
 iptables -t nat -A ISTIO_PRERT \
@@ -103,14 +102,9 @@ iptables -t nat -A ISTIO_PRERT \
   -j REDIRECT --to-ports 15001
 iptables -t nat -A ISTIO_PRERT \
   -m physdev --physdev-in 'msb-tap+' -p tcp -j RETURN
-
-iptables -t nat -A ISTIO_OUTPUT \
-  -p tcp --dport 9862 -j ACCEPT
-iptables -t nat -A ISTIO_OUTPUT \
-  -p tcp -d 169.254.0.21/32 -j ACCEPT
 ```
 
-每组规则的顺序都是 `REDIRECT` 在前、`RETURN` 在后。源 CIDR 用于识别“这是 Actor 方向的流量”，不能作为 Actor 安全身份；ActorContext 仍来自可信的 ListWorkers assignment。使用原生 nftables 后端时，CNI 生成等价的 `ip saddr 169.254.0.21/32 ... redirect to :15001`、`meta sdifname "msb-tap*" ...` 和 OUTPUT `accept` 规则。
+每组规则的顺序都是 `REDIRECT` 在前、`RETURN` 在后。源 CIDR 用于识别“这是 Actor 方向的流量”，不能作为 Actor 安全身份；ActorContext 仍来自可信的 ListWorkers assignment。使用原生 nftables 后端时，CNI 生成等价的 `ip saddr 169.254.0.21/32 ... redirect to :15001` 和 `meta sdifname "msb-tap*" ...` 规则，同样不创建 OUTPUT hook。
 
 本实现参考 `/Users/kuromesi/MyCOde/cos/substrate` 的 `origin/fork_github`，关键提交为 `5112cf81 fix(nftables): match by source IP instead of iifname for bridge+TAP model`，对应文件为 `cmd/ateom-microsandbox/network.go` 的 `installEgressNftables`。Agentio 只复用其“按固定 Actor 源 IP 匹配并排除监听端口”的语义，不复用 `ateom_actor` nftables 表或 Actor checkpoint 清理生命周期。
 
@@ -248,11 +242,10 @@ metadata:
     istio.io/dataplane-mode: ambient
   annotations:
     sidecar.istio.io/inject: "false"
+    agentio.io/interception-mode: prerouting-only
     istio.io/reroute-virtual-interfaces: ateom0
     agentio.io/reroute-source-ip-ranges: 169.254.0.21/32
     agentio.io/reroute-bridge-port-prefixes: msb-tap
-    agentio.io/exclude-outbound-ports: "9862"
-    agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32
     ambient.istio.io/dns-capture: "false"
 spec:
   containers:
@@ -264,10 +257,11 @@ spec:
 其中：
 
 - `istio.io/dataplane-mode: ambient` 使 CNI 选择该 Worker。
+- `agentio.io/interception-mode: prerouting-only` 关闭 Worker 本地 OUTPUT 和普通入向 catch-all，只安装下面显式选择的 Actor PREROUTING 规则。
 - `istio.io/reroute-virtual-interfaces: ateom0` 告诉 CNI 捕获经 `ateom0` 进入 Worker netns 的 Actor 流量。
 - `agentio.io/reroute-source-ip-ranges: 169.254.0.21/32` 告诉 CNI 把该 Actor 源 CIDR 的 TCP 视为出向流量；支持逗号分隔的 IPv4/IPv6 CIDR 或单个 IP，输入会被规范化、去重和校验。
 - `agentio.io/reroute-bridge-port-prefixes: msb-tap` 是兼容性匹配。该值是接口名前缀，不包含通配符；多个前缀使用逗号分隔。
-- `agentio.io/exclude-outbound-ports: "9862"` 和 `agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32` 让 Worker 的 OverlayBD 与 Actor 管理 TCP 连接绕过 Ambient 出向捕获；端口范围为 `1-65535`，多个值用逗号分隔。
+- 默认 Ambient 模式仍可使用 `agentio.io/exclude-outbound-ports` 和 `agentio.io/exclude-outbound-ip-ranges` 做精细 OUTPUT 豁免；`prerouting-only` 模式不创建 OUTPUT 捕获，所以无需配置这两个注解。
 - `sidecar.istio.io/inject: "false"` 防止同时注入 ztunnel sidecar。
 - `ambient.istio.io/dns-capture: "false"` 在第一阶段关闭 DNS 捕获，避免把 DNS 变量混入 TCP 出口 PoC；确认基础链路后再单独验证 DNS。
 - `--atunnel-egress-listen-address=127.0.0.1:15099` 释放 `15001` 给 Ambient ztunnel。

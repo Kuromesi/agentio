@@ -147,22 +147,24 @@ func (cfg *NftablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 		redirectDNS = false
 	}
 
-	rb.AppendRule(
-		PreroutingChain, AmbientMangleTable,
-		"jump", IstioPreroutingChain,
-	)
+	if !podOverrides.PreroutingOnly {
+		rb.AppendRule(
+			PreroutingChain, AmbientMangleTable,
+			"jump", IstioPreroutingChain,
+		)
 
-	rb.AppendRule(
-		OutputChain, AmbientMangleTable,
-		"jump", IstioOutputChain,
-	)
+		rb.AppendRule(
+			OutputChain, AmbientMangleTable,
+			"jump", IstioOutputChain,
+		)
 
-	rb.AppendRule(
-		OutputChain, AmbientNatTable,
-		"jump", IstioOutputChain,
-	)
+		rb.AppendRule(
+			OutputChain, AmbientNatTable,
+			"jump", IstioOutputChain,
+		)
+	}
 
-	if redirectDNS {
+	if redirectDNS && !podOverrides.PreroutingOnly {
 		rb.AppendRule(
 			PreroutingChain, AmbientRawTable,
 			"jump", IstioPreroutingChain,
@@ -242,6 +244,10 @@ func (cfg *NftablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 				"return",
 			)
 		}
+	}
+
+	if podOverrides.PreroutingOnly {
+		return cfg.executeCommands(rb)
 	}
 
 	// Pod-local infrastructure may need to reach node services or management endpoints without sending those

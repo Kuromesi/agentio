@@ -208,25 +208,27 @@ func (cfg *IptablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 	// This is mostly just for visual tidiness and cleanup, as we can delete the secondary chains and jumps
 	// without polluting the main table too much.
 
-	// -t mangle -A PREROUTING -j ISTIO_PRERT
-	iptablesBuilder.AppendRule(
-		"PREROUTING", "mangle",
-		"-j", ChainInpodPrerouting,
-	)
+	if !podOverrides.PreroutingOnly {
+		// -t mangle -A PREROUTING -j ISTIO_PRERT
+		iptablesBuilder.AppendRule(
+			"PREROUTING", "mangle",
+			"-j", ChainInpodPrerouting,
+		)
 
-	// -t mangle -A OUTPUT -p tcp -j ISTIO_OUTPUT
-	iptablesBuilder.AppendRule(
-		"OUTPUT", "mangle",
-		"-j", ChainInpodOutput,
-	)
+		// -t mangle -A OUTPUT -p tcp -j ISTIO_OUTPUT
+		iptablesBuilder.AppendRule(
+			"OUTPUT", "mangle",
+			"-j", ChainInpodOutput,
+		)
 
-	// -t nat -A OUTPUT -p tcp -j ISTIO_OUTPUT
-	iptablesBuilder.AppendRule(
-		"OUTPUT", "nat",
-		"-j", ChainInpodOutput,
-	)
+		// -t nat -A OUTPUT -p tcp -j ISTIO_OUTPUT
+		iptablesBuilder.AppendRule(
+			"OUTPUT", "nat",
+			"-j", ChainInpodOutput,
+		)
+	}
 
-	if redirectDNS {
+	if redirectDNS && !podOverrides.PreroutingOnly {
 		iptablesBuilder.AppendRule(
 			"PREROUTING", "raw",
 			"-j", ChainInpodPrerouting,
@@ -313,6 +315,10 @@ func (cfg *IptablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 				"-j", "RETURN",
 			)
 		}
+	}
+
+	if podOverrides.PreroutingOnly {
+		return iptablesBuilder
 	}
 
 	// Pod-local infrastructure may need to reach node services or management endpoints without sending those

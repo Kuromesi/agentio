@@ -93,6 +93,32 @@ func TestIptablesPodLevelReroutesAndExclusions(t *testing.T) {
 	}
 }
 
+func TestIptablesPreroutingOnly(t *testing.T) {
+	cfg := constructTestConfig()
+	ext := &dep.DependenciesStub{}
+	iptConfigurator, _, err := NewIptablesConfigurator(cfg, cfg, ext, ext, EmptyNlDeps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := iptConfigurator.CreateInpodRules(scopes.CNIAgent, config.PodLevelOverrides{
+		PreroutingOnly:        true,
+		RerouteSourceIPRanges: []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.Join(ext.ExecutedAll, "\n")
+	want := "-A ISTIO_PRERT -s 169.254.0.21/32 -p tcp ! --dport 15001 -j REDIRECT --to-ports 15001"
+	if !strings.Contains(got, want) {
+		t.Fatalf("iptables rules do not contain Actor PREROUTING redirect %q:\n%s", want, got)
+	}
+	for _, forbidden := range []string{"-A OUTPUT", "ISTIO_OUTPUT", "--to-ports 15006"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("prerouting-only rules unexpectedly contain %q:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestIPv6NotAvailable(t *testing.T) {
 	setup(t)
 	cfg := constructTestConfig()

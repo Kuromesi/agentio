@@ -25,6 +25,9 @@ import (
 
 // These constants are shared between iptables and nftables implementations
 const (
+	InterceptionModeAnnotation     = "agentio.io/interception-mode"
+	InterceptionModePreroutingOnly = "prerouting-only"
+
 	// INPOD marks/masks
 	InpodTProxyMark   = 0x111
 	InpodTProxyMask   = 0xfff
@@ -58,6 +61,7 @@ type PodLevelOverrides struct {
 	RerouteSourceIPRanges   []netip.Prefix
 	ExcludeOutboundPorts    []uint16
 	ExcludeOutboundIPRanges []netip.Prefix
+	PreroutingOnly          bool
 	IngressMode             bool
 	DNSProxy                PodDNSOverride
 }

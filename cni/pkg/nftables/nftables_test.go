@@ -160,6 +160,40 @@ func TestNftablesPodLevelReroutesAndExclusions(t *testing.T) {
 	}
 }
 
+func TestNftablesPreroutingOnly(t *testing.T) {
+	cfg := constructTestConfig()
+	ext := &dep.DependenciesStub{}
+	mock := NewMockNftablesCapture()
+	originalProvider := nftProviderVar
+	nftProviderVar = func(_ knftables.Family, _ string) (builder.NftablesAPI, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { nftProviderVar = originalProvider })
+
+	iptConfigurator, _, err := NewNftablesConfigurator(cfg, cfg, ext, ext, iptables.EmptyNlDeps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := iptConfigurator.AppendInpodRules(config.PodLevelOverrides{
+		PreroutingOnly:        true,
+		RerouteSourceIPRanges: []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := tx.String()
+	want := "ip saddr 169.254.0.21/32 meta l4proto tcp tcp dport != 15001 counter redirect to :15001"
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables rules do not contain Actor PREROUTING redirect %q:\n%s", want, got)
+	}
+	for _, forbidden := range []string{"chain output", "istio-output", "redirect to :15006"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("prerouting-only rules unexpectedly contain %q:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestNftablesHostRules(t *testing.T) {
 	cases := GetCommonHostTestCases()
 

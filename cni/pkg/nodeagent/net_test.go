@@ -597,6 +597,23 @@ var overrideTests = map[string]struct {
 			DNSProxy:                config.PodDNSUnset,
 		},
 	},
+	"prerouting only interception": {
+		in: corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test",
+				Namespace: "test",
+				UID:       "12345",
+				Annotations: map[string]string{
+					"agentio.io/interception-mode": "prerouting-only",
+				},
+			},
+		},
+		out: config.PodLevelOverrides{
+			PreroutingOnly: true,
+			IngressMode:    false,
+			DNSProxy:       config.PodDNSUnset,
+		},
+	},
 
 	"various manglings": {
 		in: corev1.Pod{
