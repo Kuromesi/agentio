@@ -10,10 +10,12 @@ Agentio Ambient 模式可以接管 Substrate Actor 的出口流量，但必须�
 
 - gVisor Worker 使用独立的 `ateom0` 时，可以直接配置 `istio.io/reroute-virtual-interfaces: ateom0`。
 - 2026-08-24 实测的 Microsandbox Worker 使用 `br-msb` 和 `msb-tap*`。Actor 包从 `msb-tap*` 进入 Linux bridge，但 L3 netfilter 看到的逻辑入接口是 `br-msb`。直接把 `br-msb` 配成 reroute 接口会把 Worker 正常入向流量也误判为出向流量，不能作为正式配置。
-- Agentio CNI PoC 分支已经支持 Pod 注解 `agentio.io/reroute-bridge-port-prefixes: msb-tap`。CNI 会使用 `physdev --physdev-in msb-tap+` 只识别 Actor TAP 入包并重定向到 `15001`；Worker Pod 重建后由 CNI 自动恢复，不再需要手工写入这两条 `physdev` 规则。
+- `fork_github` 的 atunnel egress 在提交 `5112cf81` 中已经从 TAP 接口匹配改成 Actor 固定源 IP 匹配。原因是 bridge+TAP 模型执行三层路由后，PREROUTING 看到的逻辑入接口是 `br-msb`，不是 `msb-tapN`。
+- Agentio CNI PoC 分支已经支持 `agentio.io/reroute-source-ip-ranges: 169.254.0.21/32`，会把匹配 Actor 源 CIDR 的 TCP 重定向到 `15001`，并排除原目标端口 `15001` 防止回环。`agentio.io/reroute-bridge-port-prefixes: msb-tap` 保留为兼容条件，不再作为当前 Microsandbox 的首选匹配方法。
+- CNI 还支持 `agentio.io/exclude-outbound-ports: "9862"` 和 `agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32`，用于旁路 Worker 自身的 OverlayBD 和 Actor 管理连接。Worker Pod 重建后，重定向与旁路规则都由 CNI 自动恢复，不再需要运行时手工写 iptables。
 - Worker 中 atunnel 的出口监听端口不能继续使用 `15001`，因为该端口由 Ambient ztunnel 使用。PoC 使用 `127.0.0.1:15099`。
 - Worker 不再注入 Agentio ztunnel sidecar，避免 sidecar 与 Ambient 重复拦截。
-- Agentio CNI 和节点级 ztunnel 正常运行，且 CNI 已同时为 Worker Pod 编程 `ateom0` 和 `msb-tap*` 入流量规则。
+- Agentio CNI 和节点级 ztunnel 正常运行，且 CNI 已为 Worker Pod 编程 Actor 源 CIDR、可选 bridge/TAP、`ateom0` 和 Worker 管理流量旁路规则。
 
 已有 PoC 证据和本文需要复测的验收项如下：
 
@@ -27,7 +29,7 @@ Agentio Ambient 模式可以接管 Substrate Actor 的出口流量，但必须�
 | `TrafficPolicy` 入向拒绝 | 已在 ACK Microsandbox Ambient Actor 链路完成 selector A/B | selector 不匹配为 400，匹配后为 503，ztunnel 记录明确拒绝 |
 | Actor 级 `SecurityProfile` | 已使用 `kruise.io/actor-name` 实测 | 普通路径返回 200，命中路径返回 453，且 Worker Pod 本身没有 Actor name label |
 
-Ambient 实测的核心证据为：gVisor 链路的 `ateom0 -> 15001` 和 Microsandbox 链路的 `physdev msb-tap+ -> 15001` counter 都会随 Actor 新连接增长。2026-08-24 的 CNI 重建复测中，Worker UID 从 `53cc01f8-f01f-4b7d-8cc7-73535d45997a` 变为 `c43f4c85-f811-4238-809b-9625758d130b` 后，CNI 在 clean-state netns 中自动生成规则；第二个 Worker 上的 counter 从 0 增长到 5。拒绝阶段存在 ztunnel 的策略拒绝日志；GATEWAY 请求的后端来源地址为 Gateway Pod；EPE 能按 ActorContext 中的 `kruise.io/actor-name` 命中策略。
+Ambient 实测的核心证据为：gVisor 链路的 `ateom0 -> 15001` 会随 Actor 新连接增长；当前 Microsandbox 链路应优先匹配 `ip saddr 169.254.0.21/32 -> 15001`。2026-08-24 最终复测创建了 clean-state Worker `agentio-ztunnel-poc-2`，CNI 自动生成全部规则。Sandbox 发起请求后，源 IP 重定向 counter 从 0 增长到 3，而位于其后的 `physdev msb-tap+` counter 保持 0；这与 Substrate `fork_github` 提交 `5112cf81` 的修复结论一致。`9862` 和 `169.254.0.21/32` OUTPUT 旁路 counter 也自动增长。拒绝阶段存在 ztunnel 的策略拒绝日志；GATEWAY 请求的后端来源地址为 Gateway Pod；EPE 能按 ActorContext 中的 `kruise.io/actor-name` 命中策略。
 
 `egressPolicies` 和 `TrafficPolicy` 的选择边界仍是 **Worker workload**；Actor 级七层选择由 ListWorkers assignment 派生的 `Workload.extensions["actor-context"]` 和 EPE `SecurityProfile` 完成。当前只适用于一个 Worker 同时绑定一个 Actor。多个 Actor 共用同一 Worker netns 时，仍需要可靠的“连接 -> ActorContext”绑定。
 
@@ -66,9 +68,8 @@ Actor MicroVM
 Worker Pod netns
   msb-tap1 -> br-msb: 169.254.0.22
         |
-        | bridge physical ingress = msb-tap1
         | L3 logical ingress = br-msb
-        | Agentio CNI: physdev --physdev-in msb-tap+ -> REDIRECT 15001
+        | Agentio CNI: ip saddr 169.254.0.21/32 -> REDIRECT 15001
         v
 Agentio node ztunnel
         |
@@ -77,32 +78,48 @@ Agentio node ztunnel
         +-- HBONE -> Gateway API agentio-egress -> EPE -> upstream
 ```
 
-不要直接为 Microsandbox 配置 `istio.io/reroute-virtual-interfaces: br-msb`。Worker Pod IP 也挂在 `br-msb` 上，这会把 atenet-router 到 Worker 的正常入向连接重定向到 ztunnel 出向 listener，导致入向/出向语义混淆。请在 Worker Pod 模板中配置前缀，不要填写 `+` 或 `*`：
+不要直接为 Microsandbox 配置 `istio.io/reroute-virtual-interfaces: br-msb`。Worker Pod IP 也挂在 `br-msb` 上，这会把 atenet-router 到 Worker 的正常入向连接重定向到 ztunnel 出向 listener，导致入向/出向语义混淆。当前 DADI 固定使用 `169.254.0.21`，请优先在 Worker Pod 模板中配置 Actor 源 CIDR。bridge port 前缀可以保留为兼容条件；前缀值不要填写 `+` 或 `*`：
 
 ```yaml
 metadata:
   annotations:
+    agentio.io/reroute-source-ip-ranges: 169.254.0.21/32
     agentio.io/reroute-bridge-port-prefixes: msb-tap
+    agentio.io/exclude-outbound-ports: "9862"
+    agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32
 ```
 
-Agentio CNI 会在 iptables 后端生成以下等价规则：
+Agentio CNI 会在 iptables 后端生成以下规则；源 IP 规则位于 bridge、虚拟接口和普通入向捕获之前：
 
 ```bash
-iptables -t nat -I ISTIO_PRERT 1 \
-  -m physdev --physdev-in 'msb-tap+' -p tcp -j RETURN
-iptables -t nat -I ISTIO_PRERT 1 \
+iptables -t nat -A ISTIO_PRERT \
+  -s 169.254.0.21/32 -p tcp ! --dport 15001 \
+  -j REDIRECT --to-ports 15001
+iptables -t nat -A ISTIO_PRERT \
+  -s 169.254.0.21/32 -p tcp -j RETURN
+
+iptables -t nat -A ISTIO_PRERT \
   -m physdev --physdev-in 'msb-tap+' -p tcp \
   -j REDIRECT --to-ports 15001
+iptables -t nat -A ISTIO_PRERT \
+  -m physdev --physdev-in 'msb-tap+' -p tcp -j RETURN
+
+iptables -t nat -A ISTIO_OUTPUT \
+  -p tcp --dport 9862 -j ACCEPT
+iptables -t nat -A ISTIO_OUTPUT \
+  -p tcp -d 169.254.0.21/32 -j ACCEPT
 ```
 
-最终顺序是 `REDIRECT` 在前、`RETURN` 在后。`physdev` 能看到 bridge 的物理入端口，既能捕获 Actor TAP 流量，又不会把从 Worker `eth0` 进入的普通入向连接误判为 Actor 出向流量。使用原生 nftables 后端时，CNI 生成等价的 `meta sdifname "msb-tap*" meta l4proto tcp redirect to :15001` 和 `return` 规则。
+每组规则的顺序都是 `REDIRECT` 在前、`RETURN` 在后。源 CIDR 用于识别“这是 Actor 方向的流量”，不能作为 Actor 安全身份；ActorContext 仍来自可信的 ListWorkers assignment。使用原生 nftables 后端时，CNI 生成等价的 `ip saddr 169.254.0.21/32 ... redirect to :15001`、`meta sdifname "msb-tap*" ...` 和 OUTPUT `accept` 规则。
+
+本实现参考 `/Users/kuromesi/MyCOde/cos/substrate` 的 `origin/fork_github`，关键提交为 `5112cf81 fix(nftables): match by source IP instead of iifname for bridge+TAP model`，对应文件为 `cmd/ateom-microsandbox/network.go` 的 `installEgressNftables`。Agentio 只复用其“按固定 Actor 源 IP 匹配并排除监听端口”的语义，不复用 `ateom_actor` nftables 表或 Actor checkpoint 清理生命周期。
 
 ztunnel 进程运行在节点级 DaemonSet 中，但这不表示流量要先离开 Worker Pod 再进入 ztunnel Pod。当前 Agentio 实现中，CNI node agent 是 ZDS Unix socket server，ztunnel 是连接该 socket 的 client。CNI 发现 Worker Pod netns 后，通过 ZDS `AddWorkload` 把 netns FD 发送给 ztunnel；ztunnel 随后进入该 Worker 网络命名空间，创建 `15001`、`15006` 和 `15008` 等监听 socket。因此，Worker 内的重定向规则可以直接把 `ateom0` 流量送入 ztunnel。
 
 各组件的职责为：
 
 - **Substrate atunnel**：负责 Actor 与 Worker 之间的网络隧道及 Actor 网络接入。
-- **Agentio CNI**：识别加入 Ambient 的 Worker，为 `ateom0` 或匹配 `msb-tap*` 的 bridge 物理端口编程重定向规则，并把 Worker netns 交给 ztunnel。
+- **Agentio CNI**：识别加入 Ambient 的 Worker，为 Actor 源 CIDR、`ateom0` 或可选 bridge/TAP 条件编程重定向规则，为 Worker 管理连接编程 OUTPUT 旁路，并把 Worker netns 交给 ztunnel。
 - **Agentio ztunnel**：在 Worker netns 中接收被重定向的 TCP 连接，执行四层出口策略，并按需直连或转发到出口网关。
 - **agentiod**：生成 ztunnel 所需的 workload、证书、出口策略和 TrafficPolicy 配置。
 - **Agentio 出口网关**：承接 `GATEWAY` 流量；需要七层检查时，还可以在网关侧接 EPE/ext-proc。
@@ -232,7 +249,10 @@ metadata:
   annotations:
     sidecar.istio.io/inject: "false"
     istio.io/reroute-virtual-interfaces: ateom0
+    agentio.io/reroute-source-ip-ranges: 169.254.0.21/32
     agentio.io/reroute-bridge-port-prefixes: msb-tap
+    agentio.io/exclude-outbound-ports: "9862"
+    agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32
     ambient.istio.io/dns-capture: "false"
 spec:
   containers:
@@ -245,7 +265,9 @@ spec:
 
 - `istio.io/dataplane-mode: ambient` 使 CNI 选择该 Worker。
 - `istio.io/reroute-virtual-interfaces: ateom0` 告诉 CNI 捕获经 `ateom0` 进入 Worker netns 的 Actor 流量。
-- `agentio.io/reroute-bridge-port-prefixes: msb-tap` 告诉 Agentio CNI 捕获经 `msb-tap*` 进入 bridge 的 Microsandbox Actor 流量。该值是接口名前缀，不包含通配符；多个前缀使用逗号分隔。
+- `agentio.io/reroute-source-ip-ranges: 169.254.0.21/32` 告诉 CNI 把该 Actor 源 CIDR 的 TCP 视为出向流量；支持逗号分隔的 IPv4/IPv6 CIDR 或单个 IP，输入会被规范化、去重和校验。
+- `agentio.io/reroute-bridge-port-prefixes: msb-tap` 是兼容性匹配。该值是接口名前缀，不包含通配符；多个前缀使用逗号分隔。
+- `agentio.io/exclude-outbound-ports: "9862"` 和 `agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32` 让 Worker 的 OverlayBD 与 Actor 管理 TCP 连接绕过 Ambient 出向捕获；端口范围为 `1-65535`，多个值用逗号分隔。
 - `sidecar.istio.io/inject: "false"` 防止同时注入 ztunnel sidecar。
 - `ambient.istio.io/dns-capture: "false"` 在第一阶段关闭 DNS 捕获，避免把 DNS 变量混入 TCP 出口 PoC；确认基础链路后再单独验证 DNS。
 - `--atunnel-egress-listen-address=127.0.0.1:15099` 释放 `15001` 给 Ambient ztunnel。
@@ -281,7 +303,10 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
         istio.io/reroute-virtual-interfaces: ateom0
+        agentio.io/reroute-source-ip-ranges: 169.254.0.21/32
         agentio.io/reroute-bridge-port-prefixes: msb-tap
+        agentio.io/exclude-outbound-ports: "9862"
+        agentio.io/exclude-outbound-ip-ranges: 169.254.0.21/32
         ambient.istio.io/dns-capture: "false"
 ```
 
@@ -704,6 +729,10 @@ ztunnel:
   docker.io/kuromesi/ztunnel:actor-workload-64c1e189db-20260824
   sha256:bfb25fa6a5a0bbdb19286a91312960dde4bef8b9b685382ba89094a29591d96a
 
+Agentio CNI:
+  docker.io/kuromesi/install-cni:actor-context-cni-source-20260824
+  sha256:a2e60c8c91444f9f00f3f02d5342285316f1d1a19598932eee7afc68f34c4114
+
 EPE:
   docker.io/kuromesi/epe:substrate-epe-poc-v2-20260824
   sha256:29e99cc9bead13584838feebb342a20d78063853c462bc9a2ce542c3ed5334fe
@@ -877,30 +906,31 @@ spec:
 | 验证项 | 结果 | 数据面证据 |
 | --- | --- | --- |
 | ActorTemplate 构建 | Ready | provisioning 报告依赖已安装；`/readyz` 第一次探测返回 200 |
-| CNI 重建恢复 | 成功 | 新 Worker UID/netns 为 clean-state；CNI 日志自动生成 `physdev msb-tap+ -> 15001` 并向 ztunnel 发送新 UID |
-| ztunnel 捕获 | 成功 | `physdev msb-tap+ -> 15001` counter 从 0 增长到 5 |
+| CNI 重建恢复 | 成功 | 新 Worker UID/netns 为 clean-state；CNI 日志自动生成源 CIDR 重定向、bridge 兼容规则和两类 OUTPUT 旁路，并向 ztunnel 发送新 UID |
+| ztunnel 捕获 | 成功 | `169.254.0.21/32 -> 15001` counter 从 0 增长到 3；位于后面的 `physdev msb-tap+` 保持 0 |
+| Worker 管理流量旁路 | 成功 | `9862` counter 增长到 9，`169.254.0.21/32` counter 增长到 5；Actor 冷启动成功 |
 | TrafficPolicy 出向拒绝 | 502 | `explicitly denied by: agentio-substrate-poc/actor-worker-egress-poc-egress` |
 | TrafficPolicy 出向回退 | 200 | 未匹配 VIP 正常访问 |
 | TrafficPolicy 入向 selector 不匹配 | 400 | 请求到达 ateom HTTPS listener，返回原始协议错误 |
 | TrafficPolicy 入向 selector 匹配 | 503 | `explicitly denied by: agentio-substrate-poc/actor-worker-ingress-poc-ingress` |
 | GATEWAY 普通路径 | 200 | 后端 `RemoteAddr` 为 Gateway Pod `10.240.53.144` |
 | SecurityProfile 普通路径 | 200 | EPE audit outcome 为 `passthrough` |
-| SecurityProfile 拒绝路径 | 453 | CNI 重建复测的 EPE audit action 为 `curl-sandbox-cni-v1-security-poc/block-curl-actor-path` |
+| SecurityProfile 拒绝路径 | 453 | CNI 最终复测按 `kruise.io/actor-name=curl-sandbox-cni-v2` 命中 `curl-sandbox-cni-v2-security-poc` |
 
 本次 CNI 重建复测使用以下镜像和对象：
 
 ```text
-CNI image:          docker.io/kuromesi/install-cni@sha256:1bfcddb529a04586827330172bdfaf01eb3e6c0a9bffb5c3b47581eae0cecf3c
-Worker Pod:         agentio-substrate-poc/agentio-ztunnel-poc-1
-Worker UID:         fcc2b1f7-49eb-487e-9b62-8a29019ebdc1
-Actor:              agentio-poc/curl-sandbox-cni-v1
-Actor UID:          f9322676-7db0-486d-a843-7d1c1a6b540c
-SecurityProfile:    curl-sandbox-cni-v1-security-poc
+CNI image:          docker.io/kuromesi/install-cni@sha256:a2e60c8c91444f9f00f3f02d5342285316f1d1a19598932eee7afc68f34c4114
+Worker Pod:         agentio-substrate-poc/agentio-ztunnel-poc-2
+Worker UID:         882722c1-0596-482b-ad68-1c05e73d85e4
+Actor:              agentio-poc/curl-sandbox-cni-v2
+Actor UID:          4cfa52f0-aa8d-4dff-b3b5-c5b027229abc
+SecurityProfile:    curl-sandbox-cni-v2-security-poc
 ```
 
-允许路径返回 200，目标服务记录的 `RemoteAddr` 为 Gateway Pod `10.240.53.144`；七层拒绝路径返回 453，EPE audit action 为 `curl-sandbox-cni-v1-security-poc/block-curl-actor-path`；四层拒绝目标 `172.30.49.130:80` 返回 502，ztunnel 记录 `explicitly denied by: agentio-substrate-poc/actor-worker-egress-poc-egress`。
+允许路径返回 200，目标服务记录的 `RemoteAddr` 为 Gateway Pod `10.240.53.144`；七层拒绝路径返回 453，并按 ActorContext 中的 `kruise.io/actor-name=curl-sandbox-cni-v2` 命中 SecurityProfile；四层拒绝目标 `172.30.49.130:80` 返回 502，ztunnel 记录 `explicitly denied by: agentio-substrate-poc/actor-worker-egress-poc-egress`。ztunnel config dump 中存在 Actor UID、atespace、generation 和完整 Actor labels，Worker Pod 本身仍没有 `kruise.io/actor-name` label。
 
-可以使用已创建的普通 curl Pod检查集群内流量：
+可以使用已创建的普通 curl Pod 检查集群内流量：
 
 ```bash
 kubectl --kubeconfig ~/.kube/my-config/substrate-network \
@@ -912,23 +942,25 @@ Actor 侧 PoC 服务接收一个 URL 并由 Actor 发起出向请求。以下命
 
 ```bash
 kubectl --kubeconfig ~/.kube/my-config/substrate-network \
-  -n agentio-substrate-poc exec agentio-ztunnel-poc-1 -c ateom -- \
-  wget -S -O - --timeout=20 \
-  --header='Content-Type: application/json' \
-  --post-data='{"url":"http://172.30.199.186:80/security-denied"}' \
-  http://169.254.0.21:80/
+  -n agentio-substrate-poc exec agentio-ztunnel-poc-2 -c ateom -- \
+  sh -c 'body='"'"'{"url":"http://172.30.199.186:80/security-denied"}'"'"'; \
+    length=${#body}; \
+    printf "POST / HTTP/1.1\r\nHost: 169.254.0.21\r\nContent-Type: application/json\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s" \
+      "$length" "$body" | nc -w 30 169.254.0.21 80'
 ```
 
 预期返回 `453`。把 URL 改成 `/security-allowed` 预期返回 `200`；改成 `http://172.30.49.130:80/` 预期返回 `502`。
 
 ### 11.7 Microsandbox 当前限制
 
-- `physdev msb-tap+` 已由 Agentio CNI 原生生成，Worker Pod 重建后可以自动恢复；不再需要 Worker init 容器或手工执行 iptables。
-- Microsandbox 启动还依赖 Worker `overlaybd-forward -> NODE_IP:9862`，本文从 Worker 调用 Actor 测试端点还依赖 `169.254.0.21`。Ambient 默认 OUTPUT 捕获会影响这两类 Worker 管理流量。本次集群复测临时在 `ISTIO_OUTPUT` 前部为 TCP `9862` 和 `169.254.0.21/32` 添加 `ACCEPT`；这两条 bypass 仍是运行时 PoC 配置，Pod 重建后会丢失。正式方案应把它们表达成受校验的 CNI Pod 级排除配置，或者调整 Substrate 管理链路，使其使用 ztunnel 可安全识别的 mark/独立 netns。
-- 不能用 `br-msb -> 15001` 替代 `physdev`。实测会把 atenet-router 到 Worker 的入向连接误分类为出向，从而绕开入向 TrafficPolicy 的正确方向判定。
+- `169.254.0.21/32` 源地址重定向、`physdev msb-tap+` 兼容规则、TCP `9862` 和目的 `169.254.0.21/32` 的 OUTPUT 旁路均已由 Agentio CNI 原生生成。Worker Pod 重建后会自动恢复，不再需要 Worker init 容器或手工执行 iptables。
+- `fork_github` 当前 DADI 把 Actor IP 固定为 `169.254.0.21`，因此源 CIDR 匹配适合单 Actor PoC。如果 Actor IP 改为动态分配，Worker/controller 必须把实际地址列表声明到 Pod 注解；如果多个 Actor 复用相同源 IP，则该条件只能识别 Actor 流量方向，不能区分 Actor A 与 Actor B。
+- 源 IP 不能作为安全身份。正式环境应限制 Actor 的 `CAP_NET_ADMIN`/`CAP_NET_RAW`，在 TAP/bridge 层增加源 IP/MAC anti-spoof，或者为 Actor 使用独立 netns。Actor 身份必须继续来自 ListWorkers assignment 和 ActorContext。
+- 不能用 `br-msb -> 15001` 替代源 CIDR。它会把 atenet-router 到 Worker 的入向连接误分类为出向。`physdev msb-tap+` 可以作为旧实现兼容条件，但当前 bridge 三层路由路径以源 CIDR计数为准。
+- Agentio CNI 只操作自己的 `ISTIO_PRERT`/`ISTIO_OUTPUT` 链，不操作 Substrate 的 `ateom_actor` nftables 表；后者会在 Actor checkpoint 时被 ateom 整表删除。正式部署还必须保证 atunnel egress redirect 已关闭，避免两套 NAT hook 同时拦截同一连接。
 - 当前社区 ate-api 部署版本丢失 ActorTemplate 的 `command/args`，PoC 镜像用 systemd unit 规避；应升级或修复 ate-api 后取消这个兼容措施。
-- 本次删除旧 Worker 时，原 Actor 先变为 `CRASHED`；一次在缺少 `9862` bypass 时失败的冷启动又让社区控制面把新 Actor 卡在 `RESUMING`。当前部署版本没有 `DeleteActor.any_state`，PoC 因而创建第二个 Worker 和新 Actor 完成复测。该问题属于社区 Substrate 的失败恢复/状态机边界，不是 CNI `physdev` 规则失败。
-- 当前一个 Worker 同时只绑定一个 Actor。多 Actor 共用 `br-msb` 时，只有接口级捕获无法区分 Actor，需要按 TAP、IP、mark、cgroup/socket cookie 或独立 netns 建立 per-flow Actor identity。
+- 本次删除旧 Worker 时，原 Actor 先变为 `CRASHED`；一次在缺少 `9862` bypass 时失败的冷启动又让社区控制面把旧 Actor 卡在 `RESUMING`。新 Worker 使用声明式旁路后，`curl-sandbox-cni-v2` 一次冷启动成功。旧对象问题属于社区 Substrate 的失败恢复/状态机边界。
+- 当前一个 Worker 同时只绑定一个 Actor。多 Actor 共用 `br-msb` 时，需要按可信的 TAP、源地址、mark、cgroup/socket cookie 或独立 netns 建立 per-flow Actor identity；仅捕获流量并不能完成身份绑定。
 
 ### 11.8 在实际 Sandbox 中执行 curl
 
@@ -942,9 +974,9 @@ kubectl --kubeconfig ~/.kube/my-config/substrate-network \
 Image tag:     docker.io/kuromesi/substrate-egress-demo:agentio-ambient-poc-sandbox-curl-flat-v3-20260824
 Image digest:  sha256:58ca036213243a8faa20b27cc0c4685ba190a580bdb18b27f30221f03691330f
 ActorTemplate: agentio-sandbox-curl-flat-v3-poc
-Actor:         agentio-poc/curl-sandbox-cni-v1
-Actor UID:     f9322676-7db0-486d-a843-7d1c1a6b540c
-Worker Pod:    agentio-substrate-poc/agentio-ztunnel-poc-1
+Actor:         agentio-poc/curl-sandbox-cni-v2
+Actor UID:     4cfa52f0-aa8d-4dff-b3b5-c5b027229abc
+Worker Pod:    agentio-substrate-poc/agentio-ztunnel-poc-2
 ```
 
 镜像必须扁平化为单个 OCI layer。当前 Microsandbox/DADI 解压普通多层镜像时可能报 `untar layer 1: operation not supported`。同时镜像必须预装 `git`、`nfs-common` 和 `less`；否则 provision 阶段会尝试访问 Debian 软件源，而 Sandbox 构建网络不一定可达该软件源。
@@ -963,7 +995,7 @@ Worker ateom 中的 wget/nc
 
 ```bash
 kubectl --kubeconfig ~/.kube/my-config/substrate-network \
-  -n agentio-substrate-poc exec agentio-ztunnel-poc-1 -c ateom -- \
+  -n agentio-substrate-poc exec agentio-ztunnel-poc-2 -c ateom -- \
   sh -c 'body='"'"'{"url":"http://172.30.199.186:80/security-allowed"}'"'"'; \
     length=${#body}; \
     printf "POST / HTTP/1.1\r\nHost: 169.254.0.21\r\nContent-Type: application/json\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s" \
@@ -990,7 +1022,7 @@ kubectl --kubeconfig ~/.kube/my-config/substrate-network \
 | 场景 | Sandbox curl 结果 | 策略证据 |
 |---|---:|---|
 | `security-allowed` | 200 | 经 Gateway 到达目标，EPE `passthrough` |
-| `security-denied` | 453 | 返回 `blocked-by-sandbox-curl-security-profile`，按 `kruise.io/actor-name=curl-sandbox-cni-v1` 命中 SecurityProfile |
+| `security-denied` | 453 | 返回 `blocked-by-sandbox-curl-security-profile`，按 `kruise.io/actor-name=curl-sandbox-cni-v2` 命中 SecurityProfile |
 | `172.30.49.130:80` | 502 | curl `Recv failure: Connection reset by peer`，ztunnel 命中 `actor-worker-egress-poc-egress` |
 
 测试服务源码、测试和镜像定义位于：
@@ -1020,7 +1052,8 @@ tests/integration/agentio/testdata/substrate-curl-sandbox/
 检查：
 
 - gVisor Worker 是否存在 `istio.io/reroute-virtual-interfaces: ateom0`，且真实网卡名称仍为 `ateom0`。
-- Microsandbox 是否实际使用 `br-msb/msb-tap*`，以及 `ISTIO_PRERT` 是否使用 `physdev --physdev-in msb-tap+ -> 15001`。
+- Microsandbox Actor 地址是否仍为 `169.254.0.21`，Worker 注解是否包含 `agentio.io/reroute-source-ip-ranges: 169.254.0.21/32`，以及 `ISTIO_PRERT` 是否存在对应源地址重定向。
+- 如果只配置了 `agentio.io/reroute-bridge-port-prefixes`，确认当前内核/后端在 PREROUTING 中是否确实暴露 `msb-tapN`。`fork_github` 的 bridge 三层路由路径看到的是 `br-msb`，应改用源 CIDR。
 - 不要看到 `br-msb` 后就直接配置 `-i br-msb -> 15001`；先确认它是否同时承载 Worker Pod IP 和正常入向流量。
 - 查看规则 packet counter，请求前后是否增长。
 - 使用的检查命令是否匹配节点实际的 nft/legacy 后端。
@@ -1089,7 +1122,8 @@ ambient:
 PoC 验证完成后，正式接入建议补齐以下能力：
 
 - 在 WorkerPool/controller 层原生支持 Pod 标签、注解和 atunnel egress 端口，避免直接 Patch Deployment。
-- 将 `agentio.io/reroute-bridge-port-prefixes` 从 PoC 能力正式化，补齐版本化文档、升级兼容和端到端回归；同时增加受校验的 Pod 级 OUTPUT 排除配置，至少覆盖 Microsandbox `overlaybd-forward :9862` 和必要的 Worker 管理地址。
+- 将 `agentio.io/reroute-source-ip-ranges`、`agentio.io/reroute-bridge-port-prefixes` 和两类 OUTPUT 排除注解正式化，补齐版本化 API、升级兼容和 iptables/nftables 端到端回归；WorkerPool/controller 应根据实际 Sandbox 网络模型生成这些注解。
+- 为源 CIDR 匹配补充 TAP/bridge anti-spoof；如果 Actor 地址动态化，由 Substrate 把实际地址声明给 CNI，不能在 Agentio 中写死 `169.254.0.21`。
 - 对 CNI 纳管、ZDS 连接、Worker netns socket、策略下发和 gateway 转发增加监控及告警。
 - 为每次策略变更提供新的 TCP 连接验证，避免 keep-alive 造成假阴性。
 - 默认生成最小范围的目标规则，并保留显式兜底，禁止直接下发无范围的全局 `DENY`。

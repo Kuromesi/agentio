@@ -24,6 +24,19 @@ Regardless of mode, the Istio CNI Node Agent requires privileged node permission
 
 See [architecture doc](../architecture/ambient/ztunnel-cni-lifecycle.md).
 
+### Agentio ambient Pod overrides
+
+Agentio supports the following comma-separated Pod annotations when programming ambient rules inside a workload network namespace:
+
+| Annotation | Purpose |
+| --- | --- |
+| `agentio.io/reroute-source-ip-ranges` | Treat TCP packets from the listed source IPs or CIDRs as outbound and redirect them to ztunnel. |
+| `agentio.io/reroute-bridge-port-prefixes` | Treat TCP packets from matching bridge port name prefixes as outbound. Values are prefixes without `+` or `*`. |
+| `agentio.io/exclude-outbound-ports` | Bypass ztunnel for TCP connections to the listed destination ports. |
+| `agentio.io/exclude-outbound-ip-ranges` | Bypass ztunnel for TCP connections to the listed destination IPs or CIDRs. |
+
+Values are trimmed, deduplicated, and validated. Bare IP addresses are normalized to host prefixes. Source and bridge reroute rules are emitted before ordinary inbound capture; outbound exclusions are emitted before ordinary outbound capture. These annotations classify traffic and do not establish an application or Actor identity.
+
 ## Reference
 
 ### Design details
