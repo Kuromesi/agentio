@@ -582,6 +582,7 @@ var overrideTests = map[string]struct {
 				UID:       "12345",
 				Annotations: map[string]string{
 					"agentio.io/reroute-bridge-port-prefixes": " msb-tap, vmtap,msb-tap,invalid+, ,0123456789abcde ",
+					"agentio.io/reroute-source-ip-ranges":     " 169.254.0.21,169.254.0.21/32,invalid ",
 					"agentio.io/exclude-outbound-ports":       " 9862,443,9862,0,65536,invalid ",
 					"agentio.io/exclude-outbound-ip-ranges":   " 169.254.0.21/32,10.0.0.42,10.0.0.1/24,10.0.0.0/24,invalid ",
 				},
@@ -589,6 +590,7 @@ var overrideTests = map[string]struct {
 		},
 		out: config.PodLevelOverrides{
 			BridgePortPrefixes:      []string{"msb-tap", "vmtap"},
+			RerouteSourceIPRanges:   []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
 			ExcludeOutboundPorts:    []uint16{9862, 443},
 			ExcludeOutboundIPRanges: []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32"), netip.MustParsePrefix("10.0.0.42/32"), netip.MustParsePrefix("10.0.0.0/24")},
 			IngressMode:             false,
@@ -621,11 +623,16 @@ func TestGetPodLevelOverrides(t *testing.T) {
 	for name, test := range overrideTests {
 		t.Run(name, func(t *testing.T) {
 			res := getPodLevelTrafficOverrides(&test.in)
+			if !slices.Equal(res.RerouteSourceIPRanges, test.out.RerouteSourceIPRanges) {
+				t.Fatalf("test %q failed: got reroute source IP ranges %v, want %v", name, res.RerouteSourceIPRanges, test.out.RerouteSourceIPRanges)
+			}
 			if !slices.Equal(res.ExcludeOutboundIPRanges, test.out.ExcludeOutboundIPRanges) {
 				t.Fatalf("test %q failed: got outbound IP ranges %v, want %v", name, res.ExcludeOutboundIPRanges, test.out.ExcludeOutboundIPRanges)
 			}
+			res.RerouteSourceIPRanges = nil
 			res.ExcludeOutboundIPRanges = nil
 			expected := test.out
+			expected.RerouteSourceIPRanges = nil
 			expected.ExcludeOutboundIPRanges = nil
 			assert.Equal(t, res, expected, fmt.Sprintf("test '%s' failed", name))
 		})

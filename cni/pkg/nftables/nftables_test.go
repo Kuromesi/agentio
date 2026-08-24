@@ -109,7 +109,7 @@ func TestNftablesPodOverrides(t *testing.T) {
 	}
 }
 
-func TestNftablesBridgePortPrefixes(t *testing.T) {
+func TestNftablesPodLevelReroutesAndExclusions(t *testing.T) {
 	cfg := constructTestConfig()
 	ext := &dep.DependenciesStub{}
 	mock := NewMockNftablesCapture()
@@ -125,6 +125,7 @@ func TestNftablesBridgePortPrefixes(t *testing.T) {
 	}
 	tx, err := iptConfigurator.AppendInpodRules(config.PodLevelOverrides{
 		BridgePortPrefixes:      []string{"msb-tap"},
+		RerouteSourceIPRanges:   []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
 		ExcludeOutboundPorts:    []uint16{9862},
 		ExcludeOutboundIPRanges: []netip.Prefix{netip.MustParsePrefix("169.254.0.21/32")},
 	})
@@ -135,17 +136,22 @@ func TestNftablesBridgePortPrefixes(t *testing.T) {
 	got := tx.String()
 	redirect := "meta sdifname \"msb-tap*\" meta l4proto tcp counter redirect to :15001"
 	returnRule := "meta sdifname \"msb-tap*\" meta l4proto tcp counter return"
+	sourceRedirect := "ip saddr 169.254.0.21/32 meta l4proto tcp tcp dport != 15001 counter redirect to :15001"
+	sourceReturn := "ip saddr 169.254.0.21/32 meta l4proto tcp counter return"
 	inbound := "ip daddr != 127.0.0.1/32 tcp dport != 15008"
 	excludePort := "meta l4proto tcp tcp dport 9862 counter accept"
 	excludeRange := "meta l4proto tcp ip daddr 169.254.0.21/32 counter accept"
 	outbound := "meta l4proto tcp ip daddr != 127.0.0.1/32 mark and 0xfff != 0x539 counter redirect to :15001"
-	for _, want := range []string{redirect, returnRule, excludePort, excludeRange} {
+	for _, want := range []string{redirect, returnRule, sourceRedirect, sourceReturn, excludePort, excludeRange} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables rules do not contain %q:\n%s", want, got)
 		}
 	}
 	if strings.Index(got, redirect) > strings.Index(got, inbound) {
 		t.Fatalf("bridge redirect must precede ordinary inbound capture:\n%s", got)
+	}
+	if strings.Index(got, sourceRedirect) > strings.Index(got, inbound) || strings.Index(got, sourceReturn) > strings.Index(got, inbound) {
+		t.Fatalf("source IP redirect must precede ordinary inbound capture:\n%s", got)
 	}
 	for _, exclude := range []string{excludePort, excludeRange} {
 		if strings.Index(got, exclude) > strings.Index(got, outbound) {

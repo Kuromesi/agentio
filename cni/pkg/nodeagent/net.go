@@ -29,6 +29,7 @@ import (
 
 const (
 	bridgePortPrefixesAnnotation      = "agentio.io/reroute-bridge-port-prefixes"
+	rerouteSourceIPRangesAnnotation   = "agentio.io/reroute-source-ip-ranges"
 	excludeOutboundPortsAnnotation    = "agentio.io/exclude-outbound-ports"
 	excludeOutboundIPRangesAnnotation = "agentio.io/exclude-outbound-ip-ranges"
 )
@@ -78,8 +79,14 @@ func getPodLevelTrafficOverrides(pod *corev1.Pod) config.PodLevelOverrides {
 		logInvalidAnnotationValues(pod, excludeOutboundPortsAnnotation, invalid)
 	}
 
+	if ranges, found := pod.Annotations[rerouteSourceIPRangesAnnotation]; found {
+		valid, invalid := parseIPRanges(ranges)
+		podCfg.RerouteSourceIPRanges = valid
+		logInvalidAnnotationValues(pod, rerouteSourceIPRangesAnnotation, invalid)
+	}
+
 	if ranges, found := pod.Annotations[excludeOutboundIPRangesAnnotation]; found {
-		valid, invalid := parseExcludeOutboundIPRanges(ranges)
+		valid, invalid := parseIPRanges(ranges)
 		podCfg.ExcludeOutboundIPRanges = valid
 		logInvalidAnnotationValues(pod, excludeOutboundIPRangesAnnotation, invalid)
 	}
@@ -119,7 +126,7 @@ func parseExcludeOutboundPorts(raw string) ([]uint16, []string) {
 	return valid, invalid
 }
 
-func parseExcludeOutboundIPRanges(raw string) ([]netip.Prefix, []string) {
+func parseIPRanges(raw string) ([]netip.Prefix, []string) {
 	valid := make([]netip.Prefix, 0)
 	invalid := make([]string, 0)
 	seen := make(map[netip.Prefix]struct{})

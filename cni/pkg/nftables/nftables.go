@@ -180,6 +180,34 @@ func (cfg *NftablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 
 	// To keep things manageable, the first rules in the istio-prerouting chain should be short-circuits, like
 	// virtual interface exclusions/redirects:
+	for _, prefix := range podOverrides.RerouteSourceIPRanges {
+		if prefix.Addr().Is4() {
+			rb.AppendRule(IstioPreroutingChain, AmbientNatTable,
+				"ip saddr", prefix.String(),
+				"meta l4proto tcp",
+				"tcp dport !=", fmt.Sprint(config.ZtunnelOutboundPort), Counter,
+				"redirect to", ":"+fmt.Sprint(config.ZtunnelOutboundPort),
+			)
+			rb.AppendRule(IstioPreroutingChain, AmbientNatTable,
+				"ip saddr", prefix.String(),
+				"meta l4proto tcp", Counter,
+				"return",
+			)
+		} else {
+			rb.AppendV6RuleIfSupported(IstioPreroutingChain, AmbientNatTable,
+				"ip6 saddr", prefix.String(),
+				"meta l4proto tcp",
+				"tcp dport !=", fmt.Sprint(config.ZtunnelOutboundPort), Counter,
+				"redirect to", ":"+fmt.Sprint(config.ZtunnelOutboundPort),
+			)
+			rb.AppendV6RuleIfSupported(IstioPreroutingChain, AmbientNatTable,
+				"ip6 saddr", prefix.String(),
+				"meta l4proto tcp", Counter,
+				"return",
+			)
+		}
+	}
+
 	for _, bridgePortPrefix := range podOverrides.BridgePortPrefixes {
 		bridgePortPattern := strconv.Quote(bridgePortPrefix + "*")
 		rb.AppendRule(IstioPreroutingChain, AmbientNatTable,

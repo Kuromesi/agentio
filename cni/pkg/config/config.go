@@ -55,6 +55,7 @@ const (
 type PodLevelOverrides struct {
 	VirtualInterfaces       []string
 	BridgePortPrefixes      []string
+	RerouteSourceIPRanges   []netip.Prefix
 	ExcludeOutboundPorts    []uint16
 	ExcludeOutboundIPRanges []netip.Prefix
 	IngressMode             bool

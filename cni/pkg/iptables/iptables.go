@@ -247,6 +247,28 @@ func (cfg *IptablesConfigurator) AppendInpodRules(podOverrides config.PodLevelOv
 
 	// To keep things manageable, the first rules in the ISTIO_PRERT chain should be short-circuits, like
 	// virtual interface exclusions/redirects:
+	for _, prefix := range podOverrides.RerouteSourceIPRanges {
+		redirectParams := []string{
+			"-s", prefix.String(),
+			"-p", "tcp",
+			"!", "--dport", fmt.Sprint(config.ZtunnelOutboundPort),
+			"-j", "REDIRECT",
+			"--to-ports", fmt.Sprint(config.ZtunnelOutboundPort),
+		}
+		returnParams := []string{
+			"-s", prefix.String(),
+			"-p", "tcp",
+			"-j", "RETURN",
+		}
+		if prefix.Addr().Is4() {
+			iptablesBuilder.AppendRuleV4(ChainInpodPrerouting, "nat", redirectParams...)
+			iptablesBuilder.AppendRuleV4(ChainInpodPrerouting, "nat", returnParams...)
+		} else {
+			iptablesBuilder.AppendRuleV6(ChainInpodPrerouting, "nat", redirectParams...)
+			iptablesBuilder.AppendRuleV6(ChainInpodPrerouting, "nat", returnParams...)
+		}
+	}
+
 	for _, bridgePortPrefix := range podOverrides.BridgePortPrefixes {
 		bridgePortPattern := bridgePortPrefix + "+"
 		iptablesBuilder.AppendRule(ChainInpodPrerouting, "nat",
