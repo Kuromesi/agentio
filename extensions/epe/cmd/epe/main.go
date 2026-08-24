@@ -22,6 +22,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,9 +39,13 @@ import (
 	"istio.io/istio/extensions/epe/pkg/audit"
 	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
 	"istio.io/istio/extensions/epe/pkg/audit/sinks/webhook"
+	"istio.io/istio/extensions/epe/pkg/extproc"
+	"istio.io/istio/extensions/epe/pkg/httpreq"
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/metrics"
 	"istio.io/istio/extensions/epe/pkg/policy/profilestore"
 	"istio.io/istio/extensions/epe/pkg/policy/securityprofile"
+	"istio.io/istio/extensions/epe/pkg/policy/trafficpolicy"
 	"istio.io/istio/extensions/epe/pkg/runnable"
 	runserver "istio.io/istio/extensions/epe/pkg/server"
 	"istio.io/istio/extensions/epe/pkg/wiring"
@@ -136,6 +141,7 @@ func run() error {
 		return err
 	}
 	profilestore.RegisterTypes(agentsCS)
+	trafficpolicy.RegisterTypes(agentsCS)
 
 	group := &runnable.Group{}
 
@@ -160,6 +166,14 @@ func run() error {
 	store := profilestore.NewStore()
 	profiles := profilestore.NewCollection(client, registrations, nil, ctx.Done())
 	profileReg := store.RegisterCollection(profiles)
+
+	// TrafficPolicy is evaluated on the authenticated outer CONNECT before the
+	// tunnel reaches protocol detection or HTTP SecurityProfile processing.
+	// Its independent store makes policy updates live without an EPE or gateway
+	// restart.
+	connectStore := trafficpolicy.NewStore()
+	connectPolicies := trafficpolicy.NewCollection(client, nil, ctx.Done())
+	connectPolicyReg := connectStore.RegisterCollection(connectPolicies)
 
 	// Health gRPC server.
 	healthSrv := grpc.NewServer()
@@ -209,14 +223,15 @@ func run() error {
 	// Assemble the ext-proc gRPC server around the shared filter chain built
 	// above.
 	group.Add(runserver.New(runserver.Config{
-		GrpcPort:      *grpcPort,
-		PluginBudget:  *pluginBudget,
-		SecureServing: servingTLS.Secure,
-		CertProvider:  servingTLS.Provider,
-		TLSOptions:    servingTLS.Options,
-		Resolve:       securityprofile.NewResolver(store, registrations, auditRouter),
-		AuditLogger:   auditLogger,
-		Registrations: registrations,
+		GrpcPort:         *grpcPort,
+		PluginBudget:     *pluginBudget,
+		SecureServing:    servingTLS.Secure,
+		CertProvider:     servingTLS.Provider,
+		TLSOptions:       servingTLS.Options,
+		Resolve:          securityprofile.NewResolver(store, registrations, auditRouter),
+		AuthorizeRequest: connectTrafficPolicyAuthorizer(connectStore),
+		AuditLogger:      auditLogger,
+		Registrations:    registrations,
 	}, ctrllog.Log.WithName("ext-proc")))
 
 	// Start pprof server if enabled.
@@ -242,6 +257,10 @@ func run() error {
 		setupLog.Info("Profile collection sync interrupted")
 		return fmt.Errorf("profile collection sync interrupted")
 	}
+	if !connectPolicyReg.WaitUntilSynced(ctx.Done()) {
+		setupLog.Info("TrafficPolicy collection sync interrupted")
+		return fmt.Errorf("traffic policy collection sync interrupted")
+	}
 
 	setupLog.Info("EPE starting")
 	if err := group.Start(ctx); err != nil {
@@ -250,6 +269,29 @@ func run() error {
 	}
 	setupLog.Info("EPE terminated")
 	return nil
+}
+
+func connectTrafficPolicyAuthorizer(store *trafficpolicy.Store) extproc.RequestAuthorizer {
+	return func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (extproc.RequestAuthorization, error) {
+		if req == nil || !strings.EqualFold(req.Method, "CONNECT") {
+			return extproc.RequestAuthorization{}, nil
+		}
+		decision := store.Authorize(pod, req)
+		if !decision.Enforced || decision.Allowed {
+			// SecurityProfile is evaluated on the post-MITM inner HTTP request,
+			// not on the transport CONNECT envelope.
+			return extproc.RequestAuthorization{SkipProfileResolution: true}, nil
+		}
+		reason := "selected TrafficPolicy default deny"
+		if decision.Policy != "" {
+			reason = fmt.Sprintf("TrafficPolicy %s rule %d rejected CONNECT", decision.Policy, decision.Rule)
+		}
+		return extproc.RequestAuthorization{
+			Denied:  true,
+			Details: "agentio_traffic_policy_denied",
+			Body:    []byte(reason + "\n"),
+		}, nil
+	}
 }
 
 // initLogging maps the klog-style -v flag onto the zap level unless the user

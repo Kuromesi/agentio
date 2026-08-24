@@ -189,6 +189,79 @@ func makeAttrsWithLabels(namespace, name, labelsB64 string) map[string]*structpb
 // "app=blocked" base64-encoded, matching the format labels.ParseSandboxLabels expects.
 const testLabelsB64 = "YXBwPWJsb2NrZWQ="
 
+func TestHandleRequestHeaders_RequestAuthorizerBlocksConnectBeforeProfileResolution(t *testing.T) {
+	called := 0
+	srv := NewServer(ServerDeps{
+		AuthorizeRequest: func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (RequestAuthorization, error) {
+			called++
+			if pod.Namespace != "sandbox" || pod.Name != "worker-0" {
+				t.Fatalf("pod = %+v", pod)
+			}
+			if req.Method != "CONNECT" || req.Host != "172.30.17.196" || req.Port != 9000 {
+				t.Fatalf("request = %+v", req)
+			}
+			return RequestAuthorization{
+				Denied:  true,
+				Details: "agentio_traffic_policy_denied",
+				Body:    []byte("CONNECT rejected by TrafficPolicy sandbox/actor-egress rule 1\n"),
+			}, nil
+		},
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			t.Fatal("SecurityProfile resolver called after CONNECT was denied")
+			return engine.Resolution{}, nil
+		},
+	})
+
+	state := newStreamState()
+	responses, err := srv.HandleRequestHeaders(context.Background(),
+		makeRequestHeaders("172.30.17.196:9000", "", "CONNECT"),
+		makeAttrsWithLabels("sandbox", "worker-0", testLabelsB64), state)
+	if err != nil {
+		t.Fatalf("HandleRequestHeaders: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("authorizer calls = %d, want 1", called)
+	}
+	if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
+		t.Fatalf("responses = %+v, want one ImmediateResponse", responses)
+	}
+	immediate := responses[0].GetImmediateResponse()
+	if got := int(immediate.GetStatus().GetCode()); got != 403 {
+		t.Fatalf("status = %d, want 403", got)
+	}
+	if immediate.GetDetails() != "agentio_traffic_policy_denied" {
+		t.Fatalf("details = %q", immediate.GetDetails())
+	}
+	if state.lifecycle != lifecycleFinalizePending {
+		t.Fatalf("lifecycle = %v, want finalize pending", state.lifecycle)
+	}
+}
+
+func TestHandleRequestHeaders_RequestAuthorizerCanFinishAllowedConnect(t *testing.T) {
+	srv := NewServer(ServerDeps{
+		AuthorizeRequest: func(_ context.Context, _ inputs.Pod, req *httpreq.HTTPRequest) (RequestAuthorization, error) {
+			if req.Method != "CONNECT" {
+				t.Fatalf("method = %q", req.Method)
+			}
+			return RequestAuthorization{SkipProfileResolution: true}, nil
+		},
+		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			t.Fatal("SecurityProfile resolver called for an outer CONNECT")
+			return engine.Resolution{}, nil
+		},
+	})
+
+	responses, err := srv.HandleRequestHeaders(context.Background(),
+		makeRequestHeaders("172.30.199.186:80", "", "CONNECT"),
+		makeAttrsWithLabels("sandbox", "worker-0", testLabelsB64), newStreamState())
+	if err != nil {
+		t.Fatalf("HandleRequestHeaders: %v", err)
+	}
+	if len(responses) != 1 || responses[0].GetRequestHeaders() == nil {
+		t.Fatalf("responses = %+v, want pass-through request headers", responses)
+	}
+}
+
 func TestHandleRequestHeaders_ArmsOnlyRequestBodyObligation(t *testing.T) {
 	probe := &bodyProbe{}
 	regs := []filter.Registration{fixedReg("body-filter", probe)}

@@ -22,7 +22,7 @@ metadata:
     {{- include "agentio.commonLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["agents.kruise.io"]
-    resources: ["securityprofiles", "globalsecurityprofiles"]
+    resources: ["securityprofiles", "globalsecurityprofiles", "trafficpolicies", "globaltrafficpolicies"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["agents.kruise.io"]
     resources: ["securityprofiles/status", "globalsecurityprofiles/status"]

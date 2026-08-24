@@ -90,6 +90,26 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 		IP:        peer.IP,
 		Labels:    peer.Labels,
 	}
+	if s.authorizeRequest != nil {
+		authorization, err := s.authorizeRequest(ctx, pod, &req)
+		if err != nil {
+			return nil, err
+		}
+		if authorization.Denied {
+			logger.Info("Request rejected before SecurityProfile evaluation",
+				"method", req.Method, "host", req.Host, "port", req.Port,
+				"details", authorization.Details)
+			state.armFinalization(engine.DispositionBlocked)
+			return []*extProcPb.ProcessingResponse{immediateFromReply(filter.Reply{
+				Status:  403,
+				Body:    authorization.Body,
+				Details: authorization.Details,
+			})}, nil
+		}
+		if authorization.SkipProfileResolution {
+			return defaultPassThrough, nil
+		}
+	}
 	res, err := s.resolve(ctx, pod, &req)
 	// Installed before the error is honoured: a resolver that fails may still
 	// have matched rules worth recording, and finishStream promotes the error

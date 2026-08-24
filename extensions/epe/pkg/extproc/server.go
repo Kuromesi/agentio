@@ -29,21 +29,42 @@ import (
 	"istio.io/istio/extensions/epe/pkg/audit/accesslog"
 	"istio.io/istio/extensions/epe/pkg/engine"
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
+	"istio.io/istio/extensions/epe/pkg/httpreq"
+	"istio.io/istio/extensions/epe/pkg/inputs"
 	"istio.io/istio/extensions/epe/pkg/logging"
 )
 
 // Server implements the Envoy external processing server.
 // https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ext_proc/v3/external_processor.proto
 type Server struct {
-	resolve engine.Resolver
-	eng     *engine.Engine
-	loggers []filter.StreamLogger
+	resolve          engine.Resolver
+	authorizeRequest RequestAuthorizer
+	eng              *engine.Engine
+	loggers          []filter.StreamLogger
 }
+
+// RequestAuthorization is an optional pre-engine decision. It is intentionally
+// policy-neutral: the TrafficPolicy implementation lives outside extproc, and
+// a zero value permits normal SecurityProfile resolution.
+type RequestAuthorization struct {
+	Denied                bool
+	SkipProfileResolution bool
+	Details               string
+	Body                  []byte
+}
+
+// RequestAuthorizer evaluates the authenticated caller and parsed request
+// before SecurityProfile resolution. Returning Denied produces an immediate
+// 403; returning an error follows Envoy's ext_proc failure_mode policy.
+type RequestAuthorizer func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (RequestAuthorization, error)
 
 // ServerDeps holds the dependencies needed by the ext-proc server.
 type ServerDeps struct {
 	// Resolve maps request identity to applicable units. Required.
 	Resolve engine.Resolver
+	// AuthorizeRequest optionally rejects a request before profile resolution.
+	// The CONNECT TrafficPolicy PoC uses this to enforce L4 destination rules.
+	AuthorizeRequest RequestAuthorizer
 	// Registrations is the action order applied inside every rule.
 	Registrations []filter.Registration
 	// AuditLogger receives one accesslog Entry per stream. May be nil in
@@ -65,9 +86,10 @@ func NewServer(deps ServerDeps) *Server {
 	loggers := []filter.StreamLogger{accesslog.NewStreamLog(deps.AuditLogger)}
 	loggers = append(loggers, deps.StreamLoggers...)
 	return &Server{
-		resolve: deps.Resolve,
-		eng:     engine.NewEngine(deps.Registrations, deps.PluginBudget),
-		loggers: loggers,
+		resolve:          deps.Resolve,
+		authorizeRequest: deps.AuthorizeRequest,
+		eng:              engine.NewEngine(deps.Registrations, deps.PluginBudget),
+		loggers:          loggers,
 	}
 }
 

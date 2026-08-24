@@ -57,6 +57,9 @@ type Config struct {
 	// Resolve maps request identity to the policy units the engine evaluates.
 	// Required. Policy-specific stores and binders are assembled by the caller.
 	Resolve engine.Resolver
+	// AuthorizeRequest optionally rejects a request before policy-engine
+	// resolution. It is used by CONNECT-time TrafficPolicy enforcement.
+	AuthorizeRequest extproc.RequestAuthorizer
 	// Registrations is the action order applied inside every rule.
 	Registrations []filter.Registration
 	// StreamLoggers are invoked once per stream at stream end (audit).
@@ -102,11 +105,12 @@ func New(cfg Config, logger logr.Logger) runnable.Runnable {
 		extProcPb.RegisterExternalProcessorServer(
 			srv,
 			extproc.NewServer(extproc.ServerDeps{
-				Resolve:       cfg.Resolve,
-				Registrations: cfg.Registrations,
-				StreamLoggers: cfg.StreamLoggers,
-				AuditLogger:   cfg.AuditLogger,
-				PluginBudget:  cfg.PluginBudget,
+				Resolve:          cfg.Resolve,
+				AuthorizeRequest: cfg.AuthorizeRequest,
+				Registrations:    cfg.Registrations,
+				StreamLoggers:    cfg.StreamLoggers,
+				AuditLogger:      cfg.AuditLogger,
+				PluginBudget:     cfg.PluginBudget,
 			}),
 		)
 
