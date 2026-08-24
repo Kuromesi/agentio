@@ -230,8 +230,8 @@ func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 		RawMetadata: map[string]any{},
 	}
 	bootstrapConfig := Config{
-		Node:                           node,
-		PolicyStoreDeletionGracePeriod: 17 * time.Second,
+		Node: node,
+		PolicyStoreReferenceResolutionGracePeriod: 17 * time.Second,
 	}
 	params, err := bootstrapConfig.toTemplateParams()
 	if err != nil {
@@ -256,17 +256,17 @@ func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 	if strings.Contains(rendered.String(), "kruise.networking.gateway_policy") {
 		t.Fatalf("rendered bootstrap still uses the gateway-scoped policy package: %s", rendered.String())
 	}
-	if !strings.Contains(rendered.String(), `"policy_deletion_grace_period": "17s"`) {
-		t.Fatalf("rendered bootstrap does not contain the configured policy deletion grace period: %s", rendered.String())
+	if !strings.Contains(rendered.String(), `"reference_resolution_grace_period": "17s"`) {
+		t.Fatalf("rendered bootstrap does not contain the configured reference resolution grace period: %s", rendered.String())
 	}
 }
 
-// TestPolicyStoreDeletionGracePeriodIsProtoDuration renders the grace period for
+// TestPolicyStoreReferenceResolutionGracePeriodIsProtoDuration renders the grace period for
 // durations whose Go string form is not a legal google.protobuf.Duration and
 // asserts Envoy's JSON parser would accept what we emit. time.Duration.String()
 // produces "1m0s"/"500ms", which the Duration JSON mapping rejects, so a bootstrap
 // built that way never loads and the proxy crash-loops.
-func TestPolicyStoreDeletionGracePeriodIsProtoDuration(t *testing.T) {
+func TestPolicyStoreReferenceResolutionGracePeriodIsProtoDuration(t *testing.T) {
 	templatePath := filepath.Join(testenv.IstioSrc, "tools/packaging/common/envoy_bootstrap.json")
 	for _, configured := range []time.Duration{
 		15 * time.Second,
@@ -276,7 +276,7 @@ func TestPolicyStoreDeletionGracePeriodIsProtoDuration(t *testing.T) {
 		time.Hour,
 		500 * time.Millisecond,
 		2*time.Minute + 500*time.Millisecond,
-		// Zero falls back to defaultPolicyStoreDeletionGracePeriod rather than
+		// Zero falls back to defaultPolicyStoreReferenceResolutionGracePeriod rather than
 		// being skipped, which would render an empty and equally invalid value.
 		0,
 	} {
@@ -296,7 +296,7 @@ func TestPolicyStoreDeletionGracePeriodIsProtoDuration(t *testing.T) {
 					}},
 					RawMetadata: map[string]any{},
 				},
-				PolicyStoreDeletionGracePeriod: configured,
+				PolicyStoreReferenceResolutionGracePeriod: configured,
 			}
 			var rendered bytes.Buffer
 			if err := New(bootstrapConfig).WriteTo(templatePath, &rendered); err != nil {
@@ -304,33 +304,33 @@ func TestPolicyStoreDeletionGracePeriodIsProtoDuration(t *testing.T) {
 			}
 			// Parsing the whole document also proves the template still emits valid
 			// JSON, which a bad duration would not break on its own.
-			got := policyDeletionGracePeriodFromBootstrap(t, rendered.Bytes())
+			got := referenceResolutionGracePeriodFromBootstrap(t, rendered.Bytes())
 
 			var parsed durationpb.Duration
 			if err := protojson.Unmarshal([]byte(strconv.Quote(got)), &parsed); err != nil {
-				t.Fatalf("policy_deletion_grace_period %q is not a valid google.protobuf.Duration: %v", got, err)
+				t.Fatalf("reference_resolution_grace_period %q is not a valid google.protobuf.Duration: %v", got, err)
 			}
 			want := configured
 			if want <= 0 {
-				want = defaultPolicyStoreDeletionGracePeriod
+				want = defaultPolicyStoreReferenceResolutionGracePeriod
 			}
 			if parsed.AsDuration() != want {
-				t.Fatalf("policy_deletion_grace_period %q = %v, want %v", got, parsed.AsDuration(), want)
+				t.Fatalf("reference_resolution_grace_period %q = %v, want %v", got, parsed.AsDuration(), want)
 			}
 		})
 	}
 }
 
-// policyDeletionGracePeriodFromBootstrap digs the grace period out of the rendered
+// referenceResolutionGracePeriodFromBootstrap digs the grace period out of the rendered
 // bootstrap so the test asserts on what Envoy actually reads, not on a substring.
-func policyDeletionGracePeriodFromBootstrap(t *testing.T, rendered []byte) string {
+func referenceResolutionGracePeriodFromBootstrap(t *testing.T, rendered []byte) string {
 	t.Helper()
 	var doc struct {
 		BootstrapExtensions []struct {
 			Name        string `json:"name"`
 			TypedConfig struct {
 				Value struct {
-					PolicyDeletionGracePeriod string `json:"policy_deletion_grace_period"`
+					ReferenceResolutionGracePeriod string `json:"reference_resolution_grace_period"`
 				} `json:"value"`
 			} `json:"typed_config"`
 		} `json:"bootstrap_extensions"`
@@ -340,7 +340,7 @@ func policyDeletionGracePeriodFromBootstrap(t *testing.T, rendered []byte) strin
 	}
 	for _, extension := range doc.BootstrapExtensions {
 		if extension.Name == "kruise.bootstrap.policy_store" {
-			return extension.TypedConfig.Value.PolicyDeletionGracePeriod
+			return extension.TypedConfig.Value.ReferenceResolutionGracePeriod
 		}
 	}
 	t.Fatalf("rendered bootstrap has no kruise.bootstrap.policy_store extension:\n%s", rendered)

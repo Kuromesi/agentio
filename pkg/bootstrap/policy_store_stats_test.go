@@ -86,8 +86,8 @@ func TestPolicyStoreExtensionNameMatchesFactory(t *testing.T) {
 	if !strings.Contains(rendered, `"name": "kruise.bootstrap.policy_store"`) {
 		t.Error(`rendered bootstrap does not use the registered factory name "kruise.bootstrap.policy_store"`)
 	}
-	if !strings.Contains(rendered, `"policy_deletion_grace_period": "15s"`) {
-		t.Error("rendered bootstrap does not use the default fifteen-second policy deletion grace period")
+	if !strings.Contains(rendered, `"reference_resolution_grace_period": "15s"`) {
+		t.Error("rendered bootstrap does not use the default fifteen-second reference resolution grace period")
 	}
 	workloadDiscovery := strings.Index(rendered, `"name": "metadata_discovery"`)
 	policyStore := strings.Index(rendered, `"name": "kruise.bootstrap.policy_store"`)

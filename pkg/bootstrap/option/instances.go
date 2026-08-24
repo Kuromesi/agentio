@@ -281,13 +281,13 @@ func PolicyStore(value bool) Instance {
 	return newOption("policy_store", value)
 }
 
-// PolicyStoreDeletionGracePeriod renders the policy store's grace period. It must
+// PolicyStoreReferenceResolutionGracePeriod renders the policy store's grace period. It must
 // go through newEnvoyDurationOption: the value lands in a google.protobuf.Duration
 // field, whose JSON mapping only accepts fractional seconds with an "s" suffix.
 // time.Duration.String() would emit Go-only forms such as "1m0s" or "500ms" and
 // Envoy would reject the whole bootstrap.
-func PolicyStoreDeletionGracePeriod(value *durationpb.Duration) Instance {
-	return newEnvoyDurationOption("policy_store_deletion_grace_period", value)
+func PolicyStoreReferenceResolutionGracePeriod(value *durationpb.Duration) Instance {
+	return newEnvoyDurationOption("policy_store_reference_resolution_grace_period", value)
 }
 
 func MetricsLocalhostAccessOnly(proxyMetadata map[string]string) Instance {

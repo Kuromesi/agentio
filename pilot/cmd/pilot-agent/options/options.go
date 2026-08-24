@@ -134,10 +134,10 @@ var (
 		"If set to true, enable the peer metadata discovery extension in Envoy").Lookup()
 	policyRuntimeCapabilitiesEnv = env.Register("POLICY_RUNTIME_CAPABILITIES", "",
 		"Comma-separated policy runtime capabilities supported by the proxy binary").Get()
-	policyStoreDeletionGracePeriodEnv = env.Register("POLICY_STORE_DELETION_GRACE_PERIOD",
+	policyStoreReferenceResolutionGracePeriodEnv = env.Register("POLICY_STORE_REFERENCE_RESOLUTION_GRACE_PERIOD",
 		15*time.Second,
-		"Grace period for retaining a last-known-good policy snapshot while policy and binding deletion deltas reconcile. "+
-			"Must exceed the worst-case gap between the policy push and the binding push, which is bounded by "+
+		"Grace period for retaining a last-known-good policy snapshot while policy and Workload-reference deltas converge. "+
+			"Must exceed the worst-case gap between the policy push and the Workload-reference push, which is bounded by "+
 			"PILOT_DEBOUNCE_MAX (10s by default). Recovery cancels the wait immediately, so this is an upper bound.").Get()
 
 	envoyStatusPortEnv = env.Register("ENVOY_STATUS_PORT", 15021,
