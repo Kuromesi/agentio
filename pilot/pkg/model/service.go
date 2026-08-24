@@ -37,6 +37,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	corev1 "k8s.io/api/core/v1"
+	klabels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 
 	"istio.io/api/annotation"
@@ -60,7 +61,6 @@ import (
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/workloadapi"
 	"istio.io/istio/pkg/workloadapi/security"
-	klabels "k8s.io/apimachinery/pkg/labels"
 )
 
 // Service describes an Istio service (e.g., catalog.mystore.com:8080)
@@ -950,13 +950,18 @@ type AmbientIndexes interface {
 	) sets.String
 	Policies(requested sets.Set[ConfigKey]) []WorkloadAuthorization
 	PoliciesForProxy(proxy *Proxy, requested sets.Set[ConfigKey]) []WorkloadAuthorization
-	WorkloadConfigs(requested sets.Set[ConfigKey]) []WorkloadConfig
-	WorkloadConfigsForProxy(proxy *Proxy, requested sets.Set[ConfigKey]) []WorkloadConfig
 	ServicesForWaypoint(WaypointKey) []ServiceInfo
 	WorkloadsForWaypoint(WaypointKey) []WorkloadInfo
 	// ServiceScope returns service information for services matching the key.
 	// The key idenitifies a service and is in form of namespace/hostname string.
 	ServiceInfo(key string) *ServiceInfo
+}
+
+// WorkloadExtensionDiscovery is an optional registry capability for attaching
+// proxy-specific extensions while serializing a Workload resource.
+// Implementations must not mutate the cached Workload passed by the caller.
+type WorkloadExtensionDiscovery interface {
+	WorkloadExtensionsForProxy(proxy *Proxy, workload *workloadapi.Workload) []*workloadapi.Extension
 }
 
 // WaypointKey is a multi-address extension of NetworkAddress which is commonly used for lookups in AmbientIndex
@@ -1038,14 +1043,6 @@ func (u NoopAmbientIndexes) Policies(sets.Set[ConfigKey]) []WorkloadAuthorizatio
 }
 
 func (u NoopAmbientIndexes) PoliciesForProxy(_ *Proxy, _ sets.Set[ConfigKey]) []WorkloadAuthorization {
-	return nil
-}
-
-func (u NoopAmbientIndexes) WorkloadConfigs(sets.Set[ConfigKey]) []WorkloadConfig {
-	return nil
-}
-
-func (u NoopAmbientIndexes) WorkloadConfigsForProxy(_ *Proxy, _ sets.Set[ConfigKey]) []WorkloadConfig {
 	return nil
 }
 
