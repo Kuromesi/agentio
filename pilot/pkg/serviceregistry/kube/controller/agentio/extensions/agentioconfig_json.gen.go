@@ -50,17 +50,6 @@ func (this *EgressPolicies) UnmarshalJSON(b []byte) error {
 	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
 }
 
-// MarshalJSON is a custom marshaler for WorkloadConfig
-func (this *WorkloadConfig) MarshalJSON() ([]byte, error) {
-	str, err := AgentioconfigMarshaler.MarshalToString(this)
-	return []byte(str), err
-}
-
-// UnmarshalJSON is a custom unmarshaler for WorkloadConfig
-func (this *WorkloadConfig) UnmarshalJSON(b []byte) error {
-	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
-}
-
 // MarshalJSON is a custom marshaler for ExtProcProvider
 func (this *ExtProcProvider) MarshalJSON() ([]byte, error) {
 	str, err := AgentioconfigMarshaler.MarshalToString(this)

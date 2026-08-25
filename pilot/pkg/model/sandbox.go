@@ -15,17 +15,13 @@
 package model
 
 import (
-	"fmt"
-
 	"google.golang.org/protobuf/proto"
 
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config"
 	"istio.io/istio/pkg/config/schema/gvk"
-	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/config/schema/kubetypes"
 	"istio.io/istio/pkg/kube/controllers"
-	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/util/sets"
 )
 
@@ -68,24 +64,6 @@ func MakeSource(o controllers.Object) TypedObject {
 	}
 }
 
-type WorkloadConfig struct {
-	Name      string
-	Namespace string
-	Config    *extensions.WorkloadConfig
-}
-
-func (w WorkloadConfig) ResourceName() string {
-	return fmt.Sprintf("%s/%s", w.Namespace, w.Name)
-}
-
-func (w WorkloadConfig) Equals(other WorkloadConfig) bool {
-	return w.Namespace == other.Namespace && w.Name == other.Name && proto.Equal(w.Config, other.Config)
-}
-
-func (w WorkloadConfig) ConfigKey() ConfigKey {
-	return ConfigKey{Kind: kind.WorkloadConfig, Name: w.Name, Namespace: w.Namespace}
-}
-
 type AgentioResource struct {
 	Name     string
 	Resource proto.Message
@@ -98,12 +76,6 @@ type AgentioResourceDiscovery interface {
 		requested sets.Set[ConfigKey],
 	) []AgentioResource
 }
-
-// WorkloadConfig is used directly as a krt collection value type.
-var (
-	_ krt.ResourceNamer           = WorkloadConfig{}
-	_ krt.Equaler[WorkloadConfig] = WorkloadConfig{}
-)
 
 func (sc *AgentioConfig) ExtractMatchHosts() sets.String {
 	hosts := sets.New[string]()

@@ -21,14 +21,12 @@ import (
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	agentsclient "github.com/openkruise/agents-api/client/clientset/versioned"
-	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
-	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/mesh/meshwatcher"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/kube"
@@ -81,7 +79,7 @@ type Controller struct {
 	authorizationController *authorizationController
 	onDemandController      *onDemandCertController
 
-	workloadConfigs krt.Singleton[model.WorkloadConfig]
+	resolvedEgressPolicies krt.Singleton[ResolvedEgressPolicies]
 
 	// Policy collections are nil unless features.EnableSniTrafficPolicy is set.
 	// policyAttachments excludes protobuf content so resource-only changes do not
@@ -146,7 +144,11 @@ func NewController(options Options) (*Controller, error) {
 	}
 
 	c.initExternalNamesController()
-	c.initWorkloadConfigs(opts)
+	c.resolvedEgressPolicies = newResolvedEgressPolicies(
+		c.agentioConfig,
+		c.externalNamesController.FetchOrResolve,
+		opts,
+	)
 	return c, nil
 }
 
@@ -236,33 +238,12 @@ func (c *Controller) initExternalNamesController() {
 	c.externalNamesController.Start(c.stop)
 }
 
-func (c *Controller) initWorkloadConfigs(opts krt.OptionsBuilder) {
-	rootNamespace := c.meshConfig.Get().RootNamespace
-	c.workloadConfigs = krt.NewSingleton(func(ctx krt.HandlerContext) *model.WorkloadConfig {
-		sc := krt.FetchOne(ctx, c.agentioConfig.AsCollection())
-		var resolved []*extensions.EgressPolicy
-		if sc != nil {
-			for _, p := range sc.GetEgressPolicies() {
-				resolved = append(resolved, resolveEgressPolicy(ctx, p, c.externalNamesController))
-			}
-		}
-		return &model.WorkloadConfig{
-			Namespace: rootNamespace,
-			Name:      "default",
-			Config: &extensions.WorkloadConfig{
-				EgressPolicies: resolved,
-				Scope:          extensions.WorkloadConfigScope_WORKLOAD_CONFIG_SCOPE_GLOBAL,
-			},
-		}
-	}, opts.WithName("WorkloadConfigs")...)
-}
-
 func (c *Controller) AgentioConfig() krt.Singleton[model.AgentioConfig] {
 	return c.agentioConfig
 }
 
-func (c *Controller) WorkloadConfigs() krt.Collection[model.WorkloadConfig] {
-	return c.workloadConfigs.AsCollection()
+func (c *Controller) ResolvedEgressPolicies() krt.Singleton[ResolvedEgressPolicies] {
+	return c.resolvedEgressPolicies
 }
 
 // BindablePolicies returns the Agentio policies that are both published over
@@ -275,34 +256,6 @@ func (c *Controller) BindablePolicies() krt.Collection[BindablePolicy] {
 // WDS resources. It is nil until BuildWorkloadPolicyReferencesCollection runs.
 func (c *Controller) WorkloadPolicyReferences() krt.Collection[WorkloadPolicyReferences] {
 	return c.workloadPolicyReferences
-}
-
-// unreachableCIDR is the IANA IPv4 Dummy Address (RFC 7600). Used as a
-// sentinel when all match_hosts fail to resolve — ensures the policy
-// cannot accidentally wildcard-match all traffic.
-const unreachableCIDR = "192.0.0.8/32"
-
-func resolveEgressPolicy(ctx krt.HandlerContext, p *extensions.EgressPolicy, enc *externalNamesController) *extensions.EgressPolicy {
-	if len(p.GetMatchHosts()) == 0 {
-		return p
-	}
-	clone := proto.Clone(p).(*extensions.EgressPolicy)
-	hasOriginalCidrs := len(clone.GetMatchCidrs()) > 0
-	resolved := false
-	for _, h := range clone.GetMatchHosts() {
-		if addrs := enc.FetchOrResolve(ctx, h); len(addrs) > 0 {
-			for _, addr := range addrs {
-				clone.MatchCidrs = append(clone.MatchCidrs, addr+"/32")
-			}
-			resolved = true
-		} else {
-			log.Warnf("failed to resolve match_hosts entry %q, policy may not match intended traffic", h)
-		}
-	}
-	if !resolved && !hasOriginalCidrs {
-		clone.MatchCidrs = append(clone.MatchCidrs, unreachableCIDR)
-	}
-	return clone
 }
 
 func (c *Controller) OnDemandCertController() OnDemandCertController {

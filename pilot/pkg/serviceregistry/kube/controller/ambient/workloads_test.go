@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,6 +34,8 @@ import (
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/mesh"
 	"istio.io/istio/pkg/config/schema/kind"
@@ -838,6 +841,7 @@ func TestPodWorkloads(t *testing.T) {
 			builder := a.builder.podWorkloadBuilder(
 				GetMeshConfig(mock),
 				nil,
+				nil,
 				krttest.GetMockCollection[model.WorkloadAuthorization](mock),
 				krttest.GetMockCollection[*securityclient.PeerAuthentication](mock),
 				krttest.GetMockCollection[Waypoint](mock),
@@ -856,6 +860,74 @@ func TestPodWorkloads(t *testing.T) {
 			assert.Equal(t, res, tt.result)
 		})
 	}
+}
+
+func TestPodWorkloadEgressPoliciesExtension(t *testing.T) {
+	build := func(t *testing.T, policies []*extensions.EgressPolicy) *workloadapi.Workload {
+		t.Helper()
+		mock := krttest.NewMock(t, nil)
+		a := newAmbientUnitTest(t)
+		workloadServices := krttest.GetMockCollection[model.ServiceInfo](mock)
+		endpointSlices := krttest.GetMockCollection[*discovery.EndpointSlice](mock)
+		resolved := krt.NewStatic(&agentio.ResolvedEgressPolicies{
+			Policies: &extensions.EgressPolicies{EgressPolicies: policies},
+		}, true)
+		builder := a.builder.podWorkloadBuilder(
+			GetMeshConfig(mock),
+			nil,
+			resolved,
+			krttest.GetMockCollection[model.WorkloadAuthorization](mock),
+			krttest.GetMockCollection[*securityclient.PeerAuthentication](mock),
+			krttest.GetMockCollection[Waypoint](mock),
+			workloadServices,
+			krt.NewNamespaceIndex(workloadServices),
+			endpointSlices,
+			endpointSliceAddressIndex(endpointSlices),
+			krttest.GetMockCollection[*v1.Namespace](mock),
+			krttest.GetMockCollection[Node](mock),
+		)
+		result := builder(krt.TestingDummyContext{}, &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns"},
+			Status: v1.PodStatus{
+				Phase:      v1.PodRunning,
+				PodIP:      "10.0.0.1",
+				Conditions: podReady,
+			},
+		})
+		if result == nil {
+			t.Fatal("pod workload was not generated")
+		}
+		return result.Workload
+	}
+
+	t.Run("preserves compiled policy order", func(t *testing.T) {
+		want := []*extensions.EgressPolicy{
+			{MatchCidrs: []string{"203.0.113.10/32"}, Policy: extensions.EgressPolicyAction_DENY},
+			{MatchCidrs: []string{"198.51.100.0/24"}, Policy: extensions.EgressPolicyAction_PASSTHROUGH},
+		}
+		workload := build(t, want)
+		if len(workload.GetExtensions()) != 1 {
+			t.Fatalf("extensions = %v, want one egress-policies extension", workload.GetExtensions())
+		}
+		extension := workload.GetExtensions()[0]
+		if extension.GetName() != "egress-policies" {
+			t.Fatalf("extension name = %q, want egress-policies", extension.GetName())
+		}
+		got := &extensions.EgressPolicies{}
+		if err := proto.Unmarshal(extension.GetConfig().GetValue(), got); err != nil {
+			t.Fatalf("unmarshal egress policies extension: %v", err)
+		}
+		if !proto.Equal(got, &extensions.EgressPolicies{EgressPolicies: want}) {
+			t.Fatalf("egress policies = %v, want %v", got.GetEgressPolicies(), want)
+		}
+	})
+
+	t.Run("omits empty policy list", func(t *testing.T) {
+		workload := build(t, nil)
+		if len(workload.GetExtensions()) != 0 {
+			t.Fatalf("extensions = %v, want none", workload.GetExtensions())
+		}
+	})
 }
 
 func TestWorkloadEntryWorkloads(t *testing.T) {

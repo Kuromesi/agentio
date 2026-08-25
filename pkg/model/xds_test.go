@@ -17,13 +17,6 @@ package model
 
 import "testing"
 
-func TestWorkloadConfigType(t *testing.T) {
-	const want = "type.googleapis.com/kruise.networking.extensions.v1.WorkloadConfig"
-	if WorkloadConfigType != want {
-		t.Fatalf("unexpected WCDS resource type: got %q, want %q", WorkloadConfigType, want)
-	}
-}
-
 func TestSniTrafficPolicyType(t *testing.T) {
 	const want = "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"
 	if SniTrafficPolicyType != want {

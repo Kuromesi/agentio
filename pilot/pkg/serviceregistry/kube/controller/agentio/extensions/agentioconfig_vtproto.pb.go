@@ -185,42 +185,6 @@ func (this *EgressPolicies) EqualMessageVT(thatMsg proto.Message) bool {
 	}
 	return this.EqualVT(that)
 }
-func (this *WorkloadConfig) EqualVT(that *WorkloadConfig) bool {
-	if this == that {
-		return true
-	} else if this == nil || that == nil {
-		return false
-	}
-	if this.Scope != that.Scope {
-		return false
-	}
-	if len(this.EgressPolicies) != len(that.EgressPolicies) {
-		return false
-	}
-	for i, vx := range this.EgressPolicies {
-		vy := that.EgressPolicies[i]
-		if p, q := vx, vy; p != q {
-			if p == nil {
-				p = &EgressPolicy{}
-			}
-			if q == nil {
-				q = &EgressPolicy{}
-			}
-			if !p.EqualVT(q) {
-				return false
-			}
-		}
-	}
-	return string(this.unknownFields) == string(that.unknownFields)
-}
-
-func (this *WorkloadConfig) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*WorkloadConfig)
-	if !ok {
-		return false
-	}
-	return this.EqualVT(that)
-}
 func (this *ExtProcProvider) EqualVT(that *ExtProcProvider) bool {
 	if this == that {
 		return true
@@ -926,56 +890,6 @@ func (m *EgressPolicies) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) 
 			i--
 			dAtA[i] = 0xa
 		}
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *WorkloadConfig) MarshalVTStrict() (dAtA []byte, err error) {
-	if m == nil {
-		return nil, nil
-	}
-	size := m.SizeVT()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBufferVTStrict(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *WorkloadConfig) MarshalToVTStrict(dAtA []byte) (int, error) {
-	size := m.SizeVT()
-	return m.MarshalToSizedBufferVTStrict(dAtA[:size])
-}
-
-func (m *WorkloadConfig) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
-	if m == nil {
-		return 0, nil
-	}
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.unknownFields != nil {
-		i -= len(m.unknownFields)
-		copy(dAtA[i:], m.unknownFields)
-	}
-	if len(m.EgressPolicies) > 0 {
-		for iNdEx := len(m.EgressPolicies) - 1; iNdEx >= 0; iNdEx-- {
-			size, err := m.EgressPolicies[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
-			if err != nil {
-				return 0, err
-			}
-			i -= size
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
-			i--
-			dAtA[i] = 0x12
-		}
-	}
-	if m.Scope != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Scope))
-		i--
-		dAtA[i] = 0x8
 	}
 	return len(dAtA) - i, nil
 }
@@ -1943,25 +1857,6 @@ func (m *EgressPolicies) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if len(m.EgressPolicies) > 0 {
-		for _, e := range m.EgressPolicies {
-			l = e.SizeVT()
-			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-		}
-	}
-	n += len(m.unknownFields)
-	return n
-}
-
-func (m *WorkloadConfig) SizeVT() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Scope != 0 {
-		n += 1 + protohelpers.SizeOfVarint(uint64(m.Scope))
-	}
 	if len(m.EgressPolicies) > 0 {
 		for _, e := range m.EgressPolicies {
 			l = e.SizeVT()

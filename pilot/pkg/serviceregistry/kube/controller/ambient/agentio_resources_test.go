@@ -71,16 +71,11 @@ func (r *configUpdateRecorder) ConfigUpdate(request *model.PushRequest) {
 }
 
 func TestAgentioResourceProvidersAndDescriptors(t *testing.T) {
-	providerTypes := sets.New[string]()
-	for typeURL := range agentioResourceProviders {
-		providerTypes.Insert(typeURL)
-	}
 	descriptorTypes := sets.New[string]()
 	for _, descriptor := range xds.AgentioResourceDescriptors() {
 		descriptorTypes.Insert(descriptor.TypeURL)
 	}
-	assert.Equal(t, providerTypes, sets.New(xdsmodel.WorkloadConfigType))
-	assert.Equal(t, descriptorTypes, sets.New(xdsmodel.WorkloadConfigType, xdsmodel.SniTrafficPolicyType))
+	assert.Equal(t, descriptorTypes, sets.New(xdsmodel.SniTrafficPolicyType))
 }
 
 func TestAgentioResourcesForProxy(t *testing.T) {
@@ -128,34 +123,6 @@ func TestAgentioResourceProviderUsesKeyedLookup(t *testing.T) {
 	assert.Equal(t, tracked.listCalls, 0)
 	assert.Equal(t, tracked.getKeys, []string{"wanted"})
 	assert.Equal(t, len(got), 1)
-}
-
-func TestWorkloadConfigAgentioResourcesForProxy(t *testing.T) {
-	system := model.WorkloadConfig{Namespace: "agentio-system", Name: "system", Config: &extensions.WorkloadConfig{}}
-	sameNamespace := model.WorkloadConfig{Namespace: "sandbox-ns", Name: "same", Config: &extensions.WorkloadConfig{}}
-	otherNamespace := model.WorkloadConfig{Namespace: "other-ns", Name: "other", Config: &extensions.WorkloadConfig{}}
-	mock := krttest.NewMock(t, []any{system, sameNamespace, otherNamespace})
-	a := &index{
-		SystemNamespace: "agentio-system",
-		workloadConfigs: krttest.GetMockCollection[model.WorkloadConfig](mock),
-	}
-	dedicatedProxy := &model.Proxy{
-		Labels: map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
-		Metadata: &model.NodeMetadata{
-			Namespace: "sandbox-ns",
-			Labels:    map[string]string{agentio.LabelSandboxProxyType: "ztunnel"},
-		},
-	}
-
-	got := a.AgentioResourcesForProxy(dedicatedProxy, xdsmodel.WorkloadConfigType, nil)
-	want := sets.New(system.ResourceName(), sameNamespace.ResourceName())
-	for _, resource := range got {
-		if !want.Contains(resource.Name) {
-			t.Fatalf("unexpected workload config %q", resource.Name)
-		}
-		want.Delete(resource.Name)
-	}
-	assert.Equal(t, len(want), 0)
 }
 
 func TestWorkloadExtensionsForProxyPublishesPerTypePolicyReference(t *testing.T) {

@@ -511,7 +511,6 @@ var PushOrder = []string{
 	v3.AddressType,
 	v3.WorkloadType,
 	v3.WorkloadAuthorizationType,
-	v3.WorkloadConfigType,
 }
 
 // KnownOrderedTypeUrls has typeUrls for which we know the order of push.

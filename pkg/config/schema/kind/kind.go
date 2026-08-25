@@ -20,14 +20,12 @@ type Kind uint8
 // Kinds defined outside the generated schema. Explicit values keep them clear
 // of the generated iota block, which shifts on upstream rebases.
 const (
-	WorkloadConfig   Kind = 200
 	SniTrafficPolicy Kind = 202
 )
 
 // extendedKindNames names the kinds above; the generated String and FromString
 // delegate here for values outside the generated switch.
 var extendedKindNames = map[Kind]string{
-	WorkloadConfig:   "WorkloadConfig",
 	SniTrafficPolicy: "SniTrafficPolicy",
 }
 

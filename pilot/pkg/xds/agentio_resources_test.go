@@ -23,7 +23,6 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/memory"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/config/schema/kind"
-	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
 	"istio.io/istio/pkg/util/sets"
@@ -34,7 +33,6 @@ const testGatewayNS = "agentio-system"
 type sniPolicyStubDiscovery struct {
 	*memory.ServiceDiscovery
 
-	configs  []model.WorkloadConfig
 	policies []model.AgentioResource
 
 	resourceOverrides map[string][]model.AgentioResource
@@ -62,16 +60,10 @@ func (s *sniPolicyStubDiscovery) AgentioResourcesForProxy(
 	if resources, ok := s.resourceOverrides[typeURL]; ok {
 		return resources
 	}
-	switch typeURL {
-	case v3.WorkloadConfigType:
-		return slices.Map(s.configs, func(v model.WorkloadConfig) model.AgentioResource {
-			return model.AgentioResource{Name: v.ResourceName(), Resource: v.Config}
-		})
-	case v3.SniTrafficPolicyType:
+	if typeURL == v3.SniTrafficPolicyType {
 		return s.policies
-	default:
-		return nil
 	}
+	return nil
 }
 
 var (
@@ -118,10 +110,6 @@ func testPolicy(namespace, name string) model.AgentioResource {
 			Match:  &extensions.SniMatch{Sni: []string{"api.example.com"}},
 		}}},
 	}
-}
-
-func testWorkloadConfig(namespace, name string) model.WorkloadConfig {
-	return model.WorkloadConfig{Name: name, Namespace: namespace, Config: &extensions.WorkloadConfig{}}
 }
 
 func names(resources model.Resources) []string {
@@ -189,7 +177,7 @@ func TestSniPolicyDropsInvalidResources(t *testing.T) {
 		{Resource: testPolicy("ns-a", "missing-name").Resource},
 		{Name: "ns-a/untyped-nil"},
 		{Name: "ns-a/typed-nil", Resource: typedNil},
-		{Name: "ns-a/wrong-type", Resource: &extensions.WorkloadConfig{}},
+		{Name: "ns-a/wrong-type", Resource: &extensions.PolicyReference{}},
 	}
 	for i, invalid := range cases {
 		t.Run(string(rune('a'+i)), func(t *testing.T) {
@@ -244,32 +232,13 @@ func TestSniPolicyFeatureFlagOff(t *testing.T) {
 	assert.Equal(t, stub.calls[v3.SniTrafficPolicyType], 0)
 }
 
-func TestAgentioResourceGeneratorWorkloadConfigDelta(t *testing.T) {
-	live := testWorkloadConfig("sandbox-ns", "default")
-	stub := newSniPolicyStubDiscovery(nil)
-	stub.configs = []model.WorkloadConfig{live}
-	gen := agentioResourceGeneratorForType(t, newSniPolicyServer(t, stub), v3.WorkloadConfigType)
-	updated := sets.New(live.ConfigKey())
-
-	resources, removed, _, usedDelta, err := gen.GenerateDeltas(nil,
-		&model.PushRequest{ConfigsUpdated: updated},
-		&model.WatchedResource{TypeUrl: v3.WorkloadConfigType})
-
-	assert.NoError(t, err)
-	assert.Equal(t, usedDelta, true)
-	assert.Equal(t, names(resources), []string{"sandbox-ns/default"})
-	assert.Equal(t, len(removed), 0)
-	assert.Equal(t, stub.requests[v3.WorkloadConfigType], updated)
-}
-
 func TestAgentioResourceDescriptors(t *testing.T) {
 	descriptors := AgentioResourceDescriptors()
-	assert.Equal(t, len(descriptors), 2)
+	assert.Equal(t, len(descriptors), 1)
 	counts := map[string]int{}
 	for _, descriptor := range descriptors {
 		counts[descriptor.TypeURL]++
 	}
-	assert.Equal(t, counts[v3.WorkloadConfigType], 1)
 	assert.Equal(t, counts[v3.SniTrafficPolicyType], 1)
 }
 
