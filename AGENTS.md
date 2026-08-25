@@ -57,7 +57,6 @@ Repository map (Agentio-relevant paths):
 - Kubernetes policy resources use `agents.kruise.io/v1alpha1`.
 - Extension protobuf type URLs use `type.googleapis.com/kruise.networking.extensions.v1.*`.
 - Keep `extensionPrefix` in `pilot/pkg/serviceregistry/kube/controller/agentio/extensions.go`, protobuf package names, generated type URLs, and tests aligned.
-- `pkg/model/xds.go` defines the outer `WorkloadConfigType`; update it and its tests explicitly when the WCDS protocol name changes.
 - Do not replace neutral API or protocol names with implementation-branded names without an explicit design decision.
 
 ### Preserve Intentional Upstream and Domain Naming

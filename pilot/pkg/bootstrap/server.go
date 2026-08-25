@@ -1169,7 +1169,7 @@ func (s *Server) initControllers(args *PilotArgs) error {
 	// initConfigController creates the Agentio controller after initKubeOptions
 	// has already copied the Kubernetes registry options. Refresh the pointer
 	// before constructing the service registry so its ambient index receives
-	// the WorkloadConfig collection used by WCDS.
+	// Agentio's policy and Workload-extension collections.
 	args.RegistryOptions.KubeOptions.AgentioController = s.agentioController
 	if err := s.initServiceControllers(args); err != nil {
 		return fmt.Errorf("error initializing service controllers: %v", err)

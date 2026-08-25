@@ -18,7 +18,6 @@ import "testing"
 
 func TestExtendedKindStrings(t *testing.T) {
 	for k, want := range map[Kind]string{
-		WorkloadConfig:   "WorkloadConfig",
 		SniTrafficPolicy: "SniTrafficPolicy",
 	} {
 		if got := k.String(); got != want {

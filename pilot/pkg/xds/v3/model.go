@@ -34,7 +34,6 @@ const (
 	AddressType                = model.AddressType
 	WorkloadType               = model.WorkloadType
 	WorkloadAuthorizationType  = model.WorkloadAuthorizationType
-	WorkloadConfigType         = model.WorkloadConfigType
 	SniTrafficPolicyType       = model.SniTrafficPolicyType
 
 	// nolint

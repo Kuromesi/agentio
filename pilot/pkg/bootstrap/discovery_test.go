@@ -29,14 +29,8 @@ func TestAgentioResourceGeneratorRegistration(t *testing.T) {
 	InitGenerators(server, nil, "", "", nil, nil)
 
 	descriptors := xds.AgentioResourceDescriptors()
-	assert.Equal(t, len(descriptors), 2)
-	assert.Equal(t, []string{
-		descriptors[0].TypeURL,
-		descriptors[1].TypeURL,
-	}, []string{
-		v3.WorkloadConfigType,
-		v3.SniTrafficPolicyType,
-	})
+	assert.Equal(t, len(descriptors), 1)
+	assert.Equal(t, descriptors[0].TypeURL, v3.SniTrafficPolicyType)
 	for _, descriptor := range descriptors {
 		registered, found := server.Generators[descriptor.TypeURL]
 		if !found {

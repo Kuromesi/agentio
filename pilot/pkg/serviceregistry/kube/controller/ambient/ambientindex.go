@@ -149,7 +149,6 @@ type index struct {
 	builder                     Builder
 
 	agentioController *agentio.Controller
-	workloadConfigs   krt.Collection[model.WorkloadConfig]
 	// Both are nil unless features.EnableSniTrafficPolicy is set.
 	workloadPolicyReferences krt.Collection[agentio.WorkloadPolicyReferences]
 	bindablePolicies         krt.Collection[agentio.BindablePolicy]
@@ -290,6 +289,7 @@ func New(options Options) Index {
 	)...)
 
 	var sandboxConfig krt.Singleton[model.AgentioConfig]
+	var resolvedEgressPolicies krt.Singleton[agentio.ResolvedEgressPolicies]
 	var TrafficPolicyDerivedPolicies krt.Collection[model.WorkloadAuthorization]
 	if options.AgentioController != nil {
 		TrafficPolicyDerivedPolicies = options.AgentioController.BuildPolicyCollection(
@@ -301,6 +301,7 @@ func New(options Options) Index {
 			})
 		a.agentioController = options.AgentioController
 		sandboxConfig = a.agentioController.AgentioConfig()
+		resolvedEgressPolicies = a.agentioController.ResolvedEgressPolicies()
 	}
 
 	a.builder = Builder{
@@ -472,6 +473,7 @@ func New(options Options) Index {
 		NodeLocality,
 		a.meshConfig,
 		sandboxConfig,
+		resolvedEgressPolicies,
 		AuthorizationPolicies,
 		PeerAuths,
 		Waypoints,
@@ -592,15 +594,6 @@ func New(options Options) Index {
 	a.authorizationPolicies = AllPolicies
 
 	if a.agentioController != nil {
-		workloadConfigs := a.agentioController.WorkloadConfigs()
-		if workloadConfigs != nil {
-			a.workloadConfigs = workloadConfigs
-			workloadConfigs.RegisterBatch(PushXds(a.XDSUpdater,
-				func(i model.WorkloadConfig) model.ConfigKey {
-					return i.ConfigKey()
-				}), false)
-		}
-
 		workloadPolicyReferences := a.agentioController.BuildWorkloadPolicyReferencesCollection(Workloads, opts)
 		if workloadPolicyReferences != nil {
 			a.workloadPolicyReferences = workloadPolicyReferences

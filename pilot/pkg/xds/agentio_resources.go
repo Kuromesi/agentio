@@ -32,8 +32,6 @@ import (
 // sniPolicyLog carries SNI policy resource validation warnings.
 var sniPolicyLog = istiolog.RegisterScope("snipolicy", "SNI traffic policy xDS debugging")
 
-func agentioResourceAlwaysEnabled() bool { return true }
-
 // AgentioResourceDescriptor describes one Agentio resource xDS type. The
 // generator uses these fields to preserve the type-specific config filtering,
 // resource naming and feature gating while sharing the
@@ -51,12 +49,6 @@ type AgentioResourceDescriptor struct {
 func AgentioResourceDescriptors() []AgentioResourceDescriptor {
 	enabled := func() bool { return features.EnableSniTrafficPolicy }
 	return []AgentioResourceDescriptor{
-		{
-			TypeURL:             v3.WorkloadConfigType,
-			ConfigKind:          kind.WorkloadConfig,
-			ResourceNameFromKey: func(k model.ConfigKey) string { return k.Namespace + "/" + k.Name },
-			Enabled:             agentioResourceAlwaysEnabled,
-		},
 		{
 			TypeURL:             v3.SniTrafficPolicyType,
 			ConfigKind:          kind.SniTrafficPolicy,

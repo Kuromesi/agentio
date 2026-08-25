@@ -23,7 +23,6 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/log"
-	xdsmodel "istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/util/sets"
 )
 
@@ -111,21 +110,6 @@ func isNilAgentioResourceMessage(message proto.Message) bool {
 	}
 }
 
-var agentioResourceProviders = map[string]agentioResourceProvider{
-	xdsmodel.WorkloadConfigType: collectAgentioResources(
-		func(a *index) krt.Collection[model.WorkloadConfig] { return a.workloadConfigs },
-		func(key model.ConfigKey) string { return key.Namespace + "/" + key.Name },
-		func(c model.WorkloadConfig) string { return c.ResourceName() },
-		func(c model.WorkloadConfig) proto.Message { return c.Config },
-		func(a *index, proxy *model.Proxy, c model.WorkloadConfig) bool {
-			if !agentio.IsSandboxDedicatedProxy(proxy) {
-				return true
-			}
-			return c.Namespace == proxy.Metadata.Namespace || c.Namespace == a.SystemNamespace
-		},
-	),
-}
-
 func bindablePolicyResourceProvider(typeURL string) agentioResourceProvider {
 	return collectAgentioResources(
 		func(a *index) krt.Collection[agentio.BindablePolicy] { return a.bindablePolicies },
@@ -143,10 +127,6 @@ func (a *index) AgentioResourcesForProxy(
 	typeURL string,
 	requested sets.Set[model.ConfigKey],
 ) []model.AgentioResource {
-	provider, found := agentioResourceProviders[typeURL]
-	if found {
-		return provider(a, proxy, requested)
-	}
 	resources := bindablePolicyResourceProvider(typeURL)(a, proxy, requested)
 	if len(resources) == 0 {
 		return nil

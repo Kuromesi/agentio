@@ -81,21 +81,6 @@ message EgressPolicies {
     repeated EgressPolicy egress_policies = 1;
 }
 
-// WorkloadConfigScope determines the scope of a WorkloadConfig resource.
-enum WorkloadConfigScope {
-    // WORKLOAD_CONFIG_SCOPE_GLOBAL applies to all workloads in the mesh.
-    WORKLOAD_CONFIG_SCOPE_GLOBAL = 0;
-    // WORKLOAD_CONFIG_SCOPE_NAMESPACE applies only to workloads in the
-    // same namespace as the resource.
-    WORKLOAD_CONFIG_SCOPE_NAMESPACE = 1;
-}
-
-// WorkloadConfig is an independent xDS resource pushed to ztunnel.
-message WorkloadConfig {
-    WorkloadConfigScope scope = 1;
-    repeated EgressPolicy egress_policies = 2;
-}
-
 // HeaderSendMode mirrors Envoy's ProcessingMode.HeaderSendMode.
 enum HeaderSendMode {
   // Use the default behavior (request headers are sent, response headers are not).

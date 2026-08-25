@@ -69,6 +69,7 @@ func (a Builder) WorkloadsCollection(
 	nodes krt.Collection[Node],
 	meshConfig krt.Singleton[MeshConfig],
 	agentioConfig krt.Singleton[model.AgentioConfig],
+	resolvedEgressPolicies krt.Singleton[agentio.ResolvedEgressPolicies],
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
@@ -89,6 +90,7 @@ func (a Builder) WorkloadsCollection(
 		a.podWorkloadBuilder(
 			meshConfig,
 			agentioConfig,
+			resolvedEgressPolicies,
 			authorizationPolicies,
 			peerAuths,
 			waypoints,
@@ -181,6 +183,7 @@ func MergedGlobalWorkloadsCollection(
 		localCluster.Pods(),
 		podWorkloadBuilder(
 			meshConfig,
+			nil,
 			nil,
 			localNetworkGetter,
 			localAuthorizationPolicies,
@@ -421,6 +424,7 @@ func MergedGlobalWorkloadsCollection(
 				pods,
 				podWorkloadBuilder(
 					meshConfig,
+					nil,
 					nil,
 					localNetworkGetter,
 					localAuthorizationPolicies,
@@ -796,6 +800,7 @@ func computeWaypoint(
 func podWorkloadBuilder(
 	meshConfig krt.Singleton[MeshConfig],
 	agentioConfig krt.Singleton[model.AgentioConfig],
+	resolvedEgressPolicies krt.Singleton[agentio.ResolvedEgressPolicies],
 	localNetworkGetter func(krt.HandlerContext) network.ID,
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
@@ -885,6 +890,10 @@ func podWorkloadBuilder(
 		if agentioConfig != nil {
 			sc = krt.FetchOne(ctx, agentioConfig.AsCollection())
 		}
+		var compiledPolicies *agentio.ResolvedEgressPolicies
+		if resolvedEgressPolicies != nil {
+			compiledPolicies = krt.FetchOne(ctx, resolvedEgressPolicies.AsCollection())
+		}
 		labels := p.Labels
 		if sc != nil && len(sc.GetSandboxIgnoredLabels()) > 0 {
 			labels = agentio.IgnoreSandboxLabels(p.Labels, sc.SandboxIgnoredLabels)
@@ -895,9 +904,9 @@ func podWorkloadBuilder(
 				w.Extensions = append(w.Extensions, metaExtension)
 			}
 
-			if sc.GetEgressPolicies() != nil {
-				w.Extensions = append(w.Extensions, agentio.NewEgressPoliciesExtension(sc.GetEgressPolicies()))
-			}
+		}
+		if compiledPolicies != nil && len(compiledPolicies.GetEgressPolicies()) > 0 {
+			w.Extensions = append(w.Extensions, agentio.NewEgressPoliciesExtension(compiledPolicies.GetEgressPolicies()))
 		}
 
 		if p.Spec.HostNetwork {
@@ -926,6 +935,7 @@ func podWorkloadBuilder(
 func (a Builder) podWorkloadBuilder(
 	meshConfig krt.Singleton[MeshConfig],
 	agentioConfig krt.Singleton[model.AgentioConfig],
+	resolvedEgressPolicies krt.Singleton[agentio.ResolvedEgressPolicies],
 	authorizationPolicies krt.Collection[model.WorkloadAuthorization],
 	peerAuths krt.Collection[*securityclient.PeerAuthentication],
 	waypoints krt.Collection[Waypoint],
@@ -942,6 +952,7 @@ func (a Builder) podWorkloadBuilder(
 	return podWorkloadBuilder(
 		meshConfig,
 		agentioConfig,
+		resolvedEgressPolicies,
 		localNetworkGetter,
 		authorizationPolicies,
 		peerAuths,
