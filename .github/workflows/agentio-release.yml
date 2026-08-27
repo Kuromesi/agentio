@@ -293,38 +293,18 @@ jobs:
 
       - name: Prepare chart for release
         run: |
-          CHART_VERSION="${VERSION}"
           CHART_DIR="/tmp/chart-release/agentio"
 
           mkdir -p "$(dirname "$CHART_DIR")"
           cp -r "$CHART" "$CHART_DIR"
 
-          # Update Chart.yaml version and appVersion
-          sed -i "s/^version: .*/version: \"${CHART_VERSION}\"/" "$CHART_DIR/Chart.yaml"
-          sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
-          sed -i \
-            "s|See Agentio release notes: .*\"|See Agentio ${VERSION} release notes: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}\"|" \
-            "$CHART_DIR/Chart.yaml"
-
-          # Pilot, proxy-init, proxy, CNI, ztunnel, and epe follow the Agentio release
-          # version. Each sed matches the image `name:` and rewrites the `tag:` on the
-          # next line, so the key order in values.yaml matters.
-          sed -i "/name: pilot/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-          sed -i "/name: proxy-init/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-          sed -i "/name: proxyv2/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-          sed -i "/name: install-cni/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-          sed -i "/name: ztunnel/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-          sed -i "/name: agentio-epe/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
-
-          # Rebuild the reviewed OpenKruise integration bundle after applying
-          # release image tags. Downstream synchronization copies this bundle
-          # without rewriting Helm templates or capability boundaries.
-          go run ./tools/agentio-chart-exporter \
-            --source "$CHART_DIR" \
-            --bundle-output "$CHART_DIR/integrations/openkruise"
+          go run ./tools/agentio-chart-sync prepare \
+            --chart "$CHART_DIR" \
+            --version "$VERSION" \
+            --source-repository "$GITHUB_REPOSITORY"
 
           echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"
-          echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
+          echo "CHART_VERSION=${VERSION}" >> "$GITHUB_ENV"
 
       - name: Verify chart renders cleanly
         run: |

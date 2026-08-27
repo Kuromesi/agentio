@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "manifests/charts/agentio/**"
-      - "tools/agentio-chart-exporter/**"
+      - "tools/agentio-chart-sync/**"
       - ".github/workflows/agentio-chart.yml"
       - ".github/workflows/agentio-release.yml"
       - ".github/workflows/sync-sandbox-manager-agentio-chart.yml"
@@ -14,7 +14,7 @@ on:
       - "release-*"
     paths:
       - "manifests/charts/agentio/**"
-      - "tools/agentio-chart-exporter/**"
+      - "tools/agentio-chart-sync/**"
       - ".github/workflows/agentio-chart.yml"
       - ".github/workflows/agentio-release.yml"
       - ".github/workflows/sync-sandbox-manager-agentio-chart.yml"
@@ -38,7 +38,10 @@ jobs:
         with:
           version: v3.16.2
       - name: Verify OpenKruise integration bundle
-        run: go test ./tools/agentio-chart-exporter
+        run: |
+          go test ./tools/agentio-chart-sync
+          go run ./tools/agentio-chart-sync verify \
+            --bundle "$CHART/integrations/openkruise"
       - name: helm lint
         run: helm lint "$CHART"
       # Render under representative value combinations; each must template cleanly.

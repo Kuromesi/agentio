@@ -16,7 +16,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -61,42 +60,6 @@ var (
 		"ztunnel-injection-template.yaml":  {},
 	}
 )
-
-func main() {
-	source := flag.String("source", "", "prepared standalone Agentio chart directory")
-	bundle := flag.String("bundle", "", "prepared OpenKruise integration bundle directory")
-	bundleOutput := flag.String("bundle-output", "", "directory in which to build an OpenKruise integration bundle")
-	target := flag.String("target", "", "sandbox-manager chart directory")
-	sandboxControllerTarget := flag.String("sandbox-controller-target", "", "sandbox-controller chart directory")
-	flag.Parse()
-
-	if *source != "" || *bundleOutput != "" {
-		if *source == "" || *bundleOutput == "" || *bundle != "" || *target != "" || *sandboxControllerTarget != "" {
-			fmt.Fprintln(os.Stderr, "bundle build requires exactly --source and --bundle-output")
-			os.Exit(2)
-		}
-		if err := BuildIntegrationBundle(*source, *bundleOutput); err != nil {
-			fmt.Fprintf(os.Stderr, "build OpenKruise integration bundle: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	if *bundle == "" || *target == "" {
-		fmt.Fprintln(os.Stderr, "bundle sync requires --bundle and --target")
-		os.Exit(2)
-	}
-	if err := Export(filepath.Join(*bundle, "sandbox-manager"), *target); err != nil {
-		fmt.Fprintf(os.Stderr, "sync Agentio sandbox-manager integration: %v\n", err)
-		os.Exit(1)
-	}
-	if *sandboxControllerTarget != "" {
-		if err := ExportSandboxController(filepath.Join(*bundle, "sandbox-controller"), *sandboxControllerTarget); err != nil {
-			fmt.Fprintf(os.Stderr, "sync Agentio traffic-proxy injection config: %v\n", err)
-			os.Exit(1)
-		}
-	}
-}
 
 // BuildIntegrationBundle derives the reviewed OpenKruise integration sources
 // from the standalone Agentio chart. Release workflows rebuild the bundle only

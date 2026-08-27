@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -28,6 +29,158 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
+
+func TestCLIApplySubcommandSyncsPreparedBundle(t *testing.T) {
+	bundle := t.TempDir()
+	target := t.TempDir()
+
+	writeTestFile(t, bundle, "sandbox-manager/values.yaml", `# BEGIN GENERATED AGENTIO VALUES - DO NOT EDIT
+agentio:
+  enabled: false
+# END GENERATED AGENTIO VALUES
+`)
+	writeTestFile(t, bundle, "sandbox-manager/templates/agentio/config.yaml", `{{- if .Values.agentio.enabled }}
+kind: ConfigMap
+{{- end }}
+`)
+	writeTestFile(t, target, "values.yaml", "manager: unchanged\n")
+
+	command := exec.Command("go", "run", ".", "apply",
+		"--bundle", bundle,
+		"--manager-chart", target,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("agentio-chart-sync apply failed: %v\n%s", err, output)
+	}
+
+	if got := readTestFile(t, target, "templates/agentio/config.yaml"); !strings.Contains(got, ".Values.agentio.enabled") {
+		t.Fatalf("prepared manager template was not synchronized unchanged:\n%s", got)
+	}
+	if got := readTestFile(t, target, "values.yaml"); !strings.Contains(got, "manager: unchanged") || !strings.Contains(got, "agentio:") {
+		t.Fatalf("manager values were not merged:\n%s", got)
+	}
+}
+
+func TestCLIPrepareSubcommandVersionsChartImagesAndBundle(t *testing.T) {
+	chart := t.TempDir()
+	writeTestFile(t, chart, "Chart.yaml", `apiVersion: v2
+name: agentio
+version: old
+appVersion: old
+annotations:
+  artifacthub.io/changes: |
+    - "[Changed]: See Agentio release notes: https://github.com/openkruise/agentio/releases"
+`)
+	writeTestFile(t, chart, "values.yaml", `global:
+  hub: docker.io/openkruise
+agentiod:
+  image: {hub: "", name: pilot, tag: latest}
+proxy:
+  image: {hub: "", name: proxyv2, tag: latest}
+proxyInit:
+  image: {hub: "", name: proxy-init, tag: latest}
+epe:
+  image: {hub: "", name: agentio-epe, tag: latest}
+egressGateway:
+  image: {hub: "", name: proxyv2, tag: latest}
+ztunnel:
+  image: {hub: "", name: ztunnel, tag: latest}
+cni:
+  image: {hub: "", name: install-cni, tag: latest}
+`)
+	writeTestFile(t, chart, "templates/config.yaml", "kind: ConfigMap\n")
+	writeTestFile(t, chart, "files/kruise-agents-traffic-proxy-injection.tpl", `{"image":"{{ .Values.agentio.trafficProxy.image }}"}
+`)
+
+	command := exec.Command("go", "run", ".", "prepare",
+		"--chart", chart,
+		"--version", "1.2.3",
+		"--source-repository", "openkruise/agentio",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("agentio-chart-sync prepare failed: %v\n%s", err, output)
+	}
+
+	chartMetadata := map[string]any{}
+	if err := yaml.Unmarshal([]byte(readTestFile(t, chart, "Chart.yaml")), &chartMetadata); err != nil {
+		t.Fatalf("decode prepared Chart.yaml: %v", err)
+	}
+	if chartMetadata["version"] != "1.2.3" || chartMetadata["appVersion"] != "1.2.3" {
+		t.Fatalf("prepared chart versions = version:%v appVersion:%v, want 1.2.3", chartMetadata["version"], chartMetadata["appVersion"])
+	}
+	annotations, ok := chartMetadata["annotations"].(map[string]any)
+	if !ok || !strings.Contains(fmt.Sprint(annotations["artifacthub.io/changes"]), "/releases/tag/1.2.3") {
+		t.Fatalf("prepared chart release annotation = %#v", chartMetadata["annotations"])
+	}
+
+	values := map[string]any{}
+	if err := yaml.Unmarshal([]byte(readTestFile(t, chart, "values.yaml")), &values); err != nil {
+		t.Fatalf("decode prepared values.yaml: %v", err)
+	}
+	imageTags := collectImageTags(values)
+	wantImageCounts := map[string]int{
+		"pilot": 1, "proxy-init": 1, "proxyv2": 2,
+		"install-cni": 1, "ztunnel": 1, "agentio-epe": 1,
+	}
+	for name, wantCount := range wantImageCounts {
+		tags := imageTags[name]
+		if len(tags) != wantCount {
+			t.Errorf("prepared image %s count = %d, want %d: %#v", name, len(tags), wantCount, tags)
+		}
+		for _, tag := range tags {
+			if tag != "1.2.3" {
+				t.Errorf("prepared image %s tag = %q, want 1.2.3", name, tag)
+			}
+		}
+	}
+
+	controllerValues := readTestFile(t, chart, "integrations/openkruise/sandbox-controller/values.yaml")
+	for _, want := range []string{"docker.io/openkruise/ztunnel:1.2.3", "docker.io/openkruise/proxy-init:1.2.3"} {
+		if !strings.Contains(controllerValues, want) {
+			t.Errorf("prepared controller bundle does not contain %q:\n%s", want, controllerValues)
+		}
+	}
+}
+
+func TestCLIVerifySubcommandAcceptsRepositoryBundle(t *testing.T) {
+	bundle := filepath.Join(repositoryAgentioChart(t), "integrations", "openkruise")
+	command := exec.Command("go", "run", ".", "verify", "--bundle", bundle)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("agentio-chart-sync verify failed: %v\n%s", err, output)
+	}
+}
+
+func TestVerifyIntegrationBundleRejectsVersionMetadataInTemplates(t *testing.T) {
+	source := filepath.Join(repositoryAgentioChart(t), "integrations", "openkruise")
+	bundle := filepath.Join(t.TempDir(), "openkruise")
+	copyTestTree(t, source, bundle)
+
+	template := "sandbox-manager/templates/agentio/agentiod.yaml"
+	content := readTestFile(t, bundle, template)
+	writeTestFile(t, bundle, template, content+"\n_metadata:\n  chartVersion: 1.2.3\n")
+
+	err := VerifyIntegrationBundle(bundle)
+	if err == nil || !strings.Contains(err.Error(), "chartVersion") {
+		t.Fatalf("VerifyIntegrationBundle() error = %v, want chartVersion rejection", err)
+	}
+}
+
+func TestVerifyIntegrationBundleRejectsVersionMetadataInFiles(t *testing.T) {
+	source := filepath.Join(repositoryAgentioChart(t), "integrations", "openkruise")
+	bundle := filepath.Join(t.TempDir(), "openkruise")
+	copyTestTree(t, source, bundle)
+
+	file := "sandbox-manager/files/agentio/trafficpolicy-crd.yaml"
+	content := readTestFile(t, bundle, file)
+	writeTestFile(t, bundle, file, content+"\nsourceCommit: abc123\n")
+
+	err := VerifyIntegrationBundle(bundle)
+	if err == nil || !strings.Contains(err.Error(), "sourceCommit") {
+		t.Fatalf("VerifyIntegrationBundle() error = %v, want sourceCommit rejection", err)
+	}
+}
 
 func TestExportGeneratesFlatAgentioChart(t *testing.T) {
 	source := t.TempDir()
@@ -737,4 +890,53 @@ func readTestTree(t *testing.T, root string) string {
 		t.Fatalf("WalkDir(%q): %v", root, err)
 	}
 	return out.String()
+}
+
+func collectImageTags(value any) map[string][]string {
+	tags := map[string][]string{}
+	var visit func(any)
+	visit = func(current any) {
+		switch typed := current.(type) {
+		case map[string]any:
+			name, hasName := typed["name"].(string)
+			tag, hasTag := typed["tag"].(string)
+			if hasName && hasTag {
+				tags[name] = append(tags[name], tag)
+			}
+			for _, child := range typed {
+				visit(child)
+			}
+		case []any:
+			for _, child := range typed {
+				visit(child)
+			}
+		}
+	}
+	visit(value)
+	return tags
+}
+
+func copyTestTree(t *testing.T, source, target string) {
+	t.Helper()
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		writeTestFile(t, target, filepath.ToSlash(rel), string(content))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("copy test tree %q: %v", source, err)
+	}
 }

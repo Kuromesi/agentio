@@ -86,7 +86,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          go test ./tools/agentio-chart-exporter
+          go test ./tools/agentio-chart-sync
 
           released_chart="$RUNNER_TEMP/released-agentio/agentio"
           bundle="$released_chart/integrations/openkruise"
@@ -95,10 +95,13 @@ jobs:
             exit 1
           fi
 
-          go run ./tools/agentio-chart-exporter \
+          go run ./tools/agentio-chart-sync verify \
+            --bundle "$bundle"
+
+          go run ./tools/agentio-chart-sync apply \
             --bundle "$bundle" \
-            --target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_MANAGER_CHART" \
-            --sandbox-controller-target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_CONTROLLER_CHART"
+            --manager-chart "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_MANAGER_CHART" \
+            --controller-chart "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_CONTROLLER_CHART"
 
       - name: Verify generated OpenKruise charts
         working-directory: openkruise-charts
