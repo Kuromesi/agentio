@@ -632,6 +632,14 @@ func prepareSandboxManagerTemplate(rel string, content []byte) ([]byte, error) {
   - patch
 `, ""},
 		}
+	case "agentio-config.yaml":
+		replacements = [][2]string{
+			{"user overrides from .Values.agentioConfig.", "user overrides from .Values.agentio.agentioConfig."},
+		}
+	case "meshconfig.yaml":
+		replacements = [][2]string{
+			{"user overrides from .Values.meshConfig.", "user overrides from .Values.agentio.meshConfig."},
+		}
 	default:
 		return content, nil
 	}

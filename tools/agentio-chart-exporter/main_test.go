@@ -327,6 +327,15 @@ func TestExportOmitsAmbientAndSidecarInjectionFromSandboxManager(t *testing.T) {
 			t.Errorf("generated sandbox-manager values retain stale capability comment %q", stale)
 		}
 	}
+	for name, paths := range map[string][2]string{
+		"agentio-config.yaml": {".Values.agentioConfig", ".Values.agentio.agentioConfig"},
+		"meshconfig.yaml":     {".Values.meshConfig", ".Values.agentio.meshConfig"},
+	} {
+		content := readTestFile(t, target, filepath.Join("templates", "agentio", name))
+		if strings.Contains(content, paths[0]) || !strings.Contains(content, paths[1]) {
+			t.Errorf("generated %s contains a stale values-path comment: %s", name, content)
+		}
+	}
 }
 
 func TestRepositoryAgentioCRDsAreAlwaysRenderedAndRetained(t *testing.T) {
