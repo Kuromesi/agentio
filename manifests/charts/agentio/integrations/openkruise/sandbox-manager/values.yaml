@@ -47,6 +47,19 @@ agentio:
     tolerations: []
     # -- Affinity rules for control plane pods.
     affinity: {}
+  # -- Settings shared by native policy runtimes referenced by Workload discovery.
+  policyRuntime:
+    # -- Time an existing ready workload may keep its last-known-good policy snapshot
+    # while policy and Workload-reference updates converge after references become
+    # temporarily unresolved. Must exceed the
+    # control plane's worst-case gap between the two pushes, which is bounded by
+    # PILOT_DEBOUNCE_MAX (10s by default); a shorter value lets the grace period
+    # expire first and fails the workload closed. Recovery cancels the wait as
+    # soon as the streams converge, so this is an upper bound, not a fixed delay.
+    referenceResolutionGracePeriod: 15s
+  # -- Opt-in ClientHello SNI enforcement for sandbox egress gateways.
+  sniTrafficPolicy:
+    enabled: false
   epe:
     enabled: false
     name: agentio-epe
