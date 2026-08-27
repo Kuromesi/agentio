@@ -97,9 +97,40 @@ func TestTokenTransformationPayloadCompatibility(t *testing.T) {
 	if got.Source.Kind != tokentransform.SourceKindSecret || got.Source.Name != "credential" || got.Source.Namespace != "external" {
 		t.Errorf("projected source = %+v, want external/credential Secret", got.Source)
 	}
-	apiKey, ok := got.SignerCfg.(tokentransform.ApiKeyConfig)
-	if !ok || apiKey.TargetHeader != "authorization" || apiKey.Template == nil {
-		t.Errorf("projected signer config = %+v, want compiled authorization ApiKey", got.SignerCfg)
+	// The API still carries the single-header fields, which the filter
+	// normalizes into a one-entry compiled output list.
+	apiKey := got.SignerCfg.(tokentransform.ApiKeyConfig)
+	if len(apiKey.Headers) != 1 ||
+		len(apiKey.Headers[0].Names) != 1 ||
+		apiKey.Headers[0].Names[0] != "authorization" ||
+		apiKey.Headers[0].Value.Template == nil {
+		t.Fatalf("unexpected legacy projection: %+v", apiKey)
+	}
+}
+
+func TestTokenTransformationHeaderSelectorPayloadCompatibility(t *testing.T) {
+	action := &v1alpha1.TokenTransformationAction{
+		CredentialRef: v1alpha1.CredentialRef{
+			Secret: &v1alpha1.SecretCredentialRef{Name: "credential", Namespace: "external"},
+		},
+		ApiKey: &v1alpha1.ApiKeyConfig{
+			When:          &v1alpha1.ActionCondition{Header: "x-legacy", Pattern: "("},
+			TargetHeader:  "x-legacy",
+			ValueTemplate: "{{",
+			TargetHeaders: &v1alpha1.TokenTransformationHeaderSelector{
+				Names: []string{"Authorization", "X-Backend-Authorization"},
+			},
+			Value: &v1alpha1.ValueSource{Template: ptr.To("Bearer {{ .Token }}")},
+		},
+	}
+	got := projectAction(t, tokentransform.FilterName,
+		tokentransform.NewDefinition(tokentransform.Deps{}), action).(tokentransform.Config)
+	apiKey := got.SignerCfg.(tokentransform.ApiKeyConfig)
+	if len(apiKey.Headers) != 1 ||
+		!reflect.DeepEqual(apiKey.Headers[0].Names, []string{"authorization", "x-backend-authorization"}) ||
+		apiKey.Headers[0].Condition != nil ||
+		apiKey.Headers[0].Value.Template == nil {
+		t.Fatalf("unexpected selector projection: %+v", apiKey)
 	}
 }
 

@@ -69,8 +69,8 @@ func injectionRequest() *enginetest.RequestBuilder {
 
 // TestScenario_SecretAPIKeyInjectedIntoDefaultHeader proves the ApiKey
 // Kind=Secret path end to end: the Secret is read from the pod namespace,
-// the value template renders the token, and — via CRD defaulting — the
-// mutation lands on the default Authorization header.
+// the value template renders the token, and — via the EPE legacy fallback —
+// the mutation lands on the Authorization header.
 func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
 	kubeClient := kube.NewFakeClient(newAPIKeySecret("test-ns", "api-cred", "secret-token-123"))
 	h := New(t, Options{Kube: kubeClient})
@@ -109,11 +109,11 @@ func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 	})
 }
 
-// TestScenario_CredentialProviderInjectsAndCaches proves the ApiKey
-// Kind=CredentialProvider path end to end: the sandbox token from
-// filter_state authenticates the provider call, the returned key lands in
-// the header, and the token cache absorbs the second request.
-func TestScenario_CredentialProviderInjectsAndCaches(t *testing.T) {
+// TestScenario_NewAPIKeySelectorWithCredentialProvider proves the v0.6 ApiKey
+// shape end to end: CEL selects every placeholder-valued request header, one
+// provider credential rewrites all of them, and the cache absorbs the second
+// request.
+func TestScenario_NewAPIKeySelectorWithCredentialProvider(t *testing.T) {
 	provider := credentialtest.NewAPIKeyProvider(t, "provider-token")
 	client := provider.ClientWithCache(tokencache.NewCache(time.Hour, 16), nil)
 	h := New(t, Options{CredentialClient: client})
@@ -141,14 +141,22 @@ spec:
           kind: CredentialProvider
           name: my-provider
         apiKey:
-          valueTemplate: 'Bearer {{ .Token }}'
+          targetHeaders:
+            cel: 'request.headers.filter(name, request.headers[name] == "${AGENTIO_TOKEN}")'
+          value:
+            template: 'Bearer {{ .Token }}'
 `, injectionPath))
 
 	request := func() *enginetest.RequestBuilder {
-		return injectionRequest().SandboxToken("req-1", "sandbox-access-token", "sandbox-client-1")
+		return injectionRequest().
+			SandboxToken("req-1", "sandbox-access-token", "sandbox-client-1").
+			Header("authorization", "${AGENTIO_TOKEN}").
+			Header("x-api-key", "${AGENTIO_TOKEN}")
 	}
 
-	h.Run(t, request()).RequireHeader(t, "Authorization", "Bearer provider-token")
+	verdict := h.Run(t, request())
+	verdict.RequireHeader(t, "Authorization", "Bearer provider-token")
+	verdict.RequireHeader(t, "X-API-Key", "Bearer provider-token")
 	if got := provider.Calls.Load(); got != 1 {
 		t.Fatalf("provider calls = %d, want 1", got)
 	}
@@ -157,9 +165,67 @@ spec:
 	}
 
 	// Second request must be served from the token cache.
-	h.Run(t, request()).RequireHeader(t, "Authorization", "Bearer provider-token")
+	verdict = h.Run(t, request())
+	verdict.RequireHeader(t, "Authorization", "Bearer provider-token")
+	verdict.RequireHeader(t, "X-API-Key", "Bearer provider-token")
 	if got := provider.Calls.Load(); got != 1 {
 		t.Errorf("provider calls after cache hit = %d, want 1", got)
+	}
+}
+
+// TestScenario_LegacyApiKeyFieldsRemainAFullChainContract keeps the released
+// API shape on the typed bridge: type, targetHeader, valueTemplate, and when
+// are all legacy ApiKey fields. The provider counter proves that matching the
+// condition still fetches exactly once, while a non-match does not fetch.
+func TestScenario_LegacyApiKeyFieldsRemainAFullChainContract(t *testing.T) {
+	provider := credentialtest.NewAPIKeyProvider(t, "provider-token")
+	h := New(t, Options{CredentialClient: provider.Client()})
+	h.Fixture.ApplyYAML(fmt.Sprintf(`
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: legacy-api-key
+  namespace: test-ns
+spec:
+  selector:
+    matchLabels:
+      app: sandbox
+  rules:
+  - name: legacy-api-key
+    match:
+    - domains:
+      - "*"
+      paths:
+      - type: Exact
+        value: %s
+    actions:
+      tokenTransformation:
+        type: ApiKey
+        credentialRef:
+          kind: CredentialProvider
+          name: legacy-provider
+        apiKey:
+          targetHeader: X-Legacy-API-Key
+          valueTemplate: 'Bearer {{ .Token }}'
+          when:
+            header: X-Legacy-Guard
+            pattern: '^enabled$'
+`, injectionPath))
+
+	matching := injectionRequest().
+		SandboxToken("request-1", "sandbox-access-token", "sandbox-client").
+		Header("x-legacy-guard", "enabled")
+	h.Run(t, matching).RequireHeader(t, "X-Legacy-API-Key", "Bearer provider-token")
+	if got := provider.Calls.Load(); got != 1 {
+		t.Fatalf("provider calls = %d, want 1 after matching legacy ApiKey rule", got)
+	}
+
+	notMatching := injectionRequest().
+		SandboxToken("request-2", "sandbox-access-token", "sandbox-client").
+		Header("x-legacy-guard", "disabled")
+	h.Run(t, notMatching).RequirePassthrough(t)
+	if got := provider.Calls.Load(); got != 1 {
+		t.Fatalf("provider calls = %d, want no fetch when legacy when does not match", got)
 	}
 }
 

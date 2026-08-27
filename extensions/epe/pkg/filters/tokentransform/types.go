@@ -157,6 +157,12 @@ type Signer interface {
 	Sign(ctx context.Context, st *filter.Stream, body []byte, scope *inputs.Scope, cred Credential, cfg any) ([]filter.Mutation, error)
 }
 
+// SignerPreparer resolves request-dependent signer configuration before any
+// credential access. empty is a successful no-op; errors use FailStrategy.
+type SignerPreparer interface {
+	Prepare(st *filter.Stream, scope *inputs.Scope, cfg any) (prepared any, empty bool, err error)
+}
+
 // BodyWanter is the optional pre-claim probe of signers whose signature
 // consumes the request body. An error means the request is ineligible for
 // this signer and resolves through FailStrategy like other pre-claim
@@ -206,8 +212,6 @@ type Config struct {
 	Type string
 	// FailBlock mirrors the rule's FailStrategy (Block = true).
 	FailBlock bool
-	// When gates eligibility (ApiKey rules only).
-	When *When
 	// Source is where the credential comes from.
 	Source SourceSpec
 	// SignerCfg is opaque per-signer config.

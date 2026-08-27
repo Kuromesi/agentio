@@ -35,6 +35,9 @@ type Filter struct {
 	limiter RateLimiter
 	rule    filter.RuleConfig[Config]
 	pending bool
+
+	preparedSignerCfg any
+	hasPreparedCfg    bool
 }
 
 // NewDescriptor declares tokentransform to the framework. The signer
@@ -73,7 +76,6 @@ func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 // OnRequestHeaders evaluates this rule and either transforms, defers for a
 // body, blocks, or continues to the next rule.
 func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filter.Action, error) {
-	loggerD := log.FromContext(ctx).V(logging.DEBUG)
 	rc := &f.rule
 	cfg := rc.Cfg
 
@@ -83,10 +85,19 @@ func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filte
 		return filter.Action{}, fmt.Errorf("no signer registered for type %q", cfg.Type)
 	}
 
-	if !cfg.When.Met(st.Request.Headers) {
-		loggerD.Info("When condition not met, skipping token transformation", "type", cfg.Type)
-		return filter.Continue(), nil
+	signerCfg := cfg.SignerCfg
+	if preparer, ok := signer.(SignerPreparer); ok {
+		prepared, empty, err := preparer.Prepare(st, rc.Scope, signerCfg)
+		if err != nil {
+			return f.failEligible(ctx, cfg, st, err), nil
+		}
+		if empty {
+			return filter.Continue(), nil
+		}
+		signerCfg = prepared
 	}
+	f.preparedSignerCfg = signerCfg
+	f.hasPreparedCfg = true
 
 	if cfg.Source.Kind == SourceKindProvider &&
 		(st.Peer.Token == nil || st.Peer.Token.AccessToken == "") {
@@ -135,7 +146,11 @@ func (f *Filter) complete(ctx context.Context, rc *filter.RuleConfig[Config], st
 		return f.failClaimed(ctx, cfg, st, err), nil
 	}
 
-	muts, err := signer.Sign(ctx, st, body, rc.Scope, cred, cfg.SignerCfg)
+	signerCfg := cfg.SignerCfg
+	if f.hasPreparedCfg {
+		signerCfg = f.preparedSignerCfg
+	}
+	muts, err := signer.Sign(ctx, st, body, rc.Scope, cred, signerCfg)
 	if err != nil {
 		return f.failClaimed(ctx, cfg, st, err), nil
 	}

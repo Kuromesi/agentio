@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -39,12 +40,44 @@ func (f *fakeSource) Fetch(_ context.Context, ref Ref) (Credential, error) {
 	return f.cred, f.err
 }
 
+type preparingSigner struct {
+	prepared   any
+	empty      bool
+	prepareErr error
+	wantsBody  bool
+
+	prepareCalls int
+	signCalls    int
+	signedCfg    any
+}
+
+var _ SignerPreparer = (*preparingSigner)(nil)
+
+func (s *preparingSigner) Kind() CredentialKind { return CredentialKindToken }
+
+func (s *preparingSigner) Prepare(_ *filter.Stream, _ *inputs.Scope, _ any) (any, bool, error) {
+	s.prepareCalls++
+	return s.prepared, s.empty, s.prepareErr
+}
+
+func (s *preparingSigner) WantsBody(*filter.Stream) (bool, error) { return s.wantsBody, nil }
+
+func (s *preparingSigner) Sign(_ context.Context, _ *filter.Stream, _ []byte, _ *inputs.Scope, cred Credential, cfg any) ([]filter.Mutation, error) {
+	s.signCalls++
+	s.signedCfg = cfg
+	return []filter.Mutation{{HeaderOps: []filter.HeaderOp{{
+		Kind: filter.HeaderSet, Name: "x-prepared", Value: fmt.Sprintf("%s:%s", cfg, cred.Token),
+	}}}}, nil
+}
+
 // newTestFilter builds a Filter over one config with scripted
 // sources and the real ApiKey signer under its key.
 func newTestFilter(secret, provider CredentialSource, cfg Config) *Filter {
 	tmpl, _ := eval.CompileTemplate("valueTemplate", "Bearer {{ .Token }}")
 	if cfg.SignerCfg == nil {
-		cfg.SignerCfg = ApiKeyConfig{TargetHeader: "authorization", Template: tmpl}
+		cfg.SignerCfg = ApiKeyConfig{Headers: []ApiKeyHeaderConfig{{
+			Names: []string{"authorization"}, Value: HeaderValueSource{Template: tmpl},
+		}}}
 	}
 	return &Filter{
 		sources: Sources{Secret: secret, Provider: provider},
@@ -58,6 +91,16 @@ func secretCfg(failBlock bool) Config {
 		Source: SourceSpec{Kind: SourceKindSecret, Name: "s", Namespace: "ns"}}
 }
 
+func withHeaderCondition(cfg Config) Config {
+	tmpl, _ := eval.CompileTemplate("valueTemplate", "Bearer {{ .Token }}")
+	cfg.SignerCfg = ApiKeyConfig{Headers: []ApiKeyHeaderConfig{{
+		Names:     []string{"authorization"},
+		Condition: &When{Header: "x-guard", Re: regexp.MustCompile(`^go$`)},
+		Value:     HeaderValueSource{Template: tmpl},
+	}}}
+	return cfg
+}
+
 func streamWithPeerToken() *filter.Stream {
 	return &filter.Stream{Peer: filter.Peer{
 		Pod:   types.NamespacedName{Namespace: "podns", Name: "pod-x"},
@@ -67,6 +110,125 @@ func streamWithPeerToken() *filter.Stream {
 
 func streamWithoutPeerToken() *filter.Stream {
 	return &filter.Stream{Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "podns", Name: "pod-x"}}}
+}
+
+func TestFilterSignerPreparationBeforeCredentialFetch(t *testing.T) {
+	t.Run("header condition skips credential fetch", func(t *testing.T) {
+		source := &fakeSource{cred: Credential{Token: "credential"}}
+		cfg := withHeaderCondition(secretCfg(false))
+		f := newTestFilter(source, nil, cfg)
+		st := streamWithPeerToken()
+		st.Request.Headers = map[string]string{"x-guard": "skip"}
+
+		act, err := f.OnRequestHeaders(context.Background(), st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if act.Kind() != filter.KindContinue || len(act.Mutations()) != 0 {
+			t.Fatalf("action = %+v, want unmodified Continue", act)
+		}
+		if len(source.got) != 0 {
+			t.Fatalf("fetches=%d, want 0", len(source.got))
+		}
+	})
+
+	t.Run("empty preparation skips provider without a peer token", func(t *testing.T) {
+		provider := &fakeSource{}
+		cfg := Config{Type: TypeAPIKey, Source: SourceSpec{Kind: SourceKindProvider, Name: "provider"}, SignerCfg: "original"}
+		f := newTestFilter(nil, provider, cfg)
+		signer := &preparingSigner{empty: true}
+		f.signers[TypeAPIKey] = signer
+
+		act, err := f.OnRequestHeaders(context.Background(), streamWithoutPeerToken())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if act.Kind() != filter.KindContinue || len(act.Mutations()) != 0 {
+			t.Fatalf("action = %+v, want unmodified Continue", act)
+		}
+		if signer.prepareCalls != 1 || signer.signCalls != 0 || len(provider.got) != 0 {
+			t.Fatalf("prepare=%d sign=%d provider fetches=%d, want 1, 0, 0", signer.prepareCalls, signer.signCalls, len(provider.got))
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		failBlock bool
+		wantKind  filter.ActionKind
+	}{
+		{name: "block preparation error stops before fetch", failBlock: true, wantKind: filter.KindStop},
+		{name: "allow preparation error continues before fetch", wantKind: filter.KindContinue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := &fakeSource{cred: Credential{Token: "credential"}}
+			f := newTestFilter(source, nil, secretCfg(tc.failBlock))
+			signer := &preparingSigner{prepareErr: errors.New("cannot prepare")}
+			f.signers[TypeAPIKey] = signer
+
+			act, err := f.OnRequestHeaders(context.Background(), streamWithPeerToken())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if act.Kind() != tc.wantKind {
+				t.Fatalf("action kind = %v, want %v", act.Kind(), tc.wantKind)
+			}
+			if tc.failBlock {
+				reply, ok := act.Reply()
+				if !ok || reply.Status != 403 {
+					t.Fatalf("reply = %+v, present=%t; want a 403 block reply", reply, ok)
+				}
+			}
+			if signer.prepareCalls != 1 || signer.signCalls != 0 || len(source.got) != 0 {
+				t.Fatalf("prepare=%d sign=%d fetches=%d, want 1, 0, 0", signer.prepareCalls, signer.signCalls, len(source.got))
+			}
+		})
+	}
+
+	t.Run("prepared config signs after body fetch", func(t *testing.T) {
+		source := &fakeSource{cred: Credential{Token: "credential"}}
+		cfg := secretCfg(false)
+		cfg.SignerCfg = "original"
+		f := newTestFilter(source, nil, cfg)
+		signer := &preparingSigner{prepared: "prepared", wantsBody: true}
+		f.signers[TypeAPIKey] = signer
+		st := streamWithPeerToken()
+
+		headersAct, err := f.OnRequestHeaders(context.Background(), st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if headersAct.Kind() != filter.KindNeedBody || len(source.got) != 0 {
+			t.Fatalf("headers action = %+v, fetches=%d; want NeedBody with no fetch", headersAct, len(source.got))
+		}
+		bodyAct, err := f.OnRequestBody(context.Background(), st, filter.Body{Bytes: []byte("body")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		muts := bodyAct.Mutations()
+		if len(muts) != 1 || len(muts[0].HeaderOps) != 1 || muts[0].HeaderOps[0].Value != "prepared:credential" {
+			t.Fatalf("body action = %+v, want prepared credential mutation", bodyAct)
+		}
+		if signer.prepareCalls != 1 || signer.signCalls != 1 || signer.signedCfg != "prepared" || len(source.got) != 1 {
+			t.Fatalf("prepare=%d sign=%d cfg=%v fetches=%d, want 1, 1, prepared, 1", signer.prepareCalls, signer.signCalls, signer.signedCfg, len(source.got))
+		}
+	})
+
+	t.Run("existing signer still uses its original config", func(t *testing.T) {
+		source := &fakeSource{cred: Credential{Token: "credential"}}
+		f := newTestFilter(source, nil, secretCfg(false))
+
+		act, err := f.OnRequestHeaders(context.Background(), streamWithPeerToken())
+		if err != nil {
+			t.Fatal(err)
+		}
+		muts := act.Mutations()
+		if len(muts) != 1 || len(muts[0].HeaderOps) != 1 || muts[0].HeaderOps[0].Value != "Bearer credential" {
+			t.Fatalf("action = %+v, want existing signer mutation", act)
+		}
+		if len(source.got) != 1 {
+			t.Fatalf("fetches = %d, want 1", len(source.got))
+		}
+	})
 }
 
 func TestFilterInjectsForEligibleRule(t *testing.T) {
@@ -85,10 +247,47 @@ func TestFilterInjectsForEligibleRule(t *testing.T) {
 	}
 }
 
+// A multi-header config is still one transformation: the credential is fetched
+// once and every configured header is rewritten from that single fetch.
+func TestFilterInjectsEveryHeaderFromOneFetch(t *testing.T) {
+	bearer, err := eval.CompileTemplate("valueTemplate", "Bearer {{ .Token }}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := eval.CompileTemplate("valueTemplate", "{{ .Token }}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := secretCfg(false)
+	cfg.SignerCfg = ApiKeyConfig{Headers: []ApiKeyHeaderConfig{
+		{Names: []string{"authorization"}, Value: HeaderValueSource{Template: bearer}},
+		{Names: []string{"x-api-key"}, Value: HeaderValueSource{Template: raw}},
+	}}
+	src := &fakeSource{cred: Credential{Token: "k"}}
+
+	act, err := newTestFilter(src, nil, cfg).OnRequestHeaders(context.Background(), streamWithPeerToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	muts := act.Mutations()
+	if len(muts) != 1 {
+		t.Fatalf("mutations = %d, want the whole group folded into one", len(muts))
+	}
+	want := []filter.HeaderOp{
+		{Kind: filter.HeaderSet, Name: "authorization", Value: "Bearer k"},
+		{Kind: filter.HeaderSet, Name: "x-api-key", Value: "k"},
+	}
+	if !reflect.DeepEqual(muts[0].HeaderOps, want) {
+		t.Fatalf("header ops = %+v, want %+v", muts[0].HeaderOps, want)
+	}
+	if len(src.got) != 1 {
+		t.Fatalf("fetches = %d, want 1 for the whole group", len(src.got))
+	}
+}
+
 func TestFilterWhenNotMetSkipsUnit(t *testing.T) {
 	src := &fakeSource{cred: Credential{Token: "k"}}
-	cfg := secretCfg(false)
-	cfg.When = &When{Header: "x-guard", Re: regexp.MustCompile(`^go$`)}
+	cfg := withHeaderCondition(secretCfg(false))
 	f := newTestFilter(src, nil, cfg)
 	st := streamWithPeerToken()
 	st.Request.Headers = map[string]string{"x-guard": "stop"}
@@ -100,8 +299,7 @@ func TestFilterWhenNotMetSkipsUnit(t *testing.T) {
 
 func TestFilterWhenMetClaimsUnit(t *testing.T) {
 	src := &fakeSource{cred: Credential{Token: "k"}}
-	cfg := secretCfg(false)
-	cfg.When = &When{Header: "x-guard", Re: regexp.MustCompile(`^go$`)}
+	cfg := withHeaderCondition(secretCfg(false))
 	f := newTestFilter(src, nil, cfg)
 	st := streamWithPeerToken()
 	st.Request.Headers = map[string]string{"x-guard": "go"}

@@ -51,6 +51,14 @@ func commonEnvOptions() []cel.EnvOption {
 	}
 }
 
+// NewRequestEnv returns the standard request-time CEL environment plus
+// consumer-specific declarations. Callers constrain their own result type.
+func NewRequestEnv(extra ...cel.EnvOption) (*cel.Env, error) {
+	options := append([]cel.EnvOption{}, commonEnvOptions()...)
+	options = append(options, extra...)
+	return cel.NewEnv(options...)
+}
+
 // WhenEnv returns the shared CEL environment for audit `when` expressions.
 // It adds audit-only result to the request-time variables shared with provider
 // parameter values.
@@ -66,7 +74,7 @@ func WhenEnv() (*cel.Env, error) {
 // references fail during compilation instead of at request evaluation.
 func providerValueEnv() (*cel.Env, error) {
 	valueEnvOnce.Do(func() {
-		valueEnv, valueEnvErr = cel.NewEnv(commonEnvOptions()...)
+		valueEnv, valueEnvErr = NewRequestEnv()
 	})
 	return valueEnv, valueEnvErr
 }

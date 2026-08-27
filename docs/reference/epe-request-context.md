@@ -4,6 +4,8 @@ This reference defines the context that Egress Policy Enforcer (EPE) exposes whi
 
 EPE receives request data through Envoy external processing. Header names are normalized to lowercase. EPE buffers a request body only when a matched action requires it; body bytes and the sandbox bearer token are deliberately not exposed to CEL, Go templates, profile inputs, or audit payloads.
 
+The token-header evaluation contract below describes the internal EPE filter payload. It is not a currently published `SecurityProfile` CRD field: until the corresponding agents-api prerequisite is released, public policy examples continue to use the legacy `apiKey` form.
+
 ## Request attributes
 
 EPE builds the request tuple during request headers. `:authority` takes precedence over `host`; its explicit port is used, otherwise `http` defaults to 80 and `https` to 443. Envoy's `destination.port`, when present and between 1 and 65535, overrides that inferred port.
@@ -73,6 +75,14 @@ EPE compiles audit conditions and provider parameter values in separate CEL envi
 
 The CEL environment includes the standard CEL binding, string, set, and list extensions. CEL receives ordinary maps, so direct indexing of a missing header, label, query parameter, or input key raises a `no such key` evaluation error; it does not produce an empty string. Guard membership before indexing, for example, `"content-type" in request.headers && request.headers["content-type"].startsWith("application/json")`. An audit CEL runtime error drops that audit event, while a provider-parameter CEL runtime error follows the matched token transformation's `failStrategy`.
 
+### Token-header evaluation
+
+`apiKey.targetHeaders` and `apiKey.value` use separate selector and value evaluations. A selector CEL expression sees the standard `request`, `pod`, `profile`, `rule`, and `inputs` variables described above; it never sees `token`. It must return a list of header names. All selectors observe the original request snapshot, before any selected header is mutated. Header names returned by a selector, like statically configured names, are canonicalized to lowercase before they are used. Token-header CEL does not expose the unbounded `lists.range` constructor, and each selector or value evaluation has a runtime cost limit of 10,000 CEL cost units; a size or cost violation follows the transformation's `failStrategy` like any other evaluation error.
+
+A value CEL expression sees that same standard context plus `token` and `header.name`/`header.value`. Here `token` is the resolved transformation credential, not the sandbox bearer token. It must return a string. `header.name` is the canonicalized target name, while `header.value` is the target's original request value. A selector that returns no names is a successful no-op and skips credential access entirely.
+
+Token-header value templates expose `.Token` (the resolved transformation credential), `.Header.Name`, `.Header.Value`, `.Request`, `.Pod`, `.Profile`, `.Rule`, and lazy `.Inputs`. `.Header.Value` remains the original request value even when another selected header has already been staged for replacement. EPE renders and validates every selected value before returning any header mutations, so a failure cannot leave a partial set of selected headers applied; the transformation's `failStrategy` handles the failure as a whole.
+
 ## Template values and functions
 
 Go templates use `missingkey=zero` and expose only this helper allowlist: `default fallback value`, `json value`, `fromJson value`, `kindIs kind value`, `trim value`, `hasPrefix prefix value`, `fail message`, `values map`, and `first list`. Unlike CEL map indexing, the `.Request.Header` and `.Request.QueryParam` accessors return `""` when the requested key is absent. Request credentials are intentionally unavailable.
@@ -85,7 +95,8 @@ Use `fail` to abort a render deliberately. What that costs depends on the action
 
 | Template root | Values |
 | --- | --- |
-| Token transformation `apiKey.valueTemplate` | `.Token`, `.Pod`, `.Inputs` only. `.Pod` has `Name`, `Namespace`, `IP`, `Labels`, and `Label key`; `.Inputs` is the profile input map. |
+| Token transformation `apiKey.value.template` | `.Token`, `.Header.Name`, `.Header.Value`, `.Request`, `.Pod`, `.Profile`, `.Rule`, and lazy `.Inputs`. `.Pod` has `Name`, `Namespace`, `IP`, `Labels`, and `Label key`; `.Inputs` is the profile input map. |
+| Legacy token transformation `apiKey.valueTemplate` | The same context as `apiKey.value.template`; EPE normalizes the legacy single-header form to the same internal rule. |
 | Credential-provider parameter `template` | `.Request`, `.Pod`, `.Profile`, `.Rule`, `.Inputs`. `.Request` has `Host`, `Port`, `Path`, `Scheme`, `Method`, `Query`, `Header name`, and `QueryParam name`. |
 | Audit webhook URL, headers, and body | The shared roots above plus `.Result`, `.Response.Status`, and `.MatchedCriteria`/`.Matched`. Matched fields are populated only when the corresponding rule match constrained them. |
 
