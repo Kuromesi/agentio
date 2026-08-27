@@ -81,12 +81,22 @@ jobs:
             --untar \
             --untardir "$RUNNER_TEMP/released-agentio"
 
-      - name: Generate sandbox-manager Agentio templates
+      - name: Sync released OpenKruise integration bundle
         working-directory: agentio
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           go test ./tools/agentio-chart-exporter
+
+          released_chart="$RUNNER_TEMP/released-agentio/agentio"
+          bundle="$released_chart/integrations/openkruise"
+          if [[ ! -d "$bundle" ]]; then
+            echo "Agentio ${VERSION} predates embedded OpenKruise integration bundles and cannot be synchronized by this workflow." >&2
+            exit 1
+          fi
+
           go run ./tools/agentio-chart-exporter \
-            --source "$RUNNER_TEMP/released-agentio/agentio" \
+            --bundle "$bundle" \
             --target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_MANAGER_CHART" \
             --sandbox-controller-target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_CONTROLLER_CHART"
 

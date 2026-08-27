@@ -270,6 +270,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.9'
+          cache: false
+
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
@@ -310,6 +315,13 @@ jobs:
           sed -i "/name: install-cni/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: ztunnel/{n;s/tag: .*/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
           sed -i "/name: agentio-epe/{n;s/tag: latest/tag: \"${VERSION}\"/;}" "$CHART_DIR/values.yaml"
+
+          # Rebuild the reviewed OpenKruise integration bundle after applying
+          # release image tags. Downstream synchronization copies this bundle
+          # without rewriting Helm templates or capability boundaries.
+          go run ./tools/agentio-chart-exporter \
+            --source "$CHART_DIR" \
+            --bundle-output "$CHART_DIR/integrations/openkruise"
 
           echo "CHART_DIR=${CHART_DIR}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"

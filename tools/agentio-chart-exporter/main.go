@@ -63,30 +63,141 @@ var (
 )
 
 func main() {
-	source := flag.String("source", "", "prepared Agentio chart directory")
+	source := flag.String("source", "", "prepared standalone Agentio chart directory")
+	bundle := flag.String("bundle", "", "prepared OpenKruise integration bundle directory")
+	bundleOutput := flag.String("bundle-output", "", "directory in which to build an OpenKruise integration bundle")
 	target := flag.String("target", "", "sandbox-manager chart directory")
 	sandboxControllerTarget := flag.String("sandbox-controller-target", "", "sandbox-controller chart directory")
 	flag.Parse()
 
-	if *source == "" || *target == "" {
-		fmt.Fprintln(os.Stderr, "--source and --target are required")
+	if *source != "" || *bundleOutput != "" {
+		if *source == "" || *bundleOutput == "" || *bundle != "" || *target != "" || *sandboxControllerTarget != "" {
+			fmt.Fprintln(os.Stderr, "bundle build requires exactly --source and --bundle-output")
+			os.Exit(2)
+		}
+		if err := BuildIntegrationBundle(*source, *bundleOutput); err != nil {
+			fmt.Fprintf(os.Stderr, "build OpenKruise integration bundle: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *bundle == "" || *target == "" {
+		fmt.Fprintln(os.Stderr, "bundle sync requires --bundle and --target")
 		os.Exit(2)
 	}
-	if err := Export(*source, *target); err != nil {
-		fmt.Fprintf(os.Stderr, "export Agentio chart: %v\n", err)
+	if err := Export(filepath.Join(*bundle, "sandbox-manager"), *target); err != nil {
+		fmt.Fprintf(os.Stderr, "sync Agentio sandbox-manager integration: %v\n", err)
 		os.Exit(1)
 	}
 	if *sandboxControllerTarget != "" {
-		if err := ExportSandboxController(*source, *sandboxControllerTarget); err != nil {
-			fmt.Fprintf(os.Stderr, "export Agentio traffic-proxy injection config: %v\n", err)
+		if err := ExportSandboxController(filepath.Join(*bundle, "sandbox-controller"), *sandboxControllerTarget); err != nil {
+			fmt.Fprintf(os.Stderr, "sync Agentio traffic-proxy injection config: %v\n", err)
 			os.Exit(1)
 		}
 	}
 }
 
-// Export converts a standalone Agentio chart into generated, optional
-// sandbox-manager templates and values.
+// BuildIntegrationBundle derives the reviewed OpenKruise integration sources
+// from the standalone Agentio chart. Release workflows rebuild the bundle only
+// after preparing the standalone chart's release image tags.
+func BuildIntegrationBundle(source, target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create integration bundle parent: %w", err)
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(target), ".agentio-openkruise-bundle-")
+	if err != nil {
+		return fmt.Errorf("create integration bundle staging directory: %w", err)
+	}
+	defer os.RemoveAll(staging)
+
+	manager := filepath.Join(staging, "sandbox-manager")
+	controller := filepath.Join(staging, "sandbox-controller")
+	for _, path := range []string{
+		filepath.Join(manager, "values.yaml"),
+		filepath.Join(controller, "values.yaml"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create integration bundle directory: %w", err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			return fmt.Errorf("initialize integration bundle values: %w", err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(controller, "templates"), 0o755); err != nil {
+		return fmt.Errorf("create sandbox-controller bundle templates: %w", err)
+	}
+	if err := buildSandboxManagerBundle(source, manager); err != nil {
+		return err
+	}
+	if err := buildSandboxControllerBundle(source, controller); err != nil {
+		return err
+	}
+	if err := replaceDirectory(staging, target); err != nil {
+		return fmt.Errorf("replace OpenKruise integration bundle: %w", err)
+	}
+	return nil
+}
+
+// Export copies an already prepared sandbox-manager integration into the
+// downstream chart. It deliberately performs no Helm-template rewriting or
+// capability filtering; those decisions belong to the reviewed bundle.
 func Export(source, target string) error {
+	sourceValues, err := os.ReadFile(filepath.Join(source, "values.yaml"))
+	if err != nil {
+		return fmt.Errorf("read prepared sandbox-manager values: %w", err)
+	}
+	if err := validatePreparedBlock(sourceValues, valuesBegin, valuesEnd, "sandbox-manager values"); err != nil {
+		return err
+	}
+	targetValuesPath := filepath.Join(target, "values.yaml")
+	targetValues, err := os.ReadFile(targetValuesPath)
+	if err != nil {
+		return fmt.Errorf("read target values: %w", err)
+	}
+	nextValues, err := replaceMarkedBlock(targetValues, sourceValues, valuesBegin, valuesEnd, "target values")
+	if err != nil {
+		return err
+	}
+
+	staging, err := os.MkdirTemp(target, ".agentio-chart-export-")
+	if err != nil {
+		return fmt.Errorf("create staging directory: %w", err)
+	}
+	defer os.RemoveAll(staging)
+
+	for _, directory := range []string{"templates", "files"} {
+		sourceDirectory := filepath.Join(source, directory, "agentio")
+		info, statErr := os.Stat(sourceDirectory)
+		if statErr != nil {
+			if os.IsNotExist(statErr) && directory == "files" {
+				continue
+			}
+			return fmt.Errorf("validate prepared %s: %w", directory, statErr)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("validate prepared %s: not a directory", directory)
+		}
+		if err := copyTree(sourceDirectory, filepath.Join(staging, directory), nil); err != nil {
+			return fmt.Errorf("copy prepared %s: %w", directory, err)
+		}
+	}
+
+	if err := replaceDirectory(filepath.Join(staging, "templates"), filepath.Join(target, "templates", "agentio")); err != nil {
+		return fmt.Errorf("replace generated templates: %w", err)
+	}
+	if err := replaceDirectory(filepath.Join(staging, "files"), filepath.Join(target, "files", "agentio")); err != nil {
+		return fmt.Errorf("replace generated files: %w", err)
+	}
+	if err := writeFileAtomically(targetValuesPath, nextValues, 0o644); err != nil {
+		return fmt.Errorf("write target values: %w", err)
+	}
+	return nil
+}
+
+// buildSandboxManagerBundle converts a standalone Agentio chart into generated,
+// optional sandbox-manager templates and values.
+func buildSandboxManagerBundle(source, target string) error {
 	sourceValuesPath := filepath.Join(source, "values.yaml")
 	sourceValues, err := os.ReadFile(sourceValuesPath)
 	if err != nil {
@@ -170,9 +281,67 @@ type sandboxControllerSourceValues struct {
 	} `yaml:"proxyInit"`
 }
 
-// ExportSandboxController installs or updates the traffic-proxy entry consumed
-// by Kruise Agents without replacing other sandbox runtime injection entries.
+// ExportSandboxController installs an already prepared traffic-proxy entry
+// without replacing other sandbox runtime injection entries.
 func ExportSandboxController(source, target string) error {
+	sourceValues, err := os.ReadFile(filepath.Join(source, "values.yaml"))
+	if err != nil {
+		return fmt.Errorf("read prepared sandbox-controller values: %w", err)
+	}
+	if err := validatePreparedBlock(sourceValues, controllerValuesBegin, controllerValuesEnd, "sandbox-controller values"); err != nil {
+		return err
+	}
+	targetValuesPath := filepath.Join(target, "values.yaml")
+	targetValues, err := os.ReadFile(targetValuesPath)
+	if err != nil {
+		return fmt.Errorf("read sandbox-controller values: %w", err)
+	}
+	nextValues, err := replaceMarkedBlock(targetValues, sourceValues, controllerValuesBegin, controllerValuesEnd, "sandbox-controller values")
+	if err != nil {
+		return err
+	}
+
+	bundleTemplatePath, bundleTemplate, err := findSandboxInjectionConfigTemplate(filepath.Join(source, "templates"))
+	if err != nil {
+		return err
+	}
+	if bundleTemplate == nil {
+		return errors.New("prepared sandbox-controller bundle does not contain sandbox-injection-config")
+	}
+	block, err := extractMarkedBlock(bundleTemplate, trafficProxyBegin, trafficProxyEnd, "prepared traffic-proxy template")
+	if err != nil {
+		return err
+	}
+	targetTemplatePath, existing, err := findSandboxInjectionConfigTemplate(filepath.Join(target, "templates"))
+	if err != nil {
+		return err
+	}
+	var nextTemplate []byte
+	if existing == nil {
+		targetTemplatePath = filepath.Join(target, "templates", filepath.Base(bundleTemplatePath))
+		nextTemplate = bundleTemplate
+	} else {
+		nextTemplate, err = mergeTrafficProxyBlock(existing, block)
+		if err != nil {
+			return fmt.Errorf("update sandbox injection ConfigMap %q: %w", targetTemplatePath, err)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetTemplatePath), 0o755); err != nil {
+		return fmt.Errorf("create sandbox-controller template directory: %w", err)
+	}
+	if err := writeFileAtomically(targetTemplatePath, nextTemplate, 0o644); err != nil {
+		return fmt.Errorf("write sandbox injection ConfigMap: %w", err)
+	}
+	if err := writeFileAtomically(targetValuesPath, nextValues, 0o644); err != nil {
+		return fmt.Errorf("write sandbox-controller values: %w", err)
+	}
+	return nil
+}
+
+// buildSandboxControllerBundle prepares the traffic-proxy integration source
+// from the standalone Agentio chart.
+func buildSandboxControllerBundle(source, target string) error {
 	sourceValues, err := os.ReadFile(filepath.Join(source, "values.yaml"))
 	if err != nil {
 		return fmt.Errorf("read source values for sandbox-controller: %w", err)
@@ -669,6 +838,74 @@ func prepareSandboxManagerTemplate(rel string, content []byte) ([]byte, error) {
 		}
 	}
 	return content, nil
+}
+
+func validatePreparedBlock(content []byte, beginMarker, endMarker, description string) error {
+	block, err := extractMarkedBlock(content, beginMarker, endMarker, description)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(bytes.TrimSpace(content), bytes.TrimSpace(block)) {
+		return fmt.Errorf("%s must contain only its generated marker block", description)
+	}
+	return nil
+}
+
+func extractMarkedBlock(content []byte, beginMarker, endMarker, description string) ([]byte, error) {
+	beginCount := bytes.Count(content, []byte(beginMarker))
+	endCount := bytes.Count(content, []byte(endMarker))
+	if beginCount != 1 || endCount != 1 {
+		return nil, fmt.Errorf("%s must contain exactly one matching marker pair", description)
+	}
+	begin := bytes.Index(content, []byte(beginMarker))
+	end := bytes.Index(content, []byte(endMarker))
+	if begin > end {
+		return nil, fmt.Errorf("%s markers are out of order", description)
+	}
+	end += len(endMarker)
+	if end < len(content) && content[end] == '\r' {
+		end++
+	}
+	if end < len(content) && content[end] == '\n' {
+		end++
+	}
+	return append([]byte(nil), content[begin:end]...), nil
+}
+
+func replaceMarkedBlock(target, block []byte, beginMarker, endMarker, description string) ([]byte, error) {
+	beginCount := bytes.Count(target, []byte(beginMarker))
+	endCount := bytes.Count(target, []byte(endMarker))
+	if beginCount == 0 && endCount == 0 {
+		out := append([]byte(nil), target...)
+		if len(out) > 0 && out[len(out)-1] != '\n' {
+			out = append(out, '\n')
+		}
+		if len(out) > 0 && !bytes.HasSuffix(out, []byte("\n\n")) {
+			out = append(out, '\n')
+		}
+		return append(out, block...), nil
+	}
+	if beginCount != 1 || endCount != 1 {
+		return nil, fmt.Errorf("%s must contain exactly one matching marker pair", description)
+	}
+	begin := bytes.Index(target, []byte(beginMarker))
+	end := bytes.Index(target, []byte(endMarker))
+	if begin > end {
+		return nil, fmt.Errorf("%s markers are out of order", description)
+	}
+	end += len(endMarker)
+	if end < len(target) && target[end] == '\r' {
+		end++
+	}
+	if end < len(target) && target[end] == '\n' {
+		end++
+	}
+
+	out := make([]byte, 0, begin+len(block)+len(target)-end)
+	out = append(out, target[:begin]...)
+	out = append(out, block...)
+	out = append(out, target[end:]...)
+	return out, nil
 }
 
 func replaceValuesBlock(target, source []byte) ([]byte, error) {
