@@ -20,6 +20,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v3/pkg/engine"
 )
 
 func TestExportGeneratesFlatAgentioChart(t *testing.T) {
@@ -239,6 +243,53 @@ func TestRepositoryAgentioChartCanBeExported(t *testing.T) {
 	}
 	if !strings.Contains(readTestFile(t, target, "templates/agentio/agentiod.yaml"), ".Values.agentio.agentiod") {
 		t.Fatal("generated repository chart does not scope agentiod values below agentio")
+	}
+}
+
+func TestRepositoryAgentioCRDsAreAlwaysRenderedAndRetained(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller() did not return the test file path")
+	}
+	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(testFile), "..", ".."))
+	source := filepath.Join(repositoryRoot, "manifests", "charts", "agentio")
+	target := t.TempDir()
+	writeTestFile(t, target, "Chart.yaml", "apiVersion: v2\nname: sandbox-manager\nversion: 0.1.0\n")
+	writeTestFile(t, target, "values.yaml", "manager: unchanged\n")
+
+	if err := Export(source, target); err != nil {
+		t.Fatalf("Export(repository Agentio chart) error = %v", err)
+	}
+
+	chart, err := loader.Load(target)
+	if err != nil {
+		t.Fatalf("load exported chart: %v", err)
+	}
+	values, err := chartutil.ToRenderValues(chart, map[string]any{}, chartutil.ReleaseOptions{
+		Name:      "sandbox-manager",
+		Namespace: "default",
+		IsInstall: true,
+	}, chartutil.DefaultCapabilities)
+	if err != nil {
+		t.Fatalf("build exported chart render values: %v", err)
+	}
+	rendered, err := engine.Render(chart, values)
+	if err != nil {
+		t.Fatalf("render exported chart with agentio.enabled=false: %v", err)
+	}
+
+	var crds string
+	for name, content := range rendered {
+		if strings.HasSuffix(name, "/templates/agentio/crds.yaml") {
+			crds = content
+			break
+		}
+	}
+	if got := strings.Count(crds, "kind: CustomResourceDefinition"); got != 4 {
+		t.Fatalf("rendered CRD count with agentio.enabled=false = %d, want 4\nrendered:\n%s\ntemplate:\n%s", got, crds, readTestFile(t, target, "templates/agentio/crds.yaml"))
+	}
+	if got := strings.Count(crds, "helm.sh/resource-policy: keep"); got != 4 {
+		t.Fatalf("rendered retained CRD annotation count = %d, want 4\n%s", got, crds)
 	}
 }
 

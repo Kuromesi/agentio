@@ -195,6 +195,10 @@ func exportTemplates(source, target string) error {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("source template %q is a symlink", path)
 		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return fmt.Errorf("resolve source template path %q: %w", path, err)
+		}
 
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".yaml" && ext != ".yml" && ext != ".tpl" {
@@ -232,19 +236,20 @@ func exportTemplates(source, target string) error {
 			if len(helpers) > 0 && helpers[len(helpers)-1] != '\n' {
 				guarded.WriteByte('\n')
 			}
-			guarded.WriteString("{{- if .Values.agentio.enabled }}\n")
+			guardResource := filepath.ToSlash(rel) != "crds.yaml"
+			if guardResource {
+				guarded.WriteString("{{- if .Values.agentio.enabled }}\n")
+			}
 			guarded.Write(resource)
 			if len(resource) > 0 && resource[len(resource)-1] != '\n' {
 				guarded.WriteByte('\n')
 			}
-			guarded.WriteString("{{- end }}\n")
+			if guardResource {
+				guarded.WriteString("{{- end }}\n")
+			}
 			content = guarded.Bytes()
 		}
 
-		rel, err := filepath.Rel(source, path)
-		if err != nil {
-			return fmt.Errorf("resolve source template path %q: %w", path, err)
-		}
 		destination := filepath.Join(target, rel)
 		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 			return fmt.Errorf("create generated template directory: %w", err)

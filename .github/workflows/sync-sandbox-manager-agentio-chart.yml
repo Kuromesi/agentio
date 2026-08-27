@@ -101,8 +101,16 @@ jobs:
           helm template sandbox-manager "$target" \
             --set e2b.adminApiKey=test \
             --set ingress.className=test >"$disabled"
-          if grep -q '# Source: .*templates/agentio/' "$disabled"; then
-            echo "Agentio resources rendered while agentio.enabled=false" >&2
+          if grep '# Source: .*templates/agentio/' "$disabled" | grep -q -v '/crds.yaml$'; then
+            echo "Non-CRD Agentio resources rendered while agentio.enabled=false" >&2
+            exit 1
+          fi
+          if [[ "$(grep -c '^kind: CustomResourceDefinition$' "$disabled" || true)" -ne 4 ]]; then
+            echo "Expected four Agentio CRDs while agentio.enabled=false" >&2
+            exit 1
+          fi
+          if [[ "$(grep -c 'helm.sh/resource-policy: keep' "$disabled" || true)" -ne 4 ]]; then
+            echo "Expected all Agentio CRDs to carry the Helm keep policy" >&2
             exit 1
           fi
 
@@ -110,8 +118,8 @@ jobs:
             --set e2b.adminApiKey=test \
             --set ingress.className=test \
             --set agentio.enabled=true >"$enabled"
-          if ! grep -q '# Source: .*templates/agentio/' "$enabled"; then
-            echo "Agentio resources did not render while agentio.enabled=true" >&2
+          if ! grep '# Source: .*templates/agentio/' "$enabled" | grep -q -v '/crds.yaml$'; then
+            echo "Non-CRD Agentio resources did not render while agentio.enabled=true" >&2
             exit 1
           fi
 
