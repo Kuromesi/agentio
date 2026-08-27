@@ -249,6 +249,86 @@ func TestRepositoryAgentioChartCanBeExported(t *testing.T) {
 	}
 }
 
+func TestExportOmitsAmbientAndSidecarInjectionFromSandboxManager(t *testing.T) {
+	source := repositoryAgentioChart(t)
+	target := t.TempDir()
+	writeTestFile(t, target, "values.yaml", "manager: unchanged\n")
+
+	if err := Export(source, target); err != nil {
+		t.Fatalf("Export(repository Agentio chart) error = %v", err)
+	}
+
+	for _, name := range []string{
+		"cni-configmap.yaml",
+		"cni-daemonset.yaml",
+		"cni-rbac.yaml",
+		"cni-serviceaccount.yaml",
+		"injection-templates.yaml",
+		"webhook.yaml",
+		"ztunnel-daemonset.yaml",
+		"ztunnel-serviceaccount.yaml",
+	} {
+		if _, err := os.Stat(filepath.Join(target, "templates", "agentio", name)); !os.IsNotExist(err) {
+			t.Errorf("sandbox-manager export retained unsupported template %s: %v", name, err)
+		}
+	}
+	for _, name := range []string{
+		"kruise-agents-traffic-proxy-injection.tpl",
+		"waypoint-injection-template.yaml",
+		"ztunnel-injection-template.yaml",
+	} {
+		if _, err := os.Stat(filepath.Join(target, "files", "agentio", name)); !os.IsNotExist(err) {
+			t.Errorf("sandbox-manager export retained unsupported chart file %s: %v", name, err)
+		}
+	}
+
+	values := map[string]any{}
+	if err := yaml.Unmarshal([]byte(readTestFile(t, target, "values.yaml")), &values); err != nil {
+		t.Fatalf("decode generated sandbox-manager values: %v", err)
+	}
+	agentio, ok := values["agentio"].(map[string]any)
+	if !ok {
+		t.Fatalf("generated values do not contain an agentio map: %#v", values["agentio"])
+	}
+	for _, key := range []string{"ambient", "sidecarInjector", "ztunnel", "proxy", "proxyInit"} {
+		if _, found := agentio[key]; found {
+			t.Errorf("sandbox-manager values still expose unsupported agentio.%s", key)
+		}
+	}
+	global, ok := agentio["global"].(map[string]any)
+	if !ok {
+		t.Fatalf("generated values do not contain agentio.global: %#v", agentio["global"])
+	}
+	for _, key := range []string{"enableFirewallRules", "enableClusterTrustBundle"} {
+		if _, found := global[key]; found {
+			t.Errorf("sandbox-manager values still expose unsupported agentio.global.%s", key)
+		}
+	}
+
+	agentiod := readTestFile(t, target, "templates/agentio/agentiod.yaml")
+	if strings.Contains(agentiod, ".Values.agentio.ambient") || strings.Contains(agentiod, ".Values.agentio.sidecarInjector") {
+		t.Fatalf("generated agentiod template still depends on removed values:\n%s", agentiod)
+	}
+	for _, unwanted := range []string{"INJECTOR_CONFIG_MAP_NAME", "INJECTION_WEBHOOK_CONFIG_NAME", "https-webhook", "15017"} {
+		if strings.Contains(agentiod, unwanted) {
+			t.Errorf("generated agentiod template retained sidecar injector setting %q", unwanted)
+		}
+	}
+	if !strings.Contains(agentiod, "name: INJECT_ENABLED\n          value: \"false\"") {
+		t.Fatalf("generated agentiod template does not disable its injector:\n%s", agentiod)
+	}
+	clusterRole := readTestFile(t, target, "templates/agentio/clusterrole.yaml")
+	if strings.Contains(clusterRole, "mutatingwebhookconfigurations") {
+		t.Fatal("generated Agentio ClusterRole retains sidecar injector webhook permissions")
+	}
+	generatedValues := readTestFile(t, target, "values.yaml")
+	for _, stale := range []string{"sidecar injector", "ztunnel DaemonSet", "MutatingWebhookConfiguration"} {
+		if strings.Contains(generatedValues, stale) {
+			t.Errorf("generated sandbox-manager values retain stale capability comment %q", stale)
+		}
+	}
+}
+
 func TestRepositoryAgentioCRDsAreAlwaysRenderedAndRetained(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {

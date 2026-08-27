@@ -125,19 +125,43 @@ jobs:
             exit 1
           fi
 
+          for unsupported in \
+            cni-configmap.yaml \
+            cni-daemonset.yaml \
+            cni-rbac.yaml \
+            cni-serviceaccount.yaml \
+            injection-templates.yaml \
+            webhook.yaml \
+            ztunnel-daemonset.yaml \
+            ztunnel-serviceaccount.yaml; do
+            if [[ -e "$target/templates/agentio/$unsupported" ]]; then
+              echo "Generated sandbox-manager chart contains unsupported template: $unsupported" >&2
+              exit 1
+            fi
+          done
+          for unsupported in \
+            kruise-agents-traffic-proxy-injection.tpl \
+            waypoint-injection-template.yaml \
+            ztunnel-injection-template.yaml; do
+            if [[ -e "$target/files/agentio/$unsupported" ]]; then
+              echo "Generated sandbox-manager chart contains unsupported file: $unsupported" >&2
+              exit 1
+            fi
+          done
+          if grep -E '^  (ambient|sidecarInjector|ztunnel|proxy|proxyInit):' "$target/values.yaml"; then
+            echo "Generated sandbox-manager values expose ambient or sidecar injection settings" >&2
+            exit 1
+          fi
+          if ! grep -A1 'name: INJECT_ENABLED' "$enabled" | grep -q 'value: "false"'; then
+            echo "Generated Agentio control plane does not disable its sidecar injector" >&2
+            exit 1
+          fi
+
           if grep -R -E '(^|[[:space:]])(chartVersion|appVersion|sourceCommit):' \
             "$target/templates/agentio" "$target/values.yaml"; then
             echo "Generated sandbox-manager chart contains forbidden Agentio version metadata" >&2
             exit 1
           fi
-
-          helm template sandbox-manager "$target" \
-            --set e2b.adminApiKey=test \
-            --set ingress.className=test \
-            --set agentio.enabled=true \
-            --set agentio.ambient.enabled=true \
-            --set agentio.sidecarInjector.enabled=true \
-            --set agentio.global.enableClusterTrustBundle=true >/dev/null
 
           controller_target="$SANDBOX_CONTROLLER_CHART"
           controller_rendered="$RUNNER_TEMP/sandbox-controller-agentio.yaml"

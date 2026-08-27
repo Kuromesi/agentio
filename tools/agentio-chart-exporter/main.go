@@ -25,6 +25,7 @@ import (
 	"strings"
 	"unicode"
 
+	yamlv3 "gopkg.in/yaml.v3"
 	"sigs.k8s.io/yaml"
 )
 
@@ -43,6 +44,22 @@ const (
 var (
 	definePattern = regexp.MustCompile(`\{\{-?\s*define\s+`)
 	filesPattern  = regexp.MustCompile(`((?:\$)?\.Files\.(?:Get|Glob)\s+)"files/`)
+
+	sandboxManagerExcludedTemplates = map[string]struct{}{
+		"cni-configmap.yaml":          {},
+		"cni-daemonset.yaml":          {},
+		"cni-rbac.yaml":               {},
+		"cni-serviceaccount.yaml":     {},
+		"injection-templates.yaml":    {},
+		"webhook.yaml":                {},
+		"ztunnel-daemonset.yaml":      {},
+		"ztunnel-serviceaccount.yaml": {},
+	}
+	sandboxManagerExcludedFiles = map[string]struct{}{
+		trafficProxyTemplateFile:           {},
+		"waypoint-injection-template.yaml": {},
+		"ztunnel-injection-template.yaml":  {},
+	}
 )
 
 func main() {
@@ -78,13 +95,17 @@ func Export(source, target string) error {
 	if err := validateSourceValues(sourceValues); err != nil {
 		return err
 	}
+	sandboxManagerValues, err := prepareSandboxManagerValues(sourceValues)
+	if err != nil {
+		return err
+	}
 
 	targetValuesPath := filepath.Join(target, "values.yaml")
 	targetValues, err := os.ReadFile(targetValuesPath)
 	if err != nil {
 		return fmt.Errorf("read target values: %w", err)
 	}
-	nextValues, err := replaceValuesBlock(targetValues, sourceValues)
+	nextValues, err := replaceValuesBlock(targetValues, sandboxManagerValues)
 	if err != nil {
 		return err
 	}
@@ -110,7 +131,7 @@ func Export(source, target string) error {
 	}
 	stagedFiles := filepath.Join(staging, "files")
 	if info, statErr := os.Stat(filesSource); statErr == nil && info.IsDir() {
-		if err := copyTree(filesSource, stagedFiles); err != nil {
+		if err := copyTree(filesSource, stagedFiles, sandboxManagerExcludedFiles); err != nil {
 			return fmt.Errorf("copy chart files: %w", err)
 		}
 	} else if statErr != nil && !os.IsNotExist(statErr) {
@@ -489,6 +510,159 @@ func validateSourceValues(content []byte) error {
 	return nil
 }
 
+func prepareSandboxManagerValues(content []byte) ([]byte, error) {
+	document := yamlv3.Node{}
+	if err := yamlv3.Unmarshal(content, &document); err != nil {
+		return nil, fmt.Errorf("parse source values for sandbox-manager: %w", err)
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yamlv3.MappingNode {
+		return nil, errors.New("source values for sandbox-manager must be a YAML mapping")
+	}
+	root := document.Content[0]
+	removeYAMLMappingKeys(root, "ambient", "sidecarInjector", "ztunnel", "proxy", "proxyInit")
+	if global := yamlMappingValue(root, "global"); global != nil {
+		removeYAMLMappingKeys(global, "enableFirewallRules", "enableClusterTrustBundle")
+		setYAMLKeyHeadComment(global, "caCertConfigMap", "-- CA certificate ConfigMap name distributed to traffic-proxy workload namespaces.")
+		setYAMLKeyHeadComment(global, "resourcePrefix", "-- Identifier shared by Agentio configuration and leader-election resources.")
+	}
+
+	var out bytes.Buffer
+	encoder := yamlv3.NewEncoder(&out)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&document); err != nil {
+		return nil, fmt.Errorf("encode sandbox-manager Agentio values: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("finish sandbox-manager Agentio values: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
+func yamlMappingValue(mapping *yamlv3.Node, key string) *yamlv3.Node {
+	if mapping == nil || mapping.Kind != yamlv3.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func removeYAMLMappingKeys(mapping *yamlv3.Node, keys ...string) {
+	if mapping == nil || mapping.Kind != yamlv3.MappingNode {
+		return
+	}
+	excluded := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		excluded[key] = struct{}{}
+	}
+	content := mapping.Content[:0]
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if _, found := excluded[mapping.Content[i].Value]; found {
+			continue
+		}
+		content = append(content, mapping.Content[i], mapping.Content[i+1])
+	}
+	mapping.Content = content
+}
+
+func setYAMLKeyHeadComment(mapping *yamlv3.Node, key, comment string) {
+	if mapping == nil || mapping.Kind != yamlv3.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i].HeadComment = comment
+			return
+		}
+	}
+}
+
+func prepareSandboxManagerTemplate(rel string, content []byte) ([]byte, error) {
+	var replacements [][2]string
+	switch rel {
+	case "agentiod.yaml":
+		replacements = [][2]string{
+			{`        {{- if .Values.ambient.enabled }}
+        - name: CA_TRUSTED_NODE_ACCOUNTS
+          value: {{ include "agentio.namespace" . }}/{{ include "agentio.ztunnel.name" . }}
+        {{- end }}
+`, ""},
+			{`        - name: INJECTOR_CONFIG_MAP_NAME
+          value: {{ printf "%s-sidecar-injector" .Values.global.resourcePrefix | quote }}
+`, ""},
+			{`        {{- if .Values.global.enableClusterTrustBundle }}
+        - name: ENABLE_CLUSTER_TRUST_BUNDLE_API
+          value: "true"
+        {{- end }}
+`, ""},
+			{`        - name: INJECT_ENABLED
+          value: "{{ .Values.sidecarInjector.enabled }}"
+`, `        - name: INJECT_ENABLED
+          value: "false"
+`},
+			{`        {{- if .Values.sidecarInjector.enabled }}
+        - name: INJECTION_WEBHOOK_CONFIG_NAME
+          value: {{ .Values.global.resourcePrefix }}-sidecar-injector-{{ include "agentio.namespace" . }}
+        {{- end }}
+`, ""},
+			{`        - containerPort: 15017
+          name: https-webhooks
+          protocol: TCP
+`, ""},
+			{`  - name: https-webhook
+    port: 443
+    protocol: TCP
+    targetPort: 15017
+`, ""},
+		}
+	case "clusterrole.yaml":
+		replacements = [][2]string{
+			{`- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - mutatingwebhookconfigurations
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+`, ""},
+		}
+	default:
+		return content, nil
+	}
+	for _, replacement := range replacements {
+		count := bytes.Count(content, []byte(replacement[0]))
+		if count > 1 {
+			return nil, fmt.Errorf("sandbox-manager capability block is duplicated in %q", rel)
+		}
+		if count == 1 {
+			content = bytes.Replace(content, []byte(replacement[0]), []byte(replacement[1]), 1)
+		}
+	}
+	for _, forbidden := range []string{
+		".Values.ambient.enabled",
+		".Values.sidecarInjector.enabled",
+		".Values.global.enableClusterTrustBundle",
+		"INJECTOR_CONFIG_MAP_NAME",
+		"INJECTION_WEBHOOK_CONFIG_NAME",
+		"CA_TRUSTED_NODE_ACCOUNTS",
+		"ENABLE_CLUSTER_TRUST_BUNDLE_API",
+		"https-webhook",
+		"15017",
+		"mutatingwebhookconfigurations",
+	} {
+		if bytes.Contains(content, []byte(forbidden)) {
+			return nil, fmt.Errorf("sandbox-manager template %q retains unsupported capability %q", rel, forbidden)
+		}
+	}
+	return content, nil
+}
+
 func replaceValuesBlock(target, source []byte) ([]byte, error) {
 	block := generatedValuesBlock(source)
 	beginCount := bytes.Count(target, []byte(valuesBegin))
@@ -561,6 +735,10 @@ func exportTemplates(source, target string) error {
 		if err != nil {
 			return fmt.Errorf("resolve source template path %q: %w", path, err)
 		}
+		rel = filepath.ToSlash(rel)
+		if _, excluded := sandboxManagerExcludedTemplates[rel]; excluded {
+			return nil
+		}
 
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".yaml" && ext != ".yml" && ext != ".tpl" {
@@ -569,6 +747,10 @@ func exportTemplates(source, target string) error {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read source template %q: %w", path, err)
+		}
+		content, err = prepareSandboxManagerTemplate(rel, content)
+		if err != nil {
+			return err
 		}
 		if ext == ".tpl" {
 			content, err = rewriteTemplate(content)
@@ -857,7 +1039,7 @@ func valueTokenBoundary(content []byte, start, length int) bool {
 	return true
 }
 
-func copyTree(source, target string) error {
+func copyTree(source, target string, excluded map[string]struct{}) error {
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -868,6 +1050,9 @@ func copyTree(source, target string) error {
 		rel, err := filepath.Rel(source, path)
 		if err != nil {
 			return err
+		}
+		if _, found := excluded[filepath.ToSlash(rel)]; found {
+			return nil
 		}
 		destination := filepath.Join(target, rel)
 		if entry.IsDir() {
