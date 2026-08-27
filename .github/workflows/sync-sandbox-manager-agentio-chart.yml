@@ -20,6 +20,7 @@ permissions:
 env:
   CHART_REPOSITORY: openkruise/charts
   SANDBOX_MANAGER_CHART: versions/kruise-agents-sandbox-manager/next
+  SANDBOX_CONTROLLER_CHART: versions/kruise-agents-sandbox-controller/next
 
 concurrency:
   group: sync-sandbox-manager-agentio-chart-${{ inputs.version }}
@@ -86,9 +87,10 @@ jobs:
           go test ./tools/agentio-chart-exporter
           go run ./tools/agentio-chart-exporter \
             --source "$RUNNER_TEMP/released-agentio/agentio" \
-            --target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_MANAGER_CHART"
+            --target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_MANAGER_CHART" \
+            --sandbox-controller-target "$GITHUB_WORKSPACE/openkruise-charts/$SANDBOX_CONTROLLER_CHART"
 
-      - name: Verify generated sandbox-manager chart
+      - name: Verify generated OpenKruise charts
         working-directory: openkruise-charts
         run: |
           target="$SANDBOX_MANAGER_CHART"
@@ -137,6 +139,27 @@ jobs:
             --set agentio.sidecarInjector.enabled=true \
             --set agentio.global.enableClusterTrustBundle=true >/dev/null
 
+          controller_target="$SANDBOX_CONTROLLER_CHART"
+          controller_rendered="$RUNNER_TEMP/sandbox-controller-agentio.yaml"
+          traffic_proxy_json="$RUNNER_TEMP/traffic-proxy.json"
+          helm lint "$controller_target"
+          helm template sandbox-controller "$controller_target" \
+            --namespace sandbox-system >"$controller_rendered"
+          awk '
+            /^  traffic-proxy: \|/ { found=1; capture=1; next }
+            capture && /^  # END GENERATED AGENTIO TRAFFIC PROXY/ { capture=0 }
+            capture { sub(/^    /, ""); print }
+            END { if (!found) exit 1 }
+          ' "$controller_rendered" >"$traffic_proxy_json"
+          jq -e '
+            .annotations["networking.agents.kruise.io/sidecar-proxy"] == "traffic-proxy" and
+            .labels["networking.agents.kruise.io/proxy-type"] == "ztunnel" and
+            ([.initContainers[].name] == ["istio-init", "traffic-proxy"]) and
+            (.initContainers[1].restartPolicy == "Always") and
+            ([.initContainers[1].env[] | select(.name == "XDS_ADDRESS") | .value] ==
+              ["agentiod.agentio-system.svc.cluster.local:15012"])
+          ' "$traffic_proxy_json" >/dev/null
+
           git diff --check
 
       - name: Publish sync branch and pull request
@@ -151,17 +174,20 @@ jobs:
             "$target/values.yaml"
             "$target/templates/agentio"
             "$target/files/agentio"
+            "$SANDBOX_CONTROLLER_CHART/values.yaml"
+            "$SANDBOX_CONTROLLER_CHART/templates"
           )
 
           if [[ -z "$(git status --porcelain -- "${generated_paths[@]}")" ]]; then
-            echo "sandbox-manager already contains the generated Agentio chart; skipping."
+            echo "OpenKruise charts already contain the generated Agentio content; skipping."
             exit 0
           fi
 
           if git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"; then
             while IFS= read -r changed; do
               case "$changed" in
-                "$target/values.yaml"|"$target/templates/agentio/"*|"$target/files/agentio/"*) ;;
+                "$target/values.yaml"|"$target/templates/agentio/"*|"$target/files/agentio/"*|\
+                "$SANDBOX_CONTROLLER_CHART/values.yaml"|"$SANDBOX_CONTROLLER_CHART/templates/"*) ;;
                 *)
                   echo "Existing branch contains an unexpected change: $changed" >&2
                   exit 1
@@ -188,11 +214,11 @@ jobs:
               --jq '.[0].url // ""')
             case "$pr_state" in
               OPEN|MERGED)
-                echo "sandbox-manager sync pull request already exists: ${pr_url}"
+                echo "Agentio chart sync pull request already exists: ${pr_url}"
                 exit 0
                 ;;
               CLOSED)
-                echo "sandbox-manager sync pull request was closed without merging: ${pr_url}" >&2
+                echo "Agentio chart sync pull request was closed without merging: ${pr_url}" >&2
                 exit 1
                 ;;
             esac
@@ -201,8 +227,8 @@ jobs:
               --repo "$CHART_REPOSITORY" \
               --base master \
               --head "$branch" \
-              --title "feat(kruise-agents-sandbox-manager): sync Agentio ${VERSION}" \
-              --body "Embeds the released Agentio ${VERSION} chart into the sandbox-manager next chart under the agentio values key and templates/agentio. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}."
+              --title "feat(kruise-agents): sync Agentio ${VERSION}" \
+              --body "Embeds the released Agentio ${VERSION} chart into the sandbox-manager next chart and syncs its Kruise Agents traffic-proxy injection configuration into the sandbox-controller next chart. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}."
             exit 0
           fi
 
@@ -210,12 +236,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- "${generated_paths[@]}"
-          git commit --signoff -m "feat(kruise-agents-sandbox-manager): sync agentio ${VERSION}"
+          git commit --signoff -m "feat(kruise-agents): sync agentio ${VERSION}"
           git push origin "HEAD:refs/heads/${branch}"
 
           gh pr create \
             --repo "$CHART_REPOSITORY" \
             --base master \
             --head "$branch" \
-            --title "feat(kruise-agents-sandbox-manager): sync Agentio ${VERSION}" \
-            --body "Embeds the released Agentio ${VERSION} chart into the sandbox-manager next chart under the agentio values key and templates/agentio. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}."
+            --title "feat(kruise-agents): sync Agentio ${VERSION}" \
+            --body "Embeds the released Agentio ${VERSION} chart into the sandbox-manager next chart and syncs its Kruise Agents traffic-proxy injection configuration into the sandbox-controller next chart. Source release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}."

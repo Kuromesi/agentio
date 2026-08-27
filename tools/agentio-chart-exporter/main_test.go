@@ -14,6 +14,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,8 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/yaml"
 )
 
 func TestExportGeneratesFlatAgentioChart(t *testing.T) {
@@ -291,6 +294,204 @@ func TestRepositoryAgentioCRDsAreAlwaysRenderedAndRetained(t *testing.T) {
 	if got := strings.Count(crds, "helm.sh/resource-policy: keep"); got != 4 {
 		t.Fatalf("rendered retained CRD annotation count = %d, want 4\n%s", got, crds)
 	}
+}
+
+func TestExportSandboxControllerCreatesConsumableTrafficProxyConfig(t *testing.T) {
+	source := repositoryAgentioChart(t)
+	target := newSandboxControllerChart(t)
+
+	if err := ExportSandboxController(source, target); err != nil {
+		t.Fatalf("ExportSandboxController() error = %v", err)
+	}
+
+	configMap := renderSandboxInjectionConfig(t, target)
+	if configMap.Name != "sandbox-injection-config" || configMap.Namespace != "sandbox-system" {
+		t.Fatalf("rendered ConfigMap = %s/%s, want sandbox-system/sandbox-injection-config", configMap.Namespace, configMap.Name)
+	}
+
+	var config struct {
+		Annotations    map[string]string  `json:"annotations"`
+		Labels         map[string]string  `json:"labels"`
+		InitContainers []corev1.Container `json:"initContainers"`
+		Volumes        []corev1.Volume    `json:"volume"`
+	}
+	if err := json.Unmarshal([]byte(configMap.Data["traffic-proxy"]), &config); err != nil {
+		t.Fatalf("traffic-proxy data is not valid Kruise Agents JSON: %v\n%s", err, configMap.Data["traffic-proxy"])
+	}
+	if config.Annotations["networking.agents.kruise.io/sidecar-proxy"] != "traffic-proxy" {
+		t.Fatalf("sidecar-proxy annotation = %q, want traffic-proxy", config.Annotations["networking.agents.kruise.io/sidecar-proxy"])
+	}
+	if config.Labels["networking.agents.kruise.io/proxy-type"] != "ztunnel" {
+		t.Fatalf("proxy-type label = %q, want ztunnel", config.Labels["networking.agents.kruise.io/proxy-type"])
+	}
+	if len(config.InitContainers) != 2 {
+		t.Fatalf("injected init container count = %d, want istio-init and traffic-proxy", len(config.InitContainers))
+	}
+	if got := config.InitContainers[0]; got.Name != "istio-init" || got.Image != "docker.io/openkruise/proxy-init:latest" {
+		t.Fatalf("first init container = %s (%s), want istio-init (docker.io/openkruise/proxy-init:latest)", got.Name, got.Image)
+	}
+	proxy := config.InitContainers[1]
+	if proxy.Name != "traffic-proxy" || proxy.Image != "docker.io/openkruise/ztunnel:latest" {
+		t.Fatalf("native sidecar = %s (%s), want traffic-proxy (docker.io/openkruise/ztunnel:latest)", proxy.Name, proxy.Image)
+	}
+	if proxy.RestartPolicy == nil || *proxy.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+		t.Fatalf("traffic-proxy restartPolicy = %v, want Always", proxy.RestartPolicy)
+	}
+	if got := envValue(proxy.Env, "XDS_ADDRESS"); got != "agentiod.agentio-system.svc.cluster.local:15012" {
+		t.Fatalf("XDS_ADDRESS = %q, want cross-namespace Agentio address", got)
+	}
+	if got := envValue(proxy.Env, "CA_ADDRESS"); got != "agentiod.agentio-system.svc.cluster.local:15012" {
+		t.Fatalf("CA_ADDRESS = %q, want cross-namespace Agentio address", got)
+	}
+	if !hasConfigMapVolume(config.Volumes, "agentio-ca-certs") {
+		t.Fatalf("traffic-proxy volumes do not mount the namespace-local agentio-ca-certs ConfigMap: %#v", config.Volumes)
+	}
+}
+
+func TestExportSandboxControllerAddsTrafficProxyToExistingConfigMap(t *testing.T) {
+	source := repositoryAgentioChart(t)
+	target := newSandboxControllerChart(t)
+	writeTestFile(t, target, "templates/inject-config.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-injection-config
+  namespace: {{ include "sandbox-controller.namespace" . }}
+data:
+  agent-runtime: |
+    {"mainContainer":{},"csiSidecar":[],"volume":[]}
+`)
+
+	if err := ExportSandboxController(source, target); err != nil {
+		t.Fatalf("first ExportSandboxController() error = %v", err)
+	}
+	firstTemplate := readTestFile(t, target, "templates/inject-config.yaml")
+	firstValues := readTestFile(t, target, "values.yaml")
+	if err := ExportSandboxController(source, target); err != nil {
+		t.Fatalf("second ExportSandboxController() error = %v", err)
+	}
+	assertTestFile(t, target, "templates/inject-config.yaml", firstTemplate)
+	assertTestFile(t, target, "values.yaml", firstValues)
+
+	configMap := renderSandboxInjectionConfig(t, target)
+	if got := configMap.Data["agent-runtime"]; got != "{\"mainContainer\":{},\"csiSidecar\":[],\"volume\":[]}\n" {
+		t.Fatalf("existing agent-runtime data changed to %q", got)
+	}
+	if configMap.Data["traffic-proxy"] == "" {
+		t.Fatal("existing sandbox-injection-config did not receive traffic-proxy data")
+	}
+	if _, err := os.Stat(filepath.Join(target, "templates", "agentio-traffic-proxy-injection-config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("export created a duplicate injection ConfigMap template: %v", err)
+	}
+}
+
+func TestExportSandboxControllerReplacesExistingTrafficProxyEntry(t *testing.T) {
+	source := repositoryAgentioChart(t)
+	target := newSandboxControllerChart(t)
+	writeTestFile(t, target, "templates/inject-config.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-injection-config
+  namespace: {{ include "sandbox-controller.namespace" . }}
+data:
+  agent-runtime: |
+    {"mainContainer":{},"csiSidecar":[],"volume":[]}
+  traffic-proxy: |
+    {"old":true}
+`)
+
+	if err := ExportSandboxController(source, target); err != nil {
+		t.Fatalf("ExportSandboxController() error = %v", err)
+	}
+
+	template := readTestFile(t, target, "templates/inject-config.yaml")
+	if strings.Contains(template, `{"old":true}`) {
+		t.Fatal("existing traffic-proxy entry was not replaced")
+	}
+	if got := strings.Count(template, "  traffic-proxy: |"); got != 1 {
+		t.Fatalf("traffic-proxy entry count = %d, want 1", got)
+	}
+	configMap := renderSandboxInjectionConfig(t, target)
+	if got := configMap.Data["agent-runtime"]; got != "{\"mainContainer\":{},\"csiSidecar\":[],\"volume\":[]}\n" {
+		t.Fatalf("existing agent-runtime data changed to %q", got)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(configMap.Data["traffic-proxy"]), &config); err != nil {
+		t.Fatalf("replacement traffic-proxy data is invalid JSON: %v", err)
+	}
+	if config["old"] != nil {
+		t.Fatalf("replacement traffic-proxy retained old data: %#v", config)
+	}
+}
+
+func repositoryAgentioChart(t *testing.T) string {
+	t.Helper()
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller() did not return the test file path")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(testFile), "..", "..", "manifests", "charts", "agentio"))
+}
+
+func newSandboxControllerChart(t *testing.T) string {
+	t.Helper()
+	target := t.TempDir()
+	writeTestFile(t, target, "Chart.yaml", "apiVersion: v2\nname: agents-sandbox-controller\nversion: 0.3.0\n")
+	writeTestFile(t, target, "values.yaml", "namespace:\n  name: sandbox-system\n")
+	writeTestFile(t, target, "templates/_helpers.tpl", `{{- define "sandbox-controller.namespace" -}}
+{{- default .Values.namespace.name .Release.Namespace -}}
+{{- end -}}
+`)
+	return target
+}
+
+func renderSandboxInjectionConfig(t *testing.T, target string) corev1.ConfigMap {
+	t.Helper()
+	chart, err := loader.Load(target)
+	if err != nil {
+		t.Fatalf("load sandbox-controller chart: %v", err)
+	}
+	values, err := chartutil.ToRenderValues(chart, map[string]any{}, chartutil.ReleaseOptions{
+		Name:      "sandbox-controller",
+		Namespace: "sandbox-system",
+		IsInstall: true,
+	}, chartutil.DefaultCapabilities)
+	if err != nil {
+		t.Fatalf("build sandbox-controller render values: %v", err)
+	}
+	rendered, err := engine.Render(chart, values)
+	if err != nil {
+		t.Fatalf("render sandbox-controller chart: %v", err)
+	}
+	for name, content := range rendered {
+		if !strings.Contains(content, "name: sandbox-injection-config") {
+			continue
+		}
+		configMap := corev1.ConfigMap{}
+		if err := yaml.Unmarshal([]byte(content), &configMap); err != nil {
+			t.Fatalf("decode sandbox injection ConfigMap from %s: %v\n%s", name, err, content)
+		}
+		return configMap
+	}
+	t.Fatal("rendered chart does not contain sandbox-injection-config")
+	return corev1.ConfigMap{}
+}
+
+func envValue(env []corev1.EnvVar, name string) string {
+	for _, item := range env {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return ""
+}
+
+func hasConfigMapVolume(volumes []corev1.Volume, name string) bool {
+	for _, volume := range volumes {
+		if volume.ConfigMap != nil && volume.ConfigMap.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func writeTestFile(t *testing.T, root, name, content string) {
