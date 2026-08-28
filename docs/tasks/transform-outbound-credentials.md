@@ -75,8 +75,11 @@ spec:
               tenant:
                 cel: inputs.routing.tenant
         apiKey:
-          targetHeader: Authorization
-          valueTemplate: 'Bearer {{ .Token }}'
+          targetHeaders:
+            names:
+            - Authorization
+          value:
+            template: 'Bearer {{ .Token }}'
 ```
 
 Apply it with `kubectl apply -f example-api-credentials.yaml`. The source identity's bearer token and sandbox client ID travel only from EPE to the configured provider; neither is available to CEL nor to policy templates.
@@ -101,7 +104,7 @@ Repeat the request with the same provider name, sandbox client ID, and rendered 
 - `secret` reads a Kubernetes Secret once per request. `ApiKey` expects data key `apiKey`; `AliyunSTS` expects `accessKeyId`, `accessKeySecret`, and `securityToken`. A missing Secret, missing data key, invalid header value, provider failure, or signer failure follows `failStrategy`.
 - For `secret.namespace`, EPE uses the reference namespace, then the `SecurityProfile` namespace, then the selected Pod namespace. A `GlobalSecurityProfile` therefore falls back to the selected Pod namespace. A permission-denied Secret read is logged at most once per credential reference per minute, then follows `failStrategy`.
 - `credentialProvider` requires a valid sandbox token and passes its evaluated `parameters` as `extraMetadata`. Every parameter must set exactly one of `value`, `template`, or `cel`; CEL values must be JSON-compatible and may not be null. The provider-reference `namespace` field is currently ignored.
-- `ApiKey` is the default signer. It overwrites `targetHeader` (default `Authorization`) with `valueTemplate`, whose supported values are `.Token`, `.Pod`, and `.Inputs`. Its optional `when` applies only when an existing request header matches the RE2 pattern.
+- `ApiKey` is the default signer. Prefer `targetHeaders` plus one shared `value`: `names` selects known headers and `cel` may select names from the original request. A selector that returns no names is a successful no-op and skips the credential provider. `value.template` can read `.Token`, `.Header`, `.Request`, `.Pod`, `.Profile`, `.Rule`, and `.Inputs`; `value.cel` additionally exposes `token`, `header.name`, and `header.value`. The legacy `targetHeader`, `valueTemplate`, and optional `when` form remains supported when `targetHeaders` is omitted.
 - `AliyunSTS` uses the STS triplet to re-sign four detected formats. It recognizes ACS3/V3 when the trimmed `Authorization` header starts with `ACS3-HMAC-SHA256` followed by a space, V1-ROA when that header starts with `acs` followed by a space and contains `:`, and OSS V4 when it starts with `OSS4-HMAC-SHA256` followed by a space. If no header scheme matches, it recognizes V1-RPC through query parameters only when the raw query parses and contains non-empty `Signature` and `AccessKeyId` values plus exactly `SignatureMethod=HMAC-SHA1`. `apiKey` is ignored for this signer; use the provider contract's `stsToken` response or the STS Secret fields. Any other Aliyun request format is undetectable and resolves through `failStrategy` before a credential is fetched.
 - `failStrategy: Block` is the default and returns a generic HTTP 403. `Allow` and `Ignore` forward the request unmodified when the transformation cannot be applied. Provider calls use a 10-second HTTP timeout and are not retried by EPE.
 

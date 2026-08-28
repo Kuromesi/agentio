@@ -15,16 +15,19 @@
 // schema.go is tokentransform's payload contract: the JSON document a
 // policy source must produce, and the only place the filter's config is
 // built. The vocabulary is the filter's own — Type is a signer-registry
-// key, and credentialRef is the typed union only. A policy API that also
-// accepts deprecated spellings normalizes them away before the document
-// gets here, which is why this file names no API package.
+// key, and credentialRef is the typed union only. Released ApiKey spellings
+// are accepted at the JSON boundary below and immediately normalized, which
+// is why this file names no API package.
 package tokentransform
 
 import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
+
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
+	"k8s.io/utils/ptr"
 
 	"istio.io/istio/extensions/epe/pkg/engine/filter"
 	"istio.io/istio/extensions/epe/pkg/eval"
@@ -37,6 +40,13 @@ import (
 const (
 	failStrategyAllow  = "Allow"
 	failStrategyIgnore = "Ignore"
+	maxHeaderRules     = 16
+	maxHeaderTargets   = 64
+	// tokenHeaderCELCostLimit bounds request-time selector and value work in
+	// cel-go runtime cost units. Ten thousand leaves ample room for an ordinary
+	// O(headers) filter over the 64-target contract while interrupting nested
+	// comprehensions before they can consume unbounded CPU.
+	tokenHeaderCELCostLimit uint64 = 10_000
 )
 
 // spec is the wire form of a tokentransform payload. Tags mirror the
@@ -50,6 +60,9 @@ type spec struct {
 	Type          string            `json:"type,omitempty"`
 	CredentialRef credentialRefSpec `json:"credentialRef"`
 	ApiKey        *apiKeySpec       `json:"apiKey,omitempty"`
+	// Headers detects and rejects the superseded root headers spelling.
+	// Ignoring it could silently apply a coexisting legacy apiKey transform.
+	Headers []headerSpec `json:"headers,omitempty"`
 }
 
 // credentialRefSpec is the typed union; exactly one branch must be set.
@@ -75,15 +88,72 @@ type valueSourceSpec struct {
 	Template *string `json:"template,omitempty"`
 }
 
+// apiKeySpec is the one normalized ApiKey form used after JSON decoding.
 type apiKeySpec struct {
-	When          *whenSpec `json:"when,omitempty"`
-	TargetHeader  string    `json:"targetHeader,omitempty"`
-	ValueTemplate string    `json:"valueTemplate,omitempty"`
+	TargetHeaders *headerSelectorSpec `json:"targetHeaders,omitempty"`
+	Value         *valueSourceSpec    `json:"value,omitempty"`
+}
+
+// apiKeyWireSpec exists only while decoding the released and current JSON
+// spellings. UnmarshalJSON immediately folds the legacy fields into the
+// selector/value form so they cannot leak into the compiled filter config.
+type apiKeyWireSpec struct {
+	When          *whenSpec           `json:"when,omitempty"`
+	TargetHeader  string              `json:"targetHeader,omitempty"`
+	ValueTemplate string              `json:"valueTemplate,omitempty"`
+	TargetHeaders *headerSelectorSpec `json:"targetHeaders,omitempty"`
+	Value         *valueSourceSpec    `json:"value,omitempty"`
+	// NestedHeaders detects and rejects the unreleased apiKey.headers spelling
+	// from the branch baseline. It is never compiled as configuration.
+	NestedHeaders json.RawMessage `json:"headers,omitempty"`
+}
+
+type headerSelectorSpec struct {
+	Names []string `json:"names,omitempty"`
+	CEL   *string  `json:"cel,omitempty"`
+
+	// condition is the released when field normalized into selection. A
+	// non-match selects no headers, preserving the pre-credential short-circuit.
+	condition *whenSpec
+}
+
+type headerSpec struct {
+	Names     []string        `json:"names,omitempty"`
+	CEL       *string         `json:"cel,omitempty"`
+	Value     valueSourceSpec `json:"value"`
+	Condition *whenSpec       `json:"-"`
 }
 
 type whenSpec struct {
 	Header  string `json:"header,omitempty"`
 	Pattern string `json:"pattern,omitempty"`
+}
+
+func (s *apiKeySpec) UnmarshalJSON(raw []byte) error {
+	var wire apiKeyWireSpec
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	if len(wire.NestedHeaders) != 0 {
+		return fmt.Errorf("apiKey.headers is not supported; use apiKey.targetHeaders and apiKey.value")
+	}
+	*s = apiKeySpec{}
+	if wire.TargetHeaders != nil {
+		s.TargetHeaders = wire.TargetHeaders
+		s.Value = wire.Value
+		return nil
+	}
+
+	name := wire.TargetHeader
+	if name == "" {
+		name = DefaultTargetHeader
+	}
+	s.TargetHeaders = &headerSelectorSpec{
+		Names:     []string{name},
+		condition: wire.When,
+	}
+	s.Value = &valueSourceSpec{Template: ptr.To(wire.ValueTemplate)}
+	return nil
 }
 
 // parse compiles one payload document into the filter config. Templates,
@@ -96,7 +166,9 @@ func parse(raw json.RawMessage) (Config, error) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return Config{}, err
 	}
-
+	if len(s.Headers) != 0 {
+		return Config{}, fmt.Errorf("root headers is not supported; use apiKey.targetHeaders and apiKey.value")
+	}
 	key := s.Type
 	if key == "" {
 		key = TypeAPIKey
@@ -116,29 +188,175 @@ func parse(raw json.RawMessage) (Config, error) {
 	}
 	cfg.Source = source
 
-	if key == TypeAPIKey {
-		if s.ApiKey == nil {
-			return Config{}, fmt.Errorf("apiKey config is nil")
+	switch {
+	case key != TypeAPIKey:
+		// Signer-specific transports such as AliyunSTS carry no ApiKey config.
+	case s.ApiKey == nil:
+		return Config{}, fmt.Errorf("token transformation defines no apiKey config")
+	default:
+		value := valueSourceSpec{}
+		if s.ApiKey.Value != nil {
+			value = *s.ApiKey.Value
 		}
-		tmpl, err := eval.CompileTemplate("valueTemplate", s.ApiKey.ValueTemplate)
-		if err != nil {
-			return Config{}, fmt.Errorf("compile valueTemplate: %w", err)
-		}
-		// Canonicalized here, once per profile version, rather than on every
-		// request: see ApiKeyConfig.
-		cfg.SignerCfg = ApiKeyConfig{
-			TargetHeader: strings.ToLower(s.ApiKey.TargetHeader),
-			Template:     tmpl,
-		}
-		if s.ApiKey.When != nil {
-			re, err := regexp.Compile(s.ApiKey.When.Pattern)
-			if err != nil {
-				return Config{}, fmt.Errorf("compile when pattern %q: %w", s.ApiKey.When.Pattern, err)
-			}
-			cfg.When = &When{Header: s.ApiKey.When.Header, Re: re}
-		}
+		cfg.SignerCfg, err = compileHeaderRules([]headerSpec{{
+			Names:     s.ApiKey.TargetHeaders.Names,
+			CEL:       s.ApiKey.TargetHeaders.CEL,
+			Value:     value,
+			Condition: s.ApiKey.TargetHeaders.condition,
+		}}, "apiKey")
+	}
+	if err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func compileHeaderRules(rules []headerSpec, apiKeyPath ...string) (ApiKeyConfig, error) {
+	if len(rules) > maxHeaderRules {
+		return ApiKeyConfig{}, fmt.Errorf("token transformation headers has %d rules, want at most %d", len(rules), maxHeaderRules)
+	}
+	compiled := make([]ApiKeyHeaderConfig, 0, len(rules))
+	staticTargets := 0
+	staticNames := make(map[string]struct{})
+	for i, rule := range rules {
+		selectorPath := fmt.Sprintf("headers[%d]", i)
+		valuePath := selectorPath + ".value"
+		if len(apiKeyPath) > 0 && len(rules) == 1 {
+			selectorPath = apiKeyPath[0] + ".targetHeaders"
+			valuePath = apiKeyPath[0] + ".value"
+		}
+		hasNames := len(rule.Names) > 0
+		hasCEL := rule.CEL != nil
+		if hasNames == hasCEL {
+			return ApiKeyConfig{}, fmt.Errorf("%s: exactly one of names or cel must be set", selectorPath)
+		}
+
+		out := ApiKeyHeaderConfig{}
+		if rule.Condition != nil {
+			re, err := regexp.Compile(rule.Condition.Pattern)
+			if err != nil {
+				return ApiKeyConfig{}, fmt.Errorf("compile when pattern %q: %w", rule.Condition.Pattern, err)
+			}
+			out.Condition = &When{Header: rule.Condition.Header, Re: re}
+		}
+		if hasNames {
+			staticTargets += len(rule.Names)
+			if staticTargets > maxHeaderTargets {
+				return ApiKeyConfig{}, fmt.Errorf("token transformation headers has more than %d static targets", maxHeaderTargets)
+			}
+			out.Names = make([]string, len(rule.Names))
+			for j, rawName := range rule.Names {
+				name, err := filter.ValidateHeaderName(filter.HeaderSet, rawName)
+				if err != nil {
+					return ApiKeyConfig{}, fmt.Errorf("%s.names[%d]: %w", selectorPath, j, err)
+				}
+				if _, duplicate := staticNames[name]; duplicate {
+					return ApiKeyConfig{}, fmt.Errorf("%s.names[%d]: duplicates static header %q", selectorPath, j, name)
+				}
+				staticNames[name] = struct{}{}
+				out.Names[j] = name
+			}
+		} else {
+			env, err := newTokenHeaderCELEnv()
+			if err != nil {
+				return ApiKeyConfig{}, fmt.Errorf("init %s selector CEL: %w", selectorPath, err)
+			}
+			out.Selector, err = compileCEL(env, selectorPath+".cel", *rule.CEL, cel.ListType(cel.StringType))
+			if err != nil {
+				return ApiKeyConfig{}, err
+			}
+		}
+
+		branches := 0
+		if rule.Value.Value != nil {
+			branches++
+		}
+		if rule.Value.Template != nil {
+			branches++
+		}
+		if rule.Value.Cel != nil {
+			branches++
+		}
+		if branches != 1 {
+			return ApiKeyConfig{}, fmt.Errorf("%s: exactly one of value, template or cel must be set", valuePath)
+		}
+		switch {
+		case rule.Value.Value != nil:
+			out.Value.Literal = ptr.To(*rule.Value.Value)
+		case rule.Value.Template != nil:
+			if *rule.Value.Template == "" {
+				return ApiKeyConfig{}, fmt.Errorf("%s.template is empty", valuePath)
+			}
+			tmpl, err := eval.CompileTemplate(valuePath+".template", *rule.Value.Template)
+			if err != nil {
+				return ApiKeyConfig{}, fmt.Errorf("compile %s.template: %w", valuePath, err)
+			}
+			if _, err := eval.ProbeRender(tmpl, ApiKeyTemplateData{}); err != nil {
+				return ApiKeyConfig{}, fmt.Errorf("probe %s.template: %w", valuePath, err)
+			}
+			out.Value.Template = tmpl
+		case rule.Value.Cel != nil:
+			env, err := newTokenHeaderCELEnv(
+				cel.Variable("token", cel.StringType),
+				cel.Variable("header", cel.MapType(cel.StringType, cel.StringType)),
+			)
+			if err != nil {
+				return ApiKeyConfig{}, fmt.Errorf("init %s CEL: %w", valuePath, err)
+			}
+			out.Value.CEL, err = compileCEL(env, valuePath+".cel", *rule.Value.Cel, cel.StringType)
+			if err != nil {
+				return ApiKeyConfig{}, err
+			}
+		}
+		compiled = append(compiled, out)
+	}
+	return ApiKeyConfig{Headers: compiled}, nil
+}
+
+// newTokenHeaderCELEnv is intentionally separate from eval.NewRequestEnv:
+// token-header CEL runs on every selected request and must not expose a
+// request-controlled collection constructor. ListsVersion(1) retains bounded
+// list helpers while omitting lists.range, which was introduced in version 2.
+func newTokenHeaderCELEnv(extra ...cel.EnvOption) (*cel.Env, error) {
+	options := []cel.EnvOption{
+		cel.Variable("request", cel.MapType(cel.StringType, cel.DynType)),
+		cel.Variable("pod", cel.MapType(cel.StringType, cel.DynType)),
+		cel.Variable("profile", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("rule", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("inputs", cel.MapType(cel.StringType, cel.DynType)),
+		ext.Bindings(),
+		ext.Strings(),
+		ext.Sets(),
+		ext.Lists(ext.ListsVersion(1)),
+	}
+	options = append(options, extra...)
+	return cel.NewEnv(options...)
+}
+
+func compileCEL(env *cel.Env, label, expression string, want *cel.Type) (cel.Program, error) {
+	ast, issues := env.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		return nil, fmt.Errorf("compile %s: %w", label, issues.Err())
+	}
+	got := ast.OutputType()
+	if !want.IsAssignableType(got) && !dynamicCELFallback(want, got) {
+		return nil, fmt.Errorf("compile %s: expression must return %s, got %s", label, want, got)
+	}
+	prog, err := env.Program(ast,
+		cel.EvalOptions(cel.OptOptimize),
+		cel.CostLimit(tokenHeaderCELCostLimit),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("program %s: %w", label, err)
+	}
+	return prog, nil
+}
+
+func dynamicCELFallback(want, got *cel.Type) bool {
+	if got.IsExactType(cel.DynType) {
+		return true
+	}
+	return want.IsExactType(cel.ListType(cel.StringType)) && got.IsExactType(cel.ListType(cel.DynType))
 }
 
 // parseSource resolves the credentialRef union into the filter's own

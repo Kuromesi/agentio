@@ -140,7 +140,9 @@ func TestApiKeySigner_TouchesOnlyTheTargetHeader(t *testing.T) {
 	}
 	muts, err := apiKeySigner{}.Sign(context.Background(), nil, nil, nil,
 		Credential{Token: "sk-injected"},
-		ApiKeyConfig{TargetHeader: "x-api-key", Template: tmpl})
+		PreparedApiKeyConfig{Headers: []PreparedHeader{{
+			Name: "x-api-key", Value: HeaderValueSource{Template: tmpl},
+		}}})
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}

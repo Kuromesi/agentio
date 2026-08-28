@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -77,6 +78,74 @@ func TestCompileValueRejectsAuditOnlyVariables(t *testing.T) {
 	_, err := CompileValue(`result`)
 	if err == nil || !strings.Contains(err.Error(), "undeclared reference to 'result'") {
 		t.Fatalf("CompileValue(result) error = %v, want undeclared-reference error", err)
+	}
+}
+
+func TestNewRequestEnvHeaderSelector(t *testing.T) {
+	env, err := NewRequestEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := env.Compile(`request.headers.filter(name, name.startsWith("x-"))`)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile selector: %v", issues.Err())
+	}
+	prog, err := env.Program(ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	act, _ := cel.NewActivation(map[string]any{
+		"request": map[string]any{"headers": map[string]string{
+			"authorization": "client",
+			"x-first":       "one",
+			"x-second":      "two",
+		}},
+		"pod": map[string]any{}, "profile": map[string]string{},
+		"rule": map[string]string{}, "inputs": map[string]any{},
+	})
+	got, err := EvalValue(prog, act)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, ok := got.([]any)
+	if !ok {
+		t.Fatalf("selector result = %T, want []any", got)
+	}
+	gotKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		gotKeys = append(gotKeys, key.(string))
+	}
+	sort.Strings(gotKeys)
+	if want := []string{"x-first", "x-second"}; !reflect.DeepEqual(gotKeys, want) {
+		t.Fatalf("selector keys = %v, want %v", gotKeys, want)
+	}
+}
+
+func TestNewRequestEnvConsumerVariables(t *testing.T) {
+	env, err := NewRequestEnv(
+		cel.Variable("token", cel.StringType),
+		cel.Variable("header", cel.MapType(cel.StringType, cel.StringType)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := env.Compile(`token + ":" + header.name`)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile consumer expression: %v", issues.Err())
+	}
+	prog, err := env.Program(ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	act, _ := cel.NewActivation(map[string]any{
+		"token": "client", "header": map[string]string{"name": "authorization"},
+	})
+	got, err := EvalValue(prog, act)
+	if err != nil || got != "client:authorization" {
+		t.Fatalf("consumer expression = %v (%v), want client:authorization", got, err)
+	}
+	if _, err := CompileValue("token"); err == nil || !strings.Contains(err.Error(), "undeclared reference to 'token'") {
+		t.Fatalf("CompileValue(token) error = %v, want undeclared-reference error", err)
 	}
 }
 

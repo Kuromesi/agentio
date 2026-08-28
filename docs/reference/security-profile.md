@@ -12,7 +12,7 @@ All matching profiles are ordered by lower `spec.priority` first (default `1000`
 
 For each selected request, EPE evaluates every matching rule from the first profile through the last, preserving rule order inside each profile. A terminal action stops the remaining chain. A later rule may still match after a broad earlier rule: matching is not first-rule-wins.
 
-EPE compiles collection-level data when it observes a profile: the label selector, rule matchers and RE2 expressions, audit CEL/templates, and every rule's action payloads. For token transformations that includes the signer type, credential-reference normalization, provider parameter CEL/templates, API-key value template, and `when` regex. If any of that work fails, EPE retains the previous valid version for the resource when one exists. Without a prior valid version, its selected Pods have no protection from that profile. The stale/unenforced metrics and admin state describe these collection-time failures.
+EPE compiles collection-level data when it observes a profile: the label selector, rule matchers and RE2 expressions, audit CEL/templates, and every rule's action payloads. For token transformations that includes the signer type, credential-reference normalization, provider parameter CEL/templates, API-key header selectors and values, value-template probes, and the legacy `when` regex. If any of that work fails, EPE retains the previous valid version for the resource when one exists. Without a prior valid version, its selected Pods have no protection from that profile. The stale/unenforced metrics and admin state describe these collection-time failures.
 
 ConfigMap-backed inputs are resolved at the same boundary but fail differently: a ConfigMap that does not exist (or no longer exists) is availability, not authoring. The profile version still installs and all of its rules enforce — a Block rule keeps blocking — while the inputs are marked unavailable. Every CEL expression or template whose result depends on `inputs` then fails with that reason and resolves through the consuming action's failure policy: a token transformation follows its `failStrategy`, and a header mutation — which has no fail-open option — fails closed. The `epe_profile_inputs_unavailable` metric counts affected profiles, and a deleted ConfigMap makes the inputs unavailable rather than silently serving stale values. Static input authoring errors — an entry with zero or two sources, a global profile's ConfigMap reference without a namespace — reject the version like any other compile error.
 
@@ -20,7 +20,7 @@ Because action payloads are projected at the collection boundary, a malformed ac
 
 This is one rule with no exceptions: every compile-time error — a bad selector, an uncompilable regex or CEL expression, a malformed action — rejects the version and keeps the last known good one, and every runtime error resolves through the failing action's own failure policy. Per-Sandbox rules obey it too: a Sandbox whose `agents.kruise.io/security-rules` annotation fails to compile or project keeps its previous rules when it has any and enforces none otherwise, reported by `epe_profile_stale` and `epe_profile_unenforced` under `scope="pod"`. Because those rules are authored when the Sandbox is created, a rejected first version simply not taking effect is the intended authoring feedback.
 
-Header-mutation values are additionally probe-rendered when the profile is compiled, which is what catches a reference to a field the render scope does not have. Token-transformation and audit templates are compiled but not probe-rendered, so a bad field reference in those surfaces per request instead. The probe has no request to work with, so it does not exercise helper behavior that depends on one: a `fail` guard and JSON extraction from a request value are accepted at compile time and evaluated for real per request.
+Header-mutation values and API-key `value.template` values are additionally probe-rendered when the profile is compiled, including the legacy `apiKey.valueTemplate` after it is normalized to a header rule. That probe catches a reference to a field the render scope does not have. Credential-provider parameter templates and audit templates are compiled but not probe-rendered, so a bad field reference in those surfaces per request instead. The probe has no request data to work with, so it does not exercise helper behavior guarded on real request values: a guarded `fail` call and JSON extraction from a request value are accepted at compile time and evaluated for real per request.
 
 ## Rule structure and matching
 
@@ -55,11 +55,11 @@ EPE registers actions in this fixed order within each matched rule:
 
 | Field | Behavior |
 | --- | --- |
-| `type` | `ApiKey` (default) injects a rendered credential into `targetHeader` (default `Authorization`); `AliyunSTS` re-signs a detected ACS3/V3, V1-ROA, OSS V4, or V1-RPC request using an STS triplet. |
+| `type` | `ApiKey` (default) injects a rendered credential into the legacy `targetHeader` (EPE falls back to `Authorization` when it is omitted); `AliyunSTS` re-signs a detected ACS3/V3, V1-ROA, OSS V4, or V1-RPC request using an STS triplet. |
 | `credentialRef` | Required typed union: exactly one `secret` or `credentialProvider`. Deprecated flat `kind`/`name`/`namespace` values are normalized for compatibility but must not be mixed with the typed form. |
 | `credentialRef.secret` | `name` is required; namespace falls back from reference to profile to source Pod. `ApiKey` reads `apiKey`; `AliyunSTS` reads `accessKeyId`, `accessKeySecret`, `securityToken`. |
 | `credentialRef.credentialProvider` | `name` is required. `parameters` supplies metadata values from exactly one of `value`, `template`, or `cel`. Its namespace field is currently ignored. |
-| `apiKey` | Required for `ApiKey`, ignored for `AliyunSTS`. `valueTemplate` is required. Optional `when.header` and RE2 `when.pattern` gate the transform on an existing header. |
+| `apiKey` | Required for `ApiKey`, ignored for `AliyunSTS`. Prefer `targetHeaders` plus `value`; all selected headers use the same value source. `targetHeaders.names` selects fixed names, while `targetHeaders.cel` returns dynamic names from the original request. When `targetHeaders` is present, EPE ignores legacy `when`, `targetHeader`, and `valueTemplate`. Without it, the legacy fields retain their existing single-header behavior. |
 | `disabled` | Defaults to `false`; when true, leaves the configuration stored but does not mount the action. |
 | `failStrategy` | `Block` (default) denies with generic 403; `Allow` and `Ignore` pass the failed transformation through unmodified. |
 
@@ -88,7 +88,7 @@ Use `credentialRef` for credentials and `inputs` for non-secret configuration su
 
 The CRD validates required fields, enum values, header-name syntax, lengths, ports, and audit timeout bounds. At collection time, EPE additionally validates selector parsing, rule-match regex compilation, one source per input, audit CEL/template compilation and types, and every rule's action payloads — token transformations included. All of these participate in the last-known-good decision described under [Scope, selection, and precedence](#scope-selection-and-precedence). Input *availability* is deliberately not one of them: a referenced ConfigMap that does not exist leaves the version installed and marks its inputs unavailable.
 
-Notable defaults are priority `1000`, `block.statusCode` `403`, MCP `defaultAction`/`unsupportedVersionAction` `deny`, token type `ApiKey`, token target header `Authorization`, token failure strategy `Block`, and token `disabled` `false`.
+Notable defaults are priority `1000`, `block.statusCode` `403`, MCP `defaultAction`/`unsupportedVersionAction` `deny`, token type `ApiKey`, token failure strategy `Block`, and token `disabled` `false`. The legacy API-key mode has no CRD default for `targetHeader`; EPE preserves compatibility by falling back to `Authorization` when it is omitted.
 
 ## GlobalSecurityProfile differences
 

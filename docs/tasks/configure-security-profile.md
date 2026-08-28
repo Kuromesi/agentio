@@ -65,7 +65,11 @@ spec:
           secret:
             name: epe-demo-api-key
         apiKey:
-          valueTemplate: 'Bearer {{ .Token }}'
+          targetHeaders:
+            names:
+            - Authorization
+          value:
+            template: 'Bearer {{ .Token }}'
 EOF
 ```
 
