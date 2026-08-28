@@ -949,9 +949,13 @@ func (a *index) WorkloadExtensionsForProxy(
 		!agentio.SupportsPolicyRuntime(proxy.Metadata) {
 		return nil
 	}
+	workloadInfo := a.workloads.GetKey(workload.GetUid())
+	if workloadInfo == nil || workloadInfo.Source != kind.Pod {
+		return nil
+	}
 	references := a.workloadPolicyReferences.GetKey(workload.GetUid())
 	if references == nil {
-		return nil
+		return agentio.PolicyReferenceExtensionsForProxy(proxy.Metadata, nil)
 	}
 	return agentio.PolicyReferenceExtensionsForProxy(proxy.Metadata, references.References)
 }

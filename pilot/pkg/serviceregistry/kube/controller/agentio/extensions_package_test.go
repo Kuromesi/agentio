@@ -110,6 +110,10 @@ func TestNewPolicyReferenceExtension(t *testing.T) {
 	if !proto.Equal(decoded, reference) {
 		t.Fatalf("decoded reference = %v, want %v", decoded, reference)
 	}
+	emptyReference := &extensions.PolicyReference{TypeUrl: model.SniTrafficPolicyType}
+	if got := NewPolicyReferenceExtension(SniTrafficPolicyReferenceExtensionName, emptyReference); got == nil {
+		t.Fatal("expected policy reference extension with an empty resource list")
+	}
 	if got := NewPolicyReferenceExtension(SniTrafficPolicyReferenceExtensionName, &extensions.PolicyReference{}); got != nil {
 		t.Fatalf("empty reference returned extension: %v", got)
 	}

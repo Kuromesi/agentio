@@ -50,12 +50,14 @@ const (
 )
 
 type policyReferenceContract struct {
+	typeURL       string
 	capability    string
 	extensionName string
 }
 
-var policyReferenceContractByTypeURL = map[string]policyReferenceContract{
-	xdsmodel.SniTrafficPolicyType: {
+var policyReferenceContracts = []policyReferenceContract{
+	{
+		typeURL:       xdsmodel.SniTrafficPolicyType,
 		capability:    SniTrafficPolicyCapability,
 		extensionName: SniTrafficPolicyReferenceExtensionName,
 	},
@@ -217,7 +219,7 @@ func NewEgressPoliciesExtension(policies []*extensions.EgressPolicy) *workloadap
 }
 
 func NewPolicyReferenceExtension(name string, reference *extensions.PolicyReference) *workloadapi.Extension {
-	if name == "" || reference == nil || reference.GetTypeUrl() == "" || len(reference.GetResourceNames()) == 0 {
+	if name == "" || reference == nil || reference.GetTypeUrl() == "" {
 		return nil
 	}
 	pbBytes, err := proto.Marshal(reference)
@@ -260,14 +262,23 @@ func PolicyReferenceExtensionsForProxy(
 	metadata *model.NodeMetadata,
 	references []*extensions.PolicyReference,
 ) []*workloadapi.Extension {
-	if !SupportsPolicyRuntime(metadata) || len(references) == 0 {
+	if !SupportsPolicyRuntime(metadata) {
 		return nil
 	}
-	result := make([]*workloadapi.Extension, 0, len(references))
+	referencesByTypeURL := make(map[string]*extensions.PolicyReference, len(references))
 	for _, reference := range references {
-		contract, found := policyReferenceContractByTypeURL[reference.GetTypeUrl()]
-		if !found || !SupportsPolicyCapability(metadata, contract.capability) {
+		if reference != nil {
+			referencesByTypeURL[reference.GetTypeUrl()] = reference
+		}
+	}
+	result := make([]*workloadapi.Extension, 0, len(policyReferenceContracts))
+	for _, contract := range policyReferenceContracts {
+		if !SupportsPolicyCapability(metadata, contract.capability) {
 			continue
+		}
+		reference := referencesByTypeURL[contract.typeURL]
+		if reference == nil {
+			reference = &extensions.PolicyReference{TypeUrl: contract.typeURL}
 		}
 		if extension := NewPolicyReferenceExtension(contract.extensionName, reference); extension != nil {
 			result = append(result, extension)

@@ -127,6 +127,10 @@ func TestAgentioResourceProviderUsesKeyedLookup(t *testing.T) {
 
 func TestWorkloadExtensionsForProxyPublishesPerTypePolicyReference(t *testing.T) {
 	const uid = "cluster//Pod/ns/pod"
+	workload := model.WorkloadInfo{
+		Workload: &workloadapi.Workload{Uid: uid, Name: "pod", Namespace: "ns"},
+		Source:   kind.Pod,
+	}
 	references := agentio.WorkloadPolicyReferences{
 		Name: uid,
 		References: []*extensions.PolicyReference{
@@ -134,8 +138,13 @@ func TestWorkloadExtensionsForProxyPublishesPerTypePolicyReference(t *testing.T)
 			{TypeUrl: "type.googleapis.com/example.extensions.v1.UnsupportedPolicy", ResourceNames: []string{"ns/ignored"}},
 		},
 	}
-	mock := krttest.NewMock(t, []any{references})
-	a := &index{workloadPolicyReferences: krttest.GetMockCollection[agentio.WorkloadPolicyReferences](mock)}
+	mock := krttest.NewMock(t, []any{workload, references})
+	a := &index{
+		workloads: workloadsCollection{
+			Collection: krttest.GetMockCollection[model.WorkloadInfo](mock),
+		},
+		workloadPolicyReferences: krttest.GetMockCollection[agentio.WorkloadPolicyReferences](mock),
+	}
 	proxy := &model.Proxy{Metadata: &model.NodeMetadata{
 		MetadataDiscovery:         ptr.Of(model.StringBool(true)),
 		PolicyRuntimeCapabilities: []string{agentio.SniTrafficPolicyCapability},
@@ -158,6 +167,58 @@ func TestWorkloadExtensionsForProxyPublishesPerTypePolicyReference(t *testing.T)
 
 	proxy.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(false))
 	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})), 0)
+}
+
+func TestWorkloadExtensionsForProxyMarksPodWithoutPolicies(t *testing.T) {
+	const uid = "cluster//Pod/ns/unbound"
+	workload := model.WorkloadInfo{
+		Workload: &workloadapi.Workload{Uid: uid, Name: "unbound", Namespace: "ns"},
+		Source:   kind.Pod,
+	}
+	mock := krttest.NewMock(t, []any{workload})
+	a := &index{
+		workloads: workloadsCollection{
+			Collection: krttest.GetMockCollection[model.WorkloadInfo](mock),
+		},
+		workloadPolicyReferences: krttest.GetMockCollection[agentio.WorkloadPolicyReferences](mock),
+	}
+	proxy := &model.Proxy{Metadata: &model.NodeMetadata{
+		MetadataDiscovery:         ptr.Of(model.StringBool(true)),
+		PolicyRuntimeCapabilities: []string{agentio.SniTrafficPolicyCapability},
+	}}
+
+	got := a.WorkloadExtensionsForProxy(proxy, workload.Workload)
+	if len(got) != 1 {
+		t.Fatalf("extensions = %d, want one empty SNI policy marker", len(got))
+	}
+	decoded := &extensions.PolicyReference{}
+	if err := got[0].GetConfig().UnmarshalTo(decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.GetTypeUrl() != xdsmodel.SniTrafficPolicyType || len(decoded.GetResourceNames()) != 0 {
+		t.Fatalf("decoded reference = %v, want empty %s reference", decoded, xdsmodel.SniTrafficPolicyType)
+	}
+}
+
+func TestWorkloadExtensionsForProxySkipsNonPodWorkload(t *testing.T) {
+	const uid = "cluster/discovery.k8s.io/EndpointSlice/ns/shared/10.0.0.1"
+	workload := model.WorkloadInfo{
+		Workload: &workloadapi.Workload{Uid: uid, Name: "shared", Namespace: "ns"},
+		Source:   kind.EndpointSlice,
+	}
+	mock := krttest.NewMock(t, []any{workload})
+	a := &index{
+		workloads: workloadsCollection{
+			Collection: krttest.GetMockCollection[model.WorkloadInfo](mock),
+		},
+		workloadPolicyReferences: krttest.GetMockCollection[agentio.WorkloadPolicyReferences](mock),
+	}
+	proxy := &model.Proxy{Metadata: &model.NodeMetadata{
+		MetadataDiscovery:         ptr.Of(model.StringBool(true)),
+		PolicyRuntimeCapabilities: []string{agentio.SniTrafficPolicyCapability},
+	}}
+
+	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, workload.Workload)), 0)
 }
 
 func TestPushWorkloadPolicyReferencesXdsIncludesNewPolicies(t *testing.T) {
@@ -188,7 +249,7 @@ func TestPushWorkloadPolicyReferencesXdsIncludesNewPolicies(t *testing.T) {
 	))
 }
 
-func TestPushWorkloadPolicyReferencesXdsRemovesExtension(t *testing.T) {
+func TestPushWorkloadPolicyReferencesXdsPushesAddressWhenLastReferenceIsRemoved(t *testing.T) {
 	oldReferences := agentio.WorkloadPolicyReferences{
 		Name: "cluster//Pod/ns/pod",
 		References: []*extensions.PolicyReference{{

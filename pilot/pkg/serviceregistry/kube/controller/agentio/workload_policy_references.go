@@ -149,8 +149,9 @@ func workloadPolicyReferencesTransformation(
 		}
 		refs := buildPolicyRefs(ctx, policies, policiesByNamespace, namespace, w.Labels)
 		if len(refs) == 0 {
-			// A Workload without any policy-reference extension authoritatively
-			// has no policy references once initial WDS is complete.
+			// Avoid materializing an index object for unbound Pods. WDS
+			// serialization adds the capability-specific empty marker that makes
+			// the no-policy state authoritative to the data plane.
 			return nil
 		}
 		return []WorkloadPolicyReferences{{
