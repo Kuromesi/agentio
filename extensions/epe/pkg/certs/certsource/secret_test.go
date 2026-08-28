@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -92,6 +93,18 @@ func TestFromSecretRequiresNamespaceAndName(t *testing.T) {
 func TestFromSecretPicksUpSecretCreatedLater(t *testing.T) {
 	ca := certstest.New(t)
 	c := kube.NewFakeClient()
+	fakeClient := c.Kube().(*k8sfake.Clientset)
+	watchStarted := make(chan struct{}, 1)
+	fakeClient.PrependWatchReactor("secrets", func(action k8stesting.Action) (bool, watch.Interface, error) {
+		w, err := fakeClient.Tracker().Watch(action.GetResource(), action.GetNamespace())
+		if err == nil {
+			select {
+			case watchStarted <- struct{}{}:
+			default:
+			}
+		}
+		return true, w, err
+	})
 	stop := test.NewStop(t)
 	c.RunAndWait(stop)
 
@@ -106,6 +119,15 @@ func TestFromSecretPicksUpSecretCreatedLater(t *testing.T) {
 	}
 	if len(cert.Certificate) != 0 {
 		t.Fatal("a certificate was presented before the Secret existed")
+	}
+
+	// The fake tracker does not replay events created between an informer's
+	// initial List and Watch registration. Wait for the watch so this test
+	// exercises a Secret created later instead of racing that fake-only gap.
+	select {
+	case <-watchStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the Secret watch to start")
 	}
 
 	clienttest.NewWriter[*corev1.Secret](t, c).Create(mtlsSecret(t, ca, 8001, true))
