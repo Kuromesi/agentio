@@ -605,6 +605,12 @@ func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *t
 	if err := ExportSandboxController(source, target); err != nil {
 		t.Fatalf("ExportSandboxController() error = %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(target, "templates", "sandbox-injection-config.yaml")); err != nil {
+		t.Fatalf("exported sandbox injection template: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "templates", "agentio-traffic-proxy-injection-config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("export retained the legacy sandbox injection template name: %v", err)
+	}
 
 	configMap := renderSandboxInjectionConfig(t, target)
 	if configMap.Name != "sandbox-injection-config" || configMap.Namespace != "sandbox-system" {
@@ -681,7 +687,7 @@ data:
 	if configMap.Data["traffic-proxy"] == "" {
 		t.Fatal("existing sandbox-injection-config did not receive traffic-proxy data")
 	}
-	if _, err := os.Stat(filepath.Join(target, "templates", "agentio-traffic-proxy-injection-config.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(target, "templates", "sandbox-injection-config.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("export created a duplicate injection ConfigMap template: %v", err)
 	}
 }
