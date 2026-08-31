@@ -641,6 +641,77 @@ func TestSandboxManagerAgentioNamespaceIsIndependentFromReleaseNamespace(t *test
 	}
 }
 
+func TestSandboxManagerCreatesAndRetainsAgentioNamespace(t *testing.T) {
+	source := repositoryAgentioChart(t)
+	target := t.TempDir()
+	writeTestFile(t, target, "Chart.yaml", "apiVersion: v2\nname: sandbox-manager\nversion: 0.1.0\n")
+	writeTestFile(t, target, "values.yaml", "manager: unchanged\n")
+
+	if err := buildSandboxManagerBundle(source, target); err != nil {
+		t.Fatalf("buildSandboxManagerBundle() error = %v", err)
+	}
+
+	for _, test := range []struct {
+		name      string
+		values    map[string]any
+		wantName  string
+		wantFound bool
+	}{
+		{
+			name:      "default namespace",
+			values:    map[string]any{"agentio": map[string]any{"enabled": true}},
+			wantName:  "agentio-system",
+			wantFound: true,
+		},
+		{
+			name: "custom namespace",
+			values: map[string]any{"agentio": map[string]any{
+				"enabled": true,
+				"global":  map[string]any{"namespace": "custom-agentio"},
+			}},
+			wantName:  "custom-agentio",
+			wantFound: true,
+		},
+		{
+			name: "namespace creation disabled",
+			values: map[string]any{"agentio": map[string]any{
+				"enabled": true,
+				"global":  map[string]any{"createNamespace": false},
+			}},
+		},
+		{
+			name: "release namespace is managed by Helm",
+			values: map[string]any{"agentio": map[string]any{
+				"enabled": true,
+				"global":  map[string]any{"namespace": "sandbox-system"},
+			}},
+		},
+		{
+			name:   "agentio disabled",
+			values: map[string]any{"agentio": map[string]any{"enabled": false}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			namespace := renderAgentioNamespace(t, target, test.values)
+			if !test.wantFound {
+				if namespace != nil {
+					t.Fatalf("rendered Namespace %q, want none", namespace.Name)
+				}
+				return
+			}
+			if namespace == nil {
+				t.Fatal("rendered chart contains no Agentio Namespace")
+			}
+			if namespace.Name != test.wantName {
+				t.Errorf("Namespace name = %q, want %q", namespace.Name, test.wantName)
+			}
+			if got := namespace.Annotations["helm.sh/resource-policy"]; got != "keep" {
+				t.Errorf("Namespace resource policy = %q, want keep", got)
+			}
+		})
+	}
+}
+
 func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *testing.T) {
 	source := filepath.Join(repositoryAgentioChart(t), "integrations", "openkruise", "sandbox-controller")
 	target := newSandboxControllerChart(t)
@@ -840,6 +911,52 @@ func renderAgentioResourceNamespaces(t *testing.T, target string, userValues map
 		t.Fatal("rendered chart contains no namespaced Agentio resources")
 	}
 	return namespaces
+}
+
+func renderAgentioNamespace(t *testing.T, target string, userValues map[string]any) *corev1.Namespace {
+	t.Helper()
+	chart, err := loader.Load(target)
+	if err != nil {
+		t.Fatalf("load sandbox-manager chart: %v", err)
+	}
+	values, err := chartutil.ToRenderValues(chart, userValues, chartutil.ReleaseOptions{
+		Name:      "sandbox-manager",
+		Namespace: "sandbox-system",
+		IsInstall: true,
+	}, chartutil.DefaultCapabilities)
+	if err != nil {
+		t.Fatalf("build sandbox-manager render values: %v", err)
+	}
+	rendered, err := engine.Render(chart, values)
+	if err != nil {
+		t.Fatalf("render sandbox-manager chart: %v", err)
+	}
+
+	var namespace *corev1.Namespace
+	for name, content := range rendered {
+		if !strings.Contains(name, "/templates/agentio/") {
+			continue
+		}
+		for index, document := range strings.Split(content, "\n---") {
+			object := struct {
+				Kind string `yaml:"kind"`
+			}{}
+			if err := yaml.Unmarshal([]byte(document), &object); err != nil {
+				t.Fatalf("decode %s document %d: %v", name, index, err)
+			}
+			if object.Kind != "Namespace" {
+				continue
+			}
+			if namespace != nil {
+				t.Fatalf("rendered chart contains multiple Agentio Namespaces")
+			}
+			namespace = &corev1.Namespace{}
+			if err := yaml.Unmarshal([]byte(document), namespace); err != nil {
+				t.Fatalf("decode Agentio Namespace from %s document %d: %v", name, index, err)
+			}
+		}
+	}
+	return namespace
 }
 
 func renderSandboxInjectionConfig(t *testing.T, target string) corev1.ConfigMap {
