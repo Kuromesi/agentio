@@ -271,7 +271,7 @@ func ExportSandboxController(source, target string) error {
 	if bundleTemplate == nil {
 		return errors.New("prepared sandbox-controller bundle does not contain sandbox-injection-config")
 	}
-	block, err := extractMarkedBlock(bundleTemplate, trafficProxyBegin, trafficProxyEnd, "prepared traffic-proxy template")
+	block, err := extractTrafficProxyBlock(bundleTemplate, "prepared traffic-proxy template")
 	if err != nil {
 		return err
 	}
@@ -469,7 +469,6 @@ func replaceSandboxControllerValuesBlock(target, block []byte) ([]byte, error) {
 func generatedTrafficProxyBlock(template []byte) []byte {
 	template = bytes.TrimSuffix(template, []byte("\n"))
 	var out bytes.Buffer
-	fmt.Fprintln(&out, trafficProxyBegin)
 	fmt.Fprintln(&out, "  traffic-proxy: |")
 	for _, line := range bytes.Split(template, []byte("\n")) {
 		if len(line) > 0 {
@@ -478,7 +477,6 @@ func generatedTrafficProxyBlock(template []byte) []byte {
 		}
 		out.WriteByte('\n')
 	}
-	fmt.Fprintln(&out, trafficProxyEnd)
 	return out.Bytes()
 }
 
@@ -621,6 +619,37 @@ func removeLegacyControllerWholeFileWarning(content []byte) []byte {
 		}
 	}
 	return content
+}
+
+func extractTrafficProxyBlock(content []byte, description string) ([]byte, error) {
+	name := sandboxInjectionConfigNamePattern.FindIndex(content)
+	if name == nil {
+		return nil, fmt.Errorf("%s metadata.name not found", description)
+	}
+	documentStart := bytes.LastIndex(content[:name[0]], []byte("\n---"))
+	if documentStart < 0 {
+		documentStart = 0
+	} else {
+		documentStart += len("\n---")
+	}
+	documentEndRelative := bytes.Index(content[name[1]:], []byte("\n---"))
+	documentEnd := len(content)
+	if documentEndRelative >= 0 {
+		documentEnd = name[1] + documentEndRelative
+	}
+	document := content[documentStart:documentEnd]
+	data := yamlDataLinePattern.FindIndex(document)
+	if data == nil {
+		return nil, fmt.Errorf("%s data mapping not found", description)
+	}
+	dataStart := documentStart + data[1]
+	entry := yamlTrafficProxyLinePattern.FindIndex(content[dataStart:documentEnd])
+	if entry == nil {
+		return nil, fmt.Errorf("%s data.traffic-proxy entry not found", description)
+	}
+	entryStart := dataStart + entry[0]
+	entryEnd := yamlEntryEnd(content, dataStart+entry[1], documentEnd, 2)
+	return append([]byte(nil), content[entryStart:entryEnd]...), nil
 }
 
 func yamlEntryEnd(content []byte, start, limit, indentation int) int {

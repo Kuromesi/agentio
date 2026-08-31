@@ -93,7 +93,7 @@ func VerifyIntegrationBundle(bundle string) error {
 	if controllerTemplate == nil {
 		return errors.New("sandbox-controller bundle does not contain sandbox-injection-config")
 	}
-	if _, err := extractMarkedBlock(controllerTemplate, trafficProxyBegin, trafficProxyEnd, "sandbox-controller traffic-proxy template"); err != nil {
+	if _, err := extractTrafficProxyBlock(controllerTemplate, "sandbox-controller traffic-proxy template"); err != nil {
 		return err
 	}
 	if path, key, err := findVersionMetadataInTree(bundle); err != nil {

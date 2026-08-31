@@ -184,7 +184,7 @@ jobs:
             --namespace sandbox-system >"$controller_rendered"
           awk '
             /^  traffic-proxy: \|/ { found=1; capture=1; next }
-            capture && /^  # END GENERATED AGENTIO TRAFFIC PROXY/ { capture=0 }
+            capture && (/^  [^[:space:]]/ || /^---$/) { capture=0 }
             capture { sub(/^    /, ""); print }
             END { if (!found) exit 1 }
           ' "$controller_rendered" >"$traffic_proxy_json"
