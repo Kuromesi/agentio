@@ -598,6 +598,49 @@ func TestRepositoryAgentioCRDsAreAlwaysRenderedAndRetained(t *testing.T) {
 	}
 }
 
+func TestSandboxManagerAgentioNamespaceIsIndependentFromReleaseNamespace(t *testing.T) {
+	source := repositoryAgentioChart(t)
+	target := t.TempDir()
+	writeTestFile(t, target, "Chart.yaml", "apiVersion: v2\nname: sandbox-manager\nversion: 0.1.0\n")
+	writeTestFile(t, target, "values.yaml", "manager: unchanged\n")
+
+	if err := buildSandboxManagerBundle(source, target); err != nil {
+		t.Fatalf("buildSandboxManagerBundle() error = %v", err)
+	}
+
+	for _, test := range []struct {
+		name      string
+		namespace string
+		values    map[string]any
+	}{
+		{
+			name:      "default",
+			namespace: "agentio-system",
+			values: map[string]any{
+				"agentio": map[string]any{"enabled": true},
+			},
+		},
+		{
+			name:      "override",
+			namespace: "custom-agentio",
+			values: map[string]any{
+				"agentio": map[string]any{
+					"enabled": true,
+					"global":  map[string]any{"namespace": "custom-agentio"},
+				},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for resource, namespace := range renderAgentioResourceNamespaces(t, target, test.values) {
+				if namespace != test.namespace {
+					t.Errorf("%s namespace = %q, want %q", resource, namespace, test.namespace)
+				}
+			}
+		})
+	}
+}
+
 func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *testing.T) {
 	source := filepath.Join(repositoryAgentioChart(t), "integrations", "openkruise", "sandbox-controller")
 	target := newSandboxControllerChart(t)
@@ -750,6 +793,53 @@ func newSandboxControllerChart(t *testing.T) string {
 {{- end -}}
 `)
 	return target
+}
+
+func renderAgentioResourceNamespaces(t *testing.T, target string, userValues map[string]any) map[string]string {
+	t.Helper()
+	chart, err := loader.Load(target)
+	if err != nil {
+		t.Fatalf("load sandbox-manager chart: %v", err)
+	}
+	values, err := chartutil.ToRenderValues(chart, userValues, chartutil.ReleaseOptions{
+		Name:      "sandbox-manager",
+		Namespace: "sandbox-system",
+		IsInstall: true,
+	}, chartutil.DefaultCapabilities)
+	if err != nil {
+		t.Fatalf("build sandbox-manager render values: %v", err)
+	}
+	rendered, err := engine.Render(chart, values)
+	if err != nil {
+		t.Fatalf("render sandbox-manager chart: %v", err)
+	}
+
+	namespaces := map[string]string{}
+	for name, content := range rendered {
+		if !strings.Contains(name, "/templates/agentio/") {
+			continue
+		}
+		for index, document := range strings.Split(content, "\n---") {
+			object := struct {
+				Kind     string `yaml:"kind"`
+				Metadata struct {
+					Name      string `yaml:"name"`
+					Namespace string `yaml:"namespace"`
+				} `yaml:"metadata"`
+			}{}
+			if err := yaml.Unmarshal([]byte(document), &object); err != nil {
+				t.Fatalf("decode %s document %d: %v", name, index, err)
+			}
+			if object.Kind == "" || object.Metadata.Namespace == "" {
+				continue
+			}
+			namespaces[fmt.Sprintf("%s/%s", object.Kind, object.Metadata.Name)] = object.Metadata.Namespace
+		}
+	}
+	if len(namespaces) == 0 {
+		t.Fatal("rendered chart contains no namespaced Agentio resources")
+	}
+	return namespaces
 }
 
 func renderSandboxInjectionConfig(t *testing.T, target string) corev1.ConfigMap {

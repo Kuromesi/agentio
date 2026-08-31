@@ -2,9 +2,9 @@
 Shared helpers for the agentio chart.
 */}}
 
-{{/* Namespace for all agentio resources: the Helm release namespace. */}}
+{{/* Namespace for all Agentio resources. */}}
 {{- define "agentio.namespace" -}}
-{{ .Release.Namespace }}
+{{ .Values.global.namespace | default "agentio-system" }}
 {{- end -}}
 
 {{/*
