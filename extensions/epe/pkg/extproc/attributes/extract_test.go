@@ -58,6 +58,11 @@ func TestExtract(t *testing.T) {
 		":method":    "POST",
 		":scheme":    "https",
 	}
+	connectHeaders := map[string]string{
+		":authority": "target.example.com:443",
+		":method":    "CONNECT",
+		":scheme":    "http",
+	}
 	// parseHTTPRequest stores the (lowercased) header map into
 	// HTTPRequest.Headers — the single canonical header holder.
 	fullReq := func(port int32, headers map[string]string) httpreq.HTTPRequest {
@@ -116,6 +121,27 @@ func TestExtract(t *testing.T) {
 				Labels: map[string]string{"app": "sleep", "tier": "web"},
 			},
 			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
+		},
+		{
+			name: "CONNECT keeps target authority port instead of proxy destination port",
+			attrFields: map[string]any{
+				FilterStateDownstreamPeerNamespace: "default",
+				FilterStateDownstreamPeerName:      "pod-a",
+				AttrDestinationPort:                float64(1087),
+			},
+			headers: connectHeaders,
+			wantPeer: filter.Peer{
+				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
+				Labels: map[string]string{},
+			},
+			wantReq: httpreq.HTTPRequest{
+				Host:    "target.example.com",
+				Port:    443,
+				Method:  "CONNECT",
+				Scheme:  "http",
+				Headers: connectHeaders,
+			},
 			wantValid: true,
 		},
 		{

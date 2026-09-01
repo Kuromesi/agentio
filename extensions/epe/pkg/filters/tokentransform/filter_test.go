@@ -112,6 +112,28 @@ func streamWithoutPeerToken() *filter.Stream {
 	return &filter.Stream{Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "podns", Name: "pod-x"}}}
 }
 
+func TestFilterRejectsCONNECTBeforeFetchingTargetCredential(t *testing.T) {
+	source := &fakeSource{cred: Credential{Token: "must-not-reach-proxy"}}
+	f := newTestFilter(source, nil, secretCfg(false))
+	st := streamWithPeerToken()
+	st.Request.Method = "CONNECT"
+
+	act, err := f.OnRequestHeaders(context.Background(), st)
+	if err != nil {
+		t.Fatalf("OnRequestHeaders: %v", err)
+	}
+	if act.Kind() != filter.KindStop {
+		t.Fatalf("action kind = %v, want Stop", act.Kind())
+	}
+	reply, ok := act.Reply()
+	if !ok || reply.Status != 403 {
+		t.Fatalf("reply = %+v, present=%t; want a 403 block reply", reply, ok)
+	}
+	if len(source.got) != 0 {
+		t.Fatalf("credential fetches = %d, want 0", len(source.got))
+	}
+}
+
 func TestFilterSignerPreparationBeforeCredentialFetch(t *testing.T) {
 	t.Run("header condition skips credential fetch", func(t *testing.T) {
 		source := &fakeSource{cred: Credential{Token: "credential"}}

@@ -47,10 +47,11 @@ const (
 	connectProxyHTTPSNodePort = 32129
 )
 
-// TestSandboxForwardHTTPConnect sends real CONNECT requests through both the
-// cleartext and TLS-terminated forward-http paths. The explicit proxy listens
-// on NodePorts so its intercepted address is not a mesh service and therefore
-// exercises the sandbox catchall listener rather than service routing.
+// TestSandboxForwardHTTPConnect sends real CONNECT requests through ext_proc
+// and both the cleartext and TLS-terminated forward-http paths. The explicit
+// proxy listens on NodePorts so its intercepted address is not a mesh service
+// and therefore exercises the sandbox catchall listener rather than service
+// routing.
 func TestSandboxForwardHTTPConnect(t *testing.T) {
 	framework.NewTest(t).
 		Run(func(ctx framework.TestContext) {
@@ -87,6 +88,16 @@ metadata:
   name: `+agentioConfigMapName+`
 data:
   config: |
+    sandboxExtProc:
+      service: ext-proc.{{ .Namespace }}.svc.cluster.local
+      port: 9002
+      failureModeAllow: false
+      request:
+        headerMode: SEND
+        attributes:
+        - destination.port
+      response:
+        headerMode: SEND
     egressPolicies:
     - gateway:
         service: egress-gateway.{{ .Namespace }}.svc.cluster.local

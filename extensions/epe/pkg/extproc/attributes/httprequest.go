@@ -81,9 +81,11 @@ func splitPathAndQuery(rawPath string) (string, string) {
 //   - :authority "host:port"  -> Host, Port
 //   - :path "/p?q=1"          -> Path, Query
 //
-// Port inference: when :authority does not include an explicit port, the
-// default port is taken from :scheme — http=80, https=443. The :scheme
-// value itself is stored on HTTPRequest.Scheme.
+// Port inference: for ordinary requests whose :authority does not include an
+// explicit port, the default is taken from :scheme — http=80, https=443. A
+// CONNECT authority must name its target port explicitly; its :scheme belongs
+// to the proxy hop and is never used to invent a tunnel target port. The
+// :scheme value itself is stored on HTTPRequest.Scheme.
 //
 // Query-string parse errors are logged at DEBUG via the logger in ctx (the
 // returned Query still holds whatever url.ParseQuery managed to extract).
@@ -96,7 +98,7 @@ func parseHTTPRequest(ctx context.Context, headers map[string]string) httpreq.HT
 		info.Host, info.Port = splitHostPort(host)
 	}
 
-	if info.Port == 0 {
+	if info.Port == 0 && !strings.EqualFold(headers[":method"], "CONNECT") {
 		info.Port = inferPortFromScheme(headers[":scheme"])
 	}
 
