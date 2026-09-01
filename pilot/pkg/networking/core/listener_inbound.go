@@ -110,6 +110,12 @@ type inboundChainConfig struct {
 	// without the other does not silently get both.
 	acceptHTTP2 bool
 
+	// connectProxyCluster, when non-empty, enables application-level CONNECT
+	// proxying on this HTTP chain and names the cluster for the upstream proxy.
+	// The cluster must preserve the original destination; CONNECT authority is
+	// the tunnel target and must not select the upstream proxy.
+	connectProxyCluster string
+
 	// applySandboxConnectionPoolSettings when true causes sandbox connection pool timeouts
 	// (stream idle, TCP idle) to be applied to this chain's HCM/TCPProxy.
 	// Only set for sandbox egress catchall paths where unknown-destination

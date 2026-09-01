@@ -859,6 +859,12 @@ func (lb *ListenerBuilder) buildWaypointInboundHTTPFilters(svc *model.Service, c
 		}
 	}
 	h := lb.buildHTTPConnectionManager(httpOpts)
+	if cc.connectProxyCluster != "" {
+		if h.Http2ProtocolOptions == nil {
+			h.Http2ProtocolOptions = &core.Http2ProtocolOptions{}
+		}
+		h.Http2ProtocolOptions.AllowConnect = true
+	}
 	if cc.applySandboxConnectionPoolSettings {
 		applySandboxStreamIdleTimeout(lb, h)
 	}
@@ -875,6 +881,9 @@ func (lb *ListenerBuilder) buildWaypointInboundHTTPFilters(svc *model.Service, c
 	h.HttpFilters = append(pre, h.HttpFilters[:len(h.HttpFilters)-1]...)
 	h.HttpFilters = append(h.HttpFilters, post...)
 	h.HttpFilters = appendSandboxHTTPFilters(lb, h.HttpFilters, cc.validateSni)
+	if cc.connectProxyCluster == tlsProxyOriginateCluster {
+		h.HttpFilters = append(h.HttpFilters, buildConnectProxyTLSIdentityFilter())
+	}
 	h.HttpFilters = append(h.HttpFilters, router)
 
 	filters = append(filters, &listener.Filter{
@@ -1046,12 +1055,17 @@ func buildRouteVHostDomains(svc *model.Service) []string {
 func buildWaypointInboundHTTPRouteConfig(lb *ListenerBuilder, svc *model.Service, cc inboundChainConfig) *route.RouteConfiguration {
 	// TODO: Policy binding via VIP+Host is inapplicable for direct pod access.
 	if svc == nil {
+		var routeConfig *route.RouteConfiguration
 		if cc.applySandboxConnectionPoolSettings {
 			if connPool := sandboxGatewayConnPool(lb); connPool != nil {
-				return buildSandboxHTTPRouteConfig(lb, cc, connPool)
+				routeConfig = buildSandboxHTTPRouteConfig(lb, cc, connPool)
 			}
 		}
-		return buildSidecarInboundHTTPRouteConfig(svc, lb, cc)
+		if routeConfig == nil {
+			routeConfig = buildSidecarInboundHTTPRouteConfig(svc, lb, cc)
+		}
+		prependSandboxConnectRoute(routeConfig, cc.connectProxyCluster)
+		return routeConfig
 	}
 
 	virtualServices := getVirtualServiceForWaypoint(lb.node.ConfigNamespace, svc, lb.node.SidecarScope.EgressListeners[0].VirtualServices())

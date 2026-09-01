@@ -62,6 +62,7 @@ func sandboxClusters(cb *ClusterBuilder) []*cluster.Cluster {
 		buildSandboxPassthroughCluster(cb),
 		buildDefaultHTTPForwardCluster(cb),
 		buildDefaultTLSConnectOriginateCluster(cb),
+		buildTLSProxyOriginateCluster(cb),
 		GetMainForwardCluster(),
 	}
 }
@@ -139,6 +140,52 @@ func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster
 			UpstreamHttpProtocolOptions: &core.UpstreamHttpProtocolOptions{
 				AutoSni:           true,
 				AutoSanValidation: true,
+			},
+			UpstreamProtocolOptions: &httpupstream.HttpProtocolOptions_AutoConfig{
+				AutoConfig: &httpupstream.HttpProtocolOptions_AutoHttpConfig{
+					HttpProtocolOptions:  &core.Http1ProtocolOptions{},
+					Http2ProtocolOptions: http2ProtocolOptions(),
+				},
+			},
+		}),
+	}
+	c.TransportSocket = &core.TransportSocket{
+		Name: wellknown.TransportSocketTLS,
+		ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: protoconv.MessageToAny(&tlsv3.UpstreamTlsContext{
+			CommonTlsContext: &tlsv3.CommonTlsContext{
+				TlsParams: &tlsv3.TlsParameters{
+					TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
+				},
+				ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
+					ValidationContext: &tlsv3.CertificateValidationContext{
+						TrustedCa: &core.DataSource{
+							Specifier: &core.DataSource_Filename{
+								Filename: security.GetOSRootFilePath(),
+							},
+						},
+					},
+				},
+				AlpnProtocols: util.ALPNHttp,
+			},
+		})},
+	}
+	return c
+}
+
+// buildTLSProxyOriginateCluster connects to the original destination as an
+// HTTPS proxy. Its upstream SNI and certificate SANs come from the outer
+// ClientHello filter state, never from the inner CONNECT authority.
+func buildTLSProxyOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
+	c := buildSandboxPassthroughCluster(cb)
+	c.Name = tlsProxyOriginateCluster
+	c.AltStatName = util.DelimitedStatsPrefix(tlsProxyOriginateCluster)
+	// The downstream client and upstream HTTPS proxy negotiate TLS independently.
+	// Select the final HTTP codec from the proxy's ALPN rather than copying the
+	// downstream protocol, while leaving SNI/SAN selection to filter state.
+	c.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+		v3.HttpProtocolOptionsType: protoconv.MessageToAny(&httpupstream.HttpProtocolOptions{
+			CommonHttpProtocolOptions: &core.HttpProtocolOptions{
+				IdleTimeout: durationpb.New(5 * time.Minute),
 			},
 			UpstreamProtocolOptions: &httpupstream.HttpProtocolOptions_AutoConfig{
 				AutoConfig: &httpupstream.HttpProtocolOptions_AutoHttpConfig{
