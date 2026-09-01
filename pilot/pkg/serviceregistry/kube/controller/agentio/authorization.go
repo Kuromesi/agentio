@@ -155,7 +155,7 @@ func (c *authorizationController) convertTrafficPolicyToWorkloadPolicies(
 	if tp.Egress != nil {
 		rules := []*v1beta1.Rule{}
 		for _, rule := range tp.Egress.Rules {
-			rules = append(rules, c.convertRule(ctx, rule, resolver))
+			rules = append(rules, c.convertRule(ctx, rule, namespace, resolver))
 		}
 
 		ap := &securityclient.AuthorizationPolicy{
@@ -183,7 +183,7 @@ func (c *authorizationController) convertTrafficPolicyToWorkloadPolicies(
 	if tp.Ingress != nil {
 		rules := []*v1beta1.Rule{}
 		for _, rule := range tp.Ingress.Rules {
-			rules = append(rules, c.convertRule(ctx, rule, resolver))
+			rules = append(rules, c.convertRule(ctx, rule, namespace, resolver))
 		}
 
 		ap := &securityclient.AuthorizationPolicy{
@@ -236,7 +236,12 @@ func formatPortRange(port agentsv1alpha1.TrafficPolicyPort) string {
 	return s
 }
 
-func (c *authorizationController) convertRule(ctx krt.HandlerContext, rule agentsv1alpha1.TrafficPolicyRule, resolver resolveExternalName) *v1beta1.Rule {
+func (c *authorizationController) convertRule(
+	ctx krt.HandlerContext,
+	rule agentsv1alpha1.TrafficPolicyRule,
+	policyNamespace string,
+	resolver resolveExternalName,
+) *v1beta1.Rule {
 	apRule := &v1beta1.Rule{}
 
 	fetchIps := func(peer agentsv1alpha1.TrafficPolicyPeer) []string {
@@ -244,11 +249,15 @@ func (c *authorizationController) convertRule(ctx krt.HandlerContext, rule agent
 		if peer.CIDR != "" {
 			ips = append(ips, peer.CIDR)
 		} else if peer.Service != nil {
+			serviceNamespace := peer.Service.Namespace
+			if serviceNamespace == "" {
+				serviceNamespace = policyNamespace
+			}
 			var svcs []*corev1.Service
 			if peer.Service.Name == "" || peer.Service.Name == "*" {
-				svcs = krt.Fetch(ctx, c.services, krt.FilterIndex(c.servicesByNamespace, peer.Service.Namespace))
+				svcs = krt.Fetch(ctx, c.services, krt.FilterIndex(c.servicesByNamespace, serviceNamespace))
 			} else {
-				key := peer.Service.Namespace + "/" + peer.Service.Name
+				key := serviceNamespace + "/" + peer.Service.Name
 				if svc := ptr.Flatten(krt.FetchOne(ctx, c.services, krt.FilterKey(key))); svc != nil {
 					svcs = []*corev1.Service{svc}
 				} else {
@@ -310,20 +319,26 @@ func (c *authorizationController) convertRule(ctx krt.HandlerContext, rule agent
 		}
 	}
 
-	appendCondition := func(key string, values []string) {
-		if len(values) == 0 {
+	appendCondition := func(key string, values []string, declared bool) {
+		if !declared {
 			return
 		}
+		condition := &v1beta1.Condition{Key: key}
 		if rule.Action == agentsv1alpha1.RuleActionAllow {
-			apRule.When = append(apRule.When, &v1beta1.Condition{Key: key, Values: values})
+			condition.Values = values
 		} else {
-			apRule.When = append(apRule.When, &v1beta1.Condition{Key: key, NotValues: values})
+			condition.NotValues = values
 		}
+		// A declared peer with no resolved addresses must not become a wildcard.
+		// Leaving both value lists empty compiles to a non-empty Rules clause
+		// containing an empty Match, which ztunnel treats as never matching. The
+		// policy remains present and can recover when its dependencies resolve.
+		apRule.When = append(apRule.When, condition)
 	}
 
-	appendCondition("source.ip", srcIps)
-	appendCondition("destination.ip", dstIps)
-	appendCondition("destination.portRange", dstPortRanges)
+	appendCondition("source.ip", srcIps, len(rule.From) > 0)
+	appendCondition("destination.ip", dstIps, len(rule.To) > 0)
+	appendCondition("destination.portRange", dstPortRanges, len(dstPortRanges) > 0)
 
 	return apRule
 }
