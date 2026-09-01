@@ -107,7 +107,9 @@ func (b *RequestBuilder) SourceAddress(addr string) *RequestBuilder {
 
 // DestinationPort simulates the Envoy-authenticated TCP destination port.
 // It is delivered as a NUMBER value — attributes.Extract ignores strings —
-// and overrides any port parsed from :authority.
+// and overrides the authority port for ordinary requests. CONNECT retains its
+// authority port because that is the tunnel target and destination.port is the
+// explicit proxy listener.
 func (b *RequestBuilder) DestinationPort(port int32) *RequestBuilder {
 	b.dstPort = port
 	return b

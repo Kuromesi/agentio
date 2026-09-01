@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -76,6 +78,18 @@ func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 // OnRequestHeaders evaluates this rule and either transforms, defers for a
 // body, blocks, or continues to the next rule.
 func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filter.Action, error) {
+	// CONNECT headers are consumed by the explicit proxy; the target server
+	// only sees protocol bytes sent after the proxy establishes the tunnel.
+	// Applying a target TokenTransform here would therefore disclose the
+	// credential to the proxy without authenticating the target request. This
+	// protocol mismatch is always denied, independent of FailStrategy.
+	if strings.EqualFold(st.Request.Method, http.MethodConnect) {
+		return filter.Stop(filter.Reply{
+			Status: 403,
+			Body:   []byte("tokentransform: unsupported for CONNECT"),
+		}), nil
+	}
+
 	rc := &f.rule
 	cfg := rc.Cfg
 

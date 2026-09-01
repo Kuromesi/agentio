@@ -139,3 +139,44 @@ spec:
 		DestinationPort(8080)
 	h.Run(t, realPort).RequirePassthrough(t)
 }
+
+// TestScenario_CONNECTMatchesAuthorityTargetPort proves a forward-proxy
+// CONNECT is governed by the tunnel target port, not the proxy listener port
+// carried by Envoy's destination.port attribute.
+func TestScenario_CONNECTMatchesAuthorityTargetPort(t *testing.T) {
+	h := New(t, Options{})
+	h.Fixture.ApplyYAML(`
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: connect-target-port
+  namespace: test-ns
+spec:
+  selector:
+    matchLabels:
+      app: sandbox
+  rules:
+  - name: block-connect-443
+    match:
+    - domains:
+      - target.example.com
+      methods:
+      - CONNECT
+      ports:
+      - 443
+    actions:
+      block:
+        statusCode: 451
+        body: blocked-connect-target
+`)
+
+	h.Run(t, enginetest.NewRequest("CONNECT", "target.example.com:443", "").
+		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		DestinationPort(1087).
+		StreamingHeaders()).RequireBlockedBody(t, 451, "blocked-connect-target")
+
+	h.Run(t, enginetest.NewRequest("CONNECT", "target.example.com:8443", "").
+		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		DestinationPort(1087).
+		StreamingHeaders()).RequirePassthrough(t)
+}

@@ -203,6 +203,17 @@ func TestParseHTTPRequest_InfersPortFromScheme(t *testing.T) {
 	}
 }
 
+func TestParseHTTPRequest_CONNECTWithoutExplicitPortDoesNotInferProxySchemePort(t *testing.T) {
+	info := parseHTTPRequest(context.Background(), map[string]string{
+		":authority": "target.example.com",
+		":method":    "CONNECT",
+		":scheme":    "https",
+	})
+	if info.Port != 0 {
+		t.Fatalf("CONNECT port = %d, want 0 when target authority omits it", info.Port)
+	}
+}
+
 // TestInferPortFromScheme exercises the helper directly.
 func TestInferPortFromScheme(t *testing.T) {
 	cases := map[string]int32{

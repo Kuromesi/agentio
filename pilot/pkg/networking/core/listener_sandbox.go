@@ -19,16 +19,20 @@ import (
 	"strconv"
 	"time"
 
+	xds "github.com/cncf/xds/go/xds/core/v3"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbacconfig "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	extensionmatching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
 	ratelimitv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/ratelimit/v3"
+	skipaction "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/matcher/action/v3"
 	sfsvalue "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	rbachttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	sfshttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	sfsnetwork "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
 	tcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
@@ -36,6 +40,7 @@ import (
 	sniv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/cert_mappers/sni/v3"
 	on_demand_secretv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/cert_selectors/on_demand_secret/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	httpmatcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	envoytypev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/google/cel-go/cel"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
@@ -61,11 +66,12 @@ import (
 )
 
 const (
-	forwardHttpFilterChain  = "forward-http"
-	forwardTcpFilterChain   = "forward-tcp"
-	tlsTerminateFilterChain = "tls-terminate"
-	httpForwardCluster      = "http_dynamic_forward_proxy"
-	tlsOriginateCluster     = "tls_connect_originate"
+	forwardHttpFilterChain   = "forward-http"
+	forwardTcpFilterChain    = "forward-tcp"
+	tlsTerminateFilterChain  = "tls-terminate"
+	httpForwardCluster       = "http_dynamic_forward_proxy"
+	tlsOriginateCluster      = "tls_connect_originate"
+	tlsProxyOriginateCluster = "tls_proxy_originate"
 	// agentioDFPCacheName is the dynamic_forward_proxy DNS cache name shared by
 	// the HTTP filter in buildWaypointInboundHTTPFilters and the upstream
 	// cluster in buildDefaultTLSConnectOriginateCluster. Both ends must use the
@@ -83,13 +89,19 @@ const (
 	// forward-http HCM. The HCM's RBAC filter compares it against the inner
 	// :authority — preventing a client from passing the SNI allowlist with
 	// trusted.com and then targeting untrusted.com via the inner Host header.
-	outerSNIFilterStateKey = "io.kruise.outer_sni"
+	// For CONNECT requests to an HTTPS proxy, the same value is copied into the
+	// standard Envoy upstream TLS identity keys at request scope.
+	outerSNIFilterStateKey                = "io.kruise.outer_sni"
+	upstreamServerNameFilterStateKey      = "envoy.network.upstream_server_name"
+	upstreamSubjectAltNamesFilterStateKey = "envoy.network.upstream_subject_alt_names"
 
-	// networkSetFilterStateName is the Envoy canonical name for the network
-	// set_filter_state filter. wellknown does not expose it. The Name field is
-	// only a label (Envoy dispatches by typed_config type URL), but using the
-	// canonical name matches Istio conventions and keeps config dumps readable.
+	// networkSetFilterStateName labels the network set_filter_state filter that
+	// captures outer SNI. Envoy dispatches it by typed_config type URL, so a
+	// purpose-specific name keeps config dumps readable.
 	networkSetFilterStateName = "connect_sni"
+	// connectProxyTLSIdentityFilterName labels the request-scoped HTTP filter
+	// that copies outer SNI into Envoy's upstream TLS identity keys for CONNECT.
+	connectProxyTLSIdentityFilterName = "connect-proxy-tls-identity"
 	// clearDownstreamPeerFilterName is the HCM instance label for the
 	// set_filter_state HTTP filter built by sandboxClearPeerMetadataObjFilter.
 	// Custom (non-canonical) so the filter's purpose is obvious in config dumps.
@@ -109,12 +121,10 @@ func sniTrafficPolicyEnabled(metadata *model.NodeMetadata) bool {
 }
 
 // buildCaptureSNIFilter returns a network filter that captures the downstream
-// ClientHello SNI into shared filter state. Placed BEFORE the TCP proxy on
-// the tls-terminate chain. SharedWithUpstream=ONCE propagates the value
-// across the internal-listener hop into MainForwardName so the inner HCM can
-// consume it. SkipIfEmpty avoids writing a key when SNI is absent — the
-// inner RBAC then short-circuits (key missing => condition false => no DENY),
-// preserving plaintext catchall behavior.
+// ClientHello SNI into shared filter state. Placed BEFORE the TCP proxy on the
+// tls-terminate chain. SharedWithUpstream=ONCE propagates the value across the
+// internal-listener hop into MainForwardName. SkipIfEmpty avoids writing an
+// invalid identity object when SNI is absent.
 func buildCaptureSNIFilter() *listener.Filter {
 	return &listener.Filter{
 		Name: networkSetFilterStateName,
@@ -136,6 +146,86 @@ func buildCaptureSNIFilter() *listener.Filter {
 				SkipIfEmpty:        true,
 			}},
 		})},
+	}
+}
+
+// buildConnectProxyTLSIdentityFilter copies the outer proxy SNI into Envoy's
+// standard upstream TLS identity filter-state keys only for CONNECT requests.
+// ExtensionWithMatcher skips the wrapped set_filter_state filter for every
+// other method, so ordinary requests retain auto_sni and auto_san_validation.
+func buildConnectProxyTLSIdentityFilter() *hcm.HttpFilter {
+	outerSNIFormat := &core.SubstitutionFormatString{
+		OmitEmptyValues: true,
+		Format: &core.SubstitutionFormatString_TextFormatSource{
+			TextFormatSource: &core.DataSource{
+				Specifier: &core.DataSource_InlineString{
+					InlineString: fmt.Sprintf("%%FILTER_STATE(%s:PLAIN)%%", outerSNIFilterStateKey),
+				},
+			},
+		},
+	}
+	setTLSIdentity := &sfshttp.Config{
+		OnRequestHeaders: []*sfsvalue.FilterStateValue{
+			{
+				Key:         &sfsvalue.FilterStateValue_ObjectKey{ObjectKey: upstreamServerNameFilterStateKey},
+				Value:       &sfsvalue.FilterStateValue_FormatString{FormatString: outerSNIFormat},
+				SkipIfEmpty: true,
+			},
+			{
+				Key:         &sfsvalue.FilterStateValue_ObjectKey{ObjectKey: upstreamSubjectAltNamesFilterStateKey},
+				Value:       &sfsvalue.FilterStateValue_FormatString{FormatString: outerSNIFormat},
+				SkipIfEmpty: true,
+			},
+		},
+	}
+	connectMethod := &matcher.Matcher_MatcherList_Predicate{
+		MatchType: &matcher.Matcher_MatcherList_Predicate_SinglePredicate_{
+			SinglePredicate: &matcher.Matcher_MatcherList_Predicate_SinglePredicate{
+				Input: &xds.TypedExtensionConfig{
+					Name: "request-headers",
+					TypedConfig: protoconv.MessageToAny(&httpmatcher.HttpRequestHeaderMatchInput{
+						HeaderName: ":method",
+					}),
+				},
+				Matcher: &matcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{
+					ValueMatch: &matcher.StringMatcher{
+						MatchPattern: &matcher.StringMatcher_Exact{Exact: ConnectUpgradeType},
+					},
+				},
+			},
+		},
+	}
+	skipFilter := &matcher.Matcher_OnMatch{
+		OnMatch: &matcher.Matcher_OnMatch_Action{
+			Action: &xds.TypedExtensionConfig{
+				Name:        "skip",
+				TypedConfig: protoconv.MessageToAny(&skipaction.SkipFilter{}),
+			},
+		},
+	}
+	wrapped := &extensionmatching.ExtensionWithMatcher{
+		XdsMatcher: &matcher.Matcher{
+			MatcherType: &matcher.Matcher_MatcherList_{
+				MatcherList: &matcher.Matcher_MatcherList{
+					Matchers: []*matcher.Matcher_MatcherList_FieldMatcher{{
+						Predicate: &matcher.Matcher_MatcherList_Predicate{
+							MatchType: &matcher.Matcher_MatcherList_Predicate_NotMatcher{
+								NotMatcher: connectMethod,
+							},
+						},
+						OnMatch: skipFilter,
+					}},
+				},
+			},
+		},
+		ExtensionConfig: &core.TypedExtensionConfig{
+			Name:        "envoy.filters.http.set_filter_state",
+			TypedConfig: protoconv.MessageToAny(setTLSIdentity),
+		},
+	}
+	return &hcm.HttpFilter{
+		Name:       connectProxyTLSIdentityFilterName,
+		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(wrapped)},
 	}
 }
 
@@ -209,8 +299,9 @@ func buildSandboxConnectDownstreamFilter() *listener.Filter {
 
 // sniHostMismatchCondition is the CEL expression evaluated by the RBAC DENY
 // policy. It denies a request when:
-//  1. the outer SNI was captured (filter state present and non-empty), AND
-//  2. the inner :authority neither equals the SNI nor is "<sni>:port".
+//  1. the request is not CONNECT (whose authority names the tunnel target), AND
+//  2. the outer SNI was captured (filter state present and non-empty), AND
+//  3. the inner :authority neither equals the SNI nor is "<sni>:port".
 //
 // `filter_state[k]` returns CEL bytes (envoy hard-codes CreateBytes regardless
 // of the factory used to set the value). Comparing bytes to a string literal
@@ -219,6 +310,7 @@ func buildSandboxConnectDownstreamFilter() *listener.Filter {
 // string. If the filter state key is absent (plaintext catchall path), the
 // map index itself errors → policy not matched → request passes through.
 var sniHostMismatchCondition = fmt.Sprintf(`
+	request.method != 'CONNECT' &&
   '%[1]s' in filter_state &&
   string(filter_state['%[1]s']) != '' &&
   request.host.split(':')[0].lowerAscii() != string(filter_state['%[1]s']).lowerAscii()
@@ -289,9 +381,11 @@ func (lb *ListenerBuilder) buildMainForwardFilters(httpCluster, tcpCluster strin
 	// by the global ValidateTlsTerminatedSNI feature flag.
 	schemeOverwrite := ""
 	acceptHTTP2 := false
+	connectProxyCluster := util.PassthroughCluster
 	if inner {
 		schemeOverwrite = "https"
 		acceptHTTP2 = true
+		connectProxyCluster = tlsProxyOriginateCluster
 	}
 	inner = features.ValidateTlsTerminatedSNI && inner
 	catchallHTTP := &listener.FilterChain{
@@ -309,6 +403,7 @@ func (lb *ListenerBuilder) buildMainForwardFilters(httpCluster, tcpCluster strin
 			validateSni:                        inner,
 			schemeOverwrite:                    schemeOverwrite,
 			acceptHTTP2:                        acceptHTTP2,
+			connectProxyCluster:                connectProxyCluster,
 			applySandboxConnectionPoolSettings: true,
 		}),
 	}
@@ -348,8 +443,8 @@ func buildSandboxSniTrafficPolicyDenyFilterChain() *listener.FilterChain {
 	}
 }
 
-// buildTlsTerminateFilterChain builds a TLS termination filter chain with dynamic forward proxy.
-// It matches SNI and forwards traffic to the tls_connect_originate cluster.
+// buildTlsTerminateFilterChain terminates downstream TLS and forwards the
+// decrypted stream to the main_forward internal listener for protocol routing.
 func (lb *ListenerBuilder) buildTlsTerminateFilterChain(connPool *extensions.ConnectionPoolSettings) *listener.FilterChain {
 	tcpProxy := &tcp.TcpProxy{
 		StatPrefix:       MainForwardName,
@@ -414,7 +509,9 @@ func (lb *ListenerBuilder) buildTlsTerminateFilterChain(connPool *extensions.Con
 // buildMainForwardListener builds an internal listener for sandbox catchall traffic.
 // It performs protocol sniffing: HTTP traffic goes to the HTTP filter chain,
 // everything else (on_no_match) goes to the TCP filter chain.
-// Both chains route to the TLS-origination DFP cluster.
+// Ordinary HTTP and TCP both use the TLS-origination DFP cluster. A CONNECT
+// request on the HTTP chain instead uses the TLS original-destination proxy
+// cluster so its authority cannot replace the upstream proxy address.
 func (lb *ListenerBuilder) buildMainForwardListener() *listener.Listener {
 	l := &listener.Listener{
 		Name:              MainForwardName,
@@ -642,8 +739,9 @@ func sandboxGatewayConnPool(lb *ListenerBuilder) *extensions.ConnectionPoolSetti
 
 // buildSandboxHTTPRouteConfig generates a RouteConfiguration with per-host
 // VirtualHosts from ConnectionPoolSettings.HttpRouteOverrides, plus a wildcard
-// fallback VirtualHost using DefaultHttpRoute. All routes point to the same
-// cluster (DFP resolves the actual upstream via the Host header).
+// fallback VirtualHost using DefaultHttpRoute. Ordinary routes use the chain's
+// DFP cluster. When enabled, the CONNECT route is added before EnvoyFilter
+// patches so route-level policy can inspect, modify, remove, or precede it.
 func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, connPool *extensions.ConnectionPoolSettings) *route.RouteConfiguration {
 	var vhosts []*route.VirtualHost
 
@@ -651,11 +749,10 @@ func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, con
 		if len(override.GetHosts()) == 0 {
 			continue
 		}
-		r := buildSandboxRoute(lb, cc, override.GetSettings())
 		vhosts = append(vhosts, &route.VirtualHost{
 			Name:    fmt.Sprintf("sandbox|override|%d", i),
 			Domains: override.GetHosts(),
-			Routes:  []*route.Route{r},
+			Routes:  []*route.Route{buildSandboxRoute(lb, cc, override.GetSettings())},
 		})
 	}
 
@@ -671,11 +768,44 @@ func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, con
 		VirtualHosts:     vhosts,
 		ValidateClusters: proto.BoolFalse,
 	}
+	prependSandboxConnectRoute(rc, cc.connectProxyCluster)
 	efw := lb.envoyFilterWrapper
 	if efw == nil && lb.push != nil && lb.push.Mesh != nil {
 		efw = lb.push.EnvoyFilters(lb.node)
 	}
 	return envoyfilter.ApplyRouteConfigurationPatches(networking.EnvoyFilter_SIDECAR_INBOUND, lb.node, efw, rc)
+}
+
+// prependSandboxConnectRoute adds the CONNECT-specific route without rebuilding
+// or replacing the existing virtual hosts and ordinary routes.
+func prependSandboxConnectRoute(rc *route.RouteConfiguration, clusterName string) {
+	if rc == nil || clusterName == "" {
+		return
+	}
+	for _, vhost := range rc.GetVirtualHosts() {
+		vhost.Routes = append([]*route.Route{buildSandboxConnectRoute(clusterName)}, vhost.GetRoutes()...)
+	}
+}
+
+// buildSandboxConnectRoute forwards an application-level CONNECT request to
+// the proxy at the original destination. ConnectConfig is intentionally absent:
+// the upstream proxy, rather than Agentio, terminates the CONNECT exchange.
+func buildSandboxConnectRoute(clusterName string) *route.Route {
+	return &route.Route{
+		Name: "sandbox-connect",
+		Match: &route.RouteMatch{
+			PathSpecifier: &route.RouteMatch_ConnectMatcher_{
+				ConnectMatcher: &route.RouteMatch_ConnectMatcher{},
+			},
+		},
+		Action: &route.Route_Route{Route: &route.RouteAction{
+			ClusterSpecifier: &route.RouteAction_Cluster{Cluster: clusterName},
+			Timeout:          durationpb.New(0),
+			UpgradeConfigs: []*route.RouteAction_UpgradeConfig{{
+				UpgradeType: ConnectUpgradeType,
+			}},
+		}},
+	}
 }
 
 // buildSandboxRoute builds a single inbound route with optional timeout/retry

@@ -20,9 +20,15 @@ import (
 
 	typedstruct "github.com/cncf/xds/go/udpa/type/v1"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
+	extensionmatching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
+	sfshttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	sfsnetwork "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
 	tcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
+	httpmatcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -30,6 +36,7 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/core/match"
+	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/protocol"
@@ -158,7 +165,14 @@ func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestinat
 		t.Fatalf("decode HTTP connection manager: %v", err)
 	}
 	httpRoutes := httpConfig.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	if got, want := httpRoutes[0].GetRoute().GetCluster(), "http_dynamic_forward_proxy"; got != want {
+	var defaultHTTPRouteCluster string
+	for _, r := range httpRoutes {
+		if r.GetMatch().GetPrefix() == "/" {
+			defaultHTTPRouteCluster = r.GetRoute().GetCluster()
+			break
+		}
+	}
+	if got, want := defaultHTTPRouteCluster, "http_dynamic_forward_proxy"; got != want {
 		t.Fatalf("HTTP route cluster = %q, want %q", got, want)
 	}
 
@@ -178,6 +192,389 @@ func TestApplySandboxInternalChains_RoutesHTTPThroughDFPAndTCPToOriginalDestinat
 	}
 	if got, want := tcpConfig.GetCluster(), "PassthroughCluster"; got != want {
 		t.Fatalf("TCP route cluster = %q, want %q", got, want)
+	}
+}
+
+func TestBuildMainForwardFilters_ProxiesConnect(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+
+	tests := []struct {
+		name               string
+		inner              bool
+		httpCluster        string
+		tcpCluster         string
+		wantConnectCluster string
+	}{
+		{
+			name:               "clear HTTP proxy",
+			httpCluster:        httpForwardCluster,
+			tcpCluster:         util.PassthroughCluster,
+			wantConnectCluster: util.PassthroughCluster,
+		},
+		{
+			name:               "TLS-terminated HTTPS proxy",
+			inner:              true,
+			httpCluster:        tlsOriginateCluster,
+			tcpCluster:         tlsOriginateCluster,
+			wantConnectCluster: "tls_proxy_originate",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chains := lb.buildMainForwardFilters(tt.httpCluster, tt.tcpCluster, tt.inner)
+			h := &hcm.HttpConnectionManager{}
+			if err := chains[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+				t.Fatalf("decode HTTP connection manager: %v", err)
+			}
+
+			vhost := h.GetRouteConfig().GetVirtualHosts()[0]
+			if got, want := vhost.GetName(), "inbound|http|0"; got != want {
+				t.Fatalf("default virtual host name = %q, want preserved sidecar inbound name %q", got, want)
+			}
+			routes := vhost.GetRoutes()
+			if got, want := len(routes), 2; got != want {
+				t.Fatalf("routes = %d, want CONNECT followed by default HTTP route (%d)", got, want)
+			}
+			connectRoute := routes[0]
+			if connectRoute.GetMatch().GetConnectMatcher() == nil {
+				t.Fatal("first route must use connect_matcher")
+			}
+			connectAction := connectRoute.GetRoute()
+			if got := connectAction.GetCluster(); got != tt.wantConnectCluster {
+				t.Fatalf("CONNECT cluster = %q, want original proxy cluster %q", got, tt.wantConnectCluster)
+			}
+			if connectAction.GetTimeout() == nil || connectAction.GetTimeout().AsDuration() != 0 {
+				t.Fatalf("CONNECT timeout = %v, want disabled (0s)", connectAction.GetTimeout())
+			}
+			upgrades := connectAction.GetUpgradeConfigs()
+			if got, want := len(upgrades), 1; got != want {
+				t.Fatalf("CONNECT upgrade configs = %d, want %d", got, want)
+			}
+			if got := upgrades[0].GetUpgradeType(); got != ConnectUpgradeType {
+				t.Fatalf("upgrade type = %q, want %q", got, ConnectUpgradeType)
+			}
+			if upgrades[0].GetConnectConfig() != nil {
+				t.Fatal("application CONNECT must be proxied upstream, not terminated by Envoy")
+			}
+
+			defaultRoute := routes[1]
+			if got := defaultRoute.GetMatch().GetPrefix(); got != "/" {
+				t.Fatalf("default HTTP route prefix = %q, want /", got)
+			}
+			if got := defaultRoute.GetRoute().GetCluster(); got != tt.httpCluster {
+				t.Fatalf("default HTTP cluster = %q, want %q", got, tt.httpCluster)
+			}
+			if got, want := defaultRoute.GetDecorator().GetOperation(), ":0/*"; got != want {
+				t.Fatalf("default HTTP trace operation = %q, want preserved sidecar inbound operation %q", got, want)
+			}
+			if !h.GetHttp2ProtocolOptions().GetAllowConnect() {
+				t.Fatal("forward-http HCM must allow HTTP/2 CONNECT")
+			}
+		})
+	}
+}
+
+func TestBuildMainForwardFilters_AppliesEnvoyFilterToConnectRoute(t *testing.T) {
+	const envoyFilter = `
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: patch-sandbox-connect
+  namespace: istio-system
+spec:
+  configPatches:
+  - applyTo: HTTP_ROUTE
+    match:
+      context: SIDECAR_INBOUND
+      routeConfiguration:
+        vhost:
+          route:
+            name: sandbox-connect
+    patch:
+      operation: MERGE
+      value:
+        route:
+          timeout: 17s
+  - applyTo: HTTP_ROUTE
+    match:
+      context: SIDECAR_INBOUND
+      routeConfiguration:
+        vhost:
+          route:
+            name: default
+    patch:
+      operation: INSERT_FIRST
+      value:
+        name: connect-guard
+        match:
+          connect_matcher: {}
+        direct_response:
+          status: 403
+`
+
+	tests := []struct {
+		name     string
+		connPool *extensions.ConnectionPoolSettings
+	}{
+		{name: "default routes"},
+		{
+			name: "connection pool routes",
+			connPool: makeConnPool(
+				withRouteOverride([]string{"proxy.example"}, 23*time.Second),
+				withDefaultRoute(31*time.Second),
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cg := NewConfigGenTest(t, TestOptions{ConfigString: envoyFilter})
+			node := cg.SetupProxy(sandboxEgressNode())
+			push := cg.PushContext()
+			if tt.connPool != nil {
+				push.AgentioConfig = &model.AgentioConfig{
+					AgentioConfig: &extensions.AgentioConfig{
+						EgressGateways: []*extensions.EgressGateway{{
+							Name:           "egress-gw",
+							Namespace:      "istio-system",
+							ConnectionPool: tt.connPool,
+						}},
+					},
+				}
+			}
+			lb := &ListenerBuilder{node: node, push: push}
+
+			chains := lb.buildMainForwardFilters(httpForwardCluster, util.PassthroughCluster, false)
+			h := &hcm.HttpConnectionManager{}
+			if err := chains[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+				t.Fatalf("decode HTTP connection manager: %v", err)
+			}
+
+			vhosts := h.GetRouteConfig().GetVirtualHosts()
+			wantVHosts := 1
+			if tt.connPool != nil {
+				wantVHosts = 2
+			}
+			if got := len(vhosts); got != wantVHosts {
+				t.Fatalf("virtual hosts = %d, want %d", got, wantVHosts)
+			}
+			for _, vhost := range vhosts {
+				routes := vhost.GetRoutes()
+				if got := len(routes); got != 3 {
+					t.Fatalf("virtual host %q routes = %d, want guard, CONNECT, and ordinary route", vhost.GetName(), got)
+				}
+				if got := routes[0].GetName(); got != "connect-guard" {
+					t.Fatalf("virtual host %q first route = %q, want EnvoyFilter guard", vhost.GetName(), got)
+				}
+				if got := routes[0].GetDirectResponse().GetStatus(); got != 403 {
+					t.Fatalf("virtual host %q guard status = %d, want 403", vhost.GetName(), got)
+				}
+				if got := routes[1].GetName(); got != "sandbox-connect" {
+					t.Fatalf("virtual host %q second route = %q, want sandbox-connect", vhost.GetName(), got)
+				}
+				if got := routes[1].GetRoute().GetTimeout().AsDuration(); got != 17*time.Second {
+					t.Fatalf("virtual host %q CONNECT timeout = %v, want EnvoyFilter value 17s", vhost.GetName(), got)
+				}
+				ordinary := routes[2]
+				if got := ordinary.GetMatch().GetPrefix(); got != "/" {
+					t.Fatalf("virtual host %q ordinary route prefix = %q, want /", vhost.GetName(), got)
+				}
+				if got := ordinary.GetRoute().GetCluster(); got != httpForwardCluster {
+					t.Fatalf("virtual host %q ordinary route cluster = %q, want %q", vhost.GetName(), got, httpForwardCluster)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCaptureSNIFilter_OnlyPropagatesOuterSNI(t *testing.T) {
+	cfg := &sfsnetwork.Config{}
+	if err := buildCaptureSNIFilter().GetTypedConfig().UnmarshalTo(cfg); err != nil {
+		t.Fatalf("decode network set_filter_state: %v", err)
+	}
+
+	values := cfg.GetOnNewConnection()
+	if got, want := len(values), 1; got != want {
+		t.Fatalf("captured SNI values = %d, want only the request-neutral outer SNI (%d)", got, want)
+	}
+	value := values[0]
+	if got, want := value.GetObjectKey(), outerSNIFilterStateKey; got != want {
+		t.Fatalf("captured SNI key = %q, want %q", got, want)
+	}
+	if got, want := value.GetFactoryKey(), "envoy.string"; got != want {
+		t.Fatalf("factory for %q = %q, want %q", value.GetObjectKey(), got, want)
+	}
+	if got, want := value.GetFormatString().GetTextFormatSource().GetInlineString(), "%REQUESTED_SERVER_NAME%"; got != want {
+		t.Fatalf("format for %q = %q, want %q", value.GetObjectKey(), got, want)
+	}
+	if !value.GetSkipIfEmpty() {
+		t.Fatalf("captured SNI key %q must skip empty values", value.GetObjectKey())
+	}
+	if got, want := value.GetSharedWithUpstream().String(), "ONCE"; got != want {
+		t.Fatalf("sharing for %q = %s, want %s", value.GetObjectKey(), got, want)
+	}
+}
+
+func TestBuildMainForwardFilters_SetsProxyTLSIdentityOnlyForConnect(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	lb := &ListenerBuilder{
+		node: cg.SetupProxy(sandboxEgressNode()),
+		push: cg.PushContext(),
+	}
+
+	getHCM := func(inner bool) *hcm.HttpConnectionManager {
+		httpCluster := httpForwardCluster
+		tcpCluster := util.PassthroughCluster
+		if inner {
+			httpCluster = tlsOriginateCluster
+			tcpCluster = tlsOriginateCluster
+		}
+		chains := lb.buildMainForwardFilters(httpCluster, tcpCluster, inner)
+		h := &hcm.HttpConnectionManager{}
+		if err := chains[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+			t.Fatalf("decode HTTP connection manager: %v", err)
+		}
+		return h
+	}
+	findTLSIdentityFilter := func(h *hcm.HttpConnectionManager) *hcm.HttpFilter {
+		for _, filter := range h.GetHttpFilters() {
+			if filter.GetName() == "connect-proxy-tls-identity" {
+				return filter
+			}
+		}
+		return nil
+	}
+
+	if got := findTLSIdentityFilter(getHCM(false)); got != nil {
+		t.Fatal("clear HTTP proxy must not install upstream TLS identity filter")
+	}
+
+	filter := findTLSIdentityFilter(getHCM(true))
+	if filter == nil {
+		t.Fatal("HTTPS proxy must install CONNECT-scoped upstream TLS identity filter")
+	}
+	wrapped := &extensionmatching.ExtensionWithMatcher{}
+	if err := filter.GetTypedConfig().UnmarshalTo(wrapped); err != nil {
+		t.Fatalf("decode CONNECT matcher wrapper: %v", err)
+	}
+	if err := wrapped.ValidateAll(); err != nil {
+		t.Fatalf("validate CONNECT matcher wrapper: %v", err)
+	}
+
+	matchers := wrapped.GetXdsMatcher().GetMatcherList().GetMatchers()
+	if got, want := len(matchers), 1; got != want {
+		t.Fatalf("CONNECT matcher rules = %d, want %d", got, want)
+	}
+	// ExtensionWithMatcher runs the wrapped filter by default. Its sole rule
+	// skips the filter when the request method is not CONNECT.
+	notConnect := matchers[0].GetPredicate().GetNotMatcher().GetSinglePredicate()
+	if notConnect == nil {
+		t.Fatal("TLS identity filter must skip non-CONNECT requests")
+	}
+	methodInput := &httpmatcher.HttpRequestHeaderMatchInput{}
+	if err := notConnect.GetInput().GetTypedConfig().UnmarshalTo(methodInput); err != nil {
+		t.Fatalf("decode request method matcher input: %v", err)
+	}
+	if got, want := methodInput.GetHeaderName(), ":method"; got != want {
+		t.Fatalf("matcher header = %q, want %q", got, want)
+	}
+	if got, want := notConnect.GetValueMatch().GetExact(), "CONNECT"; got != want {
+		t.Fatalf("matcher method = %q, want %q", got, want)
+	}
+	if got, want := matchers[0].GetOnMatch().GetAction().GetTypedConfig().GetTypeUrl(), "type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter"; got != want {
+		t.Fatalf("non-CONNECT action type = %q, want %q", got, want)
+	}
+
+	if got, want := wrapped.GetExtensionConfig().GetName(), "envoy.filters.http.set_filter_state"; got != want {
+		t.Fatalf("wrapped filter name = %q, want %q", got, want)
+	}
+	setState := &sfshttp.Config{}
+	if err := wrapped.GetExtensionConfig().GetTypedConfig().UnmarshalTo(setState); err != nil {
+		t.Fatalf("decode HTTP set_filter_state: %v", err)
+	}
+	values := setState.GetOnRequestHeaders()
+	if got, want := len(values), 2; got != want {
+		t.Fatalf("CONNECT TLS identity values = %d, want upstream SNI and SAN (%d)", got, want)
+	}
+	wantKeys := map[string]struct{}{
+		upstreamServerNameFilterStateKey:      {},
+		upstreamSubjectAltNamesFilterStateKey: {},
+	}
+	for _, value := range values {
+		if _, found := wantKeys[value.GetObjectKey()]; !found {
+			t.Fatalf("unexpected CONNECT TLS identity key %q", value.GetObjectKey())
+		}
+		if got, want := value.GetFormatString().GetTextFormatSource().GetInlineString(), "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"; got != want {
+			t.Fatalf("format for %q = %q, want %q", value.GetObjectKey(), got, want)
+		}
+		if !value.GetSkipIfEmpty() {
+			t.Fatalf("CONNECT TLS identity key %q must skip empty values", value.GetObjectKey())
+		}
+		if got := value.GetSharedWithUpstream(); got != 0 {
+			t.Fatalf("sharing for %q = %s, want request-local NONE", value.GetObjectKey(), got)
+		}
+		delete(wantKeys, value.GetObjectKey())
+	}
+	if len(wantKeys) != 0 {
+		t.Fatalf("missing CONNECT TLS identity keys: %v", wantKeys)
+	}
+}
+
+func TestSNIHostMismatchCondition_CONNECTUsesProxyAuthoritySemantics(t *testing.T) {
+	env, err := cel.NewEnv(
+		cel.Variable("request", cel.DynType),
+		cel.Variable("filter_state", cel.MapType(cel.StringType, cel.BytesType)),
+		ext.Strings(),
+	)
+	if err != nil {
+		t.Fatalf("create CEL environment: %v", err)
+	}
+	ast, issues := env.Compile(sniHostMismatchCondition)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile SNI/host mismatch condition: %v", issues.Err())
+	}
+	program, err := env.Program(ast)
+	if err != nil {
+		t.Fatalf("create CEL program: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		method string
+		host   string
+		want   bool
+	}{
+		{name: "ordinary mismatch denied", method: "GET", host: "target.example:443", want: true},
+		{name: "CONNECT target differs from proxy SNI", method: "CONNECT", host: "target.example:443", want: false},
+		{name: "ordinary matching host allowed", method: "GET", host: "proxy.example:8443", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := program.Eval(map[string]any{
+				"request": map[string]any{
+					"method": tt.method,
+					"host":   tt.host,
+				},
+				"filter_state": map[string][]byte{
+					outerSNIFilterStateKey: []byte("proxy.example"),
+				},
+			})
+			if err != nil {
+				t.Fatalf("evaluate SNI/host mismatch condition: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("condition result type = %T, want bool", result.Value())
+			}
+			if got != tt.want {
+				t.Fatalf("condition = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

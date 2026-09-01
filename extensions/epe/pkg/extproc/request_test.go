@@ -17,12 +17,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -216,6 +218,99 @@ func TestHandleRequestHeaders_ArmsOnlyRequestBodyObligation(t *testing.T) {
 	}
 	if state.lifecycle == lifecycleFinalizePending {
 		t.Fatal("non-terminal headers result armed finalization")
+	}
+}
+
+func TestHandleRequestHeaders_CONNECTBodyDemandFailsClosedWithoutBuffering(t *testing.T) {
+	for _, endOfStream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("end_of_stream=%t", endOfStream), func(t *testing.T) {
+			probe := &bodyProbe{}
+			s, _ := wantsServer(t, []filter.Registration{fixedReg("body-filter", probe)}, []string{"r"})
+			state := newStreamState()
+			headers := makeRequestHeaders("target.example.com:443", "", "CONNECT")
+			headers.EndOfStream = endOfStream
+
+			responses, err := s.HandleRequestHeaders(context.Background(), headers,
+				makeAttrsWithLabels("default", "pod", testLabelsB64), state)
+			if err != nil {
+				t.Fatalf("HandleRequestHeaders: %v", err)
+			}
+			if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
+				t.Fatalf("responses = %+v, want one fail-closed ImmediateResponse", responses)
+			}
+			immediate := responses[0].GetImmediateResponse()
+			if immediate.GetStatus().GetCode() != 500 || immediate.GetDetails() != "epe_connect_request_body_unsupported" {
+				t.Fatalf("immediate = status %v details %q, want 500 / epe_connect_request_body_unsupported",
+					immediate.GetStatus().GetCode(), immediate.GetDetails())
+			}
+			if responses[0].GetModeOverride() != nil {
+				t.Fatalf("CONNECT fail-closed response carried body ModeOverride: %v", responses[0].GetModeOverride())
+			}
+			if state.awaitingRequestBody() {
+				t.Fatal("CONNECT body demand armed request-body buffering")
+			}
+			if state.lifecycle != lifecycleFinalizePending {
+				t.Fatalf("lifecycle = %v, want finalize pending", state.lifecycle)
+			}
+		})
+	}
+}
+
+type connectResponseBodyProbe struct {
+	filter.PassThrough
+}
+
+func (*connectResponseBodyProbe) OnResponseHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	return filter.NeedBody(), nil
+}
+
+func TestHandleResponseHeaders_CONNECTBodyDemandFailsClosedWithoutBuffering(t *testing.T) {
+	for _, endOfStream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("end_of_stream=%t", endOfStream), func(t *testing.T) {
+			probe := &connectResponseBodyProbe{}
+			reg := filter.Registration{
+				Name:       "response-body-filter",
+				Phases:     filter.PhaseRequestHeaders | filter.PhaseResponseHeaders | filter.PhaseResponseBody,
+				Parse:      func(json.RawMessage) (any, error) { return struct{}{}, nil },
+				Subscribes: func(any) filter.Phase { return filter.PhaseResponseHeaders },
+				New:        func(filter.ErasedRuleConfig) filter.Filter { return probe },
+			}
+			s, _ := wantsServer(t, []filter.Registration{reg}, []string{"r"})
+			state := newStreamState()
+			requestHeaders := makeRequestHeaders("target.example.com:443", "", "CONNECT")
+			responses, err := s.HandleRequestHeaders(context.Background(), requestHeaders,
+				makeAttrsWithLabels("default", "pod", testLabelsB64), state)
+			if err != nil {
+				t.Fatalf("HandleRequestHeaders: %v", err)
+			}
+			if len(responses) != 1 || responses[0].GetModeOverride().GetResponseHeaderMode() != extProcV3.ProcessingMode_SEND {
+				t.Fatalf("request responses = %+v, want response-headers subscription", responses)
+			}
+
+			responseHeaders := responseHeaderMsg("200")
+			responseHeaders.EndOfStream = endOfStream
+			responses, err = s.HandleResponseHeaders(context.Background(), responseHeaders, state)
+			if err != nil {
+				t.Fatalf("HandleResponseHeaders: %v", err)
+			}
+			if len(responses) != 1 || responses[0].GetImmediateResponse() == nil {
+				t.Fatalf("responses = %+v, want one fail-closed ImmediateResponse", responses)
+			}
+			immediate := responses[0].GetImmediateResponse()
+			if immediate.GetStatus().GetCode() != 500 || immediate.GetDetails() != "epe_connect_response_body_unsupported" {
+				t.Fatalf("immediate = status %v details %q, want 500 / epe_connect_response_body_unsupported",
+					immediate.GetStatus().GetCode(), immediate.GetDetails())
+			}
+			if responses[0].GetModeOverride() != nil {
+				t.Fatalf("CONNECT fail-closed response carried body ModeOverride: %v", responses[0].GetModeOverride())
+			}
+			if state.responseBodyContinuation != nil {
+				t.Fatal("CONNECT body demand armed response-body buffering")
+			}
+			if state.lifecycle != lifecycleFinalizePending {
+				t.Fatalf("lifecycle = %v, want finalize pending", state.lifecycle)
+			}
+		})
 	}
 }
 

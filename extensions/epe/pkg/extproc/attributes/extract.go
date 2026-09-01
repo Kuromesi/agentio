@@ -56,11 +56,15 @@ const (
 
 // Extract resolves the Envoy ext-proc headers message and its attributes
 // into the per-request Peer (caller identity and credential) and
-// httpreq.HTTPRequest (with the destination.port override applied). When pod
-// identity is missing from filter_state it returns a partial Peer and a zero
-// HTTPRequest and logs the condition; callers should check Peer.Valid and
-// fail open. A malformed sandbox token leaves Peer.Token nil. Log lines use
-// the logger from ctx, so request-scoped key/values are carried on them.
+// httpreq.HTTPRequest. For ordinary requests, the Envoy-authenticated
+// destination.port overrides the authority port so a forged Host cannot evade
+// port policy. CONNECT is the exception: its authority names the tunnel target
+// while destination.port names the explicit proxy, so the target authority
+// port is retained. When pod identity is missing from filter_state it returns a
+// partial Peer and a zero HTTPRequest and logs the condition; callers should
+// check Peer.Valid and fail open. A malformed sandbox token leaves Peer.Token
+// nil. Log lines use the logger from ctx, so request-scoped key/values are
+// carried on them.
 func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[string]*structpb.Struct) (filter.Peer, httpreq.HTTPRequest) {
 	logger := log.FromContext(ctx)
 	loggerD := logger.V(logging.DEBUG)
@@ -103,8 +107,10 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 
 	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
 
-	// Override port with the real TCP destination port from envoy if available.
-	if dstPort := extractAttributeInt(attrs, AttrDestinationPort); dstPort > 0 && dstPort <= 65535 {
+	// For ordinary requests, prefer the real TCP destination port observed by
+	// Envoy. A CONNECT authority is different: it is the RFC-defined tunnel
+	// target, while destination.port is only the explicit proxy's listener.
+	if dstPort := extractAttributeInt(attrs, AttrDestinationPort); !strings.EqualFold(req.Method, "CONNECT") && dstPort > 0 && dstPort <= 65535 {
 		req.Port = int32(dstPort)
 	}
 

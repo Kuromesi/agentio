@@ -47,6 +47,10 @@ const (
 	requestBodyMode = extProcV3.ProcessingMode_BUFFERED
 	// responseBodyMode has the same constraint in the response direction.
 	responseBodyMode = extProcV3.ProcessingMode_BUFFERED
+
+	connectRequestBodyUnsupportedDetails  = "epe_connect_request_body_unsupported"
+	connectResponseBodyUnsupportedDetails = "epe_connect_response_body_unsupported"
+	connectBodyUnsupportedStatus          = 500
 )
 
 // HandleRequestHeaders resolves the caller identity, matches profiles into
@@ -74,6 +78,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	peer, req := attributes.Extract(ctx, headers, attrs)
 	st.Peer = peer
 	st.Request = req
+	isConnect := strings.EqualFold(req.Method, "CONNECT")
 
 	if !peer.Valid() {
 		// Fail open: without a source pod no SecurityProfile can be
@@ -133,12 +138,25 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	// so hand it to the walk up front and body requests are satisfied inline
 	// instead of pausing.
 	var evalOpts []engine.RequestOption
-	if headers.GetEndOfStream() {
+	if headers.GetEndOfStream() && !isConnect {
 		evalOpts = append(evalOpts, engine.WithAvailableRequestBody(filter.Body{Complete: true}))
 	}
 	reqHeadersRes, evalErr := s.eng.EvalRequestHeaders(ctx, st, state.engineUnits(), evalOpts...)
 	if evalErr != nil {
 		return nil, evalErr
+	}
+	// Upgrade payload is not an HTTP message body. Buffering a CONNECT body
+	// would either wait for tunnel EOF or hit Envoy's buffer limit, so a policy
+	// that requires request payload inspection is unsupported and fails closed
+	// before the CONNECT reaches the proxy. Do this even when Envoy marked the
+	// headers end-of-stream: satisfying NeedBody with a synthetic empty body
+	// would silently claim the policy ran against the tunnel payload.
+	if isConnect && reqHeadersRes.NeedsBody() {
+		reqHeadersRes.Disposition = engine.DispositionBlocked
+		reqHeadersRes.Reply = filter.Reply{
+			Status:  connectBodyUnsupportedStatus,
+			Details: connectRequestBodyUnsupportedDetails,
+		}
 	}
 	// A bypass in this walk bounds the response-phase dispatch;
 	// HandleRequestBody records the asynchronous case.
@@ -215,7 +233,8 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 	// End-of-stream response headers are the complete bodyless response. Satisfy
 	// any NeedBody action inline because no response-body message will follow.
 	var evalOpts []engine.ResponseOption
-	if headers.GetEndOfStream() {
+	isConnect := strings.EqualFold(state.stream.Request.Method, "CONNECT")
+	if headers.GetEndOfStream() && !isConnect {
 		evalOpts = append(evalOpts, engine.WithAvailableResponseBody(filter.Body{Complete: true}))
 	}
 	// Dispatch only to subscribed pairs within the request walk's response scope.
@@ -224,9 +243,21 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 		// Contract and protocol errors return no acknowledgement.
 		return nil, evalErr
 	}
+	// A successful CONNECT turns subsequent response DATA into tunnel payload,
+	// not an HTTP response body. Refuse body-dependent response processing at
+	// the headers boundary instead of arming BUFFERED mode. The same rule is
+	// applied to non-2xx CONNECT responses so policy behavior does not depend on
+	// whether Envoy happened to mark a bodyless response end-of-stream.
+	if isConnect && respHeadersRes.NeedsBody() {
+		respHeadersRes.Disposition = engine.DispositionBlocked
+		respHeadersRes.Reply = filter.Reply{
+			Status:  connectBodyUnsupportedStatus,
+			Details: connectResponseBodyUnsupportedDetails,
+		}
+	}
 	state.awaitResponseHeaders = false
 	responses := translateResponseHeadersResult(respHeadersRes)
-	if respHeadersRes.NeedsBody() {
+	if respHeadersRes.Disposition != engine.DispositionBlocked && respHeadersRes.NeedsBody() {
 		override := &extProcV3.ProcessingMode{
 			RequestBodyMode:  extProcV3.ProcessingMode_NONE,
 			ResponseBodyMode: responseBodyMode,
