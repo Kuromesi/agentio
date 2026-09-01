@@ -1064,7 +1064,6 @@ func buildWaypointInboundHTTPRouteConfig(lb *ListenerBuilder, svc *model.Service
 		if routeConfig == nil {
 			routeConfig = buildSidecarInboundHTTPRouteConfig(svc, lb, cc)
 		}
-		prependSandboxConnectRoute(routeConfig, cc.connectProxyCluster)
 		return routeConfig
 	}
 

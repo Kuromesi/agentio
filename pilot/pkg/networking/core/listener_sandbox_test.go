@@ -279,6 +279,119 @@ func TestBuildMainForwardFilters_ProxiesConnect(t *testing.T) {
 	}
 }
 
+func TestBuildMainForwardFilters_AppliesEnvoyFilterToConnectRoute(t *testing.T) {
+	const envoyFilter = `
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: patch-sandbox-connect
+  namespace: istio-system
+spec:
+  configPatches:
+  - applyTo: HTTP_ROUTE
+    match:
+      context: SIDECAR_INBOUND
+      routeConfiguration:
+        vhost:
+          route:
+            name: sandbox-connect
+    patch:
+      operation: MERGE
+      value:
+        route:
+          timeout: 17s
+  - applyTo: HTTP_ROUTE
+    match:
+      context: SIDECAR_INBOUND
+      routeConfiguration:
+        vhost:
+          route:
+            name: default
+    patch:
+      operation: INSERT_FIRST
+      value:
+        name: connect-guard
+        match:
+          connect_matcher: {}
+        direct_response:
+          status: 403
+`
+
+	tests := []struct {
+		name     string
+		connPool *extensions.ConnectionPoolSettings
+	}{
+		{name: "default routes"},
+		{
+			name: "connection pool routes",
+			connPool: makeConnPool(
+				withRouteOverride([]string{"proxy.example"}, 23*time.Second),
+				withDefaultRoute(31*time.Second),
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cg := NewConfigGenTest(t, TestOptions{ConfigString: envoyFilter})
+			node := cg.SetupProxy(sandboxEgressNode())
+			push := cg.PushContext()
+			if tt.connPool != nil {
+				push.AgentioConfig = &model.AgentioConfig{
+					AgentioConfig: &extensions.AgentioConfig{
+						EgressGateways: []*extensions.EgressGateway{{
+							Name:           "egress-gw",
+							Namespace:      "istio-system",
+							ConnectionPool: tt.connPool,
+						}},
+					},
+				}
+			}
+			lb := &ListenerBuilder{node: node, push: push}
+
+			chains := lb.buildMainForwardFilters(httpForwardCluster, util.PassthroughCluster, false)
+			h := &hcm.HttpConnectionManager{}
+			if err := chains[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+				t.Fatalf("decode HTTP connection manager: %v", err)
+			}
+
+			vhosts := h.GetRouteConfig().GetVirtualHosts()
+			wantVHosts := 1
+			if tt.connPool != nil {
+				wantVHosts = 2
+			}
+			if got := len(vhosts); got != wantVHosts {
+				t.Fatalf("virtual hosts = %d, want %d", got, wantVHosts)
+			}
+			for _, vhost := range vhosts {
+				routes := vhost.GetRoutes()
+				if got := len(routes); got != 3 {
+					t.Fatalf("virtual host %q routes = %d, want guard, CONNECT, and ordinary route", vhost.GetName(), got)
+				}
+				if got := routes[0].GetName(); got != "connect-guard" {
+					t.Fatalf("virtual host %q first route = %q, want EnvoyFilter guard", vhost.GetName(), got)
+				}
+				if got := routes[0].GetDirectResponse().GetStatus(); got != 403 {
+					t.Fatalf("virtual host %q guard status = %d, want 403", vhost.GetName(), got)
+				}
+				if got := routes[1].GetName(); got != "sandbox-connect" {
+					t.Fatalf("virtual host %q second route = %q, want sandbox-connect", vhost.GetName(), got)
+				}
+				if got := routes[1].GetRoute().GetTimeout().AsDuration(); got != 17*time.Second {
+					t.Fatalf("virtual host %q CONNECT timeout = %v, want EnvoyFilter value 17s", vhost.GetName(), got)
+				}
+				ordinary := routes[2]
+				if got := ordinary.GetMatch().GetPrefix(); got != "/" {
+					t.Fatalf("virtual host %q ordinary route prefix = %q, want /", vhost.GetName(), got)
+				}
+				if got := ordinary.GetRoute().GetCluster(); got != httpForwardCluster {
+					t.Fatalf("virtual host %q ordinary route cluster = %q, want %q", vhost.GetName(), got, httpForwardCluster)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildCaptureSNIFilter_OnlyPropagatesOuterSNI(t *testing.T) {
 	cfg := &sfsnetwork.Config{}
 	if err := buildCaptureSNIFilter().GetTypedConfig().UnmarshalTo(cfg); err != nil {

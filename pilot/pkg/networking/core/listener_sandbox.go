@@ -740,8 +740,8 @@ func sandboxGatewayConnPool(lb *ListenerBuilder) *extensions.ConnectionPoolSetti
 // buildSandboxHTTPRouteConfig generates a RouteConfiguration with per-host
 // VirtualHosts from ConnectionPoolSettings.HttpRouteOverrides, plus a wildcard
 // fallback VirtualHost using DefaultHttpRoute. Ordinary routes use the chain's
-// DFP cluster. The caller may prepend a CONNECT route after building this
-// otherwise unchanged route configuration.
+// DFP cluster. When enabled, the CONNECT route is added before EnvoyFilter
+// patches so route-level policy can inspect, modify, remove, or precede it.
 func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, connPool *extensions.ConnectionPoolSettings) *route.RouteConfiguration {
 	var vhosts []*route.VirtualHost
 
@@ -768,6 +768,7 @@ func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, con
 		VirtualHosts:     vhosts,
 		ValidateClusters: proto.BoolFalse,
 	}
+	prependSandboxConnectRoute(rc, cc.connectProxyCluster)
 	efw := lb.envoyFilterWrapper
 	if efw == nil && lb.push != nil && lb.push.Mesh != nil {
 		efw = lb.push.EnvoyFilters(lb.node)
