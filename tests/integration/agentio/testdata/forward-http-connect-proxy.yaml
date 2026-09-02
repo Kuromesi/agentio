@@ -68,9 +68,10 @@ data:
       name: forward-http-connect-proxy-ca
       namespace: {{ .Namespace }}
     spec:
-      workloadSelector:
-        labels:
-          gateway.networking.k8s.io/gateway-name: egress-gateway
+      targetRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: egress-gateway
       configPatches:
       - applyTo: CLUSTER
         match:
