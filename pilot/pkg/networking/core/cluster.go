@@ -256,7 +256,7 @@ func (configgen *ConfigGeneratorImpl) buildClusters(proxy *model.Proxy, req *mod
 		resources = append(resources, ob...)
 		// Setup inbound clusters
 		inboundPatcher := clusterPatcher{efw: envoyFilterPatches, pctx: networking.EnvoyFilter_SIDECAR_INBOUND}
-		clusters = append(clusters, configgen.buildWaypointInboundClusters(cb, proxy, req.Push, wps.services)...)
+		clusters = append(clusters, configgen.buildWaypointInboundClusters(cb, proxy, req.Push, wps.services, inboundPatcher)...)
 		clusters = append(clusters, inboundPatcher.insertedClusters()...)
 		clusters = append(clusters, agentio.BuildExtProcClusters(proxy, req.Push.AgentioConfig)...)
 	default: // Gateways

@@ -28,6 +28,7 @@ import (
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/util"
+	agentio "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/security"
 	"istio.io/istio/pkg/wellknown"
@@ -152,6 +153,69 @@ func TestSandboxClusters_TLSProxyOriginationUsesOriginalDestination(t *testing.T
 		if common.GetAlpnProtocols()[i] != util.ALPNHttp[i] {
 			t.Fatalf("ALPN protocols = %v, want %v", common.GetAlpnProtocols(), util.ALPNHttp)
 		}
+	}
+}
+
+func TestSandboxClusters_AppliesInboundEnvoyFilterPatches(t *testing.T) {
+	mesh := testMesh()
+	mesh.RootNamespace = "agentio-system"
+	cg := NewConfigGenTest(t, TestOptions{
+		MeshConfig: mesh,
+		ConfigString: `
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: sandbox-cluster-patch
+  namespace: agentio-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: egress-gateway
+  configPatches:
+  - applyTo: CLUSTER
+    match:
+      context: SIDECAR_INBOUND
+      cluster:
+        name: tls_proxy_originate
+    patch:
+      operation: MERGE
+      value:
+        transport_socket:
+          name: envoy.transport_sockets.tls
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+            common_tls_context:
+              validation_context:
+                trusted_ca:
+                  inline_string: proxy-ca
+`,
+	})
+	proxy := cg.SetupProxy(&model.Proxy{
+		Type:            model.Waypoint,
+		ConfigNamespace: "agentio-system",
+		Labels: map[string]string{
+			agentio.LabelSandboxEgress:               "true",
+			"gateway.networking.k8s.io/gateway-name": "egress-gateway",
+		},
+	})
+
+	var got *cluster.Cluster
+	for _, c := range cg.Clusters(proxy) {
+		if c.GetName() == tlsProxyOriginateCluster {
+			got = c
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("cluster %q not found", tlsProxyOriginateCluster)
+	}
+	tlsContext := &tlsv3.UpstreamTlsContext{}
+	if err := got.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
+		t.Fatalf("decode upstream TLS context: %v", err)
+	}
+	if got := tlsContext.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetInlineString(); got != "proxy-ca" {
+		t.Fatalf("trusted CA inline string = %q, want proxy-ca", got)
 	}
 }
 

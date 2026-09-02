@@ -108,7 +108,7 @@ func TestForwardHTTPConnectProxyEnvoyFilterConfiguration(t *testing.T) {
 		if filters == nil || len(filters.Patches[networking.EnvoyFilter_CLUSTER]) != 1 {
 			t.Fatalf("embedded EnvoyFilter does not select the egress gateway waypoint")
 		}
-		patched := envoyfilter.ApplyClusterMerge(networking.EnvoyFilter_SIDECAR_OUTBOUND, filters, &cluster.Cluster{
+		patched := envoyfilter.ApplyClusterMerge(networking.EnvoyFilter_SIDECAR_INBOUND, filters, &cluster.Cluster{
 			Name: "tls_proxy_originate",
 		}, nil)
 		if patched == nil || patched.GetTransportSocket() == nil {

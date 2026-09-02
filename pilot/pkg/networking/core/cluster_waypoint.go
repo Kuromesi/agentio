@@ -98,6 +98,7 @@ func (configgen *ConfigGeneratorImpl) buildWaypointInboundClusters(
 	proxy *model.Proxy,
 	push *model.PushContext,
 	svcs map[host.Name]*model.Service,
+	cp clusterPatcher,
 ) []*cluster.Cluster {
 	clusters := make([]*cluster.Cluster, 0)
 	// Creates "main_internal" cluster to route to the main internal listener.
@@ -115,7 +116,7 @@ func (configgen *ConfigGeneratorImpl) buildWaypointInboundClusters(
 	}
 
 	if agentio.IsSandboxEgress(proxy) {
-		clusters = append(clusters, sandboxClusters(cb)...)
+		clusters = cp.conditionallyAppend(clusters, nil, sandboxClusters(cb)...)
 	}
 
 	// This bit creates clusters needed to handle requests going to a remote network.
