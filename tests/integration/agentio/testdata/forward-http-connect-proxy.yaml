@@ -66,6 +66,7 @@ data:
     kind: EnvoyFilter
     metadata:
       name: forward-http-connect-proxy-ca
+      namespace: {{ .Namespace }}
     spec:
       workloadSelector:
         labels:
