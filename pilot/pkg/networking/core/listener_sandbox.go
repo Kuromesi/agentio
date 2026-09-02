@@ -100,6 +100,7 @@ const (
 	upstreamSubjectAltNamesFilterStateKey = "envoy.network.upstream_subject_alt_names"
 	staticEndpointHeader                  = "x-agentio-static-endpoint"
 	dynamicHostFilterStateKey             = "envoy.upstream.dynamic_host"
+	dynamicPortFilterStateKey             = "envoy.upstream.dynamic_port"
 	staticEndpointHeaderMutationFilter    = "agentio.static_endpoint_header"
 	staticEndpointFilterStateFilter       = "agentio.static_endpoint_filter_state"
 	staticEndpointHeaderCleanupFilter     = "agentio.static_endpoint_header_cleanup"
@@ -721,32 +722,53 @@ func buildSandboxRemoveStaticEndpointHeaderFilter(name string) *hcm.HttpFilter {
 }
 
 // buildSandboxStaticEndpointFilterStateFilter copies the route-selected static
-// endpoint into the well-known DFP dynamic-host filter-state key. The dynamic
-// port is deliberately left unset so DFP continues to use the port from the
-// request authority.
+// endpoint and the original destination port into the well-known DFP filter-state
+// keys. DFP otherwise falls back to the scheme default port after the dynamic host
+// is overridden.
 func buildSandboxStaticEndpointFilterStateFilter() *hcm.HttpFilter {
 	return &hcm.HttpFilter{
 		Name: staticEndpointFilterStateFilter,
 		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&sfshttp.Config{
-			OnRequestHeaders: []*sfsvalue.FilterStateValue{{
-				Key: &sfsvalue.FilterStateValue_ObjectKey{
-					ObjectKey: dynamicHostFilterStateKey,
-				},
-				Value: &sfsvalue.FilterStateValue_FormatString{
-					FormatString: &core.SubstitutionFormatString{
-						OmitEmptyValues: true,
-						Format: &core.SubstitutionFormatString_TextFormatSource{
-							TextFormatSource: &core.DataSource{
-								Specifier: &core.DataSource_InlineString{
-									InlineString: "%REQ(" + staticEndpointHeader + ")%",
+			OnRequestHeaders: []*sfsvalue.FilterStateValue{
+				{
+					Key: &sfsvalue.FilterStateValue_ObjectKey{
+						ObjectKey: dynamicHostFilterStateKey,
+					},
+					Value: &sfsvalue.FilterStateValue_FormatString{
+						FormatString: &core.SubstitutionFormatString{
+							OmitEmptyValues: true,
+							Format: &core.SubstitutionFormatString_TextFormatSource{
+								TextFormatSource: &core.DataSource{
+									Specifier: &core.DataSource_InlineString{
+										InlineString: "%REQ(" + staticEndpointHeader + ")%",
+									},
 								},
 							},
 						},
 					},
+					ReadOnly:    true,
+					SkipIfEmpty: true,
 				},
-				ReadOnly:    true,
-				SkipIfEmpty: true,
-			}},
+				{
+					Key: &sfsvalue.FilterStateValue_ObjectKey{
+						ObjectKey: dynamicPortFilterStateKey,
+					},
+					Value: &sfsvalue.FilterStateValue_FormatString{
+						FormatString: &core.SubstitutionFormatString{
+							OmitEmptyValues: true,
+							Format: &core.SubstitutionFormatString_TextFormatSource{
+								TextFormatSource: &core.DataSource{
+									Specifier: &core.DataSource_InlineString{
+										InlineString: "%FILTER_STATE(" + xdsfilters.OriginalDstFilterStateKey + ":FIELD:port)%",
+									},
+								},
+							},
+						},
+					},
+					ReadOnly:    true,
+					SkipIfEmpty: true,
+				},
+			},
 		})},
 	}
 }

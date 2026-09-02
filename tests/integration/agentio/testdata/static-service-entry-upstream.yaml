@@ -176,8 +176,14 @@ spec:
   - name: http
     port: 80
     targetPort: 18080
+  - name: http-alt
+    port: 18080
+    targetPort: 18080
   - name: https
     port: 443
+    targetPort: 18443
+  - name: https-alt
+    port: 18443
     targetPort: 18443
 ---
 apiVersion: v1
@@ -191,8 +197,14 @@ spec:
   - name: http
     port: 80
     targetPort: 28080
+  - name: http-alt
+    port: 18080
+    targetPort: 28080
   - name: https
     port: 443
+    targetPort: 28443
+  - name: https-alt
+    port: 18443
     targetPort: 28443
 ---
 apiVersion: v1

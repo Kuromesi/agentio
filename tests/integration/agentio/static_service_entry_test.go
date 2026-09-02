@@ -115,17 +115,23 @@ data:
 				return nil
 			}
 
-			ctx.NewSubTest("HTTP forward-http").Run(func(ctx framework.TestContext) {
-				retry.UntilSuccessOrFail(ctx, func() error {
-					return callUntilBothEndpointsSeen("http", 80, false)
-				}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
-			})
-
-			ctx.NewSubTest("HTTPS main_forward").Run(func(ctx framework.TestContext) {
-				retry.UntilSuccessOrFail(ctx, func() error {
-					return callUntilBothEndpointsSeen("https", 443, true)
-				}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
-			})
+			for _, testCase := range []struct {
+				name     string
+				scheme   string
+				port     int
+				insecure bool
+			}{
+				{name: "HTTP forward-http default port", scheme: "http", port: 80},
+				{name: "HTTP forward-http original port", scheme: "http", port: 18080},
+				{name: "HTTPS main_forward default port", scheme: "https", port: 443, insecure: true},
+				{name: "HTTPS main_forward original port", scheme: "https", port: 18443, insecure: true},
+			} {
+				ctx.NewSubTest(testCase.name).Run(func(ctx framework.TestContext) {
+					retry.UntilSuccessOrFail(ctx, func() error {
+						return callUntilBothEndpointsSeen(testCase.scheme, testCase.port, testCase.insecure)
+					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
+				})
+			}
 		})
 }
 

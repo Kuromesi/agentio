@@ -1056,13 +1056,20 @@ func TestAppendSandboxHTTPFilters_ServiceEntries(t *testing.T) {
 		t.Fatalf("decode set-filter-state config: %v", err)
 	}
 	values := filterStateConfig.GetOnRequestHeaders()
-	if got, want := len(values), 1; got != want {
+	if got, want := len(values), 2; got != want {
 		t.Fatalf("filter-state values = %d, want %d", got, want)
 	}
 	if got := values[0].GetObjectKey(); got != dynamicHostFilterStateKey {
 		t.Fatalf("filter-state key = %q, want %q", got, dynamicHostFilterStateKey)
 	}
 	if got, want := values[0].GetFormatString().GetTextFormatSource().GetInlineString(), "%REQ("+staticEndpointHeader+")%"; got != want {
+		t.Fatalf("filter-state value format = %q, want %q", got, want)
+	}
+	if got, want := values[1].GetObjectKey(), "envoy.upstream.dynamic_port"; got != want {
+		t.Fatalf("filter-state key = %q, want %q", got, want)
+	}
+	if got, want := values[1].GetFormatString().GetTextFormatSource().GetInlineString(),
+		"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%"; got != want {
 		t.Fatalf("filter-state value format = %q, want %q", got, want)
 	}
 }
