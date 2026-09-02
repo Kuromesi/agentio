@@ -22,7 +22,6 @@ import (
 
 	xds "github.com/cncf/xds/go/xds/core/v3"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
-	mutation "github.com/envoyproxy/go-control-plane/envoy/config/common/mutation_rules/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbacconfig "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
@@ -32,7 +31,6 @@ import (
 	skipaction "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/matcher/action/v3"
 	sfsvalue "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
-	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	rbachttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	sfshttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
@@ -98,11 +96,9 @@ const (
 	outerSNIFilterStateKey                = "io.kruise.outer_sni"
 	upstreamServerNameFilterStateKey      = "envoy.network.upstream_server_name"
 	upstreamSubjectAltNamesFilterStateKey = "envoy.network.upstream_subject_alt_names"
-	staticEndpointHeader                  = "x-agentio-static-endpoint"
 	dynamicHostFilterStateKey             = "envoy.upstream.dynamic_host"
-	staticEndpointHeaderMutationFilter    = "agentio.static_endpoint_header"
+	dynamicPortFilterStateKey             = "envoy.upstream.dynamic_port"
 	staticEndpointFilterStateFilter       = "agentio.static_endpoint_filter_state"
-	staticEndpointHeaderCleanupFilter     = "agentio.static_endpoint_header_cleanup"
 
 	// networkSetFilterStateName labels the network set_filter_state filter that
 	// captures outer SNI. Envoy dispatches it by typed_config type URL, so a
@@ -703,34 +699,46 @@ func buildSandboxDFPFilter(allowDynamicHostFromFilterState bool) *hcm.HttpFilter
 	}
 }
 
-// buildSandboxRemoveStaticEndpointHeaderFilter removes the internal endpoint
-// header. One instance rejects client input before route-local mutation; a
-// second instance removes Agentio's value after it has been copied to filter
-// state so it is never forwarded upstream.
-func buildSandboxRemoveStaticEndpointHeaderFilter(name string) *hcm.HttpFilter {
-	return &hcm.HttpFilter{
-		Name: name,
-		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&headermutation.HeaderMutation{
-			Mutations: &headermutation.Mutations{
-				RequestMutations: []*mutation.HeaderMutation{{
-					Action: &mutation.HeaderMutation_Remove{Remove: staticEndpointHeader},
-				}},
-			},
-		})},
-	}
-}
-
-// buildSandboxStaticEndpointFilterStateFilter copies the route-selected static
-// endpoint into the well-known DFP dynamic-host filter-state key. The dynamic
-// port is deliberately left unset so DFP continues to use the port from the
-// request authority.
+// buildSandboxStaticEndpointFilterStateFilter installs set_filter_state in the
+// decoder chain. Its listener-level configuration is intentionally empty: only
+// service-entry routes supply values through typed_per_filter_config, leaving
+// ordinary DFP routes untouched.
 func buildSandboxStaticEndpointFilterStateFilter() *hcm.HttpFilter {
 	return &hcm.HttpFilter{
 		Name: staticEndpointFilterStateFilter,
-		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&sfshttp.Config{
-			OnRequestHeaders: []*sfsvalue.FilterStateValue{{
+		ConfigType: &hcm.HttpFilter_TypedConfig{
+			TypedConfig: protoconv.MessageToAny(&sfshttp.Config{}),
+		},
+	}
+}
+
+// buildSandboxStaticEndpointFilterStateConfig binds one route-selected endpoint
+// to DFP while retaining the request's original destination port. Keeping this
+// configuration on the route (or weighted-cluster entry) avoids using a
+// request header as an internal transport between filters.
+func buildSandboxStaticEndpointFilterStateConfig(address string) *anypb.Any {
+	return protoconv.MessageToAny(&sfshttp.Config{
+		OnRequestHeaders: []*sfsvalue.FilterStateValue{
+			{
 				Key: &sfsvalue.FilterStateValue_ObjectKey{
 					ObjectKey: dynamicHostFilterStateKey,
+				},
+				Value: &sfsvalue.FilterStateValue_FormatString{
+					FormatString: &core.SubstitutionFormatString{
+						Format: &core.SubstitutionFormatString_TextFormatSource{
+							TextFormatSource: &core.DataSource{
+								Specifier: &core.DataSource_InlineString{
+									InlineString: address,
+								},
+							},
+						},
+					},
+				},
+				ReadOnly: true,
+			},
+			{
+				Key: &sfsvalue.FilterStateValue_ObjectKey{
+					ObjectKey: dynamicPortFilterStateKey,
 				},
 				Value: &sfsvalue.FilterStateValue_FormatString{
 					FormatString: &core.SubstitutionFormatString{
@@ -738,7 +746,7 @@ func buildSandboxStaticEndpointFilterStateFilter() *hcm.HttpFilter {
 						Format: &core.SubstitutionFormatString_TextFormatSource{
 							TextFormatSource: &core.DataSource{
 								Specifier: &core.DataSource_InlineString{
-									InlineString: "%REQ(" + staticEndpointHeader + ")%",
+									InlineString: "%FILTER_STATE(" + xdsfilters.OriginalDstFilterStateKey + ":FIELD:port)%",
 								},
 							},
 						},
@@ -746,9 +754,9 @@ func buildSandboxStaticEndpointFilterStateFilter() *hcm.HttpFilter {
 				},
 				ReadOnly:    true,
 				SkipIfEmpty: true,
-			}},
-		})},
-	}
+			},
+		},
+	})
 }
 
 // appendSandboxHTTPFilters appends sandbox-egress HCM filters in the required
@@ -775,10 +783,7 @@ func appendSandboxHTTPFilters(lb *ListenerBuilder, filters []*hcm.HttpFilter, va
 	gateway := sandboxEgressGateway(lb)
 	staticEndpoints := len(gateway.GetServiceEntries()) > 0
 	if staticEndpoints {
-		filters = append(filters,
-			buildSandboxRemoveStaticEndpointHeaderFilter(staticEndpointHeaderMutationFilter),
-			buildSandboxStaticEndpointFilterStateFilter(),
-			buildSandboxRemoveStaticEndpointHeaderFilter(staticEndpointHeaderCleanupFilter))
+		filters = append(filters, buildSandboxStaticEndpointFilterStateFilter())
 	}
 	// DFP must sit between authz/ext_proc and the router: prepending it would let
 	// it resolve the upstream host before RBAC/JWT/ext_proc had a chance to deny
@@ -903,23 +908,23 @@ func buildSandboxStaticEndpointRoute(
 	out := buildSandboxRoute(lb, cc, settings)
 	if len(addresses) == 1 {
 		out.TypedPerFilterConfig = map[string]*anypb.Any{
-			staticEndpointHeaderMutationFilter: buildSandboxStaticEndpointHeaderMutation(addresses[0]),
+			staticEndpointFilterStateFilter: buildSandboxStaticEndpointFilterStateConfig(addresses[0]),
 		}
 		return out
 	}
 
 	// Weighted cluster selection happens as part of route selection, before HTTP
-	// decoder filters run. Giving each equal-weight entry its own header-mutation
-	// config therefore selects an endpoint before set_filter_state and DFP inspect
-	// the request. All entries deliberately retain the same DFP cluster: only the
-	// dynamic host changes, while the request's original port is preserved.
+	// decoder filters run. Giving each equal-weight entry its own set_filter_state
+	// config therefore selects an endpoint before DFP inspects the request. All
+	// entries deliberately retain the same DFP cluster: only the dynamic host
+	// changes, while the request's original port is preserved.
 	weightedClusters := make([]*route.WeightedCluster_ClusterWeight, 0, len(addresses))
 	for _, address := range addresses {
 		weightedClusters = append(weightedClusters, &route.WeightedCluster_ClusterWeight{
 			Name:   cc.clusterName,
 			Weight: wrapperspb.UInt32(1),
 			TypedPerFilterConfig: map[string]*anypb.Any{
-				staticEndpointHeaderMutationFilter: buildSandboxStaticEndpointHeaderMutation(address),
+				staticEndpointFilterStateFilter: buildSandboxStaticEndpointFilterStateConfig(address),
 			},
 		})
 	}
@@ -927,22 +932,6 @@ func buildSandboxStaticEndpointRoute(
 		WeightedClusters: &route.WeightedCluster{Clusters: weightedClusters},
 	}
 	return out
-}
-
-func buildSandboxStaticEndpointHeaderMutation(address string) *anypb.Any {
-	return protoconv.MessageToAny(&headermutation.HeaderMutationPerRoute{
-		Mutations: &headermutation.Mutations{
-			RequestMutations: []*mutation.HeaderMutation{{
-				Action: &mutation.HeaderMutation_Append{Append: &core.HeaderValueOption{
-					Header: &core.HeaderValue{
-						Key:   staticEndpointHeader,
-						Value: address,
-					},
-					AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
-				}},
-			}},
-		},
-	})
 }
 
 func sandboxRouteSettingsForHost(connPool *extensions.ConnectionPoolSettings, serviceHost string) *extensions.HttpRouteSettings {
