@@ -1051,9 +1051,39 @@ func TestAppendSandboxHTTPFilters_ServiceEntries(t *testing.T) {
 		t.Fatal("DFP filter must allow service-entry endpoint selection from filter state")
 	}
 
+	wrapped := &extensionmatching.ExtensionWithMatcher{}
+	if err := filters[1].GetTypedConfig().UnmarshalTo(wrapped); err != nil {
+		t.Fatalf("decode static endpoint matcher wrapper: %v", err)
+	}
+	if err := wrapped.ValidateAll(); err != nil {
+		t.Fatalf("validate static endpoint matcher wrapper: %v", err)
+	}
+	matchers := wrapped.GetXdsMatcher().GetMatcherList().GetMatchers()
+	if got, want := len(matchers), 1; got != want {
+		t.Fatalf("static endpoint matcher rules = %d, want %d", got, want)
+	}
+	missingEndpoint := matchers[0].GetPredicate().GetNotMatcher().GetSinglePredicate()
+	if missingEndpoint == nil {
+		t.Fatal("static endpoint filter-state writes must be skipped when the route did not select an endpoint")
+	}
+	headerInput := &httpmatcher.HttpRequestHeaderMatchInput{}
+	if err := missingEndpoint.GetInput().GetTypedConfig().UnmarshalTo(headerInput); err != nil {
+		t.Fatalf("decode static endpoint header matcher input: %v", err)
+	}
+	if got, want := headerInput.GetHeaderName(), staticEndpointHeader; got != want {
+		t.Fatalf("matcher header = %q, want %q", got, want)
+	}
+	if got, want := missingEndpoint.GetValueMatch().GetSafeRegex().GetRegex(), ".+"; got != want {
+		t.Fatalf("matcher header regex = %q, want %q", got, want)
+	}
+	if got, want := matchers[0].GetOnMatch().GetAction().GetTypedConfig().GetTypeUrl(),
+		"type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter"; got != want {
+		t.Fatalf("missing endpoint action type = %q, want %q", got, want)
+	}
+
 	filterStateConfig := &sfshttp.Config{}
-	if err := filters[1].GetTypedConfig().UnmarshalTo(filterStateConfig); err != nil {
-		t.Fatalf("decode set-filter-state config: %v", err)
+	if err := wrapped.GetExtensionConfig().GetTypedConfig().UnmarshalTo(filterStateConfig); err != nil {
+		t.Fatalf("decode wrapped set-filter-state config: %v", err)
 	}
 	values := filterStateConfig.GetOnRequestHeaders()
 	if got, want := len(values), 2; got != want {

@@ -181,7 +181,10 @@ func firstNodeInternalIP(ctx framework.TestContext) string {
 	return ""
 }
 
-func generateConnectProxyCertificate(ctx framework.TestContext, dnsName string) (string, string, string) {
+func generateConnectProxyCertificate(ctx framework.TestContext, dnsNames ...string) (string, string, string) {
+	if len(dnsNames) == 0 {
+		ctx.Fatal("at least one certificate DNS name is required")
+	}
 	now := time.Now()
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -207,8 +210,8 @@ func generateConnectProxyCertificate(ctx framework.TestContext, dnsName string) 
 	}
 	proxyTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: dnsName},
-		DNSNames:     []string{dnsName},
+		Subject:      pkix.Name{CommonName: dnsNames[0]},
+		DNSNames:     dnsNames,
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,

@@ -723,53 +723,106 @@ func buildSandboxRemoveStaticEndpointHeaderFilter(name string) *hcm.HttpFilter {
 
 // buildSandboxStaticEndpointFilterStateFilter copies the route-selected static
 // endpoint and the original destination port into the well-known DFP filter-state
-// keys. DFP otherwise falls back to the scheme default port after the dynamic host
-// is overridden.
+// keys. The matcher skips both writes when no static endpoint was selected so
+// unmatched DFP traffic continues to derive its host and port from :authority.
 func buildSandboxStaticEndpointFilterStateFilter() *hcm.HttpFilter {
-	return &hcm.HttpFilter{
-		Name: staticEndpointFilterStateFilter,
-		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&sfshttp.Config{
-			OnRequestHeaders: []*sfsvalue.FilterStateValue{
-				{
-					Key: &sfsvalue.FilterStateValue_ObjectKey{
-						ObjectKey: dynamicHostFilterStateKey,
-					},
-					Value: &sfsvalue.FilterStateValue_FormatString{
-						FormatString: &core.SubstitutionFormatString{
-							OmitEmptyValues: true,
-							Format: &core.SubstitutionFormatString_TextFormatSource{
-								TextFormatSource: &core.DataSource{
-									Specifier: &core.DataSource_InlineString{
-										InlineString: "%REQ(" + staticEndpointHeader + ")%",
-									},
-								},
-							},
-						},
-					},
-					ReadOnly:    true,
-					SkipIfEmpty: true,
+	setFilterState := &sfshttp.Config{
+		OnRequestHeaders: []*sfsvalue.FilterStateValue{
+			{
+				Key: &sfsvalue.FilterStateValue_ObjectKey{
+					ObjectKey: dynamicHostFilterStateKey,
 				},
-				{
-					Key: &sfsvalue.FilterStateValue_ObjectKey{
-						ObjectKey: dynamicPortFilterStateKey,
-					},
-					Value: &sfsvalue.FilterStateValue_FormatString{
-						FormatString: &core.SubstitutionFormatString{
-							OmitEmptyValues: true,
-							Format: &core.SubstitutionFormatString_TextFormatSource{
-								TextFormatSource: &core.DataSource{
-									Specifier: &core.DataSource_InlineString{
-										InlineString: "%FILTER_STATE(" + xdsfilters.OriginalDstFilterStateKey + ":FIELD:port)%",
-									},
+				Value: &sfsvalue.FilterStateValue_FormatString{
+					FormatString: &core.SubstitutionFormatString{
+						OmitEmptyValues: true,
+						Format: &core.SubstitutionFormatString_TextFormatSource{
+							TextFormatSource: &core.DataSource{
+								Specifier: &core.DataSource_InlineString{
+									InlineString: "%REQ(" + staticEndpointHeader + ")%",
 								},
 							},
 						},
 					},
-					ReadOnly:    true,
-					SkipIfEmpty: true,
+				},
+				ReadOnly:    true,
+				SkipIfEmpty: true,
+			},
+			{
+				Key: &sfsvalue.FilterStateValue_ObjectKey{
+					ObjectKey: dynamicPortFilterStateKey,
+				},
+				Value: &sfsvalue.FilterStateValue_FormatString{
+					FormatString: &core.SubstitutionFormatString{
+						OmitEmptyValues: true,
+						Format: &core.SubstitutionFormatString_TextFormatSource{
+							TextFormatSource: &core.DataSource{
+								Specifier: &core.DataSource_InlineString{
+									InlineString: "%FILTER_STATE(" + xdsfilters.OriginalDstFilterStateKey + ":FIELD:port)%",
+								},
+							},
+						},
+					},
+				},
+				ReadOnly:    true,
+				SkipIfEmpty: true,
+			},
+		},
+	}
+	staticEndpointPresent := &matcher.Matcher_MatcherList_Predicate{
+		MatchType: &matcher.Matcher_MatcherList_Predicate_SinglePredicate_{
+			SinglePredicate: &matcher.Matcher_MatcherList_Predicate_SinglePredicate{
+				Input: &xds.TypedExtensionConfig{
+					Name: "request-headers",
+					TypedConfig: protoconv.MessageToAny(&httpmatcher.HttpRequestHeaderMatchInput{
+						HeaderName: staticEndpointHeader,
+					}),
+				},
+				Matcher: &matcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{
+					ValueMatch: &matcher.StringMatcher{
+						MatchPattern: &matcher.StringMatcher_SafeRegex{
+							SafeRegex: &matcher.RegexMatcher{
+								EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}},
+								Regex:      ".+",
+							},
+						},
+					},
 				},
 			},
-		})},
+		},
+	}
+	skipFilter := &matcher.Matcher_OnMatch{
+		OnMatch: &matcher.Matcher_OnMatch_Action{
+			Action: &xds.TypedExtensionConfig{
+				Name:        "skip",
+				TypedConfig: protoconv.MessageToAny(&skipaction.SkipFilter{}),
+			},
+		},
+	}
+	wrapped := &extensionmatching.ExtensionWithMatcher{
+		XdsMatcher: &matcher.Matcher{
+			MatcherType: &matcher.Matcher_MatcherList_{
+				MatcherList: &matcher.Matcher_MatcherList{
+					Matchers: []*matcher.Matcher_MatcherList_FieldMatcher{
+						{
+							Predicate: &matcher.Matcher_MatcherList_Predicate{
+								MatchType: &matcher.Matcher_MatcherList_Predicate_NotMatcher{
+									NotMatcher: staticEndpointPresent,
+								},
+							},
+							OnMatch: skipFilter,
+						},
+					},
+				},
+			},
+		},
+		ExtensionConfig: &core.TypedExtensionConfig{
+			Name:        "envoy.filters.http.set_filter_state",
+			TypedConfig: protoconv.MessageToAny(setFilterState),
+		},
+	}
+	return &hcm.HttpFilter{
+		Name:       staticEndpointFilterStateFilter,
+		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(wrapped)},
 	}
 }
 

@@ -30,7 +30,10 @@ import (
 	"istio.io/istio/pkg/test/util/retry"
 )
 
-const staticServiceEntryHost = "static-service-entry.test"
+const (
+	staticServiceEntryHost              = "static-service-entry.test"
+	staticServiceEntryDFPControlService = "static-service-entry-dfp-control"
+)
 
 // TestSandboxStaticServiceEntry verifies that one host can use multiple static
 // endpoints on both the plaintext forward-http path and the TLS-terminated
@@ -40,8 +43,9 @@ const staticServiceEntryHost = "static-service-entry.test"
 func TestSandboxStaticServiceEntry(t *testing.T) {
 	framework.NewTest(t).
 		Run(func(ctx framework.TestContext) {
-			serverKey, serverCertChain, serverCA := generateConnectProxyCertificate(ctx, staticServiceEntryHost)
 			systemNamespace := i.Settings().SystemNamespace
+			dfpControlHost := fmt.Sprintf("%s.%s.svc.cluster.local", staticServiceEntryDFPControlService, systemNamespace)
+			serverKey, serverCertChain, serverCA := generateConnectProxyCertificate(ctx, staticServiceEntryHost, dfpControlHost)
 			ctx.ConfigIstio().EvalFile(systemNamespace, map[string]any{
 				"Namespace":       systemNamespace,
 				"ServerKey":       serverKey,
@@ -79,6 +83,7 @@ data:
       tlsTermination:
         includeHosts:
         - "`+staticServiceEntryHost+`"
+        - "`+dfpControlHost+`"
       serviceEntries:
       - hosts:
         - "`+staticServiceEntryHost+`"
@@ -114,6 +119,19 @@ data:
 				}
 				return nil
 			}
+			callUnmatchedDFPHost := func(scheme string, originalPort, authorityPort int) error {
+				command := fmt.Sprintf(
+					"curl -sS -k --noproxy '*' --resolve %s:%d:192.0.2.1 -H 'Host: %s:%d' --connect-timeout 5 --max-time 15 %s://%s:%d/",
+					dfpControlHost, originalPort, dfpControlHost, authorityPort, scheme, dfpControlHost, originalPort)
+				stdout, stderr, err := cluster.PodExec(workload.PodName(), src.NamespaceName(), "app", command)
+				if err != nil {
+					return fmt.Errorf("%s unmatched DFP request failed: %w; stdout=%q stderr=%q", scheme, err, stdout, stderr)
+				}
+				if got, want := strings.TrimSpace(stdout), "endpoint-1"; got != want {
+					return fmt.Errorf("%s unmatched DFP response = %q, want %q", scheme, got, want)
+				}
+				return nil
+			}
 
 			for _, testCase := range []struct {
 				name     string
@@ -129,6 +147,22 @@ data:
 				ctx.NewSubTest(testCase.name).Run(func(ctx framework.TestContext) {
 					retry.UntilSuccessOrFail(ctx, func() error {
 						return callUntilBothEndpointsSeen(testCase.scheme, testCase.port, testCase.insecure)
+					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
+				})
+			}
+
+			for _, testCase := range []struct {
+				name          string
+				scheme        string
+				originalPort  int
+				authorityPort int
+			}{
+				{name: "HTTP unmatched host keeps DFP authority port", scheme: "http", originalPort: 18080, authorityPort: 80},
+				{name: "HTTPS unmatched host keeps DFP authority port", scheme: "https", originalPort: 18443, authorityPort: 443},
+			} {
+				ctx.NewSubTest(testCase.name).Run(func(ctx framework.TestContext) {
+					retry.UntilSuccessOrFail(ctx, func() error {
+						return callUnmatchedDFPHost(testCase.scheme, testCase.originalPort, testCase.authorityPort)
 					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
 				})
 			}
