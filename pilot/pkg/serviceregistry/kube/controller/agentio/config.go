@@ -16,12 +16,15 @@ package agentio
 
 import (
 	"fmt"
+	"net/netip"
 	"path"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+	agentvalidation "istio.io/istio/pkg/config/validation/agent"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/kclient"
@@ -73,8 +76,67 @@ func applyAgentioConfig(yml string, defaultConfig *model.AgentioConfig) (*model.
 	if err := protomarshal.ApplyYAML(yml, out.AgentioConfig); err != nil {
 		return nil, err
 	}
+	if err := normalizeEgressServiceEntries(out.AgentioConfig); err != nil {
+		return nil, err
+	}
 	log.Infof("Loaded agentio config: %v", out.AgentioConfig)
 	return out, nil
+}
+
+func normalizeEgressServiceEntries(config *extensions.AgentioConfig) error {
+	for gatewayIndex, gateway := range config.GetEgressGateways() {
+		if gateway == nil {
+			continue
+		}
+		hosts := make(map[string]struct{})
+		for serviceIndex, service := range gateway.GetServiceEntries() {
+			field := fmt.Sprintf("egressGateways[%d].serviceEntries[%d]", gatewayIndex, serviceIndex)
+			if service == nil {
+				return fmt.Errorf("%s must not be nil", field)
+			}
+			if len(service.GetHosts()) == 0 {
+				return fmt.Errorf("%s.hosts must contain at least one host", field)
+			}
+			if len(service.GetEndpoints()) == 0 {
+				return fmt.Errorf("%s.endpoints must contain at least one endpoint", field)
+			}
+
+			addresses := make(map[string]struct{}, len(service.GetEndpoints()))
+			for endpointIndex, endpoint := range service.GetEndpoints() {
+				endpointField := fmt.Sprintf("%s.endpoints[%d]", field, endpointIndex)
+				if endpoint == nil {
+					return fmt.Errorf("%s must not be nil", endpointField)
+				}
+				address, err := netip.ParseAddr(strings.TrimSpace(endpoint.GetAddress()))
+				if err != nil || !address.Is4() {
+					return fmt.Errorf("%s.address must be an IPv4 address", endpointField)
+				}
+				canonicalAddress := address.String()
+				if _, found := addresses[canonicalAddress]; found {
+					return fmt.Errorf("%s.address duplicates endpoint %q in the same service entry", endpointField, canonicalAddress)
+				}
+				addresses[canonicalAddress] = struct{}{}
+				endpoint.Address = canonicalAddress
+			}
+
+			for hostIndex, value := range service.GetHosts() {
+				host := strings.ToLower(strings.TrimSpace(value))
+				host = strings.TrimSuffix(host, ".")
+				if host == "" || strings.HasSuffix(host, ".") {
+					return fmt.Errorf("%s.hosts[%d] is not a valid FQDN", field, hostIndex)
+				}
+				if err := agentvalidation.ValidateFQDN(host); err != nil {
+					return fmt.Errorf("%s.hosts[%d] is not a valid FQDN: %w", field, hostIndex, err)
+				}
+				if _, found := hosts[host]; found {
+					return fmt.Errorf("%s.hosts[%d] duplicates host %q in the same gateway", field, hostIndex, host)
+				}
+				hosts[host] = struct{}{}
+				service.Hosts[hostIndex] = host
+			}
+		}
+	}
+	return nil
 }
 
 func newAgentioConfig(client kube.Client, rootNamespace string, opts krt.OptionsBuilder) krt.Singleton[model.AgentioConfig] {

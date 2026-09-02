@@ -15,12 +15,15 @@
 package core
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	typedstruct "github.com/cncf/xds/go/udpa/type/v1"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	extensionmatching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
+	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
+	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	sfshttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -30,6 +33,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/ext"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	networking "istio.io/api/networking/v1alpha3"
@@ -274,6 +278,75 @@ func TestBuildMainForwardFilters_ProxiesConnect(t *testing.T) {
 			}
 			if !h.GetHttp2ProtocolOptions().GetAllowConnect() {
 				t.Fatal("forward-http HCM must allow HTTP/2 CONNECT")
+			}
+		})
+	}
+}
+
+func TestBuildMainForwardFilters_ServiceEntryEndpoints(t *testing.T) {
+	cg := NewConfigGenTest(t, TestOptions{})
+	node := cg.SetupProxy(sandboxEgressNode())
+	push := cg.PushContext()
+	push.AgentioConfig = &model.AgentioConfig{AgentioConfig: &extensions.AgentioConfig{
+		EgressGateways: []*extensions.EgressGateway{{
+			Name:      "egress-gw",
+			Namespace: "istio-system",
+			ServiceEntries: []*extensions.EgressServiceEntry{{
+				Hosts: []string{"api.example.com"},
+				Endpoints: []*extensions.EgressServiceEntryEndpoint{
+					{Address: "10.10.20.30"},
+					{Address: "10.10.20.31"},
+				},
+			}},
+		}},
+	}}
+	lb := &ListenerBuilder{node: node, push: push}
+
+	for _, tt := range []struct {
+		name        string
+		httpCluster string
+		tcpCluster  string
+		inner       bool
+	}{
+		{name: "forward-http", httpCluster: httpForwardCluster, tcpCluster: util.PassthroughCluster},
+		{name: "main_forward", httpCluster: tlsOriginateCluster, tcpCluster: tlsOriginateCluster, inner: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			chains := lb.buildMainForwardFilters(tt.httpCluster, tt.tcpCluster, tt.inner)
+			h := &hcm.HttpConnectionManager{}
+			if err := chains[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(h); err != nil {
+				t.Fatalf("decode HTTP connection manager: %v", err)
+			}
+			vhosts := h.GetRouteConfig().GetVirtualHosts()
+			if got, want := len(vhosts), 2; got != want {
+				t.Fatalf("virtual hosts = %d, want service entry and fallback (%d)", got, want)
+			}
+			if got, want := vhosts[0].GetDomains(), []string{"api.example.com", "api.example.com:*"}; !slices.Equal(got, want) {
+				t.Fatalf("service-entry domains = %v, want %v", got, want)
+			}
+			ordinaryRoute := vhosts[0].GetRoutes()[1]
+			weighted := ordinaryRoute.GetRoute().GetWeightedClusters().GetClusters()
+			if got, want := len(weighted), 2; got != want {
+				t.Fatalf("weighted clusters = %d, want %d", got, want)
+			}
+			for index, entry := range weighted {
+				if got := entry.GetName(); got != tt.httpCluster {
+					t.Fatalf("weighted cluster %d = %q, want %q", index, got, tt.httpCluster)
+				}
+			}
+
+			var dfpConfig *dfphttp.FilterConfig
+			for _, filter := range h.GetHttpFilters() {
+				if filter.GetName() != "envoy.filters.http.dynamic_forward_proxy" {
+					continue
+				}
+				dfpConfig = &dfphttp.FilterConfig{}
+				if err := filter.GetTypedConfig().UnmarshalTo(dfpConfig); err != nil {
+					t.Fatalf("decode DFP filter config: %v", err)
+				}
+			}
+			if dfpConfig == nil || !dfpConfig.GetAllowDynamicHostFromFilterState() {
+				t.Fatal("DFP filter does not accept the selected static endpoint")
 			}
 		})
 	}
@@ -841,6 +914,157 @@ func TestBuildSandboxHTTPRouteConfig_EmptyHostsSkipped(t *testing.T) {
 
 	assert.Equal(t, len(rc.VirtualHosts), 2)
 	assert.Equal(t, rc.VirtualHosts[0].Domains, []string{"valid.com"})
+}
+
+func TestBuildSandboxHTTPRouteConfig_ServiceEntryEndpoints(t *testing.T) {
+	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
+	gateway := &extensions.EgressGateway{
+		ConnectionPool: makeConnPool(withRouteOverride([]string{"api.example.com"}, 17*time.Second)),
+		ServiceEntries: []*extensions.EgressServiceEntry{{
+			Hosts: []string{"api.example.com"},
+			Endpoints: []*extensions.EgressServiceEntryEndpoint{
+				{Address: "10.10.20.30"},
+				{Address: "10.10.20.31"},
+			},
+		}},
+	}
+
+	for _, clusterName := range []string{httpForwardCluster, tlsOriginateCluster} {
+		t.Run(clusterName, func(t *testing.T) {
+			cc := testInboundChainConfig(clusterName)
+			cc.connectProxyCluster = tlsProxyOriginateCluster
+			rc := buildSandboxHTTPRouteConfigForGateway(lb, cc, gateway)
+			if err := rc.Validate(); err != nil {
+				t.Fatalf("generated route configuration is invalid: %v", err)
+			}
+
+			if got, want := len(rc.GetVirtualHosts()), 2; got != want {
+				t.Fatalf("virtual hosts = %d, want service entry and fallback (%d)", got, want)
+			}
+			serviceVHost := rc.GetVirtualHosts()[0]
+			if got, want := serviceVHost.GetDomains(), []string{"api.example.com", "api.example.com:*"}; !slices.Equal(got, want) {
+				t.Fatalf("domains = %v, want %v", got, want)
+			}
+			if got, want := len(serviceVHost.GetRoutes()), 2; got != want {
+				t.Fatalf("routes = %d, want CONNECT and service entry (%d)", got, want)
+			}
+			if config := serviceVHost.GetRoutes()[0].GetTypedPerFilterConfig(); len(config) != 0 {
+				t.Fatalf("CONNECT route unexpectedly contains endpoint config: %v", config)
+			}
+
+			serviceRoute := serviceVHost.GetRoutes()[1]
+			if got := serviceRoute.GetRoute().GetTimeout().AsDuration(); got != 17*time.Second {
+				t.Fatalf("service route timeout = %v, want route override 17s", got)
+			}
+			weighted := serviceRoute.GetRoute().GetWeightedClusters().GetClusters()
+			if got, want := len(weighted), 2; got != want {
+				t.Fatalf("weighted clusters = %d, want %d", got, want)
+			}
+			for index, wantAddress := range []string{"10.10.20.30", "10.10.20.31"} {
+				entry := weighted[index]
+				if got := entry.GetName(); got != clusterName {
+					t.Fatalf("weighted cluster %d name = %q, want %q", index, got, clusterName)
+				}
+				if got := entry.GetWeight().GetValue(); got != 1 {
+					t.Fatalf("weighted cluster %d weight = %d, want 1", index, got)
+				}
+				if got := staticEndpointFromFilterConfig(t, entry.GetTypedPerFilterConfig()); got != wantAddress {
+					t.Fatalf("weighted cluster %d endpoint = %q, want %q", index, got, wantAddress)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildSandboxHTTPRouteConfig_SingleServiceEntryEndpoint(t *testing.T) {
+	lb := &ListenerBuilder{node: sandboxEgressNode(), push: &model.PushContext{}}
+	cc := testInboundChainConfig(httpForwardCluster)
+	gateway := &extensions.EgressGateway{ServiceEntries: []*extensions.EgressServiceEntry{{
+		Hosts:     []string{"api.example.com"},
+		Endpoints: []*extensions.EgressServiceEntryEndpoint{{Address: "10.10.20.30"}},
+	}}}
+
+	serviceRoute := buildSandboxHTTPRouteConfigForGateway(lb, cc, gateway).GetVirtualHosts()[0].GetRoutes()[0]
+	if got := serviceRoute.GetRoute().GetCluster(); got != httpForwardCluster {
+		t.Fatalf("cluster = %q, want %q", got, httpForwardCluster)
+	}
+	if got := staticEndpointFromFilterConfig(t, serviceRoute.GetTypedPerFilterConfig()); got != "10.10.20.30" {
+		t.Fatalf("endpoint = %q, want 10.10.20.30", got)
+	}
+}
+
+func staticEndpointFromFilterConfig(t *testing.T, config map[string]*anypb.Any) string {
+	t.Helper()
+	typedConfig := config[staticEndpointHeaderMutationFilter]
+	if typedConfig == nil {
+		t.Fatal("static endpoint header mutation config not found")
+	}
+	mutationConfig := &headermutation.HeaderMutationPerRoute{}
+	if err := typedConfig.UnmarshalTo(mutationConfig); err != nil {
+		t.Fatalf("decode endpoint header mutation: %v", err)
+	}
+	mutations := mutationConfig.GetMutations().GetRequestMutations()
+	if len(mutations) != 1 {
+		t.Fatalf("request mutations = %d, want 1", len(mutations))
+	}
+	appendAction := mutations[0].GetAppend()
+	if appendAction.GetHeader().GetKey() != staticEndpointHeader {
+		t.Fatalf("header mutation key = %q, want %q", appendAction.GetHeader().GetKey(), staticEndpointHeader)
+	}
+	return appendAction.GetHeader().GetValue()
+}
+
+func TestAppendSandboxHTTPFilters_ServiceEntries(t *testing.T) {
+	push := &model.PushContext{AgentioConfig: &model.AgentioConfig{AgentioConfig: &extensions.AgentioConfig{
+		EgressGateways: []*extensions.EgressGateway{{
+			Name:      "egress-gw",
+			Namespace: "istio-system",
+			ServiceEntries: []*extensions.EgressServiceEntry{{
+				Hosts:     []string{"api.example.com"},
+				Endpoints: []*extensions.EgressServiceEntryEndpoint{{Address: "10.10.20.30"}, {Address: "10.10.20.31"}},
+			}},
+		}},
+	}}}
+	lb := &ListenerBuilder{node: sandboxEgressNode(), push: push}
+
+	filters := appendSandboxHTTPFilters(lb, nil, false)
+	wantNames := []string{
+		staticEndpointHeaderMutationFilter,
+		staticEndpointFilterStateFilter,
+		staticEndpointHeaderCleanupFilter,
+		"envoy.filters.http.dynamic_forward_proxy",
+	}
+	if got := len(filters); got != len(wantNames) {
+		t.Fatalf("filters = %d, want %d: %v", got, len(wantNames), filters)
+	}
+	for index, want := range wantNames {
+		if got := filters[index].GetName(); got != want {
+			t.Fatalf("filter %d = %q, want %q", index, got, want)
+		}
+	}
+
+	dfpConfig := &dfphttp.FilterConfig{}
+	if err := filters[len(filters)-1].GetTypedConfig().UnmarshalTo(dfpConfig); err != nil {
+		t.Fatalf("decode DFP filter config: %v", err)
+	}
+	if !dfpConfig.GetAllowDynamicHostFromFilterState() {
+		t.Fatal("DFP filter must allow service-entry endpoint selection from filter state")
+	}
+
+	filterStateConfig := &sfshttp.Config{}
+	if err := filters[1].GetTypedConfig().UnmarshalTo(filterStateConfig); err != nil {
+		t.Fatalf("decode set-filter-state config: %v", err)
+	}
+	values := filterStateConfig.GetOnRequestHeaders()
+	if got, want := len(values), 1; got != want {
+		t.Fatalf("filter-state values = %d, want %d", got, want)
+	}
+	if got := values[0].GetObjectKey(); got != dynamicHostFilterStateKey {
+		t.Fatalf("filter-state key = %q, want %q", got, dynamicHostFilterStateKey)
+	}
+	if got, want := values[0].GetFormatString().GetTextFormatSource().GetInlineString(), "%REQ("+staticEndpointHeader+")%"; got != want {
+		t.Fatalf("filter-state value format = %q, want %q", got, want)
+	}
 }
 
 func TestBuildSandboxHTTPRouteConfig_AppliesInboundEnvoyFilterPatches(t *testing.T) {

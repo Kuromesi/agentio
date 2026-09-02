@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: static-service-entry-upstream
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+      - name: endpoint-1-http
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 18080
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: endpoint_1_http
+              route_config:
+                name: direct
+                virtual_hosts:
+                - name: direct
+                  domains: ["*"]
+                  routes:
+                  - match: {prefix: "/"}
+                    direct_response:
+                      status: 200
+                      body: {inline_string: "endpoint-1"}
+              http_filters:
+              - name: envoy.filters.http.router
+      - name: endpoint-1-https
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 18443
+        filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_certificates:
+                - certificate_chain: {filename: /etc/certs/tls.crt}
+                  private_key: {filename: /etc/certs/tls.key}
+          filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: endpoint_1_https
+              route_config:
+                name: direct
+                virtual_hosts:
+                - name: direct
+                  domains: ["*"]
+                  routes:
+                  - match: {prefix: "/"}
+                    direct_response:
+                      status: 200
+                      body: {inline_string: "endpoint-1"}
+              http_filters:
+              - name: envoy.filters.http.router
+      - name: endpoint-2-http
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 28080
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: endpoint_2_http
+              route_config:
+                name: direct
+                virtual_hosts:
+                - name: direct
+                  domains: ["*"]
+                  routes:
+                  - match: {prefix: "/"}
+                    direct_response:
+                      status: 200
+                      body: {inline_string: "endpoint-2"}
+              http_filters:
+              - name: envoy.filters.http.router
+      - name: endpoint-2-https
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 28443
+        filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_certificates:
+                - certificate_chain: {filename: /etc/certs/tls.crt}
+                  private_key: {filename: /etc/certs/tls.key}
+          filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: endpoint_2_https
+              route_config:
+                name: direct
+                virtual_hosts:
+                - name: direct
+                  domains: ["*"]
+                  routes:
+                  - match: {prefix: "/"}
+                    direct_response:
+                      status: 200
+                      body: {inline_string: "endpoint-2"}
+              http_filters:
+              - name: envoy.filters.http.router
+  tls.crt: |
+{{ .ServerCertChain | indent 4 }}
+  tls.key: |
+{{ .ServerKey | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: static-service-entry-upstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: static-service-entry-upstream
+  template:
+    metadata:
+      labels:
+        app: static-service-entry-upstream
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+      - name: envoy
+        image: envoyproxy/envoy:v1.21.0
+        imagePullPolicy: IfNotPresent
+        args: ["-c", "/etc/envoy/envoy.yaml"]
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 18080
+        volumeMounts:
+        - name: config
+          mountPath: /etc/envoy
+        - name: certs
+          mountPath: /etc/certs
+      volumes:
+      - name: config
+        configMap:
+          name: static-service-entry-upstream
+          items:
+          - key: envoy.yaml
+            path: envoy.yaml
+      - name: certs
+        configMap:
+          name: static-service-entry-upstream
+          items:
+          - key: tls.crt
+            path: tls.crt
+          - key: tls.key
+            path: tls.key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: static-service-entry-upstream-1
+spec:
+  selector:
+    app: static-service-entry-upstream
+  ports:
+  - name: http
+    port: 80
+    targetPort: 18080
+  - name: https
+    port: 443
+    targetPort: 18443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: static-service-entry-upstream-2
+spec:
+  selector:
+    app: static-service-entry-upstream
+  ports:
+  - name: http
+    port: 80
+    targetPort: 28080
+  - name: https
+    port: 443
+    targetPort: 28443
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: static-service-entry-upstream-ca
+  labels:
+    manifests.agents.kruise.io/kube-source: "true"
+data:
+  sources: |
+    apiVersion: networking.istio.io/v1alpha3
+    kind: EnvoyFilter
+    metadata:
+      name: static-service-entry-upstream-ca
+      namespace: {{ .Namespace }}
+    spec:
+      targetRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: egress-gateway
+      configPatches:
+      - applyTo: CLUSTER
+        match:
+          context: ANY
+          cluster:
+            name: tls_connect_originate
+        patch:
+          operation: MERGE
+          value:
+            transport_socket:
+              name: envoy.transport_sockets.tls
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+                common_tls_context:
+                  validation_context:
+                    trusted_ca:
+                      inline_string: |-
+{{ .ServerCA | indent 24 }}
