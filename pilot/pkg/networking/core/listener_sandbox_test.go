@@ -23,7 +23,6 @@ import (
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	extensionmatching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
 	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
-	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	sfshttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -995,23 +994,35 @@ func TestBuildSandboxHTTPRouteConfig_SingleServiceEntryEndpoint(t *testing.T) {
 
 func staticEndpointFromFilterConfig(t *testing.T, config map[string]*anypb.Any) string {
 	t.Helper()
-	typedConfig := config[staticEndpointHeaderMutationFilter]
+	typedConfig := config[staticEndpointFilterStateFilter]
 	if typedConfig == nil {
-		t.Fatal("static endpoint header mutation config not found")
+		t.Fatal("static endpoint set-filter-state config not found")
 	}
-	mutationConfig := &headermutation.HeaderMutationPerRoute{}
-	if err := typedConfig.UnmarshalTo(mutationConfig); err != nil {
-		t.Fatalf("decode endpoint header mutation: %v", err)
+	filterStateConfig := &sfshttp.Config{}
+	if err := typedConfig.UnmarshalTo(filterStateConfig); err != nil {
+		t.Fatalf("decode endpoint set-filter-state config: %v", err)
 	}
-	mutations := mutationConfig.GetMutations().GetRequestMutations()
-	if len(mutations) != 1 {
-		t.Fatalf("request mutations = %d, want 1", len(mutations))
+	values := filterStateConfig.GetOnRequestHeaders()
+	if got, want := len(values), 2; got != want {
+		t.Fatalf("filter-state values = %d, want %d", got, want)
 	}
-	appendAction := mutations[0].GetAppend()
-	if appendAction.GetHeader().GetKey() != staticEndpointHeader {
-		t.Fatalf("header mutation key = %q, want %q", appendAction.GetHeader().GetKey(), staticEndpointHeader)
+	if got, want := values[0].GetObjectKey(), dynamicHostFilterStateKey; got != want {
+		t.Fatalf("host filter-state key = %q, want %q", got, want)
 	}
-	return appendAction.GetHeader().GetValue()
+	if !values[0].GetReadOnly() {
+		t.Fatal("host filter-state value must be read-only")
+	}
+	if got, want := values[1].GetObjectKey(), dynamicPortFilterStateKey; got != want {
+		t.Fatalf("port filter-state key = %q, want %q", got, want)
+	}
+	if got, want := values[1].GetFormatString().GetTextFormatSource().GetInlineString(),
+		"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%"; got != want {
+		t.Fatalf("port filter-state value format = %q, want %q", got, want)
+	}
+	if !values[1].GetReadOnly() || !values[1].GetSkipIfEmpty() {
+		t.Fatal("port filter-state value must be read-only and skip empty values")
+	}
+	return values[0].GetFormatString().GetTextFormatSource().GetInlineString()
 }
 
 func TestAppendSandboxHTTPFilters_ServiceEntries(t *testing.T) {
@@ -1029,9 +1040,7 @@ func TestAppendSandboxHTTPFilters_ServiceEntries(t *testing.T) {
 
 	filters := appendSandboxHTTPFilters(lb, nil, false)
 	wantNames := []string{
-		staticEndpointHeaderMutationFilter,
 		staticEndpointFilterStateFilter,
-		staticEndpointHeaderCleanupFilter,
 		"envoy.filters.http.dynamic_forward_proxy",
 	}
 	if got := len(filters); got != len(wantNames) {
@@ -1051,56 +1060,12 @@ func TestAppendSandboxHTTPFilters_ServiceEntries(t *testing.T) {
 		t.Fatal("DFP filter must allow service-entry endpoint selection from filter state")
 	}
 
-	wrapped := &extensionmatching.ExtensionWithMatcher{}
-	if err := filters[1].GetTypedConfig().UnmarshalTo(wrapped); err != nil {
-		t.Fatalf("decode static endpoint matcher wrapper: %v", err)
-	}
-	if err := wrapped.ValidateAll(); err != nil {
-		t.Fatalf("validate static endpoint matcher wrapper: %v", err)
-	}
-	matchers := wrapped.GetXdsMatcher().GetMatcherList().GetMatchers()
-	if got, want := len(matchers), 1; got != want {
-		t.Fatalf("static endpoint matcher rules = %d, want %d", got, want)
-	}
-	missingEndpoint := matchers[0].GetPredicate().GetNotMatcher().GetSinglePredicate()
-	if missingEndpoint == nil {
-		t.Fatal("static endpoint filter-state writes must be skipped when the route did not select an endpoint")
-	}
-	headerInput := &httpmatcher.HttpRequestHeaderMatchInput{}
-	if err := missingEndpoint.GetInput().GetTypedConfig().UnmarshalTo(headerInput); err != nil {
-		t.Fatalf("decode static endpoint header matcher input: %v", err)
-	}
-	if got, want := headerInput.GetHeaderName(), staticEndpointHeader; got != want {
-		t.Fatalf("matcher header = %q, want %q", got, want)
-	}
-	if got, want := missingEndpoint.GetValueMatch().GetSafeRegex().GetRegex(), ".+"; got != want {
-		t.Fatalf("matcher header regex = %q, want %q", got, want)
-	}
-	if got, want := matchers[0].GetOnMatch().GetAction().GetTypedConfig().GetTypeUrl(),
-		"type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter"; got != want {
-		t.Fatalf("missing endpoint action type = %q, want %q", got, want)
-	}
-
 	filterStateConfig := &sfshttp.Config{}
-	if err := wrapped.GetExtensionConfig().GetTypedConfig().UnmarshalTo(filterStateConfig); err != nil {
-		t.Fatalf("decode wrapped set-filter-state config: %v", err)
+	if err := filters[0].GetTypedConfig().UnmarshalTo(filterStateConfig); err != nil {
+		t.Fatalf("decode listener set-filter-state config: %v", err)
 	}
-	values := filterStateConfig.GetOnRequestHeaders()
-	if got, want := len(values), 2; got != want {
-		t.Fatalf("filter-state values = %d, want %d", got, want)
-	}
-	if got := values[0].GetObjectKey(); got != dynamicHostFilterStateKey {
-		t.Fatalf("filter-state key = %q, want %q", got, dynamicHostFilterStateKey)
-	}
-	if got, want := values[0].GetFormatString().GetTextFormatSource().GetInlineString(), "%REQ("+staticEndpointHeader+")%"; got != want {
-		t.Fatalf("filter-state value format = %q, want %q", got, want)
-	}
-	if got, want := values[1].GetObjectKey(), "envoy.upstream.dynamic_port"; got != want {
-		t.Fatalf("filter-state key = %q, want %q", got, want)
-	}
-	if got, want := values[1].GetFormatString().GetTextFormatSource().GetInlineString(),
-		"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%"; got != want {
-		t.Fatalf("filter-state value format = %q, want %q", got, want)
+	if got := len(filterStateConfig.GetOnRequestHeaders()); got != 0 {
+		t.Fatalf("listener set-filter-state values = %d, want route-only configuration", got)
 	}
 }
 
