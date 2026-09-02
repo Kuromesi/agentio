@@ -2,7 +2,13 @@ FROM alpine:3.22
 
 # Keep the init image limited to pilot-agent and the userspace tools required
 # by the istio-iptables subcommand.
-RUN apk add --no-cache ca-certificates iptables ip6tables nftables
+RUN apk add --no-cache --upgrade \
+    ca-certificates \
+    iptables \
+    ip6tables \
+    libcrypto3 \
+    libssl3 \
+    nftables
 
 ARG TARGETARCH
 COPY ${TARGETARCH:-amd64}/pilot-agent /usr/local/bin/pilot-agent
