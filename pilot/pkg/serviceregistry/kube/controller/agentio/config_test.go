@@ -16,6 +16,7 @@ package agentio
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"istio.io/istio/pilot/pkg/model"
@@ -241,4 +242,96 @@ sandboxIgnoredLabels:
 			t.Errorf("expected empty sandboxIgnoredLabels, got %v", got.GetSandboxIgnoredLabels())
 		}
 	})
+}
+
+func TestApplyAgentioConfig_ServiceEntries(t *testing.T) {
+	yml := `
+egressGateways:
+- name: egress-gw
+  namespace: istio-system
+  serviceEntries:
+  - hosts:
+    - API.Example.COM.
+    endpoints:
+    - address: " 10.10.20.30 "
+    - address: 10.10.20.31
+`
+	got, err := applyAgentioConfig(yml, nil)
+	if err != nil {
+		t.Fatalf("applyAgentioConfig failed: %v", err)
+	}
+
+	entries := got.GetEgressGateways()[0].GetServiceEntries()
+	if got, want := entries[0].GetHosts(), []string{"api.example.com"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("hosts = %v, want %v", got, want)
+	}
+	var addresses []string
+	for _, endpoint := range entries[0].GetEndpoints() {
+		addresses = append(addresses, endpoint.GetAddress())
+	}
+	if want := []string{"10.10.20.30", "10.10.20.31"}; !reflect.DeepEqual(addresses, want) {
+		t.Fatalf("endpoint addresses = %v, want %v", addresses, want)
+	}
+}
+
+func TestApplyAgentioConfig_InvalidServiceEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   string
+		wantErr string
+	}{
+		{
+			name: "missing hosts",
+			entry: `
+    endpoints:
+    - address: 10.10.20.30`,
+			wantErr: ".hosts must contain at least one host",
+		},
+		{
+			name: "wildcard host",
+			entry: `
+    hosts: ["*.example.com"]
+    endpoints:
+    - address: 10.10.20.30`,
+			wantErr: ".hosts[0] is not a valid FQDN",
+		},
+		{
+			name: "missing endpoints",
+			entry: `
+    hosts: ["api.example.com"]`,
+			wantErr: ".endpoints must contain at least one endpoint",
+		},
+		{
+			name: "non IPv4 endpoint",
+			entry: `
+    hosts: ["api.example.com"]
+    endpoints:
+    - address: 2001:db8::1`,
+			wantErr: ".endpoints[0].address must be an IPv4 address",
+		},
+		{
+			name: "duplicate endpoint",
+			entry: `
+    hosts: ["api.example.com"]
+    endpoints:
+    - address: 10.10.20.30
+    - address: " 10.10.20.30 "`,
+			wantErr: ".endpoints[1].address duplicates endpoint",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yml := `
+egressGateways:
+- name: egress-gw
+  namespace: istio-system
+  serviceEntries:
+  -` + tt.entry + "\n"
+			_, err := applyAgentioConfig(yml, nil)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
 }

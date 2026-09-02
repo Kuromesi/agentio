@@ -93,6 +93,62 @@ func TestSandboxClusters_TLSOriginationRequiresSecureClusterOptions(t *testing.T
 	}
 }
 
+func TestSandboxClusters_TargetRefEnvoyFilterPatchesTLSOrigination(t *testing.T) {
+	const envoyFilter = `
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: patch-sandbox-tls-ca
+  namespace: istio-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: egress-gateway
+  configPatches:
+  - applyTo: CLUSTER
+    match:
+      context: ANY
+      cluster:
+        name: tls_connect_originate
+    patch:
+      operation: MERGE
+      value:
+        transport_socket:
+          name: envoy.transport_sockets.tls
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+            common_tls_context:
+              validation_context:
+                trusted_ca:
+                  inline_string: test-ca
+`
+
+	cg := NewConfigGenTest(t, TestOptions{ConfigString: envoyFilter})
+	proxy := sandboxEgressNode()
+	proxy.Type = model.Waypoint
+	proxy.Labels["gateway.networking.k8s.io/gateway-name"] = "egress-gateway"
+
+	var got *cluster.Cluster
+	for _, c := range cg.Clusters(cg.SetupProxy(proxy)) {
+		if c.GetName() == tlsOriginateCluster {
+			got = c
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("TLS-origination dynamic forward proxy cluster is not registered")
+	}
+
+	tlsContext := &tlsv3.UpstreamTlsContext{}
+	if err := got.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
+		t.Fatalf("decode upstream TLS context: %v", err)
+	}
+	if got, want := tlsContext.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetInlineString(), "test-ca"; got != want {
+		t.Fatalf("trusted CA inline string = %q, want EnvoyFilter value %q", got, want)
+	}
+}
+
 func TestSandboxClusters_TLSProxyOriginationUsesOriginalDestination(t *testing.T) {
 	cb := &ClusterBuilder{req: &model.PushRequest{Push: &model.PushContext{
 		Mesh: &meshconfig.MeshConfig{ConnectTimeout: durationpb.New(time.Second)},

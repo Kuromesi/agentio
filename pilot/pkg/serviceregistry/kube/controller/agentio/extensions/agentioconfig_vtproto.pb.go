@@ -108,11 +108,89 @@ func (this *EgressGateway) EqualVT(that *EgressGateway) bool {
 	if !this.ConnectRateLimit.EqualVT(that.ConnectRateLimit) {
 		return false
 	}
+	if len(this.ServiceEntries) != len(that.ServiceEntries) {
+		return false
+	}
+	for i, vx := range this.ServiceEntries {
+		vy := that.ServiceEntries[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &EgressServiceEntry{}
+			}
+			if q == nil {
+				q = &EgressServiceEntry{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
 func (this *EgressGateway) EqualMessageVT(thatMsg proto.Message) bool {
 	that, ok := thatMsg.(*EgressGateway)
+	if !ok {
+		return false
+	}
+	return this.EqualVT(that)
+}
+func (this *EgressServiceEntry) EqualVT(that *EgressServiceEntry) bool {
+	if this == that {
+		return true
+	} else if this == nil || that == nil {
+		return false
+	}
+	if len(this.Hosts) != len(that.Hosts) {
+		return false
+	}
+	for i, vx := range this.Hosts {
+		vy := that.Hosts[i]
+		if vx != vy {
+			return false
+		}
+	}
+	if len(this.Endpoints) != len(that.Endpoints) {
+		return false
+	}
+	for i, vx := range this.Endpoints {
+		vy := that.Endpoints[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &EgressServiceEntryEndpoint{}
+			}
+			if q == nil {
+				q = &EgressServiceEntryEndpoint{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
+	}
+	return string(this.unknownFields) == string(that.unknownFields)
+}
+
+func (this *EgressServiceEntry) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*EgressServiceEntry)
+	if !ok {
+		return false
+	}
+	return this.EqualVT(that)
+}
+func (this *EgressServiceEntryEndpoint) EqualVT(that *EgressServiceEntryEndpoint) bool {
+	if this == that {
+		return true
+	} else if this == nil || that == nil {
+		return false
+	}
+	if this.Address != that.Address {
+		return false
+	}
+	return string(this.unknownFields) == string(that.unknownFields)
+}
+
+func (this *EgressServiceEntryEndpoint) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*EgressServiceEntryEndpoint)
 	if !ok {
 		return false
 	}
@@ -741,6 +819,18 @@ func (m *EgressGateway) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.ServiceEntries) > 0 {
+		for iNdEx := len(m.ServiceEntries) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.ServiceEntries[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x3a
+		}
+	}
 	if m.ConnectRateLimit != nil {
 		size, err := m.ConnectRateLimit.MarshalToSizedBufferVTStrict(dAtA[:i])
 		if err != nil {
@@ -792,6 +882,100 @@ func (m *EgressGateway) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
 		i -= len(m.Name)
 		copy(dAtA[i:], m.Name)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Name)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EgressServiceEntry) MarshalVTStrict() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVTStrict(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EgressServiceEntry) MarshalToVTStrict(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVTStrict(dAtA[:size])
+}
+
+func (m *EgressServiceEntry) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.Endpoints) > 0 {
+		for iNdEx := len(m.Endpoints) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.Endpoints[iNdEx].MarshalToSizedBufferVTStrict(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.Hosts) > 0 {
+		for iNdEx := len(m.Hosts) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Hosts[iNdEx])
+			copy(dAtA[i:], m.Hosts[iNdEx])
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Hosts[iNdEx])))
+			i--
+			dAtA[i] = 0xa
+		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EgressServiceEntryEndpoint) MarshalVTStrict() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVTStrict(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EgressServiceEntryEndpoint) MarshalToVTStrict(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVTStrict(dAtA[:size])
+}
+
+func (m *EgressServiceEntryEndpoint) MarshalToSizedBufferVTStrict(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.Address) > 0 {
+		i -= len(m.Address)
+		copy(dAtA[i:], m.Address)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Address)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -1823,6 +2007,48 @@ func (m *EgressGateway) SizeVT() (n int) {
 	}
 	if m.ConnectRateLimit != nil {
 		l = m.ConnectRateLimit.SizeVT()
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if len(m.ServiceEntries) > 0 {
+		for _, e := range m.ServiceEntries {
+			l = e.SizeVT()
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	n += len(m.unknownFields)
+	return n
+}
+
+func (m *EgressServiceEntry) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.Hosts) > 0 {
+		for _, s := range m.Hosts {
+			l = len(s)
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	if len(m.Endpoints) > 0 {
+		for _, e := range m.Endpoints {
+			l = e.SizeVT()
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	n += len(m.unknownFields)
+	return n
+}
+
+func (m *EgressServiceEntryEndpoint) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Address)
+	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)

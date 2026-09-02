@@ -59,6 +59,30 @@ message EgressGateway {
   // H2 CONNECT streams are accepted on the connect_terminate HCM.
   // nil means no rate limiting.
   LocalRateLimitSettings connect_rate_limit = 6;
+
+  // External services whose DNS result is overridden at this gateway. The
+  // original request port and detected protocol are preserved; only the
+  // upstream address is replaced by the configured endpoint.
+  repeated EgressServiceEntry service_entries = 7;
+}
+
+// EgressServiceEntry binds one or more HTTP host identities to static upstream
+// endpoints. Hosts are exact FQDNs; wildcard matching is intentionally not
+// supported for static endpoints.
+message EgressServiceEntry {
+  // HTTP Host / :authority and TLS SNI identities for this service.
+  repeated string hosts = 1;
+
+  // Static upstream endpoints. Requests are distributed evenly across them.
+  // At least one endpoint is required.
+  repeated EgressServiceEntryEndpoint endpoints = 2;
+}
+
+// EgressServiceEntryEndpoint identifies a static upstream address. The request's
+// original destination port is used when connecting to this address.
+message EgressServiceEntryEndpoint {
+  // IPv4 address of the upstream endpoint.
+  string address = 1;
 }
 
 // TlsTerminationConfig defines which SNI domains should undergo TLS termination

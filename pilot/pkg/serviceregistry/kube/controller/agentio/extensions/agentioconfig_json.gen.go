@@ -28,6 +28,28 @@ func (this *EgressGateway) UnmarshalJSON(b []byte) error {
 	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
 }
 
+// MarshalJSON is a custom marshaler for EgressServiceEntry
+func (this *EgressServiceEntry) MarshalJSON() ([]byte, error) {
+	str, err := AgentioconfigMarshaler.MarshalToString(this)
+	return []byte(str), err
+}
+
+// UnmarshalJSON is a custom unmarshaler for EgressServiceEntry
+func (this *EgressServiceEntry) UnmarshalJSON(b []byte) error {
+	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
+}
+
+// MarshalJSON is a custom marshaler for EgressServiceEntryEndpoint
+func (this *EgressServiceEntryEndpoint) MarshalJSON() ([]byte, error) {
+	str, err := AgentioconfigMarshaler.MarshalToString(this)
+	return []byte(str), err
+}
+
+// UnmarshalJSON is a custom unmarshaler for EgressServiceEntryEndpoint
+func (this *EgressServiceEntryEndpoint) UnmarshalJSON(b []byte) error {
+	return AgentioconfigUnmarshaler.Unmarshal(bytes.NewReader(b), this)
+}
+
 // MarshalJSON is a custom marshaler for TlsTerminationConfig
 func (this *TlsTerminationConfig) MarshalJSON() ([]byte, error) {
 	str, err := AgentioconfigMarshaler.MarshalToString(this)

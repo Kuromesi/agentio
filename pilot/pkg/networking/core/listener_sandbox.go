@@ -17,10 +17,12 @@ package core
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	xds "github.com/cncf/xds/go/xds/core/v3"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
+	mutation "github.com/envoyproxy/go-control-plane/envoy/config/common/mutation_rules/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbacconfig "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
@@ -30,6 +32,7 @@ import (
 	skipaction "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/matcher/action/v3"
 	sfsvalue "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
+	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	rbachttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	sfshttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
@@ -44,6 +47,7 @@ import (
 	envoytypev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/google/cel-go/cel"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 
@@ -94,6 +98,11 @@ const (
 	outerSNIFilterStateKey                = "io.kruise.outer_sni"
 	upstreamServerNameFilterStateKey      = "envoy.network.upstream_server_name"
 	upstreamSubjectAltNamesFilterStateKey = "envoy.network.upstream_subject_alt_names"
+	staticEndpointHeader                  = "x-agentio-static-endpoint"
+	dynamicHostFilterStateKey             = "envoy.upstream.dynamic_host"
+	staticEndpointHeaderMutationFilter    = "agentio.static_endpoint_header"
+	staticEndpointFilterStateFilter       = "agentio.static_endpoint_filter_state"
+	staticEndpointHeaderCleanupFilter     = "agentio.static_endpoint_header_cleanup"
 
 	// networkSetFilterStateName labels the network set_filter_state filter that
 	// captures outer SNI. Envoy dispatches it by typed_config type URL, so a
@@ -682,13 +691,62 @@ func applySandboxInternalChains(
 // buildSandboxDFPFilter builds the dynamic-forward-proxy HCM filter that resolves
 // upstream hosts via the sandbox DNS cache. Must sit between authz/ext_proc and
 // the router so DNS is not leaked for forbidden destinations.
-func buildSandboxDFPFilter() *hcm.HttpFilter {
+func buildSandboxDFPFilter(allowDynamicHostFromFilterState bool) *hcm.HttpFilter {
 	return &hcm.HttpFilter{
 		Name: "envoy.filters.http.dynamic_forward_proxy",
 		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&dfphttp.FilterConfig{
 			ImplementationSpecifier: &dfphttp.FilterConfig_DnsCacheConfig{
 				DnsCacheConfig: sandboxDFPDNSCacheConfig(),
 			},
+			AllowDynamicHostFromFilterState: allowDynamicHostFromFilterState,
+		})},
+	}
+}
+
+// buildSandboxRemoveStaticEndpointHeaderFilter removes the internal endpoint
+// header. One instance rejects client input before route-local mutation; a
+// second instance removes Agentio's value after it has been copied to filter
+// state so it is never forwarded upstream.
+func buildSandboxRemoveStaticEndpointHeaderFilter(name string) *hcm.HttpFilter {
+	return &hcm.HttpFilter{
+		Name: name,
+		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&headermutation.HeaderMutation{
+			Mutations: &headermutation.Mutations{
+				RequestMutations: []*mutation.HeaderMutation{{
+					Action: &mutation.HeaderMutation_Remove{Remove: staticEndpointHeader},
+				}},
+			},
+		})},
+	}
+}
+
+// buildSandboxStaticEndpointFilterStateFilter copies the route-selected static
+// endpoint into the well-known DFP dynamic-host filter-state key. The dynamic
+// port is deliberately left unset so DFP continues to use the port from the
+// request authority.
+func buildSandboxStaticEndpointFilterStateFilter() *hcm.HttpFilter {
+	return &hcm.HttpFilter{
+		Name: staticEndpointFilterStateFilter,
+		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: protoconv.MessageToAny(&sfshttp.Config{
+			OnRequestHeaders: []*sfsvalue.FilterStateValue{{
+				Key: &sfsvalue.FilterStateValue_ObjectKey{
+					ObjectKey: dynamicHostFilterStateKey,
+				},
+				Value: &sfsvalue.FilterStateValue_FormatString{
+					FormatString: &core.SubstitutionFormatString{
+						OmitEmptyValues: true,
+						Format: &core.SubstitutionFormatString_TextFormatSource{
+							TextFormatSource: &core.DataSource{
+								Specifier: &core.DataSource_InlineString{
+									InlineString: "%REQ(" + staticEndpointHeader + ")%",
+								},
+							},
+						},
+					},
+				},
+				ReadOnly:    true,
+				SkipIfEmpty: true,
+			}},
 		})},
 	}
 }
@@ -714,10 +772,18 @@ func appendSandboxHTTPFilters(lb *ListenerBuilder, filters []*hcm.HttpFilter, va
 	// ext_proc runs first so external auth/policy can reject before we pay the
 	// cost of a DNS lookup and to keep authz decisions before any egress side effect.
 	filters = append(filters, agentio.BuildExtProcFilter(lb.node, lb.push.AgentioConfig)...)
+	gateway := sandboxEgressGateway(lb)
+	staticEndpoints := len(gateway.GetServiceEntries()) > 0
+	if staticEndpoints {
+		filters = append(filters,
+			buildSandboxRemoveStaticEndpointHeaderFilter(staticEndpointHeaderMutationFilter),
+			buildSandboxStaticEndpointFilterStateFilter(),
+			buildSandboxRemoveStaticEndpointHeaderFilter(staticEndpointHeaderCleanupFilter))
+	}
 	// DFP must sit between authz/ext_proc and the router: prepending it would let
 	// it resolve the upstream host before RBAC/JWT/ext_proc had a chance to deny
 	// the request, leaking DNS for forbidden destinations.
-	filters = append(filters, buildSandboxDFPFilter())
+	filters = append(filters, buildSandboxDFPFilter(staticEndpoints))
 	return filters
 }
 
@@ -726,32 +792,84 @@ var (
 	defaultTCPIdleTimeout    = durationpb.New(1 * time.Hour)
 )
 
+// sandboxEgressGateway returns the gateway configuration selected for this
+// proxy's verified namespace and service account identity.
+func sandboxEgressGateway(lb *ListenerBuilder) *extensions.EgressGateway {
+	if !agentio.IsSandboxEgress(lb.node) {
+		return nil
+	}
+	return agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
+}
+
 // sandboxGatewayConnPool returns the ConnectionPoolSettings for the current
 // sandbox egress gateway. Returns nil when the node is not a sandbox egress
 // or no ConnectionPool is configured.
 func sandboxGatewayConnPool(lb *ListenerBuilder) *extensions.ConnectionPoolSettings {
-	if !agentio.IsSandboxEgress(lb.node) {
-		return nil
-	}
-	gw := agentio.FindEgressGatewayForProxy(lb.node, lb.push.AgentioConfig.GetEgressGateways())
-	return gw.GetConnectionPool()
+	return sandboxEgressGateway(lb).GetConnectionPool()
 }
 
-// buildSandboxHTTPRouteConfig generates a RouteConfiguration with per-host
-// VirtualHosts from ConnectionPoolSettings.HttpRouteOverrides, plus a wildcard
-// fallback VirtualHost using DefaultHttpRoute. Ordinary routes use the chain's
-// DFP cluster. When enabled, the CONNECT route is added before EnvoyFilter
-// patches so route-level policy can inspect, modify, remove, or precede it.
-func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, connPool *extensions.ConnectionPoolSettings) *route.RouteConfiguration {
+// buildSandboxHTTPRouteConfig builds the connection-pool-only form used when no
+// static service entries are supplied.
+func buildSandboxHTTPRouteConfig(
+	lb *ListenerBuilder,
+	cc inboundChainConfig,
+	connPool *extensions.ConnectionPoolSettings,
+) *route.RouteConfiguration {
+	return buildSandboxHTTPRouteConfigForGateway(lb, cc, &extensions.EgressGateway{ConnectionPool: connPool})
+}
+
+// buildSandboxHTTPRouteConfigForGateway generates a RouteConfiguration with
+// static service-entry and connection-pool override VirtualHosts, plus a
+// wildcard fallback. Static routes keep the chain's DFP cluster but select a
+// configured endpoint through route-local filter configuration.
+func buildSandboxHTTPRouteConfigForGateway(lb *ListenerBuilder, cc inboundChainConfig, gateway *extensions.EgressGateway) *route.RouteConfiguration {
 	var vhosts []*route.VirtualHost
+	connPool := gateway.GetConnectionPool()
+	staticDomains := make(map[string]struct{})
+
+	for serviceIndex, service := range gateway.GetServiceEntries() {
+		if service == nil {
+			continue
+		}
+		addresses := make([]string, 0, len(service.GetEndpoints()))
+		for _, endpoint := range service.GetEndpoints() {
+			if endpoint != nil && endpoint.GetAddress() != "" {
+				addresses = append(addresses, endpoint.GetAddress())
+			}
+		}
+		if len(addresses) == 0 {
+			continue
+		}
+		for hostIndex, serviceHost := range service.GetHosts() {
+			if serviceHost == "" {
+				continue
+			}
+			domains := []string{serviceHost, serviceHost + ":*"}
+			for _, domain := range domains {
+				staticDomains[strings.ToLower(domain)] = struct{}{}
+			}
+			settings := sandboxRouteSettingsForHost(connPool, serviceHost)
+			vhosts = append(vhosts, &route.VirtualHost{
+				Name:    fmt.Sprintf("sandbox|service-entry|%d|%d", serviceIndex, hostIndex),
+				Domains: domains,
+				Routes:  []*route.Route{buildSandboxStaticEndpointRoute(lb, cc, settings, addresses)},
+			})
+		}
+	}
 
 	for i, override := range connPool.GetHttp().GetRouteOverrides() {
-		if len(override.GetHosts()) == 0 {
+		domains := make([]string, 0, len(override.GetHosts()))
+		for _, domain := range override.GetHosts() {
+			if _, found := staticDomains[strings.ToLower(domain)]; !found {
+				domains = append(domains, domain)
+			}
+		}
+		if len(domains) == 0 {
 			continue
 		}
 		vhosts = append(vhosts, &route.VirtualHost{
 			Name:    fmt.Sprintf("sandbox|override|%d", i),
-			Domains: override.GetHosts(),
+			Domains: domains,
 			Routes:  []*route.Route{buildSandboxRoute(lb, cc, override.GetSettings())},
 		})
 	}
@@ -774,6 +892,94 @@ func buildSandboxHTTPRouteConfig(lb *ListenerBuilder, cc inboundChainConfig, con
 		efw = lb.push.EnvoyFilters(lb.node)
 	}
 	return envoyfilter.ApplyRouteConfigurationPatches(networking.EnvoyFilter_SIDECAR_INBOUND, lb.node, efw, rc)
+}
+
+func buildSandboxStaticEndpointRoute(
+	lb *ListenerBuilder,
+	cc inboundChainConfig,
+	settings *extensions.HttpRouteSettings,
+	addresses []string,
+) *route.Route {
+	out := buildSandboxRoute(lb, cc, settings)
+	if len(addresses) == 1 {
+		out.TypedPerFilterConfig = map[string]*anypb.Any{
+			staticEndpointHeaderMutationFilter: buildSandboxStaticEndpointHeaderMutation(addresses[0]),
+		}
+		return out
+	}
+
+	// Weighted cluster selection happens as part of route selection, before HTTP
+	// decoder filters run. Giving each equal-weight entry its own header-mutation
+	// config therefore selects an endpoint before set_filter_state and DFP inspect
+	// the request. All entries deliberately retain the same DFP cluster: only the
+	// dynamic host changes, while the request's original port is preserved.
+	weightedClusters := make([]*route.WeightedCluster_ClusterWeight, 0, len(addresses))
+	for _, address := range addresses {
+		weightedClusters = append(weightedClusters, &route.WeightedCluster_ClusterWeight{
+			Name:   cc.clusterName,
+			Weight: wrapperspb.UInt32(1),
+			TypedPerFilterConfig: map[string]*anypb.Any{
+				staticEndpointHeaderMutationFilter: buildSandboxStaticEndpointHeaderMutation(address),
+			},
+		})
+	}
+	out.GetRoute().ClusterSpecifier = &route.RouteAction_WeightedClusters{
+		WeightedClusters: &route.WeightedCluster{Clusters: weightedClusters},
+	}
+	return out
+}
+
+func buildSandboxStaticEndpointHeaderMutation(address string) *anypb.Any {
+	return protoconv.MessageToAny(&headermutation.HeaderMutationPerRoute{
+		Mutations: &headermutation.Mutations{
+			RequestMutations: []*mutation.HeaderMutation{{
+				Action: &mutation.HeaderMutation_Append{Append: &core.HeaderValueOption{
+					Header: &core.HeaderValue{
+						Key:   staticEndpointHeader,
+						Value: address,
+					},
+					AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+				}},
+			}},
+		},
+	})
+}
+
+func sandboxRouteSettingsForHost(connPool *extensions.ConnectionPoolSettings, serviceHost string) *extensions.HttpRouteSettings {
+	settings := connPool.GetHttp().GetDefaultRoute()
+	bestRank, bestLength := -1, -1
+	for _, override := range connPool.GetHttp().GetRouteOverrides() {
+		for _, domain := range override.GetHosts() {
+			rank, length, matched := sandboxDomainMatchSpecificity(domain, serviceHost)
+			if matched && (rank > bestRank || rank == bestRank && length > bestLength) {
+				settings = override.GetSettings()
+				bestRank, bestLength = rank, length
+			}
+		}
+	}
+	return settings
+}
+
+// sandboxDomainMatchSpecificity mirrors Envoy VirtualHost domain precedence:
+// exact, suffix wildcard, prefix wildcard, then the catch-all wildcard.
+func sandboxDomainMatchSpecificity(pattern, value string) (rank int, length int, matched bool) {
+	pattern = strings.ToLower(pattern)
+	value = strings.ToLower(value)
+	if pattern == value {
+		return 3, len(pattern), true
+	}
+	if pattern == "*" {
+		return 0, 1, value != ""
+	}
+	if strings.HasPrefix(pattern, "*") {
+		suffix := pattern[1:]
+		return 2, len(pattern), len(value) > len(suffix) && strings.HasSuffix(value, suffix)
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return 1, len(pattern), len(value) > len(prefix) && strings.HasPrefix(value, prefix)
+	}
+	return 0, 0, false
 }
 
 // prependSandboxConnectRoute adds the CONNECT-specific route without rebuilding

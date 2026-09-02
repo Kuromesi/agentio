@@ -234,8 +234,12 @@ type EgressGateway struct {
 	// H2 CONNECT streams are accepted on the connect_terminate HCM.
 	// nil means no rate limiting.
 	ConnectRateLimit *LocalRateLimitSettings `protobuf:"bytes,6,opt,name=connect_rate_limit,json=connectRateLimit,proto3" json:"connect_rate_limit,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// External services whose DNS result is overridden at this gateway. The
+	// original request port and detected protocol are preserved; only the
+	// upstream address is replaced by the configured endpoint.
+	ServiceEntries []*EgressServiceEntry `protobuf:"bytes,7,rep,name=service_entries,json=serviceEntries,proto3" json:"service_entries,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EgressGateway) Reset() {
@@ -310,6 +314,118 @@ func (x *EgressGateway) GetConnectRateLimit() *LocalRateLimitSettings {
 	return nil
 }
 
+func (x *EgressGateway) GetServiceEntries() []*EgressServiceEntry {
+	if x != nil {
+		return x.ServiceEntries
+	}
+	return nil
+}
+
+// EgressServiceEntry binds one or more HTTP host identities to static upstream
+// endpoints. Hosts are exact FQDNs; wildcard matching is intentionally not
+// supported for static endpoints.
+type EgressServiceEntry struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// HTTP Host / :authority and TLS SNI identities for this service.
+	Hosts []string `protobuf:"bytes,1,rep,name=hosts,proto3" json:"hosts,omitempty"`
+	// Static upstream endpoints. Requests are distributed evenly across them.
+	// At least one endpoint is required.
+	Endpoints     []*EgressServiceEntryEndpoint `protobuf:"bytes,2,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EgressServiceEntry) Reset() {
+	*x = EgressServiceEntry{}
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EgressServiceEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EgressServiceEntry) ProtoMessage() {}
+
+func (x *EgressServiceEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EgressServiceEntry.ProtoReflect.Descriptor instead.
+func (*EgressServiceEntry) Descriptor() ([]byte, []int) {
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *EgressServiceEntry) GetHosts() []string {
+	if x != nil {
+		return x.Hosts
+	}
+	return nil
+}
+
+func (x *EgressServiceEntry) GetEndpoints() []*EgressServiceEntryEndpoint {
+	if x != nil {
+		return x.Endpoints
+	}
+	return nil
+}
+
+// EgressServiceEntryEndpoint identifies a static upstream address. The request's
+// original destination port is used when connecting to this address.
+type EgressServiceEntryEndpoint struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// IPv4 address of the upstream endpoint.
+	Address       string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EgressServiceEntryEndpoint) Reset() {
+	*x = EgressServiceEntryEndpoint{}
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EgressServiceEntryEndpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EgressServiceEntryEndpoint) ProtoMessage() {}
+
+func (x *EgressServiceEntryEndpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EgressServiceEntryEndpoint.ProtoReflect.Descriptor instead.
+func (*EgressServiceEntryEndpoint) Descriptor() ([]byte, []int) {
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *EgressServiceEntryEndpoint) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
 // TlsTerminationConfig defines which SNI domains should undergo TLS termination
 // and which should bypass it in the sandbox waypoint.
 type TlsTerminationConfig struct {
@@ -329,7 +445,7 @@ type TlsTerminationConfig struct {
 
 func (x *TlsTerminationConfig) Reset() {
 	*x = TlsTerminationConfig{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[2]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -341,7 +457,7 @@ func (x *TlsTerminationConfig) String() string {
 func (*TlsTerminationConfig) ProtoMessage() {}
 
 func (x *TlsTerminationConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[2]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -354,7 +470,7 @@ func (x *TlsTerminationConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TlsTerminationConfig.ProtoReflect.Descriptor instead.
 func (*TlsTerminationConfig) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{2}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TlsTerminationConfig) GetIncludeHosts() []string {
@@ -381,7 +497,7 @@ type EgressPolicies struct {
 
 func (x *EgressPolicies) Reset() {
 	*x = EgressPolicies{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[3]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -393,7 +509,7 @@ func (x *EgressPolicies) String() string {
 func (*EgressPolicies) ProtoMessage() {}
 
 func (x *EgressPolicies) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[3]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -406,7 +522,7 @@ func (x *EgressPolicies) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressPolicies.ProtoReflect.Descriptor instead.
 func (*EgressPolicies) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{3}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *EgressPolicies) GetEgressPolicies() []*EgressPolicy {
@@ -442,7 +558,7 @@ type ExtProcProvider struct {
 
 func (x *ExtProcProvider) Reset() {
 	*x = ExtProcProvider{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[4]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -454,7 +570,7 @@ func (x *ExtProcProvider) String() string {
 func (*ExtProcProvider) ProtoMessage() {}
 
 func (x *ExtProcProvider) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[4]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -467,7 +583,7 @@ func (x *ExtProcProvider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtProcProvider.ProtoReflect.Descriptor instead.
 func (*ExtProcProvider) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{4}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ExtProcProvider) GetService() string {
@@ -530,7 +646,7 @@ type ClusterSettings struct {
 
 func (x *ClusterSettings) Reset() {
 	*x = ClusterSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[5]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +658,7 @@ func (x *ClusterSettings) String() string {
 func (*ClusterSettings) ProtoMessage() {}
 
 func (x *ClusterSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[5]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +671,7 @@ func (x *ClusterSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterSettings.ProtoReflect.Descriptor instead.
 func (*ClusterSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{5}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ClusterSettings) GetHttp() *HttpSettings {
@@ -580,7 +696,7 @@ type HttpSettings struct {
 
 func (x *HttpSettings) Reset() {
 	*x = HttpSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[6]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -592,7 +708,7 @@ func (x *HttpSettings) String() string {
 func (*HttpSettings) ProtoMessage() {}
 
 func (x *HttpSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[6]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -605,7 +721,7 @@ func (x *HttpSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpSettings.ProtoReflect.Descriptor instead.
 func (*HttpSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{6}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HttpSettings) GetMaxConcurrentStreams() uint32 {
@@ -634,7 +750,7 @@ type ProcessingModeOptions struct {
 
 func (x *ProcessingModeOptions) Reset() {
 	*x = ProcessingModeOptions{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[7]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -646,7 +762,7 @@ func (x *ProcessingModeOptions) String() string {
 func (*ProcessingModeOptions) ProtoMessage() {}
 
 func (x *ProcessingModeOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[7]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -659,7 +775,7 @@ func (x *ProcessingModeOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProcessingModeOptions.ProtoReflect.Descriptor instead.
 func (*ProcessingModeOptions) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{7}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProcessingModeOptions) GetHeaderMode() HeaderSendMode {
@@ -706,7 +822,7 @@ type EgressPolicy struct {
 
 func (x *EgressPolicy) Reset() {
 	*x = EgressPolicy{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[8]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -718,7 +834,7 @@ func (x *EgressPolicy) String() string {
 func (*EgressPolicy) ProtoMessage() {}
 
 func (x *EgressPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[8]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -731,7 +847,7 @@ func (x *EgressPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressPolicy.ProtoReflect.Descriptor instead.
 func (*EgressPolicy) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{8}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *EgressPolicy) GetNamespaces() []string {
@@ -789,7 +905,7 @@ type GatewayAddress struct {
 
 func (x *GatewayAddress) Reset() {
 	*x = GatewayAddress{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[9]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -801,7 +917,7 @@ func (x *GatewayAddress) String() string {
 func (*GatewayAddress) ProtoMessage() {}
 
 func (x *GatewayAddress) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[9]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -814,7 +930,7 @@ func (x *GatewayAddress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GatewayAddress.ProtoReflect.Descriptor instead.
 func (*GatewayAddress) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{9}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GatewayAddress) GetService() string {
@@ -846,7 +962,7 @@ type ConnectionPoolSettings struct {
 
 func (x *ConnectionPoolSettings) Reset() {
 	*x = ConnectionPoolSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[10]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -858,7 +974,7 @@ func (x *ConnectionPoolSettings) String() string {
 func (*ConnectionPoolSettings) ProtoMessage() {}
 
 func (x *ConnectionPoolSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[10]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -871,7 +987,7 @@ func (x *ConnectionPoolSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionPoolSettings.ProtoReflect.Descriptor instead.
 func (*ConnectionPoolSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{10}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ConnectionPoolSettings) GetTcp() *TcpSettings {
@@ -905,7 +1021,7 @@ type TcpSettings struct {
 
 func (x *TcpSettings) Reset() {
 	*x = TcpSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[11]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -917,7 +1033,7 @@ func (x *TcpSettings) String() string {
 func (*TcpSettings) ProtoMessage() {}
 
 func (x *TcpSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[11]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -930,7 +1046,7 @@ func (x *TcpSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TcpSettings.ProtoReflect.Descriptor instead.
 func (*TcpSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{11}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *TcpSettings) GetIdleTimeout() *duration.Duration {
@@ -968,7 +1084,7 @@ type ConnectionPoolHttpSettings struct {
 
 func (x *ConnectionPoolHttpSettings) Reset() {
 	*x = ConnectionPoolHttpSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[12]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -980,7 +1096,7 @@ func (x *ConnectionPoolHttpSettings) String() string {
 func (*ConnectionPoolHttpSettings) ProtoMessage() {}
 
 func (x *ConnectionPoolHttpSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[12]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -993,7 +1109,7 @@ func (x *ConnectionPoolHttpSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionPoolHttpSettings.ProtoReflect.Descriptor instead.
 func (*ConnectionPoolHttpSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{12}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ConnectionPoolHttpSettings) GetStreamIdleTimeout() *duration.Duration {
@@ -1031,7 +1147,7 @@ type HttpRouteOverride struct {
 
 func (x *HttpRouteOverride) Reset() {
 	*x = HttpRouteOverride{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[13]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1043,7 +1159,7 @@ func (x *HttpRouteOverride) String() string {
 func (*HttpRouteOverride) ProtoMessage() {}
 
 func (x *HttpRouteOverride) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[13]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1056,7 +1172,7 @@ func (x *HttpRouteOverride) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpRouteOverride.ProtoReflect.Descriptor instead.
 func (*HttpRouteOverride) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{13}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HttpRouteOverride) GetHosts() []string {
@@ -1087,7 +1203,7 @@ type HttpRouteSettings struct {
 
 func (x *HttpRouteSettings) Reset() {
 	*x = HttpRouteSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[14]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1099,7 +1215,7 @@ func (x *HttpRouteSettings) String() string {
 func (*HttpRouteSettings) ProtoMessage() {}
 
 func (x *HttpRouteSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[14]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1112,7 +1228,7 @@ func (x *HttpRouteSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpRouteSettings.ProtoReflect.Descriptor instead.
 func (*HttpRouteSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{14}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *HttpRouteSettings) GetTimeout() *duration.Duration {
@@ -1151,7 +1267,7 @@ type LocalRateLimitSettings struct {
 
 func (x *LocalRateLimitSettings) Reset() {
 	*x = LocalRateLimitSettings{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[15]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1163,7 +1279,7 @@ func (x *LocalRateLimitSettings) String() string {
 func (*LocalRateLimitSettings) ProtoMessage() {}
 
 func (x *LocalRateLimitSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[15]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1176,7 +1292,7 @@ func (x *LocalRateLimitSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LocalRateLimitSettings.ProtoReflect.Descriptor instead.
 func (*LocalRateLimitSettings) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{15}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LocalRateLimitSettings) GetTokenBucket() *TokenBucket {
@@ -1216,7 +1332,7 @@ type TokenBucket struct {
 
 func (x *TokenBucket) Reset() {
 	*x = TokenBucket{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[16]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1228,7 +1344,7 @@ func (x *TokenBucket) String() string {
 func (*TokenBucket) ProtoMessage() {}
 
 func (x *TokenBucket) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[16]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1241,7 +1357,7 @@ func (x *TokenBucket) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenBucket.ProtoReflect.Descriptor instead.
 func (*TokenBucket) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{16}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TokenBucket) GetMaxTokens() uint32 {
@@ -1280,7 +1396,7 @@ type RateLimitDescriptor struct {
 
 func (x *RateLimitDescriptor) Reset() {
 	*x = RateLimitDescriptor{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[17]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1292,7 +1408,7 @@ func (x *RateLimitDescriptor) String() string {
 func (*RateLimitDescriptor) ProtoMessage() {}
 
 func (x *RateLimitDescriptor) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[17]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1305,7 +1421,7 @@ func (x *RateLimitDescriptor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateLimitDescriptor.ProtoReflect.Descriptor instead.
 func (*RateLimitDescriptor) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{17}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RateLimitDescriptor) GetEntries() []*RateLimitEntry {
@@ -1344,7 +1460,7 @@ type RateLimitEntry struct {
 
 func (x *RateLimitEntry) Reset() {
 	*x = RateLimitEntry{}
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[18]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1356,7 +1472,7 @@ func (x *RateLimitEntry) String() string {
 func (*RateLimitEntry) ProtoMessage() {}
 
 func (x *RateLimitEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[18]
+	mi := &file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1369,7 +1485,7 @@ func (x *RateLimitEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateLimitEntry.ProtoReflect.Descriptor instead.
 func (*RateLimitEntry) Descriptor() ([]byte, []int) {
-	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{18}
+	return file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RateLimitEntry) GetKey() string {
@@ -1402,14 +1518,20 @@ const file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioc
 	"\x10sandbox_ext_proc\x18\x01 \x01(\v20.kruise.networking.extensions.v1.ExtProcProviderR\x0esandboxExtProc\x12V\n" +
 	"\x0fegress_policies\x18\x02 \x03(\v2-.kruise.networking.extensions.v1.EgressPolicyR\x0eegressPolicies\x124\n" +
 	"\x16sandbox_ignored_labels\x18\x03 \x03(\tR\x14sandboxIgnoredLabels\x12W\n" +
-	"\x0fegress_gateways\x18\x04 \x03(\v2..kruise.networking.extensions.v1.EgressGatewayR\x0eegressGateways\"\xb7\x03\n" +
+	"\x0fegress_gateways\x18\x04 \x03(\v2..kruise.networking.extensions.v1.EgressGatewayR\x0eegressGateways\"\x95\x04\n" +
 	"\rEgressGateway\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12^\n" +
 	"\x0ftls_termination\x18\x03 \x01(\v25.kruise.networking.extensions.v1.TlsTerminationConfigR\x0etlsTermination\x12K\n" +
 	"\bext_proc\x18\x04 \x01(\v20.kruise.networking.extensions.v1.ExtProcProviderR\aextProc\x12`\n" +
 	"\x0fconnection_pool\x18\x05 \x01(\v27.kruise.networking.extensions.v1.ConnectionPoolSettingsR\x0econnectionPool\x12e\n" +
-	"\x12connect_rate_limit\x18\x06 \x01(\v27.kruise.networking.extensions.v1.LocalRateLimitSettingsR\x10connectRateLimit\"`\n" +
+	"\x12connect_rate_limit\x18\x06 \x01(\v27.kruise.networking.extensions.v1.LocalRateLimitSettingsR\x10connectRateLimit\x12\\\n" +
+	"\x0fservice_entries\x18\a \x03(\v23.kruise.networking.extensions.v1.EgressServiceEntryR\x0eserviceEntries\"\x85\x01\n" +
+	"\x12EgressServiceEntry\x12\x14\n" +
+	"\x05hosts\x18\x01 \x03(\tR\x05hosts\x12Y\n" +
+	"\tendpoints\x18\x02 \x03(\v2;.kruise.networking.extensions.v1.EgressServiceEntryEndpointR\tendpoints\"6\n" +
+	"\x1aEgressServiceEntryEndpoint\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\"`\n" +
 	"\x14TlsTerminationConfig\x12#\n" +
 	"\rinclude_hosts\x18\x01 \x03(\tR\fincludeHosts\x12#\n" +
 	"\rexclude_hosts\x18\x02 \x03(\tR\fexcludeHosts\"h\n" +
@@ -1503,68 +1625,72 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioco
 }
 
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_goTypes = []any{
 	(HeaderSendMode)(0),                // 0: kruise.networking.extensions.v1.HeaderSendMode
 	(EgressPolicyAction)(0),            // 1: kruise.networking.extensions.v1.EgressPolicyAction
 	(*AgentioConfig)(nil),              // 2: kruise.networking.extensions.v1.AgentioConfig
 	(*EgressGateway)(nil),              // 3: kruise.networking.extensions.v1.EgressGateway
-	(*TlsTerminationConfig)(nil),       // 4: kruise.networking.extensions.v1.TlsTerminationConfig
-	(*EgressPolicies)(nil),             // 5: kruise.networking.extensions.v1.EgressPolicies
-	(*ExtProcProvider)(nil),            // 6: kruise.networking.extensions.v1.ExtProcProvider
-	(*ClusterSettings)(nil),            // 7: kruise.networking.extensions.v1.ClusterSettings
-	(*HttpSettings)(nil),               // 8: kruise.networking.extensions.v1.HttpSettings
-	(*ProcessingModeOptions)(nil),      // 9: kruise.networking.extensions.v1.ProcessingModeOptions
-	(*EgressPolicy)(nil),               // 10: kruise.networking.extensions.v1.EgressPolicy
-	(*GatewayAddress)(nil),             // 11: kruise.networking.extensions.v1.GatewayAddress
-	(*ConnectionPoolSettings)(nil),     // 12: kruise.networking.extensions.v1.ConnectionPoolSettings
-	(*TcpSettings)(nil),                // 13: kruise.networking.extensions.v1.TcpSettings
-	(*ConnectionPoolHttpSettings)(nil), // 14: kruise.networking.extensions.v1.ConnectionPoolHttpSettings
-	(*HttpRouteOverride)(nil),          // 15: kruise.networking.extensions.v1.HttpRouteOverride
-	(*HttpRouteSettings)(nil),          // 16: kruise.networking.extensions.v1.HttpRouteSettings
-	(*LocalRateLimitSettings)(nil),     // 17: kruise.networking.extensions.v1.LocalRateLimitSettings
-	(*TokenBucket)(nil),                // 18: kruise.networking.extensions.v1.TokenBucket
-	(*RateLimitDescriptor)(nil),        // 19: kruise.networking.extensions.v1.RateLimitDescriptor
-	(*RateLimitEntry)(nil),             // 20: kruise.networking.extensions.v1.RateLimitEntry
-	(*duration.Duration)(nil),          // 21: google.protobuf.Duration
-	(*v1alpha3.HTTPRetry)(nil),         // 22: istio.networking.v1alpha3.HTTPRetry
+	(*EgressServiceEntry)(nil),         // 4: kruise.networking.extensions.v1.EgressServiceEntry
+	(*EgressServiceEntryEndpoint)(nil), // 5: kruise.networking.extensions.v1.EgressServiceEntryEndpoint
+	(*TlsTerminationConfig)(nil),       // 6: kruise.networking.extensions.v1.TlsTerminationConfig
+	(*EgressPolicies)(nil),             // 7: kruise.networking.extensions.v1.EgressPolicies
+	(*ExtProcProvider)(nil),            // 8: kruise.networking.extensions.v1.ExtProcProvider
+	(*ClusterSettings)(nil),            // 9: kruise.networking.extensions.v1.ClusterSettings
+	(*HttpSettings)(nil),               // 10: kruise.networking.extensions.v1.HttpSettings
+	(*ProcessingModeOptions)(nil),      // 11: kruise.networking.extensions.v1.ProcessingModeOptions
+	(*EgressPolicy)(nil),               // 12: kruise.networking.extensions.v1.EgressPolicy
+	(*GatewayAddress)(nil),             // 13: kruise.networking.extensions.v1.GatewayAddress
+	(*ConnectionPoolSettings)(nil),     // 14: kruise.networking.extensions.v1.ConnectionPoolSettings
+	(*TcpSettings)(nil),                // 15: kruise.networking.extensions.v1.TcpSettings
+	(*ConnectionPoolHttpSettings)(nil), // 16: kruise.networking.extensions.v1.ConnectionPoolHttpSettings
+	(*HttpRouteOverride)(nil),          // 17: kruise.networking.extensions.v1.HttpRouteOverride
+	(*HttpRouteSettings)(nil),          // 18: kruise.networking.extensions.v1.HttpRouteSettings
+	(*LocalRateLimitSettings)(nil),     // 19: kruise.networking.extensions.v1.LocalRateLimitSettings
+	(*TokenBucket)(nil),                // 20: kruise.networking.extensions.v1.TokenBucket
+	(*RateLimitDescriptor)(nil),        // 21: kruise.networking.extensions.v1.RateLimitDescriptor
+	(*RateLimitEntry)(nil),             // 22: kruise.networking.extensions.v1.RateLimitEntry
+	(*duration.Duration)(nil),          // 23: google.protobuf.Duration
+	(*v1alpha3.HTTPRetry)(nil),         // 24: istio.networking.v1alpha3.HTTPRetry
 }
 var file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_depIdxs = []int32{
-	6,  // 0: kruise.networking.extensions.v1.AgentioConfig.sandbox_ext_proc:type_name -> kruise.networking.extensions.v1.ExtProcProvider
-	10, // 1: kruise.networking.extensions.v1.AgentioConfig.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
+	8,  // 0: kruise.networking.extensions.v1.AgentioConfig.sandbox_ext_proc:type_name -> kruise.networking.extensions.v1.ExtProcProvider
+	12, // 1: kruise.networking.extensions.v1.AgentioConfig.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
 	3,  // 2: kruise.networking.extensions.v1.AgentioConfig.egress_gateways:type_name -> kruise.networking.extensions.v1.EgressGateway
-	4,  // 3: kruise.networking.extensions.v1.EgressGateway.tls_termination:type_name -> kruise.networking.extensions.v1.TlsTerminationConfig
-	6,  // 4: kruise.networking.extensions.v1.EgressGateway.ext_proc:type_name -> kruise.networking.extensions.v1.ExtProcProvider
-	12, // 5: kruise.networking.extensions.v1.EgressGateway.connection_pool:type_name -> kruise.networking.extensions.v1.ConnectionPoolSettings
-	17, // 6: kruise.networking.extensions.v1.EgressGateway.connect_rate_limit:type_name -> kruise.networking.extensions.v1.LocalRateLimitSettings
-	10, // 7: kruise.networking.extensions.v1.EgressPolicies.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
-	9,  // 8: kruise.networking.extensions.v1.ExtProcProvider.request:type_name -> kruise.networking.extensions.v1.ProcessingModeOptions
-	9,  // 9: kruise.networking.extensions.v1.ExtProcProvider.response:type_name -> kruise.networking.extensions.v1.ProcessingModeOptions
-	7,  // 10: kruise.networking.extensions.v1.ExtProcProvider.cluster_settings:type_name -> kruise.networking.extensions.v1.ClusterSettings
-	8,  // 11: kruise.networking.extensions.v1.ClusterSettings.http:type_name -> kruise.networking.extensions.v1.HttpSettings
-	0,  // 12: kruise.networking.extensions.v1.ProcessingModeOptions.header_mode:type_name -> kruise.networking.extensions.v1.HeaderSendMode
-	1,  // 13: kruise.networking.extensions.v1.EgressPolicy.policy:type_name -> kruise.networking.extensions.v1.EgressPolicyAction
-	11, // 14: kruise.networking.extensions.v1.EgressPolicy.gateway:type_name -> kruise.networking.extensions.v1.GatewayAddress
-	13, // 15: kruise.networking.extensions.v1.ConnectionPoolSettings.tcp:type_name -> kruise.networking.extensions.v1.TcpSettings
-	14, // 16: kruise.networking.extensions.v1.ConnectionPoolSettings.http:type_name -> kruise.networking.extensions.v1.ConnectionPoolHttpSettings
-	21, // 17: kruise.networking.extensions.v1.TcpSettings.idle_timeout:type_name -> google.protobuf.Duration
-	21, // 18: kruise.networking.extensions.v1.TcpSettings.max_connection_duration:type_name -> google.protobuf.Duration
-	21, // 19: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.stream_idle_timeout:type_name -> google.protobuf.Duration
-	16, // 20: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.default_route:type_name -> kruise.networking.extensions.v1.HttpRouteSettings
-	15, // 21: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.route_overrides:type_name -> kruise.networking.extensions.v1.HttpRouteOverride
-	16, // 22: kruise.networking.extensions.v1.HttpRouteOverride.settings:type_name -> kruise.networking.extensions.v1.HttpRouteSettings
-	21, // 23: kruise.networking.extensions.v1.HttpRouteSettings.timeout:type_name -> google.protobuf.Duration
-	22, // 24: kruise.networking.extensions.v1.HttpRouteSettings.retries:type_name -> istio.networking.v1alpha3.HTTPRetry
-	18, // 25: kruise.networking.extensions.v1.LocalRateLimitSettings.token_bucket:type_name -> kruise.networking.extensions.v1.TokenBucket
-	19, // 26: kruise.networking.extensions.v1.LocalRateLimitSettings.descriptors:type_name -> kruise.networking.extensions.v1.RateLimitDescriptor
-	21, // 27: kruise.networking.extensions.v1.TokenBucket.fill_interval:type_name -> google.protobuf.Duration
-	20, // 28: kruise.networking.extensions.v1.RateLimitDescriptor.entries:type_name -> kruise.networking.extensions.v1.RateLimitEntry
-	18, // 29: kruise.networking.extensions.v1.RateLimitDescriptor.token_bucket:type_name -> kruise.networking.extensions.v1.TokenBucket
-	30, // [30:30] is the sub-list for method output_type
-	30, // [30:30] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	6,  // 3: kruise.networking.extensions.v1.EgressGateway.tls_termination:type_name -> kruise.networking.extensions.v1.TlsTerminationConfig
+	8,  // 4: kruise.networking.extensions.v1.EgressGateway.ext_proc:type_name -> kruise.networking.extensions.v1.ExtProcProvider
+	14, // 5: kruise.networking.extensions.v1.EgressGateway.connection_pool:type_name -> kruise.networking.extensions.v1.ConnectionPoolSettings
+	19, // 6: kruise.networking.extensions.v1.EgressGateway.connect_rate_limit:type_name -> kruise.networking.extensions.v1.LocalRateLimitSettings
+	4,  // 7: kruise.networking.extensions.v1.EgressGateway.service_entries:type_name -> kruise.networking.extensions.v1.EgressServiceEntry
+	5,  // 8: kruise.networking.extensions.v1.EgressServiceEntry.endpoints:type_name -> kruise.networking.extensions.v1.EgressServiceEntryEndpoint
+	12, // 9: kruise.networking.extensions.v1.EgressPolicies.egress_policies:type_name -> kruise.networking.extensions.v1.EgressPolicy
+	11, // 10: kruise.networking.extensions.v1.ExtProcProvider.request:type_name -> kruise.networking.extensions.v1.ProcessingModeOptions
+	11, // 11: kruise.networking.extensions.v1.ExtProcProvider.response:type_name -> kruise.networking.extensions.v1.ProcessingModeOptions
+	9,  // 12: kruise.networking.extensions.v1.ExtProcProvider.cluster_settings:type_name -> kruise.networking.extensions.v1.ClusterSettings
+	10, // 13: kruise.networking.extensions.v1.ClusterSettings.http:type_name -> kruise.networking.extensions.v1.HttpSettings
+	0,  // 14: kruise.networking.extensions.v1.ProcessingModeOptions.header_mode:type_name -> kruise.networking.extensions.v1.HeaderSendMode
+	1,  // 15: kruise.networking.extensions.v1.EgressPolicy.policy:type_name -> kruise.networking.extensions.v1.EgressPolicyAction
+	13, // 16: kruise.networking.extensions.v1.EgressPolicy.gateway:type_name -> kruise.networking.extensions.v1.GatewayAddress
+	15, // 17: kruise.networking.extensions.v1.ConnectionPoolSettings.tcp:type_name -> kruise.networking.extensions.v1.TcpSettings
+	16, // 18: kruise.networking.extensions.v1.ConnectionPoolSettings.http:type_name -> kruise.networking.extensions.v1.ConnectionPoolHttpSettings
+	23, // 19: kruise.networking.extensions.v1.TcpSettings.idle_timeout:type_name -> google.protobuf.Duration
+	23, // 20: kruise.networking.extensions.v1.TcpSettings.max_connection_duration:type_name -> google.protobuf.Duration
+	23, // 21: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.stream_idle_timeout:type_name -> google.protobuf.Duration
+	18, // 22: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.default_route:type_name -> kruise.networking.extensions.v1.HttpRouteSettings
+	17, // 23: kruise.networking.extensions.v1.ConnectionPoolHttpSettings.route_overrides:type_name -> kruise.networking.extensions.v1.HttpRouteOverride
+	18, // 24: kruise.networking.extensions.v1.HttpRouteOverride.settings:type_name -> kruise.networking.extensions.v1.HttpRouteSettings
+	23, // 25: kruise.networking.extensions.v1.HttpRouteSettings.timeout:type_name -> google.protobuf.Duration
+	24, // 26: kruise.networking.extensions.v1.HttpRouteSettings.retries:type_name -> istio.networking.v1alpha3.HTTPRetry
+	20, // 27: kruise.networking.extensions.v1.LocalRateLimitSettings.token_bucket:type_name -> kruise.networking.extensions.v1.TokenBucket
+	21, // 28: kruise.networking.extensions.v1.LocalRateLimitSettings.descriptors:type_name -> kruise.networking.extensions.v1.RateLimitDescriptor
+	23, // 29: kruise.networking.extensions.v1.TokenBucket.fill_interval:type_name -> google.protobuf.Duration
+	22, // 30: kruise.networking.extensions.v1.RateLimitDescriptor.entries:type_name -> kruise.networking.extensions.v1.RateLimitEntry
+	20, // 31: kruise.networking.extensions.v1.RateLimitDescriptor.token_bucket:type_name -> kruise.networking.extensions.v1.TokenBucket
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() {
@@ -1580,7 +1706,7 @@ func file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioco
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc), len(file_pilot_pkg_serviceregistry_kube_controller_agentio_extensions_agentioconfig_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   19,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

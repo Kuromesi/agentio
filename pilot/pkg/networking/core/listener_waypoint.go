@@ -1057,8 +1057,9 @@ func buildWaypointInboundHTTPRouteConfig(lb *ListenerBuilder, svc *model.Service
 	if svc == nil {
 		var routeConfig *route.RouteConfiguration
 		if cc.applySandboxConnectionPoolSettings {
-			if connPool := sandboxGatewayConnPool(lb); connPool != nil {
-				routeConfig = buildSandboxHTTPRouteConfig(lb, cc, connPool)
+			if gateway := sandboxEgressGateway(lb); gateway != nil &&
+				(gateway.GetConnectionPool() != nil || len(gateway.GetServiceEntries()) > 0) {
+				routeConfig = buildSandboxHTTPRouteConfigForGateway(lb, cc, gateway)
 			}
 		}
 		if routeConfig == nil {
