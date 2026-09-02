@@ -31,7 +31,7 @@ import (
 // TestSandboxTrafficPolicyLifecycle covers policy lifecycle scenarios that go
 // beyond basic allow/deny enforcement: update propagation, deletion cleanup,
 // invalid CIDR resilience, empty selector, wildcard service, label-change
-// reconciliation, and unresolvable FQDN status.
+// reconciliation, and fail-closed handling of unresolvable FQDNs.
 func TestSandboxTrafficPolicyLifecycle(t *testing.T) {
 	framework.NewTest(t).
 		Run(func(ctx framework.TestContext) {
@@ -424,11 +424,11 @@ spec:
 					waitForAuthorizationPolicyGoneOrFail(ctx, src, "tp-label-reconcile")
 				})
 
-			ctx.NewSubTest("unresolvable FQDN status").
+			ctx.NewSubTest("unresolvable FQDN fails closed").
 				Run(func(ctx framework.TestContext) {
 					// Apply a policy with an unresolvable FQDN.
-					// The controller should handle it gracefully — either produce
-					// empty IPSet entries or report a condition in the status.
+					// The controller should retain the policy with a never-match
+					// clause rather than broadening the allow rule to a wildcard.
 					ctx.ConfigIstio().Eval(ns.Name(), map[string]any{
 						"App": src.Config().Service,
 					}, `
@@ -456,16 +456,15 @@ spec:
 					// Wait for the policy to be processed.
 					waitForAuthorizationPolicyOrFail(ctx, src, "tp-bad-fqdn")
 
-					// The unresolvable FQDN produces no IPs, so its allow rule is
-					// effectively empty. But there is no deny-all, so dst should
-					// still be reachable. The key assertion is that the controller
-					// does not crash and subsequent policies still work.
+					// The unresolvable FQDN must fail closed. The kube-dns rule does
+					// not match dst, and the empty Match sentinel prevents the FQDN
+					// rule from becoming a wildcard allow.
 					src.CallOrFail(ctx, echo.CallOptions{
 						To: dst,
 						Port: echo.Port{
 							Name: "http",
 						},
-						Check: check.OK(),
+						Check: check.Error(),
 					})
 
 					// The controller should not crash — verify by applying another policy.
