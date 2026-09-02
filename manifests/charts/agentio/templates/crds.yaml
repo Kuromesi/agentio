@@ -1,7 +1,7 @@
-{{ .Files.Get "files/securityprofile-crd.yaml" }}
+{{ include "agentio.renderCRD" (.Files.Get "files/securityprofile-crd.yaml") }}
 ---
-{{ .Files.Get "files/globalsecurityprofile-crd.yaml" }}
+{{ include "agentio.renderCRD" (.Files.Get "files/globalsecurityprofile-crd.yaml") }}
 ---
-{{ .Files.Get "files/trafficpolicy-crd.yaml" }}
+{{ include "agentio.renderCRD" (.Files.Get "files/trafficpolicy-crd.yaml") }}
 ---
-{{ .Files.Get "files/globaltrafficpolicy-crd.yaml" }}
+{{ include "agentio.renderCRD" (.Files.Get "files/globaltrafficpolicy-crd.yaml") }}
