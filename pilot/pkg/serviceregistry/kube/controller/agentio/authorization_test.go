@@ -119,7 +119,7 @@ func TestConvertRule_CIDRAllow(t *testing.T) {
 		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
 		Ports:  []agentsv1alpha1.TrafficPolicyPort{{Port: &port, EndPort: &endPort}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 
 	dst := findCondition(got, "destination.ip")
 	if dst == nil || len(dst.Values) != 1 || dst.Values[0] != "10.0.0.0/24" {
@@ -140,7 +140,7 @@ func TestConvertRule_CIDRDeny_UsesNotValues(t *testing.T) {
 		Action: agentsv1alpha1.RuleActionReject,
 		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	dst := findCondition(got, "destination.ip")
 	if dst == nil || len(dst.NotValues) != 1 || dst.NotValues[0] != "10.0.0.0/24" {
 		t.Errorf("expected deny → NotValues populated; got %+v", dst)
@@ -173,7 +173,7 @@ func TestConvertRule_PortRangeFormatting(t *testing.T) {
 				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/8"}},
 				Ports:  []agentsv1alpha1.TrafficPolicyPort{tc.port},
 			}
-			got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+			got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 			ports := findCondition(got, "destination.portRange")
 			if tc.empty {
 				if ports != nil {
@@ -194,7 +194,7 @@ func TestConvertRule_FQDNResolver(t *testing.T) {
 		Action: agentsv1alpha1.RuleActionAllow,
 		To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "example.com"}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	dst := findCondition(got, "destination.ip")
 	want := []string{"203.0.113.10", "203.0.113.11"}
 	if dst == nil || len(dst.Values) != 2 {
@@ -205,15 +205,133 @@ func TestConvertRule_FQDNResolver(t *testing.T) {
 	}
 }
 
-func TestConvertRule_FQDNUnknownReturnsEmpty(t *testing.T) {
+func TestConvertRule_UnresolvedPeerAddsNeverMatchCondition(t *testing.T) {
+	tests := []struct {
+		name   string
+		action agentsv1alpha1.RuleAction
+		peer   agentsv1alpha1.TrafficPolicyPeer
+	}{
+		{
+			name:   "allow FQDN",
+			action: agentsv1alpha1.RuleActionAllow,
+			peer:   agentsv1alpha1.TrafficPolicyPeer{FQDN: "unknown.invalid"},
+		},
+		{
+			name:   "reject FQDN",
+			action: agentsv1alpha1.RuleActionReject,
+			peer:   agentsv1alpha1.TrafficPolicyPeer{FQDN: "unknown.invalid"},
+		},
+		{
+			name:   "allow workload",
+			action: agentsv1alpha1.RuleActionAllow,
+			peer: agentsv1alpha1.TrafficPolicyPeer{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
+				Namespace: "default",
+				Selector:  map[string]string{"app": "missing"},
+			}},
+		},
+		{
+			name:   "reject workload",
+			action: agentsv1alpha1.RuleActionReject,
+			peer: agentsv1alpha1.TrafficPolicyPeer{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
+				Namespace: "default",
+				Selector:  map[string]string{"app": "missing"},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newControllerForTest(t, nil, nil, nil)
+			rule := agentsv1alpha1.TrafficPolicyRule{
+				Action: tt.action,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{tt.peer},
+			}
+			got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
+			dst := findCondition(got, "destination.ip")
+			if dst == nil || len(dst.Values) != 0 || len(dst.NotValues) != 0 {
+				t.Errorf("expected empty destination.ip condition, got %+v", dst)
+			}
+		})
+	}
+}
+
+func TestConvertRule_UnresolvedFromAddsNeverMatchCondition(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
 	rule := agentsv1alpha1.TrafficPolicyRule{
 		Action: agentsv1alpha1.RuleActionAllow,
-		To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "unknown.invalid"}},
+		From:   []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "unknown.invalid"}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
+	src := findCondition(got, "source.ip")
+	if src == nil || len(src.Values) != 0 || len(src.NotValues) != 0 {
+		t.Errorf("expected empty source.ip condition, got %+v", src)
+	}
+}
+
+func TestConvertRule_InvalidCIDRIsKeptForNeverMatchCompilation(t *testing.T) {
+	c := newControllerForTest(t, nil, nil, nil)
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "not-a-cidr"}},
+	}
+
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
+	dst := findCondition(got, "destination.ip")
+	if dst == nil || len(dst.Values) != 1 || dst.Values[0] != "not-a-cidr" {
+		t.Errorf("expected invalid CIDR condition to reach never-match compilation, got %+v", dst)
+	}
+}
+
+func TestConvertRule_ResolvedPeerPreservesORWithUnresolvedPeer(t *testing.T) {
+	c := newControllerForTest(t, nil, nil, nil)
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To: []agentsv1alpha1.TrafficPolicyPeer{
+			{FQDN: "unknown.invalid"},
+			{CIDR: "10.0.0.0/24"},
+		},
+	}
+
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
+	dst := findCondition(got, "destination.ip")
+	if dst == nil || len(dst.Values) != 1 || dst.Values[0] != "10.0.0.0/24" {
+		t.Errorf("expected the resolved peer to remain as the only OR candidate, got %+v", dst)
+	}
+}
+
+func TestConvertRule_OmittedPeerRemainsWildcard(t *testing.T) {
+	c := newControllerForTest(t, nil, nil, nil)
+	got := c.convertRule(krt.TestingDummyContext{}, agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+	}, "default", fakeResolver)
+
+	if src := findCondition(got, "source.ip"); src != nil {
+		t.Errorf("expected omitted from to remain wildcard, got %+v", src)
+	}
 	if dst := findCondition(got, "destination.ip"); dst != nil {
-		t.Errorf("expected no destination.ip condition for unresolved FQDN, got %+v", dst)
+		t.Errorf("expected omitted to to remain wildcard, got %+v", dst)
+	}
+}
+
+func TestConvertRule_UnresolvedPeerRemainsANDedWithPorts(t *testing.T) {
+	c := newControllerForTest(t, nil, nil, nil)
+	port := int32(443)
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "unknown.invalid"}},
+		Ports:  []agentsv1alpha1.TrafficPolicyPort{{Port: &port}},
+	}
+
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
+	if len(got.When) != 2 {
+		t.Fatalf("expected peer and port to produce two ANDed conditions, got %+v", got.When)
+	}
+	if dst := findCondition(got, "destination.ip"); dst == nil || len(dst.Values) != 0 || len(dst.NotValues) != 0 {
+		t.Errorf("expected empty destination.ip condition, got %+v", dst)
+	}
+	if ports := findCondition(got, "destination.portRange"); ports == nil || len(ports.Values) != 1 || ports.Values[0] != "443-" {
+		t.Errorf("expected destination.portRange=[443-], got %+v", ports)
 	}
 }
 
@@ -224,7 +342,7 @@ func TestConvertRule_SrcAndDstBothPopulated(t *testing.T) {
 		From:   []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.168.0.0/16"}},
 		To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	if src := findCondition(got, "source.ip"); src == nil || src.Values[0] != "192.168.0.0/16" {
 		t.Errorf("expected source.ip set; got %+v", src)
 	}
@@ -377,7 +495,7 @@ func TestConvertRule_ServicePeer(t *testing.T) {
 			Name: "frontend", Namespace: "default",
 		}}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	dst := findCondition(got, "destination.ip")
 	if dst == nil {
 		t.Fatalf("expected destination.ip condition")
@@ -394,6 +512,23 @@ func TestConvertRule_ServicePeer(t *testing.T) {
 	}
 }
 
+func TestConvertRule_ServicePeerDefaultsToPolicyNamespace(t *testing.T) {
+	svc := svcWith("frontend", "policy-ns", "10.0.0.5", nil)
+	c := newControllerForTest(t, []*corev1.Service{svc}, nil, nil)
+	rule := agentsv1alpha1.TrafficPolicyRule{
+		Action: agentsv1alpha1.RuleActionAllow,
+		To: []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{
+			Name: "frontend",
+		}}},
+	}
+
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "policy-ns", fakeResolver)
+	dst := findCondition(got, "destination.ip")
+	if dst == nil || len(dst.Values) != 1 || dst.Values[0] != "10.0.0.5" {
+		t.Errorf("expected service lookup in TrafficPolicy namespace, got %+v", dst)
+	}
+}
+
 func TestConvertRule_ServicePeerWithManualEndpoints(t *testing.T) {
 	svc := svcWith("external-db", "default", "10.0.0.10", nil)
 	es := endpointSliceFor("external-db", "default", "192.168.1.100", "192.168.1.101")
@@ -405,7 +540,7 @@ func TestConvertRule_ServicePeerWithManualEndpoints(t *testing.T) {
 			Name: "external-db", Namespace: "default",
 		}}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	dst := findCondition(got, "destination.ip")
 	if dst == nil {
 		t.Fatalf("expected destination.ip condition")
@@ -435,7 +570,7 @@ func TestConvertRule_WorkloadPeerSkipsUnreadyPod(t *testing.T) {
 			Selector:  map[string]string{"app": "x"},
 		}}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	dst := findCondition(got, "destination.ip")
 	if dst == nil || len(dst.Values) != 1 || dst.Values[0] != "10.244.0.1" {
 		t.Errorf("expected only ready pod IP 10.244.0.1, got %+v", dst)
@@ -465,7 +600,7 @@ func TestConvertRule_ServicePeerIncludesNotReadyEndpoints(t *testing.T) {
 			Name: "my-svc", Namespace: "default",
 		}}},
 	}
-	got := c.convertRule(krt.TestingDummyContext{}, rule, fakeResolver)
+	got := c.convertRule(krt.TestingDummyContext{}, rule, "default", fakeResolver)
 	dst := findCondition(got, "destination.ip")
 	if dst == nil {
 		t.Fatalf("expected destination.ip condition")

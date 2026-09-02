@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gtwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -278,6 +279,67 @@ func TestConvertAuthorizationPolicyKeepsWhenConditionsInSameGroup(t *testing.T) 
 	}
 	if !foundPortRange {
 		t.Fatalf("expected destination.portRange match for 80-81/TCP in group: %+v", group.Rules)
+	}
+}
+
+func TestConvertAuthorizationPolicyPreservesNeverMatchSentinel(t *testing.T) {
+	tests := []struct {
+		name      string
+		condition *v1beta1.Condition
+	}{
+		{
+			name:      "unresolved allow peer",
+			condition: &v1beta1.Condition{Key: "destination.ip"},
+		},
+		{
+			name: "invalid CIDR in allow peer",
+			condition: &v1beta1.Condition{
+				Key:    "destination.ip",
+				Values: []string{"not-a-cidr"},
+			},
+		},
+		{
+			name: "invalid CIDR in reject peer",
+			condition: &v1beta1.Condition{
+				Key:       "destination.ip",
+				NotValues: []string{"not-a-cidr"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authz := &securityclient.AuthorizationPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "never-match", Namespace: "default"},
+				Spec: v1beta1.AuthorizationPolicy{
+					Action: v1beta1.AuthorizationPolicy_ALLOW,
+					Rules: []*v1beta1.Rule{{
+						When: []*v1beta1.Condition{tt.condition},
+					}},
+				},
+			}
+
+			pol, status := convertAuthorizationPolicy(rootns, authz)
+			assert.Equal(t, nil, status)
+			if pol == nil || len(pol.Groups) != 1 || len(pol.Groups[0].Rules) != 1 || len(pol.Groups[0].Rules[0].Matches) != 1 {
+				t.Fatalf("expected Rules{Matches: [{}]}, got %+v", pol)
+			}
+			if !proto.Equal(pol.Groups[0].Rules[0].Matches[0], &security.Match{}) {
+				t.Fatalf("expected empty Match sentinel, got %+v", pol.Groups[0].Rules[0].Matches[0])
+			}
+
+			wire, err := proto.Marshal(pol)
+			if err != nil {
+				t.Fatalf("marshal authorization: %v", err)
+			}
+			roundTripped := &security.Authorization{}
+			if err := proto.Unmarshal(wire, roundTripped); err != nil {
+				t.Fatalf("unmarshal authorization: %v", err)
+			}
+			if !proto.Equal(roundTripped, pol) {
+				t.Fatalf("protobuf round trip changed sentinel: got %+v, want %+v", roundTripped, pol)
+			}
+		})
 	}
 }
 
