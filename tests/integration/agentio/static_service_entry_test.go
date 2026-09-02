@@ -120,10 +120,13 @@ data:
 				return nil
 			}
 			callUnmatchedDFPHost := func(scheme string, originalPort, authorityPort int) error {
-				command := fmt.Sprintf(
-					"curl -sS -k --noproxy '*' --resolve %s:%d:192.0.2.1 -H 'Host: %s:%d' --connect-timeout 5 --max-time 15 %s://%s:%d/",
-					dfpControlHost, originalPort, dfpControlHost, authorityPort, scheme, dfpControlHost, originalPort)
-				stdout, stderr, err := cluster.PodExec(workload.PodName(), src.NamespaceName(), "app", command)
+				stdout, stderr, err := cluster.PodExecCommands(workload.PodName(), src.NamespaceName(), "app", []string{
+					"curl", "-sS", "-k", "--noproxy", "*",
+					"--resolve", fmt.Sprintf("%s:%d:192.0.2.1", dfpControlHost, originalPort),
+					"-H", fmt.Sprintf("Host: %s:%d", dfpControlHost, authorityPort),
+					"--connect-timeout", "5", "--max-time", "15",
+					fmt.Sprintf("%s://%s:%d/", scheme, dfpControlHost, originalPort),
+				})
 				if err != nil {
 					return fmt.Errorf("%s unmatched DFP request failed: %w; stdout=%q stderr=%q", scheme, err, stdout, stderr)
 				}
