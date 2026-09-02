@@ -67,6 +67,7 @@ func TestSandboxForwardHTTPConnect(t *testing.T) {
 			systemNamespace := i.Settings().SystemNamespace
 			ctx.ConfigIstio().EvalFile(systemNamespace, map[string]any{
 				"EnvoyYAML":      bootstrap,
+				"Namespace":      systemNamespace,
 				"ProxyKey":       proxyKey,
 				"ProxyCertChain": proxyCertChain,
 				"ProxyCA":        proxyCA,
@@ -125,27 +126,22 @@ data:
 					resolve, proxyURL, target))
 			}
 
-			for _, tt := range []struct {
-				name      string
-				scheme    string
-				proxyPort int
-			}{
-				{name: "HTTP proxy", scheme: "http", proxyPort: connectProxyHTTPNodePort},
-				{name: "HTTPS proxy", scheme: "https", proxyPort: connectProxyHTTPSNodePort},
-			} {
-				ctx.NewSubTest(tt.name).Run(func(ctx framework.TestContext) {
+			checkProxySuccess := func(name, scheme string, proxyPort int) {
+				ctx.NewSubTest(name).Run(func(ctx framework.TestContext) {
 					retry.UntilSuccessOrFail(ctx, func() error {
-						stdout, stderr, err := curlThroughProxy(connectProxyHost, tt.scheme, tt.proxyPort)
+						stdout, stderr, err := curlThroughProxy(connectProxyHost, scheme, proxyPort)
 						if err != nil {
-							return fmt.Errorf("curl through %s failed: %v; stdout=%q stderr=%q", tt.name, err, stdout, stderr)
+							return fmt.Errorf("curl through %s failed: %v; stdout=%q stderr=%q", name, err, stdout, stderr)
 						}
 						if codes := strings.TrimSpace(stdout); codes != "200:200" {
-							return fmt.Errorf("curl through %s returned target:CONNECT codes %s, want 200:200; stderr=%q", tt.name, codes, stderr)
+							return fmt.Errorf("curl through %s returned target:CONNECT codes %s, want 200:200; stderr=%q", name, codes, stderr)
 						}
 						return nil
 					}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
 				})
 			}
+
+			checkProxySuccess("HTTP proxy", "http", connectProxyHTTPNodePort)
 
 			ctx.NewSubTest("HTTPS proxy certificate SAN mismatch").Run(func(ctx framework.TestContext) {
 				retry.UntilSuccessOrFail(ctx, func() error {
@@ -164,6 +160,8 @@ data:
 					return nil
 				}, retry.Timeout(2*time.Minute), retry.Delay(5*time.Second))
 			})
+
+			checkProxySuccess("HTTPS proxy", "https", connectProxyHTTPSNodePort)
 		})
 }
 
