@@ -1,3 +1,5 @@
+//go:build integ
+
 // Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
