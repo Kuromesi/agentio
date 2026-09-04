@@ -1,0 +1,57 @@
+name: logging
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "**/*.go"
+      - "bin/lint_logging.sh"
+      - ".github/workflows/logging.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "**/*.go"
+      - "bin/lint_logging.sh"
+      - ".github/workflows/logging.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  logging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # The check diffs against the merge base, so the history has to be there.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Determine base ref
+        id: base
+        # Event fields reach the shell through the environment rather than by
+        # interpolation into the script text, so a ref name cannot inject a command.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$PR_BASE_REF" || true
+            ref="$(git merge-base "origin/$PR_BASE_REF" HEAD)"
+          else
+            ref="$PUSH_BEFORE"
+            if ! git rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1; then
+              ref="HEAD~1"
+            fi
+          fi
+          # The check takes a commit-ish; refuse anything that is not one.
+          git rev-parse -q --verify "$ref^{commit}" >/dev/null
+          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+      - name: Check logging convention
+        env:
+          BASE_REF: ${{ steps.base.outputs.ref }}
+        run: ./bin/lint_logging.sh "$BASE_REF"

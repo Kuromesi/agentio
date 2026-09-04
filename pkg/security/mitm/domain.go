@@ -1,0 +1,48 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package mitm
+
+import (
+	"strconv"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/util/validation"
+)
+
+// IsValidDomain reports whether a raw SDS resource name is an Agentio-compatible DNS FQDN.
+func IsValidDomain(domain string) bool {
+	if domain != strings.TrimSpace(domain) || len(domain) == 0 || len(domain) > 255 || !strings.Contains(domain, ".") {
+		return false
+	}
+	parts := strings.Split(CanonicalDomain(domain), ".")
+	if len(parts) < 2 {
+		return false
+	}
+	if _, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+		return false
+	}
+	for _, part := range parts {
+		if len(validation.IsDNS1123Label(part)) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// CanonicalDomain returns the cache and comparison form of an on-demand domain.
+// SDS wire resource names remain unchanged so they match Envoy's exact subscription.
+func CanonicalDomain(domain string) string {
+	return strings.TrimSuffix(strings.ToLower(domain), ".")
+}

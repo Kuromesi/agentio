@@ -1,0 +1,24 @@
+Agentio was installed with the {{ .Values.profile }} profile.
+
+Control plane:
+  {{ include "agentiod.fullname" . }}.{{ .Release.Namespace }}.svc.{{ .Values.global.clusterDomain }}:15012
+
+{{- if eq .Values.profile "ambient" }}
+Enroll a namespace in ambient mode:
+  kubectl label namespace <namespace> agentio.kruise.io/dataplane-mode=ambient --overwrite
+  kubectl rollout restart deployment -n <namespace>
+{{- else }}
+Enable per-Pod ztunnel injection:
+  kubectl label namespace <namespace> agentio.kruise.io/dataplane-mode=sidecar --overwrite
+  kubectl rollout restart deployment -n <namespace>
+{{- end }}
+
+{{- if eq .Values.egressGateway.mode "gatewayAPI" }}
+Gateway API mode is enabled. Ensure the Kubernetes Gateway API CRDs are installed.
+{{- else if eq .Values.egressGateway.mode "static" }}
+Static egress gateway {{ include "gateway.fullname" . }} is enabled.
+{{- end }}
+
+{{- if ne .Values.epe.mode "disabled" }}
+EPE endpoint: {{ include "agentio.epeAddress" . }}
+{{- end }}

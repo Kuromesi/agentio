@@ -1,0 +1,107 @@
+name: agentio-image
+
+# Agentio master owns only the agentiod and EPE images. Release callers receive
+# immutable references so the exact candidates tested by E2E can be promoted.
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/workflows/docs-lint.yml"
+  workflow_call:
+    inputs:
+      tag:
+        description: Candidate image tag; defaults to the source commit SHA
+        required: false
+        default: ""
+        type: string
+    outputs:
+      agentiod_image:
+        description: Immutable agentiod image reference
+        value: ${{ jobs.build-images.outputs.agentiod_image }}
+      epe_image:
+        description: Immutable EPE image reference
+        value: ${{ jobs.build-images.outputs.epe_image }}
+    secrets:
+      HUB_KRUISE:
+        description: Docker Hub access token
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  HUB: docker.io/openkruise
+
+concurrency:
+  group: agentio-image-${{ inputs.tag != '' && inputs.tag || github.ref }}
+  cancel-in-progress: ${{ inputs.tag == '' }}
+
+jobs:
+  build-images:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: development
+    outputs:
+      agentiod_image: ${{ steps.images.outputs.agentiod_image }}
+      epe_image: ${{ steps.images.outputs.epe_image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Resolve candidate tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="$INPUT_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="$GITHUB_SHA"
+          fi
+          if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "Invalid OCI image tag: $tag" >&2
+            exit 1
+          fi
+          echo "CANDIDATE_TAG=$tag" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.HUB_KRUISE }}
+      - name: Build and push owned candidates
+        id: images
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          build_image() {
+            local output_name="$1" image_name="$2" dockerfile="$3"
+            local destination metadata digest
+            destination="${HUB}/${image_name}:${CANDIDATE_TAG}"
+            metadata="${RUNNER_TEMP}/${image_name}-metadata.json"
+            tags=(--tag "$destination")
+            if [[ -z "$INPUT_TAG" ]]; then
+              tags+=(--tag "${HUB}/${image_name}:master-dev")
+            fi
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              --provenance=false \
+              --file "$dockerfile" \
+              --metadata-file "$metadata" \
+              "${tags[@]}" \
+              --push \
+              .
+            digest=$(jq -er '."containerimage.digest"' "$metadata")
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Unable to resolve immutable digest for ${image_name}: $digest" >&2
+              exit 1
+            fi
+            echo "${output_name}=${HUB}/${image_name}@${digest}" >> "$GITHUB_OUTPUT"
+          }
+
+          build_image agentiod_image agentiod Dockerfile
+          build_image epe_image agentio-epe extensions/epe/docker/Dockerfile

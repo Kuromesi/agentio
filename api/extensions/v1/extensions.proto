@@ -1,0 +1,64 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package kruise.networking.extensions.v1;
+
+option go_package = "github.com/openkruise/agentio/api/extensions/v1;extensionsv1";
+
+// TrafficPolicyExtension provides traffic policy priority and protocol information.
+// Attached to Authorization policies via auth_extensions field.
+message TrafficPolicyExtension {
+  // Rule evaluation priority (lower value = higher priority = executed first).
+  int32 priority = 1;
+
+  // Traffic direction mode:
+  //   SERVER (0) = inbound traffic
+  //   CLIENT (1) = outbound traffic
+  TrafficPolicyMode mode = 2;
+}
+
+// MeshInternalTrafficPolicy defines how mesh-internal (east-west) traffic is
+// handled by agentio tunnel proxies.
+enum MeshInternalTrafficPolicy {
+  MESH_INTERNAL_PEER_AWARE = 0;
+  MESH_INTERNAL_PASSTHROUGH = 1;
+}
+
+message WorkloadMetadata {
+  map<string, string> labels = 1;
+  MeshInternalTrafficPolicy mesh_internal_traffic_policy = 2;
+}
+
+// WorkloadSandboxBindings is the runtime-neutral attestation relationship
+// projected onto one Workload. Sandbox policy payloads remain independent.
+message WorkloadSandboxBindings {
+  // SourceUid identifies the current backing runtime activation when one is
+  // available. It is not a Sandbox identity or transport Principal.
+  string source_uid = 1;
+
+  // Sandboxes lists the policy subjects this Workload may attest.
+  repeated SandboxBinding sandboxes = 2;
+}
+
+message SandboxBinding {
+  string sandbox_uid = 1;
+}
+
+// Traffic direction mode (server = inbound, client = outbound)
+enum TrafficPolicyMode {
+  SERVER = 0;  // Inbound traffic (PREROUTING hook)
+  CLIENT = 1;  // Outbound traffic (OUTPUT hook)
+}

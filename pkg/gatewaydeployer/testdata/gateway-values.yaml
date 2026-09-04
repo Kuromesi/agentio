@@ -1,0 +1,43 @@
+# Minimal values used to exercise the Agentio egress-gateway template.
+agentio:
+  env:
+    ENABLE_CLUSTER_TRUST_BUNDLE_API: false
+
+global:
+  hub: gcr.io/istio-testing
+  tag: latest
+  imagePullPolicy: ""
+  imagePullSecrets: []
+  istioNamespace: istio-system
+  logAsJson: false
+  logging:
+    level: "default:info"
+  proxy:
+    image: proxyv2
+    clusterDomain: cluster.local
+    componentLogLevel: "misc:error"
+    logLevel: warning
+    outlierLogPath: ""
+  caAddress: ""
+  meshID: ""
+  trustDomain: ""
+  multiCluster:
+    clusterName: ""
+  network: ""
+  pilotCertProvider: istiod
+  platform: ""
+  egressGateway:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: "2"
+        memory: 1Gi
+    affinity: {}
+    topologySpreadConstraints: []
+    nodeSelector: {}
+    tolerations: []
+
+gateways:
+  seccompProfile: {}

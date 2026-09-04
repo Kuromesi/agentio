@@ -1,0 +1,331 @@
+profile: ambient
+
+global:
+  hub: docker.io/openkruise
+  tag: latest
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  clusterId: Kubernetes
+  trustDomain: cluster.local
+  clusterDomain: cluster.local
+  caCertConfigMap: agentio-ca-certs
+
+agentiod:
+  nameOverride: agentiod
+  fullnameOverride: ""
+  replicaCount: 1
+  image:
+    repository: ""
+    name: agentiod
+    tag: ""
+    digest: ""
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  service:
+    annotations: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+  rollingUpdate:
+    maxSurge: 100%
+    maxUnavailable: 25%
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  podAnnotations: {}
+  podLabels: {}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1337
+    runAsGroup: 1337
+    fsGroup: 1337
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    readOnlyRootFilesystem: true
+  tokenAudience: istio-ca
+  logging:
+    level: info
+    format: text
+  keepalive:
+    # Set to 0s to disable periodic server-side gRPC connection expiry.
+    maxServerConnectionAge: 30m
+  trustedNodeServiceAccount: ztunnel
+  enableDebugOnHTTP: true
+  meshInternalTrafficPolicy: PEER_AWARE
+  enableSNITrafficPolicy: false
+  ca:
+    secretName: istio-ca-secret
+    configMapName: ""
+    leaseName: agentiod-ca-leader
+    trustBundleConfigMapName: istio-ca-root-cert
+    trustBundleLeaseName: agentiod-trust-bundle-leader
+  mitm:
+    secretName: agentio-mitm-ca
+    secretNamespace: ""
+    signMode: SELF_SIGN
+  config:
+    name: agentio-config
+    primaryName: agentio-config-primary
+    values: {}
+    sourcesName: agentio-config-sources
+    sources: ""
+  injector:
+    configMapName: agentio-sidecar-injector
+    webhookName: ""
+    nativeSidecars: auto
+    failurePolicy: Fail
+    reinvocationPolicy: Never
+    ztunnel:
+      image: ""
+      imageName: ztunnel
+      enableFirewallRules: true
+      firewallBackend: auto
+    proxyInit:
+      image: ""
+      imageName: proxy-init
+  gatewayDeployer:
+    leaseName: agentiod-gateway-deployer-leader
+    referenceResolutionGracePeriod: 15s
+  networkPolicy:
+    enabled: false
+  env: {}
+
+cni:
+  nameOverride: agentio-cni
+  fullnameOverride: ""
+  image:
+    repository: ""
+    name: install-cni
+    tag: ""
+    digest: ""
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  cniBinDir: /opt/cni/bin
+  cniConfDir: /etc/cni/net.d
+  cniConfFileName: ""
+  cniNetnsDir: /var/run/netns
+  chained: true
+  shareHostNetworkNamespace: false
+  excludeNamespaces:
+    - kube-system
+    - agentio-system
+  dnsCapture: true
+  ipv6: true
+  reconcileIptablesOnStartup: true
+  enablementSelector:
+    - podSelector:
+        matchLabels:
+          agentio.kruise.io/dataplane-mode: ambient
+    - podSelector:
+        matchExpressions:
+          - key: agentio.kruise.io/dataplane-mode
+            operator: NotIn
+            values: [none]
+      namespaceSelector:
+        matchLabels:
+          agentio.kruise.io/dataplane-mode: ambient
+  repair:
+    enabled: true
+    repairPods: true
+    labelPods: false
+    deletePods: false
+    initContainerName: agentio-validation
+    brokenPodLabelKey: cni.istio.io/uninitialized
+    brokenPodLabelValue: "true"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  terminationGracePeriodSeconds: 30
+  podAnnotations: {}
+  podLabels: {}
+  networkPolicy:
+    enabled: false
+
+ztunnel:
+  nameOverride: ztunnel
+  fullnameOverride: ""
+  image:
+    repository: ""
+    name: ztunnel
+    tag: ""
+    digest: ""
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  tokenAudience: istio-ca
+  trustBundle:
+    useClusterTrustBundle: false
+    clusterTrustBundleName: istio.io:istiod-ca:root-cert
+  enableFirewallRules: true
+  logLevel: info
+  logAsJson: true
+  env: {}
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  terminationGracePeriodSeconds: 30
+  podAnnotations: {}
+  podLabels: {}
+  networkPolicy:
+    enabled: false
+  platform: ""
+
+egressGateway:
+  mode: disabled
+  nameOverride: agentio-egress
+  fullnameOverride: ""
+  image:
+    repository: ""
+    name: proxyv2
+    tag: ""
+    digest: ""
+  tokenAudience: istio-ca
+  replicaCount: 2
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  rbac:
+    readSecrets: false
+  service:
+    type: ClusterIP
+    annotations: {}
+    ports:
+      status: 15021
+      mesh: 15008
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  terminationGracePeriodSeconds: 30
+  statsFlushInterval: ""
+  statsEvictionInterval: ""
+  sniTrafficPolicy:
+    enabled: false
+    referenceResolutionGracePeriod: 15s
+  env: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  networkPolicy:
+    enabled: false
+  gatewayAPI:
+    create: false
+    name: agentio-egress
+    gatewayClassName: agentio-egress
+    annotations: {}
+    labels: {}
+    listeners:
+      - name: mesh
+        port: 15008
+        protocol: HBONE
+
+epe:
+  mode: disabled
+  nameOverride: agentio-epe
+  fullnameOverride: ""
+  image:
+    repository: ""
+    name: agentio-epe
+    tag: ""
+    digest: ""
+  replicaCount: 1
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  service:
+    grpcPort: 9002
+    healthPort: 9003
+    metricsPort: 9090
+  external:
+    address: ""
+    port: 9002
+  messageTimeout: 5s
+  credentialProvider:
+    url: ""
+    mtls:
+      source: files
+      secretName: ""
+      secret:
+        namespace: ""
+        name: ""
+      insecureSkipVerify: false
+  tokenCacheTTL: 15m
+  tokenCacheMaxSize: 10000
+  auditWebhook:
+    insecureSkipVerify: false
+  env: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  networkPolicy:
+    enabled: false

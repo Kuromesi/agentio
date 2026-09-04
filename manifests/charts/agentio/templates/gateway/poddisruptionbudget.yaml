@@ -1,0 +1,16 @@
+{{- if eq .Values.egressGateway.mode "static" }}
+{{- if .Values.egressGateway.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.egressGateway.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "gateway.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- end }}

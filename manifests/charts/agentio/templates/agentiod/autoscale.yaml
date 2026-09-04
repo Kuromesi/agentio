@@ -1,0 +1,23 @@
+{{- if .Values.agentiod.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "agentiod.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentiod.labels" . | nindent 4 }}
+spec:
+  minReplicas: {{ .Values.agentiod.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.agentiod.autoscaling.maxReplicas }}
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "agentiod.fullname" . }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.agentiod.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

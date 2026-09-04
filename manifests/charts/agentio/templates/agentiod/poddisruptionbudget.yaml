@@ -1,0 +1,14 @@
+{{- if .Values.agentiod.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agentiod.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentiod.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.agentiod.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "agentiod.selectorLabels" . | nindent 6 }}
+{{- end }}

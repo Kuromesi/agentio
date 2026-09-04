@@ -1,0 +1,83 @@
+{
+  "global": {
+    "hub": "docker.io/agentio",
+    "tag": "test",
+    "proxyZtunnel": {
+      "image": "docker.io/agentio/ztunnel:test",
+      "enableFirewallRules": false,
+      "firewallBackend": "auto"
+    },
+    "caAddress": "agentiod.agentio-system.svc.cluster.local:15012",
+    "xdsAddress": "agentiod.agentio-system.svc.cluster.local:15012",
+    "trustBundleName": "istio-ca-root-cert",
+    "caName": "",
+    "imagePullPolicy": "",
+    "imagePullSecrets": [],
+    "logAsJson": false,
+    "logging": {
+      "level": "default:info"
+    },
+    "multiCluster": {
+      "clusterName": "Kubernetes"
+    },
+    "nativeNftables": false,
+    "network": "",
+    "proxy": {
+      "image": "docker.io/agentio/proxyv2:test",
+      "clusterDomain": "cluster.local",
+      "componentLogLevel": "misc:error",
+      "excludeIPRanges": "",
+      "excludeInboundPorts": "",
+      "excludeOutboundPorts": "",
+      "includeIPRanges": "*",
+      "includeInboundPorts": "*",
+      "includeOutboundPorts": "",
+      "logLevel": "warning",
+      "privileged": false,
+      "readinessFailureThreshold": 4,
+      "readinessInitialDelaySeconds": 0,
+      "readinessPeriodSeconds": 15,
+      "resources": {
+        "limits": {
+          "cpu": "2000m",
+          "memory": "1024Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi"
+        }
+      },
+      "seccompProfile": {},
+      "startupProbe": {
+        "enabled": true,
+        "failureThreshold": 600
+      },
+      "statusPort": 15020,
+      "tracer": "none"
+    },
+    "proxyInit": {
+      "forceApplyIptables": false,
+      "image": "docker.io/agentio/proxyv2:test"
+    },
+    "sds": {
+      "token": {
+        "aud": "istio-ca"
+      }
+    }
+  },
+  "pilot": {
+    "cni": {
+      "enabled": false
+    }
+  },
+  "sidecarInjectorWebhook": {
+    "alwaysInjectSelector": [],
+    "defaultTemplates": [],
+    "enableNamespacesByDefault": false,
+    "injectedAnnotations": {},
+    "neverInjectSelector": [],
+    "reinvocationPolicy": "Never",
+    "rewriteAppHTTPProbe": true,
+    "templates": {}
+  }
+}

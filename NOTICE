@@ -1,0 +1,24 @@
+agentio
+Copyright 2026 The Kruise Authors
+
+This product includes software developed at the OpenKruise community
+(https://github.com/openkruise).
+
+------------------------------------------------------------------------
+Agentio is an independent project.
+Portions of this product are derived from Istio (https://istio.io/).
+The Istio-derived portions retain Copyright Istio Authors and are licensed
+under the Apache License, Version 2.0.
+
+Modified files derived from Istio carry a
+"Modifications Copyright 2026 The Kruise Authors" notice; the nature of
+changes is recorded in this project's git history.
+
+The original, unmodified Istio project README is preserved at
+README.istio.md. Third-party dependency licenses are collected under the
+licenses/ directory.
+
+"Istio" is a trademark of the Istio project / Open Usage Commons. Use of
+the Istio name in this project is nominative (to describe the origin of
+the code) and does not imply endorsement or affiliation.
+------------------------------------------------------------------------

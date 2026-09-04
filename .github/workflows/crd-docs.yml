@@ -1,0 +1,48 @@
+name: crd-docs
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "manifests/charts/agentio/crds/**"
+      - "tools/generate-crd-docs.sh"
+      - "tools/crd-docs.tmpl"
+      - "docs/reference/traffic-policy-api.md"
+      - "docs/reference/security-profile-api.md"
+      - ".github/workflows/crd-docs.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "manifests/charts/agentio/crds/**"
+      - "tools/generate-crd-docs.sh"
+      - "tools/crd-docs.tmpl"
+      - "docs/reference/traffic-policy-api.md"
+      - "docs/reference/security-profile-api.md"
+      - ".github/workflows/crd-docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Regenerate CRD API reference
+        run: make gen.crddocs
+      - name: Verify generated docs are committed
+        run: |
+          git diff --exit-code -- docs/reference/traffic-policy-api.md docs/reference/security-profile-api.md || {
+            echo "CRD API reference pages are out of date. Run 'make gen.crddocs' and commit the result." >&2
+            exit 1
+          }

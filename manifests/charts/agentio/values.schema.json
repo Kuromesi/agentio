@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["profile", "global", "agentiod", "cni", "ztunnel", "egressGateway", "epe"],
+  "properties": {
+    "profile": {"type": "string", "enum": ["ambient", "sidecar"]},
+    "agentiod": {
+      "type": "object",
+      "properties": {
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "logging": {
+          "type": "object",
+          "required": ["level", "format"],
+          "properties": {
+            "level": {"type": "string", "enum": ["debug", "info", "warn", "error", "none"]},
+            "format": {"type": "string", "enum": ["text", "json"]}
+          }
+        },
+        "keepalive": {
+          "type": "object",
+          "required": ["maxServerConnectionAge"],
+          "properties": {
+            "maxServerConnectionAge": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "egressGateway": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["disabled", "static", "gatewayAPI"]},
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "service": {
+          "type": "object",
+          "properties": {"type": {"enum": ["ClusterIP", "NodePort", "LoadBalancer"]}}
+        }
+      }
+    },
+    "epe": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["disabled", "managed", "external"]},
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "external": {
+          "type": "object",
+          "properties": {
+            "address": {"type": "string"},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+          }
+        },
+        "credentialProvider": {
+          "type": "object",
+          "properties": {
+            "mtls": {
+              "type": "object",
+              "properties": {"source": {"enum": ["files", "secret", "none"]}}
+            }
+          }
+        },
+        "auditWebhook": {
+          "type": "object",
+          "required": ["insecureSkipVerify"],
+          "properties": {
+            "insecureSkipVerify": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"epe": {"properties": {"mode": {"const": "external"}}}}
+      },
+      "then": {
+        "properties": {
+          "epe": {
+            "properties": {
+              "external": {
+                "required": ["address"],
+                "properties": {"address": {"minLength": 1}}
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

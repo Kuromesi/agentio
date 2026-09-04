@@ -1,0 +1,26 @@
+[
+  {
+    "_comment": "Immutable digest of the multi-architecture ztunnel image.",
+    "name": "ZTUNNEL_IMAGE",
+    "repository": "docker.io/openkruise/ztunnel",
+    "digest": "sha256:d815079b8e5a55f3f0fe9026c4d0affcc2677d2fca481a82e54d707342898165"
+  },
+  {
+    "_comment": "Immutable digest of the multi-architecture CNI image.",
+    "name": "CNI_IMAGE",
+    "repository": "docker.io/openkruise/install-cni",
+    "digest": "sha256:c08ba3c8924fe83947b4cfe23dae1b4bf61ec84c1937d4b4e3bccd422f14e28f"
+  },
+  {
+    "_comment": "Immutable digest of the multi-architecture proxy-init image.",
+    "name": "PROXY_INIT_IMAGE",
+    "repository": "docker.io/openkruise/proxy-init",
+    "digest": "sha256:d4d20846aefcc0a4c29d12b974dc766c01f306832331c280788f66b90b1ef03e"
+  },
+  {
+    "_comment": "Immutable digest of the multi-architecture gateway/proxyv2 image.",
+    "name": "GATEWAY_IMAGE",
+    "repository": "docker.io/openkruise/proxyv2",
+    "digest": "sha256:261958bc3728e0f94e07355a161310d19df2c93e8fd598f3e82888e856758830"
+  }
+]

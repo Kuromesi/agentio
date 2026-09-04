@@ -1,0 +1,154 @@
+name: sync-agentio-dependency-bom
+
+# Component release workflows dispatch immutable image references here. The
+# default branch never follows a source repository HEAD and never republishes
+# artifacts owned by an Istio fork branch or the ztunnel repository.
+on:
+  repository_dispatch:
+    types:
+      - dependency-released
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Released component
+        required: true
+        type: choice
+        options:
+          - ztunnel
+          - cni
+          - proxy-init
+          - gateway
+      image:
+        description: Immutable released image (repository@sha256:digest)
+        required: true
+        type: string
+      source_repository:
+        description: Optional source repository (owner/name)
+        required: false
+        default: ""
+        type: string
+      source_ref:
+        description: Optional source release tag or commit
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-agentio-dependency-${{ github.event.client_payload.component || inputs.component }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate released dependency
+        id: dependency
+        env:
+          COMPONENT: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.component || inputs.component }}
+          IMAGE: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.image || inputs.image }}
+          SOURCE_REPOSITORY: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.source_repository || inputs.source_repository }}
+          SOURCE_REF: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.source_ref || inputs.source_ref }}
+        run: |
+          case "$COMPONENT" in
+            ztunnel) pin_name=ZTUNNEL_IMAGE ;;
+            cni) pin_name=CNI_IMAGE ;;
+            proxy-init) pin_name=PROXY_INIT_IMAGE ;;
+            gateway) pin_name=GATEWAY_IMAGE ;;
+            *)
+              echo "Unsupported dependency component: $COMPONENT" >&2
+              exit 1
+              ;;
+          esac
+          image_pattern='^[a-z0-9][a-z0-9.-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._-]*)+@sha256:[0-9a-f]{64}$'
+          if [[ ! "$IMAGE" =~ $image_pattern ]]; then
+            echo "Invalid immutable image: $IMAGE" >&2
+            exit 1
+          fi
+          if [[ -n "$SOURCE_REPOSITORY" && ! "$SOURCE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Invalid source repository: $SOURCE_REPOSITORY" >&2
+            exit 1
+          fi
+          if [[ "$SOURCE_REF" == *$'\n'* || "$SOURCE_REF" == *$'\r'* ]]; then
+            echo "Source ref must be a single line" >&2
+            exit 1
+          fi
+          {
+            echo "component=$COMPONENT"
+            echo "pin_name=$pin_name"
+            echo "repository=${IMAGE%@*}"
+            echo "digest=${IMAGE##*@}"
+            echo "source_repository=$SOURCE_REPOSITORY"
+            echo "source_ref=$SOURCE_REF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create repository GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AGENTIO_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIO_SYNC_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Checkout master
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: master
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+      - name: Update immutable BOM entry
+        id: update
+        env:
+          PIN_NAME: ${{ steps.dependency.outputs.pin_name }}
+          REPOSITORY: ${{ steps.dependency.outputs.repository }}
+          DIGEST: ${{ steps.dependency.outputs.digest }}
+          SOURCE_REPOSITORY: ${{ steps.dependency.outputs.source_repository }}
+          SOURCE_REF: ${{ steps.dependency.outputs.source_ref }}
+        run: |
+          if [[ "$(jq -r --arg name "$PIN_NAME" '[.[] | select(.name == $name)] | length' agentio.deps)" != "1" ]]; then
+            echo "agentio.deps must contain exactly one ${PIN_NAME} entry" >&2
+            exit 1
+          fi
+          jq \
+            --arg name "$PIN_NAME" \
+            --arg repository "$REPOSITORY" \
+            --arg digest "$DIGEST" \
+            --arg sourceRepository "$SOURCE_REPOSITORY" \
+            --arg sourceRef "$SOURCE_REF" \
+            'map(
+              if .name == $name then
+                .repository = $repository |
+                .digest = $digest |
+                .sourceRepository = $sourceRepository |
+                .sourceRef = $sourceRef
+              else . end
+            )' agentio.deps > agentio.deps.next
+          if cmp -s agentio.deps agentio.deps.next; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mv agentio.deps.next agentio.deps
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Create or update BOM pull request
+        if: steps.update.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: master
+          branch: automation/${{ steps.dependency.outputs.component }}-image
+          delete-branch: true
+          add-paths: agentio.deps
+          commit-message: "chore: update ${{ steps.dependency.outputs.component }} image"
+          title: "chore: update ${{ steps.dependency.outputs.component }} release in Agentio BOM"
+          body: |
+            Updates the immutable Agentio dependency BOM from a component release.
+
+            - Component: `${{ steps.dependency.outputs.component }}`
+            - Image: `${{ steps.dependency.outputs.repository }}@${{ steps.dependency.outputs.digest }}`
+            - Source repository: `${{ steps.dependency.outputs.source_repository }}`
+            - Source ref: `${{ steps.dependency.outputs.source_ref }}`

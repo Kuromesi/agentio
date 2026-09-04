@@ -1,0 +1,59 @@
+name: agentio-chart
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "manifests/charts/agentio/**"
+      - "manifests/charts/charts_test.go"
+      - "tools/prepare-release-chart.sh"
+      - ".github/workflows/agentio-release.yml"
+      - ".github/workflows/agentio-chart.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "manifests/charts/agentio/**"
+      - "manifests/charts/charts_test.go"
+      - "tools/prepare-release-chart.sh"
+      - ".github/workflows/agentio-release.yml"
+      - ".github/workflows/agentio-chart.yml"
+
+permissions:
+  contents: read
+
+env:
+  CHART: manifests/charts/agentio
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.16.2
+      - name: Helm lint
+        run: helm lint "$CHART"
+      - name: Run chart render contract tests
+        run: go test ./manifests/charts -count=1
+      - name: Helm template — defaults
+        run: helm template agentio "$CHART" >/dev/null
+      - name: Helm template — sidecar profile
+        run: helm template agentio "$CHART" --set profile=sidecar >/dev/null
+      - name: Helm template — ClusterTrustBundle enabled
+        run: helm template agentio "$CHART" --set ztunnel.trustBundle.useClusterTrustBundle=true >/dev/null
+      - name: Helm template — Gateway API egress
+        run: >-
+          helm template agentio "$CHART"
+          --set egressGateway.mode=gatewayAPI
+          --set egressGateway.gatewayAPI.create=true
+          >/dev/null

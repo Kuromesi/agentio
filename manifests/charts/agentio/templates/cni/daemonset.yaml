@@ -1,0 +1,138 @@
+{{- if eq .Values.profile "ambient" }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "agentio-cni.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentio-cni.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "agentio-cni.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    {{- toYaml .Values.cni.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentio-cni.selectorLabels" . | nindent 8 }}
+        agentio.kruise.io/dataplane-mode: none
+        {{- with .Values.cni.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "15014"
+        prometheus.io/path: /metrics
+        container.apparmor.security.beta.kubernetes.io/install-cni: unconfined
+        {{- with .Values.cni.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if .Values.cni.shareHostNetworkNamespace }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      serviceAccountName: {{ include "agentio-cni.serviceAccountName" . }}
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: {{ .Values.cni.terminationGracePeriodSeconds }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.cni.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.cni.tolerations | nindent 8 }}
+      containers:
+        - name: install-cni
+          image: {{ include "agentio-cni.image" . | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - install-cni
+          envFrom:
+            - configMapRef:
+                name: {{ include "agentio-cni.fullname" . }}-config
+          env:
+            - name: REPAIR_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: REPAIR_RUN_AS_DAEMON
+              value: "true"
+            - name: REPAIR_SIDECAR_ANNOTATION
+              value: sidecar.istio.io/status
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if not .Values.cni.shareHostNetworkNamespace }}
+            - name: ALLOW_SWITCH_TO_HOST_NS
+              value: "true"
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: 15014
+            - name: readiness
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+          securityContext:
+            privileged: false
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            capabilities:
+              drop: [ALL]
+              add: [NET_ADMIN, NET_RAW, SYS_PTRACE, SYS_ADMIN, DAC_OVERRIDE]
+          resources:
+            {{- toYaml .Values.cni.resources | nindent 12 }}
+          volumeMounts:
+            - name: cni-bin-dir
+              mountPath: /host/opt/cni/bin
+            - name: cni-host-procfs
+              mountPath: /host/proc
+              readOnly: true
+            - name: cni-net-dir
+              mountPath: /host/etc/cni/net.d
+            - name: cni-socket-dir
+              mountPath: /var/run/istio-cni
+            - name: cni-netns-dir
+              mountPath: /host/var/run/netns
+              mountPropagation: HostToContainer
+            - name: cni-ztunnel-sock-dir
+              mountPath: /var/run/ztunnel
+      volumes:
+        - name: cni-bin-dir
+          hostPath:
+            path: {{ .Values.cni.cniBinDir }}
+        - name: cni-host-procfs
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: cni-net-dir
+          hostPath:
+            path: {{ .Values.cni.cniConfDir }}
+        - name: cni-socket-dir
+          hostPath:
+            path: /var/run/istio-cni
+            type: DirectoryOrCreate
+        - name: cni-netns-dir
+          hostPath:
+            path: {{ .Values.cni.cniNetnsDir }}
+            type: DirectoryOrCreate
+        - name: cni-ztunnel-sock-dir
+          hostPath:
+            path: /var/run/ztunnel
+            type: DirectoryOrCreate
+{{- end }}

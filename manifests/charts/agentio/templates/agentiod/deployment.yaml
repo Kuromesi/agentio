@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentiod.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentiod.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.agentiod.autoscaling.enabled }}
+  replicas: {{ .Values.agentiod.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agentiod.selectorLabels" . | nindent 6 }}
+  strategy:
+    rollingUpdate:
+      maxSurge: {{ .Values.agentiod.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.agentiod.rollingUpdate.maxUnavailable }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentiod.selectorLabels" . | nindent 8 }}
+        app: agentiod
+        agentio.kruise.io/dataplane-mode: none
+        {{- with .Values.agentiod.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "15014"
+        prometheus.io/path: /metrics
+        {{- with .Values.agentiod.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agentiod.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.agentiod.securityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: discovery
+          image: {{ include "agentiod.image" . | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - --discovery-address=:15012
+            - --monitoring-address=:15014
+            - --cluster-id={{ .Values.global.clusterId }}
+            - --namespace={{ .Release.Namespace }}
+            - --domain={{ .Values.global.clusterDomain }}
+            - --trust-domain={{ .Values.global.trustDomain }}
+          ports:
+            - name: grpc-xds
+              containerPort: 15012
+              protocol: TCP
+            - name: http-monitoring
+              containerPort: 15014
+              protocol: TCP
+            {{- if eq .Values.profile "sidecar" }}
+            - name: https-webhook
+              containerPort: 15017
+              protocol: TCP
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 15014
+            initialDelaySeconds: 1
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 15014
+            periodSeconds: 10
+          securityContext:
+            {{- toYaml .Values.agentiod.containerSecurityContext | nindent 12 }}
+          env:
+            - name: AGENTIO_LOG_LEVEL
+              value: {{ .Values.agentiod.logging.level | quote }}
+            - name: AGENTIO_LOG_FORMAT
+              value: {{ .Values.agentiod.logging.format | quote }}
+            - name: AGENTIO_KEEPALIVE_MAX_SERVER_CONNECTION_AGE
+              value: {{ .Values.agentiod.keepalive.maxServerConnectionAge | quote }}
+            - name: AGENTIO_SERVICE_NAME
+              value: {{ include "agentiod.fullname" . | quote }}
+            - name: AGENTIO_TOKEN_AUDIENCE
+              value: {{ .Values.agentiod.tokenAudience | quote }}
+            - name: AGENTIO_TRUSTED_NODE_ACCOUNTS
+              value: {{ .Values.agentiod.trustedNodeServiceAccount | quote }}
+            - name: AGENTIO_CONFIGMAP_NAME
+              value: {{ .Values.agentiod.config.name | quote }}
+            - name: AGENTIO_PRIMARY_CONFIGMAP_NAME
+              value: {{ .Values.agentiod.config.primaryName | quote }}
+            - name: AGENTIO_ENABLE_DEBUG_ON_HTTP
+              value: {{ .Values.agentiod.enableDebugOnHTTP | quote }}
+            - name: AGENTIO_CA_SECRET_NAME
+              value: {{ .Values.agentiod.ca.secretName | quote }}
+            - name: AGENTIO_CA_CONFIGMAP_NAME
+              value: {{ include "agentiod.caConfigMapName" . | quote }}
+            - name: AGENTIO_CA_LEASE_NAME
+              value: {{ .Values.agentiod.ca.leaseName | quote }}
+            - name: AGENTIO_TRUST_BUNDLE_CONFIGMAP_NAME
+              value: {{ .Values.agentiod.ca.trustBundleConfigMapName | quote }}
+            - name: AGENTIO_TRUST_BUNDLE_LEASE_NAME
+              value: {{ .Values.agentiod.ca.trustBundleLeaseName | quote }}
+            - name: AGENTIO_MITM_CA_SECRET_NAME
+              value: {{ .Values.agentiod.mitm.secretName | quote }}
+            - name: AGENTIO_MITM_CA_SECRET_NAMESPACE
+              value: {{ .Values.agentiod.mitm.secretNamespace | quote }}
+            - name: AGENTIO_MITM_SIGN_MODE
+              value: {{ .Values.agentiod.mitm.signMode | quote }}
+            - name: AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY
+              value: {{ .Values.agentiod.meshInternalTrafficPolicy | quote }}
+            - name: AGENTIO_ENABLE_SNI_TRAFFIC_POLICY
+              value: {{ .Values.agentiod.enableSNITrafficPolicy | quote }}
+            - name: AGENTIO_ENABLE_SIDECAR_INJECTOR
+              value: {{ (eq .Values.profile "sidecar") | quote }}
+            - name: AGENTIO_INJECTOR_CONFIGMAP_NAME
+              value: {{ .Values.agentiod.injector.configMapName | quote }}
+            - name: AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME
+              value: {{ include "agentiod.webhookName" . | quote }}
+            - name: AGENTIO_NATIVE_SIDECARS
+              value: {{ .Values.agentiod.injector.nativeSidecars | quote }}
+            - name: AGENTIO_ENABLE_GATEWAY_DEPLOYER
+              value: {{ (eq .Values.egressGateway.mode "gatewayAPI") | quote }}
+            - name: AGENTIO_GATEWAY_LEASE_NAME
+              value: {{ .Values.agentiod.gatewayDeployer.leaseName | quote }}
+            {{- range $name, $value := .Values.agentiod.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agentiod.resources | nindent 12 }}
+      {{- with .Values.agentiod.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentiod.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentiod.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentiod.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

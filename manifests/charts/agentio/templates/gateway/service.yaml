@@ -1,0 +1,26 @@
+{{- if eq .Values.egressGateway.mode "static" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+  {{- with .Values.egressGateway.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.egressGateway.service.type }}
+  selector:
+    {{- include "gateway.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: status-port
+      appProtocol: tcp
+      port: {{ .Values.egressGateway.service.ports.status }}
+      targetPort: status-port
+    - name: mesh
+      appProtocol: hbone
+      port: {{ .Values.egressGateway.service.ports.mesh }}
+      targetPort: {{ .Values.egressGateway.service.ports.mesh }}
+{{- end }}

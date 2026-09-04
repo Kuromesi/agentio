@@ -1,0 +1,23 @@
+# Complete values skeleton for the single Agentio Helm release.
+profile: ambient
+
+global:
+  hub: docker.io/openkruise
+  tag: latest
+  imagePullPolicy: IfNotPresent
+  clusterId: Kubernetes
+  trustDomain: cluster.local
+  clusterDomain: cluster.local
+  caCertConfigMap: agentio-ca-certs
+
+agentiod:
+  replicaCount: 1
+
+cni: {}
+ztunnel: {}
+
+egressGateway:
+  mode: disabled
+
+epe:
+  mode: disabled

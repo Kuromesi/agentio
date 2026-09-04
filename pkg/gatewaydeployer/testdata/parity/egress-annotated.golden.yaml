@@ -1,0 +1,287 @@
+# Copyright 2026 The Kruise Authors
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "egress-sa"
+  namespace: "demo"
+  annotations:
+    {"note":"keep"}
+  labels:
+    {"agentio.kruise.io/network":"edge-net","gateway.networking.k8s.io/gateway-class-name":"agentio-egress","gateway.networking.k8s.io/gateway-name":"egress-custom","infra":"yes"}
+  # Safe since 1.28: https://github.com/kubernetes/kubernetes/pull/117412
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "egress-custom"
+    uid: "uid-2"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "egress-renamed"
+  namespace: "demo"
+  annotations:
+    {"note":"keep"}
+  labels:
+    {"agentio.kruise.io/network":"edge-net","gateway.agentio.kruise.io/managed":"agentio.kruise.io-egress-gateway-controller","gateway.networking.k8s.io/gateway-class-name":"agentio-egress","gateway.networking.k8s.io/gateway-name":"egress-custom","infra":"yes"}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "egress-custom"
+    uid: "uid-2"
+spec:
+  selector:
+    matchLabels:
+      "gateway.networking.k8s.io/gateway-name": "egress-custom"
+  template:
+    metadata:
+      annotations:
+        {"note":"keep","prometheus.io/path":"/stats/prometheus","prometheus.io/port":"15020","prometheus.io/scrape":"true"}
+      labels:
+        {"agentio.kruise.io/dataplane-mode":"none","agentio.kruise.io/network":"edge-net","gateway.agentio.kruise.io/managed":"agentio.kruise.io-egress-gateway-controller","gateway.networking.k8s.io/gateway-class-name":"agentio-egress","gateway.networking.k8s.io/gateway-name":"egress-custom","infra":"yes"}
+    spec:
+      serviceAccountName: "egress-sa"
+      containers:
+      - name: agentio-proxy
+        ports:
+        - containerPort: 15020
+          name: metrics
+          protocol: TCP
+        - containerPort: 15021
+          name: status-port
+          protocol: TCP
+        - containerPort: 15090
+          protocol: TCP
+          name: http-envoy-prom
+        image: "example.com/agentio/proxyv2:1.0.0-test"
+
+        args:
+        - proxy
+        - waypoint
+        - --domain
+        - $(POD_NAMESPACE).svc.cluster.local
+        - --serviceCluster
+        - egress-sa.$(POD_NAMESPACE)
+        - --proxyLogLevel
+        - "warning"
+        - --proxyComponentLogLevel
+        - "misc:error"
+        - --log_output_level
+        - "default:info"
+        env:
+        - name: ISTIO_META_SERVICE_ACCOUNT
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
+        - name: ISTIO_META_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: PILOT_CERT_PROVIDER
+          value: istiod
+        - name: CA_ADDR
+          value: agentiod.agentio-system.svc:15012
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: INSTANCE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SERVICE_ACCOUNT
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
+        - name: HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: ISTIO_CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+              divisor: "1"
+        - name: PROXY_CONFIG
+          value: |
+                 {}
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.memory
+              divisor: "1"
+        - name: GOMAXPROCS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+              divisor: "1"
+        - name: ISTIO_META_CLUSTER_ID
+          value: "Kubernetes"
+        - name: ISTIO_META_NETWORK
+          value: "edge-net"
+        - name: ISTIO_META_INTERCEPTION_MODE
+          value: REDIRECT
+        - name: ISTIO_META_WORKLOAD_NAME
+          value: egress-renamed
+        - name: ISTIO_META_OWNER
+          value: kubernetes://apis/apps/v1/namespaces/demo/deployments/egress-renamed
+        - name: ISTIO_META_MESH_ID
+          value: "cluster.local"
+        - name: TRUST_DOMAIN
+          value: "cluster.local"
+        resources:
+          limits:
+            cpu: "2"
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /healthz/ready
+            port: 15021
+            scheme: HTTP
+          initialDelaySeconds: 1
+          periodSeconds: 1
+          successThreshold: 1
+          timeoutSeconds: 1
+        readinessProbe:
+          failureThreshold: 4
+          httpGet:
+            path: /healthz/ready
+            port: 15021
+            scheme: HTTP
+          initialDelaySeconds: 0
+          periodSeconds: 15
+          successThreshold: 1
+          timeoutSeconds: 1
+        securityContext:
+          privileged: false
+          runAsGroup: 1337
+          runAsUser: 1337
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - mountPath: /var/run/secrets/workload-spiffe-uds
+          name: workload-socket
+        - mountPath: /var/run/secrets/istio
+          name: agentiod-ca-cert
+        - mountPath: /var/lib/istio/data
+          name: agentio-data
+        - mountPath: /etc/istio/proxy
+          name: agentio-envoy
+        - mountPath: /var/run/secrets/tokens
+          name: agentio-token
+        - mountPath: /etc/istio/pod
+          name: agentio-podinfo
+      volumes:
+      - emptyDir: {}
+        name: workload-socket
+      - emptyDir:
+          medium: Memory
+        name: agentio-envoy
+      - emptyDir:
+          medium: Memory
+        name: go-proxy-envoy
+      - emptyDir: {}
+        name: agentio-data
+      - emptyDir: {}
+        name: go-proxy-data
+      - downwardAPI:
+          items:
+          - fieldRef:
+              fieldPath: metadata.labels
+            path: labels
+          - fieldRef:
+              fieldPath: metadata.annotations
+            path: annotations
+        name: agentio-podinfo
+      - name: agentio-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: istio-ca
+              expirationSeconds: 43200
+              path: istio-token
+      - name: agentiod-ca-cert
+        configMap:
+          name: istio-ca-root-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    {"networking.istio.io/traffic-distribution":"PreferClose","note":"keep"}
+  labels:
+    {"agentio.kruise.io/network":"edge-net","gateway.networking.k8s.io/gateway-class-name":"agentio-egress","gateway.networking.k8s.io/gateway-name":"egress-custom","infra":"yes"}
+  name: "egress-renamed"
+  namespace: "demo"
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "egress-custom"
+    uid: "uid-2"
+spec:
+  ipFamilyPolicy: PreferDualStack
+  ports:
+  - name: "status-port"
+    port: 15021
+    protocol: TCP
+    appProtocol: tcp
+  - name: "mesh"
+    port: 15008
+    protocol: TCP
+    appProtocol: hbone
+  selector:
+    "gateway.networking.k8s.io/gateway-name": "egress-custom"
+  type: "NodePort"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: "egress-renamed"
+  namespace: "demo"
+  annotations:
+    {"note":"keep"}
+  labels:
+    {"agentio.kruise.io/network":"edge-net","gateway.networking.k8s.io/gateway-class-name":"agentio-egress","gateway.networking.k8s.io/gateway-name":"egress-custom","infra":"yes"}
+  ownerReferences:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      name: egress-custom
+      uid: "uid-2"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name:  "egress-renamed"
+  maxReplicas: 1
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: "egress-renamed"
+  namespace: "demo"
+  annotations:
+    {"note":"keep"}
+  labels:
+    {"agentio.kruise.io/network":"edge-net","gateway.networking.k8s.io/gateway-class-name":"agentio-egress","gateway.networking.k8s.io/gateway-name":"egress-custom","infra":"yes"}
+  ownerReferences:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      name: egress-custom
+      uid: "uid-2"
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: "egress-custom"
+

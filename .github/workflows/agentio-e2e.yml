@@ -1,0 +1,179 @@
+name: agentio-product-e2e
+
+# Product E2E consumes a complete immutable release BOM. Sidecar and ambient
+# run in separate jobs so CNI and firewall state never crosses profiles.
+on:
+  workflow_call:
+    inputs:
+      agentiod_image:
+        description: Immutable agentiod image (repository@sha256:digest)
+        required: true
+        type: string
+      epe_image:
+        description: Immutable EPE image (repository@sha256:digest)
+        required: true
+        type: string
+      cni_image:
+        description: Immutable CNI image (repository@sha256:digest)
+        required: true
+        type: string
+      ztunnel_image:
+        description: Immutable ztunnel image (repository@sha256:digest)
+        required: true
+        type: string
+      proxy_init_image:
+        description: Immutable proxy-init image (repository@sha256:digest)
+        required: true
+        type: string
+      gateway_image:
+        description: Immutable gateway/proxyv2 image (repository@sha256:digest)
+        required: true
+        type: string
+      ext_proc_image:
+        description: Immutable ext-proc fixture image (repository@sha256:digest)
+        required: true
+        type: string
+      forward_proxy_image:
+        description: Optional immutable forward-proxy fixture override
+        required: false
+        default: ""
+        type: string
+      chart_artifact:
+        description: Optional same-run artifact containing the prepared chart
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      agentiod_image:
+        description: Immutable agentiod image (repository@sha256:digest)
+        required: true
+        type: string
+      epe_image:
+        description: Immutable EPE image (repository@sha256:digest)
+        required: true
+        type: string
+      cni_image:
+        description: Immutable CNI image (repository@sha256:digest)
+        required: true
+        type: string
+      ztunnel_image:
+        description: Immutable ztunnel image (repository@sha256:digest)
+        required: true
+        type: string
+      proxy_init_image:
+        description: Immutable proxy-init image (repository@sha256:digest)
+        required: true
+        type: string
+      gateway_image:
+        description: Immutable gateway/proxyv2 image (repository@sha256:digest)
+        required: true
+        type: string
+      ext_proc_image:
+        description: Immutable ext-proc fixture image (repository@sha256:digest)
+        required: true
+        type: string
+      forward_proxy_image:
+        description: Optional immutable forward-proxy fixture override
+        required: false
+        default: ""
+        type: string
+      chart_artifact:
+        description: Internal same-run chart artifact; leave empty for manual runs
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentio-product-e2e-${{ github.run_id }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  product-e2e:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: sidecar
+            cluster: agentio-sidecar-e2e
+            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
+          - profile: ambient
+            cluster: agentio-ambient-e2e
+            suites: ./suites/ambient
+    env:
+      E2E_CLUSTER_NAME: ${{ matrix.cluster }}
+      E2E_CLUSTER_REUSE: "true"
+      E2E_LIFECYCLE_RETAIN: never
+      AGENTIO_E2E_PROFILE: ${{ matrix.profile }}
+      AGENTIO_E2E_SUITES: ${{ matrix.suites }}
+      AGENTIO_E2E_AGENTIOD_IMAGE: ${{ inputs.agentiod_image }}
+      AGENTIO_E2E_EPE_IMAGE: ${{ inputs.epe_image }}
+      AGENTIO_E2E_CNI_IMAGE: ${{ inputs.cni_image }}
+      AGENTIO_E2E_ZTUNNEL_IMAGE: ${{ inputs.ztunnel_image }}
+      AGENTIO_E2E_PROXY_INIT_IMAGE: ${{ inputs.proxy_init_image }}
+      AGENTIO_E2E_GATEWAY_IMAGE: ${{ inputs.gateway_image }}
+      AGENTIO_E2E_EXT_PROC_IMAGE: ${{ inputs.ext_proc_image }}
+      AGENTIO_E2E_FORWARD_PROXY_IMAGE: ${{ inputs.forward_proxy_image }}
+      AGENTIO_E2E_ENABLE_FIREWALL_RULES: "true"
+      AGENTIO_E2E_FIREWALL_BACKEND: auto
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Configure profile artifact directory
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: echo "E2E_ARTIFACTS_DIR=${RUNNER_TEMP}/agentio-${PROFILE}-e2e-artifacts" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            test/e2e/go.sum
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+        with:
+          version: v1.31.0
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.16.2
+      - name: Install KinD
+        run: |
+          go install sigs.k8s.io/kind@v0.24.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Download prepared release chart
+        if: inputs.chart_artifact != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.chart_artifact }}
+          path: ${{ runner.temp }}/agentio-candidate-chart
+      - name: Select prepared release chart
+        if: inputs.chart_artifact != ''
+        run: |
+          chart_path="${RUNNER_TEMP}/agentio-candidate-chart"
+          if [[ ! -f "${chart_path}/Chart.yaml" ]]; then
+            echo "Prepared chart artifact does not contain Chart.yaml" >&2
+            exit 1
+          fi
+          echo "AGENTIO_E2E_CHART_PATH=$chart_path" >> "$GITHUB_ENV"
+      - name: Create isolated KinD cluster
+        run: kind create cluster --name "$E2E_CLUSTER_NAME"
+      - name: Run Agentio ${{ matrix.profile }} product E2E
+        run: make test.integration.agentio.product
+      - name: Upload Agentio ${{ matrix.profile }} E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: agentio-${{ matrix.profile }}-e2e-artifacts
+          path: ${{ runner.temp }}/agentio-${{ matrix.profile }}-e2e-artifacts
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Delete isolated KinD cluster
+        if: always()
+        run: kind delete cluster --name "$E2E_CLUSTER_NAME"

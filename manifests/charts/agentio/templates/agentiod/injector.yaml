@@ -1,0 +1,153 @@
+{{- if or (eq .Values.profile "sidecar") (eq .Values.egressGateway.mode "gatewayAPI") }}
+{{- $ztunnelImage := include "agentiod.componentImage" (list .Values.agentiod.injector.ztunnel.image .Values.agentiod.injector.ztunnel.imageName .) }}
+{{- $proxyInitImage := include "agentiod.componentImage" (list .Values.agentiod.injector.proxyInit.image .Values.agentiod.injector.proxyInit.imageName .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.agentiod.injector.configMapName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: sidecar-injector
+    {{- include "agentiod.labels" . | nindent 4 }}
+data:
+  config: |-
+    defaultTemplates: [ztunnel]
+    policy: enabled
+    alwaysInjectSelector: []
+    neverInjectSelector: []
+    template: {{ `{{ Template_Version_And_Agentio_Version_Mismatched_Check_Installation }}` | quote }}
+    templates:
+      ztunnel: |
+{{ .Files.Get "files/ztunnel-injection-template.yaml" | trim | indent 8 }}
+      egress-gateway: |
+{{ .Files.Get "files/egress-gateway.yaml" | trim | indent 8 }}
+  values: |-
+    global:
+      hub: {{ .Values.global.hub | quote }}
+      tag: {{ .Values.global.tag | quote }}
+      imagePullPolicy: {{ .Values.global.imagePullPolicy | quote }}
+      istioNamespace: {{ .Release.Namespace | quote }}
+      trustDomain: {{ .Values.global.trustDomain | quote }}
+      caAddress: {{ printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain | quote }}
+      xdsAddress: {{ printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain | quote }}
+      trustBundleName: {{ .Values.agentiod.ca.trustBundleConfigMapName | quote }}
+      nativeNftables: false
+      logging:
+        level: default:info
+      logAsJson: false
+      meshID: ""
+      network: ""
+      pilotCertProvider: istiod
+      platform: ""
+      proxy:
+        image: {{ include "gateway.image" . | quote }}
+        clusterDomain: {{ .Values.global.clusterDomain | quote }}
+        componentLogLevel: misc:error
+        logLevel: warning
+        outlierLogPath: ""
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: "2", memory: 1Gi}
+        includeIPRanges: "*"
+        excludeIPRanges: ""
+        includeInboundPorts: "*"
+        excludeInboundPorts: ""
+        includeOutboundPorts: ""
+        excludeOutboundPorts: ""
+        statusPort: 15020
+        privileged: false
+        seccompProfile: {}
+      proxyInit:
+        image: {{ $proxyInitImage | quote }}
+        forceApplyIptables: false
+      proxyZtunnel:
+        image: {{ $ztunnelImage | quote }}
+        enableFirewallRules: {{ .Values.agentiod.injector.ztunnel.enableFirewallRules }}
+        firewallBackend: {{ .Values.agentiod.injector.ztunnel.firewallBackend | quote }}
+        logAsJson: true
+      sds:
+        token:
+          aud: {{ .Values.agentiod.tokenAudience | quote }}
+      multiCluster:
+        clusterName: {{ .Values.global.clusterId | quote }}
+      egressGateway:
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: "2", memory: 1Gi}
+        affinity: {}
+        topologySpreadConstraints: []
+        nodeSelector: {}
+        tolerations: []
+    gateways:
+      seccompProfile: {}
+    agentio:
+      env:
+        AGENTIO_ENABLE_SNI_TRAFFIC_POLICY: {{ .Values.agentiod.enableSNITrafficPolicy }}
+        POLICY_STORE_REFERENCE_RESOLUTION_GRACE_PERIOD: {{ .Values.agentiod.gatewayDeployer.referenceResolutionGracePeriod | quote }}
+    pilot:
+      cni:
+        enabled: {{ eq .Values.profile "ambient" }}
+        provider: default
+    sidecarInjectorWebhook:
+      rewriteAppHTTPProbe: true
+{{- if eq .Values.profile "sidecar" }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "agentiod.webhookName" . }}
+  labels:
+    app: sidecar-injector
+    {{- include "agentiod.labels" . | nindent 4 }}
+webhooks:
+  - name: namespace.sidecar-injector.agentio.io
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: {{ .Values.agentiod.injector.failurePolicy }}
+    reinvocationPolicy: {{ .Values.agentiod.injector.reinvocationPolicy }}
+    clientConfig:
+      caBundle: ""
+      service:
+        name: {{ include "agentiod.fullname" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /inject
+        port: 443
+    namespaceSelector:
+      matchLabels:
+        agentio.kruise.io/dataplane-mode: sidecar
+    objectSelector:
+      matchExpressions:
+        - key: agentio.kruise.io/dataplane-mode
+          operator: NotIn
+          values: [none, ambient]
+    rules:
+      - operations: [CREATE]
+        apiGroups: [""]
+        apiVersions: [v1]
+        resources: [pods]
+  - name: object.sidecar-injector.agentio.io
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: {{ .Values.agentiod.injector.failurePolicy }}
+    reinvocationPolicy: {{ .Values.agentiod.injector.reinvocationPolicy }}
+    clientConfig:
+      caBundle: ""
+      service:
+        name: {{ include "agentiod.fullname" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /inject
+        port: 443
+    namespaceSelector:
+      matchExpressions:
+        - key: agentio.kruise.io/dataplane-mode
+          operator: DoesNotExist
+    objectSelector:
+      matchLabels:
+        agentio.kruise.io/dataplane-mode: sidecar
+    rules:
+      - operations: [CREATE]
+        apiGroups: [""]
+        apiVersions: [v1]
+        resources: [pods]
+{{- end }}
+{{- end }}

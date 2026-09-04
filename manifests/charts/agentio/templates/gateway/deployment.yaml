@@ -1,0 +1,172 @@
+{{- if eq .Values.egressGateway.mode "static" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.egressGateway.autoscaling.enabled }}
+  replicas: {{ .Values.egressGateway.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gateway.selectorLabels" . | nindent 8 }}
+        agentio.kruise.io/dataplane-mode: none
+        {{- with .Values.egressGateway.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        prometheus.io/path: /stats/prometheus
+        prometheus.io/port: "15020"
+        prometheus.io/scrape: "true"
+        {{- with .Values.egressGateway.statsFlushInterval }}
+        sidecar.istio.io/statsFlushInterval: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.egressGateway.statsEvictionInterval }}
+        sidecar.istio.io/statsEvictionInterval: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.egressGateway.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "gateway.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.egressGateway.terminationGracePeriodSeconds }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agentio-proxy
+          image: {{ include "gateway.image" . | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - proxy
+            - waypoint
+            - --domain
+            - $(POD_NAMESPACE).svc.{{ .Values.global.trustDomain }}
+            - --serviceCluster
+            - {{ include "gateway.fullname" . }}.$(POD_NAMESPACE)
+            - --proxyLogLevel
+            - warning
+            - --proxyComponentLogLevel
+            - misc:error
+          env:
+            - name: PILOT_CERT_PROVIDER
+              value: istiod
+            - name: CA_ADDR
+              value: {{ include "gateway.xdsAddress" . | quote }}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: INSTANCE_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - name: SERVICE_ACCOUNT
+              valueFrom: {fieldRef: {fieldPath: spec.serviceAccountName}}
+            - name: ISTIO_META_SERVICE_ACCOUNT
+              valueFrom: {fieldRef: {fieldPath: spec.serviceAccountName}}
+            - name: ISTIO_META_NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - name: ISTIO_META_CLUSTER_ID
+              value: {{ .Values.global.clusterId | quote }}
+            - name: ISTIO_META_WORKLOAD_NAME
+              value: {{ include "gateway.fullname" . }}
+            - name: ISTIO_META_MESH_ID
+              value: {{ .Values.global.trustDomain | quote }}
+            - name: ISTIO_META_DNS_CAPTURE
+              value: "true"
+            - name: ISTIO_META_ENABLE_HBONE
+              value: "true"
+            - name: TRUST_DOMAIN
+              value: {{ .Values.global.trustDomain | quote }}
+            - name: PROXY_CONFIG
+              value: {{ printf "{\"discoveryAddress\":%q,\"proxyMetadata\":{\"ISTIO_META_DNS_CAPTURE\":\"true\",\"ISTIO_META_ENABLE_HBONE\":\"true\"},\"image\":{\"imageType\":\"distroless\"}}" (include "gateway.xdsAddress" .) | quote }}
+            {{- if .Values.egressGateway.sniTrafficPolicy.enabled }}
+            - name: PEER_METADATA_DISCOVERY
+              value: "true"
+            - name: POLICY_RUNTIME_CAPABILITIES
+              value: sni_traffic_policy
+            - name: POLICY_STORE_REFERENCE_RESOLUTION_GRACE_PERIOD
+              value: {{ .Values.egressGateway.sniTrafficPolicy.referenceResolutionGracePeriod | quote }}
+            {{- end }}
+            {{- if ne .Values.epe.mode "disabled" }}
+            - name: AGENTIO_EPE_ADDRESS
+              value: {{ include "gateway.epeAddress" . | quote }}
+            {{- end }}
+            {{- range $name, $value := .Values.egressGateway.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: 15020
+            - name: status-port
+              containerPort: 15021
+            - name: http-envoy-prom
+              containerPort: 15090
+          readinessProbe:
+            httpGet: {path: /healthz/ready, port: 15021}
+            periodSeconds: 15
+          startupProbe:
+            httpGet: {path: /healthz/ready, port: 15021}
+            failureThreshold: 60
+            periodSeconds: 1
+          resources:
+            {{- toYaml .Values.egressGateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1337
+            runAsGroup: 1337
+            runAsNonRoot: true
+          volumeMounts:
+            - {name: workload-socket, mountPath: /var/run/secrets/workload-spiffe-uds}
+            - {name: agentiod-ca-cert, mountPath: /var/run/secrets/istio}
+            - {name: agentio-data, mountPath: /var/lib/istio/data}
+            - {name: agentio-envoy, mountPath: /etc/istio/proxy}
+            - {name: agentio-token, mountPath: /var/run/secrets/tokens}
+            - {name: gateway-podinfo, mountPath: /etc/istio/pod}
+      volumes:
+        - {name: workload-socket, emptyDir: {}}
+        - {name: agentio-data, emptyDir: {}}
+        - {name: agentio-envoy, emptyDir: {medium: Memory}}
+        - name: gateway-podinfo
+          downwardAPI:
+            items:
+              - {path: labels, fieldRef: {fieldPath: metadata.labels}}
+              - {path: annotations, fieldRef: {fieldPath: metadata.annotations}}
+        - name: agentio-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.egressGateway.tokenAudience }}
+                  expirationSeconds: 43200
+                  path: istio-token
+        - name: agentiod-ca-cert
+          configMap:
+            name: {{ .Values.global.caCertConfigMap }}
+      {{- with .Values.egressGateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.egressGateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.egressGateway.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.egressGateway.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

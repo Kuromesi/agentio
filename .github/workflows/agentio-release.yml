@@ -1,0 +1,467 @@
+name: agentio-release
+
+# Master releases only repository-owned agentiod and EPE images. Every other
+# runtime image is supplied by the immutable dependency BOM in agentio.deps.
+# Candidates are built once, tested by digest, and promoted without rebuilding.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version to release (for example, 0.1.0 or 0.1.0-rc.1)
+        required: true
+        type: string
+      ztunnel_image:
+        description: Optional immutable ztunnel override; defaults to agentio.deps
+        required: false
+        default: ""
+        type: string
+      cni_image:
+        description: Optional immutable CNI override; defaults to agentio.deps
+        required: false
+        default: ""
+        type: string
+      proxy_init_image:
+        description: Optional immutable proxy-init override; defaults to agentio.deps
+        required: false
+        default: ""
+        type: string
+      gateway_image:
+        description: Optional immutable gateway/proxyv2 override; defaults to agentio.deps
+        required: false
+        default: ""
+        type: string
+      ext_proc_image:
+        description: Immutable ext-proc test fixture image
+        required: true
+        type: string
+      forward_proxy_image:
+        description: Optional immutable forward-proxy fixture override
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CHART: manifests/charts/agentio
+  DOCKER_HUB: docker.io/openkruise
+  CHART_ARTIFACT: agentio-release-chart-candidate
+
+concurrency:
+  group: agentio-release
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ztunnel_image: ${{ steps.images.outputs.ztunnel_image }}
+      cni_image: ${{ steps.images.outputs.cni_image }}
+      proxy_init_image: ${{ steps.images.outputs.proxy_init_image }}
+      gateway_image: ${{ steps.images.outputs.gateway_image }}
+      ext_proc_image: ${{ steps.images.outputs.ext_proc_image }}
+      forward_proxy_image: ${{ steps.images.outputs.forward_proxy_image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Validate release ref
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+            echo "Agentio product releases are restricted to master" >&2
+            exit 1
+          fi
+      - name: Validate release version and resolve dependency BOM
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          ZTUNNEL_IMAGE: ${{ inputs.ztunnel_image }}
+          CNI_IMAGE: ${{ inputs.cni_image }}
+          PROXY_INIT_IMAGE: ${{ inputs.proxy_init_image }}
+          GATEWAY_IMAGE: ${{ inputs.gateway_image }}
+          EXT_PROC_IMAGE: ${{ inputs.ext_proc_image }}
+          FORWARD_PROXY_IMAGE: ${{ inputs.forward_proxy_image }}
+        run: |
+          semver_core='(0|[1-9][0-9]*)'
+          semver_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver_pattern="^${semver_core}\.${semver_core}\.${semver_core}(-${semver_identifier}(\.${semver_identifier})*)?$"
+          if [[ ! "$VERSION" =~ $semver_pattern ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
+            existing_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${existing_sha}" >&2
+              exit 1
+            fi
+            echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${GITHUB_SHA}; resuming release."
+          fi
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REPOSITORY}@${VERSION} already exists" >&2
+            exit 1
+          fi
+
+          placeholder_digest="sha256:$(printf '0%.0s' {1..64})"
+          image_pattern='^[a-z0-9][a-z0-9.-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._-]*)+@sha256:[0-9a-f]{64}$'
+          resolve_pin() {
+            local label="$1" pin_name="$2" override="$3"
+            local repository digest image
+            image="$override"
+            if [[ -z "$image" ]]; then
+              repository=$(jq -er --arg name "$pin_name" '.[] | select(.name == $name) | .repository' agentio.deps)
+              digest=$(jq -er --arg name "$pin_name" '.[] | select(.name == $name) | .digest' agentio.deps)
+              image="${repository}@${digest}"
+            fi
+            if [[ ! "$image" =~ $image_pattern ]]; then
+              echo "Invalid immutable ${label} image: $image" >&2
+              return 1
+            fi
+            if [[ "${image##*@}" == "$placeholder_digest" ]]; then
+              echo "${label} image uses the unpublished placeholder digest" >&2
+              return 1
+            fi
+            printf '%s\n' "$image"
+          }
+
+          ZTUNNEL_IMAGE=$(resolve_pin ztunnel ZTUNNEL_IMAGE "$ZTUNNEL_IMAGE")
+          CNI_IMAGE=$(resolve_pin cni CNI_IMAGE "$CNI_IMAGE")
+          PROXY_INIT_IMAGE=$(resolve_pin proxy-init PROXY_INIT_IMAGE "$PROXY_INIT_IMAGE")
+          GATEWAY_IMAGE=$(resolve_pin gateway GATEWAY_IMAGE "$GATEWAY_IMAGE")
+          EXT_PROC_IMAGE=$(resolve_pin ext-proc EXT_PROC_IMAGE "$EXT_PROC_IMAGE")
+          if [[ -n "$FORWARD_PROXY_IMAGE" && ! "$FORWARD_PROXY_IMAGE" =~ $image_pattern ]]; then
+            echo "Invalid immutable forward-proxy image: $FORWARD_PROXY_IMAGE" >&2
+            exit 1
+          fi
+          {
+            echo "ztunnel_image=$ZTUNNEL_IMAGE"
+            echo "cni_image=$CNI_IMAGE"
+            echo "proxy_init_image=$PROXY_INIT_IMAGE"
+            echo "gateway_image=$GATEWAY_IMAGE"
+            echo "ext_proc_image=$EXT_PROC_IMAGE"
+            echo "forward_proxy_image=$FORWARD_PROXY_IMAGE"
+          } >> "$GITHUB_OUTPUT"
+      - name: Validate release notes override
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          notes_file="docs/releases/${VERSION}.md"
+          if [[ -e "$notes_file" ]]; then
+            if [[ ! -s "$notes_file" ]]; then
+              echo "Release notes override is empty: $notes_file" >&2
+              exit 1
+            fi
+            if grep -Eq '\{\{[^}]+\}\}' "$notes_file"; then
+              echo "Release notes contain unresolved template placeholders: $notes_file" >&2
+              exit 1
+            fi
+          fi
+
+  release-unit:
+    needs: validate-release
+    uses: ./.github/workflows/agentio-ut.yml
+
+  build-candidates:
+    needs: validate-release
+    uses: ./.github/workflows/agentio-image.yml
+    with:
+      tag: candidate-${{ github.sha }}
+    secrets: inherit
+
+  prepare-chart:
+    needs: [validate-release, build-candidates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.16.2
+      - name: Prepare exact candidate chart
+        env:
+          VERSION: ${{ inputs.version }}
+          AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
+          EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+          ZTUNNEL_IMAGE: ${{ needs.validate-release.outputs.ztunnel_image }}
+          CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
+          PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
+          GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}
+        run: |
+          chart_dir="${RUNNER_TEMP}/chart-release/agentio"
+          mkdir -p "$(dirname "$chart_dir")"
+          cp -r "$CHART" "$chart_dir"
+          ./tools/prepare-release-chart.sh \
+            "$chart_dir" \
+            "$VERSION" \
+            "$AGENTIOD_IMAGE" \
+            "$EPE_IMAGE" \
+            "$ZTUNNEL_IMAGE" \
+            "$CNI_IMAGE" \
+            "$PROXY_INIT_IMAGE" \
+            "$GATEWAY_IMAGE"
+          echo "CHART_DIR=$chart_dir" >> "$GITHUB_ENV"
+      - name: Verify candidate chart
+        env:
+          AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
+          EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+          ZTUNNEL_IMAGE: ${{ needs.validate-release.outputs.ztunnel_image }}
+          CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
+          PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
+          GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}
+        run: |
+          helm lint --strict "$CHART_DIR"
+          render_dir="${RUNNER_TEMP}/chart-render"
+          mkdir -p "$render_dir"
+          helm template agentio "$CHART_DIR" >"$render_dir/ambient.yaml"
+          helm template agentio "$CHART_DIR" --set profile=sidecar >"$render_dir/sidecar.yaml"
+          helm template agentio "$CHART_DIR" \
+            --set egressGateway.mode=gatewayAPI \
+            --set egressGateway.gatewayAPI.create=true \
+            --set epe.mode=managed >"$render_dir/gateway-epe.yaml"
+          for image in \
+            "$AGENTIOD_IMAGE" "$EPE_IMAGE" "$ZTUNNEL_IMAGE" \
+            "$CNI_IMAGE" "$PROXY_INIT_IMAGE" "$GATEWAY_IMAGE"; do
+            grep -R -F "image: \"${image}\"" "$render_dir" >/dev/null
+          done
+          if grep -R -n -F ':latest' "$render_dir"; then
+            echo "Release chart contains a mutable latest image" >&2
+            exit 1
+          fi
+      - name: Upload exact candidate chart
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ env.CHART_ARTIFACT }}
+          path: ${{ env.CHART_DIR }}
+          if-no-files-found: error
+          retention-days: 3
+
+  product-e2e:
+    needs: [validate-release, release-unit, build-candidates, prepare-chart]
+    uses: ./.github/workflows/agentio-e2e.yml
+    with:
+      agentiod_image: ${{ needs.build-candidates.outputs.agentiod_image }}
+      epe_image: ${{ needs.build-candidates.outputs.epe_image }}
+      cni_image: ${{ needs.validate-release.outputs.cni_image }}
+      ztunnel_image: ${{ needs.validate-release.outputs.ztunnel_image }}
+      proxy_init_image: ${{ needs.validate-release.outputs.proxy_init_image }}
+      gateway_image: ${{ needs.validate-release.outputs.gateway_image }}
+      ext_proc_image: ${{ needs.validate-release.outputs.ext_proc_image }}
+      forward_proxy_image: ${{ needs.validate-release.outputs.forward_proxy_image }}
+      chart_artifact: agentio-release-chart-candidate
+
+  tag-agentio:
+    needs: [validate-release, release-unit, product-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Create Agentio tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" >/dev/null 2>&1; then
+            existing_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              echo "Tag ${GITHUB_REPOSITORY}@${VERSION} already points to ${existing_sha}" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          tag_object_sha=$(gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f tag="$VERSION" \
+            -f message="Agentio release ${VERSION}" \
+            -f object="$GITHUB_SHA" \
+            -f type=commit \
+            --jq .sha)
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${VERSION}" \
+            -f sha="$tag_object_sha" >/dev/null
+
+  promote-version-images:
+    needs: [tag-agentio, build-candidates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    steps:
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.25.x
+          cache: false
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+      - name: Login to Docker Hub
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+        run: |
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "DOCKERHUB_USERNAME and HUB_KRUISE must both be configured" >&2
+            exit 1
+          fi
+          echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
+      - name: Promote tested candidates to version tags
+        env:
+          VERSION: ${{ inputs.version }}
+          AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
+          EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+        run: |
+          promote() {
+            local source="$1" repository expected actual
+            repository="${source%@*}"
+            expected="${source##*@}"
+            crane tag "$source" "$VERSION"
+            actual=$(crane digest "${repository}:${VERSION}")
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Promoted digest mismatch for ${repository}: ${actual}" >&2
+              return 1
+            fi
+          }
+          promote "$AGENTIOD_IMAGE"
+          promote "$EPE_IMAGE"
+
+  publish-chart:
+    needs: [prepare-chart, promote-version-images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ env.CHART_ARTIFACT }}
+          path: ${{ runner.temp }}/agentio-release-chart
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.16.2
+      - name: Package tested chart
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          helm lint --strict "$RUNNER_TEMP/agentio-release-chart"
+          helm package "$RUNNER_TEMP/agentio-release-chart" -d "$RUNNER_TEMP/chart-pkg"
+          test -f "$RUNNER_TEMP/chart-pkg/agentio-${VERSION}.tgz"
+      - name: Login to Docker Hub
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+        run: |
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "DOCKERHUB_USERNAME and HUB_KRUISE must both be configured" >&2
+            exit 1
+          fi
+          echo "$HUB_TOKEN" | helm registry login docker.io -u "$HUB_USERNAME" --password-stdin
+      - name: Push tested chart
+        env:
+          VERSION: ${{ inputs.version }}
+        run: helm push "$RUNNER_TEMP/chart-pkg/agentio-${VERSION}.tgz" "oci://docker.io/openkruise"
+
+  promote-latest:
+    needs: [publish-chart, build-candidates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    steps:
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.25.x
+          cache: false
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+      - name: Promote stable release to latest
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+          VERSION: ${{ inputs.version }}
+          AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
+          EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "${VERSION} is a prerelease; latest will not be updated."
+            exit 0
+          fi
+          echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
+          for source in "$AGENTIOD_IMAGE" "$EPE_IMAGE"; do
+            repository="${source%@*}"
+            expected="${source##*@}"
+            crane tag "$source" latest
+            actual=$(crane digest "${repository}:latest")
+            if [[ "$actual" != "$expected" ]]; then
+              echo "latest digest mismatch for ${repository}: ${actual}" >&2
+              exit 1
+            fi
+          done
+
+  create-release:
+    needs: [validate-release, build-candidates, publish-chart, promote-latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Write released BOM
+        env:
+          VERSION: ${{ inputs.version }}
+          AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
+          EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+          ZTUNNEL_IMAGE: ${{ needs.validate-release.outputs.ztunnel_image }}
+          CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
+          PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
+          GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}
+        run: |
+          jq -n \
+            --arg version "$VERSION" \
+            --arg sourceCommit "$GITHUB_SHA" \
+            --arg chart "oci://docker.io/openkruise/agentio:${VERSION}" \
+            --arg agentiod "$AGENTIOD_IMAGE" \
+            --arg epe "$EPE_IMAGE" \
+            --arg ztunnel "$ZTUNNEL_IMAGE" \
+            --arg cni "$CNI_IMAGE" \
+            --arg proxyInit "$PROXY_INIT_IMAGE" \
+            --arg gateway "$GATEWAY_IMAGE" \
+            '{
+              version: $version,
+              sourceCommit: $sourceCommit,
+              chart: $chart,
+              images: {
+                agentiod: $agentiod,
+                epe: $epe,
+                ztunnel: $ztunnel,
+                cni: $cni,
+                proxyInit: $proxyInit,
+                gateway: $gateway
+              }
+            }' > "agentio-${VERSION}-bom.json"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          release_flags=()
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            release_flags+=(--prerelease)
+          fi
+          notes_flags=(--generate-notes)
+          notes_file="docs/releases/${VERSION}.md"
+          if [[ -s "$notes_file" ]]; then
+            notes_flags=(--notes-file "$notes_file")
+          fi
+          gh release create "$VERSION" \
+            "agentio-${VERSION}-bom.json" \
+            --title "Agentio ${VERSION}" \
+            "${notes_flags[@]}" \
+            "${release_flags[@]}" \
+            --verify-tag
