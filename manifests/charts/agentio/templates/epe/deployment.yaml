@@ -1,0 +1,120 @@
+{{- if eq .Values.epe.mode "managed" }}
+{{- include "agentio.validate" . }}
+{{- $source := .Values.epe.credentialProvider.mtls.source }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "epe.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "epe.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.epe.autoscaling.enabled }}
+  replicas: {{ .Values.epe.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "epe.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "epe.selectorLabels" . | nindent 8 }}
+        agentio.kruise.io/dataplane-mode: none
+        {{- with .Values.epe.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        {{- with .Values.epe.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "epe.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: epe
+          image: {{ include "epe.image" . | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - -grpc-port={{ .Values.epe.service.grpcPort }}
+            - -grpc-health-port={{ .Values.epe.service.healthPort }}
+            - -metrics-port={{ .Values.epe.service.metricsPort }}
+            - -audit-webhook-insecure-skip-verify={{ .Values.epe.auditWebhook.insecureSkipVerify }}
+          env:
+            - name: IDENTITY_PROVIDER_URL
+              value: {{ .Values.epe.credentialProvider.url | quote }}
+            - name: TOKEN_CACHE_TTL
+              value: {{ .Values.epe.tokenCacheTTL | quote }}
+            - name: TOKEN_CACHE_MAX_SIZE
+              value: {{ .Values.epe.tokenCacheMaxSize | quote }}
+            - name: CREDENTIAL_PROVIDER_MTLS_SOURCE
+              value: {{ $source | quote }}
+            {{- if eq $source "secret" }}
+            - name: CREDENTIAL_PROVIDER_SECRET_NAMESPACE
+              value: {{ .Values.epe.credentialProvider.mtls.secret.namespace | quote }}
+            - name: CREDENTIAL_PROVIDER_SECRET_NAME
+              value: {{ .Values.epe.credentialProvider.mtls.secret.name | quote }}
+            {{- end }}
+            {{- if .Values.epe.credentialProvider.mtls.insecureSkipVerify }}
+            - name: CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY
+              value: "true"
+            {{- end }}
+            {{- range $name, $value := .Values.epe.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          ports:
+            - {name: extproc, containerPort: {{ .Values.epe.service.grpcPort }}}
+            - {name: health, containerPort: {{ .Values.epe.service.healthPort }}}
+            - {name: metrics, containerPort: {{ .Values.epe.service.metricsPort }}}
+          livenessProbe:
+            grpc: {port: {{ .Values.epe.service.healthPort }}}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            grpc: {port: {{ .Values.epe.service.healthPort }}}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.epe.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+          {{- if eq $source "files" }}
+          volumeMounts:
+            - name: credential-provider-mtls
+              mountPath: /etc/epe/credential-provider
+              readOnly: true
+          {{- end }}
+      {{- if eq $source "files" }}
+      volumes:
+        - name: credential-provider-mtls
+          secret:
+            secretName: {{ include "epe.mtlsSecretName" . }}
+            optional: true
+      {{- end }}
+      {{- with .Values.epe.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.epe.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.epe.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.epe.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,69 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package epe
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
+)
+
+func TestSetupOrder(t *testing.T) {
+	digest := "registry.example/test@sha256:" + strings.Repeat("b", 64)
+	setups := suiteSetupGraph(agentiocomponent.Config{
+		Namespace: "agentio-system", AgentiodImage: digest, ZtunnelImage: digest,
+		ProxyInitImage: digest, GatewayImage: digest, EPEImage: digest,
+		ExtProcImage: digest, ForwardProxyImage: digest,
+	})
+	names := make([]string, len(setups))
+	for index := range setups {
+		names[index] = setups[index].name
+	}
+	want := []string{
+		"agentio", "agentio-baseline", "traffic-policy-namespace", "traffic-policy-client",
+		"traffic-policy-server", "fixture-readiness",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("setup order = %v, want %v", names, want)
+	}
+}
+
+func TestWaitForPrometheusMetricsRetriesTransientConnectionFailure(t *testing.T) {
+	attempts := 0
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	output, err := waitForPrometheusMetrics(ctx, func(context.Context) (string, string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", "connection reset by peer", errors.New("exit code 56")
+		}
+		return "# HELP epe_ready EPE readiness.\n# TYPE epe_ready gauge\n", "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("metrics requests = %d, want 2", attempts)
+	}
+	if !strings.Contains(output, "# HELP epe_ready") {
+		t.Fatalf("metrics output = %q", output)
+	}
+}

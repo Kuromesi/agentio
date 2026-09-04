@@ -1,0 +1,16 @@
+{{- if eq .Values.epe.mode "managed" }}
+{{- if .Values.epe.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "epe.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "epe.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.epe.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "epe.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- end }}

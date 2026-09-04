@@ -1,0 +1,20 @@
+{{- if eq .Values.epe.mode "managed" }}
+{{- if .Values.epe.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "epe.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "epe.labels" . | nindent 4 }}
+spec:
+  minReplicas: {{ .Values.epe.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.epe.autoscaling.maxReplicas }}
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: {{ include "epe.fullname" . }}}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ .Values.epe.autoscaling.targetCPUUtilizationPercentage }}}
+{{- end }}
+{{- end }}

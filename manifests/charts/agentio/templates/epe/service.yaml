@@ -1,0 +1,17 @@
+{{- if eq .Values.epe.mode "managed" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "epe.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "epe.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "epe.selectorLabels" . | nindent 4 }}
+  ports:
+    - {name: extproc, port: {{ .Values.epe.service.grpcPort }}, targetPort: extproc}
+    - {name: health, port: {{ .Values.epe.service.healthPort }}, targetPort: health}
+    - {name: metrics, port: {{ .Values.epe.service.metricsPort }}, targetPort: metrics}
+{{- end }}
