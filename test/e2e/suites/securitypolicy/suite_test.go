@@ -45,22 +45,26 @@ func suiteSetupGraph(config agentiocomponent.Config) []suiteSetup {
 	return []suiteSetup{
 		{name: "agentio", setup: agentiocomponent.Setup(&agentioInstance, config)},
 		{name: "agentio-baseline", setup: harness.SetupBaseline(config.Namespace)},
-		{name: "sni-policy-namespace", setup: setupSNINamespace(false)},
-		{name: "sni-policy-global-namespace", setup: setupSNINamespace(true)},
+		{name: "sni-policy-namespace", setup: setupSNINamespace(config.Profile, false)},
+		{name: "sni-policy-global-namespace", setup: setupSNINamespace(config.Profile, true)},
 		{name: "sni-policy-selected", setup: setupSNIEcho("selected", false, "selected")},
 		{name: "sni-policy-unselected", setup: setupSNIEcho("unselected", false, "unselected")},
 		{name: "sni-policy-global", setup: setupSNIEcho("global", true, "global")},
-		{name: "fixture-readiness", setup: verifyFixtureReadiness(config.Namespace)},
+		{name: "fixture-readiness", setup: verifyFixtureReadiness(config)},
 	}
 }
 
-func setupSNINamespace(global bool) e2e.SetupFunc {
+func setupSNINamespace(profile string, global bool) e2e.SetupFunc {
 	return func(ctx context.Context, environment *e2e.Environment) (e2e.CleanupFunc, error) {
 		prefix := "sni-policy"
 		if global {
 			prefix = "sni-policy-global"
 		}
-		instance, cleanup, err := namespace.Apply(ctx, environment, namespace.Config{Prefix: prefix})
+		config, err := harness.DataplaneNamespaceConfig(profile, prefix)
+		if err != nil {
+			return nil, err
+		}
+		instance, cleanup, err := namespace.Apply(ctx, environment, config)
 		if err != nil {
 			return nil, err
 		}
@@ -78,10 +82,7 @@ func sniEchoConfig(name, namespaceName, policyValue string) echo.Config {
 		Name: name, Namespace: namespaceName, Image: echo.DefaultImage, Ports: echo.DefaultPorts(),
 		CallTimeout: 90 * time.Second, Converge: 3,
 		Labels: map[string]string{
-			"app": name, harness.DataplaneModeLabel: harness.DataplaneModeSidecar, sniPolicyLabel: policyValue,
-		},
-		PodAnnotations: map[string]string{
-			harness.ZtunnelInjectAnnotation: harness.ZtunnelInjectTemplate,
+			"app": name, sniPolicyLabel: policyValue,
 		},
 		Capabilities: harness.ClientCapabilities(),
 	}
@@ -93,7 +94,8 @@ func setupSNIEcho(name string, global bool, policyValue string) e2e.SetupFunc {
 		if global {
 			namespaceName = sniFixture.globalNamespace.Name()
 		}
-		instance, cleanup, err := echo.Apply(ctx, environment, sniEchoConfig(name, namespaceName, policyValue))
+		config := sniEchoConfig(name, namespaceName, policyValue)
+		instance, cleanup, err := echo.Apply(ctx, environment, config)
 		if err != nil {
 			return nil, err
 		}
@@ -111,12 +113,12 @@ func setupSNIEcho(name string, global bool, policyValue string) e2e.SetupFunc {
 	}
 }
 
-func verifyFixtureReadiness(controlPlaneNamespace string) e2e.SetupFunc {
+func verifyFixtureReadiness(config agentiocomponent.Config) e2e.SetupFunc {
 	return func(ctx context.Context, environment *e2e.Environment) (e2e.CleanupFunc, error) {
 		checks := []struct {
 			name, namespace, selector string
 		}{
-			{name: "egress gateway", namespace: controlPlaneNamespace, selector: harness.GatewayPodSelector},
+			{name: "egress gateway", namespace: config.Namespace, selector: harness.GatewayPodSelector},
 			{name: "selected SNI client", namespace: sniFixture.localNamespace.Name(), selector: "app=selected"},
 			{name: "unselected SNI client", namespace: sniFixture.localNamespace.Name(), selector: "app=unselected"},
 			{name: "global SNI client", namespace: sniFixture.globalNamespace.Name(), selector: "app=global"},
@@ -127,6 +129,9 @@ func verifyFixtureReadiness(controlPlaneNamespace string) e2e.SetupFunc {
 			if _, err := environment.Kube.WaitReadyPods(waitCtx, fixture.namespace, fixture.selector, 1); err != nil {
 				return nil, fmt.Errorf("wait for shared %s fixture: %w", fixture.name, err)
 			}
+		}
+		if err := agentiocomponent.VerifyFirewallBackend(waitCtx, environment, config); err != nil {
+			return nil, fmt.Errorf("verify firewall backend: %w", err)
 		}
 		return nil, nil
 	}

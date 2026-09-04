@@ -55,6 +55,26 @@ func TestCreateUsesUniqueDNSNameLabelsAndTestCleanup(t *testing.T) {
 	}
 }
 
+func TestCreatePreservesConfiguredAndOwnershipLabels(t *testing.T) {
+	environment, dynamicClient := namespaceEnvironment(t)
+	labels := map[string]string{"example.com/purpose": "e2e"}
+	created := Create(t, environment, Config{Prefix: "labeled", Labels: labels})
+
+	live, err := dynamicClient.Resource(namespaceGVR).Get(context.Background(), created.Name(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.GetLabels()["example.com/purpose"] != "e2e" {
+		t.Fatalf("configured label missing from namespace: %#v", live.GetLabels())
+	}
+	if live.GetLabels()[kube.TestLabel] != "TestCreatePreservesConfiguredAndOwnershipLabels" {
+		t.Fatalf("test ownership label missing from namespace: %#v", live.GetLabels())
+	}
+	if len(labels) != 1 || labels["example.com/purpose"] != "e2e" {
+		t.Fatalf("Config.Labels was mutated: %#v", labels)
+	}
+}
+
 func TestCreateGeneratesDifferentNames(t *testing.T) {
 	env, _ := namespaceEnvironment(t)
 	first := Create(t, env, Config{Prefix: "case"})

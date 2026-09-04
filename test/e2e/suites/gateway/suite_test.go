@@ -37,10 +37,11 @@ type suiteSetup struct {
 var trafficFixture harness.TrafficFixture
 
 func suiteSetupGraph(config agentiocomponent.Config) []suiteSetup {
+	trafficFixture = harness.TrafficFixture{}
 	return []suiteSetup{
 		{name: "agentio", setup: agentiocomponent.Setup(&agentioInstance, config)},
 		{name: "agentio-baseline", setup: harness.SetupBaseline(config.Namespace)},
-		{name: "traffic-policy-namespace", setup: trafficFixture.SetupNamespace()},
+		{name: "traffic-policy-namespace", setup: trafficFixture.SetupNamespace(config.Profile)},
 		{name: "traffic-policy-client", setup: trafficFixture.SetupEcho("client", 1, harness.ClientCapabilities())},
 		{name: "traffic-policy-server", setup: trafficFixture.SetupEcho("server", 1, nil)},
 		{name: "traffic-policy-another-server", setup: trafficFixture.SetupEcho("another-server", 1, nil)},
@@ -133,6 +134,6 @@ func verifyFixtureReadiness(controlPlaneNamespace string) e2e.SetupFunc {
 				return nil, fmt.Errorf("wait for shared %s fixture: %w", fixture.name, err)
 			}
 		}
-		return nil, trafficFixture.Verify(waitCtx)
+		return nil, rig.VerifyTrafficFixture(waitCtx, environment, &trafficFixture)
 	}
 }

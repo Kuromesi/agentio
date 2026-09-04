@@ -147,7 +147,7 @@ spec:
 	})
 
 	rig.RunScenario(t, "matchExpressions multiple expressions", func(t *testing.T, scope *kube.ResourceScope) {
-		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{"SrcApp": src.Name(), "LabelSandboxProxy": harness.DataplaneModeLabel}, `
+		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{"SrcApp": src.Name(), "WorkloadClassLabel": harness.WorkloadClassLabel}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
@@ -160,7 +160,7 @@ spec:
         operator: In
         values:
           - "{{ .SrcApp }}"
-      - key: "{{ .LabelSandboxProxy }}"
+      - key: "{{ .WorkloadClassLabel }}"
         operator: Exists
   egress:
     rules:

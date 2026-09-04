@@ -456,13 +456,19 @@ func TestTrafficPolicyLifecycle(t *testing.T) {
 	rig.RequireLive(t)
 	rig.RequireUncontaminated(t)
 	environment := suite.Environment(t)
-	ns := namespace.Create(t, environment, namespace.Config{Prefix: "agentio-policy"})
+	namespaceConfig, err := harness.DataplaneNamespaceConfig(resolvedAgentioConfig.Profile, "agentio-policy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := namespace.Create(t, environment, namespaceConfig)
 
 	// This first scenario deliberately exercises Agentio's ordinary-Pod
 	// compatibility projection. A later scenario must cover a real Sandbox UID and
 	// validate the Workload-to-Sandbox binding separately.
-	server := echo.Deploy(t, environment, injectedEchoConfig("server", ns.Name()))
-	client := echo.Deploy(t, environment, injectedEchoConfig("client", ns.Name()))
+	serverConfig := dataplaneEchoConfig("server", ns.Name())
+	clientConfig := dataplaneEchoConfig("client", ns.Name())
+	server := echo.Deploy(t, environment, serverConfig)
+	client := echo.Deploy(t, environment, clientConfig)
 
 	ctx, cancel := e2e.Context(t, 10*time.Minute)
 	defer cancel()
@@ -506,13 +512,11 @@ func TestTrafficPolicyLifecycle(t *testing.T) {
 	client.CallOrFail(t, call.WithCheck(check.And(check.OK(), check.ReachedWorkloads(1))))
 }
 
-func injectedEchoConfig(name, namespace string) echo.Config {
+func dataplaneEchoConfig(name, namespace string) echo.Config {
 	return echo.Config{
 		Name: name, Namespace: namespace,
-		// Kubernetes admission objectSelector and the injector both evaluate
-		// the Pod label.
-		Labels:      map[string]string{harness.DataplaneModeLabel: harness.DataplaneModeSidecar},
 		CallTimeout: 90 * time.Second,
 		Converge:    3,
+		Labels:      map[string]string{"app": name},
 	}
 }

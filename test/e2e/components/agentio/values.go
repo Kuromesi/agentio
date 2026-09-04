@@ -72,8 +72,14 @@ func chartValues(config Config) ([]byte, error) {
 				"egressPolicies": []any{map[string]any{"policy": "PASSTHROUGH"}},
 			}},
 		},
-		"cni":     map[string]any{"image": cniImage},
-		"ztunnel": map[string]any{"image": ztunnelImage},
+		"cni": map[string]any{"image": cniImage},
+		"ztunnel": map[string]any{
+			"image":               ztunnelImage,
+			"enableFirewallRules": config.EnableFirewallRules,
+			"env": map[string]any{
+				"FIREWALL_BACKEND": config.FirewallBackend,
+			},
+		},
 		"egressGateway": map[string]any{
 			"mode":                "static",
 			"nameOverride":        "egress-gateway",

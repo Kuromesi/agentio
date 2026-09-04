@@ -14,8 +14,8 @@
 
 // Package harness carries the Agentio product-suite conventions shared by the
 // per-domain E2E suites: the AGENTIO_E2E gate, the baseline ConfigMap
-// contract, scenario ledgers with contamination tracking, and the injected
-// echo fixture layout. Generic Kubernetes, echo, and retry helpers stay in
+// contract, scenario ledgers with contamination tracking, and the
+// profile-aware echo fixture layout. Generic Kubernetes, echo, and retry helpers stay in
 // their reusable components.
 package harness
 

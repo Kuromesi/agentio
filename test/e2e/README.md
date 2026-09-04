@@ -46,19 +46,16 @@ belong in their reusable package, not in an individual test file.
 
 ## Agentio product suites
 
-The Agentio product tests are split into five per-domain suites, mirroring
+The Agentio product tests are split into four per-domain suites, mirroring
 Istio's `tests/integration` layout. Each suite is an independent Go package
 with its own `TestMain` and setup graph, installs the production chart through
-`components/agentio.Setup`, and uninstalls it on exit:
+`components/agentio.Setup`, and uninstalls it on exit. The same suites run in
+both sidecar and ambient profiles on separate clusters:
 
-- `suites/ambient`: a fresh-cluster installation gate for the ambient profile;
-  it verifies the pinned CNI, ztunnel, and agentiod workloads become ready,
-  confirms CNI redirection on ambient Pods, and sends baseline traffic through
-  the ambient data plane.
 - `suites/trafficpolicy`: sandbox TrafficPolicy matrix (12 top-level tests
   with 50 scoped subscenarios plus one whole-test lifecycle scenario) and the
   control-plane config debug surface. The fixture contains `client`, `server`,
-  `another-server`, and two `workload-target` Pods using the injected ztunnel
+  `another-server`, and two `workload-target` Pods using the selected dataplane
   path. The matrix covers basic ingress and egress rules, global policy and
   priority, selector expressions, workload and service peers, TCP/UDP/ICMP
   protocol rules, policy interaction, Cartesian port/source cases, and
@@ -74,17 +71,35 @@ with its own `TestMain` and setup graph, installs the production chart through
   profile-priority contracts.
 
 The shared product conventions (the `AGENTIO_E2E` gate, baseline ConfigMap,
-scenario ledgers with contamination tracking, and the injected echo fixture)
-live in `suites/internal/harness`. Every scenario owns its transient policies
-and endpoint objects through a scoped ledger: successful scenarios clean up
-before the next scenario, while a failed scenario retains its evidence and
-causes later scenarios in the same suite to skip instead of running against
-contaminated state.
+scenario ledgers with contamination tracking, and profile-neutral echo
+fixtures) live in `suites/internal/harness`. Each product fixture namespace is
+enrolled with `agentio.kruise.io/dataplane-mode`; ordinary Echo workloads carry
+only workload labels. In sidecar mode the namespace selector activates the
+default ztunnel injection template, while ambient mode uses CNI redirection and
+the node-level ztunnel. Every scenario owns its transient policies and endpoint
+objects through a scoped ledger: successful scenarios clean up before the next
+scenario, while a failed scenario retains its evidence and causes later
+scenarios in the same suite to skip instead of running against contaminated
+state.
 
 All supplied suite images must be immutable digest references. The forward
 proxy fixture uses a framework-owned Envoy digest by default; set
-`AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. A complete run of all
-product suites is:
+`AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. CI runs the four product
+suites in four isolated scenarios: `sidecar-auto`, `sidecar-iptables`,
+`ambient-auto`, and `ambient-iptables`. Suite setup verifies the requested
+`FIREWALL_BACKEND` on the injected sidecar or ambient ztunnel Pod before any
+product assertion runs.
+
+Pull requests and master pushes use `agentio-e2e-presubmit.yml`. It builds the
+repository-owned agentiod and EPE images plus the repository-owned ext-proc
+test fixture once, transfers them to each matrix job as a same-run artifact,
+and publishes them only to that job's KinD-local registry. CNI, proxy-init,
+gateway, and ztunnel remain the immutable public images recorded in
+`agentio.deps`, so presubmit needs no registry credentials. Release calls the
+same product workflow with an immutable candidate BOM and promotes only the
+digests that passed it.
+
+A complete local run of all product suites is:
 
 ```bash
 cd test/e2e
@@ -109,11 +124,13 @@ AGENTIO_E2E=1 go test -p 1 \
   -agentio.ext-proc-image="$AGENTIO_E2E_EXT_PROC_IMAGE"
 ```
 
-The command above defaults to `-agentio.profile=sidecar`. Run the ambient data
-plane gate in a separate fresh cluster:
+The command above defaults to `-agentio.profile=sidecar`. Run the same suites
+against the ambient data plane in a separate fresh cluster:
 
 ```bash
-AGENTIO_E2E=1 AGENTIO_E2E_PROFILE=ambient go test ./suites/ambient -v -count=1 \
+AGENTIO_E2E=1 AGENTIO_E2E_PROFILE=ambient go test -p 1 \
+  ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe \
+  -v -count=1 \
   [the same immutable image flags as above...]
 ```
 

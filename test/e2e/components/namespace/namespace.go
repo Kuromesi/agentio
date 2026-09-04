@@ -32,6 +32,7 @@ type Config struct {
 	Prefix     string
 	StableName bool
 	Timeout    time.Duration
+	Labels     map[string]string
 }
 
 type Instance struct {
@@ -79,8 +80,15 @@ func apply(ctx context.Context, environment *e2e.Environment, client *kube.Clien
 		return Instance{}, nil, fmt.Errorf("create namespace name: %w", err)
 	}
 	metadata := map[string]any{"name": name}
+	labels := make(map[string]any, len(config.Labels)+1)
+	for key, value := range config.Labels {
+		labels[key] = value
+	}
 	if testID != "" {
-		metadata["labels"] = map[string]any{kube.TestLabel: sanitizeLabel(testID)}
+		labels[kube.TestLabel] = sanitizeLabel(testID)
+	}
+	if len(labels) != 0 {
+		metadata["labels"] = labels
 	}
 	object := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",

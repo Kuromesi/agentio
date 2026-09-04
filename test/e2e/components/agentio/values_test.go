@@ -130,6 +130,8 @@ func TestProductionChartRendersAmbientSuiteImages(t *testing.T) {
 	config.Profile = "ambient"
 	config.CNIImage = immutableImageRef("install-cni", "c")
 	config.ZtunnelImage = immutableImageRef("ztunnel", "d")
+	config.EnableFirewallRules = true
+	config.FirewallBackend = "iptables"
 	chartPath, err := findProductionChart()
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +153,8 @@ func TestProductionChartRendersAmbientSuiteImages(t *testing.T) {
 		`kind: DaemonSet`,
 		`image: "` + config.CNIImage + `"`,
 		`image: "` + config.ZtunnelImage + `"`,
+		`name: FIREWALL_BACKEND`,
+		`value: "iptables"`,
 	} {
 		if !strings.Contains(string(manifest), expected) {
 			t.Errorf("rendered ambient manifest does not contain %q", expected)

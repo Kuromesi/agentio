@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
 
@@ -101,7 +102,7 @@ func TestCollectorsWriteAgentioInventories(t *testing.T) {
 		RunID: "run-1", Cluster: clusterHandle,
 		Kube: kube.NewClient("run-1", clusterHandle, kube.NewLedger()), Artifacts: store,
 	}
-	collectors := Collectors(Config{Namespace: "agentio-system"})
+	collectors := Collectors(Config{Profile: ProfileAmbient, Namespace: "agentio-system"})
 	if len(collectors) != 5 {
 		t.Fatalf("collector count = %d", len(collectors))
 	}
@@ -121,7 +122,7 @@ func TestCollectorsWriteAgentioInventories(t *testing.T) {
 	}
 	for path, want := range map[string]string{
 		store.Path("setup", "agentio", "egress-gateway", "pods", "agentio-system", "gateway-0", "agentio-proxy.log"): "gateway log\n",
-		store.Path("setup", "agentio", "agentio-epe", "pods", "agentio-system", "epe-0", "agentio-epe.log"):        "epe log\n",
+		store.Path("setup", "agentio", "agentio-epe", "pods", "agentio-system", "epe-0", "agentio-epe.log"):          "epe log\n",
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -130,5 +131,69 @@ func TestCollectorsWriteAgentioInventories(t *testing.T) {
 		if got := string(data); got != want {
 			t.Fatalf("collected log %s = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func TestCollectorsSelectZtunnelForProfile(t *testing.T) {
+	tests := []struct {
+		profile, wantNamespace, wantSelector, wantNamespaceSelector, wantContainer string
+	}{
+		{
+			profile: "sidecar", wantNamespaceSelector: "agentio.kruise.io/dataplane-mode=sidecar",
+			wantContainer: "agentio-proxy",
+		},
+		{profile: "ambient", wantNamespace: "agentio-system", wantSelector: "app.kubernetes.io/name=ztunnel"},
+	}
+	for _, test := range tests {
+		t.Run(test.profile, func(t *testing.T) {
+			collectors := Collectors(Config{Profile: test.profile, Namespace: "agentio-system"})
+			ztunnel, ok := collectors[3].(podCollector)
+			if !ok {
+				t.Fatalf("ztunnel collector has type %T", collectors[3])
+			}
+			if ztunnel.namespace != test.wantNamespace || ztunnel.selector != test.wantSelector ||
+				ztunnel.namespaceSelector != test.wantNamespaceSelector || ztunnel.requiredContainer != test.wantContainer {
+				t.Fatalf("ztunnel collector = %#v", ztunnel)
+			}
+		})
+	}
+}
+
+func TestPodCollectorSelectsSidecarsFromEnrolledNamespaces(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name: "sidecar", Labels: map[string]string{"agentio.kruise.io/dataplane-mode": "sidecar"},
+		}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name: "ambient", Labels: map[string]string{"agentio.kruise.io/dataplane-mode": "ambient"},
+		}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "unenrolled"}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "injected", Namespace: "sidecar"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}, {Name: "agentio-proxy"}}},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "not-injected", Namespace: "sidecar"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "ambient-pod", Namespace: "ambient"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "agentio-proxy"}}},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "unenrolled-pod", Namespace: "unenrolled"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "agentio-proxy"}}},
+		},
+	)
+	collector := podCollector{
+		namespaceSelector: "agentio.kruise.io/dataplane-mode=sidecar",
+		requiredContainer: "agentio-proxy",
+	}
+	pods, err := collector.listPods(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods.Items) != 1 || pods.Items[0].Namespace != "sidecar" || pods.Items[0].Name != "injected" {
+		t.Fatalf("selected Pods = %#v", pods.Items)
 	}
 }

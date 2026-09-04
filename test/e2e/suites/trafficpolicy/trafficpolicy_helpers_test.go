@@ -27,7 +27,6 @@ import (
 	"github.com/openkruise/agentio/test/e2e"
 	"github.com/openkruise/agentio/test/e2e/components/echo"
 	"github.com/openkruise/agentio/test/e2e/retry"
-	"github.com/openkruise/agentio/test/e2e/suites/internal/harness"
 )
 
 type configDumpFunc func(context.Context) (string, error)
@@ -59,8 +58,9 @@ func waitForPolicyPresent(t *testing.T, instance echo.Instance, policy string) {
 	t.Helper()
 	ctx, cancel := e2e.Context(t, 2*time.Minute)
 	defer cancel()
+	environment := suite.Environment(t)
 	if err := waitForPolicyState(ctx, policy, true, func(ctx context.Context) (string, error) {
-		return harness.ConfigDump(ctx, instance)
+		return rig.ConfigDump(ctx, environment, instance)
 	}); err != nil {
 		t.Fatalf("wait for policy %q in %s config dump: %v", policy, instance.Name(), err)
 	}
@@ -70,8 +70,9 @@ func waitForPolicyGone(t *testing.T, instance echo.Instance, policy string) {
 	t.Helper()
 	ctx, cancel := e2e.Context(t, 2*time.Minute)
 	defer cancel()
+	environment := suite.Environment(t)
 	if err := waitForPolicyState(ctx, policy, false, func(ctx context.Context) (string, error) {
-		return harness.ConfigDump(ctx, instance)
+		return rig.ConfigDump(ctx, environment, instance)
 	}); err != nil {
 		t.Fatalf("wait for policy %q to leave %s config dump: %v", policy, instance.Name(), err)
 	}

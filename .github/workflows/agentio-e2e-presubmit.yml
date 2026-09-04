@@ -1,0 +1,93 @@
+name: agentio-product-e2e-presubmit
+
+# Presubmit builds only repository-owned and test-only candidates locally.
+# External runtime components remain pinned by agentio.deps.
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "logo/**"
+      - "releasenotes/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs-lint.yml"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "logo/**"
+      - "releasenotes/**"
+      - ".markdownlint-cli2.yaml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs-lint.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentio-product-e2e-presubmit-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      cni_image: ${{ steps.bom.outputs.cni_image }}
+      ztunnel_image: ${{ steps.bom.outputs.ztunnel_image }}
+      proxy_init_image: ${{ steps.bom.outputs.proxy_init_image }}
+      gateway_image: ${{ steps.bom.outputs.gateway_image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Resolve external dependency BOM
+        id: bom
+        run: |
+          resolve_pin() {
+            local output_name="$1" pin_name="$2" repository digest
+            repository=$(jq -er --arg name "$pin_name" '.[] | select(.name == $name) | .repository' agentio.deps)
+            digest=$(jq -er --arg name "$pin_name" '.[] | select(.name == $name) | .digest' agentio.deps)
+            if [[ ! "$repository" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._-]*)+$ ]] ||
+               [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid immutable dependency pin $pin_name" >&2
+              exit 1
+            fi
+            echo "${output_name}=${repository}@${digest}" >> "$GITHUB_OUTPUT"
+          }
+          resolve_pin ztunnel_image ZTUNNEL_IMAGE
+          resolve_pin cni_image CNI_IMAGE
+          resolve_pin proxy_init_image PROXY_INIT_IMAGE
+          resolve_pin gateway_image GATEWAY_IMAGE
+      - name: Build repository-owned and test fixture candidates
+        run: |
+          tag="$GITHUB_SHA"
+          docker build --file Dockerfile --tag "agentio-e2e.local/agentiod:${tag}" .
+          docker build --file extensions/epe/docker/Dockerfile --tag "agentio-e2e.local/agentio-epe:${tag}" .
+          docker build --file test/fixtures/extproc/Dockerfile --tag "agentio-e2e.local/ext-proc:${tag}" .
+          docker save --output "${RUNNER_TEMP}/candidate-images.tar" \
+            "agentio-e2e.local/agentiod:${tag}" \
+            "agentio-e2e.local/agentio-epe:${tag}" \
+            "agentio-e2e.local/ext-proc:${tag}"
+      - name: Upload local candidate images
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: agentio-presubmit-candidate-images
+          path: ${{ runner.temp }}/candidate-images.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  product-e2e:
+    needs: build-candidates
+    uses: ./.github/workflows/agentio-e2e.yml
+    with:
+      candidate_image_artifact: agentio-presubmit-candidate-images
+      cni_image: ${{ needs.build-candidates.outputs.cni_image }}
+      ztunnel_image: ${{ needs.build-candidates.outputs.ztunnel_image }}
+      proxy_init_image: ${{ needs.build-candidates.outputs.proxy_init_image }}
+      gateway_image: ${{ needs.build-candidates.outputs.gateway_image }}

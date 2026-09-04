@@ -61,10 +61,13 @@ func TestReleasePromotesExactProductE2ECandidates(t *testing.T) {
 	}
 }
 
-func TestProductE2ERunsSidecarAndAmbientOnSeparateClusters(t *testing.T) {
+func TestProductE2ERunsProfileAndFirewallMatrixOnSeparateClusters(t *testing.T) {
 	workflow := loadWorkflow(t, "agentio-e2e.yml")
 	jobs := workflowJobs(t, workflow)
 	job := workflowJob(t, jobs, "product-e2e")
+	if condition, found := job["if"]; found {
+		t.Fatalf("reusable product E2E has job restriction %q; callers own branch policy", condition)
+	}
 	strategy := mapValue(t, job, "strategy")
 	matrix := mapValue(t, strategy, "matrix")
 	include, ok := matrix["include"].([]any)
@@ -72,23 +75,44 @@ func TestProductE2ERunsSidecarAndAmbientOnSeparateClusters(t *testing.T) {
 		t.Fatalf("product-e2e matrix.include has type %T, want list", matrix["include"])
 	}
 
-	profiles := map[string]string{}
+	clusters := map[string]string{}
+	suites := map[string]string{}
 	for _, raw := range include {
 		entry, ok := raw.(map[string]any)
 		if !ok {
 			t.Fatalf("matrix entry has type %T, want map", raw)
 		}
 		profile, _ := entry["profile"].(string)
+		backend, _ := entry["backend"].(string)
 		cluster, _ := entry["cluster"].(string)
-		profiles[profile] = cluster
-	}
-	for _, profile := range []string{"sidecar", "ambient"} {
-		if profiles[profile] == "" {
-			t.Errorf("product-e2e matrix is missing %q profile", profile)
+		scenario := profile + "-" + backend
+		if clusters[scenario] != "" {
+			t.Fatalf("duplicate product E2E scenario %q", scenario)
 		}
+		clusters[scenario] = cluster
+		suites[scenario], _ = entry["suites"].(string)
 	}
-	if profiles["sidecar"] == profiles["ambient"] {
-		t.Errorf("sidecar and ambient must use separate KinD clusters, both use %q", profiles["sidecar"])
+	wantScenarios := []string{"sidecar-auto", "sidecar-iptables", "ambient-auto", "ambient-iptables"}
+	seenClusters := map[string]string{}
+	for _, scenario := range wantScenarios {
+		cluster := clusters[scenario]
+		if cluster == "" {
+			t.Errorf("product E2E matrix is missing %q", scenario)
+			continue
+		}
+		if prior := seenClusters[cluster]; prior != "" {
+			t.Errorf("scenarios %q and %q share KinD cluster %q", prior, scenario, cluster)
+		}
+		seenClusters[cluster] = scenario
+	}
+	if len(include) != len(wantScenarios) {
+		t.Errorf("product E2E matrix has %d entries, want exactly %d", len(include), len(wantScenarios))
+	}
+	wantSuites := "./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe"
+	for _, scenario := range wantScenarios {
+		if suites[scenario] != wantSuites {
+			t.Errorf("%s product E2E suites = %q, want shared product suites %q", scenario, suites[scenario], wantSuites)
+		}
 	}
 
 	environment := mapValue(t, job, "env")
@@ -98,6 +122,59 @@ func TestProductE2ERunsSidecarAndAmbientOnSeparateClusters(t *testing.T) {
 	} {
 		if _, found := environment[variable]; !found {
 			t.Errorf("product-e2e does not expose %q", variable)
+		}
+	}
+	if got := stringValue(t, environment, "AGENTIO_E2E_FIREWALL_BACKEND"); got != "${{ matrix.backend }}" {
+		t.Errorf("firewall backend = %q, want matrix backend", got)
+	}
+	if got := stringValue(t, environment, "E2E_DIAGNOSTICS_FULL_ON_FAILURE"); got != "true" {
+		t.Errorf("full failure diagnostics = %q, want true", got)
+	}
+	if got := stringValue(t, environment, "E2E_DIAGNOSTICS_MAX_FULL_DUMPS"); got != "1" {
+		t.Errorf("maximum full dumps = %q, want 1", got)
+	}
+
+	steps := listValue(t, job, "steps")
+	exportIndex := namedStepIndex(t, steps, "Export KinD logs")
+	uploadIndex := namedStepIndex(t, steps, "Upload Agentio E2E artifacts")
+	deleteIndex := namedStepIndex(t, steps, "Delete isolated KinD cluster")
+	if exportIndex < 0 || uploadIndex < 0 || deleteIndex < 0 {
+		t.Fatalf("missing diagnostic/cleanup step: export %d, upload %d, delete %d", exportIndex, uploadIndex, deleteIndex)
+	}
+	if !(exportIndex < uploadIndex && uploadIndex < deleteIndex) {
+		t.Errorf("diagnostic/cleanup step order = export %d, upload %d, delete %d", exportIndex, uploadIndex, deleteIndex)
+	}
+}
+
+func TestProductE2EPresubmitBuildsLocalCandidatesAndUsesDependencyBOM(t *testing.T) {
+	workflow := loadWorkflow(t, "agentio-e2e-presubmit.yml")
+	triggers := workflowTriggers(t, workflow)
+	for _, trigger := range []string{"pull_request", "push"} {
+		if _, found := triggers[trigger]; !found {
+			t.Errorf("product E2E presubmit is missing %q trigger", trigger)
+		}
+	}
+
+	jobs := workflowJobs(t, workflow)
+	build := workflowJob(t, jobs, "build-candidates")
+	steps := listValue(t, build, "steps")
+	if index := namedStepIndex(t, steps, "Upload local candidate images"); index < 0 {
+		t.Fatal("candidate images are not uploaded for isolated matrix jobs")
+	}
+
+	e2eJob := workflowJob(t, jobs, "product-e2e")
+	if got := stringValue(t, e2eJob, "uses"); got != "./.github/workflows/agentio-e2e.yml" {
+		t.Fatalf("presubmit product E2E uses %q", got)
+	}
+	if needs := jobNeeds(t, jobs, "product-e2e"); !slices.Contains(needs, "build-candidates") {
+		t.Errorf("presubmit product E2E needs %v, want build-candidates", needs)
+	}
+	inputs := mapValue(t, e2eJob, "with")
+	for _, input := range []string{
+		"candidate_image_artifact", "cni_image", "ztunnel_image", "proxy_init_image", "gateway_image",
+	} {
+		if _, found := inputs[input]; !found {
+			t.Errorf("presubmit product E2E does not pass %q", input)
 		}
 	}
 }
@@ -215,6 +292,33 @@ func stringValue(t *testing.T, parent map[string]any, key string) string {
 		t.Fatalf("key %q has type %T, want string", key, value)
 	}
 	return result
+}
+
+func listValue(t *testing.T, parent map[string]any, key string) []any {
+	t.Helper()
+	value, found := parent[key]
+	if !found {
+		t.Fatalf("missing key %q", key)
+	}
+	result, ok := value.([]any)
+	if !ok {
+		t.Fatalf("key %q has type %T, want list", key, value)
+	}
+	return result
+}
+
+func namedStepIndex(t *testing.T, steps []any, name string) int {
+	t.Helper()
+	for index, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("step %d has type %T, want map", index, raw)
+		}
+		if step["name"] == name {
+			return index
+		}
+	}
+	return -1
 }
 
 func jobNeeds(t *testing.T, jobs map[string]any, name string) []string {

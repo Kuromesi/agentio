@@ -21,13 +21,13 @@ import (
 	"time"
 
 	"github.com/openkruise/agentio/test/e2e"
+	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
 	"github.com/openkruise/agentio/test/e2e/components/echo"
 	"github.com/openkruise/agentio/test/e2e/components/echo/check"
 	e2econfig "github.com/openkruise/agentio/test/e2e/config"
 	"github.com/openkruise/agentio/test/e2e/kube"
 	"github.com/openkruise/agentio/test/e2e/network"
 	"github.com/openkruise/agentio/test/e2e/retry"
-	"github.com/openkruise/agentio/test/e2e/suites/internal/harness"
 )
 
 // TestSandboxTrafficPolicyLifecycle covers policy lifecycle scenarios that go
@@ -230,9 +230,13 @@ spec:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(t, kube.CreateOnly)
 
-		// Both src and anotherDst should match the empty selector.
-		waitForPolicyPresent(t, src, "tp-empty-selector")
-		waitForPolicyPresent(t, anotherDst, "tp-empty-selector")
+		// Both src and anotherDst should match the empty selector. The ambient
+		// ztunnel admin dump does not expose namespace-scoped Authorizations, so
+		// its retrying traffic checks below are the propagation barrier there.
+		if resolvedAgentioConfig.Profile == agentiocomponent.ProfileSidecar {
+			waitForPolicyPresent(t, src, "tp-empty-selector")
+			waitForPolicyPresent(t, anotherDst, "tp-empty-selector")
+		}
 
 		// src -> dst should be denied (matched by empty selector).
 		src.CallOrFail(t, dst.CallOptionsOrFail(t, "http").WithCheck(check.Error()))
@@ -501,6 +505,7 @@ spec:
 func TestSandboxWorkloadPeerAdvanced(t *testing.T) {
 	rig.RequireLive(t)
 	rig.RequireUncontaminated(t)
+	environment := suite.Environment(t)
 	src := trafficFixture.Client
 	dst := trafficFixture.Server
 	anotherDst := trafficFixture.AnotherServer
@@ -593,7 +598,7 @@ spec:
 			Timeout: 2 * time.Minute, Delay: 5 * time.Second,
 			Backoff: 1, MaxDelay: 5 * time.Second, Converge: 1,
 		}, func() error {
-			dump, err := harness.ConfigDump(ctx, src)
+			dump, err := rig.ConfigDump(ctx, environment, src)
 			if err != nil {
 				return err
 			}

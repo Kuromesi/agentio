@@ -29,7 +29,6 @@ func TestSNIEchoFixtureManifest(t *testing.T) {
 		name, namespace, policyValue string
 	}{
 		{name: "selected", namespace: "sni-policy", policyValue: "selected"},
-		{name: "unselected", namespace: "sni-policy", policyValue: "unselected"},
 		{name: "global", namespace: "sni-policy-global", policyValue: "global"},
 	}
 	for _, test := range tests {
@@ -41,18 +40,12 @@ func TestSNIEchoFixtureManifest(t *testing.T) {
 			if config.Image != echo.DefaultImage || !strings.Contains(config.Image, "@sha256:") {
 				t.Fatalf("SNI echo image = %q, want immutable default", config.Image)
 			}
-			wantLabels := map[string]string{
-				"app": test.name, harness.DataplaneModeLabel: harness.DataplaneModeSidecar,
-				sniPolicyLabel: test.policyValue,
-			}
+			wantLabels := map[string]string{"app": test.name, sniPolicyLabel: test.policyValue}
 			if !reflect.DeepEqual(config.Labels, wantLabels) {
 				t.Fatalf("SNI echo labels = %#v, want %#v", config.Labels, wantLabels)
 			}
-			wantAnnotations := map[string]string{
-				harness.ZtunnelInjectAnnotation: harness.ZtunnelInjectTemplate,
-			}
-			if !reflect.DeepEqual(config.PodAnnotations, wantAnnotations) {
-				t.Fatalf("SNI echo annotations = %#v, want %#v", config.PodAnnotations, wantAnnotations)
+			if len(config.PodAnnotations) != 0 {
+				t.Fatalf("SNI echo annotations contain dataplane enrollment: %#v", config.PodAnnotations)
 			}
 			if !reflect.DeepEqual(config.Ports, echo.DefaultPorts()) {
 				t.Fatalf("SNI echo ports = %#v, want default protocol fixture ports", config.Ports)

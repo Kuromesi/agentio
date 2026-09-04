@@ -25,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
-	"github.com/openkruise/agentio/test/e2e/suites/internal/harness"
 )
 
 func TestSetupOrder(t *testing.T) {
@@ -79,10 +78,16 @@ func TestTrafficPolicyBuilderTargetsSourceAndCIDR(t *testing.T) {
 	}
 }
 
-func TestInjectedEchoConfigCarriesWebhookLabel(t *testing.T) {
-	config := injectedEchoConfig("client", "sandbox")
-	if config.Labels[harness.DataplaneModeLabel] != harness.DataplaneModeSidecar {
-		t.Fatalf("Pod labels = %#v", config.Labels)
+func TestDataplaneEchoConfigIsProfileNeutral(t *testing.T) {
+	config := dataplaneEchoConfig("client", "sandbox")
+	if config.Name != "client" || config.Namespace != "sandbox" {
+		t.Fatalf("echo identity = %s/%s", config.Namespace, config.Name)
+	}
+	if !reflect.DeepEqual(config.Labels, map[string]string{"app": "client"}) {
+		t.Fatalf("echo labels = %#v", config.Labels)
+	}
+	if len(config.PodAnnotations) != 0 {
+		t.Fatalf("echo annotations contain dataplane enrollment: %#v", config.PodAnnotations)
 	}
 }
 

@@ -1,17 +1,25 @@
 name: agentio-product-e2e
 
-# Product E2E consumes a complete immutable release BOM. Sidecar and ambient
-# run in separate jobs so CNI and firewall state never crosses profiles.
+# Product E2E consumes an immutable release BOM or same-run local candidates.
+# Every profile/backend scenario has an isolated cluster so CNI and firewall
+# state never crosses matrix entries.
 on:
   workflow_call:
     inputs:
+      candidate_image_artifact:
+        description: Optional same-run artifact containing local agentiod, EPE, and ext-proc images
+        required: false
+        default: ""
+        type: string
       agentiod_image:
         description: Immutable agentiod image (repository@sha256:digest)
-        required: true
+        required: false
+        default: ""
         type: string
       epe_image:
         description: Immutable EPE image (repository@sha256:digest)
-        required: true
+        required: false
+        default: ""
         type: string
       cni_image:
         description: Immutable CNI image (repository@sha256:digest)
@@ -31,7 +39,8 @@ on:
         type: string
       ext_proc_image:
         description: Immutable ext-proc fixture image (repository@sha256:digest)
-        required: true
+        required: false
+        default: ""
         type: string
       forward_proxy_image:
         description: Optional immutable forward-proxy fixture override
@@ -93,7 +102,6 @@ concurrency:
 
 jobs:
   product-e2e:
-    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -101,15 +109,28 @@ jobs:
       matrix:
         include:
           - profile: sidecar
-            cluster: agentio-sidecar-e2e
+            backend: auto
+            cluster: agentio-sidecar-auto-e2e
+            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
+          - profile: sidecar
+            backend: iptables
+            cluster: agentio-sidecar-iptables-e2e
             suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
           - profile: ambient
-            cluster: agentio-ambient-e2e
-            suites: ./suites/ambient
+            backend: auto
+            cluster: agentio-ambient-auto-e2e
+            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
+          - profile: ambient
+            backend: iptables
+            cluster: agentio-ambient-iptables-e2e
+            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
     env:
       E2E_CLUSTER_NAME: ${{ matrix.cluster }}
+      E2E_REGISTRY_NAME: ${{ matrix.cluster }}-registry
       E2E_CLUSTER_REUSE: "true"
       E2E_LIFECYCLE_RETAIN: never
+      E2E_DIAGNOSTICS_FULL_ON_FAILURE: "true"
+      E2E_DIAGNOSTICS_MAX_FULL_DUMPS: "1"
       AGENTIO_E2E_PROFILE: ${{ matrix.profile }}
       AGENTIO_E2E_SUITES: ${{ matrix.suites }}
       AGENTIO_E2E_AGENTIOD_IMAGE: ${{ inputs.agentiod_image }}
@@ -121,15 +142,15 @@ jobs:
       AGENTIO_E2E_EXT_PROC_IMAGE: ${{ inputs.ext_proc_image }}
       AGENTIO_E2E_FORWARD_PROXY_IMAGE: ${{ inputs.forward_proxy_image }}
       AGENTIO_E2E_ENABLE_FIREWALL_RULES: "true"
-      AGENTIO_E2E_FIREWALL_BACKEND: auto
+      AGENTIO_E2E_FIREWALL_BACKEND: ${{ matrix.backend }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Configure profile artifact directory
+      - name: Configure scenario artifact directory
         env:
-          PROFILE: ${{ matrix.profile }}
-        run: echo "E2E_ARTIFACTS_DIR=${RUNNER_TEMP}/agentio-${PROFILE}-e2e-artifacts" >> "$GITHUB_ENV"
+          SCENARIO: ${{ matrix.profile }}-${{ matrix.backend }}
+        run: echo "E2E_ARTIFACTS_DIR=${RUNNER_TEMP}/agentio-${SCENARIO}-e2e-artifacts" >> "$GITHUB_ENV"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -147,6 +168,55 @@ jobs:
         run: |
           go install sigs.k8s.io/kind@v0.24.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Download local candidate images
+        if: inputs.candidate_image_artifact != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.candidate_image_artifact }}
+          path: ${{ runner.temp }}/agentio-candidate-images
+      - name: Publish candidates to a local registry
+        if: inputs.candidate_image_artifact != ''
+        run: |
+          archive="${RUNNER_TEMP}/agentio-candidate-images/candidate-images.tar"
+          if [[ ! -f "$archive" ]]; then
+            echo "Candidate image artifact does not contain candidate-images.tar" >&2
+            exit 1
+          fi
+          docker load --input "$archive"
+          docker run -d --restart=always \
+            -p 127.0.0.1:5001:5000 \
+            --name "$E2E_REGISTRY_NAME" \
+            registry:2.8.3
+
+          for image in agentiod agentio-epe ext-proc; do
+            source="agentio-e2e.local/${image}:${GITHUB_SHA}"
+            target="localhost:5001/${image}:${GITHUB_SHA}"
+            docker image inspect "$source" >/dev/null
+            docker tag "$source" "$target"
+            docker push "$target"
+            digest_ref=$(docker image inspect "$target" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+              grep -m 1 -E "^localhost:5001/${image}@sha256:[0-9a-f]{64}$")
+            if [[ -z "$digest_ref" ]]; then
+              echo "Unable to resolve local digest for $target" >&2
+              exit 1
+            fi
+            case "$image" in
+              agentiod) echo "AGENTIO_E2E_AGENTIOD_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
+              agentio-epe) echo "AGENTIO_E2E_EPE_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
+              ext-proc) echo "AGENTIO_E2E_EXT_PROC_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
+            esac
+          done
+
+          kind_config="${RUNNER_TEMP}/agentio-kind-registry.yaml"
+          cat >"$kind_config" <<EOF
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          containerdConfigPatches:
+          - |-
+            [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
+              endpoint = ["http://${E2E_REGISTRY_NAME}:5000"]
+          EOF
+          echo "E2E_KIND_CONFIG=$kind_config" >> "$GITHUB_ENV"
       - name: Download prepared release chart
         if: inputs.chart_artifact != ''
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -163,17 +233,36 @@ jobs:
           fi
           echo "AGENTIO_E2E_CHART_PATH=$chart_path" >> "$GITHUB_ENV"
       - name: Create isolated KinD cluster
-        run: kind create cluster --name "$E2E_CLUSTER_NAME"
-      - name: Run Agentio ${{ matrix.profile }} product E2E
+        run: |
+          args=(create cluster --name "$E2E_CLUSTER_NAME")
+          if [[ -n "${E2E_KIND_CONFIG:-}" ]]; then
+            args+=(--config "$E2E_KIND_CONFIG")
+          fi
+          kind "${args[@]}"
+          if [[ -n "${E2E_KIND_CONFIG:-}" ]]; then
+            docker network connect kind "$E2E_REGISTRY_NAME"
+          fi
+      - name: Run Agentio ${{ matrix.profile }}-${{ matrix.backend }} product E2E
         run: make test.integration.agentio.product
-      - name: Upload Agentio ${{ matrix.profile }} E2E artifacts
+      - name: Export KinD logs
+        if: always()
+        run: kind export logs --name "$E2E_CLUSTER_NAME" "$E2E_ARTIFACTS_DIR/kind" || true
+      - name: Upload Agentio E2E artifacts
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: agentio-${{ matrix.profile }}-e2e-artifacts
-          path: ${{ runner.temp }}/agentio-${{ matrix.profile }}-e2e-artifacts
+          name: agentio-${{ matrix.profile }}-${{ matrix.backend }}-e2e-artifacts
+          path: ${{ runner.temp }}/agentio-${{ matrix.profile }}-${{ matrix.backend }}-e2e-artifacts
           if-no-files-found: warn
           retention-days: 7
       - name: Delete isolated KinD cluster
         if: always()
-        run: kind delete cluster --name "$E2E_CLUSTER_NAME"
+        run: |
+          kind delete cluster --name "$E2E_CLUSTER_NAME"
+          if kind get clusters | grep -Fxq "$E2E_CLUSTER_NAME"; then
+            echo "KinD cluster $E2E_CLUSTER_NAME still exists after deletion" >&2
+            exit 1
+          fi
+      - name: Delete local candidate registry
+        if: always() && inputs.candidate_image_artifact != ''
+        run: docker rm --force "$E2E_REGISTRY_NAME" || true

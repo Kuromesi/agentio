@@ -29,6 +29,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	ProfileSidecar     = "sidecar"
+	ProfileAmbient     = "ambient"
+	DataplaneModeLabel = "agentio.kruise.io/dataplane-mode"
+)
+
 type Config struct {
 	Profile             string `yaml:"profile" json:"profile"`
 	ReleaseName         string `yaml:"release-name" json:"releaseName"`
@@ -92,7 +98,7 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 	if inputs == nil || inputs.fs == nil {
 		return Config{}, errors.New("Agentio flag inputs are required")
 	}
-	config := Config{Profile: "sidecar", ReleaseName: "agentio", Namespace: "agentio-system", FirewallBackend: "auto"}
+	config := Config{Profile: ProfileSidecar, ReleaseName: "agentio", Namespace: "agentio-system", FirewallBackend: "auto"}
 	explicit := make(map[string]bool)
 	inputs.fs.Visit(func(value *flag.Flag) { explicit[value.Name] = true })
 	configPath := os.Getenv("AGENTIO_E2E_CONFIG")
@@ -205,7 +211,7 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 var immutableImage = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 
 func (c Config) Validate() error {
-	if c.Profile != "sidecar" && c.Profile != "ambient" {
+	if c.Profile != ProfileSidecar && c.Profile != ProfileAmbient {
 		return fmt.Errorf("Agentio profile must be sidecar or ambient, got %q", c.Profile)
 	}
 	if c.Namespace == "" {

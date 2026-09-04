@@ -100,13 +100,13 @@ spec:
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTPS, dst.Address(), 9443).WithCheck(check.Error()))
 	})
 
-	rig.RunScenario(t, "deny UDP blocks DNS", func(t *testing.T, scope *kube.ResourceScope) {
+	rig.RunScenario(t, "deny UDP service traffic", func(t *testing.T, scope *kube.ResourceScope) {
 		requireFirewallRules(t)
 		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name()}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
-  name: tp-deny-udp-dns
+  name: tp-deny-udp
 spec:
   priority: 100
   selector:
@@ -117,14 +117,14 @@ spec:
       - action: reject
         ports:
           - protocol: UDP
-            port: 53
+            port: 9200
       - action: allow
         to:
           - cidr: "0.0.0.0/0"
 `).ApplyOrFail(t, kube.CreateOnly)
-		waitForPolicyPresent(t, src, "tp-deny-udp-dns")
-		src.CallOrFail(t, dst.CallOptionsOrFail(t, "http").WithCheck(check.Error()))
-		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, dst.WorkloadsOrFail(t)[0].Address, 18080).WithCheck(check.OK()))
+		waitForPolicyPresent(t, src, "tp-deny-udp")
+		src.CallOrFail(t, dst.CallOptionsOrFail(t, "udp").WithCheck(check.Error()))
+		src.CallOrFail(t, dst.CallOptionsOrFail(t, "http").WithCheck(check.OK()))
 	})
 
 	rig.RunScenario(t, "mixed protocol rules", func(t *testing.T, scope *kube.ResourceScope) {

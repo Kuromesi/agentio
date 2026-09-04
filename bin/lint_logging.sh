@@ -82,11 +82,11 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
       ;;
   esac
 
-  # 2. klog and the stdlib logger are bridged once per entrypoint, never called.
-  #    Tests are exempt: the ones that assert a bridge work must call it.
+  # 2. klog and the stdlib logger are owned by process entrypoints. Tests are
+  #    exempt because the ones that assert a bridge must call it.
   if ! is_test "${f}"; then
     case "${f}" in
-      cmd/agentiod/logging.go | extensions/epe/cmd/epe/main.go) ;;
+      cmd/agentiod/logging.go | extensions/epe/cmd/epe/main.go | test/fixtures/extproc/main.go) ;;
       *)
         scan "${f}" '(^|[^[:alnum:]_."])klog\.' \
           "klog is bridged once in the process entrypoint; use the package logger"
