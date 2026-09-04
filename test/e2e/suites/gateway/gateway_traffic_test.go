@@ -203,7 +203,10 @@ data:
 	t.Run("http traffic", func(t *testing.T) {
 		options := dst.CallOptionsOrFail(t, "http")
 		options.Count = 1
-		options.Check = check.OK()
+		// Make the first short-lived request the convergence gate for the
+		// protocols below. An origin-only success can still be a direct call
+		// while the new egress policy is propagating to the data plane.
+		options.Check = check.And(check.OK(), hasEnvoyResponseHeader())
 		options.Retry = harness.FixedRetry(2*time.Minute, 5*time.Second)
 		src.CallOrFail(t, options)
 	})

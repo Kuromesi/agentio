@@ -68,6 +68,9 @@ func TestProductE2ERunsProfileAndFirewallMatrixOnSeparateClusters(t *testing.T) 
 	if condition, found := job["if"]; found {
 		t.Fatalf("reusable product E2E has job restriction %q; callers own branch policy", condition)
 	}
+	if got := stringValue(t, job, "name"); got != "${{ matrix.profile }}-${{ matrix.backend }}" {
+		t.Errorf("product E2E job name = %q, want concise profile/backend scenario", got)
+	}
 	strategy := mapValue(t, job, "strategy")
 	matrix := mapValue(t, strategy, "matrix")
 	include, ok := matrix["include"].([]any)

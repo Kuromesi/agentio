@@ -236,14 +236,15 @@ func (s *Server) sendGeneratedDelta(
 		metrics.Default.RecordXDSPushFailure(metrics.XDSPushFailureSend, request.TypeURL)
 		return err
 	}
-	metrics.Default.RecordXDSPush(time.Since(started), len(resources)+len(removed), sizeBytes)
+	duration := time.Since(started)
+	metrics.Default.RecordXDSPush(duration, len(resources)+len(removed), sizeBytes)
 	pushLog := connLog.Debug
 	if request.Full && (len(resources) > 0 || len(removed) > 0) {
 		pushLog = connLog.Info
 	}
 	pushLog("Delta ADS push", "principal", request.Scope.Principal.String(),
 		"type_url", request.TypeURL, "resources", len(resources), "removed", len(removed),
-		"size", byteSize(sizeBytes))
+		"size", byteSize(sizeBytes), "duration", duration)
 	if delta.elideSentState {
 		// Replace, not clear, so a reconnect's InitialResourceVersions map does
 		// not keep its backing array alive.

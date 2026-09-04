@@ -102,6 +102,7 @@ concurrency:
 
 jobs:
   product-e2e:
+    name: ${{ matrix.profile }}-${{ matrix.backend }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:

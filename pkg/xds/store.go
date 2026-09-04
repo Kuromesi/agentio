@@ -276,6 +276,15 @@ func (s *Store) NotifyType(typeURL string) {
 }
 
 func (s *Store) notifyLocked(update Update) {
+	if !update.full {
+		types := make([]string, 0, len(update.dirtyTypes))
+		for typeURL := range update.dirtyTypes {
+			types = append(types, typeURL)
+		}
+		sort.Strings(types)
+		log.Info("XDS: Incremental Pushing", "connected_endpoints", len(s.subscribers),
+			"version", update.version, "types", types)
+	}
 	for _, subscriber := range s.affectedSubscribersLocked(update) {
 		// Capacity-one, type-aware mailbox; the first coalescing boundary.
 		// PushScheduler merges later duplicates.

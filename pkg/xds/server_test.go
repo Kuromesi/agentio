@@ -362,6 +362,9 @@ func TestPushLogUsesHumanReadableSizeAndDemotesEmptyPushes(t *testing.T) {
 		if !sizePattern.MatchString(line) || strings.Contains(line, "size_bytes=") {
 			t.Fatalf("push log size is not human-readable: %s", line)
 		}
+		if !strings.Contains(line, "duration=") {
+			t.Fatalf("push log has no duration: %s", line)
+		}
 	}
 	if !strings.Contains(populatedPush, "level=INFO") {
 		t.Fatalf("populated full push log = %s, want INFO", populatedPush)

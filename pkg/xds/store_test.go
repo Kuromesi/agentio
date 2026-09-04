@@ -15,17 +15,78 @@
 package xds
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 
+	agentlog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
 var _ ResourceStore = (*Store)(nil)
 var _ ResourceSubscription = (*Subscription)(nil)
+
+func TestStoreLogsOneIncrementalPushSummary(t *testing.T) {
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	previousLevel := agentlog.OutputLevel()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	agentlog.ConfigureOutputLevel(slog.LevelInfo)
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		agentlog.ConfigureOutputLevel(previousLevel)
+	})
+
+	store := NewStore(newSnapshot(t))
+	subscription := store.Subscribe(t.Context())
+	subscription.Watch(model.ClusterType)
+	subscription.Watch(model.SniTrafficPolicyType)
+	cluster := updateTestResource(t, model.ClusterType, "cluster-key", "cluster", "cluster")
+	sni := updateTestResource(t, model.SniTrafficPolicyType, "policy-key", "policy", "policy")
+	publication, err := store.Apply([]model.ResourceChange{
+		{Key: sni.Key, New: &sni},
+		{Key: cluster.Key, New: &cluster},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := bytes.TrimSpace(output.Bytes())
+	if len(encoded) == 0 {
+		t.Fatal("incremental publication emitted no push summary log")
+	}
+	lines := bytes.Split(encoded, []byte{'\n'})
+	if len(lines) != 1 {
+		t.Fatalf("incremental publication logs = %d, want 1:\n%s", len(lines), output.String())
+	}
+	var entry struct {
+		Level              string   `json:"level"`
+		Message            string   `json:"msg"`
+		ConnectedEndpoints int      `json:"connected_endpoints"`
+		Version            string   `json:"version"`
+		Types              []string `json:"types"`
+	}
+	if err := json.Unmarshal(lines[0], &entry); err != nil {
+		t.Fatalf("decode incremental push log: %v\n%s", err, lines[0])
+	}
+	if entry.Level != "INFO" || entry.Message != "XDS: Incremental Pushing" {
+		t.Fatalf("incremental push log identity = (%q, %q), want (INFO, XDS: Incremental Pushing)", entry.Level, entry.Message)
+	}
+	if entry.ConnectedEndpoints != 1 || entry.Version != publication.Snapshot.Version() {
+		t.Fatalf("incremental push summary = endpoints:%d version:%q, want endpoints:1 version:%q",
+			entry.ConnectedEndpoints, entry.Version, publication.Snapshot.Version())
+	}
+	wantTypes := []string{model.ClusterType, model.SniTrafficPolicyType}
+	if !slices.Equal(entry.Types, wantTypes) {
+		t.Fatalf("incremental push types = %v, want %v", entry.Types, wantTypes)
+	}
+}
 
 func TestResourceSubscriptionStopsWithContext(t *testing.T) {
 	empty, err := model.NewResourceSet(nil)
