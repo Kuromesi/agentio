@@ -51,7 +51,6 @@ agentio:
     tolerations: []
     # -- Affinity rules for control plane pods.
     affinity: {}
-  # -- Settings shared by native policy runtimes referenced by Workload discovery.
   # -- Opt-in ClientHello SNI enforcement for sandbox egress gateways.
   sniTrafficPolicy:
     enabled: false
