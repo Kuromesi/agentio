@@ -148,8 +148,7 @@ data:
         "env": {
           "PILOT_ENABLE_AMBIENT": "true"{{- if .Values.global.enableClusterTrustBundle }},
           "ENABLE_CLUSTER_TRUST_BUNDLE_API": true{{- end }}{{- if .Values.sniTrafficPolicy.enabled }},
-          "ENABLE_SNI_TRAFFIC_POLICY": true,
-          "POLICY_STORE_REFERENCE_RESOLUTION_GRACE_PERIOD": {{ .Values.policyRuntime.referenceResolutionGracePeriod | default "15s" | quote }}{{- end }}
+          "ENABLE_SNI_TRAFFIC_POLICY": true{{- end }}
         }
       },
       "revision": "",

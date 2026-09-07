@@ -17,20 +17,15 @@ package bootstrap
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	. "github.com/onsi/gomega"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"k8s.io/kubectl/pkg/util/fieldpath"
 
 	"istio.io/api/mesh/v1alpha1"
@@ -231,7 +226,6 @@ func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 	}
 	bootstrapConfig := Config{
 		Node: node,
-		PolicyStoreReferenceResolutionGracePeriod: 17 * time.Second,
 	}
 	params, err := bootstrapConfig.toTemplateParams()
 	if err != nil {
@@ -256,95 +250,9 @@ func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 	if strings.Contains(rendered.String(), "kruise.networking.gateway_policy") {
 		t.Fatalf("rendered bootstrap still uses the gateway-scoped policy package: %s", rendered.String())
 	}
-	if !strings.Contains(rendered.String(), `"reference_resolution_grace_period": "17s"`) {
-		t.Fatalf("rendered bootstrap does not contain the configured reference resolution grace period: %s", rendered.String())
+	if strings.Contains(rendered.String(), "reference_resolution_grace_period") {
+		t.Fatal("inline policy bootstrap must not configure reference resolution")
 	}
-}
-
-// TestPolicyStoreReferenceResolutionGracePeriodIsProtoDuration renders the grace period for
-// durations whose Go string form is not a legal google.protobuf.Duration and
-// asserts Envoy's JSON parser would accept what we emit. time.Duration.String()
-// produces "1m0s"/"500ms", which the Duration JSON mapping rejects, so a bootstrap
-// built that way never loads and the proxy crash-loops.
-func TestPolicyStoreReferenceResolutionGracePeriodIsProtoDuration(t *testing.T) {
-	templatePath := filepath.Join(testenv.IstioSrc, "tools/packaging/common/envoy_bootstrap.json")
-	for _, configured := range []time.Duration{
-		15 * time.Second,
-		17 * time.Second,
-		time.Minute,
-		90 * time.Second,
-		time.Hour,
-		500 * time.Millisecond,
-		2*time.Minute + 500*time.Millisecond,
-		// Zero falls back to defaultPolicyStoreReferenceResolutionGracePeriod rather than
-		// being skipped, which would render an empty and equally invalid value.
-		0,
-	} {
-		t.Run(configured.String(), func(t *testing.T) {
-			proxyConfig := model.NodeMetaProxyConfig(v1alpha1.ProxyConfig{
-				DiscoveryAddress: "agentiod.istio-system.svc:15012",
-				ProxyMetadata:    map[string]string{},
-			})
-			bootstrapConfig := Config{
-				Node: &model.Node{
-					ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
-					Locality: &core.Locality{},
-					Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
-						ProxyConfig:               &proxyConfig,
-						MetadataDiscovery:         ptr.Of(model.StringBool(true)),
-						PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
-					}},
-					RawMetadata: map[string]any{},
-				},
-				PolicyStoreReferenceResolutionGracePeriod: configured,
-			}
-			var rendered bytes.Buffer
-			if err := New(bootstrapConfig).WriteTo(templatePath, &rendered); err != nil {
-				t.Fatalf("render bootstrap template: %v", err)
-			}
-			// Parsing the whole document also proves the template still emits valid
-			// JSON, which a bad duration would not break on its own.
-			got := referenceResolutionGracePeriodFromBootstrap(t, rendered.Bytes())
-
-			var parsed durationpb.Duration
-			if err := protojson.Unmarshal([]byte(strconv.Quote(got)), &parsed); err != nil {
-				t.Fatalf("reference_resolution_grace_period %q is not a valid google.protobuf.Duration: %v", got, err)
-			}
-			want := configured
-			if want <= 0 {
-				want = defaultPolicyStoreReferenceResolutionGracePeriod
-			}
-			if parsed.AsDuration() != want {
-				t.Fatalf("reference_resolution_grace_period %q = %v, want %v", got, parsed.AsDuration(), want)
-			}
-		})
-	}
-}
-
-// referenceResolutionGracePeriodFromBootstrap digs the grace period out of the rendered
-// bootstrap so the test asserts on what Envoy actually reads, not on a substring.
-func referenceResolutionGracePeriodFromBootstrap(t *testing.T, rendered []byte) string {
-	t.Helper()
-	var doc struct {
-		BootstrapExtensions []struct {
-			Name        string `json:"name"`
-			TypedConfig struct {
-				Value struct {
-					ReferenceResolutionGracePeriod string `json:"reference_resolution_grace_period"`
-				} `json:"value"`
-			} `json:"typed_config"`
-		} `json:"bootstrap_extensions"`
-	}
-	if err := json.Unmarshal(rendered, &doc); err != nil {
-		t.Fatalf("rendered bootstrap is not valid JSON: %v\n%s", err, rendered)
-	}
-	for _, extension := range doc.BootstrapExtensions {
-		if extension.Name == "kruise.bootstrap.policy_store" {
-			return extension.TypedConfig.Value.ReferenceResolutionGracePeriod
-		}
-	}
-	t.Fatalf("rendered bootstrap has no kruise.bootstrap.policy_store extension:\n%s", rendered)
-	return ""
 }
 
 func TestPolicyRuntimeCapabilitiesNodeMetadata(t *testing.T) {

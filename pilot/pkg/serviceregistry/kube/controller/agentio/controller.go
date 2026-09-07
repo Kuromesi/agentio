@@ -298,6 +298,17 @@ func (c *Controller) BuildWorkloadPolicyReferencesCollection(
 	return c.workloadPolicyReferences
 }
 
+// BuildWorkloadSNIPoliciesCollection resolves SNI content for gateway-only WDS.
+func (c *Controller) BuildWorkloadSNIPoliciesCollection(
+	workloads krt.Collection[model.WorkloadInfo], opts krt.OptionsBuilder,
+) krt.Collection[WorkloadSNIPolicy] {
+	references := c.BuildWorkloadPolicyReferencesCollection(workloads, opts)
+	if references == nil {
+		return nil
+	}
+	return newWorkloadSNIPoliciesCollection(references, c.bindablePolicies, opts)
+}
+
 // extractHostname returns all FQDN hostnames referenced in the policy's
 // ingress and egress rules (both From and To peers).
 func extractHostname(spec *agentsv1alpha1.TrafficPolicySpec) sets.Set[string] {

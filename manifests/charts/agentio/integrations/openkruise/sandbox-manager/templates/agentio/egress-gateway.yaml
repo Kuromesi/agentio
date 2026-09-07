@@ -122,8 +122,6 @@ spec:
           value: "true"
         - name: POLICY_RUNTIME_CAPABILITIES
           value: "sni_traffic_policy"
-        - name: POLICY_STORE_REFERENCE_RESOLUTION_GRACE_PERIOD
-          value: {{ $.Values.agentio.policyRuntime.referenceResolutionGracePeriod | default "15s" | quote }}
         {{- end }}
         - name: GOMEMLIMIT
           valueFrom:

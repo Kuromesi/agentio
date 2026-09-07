@@ -492,6 +492,10 @@ func (h *manyCollection[I, O]) handleChangedPrimaryInputEvents(items []Event[I])
 		} else {
 			ctx := pendingDepStateUpdates[iKey]
 			results := recomputedResults[idx]
+			// DiscardResult only retains the last output. Track the latest dependencies
+			// even when there is no output yet, so missing or changed dependencies can
+			// trigger recovery without another primary input event.
+			h.dependencyState.update(iKey, ctx.d)
 			if ctx.discardUpdate {
 				// Called when the collection explicitly calls DiscardResult() on the context.
 				// This is typically used when we want to retain the last-correct state.
@@ -503,7 +507,6 @@ func (h *manyCollection[I, O]) handleChangedPrimaryInputEvents(items []Event[I])
 				}
 				h.log.WithLabels("iKey", iKey).Debugf("would discard result, but it is the first so including it")
 			}
-			h.dependencyState.update(iKey, ctx.d)
 			newKeys := sets.New(maps.Keys(results)...)
 			oldKeys := h.collectionState.mappings[iKey]
 			h.collectionState.mappings[iKey] = newKeys

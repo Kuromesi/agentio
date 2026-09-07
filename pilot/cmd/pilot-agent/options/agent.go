@@ -72,7 +72,6 @@ func NewAgentOptions(proxy *ProxyArgs, cfg *meshconfig.ProxyConfig, sds istioage
 		EnvoySkipDeprecatedLogs:     envoySkipDeprecatedLogsEnv,
 		PolicyRuntimeCapabilities:   parsePolicyRuntimeCapabilities(policyRuntimeCapabilitiesEnv),
 	}
-	o.PolicyStoreReferenceResolutionGracePeriod = policyStoreReferenceResolutionGracePeriodEnv
 	if enableWDSEnvWasSet {
 		o.MetadataDiscovery = ptr.Of(enableWDSEnv)
 	}

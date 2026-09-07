@@ -84,13 +84,11 @@ func agentioResourceGeneratorForType(
 	typeURL string,
 ) AgentioResourceGenerator {
 	t.Helper()
-	for _, descriptor := range AgentioResourceDescriptors() {
-		if descriptor.TypeURL == typeURL {
-			return AgentioResourceGenerator{Server: server, Descriptor: descriptor}
-		}
-	}
-	t.Fatalf("descriptor for %s not found", typeURL)
-	return AgentioResourceGenerator{}
+	return AgentioResourceGenerator{Server: server, Descriptor: AgentioResourceDescriptor{
+		TypeURL: typeURL, ConfigKind: kind.SniTrafficPolicy,
+		ResourceNameFromKey: func(k model.ConfigKey) string { return k.Name },
+		Enabled:             func() bool { return features.EnableSniTrafficPolicy },
+	}}
 }
 
 func newSniPolicyPush(request bool, updated sets.Set[model.ConfigKey]) *model.PushRequest {
@@ -232,27 +230,11 @@ func TestSniPolicyFeatureFlagOff(t *testing.T) {
 	assert.Equal(t, stub.calls[v3.SniTrafficPolicyType], 0)
 }
 
-func TestAgentioResourceDescriptors(t *testing.T) {
-	descriptors := AgentioResourceDescriptors()
-	assert.Equal(t, len(descriptors), 1)
-	counts := map[string]int{}
-	for _, descriptor := range descriptors {
-		counts[descriptor.TypeURL]++
-	}
-	assert.Equal(t, counts[v3.SniTrafficPolicyType], 1)
-}
-
-func TestSniPolicyPushedBeforeWorkloadReferences(t *testing.T) {
-	policyIndex, workloadIndex := -1, -1
-	for i, typeURL := range PushOrder {
-		switch typeURL {
-		case v3.SniTrafficPolicyType:
-			policyIndex = i
-		case v3.WorkloadType:
-			workloadIndex = i
+func TestInlineSNIHasNoIndependentDiscovery(t *testing.T) {
+	assert.Equal(t, len(AgentioResourceDescriptors()), 0)
+	for _, typeURL := range PushOrder {
+		if typeURL == v3.SniTrafficPolicyType {
+			t.Fatal("inline policy must not be independently pushed")
 		}
-	}
-	if policyIndex < 0 || workloadIndex < 0 || policyIndex > workloadIndex {
-		t.Fatalf("push order must place policy before Workload: policy=%d workload=%d", policyIndex, workloadIndex)
 	}
 }
