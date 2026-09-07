@@ -39,7 +39,17 @@ jobs:
       - uses: actions/checkout@v5
       - name: Configure Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # The build-tools image may ship an older Go with GOTOOLCHAIN=local.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Run Istio unit test suite
         env:
           JUNIT_OUT: ${{ runner.temp }}/junit.xml
-        run: make -e "T=-v -count=1" build racetest binaries-test
+        run: |
+          # Use setup-go's toolchain, not the image's /usr/local/go compiler.
+          unset GOROOT
+          go version
+          go tool compile -V
+          make -e "T=-v -count=1" build racetest binaries-test
