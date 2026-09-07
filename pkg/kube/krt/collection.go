@@ -433,6 +433,11 @@ func (h *manyCollection[I, O]) onPrimaryInputEvent(items []Event[I]) {
 			ev.New = nil
 		} else {
 			ev.New = iObj
+			// A queued deletion can outlive the object it referred to. Recompute
+			// from the current parent when the same key has been recreated.
+			if ev.Event == controllers.EventDelete {
+				ev.Event = controllers.EventUpdate
+			}
 		}
 		items[idx] = ev
 	}

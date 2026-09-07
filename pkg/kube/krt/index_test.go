@@ -1,4 +1,5 @@
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -230,6 +231,15 @@ func TestIndexAsCollection(t *testing.T) {
 		assert.EventuallyEqual(t, func() *PodCount {
 			return Collection.GetKey(ip)
 		}, wo)
+		// Regression coverage from istio/istio#59580.
+		assert.EventuallyEqual(t, func() *PodCount {
+			return Collection.GetKey("dummy")
+		}, nil)
+		// Also verify the index collection itself: an empty bucket is absent,
+		// rather than a present object with an empty Objects slice.
+		assert.EventuallyEqual(t, func() bool {
+			return IPIndex.AsCollection().GetKey(ip) == nil
+		}, want == 0)
 	}
 
 	pod := &corev1.Pod{
