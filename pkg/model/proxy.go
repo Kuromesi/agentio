@@ -348,8 +348,8 @@ type NodeMetadata struct {
 	// Metadata discovery service enablement
 	MetadataDiscovery *StringBool `json:"METADATA_DISCOVERY,omitempty"`
 
-	// Policy runtime capabilities supported by this proxy binary.
-	PolicyRuntimeCapabilities []string `json:"POLICY_RUNTIME_CAPABILITIES,omitempty"`
+	// Whether the policy store is enabled for this proxy.
+	EnablePolicyStore StringBool `json:"ENABLE_POLICY_STORE,omitempty"`
 
 	// Envoy command line to option to control deprecates=d logs behavior.
 	EnvoySkipDeprecatedLogs StringBool `json:"ENVOY_SKIP_DEPRECATED_LOGS,omitempty"`

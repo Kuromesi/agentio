@@ -27,7 +27,6 @@ import (
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/schema/kind"
-	xdsmodel "istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/workloadapi"
 	"istio.io/istio/pkg/workloadapi/security"
 )
@@ -39,8 +38,7 @@ const (
 	egressPoliciesExtension   = extensionPrefix + "EgressPolicies"
 	PolicyReferenceTypeURL    = extensionPrefix + "PolicyReference"
 
-	SniTrafficPolicyReferenceExtensionName = "sni-traffic-policy"
-	SniTrafficPolicyCapability             = "sni_traffic_policy"
+	SniTrafficPolicyExtensionName = "sni-traffic-policy"
 
 	LabelSandboxProxyType = "networking.agents.kruise.io/proxy-type"
 	LabelSandboxEgress    = "networking.agents.kruise.io/sandbox-egress"
@@ -48,18 +46,6 @@ const (
 	MeshInternalTrafficPolicyPassthrough = "PASSTHROUGH"
 	MeshInternalTrafficPolicyPeerAware   = "PEER_AWARE"
 )
-
-type policyReferenceContract struct {
-	capability    string
-	extensionName string
-}
-
-var policyReferenceContractByTypeURL = map[string]policyReferenceContract{
-	xdsmodel.SniTrafficPolicyType: {
-		capability:    SniTrafficPolicyCapability,
-		extensionName: SniTrafficPolicyReferenceExtensionName,
-	},
-}
 
 func IsSandboxDedicatedProxy(proxy *model.Proxy) bool {
 	return proxy.Labels[LabelSandboxProxyType] == "ztunnel"
@@ -216,64 +202,17 @@ func NewEgressPoliciesExtension(policies []*extensions.EgressPolicy) *workloadap
 	}
 }
 
-func NewPolicyReferenceExtension(name string, reference *extensions.PolicyReference) *workloadapi.Extension {
-	if name == "" || reference == nil || reference.GetTypeUrl() == "" || len(reference.GetResourceNames()) == 0 {
+// SNIPolicyExtensions carries the complete effective policy in
+// the direct Workload. Address resources shared with ztunnel are not enriched.
+func SNIPolicyExtensions(policy *extensions.SniTrafficPolicy) []*workloadapi.Extension {
+	if policy == nil {
 		return nil
 	}
-	pbBytes, err := proto.Marshal(reference)
+	payload, err := anypb.New(policy)
 	if err != nil {
 		return nil
 	}
-	return &workloadapi.Extension{
-		Name: name,
-		Config: &anypb.Any{
-			TypeUrl: PolicyReferenceTypeURL,
-			Value:   pbBytes,
-		},
-	}
-}
-
-func SupportsPolicyRuntime(metadata *model.NodeMetadata) bool {
-	if metadata == nil || metadata.MetadataDiscovery == nil || !bool(*metadata.MetadataDiscovery) {
-		return false
-	}
-	return len(metadata.PolicyRuntimeCapabilities) > 0
-}
-
-func SupportsPolicyCapability(metadata *model.NodeMetadata, capability string) bool {
-	if !SupportsPolicyRuntime(metadata) {
-		return false
-	}
-	for _, supported := range metadata.PolicyRuntimeCapabilities {
-		if supported == capability {
-			return true
-		}
-	}
-	return false
-}
-
-// PolicyReferenceExtensionsForProxy emits one Workload extension per policy
-// type implemented by this proxy. Unknown types are omitted rather than making
-// an older runtime subscribe to resources it cannot enforce or wait for them
-// during readiness.
-func PolicyReferenceExtensionsForProxy(
-	metadata *model.NodeMetadata,
-	references []*extensions.PolicyReference,
-) []*workloadapi.Extension {
-	if !SupportsPolicyRuntime(metadata) || len(references) == 0 {
-		return nil
-	}
-	result := make([]*workloadapi.Extension, 0, len(references))
-	for _, reference := range references {
-		contract, found := policyReferenceContractByTypeURL[reference.GetTypeUrl()]
-		if !found || !SupportsPolicyCapability(metadata, contract.capability) {
-			continue
-		}
-		if extension := NewPolicyReferenceExtension(contract.extensionName, reference); extension != nil {
-			result = append(result, extension)
-		}
-	}
-	return result
+	return []*workloadapi.Extension{{Name: SniTrafficPolicyExtensionName, Config: payload}}
 }
 
 func MeshInternalTrafficPolicyFromString(s string) extensions.MeshInternalTrafficPolicy {

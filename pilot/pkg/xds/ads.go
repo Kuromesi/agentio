@@ -507,7 +507,6 @@ var PushOrder = []string{
 	// Policies before Workloads: a Workload extension may start referencing a
 	// policy in the same incremental push. Deletions remain protected by the
 	// data plane's last-known-good grace period.
-	v3.SniTrafficPolicyType,
 	v3.AddressType,
 	v3.WorkloadType,
 	v3.WorkloadAuthorizationType,

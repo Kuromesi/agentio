@@ -20,7 +20,6 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/xds"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
-	"istio.io/istio/pkg/test/util/assert"
 )
 
 func TestAgentioResourceGeneratorRegistration(t *testing.T) {
@@ -28,26 +27,7 @@ func TestAgentioResourceGeneratorRegistration(t *testing.T) {
 	server := &xds.DiscoveryServer{Env: env}
 	InitGenerators(server, nil, "", "", nil, nil)
 
-	descriptors := xds.AgentioResourceDescriptors()
-	assert.Equal(t, len(descriptors), 1)
-	assert.Equal(t, descriptors[0].TypeURL, v3.SniTrafficPolicyType)
-	for _, descriptor := range descriptors {
-		registered, found := server.Generators[descriptor.TypeURL]
-		if !found {
-			t.Fatalf("generator for %q was not registered", descriptor.TypeURL)
-		}
-		generator, ok := registered.(*xds.AgentioResourceGenerator)
-		if !ok {
-			t.Fatalf("generator for %q has type %T, want *xds.AgentioResourceGenerator", descriptor.TypeURL, registered)
-		}
-		if generator.Server != server {
-			t.Fatalf("generator for %q has server %p, want %p", descriptor.TypeURL, generator.Server, server)
-		}
-		if generator.Descriptor.TypeURL != descriptor.TypeURL {
-			t.Fatalf("generator descriptor type URL is %q, want %q", generator.Descriptor.TypeURL, descriptor.TypeURL)
-		}
-		if generator.Descriptor.ConfigKind != descriptor.ConfigKind {
-			t.Fatalf("generator descriptor kind is %q, want %q", generator.Descriptor.ConfigKind, descriptor.ConfigKind)
-		}
+	if _, found := server.Generators[v3.SniTrafficPolicyType]; found {
+		t.Fatal("inline SNI policy must not register a standalone generator")
 	}
 }

@@ -123,8 +123,8 @@ pilot:
 	return nil
 }
 
-func TestAgentioWaypointPolicyCapabilities(t *testing.T) {
-	const sniTrafficPolicyCapability = "sni_traffic_policy"
+func TestAgentioWaypointPolicyStore(t *testing.T) {
+	const enabled = "true"
 	tests := []struct {
 		name                    string
 		sandboxEgress           bool
@@ -150,22 +150,22 @@ func TestAgentioWaypointPolicyCapabilities(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deployment := renderAgentioWaypointDeployment(t, tt.sandboxEgress, tt.sniTrafficPolicyEnabled)
-			capabilities := map[string]*corev1.EnvVar{}
+			settings := map[string]*corev1.EnvVar{}
 			for i := range deployment.Spec.Template.Spec.Containers[0].Env {
 				envVar := &deployment.Spec.Template.Spec.Containers[0].Env[i]
-				if envVar.Name == "PEER_METADATA_DISCOVERY" || envVar.Name == "POLICY_RUNTIME_CAPABILITIES" {
-					capabilities[envVar.Name] = envVar
+				if envVar.Name == "PEER_METADATA_DISCOVERY" || envVar.Name == "ENABLE_POLICY_STORE" {
+					settings[envVar.Name] = envVar
 				}
 			}
 			if tt.want {
-				if capability := capabilities["PEER_METADATA_DISCOVERY"]; capability == nil || capability.Value != "true" {
+				if capability := settings["PEER_METADATA_DISCOVERY"]; capability == nil || capability.Value != "true" {
 					t.Fatalf("PEER_METADATA_DISCOVERY = %#v, want true", capability)
 				}
-				if capability := capabilities["POLICY_RUNTIME_CAPABILITIES"]; capability == nil || capability.Value != sniTrafficPolicyCapability {
-					t.Fatalf("POLICY_RUNTIME_CAPABILITIES = %#v, want %q", capability, sniTrafficPolicyCapability)
+				if capability := settings["ENABLE_POLICY_STORE"]; capability == nil || capability.Value != enabled {
+					t.Fatalf("ENABLE_POLICY_STORE = %#v, want %q", capability, enabled)
 				}
-			} else if len(capabilities) != 0 {
-				t.Fatalf("policy capabilities = %#v, want absent", capabilities)
+			} else if len(settings) != 0 {
+				t.Fatalf("policy store settings = %#v, want absent", settings)
 			}
 		})
 	}

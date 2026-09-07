@@ -75,7 +75,7 @@ func TestAgentioResourceProvidersAndDescriptors(t *testing.T) {
 	for _, descriptor := range xds.AgentioResourceDescriptors() {
 		descriptorTypes.Insert(descriptor.TypeURL)
 	}
-	assert.Equal(t, descriptorTypes, sets.New(xdsmodel.SniTrafficPolicyType))
+	assert.Equal(t, descriptorTypes, sets.New[string]())
 }
 
 func TestAgentioResourcesForProxy(t *testing.T) {
@@ -125,88 +125,43 @@ func TestAgentioResourceProviderUsesKeyedLookup(t *testing.T) {
 	assert.Equal(t, len(got), 1)
 }
 
-func TestWorkloadExtensionsForProxyPublishesPerTypePolicyReference(t *testing.T) {
+func TestWorkloadExtensionsForProxyPublishesInlineSNI(t *testing.T) {
 	const uid = "cluster//Pod/ns/pod"
-	references := agentio.WorkloadPolicyReferences{
-		Name: uid,
-		References: []*extensions.PolicyReference{
-			{TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/policy"}},
-			{TypeUrl: "type.googleapis.com/example.extensions.v1.UnsupportedPolicy", ResourceNames: []string{"ns/ignored"}},
-		},
-	}
-	mock := krttest.NewMock(t, []any{references})
-	a := &index{workloadPolicyReferences: krttest.GetMockCollection[agentio.WorkloadPolicyReferences](mock)}
+	policy := &extensions.SniTrafficPolicy{Rules: []*extensions.SniRule{{
+		Match: &extensions.SniMatch{Sni: []string{"api.example.com"}}, Action: extensions.SniAction_SNI_ACTION_TLS_TERMINATION,
+	}}}
+	item := agentio.WorkloadSNIPolicy{Name: uid, Policy: policy}
+	mock := krttest.NewMock(t, []any{item})
+	a := &index{workloadSNIPolicies: krttest.GetMockCollection[agentio.WorkloadSNIPolicy](mock)}
 	proxy := &model.Proxy{Metadata: &model.NodeMetadata{
-		MetadataDiscovery:         ptr.Of(model.StringBool(true)),
-		PolicyRuntimeCapabilities: []string{agentio.SniTrafficPolicyCapability},
+		MetadataDiscovery: ptr.Of(model.StringBool(true)), EnablePolicyStore: true,
 	}}
-
 	got := a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})
 	assert.Equal(t, len(got), 1)
-	assert.Equal(t, got[0].GetName(), agentio.SniTrafficPolicyReferenceExtensionName)
-	assert.Equal(t, got[0].GetConfig().GetTypeUrl(), agentio.PolicyReferenceTypeURL)
-	decoded := &extensions.PolicyReference{}
+	assert.Equal(t, got[0].GetConfig().GetTypeUrl(), xdsmodel.SniTrafficPolicyType)
+	decoded := &extensions.SniTrafficPolicy{}
 	if err := got[0].GetConfig().UnmarshalTo(decoded); err != nil {
 		t.Fatal(err)
 	}
-	want := &extensions.PolicyReference{
-		TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/policy"},
+	if !proto.Equal(decoded, policy) {
+		t.Fatalf("inline policy = %v, want %v", decoded, policy)
 	}
-	if !proto.Equal(decoded, want) {
-		t.Fatalf("decoded references = %v, want %v", decoded, want)
-	}
-
-	proxy.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(false))
-	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})), 0)
+	proxy.Metadata = nil
+	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})), 1)
 }
 
-func TestPushWorkloadPolicyReferencesXdsIncludesNewPolicies(t *testing.T) {
-	oldReferences := agentio.WorkloadPolicyReferences{
-		Name: "cluster//Pod/ns/pod",
-		References: []*extensions.PolicyReference{{
-			TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/existing"},
-		}},
+func TestPushInlineSNIPolicyOnlyUpdatesWorkload(t *testing.T) {
+	old := agentio.WorkloadSNIPolicy{Name: "cluster//Pod/ns/pod", Policy: &extensions.SniTrafficPolicy{}}
+	updated := old
+	updated.Policy = &extensions.SniTrafficPolicy{Rules: []*extensions.SniRule{{Action: extensions.SniAction_SNI_ACTION_DENY}}}
+	for _, event := range []krt.Event[agentio.WorkloadSNIPolicy]{
+		{Event: controllers.EventUpdate, Old: &old, New: &updated},
+		{Event: controllers.EventDelete, Old: &old},
+	} {
+		recorder := &configUpdateRecorder{}
+		PushWorkloadSNIPoliciesXds(recorder)([]krt.Event[agentio.WorkloadSNIPolicy]{event})
+		assert.Equal(t, len(recorder.requests), 1)
+		assert.Equal(t, recorder.requests[0].AddressesUpdated, sets.New(old.Name))
+		assert.Equal(t, recorder.requests[0].ConfigsUpdated, sets.New(model.ConfigKey{Kind: kind.Address, Name: old.Name}))
 	}
-	newReferences := oldReferences
-	newReferences.References = []*extensions.PolicyReference{{
-		TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/existing", "ns/new"},
-	}}
-	recorder := &configUpdateRecorder{}
-
-	PushWorkloadPolicyReferencesXds(recorder)([]krt.Event[agentio.WorkloadPolicyReferences]{
-		{Event: controllers.EventUpdate, Old: &oldReferences, New: &newReferences},
-	})
-
-	if len(recorder.requests) != 1 {
-		t.Fatalf("ConfigUpdate calls = %d, want 1", len(recorder.requests))
-	}
-	request := recorder.requests[0]
-	assert.Equal(t, request.AddressesUpdated, sets.New(newReferences.ResourceName()))
-	assert.Equal(t, request.ConfigsUpdated, sets.New(
-		model.ConfigKey{Kind: kind.Address, Name: newReferences.ResourceName()},
-		model.ConfigKey{Kind: kind.SniTrafficPolicy, Name: "ns/new"},
-	))
-}
-
-func TestPushWorkloadPolicyReferencesXdsRemovesExtension(t *testing.T) {
-	oldReferences := agentio.WorkloadPolicyReferences{
-		Name: "cluster//Pod/ns/pod",
-		References: []*extensions.PolicyReference{{
-			TypeUrl: xdsmodel.SniTrafficPolicyType, ResourceNames: []string{"ns/old"},
-		}},
-	}
-	recorder := &configUpdateRecorder{}
-
-	PushWorkloadPolicyReferencesXds(recorder)([]krt.Event[agentio.WorkloadPolicyReferences]{
-		{Event: controllers.EventDelete, Old: &oldReferences},
-	})
-
-	if len(recorder.requests) != 1 {
-		t.Fatalf("ConfigUpdate calls = %d, want 1", len(recorder.requests))
-	}
-	request := recorder.requests[0]
-	assert.Equal(t, request.AddressesUpdated, sets.New(oldReferences.ResourceName()))
-	assert.Equal(t, request.ConfigsUpdated, sets.New(
-		model.ConfigKey{Kind: kind.Address, Name: oldReferences.ResourceName()},
-	))
 }

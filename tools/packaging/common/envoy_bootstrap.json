@@ -68,10 +68,7 @@
       "typed_config": {
         "@type": "type.googleapis.com/udpa.type.v1.TypedStruct",
         "type_url": "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.PolicyStoreConfig",
-        "value": {
-          "config_source": { "ads": {} },
-          "reference_resolution_grace_period": "{{ .policy_store_reference_resolution_grace_period }}"
-        }
+        "value": {}
       }
     },
     {{- end }}

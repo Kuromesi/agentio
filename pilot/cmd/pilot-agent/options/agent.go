@@ -70,28 +70,13 @@ func NewAgentOptions(proxy *ProxyArgs, cfg *meshconfig.ProxyConfig, sds istioage
 		SDSFactory:                  sds,
 		WorkloadIdentitySocketFile:  workloadIdentitySocketFile,
 		EnvoySkipDeprecatedLogs:     envoySkipDeprecatedLogsEnv,
-		PolicyRuntimeCapabilities:   parsePolicyRuntimeCapabilities(policyRuntimeCapabilitiesEnv),
+		EnablePolicyStore:           enablePolicyStoreEnv,
 	}
-	o.PolicyStoreReferenceResolutionGracePeriod = policyStoreReferenceResolutionGracePeriodEnv
 	if enableWDSEnvWasSet {
 		o.MetadataDiscovery = ptr.Of(enableWDSEnv)
 	}
 	extractXDSHeadersFromEnv(o)
 	return o
-}
-
-func parsePolicyRuntimeCapabilities(value string) []string {
-	var result []string
-	seen := sets.New[string]()
-	for _, capability := range strings.Split(value, ",") {
-		capability = strings.TrimSpace(capability)
-		if capability == "" || seen.Contains(capability) {
-			continue
-		}
-		seen.Insert(capability)
-		result = append(result, capability)
-	}
-	return result
 }
 
 // Simplified extraction of gRPC headers from environment.

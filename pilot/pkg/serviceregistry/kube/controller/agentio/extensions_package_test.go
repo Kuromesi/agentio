@@ -89,32 +89,6 @@ func TestExtensionProtoPackage(t *testing.T) {
 	}
 }
 
-func TestNewPolicyReferenceExtension(t *testing.T) {
-	reference := &extensions.PolicyReference{
-		TypeUrl: model.SniTrafficPolicyType, ResourceNames: []string{"ns/policy"},
-	}
-	got := NewPolicyReferenceExtension(SniTrafficPolicyReferenceExtensionName, reference)
-	if got == nil {
-		t.Fatal("expected policy reference extension")
-	}
-	if got.GetName() != SniTrafficPolicyReferenceExtensionName {
-		t.Fatalf("extension name = %q, want %q", got.GetName(), SniTrafficPolicyReferenceExtensionName)
-	}
-	if got.GetConfig().GetTypeUrl() != PolicyReferenceTypeURL {
-		t.Fatalf("extension TypeURL = %q, want %q", got.GetConfig().GetTypeUrl(), PolicyReferenceTypeURL)
-	}
-	decoded := &extensions.PolicyReference{}
-	if err := got.GetConfig().UnmarshalTo(decoded); err != nil {
-		t.Fatal(err)
-	}
-	if !proto.Equal(decoded, reference) {
-		t.Fatalf("decoded reference = %v, want %v", decoded, reference)
-	}
-	if got := NewPolicyReferenceExtension(SniTrafficPolicyReferenceExtensionName, &extensions.PolicyReference{}); got != nil {
-		t.Fatalf("empty reference returned extension: %v", got)
-	}
-}
-
 func TestNewWorkloadMetadataExtension(t *testing.T) {
 	got := NewWorkloadMetadataExtension(
 		map[string]string{"app": "agentio"},

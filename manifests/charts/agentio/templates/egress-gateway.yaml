@@ -118,10 +118,8 @@ spec:
         {{- if $.Values.sniTrafficPolicy.enabled }}
         - name: PEER_METADATA_DISCOVERY
           value: "true"
-        - name: POLICY_RUNTIME_CAPABILITIES
-          value: "sni_traffic_policy"
-        - name: POLICY_STORE_REFERENCE_RESOLUTION_GRACE_PERIOD
-          value: {{ $.Values.policyRuntime.referenceResolutionGracePeriod | default "15s" | quote }}
+        - name: ENABLE_POLICY_STORE
+          value: "true"
         {{- end }}
         - name: GOMEMLIMIT
           valueFrom:

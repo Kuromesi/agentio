@@ -41,9 +41,9 @@ func renderPolicyStoreBootstrap(t *testing.T) string {
 		ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
 		Locality: &core.Locality{},
 		Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
-			ProxyConfig:               &proxyConfig,
-			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
-			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
+			ProxyConfig:       &proxyConfig,
+			MetadataDiscovery: ptr.Of(model.StringBool(true)),
+			EnablePolicyStore: true,
 		}},
 		RawMetadata: map[string]any{},
 	}
@@ -85,9 +85,6 @@ func TestPolicyStoreExtensionNameMatchesFactory(t *testing.T) {
 	rendered := renderPolicyStoreBootstrap(t)
 	if !strings.Contains(rendered, `"name": "kruise.bootstrap.policy_store"`) {
 		t.Error(`rendered bootstrap does not use the registered factory name "kruise.bootstrap.policy_store"`)
-	}
-	if !strings.Contains(rendered, `"reference_resolution_grace_period": "15s"`) {
-		t.Error("rendered bootstrap does not use the default fifteen-second reference resolution grace period")
 	}
 	workloadDiscovery := strings.Index(rendered, `"name": "metadata_discovery"`)
 	policyStore := strings.Index(rendered, `"name": "kruise.bootstrap.policy_store"`)

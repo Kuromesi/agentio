@@ -34,9 +34,9 @@ func NewStatusServerOptions(ipv6 bool, t model.NodeType, proxyConfig *meshconfig
 		Probes:         []ready.Prober{agent},
 		NoEnvoy:        agent.EnvoyDisabled(),
 		// The policy store consumes Workload WDS, so readiness is enabled only when
-		// workload discovery and at least one policy runtime capability are enabled.
+		// workload discovery and the policy store are enabled.
 		PolicyStore: enableWDSEnvWasSet && enableWDSEnv &&
-			len(parsePolicyRuntimeCapabilities(policyRuntimeCapabilitiesEnv)) > 0,
+			enablePolicyStoreEnv,
 		FetchDNS:      agent.GetDNSTable,
 		GRPCBootstrap: agent.GRPCBootstrapPath(),
 		TriggerDrain: func() {

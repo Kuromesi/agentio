@@ -20,10 +20,8 @@ import (
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"google.golang.org/protobuf/proto"
 
-	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/util/protoconv"
-	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/config/schema/kind"
 	istiolog "istio.io/istio/pkg/log"
 	"istio.io/istio/pkg/util/sets"
@@ -46,16 +44,9 @@ type AgentioResourceDescriptor struct {
 // AgentioResourceDescriptors returns the resource types served by
 // AgentioResourceGenerator. A fresh slice is returned on every call so bootstrap
 // and tests cannot mutate shared descriptor ordering.
+// Reserverd and not not used currently.
 func AgentioResourceDescriptors() []AgentioResourceDescriptor {
-	enabled := func() bool { return features.EnableSniTrafficPolicy }
-	return []AgentioResourceDescriptor{
-		{
-			TypeURL:             v3.SniTrafficPolicyType,
-			ConfigKind:          kind.SniTrafficPolicy,
-			ResourceNameFromKey: func(k model.ConfigKey) string { return k.Name },
-			Enabled:             enabled,
-		},
-	}
+	return nil
 }
 
 // AgentioResourceGenerator serves descriptor-defined Agentio resources.
