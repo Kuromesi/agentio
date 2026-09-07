@@ -32,10 +32,12 @@ import (
 
 const (
 	// readyStat is the Envoy gauge published by the native gateway policy store.
-	// It becomes 1 after the first Workload discovery response and the first
-	// response for every policy TypeURL referenced by those workloads. Missing
-	// named policy resources remain fail-closed per workload, but do not make the whole gateway
-	// unavailable indefinitely.
+	// It becomes 1 after an accepted initial Workload discovery response, including
+	// its inline policies, has been flushed and published by the store. There is
+	// no separate policy TypeURL subscription to wait for. An empty initial response
+	// also qualifies: this signals initial sync, not completeness against all pods
+	// in the cluster. Missing or unusable workload policies are handled by the
+	// matcher, which fails closed unless failure_mode_allow is explicitly enabled.
 	readyStat = "policy_store.initial_sync_ready"
 
 	readyStatFilter = `^policy_store\.initial_sync_ready$`
@@ -50,8 +52,9 @@ type Probe struct {
 	localHostAddr string
 	adminPort     uint16
 
-	// Readiness is a startup gate. Once the initial subscriptions have converged,
-	// later policy changes are handled per workload and must not drain the gateway.
+	// Readiness is a latched startup gate. Once the initial store sync is observed,
+	// later checks skip this gauge. Policy changes are handled per workload and
+	// must not drain the gateway; the other readiness probes still run.
 	ready bool
 }
 
