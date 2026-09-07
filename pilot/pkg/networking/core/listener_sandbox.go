@@ -122,7 +122,7 @@ const (
 
 func sniTrafficPolicyEnabled(metadata *model.NodeMetadata) bool {
 	return features.EnableSniTrafficPolicy &&
-		agentio.SupportsPolicyCapability(metadata, agentio.SniTrafficPolicyCapability)
+		metadata != nil && metadata.MetadataDiscovery != nil && bool(*metadata.MetadataDiscovery) && bool(metadata.EnablePolicyStore)
 }
 
 // buildCaptureSNIFilter returns a network filter that captures the downstream

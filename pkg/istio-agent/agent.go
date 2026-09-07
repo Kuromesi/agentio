@@ -223,8 +223,8 @@ type AgentOptions struct {
 
 	// Enable metadata discovery bootstrap extension
 	MetadataDiscovery *bool
-	// Policy runtime capabilities supported by the proxy binary.
-	PolicyRuntimeCapabilities []string
+	// Enable the policy store backed by Workload discovery.
+	EnablePolicyStore bool
 
 	SDSFactory func(options *security.Options, workloadSecretCache security.SecretManager, pkpConf *mesh.PrivateKeyProvider) SDSService
 
@@ -291,7 +291,7 @@ func (a *Agent) generateNodeMetadata() (*model.Node, error) {
 		ExitOnZeroActiveConnections: a.cfg.ExitOnZeroActiveConnections,
 		XDSRootCert:                 a.cfg.XDSRootCerts,
 		MetadataDiscovery:           a.cfg.MetadataDiscovery,
-		PolicyRuntimeCapabilities:   a.cfg.PolicyRuntimeCapabilities,
+		EnablePolicyStore:           a.cfg.EnablePolicyStore,
 		EnvoySkipDeprecatedLogs:     a.cfg.EnvoySkipDeprecatedLogs,
 		WorkloadIdentitySocketFile:  a.cfg.WorkloadIdentitySocketFile,
 	})

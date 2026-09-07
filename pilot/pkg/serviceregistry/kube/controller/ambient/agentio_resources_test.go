@@ -134,7 +134,7 @@ func TestWorkloadExtensionsForProxyPublishesInlineSNI(t *testing.T) {
 	mock := krttest.NewMock(t, []any{item})
 	a := &index{workloadSNIPolicies: krttest.GetMockCollection[agentio.WorkloadSNIPolicy](mock)}
 	proxy := &model.Proxy{Metadata: &model.NodeMetadata{
-		MetadataDiscovery: ptr.Of(model.StringBool(true)), PolicyRuntimeCapabilities: []string{agentio.SniTrafficPolicyCapability},
+		MetadataDiscovery: ptr.Of(model.StringBool(true)), EnablePolicyStore: true,
 	}}
 	got := a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})
 	assert.Equal(t, len(got), 1)
@@ -146,8 +146,8 @@ func TestWorkloadExtensionsForProxyPublishesInlineSNI(t *testing.T) {
 	if !proto.Equal(decoded, policy) {
 		t.Fatalf("inline policy = %v, want %v", decoded, policy)
 	}
-	proxy.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(false))
-	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})), 0)
+	proxy.Metadata = nil
+	assert.Equal(t, len(a.WorkloadExtensionsForProxy(proxy, &workloadapi.Workload{Uid: uid})), 1)
 }
 
 func TestPushInlineSNIPolicyOnlyUpdatesWorkload(t *testing.T) {

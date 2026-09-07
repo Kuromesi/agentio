@@ -45,7 +45,6 @@ import (
 	"istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/security"
-	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
 	"istio.io/istio/pkg/version"
 )
@@ -114,7 +113,7 @@ func (cfg Config) toTemplateParams() (map[string]any, error) {
 		// Not supported on legacy SotW protocol
 		mDiscovery = false
 	}
-	policyStore := mDiscovery && len(cfg.Metadata.PolicyRuntimeCapabilities) > 0
+	policyStore := mDiscovery && bool(cfg.Metadata.EnablePolicyStore)
 	customSDSPath := ""
 	if _, f := cfg.RawMetadata[security.CredentialFileMetaDataName]; f {
 		customSDSPath = security.FileCredentialNameSocketPath
@@ -653,7 +652,7 @@ type MetadataOptions struct {
 	EnvoyPrometheusPort         int
 	ExitOnZeroActiveConnections bool
 	MetadataDiscovery           *bool
-	PolicyRuntimeCapabilities   []string
+	EnablePolicyStore           bool
 	EnvoySkipDeprecatedLogs     bool
 	WorkloadIdentitySocketFile  string
 }
@@ -716,7 +715,7 @@ func GetNodeMetaData(options MetadataOptions) (*model.Node, error) {
 	} else {
 		meta.MetadataDiscovery = ptr.Of(model.StringBool(*options.MetadataDiscovery))
 	}
-	meta.PolicyRuntimeCapabilities = slices.Clone(options.PolicyRuntimeCapabilities)
+	meta.EnablePolicyStore = model.StringBool(options.EnablePolicyStore)
 	meta.EnvoySkipDeprecatedLogs = model.StringBool(options.EnvoySkipDeprecatedLogs)
 
 	meta.WorkloadIdentitySocketFile = options.WorkloadIdentitySocketFile

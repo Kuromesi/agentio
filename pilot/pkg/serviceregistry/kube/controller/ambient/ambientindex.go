@@ -933,22 +933,21 @@ func (a *index) AddressInformationForProxy(
 	return res, sets.New(removed...)
 }
 
-// WorkloadExtensionsForProxy returns gateway-only extensions added while
+// WorkloadExtensionsForProxy returns policy extensions added while
 // serializing the direct Workload WDS resource. The globally cached Workload
 // and its pre-marshaled Address remain unchanged for ztunnel consumers.
 func (a *index) WorkloadExtensionsForProxy(
-	proxy *model.Proxy,
+	_ *model.Proxy,
 	workload *workloadapi.Workload,
 ) []*workloadapi.Extension {
-	if proxy == nil || workload == nil || a.workloadSNIPolicies == nil ||
-		!agentio.SupportsPolicyRuntime(proxy.Metadata) {
+	if workload == nil || a.workloadSNIPolicies == nil {
 		return nil
 	}
 	references := a.workloadSNIPolicies.GetKey(workload.GetUid())
 	if references == nil {
 		return nil
 	}
-	return agentio.SNIPolicyExtensionsForProxy(proxy.Metadata, references.Policy)
+	return agentio.SNIPolicyExtensions(references.Policy)
 }
 
 func (a *index) ServicesForWaypoint(key model.WaypointKey) []model.ServiceInfo {

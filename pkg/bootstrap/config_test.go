@@ -33,7 +33,6 @@ import (
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/model"
 	"istio.io/istio/pkg/ptr"
-	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/test"
 	testenv "istio.io/istio/pkg/test/env"
 	"istio.io/istio/pkg/version"
@@ -218,9 +217,9 @@ func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 		ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
 		Locality: &core.Locality{},
 		Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
-			ProxyConfig:               &proxyConfig,
-			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
-			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
+			ProxyConfig:       &proxyConfig,
+			MetadataDiscovery: ptr.Of(model.StringBool(true)),
+			EnablePolicyStore: true,
 		}},
 		RawMetadata: map[string]any{},
 	}
@@ -255,20 +254,33 @@ func TestPolicyRuntimeBootstrapOption(t *testing.T) {
 	}
 }
 
-func TestPolicyRuntimeCapabilitiesNodeMetadata(t *testing.T) {
+func TestEnablePolicyStoreNodeMetadata(t *testing.T) {
 	proxyConfig := &v1alpha1.ProxyConfig{ProxyMetadata: map[string]string{}}
-	want := []string{
-		"sni_traffic_policy",
-		"other_policy",
-	}
+	want := true
 	node, err := GetNodeMetaData(MetadataOptions{
-		ProxyConfig:               proxyConfig,
-		PolicyRuntimeCapabilities: want,
+		ProxyConfig:       proxyConfig,
+		EnablePolicyStore: want,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(node.Metadata.PolicyRuntimeCapabilities, want) {
-		t.Fatalf("POLICY_RUNTIME_CAPABILITIES = %v, want %v", node.Metadata.PolicyRuntimeCapabilities, want)
+	if bool(node.Metadata.EnablePolicyStore) != want {
+		t.Fatalf("ENABLE_POLICY_STORE = %v, want %v", node.Metadata.EnablePolicyStore, want)
+	}
+}
+
+func TestPolicyStoreRequiresWorkloadDiscovery(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, discovery := range []bool{false, true} {
+			proxyConfig := model.NodeMetaProxyConfig(v1alpha1.ProxyConfig{DiscoveryAddress: "istiod:15012"})
+			node := &model.Node{ID: "router~10.0.0.1~gateway.ns~ns.svc.cluster.local", Locality: &core.Locality{}, Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{ProxyConfig: &proxyConfig, MetadataDiscovery: ptr.Of(model.StringBool(discovery)), EnablePolicyStore: model.StringBool(enabled)}}, RawMetadata: map[string]any{}}
+			params, err := (Config{Node: node}).toTemplateParams()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := params["policy_store"]; got != (enabled && discovery) {
+				t.Fatalf("store=%v discovery=%v: policy_store=%v", enabled, discovery, got)
+			}
+		}
 	}
 }

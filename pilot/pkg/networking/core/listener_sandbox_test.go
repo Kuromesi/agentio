@@ -58,9 +58,9 @@ func sandboxEgressNode() *model.Proxy {
 		ID:              "egress-gw-0.istio-system",
 		ConfigNamespace: "istio-system",
 		Metadata: &model.NodeMetadata{
-			Namespace:                 "istio-system",
-			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
-			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
+			Namespace:         "istio-system",
+			MetadataDiscovery: ptr.Of(model.StringBool(true)),
+			EnablePolicyStore: true,
 		},
 		VerifiedIdentity: &spiffe.Identity{
 			ServiceAccount: "egress-gw",
@@ -766,35 +766,35 @@ func TestSniTrafficPolicyFeatureAddsMatcherOutcomeChains(t *testing.T) {
 	}
 }
 
-func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
+func TestSniTrafficPolicyRequiresPolicyStore(t *testing.T) {
 	previous := features.EnableSniTrafficPolicy
 	features.EnableSniTrafficPolicy = true
 	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
 
 	tests := []struct {
-		name                string
-		workloadDiscovery   bool
-		runtimeCapabilities []string
-		wantEnabled         bool
+		name              string
+		workloadDiscovery bool
+		enablePolicyStore bool
+		wantEnabled       bool
 	}{
 		{
-			name:                "workload discovery and matcher capability",
-			workloadDiscovery:   true,
-			runtimeCapabilities: []string{"sni_traffic_policy"},
-			wantEnabled:         true,
+			name:              "workload discovery and policy store",
+			workloadDiscovery: true,
+			enablePolicyStore: true,
+			wantEnabled:       true,
 		},
 		{
-			name:                "matcher without policy store",
-			runtimeCapabilities: []string{"sni_traffic_policy"},
+			name:              "policy store without workload discovery",
+			enablePolicyStore: true,
 		},
 		{
-			name:              "workload discovery without matcher",
+			name:              "workload discovery without policy store",
 			workloadDiscovery: true,
 		},
 		{
-			name:                "unrelated policy matcher",
-			workloadDiscovery:   true,
-			runtimeCapabilities: []string{"type.googleapis.com/example.OtherPolicyMatcher"},
+			name:              "policy store disabled",
+			workloadDiscovery: true,
+			enablePolicyStore: false,
 		},
 	}
 
@@ -803,7 +803,7 @@ func TestSniTrafficPolicyRequiresNodeCapability(t *testing.T) {
 			cg := NewConfigGenTest(t, TestOptions{})
 			node := sandboxEgressNode()
 			node.Metadata.MetadataDiscovery = ptr.Of(model.StringBool(tt.workloadDiscovery))
-			node.Metadata.PolicyRuntimeCapabilities = tt.runtimeCapabilities
+			node.Metadata.EnablePolicyStore = model.StringBool(tt.enablePolicyStore)
 			lb := &ListenerBuilder{node: cg.SetupProxy(node), push: cg.PushContext()}
 			chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
 			wantChains := 2

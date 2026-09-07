@@ -39,7 +39,6 @@ const (
 	PolicyReferenceTypeURL    = extensionPrefix + "PolicyReference"
 
 	SniTrafficPolicyExtensionName = "sni-traffic-policy"
-	SniTrafficPolicyCapability    = "sni_traffic_policy"
 
 	LabelSandboxProxyType = "networking.agents.kruise.io/proxy-type"
 	LabelSandboxEgress    = "networking.agents.kruise.io/sandbox-egress"
@@ -203,10 +202,10 @@ func NewEgressPoliciesExtension(policies []*extensions.EgressPolicy) *workloadap
 	}
 }
 
-// SNIPolicyExtensionsForProxy carries the complete effective policy in
+// SNIPolicyExtensions carries the complete effective policy in
 // the direct Workload. Address resources shared with ztunnel are not enriched.
-func SNIPolicyExtensionsForProxy(metadata *model.NodeMetadata, policy *extensions.SniTrafficPolicy) []*workloadapi.Extension {
-	if policy == nil || !SupportsPolicyCapability(metadata, SniTrafficPolicyCapability) {
+func SNIPolicyExtensions(policy *extensions.SniTrafficPolicy) []*workloadapi.Extension {
+	if policy == nil {
 		return nil
 	}
 	payload, err := anypb.New(policy)
@@ -214,25 +213,6 @@ func SNIPolicyExtensionsForProxy(metadata *model.NodeMetadata, policy *extension
 		return nil
 	}
 	return []*workloadapi.Extension{{Name: SniTrafficPolicyExtensionName, Config: payload}}
-}
-
-func SupportsPolicyRuntime(metadata *model.NodeMetadata) bool {
-	if metadata == nil || metadata.MetadataDiscovery == nil || !bool(*metadata.MetadataDiscovery) {
-		return false
-	}
-	return len(metadata.PolicyRuntimeCapabilities) > 0
-}
-
-func SupportsPolicyCapability(metadata *model.NodeMetadata, capability string) bool {
-	if !SupportsPolicyRuntime(metadata) {
-		return false
-	}
-	for _, supported := range metadata.PolicyRuntimeCapabilities {
-		if supported == capability {
-			return true
-		}
-	}
-	return false
 }
 
 func MeshInternalTrafficPolicyFromString(s string) extensions.MeshInternalTrafficPolicy {

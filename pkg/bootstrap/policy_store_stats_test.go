@@ -41,9 +41,9 @@ func renderPolicyStoreBootstrap(t *testing.T) string {
 		ID:       "router~10.0.0.1~gateway.istio-system~istio-system.svc.cluster.local",
 		Locality: &core.Locality{},
 		Metadata: &model.BootstrapNodeMetadata{NodeMetadata: model.NodeMetadata{
-			ProxyConfig:               &proxyConfig,
-			MetadataDiscovery:         ptr.Of(model.StringBool(true)),
-			PolicyRuntimeCapabilities: []string{"sni_traffic_policy"},
+			ProxyConfig:       &proxyConfig,
+			MetadataDiscovery: ptr.Of(model.StringBool(true)),
+			EnablePolicyStore: true,
 		}},
 		RawMetadata: map[string]any{},
 	}
