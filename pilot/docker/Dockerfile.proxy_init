@@ -1,13 +1,14 @@
 FROM alpine:3.22
 
 # Keep the init image limited to pilot-agent and the userspace tools required
-# by the istio-iptables subcommand.
+# by the istio-iptables subcommand. Require the CVE-2026-14456 fixes even
+# when building against a stale Alpine mirror.
 RUN apk add --no-cache --upgrade \
     ca-certificates \
     iptables \
     ip6tables \
-    libcrypto3 \
-    libssl3 \
+    "libcrypto3>=3.5.8-r0" \
+    "libssl3>=3.5.8-r0" \
     nftables
 
 ARG TARGETARCH
