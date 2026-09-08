@@ -129,13 +129,19 @@ func buildTLSProxyOriginateCluster() *clusterv3.Cluster {
 		}},
 	})
 	cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: options}
-	tlsConfig, _ := anypb.New(&tlsv3.UpstreamTlsContext{CommonTlsContext: &tlsv3.CommonTlsContext{
-		TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
-		ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
-			TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
-		}},
-		AlpnProtocols: []string{"h2", "http/1.1"},
-	}})
+	// Multiple SNI hostnames share this context. Disable session reuse until
+	// Envoy scopes its upstream session cache by SNI, otherwise a resumed
+	// session can carry another hostname's certificate and fail SAN validation.
+	// See https://github.com/envoyproxy/envoy/pull/45982.
+	tlsConfig, _ := anypb.New(&tlsv3.UpstreamTlsContext{
+		MaxSessionKeys: wrapperspb.UInt32(0),
+		CommonTlsContext: &tlsv3.CommonTlsContext{
+			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
+			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
+				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
+			}},
+			AlpnProtocols: []string{"h2", "http/1.1"},
+		}})
 	cluster.TransportSocket = &corev3.TransportSocket{
 		Name:       "envoy.transport_sockets.tls",
 		ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tlsConfig},
@@ -185,13 +191,19 @@ func buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.C
 		}},
 	})
 	cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: opts}
-	tlsConfig, _ := anypb.New(&tlsv3.UpstreamTlsContext{CommonTlsContext: &tlsv3.CommonTlsContext{
-		TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
-		ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
-			TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
-		}},
-		AlpnProtocols: []string{"h2", "http/1.1"},
-	}})
+	// Multiple SNI hostnames share this context. Disable session reuse until
+	// Envoy scopes its upstream session cache by SNI, otherwise a resumed
+	// session can carry another hostname's certificate and fail SAN validation.
+	// See https://github.com/envoyproxy/envoy/pull/45982.
+	tlsConfig, _ := anypb.New(&tlsv3.UpstreamTlsContext{
+		MaxSessionKeys: wrapperspb.UInt32(0),
+		CommonTlsContext: &tlsv3.CommonTlsContext{
+			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
+			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
+				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
+			}},
+			AlpnProtocols: []string{"h2", "http/1.1"},
+		}})
 	cluster.TransportSocket = &corev3.TransportSocket{
 		Name:       "envoy.transport_sockets.tls",
 		ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tlsConfig},

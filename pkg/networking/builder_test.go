@@ -1023,6 +1023,42 @@ func TestGatewayClustersUseConfiguredConnectTimeoutAndRootCA(t *testing.T) {
 	}
 }
 
+func TestGatewayTLSOriginationDisablesSharedSessionCache(t *testing.T) {
+	resources, err := Build(Inputs{
+		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+		TrustDomain:      "cluster.local", Gateway: testGateway(nil),
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	clusters := messagesOf(t, resources, model.ClusterType, func() *clusterv3.Cluster { return &clusterv3.Cluster{} })
+	for _, name := range []string{TLSConnectOriginate, TLSProxyOriginate} {
+		t.Run(name, func(t *testing.T) {
+			cluster := clusters[name]
+			context := &tlsv3.UpstreamTlsContext{}
+			if err := cluster.GetTransportSocket().GetTypedConfig().UnmarshalTo(context); err != nil {
+				t.Fatalf("decode TLS context: %v", err)
+			}
+			// An absent wrapper enables Envoy's default session cache.
+			if keys := context.GetMaxSessionKeys(); keys == nil || keys.GetValue() != 0 {
+				t.Fatalf("max session keys = %v, want explicit zero to prevent cross-SNI session reuse", keys)
+			}
+			if got := context.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename(); got != features.ResolveGatewayRootCAPath() {
+				t.Fatalf("trusted CA = %q, want configured roots", got)
+			}
+			if name == TLSConnectOriginate {
+				options := &httpupstreamv3.HttpProtocolOptions{}
+				if err := cluster.GetTypedExtensionProtocolOptions()[httpProtocolOptionsType].UnmarshalTo(options); err != nil {
+					t.Fatalf("decode HTTP options: %v", err)
+				}
+				if !options.GetUpstreamHttpProtocolOptions().GetAutoSni() || !options.GetUpstreamHttpProtocolOptions().GetAutoSanValidation() {
+					t.Fatal("TLS origination must retain automatic SNI and SAN validation")
+				}
+			}
+		})
+	}
+}
+
 func TestBuildRejectsRelativeGatewayRootCAPath(t *testing.T) {
 	test.SetForTest(t, &features.GatewayRootCAPath, "certs/root.pem")
 	_, err := Build(Inputs{

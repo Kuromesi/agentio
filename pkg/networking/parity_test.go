@@ -93,6 +93,21 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 			delete(got, key)
 			continue
 		}
+		// The legacy oracle predates disabling the shared cross-SNI session
+		// cache. The explicit zero is covered by the TLS origination regression test.
+		if cluster, ok := message.(*clusterv3.Cluster); ok &&
+			(cluster.GetName() == TLSConnectOriginate || cluster.GetName() == TLSProxyOriginate) {
+			context := &tlsv3.UpstreamTlsContext{}
+			if err := cluster.GetTransportSocket().GetTypedConfig().UnmarshalTo(context); err != nil {
+				t.Fatalf("decode TLS context: %v", err)
+			}
+			context.MaxSessionKeys = nil
+			typed, err := anypb.New(context)
+			if err != nil {
+				t.Fatalf("encode TLS context: %v", err)
+			}
+			cluster.TransportSocket.ConfigType = &corev3.TransportSocket_TypedConfig{TypedConfig: typed}
+		}
 		// The gateway connect timeout belongs only to Passthrough and the two
 		// DFP clusters; internal hops keep their explicit in-memory timeout.
 		if cluster, ok := message.(*clusterv3.Cluster); ok &&
