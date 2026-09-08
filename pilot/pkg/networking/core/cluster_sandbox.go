@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // Copyright Istio Authors
+// Modifications Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +40,7 @@ import (
 	httpupstream "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/util/protoconv"
@@ -152,6 +154,11 @@ func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster
 	c.TransportSocket = &core.TransportSocket{
 		Name: wellknown.TransportSocketTLS,
 		ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: protoconv.MessageToAny(&tlsv3.UpstreamTlsContext{
+			// This context serves multiple SNI hostnames. Disable session reuse until
+			// Envoy scopes its upstream session cache by SNI, otherwise a resumed
+			// session can carry another hostname's certificate and fail SAN validation.
+			// See https://github.com/envoyproxy/envoy/pull/45982.
+			MaxSessionKeys: wrapperspb.UInt32(0),
 			CommonTlsContext: &tlsv3.CommonTlsContext{
 				TlsParams: &tlsv3.TlsParameters{
 					TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
@@ -198,6 +205,9 @@ func buildTLSProxyOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
 	c.TransportSocket = &core.TransportSocket{
 		Name: wellknown.TransportSocketTLS,
 		ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: protoconv.MessageToAny(&tlsv3.UpstreamTlsContext{
+			// Proxy hostnames share this context too. As with tls_connect_originate,
+			// disable session reuse until Envoy's upstream cache is scoped by SNI.
+			MaxSessionKeys: wrapperspb.UInt32(0),
 			CommonTlsContext: &tlsv3.CommonTlsContext{
 				TlsParams: &tlsv3.TlsParameters{
 					TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
