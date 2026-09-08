@@ -91,6 +91,25 @@ func TestSandboxClusters_TLSOriginationRequiresSecureClusterOptions(t *testing.T
 	if dfpConfig.GetAllowInsecureClusterOptions() {
 		t.Fatal("TLS-origination dynamic forward proxy must require secure cluster options")
 	}
+
+	tlsContext := &tlsv3.UpstreamTlsContext{}
+	if err := got.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
+		t.Fatalf("decode upstream TLS context: %v", err)
+	}
+	// An absent wrapper enables Envoy's default session cache; require explicit zero.
+	if keys := tlsContext.GetMaxSessionKeys(); keys == nil || keys.GetValue() != 0 {
+		t.Fatalf("max session keys = %v, want explicit zero to prevent cross-SNI session reuse", keys)
+	}
+	if got, want := tlsContext.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename(), security.GetOSRootFilePath(); got != want {
+		t.Fatalf("trusted CA = %q, want OS roots %q", got, want)
+	}
+	httpOptions := &httpupstream.HttpProtocolOptions{}
+	if err := got.GetTypedExtensionProtocolOptions()[v3.HttpProtocolOptionsType].UnmarshalTo(httpOptions); err != nil {
+		t.Fatalf("decode HTTP protocol options: %v", err)
+	}
+	if !httpOptions.GetUpstreamHttpProtocolOptions().GetAutoSni() || !httpOptions.GetUpstreamHttpProtocolOptions().GetAutoSanValidation() {
+		t.Fatal("TLS origination must retain automatic SNI and SAN validation")
+	}
 }
 
 func TestSandboxClusters_TargetRefEnvoyFilterPatchesTLSOrigination(t *testing.T) {
@@ -194,6 +213,10 @@ func TestSandboxClusters_TLSProxyOriginationUsesOriginalDestination(t *testing.T
 	tlsContext := &tlsv3.UpstreamTlsContext{}
 	if err := got.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
 		t.Fatalf("decode upstream TLS context: %v", err)
+	}
+	// Proxy hostnames also share one TLS context; an absent wrapper enables the cache.
+	if keys := tlsContext.GetMaxSessionKeys(); keys == nil || keys.GetValue() != 0 {
+		t.Fatalf("max session keys = %v, want explicit zero to prevent cross-SNI session reuse", keys)
 	}
 	common := tlsContext.GetCommonTlsContext()
 	if got, want := common.GetTlsParams().GetTlsMinimumProtocolVersion(), tlsv3.TlsParameters_TLSv1_2; got != want {
