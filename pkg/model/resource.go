@@ -38,6 +38,7 @@ const (
 	ExtensionConfigurationType = "type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig"
 	ProxyConfigType            = "type.googleapis.com/istio.mesh.v1alpha1.ProxyConfig"
 	AddressType                = "type.googleapis.com/istio.workload.Address"
+	SandboxType                = "type.googleapis.com/io.kruise.agentio.sandbox.v1.Sandbox"
 	WorkloadType               = "type.googleapis.com/istio.workload.Workload"
 	WorkloadAuthorizationType  = "type.googleapis.com/istio.security.Authorization"
 	SniTrafficPolicyType       = "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"

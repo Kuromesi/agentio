@@ -409,8 +409,8 @@ func TestCompilerResolvesInlineSNIProfile(t *testing.T) {
 	if err := workloadResource.Value.UnmarshalTo(address); err != nil {
 		t.Fatalf("unmarshal Workload: %v", err)
 	}
-	if got := extensionNames(address.GetWorkload().GetExtensions()); !reflect.DeepEqual(got, []string{"workload-metadata", "egress-policies", "sandbox-bindings"}) {
-		t.Fatalf("Address workload extensions = %v, want metadata, ztunnel egress policy, and sandbox bindings", got)
+	if got := extensionNames(address.GetWorkload().GetExtensions()); !reflect.DeepEqual(got, []string{"workload-metadata", "egress-policies"}) {
+		t.Fatalf("Address workload extensions = %v, want metadata and ztunnel egress policy", got)
 	}
 	if _, found := snapshot.Get(model.ResourceKey{TypeURL: model.WorkloadType, Name: "cluster//Pod/demo/client"}); found {
 		t.Fatal("compiler retained a direct Workload resource")

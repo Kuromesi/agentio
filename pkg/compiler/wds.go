@@ -25,8 +25,6 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"istio.io/istio/pkg/util/sets"
-
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/features"
@@ -45,31 +43,6 @@ type wdsProjection struct {
 	EgressPolicies        *extensionsv1.EgressPolicies
 	EgressGatewayKeys     []string
 	OwnedGatewayKey       string
-}
-
-func newWorkloadSandboxBindingsExtension(workload model.Workload) (*workloadv1.Extension, error) {
-	if len(workload.SandboxBindings) == 0 {
-		return nil, fmt.Errorf("workload %s has no sandbox bindings", workload.UID)
-	}
-	bindings := &extensionsv1.WorkloadSandboxBindings{SourceUid: workload.SourceUID}
-	seen := sets.NewWithLength[string](len(workload.SandboxBindings))
-	for index, binding := range workload.SandboxBindings {
-		if err := binding.Validate(); err != nil {
-			return nil, fmt.Errorf("workload %s sandbox binding %d: %w", workload.UID, index, err)
-		}
-		if seen.Contains(binding.SandboxUID) {
-			return nil, fmt.Errorf("workload %s sandbox binding %q is duplicated", workload.UID, binding.SandboxUID)
-		}
-		seen.Insert(binding.SandboxUID)
-		bindings.Sandboxes = append(bindings.Sandboxes, &extensionsv1.SandboxBinding{
-			SandboxUid: binding.SandboxUID,
-		})
-	}
-	value, err := anypb.New(bindings)
-	if err != nil {
-		return nil, fmt.Errorf("marshal sandbox bindings for workload %s: %w", workload.UID, err)
-	}
-	return &workloadv1.Extension{Name: "sandbox-bindings", Config: value}, nil
 }
 
 // singleSandboxBinding returns the only binding when a Workload can be
@@ -240,13 +213,6 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 				Name:   "egress-policies",
 				Config: value,
 			})
-	}
-	if len(input.Workload.SandboxBindings) > 0 {
-		bindingsExtension, err := newWorkloadSandboxBindingsExtension(input.Workload)
-		if err != nil {
-			return nil, err
-		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions, bindingsExtension)
 	}
 
 	wireWorkload.AuthorizationPolicies = append([]string(nil), input.AuthorizationNames...)

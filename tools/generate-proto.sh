@@ -21,6 +21,8 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 proto_files=(
   api/security/v1/authorization.proto
   api/security/v1/trafficpolicy.proto
+  api/sandbox/v1/egressrouting.proto
+  api/sandbox/v1/sandbox.proto
   api/extensions/v1/extensions.proto
   api/extensions/v1/egresspolicy.proto
   api/extensions/v1/snipolicy.proto

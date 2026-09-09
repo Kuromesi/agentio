@@ -19,46 +19,12 @@ import (
 	"strings"
 	"testing"
 
-	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-func TestNewWorkloadSandboxBindingsExtensionPreservesRuntimeNeutralBindings(t *testing.T) {
+func TestBuildWDSAddressKeepsSandboxBindingsInternal(t *testing.T) {
 	workload := projectionTestWorkload()
-	workload.SourceUID = "pod-activation-1"
-	workload.SandboxBindings = []model.SandboxBinding{
-		{SandboxUID: "sandbox-a"},
-		{SandboxUID: "sandbox-b"},
-	}
-
-	extension, err := newWorkloadSandboxBindingsExtension(workload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := extension.GetName(); got != "sandbox-bindings" {
-		t.Fatalf("extension name = %q, want sandbox-bindings", got)
-	}
-	bindings := &extensionsv1.WorkloadSandboxBindings{}
-	if err := extension.GetConfig().UnmarshalTo(bindings); err != nil {
-		t.Fatalf("unmarshal bindings: %v", err)
-	}
-	if got := bindings.GetSourceUid(); got != "pod-activation-1" {
-		t.Fatalf("source UID = %q, want pod-activation-1", got)
-	}
-	want := []string{"sandbox-a", "sandbox-b"}
-	got := make([]string, 0, len(bindings.GetSandboxes()))
-	for _, binding := range bindings.GetSandboxes() {
-		got = append(got, binding.GetSandboxUid())
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("sandbox bindings = %v, want %v", got, want)
-	}
-}
-
-func TestBuildWDSAddressIncludesSandboxBindings(t *testing.T) {
-	workload := projectionTestWorkload()
-	workload.SourceUID = "pod-activation-1"
 	resources, err := buildWDSAddress(wdsProjection{Workload: workload})
 	if err != nil {
 		t.Fatal(err)
@@ -67,24 +33,11 @@ func TestBuildWDSAddressIncludesSandboxBindings(t *testing.T) {
 	if err := resources[0].Value.UnmarshalTo(address); err != nil {
 		t.Fatal(err)
 	}
-	var bindings *extensionsv1.WorkloadSandboxBindings
-	for _, extension := range address.GetWorkload().GetExtensions() {
-		if extension.GetName() != "sandbox-bindings" {
-			continue
-		}
-		bindings = &extensionsv1.WorkloadSandboxBindings{}
-		if err := extension.GetConfig().UnmarshalTo(bindings); err != nil {
-			t.Fatalf("unmarshal bindings: %v", err)
-		}
+	if got := extensionNames(address.GetWorkload().GetExtensions()); len(got) != 0 {
+		t.Fatalf("extensions = %v, want none", got)
 	}
-	if bindings == nil {
-		t.Fatal("sandbox-bindings extension is missing")
-	}
-	if got := bindings.GetSourceUid(); got != "pod-activation-1" {
-		t.Fatalf("source UID = %q, want pod-activation-1", got)
-	}
-	if got := bindings.GetSandboxes(); len(got) != 1 || got[0].GetSandboxUid() != "sandbox-a" {
-		t.Fatalf("sandbox bindings = %+v, want sandbox-a", got)
+	if got := resources[0].Facts.Workload.SandboxUID; got != "sandbox-a" {
+		t.Fatalf("internal sandbox UID = %q, want sandbox-a", got)
 	}
 }
 
