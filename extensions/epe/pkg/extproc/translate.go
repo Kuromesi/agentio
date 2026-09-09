@@ -32,8 +32,9 @@ import (
 
 // routeAffectingHeaders force clear_route_cache: a rewrite of any of these
 // silently misses routing when an earlier filter cached the route.
+// Path rewrites are excluded: their cache behavior is explicitly selected
+// through Route.ClearCache, including when SetPath is used.
 var routeAffectingHeaders = map[string]bool{
-	":path":      true,
 	":authority": true,
 	":method":    true,
 	":scheme":    true,

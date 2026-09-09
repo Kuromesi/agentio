@@ -808,6 +808,14 @@ func validateAction(reg filter.Registration, phase filter.Phase, act filter.Acti
 		return fmt.Errorf("filter %q returned unknown action kind %d", reg.Name, act.Kind())
 	}
 	for _, m := range act.Mutations() {
+		if err := m.Route.Validate(); err != nil {
+			return fmt.Errorf("filter %q returned invalid route mutation: %w", reg.Name, err)
+		}
+		// The target data contract is defined before its execution is wired.
+		// Reject unsupported targets instead of silently dropping them.
+		if m.Route != nil && m.Route.Upstream != nil {
+			return fmt.Errorf("filter %q returned an upstream target mutation; execution is not supported yet", reg.Name)
+		}
 		for _, op := range m.HeaderOps {
 			if strings.EqualFold(op.Name, ":status") {
 				return fmt.Errorf("filter %q returned :status as a header mutation; use Mutation.StatusCode", reg.Name)
@@ -819,7 +827,7 @@ func validateAction(reg filter.Registration, phase filter.Phase, act filter.Acti
 				return fmt.Errorf("filter %q returned a response status mutation from a request phase", reg.Name)
 			}
 		case filter.PhaseResponseHeaders, filter.PhaseResponseBody:
-			if m.ClearRouteCache {
+			if m.Route != nil && m.Route.ClearCache {
 				return fmt.Errorf("filter %q asked to clear the route cache from a response phase; routing is already resolved", reg.Name)
 			}
 			if m.StatusCode != nil && (*m.StatusCode < 200 || *m.StatusCode > 599) {
@@ -847,7 +855,7 @@ func foldPending(pending []filter.Mutation) (ops []filter.HeaderOp, clearRouteCa
 
 func anyClearRouteCache(muts []filter.Mutation) bool {
 	for _, m := range muts {
-		if m.ClearRouteCache {
+		if m.Route != nil && m.Route.ClearCache {
 			return true
 		}
 	}
