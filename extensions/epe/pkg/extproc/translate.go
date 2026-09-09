@@ -47,6 +47,12 @@ func translateRequestHeadersResult(reqHeadersRes *engine.RequestHeadersResult, l
 	if reqHeadersRes.Disposition == engine.DispositionBlocked {
 		return []*extProcPb.ProcessingResponse{immediateFromReply(reqHeadersRes.Reply)}
 	}
+	// Target metadata translation is connected in a separate change.
+	if reqHeadersRes.Route != nil && reqHeadersRes.Route.Upstream != nil {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(filter.Reply{
+			Status: 500, Details: "epe_upstream_route_unsupported",
+		})}
+	}
 	if len(reqHeadersRes.HeaderOps) == 0 && reqHeadersRes.Body == nil {
 		if reqHeadersRes.Disposition == engine.DispositionPassthrough {
 			loggerD.Info("no filter produced mutations; passthrough", "pod", peer.Pod.String())
@@ -54,7 +60,7 @@ func translateRequestHeadersResult(reqHeadersRes *engine.RequestHeadersResult, l
 		return defaultPassThrough
 	}
 	common := commonResponse(reqHeadersRes.HeaderOps, reqHeadersRes.Body, nil,
-		reqHeadersRes.ClearRouteCache, true, true)
+		reqHeadersRes.Route != nil && reqHeadersRes.Route.ClearCache, true, true)
 	return []*extProcPb.ProcessingResponse{{
 		Response: &extProcPb.ProcessingResponse_RequestHeaders{
 			RequestHeaders: &extProcPb.HeadersResponse{
@@ -69,11 +75,17 @@ func translateRequestBodyResult(reqBodyRes *engine.RequestBodyResult) []*extProc
 	if reqBodyRes.Disposition == engine.DispositionBlocked {
 		return []*extProcPb.ProcessingResponse{immediateFromReply(reqBodyRes.Reply)}
 	}
+	// Target metadata translation is connected in a separate change.
+	if reqBodyRes.Route != nil && reqBodyRes.Route.Upstream != nil {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(filter.Reply{
+			Status: 500, Details: "epe_upstream_route_unsupported",
+		})}
+	}
 	if len(reqBodyRes.HeaderOps) == 0 && reqBodyRes.Body == nil {
 		return defaultPassThroughBody
 	}
 	common := commonResponse(reqBodyRes.HeaderOps, reqBodyRes.Body, nil,
-		reqBodyRes.ClearRouteCache, false, true)
+		reqBodyRes.Route != nil && reqBodyRes.Route.ClearCache, false, true)
 	return []*extProcPb.ProcessingResponse{{
 		Response: &extProcPb.ProcessingResponse_RequestBody{
 			RequestBody: &extProcPb.BodyResponse{

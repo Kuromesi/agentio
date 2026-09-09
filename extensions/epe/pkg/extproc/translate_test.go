@@ -239,9 +239,9 @@ func TestTranslate_BodyPhaseRewriteSetsContentLength(t *testing.T) {
 func TestTranslate_PathOpHonorsClearRouteCache(t *testing.T) {
 	for _, clear := range []bool{false, true} {
 		er := &engine.RequestHeadersResult{
-			Disposition:     engine.DispositionMutated,
-			HeaderOps:       []filter.HeaderOp{{Kind: filter.HeaderSet, Name: ":path", Value: "/new"}},
-			ClearRouteCache: clear,
+			Disposition: engine.DispositionMutated,
+			HeaderOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: ":path", Value: "/new"}},
+			Route:       &filter.RouteMutation{ClearCache: clear},
 		}
 		resp := translateRequestHeadersResult(er, logr.Discard(), filter.Peer{})
 		common := resp[0].GetRequestHeaders().GetResponse()
