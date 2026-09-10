@@ -83,6 +83,8 @@ type controllerClients struct {
 	// other managed kind.
 	HPAs kclient.Informer[*autoscalingv2.HorizontalPodAutoscaler]
 	PDBs kclient.Informer[*policyv1.PodDisruptionBudget]
+	// File configuration is supplied by the operator, never adopted or written.
+	ConfigMaps kclient.Informer[*corev1.ConfigMap]
 	// Patcher abstracts SSA so tests can capture patches.
 	Patcher func(gvr schema.GroupVersionResource, name, namespace string, data []byte, subresources ...string) error
 }
@@ -208,6 +210,17 @@ func NewDeploymentController(clients controllerClients, renderer *renderer,
 	clients.ServiceAccounts.AddEventHandler(parentHandler)
 	clients.HPAs.AddEventHandler(parentHandler)
 	clients.PDBs.AddEventHandler(parentHandler)
+	clients.ConfigMaps.AddEventHandler(controllers.ObjectHandler(func(o controllers.Object) {
+		for _, gw := range clients.Gateways.List(o.GetNamespace(), klabels.Everything()) {
+			ci, ok := classFor(gw, clients.GatewayClasses)
+			if ok && ci.templateName == agentgatewayTemplateName && gw.Spec.Infrastructure != nil {
+				ref := gw.Spec.Infrastructure.ParametersRef
+				if ref != nil && ref.Group == "" && ref.Kind == "ConfigMap" && string(ref.Name) == o.GetName() {
+					d.queue.AddObject(gw)
+				}
+			}
+		}
+	}))
 
 	// Gateway handler: enqueue on Add/Delete, and on Update only when the
 	// generation, labels, or annotations changed.
@@ -277,6 +290,7 @@ func (d *DeploymentController) Run(stop <-chan struct{}) {
 		d.clients.ServiceAccounts.HasSynced,
 		d.clients.HPAs.HasSynced,
 		d.clients.PDBs.HasSynced,
+		d.clients.ConfigMaps.HasSynced,
 		d.clients.Gateways.HasSynced,
 		d.clients.GatewayClasses.HasSynced,
 	}
@@ -288,6 +302,7 @@ func (d *DeploymentController) Run(stop <-chan struct{}) {
 		d.clients.ServiceAccounts,
 		d.clients.HPAs,
 		d.clients.PDBs,
+		d.clients.ConfigMaps,
 		d.clients.Gateways,
 		d.clients.GatewayClasses,
 	)
@@ -334,6 +349,11 @@ func (d *DeploymentController) configureGateway(gw gatewayv1.Gateway, ci classIn
 	}
 
 	input := buildTemplateInput(gw, ci, d.clusterID, d.kubeVersion, d.renderer.globalNetwork())
+	if ci.templateName == agentgatewayTemplateName {
+		if err := d.agentgatewayInput(&input); err != nil {
+			return d.setGatewayConfigError(gw, err)
+		}
+	}
 
 	if overwriteVersion {
 		if err := d.setGatewayControllerVersion(gw); err != nil {
@@ -343,6 +363,9 @@ func (d *DeploymentController) configureGateway(gw gatewayv1.Gateway, ci classIn
 
 	rendered, err := d.renderer.Render(ci.templateName, input)
 	if err != nil {
+		if ci.templateName == agentgatewayTemplateName {
+			return d.setGatewayConfigError(gw, err)
+		}
 		// Rendering errors are not ephemeral; log and do not retry.
 		log.Error("render gateway templates",
 			"namespace", gw.Namespace, "name", gw.Name, "error", err)
@@ -353,7 +376,7 @@ func (d *DeploymentController) configureGateway(gw gatewayv1.Gateway, ci classIn
 			return fmt.Errorf("apply failed: %w", err)
 		}
 	}
-	if err := d.setGatewayStatus(gw, input.DeploymentName); err != nil {
+	if err := d.setGatewayStatus(gw, input); err != nil {
 		return fmt.Errorf("update gateway status: %w", err)
 	}
 	return nil
@@ -454,13 +477,16 @@ func (d *DeploymentController) setGatewayControllerVersion(gw gatewayv1.Gateway)
 	return d.clients.Patcher(gatewayGVR, gw.GetName(), gw.GetNamespace(), []byte(patch), "status")
 }
 
-func (d *DeploymentController) setGatewayStatus(gw gatewayv1.Gateway, deploymentName string) error {
+func (d *DeploymentController) setGatewayStatus(gw gatewayv1.Gateway, input TemplateInput) error {
 	programmedStatus := metav1.ConditionFalse
 	programmedReason := string(gatewayv1.GatewayReasonPending)
 	programmedMessage := "Waiting for gateway Deployment to become available"
-	if deployment := d.clients.Deployments.Get(deploymentName, gw.Namespace); !controllers.IsNil(deployment) {
+	if deployment := d.clients.Deployments.Get(input.DeploymentName, gw.Namespace); !controllers.IsNil(deployment) {
 		for _, condition := range deployment.Status.Conditions {
 			if condition.Type == appsv1.DeploymentAvailable && condition.Status == corev1.ConditionTrue {
+				if input.AgentgatewayConfigHash != "" && !agentgatewayRolloutReady(deployment, input.AgentgatewayConfigHash) {
+					break
+				}
 				programmedStatus = metav1.ConditionTrue
 				programmedReason = string(gatewayv1.GatewayReasonProgrammed)
 				programmedMessage = "Gateway Deployment is available"

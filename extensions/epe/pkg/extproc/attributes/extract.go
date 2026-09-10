@@ -239,7 +239,7 @@ func extractHeaderMap(headers *extProcPb.HttpHeaders) map[string]string {
 	result := make(map[string]string, len(hs))
 	for _, h := range hs {
 		if h.Key != "" {
-			result[strings.ToLower(h.Key)] = string(h.RawValue)
+			result[strings.ToLower(h.Key)] = HeaderValue(h)
 		}
 	}
 	return result

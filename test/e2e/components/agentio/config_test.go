@@ -240,3 +240,28 @@ func validImageArgs(image string) []string {
 		"-agentio.forward-proxy-image=" + image,
 	}
 }
+
+func TestGatewayDataplaneResolution(t *testing.T) {
+	valid := "registry.example/image@sha256:" + strings.Repeat("a", 64)
+	resolve := func(args ...string) (Config, error) {
+		fs := flag.NewFlagSet("agentio", flag.ContinueOnError)
+		inputs := RegisterFlags(fs)
+		if err := fs.Parse(append(validImageArgs(valid), args...)); err != nil {
+			t.Fatal(err)
+		}
+		return ResolveConfig(inputs)
+	}
+	if c, err := resolve(); err != nil || c.GatewayDataplane != "" {
+		t.Fatalf("default: %v %v", c.GatewayDataplane, err)
+	}
+	t.Setenv("AGENTIO_E2E_GATEWAY_DATAPLANE", "agentgateway")
+	if c, err := resolve(); err != nil || c.GatewayDataplane != "agentgateway" {
+		t.Fatalf("environment: %v %v", c.GatewayDataplane, err)
+	}
+	if c, err := resolve("-agentio.gateway-dataplane=envoy"); err != nil || c.GatewayDataplane != "envoy" {
+		t.Fatalf("CLI: %v %v", c.GatewayDataplane, err)
+	}
+	if _, err := resolve("-agentio.gateway-dataplane=unknown"); err == nil {
+		t.Fatal("unsupported gateway data plane accepted")
+	}
+}

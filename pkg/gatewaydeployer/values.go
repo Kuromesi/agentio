@@ -24,7 +24,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const egressGatewayTemplateName = "egress-gateway"
+const (
+	egressGatewayTemplateName = "egress-gateway"
+	agentgatewayTemplateName  = "agentgateway"
+)
 
 type Options struct {
 	ClusterID             string
@@ -37,7 +40,7 @@ type Options struct {
 	LeaseName string
 }
 
-// templateProvider serves the egress-gateway template and shared values from
+// templateProvider serves the gateway templates and shared values from
 // the injector ConfigMap. Runtime values only fill fields omitted there.
 type templateProvider struct {
 	renderer    *renderer
@@ -110,8 +113,13 @@ func (p *templateProvider) updateFromInjectorConfig(rawConfig, rawValues string)
 	} else if address := nestedString(merged, "global", "caAddress"); address != "" {
 		proxyConfig.DiscoveryAddress = address
 	}
-	if err := p.renderer.update(egressGatewayTemplateName, templateContent, merged, proxyConfig); err != nil {
-		return fmt.Errorf("parse egress-gateway template: %w", err)
+	templates := map[string]string{egressGatewayTemplateName: templateContent}
+	// Optional so older injector ConfigMaps continue serving Envoy gateways.
+	if content := config.Templates[agentgatewayTemplateName]; content != "" {
+		templates[agentgatewayTemplateName] = content
+	}
+	if err := p.renderer.updateTemplates(templates, merged, proxyConfig); err != nil {
+		return err
 	}
 	p.notifyHandlers()
 	return nil

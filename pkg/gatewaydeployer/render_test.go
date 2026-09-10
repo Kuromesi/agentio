@@ -417,8 +417,8 @@ func TestOmitNilRecursesThroughMapsAndSlices(t *testing.T) {
 func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	// Pin the expected proxy defaults as fixed literals.
 	pc := defaultProxyConfig()
-	if pc.ConfigPath != "./etc/istio/proxy" {
-		t.Fatalf("ConfigPath = %q, want %q", pc.ConfigPath, "./etc/istio/proxy")
+	if pc.ConfigPath != "" {
+		t.Fatalf("ConfigPath = %q, want unset", pc.ConfigPath)
 	}
 	if pc.BinaryPath != "/usr/local/bin/envoy" {
 		t.Fatalf("BinaryPath = %q, want %q", pc.BinaryPath, "/usr/local/bin/envoy")
@@ -441,8 +441,8 @@ func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	if pc.StatusPort != 15020 {
 		t.Fatalf("StatusPort = %d, want 15020", pc.StatusPort)
 	}
-	if pc.DiscoveryAddress != "istiod.istio-system.svc:15012" {
-		t.Fatalf("DiscoveryAddress = %q, want %q", pc.DiscoveryAddress, "istiod.istio-system.svc:15012")
+	if pc.DiscoveryAddress != "" {
+		t.Fatalf("DiscoveryAddress = %q, want unset", pc.DiscoveryAddress)
 	}
 	if pc.ControlPlaneAuthPolicy != meshv1alpha1.AuthenticationPolicy_MUTUAL_TLS {
 		t.Fatalf("ControlPlaneAuthPolicy = %v, want MUTUAL_TLS", pc.ControlPlaneAuthPolicy)
@@ -453,19 +453,22 @@ func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(got, "configPath") || strings.Contains(got, "config_path") {
-		t.Fatalf("protoToJSON did not clean default configPath: %s", got)
+	if got != "{}" {
+		t.Fatalf("protoToJSON did not omit default fields: %s", got)
 	}
 
 	// A non-default value must appear in the JSON output.
 	pc2 := defaultProxyConfig()
 	pc2.ConfigPath = "/custom/path"
+	pc2.DiscoveryAddress = "agentiod.custom.svc:15012"
 	got2, err := protoToJSON(pc2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got2, "configPath") && !strings.Contains(got2, "config_path") {
-		t.Fatalf("protoToJSON dropped non-default configPath: %s", got2)
+	for _, want := range []string{`"configPath":"/custom/path"`, `"discoveryAddress":"agentiod.custom.svc:15012"`} {
+		if !strings.Contains(got2, want) {
+			t.Fatalf("protoToJSON dropped explicit configuration %s: %s", want, got2)
+		}
 	}
 }
 

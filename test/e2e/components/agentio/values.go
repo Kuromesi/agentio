@@ -108,6 +108,21 @@ func chartValues(config Config) ([]byte, error) {
 			},
 		},
 	}
+	if config.GatewayDataplane == "agentgateway" {
+		values["agentiod"].(map[string]any)["enableSNITrafficPolicy"] = false
+		values["egressGateway"] = map[string]any{
+			"mode":       "gatewayAPI",
+			"gatewayAPI": map[string]any{"create": false},
+			"agentgateway": map[string]any{
+				"image":        config.GatewayImage,
+				"replicaCount": 1,
+				"resources": map[string]any{
+					"requests": map[string]any{"cpu": "100m", "memory": "128Mi"},
+					"limits":   map[string]any{"cpu": "1", "memory": "512Mi"},
+				},
+			},
+		}
+	}
 	return yaml.Marshal(values)
 }
 

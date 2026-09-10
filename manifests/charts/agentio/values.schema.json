@@ -30,6 +30,14 @@
       "required": ["mode"],
       "properties": {
         "mode": {"type": "string", "enum": ["disabled", "static", "gatewayAPI"]},
+        "agentgateway": {
+          "type": "object",
+          "properties": {
+            "image": {"type": "string", "minLength": 1},
+            "replicaCount": {"type": "integer", "minimum": 1},
+            "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1}
+          }
+        },
         "replicaCount": {"type": "integer", "minimum": 1},
         "service": {
           "type": "object",

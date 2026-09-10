@@ -46,7 +46,7 @@ belong in their reusable package, not in an individual test file.
 
 ## Agentio product suites
 
-The Agentio product tests are split into four per-domain suites, mirroring
+The Agentio product tests are split into per-domain suites, mirroring
 Istio's `tests/integration` layout. Each suite is an independent Go package
 with its own `TestMain` and setup graph, installs the production chart through
 `components/agentio.Setup`, and uninstalls it on exit. The same suites run in
@@ -65,10 +65,10 @@ both sidecar and ambient profiles on separate clusters:
 - `suites/gateway`: egress gateway configuration, TLS termination and
   on-demand certificates, DFP routing, static ServiceEntries, ext-proc, and
   egress policies.
+- `suites/agentgateway`: native static configuration, Gateway API deployment lifecycle, and shared outbound protocol/ext-proc/port-selection checks. See [agentgateway suite](suites/agentgateway/README.md) for its separate image input and scope.
 - `suites/securitypolicy`: SNI SecurityProfile and GlobalSecurityProfile
   lifecycle against dedicated SNI fixture namespaces.
-- `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, and
-  profile-priority contracts.
+- `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, and profile-priority contracts against Envoy. Agentgateway EPE coverage is [deferred](suites/agentgateway/README.md#scope) until production peer attributes are available.
 
 The shared product conventions (the `AGENTIO_E2E` gate, baseline ConfigMap,
 scenario ledgers with contamination tracking, and profile-neutral echo

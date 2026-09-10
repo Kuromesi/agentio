@@ -213,6 +213,19 @@ ztunnel:
 
 egressGateway:
   mode: disabled
+  # Used only by gatewaydeployer for the agentio-agentgateway GatewayClass.
+  # Native file configuration comes from the Gateway's parametersRef ConfigMap.
+  agentgateway:
+    image: cr.agentgateway.dev/agentgateway:v1.5.0
+    replicaCount: 1
+    terminationGracePeriodSeconds: 30
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: "2", memory: 1Gi}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
   nameOverride: agentio-egress
   fullnameOverride: ""
   image:
@@ -264,6 +277,7 @@ egressGateway:
     create: false
     name: agentio-egress
     gatewayClassName: agentio-egress
+    infrastructure: {}
     annotations: {}
     labels: {}
     listeners:

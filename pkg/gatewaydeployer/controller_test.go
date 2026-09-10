@@ -116,6 +116,7 @@ type controllerTestRig struct {
 	serviceAccounts kclient.Client[*corev1.ServiceAccount]
 	hpas            kclient.Informer[*autoscalingv2.HorizontalPodAutoscaler]
 	pdbs            kclient.Informer[*policyv1.PodDisruptionBudget]
+	configMaps      kclient.Informer[*corev1.ConfigMap]
 
 	patcher *recordingPatcher
 
@@ -134,6 +135,7 @@ func newControllerTestRig(t *testing.T, objects ...runtime.Object) *controllerTe
 	var deploymentFixtures []*appsv1.Deployment
 	var serviceFixtures []*corev1.Service
 	var serviceAccountFixtures []*corev1.ServiceAccount
+	var configMapFixtures []*corev1.ConfigMap
 	for _, o := range objects {
 		switch v := o.(type) {
 		case *gatewayv1.Gateway:
@@ -146,6 +148,8 @@ func newControllerTestRig(t *testing.T, objects ...runtime.Object) *controllerTe
 			serviceFixtures = append(serviceFixtures, v)
 		case *corev1.ServiceAccount:
 			serviceAccountFixtures = append(serviceAccountFixtures, v)
+		case *corev1.ConfigMap:
+			configMapFixtures = append(configMapFixtures, v)
 		default:
 			t.Fatalf("unsupported fixture object type %T", o)
 		}
@@ -176,6 +180,12 @@ func newControllerTestRig(t *testing.T, objects ...runtime.Object) *controllerTe
 		}
 	}
 
+	for _, cm := range configMapFixtures {
+		if _, err := kubeClient.CoreV1().ConfigMaps(cm.Namespace).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmInformer := coreinformers.NewConfigMapInformer(kubeClient, metav1.NamespaceAll, 0, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	gwInformer := gatewayinformers.NewGatewayInformer(gatewayClient, metav1.NamespaceAll, 0, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	gcInformer := gatewayinformers.NewGatewayClassInformer(gatewayClient, 0, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	depInformer := appsinformers.NewDeploymentInformer(kubeClient, metav1.NamespaceAll, 0, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
@@ -203,6 +213,7 @@ func newControllerTestRig(t *testing.T, objects ...runtime.Object) *controllerTe
 	pdbs := kclient.New[*policyv1.PodDisruptionBudget](pdbInformer)
 
 	stop := make(chan struct{})
+	go cmInformer.Run(stop)
 	go gwInformer.Run(stop)
 	go gcInformer.Run(stop)
 	go depInformer.Run(stop)
@@ -210,7 +221,7 @@ func newControllerTestRig(t *testing.T, objects ...runtime.Object) *controllerTe
 	go saInformer.Run(stop)
 	go hpaInformer.Run(stop)
 	go pdbInformer.Run(stop)
-	if !cache.WaitForCacheSync(stop, gwInformer.HasSynced, gcInformer.HasSynced, depInformer.HasSynced, svcInformer.HasSynced, saInformer.HasSynced, hpaInformer.HasSynced, pdbInformer.HasSynced) {
+	if !cache.WaitForCacheSync(stop, cmInformer.HasSynced, gwInformer.HasSynced, gcInformer.HasSynced, depInformer.HasSynced, svcInformer.HasSynced, saInformer.HasSynced, hpaInformer.HasSynced, pdbInformer.HasSynced) {
 		t.Fatal("informers failed to sync")
 	}
 
@@ -225,6 +236,7 @@ func newControllerTestRig(t *testing.T, objects ...runtime.Object) *controllerTe
 		serviceAccounts: serviceAccounts,
 		hpas:            hpas,
 		pdbs:            pdbs,
+		configMaps:      kclient.New[*corev1.ConfigMap](cmInformer),
 		patcher:         &recordingPatcher{},
 		stop:            stop,
 	}
@@ -244,6 +256,7 @@ func (r *controllerTestRig) newController() *DeploymentController {
 		ServiceAccounts: r.serviceAccounts,
 		HPAs:            r.hpas,
 		PDBs:            r.pdbs,
+		ConfigMaps:      r.configMaps,
 		Patcher:         r.patcher.patch,
 	}
 	d, _ := NewDeploymentController(clients, rend, "test-cluster", parityKubeVersion, func(func()) func() { return func() {} })

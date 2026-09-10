@@ -14,3 +14,5 @@ Agentiod logging is configured with `agentiod.logging.level` (`debug`, `info`, `
 Agentiod closes long-lived gRPC connections after `agentiod.keepalive.maxServerConnectionAge` (default `30m`) so clients periodically reconnect and re-authenticate. Set it to `0s` to disable periodic connection expiry.
 
 See [the repository installation guide](../README.md) for complete mode, namespace enrollment, EPE, Gateway API, and upgrade examples.
+
+With `egressGateway.mode: gatewayAPI`, the deployer also supports `agentio-agentgateway` Gateways backed by native file configuration. Set the image and resources under `egressGateway.agentgateway`, and reference a same-namespace ConfigMap through the Gateway's `spec.infrastructure.parametersRef`. See [Deploy agentgateway](../../../docs/tasks/deploy-agentgateway.md) for the configuration contract and current scope.

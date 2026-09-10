@@ -236,7 +236,7 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 	responseStatus := 0
 	for _, h := range headers.GetHeaders().GetHeaders() {
 		key := strings.ToLower(h.Key)
-		value := string(h.RawValue)
+		value := attributes.HeaderValue(h)
 		respHeaders[key] = value
 		if key == ":status" {
 			if code, err := strconv.Atoi(value); err == nil {
@@ -305,7 +305,7 @@ func extractRequestID(headers *extProcPb.HttpHeaders) string {
 	}
 	for _, h := range headers.GetHeaders().GetHeaders() {
 		if strings.EqualFold(h.Key, headerRequestID) {
-			return string(h.RawValue)
+			return attributes.HeaderValue(h)
 		}
 	}
 	return ""

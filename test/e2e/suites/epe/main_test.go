@@ -48,6 +48,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "resolve Agentio E2E configuration: %v\n", err)
 		os.Exit(2)
 	}
+	if agentioConfig.GatewayDataplane == "agentgateway" {
+		fmt.Fprintln(os.Stderr, "agentgateway EPE e2e is deferred until production peer-attribute integration is available; use the Envoy EPE suite or suites/agentgateway for gateway lifecycle and traffic tests")
+		os.Exit(2)
+	}
 	resolvedAgentioConfig = agentioConfig
 
 	suite = e2e.NewSuite(e2e.SuiteSpec{Name: "epe"}, frameworkConfig)

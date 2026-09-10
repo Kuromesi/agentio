@@ -1,0 +1,167 @@
+# Copyright Istio Authors
+# Modifications Copyright 2026 The Kruise Authors
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from Istio 1.31.0's agentgateway deployment template for file configuration.
+{{- $agentgateway := .Values.global.agentgateway | default (strdict) }}
+{{- $certs := annotation .ObjectMeta "gateway.agentio.kruise.io/agentgateway-certs" "" }}
+{{- $annotations := omit .InfrastructureAnnotations "kubectl.kubernetes.io/last-applied-configuration" "gateway.agentio.kruise.io/name-override" "gateway.agentio.kruise.io/service-account" "gateway.agentio.kruise.io/controller-version" "gateway.agentio.kruise.io/agentgateway-certs" }}
+{{- $labels := strdict "gateway.networking.k8s.io/gateway-name" .Name "gateway.networking.k8s.io/gateway-class-name" .GatewayClass "gateway.agentio.kruise.io/managed" .ControllerLabel "agentio.kruise.io/dataplane-mode" "none" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .ServiceAccount | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  {{- if ge .KubeVersion 128 }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .DeploymentName | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+spec:
+  replicas: {{ $agentgateway.replicaCount | default 1 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{ .GatewayNameLabel | quote }}: {{ .Name | quote }}
+  template:
+    metadata:
+      labels: {{ toJsonMap .InfrastructureLabels $labels }}
+      annotations: {{ toJsonMap $annotations (strdict "gateway.agentio.kruise.io/config-hash" .AgentgatewayConfigHash "prometheus.io/path" "/metrics" "prometheus.io/port" "15020" "prometheus.io/scrape" "true") }}
+    spec:
+      serviceAccountName: {{ .ServiceAccount | quote }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $agentgateway.terminationGracePeriodSeconds | default 30 }}
+      {{- with $agentgateway.nodeSelector }}
+      nodeSelector: {{ toJson . }}
+      {{- end }}
+      {{- with $agentgateway.tolerations }}
+      tolerations: {{ toJson . }}
+      {{- end }}
+      {{- with $agentgateway.affinity }}
+      affinity: {{ toJson . }}
+      {{- end }}
+      {{- with $agentgateway.topologySpreadConstraints }}
+      topologySpreadConstraints: {{ toJson . }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+      {{- range . }}
+      - name: {{ . | quote }}
+      {{- end }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10101
+        runAsGroup: 10101
+        fsGroup: 10101
+        seccompProfile:
+          type: RuntimeDefault
+        sysctls:
+        - name: net.ipv4.ip_unprivileged_port_start
+          value: "0"
+      containers:
+      - name: agentgateway
+        # Operator-controlled; Gateway annotations cannot override the image.
+        image: {{ $agentgateway.image | default "cr.agentgateway.dev/agentgateway:v1.5.0" | quote }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" | quote }}
+        args: ["-f", "/etc/agentgateway/config.yaml"]
+        {{- with $agentgateway.resources }}
+        resources: {{ toJson (omitNil .) }}
+        {{- end }}
+        securityContext:
+          capabilities:
+            drop: [ALL]
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+        ports:
+        - name: metrics
+          containerPort: 15020
+        - name: status-port
+          containerPort: 15021
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+              divisor: "1"
+        startupProbe:
+          httpGet: {path: /healthz/ready, port: 15021}
+          periodSeconds: 1
+          failureThreshold: 30
+        readinessProbe:
+          httpGet: {path: /healthz/ready, port: 15021}
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /etc/agentgateway/config.yaml
+          subPath: config.yaml
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        {{- if $certs }}
+        - name: certs
+          mountPath: /etc/agentgateway/certs
+          readOnly: true
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .AgentgatewayConfigName | quote }}
+          items:
+          - key: config.yaml
+            path: config.yaml
+      - name: tmp
+        emptyDir: {}
+      {{- if $certs }}
+      - name: certs
+        secret:
+          secretName: {{ $certs | quote }}
+          defaultMode: 0440
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .DeploymentName | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+spec:
+  type: {{ .ServiceType | quote }}
+  selector:
+    {{ .GatewayNameLabel | quote }}: {{ .Name | quote }}
+  ports: {{ toJson .Ports }}

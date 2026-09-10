@@ -304,6 +304,23 @@ func TestGatewayAPIEgressGateway(t *testing.T) {
 	)
 }
 
+func TestAgentgatewayGatewayAPIConfiguration(t *testing.T) {
+	manifest := renderAgentio(t,
+		"--set", "egressGateway.mode=gatewayAPI",
+		"--set", "egressGateway.gatewayAPI.create=true",
+		"--set", "egressGateway.gatewayAPI.gatewayClassName=agentio-agentgateway",
+		"--set-string", "egressGateway.gatewayAPI.infrastructure.parametersRef.group=",
+		"--set", "egressGateway.gatewayAPI.infrastructure.parametersRef.kind=ConfigMap",
+		"--set", "egressGateway.gatewayAPI.infrastructure.parametersRef.name=agentgateway-config",
+		"--set", "egressGateway.agentgateway.image=registry.example/agentgateway:tested",
+	)
+	requireContains(t, manifest, "gatewayClassName: agentio-agentgateway", "agentgateway: |",
+		"image: registry.example/agentgateway:tested", "parametersRef:", "name: agentgateway-config")
+	if got, want := objectNamesByKind(t, manifest, "Deployment"), []string{"agentiod"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("chart must leave gateway deployment to controller: %v", got)
+	}
+}
+
 func TestManagedEPE(t *testing.T) {
 	manifest := renderAgentio(t,
 		"--set", "global.tag=0.1.0",

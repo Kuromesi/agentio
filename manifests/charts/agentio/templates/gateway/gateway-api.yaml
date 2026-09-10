@@ -16,6 +16,10 @@ metadata:
   {{- end }}
 spec:
   gatewayClassName: {{ .Values.egressGateway.gatewayAPI.gatewayClassName }}
+  {{- with .Values.egressGateway.gatewayAPI.infrastructure }}
+  infrastructure:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   listeners:
     {{- toYaml .Values.egressGateway.gatewayAPI.listeners | nindent 4 }}
 {{- end }}
