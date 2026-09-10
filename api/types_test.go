@@ -18,9 +18,11 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
+	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
@@ -31,6 +33,9 @@ func TestWireMessageNamesAndTypeURLs(t *testing.T) {
 		message proto.Message
 		want    string
 	}{
+		{&sandboxv1.Sandbox{}, "io.kruise.agentio.sandbox.v1.Sandbox"},
+		{&sandboxv1.EgressRouting{}, "io.kruise.agentio.sandbox.v1.EgressRouting"},
+		{&securityv1.TrafficPolicy{}, "io.kruise.agentio.security.v1.TrafficPolicy"},
 		{&workloadv1.Address{}, "istio.workload.Address"},
 		{&workloadv1.Workload{}, "istio.workload.Workload"},
 		// Control-plane-only configuration decoded from ConfigMap YAML by
@@ -82,5 +87,15 @@ func TestAuthorizationDescriptorIsRenamedOffTheWireNamespace(t *testing.T) {
 	if model.WorkloadAuthorizationType != "type.googleapis.com/istio.security.Authorization" {
 		t.Errorf("WorkloadAuthorizationType = %q, want %q",
 			model.WorkloadAuthorizationType, "type.googleapis.com/istio.security.Authorization")
+	}
+}
+
+func TestSandboxDescriptorMatchesDiscoveryTypeURL(t *testing.T) {
+	value, err := anypb.New(&sandboxv1.Sandbox{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.TypeUrl != model.SandboxType {
+		t.Fatalf("Sandbox Any type URL = %q, discovery type URL = %q", value.TypeUrl, model.SandboxType)
 	}
 }

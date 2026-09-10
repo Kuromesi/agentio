@@ -14,9 +14,7 @@
 
 syntax = "proto3";
 
-package agentio.security;
-
-import "api/security/v1/authorization.proto";
+package io.kruise.agentio.security.v1;
 
 option go_package = "github.com/openkruise/agentio/api/security/v1;securityv1";
 
@@ -40,6 +38,33 @@ message TrafficPolicy {
   // including selector-based GlobalTrafficPolicies. Do not infer scope from name.
   Scope scope = 6;
 
+  // An IPv4 or IPv6 network prefix.
+  message Address {
+    // Network address in 4-byte IPv4 or 16-byte IPv6 form, with host bits zero.
+    bytes address = 1;
+    // Prefix length: 0..32 for IPv4, 0..128 for IPv6.
+    uint32 length = 2;
+  }
+
+  enum Scope {
+    GLOBAL = 0;
+    NAMESPACE = 1;
+    WORKLOAD_SELECTOR = 2;
+  }
+
+  enum Action {
+    ALLOW = 0;
+    DENY = 1;
+  }
+
+  enum Protocol {
+    ALL = 0;
+    TCP = 1;
+    UDP = 2;
+    ICMP = 3;
+    SCTP = 4;
+  }
+
   message PolicyRule {
     // First matching rule wins, in declaration order.
     // No match continues to the next policy; no per-policy default.
@@ -47,7 +72,7 @@ message TrafficPolicy {
   }
 
   message Rule {
-    // Reuse ALLOW/DENY (source allow/reject); the compiler sets the action.
+    // ALLOW/DENY correspond to source allow/reject; the compiler sets the action.
     // The protobuf default is ALLOW. Unknown values are invalid.
     Action action = 1;
     // Required presence. Explicit {} matches all traffic.
@@ -68,7 +93,7 @@ message TrafficPolicy {
   }
 
   message PortMatch {
-    // Reuse ALL/TCP/UDP/ICMP/SCTP. Unknown values are invalid.
+    // Unknown protocol values are invalid.
     // ALL with a port constraint only matches protocols with destination ports.
     Protocol protocol = 1;
     // Inclusive destination port bounds, when present, must be in 1..65535.

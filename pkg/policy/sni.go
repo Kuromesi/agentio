@@ -16,7 +16,6 @@ package policy
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -82,23 +81,6 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 			Action: extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION,
 		}}},
 	}, nil
-}
-
-// CompileSNIProfiles compiles a whole set, ordered deterministically.
-func CompileSNIProfiles(profiles []model.SecurityProfile) ([]CompiledSNIPolicy, error) {
-	result := make([]CompiledSNIPolicy, 0, len(profiles))
-	for _, profile := range profiles {
-		compiled, err := CompileSNIProfile(profile)
-		if err != nil {
-			return nil, err
-		}
-		if compiled == nil {
-			continue
-		}
-		result = append(result, *compiled)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result, nil
 }
 
 func sniHosts(profile model.SecurityProfile) ([]string, error) {

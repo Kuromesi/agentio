@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,14 +28,16 @@ import (
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/util/nilutil"
 )
 
 type GatewayCertificateAuthorizer interface {
 	Authorize(model.ClientScope) error
 }
 
-// ErrDomainCertificateEvicted reports that SDS must remove the watched secret
-// unless the current Delta request explicitly retries this exact domain.
+// ErrDomainCertificateEvicted reports that SDS must remove a watched secret
+// whose certificate is absent or no longer valid in the cache. An explicit
+// subscription may issue it again; passive refreshes never start signing.
 var ErrDomainCertificateEvicted = errors.New("on-demand domain certificate is evicted")
 
 const (
@@ -46,8 +47,7 @@ const (
 )
 
 type certificateWaiter struct {
-	ctx          context.Context
-	retryEvicted bool
+	ctx context.Context
 }
 
 type certificateFlight struct {
@@ -87,7 +87,7 @@ func NewOnDemandIssuer(
 	authorizer GatewayCertificateAuthorizer,
 	options OnDemandOptions,
 ) (*OnDemandIssuer, error) {
-	if isNilDependency(ctx) || isNilDependency(source.Signer) || isNilDependency(source.State) || isNilDependency(authorizer) {
+	if nilutil.IsNilInterface(ctx) || nilutil.IsNilInterface(source.Signer) || nilutil.IsNilInterface(source.State) || nilutil.IsNilInterface(authorizer) {
 		return nil, fmt.Errorf("context, signer, signer state, and gateway certificate authorizer are required")
 	}
 	if options.LeafLifetime <= 0 {
@@ -151,19 +151,6 @@ func (i *OnDemandIssuer) Done() <-chan struct{} {
 	return i.done
 }
 
-func isNilDependency(dependency any) bool {
-	if dependency == nil {
-		return true
-	}
-	value := reflect.ValueOf(dependency)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
-		return value.IsNil()
-	default:
-		return false
-	}
-}
-
 func (i *OnDemandIssuer) Changes() krt.Singleton[CertificateGeneration] {
 	return i.changes
 }
@@ -200,25 +187,25 @@ func (i *OnDemandIssuer) Get(ctx context.Context, scope model.ClientScope, name 
 	return i.get(ctx, scope, name, true)
 }
 
-// GetForSDS returns a domain certificate while atomically respecting current
-// eviction state. Only an explicit retry for this exact name may re-sign an
-// evicted certificate.
+// GetForSDS reads a valid cached certificate. Only an explicit subscription for
+// this name may set allowSigning to issue a missing or expired certificate.
+// Passive refreshes do not rely on bounded eviction history to prohibit signing.
 func (i *OnDemandIssuer) GetForSDS(
 	ctx context.Context,
 	scope model.ClientScope,
 	name string,
-	retryEvicted bool,
+	allowSigning bool,
 ) (SignedCertificate, error) {
-	return i.get(ctx, scope, name, retryEvicted)
+	return i.get(ctx, scope, name, allowSigning)
 }
 
 func (i *OnDemandIssuer) get(
 	ctx context.Context,
 	scope model.ClientScope,
 	name string,
-	retryEvicted bool,
+	allowSigning bool,
 ) (SignedCertificate, error) {
-	if isNilDependency(ctx) {
+	if nilutil.IsNilInterface(ctx) {
 		return SignedCertificate{}, fmt.Errorf("on-demand certificate request context is required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -231,7 +218,13 @@ func (i *OnDemandIssuer) get(
 	if err := i.authorizer.Authorize(scope); err != nil {
 		return SignedCertificate{}, fmt.Errorf("authorize on-demand certificate for %s: %w", scope.GatewayKey, err)
 	}
-	certificate, err := i.certificateWithEviction(ctx, name, retryEvicted)
+	var certificate SignedCertificate
+	var err error
+	if allowSigning {
+		certificate, err = i.certificate(ctx, name)
+	} else {
+		certificate, err = i.cachedForSDS(ctx, name)
+	}
 	if err != nil {
 		return SignedCertificate{}, err
 	}
@@ -244,24 +237,28 @@ func cloneSignedCertificate(certificate SignedCertificate) SignedCertificate {
 	return certificate
 }
 
-func (i *OnDemandIssuer) certificate(ctx context.Context, domain string) (SignedCertificate, error) {
-	return i.certificateWithEviction(ctx, domain, true)
+// cachedForSDS linearizes the lookup against eviction under the cache lock.
+// A miss also covers forgotten eviction records, preventing refresh/sign loops.
+func (i *OnDemandIssuer) cachedForSDS(ctx context.Context, domain string) (SignedCertificate, error) {
+	if err := i.requestCancellationError(ctx); err != nil {
+		return SignedCertificate{}, err
+	}
+	revision := i.signerRevision()
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	entry, found := i.cache[domain]
+	if i.evicted.Contains(domain) || !found || !i.cacheEntryValid(entry.certificate, revision) || i.signerRevision() != revision {
+		return SignedCertificate{}, domainCertificateEvictedError(domain)
+	}
+	return entry.certificate, nil
 }
 
-func (i *OnDemandIssuer) certificateWithEviction(
-	ctx context.Context,
-	domain string,
-	retryEvicted bool,
-) (SignedCertificate, error) {
+func (i *OnDemandIssuer) certificate(ctx context.Context, domain string) (SignedCertificate, error) {
 	if err := i.requestCancellationError(ctx); err != nil {
 		return SignedCertificate{}, err
 	}
 	signerRevision := i.signerRevision()
 	i.mu.RLock()
-	if i.evicted.Contains(domain) && !retryEvicted {
-		i.mu.RUnlock()
-		return SignedCertificate{}, domainCertificateEvictedError(domain)
-	}
 	cached, found := i.cache[domain]
 	if found && i.cacheEntryValid(cached.certificate, signerRevision) && i.signerRevision() == signerRevision {
 		i.mu.RUnlock()
@@ -272,15 +269,11 @@ func (i *OnDemandIssuer) certificateWithEviction(
 	}
 	i.mu.RUnlock()
 
-	waiter := &certificateWaiter{ctx: ctx, retryEvicted: retryEvicted}
+	waiter := &certificateWaiter{ctx: ctx}
 	i.mu.Lock()
 	if err := i.requestCancellationError(ctx); err != nil {
 		i.mu.Unlock()
 		return SignedCertificate{}, err
-	}
-	if i.evicted.Contains(domain) && !retryEvicted {
-		i.mu.Unlock()
-		return SignedCertificate{}, domainCertificateEvictedError(domain)
 	}
 	if cached, found = i.cache[domain]; found && i.cacheEntryValid(cached.certificate, signerRevision) &&
 		i.signerRevision() == signerRevision {
@@ -395,14 +388,6 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 			i.mu.Unlock()
 			return
 		}
-		if i.evicted.Contains(domain) && !flightAllowsEvictedCommitLocked(flight) {
-			if i.flights[domain] == flight {
-				delete(i.flights, domain)
-			}
-			resultErr = domainCertificateEvictedError(domain)
-			i.mu.Unlock()
-			return
-		}
 		if i.rotationEpoch != epoch {
 			i.mu.Unlock()
 			continue
@@ -447,15 +432,6 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 
 func domainCertificateEvictedError(domain string) error {
 	return fmt.Errorf("domain %q: %w", domain, ErrDomainCertificateEvicted)
-}
-
-func flightAllowsEvictedCommitLocked(flight *certificateFlight) bool {
-	for waiter := range flight.waiters {
-		if waiter.retryEvicted && waiter.ctx.Err() == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func (i *OnDemandIssuer) flightCancellationError(domain string, flight *certificateFlight) error {

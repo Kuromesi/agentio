@@ -26,8 +26,8 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// The scale test compiles a cluster with every input populated, not sandboxes alone.
-func TestCompileFiveThousandSandboxes(t *testing.T) {
+// The fixture mixes ordinary endpoints and Sandbox hosts with services and policies.
+func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	compiler := scaleCompiler(t, 5_000)
 	waitSynced(t, compiler)
 	snapshot, err := compiler.Snapshot()
@@ -47,26 +47,26 @@ func TestCompileFiveThousandSandboxes(t *testing.T) {
 		t.Fatalf("Address resources = %d, want %d", got, 5_000+scaleServices)
 	}
 	if got := len(snapshot.List(model.WorkloadAuthorizationType)); got != scalePolicies {
-		t.Fatalf("Authorization resources = %d, want %d", got, scalePolicies)
+		t.Fatalf("standalone Authorization resources = %d, want %d for ordinary Workloads", got, scalePolicies)
+	}
+	if got := len(snapshot.List(model.SandboxType)); got != 2_500 {
+		t.Fatalf("Sandbox resources = %d, want 2500", got)
 	}
 	if got := len(snapshot.List(model.SniTrafficPolicyType)); got != 0 {
 		t.Fatalf("independent SNI policy resources = %d, want 0", got)
 	}
 	for _, resource := range snapshot.List(model.AddressType) {
+		if facts := resource.Facts.Workload; facts != nil {
+			wantPolicies := scalePolicies
+			if facts.SandboxManaged {
+				wantPolicies = 0
+			}
+			if len(facts.AuthorizationRefs) != wantPolicies {
+				t.Fatalf("Workload %s managed=%t has %d policies, want %d", resource.Key.Name, facts.SandboxManaged, len(facts.AuthorizationRefs), wantPolicies)
+			}
+		}
 		if resource.Facts.Authorization != nil {
 			t.Fatalf("Address %s carries Authorization-family facts", resource.Key.Name)
-		}
-	}
-}
-
-func BenchmarkCompileTenThousandSandboxes(b *testing.B) {
-	compiler := scaleCompiler(b, 10_000)
-	waitSynced(b, compiler)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		if _, err := compiler.Snapshot(); err != nil {
-			b.Fatal(err)
 		}
 	}
 }
@@ -86,10 +86,15 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
+	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
 	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
 	for index := range count {
 		workload := testWDSWorkload(fmt.Sprintf("sandbox-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
 		workload.Labels = map[string]string{"app": "sandbox"}
+		if index%2 == 0 {
+			workload.SandboxManaged = true
+			sandboxes.ConditionalUpdateObject(testSandboxForWorkload(workload))
+		}
 		workloads.ConditionalUpdateObject(workload)
 	}
 
@@ -151,6 +156,7 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 	}}, options...)
 
 	inputs := validCompilerInputs(stop)
+	inputs.Sandboxes = sandboxes
 	inputs.Workloads = workloads
 	inputs.Services = services
 	inputs.Endpoints = endpoints

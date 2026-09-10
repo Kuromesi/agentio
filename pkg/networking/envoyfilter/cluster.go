@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openkruise/agentio/pkg/util/protoutil"
+
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"google.golang.org/protobuf/proto"
@@ -165,7 +167,7 @@ func mergeAny(destination, patch *anypb.Any) (*anypb.Any, error) {
 		return nil, err
 	}
 	Merge(destinationMessage, patchMessage)
-	return anypb.New(destinationMessage)
+	return protoutil.MarshalAny(destinationMessage)
 }
 
 func uniqueClusterNames(clusters []*clusterv3.Cluster) error {

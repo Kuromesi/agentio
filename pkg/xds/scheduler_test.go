@@ -19,7 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/anypb"
+
 	"github.com/openkruise/agentio/pkg/model"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 func TestPushSchedulerMergesPendingUpdatesAndKeepsFIFOOrder(t *testing.T) {
@@ -31,9 +34,9 @@ func TestPushSchedulerMergesPendingUpdatesAndKeepsFIFOOrder(t *testing.T) {
 	resourceA1 := addressResource(t, "cluster//Pod/demo/a", "a-1")
 	resourceA2 := addressResource(t, "cluster//Pod/demo/a", "a-2")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
-	updateA1 := updateFor("one", []model.ResourceChange{{Key: resourceA1.Key, Old: &resourceA0, New: &resourceA1}})
-	updateA2 := updateFor("two", []model.ResourceChange{{Key: resourceA2.Key, Old: &resourceA1, New: &resourceA2}})
-	updateB := updateFor("two", []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}})
+	updateA1 := updateFromChanges(t, []model.ResourceChange{{Key: resourceA1.Key, Old: &resourceA0, New: &resourceA1}})
+	updateA2 := updateFromChanges(t, []model.ResourceChange{{Key: resourceA2.Key, Old: &resourceA1, New: &resourceA2}})
+	updateB := updateFromChanges(t, []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}})
 
 	scheduler.Enqueue(connectionA, updateA1)
 	scheduler.Enqueue(connectionB, updateB)
@@ -44,9 +47,9 @@ func TestPushSchedulerMergesPendingUpdatesAndKeepsFIFOOrder(t *testing.T) {
 		t.Fatalf("first scheduled connection = %v, want connection A", first)
 	}
 	changes := first.Update.ChangesForType(model.AddressType)
-	if first.Update.Version() != "two" || len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil ||
+	if first.Update.Version() != updateA2.Version() || len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil ||
 		changes[0].Old.Hash != resourceA0.Hash || changes[0].New.Hash != resourceA2.Hash {
-		t.Fatalf("first update = %#v, want version two and first-old/final-new A0 -> A2", first.Update)
+		t.Fatalf("first update = %#v, want latest version and first-old/final-new A0 -> A2", first.Update)
 	}
 	second := scheduler.Next(context.Background())
 	if second == nil || second.Connection != connectionB {
@@ -66,10 +69,10 @@ func TestPushSchedulerRequeuesMergedUpdateAfterProcessing(t *testing.T) {
 	resourceA2 := addressResource(t, "cluster//Pod/demo/a", "a-2")
 	resourceA3 := addressResource(t, "cluster//Pod/demo/a", "a-3")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
-	updateA1 := updateFor("one", []model.ResourceChange{{Key: resourceA1.Key, Old: &resourceA0, New: &resourceA1}})
-	updateA2 := updateFor("two", []model.ResourceChange{{Key: resourceA2.Key, Old: &resourceA1, New: &resourceA2}})
-	updateA3 := updateFor("three", []model.ResourceChange{{Key: resourceA3.Key, Old: &resourceA2, New: &resourceA3}})
-	updateB := updateFor("three", []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}})
+	updateA1 := updateFromChanges(t, []model.ResourceChange{{Key: resourceA1.Key, Old: &resourceA0, New: &resourceA1}})
+	updateA2 := updateFromChanges(t, []model.ResourceChange{{Key: resourceA2.Key, Old: &resourceA1, New: &resourceA2}})
+	updateA3 := updateFromChanges(t, []model.ResourceChange{{Key: resourceA3.Key, Old: &resourceA2, New: &resourceA3}})
+	updateB := updateFromChanges(t, []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}})
 
 	scheduler.Enqueue(connectionA, updateA1)
 	first := scheduler.Next(context.Background())
@@ -88,7 +91,7 @@ func TestPushSchedulerRequeuesMergedUpdateAfterProcessing(t *testing.T) {
 		t.Fatalf("third scheduled connection = %v, want requeued connection A", third)
 	}
 	changes := third.Update.ChangesForType(model.AddressType)
-	if third.Update.Version() != "three" || len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil ||
+	if third.Update.Version() != updateA3.Version() || len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil ||
 		changes[0].Old.Hash != resourceA1.Hash || changes[0].New.Hash != resourceA3.Hash {
 		t.Fatalf("requeued update = %#v, want merged-during-processing A1 -> A3", third.Update)
 	}
@@ -101,9 +104,9 @@ func TestPushSchedulerPendingMergeKeepsFirstStartTime(t *testing.T) {
 	connection := newPushConnection(context.Background())
 
 	before := time.Now()
-	scheduler.Enqueue(connection, Update{version: "one", full: true})
+	scheduler.Enqueue(connection, fullUpdate(t, "one"))
 	after := time.Now()
-	scheduler.Enqueue(connection, Update{version: "two", full: true})
+	scheduler.Enqueue(connection, fullUpdate(t, "two"))
 
 	push := scheduler.Next(context.Background())
 	if push.Started.Before(before) || push.Started.After(after) {
@@ -116,13 +119,13 @@ func TestPushSchedulerProcessingMergeKeepsLaterBatchStartTime(t *testing.T) {
 	scheduler := NewPushScheduler(1)
 	t.Cleanup(scheduler.Close)
 	connection := newPushConnection(context.Background())
-	scheduler.Enqueue(connection, Update{version: "one", full: true})
+	scheduler.Enqueue(connection, fullUpdate(t, "one"))
 	first := scheduler.Next(context.Background())
 
 	beforeLater := time.Now()
-	scheduler.Enqueue(connection, Update{version: "two", full: true})
+	scheduler.Enqueue(connection, fullUpdate(t, "two"))
 	afterLater := time.Now()
-	scheduler.Enqueue(connection, Update{version: "three", full: true})
+	scheduler.Enqueue(connection, fullUpdate(t, "three"))
 	scheduler.Done(first)
 
 	second := scheduler.Next(context.Background())
@@ -139,8 +142,8 @@ func TestPushSchedulerAcquiresCapacityBeforeAssignment(t *testing.T) {
 	connectionB := newPushConnection(context.Background())
 	resourceA := addressResource(t, "cluster//Pod/demo/a", "a")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
-	scheduler.Enqueue(connectionA, updateFor("one", []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
-	scheduler.Enqueue(connectionB, updateFor("one", []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
+	scheduler.Enqueue(connectionA, updateFromChanges(t, []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
+	scheduler.Enqueue(connectionB, updateFromChanges(t, []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
 
 	first := scheduler.Next(context.Background())
 	next := make(chan *scheduledPush, 1)
@@ -170,9 +173,9 @@ func TestPushSchedulerCancellationReleasesProcessingCapacity(t *testing.T) {
 	connectionB := newPushConnection(context.Background())
 	resourceA := addressResource(t, "cluster//Pod/demo/a", "a")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
-	scheduler.Enqueue(connectionA, updateFor("one", []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
+	scheduler.Enqueue(connectionA, updateFromChanges(t, []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
 	first := scheduler.Next(context.Background())
-	scheduler.Enqueue(connectionB, updateFor("one", []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
+	scheduler.Enqueue(connectionB, updateFromChanges(t, []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
 
 	cancelConnection()
 	nextContext, cancelNext := context.WithTimeout(context.Background(), time.Second)
@@ -194,9 +197,9 @@ func TestPushSchedulerCanceledNextDoesNotConsumeCapacity(t *testing.T) {
 	connectionB := newPushConnection(context.Background())
 	resourceA := addressResource(t, "cluster//Pod/demo/a", "a")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
-	scheduler.Enqueue(connectionA, updateFor("one", []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
+	scheduler.Enqueue(connectionA, updateFromChanges(t, []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
 	first := scheduler.Next(context.Background())
-	scheduler.Enqueue(connectionB, updateFor("one", []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
+	scheduler.Enqueue(connectionB, updateFromChanges(t, []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
 
 	nextContext, cancelNext := context.WithCancel(context.Background())
 	cancelNext()
@@ -221,10 +224,10 @@ func TestPushSchedulerDropsCanceledPendingConnection(t *testing.T) {
 	resourceA := addressResource(t, "cluster//Pod/demo/a", "a")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
 	resourceC := addressResource(t, "cluster//Pod/demo/c", "c")
-	scheduler.Enqueue(connectionA, updateFor("one", []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
+	scheduler.Enqueue(connectionA, updateFromChanges(t, []model.ResourceChange{{Key: resourceA.Key, New: &resourceA}}))
 	first := scheduler.Next(context.Background())
-	scheduler.Enqueue(connectionB, updateFor("one", []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
-	scheduler.Enqueue(connectionC, updateFor("one", []model.ResourceChange{{Key: resourceC.Key, New: &resourceC}}))
+	scheduler.Enqueue(connectionB, updateFromChanges(t, []model.ResourceChange{{Key: resourceB.Key, New: &resourceB}}))
+	scheduler.Enqueue(connectionC, updateFromChanges(t, []model.ResourceChange{{Key: resourceC.Key, New: &resourceC}}))
 	cancelConnection()
 	scheduler.Done(first)
 
@@ -261,7 +264,7 @@ func TestStreamProcessesRequestWhilePushWaitsForPermit(t *testing.T) {
 	newResource := addressResource(t, "cluster//Pod/demo/new", "new")
 	scheduler := NewPushScheduler(1)
 	blocker := newPushConnection(context.Background())
-	scheduler.Enqueue(blocker, Update{version: "blocker", full: true})
+	scheduler.Enqueue(blocker, fullUpdate(t, "blocker"))
 	held := scheduler.Next(context.Background())
 	defer scheduler.Done(held)
 	server := newTestServerWithScheduler(t, ztunnelScope(), []model.Resource{oldResource}, nil, scheduler)
@@ -303,4 +306,84 @@ func TestStreamProcessesRequestWhilePushWaitsForPermit(t *testing.T) {
 		t.Fatal("stream did not stop after cancellation")
 	}
 	t.Fatal("subscription response was blocked behind push capacity")
+}
+
+func TestSlowClientBurstConvergesFromFirstUnsentToFinalPublication(t *testing.T) {
+	resource := func(payload string) model.Resource {
+		result, err := model.NewResource(
+			model.ResourceKey{TypeURL: model.AddressType, Name: "workload-a"}, "",
+			&anypb.Any{TypeUrl: model.AddressType, Value: []byte(payload)}, nil,
+			model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+				WorkloadUID: "workload-a",
+				NodeName:    "node-a",
+				Principal:   serviceAccountPrincipal("demo", "default"),
+			}},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	versions := []model.Resource{resource("zero"), resource("one"), resource("two"), resource("three")}
+	initial, err := model.NewResourceSet(versions[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := xdsstore.New(initial)
+	ctx := t.Context()
+	subscription := store.Subscribe(ctx)
+	subscription.Watch(model.AddressType)
+
+	scheduler := NewPushScheduler(1)
+	t.Cleanup(scheduler.Close)
+	connection := newPushConnection(ctx)
+	apply := func(old, next model.Resource) xdsstore.Update {
+		t.Helper()
+		if _, err := store.Apply([]model.ResourceChange{{Key: next.Key, New: &next}}); err != nil {
+			t.Fatal(err)
+		}
+		update := <-subscription.Updates()
+		changes := update.ChangesForType(model.AddressType)
+		if len(changes) != 1 || changes[0].Old == nil || changes[0].Old.Hash != old.Hash ||
+			changes[0].New == nil || changes[0].New.Hash != next.Hash {
+			t.Fatalf("publication change = %#v, want %q -> %q", changes, old.Hash, next.Hash)
+		}
+		return update
+	}
+
+	firstUpdate := apply(versions[0], versions[1])
+	scheduler.Enqueue(connection, firstUpdate)
+	first := scheduler.Next(context.Background())
+	if first == nil {
+		t.Fatal("first push was not scheduled")
+	}
+
+	scheduler.Enqueue(connection, apply(versions[1], versions[2]))
+	scheduler.Enqueue(connection, apply(versions[2], versions[3]))
+	scheduler.Done(first)
+	final := scheduler.Next(context.Background())
+	if final == nil {
+		t.Fatal("coalesced final push was not scheduled")
+	}
+	defer scheduler.Done(final)
+
+	before, found := final.Update.Before().Get(versions[1].Key)
+	if !found || before.Hash != versions[1].Hash {
+		t.Fatalf("coalesced Before = %#v, want first unsent version", before)
+	}
+	after, found := final.Update.After().Get(versions[3].Key)
+	if !found || after.Hash != versions[3].Hash {
+		t.Fatalf("coalesced After = %#v, want final version", after)
+	}
+	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
+		Scope:   model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"},
+		TypeURL: model.AddressType, Subscription: SubscriptionView{wildcard: true},
+		Snapshot: final.Update.After(), Update: final.Update,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delta.Resources) != 1 || delta.Resources[0].Hash != versions[3].Hash || len(delta.Removed) != 0 {
+		t.Fatalf("coalesced delta resources=%#v removed=%v, want only final version", delta.Resources, delta.Removed)
+	}
 }

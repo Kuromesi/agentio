@@ -42,21 +42,6 @@ message WorkloadMetadata {
   MeshInternalTrafficPolicy mesh_internal_traffic_policy = 2;
 }
 
-// WorkloadSandboxBindings is the runtime-neutral attestation relationship
-// projected onto one Workload. Sandbox policy payloads remain independent.
-message WorkloadSandboxBindings {
-  // SourceUid identifies the current backing runtime activation when one is
-  // available. It is not a Sandbox identity or transport Principal.
-  string source_uid = 1;
-
-  // Sandboxes lists the policy subjects this Workload may attest.
-  repeated SandboxBinding sandboxes = 2;
-}
-
-message SandboxBinding {
-  string sandbox_uid = 1;
-}
-
 // Traffic direction mode (server = inbound, client = outbound)
 enum TrafficPolicyMode {
   SERVER = 0;  // Inbound traffic (PREROUTING hook)

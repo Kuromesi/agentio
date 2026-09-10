@@ -144,16 +144,11 @@ func testSourceCollections(stop <-chan struct{}) SourceCollections {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	return SourceCollections{
 		Sandboxes: krt.NewStaticCollection[model.Sandbox](nil,
-			[]model.Sandbox{{UID: "sandbox-1"}}, options...),
+			[]model.Sandbox{{UID: "sandbox-1", Attester: &model.Attester{WorkloadUID: "cluster//Pod/default/pod-1"}}}, options...),
 		Workloads: krt.NewStaticCollection[model.Workload](nil,
 			[]model.Workload{{
 				UID:       "cluster//Pod/default/pod-1",
 				Namespace: "default",
-				SandboxBindings: []model.SandboxBinding{
-					{
-						SandboxUID: "sandbox-1",
-					},
-				},
 				Principal: model.Principal{
 					Kind:        model.PrincipalServiceAccount,
 					TrustDomain: "cluster.local",

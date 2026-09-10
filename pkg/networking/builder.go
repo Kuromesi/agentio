@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openkruise/agentio/pkg/util/protoutil"
+
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -26,7 +28,6 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 	meshv1alpha1 "istio.io/api/mesh/v1alpha1"
 
 	"github.com/openkruise/agentio/pkg/features"
@@ -214,7 +215,7 @@ func resolveConfig(gateway model.Gateway, globalExtProc *configv1.ExtProcProvide
 }
 
 func scopedResource(gateway model.Gateway, typeURL, name string, message proto.Message) (model.Resource, error) {
-	value, err := anypb.New(message)
+	value, err := protoutil.MarshalAny(message)
 	if err != nil {
 		return model.Resource{}, fmt.Errorf("marshal gateway resource %s: %w", name, err)
 	}

@@ -36,56 +36,21 @@ func metadataString(metadata *structpb.Struct, key string) string {
 	return metadata.GetFields()[key].GetStringValue()
 }
 
-func allowedType(class model.ClientClass, typeURL string) bool {
-	_, allowed := typeAccess(class, typeURL)
-	return allowed
-}
-
 func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 	switch typeURL {
-	case model.AddressType, model.WorkloadAuthorizationType:
+	case model.AddressType, model.WorkloadAuthorizationType, model.SandboxType:
 		return true, true
 	case model.WorkloadType, model.ClusterType, model.EndpointType, model.ListenerType, model.RouteType, model.SecretType,
-		model.ExtensionConfigurationType, model.ProxyConfigType, model.SniTrafficPolicyType:
+		model.ExtensionConfigurationType, model.ProxyConfigType:
 		return true, class == model.ClientEgressGateway
 	default:
 		return false, false
 	}
 }
 
-func scopeNamespace(scope model.ClientScope) (string, bool) {
-	if scope.Class != model.ClientDedicatedZTunnel || scope.Principal.Kind != model.PrincipalServiceAccount {
-		return "", false
-	}
-	return scope.Principal.ServiceAccount.Namespace, true
-}
-
+// scopeAllows checks ownership of generic gateway resources. Workload,
+// Authorization, and Sandbox visibility is handled by their generators.
 func scopeAllows(scope model.ClientScope, resource model.Resource) bool {
-	if resource.Facts.GatewayOwner != "" {
-		return scope.Class == model.ClientEgressGateway && resource.Facts.GatewayOwner == scope.GatewayKey
-	}
-	switch resource.Key.TypeURL {
-	case model.AddressType, model.WorkloadType:
-		if scope.Class == model.ClientEgressGateway {
-			return true
-		}
-		return workloadMatchesScope(scope, resource)
-	case model.WorkloadAuthorizationType:
-		if scope.Class == model.ClientEgressGateway {
-			return true
-		}
-		authorization := resource.Facts.Authorization
-		if authorization == nil {
-			return false
-		}
-		if authorization.Scope == model.AuthorizationScopeGlobal {
-			return true
-		}
-		namespace, found := scopeNamespace(scope)
-		return found && authorization.Scope == model.AuthorizationScopeNamespace && authorization.Namespace == namespace
-	case model.SniTrafficPolicyType:
-		return true
-	default:
-		return false
-	}
+	return resource.Facts.GatewayOwner != "" &&
+		scope.Class == model.ClientEgressGateway && resource.Facts.GatewayOwner == scope.GatewayKey
 }

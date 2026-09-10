@@ -18,10 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+
+	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/model"
-	"istio.io/istio/pkg/util/sets"
+	"github.com/openkruise/agentio/pkg/util/nilutil"
 )
 
 // ErrUnsupportedCredentials reports that an authenticator does not recognize
@@ -54,12 +55,12 @@ func NewRegisteredAttestationAuthenticator(
 	delegate Authenticator,
 	attestations []model.Attestation,
 ) (Authenticator, error) {
-	if authenticatorIsNil(delegate) {
+	if nilutil.IsNilInterface(delegate) {
 		return nil, fmt.Errorf("registered attestation authenticator requires a delegate")
 	}
 	if chain, ok := delegate.(AuthenticatorChain); ok {
 		for index, authenticator := range chain {
-			if authenticatorIsNil(authenticator) {
+			if nilutil.IsNilInterface(authenticator) {
 				return nil, fmt.Errorf("registered attestation authenticator delegate %d is nil", index+1)
 			}
 		}
@@ -75,19 +76,6 @@ func NewRegisteredAttestationAuthenticator(
 		allowed.Insert(attestation)
 	}
 	return registeredAttestationAuthenticator{delegate: delegate, allowed: allowed}, nil
-}
-
-func authenticatorIsNil(authenticator Authenticator) bool {
-	if authenticator == nil {
-		return true
-	}
-	value := reflect.ValueOf(authenticator)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }
 
 func (a registeredAttestationAuthenticator) Authenticate(ctx context.Context) (model.PeerIdentity, error) {
@@ -123,14 +111,5 @@ func (a DelegatedIdentityAuthorizers) Authorize(ctx context.Context, caller mode
 // concrete value held in a non-nil interface — the shape a partially wired
 // composition hands out.
 func DelegatedAuthorizerIsNil(authorizer DelegatedIdentityAuthorizer) bool {
-	if authorizer == nil {
-		return true
-	}
-	value := reflect.ValueOf(authorizer)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
+	return nilutil.IsNilInterface(authorizer)
 }

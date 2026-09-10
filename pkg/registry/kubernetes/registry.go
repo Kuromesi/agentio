@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -35,6 +34,7 @@ import (
 const defaultClusterDomain = "cluster.local"
 
 type Options struct {
+	SandboxMode           bool
 	ClusterID             string
 	TrustDomain           string
 	RootNamespace         string
@@ -162,29 +162,16 @@ func New(
 		return []string{pod.Spec.NodeName}
 	})
 	r.delegationPodsByNodePrincipal = newDelegationTargetIndex(pods, options.TrustDomain)
-	kruiseSource := kruise.NewSource(
-		kubeClient,
-		pods,
-		kruise.Options{
-			ClusterID:     options.ClusterID,
-			TrustDomain:   options.TrustDomain,
-			DebounceAfter: options.DebounceAfter,
-			DebounceMax:   options.DebounceMax,
-		},
-		stop,
-	)
-	r.Sandboxes = kruiseSource.Sandboxes
-	podWorkloads := podsource.NewWorkloads(
-		pods,
-		options.ClusterID,
-		options.TrustDomain,
-		kruise.OwnsPod,
-		derivedOptions("pod-workloads")...,
-	)
-	r.Workloads = krt.JoinCollection(
-		[]krt.Collection[model.Workload]{podWorkloads, kruiseSource.Workloads},
-		derivedOptions("workloads")...,
-	)
+	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, derivedOptions("sandboxes-disabled")...)
+	var sandboxManaged func(*corev1.Pod) bool
+	if options.SandboxMode {
+		sandboxManaged = kruise.OwnsPod
+		r.Sandboxes = kruise.NewSource(kubeClient, pods, kruise.Options{ClusterID: options.ClusterID, TrustDomain: options.TrustDomain,
+			DebounceAfter: options.DebounceAfter, DebounceMax: options.DebounceMax}, stop).Sandboxes
+	}
+	// Every eligible Pod remains a communication endpoint, regardless of the
+	// runtime it hosts or the runtime's lifecycle.
+	r.Workloads = podsource.NewWorkloads(pods, options.ClusterID, options.TrustDomain, sandboxManaged, derivedOptions("pod-workloads")...)
 
 	r.Services, r.Endpoints = newServiceCollections(services, slices, options.ClusterDomain, derivedOptions)
 
@@ -225,55 +212,8 @@ func New(
 		derivedOptions("egress-gateway-configurations")...,
 	)
 
-	namespacedTraffic := krt.NewCollection(trafficPolicyObjects,
-		func(_ krt.HandlerContext, policy *agentsv1alpha1.TrafficPolicy) *model.TrafficPolicy {
-			return &model.TrafficPolicy{
-				Name:         policy.Name,
-				Namespace:    policy.Namespace,
-				SandboxUID:   policy.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				CreationTime: policy.CreationTimestamp.Time,
-				Spec:         *policy.Spec.DeepCopy(),
-			}
-		}, derivedOptions("namespaced-traffic-policies")...)
-	globalTraffic := krt.NewCollection(globalTrafficObjects,
-		func(_ krt.HandlerContext, policy *agentsv1alpha1.GlobalTrafficPolicy) *model.TrafficPolicy {
-			return &model.TrafficPolicy{
-				Name:         policy.Name,
-				SandboxUID:   policy.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				Global:       true,
-				CreationTime: policy.CreationTimestamp.Time,
-				Spec:         *policy.Spec.DeepCopy(),
-			}
-		}, derivedOptions("global-traffic-policies")...)
-	// TrafficPolicy.ResourceName prefixes namespaced and global policies
-	// differently, so the two key spaces cannot collide in the join.
-	r.TrafficPolicies = krt.JoinCollection(
-		[]krt.Collection[model.TrafficPolicy]{namespacedTraffic, globalTraffic},
-		derivedOptions("traffic-policies")...)
-
-	namespacedSecurity := krt.NewCollection(securityProfileObjects,
-		func(_ krt.HandlerContext, profile *agentsv1alpha1.SecurityProfile) *model.SecurityProfile {
-			return &model.SecurityProfile{
-				Name:         profile.Name,
-				Namespace:    profile.Namespace,
-				SandboxUID:   profile.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				CreationTime: profile.CreationTimestamp.Time,
-				Spec:         *profile.Spec.DeepCopy(),
-			}
-		}, derivedOptions("namespaced-security-profiles")...)
-	globalSecurity := krt.NewCollection(globalSecurityObjects,
-		func(_ krt.HandlerContext, profile *agentsv1alpha1.GlobalSecurityProfile) *model.SecurityProfile {
-			return &model.SecurityProfile{
-				Name:         profile.Name,
-				SandboxUID:   profile.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				Global:       true,
-				CreationTime: profile.CreationTimestamp.Time,
-				Spec:         *profile.Spec.DeepCopy(),
-			}
-		}, derivedOptions("global-security-profiles")...)
-	r.SecurityProfiles = krt.JoinCollection(
-		[]krt.Collection[model.SecurityProfile]{namespacedSecurity, globalSecurity},
-		derivedOptions("security-profiles")...)
+	r.TrafficPolicies = newTrafficPolicyModels(trafficPolicyObjects, globalTrafficObjects, derivedOptions)
+	r.SecurityProfiles = newSecurityProfileModels(securityProfileObjects, globalSecurityObjects, derivedOptions)
 
 	r.collections = []krt.Syncer{
 		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways,

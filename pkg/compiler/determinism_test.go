@@ -16,7 +16,7 @@ package compiler
 
 import "testing"
 
-func TestCompileVersionIsDeterministic(t *testing.T) {
+func TestSnapshotVersionIsStable(t *testing.T) {
 	c := scaleCompiler(t, 500)
 	waitSynced(t, c)
 	first, err := c.Snapshot()

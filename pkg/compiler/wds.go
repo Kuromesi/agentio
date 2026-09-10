@@ -23,9 +23,8 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-
-	"istio.io/istio/pkg/util/sets"
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
@@ -38,66 +37,21 @@ import (
 type wdsProjection struct {
 	ClusterID             string
 	Workload              model.Workload
-	AuthorizationNames    []string
 	Endpoints             []model.Endpoint
 	Services              []model.Service
-	MetadataConfiguration *workloadMetadataConfiguration
+	SNIPolicy             *extensionsv1.SniTrafficPolicy
 	EgressPolicies        *extensionsv1.EgressPolicies
+	AuthorizationNames    []string
+	MetadataConfiguration *workloadMetadataConfiguration
 	EgressGatewayKeys     []string
 	OwnedGatewayKey       string
 }
 
-func newWorkloadSandboxBindingsExtension(workload model.Workload) (*workloadv1.Extension, error) {
-	if len(workload.SandboxBindings) == 0 {
-		return nil, fmt.Errorf("workload %s has no sandbox bindings", workload.UID)
-	}
-	bindings := &extensionsv1.WorkloadSandboxBindings{SourceUid: workload.SourceUID}
-	seen := sets.NewWithLength[string](len(workload.SandboxBindings))
-	for index, binding := range workload.SandboxBindings {
-		if err := binding.Validate(); err != nil {
-			return nil, fmt.Errorf("workload %s sandbox binding %d: %w", workload.UID, index, err)
-		}
-		if seen.Contains(binding.SandboxUID) {
-			return nil, fmt.Errorf("workload %s sandbox binding %q is duplicated", workload.UID, binding.SandboxUID)
-		}
-		seen.Insert(binding.SandboxUID)
-		bindings.Sandboxes = append(bindings.Sandboxes, &extensionsv1.SandboxBinding{
-			SandboxUid: binding.SandboxUID,
-		})
-	}
-	value, err := anypb.New(bindings)
-	if err != nil {
-		return nil, fmt.Errorf("marshal sandbox bindings for workload %s: %w", workload.UID, err)
-	}
-	return &workloadv1.Extension{Name: "sandbox-bindings", Config: value}, nil
-}
-
-// singleSandboxBinding returns the only binding when a Workload can be
-// projected faithfully onto the current workload-scoped policy wire contract.
-func singleSandboxBinding(workload model.Workload) (model.SandboxBinding, error) {
-	if len(workload.SandboxBindings) != 1 {
-		return model.SandboxBinding{}, fmt.Errorf("workload-scoped policy projection requires exactly one sandbox binding")
-	}
-	binding := workload.SandboxBindings[0]
-	if err := binding.Validate(); err != nil {
-		return model.SandboxBinding{}, fmt.Errorf("workload-scoped policy projection: %w", err)
-	}
-	return binding, nil
-}
-
 // buildWDSAddress compiles one Workload into the canonical Address form
 // consumed by ztunnel.
-func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
+func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 	if err := validateDiscoveredWorkload(input.Workload); err != nil {
 		return nil, fmt.Errorf("workload %q: %w", input.Workload.UID, err)
-	}
-	sandboxUID := ""
-	if len(input.Workload.SandboxBindings) > 0 {
-		binding, err := singleSandboxBinding(input.Workload)
-		if err != nil {
-			return nil, err
-		}
-		sandboxUID = binding.SandboxUID
 	}
 	addresses, aliases, err := parseAddresses(input.Workload.Addresses)
 	if err != nil {
@@ -111,32 +65,99 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 		return nil, err
 	}
 
+	services, serviceKeys := workloadServices(input)
+
+	status := workloadv1.WorkloadStatus_HEALTHY
+	if !input.Workload.Ready {
+		status = workloadv1.WorkloadStatus_UNHEALTHY
+	}
+	tunnel := workloadv1.TunnelProtocol_NONE
+	if input.Workload.TunnelProtocol == model.TunnelProtocolHBONE {
+		tunnel = workloadv1.TunnelProtocol_HBONE
+	}
+	wireWorkload := &workloadv1.Workload{
+		Uid:                   input.Workload.UID,
+		AuthorizationPolicies: append([]string(nil), input.AuthorizationNames...),
+		Name:                  input.Workload.Name,
+		Namespace:             input.Workload.Namespace,
+		Addresses:             addresses,
+		TunnelProtocol:        tunnel,
+		TrustDomain:           trustDomain,
+		ServiceAccount:        serviceAccount,
+		Node:                  input.Workload.NodeName,
+		Services:              services,
+		Status:                status,
+		ClusterId:             input.ClusterID,
+		WorkloadType:          workloadv1.WorkloadType_POD,
+		WorkloadName:          input.Workload.Name,
+		CanonicalName:         input.Workload.CanonicalName,
+		CanonicalRevision:     input.Workload.CanonicalRevision,
+		NativeTunnel:          input.Workload.NativeTunnel,
+	}
+	if input.Workload.HostNetwork {
+		wireWorkload.NetworkMode = workloadv1.NetworkMode_HOST_NETWORK
+	}
+	address := &workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: wireWorkload}}
+	if input.MetadataConfiguration != nil {
+		metadata, err := newWorkloadMetadataExtension(filteredWorkloadLabels(
+			input.Workload.Labels, input.MetadataConfiguration.IgnoredLabels))
+		if err != nil {
+			return nil, fmt.Errorf("marshal metadata for workload %s: %w", input.Workload.UID, err)
+		}
+		wireWorkload.Extensions = append(wireWorkload.Extensions, metadata)
+	}
+
+	if input.EgressPolicies != nil {
+		config, err := marshalDeterministicAny(input.EgressPolicies)
+		if err != nil {
+			return nil, fmt.Errorf("marshal egress policies for workload %s: %w", input.Workload.UID, err)
+		}
+		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{Name: "egress-policies", Config: config})
+	}
+	if input.SNIPolicy != nil {
+		config, err := marshalDeterministicAny(input.SNIPolicy)
+		if err != nil {
+			return nil, fmt.Errorf("marshal SNI policy for workload %s: %w", input.Workload.UID, err)
+		}
+		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
+			Name: "sni-traffic-policy", Config: config,
+		})
+	}
+
+	addressValue, err := marshalDeterministicAny(address)
+	if err != nil {
+		return nil, fmt.Errorf("marshal workload %s: %w", input.Workload.UID, err)
+	}
+	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+		SandboxManaged:    input.Workload.SandboxManaged,
+		AuthorizationRefs: append([]string(nil), input.AuthorizationNames...),
+		WorkloadUID:       input.Workload.UID,
+		SourceUID:         input.Workload.SourceUID,
+		NodeName:          input.Workload.NodeName,
+		Principal:         input.Workload.Principal,
+		ServiceKeys:       serviceKeys,
+		GatewayReferences: input.EgressGatewayKeys,
+	}}
+	if input.OwnedGatewayKey != "" {
+		facts.GatewayOwner = input.OwnedGatewayKey
+	}
+	addressResource, err := model.NewResource(
+		model.ResourceKey{
+			TypeURL: model.AddressType,
+			Name:    input.Workload.UID,
+		}, "", addressValue, aliases, facts)
+	if err != nil {
+		return nil, err
+	}
+	return &addressResource, nil
+}
+
+func workloadServices(input wdsProjection) (map[string]*workloadv1.PortList, []string) {
 	serviceByKey := make(map[string]model.Service, len(input.Services))
 	for _, service := range input.Services {
 		serviceByKey[service.ResourceName()] = service
 	}
-	ready := make([]model.Endpoint, 0, len(input.Endpoints))
-	for _, endpoint := range input.Endpoints {
-		service, found := serviceByKey[endpoint.ServiceKey]
-		if endpoint.Ready || (found && service.PublishNotReadyAddresses) {
-			ready = append(ready, endpoint)
-		}
-	}
-	sort.Slice(ready, func(i, j int) bool {
-		if ready[i].ServiceKey != ready[j].ServiceKey {
-			return ready[i].ServiceKey < ready[j].ServiceKey
-		}
-		if ready[i].PortName != ready[j].PortName {
-			return ready[i].PortName < ready[j].PortName
-		}
-		if ready[i].Protocol != ready[j].Protocol {
-			return ready[i].Protocol < ready[j].Protocol
-		}
-		if ready[i].Port != ready[j].Port {
-			return ready[i].Port < ready[j].Port
-		}
-		return ready[i].ResourceName() < ready[j].ResourceName()
-	})
+	ready := readyWDSEndpoints(input.Endpoints, serviceByKey)
 
 	services := make(map[string]*workloadv1.PortList)
 	serviceKeys := make([]string, 0, len(serviceByKey))
@@ -165,23 +186,7 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 		ports := &workloadv1.PortList{}
 		services[serviceKey] = ports
 		for _, servicePort := range servicePorts {
-			resolved := uint32(0)
-			ambiguous := false
-			for _, endpoint := range ready {
-				if endpoint.ServiceKey != serviceKey || endpoint.PortName != servicePort.Name ||
-					normalizedProtocol(endpoint.Protocol) != normalizedProtocol(servicePort.Protocol) || endpoint.Port == 0 {
-					continue
-				}
-				if servicePort.TargetPort > 0 && endpoint.Port != servicePort.TargetPort {
-					ambiguous = true
-					break
-				}
-				if resolved != 0 && resolved != endpoint.Port {
-					ambiguous = true
-					break
-				}
-				resolved = endpoint.Port
-			}
+			resolved, ambiguous := resolveWDSServicePort(serviceKey, servicePort, ready)
 			if resolved == 0 || ambiguous {
 				continue
 			}
@@ -192,90 +197,55 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 		}
 	}
 
-	status := workloadv1.WorkloadStatus_HEALTHY
-	if !input.Workload.Ready {
-		status = workloadv1.WorkloadStatus_UNHEALTHY
-	}
-	tunnel := workloadv1.TunnelProtocol_NONE
-	if input.Workload.TunnelProtocol == model.TunnelProtocolHBONE {
-		tunnel = workloadv1.TunnelProtocol_HBONE
-	}
-	wireWorkload := &workloadv1.Workload{
-		Uid:               input.Workload.UID,
-		Name:              input.Workload.Name,
-		Namespace:         input.Workload.Namespace,
-		Addresses:         addresses,
-		TunnelProtocol:    tunnel,
-		TrustDomain:       trustDomain,
-		ServiceAccount:    serviceAccount,
-		Node:              input.Workload.NodeName,
-		Services:          services,
-		Status:            status,
-		ClusterId:         input.ClusterID,
-		WorkloadType:      workloadv1.WorkloadType_POD,
-		WorkloadName:      input.Workload.Name,
-		CanonicalName:     input.Workload.CanonicalName,
-		CanonicalRevision: input.Workload.CanonicalRevision,
-		NativeTunnel:      input.Workload.NativeTunnel,
-	}
-	if input.Workload.HostNetwork {
-		wireWorkload.NetworkMode = workloadv1.NetworkMode_HOST_NETWORK
-	}
-	address := &workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: wireWorkload}}
-	if input.MetadataConfiguration != nil {
-		metadata, err := newWorkloadMetadataExtension(filteredWorkloadLabels(
-			input.Workload.Labels, input.MetadataConfiguration.IgnoredLabels))
-		if err != nil {
-			return nil, fmt.Errorf("marshal metadata for workload %s: %w", input.Workload.UID, err)
-		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions, metadata)
-	}
-	if input.EgressPolicies != nil {
-		value, err := anypb.New(input.EgressPolicies)
-		if err != nil {
-			return nil, fmt.Errorf("marshal egress policies for workload %s: %w", input.Workload.UID, err)
-		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions,
-			&workloadv1.Extension{
-				Name:   "egress-policies",
-				Config: value,
-			})
-	}
-	if len(input.Workload.SandboxBindings) > 0 {
-		bindingsExtension, err := newWorkloadSandboxBindingsExtension(input.Workload)
-		if err != nil {
-			return nil, err
-		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions, bindingsExtension)
-	}
+	return services, serviceKeys
+}
 
-	wireWorkload.AuthorizationPolicies = append([]string(nil), input.AuthorizationNames...)
-	sort.Strings(wireWorkload.AuthorizationPolicies)
+func readyWDSEndpoints(endpoints []model.Endpoint, serviceByKey map[string]model.Service) []model.Endpoint {
+	ready := make([]model.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		service, found := serviceByKey[endpoint.ServiceKey]
+		if endpoint.Ready || (found && service.PublishNotReadyAddresses) {
+			ready = append(ready, endpoint)
+		}
+	}
+	sort.Slice(ready, func(i, j int) bool {
+		if ready[i].ServiceKey != ready[j].ServiceKey {
+			return ready[i].ServiceKey < ready[j].ServiceKey
+		}
+		if ready[i].PortName != ready[j].PortName {
+			return ready[i].PortName < ready[j].PortName
+		}
+		if ready[i].Protocol != ready[j].Protocol {
+			return ready[i].Protocol < ready[j].Protocol
+		}
+		if ready[i].Port != ready[j].Port {
+			return ready[i].Port < ready[j].Port
+		}
+		return ready[i].ResourceName() < ready[j].ResourceName()
+	})
 
-	addressValue, err := anypb.New(address)
-	if err != nil {
-		return nil, fmt.Errorf("marshal workload %s: %w", input.Workload.UID, err)
+	return ready
+}
+
+func resolveWDSServicePort(serviceKey string, servicePort model.ServicePort, ready []model.Endpoint) (uint32, bool) {
+	resolved := uint32(0)
+	ambiguous := false
+	for _, endpoint := range ready {
+		if endpoint.ServiceKey != serviceKey || endpoint.PortName != servicePort.Name ||
+			normalizedProtocol(endpoint.Protocol) != normalizedProtocol(servicePort.Protocol) || endpoint.Port == 0 {
+			continue
+		}
+		if servicePort.TargetPort > 0 && endpoint.Port != servicePort.TargetPort {
+			ambiguous = true
+			break
+		}
+		if resolved != 0 && resolved != endpoint.Port {
+			ambiguous = true
+			break
+		}
+		resolved = endpoint.Port
 	}
-	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-		SandboxUID:        sandboxUID,
-		NodeName:          input.Workload.NodeName,
-		Principal:         input.Workload.Principal,
-		ServiceKeys:       serviceKeys,
-		GatewayReferences: input.EgressGatewayKeys,
-		AuthorizationRefs: input.AuthorizationNames,
-	}}
-	if input.OwnedGatewayKey != "" {
-		facts.GatewayOwner = input.OwnedGatewayKey
-	}
-	addressResource, err := model.NewResource(
-		model.ResourceKey{
-			TypeURL: model.AddressType,
-			Name:    input.Workload.UID,
-		}, "", addressValue, aliases, facts)
-	if err != nil {
-		return nil, err
-	}
-	return []model.Resource{addressResource}, nil
+	return resolved, ambiguous
 }
 
 // buildWDSService compiles the networking-only Service model into the Service
@@ -317,7 +287,7 @@ func buildWDSService(service model.Service, gatewayKey string) (model.Resource, 
 			Service: wireService,
 		},
 	}
-	value, err := anypb.New(address)
+	value, err := marshalDeterministicAny(address)
 	if err != nil {
 		return model.Resource{}, fmt.Errorf("marshal service %s: %w", service.ResourceName(), err)
 	}
@@ -426,7 +396,7 @@ func matchesIgnoredLabel(key string, patterns []string) bool {
 }
 
 func newWorkloadMetadataExtension(labels map[string]string) (*workloadv1.Extension, error) {
-	config, err := anypb.New(&extensionsv1.WorkloadMetadata{
+	config, err := marshalDeterministicAny(&extensionsv1.WorkloadMetadata{
 		Labels:                    labels,
 		MeshInternalTrafficPolicy: features.MeshInternalTrafficPolicy,
 	})
@@ -471,12 +441,22 @@ func projectWorkloadIdentity(workload model.Workload) (string, string, error) {
 		return "", "", nil
 	}
 	if principal.Kind != model.PrincipalServiceAccount {
-		return "", "", fmt.Errorf("current WDS Workload does not support %q attester principals",
+		return "", "", fmt.Errorf("current WDS Workload does not support %q workload principals",
 			principal.Kind)
 	}
 	if principal.ServiceAccount.Namespace != "" && principal.ServiceAccount.Namespace != workload.Namespace {
-		return "", "", fmt.Errorf("workload %s namespace %q does not match attester principal namespace %q",
+		return "", "", fmt.Errorf("workload %s namespace %q does not match workload principal namespace %q",
 			workload.UID, workload.Namespace, principal.ServiceAccount.Namespace)
 	}
 	return principal.TrustDomain, principal.ServiceAccount.ServiceAccount, nil
+}
+
+// marshalDeterministicAny encodes the payload before wrapping it: deterministic
+// marshaling of an outer Any cannot reorder bytes already stored in its Value.
+func marshalDeterministicAny(message proto.Message) (*anypb.Any, error) {
+	value := new(anypb.Any)
+	if err := anypb.MarshalFrom(value, message, proto.MarshalOptions{Deterministic: true}); err != nil {
+		return nil, err
+	}
+	return value, nil
 }

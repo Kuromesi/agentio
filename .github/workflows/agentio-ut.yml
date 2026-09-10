@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -62,5 +63,15 @@ jobs:
         run: make test
       - name: Run linters
         run: make lint
+      - name: Check new Go lint findings
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-${PUSH_BASE:-}}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          make lint.golangci GOLANGCI_LINT_ARGS="--new-from-rev=$base"
       - name: Run tests with the race detector
         run: make racetest

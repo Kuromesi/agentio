@@ -5,7 +5,12 @@ pkg/gatewaydeployer/controller.go
 pkg/gatewaydeployer/render.go
 pkg/inject/app_probe.go
 pkg/inject/config.go
+pkg/inject/containers.go
 pkg/inject/inject.go
+pkg/inject/native_sidecar.go
+pkg/inject/patch.go
+pkg/inject/pod.go
+pkg/inject/prometheus.go
 pkg/inject/template_functions.go
 pkg/inject/validate.go
 pkg/inject/webhook.go

@@ -14,6 +14,8 @@
 
 package xds
 
-import agentlog "github.com/openkruise/agentio/pkg/log"
+import (
+	agentlog "github.com/openkruise/agentio/pkg/log"
+)
 
 var log = agentlog.New("xds")

@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,6 +32,8 @@ import (
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/attestation"
+	"github.com/openkruise/agentio/pkg/util/nilutil"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // DeltaStream is the protocol surface needed by the local Delta ADS loop.
@@ -45,13 +46,7 @@ type DeltaStream interface {
 // ResourceStore supplies immutable xDS snapshots and context-bound subscriptions.
 type ResourceStore interface {
 	Snapshot() model.ResourceSet
-	Subscribe(context.Context) ResourceSubscription
-}
-
-// ResourceSubscription receives changes for resource types watched by a stream.
-type ResourceSubscription interface {
-	Watch(string)
-	Updates() <-chan Update
+	Subscribe(context.Context) xdsstore.Subscription
 }
 
 type Server struct {
@@ -95,7 +90,7 @@ func NewServer(
 	pushConcurrency int,
 	requestRateLimit float64,
 ) (*Server, error) {
-	if authenticator == nil || scopeFuncs == nil || isNilResourceStore(resources) || ready == nil {
+	if authenticator == nil || scopeFuncs == nil || nilutil.IsNilInterface(resources) || ready == nil {
 		return nil, fmt.Errorf("authenticator, scope functions, resource source, and readiness callback are required")
 	}
 	if queueSize <= 0 {
@@ -129,7 +124,7 @@ func newServerWithScheduler(
 	pushScheduler *PushScheduler,
 	requestRateLimit float64,
 ) (*Server, error) {
-	if authenticator == nil || scopeFuncs == nil || isNilResourceStore(resources) || ready == nil || pushScheduler == nil {
+	if authenticator == nil || scopeFuncs == nil || nilutil.IsNilInterface(resources) || ready == nil || pushScheduler == nil {
 		return nil, fmt.Errorf("authenticator, scope functions, resource source, readiness callback, and push scheduler are required")
 	}
 	if queueSize <= 0 {
@@ -140,7 +135,7 @@ func newServerWithScheduler(
 	}
 	ownedGenerators := make(map[string]ResourceGenerator, len(generators))
 	for typeURL, generator := range generators {
-		if typeURL == "" || isNilGenerator(generator) {
+		if typeURL == "" || nilutil.IsNilInterface(generator) {
 			return nil, fmt.Errorf("generator type URL and implementation are required")
 		}
 		ownedGenerators[typeURL] = generator
@@ -168,37 +163,11 @@ func invalidRequestRateLimit(limit float64) bool {
 	return limit < 0 || math.IsNaN(limit) || math.IsInf(limit, 0)
 }
 
-func isNilGenerator(generator ResourceGenerator) bool {
-	if generator == nil {
-		return true
-	}
-	value := reflect.ValueOf(generator)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
-}
-
 func (s *Server) generator(typeURL string) ResourceGenerator {
 	if generator := s.generators[typeURL]; generator != nil {
 		return generator
 	}
 	return s.defaultGen
-}
-
-func isNilResourceStore(resources ResourceStore) bool {
-	if resources == nil {
-		return true
-	}
-	value := reflect.ValueOf(resources)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }
 
 func (s *Server) StreamAggregatedResources(discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesServer) error {

@@ -425,56 +425,40 @@ func TestOnDemandIssuerEvictedSnapshotIsImmutableAndUnordered(t *testing.T) {
 	}
 }
 
-func TestNonRetryFlightCannotCommitAcrossEviction(t *testing.T) {
-	release := make(chan struct{})
-	signer := &blockingRotationDomainSigner{
-		revision: "one", result: testSignedCertificate("one"), started: make(chan int, 2),
-		blocks: map[int]chan struct{}{2: release},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	source := signer.source()
-	issuer := &OnDemandIssuer{
-		ctx: ctx, signer: signer, signerState: source.State, authorizer: &fakeGatewayAuthorizer{},
-		options: OnDemandOptions{
-			LeafLifetime: time.Hour, RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour,
-			CacheMaxEntries: defaultCacheMaxEntries, SignConcurrency: defaultSignConcurrency,
-		},
-		cache: make(map[string]*certificateCacheEntry), heap: make(certHeap, 0), evicted: sets.New[string](),
-		cacheUpdated: make(chan struct{}, 1), flights: make(map[string]*certificateFlight),
-		signSlots: make(chan struct{}, defaultSignConcurrency),
-		changes:   krt.NewStatic(&CertificateGeneration{}, true),
-	}
-	scope := model.ClientScope{Class: model.ClientEgressGateway, GatewayKey: "demo/egress"}
-	if _, err := issuer.Get(context.Background(), scope, "old.example.com"); err != nil {
+func TestPassiveSDSReadDoesNotSignExpiredCertificate(t *testing.T) {
+	signer := &fakeDomainSigner{revision: "one", result: testSignedCertificate("one")}
+	ctx, cancel := context.WithCancel(t.Context())
+	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
+		LeafLifetime: time.Hour, RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour,
+	})
+	if err != nil {
+		cancel()
 		t.Fatal(err)
 	}
-	if call := waitForSignCall(t, signer.started); call != 1 {
-		t.Fatalf("initial signing call = %d, want 1", call)
+	t.Cleanup(func() { cancel(); <-issuer.Done() })
+	if _, err := issuer.Get(ctx, model.ClientScope{}, "old.example.com"); err != nil {
+		t.Fatal(err)
 	}
-	now := time.Now()
 	issuer.mu.Lock()
-	entry := issuer.cache["old.example.com"]
-	entry.certificate.NotAfter = now.Add(-time.Second)
-	entry.deadline = now.Add(-time.Second)
-	heap.Fix(&issuer.heap, entry.index)
+	issuer.cache["old.example.com"].certificate.NotAfter = time.Now().Add(-time.Second)
 	issuer.mu.Unlock()
-
-	result := make(chan error, 1)
-	go func() {
-		_, getErr := issuer.GetForSDS(context.Background(), scope, "old.example.com", false)
-		result <- getErr
-	}()
-	if call := waitForSignCall(t, signer.started); call != 2 {
-		t.Fatalf("replacement signing call = %d, want 2", call)
+	if _, err := issuer.GetForSDS(ctx, model.ClientScope{}, "old.example.com", false); !errors.Is(err, ErrDomainCertificateEvicted) {
+		t.Fatalf("passive expired lookup = %v, want removal", err)
 	}
-	issuer.reap(now)
-	close(release)
-	if err := <-result; !errors.Is(err, ErrDomainCertificateEvicted) {
-		t.Fatalf("raced non-retry lookup error = %v, want evicted sentinel", err)
+	signer.mu.Lock()
+	calls := signer.calls
+	signer.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("passive lookup signed %d certificates, want initial certificate only", calls)
 	}
-	if got := issuer.Evicted(); len(got) != 1 || got[0] != "old.example.com" {
-		t.Fatalf("raced signing flight cleared eviction: %v", got)
+	if _, err := issuer.GetForSDS(ctx, model.ClientScope{}, "old.example.com", true); err != nil {
+		t.Fatal(err)
+	}
+	signer.mu.Lock()
+	calls = signer.calls
+	signer.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("explicit renewal signed %d certificates, want 2", calls)
 	}
 }
 

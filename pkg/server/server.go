@@ -44,6 +44,7 @@ import (
 	"github.com/openkruise/agentio/pkg/security/mitm"
 	"github.com/openkruise/agentio/pkg/server/debug"
 	"github.com/openkruise/agentio/pkg/xds"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 func Run(ctx context.Context, options Options, opts ...Option) error {
@@ -142,6 +143,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return err
 	}
 	registry, err := kubernetesregistry.New(kubeClient, kubernetesregistry.Options{
+		SandboxMode:           features.SandboxMode,
 		ClusterID:             options.ClusterID,
 		TrustDomain:           options.TrustDomain,
 		RootNamespace:         options.RootNamespace,
@@ -207,6 +209,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	dnsReferenceRegistration := resolver.Track(dnsReferences)
 	defer dnsReferenceRegistration.UnregisterHandler()
 	resourceCompiler, err := compiler.New(compiler.Inputs{
+		SandboxMode:                features.SandboxMode,
 		ClusterID:                  options.ClusterID,
 		RootNamespace:              options.RootNamespace,
 		Sandboxes:                  sources.Sandboxes,
@@ -234,7 +237,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-	store := xds.NewStore(empty)
+	store := xdsstore.New(empty)
 	var domainSigner mitm.DomainSignerSource
 	if composition.domainSigner == nil {
 		mitmSecretNamespace := strings.TrimSpace(features.MITMCASecretNamespace)
@@ -277,14 +280,6 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-	policyChanges := resourceCompiler.SandboxSNIPolicies().RegisterBatch(
-		func(events []krt.Event[compiler.SandboxSNIPolicy]) {
-			if len(events) > 0 {
-				controller.TriggerType(model.WorkloadType)
-			}
-		}, false)
-	defer policyChanges.UnregisterHandler()
-
 	var ready atomic.Bool
 	scopeFuncs, err := mergeScopeFuncs(xds.ScopeFuncs{
 		model.AttestationKubernetes: xds.KubernetesScopeFunc(registry.PodScopeResolver(sources.Workloads)),
@@ -292,7 +287,8 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-	workloadGenerator := xds.NewWorkloadGenerator(resourceCompiler)
+
+	workloadGenerator := xds.WorkloadGenerator{}
 	sdsGenerator, err := xds.NewSDSGenerator(onDemandIssuer)
 	if err != nil {
 		return err
@@ -307,6 +303,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			model.AddressType:               workloadGenerator,
 			model.WorkloadType:              workloadGenerator,
 			model.WorkloadAuthorizationType: xds.AuthorizationGenerator{},
+			model.SandboxType:               xds.SandboxGenerator{},
 			model.SecretType:                sdsGenerator,
 		},
 		features.PushConcurrency,

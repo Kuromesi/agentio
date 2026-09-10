@@ -51,7 +51,7 @@ func (r *failureRecorder) recordIf(kind, name string, err error, condition func(
 	// Log only on transition or when the reason changes: a failing object is
 	// retried on every recompute, and logging each attempt would flood.
 	if !existed || previous != err.Error() {
-		log.Warn("omitting object from snapshot", "key", key, "error", err)
+		log.Warn("object compilation failed", "key", key, "error", err)
 	}
 	metrics.Default.SetCompileFailingObjects(count)
 }

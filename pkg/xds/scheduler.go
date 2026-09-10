@@ -18,6 +18,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // pushConnection is the scheduler identity and delivery point for one Delta
@@ -33,12 +35,12 @@ func newPushConnection(ctx context.Context) *pushConnection {
 
 type scheduledPush struct {
 	Connection *pushConnection
-	Update     Update
+	Update     xdsstore.Update
 	Started    time.Time
 }
 
 type queuedUpdate struct {
-	Update  Update
+	Update  xdsstore.Update
 	Started time.Time
 }
 
@@ -78,7 +80,7 @@ func NewPushScheduler(concurrency int) *PushScheduler {
 
 // Enqueue adds a connection to the FIFO once and merges repeated updates into
 // either its pending work or the work accumulated while it is processing.
-func (s *PushScheduler) Enqueue(connection *pushConnection, update Update) {
+func (s *PushScheduler) Enqueue(connection *pushConnection, update xdsstore.Update) {
 	if connection == nil || connection.context.Err() != nil {
 		return
 	}
@@ -98,12 +100,12 @@ func (s *PushScheduler) Enqueue(connection *pushConnection, update Update) {
 			copy := incoming
 			s.processing[connection] = &copy
 		} else {
-			later.Update = mergeUpdates(later.Update, update)
+			later.Update = xdsstore.Merge(later.Update, update)
 		}
 		return
 	}
 	if pending, found := s.pending[connection]; found {
-		pending.Update = mergeUpdates(pending.Update, update)
+		pending.Update = xdsstore.Merge(pending.Update, update)
 		s.pending[connection] = pending
 		return
 	}

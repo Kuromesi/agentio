@@ -119,6 +119,7 @@ func newSandboxes(
 	sandboxesByUID krt.IndexCollection[string, *agentsv1alpha1.Sandbox],
 	pods krt.Collection[*corev1.Pod],
 	podsByUID krt.Index[string, *corev1.Pod],
+	clusterID string,
 	options ...krt.CollectionOption,
 ) krt.Collection[model.Sandbox] {
 	return krt.NewCollection(sandboxesByUID,
@@ -135,42 +136,16 @@ func newSandboxes(
 			if pod != nil {
 				podLabels = pod.Labels
 			}
+			var attester *model.Attester
+			if pod != nil && pod.DeletionTimestamp == nil && podsource.IsEligible(pod) && hasServingRuntime(sandbox) {
+				attester = &model.Attester{WorkloadUID: podsource.WorkloadUID(clusterID, pod)}
+			}
 			return &model.Sandbox{
+				State: runtimeState(sandbox), Attester: attester,
 				UID:       group.Key,
 				Namespace: sandbox.Namespace,
 				Labels:    mergeSandboxLabels(sandbox.Labels, podLabels),
 			}
-		}, options...)
-}
-
-func newWorkloads(
-	sandboxesByUID krt.IndexCollection[string, *agentsv1alpha1.Sandbox],
-	pods krt.Collection[*corev1.Pod],
-	podsByUID krt.Index[string, *corev1.Pod],
-	clusterID, trustDomain string,
-	options ...krt.CollectionOption,
-) krt.Collection[model.Workload] {
-	return krt.NewCollection(sandboxesByUID,
-		func(ctx krt.HandlerContext, group krt.IndexObject[string, *agentsv1alpha1.Sandbox]) *model.Workload {
-			if len(group.Objects) != 1 {
-				return nil
-			}
-			sandbox := group.Objects[0]
-			if !isPolicySubject(sandbox) || !hasServingRuntime(sandbox) {
-				return nil
-			}
-			pod := backingPod(ctx, pods, podsByUID, sandbox)
-			if pod == nil || pod.DeletionTimestamp != nil || !podsource.IsEligible(pod) {
-				return nil
-			}
-			workload := podsource.BaseWorkloadFromPod(clusterID, trustDomain, pod)
-			workload.SandboxBindings = []model.SandboxBinding{
-				{
-					SandboxUID: group.Key,
-				},
-			}
-			workload.Ready = workload.Ready && ready(sandbox)
-			return workload
 		}, options...)
 }
 
@@ -198,16 +173,23 @@ func hasServingRuntime(sandbox *agentsv1alpha1.Sandbox) bool {
 	return true
 }
 
-func ready(sandbox *agentsv1alpha1.Sandbox) bool {
-	if sandbox.Status.Phase != agentsv1alpha1.SandboxRunning {
-		return false
-	}
-	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(agentsv1alpha1.SandboxConditionReady) {
-			return condition.Status == metav1.ConditionTrue
+func runtimeState(sandbox *agentsv1alpha1.Sandbox) model.SandboxState {
+	switch sandbox.Status.Phase {
+	case agentsv1alpha1.SandboxPending:
+		return model.SandboxStatePending
+	case agentsv1alpha1.SandboxRunning:
+		return model.SandboxStateRunning
+	case agentsv1alpha1.SandboxPaused:
+		for _, condition := range sandbox.Status.Conditions {
+			if condition.Type == string(agentsv1alpha1.SandboxConditionPaused) && condition.Status == metav1.ConditionTrue {
+				return model.SandboxStatePaused
+			}
 		}
+	case agentsv1alpha1.SandboxSucceeded, agentsv1alpha1.SandboxFailed:
+		return model.SandboxStateStopped
 	}
-	return false
+	// Transitional phases do not prove a completed lifecycle state.
+	return model.SandboxStateUnspecified
 }
 
 func ownedPod(pod *corev1.Pod, sandbox *agentsv1alpha1.Sandbox) bool {
@@ -224,8 +206,8 @@ func ownedPod(pod *corev1.Pod, sandbox *agentsv1alpha1.Sandbox) bool {
 	return false
 }
 
-// OwnsPod reports whether a Pod's controller owner reference assigns its
-// Workload projection to the Kruise adapter.
+// OwnsPod classifies Kruise Sandbox hosts from the Pod itself, independently
+// of Sandbox availability, claim status, or lifecycle.
 func OwnsPod(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false

@@ -18,8 +18,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openkruise/agentio/pkg/model"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // AuthorizationGenerator projects global, namespace, and workload-selector
@@ -34,12 +35,10 @@ func (AuthorizationGenerator) Generate(ctx context.Context, request GenerationRe
 		return GeneratedDelta{}, fmt.Errorf("authorization generator does not support type URL %q", request.TypeURL)
 	}
 	if !request.Full && !request.Update.FullFor(model.WorkloadAuthorizationType) {
-		return generateAuthorizationDirty(request), nil
+		return generateAuthorizationIncremental(request), nil
 	}
 	selected := make(map[string]model.Resource)
-	for _, resource := range selectAuthorizationResources(
-		request.Scope, request.Snapshot, selectionNames(request.Subscription),
-	) {
+	for _, resource := range selectAuthorizationResources(request.Scope, request.Snapshot, selectionNames(request.Subscription)) {
 		selected[resource.XDSName] = resource
 	}
 	return diffSelected(request.Subscription, selected), nil
@@ -50,37 +49,16 @@ func selectAuthorizationResources(
 	snapshot model.ResourceSet,
 	names []string,
 ) []model.Resource {
-	if scope.Class == model.ClientEgressGateway {
-		if names == nil {
-			return snapshot.List(model.WorkloadAuthorizationType)
-		}
-		selected := make([]model.Resource, 0, len(names))
-		for _, name := range names {
-			for _, resource := range snapshot.Lookup(model.WorkloadAuthorizationType, name) {
-				if scopeAllows(scope, resource) {
-					selected = append(selected, resource)
-				}
-			}
-		}
-		return orderedUnique(selected)
+	visibility := newAuthorizationVisibility(scope, snapshot)
+	if !visibility.hasWorkloads {
+		return nil
 	}
-
 	selected := snapshot.ListGlobalAuthorizations()
-	workloads := scopedWorkloads(scope, snapshot, model.AddressType)
-	namespaces := workloadNamespaces(workloads)
-	if namespace, found := scopeNamespace(scope); found {
-		namespaces.Insert(namespace)
-	}
-	for namespace := range namespaces {
+	for namespace := range visibility.namespaces {
 		selected = append(selected, snapshot.ListNamespaceAuthorizations(namespace)...)
 	}
-	for policyName := range workloadAuthorizationNames(workloads) {
-		if resource, found := snapshot.Get(model.ResourceKey{
-			TypeURL: model.WorkloadAuthorizationType,
-			Name:    policyName,
-		}); found {
-			selected = append(selected, resource)
-		}
+	for policyName := range visibility.policyNames {
+		selected = append(selected, snapshot.Lookup(model.WorkloadAuthorizationType, policyName)...)
 	}
 	selected = orderedUnique(selected)
 	if names == nil {
@@ -96,6 +74,18 @@ func selectAuthorizationResources(
 		}
 	}
 	return orderedUnique(result)
+}
+
+// Gateways serve ordinary endpoints cluster-wide; other clients use their
+// authenticated endpoint/node scope. Sandbox-managed endpoints never contribute.
+func authorizationWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
+	query := model.WorkloadQuery{WorkloadPoliciesOnly: true}
+	if scope.Class == model.ClientEgressGateway {
+		return query, true
+	}
+	query, ok := workloadScopeQuery(scope)
+	query.WorkloadPoliciesOnly = true
+	return query, ok
 }
 
 func workloadAuthorizationNames(resources []model.Resource) sets.Set[string] {
@@ -120,4 +110,90 @@ func workloadNamespaces(resources []model.Resource) sets.Set[string] {
 		result.Insert(resource.Facts.Workload.Principal.ServiceAccount.Namespace)
 	}
 	return result
+}
+
+func generateAuthorizationIncremental(request GenerationRequest) GeneratedDelta {
+	authorizationChanges := request.Update.ReadOnlyChangesForType(model.WorkloadAuthorizationType)
+	scopeChanged := scopedWorkloadChanged(request.Scope, request.Update)
+	if !scopeChanged && len(authorizationChanges) == 0 {
+		return GeneratedDelta{}
+	}
+	if !scopeChanged {
+		candidates := sets.NewWithLength[model.ResourceKey](len(authorizationChanges))
+		for _, change := range authorizationChanges {
+			candidates.Insert(change.Key)
+		}
+		visible := func(snapshot model.ResourceSet) func(model.Resource) bool {
+			return func(resource model.Resource) bool {
+				return authorizationVisibleForScope(request.Scope, snapshot, resource) &&
+					request.Subscription.allows(resource)
+			}
+		}
+		selected, removed := diffCandidateTransition(candidates,
+			request.Update.Before().Get, request.Update.After().Get,
+			visible(request.Update.Before()), visible(request.Update.After()))
+		return newSortedDelta(selected, removed, false)
+	}
+	after := newAuthorizationVisibility(request.Scope, request.Update.After())
+	before := newAuthorizationVisibility(request.Scope, request.Update.Before())
+	candidates := authorizationCandidates(before, after, authorizationChanges)
+	visible := func(visibility authorizationVisibility) func(model.Resource) bool {
+		return func(resource model.Resource) bool {
+			return visibility.visible(resource) && request.Subscription.allows(resource)
+		}
+	}
+	selected, removed := diffCandidateTransition(candidates,
+		before.resources.Get, after.resources.Get, visible(before), visible(after))
+	return newSortedDelta(selected, removed, false)
+}
+
+func authorizationCandidates(
+	before, after authorizationVisibility,
+	changes []model.ResourceChange,
+) sets.Set[model.ResourceKey] {
+	candidates := sets.NewWithLength[model.ResourceKey](len(changes))
+	for _, change := range changes {
+		candidates.Insert(change.Key)
+	}
+	if before.hasWorkloads != after.hasWorkloads {
+		for _, snapshot := range []model.ResourceSet{before.resources, after.resources} {
+			for _, resource := range snapshot.ListGlobalAuthorizations() {
+				candidates.Insert(resource.Key)
+			}
+		}
+	}
+	namespaces := sets.NewWithLength[string](len(before.namespaces) + len(after.namespaces))
+	namespaces.Merge(before.namespaces)
+	namespaces.Merge(after.namespaces)
+	for namespace := range namespaces {
+		wasVisible := before.namespaces.Contains(namespace)
+		isVisible := after.namespaces.Contains(namespace)
+		if wasVisible == isVisible {
+			continue
+		}
+		for _, resource := range before.resources.ListNamespaceAuthorizations(namespace) {
+			candidates.Insert(resource.Key)
+		}
+		for _, resource := range after.resources.ListNamespaceAuthorizations(namespace) {
+			candidates.Insert(resource.Key)
+		}
+	}
+	policyNames := sets.NewWithLength[string](len(before.policyNames) + len(after.policyNames))
+	policyNames.Merge(before.policyNames)
+	policyNames.Merge(after.policyNames)
+	for name := range policyNames {
+		wasVisible := before.policyNames.Contains(name)
+		isVisible := after.policyNames.Contains(name)
+		if wasVisible == isVisible {
+			continue
+		}
+		key := model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name}
+		if _, found := before.resources.Get(key); found {
+			candidates.Insert(key)
+		}
+		if _, found := after.resources.Get(key); found {
+			candidates.Insert(key)
+		}
+	}
+	return candidates
 }

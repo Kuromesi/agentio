@@ -22,6 +22,8 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	stats "istio.io/api/envoy/extensions/stats"
+
+	"github.com/openkruise/agentio/pkg/util/protoutil"
 )
 
 const statsFilterName = "istio.stats"
@@ -65,7 +67,7 @@ func buildStatsFilters(configuration metricsConfig) (*hcmv3.HttpFilter, *listene
 		}
 		plugin.Metrics = append(plugin.Metrics, metric)
 	}
-	typed, err := anypb.New(plugin)
+	typed, err := protoutil.MarshalAny(plugin)
 	if err != nil {
 		return nil, nil, err
 	}

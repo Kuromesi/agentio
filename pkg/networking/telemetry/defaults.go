@@ -19,8 +19,9 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/openkruise/agentio/pkg/util/protoutil"
 
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -64,7 +65,7 @@ func defaultTelemetryProviders() model.TelemetryProviders {
 			OmitEmptyValues:   true,
 		}},
 	}
-	typed, err := anypb.New(fileLog)
+	typed, err := protoutil.MarshalAny(fileLog)
 	if err != nil {
 		panic(err)
 	}

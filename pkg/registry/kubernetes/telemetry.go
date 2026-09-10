@@ -16,16 +16,11 @@ package kubernetes
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	telemetryapi "istio.io/api/telemetry/v1alpha1"
-	"istio.io/istio/pkg/util/sets"
 	corev1 "k8s.io/api/core/v1"
-	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
@@ -54,78 +49,14 @@ func newTelemetriesCollection(
 }
 
 func decodeTelemetries(configMap *corev1.ConfigMap) ([]model.Telemetry, error) {
-	if configMap == nil {
-		return nil, nil
-	}
-	if _, selected := configMap.Labels[KubeSourceConfigMapLabel]; !selected {
-		return nil, nil
-	}
-	content := configMap.Data[KubeSourceDataKey]
-	if strings.TrimSpace(content) == "" {
-		return nil, nil
-	}
-
-	decoder := kubeyaml.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096)
-	var result []model.Telemetry
-	var parseErrors []error
-	seen := sets.New[string]()
-	for document := 0; ; document++ {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if err == io.EOF {
-				break
-			}
-			parseErrors = append(parseErrors, fmt.Errorf("decode document %d: %w", document, err))
-			break
-		}
-		if len(raw) == 0 || string(raw) == "null" {
-			continue
-		}
-		policies, err := decodeTelemetryDocument(configMap, raw)
-		if err != nil {
-			parseErrors = append(parseErrors, fmt.Errorf("document %d: %w", document, err))
-			continue
-		}
-		for _, policy := range policies {
-			if seen.Contains(policy.LogicalName()) {
-				parseErrors = append(parseErrors,
-					fmt.Errorf("duplicate Telemetry %s in one ConfigMap", policy.LogicalName()))
-				continue
-			}
-			seen.Insert(policy.LogicalName())
-			result = append(result, policy)
-		}
-	}
-	return result, errors.Join(parseErrors...)
+	return decodeConfigSources(configMap, "Telemetry", decodeTelemetryDocument)
 }
 
 func decodeTelemetryDocument(configMap *corev1.ConfigMap, raw json.RawMessage) ([]model.Telemetry, error) {
-	var document configSourceDocument
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return nil, fmt.Errorf("decode Kubernetes object: %w", err)
-	}
-	if document.Kind == "List" {
-		var result []model.Telemetry
-		var parseErrors []error
-		for index, item := range document.Items {
-			policies, err := decodeTelemetryDocument(configMap, item)
-			if err != nil {
-				parseErrors = append(parseErrors, fmt.Errorf("list item %d: %w", index, err))
-				continue
-			}
-			result = append(result, policies...)
-		}
-		return result, errors.Join(parseErrors...)
-	}
-	if document.Kind != "Telemetry" || apiGroup(document.APIVersion) != telemetryAPIGroup {
-		return nil, nil
-	}
-	if document.Metadata.Namespace == "" || document.Metadata.Name == "" {
-		return nil, fmt.Errorf("Telemetry metadata namespace and name are required")
-	}
-	if len(document.Spec) == 0 || string(document.Spec) == "null" {
-		return nil, fmt.Errorf("Telemetry %s/%s spec is required", document.Metadata.Namespace, document.Metadata.Name)
-	}
+	return decodeConfigSourceDocument(configMap, raw, "Telemetry", telemetryAPIGroup, convertTelemetryDocument)
+}
+
+func convertTelemetryDocument(configMap *corev1.ConfigMap, document configSourceDocument) ([]model.Telemetry, error) {
 	normalized, err := normalizeLegacyTelemetryJSON(document.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("normalize Telemetry %s/%s spec: %w", document.Metadata.Namespace, document.Metadata.Name, err)

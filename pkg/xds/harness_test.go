@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -32,9 +33,11 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"istio.io/istio/pkg/util/sets"
 
+	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/mitm"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // fakeStream is an in-memory DeltaStream: queued requests, collected responses, EOF when exhausted.
@@ -136,20 +139,20 @@ func (f fakeResolver) scopeFuncs() ScopeFuncs {
 type fakeResourceStore struct {
 	mu            sync.Mutex
 	snapshot      model.ResourceSet
-	updates       chan Update
+	updates       chan xdsstore.Update
 	subscriptions sets.Set[*fakeResourceSubscription]
 }
 
 type fakeResourceSubscription struct {
 	store   *fakeResourceStore
-	updates chan Update
+	updates chan xdsstore.Update
 	types   sets.Set[string]
 }
 
 func newFakeResourceStore(snapshot model.ResourceSet) *fakeResourceStore {
 	return &fakeResourceStore{
 		snapshot:      snapshot,
-		updates:       make(chan Update),
+		updates:       make(chan xdsstore.Update),
 		subscriptions: sets.New[*fakeResourceSubscription](),
 	}
 }
@@ -160,9 +163,9 @@ func (f *fakeResourceStore) Snapshot() model.ResourceSet {
 	return f.snapshot
 }
 
-func (f *fakeResourceStore) Subscribe(ctx context.Context) ResourceSubscription {
+func (f *fakeResourceStore) Subscribe(ctx context.Context) xdsstore.Subscription {
 	subscription := &fakeResourceSubscription{
-		store: f, updates: make(chan Update, 1), types: sets.New[string](),
+		store: f, updates: make(chan xdsstore.Update, 1), types: sets.New[string](),
 	}
 	f.mu.Lock()
 	f.subscriptions.Insert(subscription)
@@ -182,11 +185,11 @@ func (f *fakeResourceSubscription) Watch(typeURL string) {
 	f.store.mu.Unlock()
 }
 
-func (f *fakeResourceSubscription) Updates() <-chan Update { return f.updates }
+func (f *fakeResourceSubscription) Updates() <-chan xdsstore.Update { return f.updates }
 
 // updateReversedFrom builds a store update whose before publication is derived
 // by reversing changes against the after snapshot.
-func updateReversedFrom(t testing.TB, after model.ResourceSet, changes []model.ResourceChange) Update {
+func updateReversedFrom(t testing.TB, after model.ResourceSet, changes []model.ResourceChange) xdsstore.Update {
 	t.Helper()
 	reverse := make([]model.ResourceChange, 0, len(changes))
 	for _, change := range changes {
@@ -226,7 +229,7 @@ func (f *fakeResourceStore) publish(snapshot model.ResourceSet) {
 			merged := update
 			select {
 			case pending := <-subscription.updates:
-				merged = mergeUpdates(pending, update)
+				merged = xdsstore.Merge(pending, update)
 			default:
 			}
 			select {
@@ -423,6 +426,7 @@ func testGenerators(overrides map[string]ResourceGenerator) map[string]ResourceG
 		model.AddressType:               WorkloadGenerator{},
 		model.WorkloadType:              WorkloadGenerator{},
 		model.WorkloadAuthorizationType: AuthorizationGenerator{},
+		model.SandboxType:               SandboxGenerator{},
 	}
 	maps.Copy(result, overrides)
 	return result
@@ -556,9 +560,10 @@ func addressResource(t testing.TB, name, payload string, aliases ...string) mode
 			Workload: &workloadv1.Workload{Uid: name, Name: payload, Namespace: "demo"},
 		}}), aliases,
 		model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-			SandboxUID: "cluster//Pod/demo/client-pod",
-			NodeName:   "node-a",
-			Principal:  serviceAccountPrincipal("demo", "default"),
+			WorkloadUID: "cluster//Pod/demo/client-pod",
+			SourceUID:   "cluster//Pod/demo/client-pod",
+			NodeName:    "node-a",
+			Principal:   serviceAccountPrincipal("demo", "default"),
 		}})
 	if err != nil {
 		t.Fatal(err)
@@ -602,9 +607,9 @@ func gatewayScope() model.ClientScope {
 
 func ztunnelScope() model.ClientScope {
 	return model.ClientScope{
-		Class:      model.ClientDedicatedZTunnel,
-		Principal:  serviceAccountPrincipal("demo", "default"),
-		SandboxUID: "cluster//Pod/demo/client-pod",
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   serviceAccountPrincipal("demo", "default"),
+		WorkloadUID: "cluster//Pod/demo/client-pod", SourceUID: "cluster//Pod/demo/client-pod",
 	}
 }
 
@@ -625,4 +630,256 @@ func resourceNames(response *discoveryv3.DeltaDiscoveryResponse) []string {
 		result = append(result, resource.GetName())
 	}
 	return result
+}
+
+// updateBetween obtains an update through the same publication API as production.
+func updateBetween(before, after model.ResourceSet, changes []model.ResourceChange) xdsstore.Update {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	resources := xdsstore.New(before)
+	subscription := resources.Subscribe(ctx)
+	for typeURL := range before.CountsByType() {
+		subscription.Watch(typeURL)
+	}
+	for typeURL := range after.CountsByType() {
+		subscription.Watch(typeURL)
+	}
+	expected, _, err := before.Apply(changes)
+	if err != nil {
+		panic(err)
+	}
+	if len(expected.Diff(after)) != 0 {
+		panic("test update changes do not produce the expected after snapshot")
+	}
+	if !resources.Replace(after).Changed {
+		return xdsstore.Update{}
+	}
+	return <-subscription.Updates()
+}
+
+func updateFromChanges(t testing.TB, changes []model.ResourceChange) xdsstore.Update {
+	t.Helper()
+	var oldResources []model.Resource
+	for _, change := range changes {
+		if change.Old != nil {
+			oldResources = append(oldResources, *change.Old)
+		}
+	}
+	before, err := model.NewResourceSet(oldResources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _, err := before.Apply(changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return updateBetween(before, after, changes)
+}
+
+func fullUpdate(t testing.TB, name string) xdsstore.Update {
+	t.Helper()
+	resources := xdsstore.New(newSnapshot(t, name))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscription := resources.Subscribe(ctx)
+	subscription.Watch(model.AddressType)
+	resources.Notify()
+	return <-subscription.Updates()
+}
+
+var _ ResourceStore = (*xdsstore.Store)(nil)
+
+type recordingGenerator struct {
+	calls int
+	delta GeneratedDelta
+	err   error
+}
+
+type subscriptionRecordingGenerator struct {
+	sentNames []string
+}
+
+type scopeRecordingGenerator struct {
+	scope model.ClientScope
+}
+
+type requestRecordingGenerator struct {
+	request GenerationRequest
+}
+
+func (g *subscriptionRecordingGenerator) Generate(_ context.Context, request GenerationRequest) (GeneratedDelta, error) {
+	g.sentNames = request.Subscription.SentNames()
+	request.Subscription.sent["cluster//Pod/demo/unrelated"] = "mutated"
+	return GeneratedDelta{}, nil
+}
+
+func (g *recordingGenerator) Generate(context.Context, GenerationRequest) (GeneratedDelta, error) {
+	g.calls++
+	return g.delta, g.err
+}
+
+func (g *scopeRecordingGenerator) Generate(_ context.Context, request GenerationRequest) (GeneratedDelta, error) {
+	g.scope = request.Scope
+	return GeneratedDelta{}, nil
+}
+
+func (g *requestRecordingGenerator) Generate(_ context.Context, request GenerationRequest) (GeneratedDelta, error) {
+	g.request = request
+	return GeneratedDelta{}, nil
+}
+
+func watchSentNames(watch *watchState) []string {
+	return newSubscriptionView(watch).SentNames()
+}
+
+func selectionSnapshot(t *testing.T, resources []model.Resource) model.ResourceSet {
+	t.Helper()
+	snapshot, err := model.NewResourceSet(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func selectionWorkload(t *testing.T, uid, namespace, node, service, policyName string) model.Resource {
+	t.Helper()
+	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+		WorkloadUID: uid,
+		SourceUID:   uid,
+		NodeName:    node,
+		Principal:   serviceAccountPrincipal(namespace, "default"),
+	}}
+	if service != "" {
+		facts.Workload.ServiceKeys = []string{"demo/" + service}
+	}
+	authorizationPolicies := []string(nil)
+	if policyName != "" {
+		authorizationPolicies = []string{policyName}
+		facts.Workload.AuthorizationRefs = []string{policyName}
+	}
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.AddressType, Name: uid}, "",
+		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
+			Uid: uid, Namespace: namespace, Node: node, AuthorizationPolicies: authorizationPolicies,
+		}}}), nil, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resource
+}
+
+func projectedWorkloads(t *testing.T, scope model.ClientScope, snapshot model.ResourceSet, names []string) []model.Resource {
+	t.Helper()
+	subscription := SubscriptionView{wildcard: names == nil, names: append([]string(nil), names...)}
+	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
+		Scope: scope, TypeURL: model.WorkloadType, Subscription: subscription, Snapshot: snapshot, Full: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return delta.Resources
+}
+
+func selectionService(t *testing.T, name string, aliases ...string) model.Resource {
+	t.Helper()
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.AddressType, Name: name}, "",
+		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Service{Service: &workloadv1.Service{
+			Name: name,
+		}}}), aliases, model.ResourceFacts{Service: &model.ServiceResourceFacts{ServiceKey: name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resource
+}
+
+func selectionWithGatewayReference(t *testing.T, resource model.Resource, gatewayKey string) model.Resource {
+	t.Helper()
+	facts := resource.Facts
+	workload := *facts.Workload
+	workload.GatewayReferences = append(append([]string(nil), workload.GatewayReferences...), gatewayKey)
+	facts.Workload = &workload
+	updated, err := model.NewResource(resource.Key, resource.XDSName, resource.Value, resource.Aliases, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return updated
+}
+
+func selectionOwnedByGateway(t *testing.T, resource model.Resource, gatewayKey string) model.Resource {
+	t.Helper()
+	facts := resource.Facts
+	facts.GatewayOwner = gatewayKey
+	updated, err := model.NewResource(resource.Key, resource.XDSName, resource.Value, resource.Aliases, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return updated
+}
+
+func selectionAuthorization(
+	t *testing.T,
+	name string,
+	scope model.AuthorizationScope,
+	namespace string,
+) model.Resource {
+	t.Helper()
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name}, "",
+		mustWireAny(model.WorkloadAuthorizationType, &securityv1.Authorization{Name: name}), nil,
+		model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{Scope: scope, Namespace: namespace}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resource
+}
+
+func selectedNames(resources []model.Resource) []string {
+	names := make([]string, 0, len(resources))
+	for _, resource := range resources {
+		names = append(names, resource.XDSName)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func scaleWorkloadTransition(t testing.TB, resourceCount int) (
+	model.ResourceSet, model.ResourceSet, xdsstore.Update, model.Resource,
+) {
+	t.Helper()
+	value := &anypb.Any{TypeUrl: model.AddressType, Value: []byte("address")}
+	resources := make([]model.Resource, 0, resourceCount)
+	for index := range resourceCount {
+		name := fmt.Sprintf("workload-%06d", index)
+		resources = append(resources, model.Resource{
+			Key:     model.ResourceKey{TypeURL: model.AddressType, Name: name},
+			XDSName: name, Value: value, Hash: name + "-old",
+			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+				WorkloadUID: name,
+				SourceUID:   name,
+				NodeName:    fmt.Sprintf("node-%03d", index%100),
+				Principal:   serviceAccountPrincipal("demo", "default"),
+			}},
+		})
+	}
+	before, err := model.NewResourceSet(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetKey := model.ResourceKey{TypeURL: model.AddressType, Name: "workload-005050"}
+	oldTarget, found := before.Get(targetKey)
+	if !found {
+		t.Fatalf("target Workload %q not found", targetKey.Name)
+	}
+	newTarget := oldTarget
+	newTarget.Hash = targetKey.Name + "-new"
+	after, changed, err := before.Apply([]model.ResourceChange{{Key: targetKey, New: &newTarget}})
+	if err != nil || !changed {
+		t.Fatalf("build Workload transition: changed=%v err=%v", changed, err)
+	}
+	update := updateBetween(before, after, []model.ResourceChange{{
+		Key: targetKey, Old: &oldTarget, New: &newTarget,
+	}})
+	return before, after, update, newTarget
 }

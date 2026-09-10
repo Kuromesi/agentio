@@ -123,11 +123,14 @@ func ParsePrincipalURL(identity *url.URL, trustDomain string) (Principal, error)
 }
 
 type ClientScope struct {
-	Class      ClientClass
-	Principal  Principal
-	NodeName   string
-	SandboxUID string
-	GatewayKey string
+	// WorkloadUID + SourceUID bind a dedicated stream to its authenticated
+	// runtime object. Its Sandbox set is resolved dynamically on each update.
+	WorkloadUID string
+	SourceUID   string
+	Class       ClientClass
+	Principal   Principal
+	NodeName    string
+	GatewayKey  string
 }
 
 func (s ClientScope) Validate() error {
@@ -140,8 +143,8 @@ func (s ClientScope) Validate() error {
 			return fmt.Errorf("shared ztunnel scope requires node name")
 		}
 	case ClientDedicatedZTunnel:
-		if strings.TrimSpace(s.SandboxUID) == "" {
-			return fmt.Errorf("dedicated ztunnel scope requires sandbox UID")
+		if strings.TrimSpace(s.WorkloadUID) == "" || strings.TrimSpace(s.SourceUID) == "" {
+			return fmt.Errorf("dedicated ztunnel scope requires Workload UID and source UID")
 		}
 	case ClientEgressGateway:
 		if strings.TrimSpace(s.GatewayKey) == "" {

@@ -28,6 +28,7 @@ import (
 	agentlog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // pushOrder gives send calls a deterministic per-type order; it is not an ACK barrier.
@@ -37,16 +38,16 @@ var pushOrder = []string{
 	model.ListenerType,
 	model.RouteType,
 	model.SecretType,
-	model.SniTrafficPolicyType,
 	model.AddressType,
 	model.WorkloadType,
 	model.WorkloadAuthorizationType,
+	model.SandboxType,
 	model.ExtensionConfigurationType,
 	model.ProxyConfigType,
 }
 
 func (s *Server) handleRequest(stream DeltaStream,
-	scope model.ClientScope, connLog *agentlog.Logger, watches map[string]*watchState, subscription ResourceSubscription,
+	scope model.ClientScope, connLog *agentlog.Logger, watches map[string]*watchState, subscription xdsstore.Subscription,
 	request *discoveryv3.DeltaDiscoveryRequest,
 ) error {
 	typeURL := request.GetTypeUrl()
@@ -76,12 +77,25 @@ func (s *Server) handleRequest(stream DeltaStream,
 		return status.Errorf(codes.ResourceExhausted, "subscribe to %s: %v", typeURL, err)
 	}
 
+	matched := watch.recordAcknowledgement(request)
+	if nonce := request.GetResponseNonce(); nonce != "" && !matched {
+		metrics.Default.RecordXDSStaleNonce()
+		connLog.Debug("xDS stale acknowledgement", "type_url", typeURL,
+			"nonce", nonce, "nonce_sent", watch.nonceSent)
+	}
 	if detail := request.GetErrorDetail(); detail != nil {
+		// Keep counting all received NACKs, including late ones, without letting
+		// a late rejection overwrite the latest response's acknowledgement state.
 		metrics.Default.RecordXDSNACK()
 		connLog.Warn("xDS NACK", "principal", scope.Principal.String(),
-			"type_url", typeURL, "code", codes.Code(detail.GetCode()).String(),
-			"detail", detail.GetMessage())
+			"type_url", typeURL, "nonce", request.GetResponseNonce(),
+			"nonce_sent", watch.nonceSent, "matched", matched,
+			"code", codes.Code(detail.GetCode()).String(), "detail", detail.GetMessage())
+	} else if matched {
+		metrics.Default.RecordXDSACK()
+		connLog.Debug("xDS ACK", "type_url", typeURL, "nonce", watch.nonceAcked)
 	}
+
 	if initial {
 		if known {
 			connLog.Debug("Delta ADS watch started", "client_class", scope.Class,
@@ -95,14 +109,15 @@ func (s *Server) handleRequest(stream DeltaStream,
 
 	// A nonce with an unchanged subscription is a pure acknowledgement; there
 	// is nothing to send.
+	explicitSandboxSubscribe := typeURL == model.SandboxType && len(request.GetResourceNamesSubscribe()) > 0
 	explicitSecretSubscribe := typeURL == model.SecretType && len(request.GetResourceNamesSubscribe()) > 0
-	if !changed && request.GetResponseNonce() != "" && !explicitSecretSubscribe {
+	if !changed && request.GetResponseNonce() != "" && !explicitSecretSubscribe && !explicitSandboxSubscribe {
 		return nil
 	}
 	return s.sendDiffForNames(stream, scope, connLog, typeURL, watch, true, request.GetResourceNamesSubscribe())
 }
 
-func orderedWatchedTypes(watches map[string]*watchState, update Update) []string {
+func orderedWatchedTypes(watches map[string]*watchState, update xdsstore.Update) []string {
 	result := make([]string, 0, len(watches))
 	added := sets.NewWithLength[string](len(watches))
 	for _, typeURL := range pushOrder {
@@ -129,7 +144,7 @@ func (s *Server) pushUpdate(
 	scope model.ClientScope,
 	connLog *agentlog.Logger,
 	watches map[string]*watchState,
-	update Update,
+	update xdsstore.Update,
 ) error {
 	for _, typeURL := range orderedWatchedTypes(watches, update) {
 		watch := watches[typeURL]
@@ -139,7 +154,7 @@ func (s *Server) pushUpdate(
 			}
 			continue
 		}
-		if err := s.sendDirty(stream, scope, connLog, typeURL, watch, update); err != nil {
+		if err := s.sendIncremental(stream, scope, connLog, typeURL, watch, update); err != nil {
 			return err
 		}
 	}
@@ -166,16 +181,17 @@ func (s *Server) sendDiffForNames(stream DeltaStream,
 	}, force)
 }
 
-// sendDirty builds a Delta response directly from the KRT changes carried by
+// sendIncremental builds a Delta response directly from the KRT changes carried by
 // the store update. Named and non-WDS watches leave sent state for every other
 // key untouched; wildcard Address watches elide that state entirely.
-func (s *Server) sendDirty(stream DeltaStream,
-	scope model.ClientScope, connLog *agentlog.Logger, typeURL string, watch *watchState, update Update,
+func (s *Server) sendIncremental(stream DeltaStream,
+	scope model.ClientScope, connLog *agentlog.Logger, typeURL string, watch *watchState, update xdsstore.Update,
 ) error {
+	subscriptionView := newIncrementalSubscriptionView(watch, typeURL, update)
 	request := GenerationRequest{
 		Scope:        scope,
 		TypeURL:      typeURL,
-		Subscription: newDirtySubscriptionView(watch, typeURL, update),
+		Subscription: subscriptionView,
 		Snapshot:     update.After(),
 		Update:       update,
 	}
@@ -259,7 +275,10 @@ func (s *Server) sendGeneratedDelta(
 	pushLog("Delta ADS push", "principal", request.Scope.Principal.String(),
 		"type_url", request.TypeURL, "push", pushMode,
 		"resources", len(resources), "removed", len(removed),
-		"size", byteSize(sizeBytes), "duration", duration)
+		"size", byteSize(sizeBytes), "duration", duration,
+		"nonce_sent", nonce, "nonce_acked", watch.nonceAcked,
+		"nonce_nacked", watch.nonceNacked, "last_error", watch.lastError,
+		"last_error_code", watch.lastErrorCode.String())
 	if delta.elideSentState {
 		// Replace, not clear, so a reconnect's InitialResourceVersions map does
 		// not keep its backing array alive.
@@ -272,7 +291,7 @@ func (s *Server) sendGeneratedDelta(
 			watch.sent[resource.XDSName] = resource.Hash
 		}
 	}
-	watch.nonce = nonce
+	watch.nonceSent = nonce
 	return nil
 }
 

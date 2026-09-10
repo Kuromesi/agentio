@@ -19,11 +19,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openkruise/agentio/pkg/util/protoutil"
+
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/model"
@@ -347,7 +348,7 @@ func applyHTTPFilters(patches *Patches, listener *listenerv3.Listener, chain *li
 			existing.Name = name
 		}
 	}
-	encoded, err := anypb.New(manager)
+	encoded, err := protoutil.MarshalAny(manager)
 	if err != nil {
 		return err
 	}

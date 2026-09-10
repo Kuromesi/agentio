@@ -17,18 +17,17 @@ package compiler
 import (
 	"fmt"
 
-	"google.golang.org/protobuf/proto"
-
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 
-	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policy"
 )
 
 type Inputs struct {
+	// SandboxMode enables explicit Sandbox resources. Providers classify Sandbox-managed Workloads.
+	SandboxMode   bool
 	ClusterID     string
 	RootNamespace string
 
@@ -58,7 +57,6 @@ type Inputs struct {
 // Compiler turns registry state into an xDS snapshot. The derived collections
 // are built once, in New, and maintained incrementally.
 type Compiler struct {
-	inputs   Inputs
 	graph    *graph
 	failures *failureRecorder
 }
@@ -66,6 +64,9 @@ type Compiler struct {
 func New(inputs Inputs, options krt.OptionsBuilder) (*Compiler, error) {
 	if options.Stop() == nil {
 		return nil, fmt.Errorf("KRT stop channel is required")
+	}
+	if !inputs.SandboxMode {
+		inputs.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, options.WithName("sandboxes-disabled")...)
 	}
 	if inputs.Sandboxes == nil || inputs.Workloads == nil || inputs.Pods == nil || inputs.KubernetesServices == nil ||
 		inputs.EndpointSlices == nil || inputs.Services == nil || inputs.Endpoints == nil ||
@@ -85,22 +86,19 @@ func New(inputs Inputs, options krt.OptionsBuilder) (*Compiler, error) {
 		return nil, fmt.Errorf("Agentio configuration collection is required")
 	}
 	failures := newFailureRecorder()
-	built, err := buildGraph(inputs, failures, options)
-	if err != nil {
-		return nil, err
-	}
-	return &Compiler{inputs: inputs, graph: built, failures: failures}, nil
+	built := buildGraph(inputs, failures, options)
+	return &Compiler{graph: built, failures: failures}, nil
 }
 
 // HasSynced reports whether the derived collections have processed the state present when they were created; do not publish a snapshot before this is true.
 func (c *Compiler) HasSynced() bool {
-	return c.graph.resources.HasSynced() && c.graph.policies.sandboxSNIPolicies.HasSynced()
+	return c.graph.resources.HasSynced()
 }
 
 // WaitUntilSynced blocks until the derived collections are populated, or until
 // stop is closed. It reports whether syncing completed.
 func (c *Compiler) WaitUntilSynced(stop <-chan struct{}) bool {
-	return c.graph.resources.WaitUntilSynced(stop) && c.graph.policies.sandboxSNIPolicies.WaitUntilSynced(stop)
+	return c.graph.resources.WaitUntilSynced(stop)
 }
 
 // Resources exposes the compiled resource event stream.
@@ -115,14 +113,14 @@ func (c *Compiler) Gateways() krt.Collection[model.Gateway] {
 	return c.graph.gateways
 }
 
-// SandboxPolicyBindings exposes the payload-free policy binding projection per Sandbox.
-func (c *Compiler) SandboxPolicyBindings() krt.Collection[policy.SandboxPolicyBindings] {
-	return c.graph.policies.sandboxBindings
+// Bindings exposes policy selections keyed by target kind and UID.
+func (c *Compiler) Bindings() krt.Collection[policy.Bindings] {
+	return c.graph.policies.policyBindings
 }
 
-// PolicyNames returns the policy names bound to the given Sandbox UID.
-func (c *Compiler) PolicyNames(sandboxUID string, kind model.PolicyKind) []string {
-	binding := c.graph.policies.sandboxBindings.GetKey(sandboxUID)
+// PolicyNames returns the policy names bound to the given target.
+func (c *Compiler) PolicyNames(targetKind policy.TargetKind, targetUID string, kind model.PolicyKind) []string {
+	binding := c.graph.policies.policyBindings.GetKey(policy.BindingsKey(targetKind, targetUID))
 	if binding == nil || !binding.Valid() {
 		return nil
 	}
@@ -130,26 +128,12 @@ func (c *Compiler) PolicyNames(sandboxUID string, kind model.PolicyKind) []strin
 }
 
 // Failures returns the objects that currently fail to compile, keyed by
-// "kind/name". A failing object is omitted from the snapshot while the rest of
-// the configuration continues to be published.
+// "kind/name". A failed update may retain the previous valid output or withdraw
+// the resource, depending on the compilation stage.
 func (c *Compiler) Failures() map[string]string {
 	return c.failures.snapshot()
 }
 
 func (c *Compiler) Snapshot() (model.ResourceSet, error) {
 	return model.NewResourceSet(c.graph.resources.List())
-}
-
-// SandboxSNIPolicies exposes inline payload changes, including rules-only edits.
-func (c *Compiler) SandboxSNIPolicies() krt.Collection[SandboxSNIPolicy] {
-	return c.graph.policies.sandboxSNIPolicies
-}
-
-// SNIPolicy returns a private copy of the complete payload for one Sandbox.
-func (c *Compiler) SNIPolicy(uid string) *extensionsv1.SniTrafficPolicy {
-	current := c.graph.policies.sandboxSNIPolicies.GetKey(uid)
-	if current == nil {
-		return nil
-	}
-	return proto.Clone(current.Policy).(*extensionsv1.SniTrafficPolicy)
 }

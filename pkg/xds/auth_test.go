@@ -64,84 +64,47 @@ func TestClientVersionFromNode(t *testing.T) {
 	}
 }
 
-func TestScopeAllowsNamespaceAuthorization(t *testing.T) {
-	resourceFor := func(namespace string) model.Resource {
-		return model.Resource{
-			Key: model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: "policy"},
-			Facts: model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
-				Scope: model.AuthorizationScopeNamespace, Namespace: namespace,
-			}},
+func TestScopeAllowsGatewayOwnedResources(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		scope   model.ClientScope
+		owner   string
+		allowed bool
+	}{
+		{name: "own gateway", scope: model.ClientScope{Class: model.ClientEgressGateway, GatewayKey: "demo/egress"}, owner: "demo/egress", allowed: true},
+		{name: "other gateway", scope: model.ClientScope{Class: model.ClientEgressGateway, GatewayKey: "demo/other"}, owner: "demo/egress"},
+		{name: "unowned resource", scope: model.ClientScope{Class: model.ClientEgressGateway, GatewayKey: "demo/egress"}},
+		{name: "empty gateway key", scope: model.ClientScope{Class: model.ClientEgressGateway}},
+		{name: "dedicated client", scope: model.ClientScope{Class: model.ClientDedicatedZTunnel, GatewayKey: "demo/egress"}, owner: "demo/egress"},
+		{name: "shared client", scope: model.ClientScope{Class: model.ClientSharedZTunnel, GatewayKey: "demo/egress"}, owner: "demo/egress"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resource := model.Resource{Key: model.ResourceKey{TypeURL: model.SecretType, Name: "secret"}, Facts: model.ResourceFacts{GatewayOwner: tt.owner}}
+			if got := scopeAllows(tt.scope, resource); got != tt.allowed {
+				t.Fatalf("scopeAllows() = %v, want %v", got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestStandaloneSNIPolicyTypeIsUnknown(t *testing.T) {
+	for _, class := range []model.ClientClass{model.ClientDedicatedZTunnel, model.ClientSharedZTunnel, model.ClientEgressGateway} {
+		if known, allowed := typeAccess(class, model.SniTrafficPolicyType); known || allowed {
+			t.Fatalf("standalone SNI type access for %v = (%v, %v), want unknown and denied", class, known, allowed)
 		}
 	}
-	serviceAccountScope := model.ClientScope{
-		Class: model.ClientDedicatedZTunnel,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "app",
-			},
-		},
-		SandboxUID: "uid-a",
-	}
-
-	if !scopeAllows(serviceAccountScope, resourceFor("demo")) {
-		t.Fatal("service account scope lost its namespace identity visibility")
-	}
-	if scopeAllows(serviceAccountScope, resourceFor("other")) {
-		t.Fatal("service account scope received another namespace Authorization")
-	}
 }
 
-func TestScopeAllowsFullWDSOnlyForGateways(t *testing.T) {
-	address := model.Resource{
-		Key: model.ResourceKey{TypeURL: model.AddressType, Name: "uid-a"},
-		Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-			SandboxUID: "uid-a", NodeName: "node-b",
-		}},
+func TestWorkloadTypeIsGatewayOnly(t *testing.T) {
+	for _, class := range []model.ClientClass{
+		model.ClientSharedZTunnel,
+		model.ClientDedicatedZTunnel,
+	} {
+		if known, allowed := typeAccess(class, model.WorkloadType); !known || allowed {
+			t.Errorf("typeAccess(%q, WorkloadType) must be known and denied", class)
+		}
 	}
-	sniPolicy := model.Resource{
-		Key: model.ResourceKey{TypeURL: model.SniTrafficPolicyType, Name: "demo/policy"},
-	}
-	gateway := model.ClientScope{Class: model.ClientEgressGateway, GatewayKey: "agentio-system/egress"}
-	sandbox := model.ClientScope{Class: model.ClientDedicatedZTunnel, SandboxUID: "uid-other"}
-	node := model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"}
-
-	if !scopeAllows(gateway, address) {
-		t.Fatal("gateway lost full WDS snapshot visibility")
-	}
-	if scopeAllows(sandbox, address) {
-		t.Fatal("sandbox client must not see WDS snapshot members beyond its subject")
-	}
-	if scopeAllows(node, address) {
-		t.Fatal("node client must not see WDS snapshot members beyond its subject")
-	}
-	if !scopeAllows(sandbox, sniPolicy) || !scopeAllows(node, sniPolicy) || !scopeAllows(gateway, sniPolicy) {
-		t.Fatal("global SNI resources must stay visible to every client class")
-	}
-}
-
-func TestScopeNamespaceByClass(t *testing.T) {
-	serviceAccount := model.ClientScope{
-		Class: model.ClientDedicatedZTunnel,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "app",
-			},
-		},
-		SandboxUID: "uid-a",
-	}
-	node := model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a",
-		Principal: serviceAccount.Principal}
-
-	if got, found := scopeNamespace(serviceAccount); !found || got != "demo" {
-		t.Fatalf("service account scope namespace = %q, found=%t", got, found)
-	}
-	if got, found := scopeNamespace(node); found {
-		t.Fatalf("node scope owns namespace %q", got)
+	if known, allowed := typeAccess(model.ClientEgressGateway, model.WorkloadType); !known || !allowed {
+		t.Fatal("egress gateway cannot subscribe WorkloadType")
 	}
 }
