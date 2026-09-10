@@ -30,6 +30,7 @@
 package core
 
 import (
+	"slices"
 	"time"
 
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -42,7 +43,10 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/util"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	"istio.io/istio/pilot/pkg/util/protoconv"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/security"
@@ -59,12 +63,16 @@ var GetMainForwardCluster = func() *cluster.Cluster {
 
 // sandboxClusters returns the sandbox-egress-specific clusters appended to the
 // waypoint cluster list.
-func sandboxClusters(cb *ClusterBuilder) []*cluster.Cluster {
+func sandboxClusters(cb *ClusterBuilder, proxy *model.Proxy) []*cluster.Cluster {
+	var settings *extensions.UpstreamTlsSettings
+	if cb.req.Push.AgentioConfig != nil {
+		settings = agentio.FindEgressGatewayForProxy(proxy, cb.req.Push.AgentioConfig.GetEgressGateways()).GetUpstreamTls()
+	}
 	return []*cluster.Cluster{
 		buildSandboxPassthroughCluster(cb),
 		buildDefaultHTTPForwardCluster(cb),
-		buildDefaultTLSConnectOriginateCluster(cb),
-		buildTLSProxyOriginateCluster(cb),
+		buildDefaultTLSConnectOriginateCluster(cb, settings),
+		buildTLSProxyOriginateCluster(cb, settings),
 		GetMainForwardCluster(),
 	}
 }
@@ -132,7 +140,7 @@ func buildDefaultHTTPForwardCluster(cb *ClusterBuilder) *cluster.Cluster {
 // buildDefaultTLSConnectOriginateCluster builds a dynamic forward proxy cluster for
 // the catchall-tls filter chain. Resolves SNI hostnames via DNS and originates TLS
 // connections to upstream services.
-func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
+func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder, settings *extensions.UpstreamTlsSettings) *cluster.Cluster {
 	c := buildSandboxDFPCluster(cb, tlsOriginateCluster, false)
 	c.TypedExtensionProtocolOptions = map[string]*anypb.Any{
 		v3.HttpProtocolOptionsType: protoconv.MessageToAny(&httpupstream.HttpProtocolOptions{
@@ -160,9 +168,7 @@ func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster
 			// See https://github.com/envoyproxy/envoy/pull/45982.
 			MaxSessionKeys: wrapperspb.UInt32(0),
 			CommonTlsContext: &tlsv3.CommonTlsContext{
-				TlsParams: &tlsv3.TlsParameters{
-					TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
-				},
+				TlsParams: sandboxUpstreamTLSParameters(settings),
 				ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
 					ValidationContext: &tlsv3.CertificateValidationContext{
 						TrustedCa: &core.DataSource{
@@ -182,7 +188,7 @@ func buildDefaultTLSConnectOriginateCluster(cb *ClusterBuilder) *cluster.Cluster
 // buildTLSProxyOriginateCluster connects to the original destination as an
 // HTTPS proxy. Its upstream SNI and certificate SANs come from the outer
 // ClientHello filter state, never from the inner CONNECT authority.
-func buildTLSProxyOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
+func buildTLSProxyOriginateCluster(cb *ClusterBuilder, settings *extensions.UpstreamTlsSettings) *cluster.Cluster {
 	c := buildSandboxPassthroughCluster(cb)
 	c.Name = tlsProxyOriginateCluster
 	c.AltStatName = util.DelimitedStatsPrefix(tlsProxyOriginateCluster)
@@ -209,9 +215,7 @@ func buildTLSProxyOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
 			// disable session reuse until Envoy's upstream cache is scoped by SNI.
 			MaxSessionKeys: wrapperspb.UInt32(0),
 			CommonTlsContext: &tlsv3.CommonTlsContext{
-				TlsParams: &tlsv3.TlsParameters{
-					TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
-				},
+				TlsParams: sandboxUpstreamTLSParameters(settings),
 				ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
 					ValidationContext: &tlsv3.CertificateValidationContext{
 						TrustedCa: &core.DataSource{
@@ -226,4 +230,41 @@ func buildTLSProxyOriginateCluster(cb *ClusterBuilder) *cluster.Cluster {
 		})},
 	}
 	return c
+}
+
+// sandboxUpstreamTLSParameters explicitly enables TLS 1.3 for upstream clients.
+// Keep ECDHE suites first, with RSA-GCM for older public servers that do not
+// support ECDHE. RSA key exchange does not provide forward secrecy. This cipher
+// list applies only to TLS 1.2; Envoy manages TLS 1.3 cipher suites separately.
+func sandboxUpstreamTLSParameters(settings *extensions.UpstreamTlsSettings) *tlsv3.TlsParameters {
+	params := &tlsv3.TlsParameters{
+		TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
+		TlsMaximumProtocolVersion: tlsv3.TlsParameters_TLSv1_3,
+		CipherSuites: []string{
+			"ECDHE-ECDSA-AES128-GCM-SHA256",
+			"ECDHE-RSA-AES128-GCM-SHA256",
+			"ECDHE-ECDSA-AES256-GCM-SHA384",
+			"ECDHE-RSA-AES256-GCM-SHA384",
+			"ECDHE-ECDSA-CHACHA20-POLY1305",
+			"ECDHE-RSA-CHACHA20-POLY1305",
+			"AES128-GCM-SHA256",
+			"AES256-GCM-SHA384",
+		},
+	}
+	switch settings.GetMinProtocolVersion() {
+	case extensions.UpstreamTlsSettings_TLSV1_2:
+		params.TlsMinimumProtocolVersion = tlsv3.TlsParameters_TLSv1_2
+	case extensions.UpstreamTlsSettings_TLSV1_3:
+		params.TlsMinimumProtocolVersion = tlsv3.TlsParameters_TLSv1_3
+	}
+	switch settings.GetMaxProtocolVersion() {
+	case extensions.UpstreamTlsSettings_TLSV1_2:
+		params.TlsMaximumProtocolVersion = tlsv3.TlsParameters_TLSv1_2
+	case extensions.UpstreamTlsSettings_TLSV1_3:
+		params.TlsMaximumProtocolVersion = tlsv3.TlsParameters_TLSv1_3
+	}
+	if len(settings.GetCipherSuites()) > 0 {
+		params.CipherSuites = slices.Clone(settings.GetCipherSuites())
+	}
+	return params
 }

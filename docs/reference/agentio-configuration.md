@@ -212,6 +212,60 @@ agentioConfig:
 
 The Secret coordinates, restricted Secret scope, and gateway namespace must be consistent. See [On-demand TLS certificate environment variables](agentiod-environment-variables.md#on-demand-tls-certificates) for the complete signing settings.
 
+### Upstream TLS defaults
+
+When the sandbox egress gateway originates TLS to a destination or an HTTPS
+proxy, it explicitly allows TLS 1.2 through TLS 1.3. Its TLS 1.2 cipher list
+contains the six ECDHE AES-GCM and ChaCha20-Poly1305 suites, followed by
+`AES128-GCM-SHA256` and `AES256-GCM-SHA384` for older public servers without
+ECDHE support. Connections negotiating these two RSA suites do not provide
+forward secrecy. TLS 1.3 cipher suites are managed separately by Envoy.
+
+Upstream CA and hostname verification remain enabled, and the shared upstream
+TLS session cache remains disabled to prevent cross-host session reuse. These settings do not change downstream TLS termination or connections forwarded
+without termination.
+
+Override the upstream defaults per gateway with `upstreamTls`:
+
+```yaml
+agentioConfig:
+  egressGateways:
+  - name: agentio-egress
+    namespace: agentio-system
+    upstreamTls:
+      minProtocolVersion: TLSV1_2
+      maxProtocolVersion: TLSV1_3
+      cipherSuites:
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384
+      - ECDHE-ECDSA-CHACHA20-POLY1305
+      - ECDHE-RSA-CHACHA20-POLY1305
+```
+
+This example removes RSA key-exchange suites. For a raw ConfigMap `data.config`,
+start at `egressGateways` without the Helm `agentioConfig` wrapper. Preserve the
+other gateway fields and gateway entries when replacing the list.
+
+| Field | Default | Behavior |
+| --- | --- | --- |
+| `minProtocolVersion` | `TLSV1_2` | Accepts `DEFAULT`, `TLSV1_2`, or `TLSV1_3`. |
+| `maxProtocolVersion` | `TLSV1_3` | Same values; cannot be below the effective minimum. |
+| `cipherSuites` | Eight suites described above | A non-empty list replaces the default list in order; omitted or empty lists restore defaults. Only affects TLS 1.2. |
+
+`DEFAULT` or an omitted version uses that field's default. Set only
+`maxProtocolVersion: TLSV1_2` for TLS 1.2 only, or only
+`minProtocolVersion: TLSV1_3` for TLS 1.3 only. Cipher names must be explicit
+Envoy/OpenSSL names recognized by the controller; unknown names, expressions
+such as `ALL`, and duplicates are rejected. Invalid settings reject the
+configuration layer and follow the fallback behavior described above.
+
+The override applies to both destination and HTTPS proxy TLS origination on the
+matching gateway. CA verification, hostname verification, and session cache
+behavior cannot be disabled through this API. Domain-specific TLS overrides are
+not currently supported; `tlsTermination.excludeHosts` selects TLS passthrough.
+
 ### Connection pool and route settings
 
 | Field | Default | Description |
