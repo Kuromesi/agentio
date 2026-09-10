@@ -26,6 +26,7 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
+// CompiledTrafficPolicy contains a native TrafficPolicy and its attachment metadata.
 type CompiledTrafficPolicy = CompiledPolicy[*securityv1.TrafficPolicy]
 
 // CompileTrafficPolicy preserves rule actions and both directions in one

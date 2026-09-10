@@ -34,7 +34,7 @@ type policyCollections struct {
 	sniPolicies     krt.Collection[policy.CompiledSNIPolicy]
 	egressPolicies  krt.Collection[policy.CompiledEgressPolicy]
 
-	policyBindings krt.Collection[policy.PolicyBindings]
+	policyBindings krt.Collection[policy.Bindings]
 }
 
 // newPolicyCollections builds the compiled-policy stages and the attachment
@@ -141,20 +141,20 @@ func newPolicyCollections(
 	}, options("policy-attachments")...)
 	policyBindings := policy.NewPolicyBindingsCollection(inputs.Workloads, inputs.Sandboxes, attachments, builder)
 	policyBindings = krt.NewCollection(policyBindings,
-		func(_ krt.HandlerContext, binding policy.PolicyBindings) *policy.PolicyBindings {
+		func(_ krt.HandlerContext, binding policy.Bindings) *policy.Bindings {
 			if !binding.Valid() {
 				reason := binding.InvalidReason
 				if reason == "" {
 					reason = fmt.Sprintf("unresolved policy references: %v", binding.Unresolved)
 				}
-				failures.record("PolicyBindings", binding.ResourceName(),
+				failures.record("Bindings", binding.ResourceName(),
 					fmt.Errorf("invalid policy bindings: %s", reason))
 			} else {
-				failures.clear("PolicyBindings", binding.ResourceName())
+				failures.clear("Bindings", binding.ResourceName())
 			}
 			return &binding
 		}, options("validated-policy-bindings")...)
-	clearFailureOnSourceDelete(policyBindings, failures, "PolicyBindings")
+	clearFailureOnSourceDelete(policyBindings, failures, "Bindings")
 	return policyCollections{
 		authorizations:  authorizations,
 		trafficPolicies: trafficPolicies,

@@ -18,6 +18,9 @@ import (
 	"reflect"
 	"testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
@@ -25,8 +28,6 @@ import (
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policy"
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestCompilerModeOutputs(t *testing.T) {
@@ -81,7 +82,7 @@ func TestCompilerModeOutputs(t *testing.T) {
 			if len(sni.Rules) != 1 || !reflect.DeepEqual(sni.Rules[0].Match.Sni, []string{"api.example.com"}) {
 				t.Fatalf("ordinary SNI = %v", sni)
 			}
-			binding := compiler.PolicyBindings().GetKey(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, worker.UID))
+			binding := compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetWorkload, worker.UID))
 			if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policy.PolicyKindAuthorization), []string{"demo/allow-egress"}) {
 				t.Fatalf("Workload authorization binding = %+v", binding)
 			}
@@ -90,7 +91,7 @@ func TestCompilerModeOutputs(t *testing.T) {
 				if manifest == nil || manifest.State != sandboxv1.SandboxState_SANDBOX_STATE_RUNNING || manifest.GetAttester().GetWorkloadUid() != worker.UID || len(manifest.TrafficPolicies) != 1 || len(manifest.Extensions) != 2 || len(manifest.GetEgressRouting().GetRoutes()) != 1 {
 					t.Fatalf("Sandbox output = %v", manifest)
 				}
-				binding := compiler.PolicyBindings().GetKey(policy.PolicyBindingsKey(policy.PolicyTargetSandbox, "actor"))
+				binding := compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, "actor"))
 				if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policy.PolicyKindAuthorization), []string{"trafficpolicy/demo/allow"}) {
 					t.Fatalf("Sandbox authorization binding = %+v", binding)
 				}
@@ -193,7 +194,7 @@ func TestCompilerSandboxManagedHostSkipsWorkloadPolicies(t *testing.T) {
 				if r.Value.UnmarshalTo(wire) != nil {
 					return false
 				}
-				binding := fixture.compiler.PolicyBindings().GetKey(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, workload.UID))
+				binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID))
 				if workload.SandboxManaged {
 					if binding != nil || len(wire.GetWorkload().AuthorizationPolicies) != 0 || !reflect.DeepEqual(extensionNames(wire.GetWorkload().Extensions), []string{"workload-metadata"}) {
 						return false

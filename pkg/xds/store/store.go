@@ -33,6 +33,7 @@ type Publication struct {
 	Snapshot model.ResourceSet
 }
 
+// Store publishes immutable resource snapshots and notifies interested subscribers.
 type Store struct {
 	mu          sync.RWMutex
 	current     model.ResourceSet
@@ -42,6 +43,7 @@ type Store struct {
 	nextID            uint64
 }
 
+// New creates a store with an initial snapshot and no subscribers.
 func New(initial model.ResourceSet) *Store {
 	return &Store{
 		current:           initial,
@@ -50,12 +52,14 @@ func New(initial model.ResourceSet) *Store {
 	}
 }
 
+// Snapshot returns the current immutable publication.
 func (s *Store) Snapshot() model.ResourceSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.current
 }
 
+// Replace atomically installs a snapshot and notifies subscribers of effective changes.
 func (s *Store) Replace(snapshot model.ResourceSet) Publication {
 	s.mu.Lock()
 	defer s.mu.Unlock()

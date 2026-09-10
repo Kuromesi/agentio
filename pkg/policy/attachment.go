@@ -50,7 +50,7 @@ const (
 // AttachmentTarget describes selector-derived policy attachment (global, namespaces, or label selector).
 type AttachmentTarget struct {
 	// Kind restricts the payload consumer; empty allows both Workload and Sandbox.
-	Kind       PolicyTargetKind
+	Kind       TargetKind
 	Global     bool
 	Namespaces []string
 	SandboxUID string
@@ -200,7 +200,7 @@ func (p PolicyAttachment) Selects(sandbox model.Sandbox) bool {
 	return p.selects(PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels)
 }
 
-func (p PolicyAttachment) selects(kind PolicyTargetKind, uid, namespace string, targetLabels map[string]string) bool {
+func (p PolicyAttachment) selects(kind TargetKind, uid, namespace string, targetLabels map[string]string) bool {
 	if p.Target.Kind != "" && p.Target.Kind != kind {
 		return false
 	}

@@ -58,6 +58,7 @@ func (s *subscription) Watch(typeURL string) {
 	s.store.mu.Unlock()
 }
 
+// Subscribe registers a watcher that is released when ctx is canceled.
 func (s *Store) Subscribe(ctx context.Context) Subscription {
 	s.mu.Lock()
 	s.nextID++

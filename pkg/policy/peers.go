@@ -75,34 +75,7 @@ func resolvePeers(ctx krt.HandlerContext, peers []agentsv1alpha1.TrafficPolicyPe
 		case peer.CIDR != "":
 			add(peer.CIDR)
 		case peer.Service != nil:
-			namespace := peer.Service.Namespace
-			if namespace == "" {
-				namespace = policyNamespace
-			}
-			services := []*corev1.Service(nil)
-			if peer.Service.Name == "" || peer.Service.Name == "*" {
-				services = krt.Fetch(ctx, inputs.Services,
-					krt.FilterIndex(inputs.ServicesByNamespace, namespace))
-			} else if service := krt.FetchOne(ctx, inputs.Services,
-				krt.FilterKey(namespace+"/"+peer.Service.Name)); service != nil {
-				services = append(services, *service)
-			}
-			for _, service := range services {
-				if service.Spec.ClusterIP != "" && service.Spec.ClusterIP != corev1.ClusterIPNone {
-					add(service.Spec.ClusterIP)
-				}
-				for _, slice := range krt.Fetch(ctx, inputs.EndpointSlices,
-					krt.FilterIndex(inputs.EndpointSlicesByService, service.Namespace+"/"+service.Name)) {
-					if slice.AddressType == discoveryv1.AddressTypeFQDN {
-						continue
-					}
-					for _, endpoint := range slice.Endpoints {
-						for _, address := range endpoint.Addresses {
-							add(address)
-						}
-					}
-				}
-			}
+			resolveServicePeer(ctx, peer.Service.Namespace, peer.Service.Name, policyNamespace, inputs, add)
 		case peer.FQDN != "":
 			resolved := []netip.Addr(nil)
 			if inputs.Resolve != nil {
@@ -141,4 +114,35 @@ func parsePrefix(value string) (netip.Prefix, error) {
 		return netip.Prefix{}, err
 	}
 	return netip.PrefixFrom(address, address.BitLen()), nil
+}
+
+func resolveServicePeer(ctx krt.HandlerContext, peerNamespace, peerName, policyNamespace string, inputs TrafficPolicyInputs, add func(string)) {
+	namespace := peerNamespace
+	if namespace == "" {
+		namespace = policyNamespace
+	}
+	services := []*corev1.Service(nil)
+	if peerName == "" || peerName == "*" {
+		services = krt.Fetch(ctx, inputs.Services,
+			krt.FilterIndex(inputs.ServicesByNamespace, namespace))
+	} else if service := krt.FetchOne(ctx, inputs.Services,
+		krt.FilterKey(namespace+"/"+peerName)); service != nil {
+		services = append(services, *service)
+	}
+	for _, service := range services {
+		if service.Spec.ClusterIP != "" && service.Spec.ClusterIP != corev1.ClusterIPNone {
+			add(service.Spec.ClusterIP)
+		}
+		for _, slice := range krt.Fetch(ctx, inputs.EndpointSlices,
+			krt.FilterIndex(inputs.EndpointSlicesByService, service.Namespace+"/"+service.Name)) {
+			if slice.AddressType == discoveryv1.AddressTypeFQDN {
+				continue
+			}
+			for _, endpoint := range slice.Endpoints {
+				for _, address := range endpoint.Addresses {
+					add(address)
+				}
+			}
+		}
+	}
 }

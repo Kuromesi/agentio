@@ -31,7 +31,9 @@ func TestQueryServersRetriesTruncatedResponseOverTCP(t *testing.T) {
 			}
 			udp, err := net.ListenPacket("udp", tcp.Addr().String())
 			if err != nil {
-				tcp.Close()
+				if closeErr := tcp.Close(); closeErr != nil {
+					t.Errorf("close TCP listener: %v", closeErr)
+				}
 				t.Fatal(err)
 			}
 			udpReady, tcpReady := make(chan struct{}), make(chan struct{})
@@ -39,18 +41,34 @@ func TestQueryServersRetriesTruncatedResponseOverTCP(t *testing.T) {
 				m := new(mdns.Msg)
 				m.SetReply(r)
 				m.Truncated = true
-				_ = w.WriteMsg(m)
+				if err := w.WriteMsg(m); err != nil {
+					t.Errorf("write DNS response: %v", err)
+				}
 			})}
 			tcpServer := &mdns.Server{Listener: tcp, NotifyStartedFunc: func() { close(tcpReady) }, Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, r *mdns.Msg) {
 				m := new(mdns.Msg)
 				m.SetReply(r)
 				m.Truncated = truncateTCP
 				m.Answer = []mdns.RR{&mdns.A{Hdr: mdns.RR_Header{Name: r.Question[0].Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 30}, A: net.ParseIP("192.0.2.1")}}
-				_ = w.WriteMsg(m)
+				if err := w.WriteMsg(m); err != nil {
+					t.Errorf("write DNS response: %v", err)
+				}
 			})}
-			go func() { _ = udpServer.ActivateAndServe() }()
-			go func() { _ = tcpServer.ActivateAndServe() }()
-			t.Cleanup(func() { _ = udpServer.Shutdown(); _ = tcpServer.Shutdown() })
+			udpDone, tcpDone := make(chan error, 1), make(chan error, 1)
+			go func() { udpDone <- udpServer.ActivateAndServe() }()
+			go func() { tcpDone <- tcpServer.ActivateAndServe() }()
+			t.Cleanup(func() {
+				for _, server := range []*mdns.Server{udpServer, tcpServer} {
+					if err := server.Shutdown(); err != nil {
+						t.Errorf("shutdown DNS server: %v", err)
+					}
+				}
+				for _, done := range []chan error{udpDone, tcpDone} {
+					if err := <-done; err != nil {
+						t.Errorf("serve DNS: %v", err)
+					}
+				}
+			})
 			for _, ready := range []chan struct{}{udpReady, tcpReady} {
 				select {
 				case <-ready:

@@ -29,6 +29,7 @@ import (
 // in a subscribe request. Gateways retain their existing cluster discovery scope.
 type SandboxGenerator struct{}
 
+// Generate returns the Sandbox delta visible to the authenticated client scope.
 func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedDelta{}, err

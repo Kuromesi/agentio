@@ -224,7 +224,7 @@ func TestCompilerUsesOnlyProvidedSandboxes(t *testing.T) {
 	eventually(t, func() bool { return manifestAt(t, compiler, workload.UID) != nil }, "provider Sandbox appears")
 	sandboxes.DeleteObject(workload.UID)
 	eventually(t, func() bool {
-		return manifestAt(t, compiler, workload.UID) == nil && compiler.PolicyBindings().GetKey(policy.PolicyBindingsKey(policy.PolicyTargetSandbox, workload.UID)) == nil
+		return manifestAt(t, compiler, workload.UID) == nil && compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, workload.UID)) == nil
 	}, "Sandbox deletion removes resource and bindings despite surviving Workload")
 	settle()
 	if manifestAt(t, compiler, workload.UID) != nil {
@@ -254,7 +254,7 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	})
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
-		binding := fixture.compiler.PolicyBindings().GetKey(policy.PolicyBindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
+		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
 		return binding != nil && reflect.DeepEqual(
 			binding.PolicyNames(policy.PolicyKindAuthorization),
 			[]string{"trafficpolicy/sandbox-namespace/allow"},
@@ -264,7 +264,7 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	sandbox.Labels = map[string]string{"app": "other"}
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	eventually(t, func() bool {
-		binding := fixture.compiler.PolicyBindings().GetKey(policy.PolicyBindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
+		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
 		return binding != nil && binding.Valid() && len(binding.PolicyNames(policy.PolicyKindAuthorization)) == 0
 	}, "Sandbox label update removes selector-derived binding")
 }

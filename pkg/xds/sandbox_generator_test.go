@@ -21,10 +21,11 @@ import (
 	"testing"
 
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"google.golang.org/protobuf/types/known/anypb"
+
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/model"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 func sandboxResource(t *testing.T, uid string, policies ...*securityv1.TrafficPolicy) model.Resource {

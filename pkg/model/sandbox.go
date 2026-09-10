@@ -55,6 +55,7 @@ func (r PolicyRef) Validate() error {
 // SandboxState is the observed runtime lifecycle, independent of policy validity.
 type SandboxState int32
 
+// Sandbox lifecycle states match the wire SandboxState values.
 const (
 	SandboxStateUnspecified SandboxState = iota
 	SandboxStatePending

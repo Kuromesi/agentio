@@ -117,11 +117,11 @@ func applyOverlayYAML(target *corev1.Pod, overlayYAML []byte) (*corev1.Pod, erro
 	// Overlay the injected template onto the original podSpec
 	patched, err := StrategicMergePatchYAML(currentJSON, overlayYAML, pod)
 	if err != nil {
-		return nil, fmt.Errorf("strategic merge: %v", err)
+		return nil, fmt.Errorf("strategic merge: %w", err)
 	}
 
 	if err := json.Unmarshal(patched, &pod); err != nil {
-		return nil, fmt.Errorf("unmarshal patched pod: %v", err)
+		return nil, fmt.Errorf("unmarshal patched pod: %w", err)
 	}
 	return &pod, nil
 }
@@ -137,11 +137,11 @@ func applyOverlay(target *corev1.Pod, overlayJSON []byte) (*corev1.Pod, error) {
 	// Overlay the injected template onto the original podSpec
 	patched, err := strategicpatch.StrategicMergePatch(currentJSON, overlayJSON, pod)
 	if err != nil {
-		return nil, fmt.Errorf("strategic merge: %v", err)
+		return nil, fmt.Errorf("strategic merge: %w", err)
 	}
 
 	if err := json.Unmarshal(patched, &pod); err != nil {
-		return nil, fmt.Errorf("unmarshal patched pod: %v", err)
+		return nil, fmt.Errorf("unmarshal patched pod: %w", err)
 	}
 	return &pod, nil
 }

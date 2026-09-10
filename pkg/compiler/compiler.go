@@ -113,14 +113,14 @@ func (c *Compiler) Gateways() krt.Collection[model.Gateway] {
 	return c.graph.gateways
 }
 
-// PolicyBindings exposes policy selections keyed by target kind and UID.
-func (c *Compiler) PolicyBindings() krt.Collection[policy.PolicyBindings] {
+// Bindings exposes policy selections keyed by target kind and UID.
+func (c *Compiler) Bindings() krt.Collection[policy.Bindings] {
 	return c.graph.policies.policyBindings
 }
 
 // PolicyNames returns the policy names bound to the given target.
-func (c *Compiler) PolicyNames(targetKind policy.PolicyTargetKind, targetUID string, kind model.PolicyKind) []string {
-	binding := c.graph.policies.policyBindings.GetKey(policy.PolicyBindingsKey(targetKind, targetUID))
+func (c *Compiler) PolicyNames(targetKind policy.TargetKind, targetUID string, kind model.PolicyKind) []string {
+	binding := c.graph.policies.policyBindings.GetKey(policy.BindingsKey(targetKind, targetUID))
 	if binding == nil || !binding.Valid() {
 		return nil
 	}

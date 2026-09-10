@@ -518,13 +518,13 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	t.Cleanup(func() { close(stop) })
 	builder := krt.NewOptionsBuilder(stop, "inline-test", nil)
 	options := func(name string) []krt.CollectionOption { return builder.WithName(name) }
-	bindings := krt.NewStaticCollection[policy.PolicyBindings](nil, nil, options("bindings")...)
+	bindings := krt.NewStaticCollection[policy.Bindings](nil, nil, options("bindings")...)
 	payloads := krt.NewStaticCollection[policy.CompiledSNIPolicy](nil, nil, options("payloads")...)
 	workload := testWDSWorkload("client", "", "10.1.0.2")
 
 	workloads := krt.NewStaticCollection(nil, []model.Workload{workload}, options("workloads")...)
 	resolved := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *model.Resource {
-		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, workload.UID)))
+		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
 		if selected == nil || !selected.Valid() {
 			return nil
 		}
@@ -560,8 +560,8 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	}
 	var changes atomic.Int64
 	resolved.RegisterBatch(func(events []krt.Event[model.Resource]) { changes.Add(int64(len(events))) }, false)
-	binding := func(names ...string) policy.PolicyBindings {
-		return policy.PolicyBindings{TargetKind: policy.PolicyTargetWorkload, TargetUID: workload.UID, Groups: []policy.PolicyBindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
+	binding := func(names ...string) policy.Bindings {
+		return policy.Bindings{TargetKind: policy.PolicyTargetWorkload, TargetUID: workload.UID, Groups: []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
 	}
 	payload := func(name, host string) policy.CompiledSNIPolicy {
 		return policy.CompiledSNIPolicy{Name: name, Policy: &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}}}}
@@ -612,7 +612,7 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	eventually(t, func() bool { return getPolicy() == nil }, "policy removal")
 	bindings.UpdateObject(binding("first"))
 	expect("updated.example")
-	bindings.DeleteObject(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, workload.UID))
+	bindings.DeleteObject(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID))
 	eventually(t, func() bool { return getPolicy() == nil }, "Workload binding deletion")
 }
 
@@ -657,13 +657,13 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadAttachments(t *testing.T) {
 
 	var workloadAttachmentRecomputes atomic.Int64
 	workloadAttachments := krt.NewCollection(bindings,
-		func(_ krt.HandlerContext, binding policy.PolicyBindings) *policy.PolicyBindings {
+		func(_ krt.HandlerContext, binding policy.Bindings) *policy.Bindings {
 			workloadAttachmentRecomputes.Add(1)
 			return &binding
 		}, append(options, krt.WithName("test-workload-attachments"))...)
 	var inlineUpdates atomic.Int64
 	resources := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *policy.CompiledSNIPolicy {
-		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, workload.UID)))
+		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
 		if selected == nil || !selected.Valid() {
 			return nil
 		}

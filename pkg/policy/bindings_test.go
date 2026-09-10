@@ -49,8 +49,8 @@ func TestPolicyBindingsExactTargetFanout(t *testing.T) {
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("Sandbox policy bindings did not sync")
 	}
-	events := make(chan krt.Event[PolicyBindings], 1)
-	registration := bindings.RegisterBatch(func(batch []krt.Event[PolicyBindings]) {
+	events := make(chan krt.Event[Bindings], 1)
+	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
 		for _, event := range batch {
 			events <- event
 		}
@@ -81,14 +81,14 @@ func TestPolicyBindingsExactTargetFanout(t *testing.T) {
 	}
 }
 
-func awaitBindingEvent(t testing.TB, events <-chan krt.Event[PolicyBindings]) krt.Event[PolicyBindings] {
+func awaitBindingEvent(t testing.TB, events <-chan krt.Event[Bindings]) krt.Event[Bindings] {
 	t.Helper()
 	select {
 	case event := <-events:
 		return event
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for Sandbox binding event")
-		return krt.Event[PolicyBindings]{}
+		return krt.Event[Bindings]{}
 	}
 }
 
@@ -174,7 +174,7 @@ func TestPolicyBindings(t *testing.T) {
 		t.Fatal("sandbox policy bindings did not sync")
 	}
 
-	demoBinding := bindings.GetKey(PolicyBindingsKey(PolicyTargetSandbox, demo.UID))
+	demoBinding := bindings.GetKey(BindingsKey(PolicyTargetSandbox, demo.UID))
 	if demoBinding == nil {
 		t.Fatal("demo binding is missing")
 	}
@@ -188,7 +188,7 @@ func TestPolicyBindings(t *testing.T) {
 		t.Fatalf("demo group order = %v, want %v", got, want)
 	}
 
-	otherBinding := bindings.GetKey(PolicyBindingsKey(PolicyTargetSandbox, other.UID))
+	otherBinding := bindings.GetKey(BindingsKey(PolicyTargetSandbox, other.UID))
 	if otherBinding == nil {
 		t.Fatal("other binding is missing")
 	}
@@ -222,7 +222,7 @@ func TestPolicyBindingsRejectUnresolvedExplicitReference(t *testing.T) {
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("Sandbox policy bindings did not sync")
 	}
-	binding := bindings.GetKey(PolicyBindingsKey(PolicyTargetSandbox, uid))
+	binding := bindings.GetKey(BindingsKey(PolicyTargetSandbox, uid))
 	if binding == nil || binding.Valid() || len(binding.Unresolved) != 1 {
 		t.Fatalf("binding = %+v, want one unresolved reference", binding)
 	}
@@ -254,11 +254,11 @@ func TestPolicyBindingsSeparateWorkloadAndSandboxWithSameUID(t *testing.T) {
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("bindings did not sync")
 	}
-	for kind, want := range map[PolicyTargetKind][]string{
+	for kind, want := range map[TargetKind][]string{
 		PolicyTargetWorkload: {"global", "pod"},
 		PolicyTargetSandbox:  {"exact", "explicit", "global", "sandbox"},
 	} {
-		got := bindings.GetKey(PolicyBindingsKey(kind, "same"))
+		got := bindings.GetKey(BindingsKey(kind, "same"))
 		if got == nil || !got.Valid() {
 			t.Fatalf("%s bindings = %+v", kind, got)
 		}

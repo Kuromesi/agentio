@@ -27,6 +27,7 @@ import (
 // SnapshotGenerator generates precompiled resources from store snapshots and incremental updates.
 type SnapshotGenerator struct{}
 
+// Generate selects visible snapshot resources and computes their subscription delta.
 func (SnapshotGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedDelta{}, err

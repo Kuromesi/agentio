@@ -24,6 +24,7 @@ import (
 )
 
 var (
+	// SandboxMode enables explicit Sandbox discovery and exclusive Sandbox policy delivery.
 	SandboxMode      = env.Register("AGENTIO_SANDBOX_MODE", false, "Publish explicit Sandbox resources and let runtime providers classify Sandbox hosts for exclusive Sandbox policies.").Get()
 	KRTDebounceAfter = env.Register(
 		"AGENTIO_KRT_DEBOUNCE",

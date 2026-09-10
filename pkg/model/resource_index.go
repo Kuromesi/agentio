@@ -183,9 +183,7 @@ func workloadMatchesQuery(workload *WorkloadResourceFacts, query WorkloadQuery) 
 		(query.Principal != nil && workload.Principal != *query.Principal) ||
 		(query.Namespace != "" && (workload.Principal.Kind != PrincipalServiceAccount ||
 			workload.Principal.ServiceAccount.Namespace != query.Namespace)) ||
-		(query.ServiceKey != "" && !slices.Contains(workload.ServiceKeys, query.ServiceKey)) ||
-		(query.GatewayReference != "" && !slices.Contains(workload.GatewayReferences, query.GatewayReference)) ||
-		(query.AuthorizationReference != "" && !slices.Contains(workload.AuthorizationRefs, query.AuthorizationReference)) {
+		!workloadReferencesMatch(workload, query) {
 		return false
 	}
 	return true
@@ -358,4 +356,13 @@ func updateLookupMembership(
 	updated = append(updated, names[:position]...)
 	updated = append(updated, names[position+1:]...)
 	lookup.shards[outerShardID][entry.key] = updated
+}
+
+func workloadReferencesMatch(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
+	if (query.ServiceKey != "" && !slices.Contains(workload.ServiceKeys, query.ServiceKey)) ||
+		(query.GatewayReference != "" && !slices.Contains(workload.GatewayReferences, query.GatewayReference)) ||
+		(query.AuthorizationReference != "" && !slices.Contains(workload.AuthorizationRefs, query.AuthorizationReference)) {
+		return false
+	}
+	return true
 }

@@ -17,13 +17,17 @@ package ca
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	kubeclient "k8s.io/client-go/kubernetes"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	kubetesting "k8s.io/client-go/testing"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
@@ -32,6 +36,25 @@ import (
 func TestTrustBundleDistributor(t *testing.T) {
 	client := kube.NewFakeClient()
 	coreClient := client.Kube()
+	// The fake tracker cannot replay writes between the initial LIST and WATCH.
+	// Wait for both watches before creating objects or rotating the trust bundle.
+	watchReady := map[string]chan struct{}{"namespaces": make(chan struct{}), "configmaps": make(chan struct{})}
+	watchOnce := map[string]*sync.Once{"namespaces": {}, "configmaps": {}}
+	fakeClient := coreClient.(*kubefake.Clientset)
+	fakeClient.PrependWatchReactor("*", func(action kubetesting.Action) (bool, watch.Interface, error) {
+		var options metav1.ListOptions
+		if action, ok := action.(kubetesting.WatchActionImpl); ok {
+			options = action.ListOptions
+		}
+		watcher, err := fakeClient.Tracker().Watch(action.GetResource(), action.GetNamespace(), options)
+		if err != nil {
+			return true, nil, err
+		}
+		if ready, found := watchReady[action.GetResource().Resource]; found {
+			watchOnce[action.GetResource().Resource].Do(func() { close(ready) })
+		}
+		return true, watcher, nil
+	})
 	authority := &Authority{trustBundles: krt.NewStatic(&TrustBundle{PEM: "caBundle"}, true)}
 	distributor, err := NewTrustBundleDistributor(client, authority, TrustBundleDistributorOptions{
 		Namespace: "agentio-system",
@@ -43,6 +66,13 @@ func TestTrustBundleDistributor(t *testing.T) {
 	t.Cleanup(cancel)
 	client.Run(ctx.Done())
 	go distributor.runController(ctx)
+	for resource, ready := range watchReady {
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out starting %s watch", resource)
+		}
+	}
 
 	const configMapName = "istio-ca-root-cert"
 	expectedData := map[string]string{trustBundleConfigMapKey: "caBundle"}

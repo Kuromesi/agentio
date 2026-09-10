@@ -64,7 +64,7 @@ func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
 	}
 
 	var bindingEvents atomic.Int64
-	fixture.compiler.graph.policies.policyBindings.RegisterBatch(func(events []krt.Event[policy.PolicyBindings]) {
+	fixture.compiler.graph.policies.policyBindings.RegisterBatch(func(events []krt.Event[policy.Bindings]) {
 		bindingEvents.Add(int64(len(events)))
 	}, false)
 	fixture.agentioConfig.ConditionalUpdateObject(valid("rules", "203.0.113.2/32", "egress-a.agentio-system.svc.cluster.local"))
@@ -810,7 +810,7 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	if len(payload.Rules) != 1 {
 		t.Fatalf("Sandbox SNI payload = %v", payload)
 	}
-	binding := compiler.PolicyBindings().GetKey(policypkg.PolicyBindingsKey(policypkg.PolicyTargetSandbox, workload.UID))
+	binding := compiler.Bindings().GetKey(policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID))
 	if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/terminate"}) {
 		t.Fatalf("Sandbox policy binding = %+v", binding)
 	}
@@ -845,7 +845,7 @@ func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testin
 		t.Fatal("networking must remain available when Sandbox policies are unavailable")
 	}
 	failures := compiler.Failures()
-	if _, found := failures["PolicyBindings/"+policypkg.PolicyBindingsKey(policypkg.PolicyTargetSandbox, workload.UID)]; !found {
+	if _, found := failures["Bindings/"+policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID)]; !found {
 		t.Fatalf("Sandbox failure is missing: %v", failures)
 	}
 	if manifest := manifestAt(t, compiler, workload.UID); manifest != nil {

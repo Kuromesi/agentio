@@ -24,35 +24,39 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// PolicyBindingGroup contains the ordered resource names for one typed policy
+// BindingGroup contains the ordered resource names for one typed policy
 // consumer.
-type PolicyBindingGroup struct {
+type BindingGroup struct {
 	Kind  PolicyKind
 	Names []string
 }
 
-// PolicyTargetKind distinguishes policy owners, even when their UIDs coincide.
-type PolicyTargetKind string
+// TargetKind distinguishes policy owners, even when their UIDs coincide.
+type TargetKind string
 
+// Supported owners of policy bindings.
 const (
-	PolicyTargetWorkload PolicyTargetKind = "workload"
-	PolicyTargetSandbox  PolicyTargetKind = "sandbox"
+	PolicyTargetWorkload TargetKind = "workload"
+	PolicyTargetSandbox  TargetKind = "sandbox"
 )
 
-func PolicyBindingsKey(kind PolicyTargetKind, uid string) string { return string(kind) + "/" + uid }
+// BindingsKey creates a collection key separating Workload and Sandbox UIDs.
+func BindingsKey(kind TargetKind, uid string) string { return string(kind) + "/" + uid }
 
-// PolicyBindings contains the ordered policy references for one Workload or Sandbox.
-type PolicyBindings struct {
-	TargetKind    PolicyTargetKind
+// Bindings contains the ordered policy references for one Workload or Sandbox.
+type Bindings struct {
+	TargetKind    TargetKind
 	TargetUID     string
-	Groups        []PolicyBindingGroup
+	Groups        []BindingGroup
 	Unresolved    []model.PolicyRef
 	InvalidReason string
 }
 
-func (b PolicyBindings) ResourceName() string { return PolicyBindingsKey(b.TargetKind, b.TargetUID) }
+// ResourceName returns the target kind and UID collection key.
+func (b Bindings) ResourceName() string { return BindingsKey(b.TargetKind, b.TargetUID) }
 
-func (b PolicyBindings) Equals(other PolicyBindings) bool {
+// Equals compares ordered policy references and resolution failures.
+func (b Bindings) Equals(other Bindings) bool {
 	if b.TargetKind != other.TargetKind || b.TargetUID != other.TargetUID || b.InvalidReason != other.InvalidReason ||
 		len(b.Groups) != len(other.Groups) || len(b.Unresolved) != len(other.Unresolved) {
 		return false
@@ -71,11 +75,13 @@ func (b PolicyBindings) Equals(other PolicyBindings) bool {
 	return true
 }
 
-func (b PolicyBindings) Valid() bool {
+// Valid reports whether every policy reference was resolved without validation errors.
+func (b Bindings) Valid() bool {
 	return b.InvalidReason == "" && len(b.Unresolved) == 0
 }
 
-func (b PolicyBindings) PolicyNames(kind PolicyKind) []string {
+// PolicyNames returns the ordered names for a kind; callers must not mutate the slice.
+func (b Bindings) PolicyNames(kind PolicyKind) []string {
 	for _, group := range b.Groups {
 		if group.Kind == kind {
 			// Returned slice is shared with the caller; treat it as read-only.
@@ -107,27 +113,27 @@ func NewPolicyBindingsCollection(
 	sandboxes krt.Collection[model.Sandbox],
 	attachments krt.Collection[PolicyAttachment],
 	options krt.OptionsBuilder,
-) krt.Collection[PolicyBindings] {
+) krt.Collection[Bindings] {
 	byTarget := krt.NewIndex(attachments, "policyAttachmentsByTarget", attachmentIndexKeys)
-	workloadBindings := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *PolicyBindings {
+	workloadBindings := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *Bindings {
 		if workload.SandboxManaged {
 			return nil
 		}
 		return resolvePolicyBindings(ctx, PolicyTargetWorkload, workload.UID, workload.Namespace, workload.Labels, nil, attachments, byTarget)
 	}, options.WithName("workload-policy-bindings")...)
-	sandboxBindings := krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *PolicyBindings {
+	sandboxBindings := krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
 		if err := sandbox.Validate(); err != nil {
-			return &PolicyBindings{TargetKind: PolicyTargetSandbox, TargetUID: sandbox.UID,
+			return &Bindings{TargetKind: PolicyTargetSandbox, TargetUID: sandbox.UID,
 				Unresolved: append([]model.PolicyRef(nil), sandbox.PolicyRefs...), InvalidReason: err.Error()}
 		}
 		return resolvePolicyBindings(ctx, PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels, sandbox.PolicyRefs, attachments, byTarget)
 	}, options.WithName("sandbox-policy-bindings")...)
-	return krt.JoinCollection([]krt.Collection[PolicyBindings]{workloadBindings, sandboxBindings}, options.WithName("policy-bindings")...)
+	return krt.JoinCollection([]krt.Collection[Bindings]{workloadBindings, sandboxBindings}, options.WithName("policy-bindings")...)
 }
 
-func resolvePolicyBindings(ctx krt.HandlerContext, kind PolicyTargetKind, uid, namespace string, targetLabels map[string]string,
+func resolvePolicyBindings(ctx krt.HandlerContext, kind TargetKind, uid, namespace string, targetLabels map[string]string,
 	references []model.PolicyRef, attachments krt.Collection[PolicyAttachment], byTarget krt.Index[string, PolicyAttachment],
-) *PolicyBindings {
+) *Bindings {
 	keys := []string{globalPolicyAttachmentIndexKey, namespacePolicyAttachmentKeyPrefix + namespace}
 	if kind == PolicyTargetSandbox {
 		keys = append(keys, sandboxPolicyAttachmentKeyPrefix+uid)
@@ -174,9 +180,9 @@ func resolvePolicyBindings(ctx krt.HandlerContext, kind PolicyTargetKind, uid, n
 		kinds = append(kinds, kind)
 	}
 	slices.Sort(kinds)
-	groups := make([]PolicyBindingGroup, 0, len(kinds))
+	groups := make([]BindingGroup, 0, len(kinds))
 	for _, kind := range kinds {
-		groups = append(groups, PolicyBindingGroup{Kind: kind, Names: byKind[kind]})
+		groups = append(groups, BindingGroup{Kind: kind, Names: byKind[kind]})
 	}
-	return &PolicyBindings{TargetKind: kind, TargetUID: uid, Groups: groups, Unresolved: unresolved}
+	return &Bindings{TargetKind: kind, TargetUID: uid, Groups: groups, Unresolved: unresolved}
 }

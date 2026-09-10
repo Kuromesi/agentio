@@ -38,10 +38,12 @@ type ParsedContainers struct {
 	InitContainers []corev1.Container `json:"initContainers,omitempty"`
 }
 
+// AllContainers returns regular containers followed by init containers in a new slice.
 func (p ParsedContainers) AllContainers() []corev1.Container {
 	return append(slices.Clone(p.Containers), p.InitContainers...)
 }
 
+// InjectionParameters holds the Pod, templates, and settings for one injection.
 type InjectionParameters struct {
 	pod                 *corev1.Pod
 	deployMeta          types.NamespacedName
@@ -104,22 +106,22 @@ func injectPod(req InjectionParameters) ([]byte, error) {
 	// Run the injection template, giving us a partial pod spec
 	mergedPod, injectedPodData, err := RunTemplate(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to run injection template: %v", err)
+		return nil, fmt.Errorf("failed to run injection template: %w", err)
 	}
 
 	mergedPod, err = reapplyOverwrittenContainers(mergedPod, req.pod, injectedPodData, &req.settings.Proxy)
 	if err != nil {
-		return nil, fmt.Errorf("failed to re apply container: %v", err)
+		return nil, fmt.Errorf("failed to re apply container: %w", err)
 	}
 
 	// Apply some additional transformations to the pod
 	if err := postProcessPod(mergedPod, *injectedPodData, req); err != nil {
-		return nil, fmt.Errorf("failed to process pod: %v", err)
+		return nil, fmt.Errorf("failed to process pod: %w", err)
 	}
 
 	patch, err := createPatch(mergedPod, originalPodSpec)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create patch: %v", err)
+		return nil, fmt.Errorf("failed to create patch: %w", err)
 	}
 
 	log.Debug("generated admission response", "patch", string(patch))
@@ -175,7 +177,7 @@ func reapplyOverwrittenContainers(finalPod *corev1.Pod, originalPod *corev1.Pod,
 		overrides.Containers = append(overrides.Containers, overlay)
 		newMergedPod, err := applyContainer(finalPod, overlay)
 		if err != nil {
-			return nil, fmt.Errorf("failed to apply sidecar container: %v", err)
+			return nil, fmt.Errorf("failed to apply sidecar container: %w", err)
 		}
 		finalPod = newMergedPod
 	}
@@ -198,16 +200,26 @@ func reapplyOverwrittenContainers(finalPod *corev1.Pod, originalPod *corev1.Pod,
 		overrides.InitContainers = append(overrides.InitContainers, overlay)
 		newMergedPod, err := applyInitContainer(finalPod, overlay)
 		if err != nil {
-			return nil, fmt.Errorf("failed to apply sidecar init container: %v", err)
+			return nil, fmt.Errorf("failed to apply sidecar init container: %w", err)
 		}
 		finalPod = newMergedPod
 	}
 
+	if err := recordContainerOverrides(finalPod, overrides, alreadyInjected); err != nil {
+		return nil, err
+	}
+
+	adjustInitContainerUser(finalPod, originalPod, proxyConfig)
+
+	return finalPod, nil
+}
+
+func recordContainerOverrides(finalPod *corev1.Pod, overrides ParsedContainers, alreadyInjected bool) error {
 	if !alreadyInjected && (len(overrides.Containers) > 0 || len(overrides.InitContainers) > 0) {
 		// We found any overrides. Put them in the pod annotation so we can re-apply them on re-injection
 		js, err := json.Marshal(overrides)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if finalPod.Annotations == nil {
 			finalPod.Annotations = map[string]string{}
@@ -215,9 +227,7 @@ func reapplyOverwrittenContainers(finalPod *corev1.Pod, originalPod *corev1.Pod,
 		finalPod.Annotations[annotation.ProxyOverrides.Name] = string(js)
 	}
 
-	adjustInitContainerUser(finalPod, originalPod, proxyConfig)
-
-	return finalPod, nil
+	return nil
 }
 
 // adjustInitContainerUser adjusts the RunAsUser/Group fields and iptables parameter "-u <uid>"
@@ -268,17 +278,8 @@ func adjustInitContainerUser(finalPod *corev1.Pod, originalPod *corev1.Pod, prox
 		*sidecar.SecurityContext.RunAsUser = 0
 	}
 
-	// Make sure the validation container runs with the same uid/gid as the proxy (init container is untouched, it must run with 0)
-	if !tproxy && initContainer.Name == ValidationContainerName {
-		if initContainer.SecurityContext == nil {
-			initContainer.SecurityContext = &corev1.SecurityContext{}
-		}
-		if userContainer.SecurityContext.RunAsUser != nil {
-			initContainer.SecurityContext.RunAsUser = userContainer.SecurityContext.RunAsUser
-		}
-		if userContainer.SecurityContext.RunAsGroup != nil {
-			initContainer.SecurityContext.RunAsGroup = userContainer.SecurityContext.RunAsGroup
-		}
+	if !tproxy {
+		alignValidationUser(initContainer, userContainer.SecurityContext)
 	}
 
 	// Find the "-u <uid>" parameter in the init container and replace it with the userid from SecurityContext.RunAsUser
@@ -517,4 +518,19 @@ func GetDeployMetaFromPod(pod *corev1.Pod) (types.NamespacedName, metav1.TypeMet
 	}
 
 	return deployMeta, typeMetadata
+}
+
+func alignValidationUser(initContainer *corev1.Container, securityContext *corev1.SecurityContext) {
+	// Make sure the validation container runs with the same uid/gid as the proxy (init container is untouched, it must run with 0)
+	if initContainer.Name == ValidationContainerName {
+		if initContainer.SecurityContext == nil {
+			initContainer.SecurityContext = &corev1.SecurityContext{}
+		}
+		if securityContext.RunAsUser != nil {
+			initContainer.SecurityContext.RunAsUser = securityContext.RunAsUser
+		}
+		if securityContext.RunAsGroup != nil {
+			initContainer.SecurityContext.RunAsGroup = securityContext.RunAsGroup
+		}
+	}
 }

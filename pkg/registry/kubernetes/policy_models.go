@@ -16,6 +16,7 @@ package kubernetes
 
 import (
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
@@ -28,23 +29,11 @@ func newTrafficPolicyModels(
 ) krt.Collection[model.TrafficPolicy] {
 	namespacedTraffic := krt.NewCollection(trafficPolicyObjects,
 		func(_ krt.HandlerContext, policy *agentsv1alpha1.TrafficPolicy) *model.TrafficPolicy {
-			return &model.TrafficPolicy{
-				Name:         policy.Name,
-				Namespace:    policy.Namespace,
-				SandboxUID:   policy.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				CreationTime: policy.CreationTimestamp.Time,
-				Spec:         *policy.Spec.DeepCopy(),
-			}
+			return trafficPolicyModel(policy.ObjectMeta, &policy.Spec, false)
 		}, derivedOptions("namespaced-traffic-policies")...)
 	globalTraffic := krt.NewCollection(globalTrafficObjects,
 		func(_ krt.HandlerContext, policy *agentsv1alpha1.GlobalTrafficPolicy) *model.TrafficPolicy {
-			return &model.TrafficPolicy{
-				Name:         policy.Name,
-				SandboxUID:   policy.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				Global:       true,
-				CreationTime: policy.CreationTimestamp.Time,
-				Spec:         *policy.Spec.DeepCopy(),
-			}
+			return trafficPolicyModel(policy.ObjectMeta, &policy.Spec, true)
 		}, derivedOptions("global-traffic-policies")...)
 	// TrafficPolicy.ResourceName prefixes namespaced and global policies
 	// differently, so the two key spaces cannot collide in the join.
@@ -60,25 +49,43 @@ func newSecurityProfileModels(
 ) krt.Collection[model.SecurityProfile] {
 	namespacedSecurity := krt.NewCollection(securityProfileObjects,
 		func(_ krt.HandlerContext, profile *agentsv1alpha1.SecurityProfile) *model.SecurityProfile {
-			return &model.SecurityProfile{
-				Name:         profile.Name,
-				Namespace:    profile.Namespace,
-				SandboxUID:   profile.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				CreationTime: profile.CreationTimestamp.Time,
-				Spec:         *profile.Spec.DeepCopy(),
-			}
+			return securityProfileModel(profile.ObjectMeta, &profile.Spec, false)
 		}, derivedOptions("namespaced-security-profiles")...)
 	globalSecurity := krt.NewCollection(globalSecurityObjects,
 		func(_ krt.HandlerContext, profile *agentsv1alpha1.GlobalSecurityProfile) *model.SecurityProfile {
-			return &model.SecurityProfile{
-				Name:         profile.Name,
-				SandboxUID:   profile.Annotations[agentsv1alpha1.AnnotationSandboxID],
-				Global:       true,
-				CreationTime: profile.CreationTimestamp.Time,
-				Spec:         *profile.Spec.DeepCopy(),
-			}
+			return securityProfileModel(profile.ObjectMeta, &profile.Spec, true)
 		}, derivedOptions("global-security-profiles")...)
 	return krt.JoinCollection(
 		[]krt.Collection[model.SecurityProfile]{namespacedSecurity, globalSecurity},
 		derivedOptions("security-profiles")...)
+}
+
+func trafficPolicyModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.TrafficPolicySpec, global bool) *model.TrafficPolicy {
+	namespace := metadata.Namespace
+	if global {
+		namespace = ""
+	}
+	return &model.TrafficPolicy{
+		Name:         metadata.Name,
+		Namespace:    namespace,
+		SandboxUID:   metadata.Annotations[agentsv1alpha1.AnnotationSandboxID],
+		Global:       global,
+		CreationTime: metadata.CreationTimestamp.Time,
+		Spec:         *spec.DeepCopy(),
+	}
+}
+
+func securityProfileModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.SecurityProfileSpec, global bool) *model.SecurityProfile {
+	namespace := metadata.Namespace
+	if global {
+		namespace = ""
+	}
+	return &model.SecurityProfile{
+		Name:         metadata.Name,
+		Namespace:    namespace,
+		SandboxUID:   metadata.Annotations[agentsv1alpha1.AnnotationSandboxID],
+		Global:       global,
+		CreationTime: metadata.CreationTimestamp.Time,
+		Spec:         *spec.DeepCopy(),
+	}
 }

@@ -65,86 +65,7 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		return nil, err
 	}
 
-	serviceByKey := make(map[string]model.Service, len(input.Services))
-	for _, service := range input.Services {
-		serviceByKey[service.ResourceName()] = service
-	}
-	ready := make([]model.Endpoint, 0, len(input.Endpoints))
-	for _, endpoint := range input.Endpoints {
-		service, found := serviceByKey[endpoint.ServiceKey]
-		if endpoint.Ready || (found && service.PublishNotReadyAddresses) {
-			ready = append(ready, endpoint)
-		}
-	}
-	sort.Slice(ready, func(i, j int) bool {
-		if ready[i].ServiceKey != ready[j].ServiceKey {
-			return ready[i].ServiceKey < ready[j].ServiceKey
-		}
-		if ready[i].PortName != ready[j].PortName {
-			return ready[i].PortName < ready[j].PortName
-		}
-		if ready[i].Protocol != ready[j].Protocol {
-			return ready[i].Protocol < ready[j].Protocol
-		}
-		if ready[i].Port != ready[j].Port {
-			return ready[i].Port < ready[j].Port
-		}
-		return ready[i].ResourceName() < ready[j].ResourceName()
-	})
-
-	services := make(map[string]*workloadv1.PortList)
-	serviceKeys := make([]string, 0, len(serviceByKey))
-	for key := range serviceByKey {
-		serviceKeys = append(serviceKeys, key)
-	}
-	sort.Strings(serviceKeys)
-	for _, serviceKey := range serviceKeys {
-		service := serviceByKey[serviceKey]
-		servicePorts := append([]model.ServicePort(nil), service.Ports...)
-		sort.Slice(servicePorts, func(i, j int) bool {
-			if servicePorts[i].Port != servicePorts[j].Port {
-				return servicePorts[i].Port < servicePorts[j].Port
-			}
-			if servicePorts[i].Name != servicePorts[j].Name {
-				return servicePorts[i].Name < servicePorts[j].Name
-			}
-			if servicePorts[i].Protocol != servicePorts[j].Protocol {
-				return servicePorts[i].Protocol < servicePorts[j].Protocol
-			}
-			if servicePorts[i].TargetPortName != servicePorts[j].TargetPortName {
-				return servicePorts[i].TargetPortName < servicePorts[j].TargetPortName
-			}
-			return servicePorts[i].TargetPort < servicePorts[j].TargetPort
-		})
-		ports := &workloadv1.PortList{}
-		services[serviceKey] = ports
-		for _, servicePort := range servicePorts {
-			resolved := uint32(0)
-			ambiguous := false
-			for _, endpoint := range ready {
-				if endpoint.ServiceKey != serviceKey || endpoint.PortName != servicePort.Name ||
-					normalizedProtocol(endpoint.Protocol) != normalizedProtocol(servicePort.Protocol) || endpoint.Port == 0 {
-					continue
-				}
-				if servicePort.TargetPort > 0 && endpoint.Port != servicePort.TargetPort {
-					ambiguous = true
-					break
-				}
-				if resolved != 0 && resolved != endpoint.Port {
-					ambiguous = true
-					break
-				}
-				resolved = endpoint.Port
-			}
-			if resolved == 0 || ambiguous {
-				continue
-			}
-			ports.Ports = append(ports.Ports, &workloadv1.Port{
-				ServicePort: servicePort.Port,
-				TargetPort:  resolved,
-			})
-		}
-	}
+	services, serviceKeys := workloadServices(input)
 
 	status := workloadv1.WorkloadStatus_HEALTHY
 	if !input.Workload.Ready {
@@ -229,6 +150,102 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		return nil, err
 	}
 	return &addressResource, nil
+}
+
+func workloadServices(input wdsProjection) (map[string]*workloadv1.PortList, []string) {
+	serviceByKey := make(map[string]model.Service, len(input.Services))
+	for _, service := range input.Services {
+		serviceByKey[service.ResourceName()] = service
+	}
+	ready := readyWDSEndpoints(input.Endpoints, serviceByKey)
+
+	services := make(map[string]*workloadv1.PortList)
+	serviceKeys := make([]string, 0, len(serviceByKey))
+	for key := range serviceByKey {
+		serviceKeys = append(serviceKeys, key)
+	}
+	sort.Strings(serviceKeys)
+	for _, serviceKey := range serviceKeys {
+		service := serviceByKey[serviceKey]
+		servicePorts := append([]model.ServicePort(nil), service.Ports...)
+		sort.Slice(servicePorts, func(i, j int) bool {
+			if servicePorts[i].Port != servicePorts[j].Port {
+				return servicePorts[i].Port < servicePorts[j].Port
+			}
+			if servicePorts[i].Name != servicePorts[j].Name {
+				return servicePorts[i].Name < servicePorts[j].Name
+			}
+			if servicePorts[i].Protocol != servicePorts[j].Protocol {
+				return servicePorts[i].Protocol < servicePorts[j].Protocol
+			}
+			if servicePorts[i].TargetPortName != servicePorts[j].TargetPortName {
+				return servicePorts[i].TargetPortName < servicePorts[j].TargetPortName
+			}
+			return servicePorts[i].TargetPort < servicePorts[j].TargetPort
+		})
+		ports := &workloadv1.PortList{}
+		services[serviceKey] = ports
+		for _, servicePort := range servicePorts {
+			resolved, ambiguous := resolveWDSServicePort(serviceKey, servicePort, ready)
+			if resolved == 0 || ambiguous {
+				continue
+			}
+			ports.Ports = append(ports.Ports, &workloadv1.Port{
+				ServicePort: servicePort.Port,
+				TargetPort:  resolved,
+			})
+		}
+	}
+
+	return services, serviceKeys
+}
+
+func readyWDSEndpoints(endpoints []model.Endpoint, serviceByKey map[string]model.Service) []model.Endpoint {
+	ready := make([]model.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		service, found := serviceByKey[endpoint.ServiceKey]
+		if endpoint.Ready || (found && service.PublishNotReadyAddresses) {
+			ready = append(ready, endpoint)
+		}
+	}
+	sort.Slice(ready, func(i, j int) bool {
+		if ready[i].ServiceKey != ready[j].ServiceKey {
+			return ready[i].ServiceKey < ready[j].ServiceKey
+		}
+		if ready[i].PortName != ready[j].PortName {
+			return ready[i].PortName < ready[j].PortName
+		}
+		if ready[i].Protocol != ready[j].Protocol {
+			return ready[i].Protocol < ready[j].Protocol
+		}
+		if ready[i].Port != ready[j].Port {
+			return ready[i].Port < ready[j].Port
+		}
+		return ready[i].ResourceName() < ready[j].ResourceName()
+	})
+
+	return ready
+}
+
+func resolveWDSServicePort(serviceKey string, servicePort model.ServicePort, ready []model.Endpoint) (uint32, bool) {
+	resolved := uint32(0)
+	ambiguous := false
+	for _, endpoint := range ready {
+		if endpoint.ServiceKey != serviceKey || endpoint.PortName != servicePort.Name ||
+			normalizedProtocol(endpoint.Protocol) != normalizedProtocol(servicePort.Protocol) || endpoint.Port == 0 {
+			continue
+		}
+		if servicePort.TargetPort > 0 && endpoint.Port != servicePort.TargetPort {
+			ambiguous = true
+			break
+		}
+		if resolved != 0 && resolved != endpoint.Port {
+			ambiguous = true
+			break
+		}
+		resolved = endpoint.Port
+	}
+	return resolved, ambiguous
 }
 
 // buildWDSService compiles the networking-only Service model into the Service

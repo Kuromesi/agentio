@@ -72,8 +72,8 @@ func benchmarkPolicyBindingsExactPolicyChurn(b *testing.B) {
 	if !bindings.WaitUntilSynced(stop) {
 		b.Fatal("Sandbox policy bindings did not sync")
 	}
-	events := make(chan krt.Event[PolicyBindings], 1)
-	registration := bindings.RegisterBatch(func(batch []krt.Event[PolicyBindings]) {
+	events := make(chan krt.Event[Bindings], 1)
+	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
 		for _, event := range batch {
 			events <- event
 		}

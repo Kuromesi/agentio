@@ -51,14 +51,15 @@ func newWorkloadResources(
 			var sniPolicy *extensionsv1.SniTrafficPolicy
 			var policyErr error
 			if !workload.SandboxManaged {
-				refs := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, workload.UID)))
+				refs := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
 				if refs == nil || !refs.Valid() {
 					return nil
 				}
 				authorizationNames = append([]string(nil), refs.PolicyNames(policy.PolicyKindAuthorization)...)
 				names := refs.PolicyNames(policy.PolicyKindEgressPolicy)
 				if len(names) > 0 {
-					compiled := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(names...))
+					// FilterKeys sorts its input; binding order is shared and must stay immutable.
+					compiled := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(append([]string(nil), names...)...))
 					egressPolicies, egressGatewayKeys, policyErr = policy.SelectEgressPolicies(names, compiled)
 				}
 				if policyErr == nil {

@@ -38,7 +38,7 @@ racetest:
 	go test -race -count=1 ./...
 	go -C test/e2e test -race -count=1 ./...
 
-# Pin the analyzer independently of the application module. Override the command
+# Keep the analyzer compatible with the Go version in go.mod. Override the command
 # to use an installed binary; pass --new-from-rev=<base> for incremental checks.
 GOLANGCI_LINT_VERSION := v2.13.2
 GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)

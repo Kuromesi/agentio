@@ -21,8 +21,10 @@ import (
 	"istio.io/istio/pkg/slices"
 )
 
+// ContainerReorder selects how a named container is moved or removed.
 type ContainerReorder int
 
+// Container reorder operations.
 const (
 	MoveFirst ContainerReorder = iota
 	MoveLast

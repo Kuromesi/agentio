@@ -18,11 +18,12 @@ import (
 	"reflect"
 	"testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
@@ -101,8 +102,25 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 	}, "ordered egress references")
 	eventually(t, func() bool {
 		r, ok := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: worker.UID})
-		return ok && r.Facts.Workload != nil
-	}, "worker networking ready")
+		if !ok || r.Facts.Workload == nil {
+			return false
+		}
+		address := new(workloadv1.Address)
+		if err := r.Value.UnmarshalTo(address); err != nil {
+			t.Fatal(err)
+		}
+		for _, extension := range address.GetWorkload().Extensions {
+			if extension.Name != "egress-policies" {
+				continue
+			}
+			payload := new(extensionsv1.EgressPolicies)
+			if err := extension.Config.UnmarshalTo(payload); err != nil {
+				t.Fatal(err)
+			}
+			return len(payload.EgressPolicies) == 2
+		}
+		return false
+	}, "worker egress policies ready")
 	manifest := manifestAt(t, fixture.compiler, "actor")
 	if manifest.EgressRouting.Routes[0].MatchCidrs[0] != "203.0.113.2/32" {
 		t.Fatal("embedded egress policies were reordered")

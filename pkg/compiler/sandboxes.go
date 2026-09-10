@@ -45,7 +45,7 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 		policyAvailable := false
 		var routingErr error
 		invalidPayload := false
-		bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.PolicyBindingsKey(policy.PolicyTargetSandbox, sandbox.UID)))
+		bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID)))
 		if bindings != nil && bindings.Valid() {
 			policyAvailable = true
 			if names := bindings.PolicyNames(model.PolicyKindEgressPolicy); len(names) > 0 {
@@ -61,48 +61,15 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 					}
 				}
 			}
-			for _, name := range bindings.PolicyNames(model.PolicyKindAuthorization) {
-				compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(name))
-				if compiled == nil {
-					policyAvailable = false
-					continue
-				}
-				payload.TrafficPolicies = append(payload.TrafficPolicies, proto.Clone(compiled.Policy).(*securityv1.TrafficPolicy))
-			}
-			// Native TrafficPolicy uses higher numeric priority first. Resolve ties
-			// by stable identity so attachment insertion order cannot change a decision.
-			sort.Slice(payload.TrafficPolicies, func(i, j int) bool {
-				left, right := payload.TrafficPolicies[i], payload.TrafficPolicies[j]
-				if left.Priority != right.Priority {
-					return left.Priority > right.Priority
-				}
-				return left.Name < right.Name
-			})
-			for _, name := range bindings.PolicyNames(model.PolicyKindSNIPolicy) {
-				compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(name))
-				if compiled == nil {
-					policyAvailable = false
-					continue
-				}
-				extension := new(anypb.Any)
-				if err := anypb.MarshalFrom(extension, compiled.Policy, proto.MarshalOptions{Deterministic: true}); err != nil {
-					invalidPayload = true
-					continue
-				}
-				payload.Extensions = append(payload.Extensions, extension)
-			}
+			bodiesAvailable, bodiesInvalid := loadSandboxPolicyBodies(ctx, bindings, policies, payload)
+			policyAvailable = policyAvailable && bodiesAvailable
+			invalidPayload = invalidPayload || bodiesInvalid
 		}
 		if invalidPayload || (bindings != nil && bindings.InvalidReason != "") {
 			policyAvailable = false
 		}
 		if !policyAvailable {
-			err := routingErr
-			if err == nil && bindings != nil && bindings.InvalidReason != "" {
-				err = fmt.Errorf("invalid sandbox policy bindings: %s", bindings.InvalidReason)
-			}
-			if err == nil {
-				err = fmt.Errorf("sandbox policy view is incomplete or invalid")
-			}
+			err := sandboxPolicyError(routingErr, bindings)
 			failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
 			return nil
 		}
@@ -119,4 +86,51 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 		failures.clearIf("SandboxResource", sandbox.UID, currentInput)
 		return &resource
 	}, options("sandbox-resources")...)
+}
+
+// loadSandboxPolicyBodies resolves ordered native and extension policies from one binding set.
+func loadSandboxPolicyBodies(ctx krt.HandlerContext, bindings *policy.Bindings, policies policyCollections, payload *sandboxv1.Sandbox) (bool, bool) {
+	policyAvailable, invalidPayload := true, false
+	for _, name := range bindings.PolicyNames(model.PolicyKindAuthorization) {
+		compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(name))
+		if compiled == nil {
+			policyAvailable = false
+			continue
+		}
+		payload.TrafficPolicies = append(payload.TrafficPolicies, proto.Clone(compiled.Policy).(*securityv1.TrafficPolicy))
+	}
+	// Native TrafficPolicy uses higher numeric priority first. Resolve ties
+	// by stable identity so attachment insertion order cannot change a decision.
+	sort.Slice(payload.TrafficPolicies, func(i, j int) bool {
+		left, right := payload.TrafficPolicies[i], payload.TrafficPolicies[j]
+		if left.Priority != right.Priority {
+			return left.Priority > right.Priority
+		}
+		return left.Name < right.Name
+	})
+	for _, name := range bindings.PolicyNames(model.PolicyKindSNIPolicy) {
+		compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(name))
+		if compiled == nil {
+			policyAvailable = false
+			continue
+		}
+		extension := new(anypb.Any)
+		if err := anypb.MarshalFrom(extension, compiled.Policy, proto.MarshalOptions{Deterministic: true}); err != nil {
+			invalidPayload = true
+			continue
+		}
+		payload.Extensions = append(payload.Extensions, extension)
+	}
+	return policyAvailable, invalidPayload
+}
+
+func sandboxPolicyError(routingErr error, bindings *policy.Bindings) error {
+	err := routingErr
+	if err == nil && bindings != nil && bindings.InvalidReason != "" {
+		err = fmt.Errorf("invalid sandbox policy bindings: %s", bindings.InvalidReason)
+	}
+	if err == nil {
+		err = fmt.Errorf("sandbox policy view is incomplete or invalid")
+	}
+	return err
 }

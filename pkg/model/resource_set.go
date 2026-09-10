@@ -25,6 +25,7 @@ import (
 	"istio.io/istio/pkg/util/sets"
 )
 
+// ResourceSet is an immutable, indexed snapshot of discovery resources.
 type ResourceSet struct {
 	resources map[string]*resourceTypeIndex
 	version   string
@@ -70,10 +71,12 @@ func NewResourceSet(resources []Resource) (ResourceSet, error) {
 	return result, nil
 }
 
+// Version returns the snapshot version used for discovery publication.
 func (s ResourceSet) Version() string {
 	return s.version
 }
 
+// Len returns the total number of resources across all types.
 func (s ResourceSet) Len() int {
 	return s.length
 }
@@ -106,6 +109,7 @@ func (s ResourceSet) Lookup(typeURL, name string) []Resource {
 	return resourcesForNames(index, names)
 }
 
+// ListWorkloads returns resources of the given type matching every query constraint.
 func (s ResourceSet) ListWorkloads(typeURL string, query WorkloadQuery) []Resource {
 	index := s.resources[typeURL]
 	keys, valid := workloadQueryFactKeys(query)
@@ -127,6 +131,7 @@ func (s ResourceSet) ListWorkloads(typeURL string, query WorkloadQuery) []Resour
 	return result
 }
 
+// HasWorkload reports whether any resource of the type matches the query.
 func (s ResourceSet) HasWorkload(typeURL string, query WorkloadQuery) bool {
 	index := s.resources[typeURL]
 	keys, valid := workloadQueryFactKeys(query)
@@ -147,22 +152,27 @@ func (s ResourceSet) ListSandboxesByAttester(workloadUID string) []Resource {
 	return s.listByFact(SandboxType, resourceFactAttesterWorkloadUID, workloadUID)
 }
 
+// ListSandboxesReferencingGateway returns Sandboxes whose policies reference the gateway.
 func (s ResourceSet) ListSandboxesReferencingGateway(gatewayKey string) []Resource {
 	return s.listByFact(SandboxType, resourceFactGatewayReference, gatewayKey)
 }
 
+// ListServiceMembers returns resources of the type belonging to a Service.
 func (s ResourceSet) ListServiceMembers(typeURL, serviceKey string) []Resource {
 	return s.listByFact(typeURL, resourceFactService, serviceKey)
 }
 
+// ListResourcesOwnedByGateway returns resources published for a gateway.
 func (s ResourceSet) ListResourcesOwnedByGateway(typeURL, gatewayKey string) []Resource {
 	return s.listByFact(typeURL, resourceFactGatewayOwner, gatewayKey)
 }
 
+// ListGlobalAuthorizations returns authorizations with global scope.
 func (s ResourceSet) ListGlobalAuthorizations() []Resource {
 	return s.listByFact(WorkloadAuthorizationType, resourceFactAuthorizationGlobal, "global")
 }
 
+// ListNamespaceAuthorizations returns authorizations scoped to the namespace.
 func (s ResourceSet) ListNamespaceAuthorizations(namespace string) []Resource {
 	return s.listByFact(WorkloadAuthorizationType, resourceFactAuthorizationNamespace, namespace)
 }
@@ -192,6 +202,7 @@ func (s ResourceSet) List(typeURL string) []Resource {
 	return result
 }
 
+// Types returns the resource type URLs in sorted order.
 func (s ResourceSet) Types() []string {
 	result := make([]string, 0, len(s.resources))
 	for typeURL := range s.resources {
@@ -244,17 +255,8 @@ func (s ResourceSet) Apply(changes []ResourceChange) (ResourceSet, bool, error) 
 				continue
 			}
 		} else {
-			if change.New.Key != change.Key {
-				return ResourceSet{}, false, fmt.Errorf("resource change key %v does not match new resource key %v", change.Key, change.New.Key)
-			}
-			normalized := *change.New
-			if normalized.Hash == "" {
-				var err error
-				normalized, err = normalizeResource(normalized)
-				if err != nil {
-					return ResourceSet{}, false, err
-				}
-			} else if err := validateResource(normalized); err != nil {
+			normalized, err := normalizeChangedResource(change)
+			if err != nil {
 				return ResourceSet{}, false, err
 			}
 			if found && current.Hash == normalized.Hash {
@@ -390,4 +392,21 @@ func (s ResourceSet) computeVersion() string {
 		}
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func normalizeChangedResource(change ResourceChange) (Resource, error) {
+	if change.New.Key != change.Key {
+		return Resource{}, fmt.Errorf("resource change key %v does not match new resource key %v", change.Key, change.New.Key)
+	}
+	normalized := *change.New
+	if normalized.Hash == "" {
+		var err error
+		normalized, err = normalizeResource(normalized)
+		if err != nil {
+			return Resource{}, err
+		}
+	} else if err := validateResource(normalized); err != nil {
+		return Resource{}, err
+	}
+	return normalized, nil
 }
