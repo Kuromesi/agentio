@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
 	"testing"
 	"time"
 
@@ -143,21 +142,30 @@ func TestGRPCServer_GracefulStopBoundedByDeadline(t *testing.T) {
 			return stream.RecvMsg(&m)
 		}))
 
-	port := freePort(t)
-	r := GRPCServer("stuck", srv, port, WithGracefulStopTimeout(200*time.Millisecond))
+	// Bind before starting the client so dialing cannot race the server startup.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("pre-bind: %v", err)
+	}
+	r := GRPCServer("stuck", srv, 0, WithListener(lis), WithGracefulStopTimeout(200*time.Millisecond))
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- r.Start(ctx) }()
 
-	conn, err := grpc.NewClient("127.0.0.1:"+strconv.Itoa(port),
+	conn, err := grpc.NewClient(lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
 
-	if _, err := conn.NewStream(context.Background(),
+	// Keep this deadline longer than the shutdown assertion, so it cannot
+	// release the stuck handler and hide a broken graceful-stop timeout.
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer streamCancel()
+	if _, err := conn.NewStream(streamCtx,
 		&grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, "/stuck.Service/Hang"); err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
@@ -170,7 +178,10 @@ func TestGRPCServer_GracefulStopBoundedByDeadline(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Start = %v, want nil", err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("shutdown blocked on the stuck stream: GracefulStop is not bounded by a deadline")
 	}
