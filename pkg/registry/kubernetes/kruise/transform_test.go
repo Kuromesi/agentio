@@ -23,6 +23,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openkruise/agentio/pkg/krt"
+	"github.com/openkruise/agentio/pkg/model"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 func TestSandboxUIDHonorsDeliveryIdentity(t *testing.T) {
@@ -162,15 +164,8 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	sandboxGroups := newSandboxesByUID(sandboxObjects).AsCollection(options...)
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{pod}, options...)
 	podsByUID := newPodsByUID(pods)
-	sandboxes := newSandboxes(sandboxGroups, pods, podsByUID, options...)
-	workloads := newWorkloads(
-		sandboxGroups,
-		pods,
-		podsByUID,
-		"cluster",
-		"cluster.local",
-		options...,
-	)
+	sandboxes := newSandboxes(sandboxGroups, pods, podsByUID, "cluster", options...)
+	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", OwnsPod, options...)
 	if !sandboxes.WaitUntilSynced(stop) || !workloads.WaitUntilSynced(stop) {
 		t.Fatal("Kruise runtime collections did not synchronize")
 	}
@@ -230,10 +225,11 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	if workload.SourceUID != "pod-uid" || workload.Principal.String() != "spiffe://cluster.local/ns/demo/sa/default" {
 		t.Fatalf("Workload attester = %+v", workload)
 	}
-	if len(workload.SandboxBindings) != 1 || workload.SandboxBindings[0].SandboxUID != "delivery-uid" {
-		t.Fatalf("Sandbox bindings = %+v", workload.SandboxBindings)
+	if policySubject.Attester == nil || policySubject.Attester.WorkloadUID != workload.UID || policySubject.State != model.SandboxStateRunning {
+		t.Fatalf("Sandbox runtime = %+v", policySubject)
 	}
-	if !workload.Ready || !OwnsPod(pod) {
+
+	if !workload.Ready || !workload.SandboxManaged || !OwnsPod(pod) {
 		t.Fatalf("Workload ready = %v, OwnsPod = %v", workload.Ready, OwnsPod(pod))
 	}
 }
@@ -278,5 +274,53 @@ func TestKruiseRuntimeActivationFailsClosed(t *testing.T) {
 				t.Fatalf("hasServingRuntime() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestKruiseRuntimeStateRequiresCompletedPause(t *testing.T) {
+	for _, test := range []struct {
+		phase  agentsv1alpha1.SandboxPhase
+		paused bool
+		want   model.SandboxState
+	}{
+		{agentsv1alpha1.SandboxPending, false, model.SandboxStatePending},
+		{agentsv1alpha1.SandboxRunning, false, model.SandboxStateRunning},
+		{agentsv1alpha1.SandboxPaused, false, model.SandboxStateUnspecified},
+		{agentsv1alpha1.SandboxPaused, true, model.SandboxStatePaused},
+		{agentsv1alpha1.SandboxSucceeded, false, model.SandboxStateStopped},
+		{agentsv1alpha1.SandboxFailed, false, model.SandboxStateStopped},
+	} {
+		sandbox := &agentsv1alpha1.Sandbox{Status: agentsv1alpha1.SandboxStatus{Phase: test.phase}}
+		if test.paused {
+			sandbox.Status.Conditions = []metav1.Condition{{Type: string(agentsv1alpha1.SandboxConditionPaused), Status: metav1.ConditionTrue}}
+		}
+		if got := runtimeState(sandbox); got != test.want {
+			t.Fatalf("phase %s paused %v: state %v, want %v", test.phase, test.paused, got, test.want)
+		}
+	}
+}
+
+func TestKruiseClassifiesHostWithoutSandboxDiscovery(t *testing.T) {
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	controller := true
+	host := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "host", Namespace: "demo", UID: "pod-uid", OwnerReferences: []metav1.OwnerReference{{
+		APIVersion: agentsv1alpha1.GroupVersion.String(), Kind: "Sandbox", Name: "not-yet-discovered", UID: "sandbox-uid", Controller: &controller,
+	}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1"}}
+	ordinary := host.DeepCopy()
+	ordinary.Name = "ordinary"
+	ordinary.OwnerReferences = nil
+	// A label alone cannot turn an ordinary Pod into a Sandbox host.
+	ordinary.Labels = map[string]string{agentsv1alpha1.LabelSandboxID: "claimed"}
+	pods := krt.NewStaticCollection(nil, []*corev1.Pod{host, ordinary}, krt.WithStop(stop))
+	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", OwnsPod, krt.WithStop(stop))
+	if !workloads.WaitUntilSynced(stop) {
+		t.Fatal("Workloads did not sync")
+	}
+	for _, pod := range []*corev1.Pod{host, ordinary} {
+		got := workloads.GetKey(podsource.WorkloadUID("cluster", pod))
+		if got == nil || got.SandboxManaged != (pod.Name == "host") {
+			t.Fatalf("Pod %s classification = %+v", pod.Name, got)
+		}
 	}
 }

@@ -17,6 +17,8 @@ package attestation
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -103,8 +105,17 @@ func (a *TokenReviewer) cached(token string, now time.Time) (model.PeerIdentity,
 	return entry.caller, true
 }
 
-// remember caches a successful review; failures are not cached.
+// remember caches a successful review, never beyond the token's expiry.
+// Parsing exp does not authenticate the token: TokenReview remains authoritative.
+// Opaque tokens and JWTs without a usable expiry are reviewed on every request.
 func (a *TokenReviewer) remember(token string, caller model.PeerIdentity, now time.Time) {
+	expires, ok := tokenExpiration(token)
+	if !ok || !expires.After(now) {
+		return
+	}
+	if deadline := now.Add(a.ttl); deadline.Before(expires) {
+		expires = deadline
+	}
 	key := cacheKey(token)
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -122,7 +133,27 @@ func (a *TokenReviewer) remember(token string, caller model.PeerIdentity, now ti
 			delete(a.cache, candidate)
 		}
 	}
-	a.cache[key] = tokenReviewEntry{caller: caller, expires: now.Add(a.ttl)}
+	a.cache[key] = tokenReviewEntry{caller: caller, expires: expires}
+}
+
+// tokenExpiration only extracts a cache bound from an already reviewed JWT.
+// Unsupported encodings disable caching rather than weaken authentication.
+func tokenExpiration(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || parts[0] == "" || parts[2] == "" {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		ExpiresAt *int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.ExpiresAt == nil {
+		return time.Time{}, false
+	}
+	return time.Unix(*claims.ExpiresAt, 0), true
 }
 
 func (a *TokenReviewer) Authenticate(ctx context.Context) (model.PeerIdentity, error) {

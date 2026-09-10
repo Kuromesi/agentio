@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 
+	"google.golang.org/protobuf/proto"
 	"istio.io/istio/pkg/util/sets"
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
@@ -27,7 +28,7 @@ import (
 )
 
 // newWorkloadResources owns the incremental joins for WDS networking state
-// and the current Workload-scoped policy overlay. Deterministic protobuf and
+// and gateway dependencies from its own policy bindings. Deterministic protobuf and
 // Resource encoding lives in wds.go.
 func newWorkloadResources(
 	inputs Inputs,
@@ -39,45 +40,33 @@ func newWorkloadResources(
 	options collectionOptions,
 ) krt.Collection[model.Resource] {
 	clearFailureOnSourceDelete(inputs.Workloads, failures, "WDSWorkload")
-	return krt.NewManyCollection(inputs.Workloads,
-		func(ctx krt.HandlerContext, workload model.Workload) []model.Resource {
-			var authorizationNames []string
+	return krt.NewCollection(inputs.Workloads,
+		func(ctx krt.HandlerContext, workload model.Workload) *model.Resource {
+			currentInput := func() bool {
+				current := inputs.Workloads.GetKey(workload.ResourceName())
+				return current != nil && current.Equals(workload)
+			}
+			var egressGatewayKeys, authorizationNames []string
 			var egressPolicies *extensionsv1.EgressPolicies
-			var egressGatewayKeys []string
-			if len(workload.SandboxBindings) > 0 {
-				binding, err := singleSandboxBinding(workload)
-				if err != nil {
-					failures.record("WDSWorkload", workload.ResourceName(), err)
+			var sniPolicy *extensionsv1.SniTrafficPolicy
+			var policyErr error
+			if !workload.SandboxManaged {
+				refs := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.PolicyBindingsKey(policy.PolicyTargetWorkload, workload.UID)))
+				if refs == nil || !refs.Valid() {
 					return nil
 				}
-				policyBindings := krt.FetchOne(ctx, policies.sandboxBindings,
-					krt.FilterKey(binding.SandboxUID))
-				if policyBindings != nil && !policyBindings.Valid() {
-					failures.record("WDSWorkload", workload.ResourceName(),
-						fmt.Errorf("sandbox %q has invalid policy bindings", binding.SandboxUID))
-					return nil
+				authorizationNames = append([]string(nil), refs.PolicyNames(policy.PolicyKindAuthorization)...)
+				names := refs.PolicyNames(policy.PolicyKindEgressPolicy)
+				if len(names) > 0 {
+					compiled := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(names...))
+					egressPolicies, egressGatewayKeys, policyErr = policy.SelectEgressPolicies(names, compiled)
 				}
-				if policyBindings != nil {
-					authorizationNames = policyBindings.PolicyNames(policy.PolicyKindAuthorization)
-					egressNames := policyBindings.PolicyNames(policy.PolicyKindEgressPolicy)
-					if len(egressNames) > 0 {
-						fetched := krt.Fetch(ctx, policies.egressPolicies,
-							krt.FilterKeys(egressNames...))
-						if len(fetched) != len(egressNames) {
-							// Discard the result to keep the previous Workload during the attachment/payload event-ordering window.
-							ctx.DiscardResult()
-							return nil
-						}
-						var err error
-						egressPolicies, egressGatewayKeys, err = policy.SelectEgressPolicies(
-							egressNames,
-							fetched,
-						)
-						if err != nil {
-							failures.record("WDSWorkload", workload.ResourceName(), err)
-							return nil
-						}
-					}
+				if policyErr == nil {
+					sniPolicy, policyErr = workloadSNIPolicy(ctx, refs.PolicyNames(model.PolicyKindSNIPolicy), policies.sniPolicies)
+				}
+				if policyErr != nil {
+					failures.recordIf("WDSWorkload", workload.UID, policyErr, currentInput)
+					return nil
 				}
 			}
 			ownedGatewayKey := gatewayKeyForWorkload(workload)
@@ -135,21 +124,22 @@ func newWorkloadResources(
 			projection := wdsProjection{
 				ClusterID:          inputs.ClusterID,
 				Workload:           workload,
+				SNIPolicy:          sniPolicy,
+				EgressPolicies:     egressPolicies,
 				AuthorizationNames: authorizationNames,
 				Endpoints:          endpoints,
 				Services:           services,
-				EgressPolicies:     egressPolicies,
 				EgressGatewayKeys:  egressGatewayKeys,
 				OwnedGatewayKey:    ownedGatewayKey,
 			}
 			projection.MetadataConfiguration = currentMetadataConfiguration
-			resources, err := buildWDSAddress(projection)
+			resource, err := buildWDSAddress(projection)
 			if err != nil {
-				failures.record("WDSWorkload", workload.ResourceName(), err)
+				failures.recordIf("WDSWorkload", workload.ResourceName(), err, currentInput)
 				return nil
 			}
-			failures.clear("WDSWorkload", workload.ResourceName())
-			return resources
+			failures.clearIf("WDSWorkload", workload.ResourceName(), currentInput)
+			return resource
 		}, options("workload-resources")...)
 }
 
@@ -168,20 +158,26 @@ func gatewayKeyForWorkload(workload model.Workload) string {
 	return key
 }
 
-func newServiceResources(inputs Inputs, gateways krt.Collection[model.Gateway], failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
-	clearFailureOnSourceDelete(inputs.Services, failures, "Service")
-	return krt.NewManyCollection(inputs.Services,
-		func(ctx krt.HandlerContext, service model.Service) []model.Resource {
-			gatewayKey := service.Namespace + "/" + service.Name
-			if krt.FetchOne(ctx, gateways, krt.FilterKey(gatewayKey)) == nil {
-				gatewayKey = ""
-			}
-			resource, err := buildWDSService(service, gatewayKey)
-			if err != nil {
-				failures.record("Service", service.ResourceName(), err)
-				return nil
-			}
-			failures.clear("Service", service.ResourceName())
-			return []model.Resource{resource}
-		}, options("service-resources")...)
+// workloadSNIPolicy projects only the Workload's own ordered SNI rules.
+// Fetches register content dependencies directly on the Workload.
+func workloadSNIPolicy(ctx krt.HandlerContext, names []string, sniPolicies krt.Collection[policy.CompiledSNIPolicy]) (*extensionsv1.SniTrafficPolicy, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	result := &extensionsv1.SniTrafficPolicy{}
+	complete := true
+	for _, name := range names {
+		compiled := krt.FetchOne(ctx, sniPolicies, krt.FilterKey(name))
+		if compiled == nil || compiled.Policy == nil {
+			complete = false
+			continue
+		}
+		for _, rule := range compiled.Policy.Rules {
+			result.Rules = append(result.Rules, proto.Clone(rule).(*extensionsv1.SniRule))
+		}
+	}
+	if !complete {
+		return nil, fmt.Errorf("workload SNI policy content is incomplete: %v", names)
+	}
+	return result, nil
 }

@@ -20,28 +20,14 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-
 	"istio.io/istio/pkg/util/sets"
 
-	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// SandboxPolicyResolver resolves the complete SNI payload attached to a sandbox UID.
-type SandboxPolicyResolver interface {
-	SNIPolicy(string) *extensionsv1.SniTrafficPolicy
-}
-
-// WorkloadGenerator applies workload-discovery scope and on-demand projection
-// for Address and Workload resources.
-type WorkloadGenerator struct {
-	policies SandboxPolicyResolver
-}
-
-func NewWorkloadGenerator(policies SandboxPolicyResolver) WorkloadGenerator {
-	return WorkloadGenerator{policies: policies}
-}
+// WorkloadGenerator serves networking state and independently matched Workload policies.
+type WorkloadGenerator struct{}
 
 func (g WorkloadGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
 	if err := ctx.Err(); err != nil {
@@ -72,7 +58,7 @@ func (g WorkloadGenerator) Generate(ctx context.Context, request GenerationReque
 		delta.elideSentState = request.Subscription.Wildcard()
 		return delta, nil
 	}
-	return generateWDSDirty(request, false), nil
+	return generateWDSIncremental(request, false), nil
 }
 
 // collapseSortedXDSNames preserves the full selection's deterministic
@@ -96,8 +82,7 @@ func (g WorkloadGenerator) generateDirectWorkloads(request GenerationRequest) (G
 	sourceRequest.TypeURL = model.AddressType
 	// Direct Workloads keep per-connection sent state even for wildcard
 	// watches: only egress gateways consume them, and sent versions are what
-	// let a full regeneration (policy-binding triggers) send a diff instead of
-	// retransmitting the entire set.
+	// let a full regeneration send a diff instead of retransmitting the entire set.
 	projectDelta := func(delta GeneratedDelta) (GeneratedDelta, error) {
 		projected, err := g.projectAddresses(delta.Resources)
 		if err != nil {
@@ -120,7 +105,7 @@ func (g WorkloadGenerator) generateDirectWorkloads(request GenerationRequest) (G
 		}
 		return diffSelected(request.Subscription, selected), nil
 	}
-	return projectDelta(generateWDSDirty(sourceRequest, true))
+	return projectDelta(generateWDSIncremental(sourceRequest, true))
 }
 
 func (g WorkloadGenerator) projectAddresses(addresses []model.Resource) ([]model.Resource, error) {
@@ -133,15 +118,6 @@ func (g WorkloadGenerator) projectAddresses(addresses []model.Resource) ([]model
 		workload := address.GetWorkload()
 		if workload == nil {
 			continue
-		}
-		if sandboxUID := sandboxUIDForResource(addressResource); sandboxUID != "" && g.policies != nil {
-			if payload := g.policies.SNIPolicy(sandboxUID); payload != nil {
-				config := new(anypb.Any)
-				if err := anypb.MarshalFrom(config, payload, proto.MarshalOptions{Deterministic: true}); err != nil {
-					return nil, fmt.Errorf("marshal SNI policy for workload %s: %w", addressResource.Key.Name, err)
-				}
-				workload.Extensions = append(workload.Extensions, &workloadv1.Extension{Name: "sni-traffic-policy", Config: config})
-			}
 		}
 		// Deterministic marshaling keeps the projected hash stable across
 		// regenerations; the default marshal randomizes map-field order and
@@ -159,13 +135,6 @@ func (g WorkloadGenerator) projectAddresses(addresses []model.Resource) ([]model
 		result = append(result, resource)
 	}
 	return result, nil
-}
-
-func sandboxUIDForResource(resource model.Resource) string {
-	if resource.Facts.Workload != nil {
-		return resource.Facts.Workload.SandboxUID
-	}
-	return ""
 }
 
 func selectWorkloadResources(
@@ -198,6 +167,7 @@ func selectWorkloadResources(
 
 	workloads := scopedWorkloads(scope, snapshot, typeURL)
 	referencedGateways := gatewayReferenceKeys(workloads)
+	referencedGateways.Merge(sandboxGatewayReferenceKeys(snapshot, workloads))
 	withGateways := func(selected []model.Resource) []model.Resource {
 		selected = append(selected, gatewayResourcesForKeys(snapshot, typeURL, referencedGateways)...)
 		return orderedUnique(selected)
@@ -308,7 +278,7 @@ func workloadMatchesScope(scope model.ClientScope, resource model.Resource) bool
 	}
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
-		return workload.SandboxUID == scope.SandboxUID
+		return scope.WorkloadUID != "" && scope.SourceUID != "" && workload.WorkloadUID == scope.WorkloadUID && workload.SourceUID == scope.SourceUID && workload.Principal == scope.Principal
 	case model.ClientSharedZTunnel:
 		return workload.NodeName == scope.NodeName
 	default:
@@ -327,7 +297,10 @@ func scopedWorkloads(scope model.ClientScope, snapshot model.ResourceSet, typeUR
 func workloadScopeQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
-		return model.WorkloadQuery{SandboxUID: scope.SandboxUID}, true
+		if scope.WorkloadUID != "" && scope.SourceUID != "" {
+			return model.WorkloadQuery{WorkloadUID: scope.WorkloadUID, SourceUID: scope.SourceUID, Principal: &scope.Principal}, true
+		}
+		return model.WorkloadQuery{}, false
 	case model.ClientSharedZTunnel:
 		return model.WorkloadQuery{NodeName: scope.NodeName}, true
 	default:
@@ -383,4 +356,175 @@ func gatewayResourcesForKeys(
 		result = append(result, snapshot.ListResourcesOwnedByGateway(typeURL, key)...)
 	}
 	return orderedUnique(result)
+}
+
+// generateWDSIncremental diffs the update's before/after publications for this
+// scope, without per-connection sent state.
+func generateWDSIncremental(request GenerationRequest, workloadsOnly bool) GeneratedDelta {
+	if !request.Subscription.Wildcard() {
+		names := selectionNames(request.Subscription)
+		return diffWDSSelections(
+			selectWorkloadResources(request.Scope, request.Update.Before(), request.TypeURL, names),
+			selectWorkloadResources(request.Scope, request.Update.After(), request.TypeURL, names),
+			workloadsOnly)
+	}
+	before := newWorkloadVisibility(request.Scope, request.Update.Before(), request.TypeURL)
+	after := newWorkloadVisibility(request.Scope, request.Update.After(), request.TypeURL)
+	changes := request.Update.ReadOnlyChangesForType(request.TypeURL)
+	sandboxChanges := request.Update.ReadOnlyChangesForType(model.SandboxType)
+	if stableWDSFacts(changes) && !request.Update.SandboxGatewayFactsChanged() {
+		return diffWDSChanges(before, after, changes, workloadsOnly)
+	}
+	candidates := affectedWDSCandidates(before, after, changes)
+	addSandboxGatewayCandidates(candidates, before, after, sandboxChanges)
+	return diffWDSCandidates(before, after, candidates, workloadsOnly)
+}
+
+func addSandboxGatewayCandidates(candidates sets.Set[model.ResourceKey], before, after workloadVisibility, changes []model.ResourceChange) {
+	for _, change := range changes {
+		if change.Old != nil && change.New != nil && change.Old.Facts.Equal(change.New.Facts) {
+			continue
+		}
+		for _, sandbox := range []*model.Resource{change.Old, change.New} {
+			if sandbox == nil || sandbox.Facts.Sandbox == nil {
+				continue
+			}
+			for _, key := range sandbox.Facts.Sandbox.GatewayReferences {
+				for _, visibility := range []workloadVisibility{before, after} {
+					for _, resource := range visibility.ownedByGateway(key) {
+						candidates.Insert(resource.Key)
+					}
+				}
+			}
+		}
+	}
+}
+
+func stableWDSFacts(changes []model.ResourceChange) bool {
+	for _, change := range changes {
+		if change.Old == nil || change.New == nil ||
+			!change.Old.Facts.Equal(change.New.Facts) {
+			return false
+		}
+	}
+	return true
+}
+
+func serviceResourcesForKey(snapshot model.ResourceSet, serviceKey string) []model.Resource {
+	result := make([]model.Resource, 0, 1)
+	for _, resource := range snapshot.Lookup(model.AddressType, serviceKey) {
+		if resource.Facts.Service != nil && resource.Facts.Service.ServiceKey == serviceKey {
+			result = append(result, resource)
+		}
+	}
+	return result
+}
+
+func affectedWDSCandidates(before, after workloadVisibility, changes []model.ResourceChange) sets.Set[model.ResourceKey] {
+	candidates := sets.NewWithLength[model.ResourceKey](len(changes))
+	add := func(resource *model.Resource) {
+		if resource != nil && resource.Key.TypeURL == before.typeURL {
+			candidates.Insert(resource.Key)
+		}
+	}
+	addResources := func(resources []model.Resource) {
+		for index := range resources {
+			add(&resources[index])
+		}
+	}
+	for _, change := range changes {
+		add(change.Old)
+		add(change.New)
+		if change.Old != nil && change.New != nil &&
+			change.Old.Facts.Equal(change.New.Facts) {
+			// A payload-only change cannot flip Service or Gateway visibility.
+			continue
+		}
+		for _, workload := range []*model.Resource{change.Old, change.New} {
+			if workload == nil || !workload.IsWorkloadAddress() ||
+				!workloadMatchesScope(before.scope, *workload) {
+				continue
+			}
+			if before.typeURL == model.AddressType {
+				for _, serviceKey := range workload.Facts.Workload.ServiceKeys {
+					addResources(serviceResourcesForKey(before.resources, serviceKey))
+					addResources(serviceResourcesForKey(after.resources, serviceKey))
+				}
+			}
+			gateways := sets.New(workload.Facts.Workload.GatewayReferences...)
+			gateways.Merge(sandboxGatewayReferenceKeys(before.resources, []model.Resource{*workload}))
+			gateways.Merge(sandboxGatewayReferenceKeys(after.resources, []model.Resource{*workload}))
+			for gatewayKey := range gateways {
+				addResources(before.ownedByGateway(gatewayKey))
+				addResources(after.ownedByGateway(gatewayKey))
+			}
+		}
+	}
+	return candidates
+}
+
+func diffWDSCandidates(
+	before, after workloadVisibility,
+	candidates sets.Set[model.ResourceKey],
+	workloadsOnly bool,
+) GeneratedDelta {
+	visible := func(visibility workloadVisibility) func(model.Resource) bool {
+		return func(resource model.Resource) bool {
+			if workloadsOnly && !resource.IsWorkloadAddress() {
+				return false
+			}
+			return visibility.visible(resource)
+		}
+	}
+	selected, removed := diffCandidateTransition(candidates,
+		before.resources.Get, after.resources.Get, visible(before), visible(after))
+	return newSortedDelta(selected, removed, true)
+}
+
+func diffWDSChanges(
+	before, after workloadVisibility,
+	changes []model.ResourceChange,
+	workloadsOnly bool,
+) GeneratedDelta {
+	visible := func(visibility workloadVisibility, resource *model.Resource) bool {
+		return resource != nil && (!workloadsOnly || resource.IsWorkloadAddress()) && visibility.visible(*resource)
+	}
+	var selected map[string]model.Resource
+	var removed sets.Set[string]
+	for _, change := range changes {
+		addResourceTransition(&selected, &removed, change.Old, change.New,
+			visible(before, change.Old), visible(after, change.New))
+	}
+	return newSortedDelta(selected, removed, true)
+}
+
+func diffWDSSelections(before, after []model.Resource, workloadsOnly bool) GeneratedDelta {
+	byKey := func(resources []model.Resource) map[model.ResourceKey]model.Resource {
+		result := make(map[model.ResourceKey]model.Resource, len(resources))
+		for _, resource := range resources {
+			if !workloadsOnly || resource.IsWorkloadAddress() {
+				result[resource.Key] = resource
+			}
+		}
+		return result
+	}
+	oldByKey := byKey(before)
+	newByKey := byKey(after)
+	candidates := sets.NewWithLength[model.ResourceKey](len(oldByKey) + len(newByKey))
+	for key := range oldByKey {
+		candidates.Insert(key)
+	}
+	for key := range newByKey {
+		candidates.Insert(key)
+	}
+	lookup := func(resources map[model.ResourceKey]model.Resource) func(model.ResourceKey) (model.Resource, bool) {
+		return func(key model.ResourceKey) (model.Resource, bool) {
+			resource, found := resources[key]
+			return resource, found
+		}
+	}
+	always := func(model.Resource) bool { return true }
+	selected, removed := diffCandidateTransition(candidates,
+		lookup(oldByKey), lookup(newByKey), always, always)
+	return newSortedDelta(selected, removed, false)
 }

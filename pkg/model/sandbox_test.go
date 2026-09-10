@@ -105,3 +105,14 @@ func TestSandboxValidationRejectsInvalidPolicyReferences(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxAttesterValidation(t *testing.T) {
+	for _, sandbox := range []Sandbox{{UID: "a", Attester: &Attester{}}, {UID: "a", State: SandboxState(99)}} {
+		if sandbox.Validate() == nil {
+			t.Fatalf("invalid Sandbox accepted: %+v", sandbox)
+		}
+	}
+	if err := (Sandbox{UID: "a", State: SandboxStatePaused}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

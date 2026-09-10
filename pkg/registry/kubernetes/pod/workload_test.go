@@ -93,7 +93,7 @@ func TestPodWorkloadDoesNotInferGatewayRoleFromLabels(t *testing.T) {
 	}
 }
 
-func TestPodProducesWorkloadAttester(t *testing.T) {
+func TestPodProducesWorkloadWithoutSandbox(t *testing.T) {
 	pod := workloadTestPod(corev1.PodRunning, "10.0.0.1")
 	pod.Namespace, pod.Name, pod.UID = "demo", "client", "pod-uid"
 	pod.Spec.ServiceAccountName = "client"
@@ -101,9 +101,8 @@ func TestPodProducesWorkloadAttester(t *testing.T) {
 	pod.Spec.Containers = []corev1.Container{dedicatedZTunnelContainer()}
 
 	workload := workloadFromPod("cluster", "cluster.local", pod)
-	if len(workload.SandboxBindings) != 1 || workload.SandboxBindings[0].SandboxUID != "cluster//Pod/demo/client" ||
-		workload.UID != workload.SandboxBindings[0].SandboxUID {
-		t.Fatalf("workload identity = %q bindings %+v", workload.UID, workload.SandboxBindings)
+	if workload.UID != "cluster//Pod/demo/client" {
+		t.Fatalf("ordinary Pod workload identity = %q", workload.UID)
 	}
 	if workload.SourceUID != "pod-uid" || workload.TunnelProtocol != "HBONE" || !workload.NativeTunnel {
 		t.Fatalf("workload = %+v", workload)

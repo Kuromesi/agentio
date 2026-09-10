@@ -21,28 +21,22 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-func TestValidatedDomainInputsRejectsMultipleActiveAttestersForSandbox(t *testing.T) {
+func TestInvalidSandboxDoesNotRemoveWorkload(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	workloads := krt.NewStaticCollection(nil, []model.Workload{
-		validationTestWorkload("workload-a", "sandbox-a"),
-		validationTestWorkload("workload-b", "sandbox-a"),
-	}, options...)
 	failures := newFailureRecorder()
-
-	validated := validatedDomainInputs(Inputs{Workloads: workloads}, failures,
-		func(name string) []krt.CollectionOption {
-			return []krt.CollectionOption{krt.WithStop(stop), krt.WithName(name)}
-		})
-	if !validated.Workloads.WaitUntilSynced(stop) {
-		t.Fatal("validated Workloads did not sync")
+	inputs := validCompilerInputs(stop)
+	inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{validationTestWorkload("worker", "")}, options...)
+	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: "sandbox", Attester: &model.Attester{}}}, options...)
+	validated := validatedDomainInputs(inputs, failures, func(name string) []krt.CollectionOption {
+		return []krt.CollectionOption{krt.WithStop(stop), krt.WithName(name)}
+	})
+	if !validated.Workloads.WaitUntilSynced(stop) || !validated.Sandboxes.WaitUntilSynced(stop) {
+		t.Fatal("sync failed")
 	}
-	if got := validated.Workloads.List(); len(got) != 0 {
-		t.Fatalf("validated Workloads = %+v, want both conflicting attesters omitted", got)
-	}
-	if got := len(failures.snapshot()); got != 2 {
-		t.Fatalf("failures = %v, want one per conflicting Workload", failures.snapshot())
+	if len(validated.Workloads.List()) != 1 || len(validated.Sandboxes.List()) != 0 {
+		t.Fatal("invalid Sandbox affected endpoint discovery")
 	}
 }
 
@@ -63,12 +57,6 @@ func TestValidateDiscoveredWorkload(t *testing.T) {
 		}, wantErr: true},
 		{name: "invalid tunnel", mutate: func(workload *model.Workload) {
 			workload.TunnelProtocol = "invalid"
-		}, wantErr: true},
-		{name: "empty binding", mutate: func(workload *model.Workload) {
-			workload.SandboxBindings = []model.SandboxBinding{{}}
-		}, wantErr: true},
-		{name: "duplicate binding", mutate: func(workload *model.Workload) {
-			workload.SandboxBindings = append(workload.SandboxBindings, workload.SandboxBindings[0])
 		}, wantErr: true},
 		{name: "identity fields without kind", mutate: func(workload *model.Workload) {
 			workload.Principal = model.Principal{TrustDomain: "cluster.local"}
@@ -95,11 +83,6 @@ func validationTestWorkload(uid, sandboxUID string) model.Workload {
 	return model.Workload{
 		UID:       uid,
 		Namespace: "demo",
-		SandboxBindings: []model.SandboxBinding{
-			{
-				SandboxUID: sandboxUID,
-			},
-		},
 		Principal: model.Principal{
 			Kind:        model.PrincipalServiceAccount,
 			TrustDomain: "cluster.local",

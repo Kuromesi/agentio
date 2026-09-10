@@ -66,9 +66,9 @@ func TestCompileSNIProfileSandboxUIDAssociation(t *testing.T) {
 	}
 }
 
-func TestCompileSNIProfilesNormalizesHTTPSDomains(t *testing.T) {
+func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	priority := int32(10)
-	compiled, err := CompileSNIProfiles([]model.SecurityProfile{{
+	compiled, err := CompileSNIProfile(model.SecurityProfile{
 		Name: "profile", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{
 			Priority: &priority, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Rules: []agentsv1alpha1.SecurityRule{{Name: "hosts", Match: []agentsv1alpha1.RuleMatch{
@@ -76,14 +76,14 @@ func TestCompileSNIProfilesNormalizesHTTPSDomains(t *testing.T) {
 				{Domains: []string{"http-only.example.com"}, Schemes: []string{"http"}},
 			}}},
 		},
-	}})
+	})
 	if err != nil {
 		t.Fatalf("compile SNI profiles: %v", err)
 	}
-	if len(compiled) != 1 || compiled[0].ResourceName() != "demo/profile" {
+	if compiled == nil || compiled.ResourceName() != "demo/profile" {
 		t.Fatalf("compiled profiles = %+v", compiled)
 	}
-	got := compiled[0].Policy.GetRules()[0]
+	got := compiled.Policy.GetRules()[0]
 	want := []string{"api.example.com", "*.example.com"}
 	if got.GetAction() != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION || len(got.GetMatch().GetSni()) != len(want) {
 		t.Fatalf("SNI rule = %+v", got)
@@ -95,13 +95,13 @@ func TestCompileSNIProfilesNormalizesHTTPSDomains(t *testing.T) {
 	}
 }
 
-func TestCompileSNIProfilesRejectsPartialWildcard(t *testing.T) {
-	_, err := CompileSNIProfiles([]model.SecurityProfile{{
+func TestCompileSNIProfileRejectsPartialWildcard(t *testing.T) {
+	_, err := CompileSNIProfile(model.SecurityProfile{
 		Name: "bad", Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{
 			Name: "bad", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"*foo.example.com"}}},
 		}}},
-	}})
+	})
 	if err == nil {
 		t.Fatal("partial wildcard was accepted")
 	}

@@ -75,7 +75,7 @@ func TestResolverEvictsUnreferencedColdResultAtRefreshDeadline(t *testing.T) {
 			Hostname:  host,
 			Addresses: []netip.Addr{address},
 		}}),
-		jobs: make(chan string, 1),
+		jobs: make(chan *entry, 1),
 	}
 	resolver.scheduleLocked(item)
 
@@ -106,7 +106,7 @@ func TestResolverDropsUnreferencedColdEntryAfterLookupFailure(t *testing.T) {
 		wake:    make(chan struct{}, 1),
 	}
 
-	resolver.refresh(host)
+	resolver.refresh(item)
 
 	resolver.mu.RLock()
 	_, retained := resolver.entries[host]
@@ -251,7 +251,10 @@ func TestResolverSchedulesFromAnswerTTLAndPreservesOnFailure(t *testing.T) {
 	}
 
 	phase.Store(1)
-	resolver.refresh("api.example.com")
+	resolver.mu.RLock()
+	item := resolver.entries["api.example.com"]
+	resolver.mu.RUnlock()
+	resolver.refresh(item)
 	result := resolver.Results().GetKey("api.example.com")
 	if result == nil || len(result.Addresses) != 1 || result.Addresses[0].String() != "203.0.113.20" {
 		t.Fatalf("temporary failure discarded last-known-good result: %+v", result)
@@ -326,4 +329,45 @@ func TestResolverWakesForAnswerTTLBeforeFallbackInterval(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("TTL refresh did not run before fallback interval; calls=%d", calls.Load())
+}
+
+func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
+	for _, recreate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "deleted", true: "recreated"}[recreate], func(t *testing.T) {
+			started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			old := &entry{hostname: "example.com", refs: 1, resolving: true, index: -1}
+			resolver := &Resolver{ctx: t.Context(), options: Options{LookupTimeout: time.Second}, entries: map[string]*entry{"example.com": old}, results: krt.NewStaticCollection[Result](nil, nil), wake: make(chan struct{}, 1)}
+			resolver.lookup = func(ctx context.Context, _ string) (LookupResult, error) {
+				close(started)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return LookupResult{}, ctx.Err()
+				}
+				return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")}, TTL: time.Minute}, nil
+			}
+			go func() { resolver.refresh(old); close(done) }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("lookup did not start")
+			}
+			resolver.HandleDelete("example.com")
+			if recreate {
+				resolver.HandleAdd("example.com")
+			}
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("lookup did not finish")
+			}
+			if result := resolver.Results().GetKey("example.com"); result != nil {
+				t.Fatalf("old lookup published: %+v", result)
+			}
+			if recreate && resolver.entries["example.com"].published {
+				t.Fatal("old lookup changed recreated entry")
+			}
+		})
+	}
 }

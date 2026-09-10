@@ -16,12 +16,10 @@ package compiler
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
-	"istio.io/istio/pkg/util/sets"
 )
 
 func validateDiscoveredWorkload(workload model.Workload) error {
@@ -40,65 +38,28 @@ func validateDiscoveredWorkload(workload model.Workload) error {
 	if err := workload.TunnelProtocol.Validate(); err != nil {
 		return err
 	}
-	seen := sets.NewWithLength[string](len(workload.SandboxBindings))
-	for index, binding := range workload.SandboxBindings {
-		if err := binding.Validate(); err != nil {
-			return fmt.Errorf("sandbox binding %d: %w", index, err)
-		}
-		if seen.Contains(binding.SandboxUID) {
-			return fmt.Errorf("sandbox binding %q is duplicated", binding.SandboxUID)
-		}
-		seen.Insert(binding.SandboxUID)
-	}
 	return nil
 }
 
-// validatedDomainInputs filters Workloads that are invalid or ambiguously owned.
+// validatedDomainInputs validates endpoints and explicit runtimes independently.
 func validatedDomainInputs(inputs Inputs, failures *failureRecorder, options collectionOptions) Inputs {
-	rawWorkloads := inputs.Workloads
-	clearFailureOnSourceDelete(rawWorkloads, failures, "Workload")
-	workloadsBySandbox := krt.NewIndex(rawWorkloads, "workloadsBySandbox",
-		func(workload model.Workload) []string {
-			result := make([]string, 0, len(workload.SandboxBindings))
-			seen := sets.NewWithLength[string](len(workload.SandboxBindings))
-			for _, binding := range workload.SandboxBindings {
-				if binding.SandboxUID == "" {
-					continue
-				}
-				if seen.Contains(binding.SandboxUID) {
-					continue
-				}
-				seen.Insert(binding.SandboxUID)
-				result = append(result, binding.SandboxUID)
-			}
-			return result
-		})
-	inputs.Workloads = krt.NewCollection(rawWorkloads,
-		func(ctx krt.HandlerContext, workload model.Workload) *model.Workload {
-			if err := validateDiscoveredWorkload(workload); err != nil {
-				failures.record("Workload", workload.ResourceName(), err)
-				return nil
-			}
-
-			conflicts := make([]string, 0)
-			for _, binding := range workload.SandboxBindings {
-				for _, owner := range krt.Fetch(ctx, rawWorkloads,
-					krt.FilterIndex(workloadsBySandbox, binding.SandboxUID)) {
-					if owner.UID != workload.UID {
-						conflicts = append(conflicts,
-							fmt.Sprintf("%s (Sandbox %s)", owner.UID, binding.SandboxUID))
-					}
-				}
-			}
-			if len(conflicts) > 0 {
-				sort.Strings(conflicts)
-				failures.record("Workload", workload.ResourceName(),
-					fmt.Errorf("sandbox bindings conflict with active workloads %v", conflicts))
-				return nil
-			}
-
-			failures.clear("Workload", workload.ResourceName())
-			return &workload
-		}, options("validated-workloads")...)
+	clearFailureOnSourceDelete(inputs.Workloads, failures, "Workload")
+	inputs.Workloads = krt.NewCollection(inputs.Workloads, func(_ krt.HandlerContext, workload model.Workload) *model.Workload {
+		if err := validateDiscoveredWorkload(workload); err != nil {
+			failures.record("Workload", workload.UID, err)
+			return nil
+		}
+		failures.clear("Workload", workload.UID)
+		return &workload
+	}, options("validated-workloads")...)
+	clearFailureOnSourceDelete(inputs.Sandboxes, failures, "Sandbox")
+	inputs.Sandboxes = krt.NewCollection(inputs.Sandboxes, func(_ krt.HandlerContext, sandbox model.Sandbox) *model.Sandbox {
+		if err := sandbox.Validate(); err != nil {
+			failures.record("Sandbox", sandbox.UID, err)
+			return nil
+		}
+		failures.clear("Sandbox", sandbox.UID)
+		return &sandbox
+	}, options("validated-sandboxes")...)
 	return inputs
 }

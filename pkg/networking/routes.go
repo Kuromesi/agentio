@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/pkg/util/protoutil"
 
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	previoushostsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/retry/host/previous_hosts/v3"
@@ -28,10 +28,12 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 )
 
 var previousHostsRetryPredicate = func() *routev3.RetryPolicy_RetryHostPredicate {
-	config, err := anypb.New(&previoushostsv3.PreviousHostsPredicate{})
+	config, err := protoutil.MarshalAny(&previoushostsv3.PreviousHostsPredicate{})
 	if err != nil {
 		panic(fmt.Errorf("encode previous-hosts retry predicate: %w", err))
 	}
@@ -42,7 +44,7 @@ var previousHostsRetryPredicate = func() *routev3.RetryPolicy_RetryHostPredicate
 }()
 
 var remoteLocalitiesRetryPriority = func() *routev3.RetryPolicy_RetryPriority {
-	config, err := anypb.New(&previousprioritiesv3.PreviousPrioritiesConfig{UpdateFrequency: 2})
+	config, err := protoutil.MarshalAny(&previousprioritiesv3.PreviousPrioritiesConfig{UpdateFrequency: 2})
 	if err != nil {
 		panic(fmt.Errorf("encode previous-priorities retry config: %w", err))
 	}
@@ -52,7 +54,7 @@ var remoteLocalitiesRetryPriority = func() *routev3.RetryPolicy_RetryPriority {
 	}
 }()
 
-func buildRoutes(gateway *configv1.EgressGateway) ([]*routev3.RouteConfiguration, error) {
+func (b *resourceBuilder) buildRoutes(gateway *configv1.EgressGateway) ([]*routev3.RouteConfiguration, error) {
 	connect := &routev3.RouteConfiguration{
 		Name: ConnectTerminate,
 		VirtualHosts: []*routev3.VirtualHost{{
@@ -71,8 +73,8 @@ func buildRoutes(gateway *configv1.EgressGateway) ([]*routev3.RouteConfiguration
 			}},
 		}},
 	}
-	http := buildForwardRoute(HTTPDynamicForwardProxy, gateway)
-	tls := buildForwardRoute(TLSConnectOriginate, gateway)
+	http := b.buildForwardRoute(HTTPDynamicForwardProxy, gateway)
+	tls := b.buildForwardRoute(TLSConnectOriginate, gateway)
 	for _, route := range []*routev3.RouteConfiguration{connect, http, tls} {
 		if err := route.ValidateAll(); err != nil {
 			return nil, fmt.Errorf("validate route %s: %w", route.GetName(), err)
@@ -83,7 +85,7 @@ func buildRoutes(gateway *configv1.EgressGateway) ([]*routev3.RouteConfiguration
 
 // buildForwardRoute keeps the existing DFP cluster for static routes and
 // replaces only the route-selected host and original port state.
-func buildForwardRoute(name string, gateway *configv1.EgressGateway) *routev3.RouteConfiguration {
+func (b *resourceBuilder) buildForwardRoute(name string, gateway *configv1.EgressGateway) *routev3.RouteConfiguration {
 	result := &routev3.RouteConfiguration{Name: name, ValidateClusters: wrapperspb.Bool(false)}
 	settings := gateway.GetConnectionPool().GetHttp()
 	staticDomains := make(map[string]struct{})
@@ -100,7 +102,7 @@ func buildForwardRoute(name string, gateway *configv1.EgressGateway) *routev3.Ro
 			result.VirtualHosts = append(result.VirtualHosts, &routev3.VirtualHost{
 				Name:    fmt.Sprintf("sandbox|service-entry|%d|%d", serviceIndex, hostIndex),
 				Domains: domains,
-				Routes: []*routev3.Route{staticEndpointRoute(
+				Routes: []*routev3.Route{b.staticEndpointRoute(
 					name,
 					routeSettingsForHost(settings, host),
 					addresses,
@@ -158,11 +160,11 @@ func forwardProxyConnectRoute(cluster string) *routev3.Route {
 	}
 }
 
-func staticEndpointRoute(cluster string, settings *configv1.HttpRouteSettings, addresses []string) *routev3.Route {
+func (b *resourceBuilder) staticEndpointRoute(cluster string, settings *configv1.HttpRouteSettings, addresses []string) *routev3.Route {
 	result := forwardRoute(cluster, settings)
 	if len(addresses) == 1 {
 		result.TypedPerFilterConfig = map[string]*anypb.Any{
-			staticEndpointFilterStateFilter: staticEndpointFilterStateConfig(addresses[0]),
+			staticEndpointFilterStateFilter: b.staticEndpointFilterStateConfig(addresses[0]),
 		}
 		return result
 	}
@@ -172,7 +174,7 @@ func staticEndpointRoute(cluster string, settings *configv1.HttpRouteSettings, a
 			Name:   cluster,
 			Weight: wrapperspb.UInt32(1),
 			TypedPerFilterConfig: map[string]*anypb.Any{
-				staticEndpointFilterStateFilter: staticEndpointFilterStateConfig(address),
+				staticEndpointFilterStateFilter: b.staticEndpointFilterStateConfig(address),
 			},
 		})
 	}

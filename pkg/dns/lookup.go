@@ -78,6 +78,13 @@ func queryServers(
 	var lastErr error
 	for _, server := range servers {
 		response, _, err := client.ExchangeContext(ctx, request, server)
+		if err == nil && response.Truncated {
+			tcpClient := &mdns.Client{Net: "tcp", Timeout: timeout}
+			response, _, err = tcpClient.ExchangeContext(ctx, request, server)
+			if err == nil && response.Truncated {
+				err = fmt.Errorf("DNS server %s returned a truncated TCP response for %s", server, host)
+			}
+		}
 		if err != nil {
 			lastErr = err
 			continue

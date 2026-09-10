@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
@@ -36,41 +37,21 @@ import (
 type wdsProjection struct {
 	ClusterID             string
 	Workload              model.Workload
-	AuthorizationNames    []string
 	Endpoints             []model.Endpoint
 	Services              []model.Service
-	MetadataConfiguration *workloadMetadataConfiguration
+	SNIPolicy             *extensionsv1.SniTrafficPolicy
 	EgressPolicies        *extensionsv1.EgressPolicies
+	AuthorizationNames    []string
+	MetadataConfiguration *workloadMetadataConfiguration
 	EgressGatewayKeys     []string
 	OwnedGatewayKey       string
 }
 
-// singleSandboxBinding returns the only binding when a Workload can be
-// projected faithfully onto the current workload-scoped policy wire contract.
-func singleSandboxBinding(workload model.Workload) (model.SandboxBinding, error) {
-	if len(workload.SandboxBindings) != 1 {
-		return model.SandboxBinding{}, fmt.Errorf("workload-scoped policy projection requires exactly one sandbox binding")
-	}
-	binding := workload.SandboxBindings[0]
-	if err := binding.Validate(); err != nil {
-		return model.SandboxBinding{}, fmt.Errorf("workload-scoped policy projection: %w", err)
-	}
-	return binding, nil
-}
-
 // buildWDSAddress compiles one Workload into the canonical Address form
 // consumed by ztunnel.
-func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
+func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 	if err := validateDiscoveredWorkload(input.Workload); err != nil {
 		return nil, fmt.Errorf("workload %q: %w", input.Workload.UID, err)
-	}
-	sandboxUID := ""
-	if len(input.Workload.SandboxBindings) > 0 {
-		binding, err := singleSandboxBinding(input.Workload)
-		if err != nil {
-			return nil, err
-		}
-		sandboxUID = binding.SandboxUID
 	}
 	addresses, aliases, err := parseAddresses(input.Workload.Addresses)
 	if err != nil {
@@ -174,22 +155,23 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 		tunnel = workloadv1.TunnelProtocol_HBONE
 	}
 	wireWorkload := &workloadv1.Workload{
-		Uid:               input.Workload.UID,
-		Name:              input.Workload.Name,
-		Namespace:         input.Workload.Namespace,
-		Addresses:         addresses,
-		TunnelProtocol:    tunnel,
-		TrustDomain:       trustDomain,
-		ServiceAccount:    serviceAccount,
-		Node:              input.Workload.NodeName,
-		Services:          services,
-		Status:            status,
-		ClusterId:         input.ClusterID,
-		WorkloadType:      workloadv1.WorkloadType_POD,
-		WorkloadName:      input.Workload.Name,
-		CanonicalName:     input.Workload.CanonicalName,
-		CanonicalRevision: input.Workload.CanonicalRevision,
-		NativeTunnel:      input.Workload.NativeTunnel,
+		Uid:                   input.Workload.UID,
+		AuthorizationPolicies: append([]string(nil), input.AuthorizationNames...),
+		Name:                  input.Workload.Name,
+		Namespace:             input.Workload.Namespace,
+		Addresses:             addresses,
+		TunnelProtocol:        tunnel,
+		TrustDomain:           trustDomain,
+		ServiceAccount:        serviceAccount,
+		Node:                  input.Workload.NodeName,
+		Services:              services,
+		Status:                status,
+		ClusterId:             input.ClusterID,
+		WorkloadType:          workloadv1.WorkloadType_POD,
+		WorkloadName:          input.Workload.Name,
+		CanonicalName:         input.Workload.CanonicalName,
+		CanonicalRevision:     input.Workload.CanonicalRevision,
+		NativeTunnel:          input.Workload.NativeTunnel,
 	}
 	if input.Workload.HostNetwork {
 		wireWorkload.NetworkMode = workloadv1.NetworkMode_HOST_NETWORK
@@ -203,32 +185,37 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 		}
 		wireWorkload.Extensions = append(wireWorkload.Extensions, metadata)
 	}
+
 	if input.EgressPolicies != nil {
-		value, err := anypb.New(input.EgressPolicies)
+		config, err := marshalDeterministicAny(input.EgressPolicies)
 		if err != nil {
 			return nil, fmt.Errorf("marshal egress policies for workload %s: %w", input.Workload.UID, err)
 		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions,
-			&workloadv1.Extension{
-				Name:   "egress-policies",
-				Config: value,
-			})
+		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{Name: "egress-policies", Config: config})
+	}
+	if input.SNIPolicy != nil {
+		config, err := marshalDeterministicAny(input.SNIPolicy)
+		if err != nil {
+			return nil, fmt.Errorf("marshal SNI policy for workload %s: %w", input.Workload.UID, err)
+		}
+		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
+			Name: "sni-traffic-policy", Config: config,
+		})
 	}
 
-	wireWorkload.AuthorizationPolicies = append([]string(nil), input.AuthorizationNames...)
-	sort.Strings(wireWorkload.AuthorizationPolicies)
-
-	addressValue, err := anypb.New(address)
+	addressValue, err := marshalDeterministicAny(address)
 	if err != nil {
 		return nil, fmt.Errorf("marshal workload %s: %w", input.Workload.UID, err)
 	}
 	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-		SandboxUID:        sandboxUID,
+		SandboxManaged:    input.Workload.SandboxManaged,
+		AuthorizationRefs: append([]string(nil), input.AuthorizationNames...),
+		WorkloadUID:       input.Workload.UID,
+		SourceUID:         input.Workload.SourceUID,
 		NodeName:          input.Workload.NodeName,
 		Principal:         input.Workload.Principal,
 		ServiceKeys:       serviceKeys,
 		GatewayReferences: input.EgressGatewayKeys,
-		AuthorizationRefs: input.AuthorizationNames,
 	}}
 	if input.OwnedGatewayKey != "" {
 		facts.GatewayOwner = input.OwnedGatewayKey
@@ -241,7 +228,7 @@ func buildWDSAddress(input wdsProjection) ([]model.Resource, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []model.Resource{addressResource}, nil
+	return &addressResource, nil
 }
 
 // buildWDSService compiles the networking-only Service model into the Service
@@ -283,7 +270,7 @@ func buildWDSService(service model.Service, gatewayKey string) (model.Resource, 
 			Service: wireService,
 		},
 	}
-	value, err := anypb.New(address)
+	value, err := marshalDeterministicAny(address)
 	if err != nil {
 		return model.Resource{}, fmt.Errorf("marshal service %s: %w", service.ResourceName(), err)
 	}
@@ -392,7 +379,7 @@ func matchesIgnoredLabel(key string, patterns []string) bool {
 }
 
 func newWorkloadMetadataExtension(labels map[string]string) (*workloadv1.Extension, error) {
-	config, err := anypb.New(&extensionsv1.WorkloadMetadata{
+	config, err := marshalDeterministicAny(&extensionsv1.WorkloadMetadata{
 		Labels:                    labels,
 		MeshInternalTrafficPolicy: features.MeshInternalTrafficPolicy,
 	})
@@ -437,12 +424,22 @@ func projectWorkloadIdentity(workload model.Workload) (string, string, error) {
 		return "", "", nil
 	}
 	if principal.Kind != model.PrincipalServiceAccount {
-		return "", "", fmt.Errorf("current WDS Workload does not support %q attester principals",
+		return "", "", fmt.Errorf("current WDS Workload does not support %q workload principals",
 			principal.Kind)
 	}
 	if principal.ServiceAccount.Namespace != "" && principal.ServiceAccount.Namespace != workload.Namespace {
-		return "", "", fmt.Errorf("workload %s namespace %q does not match attester principal namespace %q",
+		return "", "", fmt.Errorf("workload %s namespace %q does not match workload principal namespace %q",
 			workload.UID, workload.Namespace, principal.ServiceAccount.Namespace)
 	}
 	return principal.TrustDomain, principal.ServiceAccount.ServiceAccount, nil
+}
+
+// marshalDeterministicAny encodes the payload before wrapping it: deterministic
+// marshaling of an outer Any cannot reorder bytes already stored in its Value.
+func marshalDeterministicAny(message proto.Message) (*anypb.Any, error) {
+	value := new(anypb.Any)
+	if err := anypb.MarshalFrom(value, message, proto.MarshalOptions{Deterministic: true}); err != nil {
+		return nil, err
+	}
+	return value, nil
 }

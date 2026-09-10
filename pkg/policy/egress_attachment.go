@@ -85,7 +85,7 @@ func CompiledEgressPolicies(
 	return result, nil
 }
 
-// SelectEgressPolicies returns the policy payloads and gateway keys named by one Sandbox binding, in binding order.
+// SelectEgressPolicies returns the policy payloads and gateway keys named by one policy binding, in binding order.
 func SelectEgressPolicies(
 	names []string,
 	policies []CompiledEgressPolicy,

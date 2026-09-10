@@ -16,7 +16,8 @@ package model
 
 import (
 	"fmt"
-	"reflect"
+	"maps"
+	"slices"
 	"strings"
 
 	"istio.io/istio/pkg/util/sets"
@@ -51,12 +52,24 @@ func (r PolicyRef) Validate() error {
 	return nil
 }
 
-// Sandbox is the minimal policy-enforcement unit: a stable UID, policy-selection
-// namespace and labels, and explicit policy references. Namespace is the
-// configuration scope used by namespaced policy APIs; it need not be native to
-// the runtime hosting the Sandbox. Runtime, attester, and wire-projection state
-// deliberately live outside this domain value.
+// SandboxState is the observed runtime lifecycle, independent of policy validity.
+type SandboxState int32
+
+const (
+	SandboxStateUnspecified SandboxState = iota
+	SandboxStatePending
+	SandboxStateRunning
+	SandboxStatePaused
+	SandboxStateStopped
+)
+
+// Attester identifies the one Workload currently hosting a Sandbox.
+type Attester struct{ WorkloadUID string }
+
+// Sandbox is an explicitly discovered runtime and its policy configuration.
 type Sandbox struct {
+	State      SandboxState
+	Attester   *Attester
 	UID        string
 	Namespace  string
 	Labels     map[string]string
@@ -66,6 +79,12 @@ type Sandbox struct {
 func (s Sandbox) Validate() error {
 	if strings.TrimSpace(s.UID) == "" {
 		return fmt.Errorf("sandbox UID is required")
+	}
+	if s.State < SandboxStateUnspecified || s.State > SandboxStateStopped {
+		return fmt.Errorf("unknown sandbox state %d", s.State)
+	}
+	if s.Attester != nil && strings.TrimSpace(s.Attester.WorkloadUID) == "" {
+		return fmt.Errorf("attester workload UID is required")
 	}
 	seen := sets.NewWithLength[string](len(s.PolicyRefs))
 	for index, reference := range s.PolicyRefs {
@@ -85,6 +104,21 @@ func (s Sandbox) ResourceName() string {
 	return s.UID
 }
 
+// Equals compares all fields, preserving the distinction between nil and empty collections.
 func (s Sandbox) Equals(other Sandbox) bool {
-	return reflect.DeepEqual(s, other)
+	return s.State == other.State &&
+		s.UID == other.UID &&
+		s.Namespace == other.Namespace &&
+		attestersEqual(s.Attester, other.Attester) &&
+		(s.PolicyRefs == nil) == (other.PolicyRefs == nil) &&
+		slices.Equal(s.PolicyRefs, other.PolicyRefs) &&
+		(s.Labels == nil) == (other.Labels == nil) &&
+		maps.Equal(s.Labels, other.Labels)
+}
+
+func attestersEqual(left, right *Attester) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }

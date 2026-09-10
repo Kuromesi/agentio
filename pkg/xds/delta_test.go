@@ -16,6 +16,7 @@ package xds
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -252,7 +253,7 @@ func TestWrappedWorkloadGeneratorPreservesWildcardStateElision(t *testing.T) {
 		Key: resource.Key,
 		Old: &resource,
 	}})
-	if err := server.server.sendDirty(stream, server.scope, log, model.AddressType, watch, update); err != nil {
+	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, update); err != nil {
 		t.Fatal(err)
 	}
 	responses := stream.responsesFor(model.AddressType)
@@ -260,14 +261,14 @@ func TestWrappedWorkloadGeneratorPreservesWildcardStateElision(t *testing.T) {
 		t.Fatalf("wrapped workload removal responses = %#v", responses)
 	}
 	if len(watch.sent) != 0 {
-		t.Fatalf("wrapped workload dirty response retained sent state: %v", watch.sent)
+		t.Fatalf("wrapped workload incremental response retained sent state: %v", watch.sent)
 	}
 }
 
-func TestWildcardSnapshotGeneratorRetainsSentStateForDirtyRemoval(t *testing.T) {
-	resource := addressResource(t, "cluster//Pod/demo/a", "a")
-	server := newTestServerWithGenerators(t, ztunnelScope(), []model.Resource{resource}, map[string]ResourceGenerator{
-		model.AddressType: SnapshotGenerator{},
+func TestWildcardSnapshotGeneratorRetainsSentStateForIncrementalRemoval(t *testing.T) {
+	resource := gatewayResource(t, "demo/egress", "cluster-a", "a")
+	server := newTestServerWithGenerators(t, gatewayScope(), []model.Resource{resource}, map[string]ResourceGenerator{
+		model.ClusterType: SnapshotGenerator{},
 	})
 	stream := newFakeStream(context.Background(), 2)
 	watch := &watchState{
@@ -277,7 +278,7 @@ func TestWildcardSnapshotGeneratorRetainsSentStateForDirtyRemoval(t *testing.T) 
 		sent:     map[string]string{},
 	}
 
-	if err := server.server.sendDiff(stream, server.scope, log, model.AddressType, watch, true); err != nil {
+	if err := server.server.sendDiff(stream, server.scope, log, model.ClusterType, watch, true); err != nil {
 		t.Fatal(err)
 	}
 	if got := watch.sent[resource.XDSName]; got != resource.Hash {
@@ -289,19 +290,19 @@ func TestWildcardSnapshotGeneratorRetainsSentStateForDirtyRemoval(t *testing.T) 
 	update := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
 		Key: resource.Key, Old: &resource,
 	}})
-	if err := server.server.sendDirty(stream, server.scope, log, model.AddressType, watch, update); err != nil {
+	if err := server.server.sendIncremental(stream, server.scope, log, model.ClusterType, watch, update); err != nil {
 		t.Fatal(err)
 	}
-	responses := stream.responsesFor(model.AddressType)
+	responses := stream.responsesFor(model.ClusterType)
 	if len(responses) != 2 {
-		t.Fatalf("responses = %d, want initial response and dirty removal", len(responses))
+		t.Fatalf("responses = %d, want initial response and incremental removal", len(responses))
 	}
 	if got := responses[1].GetRemovedResources(); !slices.Equal(got, []string{resource.XDSName}) {
-		t.Fatalf("dirty removals = %v, want %s", got, resource.XDSName)
+		t.Fatalf("incremental removals = %v, want %s", got, resource.XDSName)
 	}
 }
 
-func TestWildcardWDSInitialVersionsDirtyRemovalAndSubscriptionTransitions(t *testing.T) {
+func TestWildcardWDSInitialVersionsIncrementalRemovalAndSubscriptionTransitions(t *testing.T) {
 	ctx := t.Context()
 	resourceA := addressResource(t, "cluster//Pod/demo/a", "a")
 	resourceB := addressResource(t, "cluster//Pod/demo/b", "b")
@@ -361,12 +362,12 @@ func TestWildcardWDSInitialVersionsDirtyRemovalAndSubscriptionTransitions(t *tes
 	deleteUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
 		Key: resourceA.Key, Old: &resourceA,
 	}})
-	if err := server.server.sendDirty(stream, server.scope, log, model.AddressType, watch, deleteUpdate); err != nil {
+	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, deleteUpdate); err != nil {
 		t.Fatal(err)
 	}
 	removed := stream.responsesFor(model.AddressType)[2]
 	if got := removed.GetRemovedResources(); !slices.Equal(got, []string{resourceA.XDSName}) {
-		t.Fatalf("named dirty removals = %v, want %s", got, resourceA.XDSName)
+		t.Fatalf("named incremental removals = %v, want %s", got, resourceA.XDSName)
 	}
 
 	resourceC := addressResource(t, "cluster//Pod/demo/c", "c")
@@ -376,7 +377,7 @@ func TestWildcardWDSInitialVersionsDirtyRemovalAndSubscriptionTransitions(t *tes
 	addUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
 		Key: resourceC.Key, New: &resourceC,
 	}})
-	if err := server.server.sendDirty(stream, server.scope, log, model.AddressType, watch, addUpdate); err != nil {
+	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, addUpdate); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(stream.responsesFor(model.AddressType)); got != 3 {
@@ -405,19 +406,19 @@ func TestWildcardWDSInitialVersionsDirtyRemovalAndSubscriptionTransitions(t *tes
 	wildcardDelete := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
 		Key: resourceB.Key, Old: &resourceB,
 	}})
-	if err := server.server.sendDirty(stream, server.scope, log, model.AddressType, watch, wildcardDelete); err != nil {
+	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, wildcardDelete); err != nil {
 		t.Fatal(err)
 	}
 	last := stream.responsesFor(model.AddressType)[4]
 	if got := last.GetRemovedResources(); !slices.Equal(got, []string{resourceB.XDSName}) {
-		t.Fatalf("wildcard dirty removals = %v, want %s", got, resourceB.XDSName)
+		t.Fatalf("wildcard incremental removals = %v, want %s", got, resourceB.XDSName)
 	}
 	if len(watch.sent) != 0 {
-		t.Fatalf("wildcard dirty response retained sent hashes: %v", watch.sent)
+		t.Fatalf("wildcard incremental response retained sent hashes: %v", watch.sent)
 	}
 }
 
-func TestWildcardAddressDirtyMembershipUsesExactChanges(t *testing.T) {
+func TestWildcardAddressIncrementalMembershipUsesExactChanges(t *testing.T) {
 	service := selectionService(t, "demo/svc-a", "/10.96.0.1")
 	oldWorkload := selectionWorkload(t, "uid-a", "demo", "node-a", "svc-a", "")
 	scope := model.ClientScope{
@@ -440,7 +441,7 @@ func TestWildcardAddressDirtyMembershipUsesExactChanges(t *testing.T) {
 	deleteUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
 		Key: oldWorkload.Key, Old: &oldWorkload,
 	}})
-	if err := server.server.sendDirty(stream, scope, log, model.AddressType, watch, deleteUpdate); err != nil {
+	if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watch, deleteUpdate); err != nil {
 		t.Fatal(err)
 	}
 	responses := stream.responsesFor(model.AddressType)
@@ -459,7 +460,7 @@ func TestWildcardAddressDirtyMembershipUsesExactChanges(t *testing.T) {
 	addUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
 		Key: newWorkload.Key, New: &newWorkload,
 	}})
-	if err := server.server.sendDirty(stream, scope, log, model.AddressType, watch, addUpdate); err != nil {
+	if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watch, addUpdate); err != nil {
 		t.Fatal(err)
 	}
 	responses = stream.responsesFor(model.AddressType)
@@ -468,24 +469,26 @@ func TestWildcardAddressDirtyMembershipUsesExactChanges(t *testing.T) {
 		t.Fatalf("add resources = %v, want %v", got, wantAdded)
 	}
 	if len(watch.sent) != 0 {
-		t.Fatalf("dirty membership responses retained sent hashes: %v", watch.sent)
+		t.Fatalf("incremental membership responses retained sent hashes: %v", watch.sent)
 	}
 }
 
-func TestWildcardWorkloadDirtyDeleteUsesExactChange(t *testing.T) {
+func TestWildcardWorkloadIncrementalDeleteUsesExactChange(t *testing.T) {
 	oldWorkload := selectionWorkload(t, "uid-a", "demo", "node-a", "", "")
-	scope := model.ClientScope{
-		Class:     model.ClientSharedZTunnel,
-		Principal: serviceAccountPrincipal("demo", "ztunnel"),
-		NodeName:  "node-a",
-	}
+	scope := gatewayScope()
 	server := newTestServer(t, scope, []model.Resource{oldWorkload}, nil)
-	stream := newFakeStream(context.Background(), 1)
+	stream := newFakeStream(context.Background(), 2)
 	watch := &watchState{
 		wildcard: true,
 		started:  true,
 		names:    sets.New[string](),
 		sent:     map[string]string{},
+	}
+	if err := server.server.sendDiff(stream, scope, log, model.WorkloadType, watch, true); err != nil {
+		t.Fatal(err)
+	}
+	if initial := stream.responsesFor(model.WorkloadType); len(initial) != 1 || len(initial[0].GetResources()) != 1 {
+		t.Fatalf("initial Workload responses = %#v, want one resource", initial)
 	}
 	if err := server.resources.apply([]model.ResourceChange{{Key: oldWorkload.Key}}); err != nil {
 		t.Fatal(err)
@@ -494,18 +497,18 @@ func TestWildcardWorkloadDirtyDeleteUsesExactChange(t *testing.T) {
 		Key: oldWorkload.Key, Old: &oldWorkload,
 	}})
 
-	if err := server.server.sendDirty(stream, scope, log, model.WorkloadType, watch, update); err != nil {
+	if err := server.server.sendIncremental(stream, scope, log, model.WorkloadType, watch, update); err != nil {
 		t.Fatal(err)
 	}
 	responses := stream.responsesFor(model.WorkloadType)
-	if len(responses) != 1 {
-		t.Fatalf("responses = %d, want 1", len(responses))
+	if len(responses) != 2 {
+		t.Fatalf("responses = %d, want initial response and removal", len(responses))
 	}
-	if got := responses[0].GetRemovedResources(); !slices.Equal(got, []string{oldWorkload.XDSName}) {
+	if got := responses[1].GetRemovedResources(); !slices.Equal(got, []string{oldWorkload.XDSName}) {
 		t.Fatalf("removed = %v, want %s", got, oldWorkload.XDSName)
 	}
 	if len(watch.sent) != 0 {
-		t.Fatalf("dirty Workload response retained sent hashes: %v", watch.sent)
+		t.Fatalf("incremental Workload response retained sent hashes: %v", watch.sent)
 	}
 }
 
@@ -855,9 +858,9 @@ func TestAuthorizationSelectionMovesWithWorkloadReference(t *testing.T) {
 	authorizationA := selectionAuthorization(t, "demo/selector-a", model.AuthorizationScopeWorkload, "")
 	authorizationB := selectionAuthorization(t, "demo/selector-b", model.AuthorizationScopeWorkload, "")
 	scope := model.ClientScope{
-		Class:      model.ClientDedicatedZTunnel,
-		Principal:  serviceAccountPrincipal("demo", "client-a"),
-		SandboxUID: "uid-a",
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   serviceAccountPrincipal("demo", "default"),
+		WorkloadUID: "uid-a", SourceUID: "uid-a",
 	}
 	server := newTestServer(t, scope, []model.Resource{oldWorkload, authorizationA, authorizationB}, nil)
 	stream := newFakeStream(ctx, 4)
@@ -915,64 +918,168 @@ func TestStaleNonceStillAppliesSubscription(t *testing.T) {
 
 // A nonce that changes nothing is a plain acknowledgement and must not provoke a
 // response, or client and server would ping-pong forever.
-func TestAcknowledgementProducesNoResponse(t *testing.T) {
-	ctx := t.Context()
-	server := newTestServer(t, ztunnelScope(), []model.Resource{
-		addressResource(t, "cluster//Pod/demo/a", "a"),
-	}, nil)
-
-	stream := newFakeStream(ctx, 4)
-	stream.send(nodeRequest(model.AddressType))
-	if err := server.run(t, stream); err != nil {
-		t.Fatalf("stream: %v", err)
-	}
-	first := stream.responsesFor(model.AddressType)
-	if len(first) != 1 {
-		t.Fatalf("responses = %d, want 1", len(first))
-	}
-
-	// Replay with the acknowledgement appended.
-	stream = newFakeStream(ctx, 4)
-	stream.send(nodeRequest(model.AddressType))
-	stream.send(&discoveryv3.DeltaDiscoveryRequest{
-		TypeUrl:       model.AddressType,
-		ResponseNonce: first[0].GetNonce(),
-	})
-	if err := server.run(t, stream); err != nil {
-		t.Fatalf("stream: %v", err)
-	}
-	if got := len(stream.responsesFor(model.AddressType)); got != 1 {
-		t.Fatalf("responses = %d, want 1; an ACK should not be answered", got)
+func TestAcknowledgementsDoNotTriggerResend(t *testing.T) {
+	for _, nack := range []bool{false, true} {
+		t.Run(fmt.Sprintf("nack=%v", nack), func(t *testing.T) {
+			server := newTestServer(t, ztunnelScope(), []model.Resource{
+				addressResource(t, "cluster//Pod/demo/a", "a"),
+			}, nil)
+			stream := newFakeStream(t.Context(), 4)
+			done := server.start(stream)
+			stream.send(nodeRequest(model.AddressType))
+			first := stream.awaitResponses(t, model.AddressType, 1)[0]
+			ack := &discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.AddressType, ResponseNonce: first.GetNonce()}
+			if nack {
+				ack.ErrorDetail = &rpcstatus.Status{Code: int32(codes.InvalidArgument), Message: "rejected by the proxy"}
+			}
+			stream.send(ack)
+			if err := server.finish(t, stream, done); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(stream.responsesFor(model.AddressType)); got != 1 {
+				t.Fatalf("responses = %d, want 1; ACK/NACK must not trigger a resend", got)
+			}
+		})
 	}
 }
 
-// A NACK is recorded but does not re-send the rejected resource: the client
-// already has it and rejected it, and resending unchanged bytes would loop.
-func TestNACKIsRecordedWithoutResending(t *testing.T) {
-	ctx := t.Context()
-	server := newTestServer(t, ztunnelScope(), []model.Resource{
-		addressResource(t, "cluster//Pod/demo/a", "a"),
+// Exercise response commits and acknowledgements together, including rejection
+// recovery, delayed replies, and nonce isolation between resource types.
+func TestDeltaAcknowledgementsTrackLatestResponse(t *testing.T) {
+	previousMetrics := metrics.Default
+	registry := metrics.NewRegistry()
+	metrics.Default = registry
+	t.Cleanup(func() { metrics.Default = previousMetrics })
+	server := newTestServer(t, gatewayScope(), []model.Resource{
+		selectionWorkload(t, "uid-a", "demo", "node-a", "", ""),
 	}, nil)
-
-	stream := newFakeStream(ctx, 4)
-	stream.send(nodeRequest(model.AddressType))
-	if err := server.run(t, stream); err != nil {
-		t.Fatalf("stream: %v", err)
+	stream := newFakeStream(t.Context(), 8)
+	watches := map[string]*watchState{}
+	subscription := server.resources.Subscribe(t.Context())
+	handle := func(request *discoveryv3.DeltaDiscoveryRequest) {
+		t.Helper()
+		if err := server.server.handleRequest(stream, server.scope, log, watches, subscription, request); err != nil {
+			t.Fatal(err)
+		}
 	}
-	nonce := stream.responsesFor(model.AddressType)[0].GetNonce()
-
-	stream = newFakeStream(ctx, 4)
-	stream.send(nodeRequest(model.AddressType))
-	stream.send(&discoveryv3.DeltaDiscoveryRequest{
-		TypeUrl:       model.AddressType,
-		ResponseNonce: nonce,
-		ErrorDetail:   &rpcstatus.Status{Message: "rejected by the proxy"},
-	})
-	if err := server.run(t, stream); err != nil {
-		t.Fatalf("stream: %v", err)
+	reply := func(typeURL, nonce string, detail *rpcstatus.Status) {
+		t.Helper()
+		handle(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: typeURL, ResponseNonce: nonce, ErrorDetail: detail})
 	}
-	if got := len(stream.responsesFor(model.AddressType)); got != 1 {
-		t.Fatalf("responses = %d, want 1; a NACK should not trigger a resend", got)
+	handle(request(model.AddressType))
+	watch := watches[model.AddressType]
+	firstNonce := watch.nonceSent
+	if firstNonce == "" || firstNonce != stream.responsesFor(model.AddressType)[0].GetNonce() {
+		t.Fatal("successful send did not record the response nonce")
+	}
+	reply(model.AddressType, firstNonce, nil)
+	if watch.nonceAcked != firstNonce {
+		t.Fatal("ACK did not record the latest response")
+	}
+	// A spontaneous request is not an ACK; its response starts a new pending update.
+	handle(request(model.AddressType))
+	secondNonce := watch.nonceSent
+	if secondNonce == firstNonce || watch.nonceAcked != firstNonce {
+		t.Fatal("new send changed the last ACK or reused the nonce")
+	}
+	rejection := &rpcstatus.Status{Code: int32(codes.InvalidArgument), Message: "invalid policy"}
+	reply(model.AddressType, secondNonce, rejection)
+	if watch.nonceNacked != secondNonce || watch.nonceAcked != firstNonce || watch.lastError != rejection.Message || watch.lastErrorCode != codes.InvalidArgument {
+		t.Fatalf("NACK state = %+v", watch)
+	}
+	// An old ACK cannot clear the current rejection.
+	reply(model.AddressType, firstNonce, nil)
+	if watch.nonceNacked != secondNonce || watch.lastError == "" {
+		t.Fatal("old ACK cleared the rejection")
+	}
+	handle(request(model.AddressType))
+	thirdNonce := watch.nonceSent
+	if thirdNonce == secondNonce || watch.nonceNacked != secondNonce || watch.lastError == "" {
+		t.Fatal("new send lost the previous rejection")
+	}
+	reply(model.AddressType, thirdNonce, nil)
+	if watch.nonceAcked != thirdNonce || watch.nonceNacked != "" || watch.lastError != "" || watch.lastErrorCode != codes.OK {
+		t.Fatalf("recovery ACK state = %+v", watch)
+	}
+	// An old NACK cannot replace the latest successful ACK.
+	reply(model.AddressType, secondNonce, rejection)
+	if watch.nonceAcked != thirdNonce || watch.nonceNacked != "" || watch.lastError != "" {
+		t.Fatal("old NACK overwrote the latest ACK")
+	}
+	// Another type's nonce is not an ACK for Address, even on the same stream.
+	handle(request(model.WorkloadType))
+	workloadWatch := watches[model.WorkloadType]
+	reply(model.AddressType, workloadWatch.nonceSent, nil)
+	if watch.nonceAcked != thirdNonce || workloadWatch.nonceAcked != "" {
+		t.Fatal("nonce crossed resource type boundary")
+	}
+	reply(model.WorkloadType, workloadWatch.nonceSent, nil)
+	if workloadWatch.nonceAcked != workloadWatch.nonceSent {
+		t.Fatal("Workload ACK was not recorded")
+	}
+	if got := len(stream.sent()); got != 4 {
+		t.Fatalf("responses = %d, want 4; confirmations must not send responses", got)
+	}
+	response := httptest.NewRecorder()
+	registry.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{"agentio_xds_acks_total 3\n", "agentio_xds_nacks_total 2\n", "agentio_xds_stale_nonces_total 3\n"} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("missing metric %q", want)
+		}
+	}
+}
+
+func TestDeltaAcknowledgementsPreserveSubscriptionChanges(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		for _, nack := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stale=%v/nack=%v", stale, nack), func(t *testing.T) {
+				server := newTestServer(t, gatewayScope(), []model.Resource{
+					selectionWorkload(t, "uid-a", "demo", "node-a", "", ""),
+					selectionWorkload(t, "uid-b", "demo", "node-a", "", ""),
+				}, nil)
+				stream := newFakeStream(t.Context(), 4)
+				watches := map[string]*watchState{}
+				subscription := server.resources.Subscribe(t.Context())
+				handle := func(req *discoveryv3.DeltaDiscoveryRequest) {
+					t.Helper()
+					if err := server.server.handleRequest(stream, server.scope, log, watches, subscription, req); err != nil {
+						t.Fatal(err)
+					}
+				}
+				handle(request(model.AddressType, "uid-a"))
+				watch := watches[model.AddressType]
+				nonce := watch.nonceSent
+				if stale {
+					nonce = "unknown-response"
+				}
+				req := &discoveryv3.DeltaDiscoveryRequest{
+					TypeUrl: model.AddressType, ResponseNonce: nonce,
+					ResourceNamesSubscribe: []string{"uid-b"}, ResourceNamesUnsubscribe: []string{"uid-a"},
+				}
+				if nack {
+					req.ErrorDetail = &rpcstatus.Status{Message: "invalid resource"}
+				}
+				handle(req)
+				responses := stream.responsesFor(model.AddressType)
+				if len(responses) != 2 || !slices.Equal(resourceNames(responses[1]), []string{"uid-b"}) || !slices.Equal(responses[1].GetRemovedResources(), []string{"uid-a"}) {
+					t.Fatalf("subscription delta = %v", responses)
+				}
+				if !watch.names.Contains("uid-b") || watch.names.Contains("uid-a") {
+					t.Fatal("subscription changes were dropped")
+				}
+				if stale {
+					if watch.nonceAcked != "" || watch.nonceNacked != "" || watch.lastError != "" {
+						t.Fatal("unknown nonce modified acknowledgement state")
+					}
+				} else if nack {
+					if watch.nonceNacked != nonce || watch.lastError != "invalid resource" {
+						t.Fatal("NACK with subscription changes was not recorded")
+					}
+				} else if watch.nonceAcked != nonce {
+					t.Fatal("ACK with subscription changes was not recorded")
+				}
+			})
+		}
 	}
 }
 
@@ -1117,9 +1224,9 @@ func TestPushUsesDeterministicTypeOrder(t *testing.T) {
 	}
 }
 
-// An incremental wildcard WDS update must use only its exact dirty keys. It
+// An incremental wildcard WDS update must use only its exact changed keys. It
 // must neither withdraw unrelated resources nor retain their hashes.
-func TestWildcardDirtyPushDoesNotRetainUnrelatedSentState(t *testing.T) {
+func TestWildcardIncrementalPushDoesNotRetainUnrelatedSentState(t *testing.T) {
 	ctx := t.Context()
 	oldResource := addressResource(t, "cluster//Pod/demo/a", "old")
 	newResource := addressResource(t, "cluster//Pod/demo/a", "new")
@@ -1139,23 +1246,23 @@ func TestWildcardDirtyPushDoesNotRetainUnrelatedSentState(t *testing.T) {
 		Key: newResource.Key, Old: &oldResource, New: &newResource,
 	}})
 
-	if err := server.server.sendDirty(stream, server.scope, log, model.AddressType, watch, update); err != nil {
+	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, update); err != nil {
 		t.Fatal(err)
 	}
 	responses := stream.responsesFor(model.AddressType)
 	if len(responses) != 1 || !slices.Equal(resourceNames(responses[0]), []string{newResource.XDSName}) {
-		t.Fatalf("dirty response = %#v", responses)
+		t.Fatalf("incremental response = %#v", responses)
 	}
 	if len(responses[0].GetRemovedResources()) != 0 {
 		t.Fatalf("unrelated state was withdrawn: %v", responses[0].GetRemovedResources())
 	}
 	if len(watch.sent) != 0 {
-		t.Fatalf("dirty push retained sent state: %v", watch.sent)
+		t.Fatalf("incremental push retained sent state: %v", watch.sent)
 	}
 }
 
 func TestWildcardReferencedGatewayLifecycle(t *testing.T) {
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, SandboxUID: "uid-a"}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: "uid-a", SourceUID: "uid-a", Principal: serviceAccountPrincipal("demo", "default")}
 	plain := selectionWorkload(t, "uid-a", "demo", "node-a", "", "")
 	withReference := func(key string) model.Resource {
 		return selectionWithGatewayReference(t, plain, key)
@@ -1182,7 +1289,7 @@ func TestWildcardReferencedGatewayLifecycle(t *testing.T) {
 	transition := func(nextResources []model.Resource, wantResources, wantRemoved []string) {
 		t.Helper()
 		next := selectionSnapshot(t, nextResources)
-		delta := generateWDSDirty(GenerationRequest{
+		delta := generateWDSIncremental(GenerationRequest{
 			Scope: scope, TypeURL: model.AddressType,
 			Subscription: SubscriptionView{wildcard: true},
 			Snapshot:     next,
@@ -1467,5 +1574,147 @@ func TestUnreadyServerRefusesTheStream(t *testing.T) {
 	stream.send(nodeRequest(model.AddressType))
 	if code := status.Code(server.run(t, stream)); code != codes.Unavailable {
 		t.Fatalf("code = %v, want Unavailable", code)
+	}
+}
+
+func TestIncrementalGenerationUsesQueuedPublicationTransition(t *testing.T) {
+	oldResource := addressResource(t, "cluster//Pod/demo/a", "old")
+	middleResource := addressResource(t, "cluster//Pod/demo/a", "middle")
+	newResource := addressResource(t, "cluster//Pod/demo/a", "new")
+	snapshot := func(resource model.Resource) model.ResourceSet {
+		result, err := model.NewResourceSet([]model.Resource{resource})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	before := snapshot(oldResource)
+	after := snapshot(middleResource)
+	live := snapshot(newResource)
+	generator := &requestRecordingGenerator{}
+	server := newTestServerWithGenerators(t, ztunnelScope(), []model.Resource{newResource}, map[string]ResourceGenerator{
+		model.AddressType: generator,
+	})
+	watch := &watchState{wildcard: true, started: true, names: sets.New[string](), sent: map[string]string{}}
+	update := updateBetween(before, after, []model.ResourceChange{{
+		Key: oldResource.Key, Old: &oldResource, New: &middleResource,
+	}})
+
+	if got := server.resources.Snapshot().Version(); got != live.Version() {
+		t.Fatalf("live snapshot version = %q, want %q", got, live.Version())
+	}
+	if err := server.server.sendIncremental(newFakeStream(context.Background(), 1), server.scope, log,
+		model.AddressType, watch, update); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := generator.request.Update.Before().Version(); got != before.Version() {
+		t.Fatalf("generator Before version = %q, want %q", got, before.Version())
+	}
+	if got := generator.request.Snapshot.Version(); got != after.Version() {
+		t.Fatalf("generator After version = %q, want queued %q rather than live %q", got, after.Version(), live.Version())
+	}
+}
+
+func TestIncrementalGenerationCopiesOnlyRelevantSentState(t *testing.T) {
+	oldResource := addressResource(t, "cluster//Pod/demo/a", "old")
+	newResource := addressResource(t, "cluster//Pod/demo/a", "new")
+	generator := &subscriptionRecordingGenerator{}
+	server := newTestServerWithGenerators(t, ztunnelScope(), []model.Resource{newResource}, map[string]ResourceGenerator{
+		model.AddressType: generator,
+	})
+	watch := &watchState{
+		wildcard: true,
+		started:  true,
+		names:    sets.New[string](),
+		sent: map[string]string{
+			oldResource.XDSName:           oldResource.Hash,
+			"cluster//Pod/demo/unrelated": "unchanged-hash",
+		},
+	}
+	update := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
+		Key: newResource.Key, Old: &oldResource, New: &newResource,
+	}})
+	if err := server.server.sendIncremental(newFakeStream(context.Background(), 1), server.scope, log, model.AddressType, watch, update); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(generator.sentNames, []string{oldResource.XDSName}) {
+		t.Fatalf("incremental sent-state copy = %v, want only %q", generator.sentNames, oldResource.XDSName)
+	}
+	if got := watch.sent["cluster//Pod/demo/unrelated"]; got != "unchanged-hash" {
+		t.Fatalf("generator mutated live sent state to %q", got)
+	}
+}
+
+func TestFailedSendDoesNotCommitGeneratedDelta(t *testing.T) {
+	oldResource := addressResource(t, "cluster//Pod/demo/old", "old")
+	newResource := addressResource(t, "cluster//Pod/demo/new", "new")
+	generator := &recordingGenerator{delta: GeneratedDelta{
+		Resources: []model.Resource{newResource},
+		Removed:   []string{oldResource.XDSName},
+	}}
+	server := newTestServerWithGenerators(t, ztunnelScope(), nil, map[string]ResourceGenerator{
+		model.AddressType: generator,
+	})
+	watch := &watchState{
+		wildcard:  true,
+		started:   true,
+		names:     sets.New[string](),
+		sent:      map[string]string{oldResource.XDSName: oldResource.Hash},
+		nonceSent: "previous",
+	}
+	stream := newFakeStream(context.Background(), 1)
+	stream.setSendErr(errors.New("send failed"))
+	err := server.server.generateAndSend(stream, log, watch, GenerationRequest{
+		Scope: server.scope, TypeURL: model.AddressType, Subscription: newSubscriptionView(watch), Full: true,
+	}, false)
+	if err == nil || err.Error() != "send failed" {
+		t.Fatalf("send error = %v, want send failed", err)
+	}
+	if !slices.Equal(watchSentNames(watch), []string{oldResource.XDSName}) || watch.sent[oldResource.XDSName] != oldResource.Hash {
+		t.Fatalf("failed send committed sent state: %v", watch.sent)
+	}
+	if watch.nonceSent != "previous" {
+		t.Fatalf("failed send committed nonce %q", watch.nonceSent)
+	}
+}
+
+func TestServerRejectsMismatchedGeneratorResource(t *testing.T) {
+	resource := addressResource(t, "cluster//Pod/demo/a", "a")
+	generator := &recordingGenerator{delta: GeneratedDelta{Resources: []model.Resource{resource}}}
+	server := newTestServerWithGenerators(t, gatewayScope(), nil, map[string]ResourceGenerator{
+		model.SecretType: generator,
+	})
+	stream := newFakeStream(context.Background(), 1)
+	stream.send(nodeRequest(model.SecretType, "api.example.com"))
+	err := server.run(t, stream)
+	if err == nil || !strings.Contains(err.Error(), "mismatched type URL") {
+		t.Fatalf("stream error = %v, want mismatched type URL", err)
+	}
+	if responses := stream.sent(); len(responses) != 0 {
+		t.Fatalf("invalid generator result was sent: %#v", responses)
+	}
+}
+
+func TestUnsupportedTypeSubscriptionReturnsEmptyResponseWithoutClosingStream(t *testing.T) {
+	for _, tc := range []struct{ name, typeURL string }{
+		{name: "unknown type", typeURL: "type.googleapis.com/example.OptionalResource"},
+		{name: "legacy WorkloadConfig", typeURL: "type.googleapis.com/kruise.extensions.WorkloadConfig"},
+		{name: "versioned legacy WorkloadConfig", typeURL: "type.googleapis.com/kruise.networking.extensions.v1.WorkloadConfig"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newTestServer(t, ztunnelScope(), nil, nil)
+			stream := newFakeStream(t.Context(), 2)
+			stream.send(nodeRequest(model.AddressType))
+			stream.send(request(tc.typeURL))
+			if err := server.run(t, stream); err != nil {
+				t.Fatalf("unsupported type subscription closed the stream: %v", err)
+			}
+			responses := stream.responsesFor(tc.typeURL)
+			if len(responses) != 1 || len(responses[0].GetResources()) != 0 {
+				t.Fatalf("unsupported type responses = %#v, want one empty response", responses)
+			}
+		})
 	}
 }

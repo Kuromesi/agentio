@@ -120,7 +120,7 @@ func (r *Resolver) dispatchDue() time.Duration {
 		}
 		item.resolving = true
 		select {
-		case r.jobs <- item.hostname:
+		case r.jobs <- item:
 		default:
 			item.resolving = false
 			item.next = now.Add(saturatedRetryDelay)
@@ -136,8 +136,8 @@ func (r *Resolver) worker() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case host := <-r.jobs:
-			r.refresh(host)
+		case item := <-r.jobs:
+			r.refresh(item)
 		}
 	}
 }

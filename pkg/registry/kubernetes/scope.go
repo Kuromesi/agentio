@@ -124,39 +124,14 @@ func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string
 		if !podBound {
 			continue
 		}
-		sandboxUID, err := s.singleSandboxBinding(pod, principal)
+		workload, err := s.boundWorkload(pod, principal)
 		if err != nil {
 			return model.ClientScope{}, err
 		}
-		return model.ClientScope{
-			Class:      model.ClientDedicatedZTunnel,
-			Principal:  principal,
-			SandboxUID: sandboxUID,
-		}, nil
+		return model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: principal,
+			WorkloadUID: workload.UID, SourceUID: workload.SourceUID}, nil
 	}
 	return model.ClientScope{}, fmt.Errorf("authenticated identity %s does not own the requested xDS client", principal.String())
-}
-
-// singleSandboxBinding resolves the dedicated ztunnel's Sandbox UID from the live Workload binding.
-func (s *PodScopeResolver) singleSandboxBinding(pod *corev1.Pod, principal model.Principal) (string, error) {
-	workloads := s.workloadsBySourceUID.Lookup(string(pod.UID))
-	if len(workloads) != 1 {
-		return "", fmt.Errorf("client Pod %s/%s resolves to %d active Workloads", pod.Namespace, pod.Name, len(workloads))
-	}
-	workload := workloads[0]
-	if workload.SourceUID != string(pod.UID) || workload.UID != podsource.WorkloadUID(s.clusterID, pod) ||
-		workload.Namespace != pod.Namespace || workload.Name != pod.Name || workload.Principal != principal {
-		return "", fmt.Errorf("client Pod %s/%s does not match its active Workload", pod.Namespace, pod.Name)
-	}
-	if len(workload.SandboxBindings) != 1 {
-		return "", fmt.Errorf("client Workload %s has %d Sandbox bindings; dedicated compatibility scope requires exactly one",
-			workload.UID, len(workload.SandboxBindings))
-	}
-	binding := workload.SandboxBindings[0]
-	if err := binding.Validate(); err != nil {
-		return "", fmt.Errorf("client Workload %s has an invalid Sandbox binding: %w", workload.UID, err)
-	}
-	return binding.SandboxUID, nil
 }
 
 // candidatePods returns the narrowest Pod set the authenticated identity permits; hints never prove ownership.
@@ -181,4 +156,17 @@ func (s *PodScopeResolver) candidatePods(principal model.Principal, peer model.P
 		return result[i].Name < result[j].Name
 	})
 	return result, nil
+}
+
+func (s *PodScopeResolver) boundWorkload(pod *corev1.Pod, principal model.Principal) (model.Workload, error) {
+	workloads := s.workloadsBySourceUID.Lookup(string(pod.UID))
+	if len(workloads) != 1 {
+		return model.Workload{}, fmt.Errorf("client Pod %s/%s resolves to %d active Workloads", pod.Namespace, pod.Name, len(workloads))
+	}
+	workload := workloads[0]
+	if workload.SourceUID != string(pod.UID) || workload.UID != podsource.WorkloadUID(s.clusterID, pod) ||
+		workload.Namespace != pod.Namespace || workload.Name != pod.Name || workload.Principal != principal {
+		return model.Workload{}, fmt.Errorf("client Pod %s/%s does not match its active Workload", pod.Namespace, pod.Name)
+	}
+	return workload, nil
 }

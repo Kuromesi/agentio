@@ -19,7 +19,8 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	celv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/filters/cel/v3"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
+
+	"github.com/openkruise/agentio/pkg/util/protoutil"
 )
 
 const celFilterName = "envoy.access_loggers.extension_filters.cel"
@@ -88,7 +89,7 @@ func buildAccessLogWithBaseFilter(
 }
 
 func celAccessLogFilter(filter *string) *accesslogv3.AccessLogFilter {
-	typed, err := anypb.New(&celv3.ExpressionFilter{Expression: *filter})
+	typed, err := protoutil.MarshalAny(&celv3.ExpressionFilter{Expression: *filter})
 	if err != nil {
 		// ExpressionFilter marshalling only fails on nil input, which cannot
 		// happen here because filter is a valid pointer.

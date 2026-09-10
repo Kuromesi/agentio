@@ -16,8 +16,8 @@ package model
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
+	"maps"
+	"slices"
 )
 
 type TunnelProtocol string
@@ -36,28 +36,17 @@ func (p TunnelProtocol) Validate() error {
 	}
 }
 
-// SandboxBinding records one Sandbox a Workload may attest.
-type SandboxBinding struct {
-	SandboxUID string
-}
-
-func (b SandboxBinding) Validate() error {
-	if strings.TrimSpace(b.SandboxUID) == "" {
-		return fmt.Errorf("sandbox UID is required")
-	}
-	return nil
-}
-
 // Workload is a network endpoint with optional attester identity metadata.
 // An absent Principal makes it discovery-only; authentication validates the
 // Principal independently.
 type Workload struct {
-	UID             string
-	Principal       Principal
-	SandboxBindings []SandboxBinding
+	UID       string
+	Principal Principal
 
 	// SourceUID identifies the current backing runtime object or activation.
 	// Kubernetes supplies the Pod UID; other runtimes supply their equivalent.
+	// SandboxManaged endpoints use Sandbox policies exclusively, even before a Sandbox is available.
+	SandboxManaged    bool
 	SourceUID         string
 	Namespace         string
 	Name              string
@@ -75,6 +64,24 @@ type Workload struct {
 
 func (w Workload) ResourceName() string { return w.UID }
 
+// Equals compares all fields, preserving the distinction between nil and empty collections.
 func (w Workload) Equals(other Workload) bool {
-	return reflect.DeepEqual(w, other)
+	return w.UID == other.UID &&
+		w.Principal == other.Principal &&
+		w.SandboxManaged == other.SandboxManaged &&
+		w.SourceUID == other.SourceUID &&
+		w.Namespace == other.Namespace &&
+		w.Name == other.Name &&
+		w.CanonicalName == other.CanonicalName &&
+		w.CanonicalRevision == other.CanonicalRevision &&
+		w.NodeName == other.NodeName &&
+		w.GatewayKey == other.GatewayKey &&
+		w.HostNetwork == other.HostNetwork &&
+		w.TunnelProtocol == other.TunnelProtocol &&
+		w.NativeTunnel == other.NativeTunnel &&
+		w.Ready == other.Ready &&
+		(w.Addresses == nil) == (other.Addresses == nil) &&
+		slices.Equal(w.Addresses, other.Addresses) &&
+		(w.Labels == nil) == (other.Labels == nil) &&
+		maps.Equal(w.Labels, other.Labels)
 }

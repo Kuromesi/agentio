@@ -31,21 +31,21 @@ const (
 	ambientRedirectionAnnotation = "ambient.istio.io/redirection"
 )
 
-// NewWorkloads translates eligible, unclaimed Pods into Workloads; claimedByRuntime excludes runtime-owned Pods.
+// NewWorkloads translates all eligible Pods into Workloads. The runtime classifier
+// marks Sandbox-managed endpoints without depending on Sandbox discovery state.
 func NewWorkloads(
 	pods krt.Collection[*corev1.Pod],
 	clusterID, trustDomain string,
-	claimedByRuntime func(*corev1.Pod) bool,
+	sandboxManaged func(*corev1.Pod) bool,
 	options ...krt.CollectionOption,
 ) krt.Collection[model.Workload] {
 	return krt.NewCollection(pods, func(_ krt.HandlerContext, pod *corev1.Pod) *model.Workload {
-		if claimedByRuntime != nil && claimedByRuntime(pod) {
-			return nil
-		}
 		if !IsEligible(pod) {
 			return nil
 		}
-		return workloadFromPod(clusterID, trustDomain, pod)
+		workload := workloadFromPod(clusterID, trustDomain, pod)
+		workload.SandboxManaged = sandboxManaged != nil && sandboxManaged(pod)
+		return workload
 	}, options...)
 }
 
@@ -76,7 +76,7 @@ func WorkloadUID(clusterID string, pod *corev1.Pod) string {
 }
 
 // BaseWorkloadFromPod projects only the Pod-owned networking and
-// attester state. Runtime adapters add their own Sandbox bindings afterwards.
+// identity state. Runtime classification is applied by NewWorkloads.
 func BaseWorkloadFromPod(clusterID, trustDomain string, pod *corev1.Pod) *model.Workload {
 	addresses := make([]string, 0, len(pod.Status.PodIPs))
 	for _, address := range pod.Status.PodIPs {
@@ -184,13 +184,7 @@ func AmbientRedirectionEnabled(pod *corev1.Pod) bool {
 }
 
 func workloadFromPod(clusterID, trustDomain string, pod *corev1.Pod) *model.Workload {
-	workload := BaseWorkloadFromPod(clusterID, trustDomain, pod)
-	workload.SandboxBindings = []model.SandboxBinding{
-		{
-			SandboxUID: workload.UID,
-		},
-	}
-	return workload
+	return BaseWorkloadFromPod(clusterID, trustDomain, pod)
 }
 
 func tunnelProtocol(pod *corev1.Pod, injected bool) model.TunnelProtocol {

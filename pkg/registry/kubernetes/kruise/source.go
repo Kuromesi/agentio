@@ -49,10 +49,9 @@ type Options struct {
 	DebounceMax   time.Duration
 }
 
-// Source holds the Sandbox and Workload collections produced by the Kruise adapter.
+// Source holds explicitly defined Kruise Sandboxes.
 type Source struct {
 	Sandboxes krt.Collection[model.Sandbox]
-	Workloads krt.Collection[model.Workload]
 }
 
 // NewSource constructs the optional, delayed-informer-backed Kruise source.
@@ -92,15 +91,8 @@ func NewSource(
 			sandboxGroups,
 			pods,
 			podsByUID,
-			derivedOptions("kruise-sandboxes")...,
-		),
-		Workloads: newWorkloads(
-			sandboxGroups,
-			pods,
-			podsByUID,
 			options.ClusterID,
-			options.TrustDomain,
-			derivedOptions("kruise-sandbox-workloads")...,
+			derivedOptions("kruise-sandboxes")...,
 		),
 	}
 }

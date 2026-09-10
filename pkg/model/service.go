@@ -16,7 +16,7 @@ package model
 
 import (
 	"fmt"
-	"reflect"
+	"slices"
 )
 
 // AppProtocol is the small application-protocol subset represented by the
@@ -91,8 +91,21 @@ func (s Service) ResourceName() string {
 	return s.Namespace + "/" + s.Hostname
 }
 
+// Equals compares all fields, preserving the distinction between nil and empty collections.
 func (s Service) Equals(other Service) bool {
-	return reflect.DeepEqual(s, other)
+	return s.Namespace == other.Namespace &&
+		s.Name == other.Name &&
+		s.Hostname == other.Hostname &&
+		s.Network == other.Network &&
+		s.InternalTrafficPolicyLocal == other.InternalTrafficPolicyLocal &&
+		s.TrafficDistribution == other.TrafficDistribution &&
+		s.IPFamilies == other.IPFamilies &&
+		s.PublishNotReadyAddresses == other.PublishNotReadyAddresses &&
+		s.Canonical == other.Canonical &&
+		(s.Addresses == nil) == (other.Addresses == nil) &&
+		slices.Equal(s.Addresses, other.Addresses) &&
+		(s.Ports == nil) == (other.Ports == nil) &&
+		slices.Equal(s.Ports, other.Ports)
 }
 
 // Endpoint relates a Service to a reachable network target. Runtime

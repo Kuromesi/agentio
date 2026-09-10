@@ -16,112 +16,17 @@ package xds
 
 import (
 	"context"
-	"fmt"
-	"maps"
-	"slices"
 	"sort"
 
-	"github.com/openkruise/agentio/pkg/model"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/model"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
-
-// SubscriptionView is an immutable copy of the subscription state visible to a
-// resource generator. Its accessors never expose the Delta stream's live maps.
-type SubscriptionView struct {
-	wildcard bool
-	names    []string
-	sent     map[string]string
-}
-
-func newSubscriptionView(watch *watchState) SubscriptionView {
-	names := sortedNames(watch.names)
-	sent := make(map[string]string, len(watch.sent))
-	maps.Copy(sent, watch.sent)
-	return SubscriptionView{wildcard: watch.wildcard, names: names, sent: sent}
-}
-
-func newDirtySubscriptionView(watch *watchState, typeURL string, update Update) SubscriptionView {
-	view := SubscriptionView{
-		wildcard: watch.wildcard,
-		names:    sortedNames(watch.names),
-		sent:     make(map[string]string),
-	}
-	var changes []model.ResourceChange
-	if view.wildcard {
-		changes = update.changesForType(typeURL)
-	} else {
-		changes = update.ChangesForNames(typeURL, view.names)
-	}
-	copySentForChanges(&view, watch, changes)
-	return view
-}
-
-func copySentForChanges(view *SubscriptionView, watch *watchState, changes []model.ResourceChange) {
-	copySent := func(resource *model.Resource) {
-		if resource == nil {
-			return
-		}
-		if version, found := watch.sent[resource.XDSName]; found {
-			view.sent[resource.XDSName] = version
-		}
-	}
-	for _, change := range changes {
-		copySent(change.Old)
-		copySent(change.New)
-	}
-}
-
-// Wildcard reports whether every resource of this type is subscribed.
-func (s SubscriptionView) Wildcard() bool {
-	return s.wildcard
-}
-
-// Names returns the explicitly subscribed names in lexical order.
-func (s SubscriptionView) Names() []string {
-	result := make([]string, len(s.names))
-	copy(result, s.names)
-	return result
-}
-
-// SentVersion returns the version last sent successfully for a wire name.
-func (s SubscriptionView) SentVersion(name string) (string, bool) {
-	version, found := s.sent[name]
-	return version, found
-}
-
-// SentNames returns successfully sent wire names in lexical order.
-func (s SubscriptionView) SentNames() []string {
-	result := make([]string, 0, len(s.sent))
-	for name := range s.sent {
-		result = append(result, name)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func (s SubscriptionView) allows(resource model.Resource) bool {
-	if s.wildcard {
-		return true
-	}
-	if containsSorted(s.names, resource.XDSName) {
-		return true
-	}
-	for _, alias := range resource.Aliases {
-		if containsSorted(s.names, alias) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsSorted(values []string, value string) bool {
-	_, found := slices.BinarySearch(values, value)
-	return found
-}
 
 // GenerationRequest is the immutable input to one resource generation pass.
 // Full selects a complete snapshot diff; otherwise Update carries the indexed
-// dirty changes for the requested type.
+// changes for the requested type.
 type GenerationRequest struct {
 	// Scope is the authenticated client visibility used to filter every
 	// candidate resource; generators must never widen beyond it.
@@ -135,10 +40,10 @@ type GenerationRequest struct {
 	// version becomes the response system version.
 	Snapshot model.ResourceSet
 	// Update carries the indexed key-level changes and the before/after
-	// publication transition consumed by the dirty path. It is unset when Full
+	// publication transition consumed by the incremental path. It is unset when Full
 	// is true.
-	Update Update
-	// Full selects the complete snapshot diff path instead of dirty generation.
+	Update xdsstore.Update
+	// Full selects the complete snapshot diff path instead of incremental generation.
 	// It is set for initial reads, new subscriptions, and full-rebuild updates.
 	Full bool
 	// SubscribedNames is the immutable set of names explicitly subscribed by
@@ -168,32 +73,6 @@ type GeneratedDelta struct {
 // stream state or writing to the stream.
 type ResourceGenerator interface {
 	Generate(context.Context, GenerationRequest) (GeneratedDelta, error)
-}
-
-// SnapshotGenerator generates precompiled resources from store snapshots and dirty updates.
-type SnapshotGenerator struct{}
-
-func (SnapshotGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
-	if err := ctx.Err(); err != nil {
-		return GeneratedDelta{}, err
-	}
-	if request.TypeURL == "" {
-		return GeneratedDelta{}, fmt.Errorf("generation type URL is required")
-	}
-	if request.Full {
-		return generateSnapshotDiff(request), nil
-	}
-	return generateSnapshotDirty(request), nil
-}
-
-func generateSnapshotDiff(request GenerationRequest) GeneratedDelta {
-	selected := make(map[string]model.Resource)
-	for _, resource := range selectGeneric(
-		request.Scope, request.Snapshot, request.TypeURL, selectionNames(request.Subscription),
-	) {
-		selected[resource.XDSName] = resource
-	}
-	return diffSelected(request.Subscription, selected)
 }
 
 func selectionNames(subscription SubscriptionView) []string {
@@ -229,35 +108,57 @@ func diffResourceSelection(
 	return GeneratedDelta{Resources: resources, Removed: removed}
 }
 
-func generateSnapshotDirty(request GenerationRequest) GeneratedDelta {
-	var changes []model.ResourceChange
-	if request.Subscription.Wildcard() {
-		changes = request.Update.changesForType(request.TypeURL)
-	} else {
-		changes = request.Update.ChangesForNames(request.TypeURL, request.Subscription.Names())
-	}
-
-	selected := make(map[string]model.Resource, len(changes))
-	removedSet := sets.New[string]()
-	for _, change := range changes {
-		oldSelected := change.Old != nil && scopeAllows(request.Scope, *change.Old) && request.Subscription.allows(*change.Old)
-		newSelected := change.New != nil && scopeAllows(request.Scope, *change.New) && request.Subscription.allows(*change.New)
-		if newSelected {
-			selected[change.New.XDSName] = *change.New
+// diffCandidateTransition diffs each candidate's visibility and content between
+// the two publications, mapping renames to removals of the old wire name.
+func diffCandidateTransition(
+	candidates sets.Set[model.ResourceKey],
+	lookupOld, lookupNew func(model.ResourceKey) (model.Resource, bool),
+	oldVisible, newVisible func(model.Resource) bool,
+) (map[string]model.Resource, sets.Set[string]) {
+	var selected map[string]model.Resource
+	var removed sets.Set[string]
+	for key := range candidates {
+		oldResource, hadOld := lookupOld(key)
+		newResource, hasNew := lookupNew(key)
+		var oldPointer, newPointer *model.Resource
+		if hadOld {
+			oldPointer = &oldResource
 		}
-		if oldSelected && (!newSelected || change.Old.XDSName != change.New.XDSName) {
-			if _, sent := request.Subscription.SentVersion(change.Old.XDSName); sent {
-				removedSet.Insert(change.Old.XDSName)
-			}
+		if hasNew {
+			newPointer = &newResource
 		}
+		addResourceTransition(&selected, &removed, oldPointer, newPointer,
+			hadOld && oldVisible(oldResource), hasNew && newVisible(newResource))
 	}
+	return selected, removed
+}
 
+func addResourceTransition(
+	selected *map[string]model.Resource,
+	removed *sets.Set[string],
+	oldResource, newResource *model.Resource,
+	oldVisible, newVisible bool,
+) {
+	if newVisible && (!oldVisible || oldResource.Hash != newResource.Hash) {
+		if *selected == nil {
+			*selected = make(map[string]model.Resource)
+		}
+		(*selected)[newResource.XDSName] = *newResource
+	}
+	if oldVisible && (!newVisible || oldResource.XDSName != newResource.XDSName) {
+		if *removed == nil {
+			*removed = sets.New[string]()
+		}
+		(*removed).Insert(oldResource.XDSName)
+	}
+}
+
+// newSortedDelta builds the deterministic delta; a name that is re-selected
+// drops out of the removal set.
+func newSortedDelta(selected map[string]model.Resource, removedSet sets.Set[string], elideSentState bool) GeneratedDelta {
 	resources := make([]model.Resource, 0, len(selected))
 	for name, resource := range selected {
 		removedSet.Delete(name)
-		if version, found := request.Subscription.SentVersion(name); found && version == resource.Hash {
-			continue
-		}
 		resources = append(resources, resource)
 	}
 	sort.Slice(resources, func(i, j int) bool { return resources[i].XDSName < resources[j].XDSName })
@@ -266,5 +167,5 @@ func generateSnapshotDirty(request GenerationRequest) GeneratedDelta {
 		removed = append(removed, name)
 	}
 	sort.Strings(removed)
-	return GeneratedDelta{Resources: resources, Removed: removed}
+	return GeneratedDelta{Resources: resources, Removed: removed, elideSentState: elideSentState}
 }

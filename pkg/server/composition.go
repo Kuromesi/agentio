@@ -17,12 +17,12 @@ package server
 import (
 	"fmt"
 	"maps"
-	"reflect"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/mitm"
+	"github.com/openkruise/agentio/pkg/util/nilutil"
 	"github.com/openkruise/agentio/pkg/xds"
 )
 
@@ -131,43 +131,30 @@ func applySourceCollectionTransforms(
 
 func validateSourceCollections(sources SourceCollections) error {
 	switch {
-	case isNilCompositionDependency(sources.Sandboxes):
+	case nilutil.IsNilInterface(sources.Sandboxes):
 		return fmt.Errorf("sandbox source collection is required")
-	case isNilCompositionDependency(sources.Workloads):
+	case nilutil.IsNilInterface(sources.Workloads):
 		return fmt.Errorf("workload source collection is required")
-	case isNilCompositionDependency(sources.Services):
+	case nilutil.IsNilInterface(sources.Services):
 		return fmt.Errorf("service source collection is required")
-	case isNilCompositionDependency(sources.Endpoints):
+	case nilutil.IsNilInterface(sources.Endpoints):
 		return fmt.Errorf("endpoint source collection is required")
-	case isNilCompositionDependency(sources.Gateways):
+	case nilutil.IsNilInterface(sources.Gateways):
 		return fmt.Errorf("gateway source collection is required")
-	case isNilCompositionDependency(sources.TrafficPolicies):
+	case nilutil.IsNilInterface(sources.TrafficPolicies):
 		return fmt.Errorf("traffic policy source collection is required")
-	case isNilCompositionDependency(sources.SecurityProfiles):
+	case nilutil.IsNilInterface(sources.SecurityProfiles):
 		return fmt.Errorf("security profile source collection is required")
-	case isNilCompositionDependency(sources.GatewayPatches):
+	case nilutil.IsNilInterface(sources.GatewayPatches):
 		return fmt.Errorf("GatewayPatch source collection is required")
-	case isNilCompositionDependency(sources.Telemetry):
+	case nilutil.IsNilInterface(sources.Telemetry):
 		return fmt.Errorf("Telemetry source collection is required")
-	case isNilCompositionDependency(sources.TelemetryProviderOverrides):
+	case nilutil.IsNilInterface(sources.TelemetryProviderOverrides):
 		return fmt.Errorf("Telemetry provider override singleton is required")
-	case isNilCompositionDependency(sources.AgentioConfig):
+	case nilutil.IsNilInterface(sources.AgentioConfig):
 		return fmt.Errorf("agentio config source collection is required")
 	default:
 		return nil
-	}
-}
-
-func isNilCompositionDependency(dependency any) bool {
-	if dependency == nil {
-		return true
-	}
-	value := reflect.ValueOf(dependency)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
 	}
 }
 

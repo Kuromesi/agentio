@@ -16,15 +16,6 @@ package model
 
 import "testing"
 
-func TestSandboxBindingValidateRequiresUID(t *testing.T) {
-	if err := (SandboxBinding{SandboxUID: "sandbox-a"}).Validate(); err != nil {
-		t.Fatalf("valid Sandbox binding rejected: %v", err)
-	}
-	if err := (SandboxBinding{}).Validate(); err == nil {
-		t.Fatal("empty Sandbox binding accepted")
-	}
-}
-
 func TestTunnelProtocolValidateRejectsUnknownProtocol(t *testing.T) {
 	for _, protocol := range []TunnelProtocol{"", TunnelProtocolNone, TunnelProtocolHBONE} {
 		if err := protocol.Validate(); err != nil {

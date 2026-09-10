@@ -107,7 +107,9 @@ type Registry struct {
 	compileFailures   atomic.Uint64
 	snapshotResources atomic.Int64
 	xdsConnections    atomic.Int64
+	xdsACKs           atomic.Uint64
 	xdsNACKs          atomic.Uint64
+	xdsStaleNonces    atomic.Uint64
 	xdsPushes         atomic.Uint64
 	xdsRequestRejects atomic.Uint64
 	xdsDeniedResource atomic.Uint64
@@ -318,6 +320,13 @@ func versionComponent(value string) bool {
 	return true
 }
 
+// RecordXDSACK counts an ACK matching the latest response for its stream and type.
+func (r *Registry) RecordXDSACK() { r.xdsACKs.Add(1) }
+
+// RecordXDSStaleNonce counts ACK/NACK requests with a nonempty nonce that does
+// not match the latest successfully sent response for the stream and type.
+func (r *Registry) RecordXDSStaleNonce() { r.xdsStaleNonces.Add(1) }
+
 func (r *Registry) RecordXDSNACK() { r.xdsNACKs.Add(1) }
 
 // RecordKRTTransform counts one krt transform execution; slow marks executions past the threshold.
@@ -363,6 +372,8 @@ func (r *Registry) ServeHTTP(response http.ResponseWriter, _ *http.Request) {
 		{"agentio_snapshot_resources", "Resources in the current xDS snapshot.", "gauge", r.snapshotResources.Load()},
 		{"agentio_xds_connections", "Active Delta ADS connections.", "gauge", r.xdsConnections.Load()},
 		{"agentio_xds_pushes_total", "Total xDS responses sent.", "counter", r.xdsPushes.Load()},
+		{"agentio_xds_acks_total", "Received ACKs matching the latest response for the stream and resource type.", "counter", r.xdsACKs.Load()},
+		{"agentio_xds_stale_nonces_total", "ACK/NACK requests whose nonempty nonce does not match the latest response for the stream and resource type.", "counter", r.xdsStaleNonces.Load()},
 		{"agentio_xds_nacks_total", "Total xDS NACKs.", "counter", r.xdsNACKs.Load()},
 		{"agentio_xds_request_rejections_total", "New xDS streams rejected by request admission.", "counter", r.xdsRequestRejects.Load()},
 		{"agentio_xds_denied_resources_total", "Resources omitted from responses because the client may not receive them.", "counter", r.xdsDeniedResource.Load()},

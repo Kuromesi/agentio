@@ -18,9 +18,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
-
-	"github.com/openkruise/agentio/pkg/model"
 )
 
 func TestMain(m *testing.M) {
@@ -28,29 +25,4 @@ func TestMain(m *testing.M) {
 	// running control plane and pure noise in a test run.
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 	os.Exit(m.Run())
-}
-
-// waitSynced blocks until the compiler's derived collections are populated.
-func waitSynced(t testing.TB, compiler *Compiler) {
-	t.Helper()
-	stop := make(chan struct{})
-	timer := time.AfterFunc(30*time.Second, func() { close(stop) })
-	defer timer.Stop()
-	if !compiler.WaitUntilSynced(stop) {
-		t.Fatal("compiler did not sync")
-	}
-}
-
-// compileSynced waits for the graph and then compiles, failing the test on error.
-func compileSynced(t testing.TB, compiler *Compiler) model.ResourceSet {
-	t.Helper()
-	waitSynced(t, compiler)
-	snapshot, err := compiler.Snapshot()
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if failures := compiler.Failures(); len(failures) > 0 {
-		t.Fatalf("objects failed to compile: %v", failures)
-	}
-	return snapshot
 }

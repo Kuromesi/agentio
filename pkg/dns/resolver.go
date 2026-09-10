@@ -24,8 +24,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openkruise/agentio/pkg/krt"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/krt"
 )
 
 func refreshDelay(host string, ttl, fallback time.Duration) time.Duration {
@@ -85,7 +86,7 @@ type Resolver struct {
 	options Options
 	lookup  Lookup
 	results krt.StaticCollection[Result]
-	jobs    chan string
+	jobs    chan *entry
 	wake    chan struct{}
 
 	mu       sync.RWMutex
@@ -119,7 +120,7 @@ func New(ctx context.Context, options Options, lookup Lookup, collectionOptions 
 		lookup:  lookup,
 		entries: make(map[string]*entry),
 		results: krt.NewStaticCollection[Result](nil, nil, collectionOptions...),
-		jobs:    make(chan string, options.MaxConcurrent),
+		jobs:    make(chan *entry, options.MaxConcurrent),
 		wake:    make(chan struct{}, 1),
 	}
 	for range options.MaxConcurrent {
@@ -175,8 +176,8 @@ func (r *Resolver) HandleDelete(host string) {
 	}
 	r.removeScheduledLocked(item)
 	delete(r.entries, host)
-	r.mu.Unlock()
 	r.results.DeleteObject(host)
+	r.mu.Unlock()
 	r.signalScheduler()
 }
 
@@ -207,15 +208,21 @@ func (r *Resolver) Resolve(ctx krt.HandlerContext, host string) []netip.Addr {
 	return append([]netip.Addr(nil), resolved.Addresses...)
 }
 
-func (r *Resolver) refresh(host string) {
+func (r *Resolver) refresh(item *entry) {
+	host := item.hostname
+	r.mu.RLock()
+	current := r.entries[host] == item
+	r.mu.RUnlock()
+	if !current {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.ctx, r.options.LookupTimeout)
 	result, err := r.lookup(ctx, host)
 	cancel()
 	now := time.Now()
 	addresses := normalizeAddresses(result.Addresses)
 	r.mu.Lock()
-	item := r.entries[host]
-	if item == nil {
+	if r.entries[host] != item {
 		r.mu.Unlock()
 		return
 	}
@@ -240,11 +247,12 @@ func (r *Resolver) refresh(host string) {
 	item.addresses = addresses
 	item.published = true
 	r.scheduleLocked(item)
-	r.mu.Unlock()
-	r.signalScheduler()
+	// Serialize publication with removal so a completed lookup cannot resurrect a deleted result.
 	if updated {
 		r.results.ConditionalUpdateObject(Result{Hostname: host, Addresses: append([]netip.Addr(nil), addresses...)})
 	}
+	r.mu.Unlock()
+	r.signalScheduler()
 }
 
 func normalizeHostname(host string) string {

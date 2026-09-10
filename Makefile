@@ -1,4 +1,4 @@
-.PHONY: build build.agentiod build.epe clean fmt format gen gen.crddocs lint lint.logging racetest test test.epe test.integration.agentio.kube test.integration.agentio.product tidy
+.PHONY: build build.agentiod build.epe clean fmt format gen gen.crddocs lint lint.golangci lint.logging racetest test test.epe test.integration.agentio.kube test.integration.agentio.product tidy
 
 build: build.agentiod build.epe
 
@@ -38,13 +38,21 @@ racetest:
 	go test -race -count=1 ./...
 	go -C test/e2e test -race -count=1 ./...
 
+# Pin the analyzer independently of the application module. Override the command
+# to use an installed binary; pass --new-from-rev=<base> for incremental checks.
+GOLANGCI_LINT_VERSION := v2.13.2
+GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+GOLANGCI_LINT_ARGS ?=
+
+lint.golangci:
+	$(GOLANGCI_LINT) run $(GOLANGCI_LINT_ARGS) ./...
+
 lint:
 	go vet ./...
 	go -C test/e2e vet ./...
 
-# The logging convention check diffs against a merge base, which the shallow
-# checkout in agentio-ut.yml cannot supply, so it runs in its own workflow
-# instead of here. Called without an argument it resolves the base itself.
+# The logging convention check runs in its own workflow with path filters.
+# Called without an argument it resolves the merge base itself.
 lint.logging:
 	./bin/lint_logging.sh
 

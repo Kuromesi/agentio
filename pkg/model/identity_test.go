@@ -91,13 +91,13 @@ func TestClientScopeValidateRequiresClassOwnership(t *testing.T) {
 	}{
 		{"node", ClientScope{Class: ClientSharedZTunnel, Principal: principal, NodeName: "node-a"}, true},
 		{"node missing ownership", ClientScope{Class: ClientSharedZTunnel, Principal: principal}, false},
-		{"sandbox", ClientScope{Class: ClientDedicatedZTunnel, Principal: principal, SandboxUID: "uid-a"}, true},
+		{"sandbox", ClientScope{Class: ClientDedicatedZTunnel, Principal: principal, WorkloadUID: "uid-a", SourceUID: "uid-a"}, true},
 		{"sandbox missing ownership", ClientScope{Class: ClientDedicatedZTunnel, Principal: principal}, false},
 		{"gateway", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "demo/agent"}, true},
 		{"gateway missing ownership", ClientScope{Class: ClientEgressGateway, Principal: principal}, false},
 		{"gateway wrong namespace", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "other/agent"}, false},
 		{"gateway wrong service account", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "demo/other"}, false},
-		{"sandbox invalid principal", ClientScope{Class: ClientDedicatedZTunnel, SandboxUID: "vm-a"}, false},
+		{"sandbox invalid principal", ClientScope{Class: ClientDedicatedZTunnel, WorkloadUID: "vm-a", SourceUID: "vm-a"}, false},
 		{"unknown", ClientScope{Class: "spoofed", Principal: principal, NodeName: "node-a"}, false},
 	}
 

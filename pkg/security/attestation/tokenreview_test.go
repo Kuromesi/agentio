@@ -16,7 +16,9 @@ package attestation
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -71,6 +73,15 @@ func (c *countingReviewer) reviews() int {
 func bearerContext(token string) context.Context {
 	return metadata.NewIncomingContext(context.Background(),
 		metadata.Pairs("authorization", "Bearer "+token))
+}
+
+// Synthetic JWT payloads are only used with fake TokenReview responses.
+func tokenWithClaims(claims string) string {
+	return "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".synthetic"
+}
+
+func expiringToken(subject string, expiry time.Time) string {
+	return tokenWithClaims(fmt.Sprintf(`{"sub":%q,"exp":%d}`, subject, expiry.Unix()))
 }
 
 func authenticatedAs(username string) authenticationv1.TokenReviewStatus {
@@ -150,8 +161,9 @@ func TestAuthenticateCachesSuccessfulReviews(t *testing.T) {
 		return authenticatedAs("system:serviceaccount:demo:app")
 	})
 
+	token := expiringToken("app", time.Now().Add(time.Hour))
 	for range 5 {
-		caller, err := counter.reviewer.Authenticate(bearerContext("a-token"))
+		caller, err := counter.reviewer.Authenticate(bearerContext(token))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,12 +211,13 @@ func TestAuthenticateReReviewsAfterTTL(t *testing.T) {
 		return authenticatedAs("system:serviceaccount:demo:app")
 	})
 	counter.reviewer.ttl = 10 * time.Millisecond
+	token := expiringToken("app", time.Now().Add(time.Hour))
 
-	if _, err := counter.reviewer.Authenticate(bearerContext("a-token")); err != nil {
+	if _, err := counter.reviewer.Authenticate(bearerContext(token)); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if _, err := counter.reviewer.Authenticate(bearerContext("a-token")); err != nil {
+	if _, err := counter.reviewer.Authenticate(bearerContext(token)); err != nil {
 		t.Fatal(err)
 	}
 	if got := counter.reviews(); got != 2 {
@@ -251,12 +264,12 @@ func TestTokenReviewCacheIsBounded(t *testing.T) {
 	})
 	now := time.Now()
 	for index := range tokenReviewCacheEntries + 500 {
-		counter.reviewer.remember(string(rune(index))+"-token", model.PeerIdentity{}, now)
+		counter.reviewer.remember(expiringToken(fmt.Sprint(index), now.Add(time.Hour)), model.PeerIdentity{}, now)
 	}
 	counter.reviewer.mu.Lock()
 	size := len(counter.reviewer.cache)
 	counter.reviewer.mu.Unlock()
-	if size > tokenReviewCacheEntries {
+	if size != tokenReviewCacheEntries {
 		t.Fatalf("cache grew to %d entries, cap is %d", size, tokenReviewCacheEntries)
 	}
 }
@@ -276,5 +289,72 @@ func TestAuthenticateRequiresBearerToken(t *testing.T) {
 	}
 	if got := counter.reviews(); got != 0 {
 		t.Fatalf("TokenReviews = %d, want none for malformed credentials", got)
+	}
+}
+
+func TestTokenReviewCacheExpiresAtCredentialDeadline(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	for _, tc := range []struct {
+		name                   string
+		lifetime, wantLifetime time.Duration
+	}{
+		{name: "token expires before cache TTL", lifetime: 10 * time.Second, wantLifetime: 10 * time.Second},
+		{name: "cache TTL expires first", lifetime: time.Hour, wantLifetime: tokenReviewCacheTTL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := newCountingReviewer(t, func(string) authenticationv1.TokenReviewStatus {
+				return authenticatedAs("system:serviceaccount:demo:app")
+			})
+			token := expiringToken("app", now.Add(tc.lifetime))
+			counter.reviewer.remember(token, model.PeerIdentity{}, now)
+			deadline := now.Add(tc.wantLifetime)
+			if _, found := counter.reviewer.cached(token, deadline.Add(-time.Nanosecond)); !found {
+				t.Fatal("valid cached review was not reused")
+			}
+			if _, found := counter.reviewer.cached(token, deadline); found {
+				t.Fatal("review was reused at or after its deadline")
+			}
+		})
+	}
+}
+
+func TestAuthenticateReReviewsAfterTokenExpiry(t *testing.T) {
+	counter := newCountingReviewer(t, func(string) authenticationv1.TokenReviewStatus {
+		return authenticationv1.TokenReviewStatus{Authenticated: false, Error: "token expired"}
+	})
+	now := time.Now().Truncate(time.Second)
+	token := expiringToken("app", now.Add(-time.Second))
+	// Model a successful review ten seconds ago. Its one-minute TTL has not
+	// elapsed, but the credential has expired and must be reviewed again.
+	counter.reviewer.remember(token, model.PeerIdentity{}, now.Add(-10*time.Second))
+	if _, err := counter.reviewer.Authenticate(bearerContext(token)); err == nil {
+		t.Fatal("expired token accepted from cache")
+	}
+	if got := counter.reviews(); got != 1 {
+		t.Fatalf("reviews = %d, want expired token rechecked", got)
+	}
+}
+
+func TestAuthenticateDoesNotCacheWithoutFutureExpiry(t *testing.T) {
+	for _, token := range []string{
+		"opaque-token", "header.invalid!.signature", tokenWithClaims(`{`),
+		tokenWithClaims(`{}`), tokenWithClaims(`{"exp":null}`),
+		tokenWithClaims(`{"exp":"9999999999"}`), tokenWithClaims(`{"exp":1.5}`),
+		tokenWithClaims(`{"exp":9999999999999999999999}`),
+		expiringToken("app", time.Now().Add(-time.Hour)),
+	} {
+		counter := newCountingReviewer(t, func(string) authenticationv1.TokenReviewStatus {
+			return authenticatedAs("system:serviceaccount:demo:app")
+		})
+		for range 2 {
+			// Local claim parsing only governs caching, never overrides the API
+			// server's authentication decision for opaque/unsupported tokens.
+			if _, err := counter.reviewer.Authenticate(bearerContext(token)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := counter.reviews(); got != 2 {
+			t.Fatalf("reviews = %d, want 2 without usable expiry", got)
+		}
 	}
 }

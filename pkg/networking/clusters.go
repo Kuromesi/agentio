@@ -19,8 +19,6 @@ import (
 	"math"
 	"time"
 
-	configv1 "github.com/openkruise/agentio/api/config/v1"
-
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -36,6 +34,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"istio.io/istio/pkg/util/sets"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
 )
 
@@ -43,18 +42,21 @@ import (
 // not an Any type URL; Envoy rejects the wrong key form.
 const httpProtocolOptionsType = "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"
 
-func buildClusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
+// upstreamHTTPIdleTimeout applies to both HTTP/1 and HTTP/2 gateway upstreams.
+const upstreamHTTPIdleTimeout = 5 * time.Minute
+
+func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
 	result := []*clusterv3.Cluster{
-		buildInternalCluster(MainInternal),
-		buildInternalCluster(MainForward),
-		buildPassthroughCluster(),
+		b.buildInternalCluster(MainInternal),
+		b.buildInternalCluster(MainForward),
+		b.buildPassthroughCluster(),
 		buildBlackHoleCluster(),
-		buildDFPCluster(HTTPDynamicForwardProxy, true, false),
-		buildDFPCluster(TLSConnectOriginate, false, true),
-		buildTLSProxyOriginateCluster(),
+		b.buildDFPCluster(HTTPDynamicForwardProxy, true, false),
+		b.buildDFPCluster(TLSConnectOriginate, false, true),
+		b.buildTLSProxyOriginateCluster(),
 	}
 	if config.extProc != nil {
-		result = append(result, buildExtProcCluster(config.extProc))
+		result = append(result, b.buildExtProcCluster(config.extProc))
 	}
 	if config.telemetry != nil {
 		names := sets.NewWithLength[string](len(result) + len(config.telemetry.Clusters))
@@ -72,9 +74,9 @@ func buildClusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
 	return result, nil
 }
 
-func buildInternalCluster(name string) *clusterv3.Cluster {
-	raw, _ := anypb.New(&rawbufferv3.RawBuffer{})
-	internal, _ := anypb.New(&internalupstreamv3.InternalUpstreamTransport{
+func (b *resourceBuilder) buildInternalCluster(name string) *clusterv3.Cluster {
+	raw := b.pack(&rawbufferv3.RawBuffer{})
+	internal := b.pack(&internalupstreamv3.InternalUpstreamTransport{
 		TransportSocket: &corev3.TransportSocket{Name: "raw_buffer", ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: raw}},
 	})
 	return &clusterv3.Cluster{
@@ -96,11 +98,11 @@ func buildInternalCluster(name string) *clusterv3.Cluster {
 			Name:       "internal_upstream",
 			ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: internal},
 		},
-		TypedExtensionProtocolOptions: map[string]*anypb.Any{httpProtocolOptionsType: downstreamHTTPOptions()},
+		TypedExtensionProtocolOptions: map[string]*anypb.Any{httpProtocolOptionsType: b.downstreamHTTPOptions()},
 	}
 }
 
-func buildPassthroughCluster() *clusterv3.Cluster {
+func (b *resourceBuilder) buildPassthroughCluster() *clusterv3.Cluster {
 	return &clusterv3.Cluster{
 		Name:                 PassthroughCluster,
 		AltStatName:          delimitedStatsPrefix(PassthroughCluster),
@@ -109,7 +111,7 @@ func buildPassthroughCluster() *clusterv3.Cluster {
 		LbPolicy:             clusterv3.Cluster_CLUSTER_PROVIDED,
 		CircuitBreakers:      defaultCircuitBreakers(),
 		TypedExtensionProtocolOptions: map[string]*anypb.Any{
-			httpProtocolOptionsType: downstreamHTTPOptions(),
+			httpProtocolOptionsType: b.downstreamHTTPOptions(),
 		},
 	}
 }
@@ -117,12 +119,12 @@ func buildPassthroughCluster() *clusterv3.Cluster {
 // buildTLSProxyOriginateCluster reconnects to the original HTTPS proxy while
 // request-scoped filter state supplies the outer SNI and SAN. The inner CONNECT
 // authority must never become the proxy certificate identity.
-func buildTLSProxyOriginateCluster() *clusterv3.Cluster {
-	cluster := buildPassthroughCluster()
+func (b *resourceBuilder) buildTLSProxyOriginateCluster() *clusterv3.Cluster {
+	cluster := b.buildPassthroughCluster()
 	cluster.Name = TLSProxyOriginate
 	cluster.AltStatName = delimitedStatsPrefix(TLSProxyOriginate)
-	options, _ := anypb.New(&httpupstreamv3.HttpProtocolOptions{
-		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(5 * time.Minute)},
+	options := b.pack(&httpupstreamv3.HttpProtocolOptions{
+		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
 		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_AutoConfig{AutoConfig: &httpupstreamv3.HttpProtocolOptions_AutoHttpConfig{
 			HttpProtocolOptions:  &corev3.Http1ProtocolOptions{},
 			Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
@@ -133,7 +135,7 @@ func buildTLSProxyOriginateCluster() *clusterv3.Cluster {
 	// Envoy scopes its upstream session cache by SNI, otherwise a resumed
 	// session can carry another hostname's certificate and fail SAN validation.
 	// See https://github.com/envoyproxy/envoy/pull/45982.
-	tlsConfig, _ := anypb.New(&tlsv3.UpstreamTlsContext{
+	tlsConfig := b.pack(&tlsv3.UpstreamTlsContext{
 		MaxSessionKeys: wrapperspb.UInt32(0),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
 			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
@@ -159,8 +161,8 @@ func buildBlackHoleCluster() *clusterv3.Cluster {
 	}
 }
 
-func buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.Cluster {
-	typed, _ := anypb.New(&dfpclusterv3.ClusterConfig{
+func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.Cluster {
+	typed := b.pack(&dfpclusterv3.ClusterConfig{
 		ClusterImplementationSpecifier: &dfpclusterv3.ClusterConfig_DnsCacheConfig{DnsCacheConfig: dnsCacheConfig()},
 		AllowInsecureClusterOptions:    allowInsecure,
 	})
@@ -176,11 +178,11 @@ func buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.C
 		}},
 	}
 	if !originateTLS {
-		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: downstreamHTTPOptions()}
+		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: b.downstreamHTTPOptions()}
 		return cluster
 	}
-	opts, _ := anypb.New(&httpupstreamv3.HttpProtocolOptions{
-		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(5 * time.Minute)},
+	opts := b.pack(&httpupstreamv3.HttpProtocolOptions{
+		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
 		UpstreamHttpProtocolOptions: &corev3.UpstreamHttpProtocolOptions{
 			AutoSni:           true,
 			AutoSanValidation: true,
@@ -195,7 +197,7 @@ func buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.C
 	// Envoy scopes its upstream session cache by SNI, otherwise a resumed
 	// session can carry another hostname's certificate and fail SAN validation.
 	// See https://github.com/envoyproxy/envoy/pull/45982.
-	tlsConfig, _ := anypb.New(&tlsv3.UpstreamTlsContext{
+	tlsConfig := b.pack(&tlsv3.UpstreamTlsContext{
 		MaxSessionKeys: wrapperspb.UInt32(0),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
 			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
@@ -211,7 +213,7 @@ func buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.C
 	return cluster
 }
 
-func buildExtProcCluster(provider *configv1.ExtProcProvider) *clusterv3.Cluster {
+func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider) *clusterv3.Cluster {
 	port := provider.GetPort()
 	if port == 0 {
 		port = 9002
@@ -222,7 +224,7 @@ func buildExtProcCluster(provider *configv1.ExtProcProvider) *clusterv3.Cluster 
 		http2.MaxConcurrentStreams = wrapperspb.UInt32(httpSettings.GetMaxConcurrentStreams())
 	}
 	protocol := &httpupstreamv3.HttpProtocolOptions{
-		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(5 * time.Minute)},
+		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
 		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig_{ExplicitHttpConfig: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig{
 			ProtocolConfig: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{Http2ProtocolOptions: http2},
 		}},
@@ -230,7 +232,7 @@ func buildExtProcCluster(provider *configv1.ExtProcProvider) *clusterv3.Cluster 
 	if httpSettings.GetMaxRequestsPerConnection() > 0 {
 		protocol.CommonHttpProtocolOptions.MaxRequestsPerConnection = wrapperspb.UInt32(httpSettings.GetMaxRequestsPerConnection())
 	}
-	protocolAny, _ := anypb.New(protocol)
+	protocolAny := b.pack(protocol)
 	return &clusterv3.Cluster{
 		Name:                 ExtProcCluster,
 		AltStatName:          delimitedStatsPrefix(ExtProcCluster),
@@ -271,9 +273,9 @@ func defaultCircuitBreakers() *clusterv3.CircuitBreakers {
 	}}}
 }
 
-func downstreamHTTPOptions() *anypb.Any {
-	value, _ := anypb.New(&httpupstreamv3.HttpProtocolOptions{
-		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(5 * time.Minute)},
+func (b *resourceBuilder) downstreamHTTPOptions() *anypb.Any {
+	value := b.pack(&httpupstreamv3.HttpProtocolOptions{
+		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
 		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_UseDownstreamProtocolConfig{
 			UseDownstreamProtocolConfig: &httpupstreamv3.HttpProtocolOptions_UseDownstreamHttpConfig{
 				HttpProtocolOptions:  &corev3.Http1ProtocolOptions{},

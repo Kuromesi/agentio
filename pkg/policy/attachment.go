@@ -16,7 +16,6 @@ package policy
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -27,9 +26,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
-	"github.com/openkruise/agentio/pkg/krt"
-	"github.com/openkruise/agentio/pkg/model"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 const (
@@ -50,33 +49,15 @@ const (
 
 // AttachmentTarget describes selector-derived policy attachment (global, namespaces, or label selector).
 type AttachmentTarget struct {
+	// Kind restricts the payload consumer; empty allows both Workload and Sandbox.
+	Kind       PolicyTargetKind
 	Global     bool
 	Namespaces []string
 	SandboxUID string
 	Selector   metav1.LabelSelector
 }
 
-// SandboxSubject is the joined policy-selection view of a Sandbox and its
-// Workload binding. Namespace and labels come from an explicit Sandbox;
-// implicit Pod-shaped Sandboxes retain Workload metadata for compatibility.
-// Addresses and readiness always come from the active Workload.
-type SandboxSubject struct {
-	SandboxUID string
-	Namespace  string
-	Labels     map[string]string
-	Addresses  []string
-	Ready      bool
-}
-
-func (s SandboxSubject) ResourceName() string { return s.SandboxUID }
-
-func (s SandboxSubject) Equals(other SandboxSubject) bool {
-	return s.SandboxUID == other.SandboxUID && s.Namespace == other.Namespace &&
-		reflect.DeepEqual(s.Labels, other.Labels) && reflect.DeepEqual(s.Addresses, other.Addresses) &&
-		s.Ready == other.Ready
-}
-
-// PolicyAttachment is the payload-free Sandbox-binding projection of a typed policy.
+// PolicyAttachment is the payload-free binding projection of a typed policy.
 type PolicyAttachment struct {
 	Kind            PolicyKind
 	Name            string
@@ -101,6 +82,7 @@ func (p PolicyAttachment) ResourceName() string {
 func (p PolicyAttachment) Equals(other PolicyAttachment) bool {
 	return p.Kind == other.Kind &&
 		p.Name == other.Name &&
+		p.Target.Kind == other.Target.Kind &&
 		p.Target.Global == other.Target.Global &&
 		equalStrings(p.Target.Namespaces, other.Target.Namespaces) &&
 		apiequality.Semantic.DeepEqual(p.Target.Selector, other.Target.Selector) &&
@@ -138,6 +120,9 @@ func (p PolicyAttachment) validate() error {
 		Name: p.Name,
 	}).Validate(); err != nil {
 		return fmt.Errorf("policy attachment: %w", err)
+	}
+	if p.Target.Kind != "" && p.Target.Kind != PolicyTargetWorkload && p.Target.Kind != PolicyTargetSandbox {
+		return fmt.Errorf("policy attachment %s has unknown target kind %q", p.Name, p.Target.Kind)
 	}
 	modes := 0
 	if p.Target.Global {
@@ -211,11 +196,18 @@ func containsString(values []string, value string) bool {
 }
 
 // Selects reports whether this attachment applies to the sandbox.
-func (p PolicyAttachment) Selects(subject SandboxSubject) bool {
-	if p.Target.SandboxUID != "" && p.Target.SandboxUID != subject.SandboxUID {
+func (p PolicyAttachment) Selects(sandbox model.Sandbox) bool {
+	return p.selects(PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels)
+}
+
+func (p PolicyAttachment) selects(kind PolicyTargetKind, uid, namespace string, targetLabels map[string]string) bool {
+	if p.Target.Kind != "" && p.Target.Kind != kind {
 		return false
 	}
-	if p.Target.SandboxUID == "" && !p.Target.Global && !containsString(p.Target.Namespaces, subject.Namespace) {
+	if p.Target.SandboxUID != "" && (kind != PolicyTargetSandbox || p.Target.SandboxUID != uid) {
+		return false
+	}
+	if p.Target.SandboxUID == "" && !p.Target.Global && !containsString(p.Target.Namespaces, namespace) {
 		return false
 	}
 	selector := p.selector
@@ -226,7 +218,7 @@ func (p PolicyAttachment) Selects(subject SandboxSubject) bool {
 			return false
 		}
 	}
-	return selector.Matches(labels.Set(subject.Labels))
+	return selector.Matches(labels.Set(targetLabels))
 }
 
 func (p PolicyAttachment) specificity() int {
@@ -259,154 +251,4 @@ func policyAttachmentLess(left, right PolicyAttachment) bool {
 		return left.SourceNamespace < right.SourceNamespace
 	}
 	return left.Name < right.Name
-}
-
-// PolicyBindingGroup contains the ordered resource names for one typed policy
-// consumer.
-type PolicyBindingGroup struct {
-	Kind  PolicyKind
-	Names []string
-}
-
-// SandboxPolicyBindings is the shared payload-free projection of explicit and
-// selector-derived policy references for one sandbox.
-type SandboxPolicyBindings struct {
-	SandboxUID    string
-	Groups        []PolicyBindingGroup
-	Unresolved    []model.PolicyRef
-	InvalidReason string
-}
-
-func (b SandboxPolicyBindings) ResourceName() string { return b.SandboxUID }
-
-func (b SandboxPolicyBindings) Equals(other SandboxPolicyBindings) bool {
-	if b.SandboxUID != other.SandboxUID || b.InvalidReason != other.InvalidReason ||
-		len(b.Groups) != len(other.Groups) || len(b.Unresolved) != len(other.Unresolved) {
-		return false
-	}
-	for index := range b.Groups {
-		if b.Groups[index].Kind != other.Groups[index].Kind ||
-			!equalStrings(b.Groups[index].Names, other.Groups[index].Names) {
-			return false
-		}
-	}
-	for index := range b.Unresolved {
-		if b.Unresolved[index] != other.Unresolved[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func (b SandboxPolicyBindings) Valid() bool {
-	return b.InvalidReason == "" && len(b.Unresolved) == 0
-}
-
-func (b SandboxPolicyBindings) PolicyNames(kind PolicyKind) []string {
-	for _, group := range b.Groups {
-		if group.Kind == kind {
-			// Returned slice is shared with the caller; treat it as read-only.
-			return group.Names
-		}
-	}
-	return nil
-}
-
-func attachmentIndexKeys(attachment PolicyAttachment) []string {
-	switch {
-	case attachment.Target.SandboxUID != "":
-		return []string{sandboxPolicyAttachmentKeyPrefix + attachment.Target.SandboxUID}
-	case attachment.Target.Global:
-		return []string{globalPolicyAttachmentIndexKey}
-	default:
-		result := make([]string, 0, len(attachment.Target.Namespaces))
-		for _, namespace := range attachment.Target.Namespaces {
-			result = append(result, namespacePolicyAttachmentKeyPrefix+namespace)
-		}
-		return result
-	}
-}
-
-func NewSandboxPolicyBindingsCollection(
-	sandboxes krt.Collection[model.Sandbox],
-	subjects krt.Collection[SandboxSubject],
-	attachments krt.Collection[PolicyAttachment],
-	options krt.OptionsBuilder,
-) krt.Collection[SandboxPolicyBindings] {
-	byTarget := krt.NewIndex(attachments, "policyAttachmentsByTarget", attachmentIndexKeys)
-	return krt.NewManyCollection(subjects,
-		func(ctx krt.HandlerContext, subject SandboxSubject) []SandboxPolicyBindings {
-			sandbox := krt.FetchOne(ctx, sandboxes, krt.FilterKey(subject.SandboxUID))
-			if sandbox != nil {
-				if err := sandbox.Validate(); err != nil {
-					return []SandboxPolicyBindings{{
-						SandboxUID:    subject.ResourceName(),
-						Unresolved:    append([]model.PolicyRef(nil), sandbox.PolicyRefs...),
-						InvalidReason: err.Error(),
-					}}
-				}
-			}
-			matchedByName := make(map[string]PolicyAttachment)
-			for _, indexKey := range []string{
-				sandboxPolicyAttachmentKeyPrefix + subject.SandboxUID,
-				globalPolicyAttachmentIndexKey,
-				namespacePolicyAttachmentKeyPrefix + subject.Namespace,
-			} {
-				for _, attachment := range krt.Fetch(ctx, attachments, krt.FilterIndex(byTarget, indexKey)) {
-					if attachment.Selects(subject) {
-						matchedByName[attachment.ResourceName()] = attachment
-					}
-				}
-			}
-			if len(matchedByName) == 0 && (sandbox == nil || len(sandbox.PolicyRefs) == 0) {
-				return nil
-			}
-			matched := make([]PolicyAttachment, 0, len(matchedByName))
-			for _, attachment := range matchedByName {
-				matched = append(matched, attachment)
-			}
-			sort.Slice(matched, func(i, j int) bool { return policyAttachmentLess(matched[i], matched[j]) })
-			byKind := make(map[PolicyKind][]string)
-			seen := sets.New[string]()
-			unresolved := make([]model.PolicyRef, 0)
-			if sandbox != nil {
-				for _, reference := range sandbox.PolicyRefs {
-					key := reference.ResourceName()
-					if krt.FetchOne(ctx, attachments, krt.FilterKey(key)) == nil {
-						unresolved = append(unresolved, reference)
-						continue
-					}
-					if seen.Contains(key) {
-						continue
-					}
-					seen.Insert(key)
-					byKind[reference.Kind] = append(byKind[reference.Kind], reference.Name)
-				}
-			}
-			for _, attachment := range matched {
-				key := attachment.ResourceName()
-				if seen.Contains(key) {
-					continue
-				}
-				seen.Insert(key)
-				byKind[attachment.Kind] = append(byKind[attachment.Kind], attachment.Name)
-			}
-			kinds := make([]PolicyKind, 0, len(byKind))
-			for kind := range byKind {
-				kinds = append(kinds, kind)
-			}
-			slices.Sort(kinds)
-			groups := make([]PolicyBindingGroup, 0, len(kinds))
-			for _, kind := range kinds {
-				groups = append(groups, PolicyBindingGroup{
-					Kind:  kind,
-					Names: byKind[kind],
-				})
-			}
-			return []SandboxPolicyBindings{{
-				SandboxUID: subject.ResourceName(),
-				Groups:     groups,
-				Unresolved: unresolved,
-			}}
-		}, options.WithName("sandbox-policy-bindings")...)
 }

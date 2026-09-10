@@ -19,14 +19,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-	"istio.io/istio/pkg/util/sets"
 )
 
 const (
@@ -57,18 +55,27 @@ const (
 // authenticated client classes may consume them.
 type ResourceFacts struct {
 	Workload      *WorkloadResourceFacts
+	Sandbox       *SandboxResourceFacts
 	Service       *ServiceResourceFacts
 	Authorization *AuthorizationResourceFacts
 	GatewayOwner  string
 }
 
 type WorkloadResourceFacts struct {
-	SandboxUID        string
+	SandboxManaged    bool
+	WorkloadUID       string
+	SourceUID         string
 	NodeName          string
 	Principal         Principal
 	ServiceKeys       []string
 	GatewayReferences []string
 	AuthorizationRefs []string
+}
+
+// SandboxResourceFacts records discovery dependencies owned by a Sandbox.
+type SandboxResourceFacts struct {
+	AttesterWorkloadUID string
+	GatewayReferences   []string
 }
 
 type ServiceResourceFacts struct {
@@ -84,7 +91,10 @@ type AuthorizationResourceFacts struct {
 // typed query seam over Workload facts; arbitrary cross-family combinations
 // are intentionally not representable.
 type WorkloadQuery struct {
-	SandboxUID             string
+	// WorkloadPoliciesOnly excludes endpoints whose policies belong to Sandboxes.
+	WorkloadPoliciesOnly   bool
+	WorkloadUID            string
+	SourceUID              string
 	NodeName               string
 	Principal              *Principal
 	Namespace              string
@@ -152,74 +162,6 @@ func NewResource(key ResourceKey, xdsName string, value *anypb.Any, aliases []st
 	})
 }
 
-type ResourceSet struct {
-	resources map[string]*resourceTypeIndex
-	version   string
-	length    int
-}
-
-const resourceShardCount = 1024
-
-// resourceTypeIndex shards the otherwise very large Address/Workload maps.
-// Applying one key copies one small shard and the fixed-size shard table, while
-// unchanged shards remain shared by immutable snapshots already in use.
-type resourceTypeIndex struct {
-	shards [resourceShardCount]map[string]Resource
-	lookup resourceLookupIndex
-	facts  resourceLookupIndex
-	length int
-}
-
-// resourceLookupIndex is sharded so one-key updates copy one shard only.
-type resourceLookupIndex struct {
-	shards [resourceShardCount]map[string][]string
-}
-
-type lookupShardKey struct {
-	typeURL string
-	kind    byte
-	shard   uint16
-}
-
-// NewResourceSet indexes resources by type and name; pre-hashed resources are validated but not re-normalized.
-func NewResourceSet(resources []Resource) (ResourceSet, error) {
-	result := ResourceSet{resources: make(map[string]*resourceTypeIndex)}
-	for _, resource := range resources {
-		normalized := resource
-		if normalized.Hash == "" {
-			var err error
-			normalized, err = normalizeResource(resource)
-			if err != nil {
-				return ResourceSet{}, err
-			}
-		} else if err := validateResource(normalized); err != nil {
-			return ResourceSet{}, err
-		}
-		index := result.resources[normalized.Key.TypeURL]
-		if index == nil {
-			index = &resourceTypeIndex{}
-			result.resources[normalized.Key.TypeURL] = index
-		}
-		shardID := resourceShard(normalized.Key.Name)
-		if index.shards[shardID] == nil {
-			index.shards[shardID] = make(map[string]Resource)
-		}
-		if _, found := index.shards[shardID][normalized.Key.Name]; found {
-			return ResourceSet{}, fmt.Errorf("duplicate resource %s/%s", normalized.Key.TypeURL, normalized.Key.Name)
-		}
-		index.shards[shardID][normalized.Key.Name] = normalized
-		indexResourceLookups(index, normalized)
-		index.length++
-		result.length++
-	}
-	for _, index := range result.resources {
-		finalizeLookupIndex(&index.lookup)
-		finalizeLookupIndex(&index.facts)
-	}
-	result.version = result.computeVersion()
-	return result, nil
-}
-
 func validateResource(resource Resource) error {
 	if strings.TrimSpace(resource.Key.TypeURL) == "" {
 		return fmt.Errorf("resource type URL is required")
@@ -241,6 +183,20 @@ func validateResource(resource Resource) error {
 
 func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 	families := 0
+	if facts.Sandbox != nil {
+		families++
+		if key.TypeURL != SandboxType {
+			return fmt.Errorf("resource %s/%s carries Sandbox facts", key.TypeURL, key.Name)
+		}
+		if uid := facts.Sandbox.AttesterWorkloadUID; uid != strings.TrimSpace(uid) {
+			return fmt.Errorf("Sandbox %s has a non-canonical attester UID", key.Name)
+		}
+		for _, key := range facts.Sandbox.GatewayReferences {
+			if strings.TrimSpace(key) == "" {
+				return fmt.Errorf("Sandbox gateway reference is empty")
+			}
+		}
+	}
 	if facts.Workload != nil {
 		families++
 	}
@@ -257,8 +213,8 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 		if key.TypeURL != AddressType && key.TypeURL != WorkloadType {
 			return fmt.Errorf("resource %s/%s carries Workload facts", key.TypeURL, key.Name)
 		}
-		if facts.Workload.SandboxUID != strings.TrimSpace(facts.Workload.SandboxUID) {
-			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical sandbox UID", key.TypeURL, key.Name)
+		if uid := facts.Workload.WorkloadUID; uid != strings.TrimSpace(uid) {
+			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical workload UID", key.TypeURL, key.Name)
 		}
 		if facts.Workload.NodeName != strings.TrimSpace(facts.Workload.NodeName) {
 			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical node name", key.TypeURL, key.Name)
@@ -305,6 +261,10 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 	}
 
 	switch key.TypeURL {
+	case SandboxType:
+		if facts.Sandbox == nil {
+			return fmt.Errorf("Sandbox resource %s requires Sandbox facts", key.Name)
+		}
 	case AddressType:
 		if facts.Workload == nil && facts.Service == nil {
 			return fmt.Errorf("Address resource %s requires Workload or Service facts", key.Name)
@@ -353,6 +313,11 @@ func validateWorkloadResourcePrincipal(principal Principal) error {
 
 func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 	result := ResourceFacts{GatewayOwner: facts.GatewayOwner}
+	if facts.Sandbox != nil {
+		sandbox := *facts.Sandbox
+		sandbox.GatewayReferences = append([]string(nil), sandbox.GatewayReferences...)
+		result.Sandbox = &sandbox
+	}
 	if facts.Workload != nil {
 		workload := *facts.Workload
 		workload.ServiceKeys = append([]string(nil), workload.ServiceKeys...)
@@ -372,6 +337,9 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 }
 
 func normalizeResourceFacts(facts *ResourceFacts) {
+	if facts.Sandbox != nil {
+		facts.Sandbox.GatewayReferences = sortedUnique(facts.Sandbox.GatewayReferences)
+	}
 	if facts.Workload == nil {
 		return
 	}
@@ -392,9 +360,18 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(value))
 	}
+	if facts.Sandbox != nil {
+		write("family", "sandbox")
+		write("attester-workload-uid", facts.Sandbox.AttesterWorkloadUID)
+		for _, key := range facts.Sandbox.GatewayReferences {
+			write("gateway-reference", key)
+		}
+	}
 	if facts.Workload != nil {
 		write("family", "workload")
-		write("sandbox", facts.Workload.SandboxUID)
+		write("sandbox-managed", fmt.Sprint(facts.Workload.SandboxManaged))
+		write("workload-uid", facts.Workload.WorkloadUID)
+		write("source-uid", facts.Workload.SourceUID)
 		write("node", facts.Workload.NodeName)
 		write("principal", facts.Workload.Principal.String())
 		for _, value := range facts.Workload.ServiceKeys {
@@ -424,17 +401,24 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 	if facts.GatewayOwner != other.GatewayOwner ||
 		(facts.Workload == nil) != (other.Workload == nil) ||
+		(facts.Sandbox == nil) != (other.Sandbox == nil) ||
 		(facts.Service == nil) != (other.Service == nil) ||
 		(facts.Authorization == nil) != (other.Authorization == nil) {
 		return false
 	}
 	if facts.Workload != nil &&
-		(facts.Workload.SandboxUID != other.Workload.SandboxUID ||
+		(facts.Workload.SandboxManaged != other.Workload.SandboxManaged ||
+			facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
+			facts.Workload.SourceUID != other.Workload.SourceUID ||
 			facts.Workload.NodeName != other.Workload.NodeName ||
 			facts.Workload.Principal != other.Workload.Principal ||
 			!slices.Equal(facts.Workload.ServiceKeys, other.Workload.ServiceKeys) ||
 			!slices.Equal(facts.Workload.GatewayReferences, other.Workload.GatewayReferences) ||
 			!slices.Equal(facts.Workload.AuthorizationRefs, other.Workload.AuthorizationRefs)) {
+		return false
+	}
+	if facts.Sandbox != nil && (facts.Sandbox.AttesterWorkloadUID != other.Sandbox.AttesterWorkloadUID ||
+		!slices.Equal(facts.Sandbox.GatewayReferences, other.Sandbox.GatewayReferences)) {
 		return false
 	}
 	if facts.Service != nil && *facts.Service != *other.Service {
@@ -481,612 +465,4 @@ func normalizeResource(resource Resource) (Resource, error) {
 	hashResourceFacts(hasher, cloned.Facts)
 	cloned.Hash = hex.EncodeToString(hasher.Sum(nil))
 	return cloned, nil
-}
-
-func (s ResourceSet) Version() string {
-	return s.version
-}
-
-func (s ResourceSet) Len() int {
-	return s.length
-}
-
-// Get returns a resource by key. The result shares storage with the set and
-// must not be mutated.
-func (s ResourceSet) Get(key ResourceKey) (Resource, bool) {
-	index := s.resources[key.TypeURL]
-	if index == nil {
-		return Resource{}, false
-	}
-	resource, found := index.shards[resourceShard(key.Name)][key.Name]
-	if !found {
-		return Resource{}, false
-	}
-	return resource, true
-}
-
-// Lookup returns resources addressed by a canonical key, wire name, or alias.
-// It uses the immutable lookup index and never scans the type snapshot.
-func (s ResourceSet) Lookup(typeURL, name string) []Resource {
-	index := s.resources[typeURL]
-	if index == nil || name == "" {
-		return nil
-	}
-	names := append([]string(nil), lookupNames(&index.lookup, name)...)
-	if resource, found := s.Get(ResourceKey{TypeURL: typeURL, Name: name}); found {
-		names = append(names, resource.Key.Name)
-	}
-	return resourcesForNames(index, names)
-}
-
-func (s ResourceSet) ListWorkloads(typeURL string, query WorkloadQuery) []Resource {
-	index := s.resources[typeURL]
-	keys, valid := workloadQueryFactKeys(query)
-	if index == nil || !valid {
-		return nil
-	}
-	candidates := smallestPosting(&index.facts, keys)
-	if len(candidates) == 0 {
-		return nil
-	}
-	// Fact postings are already sorted and unique, so resolve them directly without rebuilding a set and sorting it.
-	result := make([]Resource, 0, len(candidates))
-	for _, name := range candidates {
-		resource, found := index.shards[resourceShard(name)][name]
-		if found && workloadMatchesQuery(resource.Facts.Workload, query) {
-			result = append(result, resource)
-		}
-	}
-	return result
-}
-
-func (s ResourceSet) HasWorkload(typeURL string, query WorkloadQuery) bool {
-	index := s.resources[typeURL]
-	keys, valid := workloadQueryFactKeys(query)
-	if index == nil || !valid {
-		return false
-	}
-	for _, name := range smallestPosting(&index.facts, keys) {
-		resource, found := index.shards[resourceShard(name)][name]
-		if found && workloadMatchesQuery(resource.Facts.Workload, query) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s ResourceSet) ListServiceMembers(typeURL, serviceKey string) []Resource {
-	return s.listByFact(typeURL, resourceFactService, serviceKey)
-}
-
-func (s ResourceSet) ListResourcesOwnedByGateway(typeURL, gatewayKey string) []Resource {
-	return s.listByFact(typeURL, resourceFactGatewayOwner, gatewayKey)
-}
-
-func (s ResourceSet) ListGlobalAuthorizations() []Resource {
-	return s.listByFact(WorkloadAuthorizationType, resourceFactAuthorizationGlobal, "global")
-}
-
-func (s ResourceSet) ListNamespaceAuthorizations(namespace string) []Resource {
-	return s.listByFact(WorkloadAuthorizationType, resourceFactAuthorizationNamespace, namespace)
-}
-
-func (s ResourceSet) listByFact(typeURL string, kind resourceFactKind, key string) []Resource {
-	index := s.resources[typeURL]
-	if index == nil || key == "" {
-		return nil
-	}
-	return resourcesForNames(index, lookupNames(&index.facts, resourceFactIndexKey(kind, key)))
-}
-
-// List returns every resource of a type, ordered by name. The results share
-// storage with the set and must not be mutated.
-func (s ResourceSet) List(typeURL string) []Resource {
-	index := s.resources[typeURL]
-	if index == nil {
-		return nil
-	}
-	result := make([]Resource, 0, index.length)
-	for _, shard := range index.shards {
-		for _, resource := range shard {
-			result = append(result, resource)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Key.Name < result[j].Key.Name })
-	return result
-}
-
-func (s ResourceSet) Types() []string {
-	result := make([]string, 0, len(s.resources))
-	for typeURL := range s.resources {
-		result = append(result, typeURL)
-	}
-	sort.Strings(result)
-	return result
-}
-
-// CountsByType returns snapshot cardinality without allocating every resource.
-func (s ResourceSet) CountsByType() map[string]int {
-	result := make(map[string]int, len(s.resources))
-	for typeURL, index := range s.resources {
-		result[typeURL] = index.length
-	}
-	return result
-}
-
-// Apply returns a new immutable snapshot by copying only the shards that contain
-// an effective change. This keeps steady-state work bounded even when Address
-// and Workload contain hundreds of thousands of resources.
-func (s ResourceSet) Apply(changes []ResourceChange) (ResourceSet, bool, error) {
-	if len(changes) == 0 {
-		return s, false, nil
-	}
-	resources := make(map[string]*resourceTypeIndex, len(s.resources))
-	maps.Copy(resources, s.resources)
-	clonedTypes := make(map[string]*resourceTypeIndex)
-	type shardKey struct {
-		typeURL string
-		shard   uint16
-	}
-	clonedShards := sets.New[shardKey]()
-	clonedLookupShards := sets.New[lookupShardKey]()
-	effective := make([]ResourceChange, 0, len(changes))
-	length := s.length
-	for _, change := range changes {
-		if strings.TrimSpace(change.Key.TypeURL) == "" || strings.TrimSpace(change.Key.Name) == "" {
-			return ResourceSet{}, false, fmt.Errorf("resource change key is required")
-		}
-		index := resources[change.Key.TypeURL]
-		shardID := resourceShard(change.Key.Name)
-		var currentShard map[string]Resource
-		if index != nil {
-			currentShard = index.shards[shardID]
-		}
-		current, found := currentShard[change.Key.Name]
-		if change.New == nil {
-			if !found {
-				continue
-			}
-		} else {
-			if change.New.Key != change.Key {
-				return ResourceSet{}, false, fmt.Errorf("resource change key %v does not match new resource key %v", change.Key, change.New.Key)
-			}
-			normalized := *change.New
-			if normalized.Hash == "" {
-				var err error
-				normalized, err = normalizeResource(normalized)
-				if err != nil {
-					return ResourceSet{}, false, err
-				}
-			} else if err := validateResource(normalized); err != nil {
-				return ResourceSet{}, false, err
-			}
-			if found && current.Hash == normalized.Hash {
-				continue
-			}
-			change.New = &normalized
-		}
-
-		if _, cloned := clonedTypes[change.Key.TypeURL]; !cloned {
-			copied := &resourceTypeIndex{}
-			if index != nil {
-				*copied = *index
-			}
-			index = copied
-			resources[change.Key.TypeURL] = index
-			clonedTypes[change.Key.TypeURL] = index
-		} else {
-			index = clonedTypes[change.Key.TypeURL]
-		}
-		key := shardKey{typeURL: change.Key.TypeURL, shard: shardID}
-		if !clonedShards.Contains(key) {
-			original := index.shards[shardID]
-			copied := make(map[string]Resource, len(original)+1)
-			maps.Copy(copied, original)
-			index.shards[shardID] = copied
-			clonedShards.Insert(key)
-		}
-		old := current
-		if found {
-			change.Old = &old
-		}
-		updateResourceLookupDiff(index, change.Old, change.New, change.Key.TypeURL, clonedLookupShards)
-		if change.New == nil {
-			delete(index.shards[shardID], change.Key.Name)
-			index.length--
-			length--
-		} else {
-			index.shards[shardID][change.Key.Name] = *change.New
-			if !found {
-				index.length++
-				length++
-			}
-		}
-		effective = append(effective, change)
-	}
-	if len(effective) == 0 {
-		return s, false, nil
-	}
-	for typeURL, index := range clonedTypes {
-		if index.length == 0 {
-			delete(resources, typeURL)
-		}
-	}
-	return ResourceSet{resources: resources, version: incrementalVersion(s.version, effective), length: length}, true, nil
-}
-
-// Diff describes the key-level difference from s to next. It is intended for
-// startup and recovery publication; the normal KRT path already supplies these
-// changes and does not call Diff.
-func (s ResourceSet) Diff(next ResourceSet) []ResourceChange {
-	changes := make([]ResourceChange, 0)
-	for typeURL, currentIndex := range s.resources {
-		for _, currentShard := range currentIndex.shards {
-			for name, current := range currentShard {
-				updated, found := next.Get(ResourceKey{TypeURL: typeURL, Name: name})
-				if found && updated.Hash == current.Hash {
-					continue
-				}
-				old := current
-				change := ResourceChange{Key: current.Key, Old: &old}
-				if found {
-					newResource := updated
-					change.New = &newResource
-				}
-				changes = append(changes, change)
-			}
-		}
-	}
-	for typeURL, nextIndex := range next.resources {
-		for _, nextShard := range nextIndex.shards {
-			for name, resource := range nextShard {
-				if _, found := s.Get(ResourceKey{TypeURL: typeURL, Name: name}); found {
-					continue
-				}
-				newResource := resource
-				changes = append(changes, ResourceChange{Key: resource.Key, New: &newResource})
-			}
-		}
-	}
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].Key.TypeURL != changes[j].Key.TypeURL {
-			return changes[i].Key.TypeURL < changes[j].Key.TypeURL
-		}
-		return changes[i].Key.Name < changes[j].Key.Name
-	})
-	return changes
-}
-
-func incrementalVersion(previous string, changes []ResourceChange) string {
-	ordered := append([]ResourceChange(nil), changes...)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].Key.TypeURL != ordered[j].Key.TypeURL {
-			return ordered[i].Key.TypeURL < ordered[j].Key.TypeURL
-		}
-		return ordered[i].Key.Name < ordered[j].Key.Name
-	})
-	hasher := sha256.New()
-	hasher.Write([]byte(previous))
-	for _, change := range ordered {
-		hasher.Write([]byte{0})
-		hasher.Write([]byte(change.Key.TypeURL))
-		hasher.Write([]byte{0})
-		hasher.Write([]byte(change.Key.Name))
-		hasher.Write([]byte{0})
-		if change.New == nil {
-			hasher.Write([]byte("deleted"))
-		} else {
-			hasher.Write([]byte(change.New.Hash))
-		}
-	}
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-// computeVersion folds every resource hash into one snapshot version. It reads
-// the hashes straight out of the index: going through List would allocate and
-// order the full resource set a second time for no benefit.
-func (s ResourceSet) computeVersion() string {
-	hasher := sha256.New()
-	for _, typeURL := range s.Types() {
-		for _, resource := range s.List(typeURL) {
-			hasher.Write([]byte(resource.Hash))
-			hasher.Write([]byte{0})
-		}
-	}
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func resourceShard(name string) uint16 {
-	// FNV-1a is stable, fast, and sufficient for distributing resource names.
-	var hash uint32 = 2166136261
-	for i := 0; i < len(name); i++ {
-		hash ^= uint32(name[i])
-		hash *= 16777619
-	}
-	return uint16(hash & (resourceShardCount - 1))
-}
-
-type resourceFactKind byte
-
-const (
-	resourceFactSandbox resourceFactKind = iota + 1
-	resourceFactNode
-	resourceFactPrincipal
-	resourceFactNamespace
-	resourceFactService
-	resourceFactGatewayReference
-	resourceFactAuthorizationReference
-	resourceFactGatewayOwner
-	resourceFactAuthorizationGlobal
-	resourceFactAuthorizationNamespace
-)
-
-func resourceFactIndexKey(kind resourceFactKind, key string) string {
-	return string([]byte{byte(kind)}) + "\x00" + key
-}
-
-func resourceFactKeys(resource Resource) []string {
-	result := make([]string, 0, 8)
-	add := func(kind resourceFactKind, key string) {
-		if key != "" {
-			result = append(result, resourceFactIndexKey(kind, key))
-		}
-	}
-	if workload := resource.Facts.Workload; workload != nil {
-		add(resourceFactSandbox, workload.SandboxUID)
-		add(resourceFactNode, workload.NodeName)
-		add(resourceFactPrincipal, workload.Principal.String())
-		if workload.Principal.Kind == PrincipalServiceAccount {
-			add(resourceFactNamespace, workload.Principal.ServiceAccount.Namespace)
-		}
-		for _, key := range workload.ServiceKeys {
-			add(resourceFactService, key)
-		}
-		for _, key := range workload.GatewayReferences {
-			add(resourceFactGatewayReference, key)
-		}
-		for _, key := range workload.AuthorizationRefs {
-			add(resourceFactAuthorizationReference, key)
-		}
-	}
-	if resource.Facts.Service != nil {
-		add(resourceFactService, resource.Facts.Service.ServiceKey)
-	}
-	add(resourceFactGatewayOwner, resource.Facts.GatewayOwner)
-	if authorization := resource.Facts.Authorization; authorization != nil {
-		switch authorization.Scope {
-		case AuthorizationScopeGlobal:
-			add(resourceFactAuthorizationGlobal, "global")
-		case AuthorizationScopeNamespace:
-			add(resourceFactAuthorizationNamespace, authorization.Namespace)
-		}
-	}
-	return result
-}
-
-func workloadQueryFactKeys(query WorkloadQuery) ([]string, bool) {
-	keys := make([]string, 0, 7)
-	add := func(kind resourceFactKind, key string) bool {
-		if key == "" {
-			return true
-		}
-		if strings.TrimSpace(key) == "" {
-			return false
-		}
-		keys = append(keys, resourceFactIndexKey(kind, key))
-		return true
-	}
-	if !add(resourceFactSandbox, query.SandboxUID) ||
-		!add(resourceFactNode, query.NodeName) ||
-		!add(resourceFactNamespace, query.Namespace) ||
-		!add(resourceFactService, query.ServiceKey) ||
-		!add(resourceFactGatewayReference, query.GatewayReference) ||
-		!add(resourceFactAuthorizationReference, query.AuthorizationReference) {
-		return nil, false
-	}
-	if query.Principal != nil {
-		if err := query.Principal.Validate(); err != nil {
-			return nil, false
-		}
-		keys = append(keys, resourceFactIndexKey(resourceFactPrincipal, query.Principal.String()))
-	}
-	return keys, len(keys) > 0
-}
-
-func smallestPosting(index *resourceLookupIndex, keys []string) []string {
-	var candidates []string
-	for _, key := range keys {
-		names := lookupNames(index, key)
-		if len(names) == 0 {
-			return nil
-		}
-		if candidates == nil || len(names) < len(candidates) {
-			candidates = names
-		}
-	}
-	return candidates
-}
-
-func workloadMatchesQuery(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
-	if workload == nil ||
-		(query.SandboxUID != "" && workload.SandboxUID != query.SandboxUID) ||
-		(query.NodeName != "" && workload.NodeName != query.NodeName) ||
-		(query.Principal != nil && workload.Principal != *query.Principal) ||
-		(query.Namespace != "" && (workload.Principal.Kind != PrincipalServiceAccount ||
-			workload.Principal.ServiceAccount.Namespace != query.Namespace)) ||
-		(query.ServiceKey != "" && !slices.Contains(workload.ServiceKeys, query.ServiceKey)) ||
-		(query.GatewayReference != "" && !slices.Contains(workload.GatewayReferences, query.GatewayReference)) ||
-		(query.AuthorizationReference != "" && !slices.Contains(workload.AuthorizationRefs, query.AuthorizationReference)) {
-		return false
-	}
-	return true
-}
-
-func indexResourceLookups(index *resourceTypeIndex, resource Resource) {
-	appendLookupName(&index.lookup, resource.XDSName, resource.Key.Name)
-	for _, alias := range resource.Aliases {
-		appendLookupName(&index.lookup, alias, resource.Key.Name)
-	}
-	for _, key := range resourceFactKeys(resource) {
-		appendLookupName(&index.facts, key, resource.Key.Name)
-	}
-}
-
-func appendLookupName(index *resourceLookupIndex, key, name string) {
-	if key == "" || name == "" {
-		return
-	}
-	shardID := resourceShard(key)
-	if index.shards[shardID] == nil {
-		index.shards[shardID] = make(map[string][]string)
-	}
-	index.shards[shardID][key] = append(index.shards[shardID][key], name)
-}
-
-func finalizeLookupIndex(index *resourceLookupIndex) {
-	for shardID := range index.shards {
-		for key, names := range index.shards[shardID] {
-			sort.Strings(names)
-			index.shards[shardID][key] = compactSorted(names)
-		}
-	}
-}
-
-func compactSorted(values []string) []string {
-	if len(values) < 2 {
-		return values
-	}
-	write := 1
-	for read := 1; read < len(values); read++ {
-		if values[read] == values[write-1] {
-			continue
-		}
-		values[write] = values[read]
-		write++
-	}
-	return values[:write]
-}
-
-func lookupNames(index *resourceLookupIndex, key string) []string {
-	return index.shards[resourceShard(key)][key]
-}
-
-func resourcesForNames(index *resourceTypeIndex, names []string) []Resource {
-	if len(names) == 0 {
-		return nil
-	}
-	unique := sets.NewWithLength[string](len(names))
-	result := make([]Resource, 0, len(names))
-	for _, name := range names {
-		if unique.Contains(name) {
-			continue
-		}
-		resource, found := index.shards[resourceShard(name)][name]
-		if !found {
-			continue
-		}
-		unique.Insert(name)
-		result = append(result, resource)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Key.Name < result[j].Key.Name })
-	return result
-}
-
-type resourceLookupEntry struct {
-	kind byte
-	key  string
-}
-
-func resourceLookupEntries(resource *Resource) sets.Set[resourceLookupEntry] {
-	entries := sets.New[resourceLookupEntry]()
-	if resource == nil {
-		return entries
-	}
-	add := func(kind byte, key string) {
-		if key != "" {
-			entries.Insert(resourceLookupEntry{kind: kind, key: key})
-		}
-	}
-	add(0, resource.XDSName)
-	for _, alias := range resource.Aliases {
-		add(0, alias)
-	}
-	for _, key := range resourceFactKeys(*resource) {
-		add(1, key)
-	}
-	return entries
-}
-
-func updateResourceLookupDiff(
-	index *resourceTypeIndex,
-	oldResource, newResource *Resource,
-	typeURL string,
-	cloned sets.Set[lookupShardKey],
-) {
-	oldEntries := resourceLookupEntries(oldResource)
-	newEntries := resourceLookupEntries(newResource)
-	name := ""
-	if newResource != nil {
-		name = newResource.Key.Name
-	} else if oldResource != nil {
-		name = oldResource.Key.Name
-	}
-	for entry := range oldEntries {
-		if newEntries.Contains(entry) {
-			continue
-		}
-		updateLookupMembership(index, entry, name, false, typeURL, cloned)
-	}
-	for entry := range newEntries {
-		if oldEntries.Contains(entry) {
-			continue
-		}
-		updateLookupMembership(index, entry, name, true, typeURL, cloned)
-	}
-}
-
-func updateLookupMembership(
-	index *resourceTypeIndex,
-	entry resourceLookupEntry,
-	name string,
-	add bool,
-	typeURL string,
-	cloned sets.Set[lookupShardKey],
-) {
-	lookup := &index.lookup
-	if entry.kind == 1 {
-		lookup = &index.facts
-	}
-	outerShardID := resourceShard(entry.key)
-	outerCloneKey := lookupShardKey{typeURL: typeURL, kind: entry.kind, shard: outerShardID}
-	if !cloned.Contains(outerCloneKey) {
-		original := lookup.shards[outerShardID]
-		copied := make(map[string][]string, len(original)+1)
-		maps.Copy(copied, original)
-		lookup.shards[outerShardID] = copied
-		cloned.Insert(outerCloneKey)
-	}
-
-	names := lookup.shards[outerShardID][entry.key]
-	position := sort.SearchStrings(names, name)
-	contains := position < len(names) && names[position] == name
-	if add == contains {
-		return
-	}
-	if add {
-		updated := make([]string, len(names)+1)
-		copy(updated, names[:position])
-		updated[position] = name
-		copy(updated[position+1:], names[position:])
-		lookup.shards[outerShardID][entry.key] = updated
-		return
-	}
-	if len(names) == 1 {
-		delete(lookup.shards[outerShardID], entry.key)
-		return
-	}
-	updated := make([]string, 0, len(names)-1)
-	updated = append(updated, names[:position]...)
-	updated = append(updated, names[position+1:]...)
-	lookup.shards[outerShardID][entry.key] = updated
 }

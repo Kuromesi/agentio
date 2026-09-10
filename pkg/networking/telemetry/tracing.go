@@ -18,13 +18,14 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/openkruise/agentio/pkg/util/protoutil"
+
 	tracev3 "github.com/envoyproxy/go-control-plane/envoy/config/trace/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	uuidv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/request_id/uuid/v3"
 	tracingv3 "github.com/envoyproxy/go-control-plane/envoy/type/tracing/v3"
 	percentv3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/openkruise/agentio/pkg/model"
@@ -68,7 +69,7 @@ func buildTracing(
 		result.CustomTags = append(result.CustomTags, converted)
 	}
 	sort.Slice(result.CustomTags, func(i, j int) bool { return result.CustomTags[i].Tag < result.CustomTags[j].Tag })
-	uuidTyped, err := anypb.New(&uuidv3.UuidRequestIdConfig{
+	uuidTyped, err := protoutil.MarshalAny(&uuidv3.UuidRequestIdConfig{
 		UseRequestIdForTraceSampling: wrapperspb.Bool(spec.UseRequestIDForTraceSampling),
 	})
 	if err != nil {

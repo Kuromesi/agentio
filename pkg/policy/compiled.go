@@ -21,9 +21,9 @@ import (
 )
 
 // CompiledPolicy contains a typed wire payload and its optional, payload-free
-// Sandbox attachment. Published values and their nested data are immutable.
+// policy attachment. Published values and their nested data are immutable.
 // Name and Attachment.Name must agree when an attachment is present.
-// A nil Attachment means the policy does not use Sandbox reference binding.
+// A nil Attachment means the policy does not participate in target binding.
 type CompiledPolicy[P proto.Message] struct {
 	Name       string
 	Policy     P
