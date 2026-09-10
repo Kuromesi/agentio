@@ -37,23 +37,31 @@ func TestQueryServersRetriesTruncatedResponseOverTCP(t *testing.T) {
 				t.Fatal(err)
 			}
 			udpReady, tcpReady := make(chan struct{}), make(chan struct{})
-			udpServer := &mdns.Server{PacketConn: udp, NotifyStartedFunc: func() { close(udpReady) }, Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, r *mdns.Msg) {
-				m := new(mdns.Msg)
-				m.SetReply(r)
-				m.Truncated = true
-				if err := w.WriteMsg(m); err != nil {
-					t.Errorf("write DNS response: %v", err)
-				}
-			})}
-			tcpServer := &mdns.Server{Listener: tcp, NotifyStartedFunc: func() { close(tcpReady) }, Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, r *mdns.Msg) {
-				m := new(mdns.Msg)
-				m.SetReply(r)
-				m.Truncated = truncateTCP
-				m.Answer = []mdns.RR{&mdns.A{Hdr: mdns.RR_Header{Name: r.Question[0].Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 30}, A: net.ParseIP("192.0.2.1")}}
-				if err := w.WriteMsg(m); err != nil {
-					t.Errorf("write DNS response: %v", err)
-				}
-			})}
+			udpServer := &mdns.Server{
+				PacketConn:        udp,
+				NotifyStartedFunc: func() { close(udpReady) },
+				Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, r *mdns.Msg) {
+					m := new(mdns.Msg)
+					m.SetReply(r)
+					m.Truncated = true
+					if err := w.WriteMsg(m); err != nil {
+						t.Errorf("write DNS response: %v", err)
+					}
+				}),
+			}
+			tcpServer := &mdns.Server{
+				Listener:          tcp,
+				NotifyStartedFunc: func() { close(tcpReady) },
+				Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, r *mdns.Msg) {
+					m := new(mdns.Msg)
+					m.SetReply(r)
+					m.Truncated = truncateTCP
+					m.Answer = []mdns.RR{&mdns.A{Hdr: mdns.RR_Header{Name: r.Question[0].Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 30}, A: net.ParseIP("192.0.2.1")}}
+					if err := w.WriteMsg(m); err != nil {
+						t.Errorf("write DNS response: %v", err)
+					}
+				}),
+			}
 			udpDone, tcpDone := make(chan error, 1), make(chan error, 1)
 			go func() { udpDone <- udpServer.ActivateAndServe() }()
 			go func() { tcpDone <- tcpServer.ActivateAndServe() }()

@@ -22,8 +22,10 @@ import (
 
 func TestSignV1RPC_GETGolden(t *testing.T) {
 	req := &RequestSnapshot{
-		Method: "GET", Scheme: "https",
-		Host: "ecs.aliyuncs.com", Path: "/",
+		Method:   "GET",
+		Scheme:   "https",
+		Host:     "ecs.aliyuncs.com",
+		Path:     "/",
 		RawQuery: "Action=DescribeRegions&Format=JSON&Version=2014-05-26&AccessKeyId=OLDAK&SignatureMethod=HMAC-SHA1&SignatureNonce=nonce&SignatureVersion=1.0&SecurityToken=OLDSTS&Signature=stale&Timestamp=2026-05-24T10%3A00%3A00Z",
 		Headers:  map[string]string{"host": "ecs.aliyuncs.com"},
 	}
@@ -64,8 +66,10 @@ func TestSignV1RPC_GETGolden(t *testing.T) {
 func TestSignV1RPC_POSTFormBody(t *testing.T) {
 	body := []byte("Action=RunInstances&InstanceType=ecs.g6.large")
 	req := &RequestSnapshot{
-		Method: "POST", Scheme: "https",
-		Host: "ecs.aliyuncs.com", Path: "/",
+		Method:   "POST",
+		Scheme:   "https",
+		Host:     "ecs.aliyuncs.com",
+		Path:     "/",
 		RawQuery: "AccessKeyId=OLDAK&SignatureMethod=HMAC-SHA1&SignatureNonce=n&SignatureVersion=1.0&SecurityToken=OLDSTS&Signature=stale&Timestamp=2026-05-24T10%3A00%3A00Z&Version=2014-05-26&Format=JSON",
 		Headers: map[string]string{
 			"host":         "ecs.aliyuncs.com",
@@ -129,7 +133,8 @@ func TestSignV1RPC_InvalidInput(t *testing.T) {
 
 func TestSignV1RPC_EmptySecurityTokenRemoves(t *testing.T) {
 	req := &RequestSnapshot{
-		Method: "GET", Path: "/",
+		Method:   "GET",
+		Path:     "/",
 		RawQuery: "AccessKeyId=OLDAK&SignatureMethod=HMAC-SHA1&SecurityToken=OLDST&Signature=stale&SignatureVersion=1.0",
 		Headers:  map[string]string{"host": "ecs.aliyuncs.com"},
 	}
@@ -177,7 +182,8 @@ func TestSignV1RPC_POSTBodyEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := &RequestSnapshot{
-				Method: "POST", Path: "/",
+				Method:   "POST",
+				Path:     "/",
 				RawQuery: "AccessKeyId=AK&SignatureMethod=HMAC-SHA1&SecurityToken=ST&Signature=stale&SignatureVersion=1.0",
 				Headers: map[string]string{
 					"host":         "ecs.aliyuncs.com",

@@ -191,8 +191,13 @@ func benchRequestSized(nHeaders, nQuery int) inputs.Request {
 		q[fmt.Sprintf("param%d", i)] = []string{"value"}
 	}
 	return inputs.RequestFrom(httpreq.HTTPRequest{
-		Host: "api.example.com", Port: 443, Path: "/v1/chat/completions",
-		Scheme: "https", Method: "POST", Headers: h, Query: q,
+		Host:    "api.example.com",
+		Port:    443,
+		Path:    "/v1/chat/completions",
+		Scheme:  "https",
+		Method:  "POST",
+		Headers: h,
+		Query:   q,
 	})
 }
 

@@ -251,8 +251,10 @@ func TestServiceResourcePreservesNormalizedTargetPort(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			resource, err := buildWDSService(model.Service{
-				Namespace: "demo", Name: "backend", Hostname: "backend.demo.svc.cluster.local",
-				Ports: []model.ServicePort{test.port},
+				Namespace: "demo",
+				Name:      "backend",
+				Hostname:  "backend.demo.svc.cluster.local",
+				Ports:     []model.ServicePort{test.port},
 			}, "")
 			if err != nil {
 				t.Fatal(err)
@@ -446,10 +448,14 @@ func TestWorkloadResourceCarriesScopeAndServiceFacts(t *testing.T) {
 func TestBuildWDSAddressEncodingIsDeterministic(t *testing.T) {
 	workload := projectionTestWorkload()
 	workload.Labels = map[string]string{"a": "1", "b": "2", "c": "3", "d": "4"}
-	input := wdsProjection{Workload: workload, MetadataConfiguration: &workloadMetadataConfiguration{}, Services: []model.Service{
-		{Namespace: "demo", Name: "a", Hostname: "a.demo.svc.cluster.local"},
-		{Namespace: "demo", Name: "b", Hostname: "b.demo.svc.cluster.local"},
-	}}
+	input := wdsProjection{
+		Workload:              workload,
+		MetadataConfiguration: &workloadMetadataConfiguration{},
+		Services: []model.Service{
+			{Namespace: "demo", Name: "a", Hostname: "a.demo.svc.cluster.local"},
+			{Namespace: "demo", Name: "b", Hostname: "b.demo.svc.cluster.local"},
+		},
+	}
 	first, err := buildWDSAddress(input)
 	if err != nil {
 		t.Fatal(err)

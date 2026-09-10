@@ -201,27 +201,36 @@ func TestConfigDebugHandlerRejectsRemoteNonKubernetesOrWrongNamespaceIdentity(t 
 		name string
 		peer model.PeerIdentity
 	}{
-		{name: "non-kubernetes attestation", peer: func() model.PeerIdentity {
-			peer := configDebugAuthorizedPeer("agentio-system")
-			peer.AttestedBy = model.Attestation("firecracker")
-			return peer
-		}()},
+		{
+			name: "non-kubernetes attestation",
+			peer: func() model.PeerIdentity {
+				peer := configDebugAuthorizedPeer("agentio-system")
+				peer.AttestedBy = model.Attestation("firecracker")
+				return peer
+			}(),
+		},
 		{name: "wrong namespace", peer: configDebugAuthorizedPeer("application")},
-		{name: "non-service-account principal", peer: func() model.PeerIdentity {
-			peer := configDebugAuthorizedPeer("agentio-system")
-			peer.Principal.Kind = model.PrincipalKind("user")
-			return peer
-		}()},
-		{name: "invalid service account principal", peer: model.PeerIdentity{
-			AttestedBy: model.AttestationKubernetes,
-			Principal: model.Principal{
-				Kind:        model.PrincipalServiceAccount,
-				TrustDomain: "cluster.local",
-				ServiceAccount: model.ServiceAccountRef{
-					Namespace: "agentio-system",
+		{
+			name: "non-service-account principal",
+			peer: func() model.PeerIdentity {
+				peer := configDebugAuthorizedPeer("agentio-system")
+				peer.Principal.Kind = model.PrincipalKind("user")
+				return peer
+			}(),
+		},
+		{
+			name: "invalid service account principal",
+			peer: model.PeerIdentity{
+				AttestedBy: model.AttestationKubernetes,
+				Principal: model.Principal{
+					Kind:        model.PrincipalServiceAccount,
+					TrustDomain: "cluster.local",
+					ServiceAccount: model.ServiceAccountRef{
+						Namespace: "agentio-system",
+					},
 				},
 			},
-		}},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			handler := NewHandler(fixture.sources, fixture.compiler,

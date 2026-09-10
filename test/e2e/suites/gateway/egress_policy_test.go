@@ -213,8 +213,11 @@ data:
 `)
 
 		src.CallOrFail(t, withEgressPolicyRetry(echo.CallOptions{
-			Protocol: echo.HTTP, Address: "www.example.com", Port: 80,
-			FollowRedirects: true, Check: check.OK(),
+			Protocol:        echo.HTTP,
+			Address:         "www.example.com",
+			Port:            80,
+			FollowRedirects: true,
+			Check:           check.OK(),
 		}))
 	})
 
@@ -316,8 +319,11 @@ data:
 
 func withEgressPolicyRetry(options echo.CallOptions) echo.CallOptions {
 	options.Retry = retry.Policy{
-		Timeout: 2 * time.Minute, Delay: 5 * time.Second,
-		Backoff: 1, MaxDelay: 5 * time.Second, Converge: 1,
+		Timeout:  2 * time.Minute,
+		Delay:    5 * time.Second,
+		Backoff:  1,
+		MaxDelay: 5 * time.Second,
+		Converge: 1,
 	}
 	return options
 }

@@ -71,7 +71,9 @@ func NewPatchSet(patches []model.GatewayPatch) *PatchSet {
 				continue
 			}
 			result.byTarget[target] = append(result.byTarget[target], Patch{
-				Target: patch.Target, Operation: patch.Operation, FullName: declaration.LogicalName(),
+				Target:    patch.Target,
+				Operation: patch.Operation,
+				FullName:  declaration.LogicalName(),
 			})
 		}
 	}

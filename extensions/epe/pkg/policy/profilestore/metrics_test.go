@@ -375,10 +375,12 @@ func TestDegradedGaugesAreBoundedByScope(t *testing.T) {
 		id := strconv.Itoa(i)
 		events = append(events,
 			krt.Event[securityprofile.Profile]{
-				New: invalidNamespaced("p-"+id, "ns-"+id), Event: controllers.EventAdd,
+				New:   invalidNamespaced("p-"+id, "ns-"+id),
+				Event: controllers.EventAdd,
 			},
 			krt.Event[securityprofile.Profile]{
-				New: invalidInline("sbx-"+id, "ns-"+id, "1"), Event: controllers.EventAdd,
+				New:   invalidInline("sbx-"+id, "ns-"+id, "1"),
+				Event: controllers.EventAdd,
 			},
 		)
 	}
@@ -403,7 +405,8 @@ func TestDegradedGaugesAreBoundedByScope(t *testing.T) {
 	deletes := make([]krt.Event[securityprofile.Profile], 0, 2*n)
 	for _, ev := range events {
 		deletes = append(deletes, krt.Event[securityprofile.Profile]{
-			Old: ev.New, Event: controllers.EventDelete,
+			Old:   ev.New,
+			Event: controllers.EventDelete,
 		})
 	}
 	s.applyBatch(deletes)

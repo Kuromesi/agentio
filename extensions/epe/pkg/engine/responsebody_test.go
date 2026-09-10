@@ -406,9 +406,12 @@ func TestEvalRejectsPhaseIncompatibleMutations(t *testing.T) {
 			name: "request headers status",
 			want: "status",
 			run: func(t *testing.T) error {
-				regs := buildRegs(t, []regSpec{{name: "request", make: func(filter.RuleConfig[string]) filter.Filter {
-					return &actionFilter{c: &counters{}, act: filter.Continue(filter.Mutation{StatusCode: testStatusCode(200)})}
-				}}})
+				regs := buildRegs(t, []regSpec{{
+					name: "request",
+					make: func(filter.RuleConfig[string]) filter.Filter {
+						return &actionFilter{c: &counters{}, act: filter.Continue(filter.Mutation{StatusCode: testStatusCode(200)})}
+					},
+				}})
 				_, err := NewEngine(regs, 0).EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}))
 				return err
 			},

@@ -92,8 +92,9 @@ spec:
 func TestDecodeConfigMapEnvoyFiltersExpandsList(t *testing.T) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "istio-system", Name: "config-sources",
-			Labels: map[string]string{KubeSourceConfigMapLabel: ""},
+			Namespace: "istio-system",
+			Name:      "config-sources",
+			Labels:    map[string]string{KubeSourceConfigMapLabel: ""},
 		},
 		Data: map[string]string{KubeSourceDataKey: `
 apiVersion: v1
@@ -131,8 +132,9 @@ items:
 func TestDecodeConfigMapEnvoyFiltersRejectsMalformedRecognizedDocument(t *testing.T) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "istio-system", Name: "config-sources",
-			Labels: map[string]string{KubeSourceConfigMapLabel: "true"},
+			Namespace: "istio-system",
+			Name:      "config-sources",
+			Labels:    map[string]string{KubeSourceConfigMapLabel: "true"},
 		},
 		Data: map[string]string{KubeSourceDataKey: `
 apiVersion: networking.istio.io/v1alpha3
@@ -153,8 +155,9 @@ spec:
 func TestDecodeConfigMapEnvoyFiltersReturnsValidDocumentsWithPartialError(t *testing.T) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "istio-system", Name: "config-sources",
-			Labels: map[string]string{KubeSourceConfigMapLabel: "true"},
+			Namespace: "istio-system",
+			Name:      "config-sources",
+			Labels:    map[string]string{KubeSourceConfigMapLabel: "true"},
 		},
 		Data: map[string]string{KubeSourceDataKey: `
 apiVersion: networking.istio.io/v1alpha3
@@ -202,8 +205,10 @@ func TestEnvoyFilterCollectionUsesRootNamespaceAndRetainsLastKnownGood(t *testin
 
 	valid := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "agentio-system", Name: "config-sources", ResourceVersion: "1",
-			Labels: map[string]string{KubeSourceConfigMapLabel: ""},
+			Namespace:       "agentio-system",
+			Name:            "config-sources",
+			ResourceVersion: "1",
+			Labels:          map[string]string{KubeSourceConfigMapLabel: ""},
 		},
 		Data: map[string]string{KubeSourceDataKey: `
 apiVersion: networking.istio.io/v1alpha3

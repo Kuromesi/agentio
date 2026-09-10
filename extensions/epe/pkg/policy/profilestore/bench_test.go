@@ -84,7 +84,8 @@ func BenchmarkMatches_Fallback(b *testing.B) {
 				profiles = append(profiles, mustCompileIndexedProfile(b,
 					"p"+strconv.Itoa(i), "default", metav1.LabelSelector{
 						MatchExpressions: []metav1.LabelSelectorRequirement{{
-							Key: "missing-team", Operator: metav1.LabelSelectorOpExists,
+							Key:      "missing-team",
+							Operator: metav1.LabelSelectorOpExists,
 						}},
 					}))
 			}

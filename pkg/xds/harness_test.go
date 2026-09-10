@@ -165,7 +165,9 @@ func (f *fakeResourceStore) Snapshot() model.ResourceSet {
 
 func (f *fakeResourceStore) Subscribe(ctx context.Context) xdsstore.Subscription {
 	subscription := &fakeResourceSubscription{
-		store: f, updates: make(chan xdsstore.Update, 1), types: sets.New[string](),
+		store:   f,
+		updates: make(chan xdsstore.Update, 1),
+		types:   sets.New[string](),
 	}
 	f.mu.Lock()
 	f.subscriptions.Insert(subscription)
@@ -609,7 +611,8 @@ func ztunnelScope() model.ClientScope {
 	return model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
-		WorkloadUID: "cluster//Pod/demo/client-pod", SourceUID: "cluster//Pod/demo/client-pod",
+		WorkloadUID: "cluster//Pod/demo/client-pod",
+		SourceUID:   "cluster//Pod/demo/client-pod",
 	}
 }
 
@@ -760,7 +763,10 @@ func selectionWorkload(t *testing.T, uid, namespace, node, service, policyName s
 	resource, err := model.NewResource(
 		model.ResourceKey{TypeURL: model.AddressType, Name: uid}, "",
 		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
-			Uid: uid, Namespace: namespace, Node: node, AuthorizationPolicies: authorizationPolicies,
+			Uid:                   uid,
+			Namespace:             namespace,
+			Node:                  node,
+			AuthorizationPolicies: authorizationPolicies,
 		}}}), nil, facts)
 	if err != nil {
 		t.Fatal(err)
@@ -772,7 +778,11 @@ func projectedWorkloads(t *testing.T, scope model.ClientScope, snapshot model.Re
 	t.Helper()
 	subscription := SubscriptionView{wildcard: names == nil, names: append([]string(nil), names...)}
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: model.WorkloadType, Subscription: subscription, Snapshot: snapshot, Full: true,
+		Scope:        scope,
+		TypeURL:      model.WorkloadType,
+		Subscription: subscription,
+		Snapshot:     snapshot,
+		Full:         true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -854,7 +864,9 @@ func scaleWorkloadTransition(t testing.TB, resourceCount int) (
 		name := fmt.Sprintf("workload-%06d", index)
 		resources = append(resources, model.Resource{
 			Key:     model.ResourceKey{TypeURL: model.AddressType, Name: name},
-			XDSName: name, Value: value, Hash: name + "-old",
+			XDSName: name,
+			Value:   value,
+			Hash:    name + "-old",
 			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 				WorkloadUID: name,
 				SourceUID:   name,
@@ -879,7 +891,9 @@ func scaleWorkloadTransition(t testing.TB, resourceCount int) (
 		t.Fatalf("build Workload transition: changed=%v err=%v", changed, err)
 	}
 	update := updateBetween(before, after, []model.ResourceChange{{
-		Key: targetKey, Old: &oldTarget, New: &newTarget,
+		Key: targetKey,
+		Old: &oldTarget,
+		New: &newTarget,
 	}})
 	return before, after, update, newTarget
 }

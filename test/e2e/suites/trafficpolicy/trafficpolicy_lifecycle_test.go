@@ -595,8 +595,11 @@ spec:
 		ctx, cancel := e2e.Context(t, 2*time.Minute)
 		defer cancel()
 		if err := retry.UntilSuccess(ctx, retry.Policy{
-			Timeout: 2 * time.Minute, Delay: 5 * time.Second,
-			Backoff: 1, MaxDelay: 5 * time.Second, Converge: 1,
+			Timeout:  2 * time.Minute,
+			Delay:    5 * time.Second,
+			Backoff:  1,
+			MaxDelay: 5 * time.Second,
+			Converge: 1,
 		}, func() error {
 			dump, err := rig.ConfigDump(ctx, environment, src)
 			if err != nil {

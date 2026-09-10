@@ -374,7 +374,9 @@ func parseSource(ref credentialRefSpec) (SourceSpec, error) {
 			return SourceSpec{}, fmt.Errorf("credentialRef.secret.name is empty")
 		}
 		return SourceSpec{
-			Kind: SourceKindSecret, Name: ref.Secret.Name, Namespace: ref.Secret.Namespace,
+			Kind:      SourceKindSecret,
+			Name:      ref.Secret.Name,
+			Namespace: ref.Secret.Namespace,
 		}, nil
 	case hasProvider:
 		if ref.CredentialProvider.Name == "" {
@@ -385,7 +387,9 @@ func parseSource(ref credentialRefSpec) (SourceSpec, error) {
 			return SourceSpec{}, err
 		}
 		return SourceSpec{
-			Kind: SourceKindProvider, Name: ref.CredentialProvider.Name, Parameters: params,
+			Kind:       SourceKindProvider,
+			Name:       ref.CredentialProvider.Name,
+			Parameters: params,
 		}, nil
 	default:
 		return SourceSpec{}, fmt.Errorf("credentialRef sets neither secret nor credentialProvider")

@@ -42,7 +42,11 @@ func mustAPIKeyConfig(t *testing.T, rules ...headerSpec) ApiKeyConfig {
 
 func testRequest(headers map[string]string) (*filter.Stream, *inputs.Scope) {
 	req := httpreq.HTTPRequest{
-		Host: "api.example.com", Port: 443, Path: "/v1/items", Method: "POST", Scheme: "https",
+		Host:    "api.example.com",
+		Port:    443,
+		Path:    "/v1/items",
+		Method:  "POST",
+		Scheme:  "https",
 		Headers: headers,
 	}
 	return &filter.Stream{Request: req}, inputs.NewScope(
@@ -183,14 +187,16 @@ func TestAPIKeyPrepareTargets(t *testing.T) {
 		{
 			name: "non-string dynamic result",
 			rules: []headerSpec{{
-				CEL: ptr.To(`request.headers.map(name, request.port)`), Value: valueSourceSpec{Value: ptr.To("x")},
+				CEL:   ptr.To(`request.headers.map(name, request.port)`),
+				Value: valueSourceSpec{Value: ptr.To("x")},
 			}},
 			want: "element 0 is int64, want string",
 		},
 		{
 			name: "forbidden dynamic header",
 			rules: []headerSpec{{
-				CEL: ptr.To(`["Host"]`), Value: valueSourceSpec{Value: ptr.To("x")},
+				CEL:   ptr.To(`["Host"]`),
+				Value: valueSourceSpec{Value: ptr.To("x")},
 			}},
 			want: "cannot modify Host",
 		},
@@ -437,7 +443,8 @@ func TestAPIKeySign(t *testing.T) {
 		scope := inputs.NewScope(inputs.RequestFrom(req), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
 			inputs.WithInputsError("configmap missing"))
 		withoutInputs := mustAPIKeyConfig(t, headerSpec{
-			Names: []string{"x-context"}, Value: valueSourceSpec{Template: ptr.To("{{ .Token }}:{{ .Request.Method }}")},
+			Names: []string{"x-context"},
+			Value: valueSourceSpec{Template: ptr.To("{{ .Token }}:{{ .Request.Method }}")},
 		})
 		prepared, _, err := prepareAPIKey(t, st, scope, withoutInputs)
 		if err != nil {
@@ -448,7 +455,8 @@ func TestAPIKeySign(t *testing.T) {
 		}
 
 		withInputs := mustAPIKeyConfig(t, headerSpec{
-			Names: []string{"x-context"}, Value: valueSourceSpec{Template: ptr.To(`{{ index .Inputs "aud" }}`)},
+			Names: []string{"x-context"},
+			Value: valueSourceSpec{Template: ptr.To(`{{ index .Inputs "aud" }}`)},
 		})
 		prepared, _, err = prepareAPIKey(t, st, scope, withInputs)
 		if err != nil {
@@ -483,13 +491,16 @@ func TestAPIKeySign(t *testing.T) {
 	})
 
 	failingTemplate := mustAPIKeyConfig(t, headerSpec{
-		Names: []string{"x"}, Value: valueSourceSpec{Template: ptr.To(`{{ fail "boom" }}`)},
+		Names: []string{"x"},
+		Value: valueSourceSpec{Template: ptr.To(`{{ fail "boom" }}`)},
 	}).Headers[0].Value.Template
 	missingTemplate := mustAPIKeyConfig(t, headerSpec{
-		Names: []string{"x"}, Value: valueSourceSpec{Template: ptr.To(`{{ index .Inputs "missing" }}`)},
+		Names: []string{"x"},
+		Value: valueSourceSpec{Template: ptr.To(`{{ index .Inputs "missing" }}`)},
 	}).Headers[0].Value.Template
 	dynamicCEL := mustAPIKeyConfig(t, headerSpec{
-		Names: []string{"x"}, Value: valueSourceSpec{Cel: ptr.To(`request.port`)},
+		Names: []string{"x"},
+		Value: valueSourceSpec{Cel: ptr.To(`request.port`)},
 	}).Headers[0].Value.CEL
 	for _, tc := range []struct {
 		name    string
@@ -513,14 +524,16 @@ func TestAPIKeySign(t *testing.T) {
 		{
 			name: "missing key sentinel",
 			headers: []PreparedHeader{{
-				Name: "authorization", Value: HeaderValueSource{Template: missingTemplate},
+				Name:  "authorization",
+				Value: HeaderValueSource{Template: missingTemplate},
 			}},
 			want: "value resolved to <no value>",
 		},
 		{
 			name: "dynamic CEL returns a non-string",
 			headers: []PreparedHeader{{
-				Name: "authorization", Value: HeaderValueSource{CEL: dynamicCEL},
+				Name:  "authorization",
+				Value: HeaderValueSource{CEL: dynamicCEL},
 			}},
 			scope: testScopeWithPort(443),
 			want:  "CEL value is int64, want string",
@@ -528,7 +541,8 @@ func TestAPIKeySign(t *testing.T) {
 		{
 			name: "CEL value requires an evaluation scope",
 			headers: []PreparedHeader{{
-				Name: "authorization", Value: HeaderValueSource{CEL: dynamicCEL},
+				Name:  "authorization",
+				Value: HeaderValueSource{CEL: dynamicCEL},
 			}},
 			want: "evaluation scope unavailable",
 		},

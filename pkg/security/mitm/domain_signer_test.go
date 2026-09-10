@@ -123,7 +123,9 @@ func TestSecretModeReadsExistingSecretWithoutMutatingIt(t *testing.T) {
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
 	signer, err := NewMITMSigner(ctx, client, MITMSignerOptions{
-		Mode: MITMSignModeSecret, Namespace: secret.Namespace, SecretName: secret.Name,
+		Mode:       MITMSignModeSecret,
+		Namespace:  secret.Namespace,
+		SecretName: secret.Name,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +147,9 @@ func TestSecretModeDoesNotCreateMissingSecret(t *testing.T) {
 	client := kube.NewFakeClient()
 	go client.Run(ctx.Done())
 	signer, err := NewMITMSigner(ctx, client, MITMSignerOptions{
-		Mode: MITMSignModeSecret, Namespace: "agentio-system", SecretName: "mitm",
+		Mode:       MITMSignModeSecret,
+		Namespace:  "agentio-system",
+		SecretName: "mitm",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +169,9 @@ func TestSelfSignModeCreatesOneSharedSecret(t *testing.T) {
 	client := kube.NewFakeClient()
 	go client.Run(ctx.Done())
 	signer, err := NewMITMSigner(ctx, client, MITMSignerOptions{
-		Mode: MITMSignModeSelfSign, Namespace: "agentio-system", SecretName: "mitm",
+		Mode:       MITMSignModeSelfSign,
+		Namespace:  "agentio-system",
+		SecretName: "mitm",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -56,8 +56,10 @@ func TestControlPlaneConfigDebug(t *testing.T) {
 		}
 
 		reader := echo.Deploy(t, environment, echo.Config{
-			Name: "config-debug-reader", Namespace: resolvedAgentioConfig.Namespace,
-			Image: echo.DefaultImage, Ports: echo.DefaultPorts(),
+			Name:      "config-debug-reader",
+			Namespace: resolvedAgentioConfig.Namespace,
+			Image:     echo.DefaultImage,
+			Ports:     echo.DefaultPorts(),
 		})
 		token, err := environment.Cluster.Kube.CoreV1().ServiceAccounts(resolvedAgentioConfig.Namespace).CreateToken(
 			ctx,

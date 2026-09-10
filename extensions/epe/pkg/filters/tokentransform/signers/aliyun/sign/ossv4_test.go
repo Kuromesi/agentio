@@ -66,8 +66,11 @@ func TestSignOSSV4_ValidationEdgeCases(t *testing.T) {
 		{
 			name: "empty AccessKeySecret",
 			req: &RequestSnapshot{
-				Method: "GET", Scheme: "https",
-				Host: "h", Path: "/", Headers: map[string]string{"host": "h", "x-oss-date": "20260524T100000Z"},
+				Method:  "GET",
+				Scheme:  "https",
+				Host:    "h",
+				Path:    "/",
+				Headers: map[string]string{"host": "h", "x-oss-date": "20260524T100000Z"},
 			},
 			triplet:     Triplet{AccessKeyID: "AK"},
 			params:      OSSV4Params{Region: "cn-hangzhou"},
@@ -83,7 +86,8 @@ func TestSignOSSV4_ValidationEdgeCases(t *testing.T) {
 		{
 			name: "x-oss-date too short",
 			req: &RequestSnapshot{
-				Method: "GET", Path: "/",
+				Method: "GET",
+				Path:   "/",
 				Headers: map[string]string{
 					"host":       "oss.aliyuncs.com",
 					"x-oss-date": "2026052", // only 7 chars
@@ -96,7 +100,8 @@ func TestSignOSSV4_ValidationEdgeCases(t *testing.T) {
 		{
 			name: "x-oss-date missing",
 			req: &RequestSnapshot{
-				Method: "GET", Path: "/",
+				Method:  "GET",
+				Path:    "/",
 				Headers: map[string]string{"host": "oss.aliyuncs.com"},
 			},
 			triplet:     Triplet{AccessKeyID: "AK", AccessKeySecret: "SK"},
@@ -106,7 +111,8 @@ func TestSignOSSV4_ValidationEdgeCases(t *testing.T) {
 		{
 			name: "empty region",
 			req: &RequestSnapshot{
-				Method: "GET", Path: "/",
+				Method: "GET",
+				Path:   "/",
 				Headers: map[string]string{
 					"host":       "oss.aliyuncs.com",
 					"x-oss-date": "20260524T100000Z",
@@ -132,8 +138,10 @@ func TestSignOSSV4_ValidationEdgeCases(t *testing.T) {
 
 func TestSignOSSV4_EmptySecurityTokenRemovesHeader(t *testing.T) {
 	req := &RequestSnapshot{
-		Method: "GET", Scheme: "https",
-		Host: "oss-cn-hangzhou.aliyuncs.com", Path: "/",
+		Method: "GET",
+		Scheme: "https",
+		Host:   "oss-cn-hangzhou.aliyuncs.com",
+		Path:   "/",
 		Headers: map[string]string{
 			"host":                 "oss-cn-hangzhou.aliyuncs.com",
 			"x-oss-date":           "20260524T100000Z",
@@ -193,7 +201,8 @@ func TestSignOSSV4_WithQueryString(t *testing.T) {
 
 func TestComputeOSSV4Signature_EmptySecurityToken(t *testing.T) {
 	req := &RequestSnapshot{
-		Method: "GET", Path: "/",
+		Method: "GET",
+		Path:   "/",
 		Headers: map[string]string{
 			"host":                 "oss.aliyuncs.com",
 			"x-oss-date":           "20260524T100000Z",

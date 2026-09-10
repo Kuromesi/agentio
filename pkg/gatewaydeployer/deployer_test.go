@@ -33,9 +33,13 @@ import (
 
 func testOptions() Options {
 	return Options{
-		ClusterID: "test", SystemNamespace: "agentio-system", InjectorConfigMapName: "agentio-sidecar-injector",
-		TrustDomain: "cluster.local", ClusterDomain: "cluster.local",
-		CAAddress: "agentiod.agentio-system.svc:15012", LeaseName: "test-gateway-deployer",
+		ClusterID:             "test",
+		SystemNamespace:       "agentio-system",
+		InjectorConfigMapName: "agentio-sidecar-injector",
+		TrustDomain:           "cluster.local",
+		ClusterDomain:         "cluster.local",
+		CAAddress:             "agentiod.agentio-system.svc:15012",
+		LeaseName:             "test-gateway-deployer",
 	}
 }
 

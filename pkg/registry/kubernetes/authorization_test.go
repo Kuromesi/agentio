@@ -42,49 +42,85 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 		allow  bool
 	}{
 		{name: "node-local ambient workload", allow: true},
-		{name: "untrusted caller service account", mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
-			caller.Principal.ServiceAccount.ServiceAccount = "attacker"
-		}},
-		{name: "unbound caller token", mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
-			caller.Kubernetes.WorkloadUID = ""
-		}},
-		{name: "stale caller UID", mutate: func(_ *model.PeerIdentity, _ *model.Principal, ztunnel, _ *corev1.Pod) {
-			ztunnel.UID = "replacement-uid"
-		}},
-		{name: "caller pod service account mismatch", mutate: func(_ *model.PeerIdentity, _ *model.Principal, ztunnel, _ *corev1.Pod) {
-			ztunnel.Spec.ServiceAccountName = "other"
-		}},
-		{name: "target on another node", mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
-			target.Spec.NodeName = "node-b"
-		}},
-		{name: "target namespace mismatch", mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
-			requested.ServiceAccount.Namespace = "other"
-		}},
-		{name: "target service account mismatch", mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
-			requested.ServiceAccount.ServiceAccount = "other"
-		}},
-		{name: "unsupported requested identity kind", mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
-			*requested = model.Principal{
-				Kind:        "workload-v1",
-				TrustDomain: "cluster.local",
-			}
-		}},
-		{name: "unsupported caller identity kind", mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
-			caller.Principal = model.Principal{
-				Kind:        "workload-v1",
-				TrustDomain: "cluster.local",
-			}
-		}},
-		{name: "target outside ambient", mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
-			delete(target.Annotations, "ambient.istio.io/redirection")
-		}},
-		{name: "terminating target", mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
-			now := metav1.Now()
-			target.DeletionTimestamp = &now
-		}},
-		{name: "completed target", mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
-			target.Status.Phase = corev1.PodSucceeded
-		}},
+		{
+			name: "untrusted caller service account",
+			mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
+				caller.Principal.ServiceAccount.ServiceAccount = "attacker"
+			},
+		},
+		{
+			name: "unbound caller token",
+			mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
+				caller.Kubernetes.WorkloadUID = ""
+			},
+		},
+		{
+			name: "stale caller UID",
+			mutate: func(_ *model.PeerIdentity, _ *model.Principal, ztunnel, _ *corev1.Pod) {
+				ztunnel.UID = "replacement-uid"
+			},
+		},
+		{
+			name: "caller pod service account mismatch",
+			mutate: func(_ *model.PeerIdentity, _ *model.Principal, ztunnel, _ *corev1.Pod) {
+				ztunnel.Spec.ServiceAccountName = "other"
+			},
+		},
+		{
+			name: "target on another node",
+			mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
+				target.Spec.NodeName = "node-b"
+			},
+		},
+		{
+			name: "target namespace mismatch",
+			mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
+				requested.ServiceAccount.Namespace = "other"
+			},
+		},
+		{
+			name: "target service account mismatch",
+			mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
+				requested.ServiceAccount.ServiceAccount = "other"
+			},
+		},
+		{
+			name: "unsupported requested identity kind",
+			mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
+				*requested = model.Principal{
+					Kind:        "workload-v1",
+					TrustDomain: "cluster.local",
+				}
+			},
+		},
+		{
+			name: "unsupported caller identity kind",
+			mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
+				caller.Principal = model.Principal{
+					Kind:        "workload-v1",
+					TrustDomain: "cluster.local",
+				}
+			},
+		},
+		{
+			name: "target outside ambient",
+			mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
+				delete(target.Annotations, "ambient.istio.io/redirection")
+			},
+		},
+		{
+			name: "terminating target",
+			mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
+				now := metav1.Now()
+				target.DeletionTimestamp = &now
+			},
+		},
+		{
+			name: "completed target",
+			mutate: func(_ *model.PeerIdentity, _ *model.Principal, _, target *corev1.Pod) {
+				target.Status.Phase = corev1.PodSucceeded
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -133,9 +169,12 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 
 func TestGatewayCertificateAuthorizationUsesEffectiveConfiguration(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"}, Data: map[string]string{
-		"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
-	}}
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
+		Data: map[string]string{
+			"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
+		},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 	authorizer := r.GatewayCertificateAuthorizer()
 	scope := model.ClientScope{

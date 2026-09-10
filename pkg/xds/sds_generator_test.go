@@ -246,31 +246,43 @@ func TestSDSGeneratorEvictionAndResign(t *testing.T) {
 
 func TestLaggingSubscriberRefreshesRestoredDomainAndRemovesRemainingEviction(t *testing.T) {
 	provider := &fakeCertificateProvider{
-		certificate: testSDSCertificate(), evicted: []string{"a.example.com", "b.example.com"},
+		certificate: testSDSCertificate(),
+		evicted:     []string{"a.example.com", "b.example.com"},
 	}
 	firstWatch := &watchState{
-		started: true, names: sets.New("a.example.com", "b.example.com"),
-		sent: map[string]string{"a.example.com": "old-a", "b.example.com": "old-b"},
+		started: true,
+		names:   sets.New("a.example.com", "b.example.com"),
+		sent:    map[string]string{"a.example.com": "old-a", "b.example.com": "old-b"},
 	}
 	first, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-		Scope: gatewayScope(), TypeURL: model.SecretType, Subscription: newSubscriptionView(firstWatch), Full: true,
+		Scope:        gatewayScope(),
+		TypeURL:      model.SecretType,
+		Subscription: newSubscriptionView(firstWatch),
+		Full:         true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	requestWatch := &watchState{started: true, names: sets.New("a.example.com"), sent: map[string]string{}}
 	if _, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-		Scope: gatewayScope(), TypeURL: model.SecretType, Subscription: newSubscriptionView(requestWatch), Full: true,
+		Scope:           gatewayScope(),
+		TypeURL:         model.SecretType,
+		Subscription:    newSubscriptionView(requestWatch),
+		Full:            true,
 		SubscribedNames: []string{"a.example.com"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	secondWatch := &watchState{
-		started: true, names: sets.New("a.example.com", "b.example.com"),
-		sent: map[string]string{"a.example.com": "old-a", "b.example.com": "old-b"},
+		started: true,
+		names:   sets.New("a.example.com", "b.example.com"),
+		sent:    map[string]string{"a.example.com": "old-a", "b.example.com": "old-b"},
 	}
 	second, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-		Scope: gatewayScope(), TypeURL: model.SecretType, Subscription: newSubscriptionView(secondWatch), Full: true,
+		Scope:        gatewayScope(),
+		TypeURL:      model.SecretType,
+		Subscription: newSubscriptionView(secondWatch),
+		Full:         true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -381,7 +393,11 @@ func TestSDSEvictionRefreshConvergesAfterHistoryIsForgotten(t *testing.T) {
 	signer := &countingSDSSigner{}
 	state := krt.NewStatic(&mitm.SignerState{Revision: "one"}, true, krt.WithStop(ctx.Done()))
 	issuer, err := mitm.NewOnDemandIssuer(ctx, mitm.DomainSignerSource{Signer: signer, State: state}, signer, mitm.OnDemandOptions{
-		LeafLifetime: time.Hour, RenewBefore: time.Minute, CacheMaxAge: time.Hour, CacheMaxEntries: 1, SignConcurrency: 1,
+		LeafLifetime:    time.Hour,
+		RenewBefore:     time.Minute,
+		CacheMaxAge:     time.Hour,
+		CacheMaxEntries: 1,
+		SignConcurrency: 1,
 	})
 	if err != nil {
 		cancel()
@@ -392,8 +408,12 @@ func TestSDSEvictionRefreshConvergesAfterHistoryIsForgotten(t *testing.T) {
 	names := []string{"a.example.com", "b.example.com", "c.example.com"}
 	sent := map[string]string{}
 	request := GenerationRequest{
-		Scope: gatewayScope(), TypeURL: model.SecretType, Snapshot: selectionSnapshot(t, nil), Full: true,
-		Subscription: SubscriptionView{names: names, sent: sent}, SubscribedNames: names,
+		Scope:           gatewayScope(),
+		TypeURL:         model.SecretType,
+		Snapshot:        selectionSnapshot(t, nil),
+		Full:            true,
+		Subscription:    SubscriptionView{names: names, sent: sent},
+		SubscribedNames: names,
 	}
 	generate := func() GeneratedDelta {
 		t.Helper()

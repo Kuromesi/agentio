@@ -480,8 +480,11 @@ func TestTrafficPolicyLifecycle(t *testing.T) {
 	call.Count = 1
 	call.Timeout = 2 * time.Second
 	call.Retry = retry.Policy{
-		Timeout: 90 * time.Second, Delay: 300 * time.Millisecond,
-		Backoff: 1.5, MaxDelay: 2 * time.Second, Converge: 3,
+		Timeout:  90 * time.Second,
+		Delay:    300 * time.Millisecond,
+		Backoff:  1.5,
+		MaxDelay: 2 * time.Second,
+		Converge: 3,
 	}
 	client.CallOrFail(t, call.WithCheck(check.And(check.OK(), check.ReachedWorkloads(1))))
 
@@ -514,7 +517,8 @@ func TestTrafficPolicyLifecycle(t *testing.T) {
 
 func dataplaneEchoConfig(name, namespace string) echo.Config {
 	return echo.Config{
-		Name: name, Namespace: namespace,
+		Name:        name,
+		Namespace:   namespace,
 		CallTimeout: 90 * time.Second,
 		Converge:    3,
 		Labels:      map[string]string{"app": name},

@@ -134,7 +134,8 @@ func TestHandleResponseBody_ResumesAndTranslatesFinalResult(t *testing.T) {
 	}
 	s, state, _ := pendingResponseBodyState(t, p, filter.FailClosed)
 	responses, err := s.HandleResponseBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("original"), EndOfStream: false,
+		Body:        []byte("original"),
+		EndOfStream: false,
 	}, state)
 	if err != nil {
 		t.Fatalf("HandleResponseBody: %v", err)

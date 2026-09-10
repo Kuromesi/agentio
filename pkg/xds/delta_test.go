@@ -66,7 +66,9 @@ func TestPushedUpdateRecordsDashboardCompatibilityLifecycle(t *testing.T) {
 	stream.awaitResponses(t, model.AddressType, 1)
 
 	if err := server.resources.apply([]model.ResourceChange{{
-		Key: newResource.Key, Old: &oldResource, New: &newResource,
+		Key: newResource.Key,
+		Old: &oldResource,
+		New: &newResource,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +290,8 @@ func TestWildcardSnapshotGeneratorRetainsSentStateForIncrementalRemoval(t *testi
 		t.Fatal(err)
 	}
 	update := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: resource.Key, Old: &resource,
+		Key: resource.Key,
+		Old: &resource,
 	}})
 	if err := server.server.sendIncremental(stream, server.scope, log, model.ClusterType, watch, update); err != nil {
 		t.Fatal(err)
@@ -360,7 +363,8 @@ func TestWildcardWDSInitialVersionsIncrementalRemovalAndSubscriptionTransitions(
 		t.Fatal(err)
 	}
 	deleteUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: resourceA.Key, Old: &resourceA,
+		Key: resourceA.Key,
+		Old: &resourceA,
 	}})
 	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, deleteUpdate); err != nil {
 		t.Fatal(err)
@@ -375,7 +379,8 @@ func TestWildcardWDSInitialVersionsIncrementalRemovalAndSubscriptionTransitions(
 		t.Fatal(err)
 	}
 	addUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: resourceC.Key, New: &resourceC,
+		Key: resourceC.Key,
+		New: &resourceC,
 	}})
 	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, addUpdate); err != nil {
 		t.Fatal(err)
@@ -404,7 +409,8 @@ func TestWildcardWDSInitialVersionsIncrementalRemovalAndSubscriptionTransitions(
 		t.Fatal(err)
 	}
 	wildcardDelete := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: resourceB.Key, Old: &resourceB,
+		Key: resourceB.Key,
+		Old: &resourceB,
 	}})
 	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, wildcardDelete); err != nil {
 		t.Fatal(err)
@@ -439,7 +445,8 @@ func TestWildcardAddressIncrementalMembershipUsesExactChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	deleteUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: oldWorkload.Key, Old: &oldWorkload,
+		Key: oldWorkload.Key,
+		Old: &oldWorkload,
 	}})
 	if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watch, deleteUpdate); err != nil {
 		t.Fatal(err)
@@ -458,7 +465,8 @@ func TestWildcardAddressIncrementalMembershipUsesExactChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	addUpdate := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: newWorkload.Key, New: &newWorkload,
+		Key: newWorkload.Key,
+		New: &newWorkload,
 	}})
 	if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watch, addUpdate); err != nil {
 		t.Fatal(err)
@@ -494,7 +502,8 @@ func TestWildcardWorkloadIncrementalDeleteUsesExactChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	update := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: oldWorkload.Key, Old: &oldWorkload,
+		Key: oldWorkload.Key,
+		Old: &oldWorkload,
 	}})
 
 	if err := server.server.sendIncremental(stream, scope, log, model.WorkloadType, watch, update); err != nil {
@@ -860,7 +869,8 @@ func TestAuthorizationSelectionMovesWithWorkloadReference(t *testing.T) {
 	scope := model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
-		WorkloadUID: "uid-a", SourceUID: "uid-a",
+		WorkloadUID: "uid-a",
+		SourceUID:   "uid-a",
 	}
 	server := newTestServer(t, scope, []model.Resource{oldWorkload, authorizationA, authorizationB}, nil)
 	stream := newFakeStream(ctx, 4)
@@ -1053,8 +1063,10 @@ func TestDeltaAcknowledgementsPreserveSubscriptionChanges(t *testing.T) {
 					nonce = "unknown-response"
 				}
 				req := &discoveryv3.DeltaDiscoveryRequest{
-					TypeUrl: model.AddressType, ResponseNonce: nonce,
-					ResourceNamesSubscribe: []string{"uid-b"}, ResourceNamesUnsubscribe: []string{"uid-a"},
+					TypeUrl:                  model.AddressType,
+					ResponseNonce:            nonce,
+					ResourceNamesSubscribe:   []string{"uid-b"},
+					ResourceNamesUnsubscribe: []string{"uid-a"},
 				}
 				if nack {
 					req.ErrorDetail = &rpcstatus.Status{Message: "invalid resource"}
@@ -1243,7 +1255,9 @@ func TestWildcardIncrementalPushDoesNotRetainUnrelatedSentState(t *testing.T) {
 		},
 	}
 	update := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: newResource.Key, Old: &oldResource, New: &newResource,
+		Key: newResource.Key,
+		Old: &oldResource,
+		New: &newResource,
 	}})
 
 	if err := server.server.sendIncremental(stream, server.scope, log, model.AddressType, watch, update); err != nil {
@@ -1290,7 +1304,8 @@ func TestWildcardReferencedGatewayLifecycle(t *testing.T) {
 		t.Helper()
 		next := selectionSnapshot(t, nextResources)
 		delta := generateWDSIncremental(GenerationRequest{
-			Scope: scope, TypeURL: model.AddressType,
+			Scope:        scope,
+			TypeURL:      model.AddressType,
 			Subscription: SubscriptionView{wildcard: true},
 			Snapshot:     next,
 			Update:       updateBetween(state, next, state.Diff(next)),
@@ -1597,7 +1612,9 @@ func TestIncrementalGenerationUsesQueuedPublicationTransition(t *testing.T) {
 	})
 	watch := &watchState{wildcard: true, started: true, names: sets.New[string](), sent: map[string]string{}}
 	update := updateBetween(before, after, []model.ResourceChange{{
-		Key: oldResource.Key, Old: &oldResource, New: &middleResource,
+		Key: oldResource.Key,
+		Old: &oldResource,
+		New: &middleResource,
 	}})
 
 	if got := server.resources.Snapshot().Version(); got != live.Version() {
@@ -1633,7 +1650,9 @@ func TestIncrementalGenerationCopiesOnlyRelevantSentState(t *testing.T) {
 		},
 	}
 	update := updateReversedFrom(t, server.resources.Snapshot(), []model.ResourceChange{{
-		Key: newResource.Key, Old: &oldResource, New: &newResource,
+		Key: newResource.Key,
+		Old: &oldResource,
+		New: &newResource,
 	}})
 	if err := server.server.sendIncremental(newFakeStream(context.Background(), 1), server.scope, log, model.AddressType, watch, update); err != nil {
 		t.Fatal(err)
@@ -1667,7 +1686,10 @@ func TestFailedSendDoesNotCommitGeneratedDelta(t *testing.T) {
 	stream := newFakeStream(context.Background(), 1)
 	stream.setSendErr(errors.New("send failed"))
 	err := server.server.generateAndSend(stream, log, watch, GenerationRequest{
-		Scope: server.scope, TypeURL: model.AddressType, Subscription: newSubscriptionView(watch), Full: true,
+		Scope:        server.scope,
+		TypeURL:      model.AddressType,
+		Subscription: newSubscriptionView(watch),
+		Full:         true,
 	}, false)
 	if err == nil || err.Error() != "send failed" {
 		t.Fatalf("send error = %v, want send failed", err)

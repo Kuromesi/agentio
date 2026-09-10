@@ -57,17 +57,20 @@ func TestAgentioMetricsMergeVectors(t *testing.T) {
 				Providers: []string{"prometheus"},
 			}}}},
 			want: map[string]metricsConfig{"prometheus": {
-				ClientMetrics: metricConfig{}, ServerMetrics: metricConfig{},
+				ClientMetrics: metricConfig{},
+				ServerMetrics: metricConfig{},
 			}},
 		},
 		{
 			name: "server disable does not affect client",
 			policies: []model.Telemetry{{Metrics: []model.TelemetryMetrics{{
-				Providers: []string{"prometheus"}, Overrides: []model.TelemetryMetricOverride{allServerDisabled},
+				Providers: []string{"prometheus"},
+				Overrides: []model.TelemetryMetricOverride{allServerDisabled},
 			}}}},
 			defaults: []string{"prometheus"},
 			want: map[string]metricsConfig{"prometheus": {
-				ClientMetrics: metricConfig{}, ServerMetrics: metricConfig{Disabled: true},
+				ClientMetrics: metricConfig{},
+				ServerMetrics: metricConfig{Disabled: true},
 			}},
 		},
 		{
@@ -90,7 +93,8 @@ func TestAgentioMetricsMergeVectors(t *testing.T) {
 			},
 			defaults: []string{"default"},
 			want: map[string]metricsConfig{"root": {
-				ClientMetrics: metricConfig{}, ServerMetrics: metricConfig{},
+				ClientMetrics: metricConfig{},
+				ServerMetrics: metricConfig{},
 			}},
 		},
 		{
@@ -101,7 +105,8 @@ func TestAgentioMetricsMergeVectors(t *testing.T) {
 			},
 			defaults: []string{"default"},
 			want: map[string]metricsConfig{"child": {
-				ClientMetrics: metricConfig{}, ServerMetrics: metricConfig{},
+				ClientMetrics: metricConfig{},
+				ServerMetrics: metricConfig{},
 			}},
 		},
 	}
@@ -135,7 +140,8 @@ func TestAgentioAccessLoggingMergeVectors(t *testing.T) {
 		{
 			name: "explicit provider replaces default",
 			policies: []model.Telemetry{{AccessLogging: []model.TelemetryAccessLogging{{
-				Mode: model.TelemetryModeServer, Providers: []string{"json"},
+				Mode:      model.TelemetryModeServer,
+				Providers: []string{"json"},
 			}}}},
 			defaults: []string{"envoy"},
 			want:     map[string]loggingSpec{"json": {}},
@@ -210,17 +216,22 @@ func TestAgentioTracingMergeVectors(t *testing.T) {
 			name:     "default provider",
 			defaults: []string{"zipkin"},
 			want: tracingSpec{
-				Provider: "zipkin", UseRequestIDForTraceSampling: true, EnableIstioTags: true,
+				Provider:                     "zipkin",
+				UseRequestIDForTraceSampling: true,
+				EnableIstioTags:              true,
 			},
 		},
 		{
 			name: "first explicit provider replaces default",
 			policies: []model.Telemetry{{Tracing: []model.TelemetryTracing{{
-				Mode: model.TelemetryModeServer, Providers: []string{"otel", "ignored"},
+				Mode:      model.TelemetryModeServer,
+				Providers: []string{"otel", "ignored"},
 			}}}},
 			defaults: []string{"zipkin"},
 			want: tracingSpec{
-				Provider: "otel", UseRequestIDForTraceSampling: true, EnableIstioTags: true,
+				Provider:                     "otel",
+				UseRequestIDForTraceSampling: true,
+				EnableIstioTags:              true,
 			},
 		},
 		{
@@ -230,7 +241,9 @@ func TestAgentioTracingMergeVectors(t *testing.T) {
 				{Tracing: []model.TelemetryTracing{{Mode: model.TelemetryModeServer}}},
 			},
 			want: tracingSpec{
-				Provider: "otel", UseRequestIDForTraceSampling: true, EnableIstioTags: true,
+				Provider:                     "otel",
+				UseRequestIDForTraceSampling: true,
+				EnableIstioTags:              true,
 			},
 		},
 		{
@@ -241,7 +254,9 @@ func TestAgentioTracingMergeVectors(t *testing.T) {
 			},
 			defaults: []string{"zipkin"},
 			want: tracingSpec{
-				Provider: "zipkin", UseRequestIDForTraceSampling: true, EnableIstioTags: true,
+				Provider:                     "zipkin",
+				UseRequestIDForTraceSampling: true,
+				EnableIstioTags:              true,
 			},
 		},
 		{
@@ -254,7 +269,8 @@ func TestAgentioTracingMergeVectors(t *testing.T) {
 					},
 				}}},
 				{Tracing: []model.TelemetryTracing{{
-					Mode: model.TelemetryModeServer, RandomSamplingPercentage: &sampling,
+					Mode:                         model.TelemetryModeServer,
+					RandomSamplingPercentage:     &sampling,
 					UseRequestIDForTraceSampling: &requestID,
 					CustomTags: map[string]model.TelemetryTracingTag{
 						"child": {Kind: model.TelemetryTracingTagLiteral, Value: "child"},
@@ -263,28 +279,36 @@ func TestAgentioTracingMergeVectors(t *testing.T) {
 			},
 			defaults: []string{"zipkin"},
 			want: tracingSpec{
-				Provider: "zipkin", RandomSamplingPercentage: &sampling,
+				Provider:                 "zipkin",
+				RandomSamplingPercentage: &sampling,
 				CustomTags: map[string]model.TelemetryTracingTag{
 					"child": {Kind: model.TelemetryTracingTagLiteral, Value: "child"},
 				},
-				UseRequestIDForTraceSampling: false, EnableIstioTags: true,
+				UseRequestIDForTraceSampling: false,
+				EnableIstioTags:              true,
 			},
 		},
 		{
 			name: "client-only override does not alter server",
 			policies: []model.Telemetry{{Tracing: []model.TelemetryTracing{{
-				Mode: model.TelemetryModeClient, Providers: []string{"client"}, RandomSamplingPercentage: &clientSampling,
+				Mode:                     model.TelemetryModeClient,
+				Providers:                []string{"client"},
+				RandomSamplingPercentage: &clientSampling,
 			}}}},
 			defaults: []string{"zipkin"},
 			want: tracingSpec{
-				Provider: "zipkin", UseRequestIDForTraceSampling: true, EnableIstioTags: true,
+				Provider:                     "zipkin",
+				UseRequestIDForTraceSampling: true,
+				EnableIstioTags:              true,
 			},
 		},
 		{
 			name:     "missing provider disables tracing",
 			policies: []model.Telemetry{{Tracing: []model.TelemetryTracing{{Mode: model.TelemetryModeServer}}}},
 			want: tracingSpec{
-				Disabled: true, UseRequestIDForTraceSampling: true, EnableIstioTags: true,
+				Disabled:                     true,
+				UseRequestIDForTraceSampling: true,
+				EnableIstioTags:              true,
 			},
 		},
 	}

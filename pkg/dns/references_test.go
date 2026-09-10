@@ -46,7 +46,8 @@ func TestReferencesRetainSharedHostnameUntilLastOwnerIsDeleted(t *testing.T) {
 	defer registration.UnregisterHandler()
 
 	policies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "api", Namespace: "demo",
+		Name:      "api",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{Egress: &agentsv1alpha1.TrafficPolicyDirection{
 			Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "API.EXAMPLE.COM."}},

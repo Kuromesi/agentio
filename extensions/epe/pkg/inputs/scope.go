@@ -103,8 +103,12 @@ func WithInputsError(msg string) ScopeOption {
 // absent is a second construction path whose failure mode is invisible.
 func NewScope(req Request, pod Pod, profile Profile, rule Rule, in map[string]any, opts ...ScopeOption) *Scope {
 	s := &Scope{
-		request: req, pod: pod, profile: profile, rule: rule, inputs: in,
-		cache: &activationCache{},
+		request: req,
+		pod:     pod,
+		profile: profile,
+		rule:    rule,
+		inputs:  in,
+		cache:   &activationCache{},
 	}
 	for _, opt := range opts {
 		opt(s)

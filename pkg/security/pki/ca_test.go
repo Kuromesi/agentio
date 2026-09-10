@@ -42,26 +42,51 @@ func TestValidateCAKeyPair(t *testing.T) {
 	}{
 		{name: "valid", certPEM: validCert, keyPEM: validKey},
 		{name: "mismatched key", certPEM: validCert, keyPEM: otherKey, wantErr: "private key does not match"},
-		{name: "missing CA basic constraints", certPEM: func() []byte {
-			cert, _ := testCAKeyPair(t, now.Add(-time.Hour), now.Add(time.Hour), true, false, x509.KeyUsageCertSign)
-			return cert
-		}(), keyPEM: validKey, wantErr: "valid CA basic constraints"},
-		{name: "not a CA", certPEM: func() []byte {
-			cert, _ := testCAKeyPair(t, now.Add(-time.Hour), now.Add(time.Hour), false, true, x509.KeyUsageDigitalSignature)
-			return cert
-		}(), keyPEM: validKey, wantErr: "valid CA basic constraints"},
-		{name: "missing cert sign usage", certPEM: func() []byte {
-			cert, _ := testCAKeyPair(t, now.Add(-time.Hour), now.Add(time.Hour), true, true, x509.KeyUsageDigitalSignature)
-			return cert
-		}(), keyPEM: validKey, wantErr: "certificate signing key usage"},
-		{name: "expired", certPEM: func() []byte {
-			cert, _ := testCAKeyPair(t, now.Add(-2*time.Hour), now.Add(-time.Hour), true, true, x509.KeyUsageCertSign)
-			return cert
-		}(), keyPEM: validKey, wantErr: "expired"},
-		{name: "not yet valid", certPEM: func() []byte {
-			cert, _ := testCAKeyPair(t, now.Add(time.Hour), now.Add(2*time.Hour), true, true, x509.KeyUsageCertSign)
-			return cert
-		}(), keyPEM: validKey, wantErr: "not valid before"},
+		{
+			name: "missing CA basic constraints",
+			certPEM: func() []byte {
+				cert, _ := testCAKeyPair(t, now.Add(-time.Hour), now.Add(time.Hour), true, false, x509.KeyUsageCertSign)
+				return cert
+			}(),
+			keyPEM:  validKey,
+			wantErr: "valid CA basic constraints",
+		},
+		{
+			name: "not a CA",
+			certPEM: func() []byte {
+				cert, _ := testCAKeyPair(t, now.Add(-time.Hour), now.Add(time.Hour), false, true, x509.KeyUsageDigitalSignature)
+				return cert
+			}(),
+			keyPEM:  validKey,
+			wantErr: "valid CA basic constraints",
+		},
+		{
+			name: "missing cert sign usage",
+			certPEM: func() []byte {
+				cert, _ := testCAKeyPair(t, now.Add(-time.Hour), now.Add(time.Hour), true, true, x509.KeyUsageDigitalSignature)
+				return cert
+			}(),
+			keyPEM:  validKey,
+			wantErr: "certificate signing key usage",
+		},
+		{
+			name: "expired",
+			certPEM: func() []byte {
+				cert, _ := testCAKeyPair(t, now.Add(-2*time.Hour), now.Add(-time.Hour), true, true, x509.KeyUsageCertSign)
+				return cert
+			}(),
+			keyPEM:  validKey,
+			wantErr: "expired",
+		},
+		{
+			name: "not yet valid",
+			certPEM: func() []byte {
+				cert, _ := testCAKeyPair(t, now.Add(time.Hour), now.Add(2*time.Hour), true, true, x509.KeyUsageCertSign)
+				return cert
+			}(),
+			keyPEM:  validKey,
+			wantErr: "not valid before",
+		},
 		{name: "certificate trailing data", certPEM: append(append([]byte(nil), validCert...), []byte("trailing")...), keyPEM: validKey, wantErr: "invalid PEM"},
 		{name: "extra certificate", certPEM: append(append([]byte(nil), validCert...), validCert...), keyPEM: validKey, wantErr: "trailing data"},
 		{name: "key trailing data", certPEM: validCert, keyPEM: append(append([]byte(nil), validKey...), []byte("trailing")...), wantErr: "trailing data"},
@@ -175,9 +200,13 @@ func testSignedCACertificate(t *testing.T, parentPEM, parentKeyPEM []byte, now t
 		t.Fatal(err)
 	}
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(now.UnixNano() + 1), Subject: pkix.Name{CommonName: "intermediate CA"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true,
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+		SerialNumber:          big.NewInt(now.UnixNano() + 1),
+		Subject:               pkix.Name{CommonName: "intermediate CA"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, parent, key.Public(), parentKey)
 	if err != nil {

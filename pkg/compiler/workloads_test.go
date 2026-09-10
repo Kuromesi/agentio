@@ -37,8 +37,10 @@ func TestEndpointEditReachesOnlyItsWorkload(t *testing.T) {
 	fixture.workloads.ConditionalUpdateObject(testWorkload("alpha", "client", "10.1.0.1"))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("alpha", "other", "10.1.0.2"))
 	fixture.services.ConditionalUpdateObject(model.Service{
-		Namespace: "alpha", Name: "backend", Hostname: "backend.alpha.svc.cluster.local",
-		Ports: []model.ServicePort{{Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP"}},
+		Namespace: "alpha",
+		Name:      "backend",
+		Hostname:  "backend.alpha.svc.cluster.local",
+		Ports:     []model.ServicePort{{Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP"}},
 	})
 	waitSynced(t, fixture.compiler)
 	awaitSteadyState(t, fixture.compiler,
@@ -48,8 +50,13 @@ func TestEndpointEditReachesOnlyItsWorkload(t *testing.T) {
 	recorder := newRecorder(fixture.compiler.Resources())
 
 	fixture.endpoints.ConditionalUpdateObject(model.Endpoint{
-		ServiceKey: "alpha/backend.alpha.svc.cluster.local", SourceKey: "alpha/backend-abc",
-		Address: "10.1.0.1", PortName: "http", Port: 8080, Protocol: "TCP", Ready: true,
+		ServiceKey: "alpha/backend.alpha.svc.cluster.local",
+		SourceKey:  "alpha/backend-abc",
+		Address:    "10.1.0.1",
+		PortName:   "http",
+		Port:       8080,
+		Protocol:   "TCP",
+		Ready:      true,
 	})
 
 	eventually(t, func() bool {
@@ -240,7 +247,9 @@ func TestWorkloadDeletionRemovesItsResources(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		_, found := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{
-			TypeURL: model.AddressType, Name: "cluster//Pod/alpha/client"})
+			TypeURL: model.AddressType,
+			Name:    "cluster//Pod/alpha/client",
+		})
 		return found
 	}, "workload published")
 
@@ -295,55 +304,95 @@ func TestWorkloadServicePortsPreserveServiceAndTargetPorts(t *testing.T) {
 		{
 			name: "numeric target port",
 			service: model.ServicePort{
-				Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP",
+				Name:       "http",
+				Port:       80,
+				TargetPort: 8080,
+				Protocol:   "TCP",
 			},
 			endpoint: model.Endpoint{
-				ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1",
-				PortName: "http", Port: 8080, Protocol: "TCP", Ready: true,
+				ServiceKey: testServiceKey,
+				SourceKey:  "demo/backend-a",
+				Address:    "10.0.0.1",
+				PortName:   "http",
+				Port:       8080,
+				Protocol:   "TCP",
+				Ready:      true,
 			},
 			wantPorts: []*workloadv1.Port{{ServicePort: 80, TargetPort: 8080}},
 		},
 		{
 			name: "numeric target port contradicting EndpointSlice is omitted",
 			service: model.ServicePort{
-				Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP",
+				Name:       "http",
+				Port:       80,
+				TargetPort: 8080,
+				Protocol:   "TCP",
 			},
 			endpoint: model.Endpoint{
-				ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1",
-				PortName: "http", Port: 9090, Protocol: "TCP", Ready: true,
+				ServiceKey: testServiceKey,
+				SourceKey:  "demo/backend-a",
+				Address:    "10.0.0.1",
+				PortName:   "http",
+				Port:       9090,
+				Protocol:   "TCP",
+				Ready:      true,
 			},
 			wantPorts: nil,
 		},
 		{
 			name: "named target port retained while service port name is EndpointSlice join key",
 			service: model.ServicePort{
-				Name: "web", Port: 81, TargetPortName: "http-backend", Protocol: "TCP",
+				Name:           "web",
+				Port:           81,
+				TargetPortName: "http-backend",
+				Protocol:       "TCP",
 			},
 			endpoint: model.Endpoint{
-				ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1",
-				PortName: "web", Port: 9090, Protocol: "TCP", Ready: true,
+				ServiceKey: testServiceKey,
+				SourceKey:  "demo/backend-a",
+				Address:    "10.0.0.1",
+				PortName:   "web",
+				Port:       9090,
+				Protocol:   "TCP",
+				Ready:      true,
 			},
 			wantPorts: []*workloadv1.Port{{ServicePort: 81, TargetPort: 9090}},
 		},
 		{
 			name: "named target port with mismatched service port name is omitted",
 			service: model.ServicePort{
-				Name: "web", Port: 81, TargetPortName: "http-backend", Protocol: "TCP",
+				Name:           "web",
+				Port:           81,
+				TargetPortName: "http-backend",
+				Protocol:       "TCP",
 			},
 			endpoint: model.Endpoint{
-				ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1",
-				PortName: "metrics", Port: 9090, Protocol: "TCP", Ready: true,
+				ServiceKey: testServiceKey,
+				SourceKey:  "demo/backend-a",
+				Address:    "10.0.0.1",
+				PortName:   "metrics",
+				Port:       9090,
+				Protocol:   "TCP",
+				Ready:      true,
 			},
 			wantPorts: nil,
 		},
 		{
 			name: "protocol mismatch is omitted",
 			service: model.ServicePort{
-				Name: "dns", Port: 53, TargetPort: 5353, Protocol: "UDP",
+				Name:       "dns",
+				Port:       53,
+				TargetPort: 5353,
+				Protocol:   "UDP",
 			},
 			endpoint: model.Endpoint{
-				ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1",
-				PortName: "dns", Port: 5353, Protocol: "TCP", Ready: true,
+				ServiceKey: testServiceKey,
+				SourceKey:  "demo/backend-a",
+				Address:    "10.0.0.1",
+				PortName:   "dns",
+				Port:       5353,
+				Protocol:   "TCP",
+				Ready:      true,
 			},
 			wantPorts: nil,
 		},
@@ -633,7 +682,8 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadAttachments(t *testing.T) {
 	}
 	profiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
 	profile := model.SecurityProfile{
-		Name: "security-profile", Namespace: "demo",
+		Name:      "security-profile",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "workload"}},
 			Rules: []agentsv1alpha1.SecurityRule{{

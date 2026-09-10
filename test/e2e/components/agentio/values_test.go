@@ -178,9 +178,17 @@ func validConfig(t *testing.T) Config {
 	t.Helper()
 	image := immutableImageRef("image", "a")
 	return Config{
-		Profile: "sidecar", Namespace: "agentio-system", AgentiodImage: image, CNIImage: image, ZtunnelImage: image,
-		ProxyInitImage: image, GatewayImage: image, EPEImage: image,
-		ExtProcImage: image, ForwardProxyImage: image, FirewallBackend: "auto",
+		Profile:           "sidecar",
+		Namespace:         "agentio-system",
+		AgentiodImage:     image,
+		CNIImage:          image,
+		ZtunnelImage:      image,
+		ProxyInitImage:    image,
+		GatewayImage:      image,
+		EPEImage:          image,
+		ExtProcImage:      image,
+		ForwardProxyImage: image,
+		FirewallBackend:   "auto",
 	}
 }
 

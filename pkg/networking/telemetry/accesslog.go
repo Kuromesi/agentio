@@ -98,7 +98,8 @@ func celAccessLogFilter(filter *string) *accesslogv3.AccessLogFilter {
 	return &accesslogv3.AccessLogFilter{
 		FilterSpecifier: &accesslogv3.AccessLogFilter_ExtensionFilter{
 			ExtensionFilter: &accesslogv3.ExtensionFilter{
-				Name: celFilterName, ConfigType: &accesslogv3.ExtensionFilter_TypedConfig{TypedConfig: typed},
+				Name:       celFilterName,
+				ConfigType: &accesslogv3.ExtensionFilter_TypedConfig{TypedConfig: typed},
 			},
 		},
 	}

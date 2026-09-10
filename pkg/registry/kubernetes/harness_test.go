@@ -45,8 +45,9 @@ func eventually(t testing.TB, condition func() bool, message string) {
 func egressPod(namespace, name, gatewayName, address string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace, Name: name,
-			Labels: map[string]string{podsource.LabelGatewayName: gatewayName},
+			Namespace: namespace,
+			Name:      name,
+			Labels:    map[string]string{podsource.LabelGatewayName: gatewayName},
 		},
 		Spec:   corev1.PodSpec{ServiceAccountName: gatewayName, NodeName: "node-a"},
 		Status: corev1.PodStatus{PodIP: address, PodIPs: []corev1.PodIP{{IP: address}}},

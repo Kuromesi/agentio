@@ -392,7 +392,8 @@ func TestNewProfile(t *testing.T) {
 			obj: &v1alpha1.SecurityProfile{
 				Spec: v1alpha1.SecurityProfileSpec{
 					Selector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-						Key: "!", Operator: metav1.LabelSelectorOpExists,
+						Key:      "!",
+						Operator: metav1.LabelSelectorOpExists,
 					}}},
 				},
 			},

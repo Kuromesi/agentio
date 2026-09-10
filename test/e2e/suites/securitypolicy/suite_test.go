@@ -79,8 +79,12 @@ func setupSNINamespace(profile string, global bool) e2e.SetupFunc {
 
 func sniEchoConfig(name, namespaceName, policyValue string) echo.Config {
 	return echo.Config{
-		Name: name, Namespace: namespaceName, Image: echo.DefaultImage, Ports: echo.DefaultPorts(),
-		CallTimeout: 90 * time.Second, Converge: 3,
+		Name:        name,
+		Namespace:   namespaceName,
+		Image:       echo.DefaultImage,
+		Ports:       echo.DefaultPorts(),
+		CallTimeout: 90 * time.Second,
+		Converge:    3,
 		Labels: map[string]string{
 			"app": name, sniPolicyLabel: policyValue,
 		},

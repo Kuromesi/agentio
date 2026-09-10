@@ -50,15 +50,17 @@ func TestCollectorsWriteAgentioInventories(t *testing.T) {
 	)
 	gatewayPod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "gateway-0", Namespace: "agentio-system",
-			Labels: map[string]string{"gateway.networking.k8s.io/gateway-name": "egress-gateway"},
+			Name:      "gateway-0",
+			Namespace: "agentio-system",
+			Labels:    map[string]string{"gateway.networking.k8s.io/gateway-name": "egress-gateway"},
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agentio-proxy"}}},
 	}
 	epePod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "epe-0", Namespace: "agentio-system",
-			Labels: map[string]string{"app.kubernetes.io/name": "agentio-epe"},
+			Name:      "epe-0",
+			Namespace: "agentio-system",
+			Labels:    map[string]string{"app.kubernetes.io/name": "agentio-epe"},
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agentio-epe"}}},
 	}
@@ -99,8 +101,10 @@ func TestCollectorsWriteAgentioInventories(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment := &e2e.Environment{
-		RunID: "run-1", Cluster: clusterHandle,
-		Kube: kube.NewClient("run-1", clusterHandle, kube.NewLedger()), Artifacts: store,
+		RunID:     "run-1",
+		Cluster:   clusterHandle,
+		Kube:      kube.NewClient("run-1", clusterHandle, kube.NewLedger()),
+		Artifacts: store,
 	}
 	collectors := Collectors(Config{Profile: ProfileAmbient, Namespace: "agentio-system"})
 	if len(collectors) != 5 {
@@ -139,8 +143,9 @@ func TestCollectorsSelectZtunnelForProfile(t *testing.T) {
 		profile, wantNamespace, wantSelector, wantNamespaceSelector, wantContainer string
 	}{
 		{
-			profile: "sidecar", wantNamespaceSelector: "agentio.kruise.io/dataplane-mode=sidecar",
-			wantContainer: "agentio-proxy",
+			profile:               "sidecar",
+			wantNamespaceSelector: "agentio.kruise.io/dataplane-mode=sidecar",
+			wantContainer:         "agentio-proxy",
 		},
 		{profile: "ambient", wantNamespace: "agentio-system", wantSelector: "app.kubernetes.io/name=ztunnel"},
 	}
@@ -162,10 +167,12 @@ func TestCollectorsSelectZtunnelForProfile(t *testing.T) {
 func TestPodCollectorSelectsSidecarsFromEnrolledNamespaces(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-			Name: "sidecar", Labels: map[string]string{"agentio.kruise.io/dataplane-mode": "sidecar"},
+			Name:   "sidecar",
+			Labels: map[string]string{"agentio.kruise.io/dataplane-mode": "sidecar"},
 		}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-			Name: "ambient", Labels: map[string]string{"agentio.kruise.io/dataplane-mode": "ambient"},
+			Name:   "ambient",
+			Labels: map[string]string{"agentio.kruise.io/dataplane-mode": "ambient"},
 		}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "unenrolled"}},
 		&corev1.Pod{

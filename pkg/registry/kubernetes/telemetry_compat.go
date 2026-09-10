@@ -233,14 +233,20 @@ func convertTelemetryTracingTag(tag *telemetryapi.Tracing_CustomTag) (model.Tele
 		if value.Environment == nil {
 			return model.TelemetryTracingTag{}, fmt.Errorf("environment is required")
 		}
-		return model.TelemetryTracingTag{Kind: model.TelemetryTracingTagEnvironment,
-			Name: value.Environment.GetName(), DefaultValue: value.Environment.GetDefaultValue()}, nil
+		return model.TelemetryTracingTag{
+			Kind:         model.TelemetryTracingTagEnvironment,
+			Name:         value.Environment.GetName(),
+			DefaultValue: value.Environment.GetDefaultValue(),
+		}, nil
 	case *telemetryapi.Tracing_CustomTag_Header:
 		if value.Header == nil {
 			return model.TelemetryTracingTag{}, fmt.Errorf("header is required")
 		}
-		return model.TelemetryTracingTag{Kind: model.TelemetryTracingTagHeader,
-			Name: value.Header.GetName(), DefaultValue: value.Header.GetDefaultValue()}, nil
+		return model.TelemetryTracingTag{
+			Kind:         model.TelemetryTracingTagHeader,
+			Name:         value.Header.GetName(),
+			DefaultValue: value.Header.GetDefaultValue(),
+		}, nil
 	case *telemetryapi.Tracing_CustomTag_Formatter:
 		if value.Formatter == nil {
 			return model.TelemetryTracingTag{}, fmt.Errorf("formatter is required")

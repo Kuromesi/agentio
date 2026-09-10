@@ -37,8 +37,12 @@ func TestNormalizedObjectResourceNames(t *testing.T) {
 
 func TestEndpointTargetRefMakesHostNetworkIdentityUnique(t *testing.T) {
 	base := Endpoint{
-		ServiceKey: "demo/api.demo.svc.cluster.local", SourceKey: "demo/api-abc",
-		Address: "10.0.0.1", PortName: "http", Port: 8080, HasTargetRef: true,
+		ServiceKey:   "demo/api.demo.svc.cluster.local",
+		SourceKey:    "demo/api-abc",
+		Address:      "10.0.0.1",
+		PortName:     "http",
+		Port:         8080,
+		HasTargetRef: true,
 	}
 	podA := base
 	podA.TargetUID = "pod-a-uid"

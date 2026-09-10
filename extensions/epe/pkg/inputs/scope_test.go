@@ -159,7 +159,11 @@ func evalBoolOnAuditScope(t *testing.T, s *audit.Scope, expr string) (bool, erro
 func invariantScope() *inputs.Scope {
 	return inputs.NewScope(
 		inputs.RequestFrom(httpreq.HTTPRequest{
-			Host: "api.example.com", Port: 8080, Path: "/v1/chat", Scheme: "https", Method: "POST",
+			Host:    "api.example.com",
+			Port:    8080,
+			Path:    "/v1/chat",
+			Scheme:  "https",
+			Method:  "POST",
 			Headers: map[string]string{"x-tenant": "a"},
 			Query:   map[string][]string{"q": {"first", "second"}, "empty": {}},
 		}),

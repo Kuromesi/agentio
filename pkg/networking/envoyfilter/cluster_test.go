@@ -54,7 +54,9 @@ func TestApplyClustersRejectsDuplicateInsertedName(t *testing.T) {
 func clusterPolicy(t *testing.T, name string, patches ...model.EnvoyPatch) model.GatewayPatch {
 	t.Helper()
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: name, Source: "source",
+		Namespace: "demo",
+		Name:      name,
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, patches)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +65,11 @@ func clusterPolicy(t *testing.T, name string, patches ...model.EnvoyPatch) model
 }
 
 func clusterPatch(operation model.PatchOperation, name string, value *clusterv3.Cluster) model.EnvoyPatch {
-	return model.EnvoyPatch{Operation: operation, Target: model.ClusterPatch{
-		Match: &model.ClusterMatch{Name: name}, Value: value,
-	}}
+	return model.EnvoyPatch{
+		Operation: operation,
+		Target: model.ClusterPatch{
+			Match: &model.ClusterMatch{Name: name},
+			Value: value,
+		},
+	}
 }

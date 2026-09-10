@@ -80,8 +80,10 @@ func (r *renderer) updateTemplates(contents map[string]string, values map[string
 	}
 	current := r.state.Load()
 	r.state.Store(&renderState{
-		values: values, proxyConfig: proxyConfig, trustDomain: current.trustDomain,
-		templates: templates,
+		values:      values,
+		proxyConfig: proxyConfig,
+		trustDomain: current.trustDomain,
+		templates:   templates,
 	})
 	return nil
 }
@@ -97,8 +99,10 @@ type derivedInput struct {
 func newRenderer(values func() map[string]any, proxyConfig *meshv1alpha1.ProxyConfig, trustDomain string) (*renderer, error) {
 	r := &renderer{}
 	r.state.Store(&renderState{
-		values: values(), proxyConfig: proxyConfig, trustDomain: trustDomain,
-		templates: map[string]*template.Template{},
+		values:      values(),
+		proxyConfig: proxyConfig,
+		trustDomain: trustDomain,
+		templates:   map[string]*template.Template{},
 	})
 	return r, nil
 }

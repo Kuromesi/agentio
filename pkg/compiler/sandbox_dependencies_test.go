@@ -35,19 +35,24 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	fixture.workloads.ConditionalUpdateObject(worker)
 	for _, namespace := range []string{"tenant", "workers"} {
-		fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{Name: "baseline", Namespace: namespace,
+		fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
+			Name:      "baseline",
+			Namespace: namespace,
 			Spec: agentsv1alpha1.TrafficPolicySpec{Egress: &agentsv1alpha1.TrafficPolicyDirection{
 				Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}},
 			}},
 		})
 	}
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "egress", Value: &configv1.AgentioConfig{
-		EgressPolicies: []*extensionsv1.EgressPolicy{
-			{Namespaces: []string{"tenant"}, MatchCidrs: []string{"203.0.113.1/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
-			{Namespaces: []string{"workers"}, MatchCidrs: []string{"203.0.113.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
-			{Namespaces: []string{"tenant"}, MatchCidrs: []string{"203.0.113.3/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "egress",
+		Value: &configv1.AgentioConfig{
+			EgressPolicies: []*extensionsv1.EgressPolicy{
+				{Namespaces: []string{"tenant"}, MatchCidrs: []string{"203.0.113.1/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+				{Namespaces: []string{"workers"}, MatchCidrs: []string{"203.0.113.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+				{Namespaces: []string{"tenant"}, MatchCidrs: []string{"203.0.113.3/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+			},
 		},
-	}})
+	})
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		m := manifestAt(t, fixture.compiler, "actor")
@@ -80,21 +85,28 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 
 func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 	fixture := newIncrementalFixture(t)
-	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "actor", Namespace: "tenant", PolicyRefs: []model.PolicyRef{
-		{Kind: model.PolicyKindEgressPolicy, Name: "agentio-config/egress/000001"},
-		{Kind: model.PolicyKindEgressPolicy, Name: "agentio-config/egress/000000"},
-	}})
+	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
+		UID:       "actor",
+		Namespace: "tenant",
+		PolicyRefs: []model.PolicyRef{
+			{Kind: model.PolicyKindEgressPolicy, Name: "agentio-config/egress/000001"},
+			{Kind: model.PolicyKindEgressPolicy, Name: "agentio-config/egress/000000"},
+		},
+	})
 	worker := testWorkload("workers", "worker", "10.1.0.1")
 	sandbox := *fixture.sandboxes.GetKey("actor")
 	sandbox.Attester = &model.Attester{WorkloadUID: worker.UID}
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	fixture.workloads.ConditionalUpdateObject(worker)
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "ordered", Value: &configv1.AgentioConfig{
-		EgressPolicies: []*extensionsv1.EgressPolicy{
-			{MatchCidrs: []string{"203.0.113.1/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
-			{MatchCidrs: []string{"203.0.113.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "ordered",
+		Value: &configv1.AgentioConfig{
+			EgressPolicies: []*extensionsv1.EgressPolicy{
+				{MatchCidrs: []string{"203.0.113.1/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+				{MatchCidrs: []string{"203.0.113.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+			},
 		},
-	}})
+	})
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		m := manifestAt(t, fixture.compiler, "actor")

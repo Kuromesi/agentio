@@ -46,9 +46,14 @@ func TestCompilerModeOutputs(t *testing.T) {
 			inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{worker}, opts...)
 			inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: "actor", Namespace: "demo", Labels: worker.Labels, State: model.SandboxStateRunning, Attester: &model.Attester{WorkloadUID: worker.UID}}}, opts...)
 			selector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}
-			inputs.TrafficPolicies = krt.NewStaticCollection(nil, []model.TrafficPolicy{{Name: "allow", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
-				Selector: selector, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}}}},
-			}}}, opts...)
+			inputs.TrafficPolicies = krt.NewStaticCollection(nil, []model.TrafficPolicy{{
+				Name:      "allow",
+				Namespace: "demo",
+				Spec: agentsv1alpha1.TrafficPolicySpec{
+					Selector: selector,
+					Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}}}},
+				},
+			}}, opts...)
 			inputs.SecurityProfiles = krt.NewStaticCollection(nil, []model.SecurityProfile{
 				{Name: "shared", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{Selector: selector, Rules: []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}}}},
 				{Name: "actor-only", Namespace: "demo", SandboxUID: "actor", Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{Name: "secret", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}}}}}},
@@ -174,11 +179,21 @@ func TestCompilerSandboxManagedHostSkipsWorkloadPolicies(t *testing.T) {
 	fixture.workloads.UpdateObject(host)
 	fixture.workloads.UpdateObject(ordinary)
 	selector := metav1.LabelSelector{MatchLabels: host.Labels}
-	fixture.trafficPolicies.UpdateObject(model.TrafficPolicy{Name: "allow", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
-		Selector: selector, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}}}},
-	}})
-	fixture.securityProfiles.UpdateObject(model.SecurityProfile{Name: "sni", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{
-		Selector: selector, Rules: []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}}},
+	fixture.trafficPolicies.UpdateObject(model.TrafficPolicy{
+		Name:      "allow",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Selector: selector,
+			Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}}}},
+		},
+	})
+	fixture.securityProfiles.UpdateObject(model.SecurityProfile{
+		Name:      "sni",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.SecurityProfileSpec{
+			Selector: selector,
+			Rules:    []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
+		},
 	})
 	fixture.agentioConfig.UpdateObject(model.AgentioConfiguration{Value: &configv1.AgentioConfig{EgressPolicies: []*extensionsv1.EgressPolicy{{Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH}}}})
 	checkWorkloads := func() {

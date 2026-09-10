@@ -85,8 +85,12 @@ func TestResourceScopeDeleteUsesOwnedIdentity(t *testing.T) {
 	client, _ = newFakeClient(t, recreated)
 	scope = NewResourceScope(client)
 	err = scope.Delete(context.Background(), ResourceRecord{
-		GVR: configMapGVR, Namespace: "sandbox", Name: "foreign",
-		UID: "uid-old", RunID: "run-1", Namespaced: true,
+		GVR:        configMapGVR,
+		Namespace:  "sandbox",
+		Name:       "foreign",
+		UID:        "uid-old",
+		RunID:      "run-1",
+		Namespaced: true,
 	})
 	if !errors.Is(err, ErrOwnershipMismatch) {
 		t.Fatalf("Delete() error = %v, want ownership mismatch", err)

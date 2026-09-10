@@ -86,7 +86,9 @@ func TestWildcardWDSIncrementalDiffsPublicationTransitionClosure(t *testing.T) {
 		Subscription: SubscriptionView{wildcard: true},
 		Snapshot:     after,
 		Update: updateBetween(before, after, []model.ResourceChange{{
-			Key: plain.Key, Old: &plain, New: &attached,
+			Key: plain.Key,
+			Old: &plain,
+			New: &attached,
 		}}),
 	})
 	if err != nil {
@@ -102,7 +104,9 @@ func TestWildcardWDSIncrementalDiffsPublicationTransitionClosure(t *testing.T) {
 		Subscription: SubscriptionView{wildcard: true},
 		Snapshot:     before,
 		Update: updateBetween(after, before, []model.ResourceChange{{
-			Key: plain.Key, Old: &attached, New: &plain,
+			Key: plain.Key,
+			Old: &attached,
+			New: &plain,
 		}}),
 	})
 	if err != nil {

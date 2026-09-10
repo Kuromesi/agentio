@@ -105,7 +105,8 @@ func TestStreamEnd_BodyPhaseMutateIsAudited(t *testing.T) {
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-mutate-test", fp)}, cap)
 
 	if _, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
-		Body: []byte(`{}`), EndOfStream: true,
+		Body:        []byte(`{}`),
+		EndOfStream: true,
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +132,8 @@ func TestStreamEnd_BodyPhaseErrorIsAudited(t *testing.T) {
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("body-err-test", fp)}, cap)
 
 	responses, err := sendRequestBody(t, s, state, &extProcPb.HttpBody{
-		Body: []byte(`{}`), EndOfStream: true,
+		Body:        []byte(`{}`),
+		EndOfStream: true,
 	})
 	if err != nil {
 		t.Fatalf("configured FailClosed returned handler error: %v", err)

@@ -107,7 +107,8 @@ func TestDNSChangePropagatesThroughCollection(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("alpha", "client", "10.1.0.1")))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("alpha", "client", "10.1.0.1"))
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "fqdn", Namespace: "alpha",
+		Name:      "fqdn",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -147,7 +148,8 @@ func TestDNSChangeOnlyRecompilesPoliciesForThatHostname(t *testing.T) {
 		{name: "database", host: "database.example.com"},
 	} {
 		fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-			Name: policy.name, Namespace: "alpha",
+			Name:      policy.name,
+			Namespace: "alpha",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
 				Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 					Action: agentsv1alpha1.RuleActionAllow,
@@ -237,7 +239,8 @@ func TestDNSFlipUsesNarrowWorkloadConfigurationDependency(t *testing.T) {
 	t.Cleanup(registration.UnregisterHandler)
 
 	dnsResults.ConditionalUpdateObject(dnsBenchmarkResult{
-		host: "api.example.com", address: netip.MustParseAddr("10.1.0.2"),
+		host:    "api.example.com",
+		address: netip.MustParseAddr("10.1.0.2"),
 	})
 	eventually(t, func() bool { return addressUpdates.Load() == 1 }, "DNS update published one Address update")
 }

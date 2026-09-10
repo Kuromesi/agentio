@@ -79,7 +79,8 @@ func TestManifestsUsePinnedImagePortsAndGRPCReadiness(t *testing.T) {
 
 func TestManifestsDeriveDefaultPortsAndCapabilities(t *testing.T) {
 	objects, err := manifests(Config{
-		Name: "client", Namespace: "sandbox",
+		Name:         "client",
+		Namespace:    "sandbox",
 		Capabilities: []corev1.Capability{"NET_ADMIN", "NET_RAW"},
 	})
 	if err != nil {
@@ -137,8 +138,9 @@ func TestManifestsDeriveDefaultPortsAndCapabilities(t *testing.T) {
 
 func TestManifestsUseCustomPortsInsteadOfDefaults(t *testing.T) {
 	objects, err := manifests(Config{
-		Name: "server", Namespace: "sandbox",
-		Ports: []Port{{Name: "custom-tcp", Protocol: TCP, ServicePort: 1234, WorkloadPort: 4321}},
+		Name:      "server",
+		Namespace: "sandbox",
+		Ports:     []Port{{Name: "custom-tcp", Protocol: TCP, ServicePort: 1234, WorkloadPort: 4321}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +278,11 @@ func TestCommandArgsPacesRequestsOnOneGRPCConnection(t *testing.T) {
 
 func TestCommandArgsFollowRedirects(t *testing.T) {
 	args, err := commandArgs(CallOptions{
-		Protocol: HTTP, Address: "server", Count: 1, Timeout: time.Second, FollowRedirects: true,
+		Protocol:        HTTP,
+		Address:         "server",
+		Count:           1,
+		Timeout:         time.Second,
+		FollowRedirects: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +294,11 @@ func TestCommandArgsFollowRedirects(t *testing.T) {
 
 func TestCommandArgsServerName(t *testing.T) {
 	args, err := commandArgs(CallOptions{
-		Protocol: HTTPS, Address: "server", Count: 1, Timeout: time.Second, ServerName: "example.com",
+		Protocol:   HTTPS,
+		Address:    "server",
+		Count:      1,
+		Timeout:    time.Second,
+		ServerName: "example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -306,12 +316,16 @@ func TestCommandArgsPreserveProtocolFlagsWithExplicitPortAndPath(t *testing.T) {
 		wantArg string
 	}{
 		{
-			name: "https", options: CallOptions{Protocol: HTTPS, Address: "example.org", Port: 9443, Path: "/ready", Count: 1, Timeout: time.Second},
-			wantURL: "https://example.org:9443/ready", wantArg: "--insecure-skip-verify",
+			name:    "https",
+			options: CallOptions{Protocol: HTTPS, Address: "example.org", Port: 9443, Path: "/ready", Count: 1, Timeout: time.Second},
+			wantURL: "https://example.org:9443/ready",
+			wantArg: "--insecure-skip-verify",
 		},
 		{
-			name: "http2", options: CallOptions{Protocol: HTTP2, Address: "server", Port: 85, Path: "/", Count: 1, Timeout: time.Second},
-			wantURL: "http://server:85/", wantArg: "--http2",
+			name:    "http2",
+			options: CallOptions{Protocol: HTTP2, Address: "server", Port: 85, Path: "/", Count: 1, Timeout: time.Second},
+			wantURL: "http://server:85/",
+			wantArg: "--http2",
 		},
 	}
 	for _, test := range tests {
@@ -329,7 +343,12 @@ func TestCommandArgsPreserveProtocolFlagsWithExplicitPortAndPath(t *testing.T) {
 
 func TestCommandArgsPreservePathQuery(t *testing.T) {
 	args, err := commandArgs(CallOptions{
-		Protocol: HTTP, Address: "server", Port: 80, Path: "/?delay=5s", Count: 1, Timeout: time.Second,
+		Protocol: HTTP,
+		Address:  "server",
+		Port:     80,
+		Path:     "/?delay=5s",
+		Count:    1,
+		Timeout:  time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -354,8 +373,12 @@ func TestCommandArgsDefaultHostMatchesAgentio(t *testing.T) {
 		{
 			name: "explicit host wins case insensitively",
 			options: CallOptions{
-				Protocol: HTTP, Address: "server.sandbox.svc.cluster.local", Port: 80, Count: 1, Timeout: time.Second,
-				Headers: map[string]string{"host": "override.example"},
+				Protocol: HTTP,
+				Address:  "server.sandbox.svc.cluster.local",
+				Port:     80,
+				Count:    1,
+				Timeout:  time.Second,
+				Headers:  map[string]string{"host": "override.example"},
 			},
 			want:   "host:override.example",
 			absent: "Host:server.sandbox.svc.cluster.local",
@@ -396,8 +419,10 @@ func TestCallRetriesAndPreservesFailedAttempt(t *testing.T) {
 		},
 	}
 	result, err := instance.Call(context.Background(), CallOptions{
-		Protocol: HTTP, Address: "server", Count: 1,
-		Retry: retry.Policy{Timeout: time.Second, Delay: time.Millisecond, Backoff: 1, MaxDelay: time.Millisecond},
+		Protocol: HTTP,
+		Address:  "server",
+		Count:    1,
+		Retry:    retry.Policy{Timeout: time.Second, Delay: time.Millisecond, Backoff: 1, MaxDelay: time.Millisecond},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -425,8 +450,10 @@ func TestCallCheckerParticipatesInRetry(t *testing.T) {
 		},
 	}
 	result, err := instance.Call(context.Background(), CallOptions{
-		Protocol: HTTP, Address: "server", Count: 1,
-		Retry: retry.Policy{Timeout: time.Second, Delay: time.Millisecond, Backoff: 1, MaxDelay: time.Millisecond},
+		Protocol: HTTP,
+		Address:  "server",
+		Count:    1,
+		Retry:    retry.Policy{Timeout: time.Second, Delay: time.Millisecond, Backoff: 1, MaxDelay: time.Millisecond},
 		Check: func(result Result, err error) error {
 			if err != nil {
 				return err
@@ -456,8 +483,10 @@ func TestCallCheckerAcceptsExpectedError(t *testing.T) {
 		},
 	}
 	result, err := instance.Call(context.Background(), CallOptions{
-		Protocol: HTTP, Address: "server", Count: 1,
-		Retry: retry.Policy{Timeout: time.Second, Delay: time.Millisecond, Backoff: 1, MaxDelay: time.Millisecond},
+		Protocol: HTTP,
+		Address:  "server",
+		Count:    1,
+		Retry:    retry.Policy{Timeout: time.Second, Delay: time.Millisecond, Backoff: 1, MaxDelay: time.Millisecond},
 		Check: func(_ Result, err error) error {
 			if err == nil {
 				return errors.New("expected call error")
@@ -482,7 +511,9 @@ func TestCallOrFailUsesTestingDeadlineContext(t *testing.T) {
 		},
 	}
 	result := instance.CallOrFail(t, CallOptions{
-		Protocol: HTTP, Address: "server", Count: 1,
+		Protocol: HTTP,
+		Address:  "server",
+		Count:    1,
 		Check: func(result Result, err error) error {
 			if err != nil || len(result.Responses) != 1 || result.Responses[0].StatusCode != 200 {
 				return fmt.Errorf("unexpected result: %+v, %v", result, err)

@@ -34,7 +34,11 @@ func TestInstallRejectsUnrelatedReleaseFingerprint(t *testing.T) {
 	env := helmEnvironment(t, runner)
 
 	_, _, err := Install(context.Background(), env, Config{
-		Name: "control-plane", Namespace: "agentio-system", Chart: "./chart", Fingerprint: "expected", Reuse: true,
+		Name:        "control-plane",
+		Namespace:   "agentio-system",
+		Chart:       "./chart",
+		Fingerprint: "expected",
+		Reuse:       true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "fingerprint") {
 		t.Fatalf("Install() error = %v", err)
@@ -49,7 +53,11 @@ func TestInstallReusesExactReleaseWithoutMutation(t *testing.T) {
 	env := helmEnvironment(t, runner)
 
 	release, cleanup, err := Install(context.Background(), env, Config{
-		Name: "control-plane", Namespace: "agentio-system", Chart: "./chart", Fingerprint: "fp-1", Reuse: true,
+		Name:        "control-plane",
+		Namespace:   "agentio-system",
+		Chart:       "./chart",
+		Fingerprint: "fp-1",
+		Reuse:       true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +81,11 @@ func TestInstallRejectsMissingReleaseWhenReuseRequested(t *testing.T) {
 	env := helmEnvironment(t, runner)
 
 	_, _, err := Install(context.Background(), env, Config{
-		Name: "control-plane", Namespace: "agentio-system", Chart: "./chart", Fingerprint: "fp-1", Reuse: true,
+		Name:        "control-plane",
+		Namespace:   "agentio-system",
+		Chart:       "./chart",
+		Fingerprint: "fp-1",
+		Reuse:       true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "reuse requested") {
 		t.Fatalf("Install() error = %v, want missing reusable release", err)
@@ -96,8 +108,13 @@ func TestInstallRendersInstallsAndUninstallsOwnedRelease(t *testing.T) {
 	env := helmEnvironment(t, runner)
 	env.Cluster = &cluster.Cluster{Kubeconfig: "/tmp/e2e-kubeconfig", Context: "kind-target"}
 	release, cleanup, err := Install(context.Background(), env, Config{
-		Name: "control-plane", Namespace: "agentio-system", Chart: "./chart", Fingerprint: "fp-1",
-		ValuesFiles: []string{"values.yaml"}, Timeout: 2 * time.Minute, SkipCRDs: true,
+		Name:        "control-plane",
+		Namespace:   "agentio-system",
+		Chart:       "./chart",
+		Fingerprint: "fp-1",
+		ValuesFiles: []string{"values.yaml"},
+		Timeout:     2 * time.Minute,
+		SkipCRDs:    true,
 	})
 	if err != nil {
 		t.Fatal(err)

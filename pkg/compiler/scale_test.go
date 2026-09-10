@@ -17,6 +17,7 @@ package compiler
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +30,8 @@ import (
 // The fixture mixes ordinary endpoints and Sandbox hosts with services and policies.
 func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	compiler := scaleCompiler(t, 5_000)
-	waitSynced(t, compiler)
+	// Race instrumentation and concurrent package tests can exceed the small-fixture timeout.
+	waitSyncedWithin(t, compiler, 2*time.Minute)
 	snapshot, err := compiler.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -104,14 +106,19 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 		name := fmt.Sprintf("service-%d", index)
 		hostname := name + ".demo.svc.cluster.local"
 		services.ConditionalUpdateObject(model.Service{
-			Namespace: "demo", Name: name, Hostname: hostname,
+			Namespace: "demo",
+			Name:      name,
+			Hostname:  hostname,
 			Addresses: []string{fmt.Sprintf("10.96.%d.%d", (index/256)%256, index%256)},
 			Ports:     []model.ServicePort{{Name: "http", Port: 8080, Protocol: "TCP"}},
 		})
 		for replica := range scaleEndpointsPerService {
 			endpoints.ConditionalUpdateObject(model.Endpoint{
-				ServiceKey: "demo/" + hostname, SourceKey: "demo/" + name + "-slice",
-				Address: fmt.Sprintf("10.%d.%d.%d", (index/256)%256, index%256, replica), Port: 8080, Ready: true,
+				ServiceKey: "demo/" + hostname,
+				SourceKey:  "demo/" + name + "-slice",
+				Address:    fmt.Sprintf("10.%d.%d.%d", (index/256)%256, index%256, replica),
+				Port:       8080,
+				Ready:      true,
 			})
 		}
 	}
@@ -121,7 +128,8 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 	for index := range scalePolicies {
 		selector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "sandbox"}}
 		trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-			Name: fmt.Sprintf("policy-%d", index), Namespace: "demo",
+			Name:      fmt.Sprintf("policy-%d", index),
+			Namespace: "demo",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
 				Selector: selector,
 				Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -135,7 +143,8 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 			},
 		})
 		securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
-			Name: fmt.Sprintf("profile-%d", index), Namespace: "demo",
+			Name:      fmt.Sprintf("profile-%d", index),
+			Namespace: "demo",
 			Spec: agentsv1alpha1.SecurityProfileSpec{
 				Selector: selector,
 				Rules: []agentsv1alpha1.SecurityRule{{

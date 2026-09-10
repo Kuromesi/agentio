@@ -62,11 +62,14 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 		// pair is skipped at dispatch and the declared phase is unreachable. That
 		// is the same defect as the two implications above, and it used to be the
 		// only one that failed silently instead of here.
-		{name: "response headers phase without SubscribesOf", desc: func() Descriptor[testCfg] {
-			d := testDescriptor("f")
-			d.Phases = PhaseRequestHeaders | PhaseResponseHeaders
-			return d
-		}()},
+		{
+			name: "response headers phase without SubscribesOf",
+			desc: func() Descriptor[testCfg] {
+				d := testDescriptor("f")
+				d.Phases = PhaseRequestHeaders | PhaseResponseHeaders
+				return d
+			}(),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -50,12 +50,18 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		Gateway: testGateway(&configv1.EgressGateway{
 			ConnectionPool: &configv1.ConnectionPoolSettings{
 				Tcp: &configv1.TcpSettings{IdleTimeout: durationpb.New(2 * time.Minute)},
-				Http: &configv1.ConnectionPoolHttpSettings{StreamIdleTimeout: durationpb.New(3 * time.Minute),
-					RouteOverrides: []*configv1.HttpRouteOverride{{Hosts: []string{"api.example.com"},
-						Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(4 * time.Second)}}}},
+				Http: &configv1.ConnectionPoolHttpSettings{
+					StreamIdleTimeout: durationpb.New(3 * time.Minute),
+					RouteOverrides: []*configv1.HttpRouteOverride{{
+						Hosts:    []string{"api.example.com"},
+						Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(4 * time.Second)},
+					}},
+				},
 			},
 			ConnectRateLimit: &configv1.LocalRateLimitSettings{TokenBucket: &configv1.TokenBucket{
-				MaxTokens: 20, TokensPerFill: 5, FillInterval: durationpb.New(time.Second),
+				MaxTokens:     20,
+				TokensPerFill: 5,
+				FillInterval:  durationpb.New(time.Second),
 			}},
 		}),
 		GlobalExtProc: &configv1.ExtProcProvider{
@@ -219,7 +225,8 @@ func TestBuildConnectTerminateRouteDisablesRequestTimeout(t *testing.T) {
 func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 	resources, err := Build(Inputs{
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local", Gateway: testGateway(&configv1.EgressGateway{
+		TrustDomain:      "cluster.local",
+		Gateway: testGateway(&configv1.EgressGateway{
 			ConnectionPool: &configv1.ConnectionPoolSettings{Http: &configv1.ConnectionPoolHttpSettings{
 				RouteOverrides: []*configv1.HttpRouteOverride{{
 					Hosts:    []string{"api.example.com", "other.example.com"},
@@ -239,7 +246,8 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 					Endpoints: []*configv1.EgressServiceEntryEndpoint{{Address: "10.10.20.40"}},
 				},
 			},
-		})})
+		}),
+	})
 	if err != nil {
 		t.Fatalf("Build(): %v", err)
 	}
@@ -395,9 +403,13 @@ func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T)
 func TestBuildInstallsNoRouteListenerAccessLogs(t *testing.T) {
 	filter := "response.code >= 500"
 	policy, err := model.NewTelemetry(model.TelemetryMetadata{
-		Namespace: "agentio-system", Name: "listener-logs", Source: "agentio-system/source",
+		Namespace: "agentio-system",
+		Name:      "listener-logs",
+		Source:    "agentio-system/source",
 	}, []string{"agentio-system/egress"}, nil, nil, []model.TelemetryAccessLogging{{
-		Mode: model.TelemetryModeServer, Providers: []string{"envoy"}, Filter: &filter,
+		Mode:      model.TelemetryModeServer,
+		Providers: []string{"envoy"},
+		Filter:    &filter,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -439,13 +451,18 @@ func TestBuildAppliesEnvoyFilterAfterTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	patch, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "agentio-system", Name: "telemetry-patch", Source: "agentio-system/config-source",
+		Namespace: "agentio-system",
+		Name:      "telemetry-patch",
+		Source:    "agentio-system/config-source",
 	}, 0, []string{"agentio-system/egress"}, []model.EnvoyPatch{{
 		Operation: model.PatchInsertBefore,
 		Target: model.HTTPFilterPatch{
-			Match: &model.ListenerMatch{Name: MainForward, FilterChain: &model.FilterChainMatch{
-				Filter: &model.FilterMatch{Name: "envoy.filters.network.http_connection_manager", SubFilter: &model.SubFilterMatch{Name: "istio.stats"}},
-			}},
+			Match: &model.ListenerMatch{
+				Name: MainForward,
+				FilterChain: &model.FilterChainMatch{
+					Filter: &model.FilterMatch{Name: "envoy.filters.network.http_connection_manager", SubFilter: &model.SubFilterMatch{Name: "istio.stats"}},
+				},
+			},
 			Value: &hcmv3.HttpFilter{Name: "example.before-stats", ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: emptyAny}},
 		},
 	}})
@@ -453,9 +470,11 @@ func TestBuildAppliesEnvoyFilterAfterTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	resources, err := Build(Inputs{
-		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local",
-		Gateway:          testGateway(nil), GatewayPatches: []model.GatewayPatch{patch}, TelemetryRootNamespace: "agentio-system",
+		DiscoveryAddress:       "agentiod.agentio-system.svc:15012",
+		TrustDomain:            "cluster.local",
+		Gateway:                testGateway(nil),
+		GatewayPatches:         []model.GatewayPatch{patch},
+		TelemetryRootNamespace: "agentio-system",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -483,7 +502,9 @@ func TestBuildAppliesGatewayEnvoyFilterTransactionally(t *testing.T) {
 		t.Fatal(err)
 	}
 	filter, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "agentio-system", Name: "egress-patches", Source: "agentio-system/config-sources",
+		Namespace: "agentio-system",
+		Name:      "egress-patches",
+		Source:    "agentio-system/config-sources",
 	}, 0, []string{"agentio-system/egress"}, []model.EnvoyPatch{
 		{
 			Operation: model.PatchMerge,
@@ -495,18 +516,26 @@ func TestBuildAppliesGatewayEnvoyFilterTransactionally(t *testing.T) {
 		{
 			Operation: model.PatchInsertBefore,
 			Target: model.HTTPFilterPatch{
-				Match: &model.ListenerMatch{Name: MainForward, FilterChain: &model.FilterChainMatch{
-					Filter: &model.FilterMatch{Name: "envoy.filters.network.http_connection_manager",
-						SubFilter: &model.SubFilterMatch{Name: "envoy.filters.http.router"}},
-				}},
-				Value: &hcmv3.HttpFilter{Name: "envoy.filters.http.gateway-patch",
-					ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: emptyAny}},
+				Match: &model.ListenerMatch{
+					Name: MainForward,
+					FilterChain: &model.FilterChainMatch{
+						Filter: &model.FilterMatch{
+							Name:      "envoy.filters.network.http_connection_manager",
+							SubFilter: &model.SubFilterMatch{Name: "envoy.filters.http.router"},
+						},
+					},
+				},
+				Value: &hcmv3.HttpFilter{
+					Name:       "envoy.filters.http.gateway-patch",
+					ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: emptyAny},
+				},
 			},
 		},
 		{
 			Operation: model.PatchAdd,
 			Target: model.ExtensionConfigurationPatch{Value: &corev3.TypedExtensionConfig{
-				Name: "gateway-extension", TypedConfig: emptyAny,
+				Name:        "gateway-extension",
+				TypedConfig: emptyAny,
 			}},
 		},
 	})
@@ -516,7 +545,10 @@ func TestBuildAppliesGatewayEnvoyFilterTransactionally(t *testing.T) {
 
 	resources, err := Build(Inputs{
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local", Gateway: testGateway(nil), GatewayPatches: []model.GatewayPatch{filter}})
+		TrustDomain:      "cluster.local",
+		Gateway:          testGateway(nil),
+		GatewayPatches:   []model.GatewayPatch{filter},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +586,9 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "agentio-system", Name: "egress-gateway-dfp-ipv4-only", Source: "agentio-system/config-source",
+		Namespace: "agentio-system",
+		Name:      "egress-gateway-dfp-ipv4-only",
+		Source:    "agentio-system/config-source",
 	}, 0, []string{"agentio-system/egress"}, []model.EnvoyPatch{
 		{
 			Operation: model.PatchMerge,
@@ -562,7 +596,8 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 				Match: &model.ClusterMatch{Name: TLSConnectOriginate},
 				Value: &clusterv3.Cluster{ClusterDiscoveryType: &clusterv3.Cluster_ClusterType{
 					ClusterType: &clusterv3.Cluster_CustomClusterType{
-						Name: "envoy.clusters.dynamic_forward_proxy", TypedConfig: clusterTyped,
+						Name:        "envoy.clusters.dynamic_forward_proxy",
+						TypedConfig: clusterTyped,
 					},
 				}},
 			},
@@ -574,8 +609,10 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 					Name:      "envoy.filters.network.http_connection_manager",
 					SubFilter: &model.SubFilterMatch{Name: "envoy.filters.http.dynamic_forward_proxy"},
 				}}},
-				Value: &hcmv3.HttpFilter{Name: "envoy.filters.http.dynamic_forward_proxy",
-					ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: httpTyped}},
+				Value: &hcmv3.HttpFilter{
+					Name:       "envoy.filters.http.dynamic_forward_proxy",
+					ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: httpTyped},
+				},
 			},
 		},
 	})
@@ -584,7 +621,10 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 	}
 	resources, err := Build(Inputs{
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local", Gateway: testGateway(nil), GatewayPatches: []model.GatewayPatch{policy}})
+		TrustDomain:      "cluster.local",
+		Gateway:          testGateway(nil),
+		GatewayPatches:   []model.GatewayPatch{policy},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +660,9 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 
 func TestBuildSupportsDeployedSandboxConnectPatch(t *testing.T) {
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "agentio-system", Name: "enable-sandbox-connect", Source: "agentio-system/config-source",
+		Namespace: "agentio-system",
+		Name:      "enable-sandbox-connect",
+		Source:    "agentio-system/config-source",
 	}, 0, []string{"agentio-system/egress"}, []model.EnvoyPatch{{
 		Operation: model.PatchInsertBefore,
 		Target: model.HTTPRoutePatch{
@@ -637,7 +679,8 @@ func TestBuildSupportsDeployedSandboxConnectPatch(t *testing.T) {
 					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: PassthroughCluster},
 					Timeout:          durationpb.New(0),
 					UpgradeConfigs: []*routev3.RouteAction_UpgradeConfig{{
-						UpgradeType: "CONNECT", ConnectConfig: &routev3.RouteAction_UpgradeConfig_ConnectConfig{},
+						UpgradeType:   "CONNECT",
+						ConnectConfig: &routev3.RouteAction_UpgradeConfig_ConnectConfig{},
 					}},
 				}},
 			},
@@ -649,7 +692,10 @@ func TestBuildSupportsDeployedSandboxConnectPatch(t *testing.T) {
 
 	resources, err := Build(Inputs{
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local", Gateway: testGateway(nil), GatewayPatches: []model.GatewayPatch{policy}})
+		TrustDomain:      "cluster.local",
+		Gateway:          testGateway(nil),
+		GatewayPatches:   []model.GatewayPatch{policy},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +744,9 @@ func TestBuildRejectsConflictingGateway(t *testing.T) {
 	gateway.Source = model.GatewaySourceConflict
 	_, err := Build(Inputs{
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local", Gateway: gateway})
+		TrustDomain:      "cluster.local",
+		Gateway:          gateway,
+	})
 	if err == nil || err.Error() != "gateway agentio-system/egress has conflicting declarations" {
 		t.Fatalf("Build() error = %v", err)
 	}

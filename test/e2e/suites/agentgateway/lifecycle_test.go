@@ -66,12 +66,19 @@ func TestAgentgatewayDeploymentLifecycle(t *testing.T) {
 	}
 	probe := func(t *testing.T, body string) {
 		t.Helper()
-		traffic.Client.CallOrFail(t, echo.CallOptions{Protocol: echo.HTTP, Address: name + "." + config.Namespace + ".svc.cluster.local", Port: 8080, Count: 1, Check: check.And(check.OK(), check.Each(func(r echo.Response) error {
-			if !strings.Contains(r.RawContent, body) {
-				return fmt.Errorf("expected %q in response: %s", body, r.RawContent)
-			}
-			return nil
-		})), Retry: harness.FixedRetry(time.Minute, time.Second)})
+		traffic.Client.CallOrFail(t, echo.CallOptions{
+			Protocol: echo.HTTP,
+			Address:  name + "." + config.Namespace + ".svc.cluster.local",
+			Port:     8080,
+			Count:    1,
+			Check: check.And(check.OK(), check.Each(func(r echo.Response) error {
+				if !strings.Contains(r.RawContent, body) {
+					return fmt.Errorf("expected %q in response: %s", body, r.RawContent)
+				}
+				return nil
+			})),
+			Retry: harness.FixedRetry(time.Minute, time.Second),
+		})
 	}
 	step := func(name string, body func(*testing.T)) {
 		t.Helper()

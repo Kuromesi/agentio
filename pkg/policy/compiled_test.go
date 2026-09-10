@@ -23,7 +23,8 @@ import (
 
 func TestCompiledPolicyEqualityAndOptionalAttachment(t *testing.T) {
 	base := CompiledAuthorization{
-		Name: "demo/allow", Policy: &securityv1.Authorization{Name: "allow", Namespace: "demo"},
+		Name:   "demo/allow",
+		Policy: &securityv1.Authorization{Name: "allow", Namespace: "demo"},
 	}
 	clone := base
 	clone.Policy = proto.Clone(base.Policy).(*securityv1.Authorization)
@@ -53,7 +54,8 @@ func TestCompiledPolicyEqualityAndOptionalAttachment(t *testing.T) {
 func TestCompiledEgressPolicyEqualityIncludesGateway(t *testing.T) {
 	base := CompiledEgressPolicy{
 		CompiledPolicy: CompiledPolicy[*extensionsv1.EgressPolicy]{
-			Name: "egress", Policy: &extensionsv1.EgressPolicy{},
+			Name:   "egress",
+			Policy: &extensionsv1.EgressPolicy{},
 		},
 		GatewayKey: "demo/gateway-a",
 	}

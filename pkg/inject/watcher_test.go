@@ -83,7 +83,8 @@ func TestWatcherLoadsAndKeepsLastKnownGoodConfig(t *testing.T) {
 	// An unparsable update must not replace the last known good config.
 	broken := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "agentio-sidecar-injector", Namespace: "agentio-system",
+			Name:            "agentio-sidecar-injector",
+			Namespace:       "agentio-system",
 			ResourceVersion: "broken",
 		},
 		Data: map[string]string{"config": "templates:\n  ztunnel: '{{ not closed'", "values": "{"},

@@ -215,7 +215,10 @@ func testClusterGatewayPatch(
 ) model.GatewayPatch {
 	t.Helper()
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: name, Source: source, ResourceVersion: resourceVersion,
+		Namespace:       "demo",
+		Name:            name,
+		Source:          source,
+		ResourceVersion: resourceVersion,
 	}, 0, []string{target}, []model.EnvoyPatch{{
 		Operation: model.PatchMerge,
 		Target: model.ClusterPatch{
@@ -301,24 +304,39 @@ func workloadWithSourceUID(namespace, name, address, uid string) model.Workload 
 
 func incrementalService(name, hostname string, targetPort uint32) model.Service {
 	return model.Service{
-		Namespace: "alpha", Name: name, Hostname: hostname,
-		Ports: []model.ServicePort{{Name: "http", Port: 80, TargetPort: targetPort, Protocol: "TCP"}},
+		Namespace: "alpha",
+		Name:      name,
+		Hostname:  hostname,
+		Ports:     []model.ServicePort{{Name: "http", Port: 80, TargetPort: targetPort, Protocol: "TCP"}},
 	}
 }
 
 func incrementalTargetEndpoint(hostname, targetUID, targetName string) model.Endpoint {
 	return model.Endpoint{
-		ServiceKey: "alpha/" + hostname, SourceKey: "alpha/" + targetName + "-slice",
-		Address: "10.1.0.1", PortName: "http", Port: 8080, Protocol: "TCP", Ready: true,
-		HasTargetRef: true, TargetKind: "Pod", TargetUID: targetUID,
-		TargetNamespace: "alpha", TargetName: targetName,
+		ServiceKey:      "alpha/" + hostname,
+		SourceKey:       "alpha/" + targetName + "-slice",
+		Address:         "10.1.0.1",
+		PortName:        "http",
+		Port:            8080,
+		Protocol:        "TCP",
+		Ready:           true,
+		HasTargetRef:    true,
+		TargetKind:      "Pod",
+		TargetUID:       targetUID,
+		TargetNamespace: "alpha",
+		TargetName:      targetName,
 	}
 }
 
 func incrementalAddressEndpoint(hostname, address string, port uint32) model.Endpoint {
 	return model.Endpoint{
-		ServiceKey: "alpha/" + hostname, SourceKey: "alpha/" + hostname + "-slice",
-		Address: address, PortName: "http", Port: port, Protocol: "TCP", Ready: true,
+		ServiceKey: "alpha/" + hostname,
+		SourceKey:  "alpha/" + hostname + "-slice",
+		Address:    address,
+		PortName:   "http",
+		Port:       port,
+		Protocol:   "TCP",
+		Ready:      true,
 	}
 }
 
@@ -567,7 +585,8 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 	services := krt.NewStaticCollection[model.Service](nil, nil, options...)
 	endpoints := krt.NewStaticCollection[model.Endpoint](nil, nil, options...)
 	trafficPolicies := krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-		Name: "egress-default", Namespace: "demo",
+		Name:      "egress-default",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "workload"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -610,11 +629,16 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 // waitSynced blocks until the compiler's derived collections are populated.
 func waitSynced(t testing.TB, compiler *Compiler) {
 	t.Helper()
+	waitSyncedWithin(t, compiler, 30*time.Second)
+}
+
+func waitSyncedWithin(t testing.TB, compiler *Compiler, timeout time.Duration) {
+	t.Helper()
 	stop := make(chan struct{})
-	timer := time.AfterFunc(30*time.Second, func() { close(stop) })
+	timer := time.AfterFunc(timeout, func() { close(stop) })
 	defer timer.Stop()
 	if !compiler.WaitUntilSynced(stop) {
-		t.Fatal("compiler did not sync")
+		t.Fatalf("compiler did not sync within %s", timeout)
 	}
 }
 

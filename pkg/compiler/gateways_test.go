@@ -266,9 +266,12 @@ func TestGatewayResourcesCarryClusterOptions(t *testing.T) {
 
 func TestGatewayTelemetryChangeAffectsOnlyTargetGateway(t *testing.T) {
 	fixture := newIncrementalFixture(t)
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "gateways", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress-a"}, {Namespace: "demo", Name: "egress-b"}},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "gateways",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress-a"}, {Namespace: "demo", Name: "egress-b"}},
+		},
+	})
 	wantA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.MainForward)
 	wantB := gatewayResourceName(model.ListenerType, "demo/egress-b", networking.MainForward)
 	waitSynced(t, fixture.compiler)
@@ -277,7 +280,9 @@ func TestGatewayTelemetryChangeAffectsOnlyTargetGateway(t *testing.T) {
 	recorder := newRecorder(fixture.compiler.Resources())
 
 	policy, err := model.NewTelemetry(model.TelemetryMetadata{
-		Namespace: "demo", Name: "metrics-a", Source: "agentio-system/custom-source",
+		Namespace: "demo",
+		Name:      "metrics-a",
+		Source:    "agentio-system/custom-source",
 	}, []string{"demo/egress-a"}, []model.TelemetryMetrics{{
 		Overrides: []model.TelemetryMetricOverride{{
 			Match:        model.TelemetryMetricSelector{Kind: model.TelemetryMetricStandard, Name: "REQUEST_COUNT", Mode: model.TelemetryModeServer},
@@ -302,15 +307,20 @@ func TestGatewayTelemetryChangeAffectsOnlyTargetGateway(t *testing.T) {
 
 func TestConflictingTelemetryRetainsTargetGatewayLastKnownGood(t *testing.T) {
 	fixture := newIncrementalFixture(t)
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "gateway", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress"}},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "gateway",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress"}},
+		},
+	})
 	wantListener := gatewayResourceName(model.ListenerType, "demo/egress", networking.MainForward)
 	waitSynced(t, fixture.compiler)
 	awaitSteadyState(t, fixture.compiler, wantListener)
 
 	first, err := model.NewTelemetry(model.TelemetryMetadata{
-		Namespace: "demo", Name: "first", Source: "agentio-system/source-a",
+		Namespace: "demo",
+		Name:      "first",
+		Source:    "agentio-system/source-a",
 	}, []string{"demo/egress"}, []model.TelemetryMetrics{{Overrides: []model.TelemetryMetricOverride{{
 		Match:        model.TelemetryMetricSelector{Kind: model.TelemetryMetricStandard, Name: "REQUEST_COUNT", Mode: model.TelemetryModeServer},
 		TagOverrides: map[string]model.TelemetryMetricTagOverride{"first": {Operation: model.TelemetryTagRemove}},
@@ -327,7 +337,9 @@ func TestConflictingTelemetryRetainsTargetGatewayLastKnownGood(t *testing.T) {
 	lastGood := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress")
 
 	second, err := model.NewTelemetry(model.TelemetryMetadata{
-		Namespace: "demo", Name: "second", Source: "agentio-system/source-b",
+		Namespace: "demo",
+		Name:      "second",
+		Source:    "agentio-system/source-b",
 	}, []string{"demo/egress"}, nil, nil, []model.TelemetryAccessLogging{{Mode: model.TelemetryModeServer}})
 	if err != nil {
 		t.Fatal(err)
@@ -353,9 +365,12 @@ func TestEnvoyFilterChangeAffectsOnlyTargetGateway(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	a := &configv1.EgressGateway{Namespace: "demo", Name: "egress-a"}
 	b := &configv1.EgressGateway{Namespace: "demo", Name: "egress-b"}
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "gateways", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{a, b},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "gateways",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{a, b},
+		},
+	})
 	waitSynced(t, fixture.compiler)
 	aCluster := gatewayResourceName(model.ClusterType, "demo/egress-a", networking.MainForward)
 	bCluster := gatewayResourceName(model.ClusterType, "demo/egress-b", networking.MainForward)
@@ -381,9 +396,12 @@ func TestEnvoyFilterChangeAffectsOnlyTargetGateway(t *testing.T) {
 
 func TestDuplicateEnvoyFilterIdentityRetainsTargetGatewayLastKnownGood(t *testing.T) {
 	fixture := newIncrementalFixture(t)
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "gateway", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress"}},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "gateway",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress"}},
+		},
+	})
 	wantCluster := gatewayResourceName(model.ClusterType, "demo/egress", networking.MainForward)
 	waitSynced(t, fixture.compiler)
 	awaitSteadyState(t, fixture.compiler, wantCluster)
@@ -413,12 +431,15 @@ func TestDuplicateEnvoyFilterIdentityRetainsTargetGatewayLastKnownGood(t *testin
 
 func TestDuplicateEnvoyFilterIdentityAcrossTargetsFailsTargetUnionClosed(t *testing.T) {
 	fixture := newIncrementalFixture(t)
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "gateways", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{
-			{Namespace: "demo", Name: "egress-a"},
-			{Namespace: "demo", Name: "egress-b"},
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "gateways",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{
+				{Namespace: "demo", Name: "egress-a"},
+				{Namespace: "demo", Name: "egress-b"},
+			},
 		},
-	}})
+	})
 	wantA := gatewayResourceName(model.ClusterType, "demo/egress-a", networking.MainForward)
 	wantB := gatewayResourceName(model.ClusterType, "demo/egress-b", networking.MainForward)
 	waitSynced(t, fixture.compiler)
@@ -466,18 +487,24 @@ func TestDuplicateEnvoyFilterIdentityAcrossTargetsFailsTargetUnionClosed(t *test
 func TestGatewayConfigChangesAffectOnlyConfiguredGateway(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	a := &configv1.EgressGateway{Namespace: "demo", Name: "egress-a"}
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "initial", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{a},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "initial",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{a},
+		},
+	})
 	waitSynced(t, fixture.compiler)
 	awaitSteadyState(t, fixture.compiler,
 		gatewayResourceName(model.ProxyConfigType, "demo/egress-a", "agentio-proxy"))
 	recorder := newRecorder(fixture.compiler.Resources())
 
 	b := &configv1.EgressGateway{Namespace: "demo", Name: "egress-b"}
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "add", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{a, b},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "add",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{a, b},
+		},
+	})
 	bProxy := gatewayResourceName(model.ProxyConfigType, "demo/egress-b", "agentio-proxy")
 	eventually(t, func() bool { return recorder.has(bProxy) }, "configured gateway add")
 	settle()
@@ -489,13 +516,17 @@ func TestGatewayConfigChangesAffectOnlyConfiguredGateway(t *testing.T) {
 
 	recorder.reset()
 	b = &configv1.EgressGateway{
-		Namespace: "demo", Name: "egress-b",
+		Namespace:      "demo",
+		Name:           "egress-b",
 		ExtProc:        &configv1.ExtProcProvider{Service: "epe.demo.svc.cluster.local", Port: 9002},
 		TlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"new.example.com"}},
 	}
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "update", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{a, b},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "update",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{a, b},
+		},
+	})
 	bExtProc := gatewayResourceName(model.ClusterType, "demo/egress-b", networking.ExtProcCluster)
 	eventually(t, func() bool { return recorder.has(bExtProc) }, "configured gateway update")
 	settle()
@@ -506,9 +537,12 @@ func TestGatewayConfigChangesAffectOnlyConfiguredGateway(t *testing.T) {
 	}
 
 	recorder.reset()
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "delete", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{a},
-	}})
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "delete",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{a},
+		},
+	})
 	eventually(t, func() bool { return recorder.has(bProxy) }, "configured gateway delete")
 	settle()
 	for _, changed := range recorder.names() {
@@ -526,12 +560,15 @@ func TestGatewayConfigChangesAffectOnlyConfiguredGateway(t *testing.T) {
 // resources for that identity.
 func TestDuplicateGatewayConfigPublishesNoGraphAndRecordsFailure(t *testing.T) {
 	fixture := newIncrementalFixture(t)
-	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "duplicate", Value: &configv1.AgentioConfig{
-		EgressGateways: []*configv1.EgressGateway{
-			{Namespace: "demo", Name: "egress"},
-			{Namespace: "demo", Name: "egress"},
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
+		ResourceVersion: "duplicate",
+		Value: &configv1.AgentioConfig{
+			EgressGateways: []*configv1.EgressGateway{
+				{Namespace: "demo", Name: "egress"},
+				{Namespace: "demo", Name: "egress"},
+			},
 		},
-	}})
+	})
 	waitSynced(t, fixture.compiler)
 
 	eventually(t, func() bool {
@@ -546,7 +583,8 @@ func TestDuplicateGatewayConfigPublishesNoGraphAndRecordsFailure(t *testing.T) {
 	}
 
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
-		ResourceVersion: "removed", Value: &configv1.AgentioConfig{},
+		ResourceVersion: "removed",
+		Value:           &configv1.AgentioConfig{},
 	})
 	eventually(t, func() bool {
 		_, failed := fixture.compiler.Failures()["Gateway/demo/egress"]
@@ -559,10 +597,12 @@ func TestInvalidSemanticConfigurationRetainsGatewayGraphUntilRecovery(t *testing
 	valid := &configv1.AgentioConfig{
 		SandboxExtProc: &configv1.ExtProcProvider{Service: "epe-old.demo.svc.cluster.local", Port: 9002},
 		EgressPolicies: []*extensionsv1.EgressPolicy{{
-			MatchCidrs: []string{"10.0.0.0/24"}, Policy: extensionsv1.EgressPolicyAction_DENY,
+			MatchCidrs: []string{"10.0.0.0/24"},
+			Policy:     extensionsv1.EgressPolicyAction_DENY,
 		}},
 		EgressGateways: []*configv1.EgressGateway{{
-			Namespace: "demo", Name: "egress",
+			Namespace:      "demo",
+			Name:           "egress",
 			TlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"old.example.com"}},
 		}},
 	}
@@ -578,13 +618,17 @@ func TestInvalidSemanticConfigurationRetainsGatewayGraphUntilRecovery(t *testing
 
 	invalid := &configv1.AgentioConfig{
 		SandboxExtProc: &configv1.ExtProcProvider{
-			Service: "epe-new.demo.svc.cluster.local", Port: 9002, FailureModeAllow: true,
+			Service:          "epe-new.demo.svc.cluster.local",
+			Port:             9002,
+			FailureModeAllow: true,
 		},
 		EgressPolicies: []*extensionsv1.EgressPolicy{{
-			MatchCidrs: []string{"not-a-cidr"}, Policy: extensionsv1.EgressPolicyAction_DENY,
+			MatchCidrs: []string{"not-a-cidr"},
+			Policy:     extensionsv1.EgressPolicyAction_DENY,
 		}},
 		EgressGateways: []*configv1.EgressGateway{{
-			Namespace: "demo", Name: "egress",
+			Namespace:      "demo",
+			Name:           "egress",
 			TlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"new.example.com"}},
 		}},
 	}
@@ -613,7 +657,8 @@ func TestInvalidSemanticConfigurationRetainsGatewayGraphUntilRecovery(t *testing
 	recovered := &configv1.AgentioConfig{
 		SandboxExtProc: invalid.SandboxExtProc,
 		EgressPolicies: []*extensionsv1.EgressPolicy{{
-			MatchCidrs: []string{"203.0.113.0/24"}, Policy: extensionsv1.EgressPolicyAction_DENY,
+			MatchCidrs: []string{"203.0.113.0/24"},
+			Policy:     extensionsv1.EgressPolicyAction_DENY,
 		}},
 		EgressGateways: invalid.EgressGateways,
 	}
@@ -646,7 +691,8 @@ func TestInitialInvalidEgressAndTLSGatewayDoNotCreateSandboxReference(t *testing
 			name: "TLS include hosts only",
 			config: &configv1.AgentioConfig{EgressGateways: []*configv1.EgressGateway{
 				{
-					Namespace: "agentio-system", Name: "egress",
+					Namespace:      "agentio-system",
+					Name:           "egress",
 					TlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"api.example.com"}},
 				},
 			}},
@@ -684,10 +730,16 @@ func TestGatewayWDSOwnershipLifecycle(t *testing.T) {
 	gatewaySandbox.Principal.ServiceAccount.ServiceAccount = "egress"
 	unrelatedSandbox := testWorkload("other", "client", "10.0.1.10")
 	gatewayService := model.Service{
-		Namespace: "demo", Name: "egress", Hostname: "egress.demo.svc.cluster.local", Addresses: []string{"10.96.0.10"},
+		Namespace: "demo",
+		Name:      "egress",
+		Hostname:  "egress.demo.svc.cluster.local",
+		Addresses: []string{"10.96.0.10"},
 	}
 	unrelatedService := model.Service{
-		Namespace: "other", Name: "backend", Hostname: "backend.other.svc.cluster.local", Addresses: []string{"10.96.1.10"},
+		Namespace: "other",
+		Name:      "backend",
+		Hostname:  "backend.other.svc.cluster.local",
+		Addresses: []string{"10.96.1.10"},
 	}
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(gatewaySandbox))
 	fixture.workloads.ConditionalUpdateObject(gatewaySandbox)
@@ -696,7 +748,8 @@ func TestGatewayWDSOwnershipLifecycle(t *testing.T) {
 	fixture.services.ConditionalUpdateObject(gatewayService)
 	fixture.services.ConditionalUpdateObject(unrelatedService)
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
-		ResourceVersion: "empty", Value: &configv1.AgentioConfig{},
+		ResourceVersion: "empty",
+		Value:           &configv1.AgentioConfig{},
 	})
 	waitSynced(t, fixture.compiler)
 	awaitSteadyState(t, fixture.compiler,
@@ -717,8 +770,10 @@ func TestGatewayWDSOwnershipLifecycle(t *testing.T) {
 	}
 
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
-		ResourceVersion: "add", Value: &configv1.AgentioConfig{EgressGateways: []*configv1.EgressGateway{{
-			Namespace: "demo", Name: "egress",
+		ResourceVersion: "add",
+		Value: &configv1.AgentioConfig{EgressGateways: []*configv1.EgressGateway{{
+			Namespace: "demo",
+			Name:      "egress",
 		}}},
 	})
 	eventually(t, func() bool {
@@ -737,7 +792,8 @@ func TestGatewayWDSOwnershipLifecycle(t *testing.T) {
 	}
 
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
-		ResourceVersion: "remove", Value: &configv1.AgentioConfig{},
+		ResourceVersion: "remove",
+		Value:           &configv1.AgentioConfig{},
 	})
 	eventually(t, func() bool {
 		snapshot := currentSnapshot(t, fixture.compiler)
@@ -750,7 +806,8 @@ func TestGatewayWDSOwnershipLifecycle(t *testing.T) {
 func TestInvalidGatewayUpdateRetainsLastKnownGoodGraph(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	valid := &configv1.AgentioConfig{EgressGateways: []*configv1.EgressGateway{{
-		Namespace: "demo", Name: "egress",
+		Namespace: "demo",
+		Name:      "egress",
 	}}}
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "valid", Value: valid})
 	waitSynced(t, fixture.compiler)
@@ -773,7 +830,8 @@ func TestInvalidGatewayUpdateRetainsLastKnownGoodGraph(t *testing.T) {
 	}
 
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
-		ResourceVersion: "removed", Value: &configv1.AgentioConfig{},
+		ResourceVersion: "removed",
+		Value:           &configv1.AgentioConfig{},
 	})
 	eventually(t, func() bool {
 		_, failed := fixture.compiler.Failures()["Gateway/demo/egress"]
@@ -781,7 +839,8 @@ func TestInvalidGatewayUpdateRetainsLastKnownGoodGraph(t *testing.T) {
 	}, "removed invalid gateway clears failure and last-known-good graph")
 
 	recovered := &configv1.AgentioConfig{EgressGateways: []*configv1.EgressGateway{{
-		Namespace: "demo", Name: "egress",
+		Namespace:      "demo",
+		Name:           "egress",
 		TlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"new.example.com"}},
 	}}}
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "recovered", Value: recovered})

@@ -74,9 +74,14 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 		return nil, err
 	}
 	attachment, err := NewPolicyAttachment(PolicyAttachment{
-		Kind: PolicyKindAuthorization, Name: name, Target: target,
-		Priority: source.Spec.Priority, CreationTime: source.CreationTime,
-		SourceName: source.Name, SourceNamespace: source.Namespace, selector: selector,
+		Kind:            PolicyKindAuthorization,
+		Name:            name,
+		Target:          target,
+		Priority:        source.Spec.Priority,
+		CreationTime:    source.CreationTime,
+		SourceName:      source.Name,
+		SourceNamespace: source.Namespace,
+		selector:        selector,
 	})
 	if err != nil {
 		return nil, err
@@ -163,7 +168,8 @@ func nativeAddresses(addresses []*securityv1.Address) []*securityv1.TrafficPolic
 	result := make([]*securityv1.TrafficPolicy_Address, 0, len(addresses))
 	for _, address := range addresses {
 		result = append(result, &securityv1.TrafficPolicy_Address{
-			Address: append([]byte(nil), address.Address...), Length: address.Length,
+			Address: append([]byte(nil), address.Address...),
+			Length:  address.Length,
 		})
 	}
 	return result

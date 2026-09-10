@@ -54,8 +54,13 @@ type Request struct {
 // lowercase-keyed by httpreq's contract.
 func RequestFrom(r httpreq.HTTPRequest) Request {
 	return Request{
-		Host: r.Host, Port: r.Port, Path: r.Path, Scheme: r.Scheme,
-		Method: r.Method, Query: r.Query, headers: r.Headers,
+		Host:    r.Host,
+		Port:    r.Port,
+		Path:    r.Path,
+		Scheme:  r.Scheme,
+		Method:  r.Method,
+		Query:   r.Query,
+		headers: r.Headers,
 	}
 }
 

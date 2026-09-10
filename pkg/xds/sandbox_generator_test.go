@@ -59,8 +59,12 @@ func workerResource(t *testing.T, source string) model.Resource {
 }
 
 func workerScope(r model.Resource) model.ClientScope {
-	return model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: r.Facts.Workload.Principal,
-		WorkloadUID: "worker", SourceUID: r.Facts.Workload.SourceUID}
+	return model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   r.Facts.Workload.Principal,
+		WorkloadUID: "worker",
+		SourceUID:   r.Facts.Workload.SourceUID,
+	}
 }
 
 func TestSandboxNamedDeltaResubscribeAndDeletion(t *testing.T) {
@@ -176,17 +180,25 @@ func TestSandboxWatchStartsEmptyAndUnsubscribeStopsDelivery(t *testing.T) {
 
 func TestSandboxInlinePolicyChangeIsDeliveredWithoutPolicySubscriptions(t *testing.T) {
 	worker := workerResource(t, "pod-1")
-	policy := &securityv1.TrafficPolicy{Name: "trafficpolicy/tenant/p", Egress: &securityv1.TrafficPolicy_PolicyRule{
-		Rules: []*securityv1.TrafficPolicy_Rule{{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}}},
-	}}
+	policy := &securityv1.TrafficPolicy{
+		Name: "trafficpolicy/tenant/p",
+		Egress: &securityv1.TrafficPolicy_PolicyRule{
+			Rules: []*securityv1.TrafficPolicy_Rule{{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}}},
+		},
+	}
 	before := selectionSnapshot(t, []model.Resource{worker, sandboxResourceWithAttester(t, "a", "worker")})
 	after := selectionSnapshot(t, []model.Resource{worker, sandboxResourceWithAttester(t, "a", "worker", policy)})
 	update := updateBetween(before, after, before.Diff(after))
 	if update.Affects(model.WorkloadAuthorizationType) || update.Affects(model.SniTrafficPolicyType) {
 		t.Fatal("inline policy change must not wake independent policy watches")
 	}
-	delta, err := (SandboxGenerator{}).Generate(t.Context(), GenerationRequest{Scope: workerScope(worker), TypeURL: model.SandboxType,
-		Subscription: SubscriptionView{names: []string{"a"}}, Snapshot: after, Update: update})
+	delta, err := (SandboxGenerator{}).Generate(t.Context(), GenerationRequest{
+		Scope:        workerScope(worker),
+		TypeURL:      model.SandboxType,
+		Subscription: SubscriptionView{names: []string{"a"}},
+		Snapshot:     after,
+		Update:       update,
+	})
 	if err != nil || len(delta.Resources) != 1 {
 		t.Fatalf("inline update: %+v %v", delta, err)
 	}
@@ -216,10 +228,19 @@ func TestSandboxAttesterMigrationUpdatesVisibilityWithoutWorkloadChanges(t *test
 	}
 	for _, wildcard := range []bool{false, true} {
 		for _, worker := range []model.Resource{a, b} {
-			scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: worker.Facts.Workload.Principal,
-				WorkloadUID: worker.Facts.Workload.WorkloadUID, SourceUID: worker.Facts.Workload.SourceUID}
-			delta, err := (SandboxGenerator{}).Generate(t.Context(), GenerationRequest{Scope: scope, TypeURL: model.SandboxType,
-				Subscription: SubscriptionView{names: []string{"actor"}, wildcard: wildcard}, Snapshot: after, Update: update})
+			scope := model.ClientScope{
+				Class:       model.ClientDedicatedZTunnel,
+				Principal:   worker.Facts.Workload.Principal,
+				WorkloadUID: worker.Facts.Workload.WorkloadUID,
+				SourceUID:   worker.Facts.Workload.SourceUID,
+			}
+			delta, err := (SandboxGenerator{}).Generate(t.Context(), GenerationRequest{
+				Scope:        scope,
+				TypeURL:      model.SandboxType,
+				Subscription: SubscriptionView{names: []string{"actor"}, wildcard: wildcard},
+				Snapshot:     after,
+				Update:       update,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,8 +287,12 @@ func TestSandboxGatewayDiscoveryFollowsAttester(t *testing.T) {
 				t.Fatal("gateway dependency change did not wake networking watches")
 			}
 			for _, worker := range []model.Resource{a, b} {
-				scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: worker.Facts.Workload.Principal,
-					WorkloadUID: worker.Facts.Workload.WorkloadUID, SourceUID: worker.Facts.Workload.SourceUID}
+				scope := model.ClientScope{
+					Class:       model.ClientDedicatedZTunnel,
+					Principal:   worker.Facts.Workload.Principal,
+					WorkloadUID: worker.Facts.Workload.WorkloadUID,
+					SourceUID:   worker.Facts.Workload.SourceUID,
+				}
 				for _, wildcard := range []bool{false, true} {
 					sub := SubscriptionView{wildcard: wildcard, names: []string{worker.Key.Name}}
 					oldSelection := selectWorkloadResources(scope, before, model.AddressType, selectionNames(sub))

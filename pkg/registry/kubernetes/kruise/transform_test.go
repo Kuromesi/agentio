@@ -304,9 +304,21 @@ func TestKruiseClassifiesHostWithoutSandboxDiscovery(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	controller := true
-	host := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "host", Namespace: "demo", UID: "pod-uid", OwnerReferences: []metav1.OwnerReference{{
-		APIVersion: agentsv1alpha1.GroupVersion.String(), Kind: "Sandbox", Name: "not-yet-discovered", UID: "sandbox-uid", Controller: &controller,
-	}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1"}}
+	host := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "host",
+			Namespace: "demo",
+			UID:       "pod-uid",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: agentsv1alpha1.GroupVersion.String(),
+				Kind:       "Sandbox",
+				Name:       "not-yet-discovered",
+				UID:        "sandbox-uid",
+				Controller: &controller,
+			}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1"},
+	}
 	ordinary := host.DeepCopy()
 	ordinary.Name = "ordinary"
 	ordinary.OwnerReferences = nil

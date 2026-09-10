@@ -288,9 +288,12 @@ func TestCertificateRequestRequiresOneStrictPEMBlock(t *testing.T) {
 		{name: "prefixed data", csr: func(csr string) string { return "garbage\n" + csr }, wantCode: codes.InvalidArgument},
 		{name: "trailing data", csr: func(csr string) string { return csr + "garbage" }, wantCode: codes.InvalidArgument},
 		{name: "extra PEM block", csr: func(csr string) string { return csr + csr }, wantCode: codes.InvalidArgument},
-		{name: "surrounding ASCII whitespace", csr: func(csr string) string {
-			return string(withASCIIWhitespace([]byte(csr)))
-		}},
+		{
+			name: "surrounding ASCII whitespace",
+			csr: func(csr string) string {
+				return string(withASCIIWhitespace([]byte(csr)))
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := requestWithCSR(t)

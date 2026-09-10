@@ -45,15 +45,21 @@ func TestPolicyAttachmentTargets(t *testing.T) {
 	}{
 		{name: "global", target: AttachmentTarget{Global: true}, wantDemo: true, wantOther: true},
 		{name: "namespace", target: AttachmentTarget{Namespaces: []string{"demo"}}, wantDemo: true},
-		{name: "global selector", target: AttachmentTarget{
-			Global:   true,
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"tier": "trusted"}},
-		}, wantDemo: true},
+		{
+			name: "global selector",
+			target: AttachmentTarget{
+				Global:   true,
+				Selector: metav1.LabelSelector{MatchLabels: map[string]string{"tier": "trusted"}},
+			},
+			wantDemo: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			attachment, err := NewPolicyAttachment(PolicyAttachment{
-				Kind: PolicyKindSNIPolicy, Name: test.name, Target: test.target,
+				Kind:   PolicyKindSNIPolicy,
+				Name:   test.name,
+				Target: test.target,
 			})
 			if err != nil {
 				t.Fatalf("new policy attachment: %v", err)
@@ -147,7 +153,9 @@ func TestPolicyAttachmentExactTarget(t *testing.T) {
 		},
 	} {
 		if _, err := NewPolicyAttachment(PolicyAttachment{
-			Kind: PolicyKindAuthorization, Name: "invalid", Target: target,
+			Kind:   PolicyKindAuthorization,
+			Name:   "invalid",
+			Target: target,
 		}); err == nil {
 			t.Fatalf("invalid exact target %+v was accepted", target)
 		}
@@ -156,7 +164,9 @@ func TestPolicyAttachmentExactTarget(t *testing.T) {
 
 func TestPolicyAttachmentValidation(t *testing.T) {
 	invalidSelector := metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-		Key: "app", Operator: metav1.LabelSelectorOperator("Invalid"), Values: []string{"client"},
+		Key:      "app",
+		Operator: metav1.LabelSelectorOperator("Invalid"),
+		Values:   []string{"client"},
 	}}}
 	tests := []struct {
 		name       string
@@ -241,8 +251,10 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 
 func TestPolicyAttachmentEqualityTracksOnlyReferenceFields(t *testing.T) {
 	policy, err := CompileSNIProfile(model.SecurityProfile{
-		Name: "security-profile", Namespace: "demo", CreationTime: time.Unix(100, 0),
-		Spec: securitySpec(nil, map[string]string{"app": "sandbox"}),
+		Name:         "security-profile",
+		Namespace:    "demo",
+		CreationTime: time.Unix(100, 0),
+		Spec:         securitySpec(nil, map[string]string{"app": "sandbox"}),
 	})
 	if err != nil {
 		t.Fatal(err)

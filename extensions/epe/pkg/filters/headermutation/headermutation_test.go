@@ -72,13 +72,16 @@ func TestFilterRendersResponseHeaderMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
-		inputs.Request{},
-		inputs.Pod{Namespace: "payments"},
-		inputs.Profile{Name: "outbound"},
-		inputs.Rule{Name: "inject-context"},
-		map[string]any{"tag": "trusted"},
-	)})
+	f := New(filter.RuleConfig[Config]{
+		Cfg: cfg,
+		Scope: inputs.NewScope(
+			inputs.Request{},
+			inputs.Pod{Namespace: "payments"},
+			inputs.Profile{Name: "outbound"},
+			inputs.Rule{Name: "inject-context"},
+			map[string]any{"tag": "trusted"},
+		),
+	})
 
 	got, err := f.OnResponseHeaders(context.Background(), &filter.Stream{})
 	if err != nil {
@@ -131,9 +134,12 @@ func TestFilterDeclaresResponseWantFromConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
-				inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
-			)})
+			f := New(filter.RuleConfig[Config]{
+				Cfg: cfg,
+				Scope: inputs.NewScope(
+					inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+				),
+			})
 			// Response operations subscribe to response headers; empty response
 			// operations do not.
 			wantPhase := filter.Phase(0)
@@ -160,9 +166,12 @@ func TestFilterResponsePhaseIgnoresRequestOnlyOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
-		inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
-	)})
+	f := New(filter.RuleConfig[Config]{
+		Cfg: cfg,
+		Scope: inputs.NewScope(
+			inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+		),
+	})
 	got, err := f.OnResponseHeaders(context.Background(), &filter.Stream{})
 	if err != nil {
 		t.Fatalf("OnResponseHeaders: %v", err)
@@ -198,10 +207,13 @@ func TestFilterRejectsMissingKeySentinel(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
-				inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{},
-				map[string]any{"present": "yes"},
-			)})
+			f := New(filter.RuleConfig[Config]{
+				Cfg: cfg,
+				Scope: inputs.NewScope(
+					inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{},
+					map[string]any{"present": "yes"},
+				),
+			})
 			got, err := tc.invoke(f)
 			if err == nil {
 				t.Fatalf("render succeeded with action %+v, want a <no value> error", got)
@@ -226,9 +238,12 @@ func TestFilterRejectsInvalidRenderedResponseValueWithoutPartialMutation(t *test
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
-		inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
-	)})
+	f := New(filter.RuleConfig[Config]{
+		Cfg: cfg,
+		Scope: inputs.NewScope(
+			inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+		),
+	})
 
 	got, err := f.OnResponseHeaders(context.Background(), &filter.Stream{})
 	if err == nil {
@@ -261,9 +276,12 @@ func TestFilterRejectsInvalidRenderedValueWithoutPartialMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	f := New(filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(
-		inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
-	)})
+	f := New(filter.RuleConfig[Config]{
+		Cfg: cfg,
+		Scope: inputs.NewScope(
+			inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+		),
+	})
 
 	got, err := f.OnRequestHeaders(context.Background(), &filter.Stream{})
 	if err == nil {

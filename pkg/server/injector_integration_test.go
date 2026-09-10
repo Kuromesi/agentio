@@ -236,7 +236,8 @@ func buildReview(t *testing.T, namespace, name string) *admissionv1.AdmissionRev
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name: "app", Image: "docker.io/library/nginx:1.27",
+				Name:  "app",
+				Image: "docker.io/library/nginx:1.27",
 				ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 					HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(8080)},
 				}},

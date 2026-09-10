@@ -33,7 +33,9 @@ func parityFixtures() []parityFixture {
 			TemplateName: "egress-gateway",
 			Gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "egress", Namespace: "agentio-system", UID: "uid-1",
+					Name:      "egress",
+					Namespace: "agentio-system",
+					UID:       "uid-1",
 				},
 				Spec: gatewayv1.GatewaySpec{
 					GatewayClassName: "agentio-egress",
@@ -48,8 +50,10 @@ func parityFixtures() []parityFixture {
 			TemplateName: "egress-gateway",
 			Gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "egress-custom", Namespace: "demo", UID: "uid-2",
-					Labels: map[string]string{"team": "search"},
+					Name:      "egress-custom",
+					Namespace: "demo",
+					UID:       "uid-2",
+					Labels:    map[string]string{"team": "search"},
 					Annotations: map[string]string{
 						"gateway.agentio.kruise.io/service-type":    "NodePort",
 						"gateway.agentio.kruise.io/name-override":   "egress-renamed",

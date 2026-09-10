@@ -59,7 +59,10 @@ func testGatewayPatch(
 		})
 	}
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: namespace, Name: name, Source: source, CreationTime: created,
+		Namespace:    namespace,
+		Name:         name,
+		Source:       source,
+		CreationTime: created,
 	}, priority, []string{"demo/gateway"}, patches)
 	if err != nil {
 		t.Fatal(err)

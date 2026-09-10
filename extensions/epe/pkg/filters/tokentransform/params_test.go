@@ -127,8 +127,13 @@ func TestRenderParamsConcurrentIsolation(t *testing.T) {
 			defer wg.Done()
 			scope := inputs.NewScope(
 				inputs.RequestFrom(httpreq.HTTPRequest{
-					Host: tenant + ".example.com", Port: 443, Path: "/v1", Scheme: "https", Method: "GET",
-					Query: url.Values{}, Headers: map[string]string{"x-tenant": tenant},
+					Host:    tenant + ".example.com",
+					Port:    443,
+					Path:    "/v1",
+					Scheme:  "https",
+					Method:  "GET",
+					Query:   url.Values{},
+					Headers: map[string]string{"x-tenant": tenant},
 				}),
 				inputs.Pod{Name: tenant, Namespace: tenant, Labels: map[string]string{"tenant": tenant}},
 				inputs.Profile{Name: tenant, Namespace: tenant},

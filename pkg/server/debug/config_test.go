@@ -155,7 +155,9 @@ func TestConfigDebugSnapshotFiltersAndCountsPostFilterItems(t *testing.T) {
 func TestConfigDebugSnapshotUsesInjectedFinalSource(t *testing.T) {
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		replacement := krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-			Name: "injected", Namespace: "external", Spec: validConfigDebugTrafficPolicySpec(),
+			Name:      "injected",
+			Namespace: "external",
+			Spec:      validConfigDebugTrafficPolicySpec(),
 		}}, krt.WithStop(stop))
 		sources.TrafficPolicies = replacement
 		return sources
@@ -175,7 +177,9 @@ func TestConfigDebugSnapshotUsesInjectedFinalSource(t *testing.T) {
 func TestConfigDebugSnapshotReportsCompilerFailures(t *testing.T) {
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		sources.TrafficPolicies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-			Name: "broken-traffic", Namespace: "demo", SandboxUID: "sandbox-a",
+			Name:       "broken-traffic",
+			Namespace:  "demo",
+			SandboxUID: "sandbox-a",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
 				Selector: metav1.LabelSelector{MatchLabels: map[string]string{
 					agentsv1alpha1.LabelSandboxID: "sandbox-b",
@@ -187,7 +191,8 @@ func TestConfigDebugSnapshotReportsCompilerFailures(t *testing.T) {
 			},
 		}}, krt.WithStop(stop))
 		sources.SecurityProfiles = krt.NewStaticCollection[model.SecurityProfile](nil, []model.SecurityProfile{{
-			Name: "broken-security", Namespace: "demo",
+			Name:      "broken-security",
+			Namespace: "demo",
 			Spec: agentsv1alpha1.SecurityProfileSpec{
 				Selector: metav1.LabelSelector{},
 				Rules: []agentsv1alpha1.SecurityRule{{
@@ -226,7 +231,9 @@ func TestConfigDebugSnapshotRemovesRecoveredCompilerFailures(t *testing.T) {
 	var policies krt.StaticCollection[model.TrafficPolicy]
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		policies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-			Name: "recovering", Namespace: "demo", SandboxUID: "sandbox-a",
+			Name:       "recovering",
+			Namespace:  "demo",
+			SandboxUID: "sandbox-a",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
 				Selector: metav1.LabelSelector{MatchLabels: map[string]string{
 					agentsv1alpha1.LabelSandboxID: "sandbox-b",
@@ -253,7 +260,9 @@ func TestConfigDebugSnapshotRemovesRecoveredCompilerFailures(t *testing.T) {
 	}
 
 	policies.UpdateObject(model.TrafficPolicy{
-		Name: "recovering", Namespace: "demo", Spec: validConfigDebugTrafficPolicySpec(),
+		Name:      "recovering",
+		Namespace: "demo",
+		Spec:      validConfigDebugTrafficPolicySpec(),
 	})
 	waitForConfigDebugCondition(t, func() bool { return len(fixture.compiler.Failures()) == 0 })
 	after, err := configDebugSnapshotAt(configDebugTestTime, fixture.sources, fixture.compiler, configDebugFilter{})
@@ -299,7 +308,8 @@ func TestConfigDebugSnapshotExcludesTelemetryProviderOverrides(t *testing.T) {
 func TestConfigDebugSnapshotEncodesEmptyCollectionsAsObjectsAndArrays(t *testing.T) {
 	fixture := newConfigDebugFixture(t, nil, true)
 	got, err := configDebugSnapshotAt(configDebugTestTime, fixture.sources, fixture.compiler, configDebugFilter{
-		Kind: "TrafficPolicy", Name: "missing",
+		Kind: "TrafficPolicy",
+		Name: "missing",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -342,7 +352,9 @@ func TestConfigDebugSnapshotSupportsConcurrentSourceUpdates(t *testing.T) {
 	var policies krt.StaticCollection[model.TrafficPolicy]
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		policies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-			Name: "changing", Namespace: "demo", Spec: validConfigDebugTrafficPolicySpec(),
+			Name:      "changing",
+			Namespace: "demo",
+			Spec:      validConfigDebugTrafficPolicySpec(),
 		}}, krt.WithStop(stop))
 		sources.TrafficPolicies = policies
 		return sources

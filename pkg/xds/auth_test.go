@@ -41,16 +41,28 @@ func TestClientVersionFromNode(t *testing.T) {
 		mutate  func(*discoveryv3.DeltaDiscoveryRequest)
 		version string
 	}{
-		{name: "istio version metadata", mutate: func(request *discoveryv3.DeltaDiscoveryRequest) {
-			request.Node.Metadata.Fields["ISTIO_VERSION"] = structpb.NewStringValue("1.24.2")
-		}, version: "1.24.2"},
-		{name: "user agent fallback", mutate: func(request *discoveryv3.DeltaDiscoveryRequest) {
-			request.Node.UserAgentVersionType = &corev3.Node_UserAgentVersion{UserAgentVersion: "1.30.0"}
-		}, version: "1.30.0"},
-		{name: "metadata wins over user agent", mutate: func(request *discoveryv3.DeltaDiscoveryRequest) {
-			request.Node.Metadata.Fields["ISTIO_VERSION"] = structpb.NewStringValue("1.24.2")
-			request.Node.UserAgentVersionType = &corev3.Node_UserAgentVersion{UserAgentVersion: "1.30.0"}
-		}, version: "1.24.2"},
+		{
+			name: "istio version metadata",
+			mutate: func(request *discoveryv3.DeltaDiscoveryRequest) {
+				request.Node.Metadata.Fields["ISTIO_VERSION"] = structpb.NewStringValue("1.24.2")
+			},
+			version: "1.24.2",
+		},
+		{
+			name: "user agent fallback",
+			mutate: func(request *discoveryv3.DeltaDiscoveryRequest) {
+				request.Node.UserAgentVersionType = &corev3.Node_UserAgentVersion{UserAgentVersion: "1.30.0"}
+			},
+			version: "1.30.0",
+		},
+		{
+			name: "metadata wins over user agent",
+			mutate: func(request *discoveryv3.DeltaDiscoveryRequest) {
+				request.Node.Metadata.Fields["ISTIO_VERSION"] = structpb.NewStringValue("1.24.2")
+				request.Node.UserAgentVersionType = &corev3.Node_UserAgentVersion{UserAgentVersion: "1.30.0"}
+			},
+			version: "1.24.2",
+		},
 		{name: "absent", mutate: func(*discoveryv3.DeltaDiscoveryRequest) {}, version: ""},
 	}
 	for _, tt := range tests {

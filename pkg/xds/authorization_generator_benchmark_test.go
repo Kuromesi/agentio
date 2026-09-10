@@ -34,7 +34,10 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 		resource, err := model.NewResource(
 			model.ResourceKey{TypeURL: model.AddressType, Name: uid}, "",
 			mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
-				Uid: uid, Namespace: "demo", Node: node, AuthorizationPolicies: policies,
+				Uid:                   uid,
+				Namespace:             "demo",
+				Node:                  node,
+				AuthorizationPolicies: policies,
 			}}}), nil,
 			model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 				WorkloadUID:       uid,
@@ -61,7 +64,9 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 		name := fmt.Sprintf("demo/policy-%06d", index)
 		resources = append(resources, model.Resource{
 			Key:     model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name},
-			XDSName: name, Value: value, Hash: name + "-old",
+			XDSName: name,
+			Value:   value,
+			Hash:    name + "-old",
 			Facts: model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
 				Scope: model.AuthorizationScopeWorkload,
 			}},
@@ -83,7 +88,9 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 		b.Fatalf("build Authorization transition: changed=%v err=%v", changed, err)
 	}
 	policyUpdate := updateBetween(before, afterPolicy, []model.ResourceChange{{
-		Key: targetKey, Old: &oldTarget, New: &newTarget,
+		Key: targetKey,
+		Old: &oldTarget,
+		New: &newTarget,
 	}})
 
 	newRemote := oldRemote
@@ -93,7 +100,9 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 		b.Fatalf("build Address churn transition: changed=%v err=%v", changed, err)
 	}
 	churnUpdate := updateBetween(before, afterChurn, []model.ResourceChange{{
-		Key: oldRemote.Key, Old: &oldRemote, New: &newRemote,
+		Key: oldRemote.Key,
+		Old: &oldRemote,
+		New: &newRemote,
 	}})
 
 	dedicated := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-000", SourceUID: "uid-000"}
@@ -105,12 +114,27 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 		update        xdsstore.Update
 		wantResources int
 	}{
-		{name: "change=policy/client=dedicated", scope: dedicated,
-			snapshot: afterPolicy, update: policyUpdate, wantResources: 1},
-		{name: "change=policy/client=shared/local-workloads=100", scope: node,
-			snapshot: afterPolicy, update: policyUpdate, wantResources: 1},
-		{name: "change=unrelated-address/client=shared/local-workloads=100", scope: node,
-			snapshot: afterChurn, update: churnUpdate, wantResources: 0},
+		{
+			name:          "change=policy/client=dedicated",
+			scope:         dedicated,
+			snapshot:      afterPolicy,
+			update:        policyUpdate,
+			wantResources: 1,
+		},
+		{
+			name:          "change=policy/client=shared/local-workloads=100",
+			scope:         node,
+			snapshot:      afterPolicy,
+			update:        policyUpdate,
+			wantResources: 1,
+		},
+		{
+			name:          "change=unrelated-address/client=shared/local-workloads=100",
+			scope:         node,
+			snapshot:      afterChurn,
+			update:        churnUpdate,
+			wantResources: 0,
+		},
 	} {
 		b.Run("policies=10000/"+benchmark.name, func(b *testing.B) {
 			request := GenerationRequest{

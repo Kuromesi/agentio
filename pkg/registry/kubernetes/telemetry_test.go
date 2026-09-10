@@ -189,7 +189,10 @@ func TestAgentioChartTelemetryCompatibility(t *testing.T) {
 	}
 	resources, err := networking.Build(networking.Inputs{
 		Gateway: model.Gateway{
-			Namespace: "demo", Name: "egress", Source: model.GatewaySourceAgentioConfig, Config: &configv1.EgressGateway{},
+			Namespace: "demo",
+			Name:      "egress",
+			Source:    model.GatewaySourceAgentioConfig,
+			Config:    &configv1.EgressGateway{},
 		},
 		TelemetryRootNamespace: "agentio-system",
 		Telemetry:              policies,
@@ -366,26 +369,42 @@ func TestDecodeTelemetryRejectsUnsupportedAttachmentsAndMalformedCEL(t *testing.
 		want string
 	}{
 		{name: "selector", spec: "selector: {}", want: "selector"},
-		{name: "cross namespace", spec: `targetRefs:
+		{
+			name: "cross namespace",
+			spec: `targetRefs:
   - group: gateway.networking.k8s.io
     kind: Gateway
     namespace: other
-    name: egress`, want: "crosses namespace"},
-		{name: "wrong kind", spec: `targetRefs:
+    name: egress`,
+			want: "crosses namespace",
+		},
+		{
+			name: "wrong kind",
+			spec: `targetRefs:
   - group: gateway.networking.k8s.io
     kind: GatewayClass
-    name: egress`, want: "unsupported targetRef"},
-		{name: "both target forms", spec: `targetRef:
+    name: egress`,
+			want: "unsupported targetRef",
+		},
+		{
+			name: "both target forms",
+			spec: `targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: one
   targetRefs:
   - group: gateway.networking.k8s.io
     kind: Gateway
-    name: two`, want: "targetRef and targetRefs"},
-		{name: "invalid CEL", spec: `accessLogging:
+    name: two`,
+			want: "targetRef and targetRefs",
+		},
+		{
+			name: "invalid CEL",
+			spec: `accessLogging:
   - filter:
-      expression: 'response.code >'`, want: "CEL"},
+      expression: 'response.code >'`,
+			want: "CEL",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

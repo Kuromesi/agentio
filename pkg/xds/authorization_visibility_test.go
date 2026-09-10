@@ -55,7 +55,9 @@ func TestAuthorizationIncrementalDiffsExactReferenceTransition(t *testing.T) {
 		Subscription: SubscriptionView{wildcard: true},
 		Snapshot:     after,
 		Update: updateBetween(before, after, []model.ResourceChange{{
-			Key: oldWorkload.Key, Old: &oldWorkload, New: &newWorkload,
+			Key: oldWorkload.Key,
+			Old: &oldWorkload,
+			New: &newWorkload,
 		}}),
 	}
 
@@ -106,8 +108,13 @@ func TestAuthorizationExcludesSandboxManagedEndpoints(t *testing.T) {
 			if got := selectAuthorizationResources(scope, after, names); len(got) != 0 {
 				t.Fatalf("Sandbox-only scope received Workload policies: %v", selectedNames(got))
 			}
-			delta := generateAuthorizationIncremental(GenerationRequest{Scope: scope, TypeURL: model.WorkloadAuthorizationType,
-				Subscription: SubscriptionView{wildcard: names == nil, names: names}, Snapshot: after, Update: update})
+			delta := generateAuthorizationIncremental(GenerationRequest{
+				Scope:        scope,
+				TypeURL:      model.WorkloadAuthorizationType,
+				Subscription: SubscriptionView{wildcard: names == nil, names: names},
+				Snapshot:     after,
+				Update:       update,
+			})
 			if len(delta.Resources) != 0 || !slices.Equal(delta.Removed, want) {
 				t.Fatalf("removing last ordinary endpoint: %+v, want removals %v", delta, want)
 			}
@@ -121,8 +128,13 @@ func TestAuthorizationExcludesSandboxManagedEndpoints(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		delta := generateAuthorizationIncremental(GenerationRequest{Scope: scope, TypeURL: model.WorkloadAuthorizationType,
-			Subscription: SubscriptionView{wildcard: true}, Snapshot: latest, Update: updateBetween(after, latest, after.Diff(latest))})
+		delta := generateAuthorizationIncremental(GenerationRequest{
+			Scope:        scope,
+			TypeURL:      model.WorkloadAuthorizationType,
+			Subscription: SubscriptionView{wildcard: true},
+			Snapshot:     latest,
+			Update:       updateBetween(after, latest, after.Diff(latest)),
+		})
 		if len(delta.Resources) != 0 {
 			t.Fatalf("policy-only update leaked to Sandbox hosts: %+v", delta)
 		}

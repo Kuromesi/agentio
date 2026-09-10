@@ -67,15 +67,21 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 		target.Namespaces = []string{profile.Namespace}
 	}
 	attachment, err := NewPolicyAttachment(PolicyAttachment{
-		Kind: PolicyKindSNIPolicy, Name: resourceName, Target: target,
-		Priority: priority, CreationTime: profile.CreationTime,
-		SourceName: profile.Name, SourceNamespace: profile.Namespace, selector: selector,
+		Kind:            PolicyKindSNIPolicy,
+		Name:            resourceName,
+		Target:          target,
+		Priority:        priority,
+		CreationTime:    profile.CreationTime,
+		SourceName:      profile.Name,
+		SourceNamespace: profile.Namespace,
+		selector:        selector,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &CompiledSNIPolicy{
-		Name: resourceName, Attachment: &attachment,
+		Name:       resourceName,
+		Attachment: &attachment,
 		Policy: &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{
 			Match:  &extensionsv1.SniMatch{Sni: hosts},
 			Action: extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION,

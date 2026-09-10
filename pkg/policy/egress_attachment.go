@@ -78,8 +78,11 @@ func CompiledEgressPolicies(
 		}
 		result = append(result, CompiledEgressPolicy{
 			CompiledPolicy: CompiledPolicy[*extensionsv1.EgressPolicy]{
-				Name: name, Attachment: &attachment, Policy: proto.Clone(source).(*extensionsv1.EgressPolicy),
-			}, GatewayKey: gatewayKey,
+				Name:       name,
+				Attachment: &attachment,
+				Policy:     proto.Clone(source).(*extensionsv1.EgressPolicy),
+			},
+			GatewayKey: gatewayKey,
 		})
 	}
 	return result, nil

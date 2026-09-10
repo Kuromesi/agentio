@@ -25,13 +25,17 @@ import (
 )
 
 func TestNativeTrafficPolicyPreservesActionsAndEmptyDirection(t *testing.T) {
-	source := model.TrafficPolicy{Name: "p", Namespace: "tenant", Spec: agentsv1alpha1.TrafficPolicySpec{
-		Ingress: &agentsv1alpha1.TrafficPolicyDirection{},
-		Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
-			{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/8"}}},
-			{Action: agentsv1alpha1.RuleActionReject},
-		}},
-	}}
+	source := model.TrafficPolicy{
+		Name:      "p",
+		Namespace: "tenant",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Ingress: &agentsv1alpha1.TrafficPolicyDirection{},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/8"}}},
+				{Action: agentsv1alpha1.RuleActionReject},
+			}},
+		},
+	}
 	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, source, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
 	if err != nil {
 		t.Fatal(err)

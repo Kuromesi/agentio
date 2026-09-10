@@ -341,11 +341,13 @@ func TestReconcileReportsGatewayAcceptedAndProgrammedFromDeploymentReadiness(t *
 			name: "deployment available",
 			deployment: &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "egress", Namespace: "agentio-system",
-					Labels: map[string]string{managedLabel: "agentio.kruise.io-egress-gateway-controller"},
+					Name:      "egress",
+					Namespace: "agentio-system",
+					Labels:    map[string]string{managedLabel: "agentio.kruise.io-egress-gateway-controller"},
 				},
 				Status: appsv1.DeploymentStatus{Conditions: []appsv1.DeploymentCondition{{
-					Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue,
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
 				}}},
 			},
 			programmedStatus: metav1.ConditionTrue,
@@ -617,7 +619,8 @@ func TestChildResourceChangeRequeuesParentGateway(t *testing.T) {
 	yes := true
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "egress", Namespace: "agentio-system",
+			Name:            "egress",
+			Namespace:       "agentio-system",
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "gateway.networking.k8s.io/v1", Kind: "Gateway", Name: "egress", UID: gw.UID, Controller: &yes}},
 		},
 	}
@@ -663,7 +666,8 @@ func TestChildResourceChangeRequeuesParentGatewayNonControllerOwnerRef(t *testin
 	no := false
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "egress", Namespace: "agentio-system",
+			Name:            "egress",
+			Namespace:       "agentio-system",
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "gateway.networking.k8s.io/v1", Kind: "Gateway", Name: "egress", UID: gw.UID, Controller: &no}},
 		},
 	}

@@ -24,7 +24,9 @@ import (
 
 func TestApplyExtensionConfigurationsAddsGatewayScopedValues(t *testing.T) {
 	filter, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: "ecds", Source: "source",
+		Namespace: "demo",
+		Name:      "ecds",
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, []model.EnvoyPatch{{
 		Operation: model.PatchAdd,
 		Target: model.ExtensionConfigurationPatch{Value: &corev3.TypedExtensionConfig{

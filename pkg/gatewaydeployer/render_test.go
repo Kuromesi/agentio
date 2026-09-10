@@ -128,35 +128,47 @@ func TestProxyImage(t *testing.T) {
 		want    string
 	}{
 		{
-			name: "bare image joins hub and tag",
-			hub:  "example.com/agentio", tag: "1.0.0", image: "proxyv2",
-			want: "example.com/agentio/proxyv2:1.0.0",
+			name:  "bare image joins hub and tag",
+			hub:   "example.com/agentio",
+			tag:   "1.0.0",
+			image: "proxyv2",
+			want:  "example.com/agentio/proxyv2:1.0.0",
 		},
 		{
-			name: "fully qualified image with tag preserved",
-			hub:  "docker.io/openkruise", tag: "latest", image: "registry.example/agentio/proxyv2:1.0.0",
-			want: "registry.example/agentio/proxyv2:1.0.0",
+			name:  "fully qualified image with tag preserved",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
+			image: "registry.example/agentio/proxyv2:1.0.0",
+			want:  "registry.example/agentio/proxyv2:1.0.0",
 		},
 		{
-			name: "fully qualified image with digest preserved",
-			hub:  "docker.io/openkruise", tag: "latest",
+			name:  "fully qualified image with digest preserved",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
 			image: "registry.example/agentio/proxyv2@sha256:0000000000000000000000000000000000000000000000000000000000000000",
 			want:  "registry.example/agentio/proxyv2@sha256:0000000000000000000000000000000000000000000000000000000000000000",
 		},
 		{
-			name: "fully qualified image without tag preserved",
-			hub:  "docker.io/openkruise", tag: "latest", image: "registry.example/proxyv2",
-			want: "registry.example/proxyv2",
+			name:  "fully qualified image without tag preserved",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
+			image: "registry.example/proxyv2",
+			want:  "registry.example/proxyv2",
 		},
 		{
-			name: "bare image joins default hub and tag",
-			hub:  "docker.io/openkruise", tag: "latest", image: "proxyv2",
-			want: "docker.io/openkruise/proxyv2:latest",
+			name:  "bare image joins default hub and tag",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
+			image: "proxyv2",
+			want:  "docker.io/openkruise/proxyv2:latest",
 		},
 		{
-			name: "variant replaces tag suffix",
-			hub:  "example.com/agentio/", tag: "1.0.0-distroless", variant: "debug", image: "customproxy",
-			want: "example.com/agentio/customproxy:1.0.0-debug",
+			name:    "variant replaces tag suffix",
+			hub:     "example.com/agentio/",
+			tag:     "1.0.0-distroless",
+			variant: "debug",
+			image:   "customproxy",
+			want:    "example.com/agentio/customproxy:1.0.0-debug",
 		},
 	}
 	for _, tt := range tests {
@@ -180,7 +192,9 @@ func TestRenderIgnoresProxyImageAnnotation(t *testing.T) {
 	rend := testRenderer(t, merged)
 	gw := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "egress", Namespace: "demo", UID: "uid-img",
+			Name:      "egress",
+			Namespace: "demo",
+			UID:       "uid-img",
 			Annotations: map[string]string{
 				"sidecar.agentio.kruise.io/proxy-image":      "evil.example/attacker:latest",
 				"sidecar.agentio.kruise.io/proxy-image-type": "evil",

@@ -39,7 +39,8 @@ func TestLoadOrCreateAuthorityReusesAgentioCAByDefault(t *testing.T) {
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
 	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
-		Namespace: namespace, ConfigMapName: "agentio-ca-certs",
+		Namespace:     namespace,
+		ConfigMapName: "agentio-ca-certs",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +68,8 @@ func TestLoadOrCreateAuthorityBootstrapsMissingSecret(t *testing.T) {
 	client := kube.NewFakeClient()
 	go client.Run(ctx.Done())
 	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
-		Namespace: namespace, ConfigMapName: "agentio-ca-certs",
+		Namespace:     namespace,
+		ConfigMapName: "agentio-ca-certs",
 	})
 	if err != nil {
 		t.Fatalf("LoadOrCreateAuthority() error = %v", err)
@@ -87,9 +89,12 @@ func TestLoadOrCreateAuthorityRejectsInvalidTrustBundle(t *testing.T) {
 		bundle func(*testing.T) []byte
 	}{
 		{name: "malformed", bundle: func(*testing.T) []byte { return []byte("not a certificate") }},
-		{name: "unrelated", bundle: func(t *testing.T) []byte {
-			return newWorkloadCASecret(t, namespace, "unrelated", 24*time.Hour).Data[caCertKey]
-		}},
+		{
+			name: "unrelated",
+			bundle: func(t *testing.T) []byte {
+				return newWorkloadCASecret(t, namespace, "unrelated", 24*time.Hour).Data[caCertKey]
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			secret := newWorkloadCASecret(t, namespace, "workload", 24*time.Hour)
@@ -100,7 +105,9 @@ func TestLoadOrCreateAuthorityRejectsInvalidTrustBundle(t *testing.T) {
 			go client.Run(ctx.Done())
 
 			_, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
-				Namespace: namespace, SecretName: "workload", ConfigMapName: "roots",
+				Namespace:     namespace,
+				SecretName:    "workload",
+				ConfigMapName: "roots",
 			})
 			if err == nil || !strings.Contains(err.Error(), "trust bundle") {
 				t.Fatalf("LoadOrCreateAuthority() error = %v, want trust bundle rejection", err)
@@ -165,7 +172,9 @@ func TestCASecretDeletionDisablesSigningAndRetainsCommittedTrust(t *testing.T) {
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
 	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
-		Namespace: namespace, SecretName: "workload", ConfigMapName: "roots",
+		Namespace:     namespace,
+		SecretName:    "workload",
+		ConfigMapName: "roots",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -104,8 +104,12 @@ func setupSidecarInjector(ctx context.Context, client kube.Client, authority *ca
 
 	webhookTLS := authority.TLSConfig()
 	webhookTLS.NextProtos = []string{"h2", "http/1.1"}
-	webhookServer := &http.Server{Addr: options.Address, Handler: webhookMux,
-		TLSConfig: webhookTLS, ReadHeaderTimeout: options.ReadHeaderTimeout}
+	webhookServer := &http.Server{
+		Addr:              options.Address,
+		Handler:           webhookMux,
+		TLSConfig:         webhookTLS,
+		ReadHeaderTimeout: options.ReadHeaderTimeout,
+	}
 	nodes.Start(ctx.Done())
 	go func() {
 		<-ctx.Done()

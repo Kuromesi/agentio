@@ -219,9 +219,14 @@ func TestAgentgatewayChartTemplateMatches(t *testing.T) {
 
 func TestAgentgatewayProgrammedWaitsForNewConfig(t *testing.T) {
 	replicas := int32(1)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &replicas,
-		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"gateway.agentio.kruise.io/config-hash": "new"}}}},
-		Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Generation: 2},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"gateway.agentio.kruise.io/config-hash": "new"}}},
+		},
+		Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1},
+	}
 	if !agentgatewayRolloutReady(dep, "new") {
 		t.Fatal("completed rollout not ready")
 	}

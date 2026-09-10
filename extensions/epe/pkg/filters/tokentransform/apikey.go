@@ -156,7 +156,9 @@ func (apiKeySigner) Prepare(st *filter.Stream, scope *inputs.Scope, cfg any) (an
 				original = st.Request.Headers[name]
 			}
 			prepared = append(prepared, PreparedHeader{
-				Name: name, OriginalValue: original, Value: header.Value,
+				Name:          name,
+				OriginalValue: original,
+				Value:         header.Value,
 			})
 		}
 	}

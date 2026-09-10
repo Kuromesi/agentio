@@ -86,7 +86,8 @@ func TestAgentioMetricsMergeParity(t *testing.T) {
 		"prometheus": {
 			ReportingInterval: &interval,
 			ClientMetrics: metricConfig{Overrides: []metricsOverride{{
-				Name: "custom_metric", Tags: []tagOverride{},
+				Name: "custom_metric",
+				Tags: []tagOverride{},
 			}}},
 			ServerMetrics: metricConfig{Overrides: []metricsOverride{{
 				Name: "REQUEST_COUNT",
@@ -109,7 +110,9 @@ func TestAgentioLoggingMergeParity(t *testing.T) {
 	clientFilter := "true"
 	policies := []model.Telemetry{
 		{AccessLogging: []model.TelemetryAccessLogging{{
-			Mode: model.TelemetryModeServer, Providers: []string{"envoy"}, Filter: &serverFilter,
+			Mode:      model.TelemetryModeServer,
+			Providers: []string{"envoy"},
+			Filter:    &serverFilter,
 		}}},
 		{AccessLogging: []model.TelemetryAccessLogging{
 			{Mode: model.TelemetryModeServer, Disabled: &disabled},
@@ -127,7 +130,8 @@ func TestAgentioLoggingMergeParity(t *testing.T) {
 	}
 
 	clientOnly := []model.Telemetry{{AccessLogging: []model.TelemetryAccessLogging{{
-		Mode: model.TelemetryModeClient, Providers: []string{"client"},
+		Mode:      model.TelemetryModeClient,
+		Providers: []string{"client"},
 	}}}}
 	if got := mergeLogs(clientOnly, []string{"envoy"}); !reflect.DeepEqual(got, map[string]loggingSpec{"envoy": {}}) {
 		t.Fatalf("client-only logging changed server defaults = %#v", got)
@@ -195,7 +199,9 @@ func TestAgentioTracingMergeParity(t *testing.T) {
 func telemetryValue(t *testing.T, namespace, name string, targets []string) model.Telemetry {
 	t.Helper()
 	policy, err := model.NewTelemetry(model.TelemetryMetadata{
-		Namespace: namespace, Name: name, Source: "agentio-system/config-sources",
+		Namespace: namespace,
+		Name:      name,
+		Source:    "agentio-system/config-sources",
 	}, targets, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
