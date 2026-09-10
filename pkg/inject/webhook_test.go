@@ -84,7 +84,10 @@ func testPod() *corev1.Pod {
 			Namespace:    "demo",
 			Labels:       map[string]string{"app": "hello", "pod-template-hash": "6d8f7c9b5d"},
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "hello-6d8f7c9b5d", Controller: &controller,
+				APIVersion: "apps/v1",
+				Kind:       "ReplicaSet",
+				Name:       "hello-6d8f7c9b5d",
+				Controller: &controller,
 			}},
 		},
 		Spec: corev1.PodSpec{
@@ -481,7 +484,9 @@ func TestServeInjectHTTPContract(t *testing.T) {
 	review := admissionv1.AdmissionReview{
 		TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"},
 		Request: &admissionv1.AdmissionRequest{
-			UID: "http-uid", Namespace: pod.Namespace, Object: runtime.RawExtension{Raw: raw},
+			UID:       "http-uid",
+			Namespace: pod.Namespace,
+			Object:    runtime.RawExtension{Raw: raw},
 		},
 	}
 	body, _ := json.Marshal(review)

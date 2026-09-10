@@ -52,18 +52,28 @@ func TestAgentioConfigStartsFromDefaults(t *testing.T) {
 func TestAgentioConfigMapNamesAreConfigurable(t *testing.T) {
 	ctx := t.Context()
 	objects := []runtime.Object{
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"}, Data: map[string]string{
-			"config": "sandboxExtProc:\n  service: ignored.agentio-system.svc.cluster.local\n",
-		}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "custom-base"}, Data: map[string]string{
-			"config": "sandboxExtProc:\n  service: custom.agentio-system.svc.cluster.local\n  port: 9002\n",
-		}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "custom-primary"}, Data: map[string]string{
-			"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
-		}},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
+			Data: map[string]string{
+				"config": "sandboxExtProc:\n  service: ignored.agentio-system.svc.cluster.local\n",
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "custom-base"},
+			Data: map[string]string{
+				"config": "sandboxExtProc:\n  service: custom.agentio-system.svc.cluster.local\n  port: 9002\n",
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "custom-primary"},
+			Data: map[string]string{
+				"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
+			},
+		},
 	}
 	r := newTestRegistryWithAgentioConfigMaps(t, ctx, objects, nil, &AgentioConfigMapOptions{
-		BaseName: "custom-base", PrimaryName: "custom-primary",
+		BaseName:    "custom-base",
+		PrimaryName: "custom-primary",
 	})
 
 	config := r.AgentioConfig.GetKey("effective")
@@ -81,15 +91,22 @@ func TestAgentioConfigMapNamesAreConfigurable(t *testing.T) {
 func TestEmptyPrimaryAgentioConfigMapNameDisablesOverlay(t *testing.T) {
 	ctx := t.Context()
 	objects := []runtime.Object{
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "custom-base"}, Data: map[string]string{
-			"config": "sandboxExtProc:\n  service: base.agentio-system.svc.cluster.local\n",
-		}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config-primary"}, Data: map[string]string{
-			"config": "sandboxExtProc:\n  service: must-not-apply.agentio-system.svc.cluster.local\n",
-		}},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "custom-base"},
+			Data: map[string]string{
+				"config": "sandboxExtProc:\n  service: base.agentio-system.svc.cluster.local\n",
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config-primary"},
+			Data: map[string]string{
+				"config": "sandboxExtProc:\n  service: must-not-apply.agentio-system.svc.cluster.local\n",
+			},
+		},
 	}
 	r := newTestRegistryWithAgentioConfigMaps(t, ctx, objects, nil, &AgentioConfigMapOptions{
-		BaseName: "custom-base", PrimaryName: "",
+		BaseName:    "custom-base",
+		PrimaryName: "",
 	})
 
 	config := r.AgentioConfig.GetKey("effective")
@@ -137,25 +154,36 @@ func TestAgentioConfigPrimaryReplacesFullSubmessage(t *testing.T) {
 			wantService: "primary.agentio-system.svc.cluster.local",
 		},
 		{
-			name: "explicit empty message resets every field", primary: "sandboxExtProc: {}",
+			name:    "explicit empty message resets every field",
+			primary: "sandboxExtProc: {}",
 		},
 		{
-			name: "omitted message leaves the lower layer intact", primary: "{}",
-			wantService: "base.agentio-system.svc.cluster.local", wantPort: 9002,
+			name:        "omitted message leaves the lower layer intact",
+			primary:     "{}",
+			wantService: "base.agentio-system.svc.cluster.local",
+			wantPort:    9002,
 		},
 		{
-			name: "null leaves the lower layer intact", primary: "sandboxExtProc: null",
-			wantService: "base.agentio-system.svc.cluster.local", wantPort: 9002,
+			name:        "null leaves the lower layer intact",
+			primary:     "sandboxExtProc: null",
+			wantService: "base.agentio-system.svc.cluster.local",
+			wantPort:    9002,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
-			base := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"}, Data: map[string]string{
-				"config": "sandboxExtProc:\n  service: base.agentio-system.svc.cluster.local\n  port: 9002\n",
-			}}
-			primary := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config-primary"}, Data: map[string]string{
-				"config": test.primary,
-			}}
+			base := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
+				Data: map[string]string{
+					"config": "sandboxExtProc:\n  service: base.agentio-system.svc.cluster.local\n  port: 9002\n",
+				},
+			}
+			primary := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config-primary"},
+				Data: map[string]string{
+					"config": test.primary,
+				},
+			}
 			r := newTestRegistry(t, ctx, []runtime.Object{base, primary}, nil)
 
 			config := r.AgentioConfig.GetKey("effective")
@@ -227,18 +255,22 @@ func TestApplyAgentioConfigRejectsInvalidStaticServiceEntries(t *testing.T) {
 func TestPolicyCollectionsTrackTypedResources(t *testing.T) {
 	ctx := t.Context()
 	traffic := &agentsv1alpha1.TrafficPolicy{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "demo", Name: "traffic",
+		Namespace:   "demo",
+		Name:        "traffic",
 		Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "sandbox-a"},
 	}}
 	globalTraffic := &agentsv1alpha1.GlobalTrafficPolicy{ObjectMeta: metav1.ObjectMeta{
-		Name: "global-traffic", Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "sandbox-b"},
+		Name:        "global-traffic",
+		Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "sandbox-b"},
 	}}
 	security := &agentsv1alpha1.SecurityProfile{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "demo", Name: "security",
+		Namespace:   "demo",
+		Name:        "security",
 		Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "sandbox-c"},
 	}}
 	globalSecurity := &agentsv1alpha1.GlobalSecurityProfile{ObjectMeta: metav1.ObjectMeta{
-		Name: "global-security", Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "sandbox-d"},
+		Name:        "global-security",
+		Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "sandbox-d"},
 	}}
 	r := newTestRegistry(t, ctx, nil, []runtime.Object{traffic, globalTraffic, security, globalSecurity})
 
@@ -265,12 +297,18 @@ func TestPolicyCollectionsTrackTypedResources(t *testing.T) {
 
 func TestAgentioConfigRetainsLastKnownGoodOverlay(t *testing.T) {
 	ctx := t.Context()
-	base := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"}, Data: map[string]string{
-		"config": "sandboxExtProc:\n  service: base.agentio-system.svc.cluster.local\n  port: 9002\n",
-	}}
-	primary := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config-primary"}, Data: map[string]string{
-		"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
-	}}
+	base := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
+		Data: map[string]string{
+			"config": "sandboxExtProc:\n  service: base.agentio-system.svc.cluster.local\n  port: 9002\n",
+		},
+	}
+	primary := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config-primary"},
+		Data: map[string]string{
+			"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
+		},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{base, primary}, nil)
 
 	config := r.AgentioConfig.GetKey("effective")
@@ -319,8 +357,11 @@ func newTestRegistryWithAgentioConfigMaps(
 		),
 	}
 	r, err := New(client, Options{
-		ClusterID: "test", TrustDomain: "cluster.local", RootNamespace: "agentio-system",
-		DebounceAfter: time.Millisecond, DebounceMax: 5 * time.Millisecond,
+		ClusterID:         "test",
+		TrustDomain:       "cluster.local",
+		RootNamespace:     "agentio-system",
+		DebounceAfter:     time.Millisecond,
+		DebounceMax:       5 * time.Millisecond,
 		AgentioConfigMaps: agentioConfigMaps,
 	}, ctx.Done())
 	if err != nil {

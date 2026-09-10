@@ -175,7 +175,10 @@ func TestSignV3_SynthesizedHostKeepsThePort(t *testing.T) {
 	// An explicit literal host header carrying the same authority is the
 	// reference: it is what the old code signed and what the gateway sees.
 	ref := &RequestSnapshot{
-		Method: "GET", Scheme: "https", Host: "ecs.cn-hangzhou.aliyuncs.com", Path: "/",
+		Method: "GET",
+		Scheme: "https",
+		Host:   "ecs.cn-hangzhou.aliyuncs.com",
+		Path:   "/",
 		Headers: map[string]string{
 			"host":                 "ecs.cn-hangzhou.aliyuncs.com:8443",
 			"x-acs-action":         "DescribeRegions",
@@ -228,8 +231,11 @@ func TestSignV3_MalformedWireQueryFailsRatherThanSigningPartially(t *testing.T) 
 func TestSignV3_WireEncodingVariantsSignIdentically(t *testing.T) {
 	sign := func(rawQuery string) string {
 		req := &RequestSnapshot{
-			Method: "GET", Scheme: "https", Host: "ecs.cn-hangzhou.aliyuncs.com",
-			Path: "/", RawQuery: rawQuery,
+			Method:   "GET",
+			Scheme:   "https",
+			Host:     "ecs.cn-hangzhou.aliyuncs.com",
+			Path:     "/",
+			RawQuery: rawQuery,
 			Headers: map[string]string{
 				":authority":           "ecs.cn-hangzhou.aliyuncs.com",
 				"x-acs-action":         "DescribeRegions",
@@ -322,8 +328,10 @@ func TestSignV3_InvalidInput(t *testing.T) {
 		{
 			name: "missing x-acs-content-sha256",
 			req: &RequestSnapshot{
-				Method: "POST", Scheme: "https",
-				Host: "ecs.cn-hangzhou.aliyuncs.com", Path: "/",
+				Method: "POST",
+				Scheme: "https",
+				Host:   "ecs.cn-hangzhou.aliyuncs.com",
+				Path:   "/",
 				Headers: map[string]string{
 					"host":          "ecs.cn-hangzhou.aliyuncs.com",
 					"authorization": "ACS3-HMAC-SHA256 Credential=AK,SignedHeaders=host,Signature=x",
@@ -335,8 +343,10 @@ func TestSignV3_InvalidInput(t *testing.T) {
 		{
 			name: "empty AccessKeySecret",
 			req: &RequestSnapshot{
-				Method: "POST", Scheme: "https",
-				Host: "ecs.cn-hangzhou.aliyuncs.com", Path: "/",
+				Method: "POST",
+				Scheme: "https",
+				Host:   "ecs.cn-hangzhou.aliyuncs.com",
+				Path:   "/",
 				Headers: map[string]string{
 					"host":                 "ecs.cn-hangzhou.aliyuncs.com",
 					"x-acs-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -367,8 +377,10 @@ func TestSignV3_InvalidInput(t *testing.T) {
 
 func TestSignV3_EmptySecurityTokenRemovesHeader(t *testing.T) {
 	req := &RequestSnapshot{
-		Method: "POST", Scheme: "https",
-		Host: "ecs.cn-hangzhou.aliyuncs.com", Path: "/",
+		Method: "POST",
+		Scheme: "https",
+		Host:   "ecs.cn-hangzhou.aliyuncs.com",
+		Path:   "/",
 		Headers: map[string]string{
 			"host":                 "ecs.cn-hangzhou.aliyuncs.com",
 			"x-acs-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -448,7 +460,8 @@ func TestComputeV3Signature_InvalidInput(t *testing.T) {
 		{
 			name: "empty AccessKeySecret",
 			req: &RequestSnapshot{
-				Method: "POST", Path: "/",
+				Method: "POST",
+				Path:   "/",
 				Headers: map[string]string{
 					"host":                 "ecs.aliyuncs.com",
 					"x-acs-content-sha256": "hash",

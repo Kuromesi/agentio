@@ -68,8 +68,11 @@ func TestSignV1ROA_InvalidInput(t *testing.T) {
 		{
 			name: "empty AccessKeySecret",
 			req: &RequestSnapshot{
-				Method: "GET", Scheme: "https",
-				Host: "h", Path: "/", Headers: map[string]string{"host": "h"},
+				Method:  "GET",
+				Scheme:  "https",
+				Host:    "h",
+				Path:    "/",
+				Headers: map[string]string{"host": "h"},
 			},
 			triplet: Triplet{AccessKeyID: "AK"},
 			wantErr: "AccessKeySecret",
@@ -96,8 +99,10 @@ func TestSignV1ROA_InvalidInput(t *testing.T) {
 
 func TestSignV1ROA_EmptySecurityTokenRemovesHeader(t *testing.T) {
 	req := &RequestSnapshot{
-		Method: "GET", Scheme: "https",
-		Host: "cs.cn-hangzhou.aliyuncs.com", Path: "/clusters",
+		Method: "GET",
+		Scheme: "https",
+		Host:   "cs.cn-hangzhou.aliyuncs.com",
+		Path:   "/clusters",
 		Headers: map[string]string{
 			"host":                 "cs.cn-hangzhou.aliyuncs.com",
 			"accept":               "application/json",

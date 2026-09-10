@@ -130,6 +130,7 @@ func New(client kube.Client, o Options) (*Deployer, error) {
 	// the dynamic SSA patcher, so a read-only client is enough.
 	hpas := kclient.NewFiltered[*autoscalingv2.HorizontalPodAutoscaler](client, filter)
 	pdbs := kclient.NewFiltered[*policyv1.PodDisruptionBudget](client, filter)
+	configMaps := kclient.NewFiltered[*corev1.ConfigMap](client, filter)
 
 	var gatewayInformer kclient.StartableInformer[*gatewayv1.Gateway]
 	var gatewayClassInformer kclient.StartableInformer[*gatewayv1.GatewayClass]
@@ -161,6 +162,7 @@ func New(client kube.Client, o Options) (*Deployer, error) {
 		ServiceAccounts: serviceAccounts,
 		HPAs:            hpas,
 		PDBs:            pdbs,
+		ConfigMaps:      configMaps,
 	}
 	deployer := &Deployer{
 		client:          client,
@@ -176,6 +178,7 @@ func New(client kube.Client, o Options) (*Deployer, error) {
 			serviceAccounts,
 			hpas,
 			pdbs,
+			configMaps,
 			gateways,
 			gatewayClasses,
 		},

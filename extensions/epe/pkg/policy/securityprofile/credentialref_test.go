@@ -41,7 +41,8 @@ func TestNormalizeCredentialRef(t *testing.T) {
 				Namespace: "tenant-a",
 			},
 			want: v1alpha1.CredentialRef{Secret: &v1alpha1.SecretCredentialRef{
-				Name: "legacy-secret", Namespace: "tenant-a",
+				Name:      "legacy-secret",
+				Namespace: "tenant-a",
 			}},
 		},
 		{
@@ -59,10 +60,12 @@ func TestNormalizeCredentialRef(t *testing.T) {
 		{
 			name: "typed secret passes through",
 			ref: v1alpha1.CredentialRef{Secret: &v1alpha1.SecretCredentialRef{
-				Name: "typed-secret", Namespace: "tenant-a",
+				Name:      "typed-secret",
+				Namespace: "tenant-a",
 			}},
 			want: v1alpha1.CredentialRef{Secret: &v1alpha1.SecretCredentialRef{
-				Name: "typed-secret", Namespace: "tenant-a",
+				Name:      "typed-secret",
+				Namespace: "tenant-a",
 			}},
 		},
 		{

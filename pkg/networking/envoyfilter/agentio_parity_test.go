@@ -47,24 +47,44 @@ func TestAgentioReplaceAndInsertParity(t *testing.T) {
 	}{
 		{name: "nil slice"},
 		{
-			name: "the first", input: []int{1, 2, 3},
-			replace: []int{10, 2, 3}, insertBefore: []int{10, 1, 2, 3}, insertAfter: []int{1, 10, 2, 3}, applied: true,
+			name:         "the first",
+			input:        []int{1, 2, 3},
+			replace:      []int{10, 2, 3},
+			insertBefore: []int{10, 1, 2, 3},
+			insertAfter:  []int{1, 10, 2, 3},
+			applied:      true,
 		},
 		{
-			name: "the middle", input: []int{0, 1, 2, 3},
-			replace: []int{0, 10, 2, 3}, insertBefore: []int{0, 10, 1, 2, 3}, insertAfter: []int{0, 1, 10, 2, 3}, applied: true,
+			name:         "the middle",
+			input:        []int{0, 1, 2, 3},
+			replace:      []int{0, 10, 2, 3},
+			insertBefore: []int{0, 10, 1, 2, 3},
+			insertAfter:  []int{0, 1, 10, 2, 3},
+			applied:      true,
 		},
 		{
-			name: "the last", input: []int{3, 2, 1},
-			replace: []int{3, 2, 10}, insertBefore: []int{3, 2, 10, 1}, insertAfter: []int{3, 2, 1, 10}, applied: true,
+			name:         "the last",
+			input:        []int{3, 2, 1},
+			replace:      []int{3, 2, 10},
+			insertBefore: []int{3, 2, 10, 1},
+			insertAfter:  []int{3, 2, 1, 10},
+			applied:      true,
 		},
 		{
-			name: "match multiple", input: []int{1, 2, 1},
-			replace: []int{10, 2, 1}, insertBefore: []int{10, 1, 2, 1}, insertAfter: []int{1, 10, 2, 1}, applied: true,
+			name:         "match multiple",
+			input:        []int{1, 2, 1},
+			replace:      []int{10, 2, 1},
+			insertBefore: []int{10, 1, 2, 1},
+			insertAfter:  []int{1, 10, 2, 1},
+			applied:      true,
 		},
 		{
-			name: "not found", input: []int{2, 3},
-			replace: []int{2, 3}, insertBefore: []int{2, 3}, insertAfter: []int{2, 3}, applied: false,
+			name:         "not found",
+			input:        []int{2, 3},
+			replace:      []int{2, 3},
+			insertBefore: []int{2, 3},
+			insertAfter:  []int{2, 3},
+			applied:      false,
 		},
 	}
 	for _, tt := range tests {
@@ -115,7 +135,8 @@ func TestAgentioListenerMatchParity(t *testing.T) {
 	listener := &listenerv3.Listener{
 		Name: "main",
 		Address: &corev3.Address{Address: &corev3.Address_SocketAddress{SocketAddress: &corev3.SocketAddress{
-			Address: "0.0.0.0", PortSpecifier: &corev3.SocketAddress_PortValue{PortValue: 15001},
+			Address:       "0.0.0.0",
+			PortSpecifier: &corev3.SocketAddress_PortValue{PortValue: 15001},
 		}}},
 		ListenerFilters: []*listenerv3.ListenerFilter{{Name: "listener-a"}},
 		FilterChains: []*listenerv3.FilterChain{{
@@ -139,9 +160,17 @@ func TestAgentioListenerMatchParity(t *testing.T) {
 		{name: "listener name and port", match: &model.ListenerMatch{Name: "main", PortNumber: 15001}, want: true},
 		{name: "listener name mismatch", match: &model.ListenerMatch{Name: "other"}},
 		{name: "listener port mismatch", match: &model.ListenerMatch{PortNumber: 15002}},
-		{name: "filter chain full match", match: &model.ListenerMatch{FilterChain: &model.FilterChainMatch{
-			Name: "chain-a", SNI: "example.com", TransportProtocol: "tls", ApplicationProtocols: "h2,http/1.1", DestinationPort: 443,
-		}}, want: true},
+		{
+			name: "filter chain full match",
+			match: &model.ListenerMatch{FilterChain: &model.FilterChainMatch{
+				Name:                 "chain-a",
+				SNI:                  "example.com",
+				TransportProtocol:    "tls",
+				ApplicationProtocols: "h2,http/1.1",
+				DestinationPort:      443,
+			}},
+			want: true,
+		},
 		{name: "filter chain name mismatch", match: &model.ListenerMatch{FilterChain: &model.FilterChainMatch{Name: "chain-b"}}},
 		{name: "SNI mismatch", match: &model.ListenerMatch{FilterChain: &model.FilterChainMatch{SNI: "other.example.com"}}},
 		{name: "transport mismatch", match: &model.ListenerMatch{FilterChain: &model.FilterChainMatch{TransportProtocol: "raw_buffer"}}},
@@ -196,16 +225,27 @@ func TestAgentioListenerFilterOperationParity(t *testing.T) {
 		{name: "insert after", operation: model.PatchInsertAfter, matched: "a", value: &listenerv3.ListenerFilter{Name: "x"}, want: []string{"a", "x", "b"}},
 		{name: "replace", operation: model.PatchReplace, matched: "b", value: &listenerv3.ListenerFilter{Name: "x"}, want: []string{"a", "x"}},
 		{name: "remove", operation: model.PatchRemove, matched: "a", want: []string{"b"}},
-		{name: "merge typed config", operation: model.PatchMerge, matched: "a", value: &listenerv3.ListenerFilter{
-			ConfigType: &listenerv3.ListenerFilter_TypedConfig{TypedConfig: patchConfig},
-		}, want: []string{"a", "b"}, wantMerge: true},
+		{
+			name:      "merge typed config",
+			operation: model.PatchMerge,
+			matched:   "a",
+			value: &listenerv3.ListenerFilter{
+				ConfigType: &listenerv3.ListenerFilter_TypedConfig{TypedConfig: patchConfig},
+			},
+			want:      []string{"a", "b"},
+			wantMerge: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			match := &model.ListenerMatch{Name: "main", ListenerFilter: tt.matched}
-			policy := parityPolicy(t, tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.ListenerFilterPatch{
-				Match: match, Value: tt.value,
-			}})
+			policy := parityPolicy(t, tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.ListenerFilterPatch{
+					Match: match,
+					Value: tt.value,
+				},
+			})
 			input := []*listenerv3.Listener{{
 				Name: "main",
 				ListenerFilters: []*listenerv3.ListenerFilter{
@@ -246,24 +286,35 @@ func TestAgentioListenerOperationParity(t *testing.T) {
 		wantMerge bool
 	}{
 		{
-			name: "add", operation: model.PatchAdd,
-			value: &listenerv3.Listener{Name: "added"}, wantNames: []string{"main", "other", "added"},
+			name:      "add",
+			operation: model.PatchAdd,
+			value:     &listenerv3.Listener{Name: "added"},
+			wantNames: []string{"main", "other", "added"},
 		},
 		{
-			name: "merge", operation: model.PatchMerge, match: &model.ListenerMatch{Name: "main"},
+			name:      "merge",
+			operation: model.PatchMerge,
+			match:     &model.ListenerMatch{Name: "main"},
 			value:     &listenerv3.Listener{TrafficDirection: corev3.TrafficDirection_INBOUND},
-			wantNames: []string{"main", "other"}, wantMerge: true,
+			wantNames: []string{"main", "other"},
+			wantMerge: true,
 		},
 		{
-			name: "remove", operation: model.PatchRemove, match: &model.ListenerMatch{Name: "main"},
+			name:      "remove",
+			operation: model.PatchRemove,
+			match:     &model.ListenerMatch{Name: "main"},
 			wantNames: []string{"other"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy := parityPolicy(t, "listener-"+tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.ListenerPatch{
-				Match: tt.match, Value: tt.value,
-			}})
+			policy := parityPolicy(t, "listener-"+tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.ListenerPatch{
+					Match: tt.match,
+					Value: tt.value,
+				},
+			})
 			input := []*listenerv3.Listener{{Name: "main"}, {Name: "other"}}
 			got, err := ApplyListeners(NewPatchSet([]model.GatewayPatch{policy}), input)
 			if err != nil {
@@ -292,27 +343,37 @@ func TestAgentioFilterChainOperationParity(t *testing.T) {
 		wantMerge bool
 	}{
 		{
-			name: "add", operation: model.PatchAdd,
+			name:      "add",
+			operation: model.PatchAdd,
 			value:     &listenerv3.FilterChain{Name: "added", Filters: []*listenerv3.Filter{{Name: "network-added"}}},
 			wantNames: []string{"a", "b", "added"},
 		},
 		{
-			name: "merge", operation: model.PatchMerge, matched: "a",
+			name:      "merge",
+			operation: model.PatchMerge,
+			matched:   "a",
 			value:     &listenerv3.FilterChain{FilterChainMatch: &listenerv3.FilterChainMatch{TransportProtocol: "tls"}},
-			wantNames: []string{"a", "b"}, wantMerge: true,
+			wantNames: []string{"a", "b"},
+			wantMerge: true,
 		},
 		{name: "remove", operation: model.PatchRemove, matched: "a", wantNames: []string{"b"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy := parityPolicy(t, "filter-chain-"+tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.FilterChainPatch{
-				Match: &model.ListenerMatch{Name: "main", FilterChain: &model.FilterChainMatch{Name: tt.matched}},
-				Value: tt.value,
-			}})
-			input := []*listenerv3.Listener{{Name: "main", FilterChains: []*listenerv3.FilterChain{
-				{Name: "a", Filters: []*listenerv3.Filter{{Name: "network-a"}}},
-				{Name: "b", Filters: []*listenerv3.Filter{{Name: "network-b"}}},
-			}}}
+			policy := parityPolicy(t, "filter-chain-"+tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.FilterChainPatch{
+					Match: &model.ListenerMatch{Name: "main", FilterChain: &model.FilterChainMatch{Name: tt.matched}},
+					Value: tt.value,
+				},
+			})
+			input := []*listenerv3.Listener{{
+				Name: "main",
+				FilterChains: []*listenerv3.FilterChain{
+					{Name: "a", Filters: []*listenerv3.Filter{{Name: "network-a"}}},
+					{Name: "b", Filters: []*listenerv3.Filter{{Name: "network-b"}}},
+				},
+			}}
 			got, err := ApplyListeners(NewPatchSet([]model.GatewayPatch{policy}), input)
 			if err != nil {
 				t.Fatal(err)
@@ -347,9 +408,16 @@ func TestAgentioNetworkFilterOperationParity(t *testing.T) {
 		{name: "insert after", operation: model.PatchInsertAfter, matched: "a", value: &listenerv3.Filter{Name: "x"}, want: []string{"a", "x", "b"}},
 		{name: "replace", operation: model.PatchReplace, matched: "b", value: &listenerv3.Filter{Name: "x"}, want: []string{"a", "x"}},
 		{name: "remove", operation: model.PatchRemove, matched: "a", want: []string{"b"}},
-		{name: "merge typed config", operation: model.PatchMerge, matched: "a", value: &listenerv3.Filter{
-			ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: patchConfig},
-		}, want: []string{"a", "b"}, wantMerge: true},
+		{
+			name:      "merge typed config",
+			operation: model.PatchMerge,
+			matched:   "a",
+			value: &listenerv3.Filter{
+				ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: patchConfig},
+			},
+			want:      []string{"a", "b"},
+			wantMerge: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -357,15 +425,23 @@ func TestAgentioNetworkFilterOperationParity(t *testing.T) {
 			if tt.matched != "" {
 				match.FilterChain.Filter = &model.FilterMatch{Name: tt.matched}
 			}
-			policy := parityPolicy(t, "network-"+tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.NetworkFilterPatch{
-				Match: match, Value: tt.value,
-			}})
-			input := []*listenerv3.Listener{{Name: "main", FilterChains: []*listenerv3.FilterChain{{
-				Name: "chain", Filters: []*listenerv3.Filter{
-					{Name: "a", ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: baseConfig}},
-					{Name: "b"},
+			policy := parityPolicy(t, "network-"+tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.NetworkFilterPatch{
+					Match: match,
+					Value: tt.value,
 				},
-			}}}}
+			})
+			input := []*listenerv3.Listener{{
+				Name: "main",
+				FilterChains: []*listenerv3.FilterChain{{
+					Name: "chain",
+					Filters: []*listenerv3.Filter{
+						{Name: "a", ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: baseConfig}},
+						{Name: "b"},
+					},
+				}},
+			}}
 			got, err := ApplyListeners(NewPatchSet([]model.GatewayPatch{policy}), input)
 			if err != nil {
 				t.Fatal(err)
@@ -407,21 +483,36 @@ func TestAgentioHTTPFilterOperationParity(t *testing.T) {
 		{name: "insert after", operation: model.PatchInsertAfter, matched: "a", value: &hcmv3.HttpFilter{Name: "x"}, want: []string{"a", "x", "b"}},
 		{name: "replace", operation: model.PatchReplace, matched: "b", value: &hcmv3.HttpFilter{Name: "x"}, want: []string{"a", "x"}},
 		{name: "remove", operation: model.PatchRemove, matched: "a", want: []string{"b"}},
-		{name: "merge typed config", operation: model.PatchMerge, matched: "a", value: &hcmv3.HttpFilter{
-			ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: patchConfig},
-		}, want: []string{"a", "b"}, wantMerge: true},
+		{
+			name:      "merge typed config",
+			operation: model.PatchMerge,
+			matched:   "a",
+			value: &hcmv3.HttpFilter{
+				ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: patchConfig},
+			},
+			want:      []string{"a", "b"},
+			wantMerge: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			match := &model.ListenerMatch{Name: "main", FilterChain: &model.FilterChainMatch{
-				Name: "chain", Filter: &model.FilterMatch{Name: httpConnectionManagerFilter},
-			}}
+			match := &model.ListenerMatch{
+				Name: "main",
+				FilterChain: &model.FilterChainMatch{
+					Name:   "chain",
+					Filter: &model.FilterMatch{Name: httpConnectionManagerFilter},
+				},
+			}
 			if tt.matched != "" {
 				match.FilterChain.Filter.SubFilter = &model.SubFilterMatch{Name: tt.matched}
 			}
-			policy := parityPolicy(t, "http-"+tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.HTTPFilterPatch{
-				Match: match, Value: tt.value,
-			}})
+			policy := parityPolicy(t, "http-"+tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.HTTPFilterPatch{
+					Match: match,
+					Value: tt.value,
+				},
+			})
 			input := listenerWithHTTPFilters(t, []*hcmv3.HttpFilter{
 				{Name: "a", ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: baseConfig}},
 				{Name: "b"},
@@ -464,12 +555,25 @@ func TestAgentioRouteMatchParity(t *testing.T) {
 			{name: "name mismatch", configuration: "scooby.90", match: &model.RouteConfigurationMatch{Name: "scooby.80"}},
 			{name: "HTTP published port", configuration: "http.8080", match: &model.RouteConfigurationMatch{PortNumber: 8080}, want: true},
 			{name: "HTTP port mismatch", configuration: "http.8080", match: &model.RouteConfigurationMatch{PortNumber: 80}},
-			{name: "gateway fields match", configuration: "https.443.app1.gw1.ns1", match: &model.RouteConfigurationMatch{
-				PortNumber: 443, PortName: "app1", Gateway: "ns1/gw1",
-			}, want: true},
-			{name: "gateway fields mismatch", configuration: "http.80", match: &model.RouteConfigurationMatch{
-				PortNumber: 443, PortName: "app1", Gateway: "ns1/gw1",
-			}},
+			{
+				name:          "gateway fields match",
+				configuration: "https.443.app1.gw1.ns1",
+				match: &model.RouteConfigurationMatch{
+					PortNumber: 443,
+					PortName:   "app1",
+					Gateway:    "ns1/gw1",
+				},
+				want: true,
+			},
+			{
+				name:          "gateway fields mismatch",
+				configuration: "http.80",
+				match: &model.RouteConfigurationMatch{
+					PortNumber: 443,
+					PortName:   "app1",
+					Gateway:    "ns1/gw1",
+				},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -551,12 +655,20 @@ func TestAgentioHTTPRouteOperationParity(t *testing.T) {
 			if tt.matched != "" {
 				match.VirtualHost.Route = &model.RouteMatch{Name: tt.matched}
 			}
-			policy := parityPolicy(t, "route-"+tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.HTTPRoutePatch{
-				Match: match, Value: tt.value,
-			}})
-			input := []*routev3.RouteConfiguration{{Name: "routes", VirtualHosts: []*routev3.VirtualHost{{
-				Name: "host", Routes: []*routev3.Route{{Name: "a"}, {Name: "b"}},
-			}}}}
+			policy := parityPolicy(t, "route-"+tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.HTTPRoutePatch{
+					Match: match,
+					Value: tt.value,
+				},
+			})
+			input := []*routev3.RouteConfiguration{{
+				Name: "routes",
+				VirtualHosts: []*routev3.VirtualHost{{
+					Name:   "host",
+					Routes: []*routev3.Route{{Name: "a"}, {Name: "b"}},
+				}},
+			}}
 			got, err := ApplyRoutes(NewPatchSet([]model.GatewayPatch{policy}), input)
 			if err != nil {
 				t.Fatal(err)
@@ -590,9 +702,13 @@ func TestAgentioVirtualHostOperationParity(t *testing.T) {
 			if tt.matched != "" {
 				match.VirtualHost = &model.VirtualHostMatch{Name: tt.matched}
 			}
-			policy := parityPolicy(t, "vhost-"+tt.name, model.EnvoyPatch{Operation: tt.operation, Target: model.VirtualHostPatch{
-				Match: match, Value: tt.value,
-			}})
+			policy := parityPolicy(t, "vhost-"+tt.name, model.EnvoyPatch{
+				Operation: tt.operation,
+				Target: model.VirtualHostPatch{
+					Match: match,
+					Value: tt.value,
+				},
+			})
 			input := []*routev3.RouteConfiguration{{Name: "routes", VirtualHosts: []*routev3.VirtualHost{{Name: "a"}, {Name: "b"}}}}
 			got, err := ApplyRoutes(NewPatchSet([]model.GatewayPatch{policy}), input)
 			if err != nil {
@@ -635,7 +751,9 @@ func TestAgentioExtensionConfigurationParity(t *testing.T) {
 func parityPolicy(t *testing.T, name string, patches ...model.EnvoyPatch) model.GatewayPatch {
 	t.Helper()
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: name, Source: "agentio-parity-test",
+		Namespace: "demo",
+		Name:      name,
+		Source:    "agentio-parity-test",
 	}, 0, []string{"demo/gateway"}, patches)
 	if err != nil {
 		t.Fatal(err)
@@ -694,11 +812,16 @@ func listenerWithHTTPFilters(t *testing.T, filters []*hcmv3.HttpFilter) []*liste
 	if err != nil {
 		t.Fatal(err)
 	}
-	return []*listenerv3.Listener{{Name: "main", FilterChains: []*listenerv3.FilterChain{{
-		Name: "chain", Filters: []*listenerv3.Filter{{
-			Name: httpConnectionManagerFilter, ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: manager},
+	return []*listenerv3.Listener{{
+		Name: "main",
+		FilterChains: []*listenerv3.FilterChain{{
+			Name: "chain",
+			Filters: []*listenerv3.Filter{{
+				Name:       httpConnectionManagerFilter,
+				ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: manager},
+			}},
 		}},
-	}}}}
+	}}
 }
 
 func unmarshalHCM(t *testing.T, filter *listenerv3.Filter) *hcmv3.HttpConnectionManager {

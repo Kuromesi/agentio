@@ -70,8 +70,11 @@ func benchAuditScope() *Scope {
 	return &Scope{
 		Scope: *inputs.NewScope(
 			inputs.RequestFrom(httpreq.HTTPRequest{
-				Host: "api.example.com", Port: 443, Path: "/v1/chat/completions",
-				Scheme: "https", Method: "POST",
+				Host:    "api.example.com",
+				Port:    443,
+				Path:    "/v1/chat/completions",
+				Scheme:  "https",
+				Method:  "POST",
 				Headers: map[string]string{"x-request-id": "abc", "x-tenant": "a"},
 			}),
 			inputs.Pod{Name: "sandbox-pod", Namespace: "test-ns", IP: "10.0.0.1", Labels: map[string]string{"app": "sleep"}},

@@ -145,7 +145,9 @@ func TestNewGatewayPatchRejectsInvalidValues(t *testing.T) {
 
 func TestNewGatewayPatchRejectsEmptyPatchPlan(t *testing.T) {
 	_, err := NewGatewayPatch(GatewayPatchMetadata{
-		Namespace: "demo", Name: "filter", Source: "source",
+		Namespace: "demo",
+		Name:      "filter",
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, nil)
 	if err == nil {
 		t.Fatal("empty patch plan accepted")

@@ -68,7 +68,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 		{
 			name: "GET object, virtual-hosted-style, UNSIGNED-PAYLOAD",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/path/to/object.txt",
+				Method: "GET",
+				Host:   goldenHost,
+				Path:   "/path/to/object.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -82,7 +84,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 		{
 			name: "PUT object with content-type",
 			req: &RequestSnapshot{
-				Method: "PUT", Host: goldenHost, Path: "/path/to/object.txt",
+				Method: "PUT",
+				Host:   goldenHost,
+				Path:   "/path/to/object.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"content-type":         "text/plain",
@@ -97,7 +101,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 		{
 			name: "GET bucket with query string (list objects)",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/",
+				Method:   "GET",
+				Host:     goldenHost,
+				Path:     "/",
 				RawQuery: "max-keys=100&prefix=foo%2F",
 				Headers: map[string]string{
 					"host":                 goldenHost,
@@ -112,7 +118,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 		{
 			name: "stale x-oss-security-token on request is replaced by triplet token",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/path/to/object.txt",
+				Method: "GET",
+				Host:   goldenHost,
+				Path:   "/path/to/object.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -129,7 +137,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 		{
 			name: "empty triplet token removes header and excludes it from signature",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/path/to/object.txt",
+				Method: "GET",
+				Host:   goldenHost,
+				Path:   "/path/to/object.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -147,7 +157,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 			// is identical to the plain "GET object" vector above.
 			name: "wire path with %2F-encoded slashes decodes to same signature",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/path%2Fto%2Fobject.txt",
+				Method: "GET",
+				Host:   goldenHost,
+				Path:   "/path%2Fto%2Fobject.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -162,7 +174,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 			// Key "dir one/obj a.txt": wire form percent-encodes space and slash.
 			name: "wire path with encoded space and slash",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/dir%20one%2Fobj%20a.txt",
+				Method: "GET",
+				Host:   goldenHost,
+				Path:   "/dir%20one%2Fobj%20a.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -178,7 +192,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 			// then re-encode to %2B; the slash was %2F on the wire.
 			name: "wire path with plus sign preserved",
 			req: &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/a%2Bb%2Fc.txt",
+				Method: "GET",
+				Host:   goldenHost,
+				Path:   "/a%2Bb%2Fc.txt",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -200,7 +216,9 @@ func TestSignOSSV4_Oss2GoldenSignatures(t *testing.T) {
 			// gets a 400 from the service regardless of signing.
 			name: "PUT, mixed-case header names, payload hash taken verbatim",
 			req: &RequestSnapshot{
-				Method: "PUT", Host: goldenHost, Path: "/data.bin",
+				Method: "PUT",
+				Host:   goldenHost,
+				Path:   "/data.bin",
 				Headers: map[string]string{
 					"Host":                 goldenHost,
 					"Content-Type":         "application/octet-stream",
@@ -264,30 +282,40 @@ func TestSignOSSV4_Oss2GoldenSubresourceQuery(t *testing.T) {
 		wantSig  string
 	}{
 		{
-			name: "GetObjectACL ?acl", method: "GET", path: "/path/to/object.txt",
+			name:     "GetObjectACL ?acl",
+			method:   "GET",
+			path:     "/path/to/object.txt",
 			rawQuery: "acl",
 			wantSig:  "851a80701781e932946ffb87831593fea3d5b24c9417aab01ca1822a1d9e4ed7",
 		},
 		{
 			// "?acl=" must canonicalize identically to "?acl": the SDK treats
 			// an empty value as no value.
-			name: "?acl= equals ?acl", method: "GET", path: "/path/to/object.txt",
+			name:     "?acl= equals ?acl",
+			method:   "GET",
+			path:     "/path/to/object.txt",
 			rawQuery: "acl=",
 			wantSig:  "851a80701781e932946ffb87831593fea3d5b24c9417aab01ca1822a1d9e4ed7",
 		},
 		{
-			name: "InitiateMultipartUpload ?uploads", method: "POST", path: "/path/to/object.txt",
+			name:     "InitiateMultipartUpload ?uploads",
+			method:   "POST",
+			path:     "/path/to/object.txt",
 			rawQuery: "uploads",
 			wantSig:  "54384045449683be57c58730e625fb39d944f74084190b195cd5028f9020bf7a",
 		},
 		{
-			name: "valueless mixed with valued", method: "GET", path: "/path/to/object.txt",
+			name:     "valueless mixed with valued",
+			method:   "GET",
+			path:     "/path/to/object.txt",
 			rawQuery: "acl&versionId=v1",
 			wantSig:  "b48aed2712ee1a48d7fff1d8f88250c410ea7cd58eb49185ab0f5dd76f053525",
 		},
 		{
 			// Sorting is by encoded key: "append" precedes "position".
-			name: "AppendObject ?append&position=0", method: "POST", path: "/path/to/object.txt",
+			name:     "AppendObject ?append&position=0",
+			method:   "POST",
+			path:     "/path/to/object.txt",
 			rawQuery: "position=0&append",
 			wantSig:  "67b1351866cded4b241169863456976f6081ac27ed8043a3b47d17a9c5fd6dc1",
 		},
@@ -295,7 +323,10 @@ func TestSignOSSV4_Oss2GoldenSubresourceQuery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := &RequestSnapshot{
-				Method: tt.method, Host: goldenHost, Path: tt.path, RawQuery: tt.rawQuery,
+				Method:   tt.method,
+				Host:     goldenHost,
+				Path:     tt.path,
+				RawQuery: tt.rawQuery,
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -359,7 +390,10 @@ func TestSignOSSV4_GoSDKGoldenVerbatimQuery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := &RequestSnapshot{
-				Method: "GET", Host: goldenHost, Path: "/", RawQuery: tt.rawQuery,
+				Method:   "GET",
+				Host:     goldenHost,
+				Path:     "/",
+				RawQuery: tt.rawQuery,
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -398,14 +432,18 @@ func TestSignOSSV4_Oss2GoldenAdditionalHeaders(t *testing.T) {
 		wantSegment string
 	}{
 		{
-			name: "single additional header (range)", declared: "range", method: "GET",
+			name:        "single additional header (range)",
+			declared:    "range",
+			method:      "GET",
 			extra:       map[string]string{"range": "bytes=0-99"},
 			wantSig:     "fdb79f648019901415f594c6442d5398e3efb3902c67fafae90890b325ad3d65",
 			wantSegment: "range",
 		},
 		{
 			// Mixed case + unsorted input must normalize to "if-match;range".
-			name: "multiple, mixed case, unsorted", declared: "Range;If-Match", method: "PUT",
+			name:     "multiple, mixed case, unsorted",
+			declared: "Range;If-Match",
+			method:   "PUT",
 			extra: map[string]string{
 				"range": "bytes=0-99", "if-match": `"etag123"`, "content-type": "text/plain",
 			},
@@ -415,7 +453,9 @@ func TestSignOSSV4_Oss2GoldenAdditionalHeaders(t *testing.T) {
 		{
 			// Declared but not present on the request: still listed, but must
 			// not appear as a canonical header line.
-			name: "declared but absent", declared: "range;x-not-present", method: "GET",
+			name:        "declared but absent",
+			declared:    "range;x-not-present",
+			method:      "GET",
 			extra:       map[string]string{"range": "bytes=0-99"},
 			wantSig:     "e45ea70784c91f25c733ee6ce981343dbf4e2740f7c5ebc0706084b90bdfb580",
 			wantSegment: "range;x-not-present",
@@ -423,7 +463,9 @@ func TestSignOSSV4_Oss2GoldenAdditionalHeaders(t *testing.T) {
 		{
 			// content-type and x-oss-* are signed by default, so the SDK drops
 			// them from the additional list.
-			name: "default-signed names filtered out", declared: "content-type;x-oss-foo;range", method: "GET",
+			name:        "default-signed names filtered out",
+			declared:    "content-type;x-oss-foo;range",
+			method:      "GET",
 			extra:       map[string]string{"content-type": "text/plain", "range": "bytes=0-99"},
 			wantSig:     "1567a811e634d8ce99ea7459973051cf95aacc5f75bede0dca4e15779a897405",
 			wantSegment: "range",
@@ -440,7 +482,10 @@ func TestSignOSSV4_Oss2GoldenAdditionalHeaders(t *testing.T) {
 			}
 			maps.Copy(headers, tt.extra)
 			req := &RequestSnapshot{
-				Method: tt.method, Host: goldenHost, Path: "/path/to/object.txt", Headers: headers,
+				Method:  tt.method,
+				Host:    goldenHost,
+				Path:    "/path/to/object.txt",
+				Headers: headers,
 			}
 			tr := Triplet{AccessKeyID: goldenAK, AccessKeySecret: goldenSK, SecurityToken: goldenToken}
 
@@ -483,43 +528,70 @@ func TestOSSCanonicalResource_EndpointMatrix(t *testing.T) {
 		wantResult string
 	}{
 		{
-			name: "public, virtual-hosted", host: "mybucket.oss-cn-beijing.aliyuncs.com",
-			wirePath: "/probe%2Fa.txt", wantBucket: "mybucket", wantResult: "/mybucket/probe/a.txt",
+			name:       "public, virtual-hosted",
+			host:       "mybucket.oss-cn-beijing.aliyuncs.com",
+			wirePath:   "/probe%2Fa.txt",
+			wantBucket: "mybucket",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
-			name: "internal, virtual-hosted", host: "mybucket.oss-cn-beijing-internal.aliyuncs.com",
-			wirePath: "/probe%2Fa.txt", wantBucket: "mybucket", wantResult: "/mybucket/probe/a.txt",
+			name:       "internal, virtual-hosted",
+			host:       "mybucket.oss-cn-beijing-internal.aliyuncs.com",
+			wirePath:   "/probe%2Fa.txt",
+			wantBucket: "mybucket",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
-			name: "accelerate, virtual-hosted", host: "mybucket.oss-accelerate.aliyuncs.com",
-			wirePath: "/probe%2Fa.txt", wantBucket: "mybucket", wantResult: "/mybucket/probe/a.txt",
+			name:       "accelerate, virtual-hosted",
+			host:       "mybucket.oss-accelerate.aliyuncs.com",
+			wirePath:   "/probe%2Fa.txt",
+			wantBucket: "mybucket",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
-			name: "accelerate overseas, virtual-hosted", host: "mybucket.oss-accelerate-overseas.aliyuncs.com",
-			wirePath: "/probe%2Fa.txt", wantBucket: "mybucket", wantResult: "/mybucket/probe/a.txt",
+			name:       "accelerate overseas, virtual-hosted",
+			host:       "mybucket.oss-accelerate-overseas.aliyuncs.com",
+			wirePath:   "/probe%2Fa.txt",
+			wantBucket: "mybucket",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
 			// Path-style: the bucket already leads the path, must not be added twice.
-			name: "internal, path-style", host: "oss-cn-beijing-internal.aliyuncs.com",
-			wirePath: "/mybucket/probe%2Fa.txt", wantBucket: "", wantResult: "/mybucket/probe/a.txt",
+			name:       "internal, path-style",
+			host:       "oss-cn-beijing-internal.aliyuncs.com",
+			wirePath:   "/mybucket/probe%2Fa.txt",
+			wantBucket: "",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
-			name: "service endpoint (list buckets)", host: "oss-cn-beijing.aliyuncs.com",
-			wirePath: "/", wantBucket: "", wantResult: "/",
+			name:       "service endpoint (list buckets)",
+			host:       "oss-cn-beijing.aliyuncs.com",
+			wirePath:   "/",
+			wantBucket: "",
+			wantResult: "/",
 		},
 		{
-			name: "dual-stack, virtual-hosted", host: "mybucket.cn-beijing.oss.aliyuncs.com",
-			wirePath: "/probe%2Fa.txt", wantBucket: "mybucket", wantResult: "/mybucket/probe/a.txt",
+			name:       "dual-stack, virtual-hosted",
+			host:       "mybucket.cn-beijing.oss.aliyuncs.com",
+			wirePath:   "/probe%2Fa.txt",
+			wantBucket: "mybucket",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
 			// Must NOT read the region as a bucket.
-			name: "dual-stack, path-style", host: "cn-beijing.oss.aliyuncs.com",
-			wirePath: "/mybucket/probe%2Fa.txt", wantBucket: "", wantResult: "/mybucket/probe/a.txt",
+			name:       "dual-stack, path-style",
+			host:       "cn-beijing.oss.aliyuncs.com",
+			wirePath:   "/mybucket/probe%2Fa.txt",
+			wantBucket: "",
+			wantResult: "/mybucket/probe/a.txt",
 		},
 		{
 			// Known gap: a custom domain carries no bucket, so none is recovered.
-			name: "custom domain (CNAME, known gap)", host: "img.example.com",
-			wirePath: "/probe%2Fa.txt", wantBucket: "", wantResult: "/probe/a.txt",
+			name:       "custom domain (CNAME, known gap)",
+			host:       "img.example.com",
+			wirePath:   "/probe%2Fa.txt",
+			wantBucket: "",
+			wantResult: "/probe/a.txt",
 		},
 	}
 	for _, tt := range tests {
@@ -544,7 +616,9 @@ func TestSignOSSV4_DualStackMatchesGolden(t *testing.T) {
 	const wantSig = "02d1ed3aa2d4e4323db260483f44a9bae2d4f69b22aae4493cba73244e7a1245"
 	dualStackHost := "mybucket.cn-beijing.oss.aliyuncs.com"
 	req := &RequestSnapshot{
-		Method: "GET", Host: dualStackHost, Path: "/path%2Fto%2Fobject.txt",
+		Method: "GET",
+		Host:   dualStackHost,
+		Path:   "/path%2Fto%2Fobject.txt",
 		Headers: map[string]string{
 			"host":                 dualStackHost,
 			"x-oss-date":           goldenDate,
@@ -552,7 +626,9 @@ func TestSignOSSV4_DualStackMatchesGolden(t *testing.T) {
 		},
 	}
 	res, err := SignOSSV4(req, Triplet{
-		AccessKeyID: goldenAK, AccessKeySecret: goldenSK, SecurityToken: goldenToken,
+		AccessKeyID:     goldenAK,
+		AccessKeySecret: goldenSK,
+		SecurityToken:   goldenToken,
 	}, OSSV4Params{Region: goldenRegion})
 	if err != nil {
 		t.Fatalf("SignOSSV4: %v", err)
@@ -603,7 +679,9 @@ func TestSignOSSV4_NeverRewritesPayloadHashHeader(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := &RequestSnapshot{
-				Method: "PUT", Host: goldenHost, Path: "/data.bin",
+				Method: "PUT",
+				Host:   goldenHost,
+				Path:   "/data.bin",
 				Headers: map[string]string{
 					"host":                 goldenHost,
 					"x-oss-date":           goldenDate,
@@ -611,7 +689,9 @@ func TestSignOSSV4_NeverRewritesPayloadHashHeader(t *testing.T) {
 				},
 			}
 			res, err := SignOSSV4(req, Triplet{
-				AccessKeyID: goldenAK, AccessKeySecret: goldenSK, SecurityToken: goldenToken,
+				AccessKeyID:     goldenAK,
+				AccessKeySecret: goldenSK,
+				SecurityToken:   goldenToken,
 			}, OSSV4Params{Region: goldenRegion})
 			if err != nil {
 				t.Fatalf("SignOSSV4: %v", err)

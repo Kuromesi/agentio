@@ -81,7 +81,9 @@ func BenchmarkWorkloadGeneratorGatewayUpdate(b *testing.B) {
 			Subscription: SubscriptionView{wildcard: true},
 			Snapshot:     newSnapshot,
 			Update: updateBetween(oldSnapshot, newSnapshot, []model.ResourceChange{{
-				Key: newGateway.Key, Old: &oldGateway, New: &newGateway,
+				Key: newGateway.Key,
+				Old: &oldGateway,
+				New: &newGateway,
 			}}),
 		}
 		if got := generateWDSIncremental(request, false); len(got.Resources) != 1 || got.Resources[0].XDSName != "gateway-a" {
@@ -102,19 +104,30 @@ func BenchmarkWorkloadGeneratorIncremental(b *testing.B) {
 		name  string
 		scope model.ClientScope
 	}{
-		{name: "client=dedicated", scope: model.ClientScope{
-			Class: model.ClientDedicatedZTunnel, WorkloadUID: target.Facts.Workload.WorkloadUID, SourceUID: target.Facts.Workload.SourceUID,
-			Principal: target.Facts.Workload.Principal,
-		}},
-		{name: "client=shared/local-workloads=100", scope: model.ClientScope{
-			Class: model.ClientSharedZTunnel, NodeName: "node-050",
-		}},
+		{
+			name: "client=dedicated",
+			scope: model.ClientScope{
+				Class:       model.ClientDedicatedZTunnel,
+				WorkloadUID: target.Facts.Workload.WorkloadUID,
+				SourceUID:   target.Facts.Workload.SourceUID,
+				Principal:   target.Facts.Workload.Principal,
+			},
+		},
+		{
+			name: "client=shared/local-workloads=100",
+			scope: model.ClientScope{
+				Class:    model.ClientSharedZTunnel,
+				NodeName: "node-050",
+			},
+		},
 	} {
 		b.Run("resources=10000/"+benchmark.name, func(b *testing.B) {
 			request := GenerationRequest{
-				Scope: benchmark.scope, TypeURL: model.AddressType,
+				Scope:        benchmark.scope,
+				TypeURL:      model.AddressType,
 				Subscription: SubscriptionView{wildcard: true},
-				Snapshot:     after, Update: update,
+				Snapshot:     after,
+				Update:       update,
 			}
 			b.ReportAllocs()
 			b.ResetTimer()

@@ -98,7 +98,8 @@ func compileAuthorizationDirection(ctx krt.HandlerContext, source model.TrafficP
 	}
 	authorization.AuthExtensions = []*securityv1.Extension{extension}
 	compiled := CompiledAuthorization{
-		Name: authorization.GetNamespace() + "/" + authorization.GetName(), Policy: authorization,
+		Name:   authorization.GetNamespace() + "/" + authorization.GetName(),
+		Policy: authorization,
 	}
 	if scope == securityv1.Scope_WORKLOAD_SELECTOR {
 		target := AttachmentTarget{Selector: source.Spec.Selector}
@@ -110,10 +111,14 @@ func compileAuthorizationDirection(ctx krt.HandlerContext, source model.TrafficP
 			target.Namespaces = []string{source.Namespace}
 		}
 		attachment, err := NewPolicyAttachment(PolicyAttachment{
-			Kind: PolicyKindAuthorization, Name: compiled.Name, Target: target,
-			Priority:     source.Spec.Priority,
-			CreationTime: source.CreationTime, SourceName: source.Name,
-			SourceNamespace: source.Namespace, selector: selector,
+			Kind:            PolicyKindAuthorization,
+			Name:            compiled.Name,
+			Target:          target,
+			Priority:        source.Spec.Priority,
+			CreationTime:    source.CreationTime,
+			SourceName:      source.Name,
+			SourceNamespace: source.Namespace,
+			selector:        selector,
 		})
 		if err != nil {
 			return CompiledAuthorization{}, err

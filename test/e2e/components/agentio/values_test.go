@@ -178,8 +178,39 @@ func validConfig(t *testing.T) Config {
 	t.Helper()
 	image := immutableImageRef("image", "a")
 	return Config{
-		Profile: "sidecar", Namespace: "agentio-system", AgentiodImage: image, CNIImage: image, ZtunnelImage: image,
-		ProxyInitImage: image, GatewayImage: image, EPEImage: image,
-		ExtProcImage: image, ForwardProxyImage: image, FirewallBackend: "auto",
+		Profile:           "sidecar",
+		Namespace:         "agentio-system",
+		AgentiodImage:     image,
+		CNIImage:          image,
+		ZtunnelImage:      image,
+		ProxyInitImage:    image,
+		GatewayImage:      image,
+		EPEImage:          image,
+		ExtProcImage:      image,
+		ForwardProxyImage: image,
+		FirewallBackend:   "auto",
+	}
+}
+
+func TestAgentgatewayChartValues(t *testing.T) {
+	config := validConfig(t)
+	config.GatewayDataplane = "agentgateway"
+	data, err := chartValues(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal(data, &values); err != nil {
+		t.Fatal(err)
+	}
+	gw := values["egressGateway"].(map[string]any)
+	if gw["mode"] != "gatewayAPI" || gw["gatewayAPI"].(map[string]any)["create"] != false {
+		t.Fatalf("gateway values: %v", gw)
+	}
+	if gw["agentgateway"].(map[string]any)["image"] != config.GatewayImage {
+		t.Fatalf("native image missing: %v", gw)
+	}
+	if values["agentiod"].(map[string]any)["enableSNITrafficPolicy"] != false {
+		t.Fatal("dynamic SNI is outside the native suite's scope")
 	}
 }

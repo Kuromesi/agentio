@@ -72,8 +72,10 @@ func buildStatsFilters(configuration metricsConfig) (*hcmv3.HttpFilter, *listene
 		return nil, nil, err
 	}
 	return &hcmv3.HttpFilter{
-			Name: statsFilterName, ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: typed},
+			Name:       statsFilterName,
+			ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: typed},
 		}, &listenerv3.Filter{
-			Name: statsFilterName, ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: proto.Clone(typed).(*anypb.Any)},
+			Name:       statsFilterName,
+			ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: proto.Clone(typed).(*anypb.Any)},
 		}, nil
 }

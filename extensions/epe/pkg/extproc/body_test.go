@@ -46,7 +46,8 @@ func TestHandleRequestBody_SetsBodyAndRunsBodyPhase(t *testing.T) {
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("fake-body", fp)}, nil)
 
 	res, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("form-data"), EndOfStream: true,
+		Body:        []byte("form-data"),
+		EndOfStream: true,
 	}, state)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -81,7 +82,8 @@ func TestHandleRequestBody_ConsumesPendingEvaluationOnce(t *testing.T) {
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("fake-body", fp)}, nil)
 
 	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("data"), EndOfStream: true,
+		Body:        []byte("data"),
+		EndOfStream: true,
 	}, state); err != nil {
 		t.Fatalf("first body: %v", err)
 	}
@@ -93,7 +95,8 @@ func TestHandleRequestBody_ConsumesPendingEvaluationOnce(t *testing.T) {
 	}
 
 	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("duplicate"), EndOfStream: true,
+		Body:        []byte("duplicate"),
+		EndOfStream: true,
 	}, state); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("duplicate body error = %v, want FailedPrecondition", err)
 	}
@@ -144,7 +147,8 @@ func TestHandleRequestBody_ArmsOnlyTerminalFinalization(t *testing.T) {
 			state.awaitResponseHeaders = tt.awaitResponse
 
 			if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-				Body: []byte("data"), EndOfStream: true,
+				Body:        []byte("data"),
+				EndOfStream: true,
 			}, state); err != nil {
 				t.Fatalf("HandleRequestBody: %v", err)
 			}
@@ -163,7 +167,8 @@ func TestHandleRequestBody_ContinueYieldsPassthrough(t *testing.T) {
 	s, state := pendingBodyState(t, []filter.Registration{fixedReg("fake-body", fp)}, nil)
 
 	res, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("data"), EndOfStream: true,
+		Body:        []byte("data"),
+		EndOfStream: true,
 	}, state)
 	if err != nil {
 		t.Fatalf("err: %v", err)

@@ -123,8 +123,12 @@ func NewPolicyBindingsCollection(
 	}, options.WithName("workload-policy-bindings")...)
 	sandboxBindings := krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
 		if err := sandbox.Validate(); err != nil {
-			return &Bindings{TargetKind: PolicyTargetSandbox, TargetUID: sandbox.UID,
-				Unresolved: append([]model.PolicyRef(nil), sandbox.PolicyRefs...), InvalidReason: err.Error()}
+			return &Bindings{
+				TargetKind:    PolicyTargetSandbox,
+				TargetUID:     sandbox.UID,
+				Unresolved:    append([]model.PolicyRef(nil), sandbox.PolicyRefs...),
+				InvalidReason: err.Error(),
+			}
 		}
 		return resolvePolicyBindings(ctx, PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels, sandbox.PolicyRefs, attachments, byTarget)
 	}, options.WithName("sandbox-policy-bindings")...)

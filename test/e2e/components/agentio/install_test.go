@@ -205,8 +205,11 @@ func installEnvironment(t *testing.T, runner command.Interface) (*e2e.Environmen
 	}
 	state := &e2e.EnvironmentState{Components: make(map[string]e2e.ComponentFingerprint)}
 	return &e2e.Environment{
-		RunID: "run-1", Cluster: clusterHandle,
+		RunID:     "run-1",
+		Cluster:   clusterHandle,
 		Kube:      kube.NewClient("run-1", clusterHandle, kube.NewLedger()),
-		Artifacts: store, Commands: runner, State: state,
+		Artifacts: store,
+		Commands:  runner,
+		State:     state,
 	}, applied
 }

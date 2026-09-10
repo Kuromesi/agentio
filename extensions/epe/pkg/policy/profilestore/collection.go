@@ -50,13 +50,19 @@ import (
 
 var (
 	securityProfileGVR = schema.GroupVersionResource{
-		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "securityprofiles",
+		Group:    "agents.kruise.io",
+		Version:  "v1alpha1",
+		Resource: "securityprofiles",
 	}
 	globalSecurityProfileGVR = schema.GroupVersionResource{
-		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "globalsecurityprofiles",
+		Group:    "agents.kruise.io",
+		Version:  "v1alpha1",
+		Resource: "globalsecurityprofiles",
 	}
 	sandboxGVR = schema.GroupVersionResource{
-		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "sandboxes",
+		Group:    "agents.kruise.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxes",
 	}
 )
 

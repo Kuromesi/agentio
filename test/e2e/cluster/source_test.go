@@ -33,17 +33,20 @@ func TestKindSourceCreatesAndDeletesOwnedCluster(t *testing.T) {
 		{},
 	}}
 	built := false
-	source := KindSource{Runner: runner, BuildClients: func(kubeconfig, contextName string) (*Cluster, error) {
-		built = true
-		data, err := os.ReadFile(kubeconfig)
-		if err != nil {
-			return nil, err
-		}
-		if !strings.Contains(string(data), "kind-new") || contextName != "kind-new" {
-			return nil, errors.New("wrong kubeconfig or context")
-		}
-		return &Cluster{}, nil
-	}}
+	source := KindSource{
+		Runner: runner,
+		BuildClients: func(kubeconfig, contextName string) (*Cluster, error) {
+			built = true
+			data, err := os.ReadFile(kubeconfig)
+			if err != nil {
+				return nil, err
+			}
+			if !strings.Contains(string(data), "kind-new") || contextName != "kind-new" {
+				return nil, errors.New("wrong kubeconfig or context")
+			}
+			return &Cluster{}, nil
+		},
+	}
 
 	opened, err := source.Open(context.Background(), Config{Mode: ModeKind, Name: "new"})
 	if err != nil {
@@ -134,10 +137,13 @@ func TestKindSourceClientBuildFailureRollsBackOwnedCluster(t *testing.T) {
 		{}, {}, {Stdout: validKubeconfig("kind-new")}, {},
 	}}
 	var kubeconfig string
-	source := KindSource{Runner: runner, BuildClients: func(path, _ string) (*Cluster, error) {
-		kubeconfig = path
-		return nil, errors.New("client build failed")
-	}}
+	source := KindSource{
+		Runner: runner,
+		BuildClients: func(path, _ string) (*Cluster, error) {
+			kubeconfig = path
+			return nil, errors.New("client build failed")
+		},
+	}
 	_, err := source.Open(context.Background(), Config{Mode: ModeKind, Name: "new"})
 	if err == nil || !strings.Contains(err.Error(), "client build failed") {
 		t.Fatalf("error = %v", err)
@@ -160,7 +166,9 @@ func TestExistingSourceIsAlwaysBorrowed(t *testing.T) {
 		return &Cluster{}, nil
 	}}
 	opened, err := source.Open(context.Background(), Config{
-		Mode: ModeExisting, Kubeconfig: "/tmp/config", Context: "dev",
+		Mode:       ModeExisting,
+		Kubeconfig: "/tmp/config",
+		Context:    "dev",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -384,7 +384,8 @@ func (b *resourceBuilder) connectProxyTLSIdentityHTTPFilter() *hcmv3.HttpFilter 
 	}
 	skipConfig := b.pack(&skipactionv3.SkipFilter{})
 	skip := &xdsmatcherv3.Matcher_OnMatch{OnMatch: &xdsmatcherv3.Matcher_OnMatch_Action{Action: &xdscorev3.TypedExtensionConfig{
-		Name: "skip", TypedConfig: skipConfig,
+		Name:        "skip",
+		TypedConfig: skipConfig,
 	}}}
 	wrapper := &extensionmatchingv3.ExtensionWithMatcher{
 		XdsMatcher: &xdsmatcherv3.Matcher{MatcherType: &xdsmatcherv3.Matcher_MatcherList_{MatcherList: &xdsmatcherv3.Matcher_MatcherList{

@@ -376,9 +376,11 @@ func TestSlowClientBurstConvergesFromFirstUnsentToFinalPublication(t *testing.T)
 		t.Fatalf("coalesced After = %#v, want final version", after)
 	}
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope:   model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"},
-		TypeURL: model.AddressType, Subscription: SubscriptionView{wildcard: true},
-		Snapshot: final.Update.After(), Update: final.Update,
+		Scope:        model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"},
+		TypeURL:      model.AddressType,
+		Subscription: SubscriptionView{wildcard: true},
+		Snapshot:     final.Update.After(),
+		Update:       final.Update,
 	})
 	if err != nil {
 		t.Fatal(err)

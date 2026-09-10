@@ -48,6 +48,8 @@ type TemplateInput struct {
 	GatewayNameLabel          string
 	IsEastWestGateway         bool
 	ControllerLabel           string
+	AgentgatewayConfigName    string
+	AgentgatewayConfigHash    string
 }
 
 type renderer struct {
@@ -62,14 +64,26 @@ type renderState struct {
 }
 
 func (r *renderer) update(name, content string, values map[string]any, proxyConfig *meshv1alpha1.ProxyConfig) error {
-	t, err := template.New(name).Funcs(templateFuncs()).Parse(content)
-	if err != nil {
-		return err
+	return r.updateTemplates(map[string]string{name: content}, values, proxyConfig)
+}
+
+// Publish templates and values as one snapshot; a malformed template must not
+// leave one data plane using a different configuration generation.
+func (r *renderer) updateTemplates(contents map[string]string, values map[string]any, proxyConfig *meshv1alpha1.ProxyConfig) error {
+	templates := make(map[string]*template.Template, len(contents))
+	for name, content := range contents {
+		t, err := template.New(name).Funcs(templateFuncs()).Parse(content)
+		if err != nil {
+			return fmt.Errorf("parse %s template: %w", name, err)
+		}
+		templates[name] = t
 	}
 	current := r.state.Load()
 	r.state.Store(&renderState{
-		values: values, proxyConfig: proxyConfig, trustDomain: current.trustDomain,
-		templates: map[string]*template.Template{name: t},
+		values:      values,
+		proxyConfig: proxyConfig,
+		trustDomain: current.trustDomain,
+		templates:   templates,
 	})
 	return nil
 }
@@ -85,8 +99,10 @@ type derivedInput struct {
 func newRenderer(values func() map[string]any, proxyConfig *meshv1alpha1.ProxyConfig, trustDomain string) (*renderer, error) {
 	r := &renderer{}
 	r.state.Store(&renderState{
-		values: values(), proxyConfig: proxyConfig, trustDomain: trustDomain,
-		templates: map[string]*template.Template{},
+		values:      values(),
+		proxyConfig: proxyConfig,
+		trustDomain: trustDomain,
+		templates:   map[string]*template.Template{},
 	})
 	return r, nil
 }
@@ -309,9 +325,6 @@ func cleanProxyConfig(msg proto.Message) proto.Message {
 	}
 	pc := proto.Clone(originalProxyConfig).(*meshv1alpha1.ProxyConfig)
 	defaults := defaultProxyConfigDefaults()
-	if pc.ConfigPath == defaults.ConfigPath {
-		pc.ConfigPath = ""
-	}
 	if pc.BinaryPath == defaults.BinaryPath {
 		pc.BinaryPath = ""
 	}
@@ -328,9 +341,6 @@ func cleanProxyConfig(msg proto.Message) proto.Message {
 	}
 	if proto.Equal(pc.TerminationDrainDuration, defaults.TerminationDrainDuration) {
 		pc.TerminationDrainDuration = nil
-	}
-	if pc.DiscoveryAddress == defaults.DiscoveryAddress {
-		pc.DiscoveryAddress = ""
 	}
 	if proto.Equal(pc.EnvoyMetricsService, defaults.EnvoyMetricsService) {
 		pc.EnvoyMetricsService = nil
@@ -361,13 +371,11 @@ func cleanProxyConfig(msg proto.Message) proto.Message {
 
 func defaultProxyConfigDefaults() *meshv1alpha1.ProxyConfig {
 	return &meshv1alpha1.ProxyConfig{
-		ConfigPath:               "./etc/istio/proxy",
 		ClusterName:              &meshv1alpha1.ProxyConfig_ServiceCluster{ServiceCluster: "agentio-proxy"},
 		DrainDuration:            durationpb.New(45 * time.Second),
 		TerminationDrainDuration: durationpb.New(5 * time.Second),
 		ProxyAdminPort:           15000,
 		ControlPlaneAuthPolicy:   meshv1alpha1.AuthenticationPolicy_MUTUAL_TLS,
-		DiscoveryAddress:         "istiod.istio-system.svc:15012",
 		BinaryPath:               "/usr/local/bin/envoy",
 		StatNameLength:           189,
 		StatusPort:               15020,

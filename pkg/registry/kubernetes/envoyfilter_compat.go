@@ -298,8 +298,11 @@ func convertListenerMatch(match *networking.EnvoyFilter_ListenerMatch) *model.Li
 	result := &model.ListenerMatch{Name: match.GetName(), PortNumber: match.GetPortNumber(), ListenerFilter: match.GetListenerFilter()}
 	if chain := match.GetFilterChain(); chain != nil {
 		result.FilterChain = &model.FilterChainMatch{
-			Name: chain.GetName(), SNI: chain.GetSni(), TransportProtocol: chain.GetTransportProtocol(),
-			ApplicationProtocols: chain.GetApplicationProtocols(), DestinationPort: chain.GetDestinationPort(),
+			Name:                 chain.GetName(),
+			SNI:                  chain.GetSni(),
+			TransportProtocol:    chain.GetTransportProtocol(),
+			ApplicationProtocols: chain.GetApplicationProtocols(),
+			DestinationPort:      chain.GetDestinationPort(),
 		}
 		if filter := chain.GetFilter(); filter != nil {
 			result.FilterChain.Filter = &model.FilterMatch{Name: filter.GetName()}
@@ -316,8 +319,10 @@ func convertRouteConfigurationMatch(match *networking.EnvoyFilter_RouteConfigura
 		return nil
 	}
 	result := &model.RouteConfigurationMatch{
-		Name:     normalizeAgentioRouteConfigurationName(match.GetName()),
-		PortName: match.GetPortName(), Gateway: match.GetGateway(), PortNumber: match.GetPortNumber(),
+		Name:       normalizeAgentioRouteConfigurationName(match.GetName()),
+		PortName:   match.GetPortName(),
+		Gateway:    match.GetGateway(),
+		PortNumber: match.GetPortNumber(),
 	}
 	if host := match.GetVhost(); host != nil {
 		result.VirtualHost = &model.VirtualHostMatch{Name: host.GetName(), DomainName: host.GetDomainName()}

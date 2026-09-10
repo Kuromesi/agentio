@@ -179,7 +179,11 @@ func TestEvalBool(t *testing.T) {
 func valueActivation(tag string, in map[string]any) cel.Activation {
 	return inputs.NewScope(
 		inputs.RequestFrom(httpreq.HTTPRequest{
-			Host: "api.example.com", Port: 443, Path: "/v1", Scheme: "https", Method: "POST",
+			Host:    "api.example.com",
+			Port:    443,
+			Path:    "/v1",
+			Scheme:  "https",
+			Method:  "POST",
 			Headers: map[string]string{"x-tenant": tag},
 			Query:   map[string][]string{"q": {tag}},
 		}),

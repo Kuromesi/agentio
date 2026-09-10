@@ -27,12 +27,15 @@ func TestApplyRoutesPreservesAgentioGatewayOrderingAndMatching(t *testing.T) {
 	original := []*routev3.RouteConfiguration{{
 		Name: "connect_terminate",
 		VirtualHosts: []*routev3.VirtualHost{{
-			Name: "primary", Domains: []string{"example.com"},
-			Routes: []*routev3.Route{{Name: "existing"}},
+			Name:    "primary",
+			Domains: []string{"example.com"},
+			Routes:  []*routev3.Route{{Name: "existing"}},
 		}},
 	}}
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: "routes", Source: "source",
+		Namespace: "demo",
+		Name:      "routes",
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, []model.EnvoyPatch{
 		{
 			Operation: model.PatchMerge,
@@ -90,7 +93,9 @@ func TestApplyRoutesPreservesAgentioGatewayOrderingAndMatching(t *testing.T) {
 
 func TestApplyRoutesSupportsDeployedSandboxConnectPatch(t *testing.T) {
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "sandbox-traffic-system", Name: "enable-sandbox-connect", Source: "sandbox-traffic-system/config-source",
+		Namespace: "sandbox-traffic-system",
+		Name:      "enable-sandbox-connect",
+		Source:    "sandbox-traffic-system/config-source",
 	}, 0, []string{"sandbox-traffic-system/egress-gateway"}, []model.EnvoyPatch{{
 		Operation: model.PatchInsertBefore,
 		Target: model.HTTPRoutePatch{
@@ -104,7 +109,8 @@ func TestApplyRoutesSupportsDeployedSandboxConnectPatch(t *testing.T) {
 					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: "PassthroughCluster"},
 					Timeout:          durationpb.New(0),
 					UpgradeConfigs: []*routev3.RouteAction_UpgradeConfig{{
-						UpgradeType: "CONNECT", ConnectConfig: &routev3.RouteAction_UpgradeConfig_ConnectConfig{},
+						UpgradeType:   "CONNECT",
+						ConnectConfig: &routev3.RouteAction_UpgradeConfig_ConnectConfig{},
 					}},
 				}},
 			},
@@ -116,7 +122,9 @@ func TestApplyRoutesSupportsDeployedSandboxConnectPatch(t *testing.T) {
 	input := []*routev3.RouteConfiguration{{
 		Name: "http_dynamic_forward_proxy",
 		VirtualHosts: []*routev3.VirtualHost{{
-			Name: "default", Domains: []string{"*"}, Routes: []*routev3.Route{{Name: "default"}},
+			Name:    "default",
+			Domains: []string{"*"},
+			Routes:  []*routev3.Route{{Name: "default"}},
 		}},
 	}}
 
@@ -159,7 +167,9 @@ func TestApplyRoutesVirtualHostRemoveDropsLaterAddOfSameName(t *testing.T) {
 		},
 	}}
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: "remove-vh", Source: "source",
+		Namespace: "demo",
+		Name:      "remove-vh",
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, []model.EnvoyPatch{
 		{
 			Operation: model.PatchRemove,
@@ -199,7 +209,9 @@ func TestApplyRoutesVirtualHostRemoveDropsEveryDuplicateName(t *testing.T) {
 		},
 	}}
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: "remove-dup", Source: "source",
+		Namespace: "demo",
+		Name:      "remove-dup",
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, []model.EnvoyPatch{{
 		Operation: model.PatchRemove,
 		Target: model.VirtualHostPatch{

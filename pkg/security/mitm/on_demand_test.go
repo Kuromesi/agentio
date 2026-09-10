@@ -203,10 +203,16 @@ func TestOnDemandIssuerRotationUpdatesCacheGaugeSynchronously(t *testing.T) {
 
 	now := time.Now()
 	signer := &rotationDomainSigner{
-		fakeDomainSigner: fakeDomainSigner{revision: "one", result: SignedCertificate{
-			CertificateChain: []byte("certificate-chain"), PrivateKey: []byte("private-key"),
-			NotAfter: now.Add(time.Hour), SignedAt: now, SignerRevision: "one",
-		}},
+		fakeDomainSigner: fakeDomainSigner{
+			revision: "one",
+			result: SignedCertificate{
+				CertificateChain: []byte("certificate-chain"),
+				PrivateKey:       []byte("private-key"),
+				NotAfter:         now.Add(time.Hour),
+				SignedAt:         now,
+				SignerRevision:   "one",
+			},
+		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
@@ -235,10 +241,16 @@ func TestOnDemandIssuerRotationUpdatesCacheGaugeSynchronously(t *testing.T) {
 
 func TestShortCertificateIsReusedUntilExpiry(t *testing.T) {
 	now := time.Now()
-	signer := &fakeDomainSigner{revision: "one", result: SignedCertificate{
-		CertificateChain: []byte("certificate-chain"), PrivateKey: []byte("private-key"),
-		SignedAt: now, NotAfter: now.Add(2 * time.Minute), SignerRevision: "one",
-	}}
+	signer := &fakeDomainSigner{
+		revision: "one",
+		result: SignedCertificate{
+			CertificateChain: []byte("certificate-chain"),
+			PrivateKey:       []byte("private-key"),
+			SignedAt:         now,
+			NotAfter:         now.Add(2 * time.Minute),
+			SignerRevision:   "one",
+		},
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
@@ -276,19 +288,25 @@ func TestShortCertificateIsReusedUntilExpiry(t *testing.T) {
 		{
 			name: "expired short certificate",
 			certificate: SignedCertificate{
-				SignedAt: now.Add(-3 * time.Minute), NotAfter: now.Add(-time.Minute), SignerRevision: "one",
+				SignedAt:       now.Add(-3 * time.Minute),
+				NotAfter:       now.Add(-time.Minute),
+				SignerRevision: "one",
 			},
 		},
 		{
 			name: "ordinary certificate inside renewal window",
 			certificate: SignedCertificate{
-				SignedAt: now.Add(-30 * time.Minute), NotAfter: now.Add(5 * time.Minute), SignerRevision: "one",
+				SignedAt:       now.Add(-30 * time.Minute),
+				NotAfter:       now.Add(5 * time.Minute),
+				SignerRevision: "one",
 			},
 		},
 		{
 			name: "ordinary certificate outside renewal window",
 			certificate: SignedCertificate{
-				SignedAt: now.Add(-30 * time.Minute), NotAfter: now.Add(20 * time.Minute), SignerRevision: "one",
+				SignedAt:       now.Add(-30 * time.Minute),
+				NotAfter:       now.Add(20 * time.Minute),
+				SignerRevision: "one",
 			},
 			wantValid: true,
 		},
@@ -357,7 +375,9 @@ func TestOnDemandIssuerKeepsEvictionUntilSuccessfulResign(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime: time.Hour, RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour,
+		LeafLifetime: time.Hour,
+		RenewBefore:  10 * time.Minute,
+		CacheMaxAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +449,9 @@ func TestPassiveSDSReadDoesNotSignExpiredCertificate(t *testing.T) {
 	signer := &fakeDomainSigner{revision: "one", result: testSignedCertificate("one")}
 	ctx, cancel := context.WithCancel(t.Context())
 	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime: time.Hour, RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour,
+		LeafLifetime: time.Hour,
+		RenewBefore:  10 * time.Minute,
+		CacheMaxAge:  time.Hour,
 	})
 	if err != nil {
 		cancel()
@@ -559,8 +581,11 @@ func newDeadlineTestIssuer(options OnDemandOptions) *OnDemandIssuer {
 		options.CacheMaxEntries = defaultCacheMaxEntries
 	}
 	return &OnDemandIssuer{
-		options: options, cache: make(map[string]*certificateCacheEntry), heap: make(certHeap, 0),
-		evicted: sets.New[string](), changes: krt.NewStatic(&CertificateGeneration{}, true),
+		options: options,
+		cache:   make(map[string]*certificateCacheEntry),
+		heap:    make(certHeap, 0),
+		evicted: sets.New[string](),
+		changes: krt.NewStatic(&CertificateGeneration{}, true),
 	}
 }
 
@@ -592,7 +617,9 @@ func testSignedCertificateAt(notAfter, signedAt time.Time) SignedCertificate {
 func TestCanceledSigningIsNeverCachedOrReturned(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	signer := &blockingRotationDomainSigner{
-		revision: "one", result: testSignedCertificate("one"), onReturn: cancelRequest,
+		revision: "one",
+		result:   testSignedCertificate("one"),
+		onReturn: cancelRequest,
 	}
 	issuerCtx, stopIssuer := context.WithCancel(context.Background())
 	t.Cleanup(stopIssuer)
@@ -936,10 +963,16 @@ func TestOnDemandIssuerAuthorizesGatewayAndCachesCertificate(t *testing.T) {
 func TestOnDemandIssuerMarksCachedDomainsEvictedOnRotation(t *testing.T) {
 	now := time.Now()
 	signer := &rotationDomainSigner{
-		fakeDomainSigner: fakeDomainSigner{revision: "one", result: SignedCertificate{
-			CertificateChain: []byte("certificate-chain"), PrivateKey: []byte("private-key"),
-			NotAfter: now.Add(time.Hour), SignedAt: now, SignerRevision: "one",
-		}},
+		fakeDomainSigner: fakeDomainSigner{
+			revision: "one",
+			result: SignedCertificate{
+				CertificateChain: []byte("certificate-chain"),
+				PrivateKey:       []byte("private-key"),
+				NotAfter:         now.Add(time.Hour),
+				SignedAt:         now,
+				SignerRevision:   "one",
+			},
+		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{

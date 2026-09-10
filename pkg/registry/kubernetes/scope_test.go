@@ -27,12 +27,16 @@ import (
 
 func TestResolveScopeAuthorizesRegisteredGatewayServiceAccounts(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `egressGateways:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `egressGateways:
 - namespace: demo
   name: egress
-`}}
+`},
+	}
 	valid := egressPod("demo", "egress-rollout-a", "egress", "10.0.0.1")
 	valid.UID = "valid-uid"
 	implicit := egressPod("demo", "egress-rollout-b", "egress", "10.0.0.2")
@@ -123,17 +127,23 @@ func TestResolveScopeAuthorizesGatewayAPIServiceAccount(t *testing.T) {
 // Unbound tokens cannot establish Pod or node ownership.
 func TestResolveScopeRejectsUnboundTokensForPodScopes(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `egressGateways:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `egressGateways:
 - namespace: demo
   name: egress
-`}}
+`},
+	}
 	gateway := egressPod("demo", "egress-rollout-a", "egress", "10.0.0.1")
 	gateway.UID = "gateway-uid"
 	sandbox := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "sandbox", UID: "sandbox-uid",
+			Namespace: "demo",
+			Name:      "sandbox",
+			UID:       "sandbox-uid",
 		},
 		Spec:   corev1.PodSpec{ServiceAccountName: "app", NodeName: "node-a"},
 		Status: corev1.PodStatus{PodIP: "10.0.0.5"},
@@ -170,10 +180,24 @@ func TestResolveScopeRejectsUnboundTokensForPodScopes(t *testing.T) {
 		{name: "unbound token claiming gateway pod", principal: gatewayPrincipal, podName: "egress-rollout-a"},
 		{name: "unbound token asserting gateway pod UID", principal: gatewayPrincipal, podName: "egress-rollout-a", podUID: "gateway-uid"},
 		{name: "unbound token claiming sandbox pod", principal: sandboxPrincipal, podName: "sandbox"},
-		{name: "bound token resolves gateway scope", principal: gatewayPrincipal, bound: true, podName: "egress-rollout-a", podUID: "gateway-uid",
-			wantClass: model.ClientEgressGateway, wantKey: "demo/egress"},
-		{name: "bound token resolves sandbox scope", principal: sandboxPrincipal, bound: true, podName: "sandbox", podUID: "sandbox-uid",
-			wantClass: model.ClientDedicatedZTunnel, wantKey: "test//Pod/demo/sandbox"},
+		{
+			name:      "bound token resolves gateway scope",
+			principal: gatewayPrincipal,
+			bound:     true,
+			podName:   "egress-rollout-a",
+			podUID:    "gateway-uid",
+			wantClass: model.ClientEgressGateway,
+			wantKey:   "demo/egress",
+		},
+		{
+			name:      "bound token resolves sandbox scope",
+			principal: sandboxPrincipal,
+			bound:     true,
+			podName:   "sandbox",
+			podUID:    "sandbox-uid",
+			wantClass: model.ClientDedicatedZTunnel,
+			wantKey:   "test//Pod/demo/sandbox",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			peer := model.PeerIdentity{
@@ -275,7 +299,9 @@ func TestResolveScopeRejectsReplacedPodUID(t *testing.T) {
 	ctx := t.Context()
 	live := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "sandbox", UID: "replacement-uid",
+			Namespace: "demo",
+			Name:      "sandbox",
+			UID:       "replacement-uid",
 		},
 		Spec:   corev1.PodSpec{ServiceAccountName: "app", NodeName: "node-a"},
 		Status: corev1.PodStatus{PodIP: "10.0.0.10"},
@@ -326,7 +352,9 @@ func TestResolveScopeUsesFinalWorkloadCollection(t *testing.T) {
 	ctx := t.Context()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "sandbox", UID: "sandbox-uid",
+			Namespace: "demo",
+			Name:      "sandbox",
+			UID:       "sandbox-uid",
 		},
 		Spec:   corev1.PodSpec{ServiceAccountName: "app", NodeName: "node-a"},
 		Status: corev1.PodStatus{PodIP: "10.0.0.10"},
@@ -374,8 +402,11 @@ func TestResolveScopeRejectsUnsupportedPrincipalKind(t *testing.T) {
 
 func TestResolveScopeAuthenticatesEmptyWorker(t *testing.T) {
 	ctx := t.Context()
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "worker", UID: "worker-pod"},
-		Spec: corev1.PodSpec{ServiceAccountName: "app", NodeName: "node-a"}, Status: corev1.PodStatus{PodIP: "10.0.0.10"}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "worker", UID: "worker-pod"},
+		Spec:       corev1.PodSpec{ServiceAccountName: "app", NodeName: "node-a"},
+		Status:     corev1.PodStatus{PodIP: "10.0.0.10"},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{pod}, nil)
 	workload := r.Workloads.GetKey("test//Pod/demo/worker")
 	if workload == nil {
@@ -384,8 +415,11 @@ func TestResolveScopeAuthenticatesEmptyWorker(t *testing.T) {
 
 	workloads := krt.NewStaticCollection[model.Workload](nil, []model.Workload{*workload}, krt.WithStop(ctx.Done()))
 	resolver := r.PodScopeResolver(workloads)
-	peer := model.PeerIdentity{Principal: workload.Principal, AttestedBy: model.AttestationKubernetes,
-		Kubernetes: model.KubernetesPeer{WorkloadName: pod.Name, WorkloadUID: string(pod.UID)}}
+	peer := model.PeerIdentity{
+		Principal:  workload.Principal,
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{WorkloadName: pod.Name, WorkloadUID: string(pod.UID)},
+	}
 	scope, err := resolver.ResolveScope(peer, "")
 	if err != nil {
 		t.Fatal(err)

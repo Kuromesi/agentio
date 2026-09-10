@@ -37,7 +37,11 @@ func TestDeleteOwnedRefusesRecreatedObject(t *testing.T) {
 	live.SetLabels(map[string]string{RunLabel: "run-1"})
 	client, _ := newFakeClient(t, live)
 	record := ResourceRecord{
-		GVR: configMapGVR, Namespace: "sandbox", Name: "settings", UID: "old-uid", RunID: "run-1",
+		GVR:       configMapGVR,
+		Namespace: "sandbox",
+		Name:      "settings",
+		UID:       "old-uid",
+		RunID:     "run-1",
 	}
 
 	err := client.DeleteOwned(context.Background(), record)
@@ -52,7 +56,11 @@ func TestDeleteOwnedRefusesWrongRunLabel(t *testing.T) {
 	live.SetLabels(map[string]string{RunLabel: "another-run"})
 	client, _ := newFakeClient(t, live)
 	record := ResourceRecord{
-		GVR: configMapGVR, Namespace: "sandbox", Name: "settings", UID: "uid-1", RunID: "run-1",
+		GVR:       configMapGVR,
+		Namespace: "sandbox",
+		Name:      "settings",
+		UID:       "uid-1",
+		RunID:     "run-1",
 	}
 
 	err := client.DeleteOwned(context.Background(), record)

@@ -203,7 +203,8 @@ func (f *Filter) fetchFromSource(ctx context.Context, rc *filter.RuleConfig[Conf
 			return Credential{}, err
 		}
 		return f.sources.Provider.Fetch(ctx, Ref{
-			Kind: kind, Name: spec.Name,
+			Kind:            kind,
+			Name:            spec.Name,
 			AccessToken:     st.Peer.Token.AccessToken,
 			SandboxClientID: st.Peer.Token.SandboxClientID,
 			ExtraMetadata:   extra,

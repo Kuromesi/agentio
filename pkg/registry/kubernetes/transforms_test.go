@@ -93,7 +93,11 @@ func TestStripSecurityProfile(t *testing.T) {
 
 func policyObjectMeta() metav1.ObjectMeta {
 	return metav1.ObjectMeta{
-		Name: "policy", Namespace: "sandbox", UID: types.UID("uid"), ResourceVersion: "42", Generation: 7,
+		Name:              "policy",
+		Namespace:         "sandbox",
+		UID:               types.UID("uid"),
+		ResourceVersion:   "42",
+		Generation:        7,
 		CreationTimestamp: metav1.NewTime(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)),
 		Labels:            map[string]string{"unused": "label"},
 		Annotations: map[string]string{
@@ -101,8 +105,9 @@ func policyObjectMeta() metav1.ObjectMeta {
 			agentsv1alpha1.AnnotationSandboxID: "sandbox-a",
 			"unused":                           "annotation",
 		},
-		Finalizers: []string{"unused"}, OwnerReferences: []metav1.OwnerReference{{Name: "unused"}},
-		ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "test"}},
+		Finalizers:      []string{"unused"},
+		OwnerReferences: []metav1.OwnerReference{{Name: "unused"}},
+		ManagedFields:   []metav1.ManagedFieldsEntry{{Manager: "test"}},
 	}
 }
 

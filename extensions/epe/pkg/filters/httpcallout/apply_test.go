@@ -264,9 +264,12 @@ func TestDecisionActionRejectsUntranslatableDecisions(t *testing.T) {
 		{
 			name:  "unknown header operation",
 			phase: PhaseRequest,
-			decision: Decision{Action: actionPtr(ActionContinue), Request: &RequestMutation{Headers: []HeaderMutation{
-				{Operation: HeaderOperation("replace"), Name: "x-a", Value: &value},
-			}}},
+			decision: Decision{
+				Action: actionPtr(ActionContinue),
+				Request: &RequestMutation{Headers: []HeaderMutation{
+					{Operation: HeaderOperation("replace"), Name: "x-a", Value: &value},
+				}},
+			},
 			wantErr: "operation",
 		},
 	} {

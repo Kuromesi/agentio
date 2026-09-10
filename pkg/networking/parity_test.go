@@ -480,10 +480,12 @@ func mustGatewayAny(t *testing.T, message proto.Message) *anypb.Any {
 func TestSemanticGatewayDiffReportsFieldsAndDirection(t *testing.T) {
 	key := gatewayResourceKey(model.ClusterType, "example")
 	want := map[string]proto.Message{key: &clusterv3.Cluster{
-		Name: "example", ConnectTimeout: durationpb.New(7 * time.Second),
+		Name:           "example",
+		ConnectTimeout: durationpb.New(7 * time.Second),
 	}}
 	got := map[string]proto.Message{key: &clusterv3.Cluster{
-		Name: "example", ConnectTimeout: durationpb.New(10 * time.Second),
+		Name:           "example",
+		ConnectTimeout: durationpb.New(10 * time.Second),
 	}}
 
 	diff := strings.Join(semanticGatewayDiff(want, got), "\n")

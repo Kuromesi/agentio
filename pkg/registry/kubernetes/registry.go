@@ -166,8 +166,12 @@ func New(
 	var sandboxManaged func(*corev1.Pod) bool
 	if options.SandboxMode {
 		sandboxManaged = kruise.OwnsPod
-		r.Sandboxes = kruise.NewSource(kubeClient, pods, kruise.Options{ClusterID: options.ClusterID, TrustDomain: options.TrustDomain,
-			DebounceAfter: options.DebounceAfter, DebounceMax: options.DebounceMax}, stop).Sandboxes
+		r.Sandboxes = kruise.NewSource(kubeClient, pods, kruise.Options{
+			ClusterID:     options.ClusterID,
+			TrustDomain:   options.TrustDomain,
+			DebounceAfter: options.DebounceAfter,
+			DebounceMax:   options.DebounceMax,
+		}, stop).Sandboxes
 	}
 	// Every eligible Pod remains a communication endpoint, regardless of the
 	// runtime it hosts or the runtime's lifecycle.

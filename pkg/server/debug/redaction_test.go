@@ -117,17 +117,23 @@ func TestConfigDebugSecurityProfileRedactsAuditHeadersWithoutMutatingSource(t *t
 			Selector: metav1.LabelSelector{},
 			Audit: []agentsv1alpha1.AuditAction{{
 				Name: "profile-audit",
-				Webhook: &agentsv1alpha1.AuditWebhook{URL: "https://audit.example.com", Request: &agentsv1alpha1.AuditRequest{
-					Headers: []agentsv1alpha1.AuditHeader{{Name: "Authorization", Value: "Bearer profile-audit-credential"}},
-				}},
+				Webhook: &agentsv1alpha1.AuditWebhook{
+					URL: "https://audit.example.com",
+					Request: &agentsv1alpha1.AuditRequest{
+						Headers: []agentsv1alpha1.AuditHeader{{Name: "Authorization", Value: "Bearer profile-audit-credential"}},
+					},
+				},
 			}},
 			Rules: []agentsv1alpha1.SecurityRule{{
 				Name: "rule-audit",
 				Actions: agentsv1alpha1.SecurityRuleActions{Audit: []agentsv1alpha1.AuditAction{{
 					Name: "rule-audit",
-					Webhook: &agentsv1alpha1.AuditWebhook{URL: "https://audit.example.com", Request: &agentsv1alpha1.AuditRequest{
-						Headers: []agentsv1alpha1.AuditHeader{{Name: "x-audit-token", Value: "rule-audit-credential"}},
-					}},
+					Webhook: &agentsv1alpha1.AuditWebhook{
+						URL: "https://audit.example.com",
+						Request: &agentsv1alpha1.AuditRequest{
+							Headers: []agentsv1alpha1.AuditHeader{{Name: "x-audit-token", Value: "rule-audit-credential"}},
+						},
+					},
 				}}},
 			}},
 		},

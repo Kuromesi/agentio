@@ -83,7 +83,8 @@ func TestWatcherLoadsAndKeepsLastKnownGoodConfig(t *testing.T) {
 	// An unparsable update must not replace the last known good config.
 	broken := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "agentio-sidecar-injector", Namespace: "agentio-system",
+			Name:            "agentio-sidecar-injector",
+			Namespace:       "agentio-system",
 			ResourceVersion: "broken",
 		},
 		Data: map[string]string{"config": "templates:\n  ztunnel: '{{ not closed'", "values": "{"},
@@ -98,7 +99,7 @@ func TestWatcherLoadsAndKeepsLastKnownGoodConfig(t *testing.T) {
 	}
 }
 
-func TestInjectorConfigCarriesZTunnelAndEgressGatewayTemplates(t *testing.T) {
+func TestInjectorConfigCarriesZTunnelAndGatewayTemplates(t *testing.T) {
 	ztunnel, err := os.ReadFile("testdata/ztunnel-injection-template.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -107,15 +108,20 @@ func TestInjectorConfigCarriesZTunnelAndEgressGatewayTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	agentgateway, err := os.ReadFile("../gatewaydeployer/templates/agentgateway.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw := "defaultTemplates: [ztunnel]\ntemplates:\n" +
 		"  ztunnel: |\n" + indentLines(string(ztunnel), "    ") +
-		"  egress-gateway: |\n" + indentLines(string(egressGateway), "    ")
+		"  egress-gateway: |\n" + indentLines(string(egressGateway), "    ") +
+		"  agentgateway: |\n" + indentLines(string(agentgateway), "    ")
 	config, err := UnmarshalConfig([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(config.RawTemplates) != 2 || config.RawTemplates["ztunnel"] == "" || config.RawTemplates["egress-gateway"] == "" {
-		t.Fatalf("injector templates = %v, want ztunnel and egress-gateway", config.RawTemplates)
+	if len(config.RawTemplates) != 3 || config.RawTemplates["ztunnel"] == "" || config.RawTemplates["egress-gateway"] == "" || config.RawTemplates["agentgateway"] == "" {
+		t.Fatalf("injector templates = %v, want ztunnel, egress-gateway and agentgateway", config.RawTemplates)
 	}
 	if _, found := config.RawTemplates["waypoint"]; found {
 		t.Fatal("injector config unexpectedly carries a waypoint template")

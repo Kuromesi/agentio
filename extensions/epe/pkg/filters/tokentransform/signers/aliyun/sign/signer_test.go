@@ -23,7 +23,10 @@ func TestSignerResign_DispatchesByVersion(t *testing.T) {
 	tr := Triplet{AccessKeyID: "AK", AccessKeySecret: "SK", SecurityToken: "ST"}
 
 	v3Req := &RequestSnapshot{
-		Method: "POST", Scheme: "https", Host: "ecs.aliyuncs.com", Path: "/",
+		Method: "POST",
+		Scheme: "https",
+		Host:   "ecs.aliyuncs.com",
+		Path:   "/",
 		Headers: map[string]string{
 			"host":                 "ecs.aliyuncs.com",
 			"x-acs-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -34,7 +37,8 @@ func TestSignerResign_DispatchesByVersion(t *testing.T) {
 	}
 
 	rpcReq := &RequestSnapshot{
-		Method: "GET", Path: "/",
+		Method:   "GET",
+		Path:     "/",
 		RawQuery: "AccessKeyId=AK&SignatureMethod=HMAC-SHA1&SecurityToken=ST&Signature=stale",
 	}
 	res, err := s.Resign(SignatureV1RPC, rpcReq, tr)
@@ -69,8 +73,10 @@ func TestSignerResign_DispatchRewritesAuthorization(t *testing.T) {
 			name:    "V1ROA",
 			version: SignatureV1ROA,
 			req: &RequestSnapshot{
-				Method: "GET", Scheme: "https",
-				Host: "cs.cn-hangzhou.aliyuncs.com", Path: "/clusters",
+				Method: "GET",
+				Scheme: "https",
+				Host:   "cs.cn-hangzhou.aliyuncs.com",
+				Path:   "/clusters",
 				Headers: map[string]string{
 					"host":                  "cs.cn-hangzhou.aliyuncs.com",
 					"accept":                "application/json",
@@ -87,8 +93,10 @@ func TestSignerResign_DispatchRewritesAuthorization(t *testing.T) {
 			name:    "OSSV4",
 			version: SignatureOSSV4,
 			req: &RequestSnapshot{
-				Method: "GET", Scheme: "https",
-				Host: "oss-cn-hangzhou.aliyuncs.com", Path: "/",
+				Method: "GET",
+				Scheme: "https",
+				Host:   "oss-cn-hangzhou.aliyuncs.com",
+				Path:   "/",
 				Headers: map[string]string{
 					"host":                 "oss-cn-hangzhou.aliyuncs.com",
 					"x-oss-date":           "20260524T100000Z",

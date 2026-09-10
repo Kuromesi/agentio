@@ -39,8 +39,11 @@ func TestFrameworkSmoke(t *testing.T) {
 		Count:    1,
 		Check:    check.And(check.OK(), check.ReachedWorkloads(1)),
 		Retry: retry.Policy{
-			Timeout: 30 * time.Second, Delay: 200 * time.Millisecond,
-			Backoff: 1.5, MaxDelay: 2 * time.Second, Converge: 1,
+			Timeout:  30 * time.Second,
+			Delay:    200 * time.Millisecond,
+			Backoff:  1.5,
+			MaxDelay: 2 * time.Second,
+			Converge: 1,
 		},
 	})
 }

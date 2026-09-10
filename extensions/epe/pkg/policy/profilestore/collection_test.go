@@ -206,7 +206,8 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 	// collection, while the store continues serving the last-known-good profile.
 	bad := live.DeepCopy()
 	bad.Spec.Selector = metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-		Key: "!", Operator: metav1.LabelSelectorOpExists,
+		Key:      "!",
+		Operator: metav1.LabelSelectorOpExists,
 	}}}
 	if _, err := agentsCS.AgentsV1alpha1().SecurityProfiles("ns-b").Update(ctx, bad, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)

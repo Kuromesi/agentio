@@ -21,8 +21,12 @@ data:
 {{ .Files.Get "files/ztunnel-injection-template.yaml" | trim | indent 8 }}
       egress-gateway: |
 {{ .Files.Get "files/egress-gateway.yaml" | trim | indent 8 }}
+      agentgateway: |
+{{ .Files.Get "files/agentgateway.yaml" | trim | indent 8 }}
   values: |-
     global:
+      agentgateway:
+{{ .Values.egressGateway.agentgateway | toYaml | indent 8 }}
       hub: {{ .Values.global.hub | quote }}
       tag: {{ .Values.global.tag | quote }}
       imagePullPolicy: {{ .Values.global.imagePullPolicy | quote }}

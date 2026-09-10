@@ -94,8 +94,11 @@ func TestBuildAccessLoggingAndTracing(t *testing.T) {
 	requestID := false
 	enableIstioTags := false
 	policy := buildValue(t, nil, []model.TelemetryTracing{{
-		Mode: model.TelemetryModeServer, Providers: []string{"trace"}, RandomSamplingPercentage: &sampling,
-		UseRequestIDForTraceSampling: &requestID, EnableIstioTags: &enableIstioTags,
+		Mode:                         model.TelemetryModeServer,
+		Providers:                    []string{"trace"},
+		RandomSamplingPercentage:     &sampling,
+		UseRequestIDForTraceSampling: &requestID,
+		EnableIstioTags:              &enableIstioTags,
 		CustomTags: map[string]model.TelemetryTracingTag{
 			"a-env":       {Kind: model.TelemetryTracingTagEnvironment, Name: "POD_NAME", DefaultValue: "unknown"},
 			"b-header":    {Kind: model.TelemetryTracingTagHeader, Name: "x-user", DefaultValue: "anonymous"},
@@ -103,7 +106,9 @@ func TestBuildAccessLoggingAndTracing(t *testing.T) {
 			"d-formatter": {Kind: model.TelemetryTracingTagFormatter, Value: "%REQ(:METHOD)%"},
 		},
 	}}, []model.TelemetryAccessLogging{{
-		Mode: model.TelemetryModeServer, Providers: []string{"envoy"}, Filter: &filter,
+		Mode:      model.TelemetryModeServer,
+		Providers: []string{"envoy"},
+		Filter:    &filter,
 	}})
 	tracerAny, err := anypb.New(&emptypb.Empty{})
 	if err != nil {
@@ -121,7 +126,10 @@ func TestBuildAccessLoggingAndTracing(t *testing.T) {
 	}
 	overrides := &model.TelemetryProviderOverrides{Providers: []model.TelemetryProvider{baseTrace}}
 	output, err := Build(Inputs{
-		Gateway: testTelemetryGateway(), RootNamespace: "agentio-system", Telemetry: []model.Telemetry{policy}, ProviderOverrides: overrides,
+		Gateway:           testTelemetryGateway(),
+		RootNamespace:     "agentio-system",
+		Telemetry:         []model.Telemetry{policy},
+		ProviderOverrides: overrides,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +187,9 @@ func TestBuildStandardMetricNamesMatchAgentio(t *testing.T) {
 	}}, nil, nil)
 
 	output, err := Build(Inputs{
-		Gateway: testTelemetryGateway(), RootNamespace: "agentio-system", Telemetry: []model.Telemetry{policy},
+		Gateway:       testTelemetryGateway(),
+		RootNamespace: "agentio-system",
+		Telemetry:     []model.Telemetry{policy},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -216,17 +226,24 @@ func TestBuildOmitsDisabledServerSignals(t *testing.T) {
 	disabled := true
 	policy := buildValue(t, []model.TelemetryMetrics{{
 		Overrides: []model.TelemetryMetricOverride{{
-			Match: model.TelemetryMetricSelector{Kind: model.TelemetryMetricAll, Mode: model.TelemetryModeServer}, Disabled: &disabled,
+			Match:    model.TelemetryMetricSelector{Kind: model.TelemetryMetricAll, Mode: model.TelemetryModeServer},
+			Disabled: &disabled,
 		}},
 	}}, []model.TelemetryTracing{{
-		Mode: model.TelemetryModeServer, Providers: []string{"trace"}, DisableSpanReporting: &disabled,
+		Mode:                 model.TelemetryModeServer,
+		Providers:            []string{"trace"},
+		DisableSpanReporting: &disabled,
 	}}, []model.TelemetryAccessLogging{{
-		Mode: model.TelemetryModeServer, Disabled: &disabled,
+		Mode:     model.TelemetryModeServer,
+		Disabled: &disabled,
 	}})
 	output, err := Build(Inputs{
-		Gateway: testTelemetryGateway(), RootNamespace: "agentio-system", Telemetry: []model.Telemetry{policy},
+		Gateway:       testTelemetryGateway(),
+		RootNamespace: "agentio-system",
+		Telemetry:     []model.Telemetry{policy},
 		ProviderOverrides: &model.TelemetryProviderOverrides{Providers: []model.TelemetryProvider{{
-			Name: "trace", Tracing: testTracingProvider(t),
+			Name:    "trace",
+			Tracing: testTracingProvider(t),
 		}}},
 	})
 	if err != nil {
@@ -245,24 +262,42 @@ func TestBuildRejectsUnknownSignalProvider(t *testing.T) {
 		policy model.Telemetry
 	}{
 		{name: "unknown metrics provider", policy: buildValue(t, []model.TelemetryMetrics{{Providers: []string{"missing"}}}, nil, nil)},
-		{name: "unknown access logging provider", policy: buildValue(t, nil, nil, []model.TelemetryAccessLogging{{
-			Mode: model.TelemetryModeServer, Providers: []string{"missing"},
-		}})},
-		{name: "unknown tracing provider", policy: buildValue(t, nil, []model.TelemetryTracing{{
-			Mode: model.TelemetryModeServer, Providers: []string{"missing"},
-		}}, nil)},
+		{
+			name: "unknown access logging provider",
+			policy: buildValue(t, nil, nil, []model.TelemetryAccessLogging{{
+				Mode:      model.TelemetryModeServer,
+				Providers: []string{"missing"},
+			}}),
+		},
+		{
+			name: "unknown tracing provider",
+			policy: buildValue(t, nil, []model.TelemetryTracing{{
+				Mode:      model.TelemetryModeServer,
+				Providers: []string{"missing"},
+			}}, nil),
+		},
 		{name: "access logger used for metrics", policy: buildValue(t, []model.TelemetryMetrics{{Providers: []string{"envoy"}}}, nil, nil)},
-		{name: "metrics provider used for access logging", policy: buildValue(t, nil, nil, []model.TelemetryAccessLogging{{
-			Mode: model.TelemetryModeServer, Providers: []string{"prometheus"},
-		}})},
-		{name: "metrics provider used for tracing", policy: buildValue(t, nil, []model.TelemetryTracing{{
-			Mode: model.TelemetryModeServer, Providers: []string{"prometheus"},
-		}}, nil)},
+		{
+			name: "metrics provider used for access logging",
+			policy: buildValue(t, nil, nil, []model.TelemetryAccessLogging{{
+				Mode:      model.TelemetryModeServer,
+				Providers: []string{"prometheus"},
+			}}),
+		},
+		{
+			name: "metrics provider used for tracing",
+			policy: buildValue(t, nil, []model.TelemetryTracing{{
+				Mode:      model.TelemetryModeServer,
+				Providers: []string{"prometheus"},
+			}}, nil),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := Build(Inputs{
-				Gateway: testTelemetryGateway(), RootNamespace: "agentio-system", Telemetry: []model.Telemetry{test.policy},
+				Gateway:       testTelemetryGateway(),
+				RootNamespace: "agentio-system",
+				Telemetry:     []model.Telemetry{test.policy},
 			}); err == nil {
 				t.Fatal("expected signal provider failure")
 			}
@@ -300,7 +335,9 @@ func testTelemetryGateway() model.Gateway {
 func buildValue(t *testing.T, metrics []model.TelemetryMetrics, tracing []model.TelemetryTracing, logging []model.TelemetryAccessLogging) model.Telemetry {
 	t.Helper()
 	policy, err := model.NewTelemetry(model.TelemetryMetadata{
-		Namespace: "bookinfo", Name: "telemetry", Source: "agentio-system/source",
+		Namespace: "bookinfo",
+		Name:      "telemetry",
+		Source:    "agentio-system/source",
 	}, []string{"bookinfo/egress"}, metrics, tracing, logging)
 	if err != nil {
 		t.Fatal(err)

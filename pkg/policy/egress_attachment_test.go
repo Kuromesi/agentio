@@ -111,9 +111,10 @@ func TestCompiledEgressPoliciesRejectMalformedGateway(t *testing.T) {
 func testCompiledEgressPolicies() *extensionsv1.EgressPolicies {
 	return &extensionsv1.EgressPolicies{EgressPolicies: []*extensionsv1.EgressPolicy{
 		{
-			Namespaces: []string{"demo"}, MatchCidrs: []string{"203.0.113.7/32"},
-			Policy:  extensionsv1.EgressPolicyAction_GATEWAY,
-			Gateway: &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008},
+			Namespaces: []string{"demo"},
+			MatchCidrs: []string{"203.0.113.7/32"},
+			Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
+			Gateway:    &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008},
 		},
 		{
 			Policy:  extensionsv1.EgressPolicyAction_GATEWAY,

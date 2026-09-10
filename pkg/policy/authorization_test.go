@@ -94,7 +94,9 @@ func TestCompileAuthorizationSandboxUIDAssociation(t *testing.T) {
 				selector.MatchLabels = map[string]string{agentsv1alpha1.LabelSandboxID: *test.selectedUID}
 			}
 			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-				Name: "allow", Namespace: "demo", SandboxUID: test.declaredUID,
+				Name:       "allow",
+				Namespace:  "demo",
+				SandboxUID: test.declaredUID,
 				Spec: agentsv1alpha1.TrafficPolicySpec{
 					Selector: selector,
 					Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -131,8 +133,11 @@ func stringPtr(value string) *string { return &value }
 func TestCompileAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
 	start, end := int32(8080), int32(8090)
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "api", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
-			Priority: 500, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+		Name:      "api",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Priority: 500,
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				From:   []agentsv1alpha1.TrafficPolicyPeer{{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{Namespace: "demo", Selector: map[string]string{"role": "source"}}}},
@@ -212,7 +217,9 @@ func TestCompileAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
 
 func TestCompileAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOfRuntimeState(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "pod-only", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "pod-only",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To: []agentsv1alpha1.TrafficPolicyPeer{{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
@@ -265,7 +272,9 @@ func TestCompileAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOfRuntimeS
 
 func TestCompileAuthorizationSkipsInvalidPeerAddresses(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "pod-addresses", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "pod-addresses",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To: []agentsv1alpha1.TrafficPolicyPeer{{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
@@ -291,7 +300,9 @@ func TestCompileAuthorizationSkipsInvalidPeerAddresses(t *testing.T) {
 
 func TestCompileAuthorizationRejectUsesNegativeMatches(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "deny", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "deny",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Ingress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionReject,
 				From:   []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.0.2.0/24"}},
@@ -310,7 +321,9 @@ func TestCompileAuthorizationRejectUsesNegativeMatches(t *testing.T) {
 
 func TestCompileAuthorizationRejectIncludesNotReadyEndpoints(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "deny-backend", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "deny-backend",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionReject,
 				To:     []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{Namespace: "demo", Name: "backend"}}},
@@ -371,7 +384,9 @@ func TestCompileAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
 		t.Run(serviceName, func(t *testing.T) {
 			serviceRef := &agentsv1alpha1.TrafficPolicyServiceRef{Name: serviceName}
 			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-				Name: "service", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+				Name:      "service",
+				Namespace: "demo",
+				Spec: agentsv1alpha1.TrafficPolicySpec{
 					Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 						Action: agentsv1alpha1.RuleActionAllow,
 						To:     []agentsv1alpha1.TrafficPolicyPeer{{Service: serviceRef}},
@@ -398,7 +413,9 @@ func TestCompileAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
 
 func TestCompileGlobalAuthorizationServiceUsesRootNamespaceByDefault(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "global-service", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:   "global-service",
+		Global: true,
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To: []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{
@@ -420,7 +437,9 @@ func TestCompileGlobalAuthorizationServiceUsesRootNamespaceByDefault(t *testing.
 
 func TestCompileAuthorizationMissingServiceFailsClosed(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "missing-service", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "missing-service",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To: []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{
@@ -460,10 +479,14 @@ func TestCompileAuthorizationRootNamespaceScope(t *testing.T) {
 		},
 		{
 			name: "root namespace with selector stays selector scoped",
-			policy: model.TrafficPolicy{Name: "scoped", Namespace: "agentio-system", Spec: agentsv1alpha1.TrafficPolicySpec{
-				Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-				Ingress:  direction,
-			}},
+			policy: model.TrafficPolicy{
+				Name:      "scoped",
+				Namespace: "agentio-system",
+				Spec: agentsv1alpha1.TrafficPolicySpec{
+					Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+					Ingress:  direction,
+				},
+			},
 			want: securityv1.Scope_WORKLOAD_SELECTOR,
 		},
 	} {
@@ -492,10 +515,13 @@ func TestCompileAuthorizationRootNamespaceScope(t *testing.T) {
 func TestCompileAuthorizationUnresolvedFQDNFailsClosed(t *testing.T) {
 	port := int32(443)
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "fqdn", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "fqdn",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-				Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.invalid"}},
-				Ports: []agentsv1alpha1.TrafficPolicyPort{{Protocol: "TCP", Port: &port}},
+				Action: agentsv1alpha1.RuleActionAllow,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.invalid"}},
+				Ports:  []agentsv1alpha1.TrafficPolicyPort{{Protocol: "TCP", Port: &port}},
 			}}},
 		},
 	}, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
@@ -526,7 +552,9 @@ func TestCompileAuthorizationPassesFQDNUnchangedToResolver(t *testing.T) {
 		return nil
 	})
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "fqdn", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "fqdn",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "API.Example.COM."}},
@@ -559,7 +587,9 @@ func TestCompileAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-				Name: "missing-peer", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+				Name:      "missing-peer",
+				Namespace: "demo",
+				Spec: agentsv1alpha1.TrafficPolicySpec{
 					Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 						Action: test.action,
 						From:   test.from,
@@ -579,7 +609,9 @@ func TestCompileAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing.T) {
 
 func TestCompileAuthorizationInvalidCIDRFailsClosed(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "invalid-cidr", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "invalid-cidr",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "not-a-cidr"}},
@@ -596,7 +628,9 @@ func TestCompileAuthorizationInvalidCIDRFailsClosed(t *testing.T) {
 
 func TestCompileAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "mixed-rules", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "mixed-rules",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
 				{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.invalid"}}},
 				{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.0.2.0/24"}}},
@@ -614,7 +648,9 @@ func TestCompileAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *testing.T)
 
 func TestCompileAuthorizationResolvedPeerKeepsMixedPeerListMatchable(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "mixed-peers", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "mixed-peers",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To: []agentsv1alpha1.TrafficPolicyPeer{
@@ -635,7 +671,9 @@ func TestCompileAuthorizationResolvedPeerKeepsMixedPeerListMatchable(t *testing.
 
 func TestCompileAuthorizationRuleWithoutPeersRemainsWildcard(t *testing.T) {
 	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "wildcard", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
+		Name:      "wildcard",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 			}}},

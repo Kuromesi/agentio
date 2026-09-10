@@ -222,8 +222,10 @@ func TestInlineProfileInvalidVersionUsesLastKnownGood(t *testing.T) {
 	sandbox := func(version, rules string) *metav1.PartialObjectMetadata {
 		return &metav1.PartialObjectMetadata{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "sbx-1", Namespace: "sandboxes", ResourceVersion: version,
-				Annotations: map[string]string{securityprofile.AnnotationSecurityRules: rules},
+				Name:            "sbx-1",
+				Namespace:       "sandboxes",
+				ResourceVersion: version,
+				Annotations:     map[string]string{securityprofile.AnnotationSecurityRules: rules},
 			},
 		}
 	}

@@ -128,8 +128,12 @@ func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string
 		if err != nil {
 			return model.ClientScope{}, err
 		}
-		return model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: principal,
-			WorkloadUID: workload.UID, SourceUID: workload.SourceUID}, nil
+		return model.ClientScope{
+			Class:       model.ClientDedicatedZTunnel,
+			Principal:   principal,
+			WorkloadUID: workload.UID,
+			SourceUID:   workload.SourceUID,
+		}, nil
 	}
 	return model.ClientScope{}, fmt.Errorf("authenticated identity %s does not own the requested xDS client", principal.String())
 }

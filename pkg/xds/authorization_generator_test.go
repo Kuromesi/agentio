@@ -41,7 +41,8 @@ func TestAuthorizationSelectionIncludesGlobalNamespaceAndWorkloadSelector(t *tes
 	scope := model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
-		WorkloadUID: "uid-a", SourceUID: "uid-a",
+		WorkloadUID: "uid-a",
+		SourceUID:   "uid-a",
 	}
 
 	got := selectAuthorizationResources(scope, snapshot, nil)
@@ -90,9 +91,11 @@ func TestGatewayNamedAuthorizationSelectionDoesNotAllocateSnapshotScale(t *testi
 	for i := range resourceCount {
 		name := fmt.Sprintf("unrelated-policy-%06d", i)
 		authorizations = append(authorizations, model.Resource{
-			Key: model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name}, XDSName: name,
-			Value: authorizationValue, Hash: name,
-			Facts: model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeWorkload}},
+			Key:     model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name},
+			XDSName: name,
+			Value:   authorizationValue,
+			Hash:    name,
+			Facts:   model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeWorkload}},
 		})
 	}
 	target := selectionAuthorization(t, "demo/target", model.AuthorizationScopeWorkload, "")
@@ -122,18 +125,23 @@ func TestUnrelatedWorkloadAddressChangeDoesNotReconcileAuthorization(t *testing.
 	before := selectionSnapshot(t, []model.Resource{owned, oldUnrelated})
 	after := selectionSnapshot(t, []model.Resource{owned, newUnrelated})
 	update := updateBetween(before, after, []model.ResourceChange{{
-		Key: oldUnrelated.Key, Old: &oldUnrelated, New: &newUnrelated,
+		Key: oldUnrelated.Key,
+		Old: &oldUnrelated,
+		New: &newUnrelated,
 	}})
 	scope := model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
-		WorkloadUID: "uid-a", SourceUID: "uid-a",
+		WorkloadUID: "uid-a",
+		SourceUID:   "uid-a",
 	}
 
 	delta, err := (AuthorizationGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: model.WorkloadAuthorizationType,
+		Scope:        scope,
+		TypeURL:      model.WorkloadAuthorizationType,
 		Subscription: SubscriptionView{wildcard: true},
-		Snapshot:     after, Update: update,
+		Snapshot:     after,
+		Update:       update,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -156,11 +164,15 @@ func TestGatewayAuthorizationIncrementalAllowsNonGlobalPolicy(t *testing.T) {
 	unrelated := selectionAuthorization(t, "other/selector-b", model.AuthorizationScopeWorkload, "")
 	snapshot := selectionSnapshot(t, []model.Resource{newResource, unrelated, selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a")})
 	watch := &watchState{
-		wildcard: true, started: true, names: sets.New[string](),
-		sent: map[string]string{oldResource.XDSName: oldResource.Hash, unrelated.XDSName: unrelated.Hash},
+		wildcard: true,
+		started:  true,
+		names:    sets.New[string](),
+		sent:     map[string]string{oldResource.XDSName: oldResource.Hash, unrelated.XDSName: unrelated.Hash},
 	}
 	update := updateReversedFrom(t, snapshot, []model.ResourceChange{{
-		Key: oldResource.Key, Old: &oldResource, New: &newResource,
+		Key: oldResource.Key,
+		Old: &oldResource,
+		New: &newResource,
 	}})
 	view := newIncrementalSubscriptionView(watch, model.WorkloadAuthorizationType, update)
 	if names := view.SentNames(); !slices.Equal(names, []string{oldResource.XDSName}) {

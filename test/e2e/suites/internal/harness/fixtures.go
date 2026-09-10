@@ -100,8 +100,13 @@ func (f *TrafficFixture) SetupNamespace(profile string) e2e.SetupFunc {
 func (f *TrafficFixture) SetupEcho(name string, replicas int, capabilities []corev1.Capability) e2e.SetupFunc {
 	return func(ctx context.Context, environment *e2e.Environment) (e2e.CleanupFunc, error) {
 		config := echo.Config{
-			Name: name, Namespace: f.Namespace.Name(), Replicas: replicas,
-			Image: echo.DefaultImage, Ports: echo.DefaultPorts(), CallTimeout: 90 * time.Second, Converge: 3,
+			Name:         name,
+			Namespace:    f.Namespace.Name(),
+			Replicas:     replicas,
+			Image:        echo.DefaultImage,
+			Ports:        echo.DefaultPorts(),
+			CallTimeout:  90 * time.Second,
+			Converge:     3,
 			Labels:       map[string]string{"app": name, WorkloadClassLabel: name},
 			Capabilities: capabilities,
 		}
@@ -172,11 +177,19 @@ func configDump(ctx context.Context, environment *e2e.Environment, config agenti
 
 func sidecarConfigDump(ctx context.Context, instance echo.Instance) (string, error) {
 	result, err := instance.Call(ctx, echo.CallOptions{
-		Protocol: echo.HTTP, Address: "localhost", Port: 15000, Path: "/config_dump",
-		Count: 1, Timeout: 5 * time.Second, Check: check.OK(),
+		Protocol: echo.HTTP,
+		Address:  "localhost",
+		Port:     15000,
+		Path:     "/config_dump",
+		Count:    1,
+		Timeout:  5 * time.Second,
+		Check:    check.OK(),
 		Retry: retry.Policy{
-			Timeout: 5 * time.Second, Delay: 100 * time.Millisecond,
-			Backoff: 1.5, MaxDelay: time.Second, Converge: 1,
+			Timeout:  5 * time.Second,
+			Delay:    100 * time.Millisecond,
+			Backoff:  1.5,
+			MaxDelay: time.Second,
+			Converge: 1,
 		},
 	})
 	if err != nil {

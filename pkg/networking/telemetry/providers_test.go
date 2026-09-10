@@ -97,8 +97,9 @@ func TestResolveProvidersRejectsInvalidOverrides(t *testing.T) {
 		{
 			name: "duplicate cluster",
 			override: model.TelemetryProviderOverrides{Providers: []model.TelemetryProvider{{
-				Name: "remote", HTTPAccessLog: &accesslogv3.AccessLog{Name: "remote"},
-				Clusters: []*clusterv3.Cluster{{Name: "same"}, {Name: "same"}},
+				Name:          "remote",
+				HTTPAccessLog: &accesslogv3.AccessLog{Name: "remote"},
+				Clusters:      []*clusterv3.Cluster{{Name: "same"}, {Name: "same"}},
 			}}},
 			want: "cluster",
 		},

@@ -155,7 +155,9 @@ func TestEPEServiceAccountCanWatchItsInputs(t *testing.T) {
 					Spec: authzv1.SubjectAccessReviewSpec{
 						User: user,
 						ResourceAttributes: &authzv1.ResourceAttributes{
-							Group: current.group, Resource: current.resource, Verb: verb,
+							Group:    current.group,
+							Resource: current.resource,
+							Verb:     verb,
 							// Namespace is intentionally empty: EPE watches at cluster scope.
 						},
 					},
@@ -408,14 +410,20 @@ func TestProfilePriorityOrdering(t *testing.T) {
 		wantBody       string
 	}{
 		{
-			name: "lower priority on the global profile wins", path: "/epe-priority-global",
-			globalPriority: 100, nsPriority: 200,
-			wantStatus: statusPriorityGlobal, wantBody: "epe-priority-global",
+			name:           "lower priority on the global profile wins",
+			path:           "/epe-priority-global",
+			globalPriority: 100,
+			nsPriority:     200,
+			wantStatus:     statusPriorityGlobal,
+			wantBody:       "epe-priority-global",
 		},
 		{
-			name: "lower priority on the namespaced profile wins", path: "/epe-priority-namespaced",
-			globalPriority: 200, nsPriority: 100,
-			wantStatus: statusPriorityNamespace, wantBody: "epe-priority-namespaced",
+			name:           "lower priority on the namespaced profile wins",
+			path:           "/epe-priority-namespaced",
+			globalPriority: 200,
+			nsPriority:     100,
+			wantStatus:     statusPriorityNamespace,
+			wantBody:       "epe-priority-namespaced",
 		},
 	}
 
@@ -489,8 +497,13 @@ func beginEPEDataPathScenario(t *testing.T, failureDiagnostic string) (*e2e.Envi
 
 func epeSelectorProbeConfig(namespaceName string) echo.Config {
 	return echo.Config{
-		Name: epeSelectorProbeName, Namespace: namespaceName, Replicas: 1,
-		Image: echo.DefaultImage, Ports: echo.DefaultPorts(), CallTimeout: 90 * time.Second, Converge: 3,
+		Name:         epeSelectorProbeName,
+		Namespace:    namespaceName,
+		Replicas:     1,
+		Image:        echo.DefaultImage,
+		Ports:        echo.DefaultPorts(),
+		CallTimeout:  90 * time.Second,
+		Converge:     3,
 		Labels:       map[string]string{"app": epeSelectorProbeName},
 		Capabilities: harness.ClientCapabilities(),
 	}

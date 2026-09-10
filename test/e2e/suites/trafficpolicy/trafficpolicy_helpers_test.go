@@ -36,8 +36,11 @@ func waitForPolicyState(ctx context.Context, policy string, present bool, dump c
 		return fmt.Errorf("config dump callback is required")
 	}
 	return retry.UntilSuccess(ctx, retry.Policy{
-		Timeout: 2 * time.Minute, Delay: 200 * time.Millisecond,
-		Backoff: 1, MaxDelay: 200 * time.Millisecond, Converge: 1,
+		Timeout:  2 * time.Minute,
+		Delay:    200 * time.Millisecond,
+		Backoff:  1,
+		MaxDelay: 200 * time.Millisecond,
+		Converge: 1,
 	}, func() error {
 		content, err := dump(ctx)
 		if err != nil {
@@ -85,8 +88,11 @@ func requirePingState(t *testing.T, source echo.Instance, address string, allowe
 	var stdout, stderr string
 	var execErr error
 	err := retry.UntilSuccess(ctx, retry.Policy{
-		Timeout: 90 * time.Second, Delay: 300 * time.Millisecond,
-		Backoff: 1.5, MaxDelay: 2 * time.Second, Converge: 3,
+		Timeout:  90 * time.Second,
+		Delay:    300 * time.Millisecond,
+		Backoff:  1.5,
+		MaxDelay: 2 * time.Second,
+		Converge: 3,
 	}, func() error {
 		stdout, stderr, execErr = source.Exec(ctx, []string{"ping", "-c", "1", "-W", "3", address})
 		if allowed && execErr == nil || !allowed && execErr != nil {

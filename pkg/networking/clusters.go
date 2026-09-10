@@ -143,7 +143,8 @@ func (b *resourceBuilder) buildTLSProxyOriginateCluster() *clusterv3.Cluster {
 				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
 			}},
 			AlpnProtocols: []string{"h2", "http/1.1"},
-		}})
+		},
+	})
 	cluster.TransportSocket = &corev3.TransportSocket{
 		Name:       "envoy.transport_sockets.tls",
 		ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tlsConfig},
@@ -205,7 +206,8 @@ func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateT
 				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
 			}},
 			AlpnProtocols: []string{"h2", "http/1.1"},
-		}})
+		},
+	})
 	cluster.TransportSocket = &corev3.TransportSocket{
 		Name:       "envoy.transport_sockets.tls",
 		ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tlsConfig},

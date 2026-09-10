@@ -47,7 +47,9 @@ func TestEligibleRequirements(t *testing.T) {
 		{
 			name: "in values are sorted",
 			selector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-				Key: "tenant", Operator: metav1.LabelSelectorOpIn, Values: []string{"b", "a"},
+				Key:      "tenant",
+				Operator: metav1.LabelSelectorOpIn,
+				Values:   []string{"b", "a"},
 			}}},
 			want: []indexRequirement{{key: "tenant", values: []string{"a", "b"}}},
 		},
@@ -62,14 +64,18 @@ func TestEligibleRequirements(t *testing.T) {
 		{
 			name: "sixteen in values remain eligible",
 			selector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-				Key: "tenant", Operator: metav1.LabelSelectorOpIn, Values: sixteenValues,
+				Key:      "tenant",
+				Operator: metav1.LabelSelectorOpIn,
+				Values:   sixteenValues,
 			}}},
 			want: []indexRequirement{{key: "tenant", values: sixteenValues}},
 		},
 		{
 			name: "seventeen in values fall back",
 			selector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-				Key: "tenant", Operator: metav1.LabelSelectorOpIn, Values: seventeenValues,
+				Key:      "tenant",
+				Operator: metav1.LabelSelectorOpIn,
+				Values:   seventeenValues,
 			}}},
 			want: nil,
 		},
@@ -125,17 +131,22 @@ func TestBuildProfileIndexSelectsLeastPopulatedAnchor(t *testing.T) {
 func TestBuildProfileIndexHandlesInAndFallbackSelectors(t *testing.T) {
 	in := mustCompileIndexedProfile(t, "tenant-in", "default", metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{{
-			Key: "tenant", Operator: metav1.LabelSelectorOpIn, Values: []string{"a", "b"},
+			Key:      "tenant",
+			Operator: metav1.LabelSelectorOpIn,
+			Values:   []string{"a", "b"},
 		}},
 	})
 	exists := mustCompileIndexedProfile(t, "team-exists", "default", metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{{
-			Key: "team", Operator: metav1.LabelSelectorOpExists,
+			Key:      "team",
+			Operator: metav1.LabelSelectorOpExists,
 		}},
 	})
 	notIn := mustCompileIndexedProfile(t, "tenant-not-in", "default", metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{{
-			Key: "tenant", Operator: metav1.LabelSelectorOpNotIn, Values: []string{"blocked"},
+			Key:      "tenant",
+			Operator: metav1.LabelSelectorOpNotIn,
+			Values:   []string{"blocked"},
 		}},
 	})
 	all := mustCompileIndexedProfile(t, "all", "default", metav1.LabelSelector{})

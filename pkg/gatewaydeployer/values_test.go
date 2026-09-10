@@ -45,8 +45,10 @@ func TestMergeMapsOverlayWinsAndRecurses(t *testing.T) {
 
 func TestProviderLoadsOnlyEgressGatewayFromInjectorConfig(t *testing.T) {
 	provider, err := newTemplateProvider(Options{
-		SystemNamespace: "agentio-system", TrustDomain: "td", ClusterDomain: "cluster.local",
-		CAAddress: "fallback:15012",
+		SystemNamespace: "agentio-system",
+		TrustDomain:     "td",
+		ClusterDomain:   "cluster.local",
+		CAAddress:       "fallback:15012",
 	}, defaultProxyConfig())
 	if err != nil {
 		t.Fatal(err)

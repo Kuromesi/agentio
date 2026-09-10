@@ -94,7 +94,9 @@ func TestResourceSetHasWorkloadUsesExactIntersection(t *testing.T) {
 		t.Fatal("node-a/gateway-a intersection was not found")
 	}
 	if !set.HasWorkload(typeURL, WorkloadQuery{
-		WorkloadUID: "sandbox-a", NodeName: "node-a", GatewayReference: "gateway-a",
+		WorkloadUID:      "sandbox-a",
+		NodeName:         "node-a",
+		GatewayReference: "gateway-a",
 	}) {
 		t.Fatal("sandbox-a/node-a/gateway-a intersection was not found")
 	}

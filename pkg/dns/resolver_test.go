@@ -142,24 +142,29 @@ func TestProtocolLookupCombinesAAndAAAAUsingMinimumTTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &mdns.Server{PacketConn: packet, Handler: mdns.HandlerFunc(func(response mdns.ResponseWriter, request *mdns.Msg) {
-		message := new(mdns.Msg)
-		message.SetReply(request)
-		name := request.Question[0].Name
-		switch request.Question[0].Qtype {
-		case mdns.TypeA:
-			message.Answer = append(message.Answer, &mdns.A{
-				Hdr: mdns.RR_Header{Name: name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 45},
-				A:   net.ParseIP("192.0.2.10"),
-			})
-		case mdns.TypeAAAA:
-			message.Answer = append(message.Answer, &mdns.AAAA{
-				Hdr:  mdns.RR_Header{Name: name, Rrtype: mdns.TypeAAAA, Class: mdns.ClassINET, Ttl: 20},
-				AAAA: net.ParseIP("2001:db8::10"),
-			})
-		}
-		_ = response.WriteMsg(message)
-	})}
+	server := &mdns.Server{
+		PacketConn: packet,
+		Handler: mdns.HandlerFunc(func(response mdns.ResponseWriter, request *mdns.Msg) {
+			message := new(mdns.Msg)
+			message.SetReply(request)
+			name := request.Question[0].Name
+			switch request.Question[0].Qtype {
+			case mdns.TypeA:
+				message.Answer = append(message.Answer, &mdns.A{
+					Hdr: mdns.RR_Header{Name: name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 45},
+					A:   net.ParseIP("192.0.2.10"),
+				})
+			case mdns.TypeAAAA:
+				message.Answer = append(message.Answer, &mdns.AAAA{
+					Hdr:  mdns.RR_Header{Name: name, Rrtype: mdns.TypeAAAA, Class: mdns.ClassINET, Ttl: 20},
+					AAAA: net.ParseIP("2001:db8::10"),
+				})
+			}
+			if err := response.WriteMsg(message); err != nil {
+				t.Errorf("write DNS response: %v", err)
+			}
+		}),
+	}
 	go func() { _ = server.ActivateAndServe() }()
 	t.Cleanup(func() { _ = server.Shutdown() })
 
@@ -190,20 +195,25 @@ func TestProtocolLookupTreatsNXDOMAINAsAuthoritativeEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &mdns.Server{PacketConn: packet, Handler: mdns.HandlerFunc(func(response mdns.ResponseWriter, request *mdns.Msg) {
-		message := new(mdns.Msg)
-		message.SetRcode(request, mdns.RcodeNameError)
-		message.Ns = append(message.Ns, &mdns.SOA{
-			Hdr:     mdns.RR_Header{Name: "example.com.", Rrtype: mdns.TypeSOA, Class: mdns.ClassINET, Ttl: 30},
-			Ns:      "ns.example.com.",
-			Mbox:    "hostmaster.example.com.",
-			Minttl:  12,
-			Refresh: 60,
-			Retry:   60,
-			Expire:  300,
-		})
-		_ = response.WriteMsg(message)
-	})}
+	server := &mdns.Server{
+		PacketConn: packet,
+		Handler: mdns.HandlerFunc(func(response mdns.ResponseWriter, request *mdns.Msg) {
+			message := new(mdns.Msg)
+			message.SetRcode(request, mdns.RcodeNameError)
+			message.Ns = append(message.Ns, &mdns.SOA{
+				Hdr:     mdns.RR_Header{Name: "example.com.", Rrtype: mdns.TypeSOA, Class: mdns.ClassINET, Ttl: 30},
+				Ns:      "ns.example.com.",
+				Mbox:    "hostmaster.example.com.",
+				Minttl:  12,
+				Refresh: 60,
+				Retry:   60,
+				Expire:  300,
+			})
+			if err := response.WriteMsg(message); err != nil {
+				t.Errorf("write DNS response: %v", err)
+			}
+		}),
+	}
 	go func() { _ = server.ActivateAndServe() }()
 	t.Cleanup(func() { _ = server.Shutdown() })
 
@@ -266,18 +276,23 @@ func TestNewUsesConfiguredDNSServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &mdns.Server{PacketConn: packet, Handler: mdns.HandlerFunc(func(response mdns.ResponseWriter, request *mdns.Msg) {
-		message := new(mdns.Msg)
-		message.SetReply(request)
-		name := request.Question[0].Name
-		if request.Question[0].Qtype == mdns.TypeA {
-			message.Answer = append(message.Answer, &mdns.A{
-				Hdr: mdns.RR_Header{Name: name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 60},
-				A:   net.ParseIP("192.0.2.30"),
-			})
-		}
-		_ = response.WriteMsg(message)
-	})}
+	server := &mdns.Server{
+		PacketConn: packet,
+		Handler: mdns.HandlerFunc(func(response mdns.ResponseWriter, request *mdns.Msg) {
+			message := new(mdns.Msg)
+			message.SetReply(request)
+			name := request.Question[0].Name
+			if request.Question[0].Qtype == mdns.TypeA {
+				message.Answer = append(message.Answer, &mdns.A{
+					Hdr: mdns.RR_Header{Name: name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 60},
+					A:   net.ParseIP("192.0.2.30"),
+				})
+			}
+			if err := response.WriteMsg(message); err != nil {
+				t.Errorf("write DNS response: %v", err)
+			}
+		}),
+	}
 	go func() { _ = server.ActivateAndServe() }()
 	t.Cleanup(func() { _ = server.Shutdown() })
 

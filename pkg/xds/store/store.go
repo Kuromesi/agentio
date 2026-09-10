@@ -132,7 +132,8 @@ func (s *Store) NotifyType(typeURL string) {
 	s.notifyLocked(Update{
 		version:    s.current.Version(),
 		transition: &publicationTransition{before: s.current, after: s.current},
-		full:       true, fullTypes: sets.New(typeURL),
+		full:       true,
+		fullTypes:  sets.New(typeURL),
 	})
 	s.mu.Unlock()
 }

@@ -73,10 +73,14 @@ func Install(ctx context.Context, environment *e2e.Environment, config Config) (
 	}
 
 	_, cleanup, err := helmcomponent.Install(ctx, environment, helmcomponent.Config{
-		Name: resolved.ReleaseName, Namespace: resolved.Namespace,
-		Chart: resolved.ChartPath, ValuesFiles: []string{valuesFile},
-		Fingerprint: fingerprint, Reuse: resolved.Reuse, SkipCRDs: true,
-		Timeout: installTimeout,
+		Name:        resolved.ReleaseName,
+		Namespace:   resolved.Namespace,
+		Chart:       resolved.ChartPath,
+		ValuesFiles: []string{valuesFile},
+		Fingerprint: fingerprint,
+		Reuse:       resolved.Reuse,
+		SkipCRDs:    true,
+		Timeout:     installTimeout,
 	})
 	if err != nil {
 		return Instance{}, nil, fmt.Errorf("install Agentio Helm chart: %w", err)

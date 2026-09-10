@@ -175,8 +175,13 @@ func (s *Suite) run(ctx context.Context, runTests func() int) int {
 	state := newEnvironmentState(runID, s.config)
 	state.setCluster(opened.Name, opened.Context, opened.Owned)
 	environment := &Environment{
-		RunID: runID, Cluster: opened, Kube: kube.NewClient(runID, opened, ledger),
-		Artifacts: store, Commands: commands, State: state, retain: s.config.Lifecycle.Retain,
+		RunID:     runID,
+		Cluster:   opened,
+		Kube:      kube.NewClient(runID, opened, ledger),
+		Artifacts: store,
+		Commands:  commands,
+		State:     state,
+		retain:    s.config.Lifecycle.Retain,
 	}
 
 	completed := make([]CleanupFunc, 0, len(s.setups))

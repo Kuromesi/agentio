@@ -36,7 +36,11 @@ import (
 func TestBuildSlotsAreJSONNative(t *testing.T) {
 	s := NewScope(
 		Request{
-			Host: "h", Port: 443, Path: "/", Scheme: "https", Method: "GET",
+			Host:    "h",
+			Port:    443,
+			Path:    "/",
+			Scheme:  "https",
+			Method:  "GET",
 			headers: map[string]string{"x": "1"},
 			Query:   map[string][]string{"q": {"v"}},
 		},
@@ -78,7 +82,11 @@ func TestBuildBagCarriesNoSecretKey(t *testing.T) {
 	}
 	s := NewScope(
 		Request{
-			Host: "h", Port: 443, Path: "/", Scheme: "https", Method: "GET",
+			Host:    "h",
+			Port:    443,
+			Path:    "/",
+			Scheme:  "https",
+			Method:  "GET",
 			headers: map[string]string{"x-tenant": "a"},
 			Query:   map[string][]string{"q": {"v"}},
 		},

@@ -67,9 +67,12 @@ func TestGatewayRoutesUseSupportedAgentioRetries(t *testing.T) {
 		Gateway: testGateway(&configv1.EgressGateway{
 			ConnectionPool: &configv1.ConnectionPoolSettings{Http: &configv1.ConnectionPoolHttpSettings{
 				DefaultRoute: &configv1.HttpRouteSettings{Timeout: durationpb.New(12 * time.Second)},
-				RouteOverrides: []*configv1.HttpRouteOverride{{Hosts: []string{"api.example.com"}, Settings: &configv1.HttpRouteSettings{
-					Retries: &networkingv1alpha3.HTTPRetry{Attempts: 3, RetryOn: "connect-failure,refused-stream"},
-				}}},
+				RouteOverrides: []*configv1.HttpRouteOverride{{
+					Hosts: []string{"api.example.com"},
+					Settings: &configv1.HttpRouteSettings{
+						Retries: &networkingv1alpha3.HTTPRetry{Attempts: 3, RetryOn: "connect-failure,refused-stream"},
+					},
+				}},
 			}},
 		}),
 	})
@@ -104,21 +107,31 @@ func TestForwardRouteConvertsSupportedAgentioRetryFields(t *testing.T) {
 	}{
 		{
 			name: "numeric status and spaces",
-			retries: &networkingv1alpha3.HTTPRetry{Attempts: 2,
-				RetryOn: " 5xx, 404, , 503,connect-failure "},
-			wantRetryOn: "5xx,connect-failure,retriable-status-codes", wantCodes: []uint32{404, 503}, wantPreviousHosts: true,
+			retries: &networkingv1alpha3.HTTPRetry{
+				Attempts: 2,
+				RetryOn:  " 5xx, 404, , 503,connect-failure ",
+			},
+			wantRetryOn:       "5xx,connect-failure,retriable-status-codes",
+			wantCodes:         []uint32{404, 503},
+			wantPreviousHosts: true,
 		},
 		{
-			name: "remote localities", retries: &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryRemoteLocalities: wrapperspb.Bool(true)},
-			wantRetryOn: "connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes", wantPreviousHosts: true, wantRemote: true,
+			name:              "remote localities",
+			retries:           &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryRemoteLocalities: wrapperspb.Bool(true)},
+			wantRetryOn:       "connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes",
+			wantPreviousHosts: true,
+			wantRemote:        true,
 		},
 		{name: "attempts disabled", retries: &networkingv1alpha3.HTTPRetry{Attempts: 0}, wantNil: true},
 		{
-			name: "ignore previous hosts enabled", retries: &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryIgnorePreviousHosts: wrapperspb.Bool(true)},
-			wantRetryOn: "connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes", wantPreviousHosts: true,
+			name:              "ignore previous hosts enabled",
+			retries:           &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryIgnorePreviousHosts: wrapperspb.Bool(true)},
+			wantRetryOn:       "connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes",
+			wantPreviousHosts: true,
 		},
 		{
-			name: "ignore previous hosts disabled", retries: &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryIgnorePreviousHosts: wrapperspb.Bool(false)},
+			name:        "ignore previous hosts disabled",
+			retries:     &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryIgnorePreviousHosts: wrapperspb.Bool(false)},
 			wantRetryOn: "connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes",
 		},
 	}

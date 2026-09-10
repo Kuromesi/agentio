@@ -120,7 +120,8 @@ func headerResponse(headers map[string]string) *servicev3.HeadersResponse {
 	mutations := make([]*corev3.HeaderValueOption, 0, len(keys))
 	for _, key := range keys {
 		mutations = append(mutations, &corev3.HeaderValueOption{Header: &corev3.HeaderValue{
-			Key: key, RawValue: []byte(headers[key]),
+			Key:      key,
+			RawValue: []byte(headers[key]),
 		}})
 	}
 	return &servicev3.HeadersResponse{Response: &servicev3.CommonResponse{

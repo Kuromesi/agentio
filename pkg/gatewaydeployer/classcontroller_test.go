@@ -81,8 +81,10 @@ func TestClassControllerCreatesMissingBuiltinClasses(t *testing.T) {
 	})
 	// The fake tracker cannot distinguish recreate from original, so count Create calls instead.
 	var createCount int32
-	client.PrependReactor("create", "gatewayclasses", func(clienttesting.Action) (bool, runtime.Object, error) {
-		atomic.AddInt32(&createCount, 1)
+	client.PrependReactor("create", "gatewayclasses", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		if action.(clienttesting.CreateAction).GetObject().(*gatewayv1.GatewayClass).Name == "agentio-egress" {
+			atomic.AddInt32(&createCount, 1)
+		}
 		return false, nil, nil
 	})
 	resource := client.GatewayV1().GatewayClasses()

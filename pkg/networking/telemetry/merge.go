@@ -204,12 +204,16 @@ func mergeMetrics(policies []model.Telemetry, defaultProviders []string) map[str
 					tags := make([]tagOverride, 0, len(value.TagOverrides))
 					for name, tag := range value.TagOverrides {
 						tags = append(tags, tagOverride{
-							Name: name, Remove: tag.Operation == model.TelemetryTagRemove, Value: tag.Value,
+							Name:   name,
+							Remove: tag.Operation == model.TelemetryTagRemove,
+							Value:  tag.Value,
 						})
 					}
 					sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
 					metricConfiguration.Overrides = append(metricConfiguration.Overrides, metricsOverride{
-						Name: metricName, Disabled: boolValue(value.Disabled), Tags: tags,
+						Name:     metricName,
+						Disabled: boolValue(value.Disabled),
+						Tags:     tags,
 					})
 				}
 				sort.Slice(metricConfiguration.Overrides, func(i, j int) bool {

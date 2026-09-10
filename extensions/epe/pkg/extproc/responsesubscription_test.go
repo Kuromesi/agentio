@@ -176,7 +176,8 @@ func TestHandleRequestHeaders_SubscriptionSurvivesAnEarlierPause(t *testing.T) {
 
 	// The separately delivered body must be accepted before response dispatch.
 	if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("payload"), EndOfStream: true,
+		Body:        []byte("payload"),
+		EndOfStream: true,
 	}, state); err != nil {
 		t.Fatalf("HandleRequestBody: %v", err)
 	}
@@ -285,7 +286,8 @@ func TestHandleRequestHeaders_SubscriptionIndependentOfBodyPresence(t *testing.T
 			if !endOfStream {
 				// The body arrives as its own message; drain it before the response.
 				if _, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-					Body: []byte("payload"), EndOfStream: true,
+					Body:        []byte("payload"),
+					EndOfStream: true,
 				}, state); err != nil {
 					t.Fatalf("HandleRequestBody: %v", err)
 				}
@@ -438,7 +440,8 @@ func TestHandleRequestBody_NeverCarriesModeOverride(t *testing.T) {
 
 	runRequestHeaders(t, s, state, false)
 	responses, err := s.HandleRequestBody(context.Background(), &extProcPb.HttpBody{
-		Body: []byte("data"), EndOfStream: true,
+		Body:        []byte("data"),
+		EndOfStream: true,
 	}, state)
 	if err != nil {
 		t.Fatalf("HandleRequestBody: %v", err)

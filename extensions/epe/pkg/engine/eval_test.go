@@ -250,12 +250,18 @@ func TestSubscriptionEntryPointsRejectMisalignedUnitConfigs(t *testing.T) {
 func TestEval_StrictRuleOrderRunsEarlierWorkBeforeLaterBlock(t *testing.T) {
 	earlier := &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "earlier", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &mutatingFilter{c: earlier, muts: []filter.Mutation{filter.SetHeader("x-earlier", "1")}}
-		}},
-		{name: "block", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &actionFilter{act: filter.Stop(filter.Reply{Status: 403}), c: &counters{}}
-		}},
+		{
+			name: "earlier",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &mutatingFilter{c: earlier, muts: []filter.Mutation{filter.SetHeader("x-earlier", "1")}}
+			},
+		},
+		{
+			name: "block",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &actionFilter{act: filter.Stop(filter.Reply{Status: 403}), c: &counters{}}
+			},
+		},
 	})
 
 	res, err := NewEngine(regs, 0).EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{
@@ -275,15 +281,21 @@ func TestEval_BypassStopsOnlyFollowingRules(t *testing.T) {
 	earlier := &counters{}
 	later := &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "body", make: func(cfg filter.RuleConfig[string]) filter.Filter {
-			if cfg.Cfg == "earlier" {
-				return &bodyFilter{c: earlier, bodyAct: filter.Continue()}
-			}
-			return &bodyFilter{c: later, bodyAct: filter.Continue()}
-		}},
-		{name: "bypass", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &actionFilter{act: filter.Bypass(), c: &counters{}}
-		}},
+		{
+			name: "body",
+			make: func(cfg filter.RuleConfig[string]) filter.Filter {
+				if cfg.Cfg == "earlier" {
+					return &bodyFilter{c: earlier, bodyAct: filter.Continue()}
+				}
+				return &bodyFilter{c: later, bodyAct: filter.Continue()}
+			},
+		},
+		{
+			name: "bypass",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &actionFilter{act: filter.Bypass(), c: &counters{}}
+			},
+		},
 	})
 
 	res, err := NewEngine(regs, 0).EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{
@@ -312,24 +324,36 @@ func TestEval_OrderedRulesTable(t *testing.T) {
 	newChain := func() (regs []filter.Registration, bypassC, blockC, mcpC, ttC *counters) {
 		bypassC, blockC, mcpC, ttC = &counters{}, &counters{}, &counters{}, &counters{}
 		regs = buildRegs(t, []regSpec{
-			{name: "bypass", make: func(c filter.RuleConfig[string]) filter.Filter {
-				bypassC.constructed++
-				return &actionFilter{act: filter.Bypass(), c: bypassC}
-			}},
-			{name: "mcp", make: func(c filter.RuleConfig[string]) filter.Filter {
-				mcpC.constructed++
-				return &bodyFilter{c: mcpC, bodyAct: filter.Continue()}
-			}},
-			{name: "block", make: func(c filter.RuleConfig[string]) filter.Filter {
-				blockC.constructed++
-				return &actionFilter{act: filter.Stop(filter.Reply{Status: 451}), c: blockC}
-			}},
-			{name: "tt", make: func(c filter.RuleConfig[string]) filter.Filter {
-				ttC.constructed++
-				f := &mutatingFilter{c: ttC, muts: []filter.Mutation{filter.SetHeader("x-token", "1")}}
-				f.seen = append(f.seen, c.ID.Name)
-				return f
-			}},
+			{
+				name: "bypass",
+				make: func(c filter.RuleConfig[string]) filter.Filter {
+					bypassC.constructed++
+					return &actionFilter{act: filter.Bypass(), c: bypassC}
+				},
+			},
+			{
+				name: "mcp",
+				make: func(c filter.RuleConfig[string]) filter.Filter {
+					mcpC.constructed++
+					return &bodyFilter{c: mcpC, bodyAct: filter.Continue()}
+				},
+			},
+			{
+				name: "block",
+				make: func(c filter.RuleConfig[string]) filter.Filter {
+					blockC.constructed++
+					return &actionFilter{act: filter.Stop(filter.Reply{Status: 451}), c: blockC}
+				},
+			},
+			{
+				name: "tt",
+				make: func(c filter.RuleConfig[string]) filter.Filter {
+					ttC.constructed++
+					f := &mutatingFilter{c: ttC, muts: []filter.Mutation{filter.SetHeader("x-token", "1")}}
+					f.seen = append(f.seen, c.ID.Name)
+					return f
+				},
+			},
 		})
 		return
 	}
@@ -453,10 +477,13 @@ func TestEval_OrderedRulesTable(t *testing.T) {
 func TestEval_NewNeverCalledWithEmptyConfigs(t *testing.T) {
 	var newCalls []int
 	regs := buildRegs(t, []regSpec{
-		{name: "m", make: func(filter.RuleConfig[string]) filter.Filter {
-			newCalls = append(newCalls, 1)
-			return &mutatingFilter{c: &counters{}}
-		}},
+		{
+			name: "m",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				newCalls = append(newCalls, 1)
+				return &mutatingFilter{c: &counters{}}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	// No unit carries m's config.
@@ -476,10 +503,13 @@ func TestEval_NewNeverCalledWithEmptyConfigs(t *testing.T) {
 func TestEval_EachRuleConfigRunsOnce(t *testing.T) {
 	c := &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "action", make: func(filter.RuleConfig[string]) filter.Filter {
-			c.constructed++
-			return &actionFilter{act: filter.Continue(), c: c}
-		}},
+		{
+			name: "action",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				c.constructed++
+				return &actionFilter{act: filter.Continue(), c: c}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"a"}, {"b"}})); err != nil {
@@ -493,11 +523,14 @@ func TestEval_EachRuleConfigRunsOnce(t *testing.T) {
 func TestEval_FilterRunsOncePerConfiguredUnit(t *testing.T) {
 	var got []string
 	regs := buildRegs(t, []regSpec{
-		{name: "m", make: func(c filter.RuleConfig[string]) filter.Filter {
-			f := &mutatingFilter{c: &counters{}}
-			got = append(got, c.Cfg)
-			return f
-		}},
+		{
+			name: "m",
+			make: func(c filter.RuleConfig[string]) filter.Filter {
+				f := &mutatingFilter{c: &counters{}}
+				got = append(got, c.Cfg)
+				return f
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"a"}, {""}, {"c"}})); err != nil {
@@ -511,12 +544,18 @@ func TestEval_FilterRunsOncePerConfiguredUnit(t *testing.T) {
 func TestEvalBody_StopShortCircuits(t *testing.T) {
 	stopC, contC := &counters{}, &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "deny", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &bodyFilter{c: stopC, bodyAct: filter.Stop(filter.Reply{Status: 452})}
-		}},
-		{name: "later", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &bodyFilter{c: contC, bodyAct: filter.Continue()}
-		}},
+		{
+			name: "deny",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &bodyFilter{c: stopC, bodyAct: filter.Stop(filter.Reply{Status: 452})}
+			},
+		},
+		{
+			name: "later",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &bodyFilter{c: contC, bodyAct: filter.Continue()}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{}
@@ -544,15 +583,24 @@ func TestEvalBody_LaterBypassPreservesEarlierMutationAndSkipsFollowingRule(t *te
 	earlier := &counters{}
 	later := &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "body", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &bodyFilter{c: earlier, bodyAct: filter.Continue(filter.SetHeader("x-body", "1"))}
-		}},
-		{name: "bypass", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &actionFilter{act: filter.Bypass(), c: &counters{}}
-		}},
-		{name: "later", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &mutatingFilter{c: later, muts: []filter.Mutation{filter.SetHeader("x-later", "1")}}
-		}},
+		{
+			name: "body",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &bodyFilter{c: earlier, bodyAct: filter.Continue(filter.SetHeader("x-body", "1"))}
+			},
+		},
+		{
+			name: "bypass",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &actionFilter{act: filter.Bypass(), c: &counters{}}
+			},
+		},
+		{
+			name: "later",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &mutatingFilter{c: later, muts: []filter.Mutation{filter.SetHeader("x-later", "1")}}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{}
@@ -582,36 +630,48 @@ func TestEvalRequestBody_FoldsAllPendingMutationsAfterResume(t *testing.T) {
 	laterCounters := &counters{}
 	var pausedBodies, laterBodies []filter.Body
 	regs := buildRegs(t, []regSpec{
-		{name: "before", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &mutatingFilter{c: &counters{}, muts: []filter.Mutation{filter.SetHeader("x-before", "1")}}
-		}},
-		{name: "paused", make: func(filter.RuleConfig[string]) filter.Filter {
-			pausedCounters.constructed++
-			return &observingBodyFilter{
-				c:         pausedCounters,
-				headerAct: filter.NeedBody(filter.SetHeader("x-paused-header", "1")),
-				bodyAct: filter.Continue(
-					filter.SetHeader("x-paused-body", "1"),
-					filter.Mutation{Body: []byte("paused replacement")},
-				),
-				seen: &pausedBodies,
-			}
-		}},
-		{name: "later-body", make: func(filter.RuleConfig[string]) filter.Filter {
-			laterCounters.constructed++
-			return &observingBodyFilter{
-				c:         laterCounters,
-				headerAct: filter.NeedBody(filter.SetHeader("x-later-header", "1")),
-				bodyAct: filter.Continue(
-					filter.SetHeader("x-later-body", "1"),
-					filter.Mutation{Body: []byte("final replacement")},
-				),
-				seen: &laterBodies,
-			}
-		}},
-		{name: "after", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &mutatingFilter{c: &counters{}, muts: []filter.Mutation{filter.SetHeader("x-after", "1")}}
-		}},
+		{
+			name: "before",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &mutatingFilter{c: &counters{}, muts: []filter.Mutation{filter.SetHeader("x-before", "1")}}
+			},
+		},
+		{
+			name: "paused",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				pausedCounters.constructed++
+				return &observingBodyFilter{
+					c:         pausedCounters,
+					headerAct: filter.NeedBody(filter.SetHeader("x-paused-header", "1")),
+					bodyAct: filter.Continue(
+						filter.SetHeader("x-paused-body", "1"),
+						filter.Mutation{Body: []byte("paused replacement")},
+					),
+					seen: &pausedBodies,
+				}
+			},
+		},
+		{
+			name: "later-body",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				laterCounters.constructed++
+				return &observingBodyFilter{
+					c:         laterCounters,
+					headerAct: filter.NeedBody(filter.SetHeader("x-later-header", "1")),
+					bodyAct: filter.Continue(
+						filter.SetHeader("x-later-body", "1"),
+						filter.Mutation{Body: []byte("final replacement")},
+					),
+					seen: &laterBodies,
+				}
+			},
+		},
+		{
+			name: "after",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &mutatingFilter{c: &counters{}, muts: []filter.Mutation{filter.SetHeader("x-after", "1")}}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{Info: filter.NewStreamInfo()}
@@ -682,9 +742,12 @@ func TestEvalRequestHeaders_WithAvailableRequestBodyRunsInline(t *testing.T) {
 
 func TestEvalBody_NeedRejected(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
-		{name: "greedy", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &bodyFilter{c: &counters{}, bodyAct: filter.NeedBody()}
-		}},
+		{
+			name: "greedy",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &bodyFilter{c: &counters{}, bodyAct: filter.NeedBody()}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{}
@@ -700,12 +763,19 @@ func TestEvalBody_NeedRejected(t *testing.T) {
 func TestInvoke_FailOpenSkips(t *testing.T) {
 	mutC := &counters{}
 	regs := buildRegs(t, []regSpec{
-		{name: "flaky", onError: filter.Always[string](filter.FailOpen), make: func(filter.RuleConfig[string]) filter.Filter {
-			return &errFilter{err: errors.New("boom")}
-		}},
-		{name: "after", make: func(filter.RuleConfig[string]) filter.Filter {
-			return &mutatingFilter{c: mutC, muts: []filter.Mutation{filter.SetHeader("x", "1")}}
-		}},
+		{
+			name:    "flaky",
+			onError: filter.Always[string](filter.FailOpen),
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &errFilter{err: errors.New("boom")}
+			},
+		},
+		{
+			name: "after",
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &mutatingFilter{c: mutC, muts: []filter.Mutation{filter.SetHeader("x", "1")}}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{Info: filter.NewStreamInfo()}
@@ -724,9 +794,13 @@ func TestInvoke_FailOpenSkips(t *testing.T) {
 
 func TestInvoke_FailClosedSynthesizesBlocked(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
-		{name: "strict", onError: filter.Always[string](filter.FailClosed), make: func(filter.RuleConfig[string]) filter.Filter {
-			return &errFilter{err: errors.New("boom")}
-		}},
+		{
+			name:    "strict",
+			onError: filter.Always[string](filter.FailClosed),
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &errFilter{err: errors.New("boom")}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{Info: filter.NewStreamInfo()}
@@ -795,7 +869,9 @@ func TestEvalBody_OnErrorConsultsConfig(t *testing.T) {
 		return filter.FailClosed
 	}
 	regs := buildRegs(t, []regSpec{{
-		name: "fr-body", onError: policy, make: mk,
+		name:    "fr-body",
+		onError: policy,
+		make:    mk,
 	}})
 	e := NewEngine(regs, 0)
 
@@ -1574,14 +1650,20 @@ func TestEval_BypassDoesNotInvokeOrRecordFollowingBlock(t *testing.T) {
 	regs, _, _, _, _ := func() ([]filter.Registration, *counters, *counters, *counters, *counters) {
 		bypassC, blockC := &counters{}, &counters{}
 		regs := buildRegs(t, []regSpec{
-			{name: "bypass", make: func(filter.RuleConfig[string]) filter.Filter {
-				bypassC.constructed++
-				return &actionFilter{act: filter.Bypass(), c: bypassC}
-			}},
-			{name: "block", make: func(filter.RuleConfig[string]) filter.Filter {
-				blockC.constructed++
-				return &actionFilter{act: filter.Stop(filter.Reply{Status: 451}), c: blockC}
-			}},
+			{
+				name: "bypass",
+				make: func(filter.RuleConfig[string]) filter.Filter {
+					bypassC.constructed++
+					return &actionFilter{act: filter.Bypass(), c: bypassC}
+				},
+			},
+			{
+				name: "block",
+				make: func(filter.RuleConfig[string]) filter.Filter {
+					blockC.constructed++
+					return &actionFilter{act: filter.Stop(filter.Reply{Status: 451}), c: blockC}
+				},
+			},
 		})
 		return regs, bypassC, blockC, nil, nil
 	}()
@@ -1618,9 +1700,13 @@ func TestEval_BypassDoesNotInvokeOrRecordFollowingBlock(t *testing.T) {
 // error, whose Err must survive the swallow.
 func TestEval_FilterRecordsIncludeFailOpenErr(t *testing.T) {
 	regs := buildRegs(t, []regSpec{
-		{name: "flaky", onError: filter.Always[string](filter.FailOpen), make: func(filter.RuleConfig[string]) filter.Filter {
-			return &errFilter{err: errors.New("boom")}
-		}},
+		{
+			name:    "flaky",
+			onError: filter.Always[string](filter.FailOpen),
+			make: func(filter.RuleConfig[string]) filter.Filter {
+				return &errFilter{err: errors.New("boom")}
+			},
+		},
 	})
 	e := NewEngine(regs, 0)
 	st := &filter.Stream{Info: filter.NewStreamInfo()}

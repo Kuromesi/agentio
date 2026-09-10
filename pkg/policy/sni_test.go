@@ -46,8 +46,10 @@ func TestCompileSNIProfileSandboxUIDAssociation(t *testing.T) {
 				selector[agentsv1alpha1.LabelSandboxID] = *test.selectedUID
 			}
 			compiled, err := CompileSNIProfile(model.SecurityProfile{
-				Name: "profile", Namespace: "demo", SandboxUID: test.declaredUID,
-				Spec: securitySpec(nil, selector),
+				Name:       "profile",
+				Namespace:  "demo",
+				SandboxUID: test.declaredUID,
+				Spec:       securitySpec(nil, selector),
 			})
 			if test.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "sandbox UID") {
@@ -69,12 +71,18 @@ func TestCompileSNIProfileSandboxUIDAssociation(t *testing.T) {
 func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	priority := int32(10)
 	compiled, err := CompileSNIProfile(model.SecurityProfile{
-		Name: "profile", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{
-			Priority: &priority, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-			Rules: []agentsv1alpha1.SecurityRule{{Name: "hosts", Match: []agentsv1alpha1.RuleMatch{
-				{Domains: []string{"API.Example.COM.", "*.Example.com", "api.example.com"}, Schemes: []string{"HTTPS"}},
-				{Domains: []string{"http-only.example.com"}, Schemes: []string{"http"}},
-			}}},
+		Name:      "profile",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.SecurityProfileSpec{
+			Priority: &priority,
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+			Rules: []agentsv1alpha1.SecurityRule{{
+				Name: "hosts",
+				Match: []agentsv1alpha1.RuleMatch{
+					{Domains: []string{"API.Example.COM.", "*.Example.com", "api.example.com"}, Schemes: []string{"HTTPS"}},
+					{Domains: []string{"http-only.example.com"}, Schemes: []string{"http"}},
+				},
+			}},
 		},
 	})
 	if err != nil {
@@ -97,9 +105,11 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 
 func TestCompileSNIProfileRejectsPartialWildcard(t *testing.T) {
 	_, err := CompileSNIProfile(model.SecurityProfile{
-		Name: "bad", Namespace: "demo",
+		Name:      "bad",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{
-			Name: "bad", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"*foo.example.com"}}},
+			Name:  "bad",
+			Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"*foo.example.com"}}},
 		}}},
 	})
 	if err == nil {
@@ -108,7 +118,8 @@ func TestCompileSNIProfileRejectsPartialWildcard(t *testing.T) {
 }
 
 func securitySpec(priority *int32, selector map[string]string) agentsv1alpha1.SecurityProfileSpec {
-	return agentsv1alpha1.SecurityProfileSpec{Priority: priority,
+	return agentsv1alpha1.SecurityProfileSpec{
+		Priority: priority,
 		Selector: metav1.LabelSelector{MatchLabels: selector},
 		Rules:    []agentsv1alpha1.SecurityRule{{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
 	}

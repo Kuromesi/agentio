@@ -28,9 +28,14 @@ import (
 func TestSetupOrder(t *testing.T) {
 	digest := "registry.example/test@sha256:" + strings.Repeat("b", 64)
 	setups := suiteSetupGraph(agentiocomponent.Config{
-		Namespace: "agentio-system", AgentiodImage: digest, ZtunnelImage: digest,
-		ProxyInitImage: digest, GatewayImage: digest, EPEImage: digest,
-		ExtProcImage: digest, ForwardProxyImage: digest,
+		Namespace:         "agentio-system",
+		AgentiodImage:     digest,
+		ZtunnelImage:      digest,
+		ProxyInitImage:    digest,
+		GatewayImage:      digest,
+		EPEImage:          digest,
+		ExtProcImage:      digest,
+		ForwardProxyImage: digest,
 	})
 	names := make([]string, len(setups))
 	for index := range setups {

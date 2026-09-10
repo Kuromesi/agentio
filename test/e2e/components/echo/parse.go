@@ -70,8 +70,10 @@ func ParseResponses(output string) ([]Response, error) {
 	responses := make([]Response, 0, len(order))
 	for _, id := range order {
 		response := Response{
-			ID: strconv.Itoa(id), Body: make(map[string]string),
-			RequestHeaders: make(http.Header), ResponseHeaders: make(http.Header),
+			ID:              strconv.Itoa(id),
+			Body:            make(map[string]string),
+			RequestHeaders:  make(http.Header),
+			ResponseHeaders: make(http.Header),
 		}
 		response.RawContent = strings.Join(frames[id], "\n")
 		for _, line := range frames[id] {

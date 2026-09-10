@@ -128,35 +128,47 @@ func TestProxyImage(t *testing.T) {
 		want    string
 	}{
 		{
-			name: "bare image joins hub and tag",
-			hub:  "example.com/agentio", tag: "1.0.0", image: "proxyv2",
-			want: "example.com/agentio/proxyv2:1.0.0",
+			name:  "bare image joins hub and tag",
+			hub:   "example.com/agentio",
+			tag:   "1.0.0",
+			image: "proxyv2",
+			want:  "example.com/agentio/proxyv2:1.0.0",
 		},
 		{
-			name: "fully qualified image with tag preserved",
-			hub:  "docker.io/openkruise", tag: "latest", image: "registry.example/agentio/proxyv2:1.0.0",
-			want: "registry.example/agentio/proxyv2:1.0.0",
+			name:  "fully qualified image with tag preserved",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
+			image: "registry.example/agentio/proxyv2:1.0.0",
+			want:  "registry.example/agentio/proxyv2:1.0.0",
 		},
 		{
-			name: "fully qualified image with digest preserved",
-			hub:  "docker.io/openkruise", tag: "latest",
+			name:  "fully qualified image with digest preserved",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
 			image: "registry.example/agentio/proxyv2@sha256:0000000000000000000000000000000000000000000000000000000000000000",
 			want:  "registry.example/agentio/proxyv2@sha256:0000000000000000000000000000000000000000000000000000000000000000",
 		},
 		{
-			name: "fully qualified image without tag preserved",
-			hub:  "docker.io/openkruise", tag: "latest", image: "registry.example/proxyv2",
-			want: "registry.example/proxyv2",
+			name:  "fully qualified image without tag preserved",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
+			image: "registry.example/proxyv2",
+			want:  "registry.example/proxyv2",
 		},
 		{
-			name: "bare image joins default hub and tag",
-			hub:  "docker.io/openkruise", tag: "latest", image: "proxyv2",
-			want: "docker.io/openkruise/proxyv2:latest",
+			name:  "bare image joins default hub and tag",
+			hub:   "docker.io/openkruise",
+			tag:   "latest",
+			image: "proxyv2",
+			want:  "docker.io/openkruise/proxyv2:latest",
 		},
 		{
-			name: "variant replaces tag suffix",
-			hub:  "example.com/agentio/", tag: "1.0.0-distroless", variant: "debug", image: "customproxy",
-			want: "example.com/agentio/customproxy:1.0.0-debug",
+			name:    "variant replaces tag suffix",
+			hub:     "example.com/agentio/",
+			tag:     "1.0.0-distroless",
+			variant: "debug",
+			image:   "customproxy",
+			want:    "example.com/agentio/customproxy:1.0.0-debug",
 		},
 	}
 	for _, tt := range tests {
@@ -180,7 +192,9 @@ func TestRenderIgnoresProxyImageAnnotation(t *testing.T) {
 	rend := testRenderer(t, merged)
 	gw := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "egress", Namespace: "demo", UID: "uid-img",
+			Name:      "egress",
+			Namespace: "demo",
+			UID:       "uid-img",
 			Annotations: map[string]string{
 				"sidecar.agentio.kruise.io/proxy-image":      "evil.example/attacker:latest",
 				"sidecar.agentio.kruise.io/proxy-image-type": "evil",
@@ -417,8 +431,8 @@ func TestOmitNilRecursesThroughMapsAndSlices(t *testing.T) {
 func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	// Pin the expected proxy defaults as fixed literals.
 	pc := defaultProxyConfig()
-	if pc.ConfigPath != "./etc/istio/proxy" {
-		t.Fatalf("ConfigPath = %q, want %q", pc.ConfigPath, "./etc/istio/proxy")
+	if pc.ConfigPath != "" {
+		t.Fatalf("ConfigPath = %q, want unset", pc.ConfigPath)
 	}
 	if pc.BinaryPath != "/usr/local/bin/envoy" {
 		t.Fatalf("BinaryPath = %q, want %q", pc.BinaryPath, "/usr/local/bin/envoy")
@@ -441,8 +455,8 @@ func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	if pc.StatusPort != 15020 {
 		t.Fatalf("StatusPort = %d, want 15020", pc.StatusPort)
 	}
-	if pc.DiscoveryAddress != "istiod.istio-system.svc:15012" {
-		t.Fatalf("DiscoveryAddress = %q, want %q", pc.DiscoveryAddress, "istiod.istio-system.svc:15012")
+	if pc.DiscoveryAddress != "" {
+		t.Fatalf("DiscoveryAddress = %q, want unset", pc.DiscoveryAddress)
 	}
 	if pc.ControlPlaneAuthPolicy != meshv1alpha1.AuthenticationPolicy_MUTUAL_TLS {
 		t.Fatalf("ControlPlaneAuthPolicy = %v, want MUTUAL_TLS", pc.ControlPlaneAuthPolicy)
@@ -453,19 +467,22 @@ func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(got, "configPath") || strings.Contains(got, "config_path") {
-		t.Fatalf("protoToJSON did not clean default configPath: %s", got)
+	if got != "{}" {
+		t.Fatalf("protoToJSON did not omit default fields: %s", got)
 	}
 
 	// A non-default value must appear in the JSON output.
 	pc2 := defaultProxyConfig()
 	pc2.ConfigPath = "/custom/path"
+	pc2.DiscoveryAddress = "agentiod.custom.svc:15012"
 	got2, err := protoToJSON(pc2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got2, "configPath") && !strings.Contains(got2, "config_path") {
-		t.Fatalf("protoToJSON dropped non-default configPath: %s", got2)
+	for _, want := range []string{`"configPath":"/custom/path"`, `"discoveryAddress":"agentiod.custom.svc:15012"`} {
+		if !strings.Contains(got2, want) {
+			t.Fatalf("protoToJSON dropped explicit configuration %s: %s", want, got2)
+		}
 	}
 }
 

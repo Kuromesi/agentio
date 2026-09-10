@@ -46,10 +46,14 @@ func TestSandboxInlinePoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "a", Namespace: "tenant", Labels: map[string]string{"app": "a"}})
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "b", Namespace: "tenant", Labels: map[string]string{"app": "b"}})
-	policy := model.TrafficPolicy{Name: "allow", Namespace: "tenant", Spec: agentsv1alpha1.TrafficPolicySpec{
-		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
-		Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}}}}},
-	}}
+	policy := model.TrafficPolicy{
+		Name:      "allow",
+		Namespace: "tenant",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+			Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}}}}},
+		},
+	}
 	fixture.trafficPolicies.ConditionalUpdateObject(policy)
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
@@ -151,20 +155,28 @@ func TestSandboxInlinePrioritySNIOrderAndUnavailableView(t *testing.T) {
 		return value
 	}
 	fixture := newIncrementalFixture(t)
-	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "a", Namespace: "tenant", PolicyRefs: []model.PolicyRef{
-		{Kind: model.PolicyKindSNIPolicy, Name: "tenant/second"},
-		{Kind: model.PolicyKindSNIPolicy, Name: "tenant/first"},
-	}})
+	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
+		UID:       "a",
+		Namespace: "tenant",
+		PolicyRefs: []model.PolicyRef{
+			{Kind: model.PolicyKindSNIPolicy, Name: "tenant/second"},
+			{Kind: model.PolicyKindSNIPolicy, Name: "tenant/first"},
+		},
+	})
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "b", Namespace: "other"})
 	global := model.TrafficPolicy{Name: "baseline", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 10, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionReject}}}}}
 	local := model.TrafficPolicy{Name: "local", Namespace: "tenant", Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 100, Ingress: &agentsv1alpha1.TrafficPolicyDirection{}, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}}}}}
 	fixture.trafficPolicies.ConditionalUpdateObject(global)
 	fixture.trafficPolicies.ConditionalUpdateObject(local)
 	profile := func(name, domain string) model.SecurityProfile {
-		return model.SecurityProfile{Name: name, Namespace: "tenant", Spec: agentsv1alpha1.SecurityProfileSpec{
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"not": "selected"}},
-			Rules:    []agentsv1alpha1.SecurityRule{{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{domain}}}}},
-		}}
+		return model.SecurityProfile{
+			Name:      name,
+			Namespace: "tenant",
+			Spec: agentsv1alpha1.SecurityProfileSpec{
+				Selector: metav1.LabelSelector{MatchLabels: map[string]string{"not": "selected"}},
+				Rules:    []agentsv1alpha1.SecurityRule{{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{domain}}}}},
+			},
+		}
 	}
 	first, second := profile("first", "first.example"), profile("second", "second.example")
 	fixture.securityProfiles.ConditionalUpdateObject(first)
@@ -243,7 +255,8 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	fixture.workloads.ConditionalUpdateObject(workload)
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "allow", Namespace: sandbox.Namespace,
+		Name:      "allow",
+		Namespace: sandbox.Namespace,
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "sandbox"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{

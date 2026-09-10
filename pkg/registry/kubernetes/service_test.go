@@ -53,8 +53,9 @@ func TestWorkloadServicePortsNormalizeServiceAndEndpointIntent(t *testing.T) {
 	ready, serving, terminating := false, true, true
 	endpoints := endpointsFromSlice("cluster.local", &discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "backend-abc",
-			Labels: map[string]string{discoveryv1.LabelServiceName: "backend"},
+			Namespace: "demo",
+			Name:      "backend-abc",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "backend"},
 		},
 		Ports: []discoveryv1.EndpointPort{
 			{Name: &portName, Port: &port, Protocol: &protocol},
@@ -63,7 +64,9 @@ func TestWorkloadServicePortsNormalizeServiceAndEndpointIntent(t *testing.T) {
 		Endpoints: []discoveryv1.Endpoint{{
 			Addresses: []string{"10.0.0.1"},
 			Conditions: discoveryv1.EndpointConditions{
-				Ready: &ready, Serving: &serving, Terminating: &terminating,
+				Ready:       &ready,
+				Serving:     &serving,
+				Terminating: &terminating,
 			},
 			TargetRef: &corev1.ObjectReference{Kind: "Pod", Name: "pod-a", UID: types.UID("pod-a-uid")},
 		}},
@@ -119,7 +122,8 @@ func TestServiceTrafficPolicyTranslation(t *testing.T) {
 
 	annotated := serviceFromKubernetes("cluster.local", &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "annotated",
+			Namespace:   "demo",
+			Name:        "annotated",
 			Annotations: map[string]string{"networking.istio.io/traffic-distribution": "PreferClose"},
 		},
 		Spec: corev1.ServiceSpec{IPFamilies: []corev1.IPFamily{corev1.IPv6Protocol}},
@@ -188,15 +192,19 @@ func TestEndpointTargetRefFQDNSliceIsIgnored(t *testing.T) {
 	protocol := corev1.ProtocolTCP
 	got := endpointsFromSlice("cluster.local", &discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "external-abc",
-			Labels: map[string]string{discoveryv1.LabelServiceName: "external"},
+			Namespace: "demo",
+			Name:      "external-abc",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "external"},
 		},
 		AddressType: discoveryv1.AddressTypeFQDN,
 		Ports:       []discoveryv1.EndpointPort{{Name: &portName, Port: &port, Protocol: &protocol}},
 		Endpoints: []discoveryv1.Endpoint{{
 			Addresses: []string{"backend.example.com"},
 			TargetRef: &corev1.ObjectReference{
-				Kind: "Pod", Namespace: "demo", Name: "pod-a", UID: types.UID("pod-a-uid"),
+				Kind:      "Pod",
+				Namespace: "demo",
+				Name:      "pod-a",
+				UID:       types.UID("pod-a-uid"),
 			},
 		}},
 	})
@@ -213,8 +221,9 @@ func TestEndpointsFollowTheirSlice(t *testing.T) {
 	ready := true
 	slice := &discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "demo", Name: "backend-abc",
-			Labels: map[string]string{discoveryv1.LabelServiceName: "backend"},
+			Namespace: "demo",
+			Name:      "backend-abc",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "backend"},
 		},
 		Endpoints: []discoveryv1.Endpoint{
 			{Addresses: []string{"10.1.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},

@@ -28,9 +28,12 @@ import (
 // Gateways are configured identities, not a projection of currently running Pods.
 func TestGatewaysDeriveConfiguredIdentitiesWithoutPods(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `sandboxExtProc:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `sandboxExtProc:
   service: epe.agentio-system.svc.cluster.local
   port: 9002
 egressGateways:
@@ -38,7 +41,8 @@ egressGateways:
   name: egress-a
 - namespace: other
   name: egress-b
-`}}
+`},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 
 	eventually(t, func() bool { return len(r.Gateways.List()) == 2 }, "configured gateways derived without Pods")
@@ -59,9 +63,12 @@ egressGateways:
 // Gateway projections must own their selected protobuf fragments.
 func TestGatewayProjectionDoesNotAliasEffectiveConfiguration(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `sandboxExtProc:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `sandboxExtProc:
   service: epe.agentio-system.svc.cluster.local
   port: 9002
 egressGateways:
@@ -71,7 +78,8 @@ egressGateways:
     includeHosts: ["a.example.com"]
 - namespace: demo
   name: egress-b
-`}}
+`},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 	eventually(t, func() bool { return len(r.Gateways.List()) == 2 }, "configured gateways")
 
@@ -94,9 +102,12 @@ egressGateways:
 // not duplicate the fallback into, or emit changes from, the Gateway source.
 func TestSharedGatewayFallbackChangeDoesNotChangeGatewaySource(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `sandboxExtProc:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `sandboxExtProc:
   service: epe-old.agentio-system.svc.cluster.local
   port: 9002
 egressGateways:
@@ -104,7 +115,8 @@ egressGateways:
   name: egress-a
 - namespace: demo
   name: egress-b
-`}}
+`},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 	eventually(t, func() bool { return len(r.Gateways.List()) == 2 }, "configured gateways")
 	recorder := newGatewayRecorder(r.Gateways)
@@ -135,16 +147,20 @@ egressGateways:
 // every downstream consumer fails the same key closed.
 func TestGatewayProjectionMarksDuplicateConfiguredEntriesAsConflict(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `egressGateways:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `egressGateways:
 - namespace: demo
   name: egress
 - namespace: demo
   name: egress
   tlsTermination:
     includeHosts: ["*.example.com"]
-`}}
+`},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 	eventually(t, func() bool {
 		gateway := r.Gateways.GetKey("demo/egress")
@@ -155,12 +171,16 @@ func TestGatewayProjectionMarksDuplicateConfiguredEntriesAsConflict(t *testing.T
 // A gateway add, update, or delete publishes only that namespace/name gateway.
 func TestGatewayConfigChangesAffectOnlyItsIdentity(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `egressGateways:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `egressGateways:
 - namespace: demo
   name: egress-a
-`}}
+`},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 	eventually(t, func() bool { return r.Gateways.GetKey("demo/egress-a") != nil }, "initial configured gateway")
 	recorder := newGatewayRecorder(r.Gateways)
@@ -219,14 +239,18 @@ func TestGatewayConfigChangesAffectOnlyItsIdentity(t *testing.T) {
 // Pod lifecycle is not a gateway graph input.
 func TestUnrelatedGatewayPodChangeDoesNotInvalidateConfiguredGraphs(t *testing.T) {
 	ctx := t.Context()
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "agentio-system", Name: "agentio-config",
-	}, Data: map[string]string{"config": `egressGateways:
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "agentio-system",
+			Name:      "agentio-config",
+		},
+		Data: map[string]string{"config": `egressGateways:
 - namespace: demo
   name: egress-a
 - namespace: demo
   name: egress-b
-`}}
+`},
+	}
 	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
 	eventually(t, func() bool { return len(r.Gateways.List()) == 2 }, "configured gateways")
 	recorder := newGatewayRecorder(r.Gateways)

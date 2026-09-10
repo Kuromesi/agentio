@@ -51,7 +51,11 @@ func TestSetupFailureUnwindsCompletedSetupsInReverse(t *testing.T) {
 
 func TestReconnectInstructionsForKindDoNotUseRemovedTemporaryKubeconfig(t *testing.T) {
 	environment := &Environment{Cluster: &cluster.Cluster{
-		Name: "retained", Context: "kind-retained", Kubeconfig: "/tmp/removed-kubeconfig.yaml", Mode: cluster.ModeKind, Owned: true,
+		Name:       "retained",
+		Context:    "kind-retained",
+		Kubeconfig: "/tmp/removed-kubeconfig.yaml",
+		Mode:       cluster.ModeKind,
+		Owned:      true,
 	}}
 	instructions := strings.Join(reconnectInstructions(environment), "\n")
 	if strings.Contains(instructions, environment.Cluster.Kubeconfig) {

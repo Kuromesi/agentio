@@ -66,7 +66,9 @@ func (s *preparingSigner) Sign(_ context.Context, _ *filter.Stream, _ []byte, _ 
 	s.signCalls++
 	s.signedCfg = cfg
 	return []filter.Mutation{{HeaderOps: []filter.HeaderOp{{
-		Kind: filter.HeaderSet, Name: "x-prepared", Value: fmt.Sprintf("%s:%s", cfg, cred.Token),
+		Kind:  filter.HeaderSet,
+		Name:  "x-prepared",
+		Value: fmt.Sprintf("%s:%s", cfg, cred.Token),
 	}}}}, nil
 }
 
@@ -76,7 +78,8 @@ func newTestFilter(secret, provider CredentialSource, cfg Config) *Filter {
 	tmpl, _ := eval.CompileTemplate("valueTemplate", "Bearer {{ .Token }}")
 	if cfg.SignerCfg == nil {
 		cfg.SignerCfg = ApiKeyConfig{Headers: []ApiKeyHeaderConfig{{
-			Names: []string{"authorization"}, Value: HeaderValueSource{Template: tmpl},
+			Names: []string{"authorization"},
+			Value: HeaderValueSource{Template: tmpl},
 		}}}
 	}
 	return &Filter{
@@ -87,8 +90,11 @@ func newTestFilter(secret, provider CredentialSource, cfg Config) *Filter {
 }
 
 func secretCfg(failBlock bool) Config {
-	return Config{Type: TypeAPIKey, FailBlock: failBlock,
-		Source: SourceSpec{Kind: SourceKindSecret, Name: "s", Namespace: "ns"}}
+	return Config{
+		Type:      TypeAPIKey,
+		FailBlock: failBlock,
+		Source:    SourceSpec{Kind: SourceKindSecret, Name: "s", Namespace: "ns"},
+	}
 }
 
 func withHeaderCondition(cfg Config) Config {
@@ -332,8 +338,10 @@ func TestFilterWhenMetClaimsUnit(t *testing.T) {
 }
 
 func TestFilterProviderWithoutPeerTokenAllowContinues(t *testing.T) {
-	providerCfg := Config{Type: TypeAPIKey,
-		Source: SourceSpec{Kind: SourceKindProvider, Name: "prov"}}
+	providerCfg := Config{
+		Type:   TypeAPIKey,
+		Source: SourceSpec{Kind: SourceKindProvider, Name: "prov"},
+	}
 	f := newTestFilter(nil, &fakeSource{}, providerCfg)
 	act, _ := f.OnRequestHeaders(context.Background(), streamWithoutPeerToken())
 	if act.Kind() != filter.KindContinue || len(act.Mutations()) != 0 {
@@ -342,8 +350,11 @@ func TestFilterProviderWithoutPeerTokenAllowContinues(t *testing.T) {
 }
 
 func TestFilterProviderWithoutPeerTokenBlockStops(t *testing.T) {
-	cfg := Config{Type: TypeAPIKey, FailBlock: true,
-		Source: SourceSpec{Kind: SourceKindProvider, Name: "prov"}}
+	cfg := Config{
+		Type:      TypeAPIKey,
+		FailBlock: true,
+		Source:    SourceSpec{Kind: SourceKindProvider, Name: "prov"},
+	}
 	f := newTestFilter(nil, &fakeSource{}, cfg)
 	act, _ := f.OnRequestHeaders(context.Background(), streamWithoutPeerToken())
 	if act.Kind() != filter.KindStop {

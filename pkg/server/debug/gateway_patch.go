@@ -156,7 +156,10 @@ func configDebugClusterMatchValue(match *model.ClusterMatch) any {
 		return nil
 	}
 	return configDebugClusterMatch{
-		Name: match.Name, Service: match.Service, Subset: match.Subset, PortNumber: match.PortNumber,
+		Name:       match.Name,
+		Service:    match.Service,
+		Subset:     match.Subset,
+		PortNumber: match.PortNumber,
 	}
 }
 

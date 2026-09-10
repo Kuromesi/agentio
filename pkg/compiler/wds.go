@@ -120,7 +120,8 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 			return nil, fmt.Errorf("marshal SNI policy for workload %s: %w", input.Workload.UID, err)
 		}
 		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
-			Name: "sni-traffic-policy", Config: config,
+			Name:   "sni-traffic-policy",
+			Config: config,
 		})
 	}
 

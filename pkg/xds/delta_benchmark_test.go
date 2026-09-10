@@ -76,10 +76,14 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 		}
 		updates := [2]xdsstore.Update{
 			updateBetween(snapshots[1], snapshots[0], []model.ResourceChange{{
-				Key: key, Old: &variants[1], New: &variants[0],
+				Key: key,
+				Old: &variants[1],
+				New: &variants[0],
 			}}),
 			updateBetween(snapshots[0], snapshots[1], []model.ResourceChange{{
-				Key: key, Old: &variants[0], New: &variants[1],
+				Key: key,
+				Old: &variants[0],
+				New: &variants[1],
 			}}),
 		}
 		sent := make(map[string]string, len(resources))
@@ -170,10 +174,14 @@ func BenchmarkDeltaPushIncrementalAllClients(b *testing.B) {
 				})
 			}
 			changes[0] = append(changes[0], model.ResourceChange{
-				Key: variants[0][index].Key, Old: &variants[1][index], New: &variants[0][index],
+				Key: variants[0][index].Key,
+				Old: &variants[1][index],
+				New: &variants[0][index],
 			})
 			changes[1] = append(changes[1], model.ResourceChange{
-				Key: variants[0][index].Key, Old: &variants[0][index], New: &variants[1][index],
+				Key: variants[0][index].Key,
+				Old: &variants[0][index],
+				New: &variants[1][index],
 			})
 		}
 		var snapshots [2]model.ResourceSet
@@ -232,8 +240,9 @@ func BenchmarkDeltaPushPublicationFanout(b *testing.B) {
 				}
 				scopes[client] = model.ClientScope{
 					Class:       model.ClientDedicatedZTunnel,
-					WorkloadUID: fmt.Sprintf("workload-%06d", index), SourceUID: fmt.Sprintf("workload-%06d", index),
-					Principal: serviceAccountPrincipal("demo", "default"),
+					WorkloadUID: fmt.Sprintf("workload-%06d", index),
+					SourceUID:   fmt.Sprintf("workload-%06d", index),
+					Principal:   serviceAccountPrincipal("demo", "default"),
 				}
 			}
 			benchmarkIncrementalClientFanout(b, resources, variants, scopes)
@@ -578,8 +587,11 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 		node := fmt.Sprintf("node-%03d", index%scenarioNodeCount)
 		name := fmt.Sprintf("workload-%06d", index)
 		resources = append(resources, model.Resource{
-			Key: model.ResourceKey{TypeURL: model.AddressType, Name: name}, XDSName: name,
-			Value: value, Hash: name, Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+			Key:     model.ResourceKey{TypeURL: model.AddressType, Name: name},
+			XDSName: name,
+			Value:   value,
+			Hash:    name,
+			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 				WorkloadUID: name,
 				SourceUID:   name,
 				NodeName:    node,
@@ -595,8 +607,11 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 		node := fmt.Sprintf("node-%03d", index)
 		name := "gateway-" + node
 		resource := model.Resource{
-			Key: model.ResourceKey{TypeURL: model.AddressType, Name: name}, XDSName: name,
-			Value: value, Hash: name, Facts: model.ResourceFacts{
+			Key:     model.ResourceKey{TypeURL: model.AddressType, Name: name},
+			XDSName: name,
+			Value:   value,
+			Hash:    name,
+			Facts: model.ResourceFacts{
 				Workload: &model.WorkloadResourceFacts{
 					WorkloadUID: name,
 					SourceUID:   name,
@@ -649,7 +664,10 @@ func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Up
 		resource, err := model.NewResource(
 			model.ResourceKey{TypeURL: model.AddressType, Name: name}, "",
 			mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
-				Uid: name, Namespace: "demo", Node: node, AuthorizationPolicies: policies,
+				Uid:                   name,
+				Namespace:             "demo",
+				Node:                  node,
+				AuthorizationPolicies: policies,
 			}}}), nil,
 			facts,
 		)
@@ -666,8 +684,10 @@ func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Up
 			name = targetPolicy
 		}
 		resource := model.Resource{
-			Key: model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name}, XDSName: name,
-			Value: value, Hash: name + "-old",
+			Key:     model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name},
+			XDSName: name,
+			Value:   value,
+			Hash:    name + "-old",
 			Facts: model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
 				Scope: model.AuthorizationScopeWorkload,
 			}},
@@ -720,7 +740,8 @@ func distributedSharedClients(clientCount int) ([]model.ClientScope, []*watchSta
 	scopes := make([]model.ClientScope, clientCount)
 	for client := range scopes {
 		scopes[client] = model.ClientScope{
-			Class: model.ClientSharedZTunnel, NodeName: fmt.Sprintf("node-%03d", client%scenarioNodeCount),
+			Class:    model.ClientSharedZTunnel,
+			NodeName: fmt.Sprintf("node-%03d", client%scenarioNodeCount),
 		}
 	}
 	return scopes, wildcardWatches(clientCount)
@@ -730,7 +751,10 @@ func distributedDedicatedClients(clientCount int) []model.ClientScope {
 	scopes := make([]model.ClientScope, clientCount)
 	for client := range scopes {
 		scopes[client] = model.ClientScope{
-			Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: fmt.Sprintf("workload-%06d", client), SourceUID: fmt.Sprintf("workload-%06d", client),
+			Class:       model.ClientDedicatedZTunnel,
+			Principal:   serviceAccountPrincipal("demo", "default"),
+			WorkloadUID: fmt.Sprintf("workload-%06d", client),
+			SourceUID:   fmt.Sprintf("workload-%06d", client),
 		}
 	}
 	return scopes
@@ -741,7 +765,8 @@ func mixedClientScopes(clientCount int) []model.ClientScope {
 	for client := range scopes {
 		if client%2 == 0 {
 			scopes[client] = model.ClientScope{
-				Class: model.ClientSharedZTunnel, NodeName: fmt.Sprintf("node-%03d", (client/2)%scenarioNodeCount),
+				Class:    model.ClientSharedZTunnel,
+				NodeName: fmt.Sprintf("node-%03d", (client/2)%scenarioNodeCount),
 			}
 			continue
 		}
@@ -752,7 +777,10 @@ func mixedClientScopes(clientCount int) []model.ClientScope {
 			index++
 		}
 		scopes[client] = model.ClientScope{
-			Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: fmt.Sprintf("workload-%06d", index), SourceUID: fmt.Sprintf("workload-%06d", index),
+			Class:       model.ClientDedicatedZTunnel,
+			Principal:   serviceAccountPrincipal("demo", "default"),
+			WorkloadUID: fmt.Sprintf("workload-%06d", index),
+			SourceUID:   fmt.Sprintf("workload-%06d", index),
 		}
 	}
 	return scopes
@@ -762,7 +790,10 @@ func wildcardWatches(clientCount int) []*watchState {
 	watches := make([]*watchState, clientCount)
 	for client := range watches {
 		watches[client] = &watchState{
-			wildcard: true, started: true, names: sets.New[string](), sent: make(map[string]string),
+			wildcard: true,
+			started:  true,
+			names:    sets.New[string](),
+			sent:     make(map[string]string),
 		}
 	}
 	return watches

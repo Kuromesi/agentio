@@ -170,8 +170,11 @@ func TestWorkloadGeneratorProjectsDirectResourceFromCanonicalAddress(t *testing.
 				t.Fatal(err)
 			}
 			delta, err := (WorkloadGenerator{}).Generate(t.Context(), GenerationRequest{
-				Scope: gatewayScope(), TypeURL: model.WorkloadType,
-				Subscription: SubscriptionView{wildcard: true}, Snapshot: snapshot, Full: true,
+				Scope:        gatewayScope(),
+				TypeURL:      model.WorkloadType,
+				Subscription: SubscriptionView{wildcard: true},
+				Snapshot:     snapshot,
+				Full:         true,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -203,7 +206,9 @@ func TestWildcardDirectWorkloadFullRegenerationOmitsUnchangedResources(t *testin
 	address, err := model.NewResource(
 		model.ResourceKey{TypeURL: model.AddressType, Name: "uid-a"}, "",
 		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
-			Uid: "uid-a", Namespace: "demo", Node: "node-a",
+			Uid:       "uid-a",
+			Namespace: "demo",
+			Node:      "node-a",
 			Services: map[string]*workloadv1.PortList{
 				"demo/svc-a": {Ports: []*workloadv1.Port{{ServicePort: 80, TargetPort: 8080}}},
 				"demo/svc-b": {Ports: []*workloadv1.Port{{ServicePort: 81, TargetPort: 8081}}},
@@ -310,7 +315,8 @@ func TestDedicatedZTunnelReceivesOnlyWorkloadScope(t *testing.T) {
 	scope := model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
-		WorkloadUID: "uid-a", SourceUID: "uid-a",
+		WorkloadUID: "uid-a",
+		SourceUID:   "uid-a",
 	}
 
 	got := selectWorkloadResources(scope, snapshot, model.AddressType, nil)
@@ -408,7 +414,11 @@ func TestNamedReferencedGatewayIncremental(t *testing.T) {
 	update := updateBetween(oldSnapshot, newSnapshot, oldSnapshot.Diff(newSnapshot))
 	view := newIncrementalSubscriptionView(watch, model.AddressType, update)
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: model.AddressType, Subscription: view, Snapshot: newSnapshot, Update: update,
+		Scope:        scope,
+		TypeURL:      model.AddressType,
+		Subscription: view,
+		Snapshot:     newSnapshot,
+		Update:       update,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -422,7 +432,11 @@ func TestNamedReferencedGatewayIncremental(t *testing.T) {
 	update = updateBetween(newSnapshot, withoutReference, newSnapshot.Diff(withoutReference))
 	view = newIncrementalSubscriptionView(watch, model.AddressType, update)
 	delta, err = (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: model.AddressType, Subscription: view, Snapshot: withoutReference, Update: update,
+		Scope:        scope,
+		TypeURL:      model.AddressType,
+		Subscription: view,
+		Snapshot:     withoutReference,
+		Update:       update,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -516,7 +530,8 @@ func TestNamedServiceSubscriptionExpandsSelectedEndpointWorkloads(t *testing.T) 
 	scope := model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
-		WorkloadUID: "uid-a", SourceUID: "uid-a",
+		WorkloadUID: "uid-a",
+		SourceUID:   "uid-a",
 	}
 
 	got := selectWorkloadResources(scope, snapshot, model.AddressType, []string{"/10.96.0.1"})
@@ -546,10 +561,14 @@ func TestGatewayNamedWorkloadSelectionDoesNotAllocateSnapshotScale(t *testing.T)
 	for i := range resourceCount {
 		name := fmt.Sprintf("unrelated-%06d", i)
 		resources = append(resources, model.Resource{
-			Key: model.ResourceKey{TypeURL: model.AddressType, Name: name}, XDSName: name,
-			Value: value, Hash: name,
+			Key:     model.ResourceKey{TypeURL: model.AddressType, Name: name},
+			XDSName: name,
+			Value:   value,
+			Hash:    name,
 			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-				WorkloadUID: name, NodeName: "node-a", Principal: serviceAccountPrincipal("demo", "default"),
+				WorkloadUID: name,
+				NodeName:    "node-a",
+				Principal:   serviceAccountPrincipal("demo", "default"),
 			}},
 		})
 	}
@@ -596,12 +615,16 @@ func TestUnrelatedGatewayNamedServiceAddressChangeDoesNotReconcile(t *testing.T)
 	before := selectionSnapshot(t, []model.Resource{service, endpoint, oldUnrelated})
 	after := selectionSnapshot(t, []model.Resource{service, endpoint, newUnrelated})
 	update := updateBetween(before, after, []model.ResourceChange{{
-		Key: oldUnrelated.Key, Old: &oldUnrelated, New: &newUnrelated,
+		Key: oldUnrelated.Key,
+		Old: &oldUnrelated,
+		New: &newUnrelated,
 	}})
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: gatewayScope(), TypeURL: model.AddressType,
+		Scope:        gatewayScope(),
+		TypeURL:      model.AddressType,
 		Subscription: SubscriptionView{names: []string{"/10.96.0.1"}},
-		Snapshot:     after, Update: update,
+		Snapshot:     after,
+		Update:       update,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -618,7 +641,10 @@ func TestNodeNamedServiceRemotePayloadUpdateUsesChangedKey(t *testing.T) {
 	newRemote, err := model.NewResource(
 		oldRemote.Key, oldRemote.XDSName,
 		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
-			Uid: "uid-remote", Namespace: "demo", Node: "node-b", Name: "updated",
+			Uid:       "uid-remote",
+			Namespace: "demo",
+			Node:      "node-b",
+			Name:      "updated",
 		}}}),
 		oldRemote.Aliases, oldRemote.Facts,
 	)
@@ -627,7 +653,9 @@ func TestNodeNamedServiceRemotePayloadUpdateUsesChangedKey(t *testing.T) {
 	}
 	snapshot := selectionSnapshot(t, []model.Resource{service, local, newRemote})
 	update := updateReversedFrom(t, snapshot, []model.ResourceChange{{
-		Key: oldRemote.Key, Old: &oldRemote, New: &newRemote,
+		Key: oldRemote.Key,
+		Old: &oldRemote,
+		New: &newRemote,
 	}})
 	scope := model.ClientScope{
 		Class:     model.ClientSharedZTunnel,
@@ -642,12 +670,18 @@ func TestNodeNamedServiceRemotePayloadUpdateUsesChangedKey(t *testing.T) {
 	sent[local.XDSName] = local.Hash
 	sent[oldRemote.XDSName] = oldRemote.Hash
 	watch := &watchState{
-		started: true, names: sets.New(service.Aliases[0]), sent: sent,
+		started: true,
+		names:   sets.New(service.Aliases[0]),
+		sent:    sent,
 	}
 
 	view := newIncrementalSubscriptionView(watch, model.AddressType, update)
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: model.AddressType, Subscription: view, Snapshot: snapshot, Update: update,
+		Scope:        scope,
+		TypeURL:      model.AddressType,
+		Subscription: view,
+		Snapshot:     snapshot,
+		Update:       update,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -667,7 +701,9 @@ func TestNodeNamedServiceRemoteToLocalMoveUpdatesWorkload(t *testing.T) {
 	newLocal := selectionWorkload(t, "uid-remote", "demo", "node-a", "svc-a", "")
 	snapshot := selectionSnapshot(t, []model.Resource{service, local, newLocal})
 	update := updateReversedFrom(t, snapshot, []model.ResourceChange{{
-		Key: oldRemote.Key, Old: &oldRemote, New: &newLocal,
+		Key: oldRemote.Key,
+		Old: &oldRemote,
+		New: &newLocal,
 	}})
 	scope := model.ClientScope{
 		Class:     model.ClientSharedZTunnel,
@@ -675,7 +711,8 @@ func TestNodeNamedServiceRemoteToLocalMoveUpdatesWorkload(t *testing.T) {
 		NodeName:  "node-a",
 	}
 	watch := &watchState{
-		started: true, names: sets.New(service.Aliases[0]),
+		started: true,
+		names:   sets.New(service.Aliases[0]),
 		sent: map[string]string{
 			service.XDSName: service.Hash, local.XDSName: local.Hash, oldRemote.XDSName: oldRemote.Hash,
 		},
@@ -683,7 +720,11 @@ func TestNodeNamedServiceRemoteToLocalMoveUpdatesWorkload(t *testing.T) {
 
 	view := newIncrementalSubscriptionView(watch, model.AddressType, update)
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: model.AddressType, Subscription: view, Snapshot: snapshot, Update: update,
+		Scope:        scope,
+		TypeURL:      model.AddressType,
+		Subscription: view,
+		Snapshot:     snapshot,
+		Update:       update,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -736,15 +777,19 @@ func TestDedicatedWorkloadNamedServiceMembershipLossReconcilesRemovals(t *testin
 				}
 				snapshot := selectionSnapshot(t, resources)
 				update := updateReversedFrom(t, snapshot, []model.ResourceChange{{
-					Key: oldWorkload.Key, Old: &oldWorkload, New: newWorkload,
+					Key: oldWorkload.Key,
+					Old: &oldWorkload,
+					New: newWorkload,
 				}})
 				scope := model.ClientScope{
 					Class:       client.class,
 					Principal:   serviceAccountPrincipal("demo", "default"),
-					WorkloadUID: "uid-local", SourceUID: "uid-local",
+					WorkloadUID: "uid-local",
+					SourceUID:   "uid-local",
 				}
 				watch := &watchState{
-					started: true, names: sets.New(service.Aliases[0]),
+					started: true,
+					names:   sets.New(service.Aliases[0]),
 					sent: map[string]string{
 						service.XDSName:     service.Hash,
 						oldWorkload.XDSName: oldWorkload.Hash,
@@ -753,7 +798,11 @@ func TestDedicatedWorkloadNamedServiceMembershipLossReconcilesRemovals(t *testin
 
 				view := newIncrementalSubscriptionView(watch, model.AddressType, update)
 				delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-					Scope: scope, TypeURL: model.AddressType, Subscription: view, Snapshot: snapshot, Update: update,
+					Scope:        scope,
+					TypeURL:      model.AddressType,
+					Subscription: view,
+					Snapshot:     snapshot,
+					Update:       update,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -775,7 +824,10 @@ func TestGatewayWorkloadIncrementalUsesResourceFamily(t *testing.T) {
 	newResource, err := model.NewResource(
 		oldResource.Key, "",
 		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: &workloadv1.Workload{
-			Uid: "uid-a", Namespace: "demo", Node: "node-a", Name: "updated",
+			Uid:       "uid-a",
+			Namespace: "demo",
+			Node:      "node-a",
+			Name:      "updated",
 		}}}), nil, oldResource.Facts)
 	if err != nil {
 		t.Fatal(err)
@@ -783,11 +835,15 @@ func TestGatewayWorkloadIncrementalUsesResourceFamily(t *testing.T) {
 	unrelated := selectionWorkload(t, "uid-b", "demo", "node-b", "", "")
 	snapshot := selectionSnapshot(t, []model.Resource{newResource, unrelated, selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a")})
 	watch := &watchState{
-		wildcard: true, started: true, names: sets.New[string](),
-		sent: map[string]string{oldResource.XDSName: oldResource.Hash, unrelated.XDSName: unrelated.Hash},
+		wildcard: true,
+		started:  true,
+		names:    sets.New[string](),
+		sent:     map[string]string{oldResource.XDSName: oldResource.Hash, unrelated.XDSName: unrelated.Hash},
 	}
 	update := updateReversedFrom(t, snapshot, []model.ResourceChange{{
-		Key: oldResource.Key, Old: &oldResource, New: &newResource,
+		Key: oldResource.Key,
+		Old: &oldResource,
+		New: &newResource,
 	}})
 	view := newIncrementalSubscriptionView(watch, model.AddressType, update)
 	if names := view.SentNames(); !slices.Equal(names, []string{oldResource.XDSName}) {
@@ -815,19 +871,30 @@ func TestIncrementalPublicationTransitionAtTenThousandResources(t *testing.T) {
 		name  string
 		scope model.ClientScope
 	}{
-		{name: "dedicated", scope: model.ClientScope{
-			Class: model.ClientDedicatedZTunnel, WorkloadUID: target.Facts.Workload.WorkloadUID, SourceUID: target.Facts.Workload.SourceUID,
-			Principal: target.Facts.Workload.Principal,
-		}},
-		{name: "node", scope: model.ClientScope{
-			Class: model.ClientSharedZTunnel, NodeName: "node-050",
-		}},
+		{
+			name: "dedicated",
+			scope: model.ClientScope{
+				Class:       model.ClientDedicatedZTunnel,
+				WorkloadUID: target.Facts.Workload.WorkloadUID,
+				SourceUID:   target.Facts.Workload.SourceUID,
+				Principal:   target.Facts.Workload.Principal,
+			},
+		},
+		{
+			name: "node",
+			scope: model.ClientScope{
+				Class:    model.ClientSharedZTunnel,
+				NodeName: "node-050",
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-				Scope: test.scope, TypeURL: model.AddressType,
+				Scope:        test.scope,
+				TypeURL:      model.AddressType,
 				Subscription: SubscriptionView{wildcard: true},
-				Snapshot:     after, Update: update,
+				Snapshot:     after,
+				Update:       update,
 			})
 			if err != nil {
 				t.Fatal(err)

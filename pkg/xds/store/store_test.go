@@ -166,10 +166,14 @@ func TestMergeUpdatesCarriesPublicationTransition(t *testing.T) {
 
 	merged := Merge(
 		updateBetween(before, middle, []model.ResourceChange{{
-			Key: oldResource.Key, Old: &oldResource, New: &middleResource,
+			Key: oldResource.Key,
+			Old: &oldResource,
+			New: &middleResource,
 		}}),
 		updateBetween(middle, after, []model.ResourceChange{{
-			Key: oldResource.Key, Old: &middleResource, New: &newResource,
+			Key: oldResource.Key,
+			Old: &middleResource,
+			New: &newResource,
 		}}),
 	)
 
@@ -201,10 +205,14 @@ func TestMergeUpdatesDropsRevertedTransitionChanges(t *testing.T) {
 
 	merged := Merge(
 		updateBetween(before, middle, []model.ResourceChange{{
-			Key: oldResource.Key, Old: &oldResource, New: &middleResource,
+			Key: oldResource.Key,
+			Old: &oldResource,
+			New: &middleResource,
 		}}),
 		updateBetween(middle, after, []model.ResourceChange{{
-			Key: oldResource.Key, Old: &middleResource, New: &oldResource,
+			Key: oldResource.Key,
+			Old: &middleResource,
+			New: &oldResource,
 		}}),
 	)
 
@@ -283,7 +291,9 @@ func TestUpdateNameIndexIncludesCanonicalResourceKey(t *testing.T) {
 	oldResource := updateTestResource(t, model.AddressType, "canonical-key", "wire-name", "old", "alias")
 	newResource := updateTestResource(t, model.AddressType, "canonical-key", "wire-name", "new", "alias")
 	update := updateFor("v2", []model.ResourceChange{{
-		Key: oldResource.Key, Old: &oldResource, New: &newResource,
+		Key: oldResource.Key,
+		Old: &oldResource,
+		New: &newResource,
 	}})
 
 	changes := update.ChangesForNames(model.AddressType, []string{"canonical-key"})

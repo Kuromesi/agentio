@@ -28,13 +28,15 @@ import (
 func TestVerifyFirewallBackendFindsSidecarInEnrolledNamespace(t *testing.T) {
 	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-			Name: "sandbox", Labels: map[string]string{DataplaneModeLabel: ProfileSidecar},
+			Name:   "sandbox",
+			Labels: map[string]string{DataplaneModeLabel: ProfileSidecar},
 		}},
 		firewallPod("sandbox", "client", "agentio-proxy", "iptables"),
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "uninjected", Namespace: "sandbox"}},
 	)
 	if err := verifyFirewallBackend(context.Background(), client, Config{
-		Profile: ProfileSidecar, FirewallBackend: "iptables",
+		Profile:         ProfileSidecar,
+		FirewallBackend: "iptables",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +47,9 @@ func TestVerifyFirewallBackendFindsAmbientZtunnel(t *testing.T) {
 	pod.Labels = map[string]string{"app.kubernetes.io/name": "ztunnel"}
 	client := fake.NewClientset(pod)
 	if err := verifyFirewallBackend(context.Background(), client, Config{
-		Profile: ProfileAmbient, Namespace: "agentio-system", FirewallBackend: "auto",
+		Profile:         ProfileAmbient,
+		Namespace:       "agentio-system",
+		FirewallBackend: "auto",
 	}); err != nil {
 		t.Fatal(err)
 	}

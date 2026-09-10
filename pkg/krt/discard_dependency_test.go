@@ -30,7 +30,9 @@ func TestCollectionDiscardResultTracksDependencies(t *testing.T) {
 	stop := test.NewStop(t)
 	opts := testOptions(t)
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name: "pod", Namespace: "ns", Labels: map[string]string{"config": "first"},
+		Name:      "pod",
+		Namespace: "ns",
+		Labels:    map[string]string{"config": "first"},
 	}}
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{pod}, opts.WithName("Pods")...)
 	configs := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, opts.WithName("Configs")...)

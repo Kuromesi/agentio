@@ -155,14 +155,18 @@ func TestMatches_IndexedAndFallbackSelectors(t *testing.T) {
 	})
 	fallback := newTestProfile("fallback", "default", nil)
 	fallback.Spec.Selector.MatchExpressions = []metav1.LabelSelectorRequirement{{
-		Key: "team", Operator: metav1.LabelSelectorOpExists,
+		Key:      "team",
+		Operator: metav1.LabelSelectorOpExists,
 	}}
 	store.ProfileSet(indexed)
 	store.ProfileSet(fallback)
 
-	got := profileNames(store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{
-		"app": "agent", "sandbox-id": "pod-1", "team": "core",
-	}}))
+	got := profileNames(store.ProfilesFor(inputs.Pod{
+		Namespace: "default",
+		Labels: map[string]string{
+			"app": "agent", "sandbox-id": "pod-1", "team": "core",
+		},
+	}))
 	want := []string{"fallback", "indexed"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Matches() = %v, want %v", got, want)

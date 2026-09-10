@@ -44,7 +44,9 @@ import (
 func TestGatewayForwardProxyConnectSemantics(t *testing.T) {
 	resources, err := Build(Inputs{
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local", Gateway: testGateway(nil)})
+		TrustDomain:      "cluster.local",
+		Gateway:          testGateway(nil),
+	})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

@@ -36,6 +36,14 @@ type classInfo struct {
 // form of the controller name, rendered as a literal pod label by the
 // egress-gateway template.
 var builtinClasses = map[string]classInfo{
+	"agentio-agentgateway": {
+		controller:         "agentio.kruise.io/agentgateway-controller",
+		controllerLabel:    "agentio.kruise.io-agentgateway-controller",
+		description:        "Agentio agentgateway with file configuration",
+		templateName:       agentgatewayTemplateName,
+		defaultServiceType: corev1.ServiceTypeClusterIP,
+		disableNameSuffix:  true,
+	},
 	"agentio-egress": {
 		controller:         "agentio.kruise.io/egress-gateway-controller",
 		controllerLabel:    "agentio.kruise.io-egress-gateway-controller",

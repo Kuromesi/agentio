@@ -34,7 +34,8 @@ func TestApplyListenersPatchesNestedGatewayFilters(t *testing.T) {
 	original := []*listenerv3.Listener{{
 		Name: "main",
 		Address: &corev3.Address{Address: &corev3.Address_SocketAddress{SocketAddress: &corev3.SocketAddress{
-			Address: "0.0.0.0", PortSpecifier: &corev3.SocketAddress_PortValue{PortValue: 15001},
+			Address:       "0.0.0.0",
+			PortSpecifier: &corev3.SocketAddress_PortValue{PortValue: 15001},
 		}}},
 		ListenerFilters: []*listenerv3.ListenerFilter{{Name: "original-listener-filter"}},
 		FilterChains: []*listenerv3.FilterChain{{
@@ -46,7 +47,9 @@ func TestApplyListenersPatchesNestedGatewayFilters(t *testing.T) {
 		}},
 	}}
 	policy, err := model.NewGatewayPatch(model.GatewayPatchMetadata{
-		Namespace: "demo", Name: "listeners", Source: "source",
+		Namespace: "demo",
+		Name:      "listeners",
+		Source:    "source",
 	}, 0, []string{"demo/gateway"}, []model.EnvoyPatch{
 		{
 			Operation: model.PatchInsertBefore,

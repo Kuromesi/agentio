@@ -36,6 +36,7 @@ const (
 )
 
 type Config struct {
+	GatewayDataplane    string `yaml:"gateway-dataplane" json:"gatewayDataplane"`
 	Profile             string `yaml:"profile" json:"profile"`
 	ReleaseName         string `yaml:"release-name" json:"releaseName"`
 	ChartPath           string `yaml:"chart-path" json:"chartPath"`
@@ -65,6 +66,7 @@ type FlagInputs struct {
 	ztunnelImage      *string
 	proxyInitImage    *string
 	gatewayImage      *string
+	gatewayDataplane  *string
 	epeImage          *string
 	extProcImage      *string
 	forwardProxyImage *string
@@ -84,6 +86,7 @@ func RegisterFlags(fs *flag.FlagSet) *FlagInputs {
 	inputs.cniImage = fs.String("agentio.cni-image", "", "immutable CNI image")
 	inputs.ztunnelImage = fs.String("agentio.ztunnel-image", "", "immutable ztunnel image")
 	inputs.proxyInitImage = fs.String("agentio.proxy-init-image", "", "immutable proxy-init image")
+	inputs.gatewayDataplane = fs.String("agentio.gateway-dataplane", "", "gateway data plane: envoy or agentgateway")
 	inputs.gatewayImage = fs.String("agentio.gateway-image", "", "immutable gateway image")
 	inputs.epeImage = fs.String("agentio.epe-image", "", "immutable epe image")
 	inputs.extProcImage = fs.String("agentio.ext-proc-image", "", "immutable ext-proc image")
@@ -129,6 +132,7 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 	applyStringEnv("AGENTIO_E2E_ZTUNNEL_IMAGE", &config.ZtunnelImage)
 	applyStringEnv("AGENTIO_E2E_PROXY_INIT_IMAGE", &config.ProxyInitImage)
 	applyStringEnv("AGENTIO_E2E_GATEWAY_IMAGE", &config.GatewayImage)
+	applyStringEnv("AGENTIO_E2E_GATEWAY_DATAPLANE", &config.GatewayDataplane)
 	applyStringEnv("AGENTIO_E2E_EPE_IMAGE", &config.EPEImage)
 	applyStringEnv("AGENTIO_E2E_EXT_PROC_IMAGE", &config.ExtProcImage)
 	applyStringEnv("AGENTIO_E2E_FORWARD_PROXY_IMAGE", &config.ForwardProxyImage)
@@ -171,6 +175,9 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 	if explicit["agentio.proxy-init-image"] {
 		config.ProxyInitImage = *inputs.proxyInitImage
 	}
+	if explicit["agentio.gateway-dataplane"] {
+		config.GatewayDataplane = *inputs.gatewayDataplane
+	}
 	if explicit["agentio.gateway-image"] {
 		config.GatewayImage = *inputs.gatewayImage
 	}
@@ -211,6 +218,9 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 var immutableImage = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 
 func (c Config) Validate() error {
+	if c.GatewayDataplane != "" && c.GatewayDataplane != "envoy" && c.GatewayDataplane != "agentgateway" {
+		return fmt.Errorf("gateway data plane must be envoy or agentgateway, got %q", c.GatewayDataplane)
+	}
 	if c.Profile != ProfileSidecar && c.Profile != ProfileAmbient {
 		return fmt.Errorf("Agentio profile must be sidecar or ambient, got %q", c.Profile)
 	}

@@ -141,7 +141,8 @@ func newSandboxes(
 				attester = &model.Attester{WorkloadUID: podsource.WorkloadUID(clusterID, pod)}
 			}
 			return &model.Sandbox{
-				State: runtimeState(sandbox), Attester: attester,
+				State:     runtimeState(sandbox),
+				Attester:  attester,
 				UID:       group.Key,
 				Namespace: sandbox.Namespace,
 				Labels:    mergeSandboxLabels(sandbox.Labels, podLabels),

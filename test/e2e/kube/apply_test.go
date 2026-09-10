@@ -170,7 +170,11 @@ func TestReconcileOwnedUsesResourceVersionAndUpdateResponse(t *testing.T) {
 	live.Object["data"] = map[string]any{"key": "old", "stale": "remove-me"}
 	client, ledger := newFakeClient(t, live)
 	ledger.Record(ResourceRecord{
-		GVR: configMapGVR, Namespace: "sandbox", Name: "settings", UID: "uid-1", RunID: "run-1",
+		GVR:       configMapGVR,
+		Namespace: "sandbox",
+		Name:      "settings",
+		UID:       "uid-1",
+		RunID:     "run-1",
 	})
 	fakeClient := client.dynamic.(*dynamicfake.FakeDynamicClient)
 	var updated *unstructured.Unstructured

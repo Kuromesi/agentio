@@ -169,15 +169,7 @@ data:
       policy: GATEWAY
 `)
 
-	options := dst.CallOptionsOrFail(t, "http")
-	options.Count = 1
-	options.Check = check.And(
-		check.OK(),
-		check.RequestHeader("X-Hello-To-Ext-Proc", "true"),
-		check.ResponseHeader("X-Hello-From-Ext-Proc", "true"),
-	)
-	options.Retry = harness.FixedRetry(2*time.Minute, 5*time.Second)
-	src.CallOrFail(t, options)
+	harness.RunGatewayExtProc(t, src, dst)
 }
 
 func TestSandboxTraffic(t *testing.T) {
@@ -200,94 +192,7 @@ data:
       policy: GATEWAY
 `)
 
-	t.Run("http traffic", func(t *testing.T) {
-		options := dst.CallOptionsOrFail(t, "http")
-		options.Count = 1
-		// Make the first short-lived request the convergence gate for the
-		// protocols below. An origin-only success can still be a direct call
-		// while the new egress policy is propagating to the data plane.
-		options.Check = check.And(check.OK(), hasEnvoyResponseHeader())
-		options.Retry = harness.FixedRetry(2*time.Minute, 5*time.Second)
-		src.CallOrFail(t, options)
-	})
-
-	t.Run("tcp traffic", func(t *testing.T) {
-		src.CallOrFail(t, echo.CallOptions{
-			Protocol: echo.TCP,
-			Address:  dst.Address(),
-			Port:     9091,
-			Count:    1,
-			Check:    check.OK(),
-			Retry:    harness.FixedRetry(2*time.Minute, 5*time.Second),
-		})
-	})
-
-	t.Run("https traffic", func(t *testing.T) {
-		src.CallOrFail(t, echo.CallOptions{
-			Protocol: echo.HTTPS,
-			Address:  dst.Address(),
-			Port:     443,
-			Count:    1,
-			Check:    check.OK(),
-			Retry:    harness.FixedRetry(2*time.Minute, 5*time.Second),
-		})
-	})
-
-	t.Run("grpc connection remains open and traverses gateway", func(t *testing.T) {
-		// The catch-all DFP path derives the upstream port from :authority.
-		// Carry the service port so the request reaches the gRPC workload port.
-		authority := net.JoinHostPort(dst.Address(), "7070")
-		requestID := fmt.Sprintf("agentio-e2e-grpc-%d", time.Now().UnixNano())
-		started := time.Now()
-		src.CallOrFail(t, echo.CallOptions{
-			Protocol: echo.GRPC,
-			Address:  dst.Address(),
-			Port:     7070,
-			// Istio's echo client reuses one gRPC connection by default. Pacing 21
-			// unary RPCs at one per second holds the same HTTP/2 connection open
-			// beyond Envoy's 15-second default request timeout. Every successful
-			// unary response also requires its final gRPC status trailer to arrive.
-			Count:   21,
-			QPS:     1,
-			Timeout: 35 * time.Second,
-			Headers: map[string]string{
-				"Host":         authority,
-				"X-Request-Id": requestID,
-			},
-			Check: check.And(
-				check.OK(),
-				check.RequestHeader("X-Request-Id", requestID),
-			),
-			Retry: harness.FixedRetry(45*time.Second, time.Second),
-		})
-		if elapsed := time.Since(started); elapsed < 20*time.Second {
-			t.Fatalf("paced gRPC connection lasted %s, want at least 20s", elapsed)
-		}
-
-		// A successful origin response alone could come from direct traffic.
-		// The request ID in the gateway's structured access log proves that
-		// this exact gRPC request traversed the egress gateway.
-		waitForGatewayAccessLog(t, environment, requestID, authority)
-	})
-
-	// h2c sits on a separate branch in waypoint's HTTPInspector path from
-	// HTTP/1.1; without an explicit case the protocol matcher could misroute
-	// upgraded connections into forward-tcp.
-	t.Run("http2 (h2c) traffic", func(t *testing.T) {
-		// The service port must be present in :authority or the DFP path
-		// resolves the scheme default (80) instead of 85.
-		src.CallOrFail(t, echo.CallOptions{
-			Protocol: echo.HTTP2,
-			Address:  dst.Address(),
-			Port:     85,
-			Count:    1,
-			Headers: map[string]string{
-				"Host": net.JoinHostPort(dst.Address(), "85"),
-			},
-			Check: check.OK(),
-			Retry: harness.FixedRetry(2*time.Minute, 5*time.Second),
-		})
-	})
+	harness.RunGatewayTraffic(t, src, dst, hasEnvoyResponseHeader(), check.NoError(), func(t *testing.T, id, authority string) { waitForGatewayAccessLog(t, environment, id, authority) })
 }
 
 // TestSandboxMatchPorts verifies that EgressPolicy.match_ports gates which
@@ -320,21 +225,7 @@ data:
       policy: GATEWAY
 `)
 
-	t.Run("matched port goes through envoy gateway", func(t *testing.T) {
-		options := dst.CallOptionsOrFail(t, "http")
-		options.Count = 1
-		options.Check = check.And(check.OK(), hasEnvoyResponseHeader())
-		options.Retry = harness.FixedRetry(2*time.Minute, 5*time.Second)
-		src.CallOrFail(t, options)
-	})
-
-	t.Run("unmatched port bypasses envoy gateway", func(t *testing.T) {
-		options := dst.CallOptionsOrFail(t, "http2")
-		options.Count = 1
-		options.Check = check.And(check.OK(), noEnvoyResponseHeader())
-		options.Retry = harness.FixedRetry(2*time.Minute, 5*time.Second)
-		src.CallOrFail(t, options)
-	})
+	harness.RunGatewayMatchPorts(t, src, dst, hasEnvoyResponseHeader(), noEnvoyResponseHeader())
 }
 
 func hostnameIs(want string) echo.Checker {

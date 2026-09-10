@@ -48,8 +48,10 @@ func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
 			ResourceVersion: resourceVersion,
 			Value: &configv1.AgentioConfig{EgressPolicies: []*extensionsv1.EgressPolicy{
 				{
-					Namespaces: []string{"demo"}, MatchCidrs: []string{cidr}, Policy: extensionsv1.EgressPolicyAction_GATEWAY,
-					Gateway: &extensionsv1.GatewayAddress{Service: service, Port: 15008},
+					Namespaces: []string{"demo"},
+					MatchCidrs: []string{cidr},
+					Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
+					Gateway:    &extensionsv1.GatewayAddress{Service: service, Port: 15008},
 				},
 			}},
 		}
@@ -110,7 +112,8 @@ func TestPolicyEditInvalidatesOnlyItsNamespace(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("beta", "client", "10.2.0.1")))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("beta", "client", "10.2.0.1"))
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "allow", Namespace: "alpha",
+		Name:      "allow",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -130,7 +133,8 @@ func TestPolicyEditInvalidatesOnlyItsNamespace(t *testing.T) {
 	// Widen the alpha policy. Only alpha's workload and the alpha Authorization
 	// depend on it.
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "allow", Namespace: "alpha",
+		Name:      "allow",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -157,12 +161,16 @@ func TestExactSandboxPolicyLifecycleAffectsOnlyTarget(t *testing.T) {
 	firstUID := "sandbox-first"
 	secondUID := "sandbox-second"
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
-		UID: firstUID, Attester: &model.Attester{WorkloadUID: first.UID}, Namespace: "demo",
-		Labels: map[string]string{agentsv1alpha1.LabelSandboxID: firstUID},
+		UID:       firstUID,
+		Attester:  &model.Attester{WorkloadUID: first.UID},
+		Namespace: "demo",
+		Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: firstUID},
 	})
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
-		UID: secondUID, Attester: &model.Attester{WorkloadUID: second.UID}, Namespace: "demo",
-		Labels: map[string]string{agentsv1alpha1.LabelSandboxID: secondUID},
+		UID:       secondUID,
+		Attester:  &model.Attester{WorkloadUID: second.UID},
+		Namespace: "demo",
+		Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: secondUID},
 	})
 	fixture.workloads.ConditionalUpdateObject(first)
 	fixture.workloads.ConditionalUpdateObject(second)
@@ -172,7 +180,9 @@ func TestExactSandboxPolicyLifecycleAffectsOnlyTarget(t *testing.T) {
 	awaitSteadyState(t, fixture.compiler, firstAddress, secondAddress)
 
 	policyInput := model.TrafficPolicy{
-		Name: "exact", Namespace: "demo", SandboxUID: firstUID,
+		Name:       "exact",
+		Namespace:  "demo",
+		SandboxUID: firstUID,
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
 				agentsv1alpha1.LabelSandboxID: firstUID,
@@ -227,7 +237,8 @@ func TestGlobalPolicyInvalidatesEveryNamespace(t *testing.T) {
 	recorder := newRecorder(fixture.compiler.Resources())
 
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "deny-all", Global: true,
+		Name:   "deny-all",
+		Global: true,
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -250,7 +261,9 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("alpha", "client", "10.1.0.1")))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("alpha", "client", "10.1.0.1"))
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "broken", Namespace: "alpha", SandboxUID: "sandbox-a",
+		Name:       "broken",
+		Namespace:  "alpha",
+		SandboxUID: "sandbox-a",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
 				"app": "client", agentsv1alpha1.LabelSandboxID: "sandbox-b",
@@ -265,7 +278,9 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 
 	eventually(t, func() bool {
 		_, found := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{
-			TypeURL: model.AddressType, Name: "cluster//Pod/alpha/client"})
+			TypeURL: model.AddressType,
+			Name:    "cluster//Pod/alpha/client",
+		})
 		return found
 	}, "workload published despite the broken policy")
 
@@ -283,7 +298,8 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	}
 
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name: "broken", Namespace: "alpha",
+		Name:      "broken",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
@@ -487,7 +503,8 @@ func TestWorkloadPeerResolutionUsesPodMetadata(t *testing.T) {
 	agentioConfig := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
 	inputs := validCompilerInputs(stop)
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{
-		UID: "sandbox-bound", Attester: &model.Attester{WorkloadUID: bound.UID},
+		UID:       "sandbox-bound",
+		Attester:  &model.Attester{WorkloadUID: bound.UID},
 		Namespace: "sandbox-namespace",
 		Labels:    map[string]string{"role": "not-peer"},
 	}}, options...)
@@ -501,7 +518,8 @@ func TestWorkloadPeerResolutionUsesPodMetadata(t *testing.T) {
 	}}, options...)
 	inputs.Gateways = testGatewaySource(agentioConfig, options...)
 	inputs.TrafficPolicies = krt.NewStaticCollection(nil, []model.TrafficPolicy{{
-		Name: "allow-peers", Namespace: "demo",
+		Name:      "allow-peers",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
@@ -557,19 +575,28 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 	inputs.Pods = krt.NewStaticCollection(nil, []*corev1.Pod{
 		{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "static-control-plane", Labels: map[string]string{"role": "control-plane"}},
-			Status: corev1.PodStatus{PodIP: "10.1.0.9", Conditions: []corev1.PodCondition{{
-				Type: corev1.PodReady, Status: corev1.ConditionTrue,
-			}}},
+			Status: corev1.PodStatus{
+				PodIP: "10.1.0.9",
+				Conditions: []corev1.PodCondition{{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				}},
+			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "opaque-endpoint", Labels: map[string]string{"role": "control-plane"}},
-			Status: corev1.PodStatus{PodIP: "10.1.0.10", Conditions: []corev1.PodCondition{{
-				Type: corev1.PodReady, Status: corev1.ConditionTrue,
-			}}},
+			Status: corev1.PodStatus{
+				PodIP: "10.1.0.10",
+				Conditions: []corev1.PodCondition{{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				}},
+			},
 		},
 	}, options...)
 	inputs.TrafficPolicies = krt.NewStaticCollection(nil, []model.TrafficPolicy{{
-		Name: "allow-control-plane", Namespace: "demo",
+		Name:      "allow-control-plane",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
@@ -635,12 +662,17 @@ func TestCompilerInlinesTrafficPolicyInSandbox(t *testing.T) {
 	securityProfiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
 	agentioConfig := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
 	workloads.ConditionalUpdateObject(testWorkload("demo", "client", "10.1.0.2"))
-	trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{Name: "allow", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
-		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-		Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-			Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}},
-		}}},
-	}})
+	trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
+		Name:      "allow",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
+				Action: agentsv1alpha1.RuleActionAllow,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}},
+			}}},
+		},
+	})
 
 	inputs := validCompilerInputs(stop)
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: "cluster//Pod/demo/client", Namespace: "demo", Labels: map[string]string{"app": "client"}}}, options...)
@@ -693,7 +725,9 @@ func TestAuthorizationResourceCarriesScopeFacts(t *testing.T) {
 			name:   "global",
 			source: model.TrafficPolicy{Name: "global", Namespace: "agentio-system", Global: true},
 			authorization: &securityv1.Authorization{
-				Name: "global-egress", Namespace: "agentio-system", Scope: securityv1.Scope_GLOBAL,
+				Name:      "global-egress",
+				Namespace: "agentio-system",
+				Scope:     securityv1.Scope_GLOBAL,
 			},
 			want: model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeGlobal},
 		},
@@ -701,7 +735,9 @@ func TestAuthorizationResourceCarriesScopeFacts(t *testing.T) {
 			name:   "namespace",
 			source: model.TrafficPolicy{Name: "namespace", Namespace: "demo"},
 			authorization: &securityv1.Authorization{
-				Name: "namespace-egress", Namespace: "demo", Scope: securityv1.Scope_NAMESPACE,
+				Name:      "namespace-egress",
+				Namespace: "demo",
+				Scope:     securityv1.Scope_NAMESPACE,
 			},
 			want: model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeNamespace, Namespace: "demo"},
 		},
@@ -709,7 +745,9 @@ func TestAuthorizationResourceCarriesScopeFacts(t *testing.T) {
 			name:   "selector",
 			source: model.TrafficPolicy{Name: "selector", Namespace: "demo"},
 			authorization: &securityv1.Authorization{
-				Name: "selector-egress", Namespace: "demo", Scope: securityv1.Scope_WORKLOAD_SELECTOR,
+				Name:      "selector-egress",
+				Namespace: "demo",
+				Scope:     securityv1.Scope_WORKLOAD_SELECTOR,
 			},
 			want: model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeWorkload},
 		},
@@ -717,7 +755,8 @@ func TestAuthorizationResourceCarriesScopeFacts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			resource, err := authorizationResource(policypkg.CompiledAuthorization{
-				Name: test.authorization.GetNamespace() + "/" + test.authorization.GetName(), Policy: test.authorization,
+				Name:   test.authorization.GetNamespace() + "/" + test.authorization.GetName(),
+				Policy: test.authorization,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -741,20 +780,29 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	agentioConfig := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
 	workload := testWorkload("demo", "client", "10.1.0.2")
 	workloads.ConditionalUpdateObject(workload)
-	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{Name: "terminate", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{
-		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "does-not-match"}},
-		Rules:    []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
-	}})
-	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{Name: "pod-policy", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{
-		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-		Rules:    []agentsv1alpha1.SecurityRule{{Name: "pod", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"pod.example.com"}}}}},
-	}})
+	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
+		Name:      "terminate",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.SecurityProfileSpec{
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "does-not-match"}},
+			Rules:    []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
+		},
+	})
+	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
+		Name:      "pod-policy",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.SecurityProfileSpec{
+			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+			Rules:    []agentsv1alpha1.SecurityRule{{Name: "pod", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"pod.example.com"}}}}},
+		},
+	})
 	agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{Value: &configv1.AgentioConfig{
 		EgressPolicies: []*extensionsv1.EgressPolicy{{Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH}},
 	}})
 	inputs := validCompilerInputs(stop)
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{
-		UID: workload.UID, Attester: &model.Attester{WorkloadUID: workload.UID},
+		UID:      workload.UID,
+		Attester: &model.Attester{WorkloadUID: workload.UID},
 		PolicyRefs: []model.PolicyRef{{
 			Kind: model.PolicyKindSNIPolicy,
 			Name: "demo/terminate",
@@ -826,7 +874,8 @@ func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testin
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{
 		UID: workload.UID,
 		PolicyRefs: []model.PolicyRef{{
-			Kind: model.PolicyKindSNIPolicy, Name: "demo/missing",
+			Kind: model.PolicyKindSNIPolicy,
+			Name: "demo/missing",
 		}},
 	}}, options...)
 
@@ -840,7 +889,8 @@ func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testin
 		t.Fatal(err)
 	}
 	if r, found := snapshot.Get(model.ResourceKey{
-		TypeURL: model.AddressType, Name: workload.UID,
+		TypeURL: model.AddressType,
+		Name:    workload.UID,
 	}); !found || r.Facts.Workload == nil {
 		t.Fatal("networking must remain available when Sandbox policies are unavailable")
 	}
@@ -864,12 +914,24 @@ func TestCompilerPublishesWorkloadEgressPolicies(t *testing.T) {
 	}, options...)
 	config := krt.NewStaticCollection[model.AgentioConfiguration](nil, []model.AgentioConfiguration{{
 		Value: &configv1.AgentioConfig{EgressPolicies: []*extensionsv1.EgressPolicy{
-			{Namespaces: []string{"demo-a"}, MatchCidrs: []string{"203.0.113.1/32"}, Policy: extensionsv1.EgressPolicyAction_GATEWAY,
-				Gateway: &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008}},
-			{Namespaces: []string{"demo-a"}, MatchCidrs: []string{"203.0.113.2/32"}, Policy: extensionsv1.EgressPolicyAction_GATEWAY,
-				Gateway: &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008}},
-			{Namespaces: []string{"demo-b"}, MatchCidrs: []string{"198.51.100.1/32"}, Policy: extensionsv1.EgressPolicyAction_GATEWAY,
-				Gateway: &extensionsv1.GatewayAddress{Service: "egress-b.agentio-system.svc.cluster.local", Port: 15008}},
+			{
+				Namespaces: []string{"demo-a"},
+				MatchCidrs: []string{"203.0.113.1/32"},
+				Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
+				Gateway:    &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008},
+			},
+			{
+				Namespaces: []string{"demo-a"},
+				MatchCidrs: []string{"203.0.113.2/32"},
+				Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
+				Gateway:    &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008},
+			},
+			{
+				Namespaces: []string{"demo-b"},
+				MatchCidrs: []string{"198.51.100.1/32"},
+				Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
+				Gateway:    &extensionsv1.GatewayAddress{Service: "egress-b.agentio-system.svc.cluster.local", Port: 15008},
+			},
 			{Namespaces: []string{"demo-b"}, MatchCidrs: []string{"198.51.100.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
 		}},
 	}}, options...)
@@ -962,7 +1024,8 @@ func TestTrafficRulesOnlyUpdateDoesNotInvalidateWorkloads(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("demo", "client", "10.1.0.1")))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("demo", "client", "10.1.0.1"))
 	policyInput := model.TrafficPolicy{
-		Name: "allow", Namespace: "demo",
+		Name:      "allow",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{

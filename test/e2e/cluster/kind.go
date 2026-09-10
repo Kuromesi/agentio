@@ -66,13 +66,15 @@ func (s KindSource) Open(ctx context.Context, config Config) (*Cluster, error) {
 	defer func() {
 		if rollbackOwned {
 			_, _ = s.Runner.Run(context.Background(), command.Request{
-				Name: "kind", Args: []string{"delete", "cluster", "--name", config.Name},
+				Name: "kind",
+				Args: []string{"delete", "cluster", "--name", config.Name},
 			})
 		}
 	}()
 
 	output, err := s.Runner.Run(ctx, command.Request{
-		Name: "kind", Args: []string{"get", "kubeconfig", "--name", config.Name},
+		Name: "kind",
+		Args: []string{"get", "kubeconfig", "--name", config.Name},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get kubeconfig for Kind cluster %q: %w", config.Name, err)
@@ -111,7 +113,8 @@ func (s KindSource) Close(ctx context.Context, opened *Cluster, options CloseOpt
 	var errs []error
 	if opened.Owned && !options.Preserve {
 		if _, err := s.Runner.Run(ctx, command.Request{
-			Name: "kind", Args: []string{"delete", "cluster", "--name", opened.Name},
+			Name: "kind",
+			Args: []string{"delete", "cluster", "--name", opened.Name},
 		}); err != nil {
 			errs = append(errs, fmt.Errorf("delete Kind cluster %q: %w", opened.Name, err))
 		}
