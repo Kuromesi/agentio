@@ -94,7 +94,8 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 			continue
 		}
 		// The legacy oracle predates disabling the shared cross-SNI session
-		// cache. The explicit zero is covered by the TLS origination regression test.
+		// cache and explicit compatible TLS defaults. Both are covered by the
+		// TLS origination regression tests.
 		if cluster, ok := message.(*clusterv3.Cluster); ok &&
 			(cluster.GetName() == TLSConnectOriginate || cluster.GetName() == TLSProxyOriginate) {
 			context := &tlsv3.UpstreamTlsContext{}
@@ -102,6 +103,8 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 				t.Fatalf("decode TLS context: %v", err)
 			}
 			context.MaxSessionKeys = nil
+			context.CommonTlsContext.TlsParams.TlsMaximumProtocolVersion = tlsv3.TlsParameters_TLS_AUTO
+			context.CommonTlsContext.TlsParams.CipherSuites = nil
 			typed, err := anypb.New(context)
 			if err != nil {
 				t.Fatalf("encode TLS context: %v", err)

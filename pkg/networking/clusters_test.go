@@ -15,16 +15,17 @@
 package networking
 
 import (
+	"slices"
 	"testing"
 	"time"
-
-	configv1 "github.com/openkruise/agentio/api/config/v1"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	httpupstreamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
+	"google.golang.org/protobuf/proto"
 	"istio.io/istio/pkg/test"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -153,6 +154,97 @@ func TestGatewayClustersUseAgentioDownstreamIdleTimeout(t *testing.T) {
 		}
 		if got := protocol.GetCommonHttpProtocolOptions().GetIdleTimeout().AsDuration(); got != 5*time.Minute {
 			t.Errorf("cluster %s downstream HTTP idle timeout = %s, want 5m", name, got)
+		}
+	}
+}
+
+func TestGatewayUpstreamTLS(t *testing.T) {
+	defaults := []string{
+		"ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-GCM-SHA256",
+		"ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384",
+		"ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-CHACHA20-POLY1305",
+		"AES128-GCM-SHA256", "AES256-GCM-SHA384",
+	}
+	replacement := []string{"AES256-GCM-SHA384", "ECDHE-RSA-AES128-GCM-SHA256"}
+	for _, tt := range []struct {
+		name     string
+		settings *configv1.UpstreamTlsSettings
+		min, max tlsv3.TlsParameters_TlsProtocol
+		ciphers  []string
+	}{
+		{"omitted", nil, tlsv3.TlsParameters_TLSv1_2, tlsv3.TlsParameters_TLSv1_3, defaults},
+		{"empty settings", &configv1.UpstreamTlsSettings{}, tlsv3.TlsParameters_TLSv1_2, tlsv3.TlsParameters_TLSv1_3, defaults},
+		{"empty cipher list", &configv1.UpstreamTlsSettings{CipherSuites: []string{}}, tlsv3.TlsParameters_TLSv1_2, tlsv3.TlsParameters_TLSv1_3, defaults},
+		{"TLS 1.2 only", &configv1.UpstreamTlsSettings{MaxProtocolVersion: configv1.UpstreamTlsSettings_TLSV1_2}, tlsv3.TlsParameters_TLSv1_2, tlsv3.TlsParameters_TLSv1_2, defaults},
+		{"TLS 1.3 only", &configv1.UpstreamTlsSettings{MinProtocolVersion: configv1.UpstreamTlsSettings_TLSV1_3}, tlsv3.TlsParameters_TLSv1_3, tlsv3.TlsParameters_TLSv1_3, defaults},
+		{"replace ciphers in order", &configv1.UpstreamTlsSettings{CipherSuites: replacement}, tlsv3.TlsParameters_TLSv1_2, tlsv3.TlsParameters_TLSv1_3, replacement},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gateway := testGateway(&configv1.EgressGateway{UpstreamTls: tt.settings})
+			before := proto.Clone(gateway.Config)
+			for _, selected := range []bool{true, false} {
+				current := gateway
+				if !selected {
+					current = testGateway(nil)
+					current.Name = "other"
+				}
+				resources, err := Build(Inputs{
+					DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+					TrustDomain:      "cluster.local",
+					Gateway:          current,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				minVersion, maxVersion, ciphers := tt.min, tt.max, tt.ciphers
+				if !selected {
+					minVersion, maxVersion, ciphers = tlsv3.TlsParameters_TLSv1_2, tlsv3.TlsParameters_TLSv1_3, defaults
+				}
+				clusters := messagesOf(t, resources, model.ClusterType, func() *clusterv3.Cluster { return &clusterv3.Cluster{} })
+				for _, name := range []string{TLSConnectOriginate, TLSProxyOriginate} {
+					cluster := clusters[name]
+					ctx := &tlsv3.UpstreamTlsContext{}
+					if err := cluster.GetTransportSocket().GetTypedConfig().UnmarshalTo(ctx); err != nil {
+						t.Fatal(err)
+					}
+					params := ctx.GetCommonTlsContext().GetTlsParams()
+					if params.GetTlsMinimumProtocolVersion() != minVersion || params.GetTlsMaximumProtocolVersion() != maxVersion || !slices.Equal(params.GetCipherSuites(), ciphers) {
+						t.Fatalf("gateway %s cluster %s TLS parameters = %v, want %v–%v and %v", current.Name, name, params, minVersion, maxVersion, ciphers)
+					}
+					if ctx.GetMaxSessionKeys() == nil || ctx.GetMaxSessionKeys().GetValue() != 0 || ctx.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename() != features.ResolveGatewayRootCAPath() {
+						t.Fatalf("cluster %s lost CA validation or disabled session cache: %v", name, ctx)
+					}
+					if name == TLSConnectOriginate {
+						options := &httpupstreamv3.HttpProtocolOptions{}
+						if err := cluster.GetTypedExtensionProtocolOptions()[httpProtocolOptionsType].UnmarshalTo(options); err != nil {
+							t.Fatal(err)
+						}
+						if !options.GetUpstreamHttpProtocolOptions().GetAutoSni() || !options.GetUpstreamHttpProtocolOptions().GetAutoSanValidation() {
+							t.Fatal("upstream TLS override lost SNI or SAN validation")
+						}
+					}
+				}
+			}
+			if !proto.Equal(before, gateway.Config) {
+				t.Fatal("building TLS resources mutated gateway configuration")
+			}
+		})
+	}
+}
+
+func TestGatewayBuildRejectsInvalidUpstreamTLS(t *testing.T) {
+	for _, settings := range []*configv1.UpstreamTlsSettings{
+		{MinProtocolVersion: configv1.UpstreamTlsSettings_TLSV1_3, MaxProtocolVersion: configv1.UpstreamTlsSettings_TLSV1_2},
+		{MinProtocolVersion: configv1.UpstreamTlsSettings_ProtocolVersion(99)},
+		{CipherSuites: []string{"ALL"}},
+	} {
+		_, err := Build(Inputs{
+			DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+			TrustDomain:      "cluster.local",
+			Gateway:          testGateway(&configv1.EgressGateway{UpstreamTls: settings}),
+		})
+		if err == nil {
+			t.Fatalf("Build accepted invalid upstream TLS settings: %v", settings)
 		}
 	}
 }
