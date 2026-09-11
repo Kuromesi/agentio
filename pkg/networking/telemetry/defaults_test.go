@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/google/cel-go/cel"
+	celenv "github.com/google/cel-go/common/env"
 
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
@@ -61,7 +62,7 @@ func TestDefaultProviders(t *testing.T) {
 			"authority_for": "%REQ(:AUTHORITY)%", "bytes_received": "%BYTES_RECEIVED%", "bytes_sent": "%BYTES_SENT%",
 			"downstream_address": "%DOWNSTREAM_REMOTE_ADDRESS%", "duration": "%DURATION%", "method": "%REQ(:METHOD)%",
 			"path": "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%", "protocol": "%PROTOCOL%", "request_id": "%REQ(X-REQUEST-ID)%",
-			"requested_server_name": "%CEL('io.kruise.outer_sni' in filter_state ? string(filter_state['io.kruise.outer_sni']) : connection.requested_server_name)%", "response_code": "%RESPONSE_CODE%", "response_flags": "%RESPONSE_FLAGS%",
+			"requested_server_name": "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%", "response_code": "%RESPONSE_CODE%", "response_flags": "%RESPONSE_FLAGS%",
 			"start_time": "%START_TIME%", "trace_id": "%TRACE_ID%", "upstream_address": "%UPSTREAM_REMOTE_ADDRESS%",
 			"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%", "user_agent": "%REQ(USER-AGENT)%",
 			"sandbox_name":      "%CEL(filter_state['downstream_peer'].name)%",
@@ -92,8 +93,11 @@ func testAccessLogSNI(t *testing.T, format string) {
 	if !strings.HasPrefix(format, "%CEL(") || !strings.HasSuffix(format, ")%") {
 		t.Fatalf("SNI format = %q, want CEL", format)
 	}
-	environment, err := cel.NewEnv(
-		cel.Variable("filter_state", cel.MapType(cel.StringType, cel.BytesType)),
+	// Envoy's default CEL builder disables string conversion. Its filter-state
+	// map is dynamically typed and exposes unstructured objects as bytes.
+	environment, err := cel.NewCustomEnv(
+		cel.StdLib(cel.StdLibSubset(celenv.NewLibrarySubset().AddExcludedFunctions(celenv.NewFunction("string")))),
+		cel.Variable("filter_state", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("connection", cel.MapType(cel.StringType, cel.StringType)),
 	)
 	if err != nil {
@@ -129,8 +133,19 @@ func testAccessLogSNI(t *testing.T, format string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Value() != tt.want {
-				t.Errorf("SNI = %v, want %q", got.Value(), tt.want)
+			// Envoy's non-typed CEL formatter prints both bytes and strings
+			// directly. TYPED_CEL has different byte serialization semantics.
+			var printed string
+			switch value := got.Value().(type) {
+			case string:
+				printed = value
+			case []byte:
+				printed = string(value)
+			default:
+				t.Fatalf("SNI result has unexpected type %T", value)
+			}
+			if printed != tt.want {
+				t.Errorf("SNI = %q, want %q", printed, tt.want)
 			}
 		})
 	}

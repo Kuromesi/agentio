@@ -37,7 +37,8 @@ const DenialReasonFilterStateKey = "io.kruise.egress_denial_reason"
 
 // The TLS termination chain shares the original ClientHello SNI with the
 // plaintext internal listener. Keep it separate from the HTTP authority, which
-// can differ (for example, an explicit proxy CONNECT target).
+// can differ (for example, an explicit proxy CONNECT target). Envoy disables CEL
+// string() conversion by default, but its CEL formatter prints bytes directly.
 var defaultAccessLogLabels = map[string]string{
 	"scheme":                         "%REQ(:SCHEME)%",
 	"original_destination":           "%DOWNSTREAM_LOCAL_ADDRESS%",
@@ -56,7 +57,7 @@ var defaultAccessLogLabels = map[string]string{
 	"path":                     "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
 	"protocol":                 "%PROTOCOL%",
 	"request_id":               "%REQ(X-REQUEST-ID)%",
-	"requested_server_name":    "%CEL('io.kruise.outer_sni' in filter_state ? string(filter_state['io.kruise.outer_sni']) : connection.requested_server_name)%",
+	"requested_server_name":    "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%",
 	"response_code":            "%RESPONSE_CODE%",
 	"response_flags":           "%RESPONSE_FLAGS%",
 	"start_time":               "%START_TIME%",

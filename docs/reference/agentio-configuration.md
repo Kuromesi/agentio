@@ -201,7 +201,7 @@ egressGateways:
       scheme: "%REQ(:SCHEME)%"
       protocol: "%PROTOCOL%"
       authority: "%REQ(:AUTHORITY)%"
-      requested_server_name: "%CEL('io.kruise.outer_sni' in filter_state ? string(filter_state['io.kruise.outer_sni']) : connection.requested_server_name)%"
+      requested_server_name: "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%"
       upstream_address: "%UPSTREAM_REMOTE_ADDRESS%"
       response_code: "%RESPONSE_CODE%"
       denial_reason: "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%"
