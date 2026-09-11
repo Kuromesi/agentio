@@ -26,7 +26,7 @@ import (
 )
 
 func TestDefaultProvidersMatchAgentioChart(t *testing.T) {
-	defaults := defaultTelemetryProviders()
+	defaults := defaultTelemetryProviders(nil)
 	if !slices.Equal(defaults.DefaultMetrics, []string{"prometheus"}) {
 		t.Fatalf("default metrics = %v", defaults.DefaultMetrics)
 	}
@@ -80,7 +80,7 @@ func TestDefaultProvidersMatchAgentioChart(t *testing.T) {
 
 func TestDefaultAccessLogPreservesOriginalSNI(t *testing.T) {
 	fileLog := &fileaccesslogv3.FileAccessLog{}
-	if err := defaultTelemetryProviders().Provider("envoy").HTTPAccessLog.GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+	if err := defaultTelemetryProviders(nil).Provider("envoy").HTTPAccessLog.GetTypedConfig().UnmarshalTo(fileLog); err != nil {
 		t.Fatal(err)
 	}
 	format := fileLog.GetLogFormat().GetJsonFormat().GetFields()["requested_server_name"].GetStringValue()

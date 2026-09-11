@@ -22,6 +22,7 @@ package agentio.config.v1;
 
 import "api/extensions/v1/egresspolicy.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
 import "networking/v1alpha3/virtual_service.proto";
 
 option go_package = "github.com/openkruise/agentio/api/config/v1;configv1";
@@ -87,6 +88,25 @@ message EgressGateway {
   // Unset fields use the built-in upstream defaults; certificate verification
   // and session cache behavior are not configurable here.
   UpstreamTlsSettings upstream_tls = 8;
+
+  // Format of this gateway's built-in envoy access-log provider on stdout.
+  // Applies to HTTP, TCP, CONNECT failures, and listener failures. Omitted or
+  // empty means the built-in JSON format. Telemetry still controls log enablement
+  // and filtering; explicitly overridden providers keep their own formats.
+  AccessLogFormat access_log_format = 9;
+}
+
+// AccessLogFormat replaces the complete built-in access-log format for a gateway.
+// Values support Envoy access-log substitution operators, including CEL.
+message AccessLogFormat {
+  // Non-blank text template. A trailing newline is appended if missing.
+  // Cannot be combined with json.
+  optional string text = 1;
+
+  // Non-empty JSON object. Replaces all default fields, without merging.
+  // Nested objects and typed values are supported. Empty values are omitted,
+  // matching the built-in JSON format. Cannot be combined with text.
+  google.protobuf.Struct json = 2;
 }
 
 // UpstreamTlsSettings controls upstream TLS origination, not termination.

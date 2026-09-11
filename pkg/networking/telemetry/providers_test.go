@@ -39,7 +39,7 @@ func TestResolveProvidersAppliesPresenceAwareOverrides(t *testing.T) {
 		},
 		RemoveProviders: []string{"envoy"},
 	}
-	got, err := resolveTelemetryProviders(override)
+	got, err := resolveTelemetryProviders(override, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestResolveProvidersRejectsInvalidOverrides(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := resolveTelemetryProviders(&test.override); err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.want)) {
+			if _, err := resolveTelemetryProviders(&test.override, nil); err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.want)) {
 				t.Fatalf("ResolveProviders error = %v, want containing %q", err, test.want)
 			}
 		})

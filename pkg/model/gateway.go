@@ -77,6 +77,9 @@ func (g Gateway) ValidateForUse() error {
 	if err := ValidateUpstreamTLS(g.Config.GetUpstreamTls()); err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
 	}
+	if err := ValidateAccessLogFormat(g.Config.GetAccessLogFormat()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
 	normalized, err := NormalizeEgressGatewayServiceEntries(g.Config)
 	if err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)

@@ -380,6 +380,47 @@ func newTestRegistryWithAgentioConfigMaps(
 	}
 }
 
+func TestGatewayConfigurationAccessLogFormat(t *testing.T) {
+	for _, tt := range []struct {
+		name, format string
+		invalid      bool
+	}{
+		{"defaults", "{}", false},
+		{"JSON", "{json: {scheme: '%REQ(:SCHEME)%', context: {authority: '%REQ(:AUTHORITY)%'}, version: 1}}", false},
+		{"text", "{text: '%REQ(:METHOD)% %REQ(:SCHEME)% %RESPONSE_CODE%'}", false},
+		{"empty JSON", "{json: {}}", true},
+		{"blank text", "{text: '  '}", true},
+		{"both formats", "{text: '%PROTOCOL%', json: {scheme: '%REQ(:SCHEME)%'}}", true},
+		{"wrong JSON type", "{json: []}", true},
+		{"unknown field", "{labels: {scheme: '%REQ(:SCHEME)%'}}", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for name, decode := range map[string]func() (*configv1.EgressGateway, error){
+				"AgentioConfig": func() (*configv1.EgressGateway, error) {
+					got, err := applyAgentioConfig("egressGateways:\n- name: egress\n  namespace: agentio-system\n  accessLogFormat: "+tt.format, nil)
+					if err != nil {
+						return nil, err
+					}
+					return got.GetEgressGateways()[0], nil
+				},
+				"Gateway API parameters": func() (*configv1.EgressGateway, error) {
+					return decodeEgressGateway("accessLogFormat: " + tt.format)
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					got, err := decode()
+					if (err != nil) != tt.invalid {
+						t.Fatalf("config error = %v, want invalid=%v", err, tt.invalid)
+					}
+					if !tt.invalid && got.GetAccessLogFormat() == nil {
+						t.Fatal("missing access-log format")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestGatewayConfigurationUpstreamTLS(t *testing.T) {
 	for _, tt := range []struct {
 		name, settings string

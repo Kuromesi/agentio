@@ -26,6 +26,7 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 	celv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/filters/cel/v3"
 	dfpclusterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
 	dfpcommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/dynamic_forward_proxy/v3"
@@ -320,6 +321,32 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 		if !dfpConfig.GetAllowDynamicHostFromFilterState() {
 			t.Fatalf("%s DFP filter does not allow route-selected static endpoints", listenerName)
 		}
+	}
+}
+
+func TestBuildGatewayFormatWithoutTelemetryInputs(t *testing.T) {
+	format := "%REQ(:SCHEME)% %PROTOCOL%"
+	resources, err := Build(Inputs{
+		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+		TrustDomain:      "cluster.local",
+		Gateway: testGateway(&configv1.EgressGateway{
+			AccessLogFormat: &configv1.AccessLogFormat{Text: &format},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	logs := findHCM(t, listeners[MainForward]).GetAccessLog()
+	if len(logs) != 1 {
+		t.Fatalf("HTTP logs = %d, want 1", len(logs))
+	}
+	fileLog := &fileaccesslogv3.FileAccessLog{}
+	if err := logs[0].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+		t.Fatal(err)
+	}
+	if got := fileLog.GetLogFormat().GetTextFormatSource().GetInlineString(); got != format+"\n" {
+		t.Fatalf("text format = %q", got)
 	}
 }
 

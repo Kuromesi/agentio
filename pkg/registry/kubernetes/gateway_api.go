@@ -61,6 +61,9 @@ func decodeEgressGateway(content string) (*configv1.EgressGateway, error) {
 	if err := model.ValidateUpstreamTLS(value.GetUpstreamTls()); err != nil {
 		return nil, err
 	}
+	if err := model.ValidateAccessLogFormat(value.GetAccessLogFormat()); err != nil {
+		return nil, err
+	}
 	normalized, err := model.NormalizeEgressGatewayServiceEntries(value)
 	if err != nil {
 		return nil, fmt.Errorf("egress gateway: %w", err)

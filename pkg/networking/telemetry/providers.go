@@ -19,12 +19,14 @@ import (
 	"sort"
 	"strings"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
+
 	"github.com/openkruise/agentio/pkg/model"
 	"istio.io/istio/pkg/util/sets"
 )
 
-func resolveTelemetryProviders(overrides *model.TelemetryProviderOverrides) (model.TelemetryProviders, error) {
-	result := defaultTelemetryProviders()
+func resolveTelemetryProviders(overrides *model.TelemetryProviderOverrides, format *configv1.AccessLogFormat) (model.TelemetryProviders, error) {
+	result := defaultTelemetryProviders(format)
 	if overrides != nil {
 		input := overrides.Clone()
 		providers := make(map[string]model.TelemetryProvider, len(result.Providers)+len(input.Providers))

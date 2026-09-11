@@ -15,6 +15,10 @@
 package telemetry
 
 import (
+	"strings"
+
+	configv1 "github.com/openkruise/agentio/api/config/v1"
+
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
@@ -62,9 +66,9 @@ var chartAccessLogLabels = map[string]string{
 	"sandbox_namespace":        "%CEL(filter_state['downstream_peer'].namespace)%",
 }
 
-// defaultTelemetryProviders returns a fresh provider graph equivalent to the Agentio
-// chart MeshConfig defaults. Callers may mutate the result safely.
-func defaultTelemetryProviders() model.TelemetryProviders {
+// defaultTelemetryProviders returns a fresh provider graph with the gateway's
+// format applied to the built-in envoy logger. Callers may mutate it safely.
+func defaultTelemetryProviders(format *configv1.AccessLogFormat) model.TelemetryProviders {
 	fields := make(map[string]*structpb.Value, len(chartAccessLogLabels))
 	for name, value := range chartAccessLogLabels {
 		fields[name] = structpb.NewStringValue(value)
@@ -76,6 +80,22 @@ func defaultTelemetryProviders() model.TelemetryProviders {
 			JsonFormatOptions: &corev3.JsonFormatOptions{SortProperties: false},
 			OmitEmptyValues:   true,
 		}},
+	}
+	switch {
+	case format != nil && format.Text != nil:
+		text := format.GetText()
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		fileLog.GetLogFormat().Format = &corev3.SubstitutionFormatString_TextFormatSource{
+			TextFormatSource: &corev3.DataSource{Specifier: &corev3.DataSource_InlineString{InlineString: text}},
+		}
+		fileLog.GetLogFormat().OmitEmptyValues = false
+		fileLog.GetLogFormat().JsonFormatOptions = nil
+	case format.GetJson() != nil:
+		fileLog.GetLogFormat().Format = &corev3.SubstitutionFormatString_JsonFormat{
+			JsonFormat: proto.Clone(format.GetJson()).(*structpb.Struct),
+		}
 	}
 	typed, err := protoutil.MarshalAny(fileLog)
 	if err != nil {

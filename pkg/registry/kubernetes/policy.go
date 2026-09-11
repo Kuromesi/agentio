@@ -112,6 +112,9 @@ func applyAgentioConfig(content string, base *configv1.AgentioConfig) (*configv1
 		if err := model.ValidateUpstreamTLS(gateway.GetUpstreamTls()); err != nil {
 			return nil, fmt.Errorf("egressGateways[%d].%w", i, err)
 		}
+		if err := model.ValidateAccessLogFormat(gateway.GetAccessLogFormat()); err != nil {
+			return nil, fmt.Errorf("egressGateways[%d].%w", i, err)
+		}
 	}
 	return value, nil
 }
