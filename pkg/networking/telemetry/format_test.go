@@ -28,9 +28,11 @@ import (
 
 func TestBuildGatewayAccessLogFormat(t *testing.T) {
 	customJSON, err := structpb.NewStruct(map[string]any{
-		"scheme":  "%REQ(:SCHEME)%",
-		"context": map[string]any{"authority": "%REQ(:AUTHORITY)%"},
-		"version": 1,
+		"scheme":           "%REQ(:SCHEME)%",
+		"context":          map[string]any{"authority": "%REQ(:AUTHORITY)%"},
+		"version":          1,
+		"upstream_cluster": "%UPSTREAM_CLUSTER%",
+		"filter_chain":     "%FILTER_CHAIN_NAME%",
 	})
 	if err != nil {
 		t.Fatal(err)

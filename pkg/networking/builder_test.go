@@ -34,6 +34,7 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -832,7 +833,11 @@ func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
 			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
 			chain := findFilterChain(t, listeners[MainInternal], sniDenyChain)
 			deny := &tcpproxyv3.TcpProxy{}
-			if err := chain.GetFilters()[0].GetTypedConfig().UnmarshalTo(deny); err != nil {
+			filters := chain.GetFilters()
+			if len(filters) != tt.want+1 {
+				t.Fatalf("deny chain filters = %d, want %d", len(filters), tt.want+1)
+			}
+			if err := filters[len(filters)-1].GetTypedConfig().UnmarshalTo(deny); err != nil {
 				t.Fatal(err)
 			}
 			if chain.GetTransportSocket() != nil || deny.GetCluster() != BlackHoleCluster {
@@ -843,6 +848,27 @@ func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
 			}
 			if tt.want == 0 {
 				return
+			}
+			state := &setstatenetworkv3.Config{}
+			if err := filters[0].GetTypedConfig().UnmarshalTo(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.ValidateAll(); err != nil {
+				t.Fatal(err)
+			}
+			values := state.GetOnNewConnection()
+			if len(values) != 1 || values[0].GetObjectKey() != telemetry.DenialReasonFilterStateKey ||
+				values[0].GetFactoryKey() != "envoy.string" || !values[0].GetReadOnly() ||
+				values[0].GetSharedWithUpstream() != 0 ||
+				values[0].GetFormatString().GetTextFormatSource().GetInlineString() != "sni_policy_denied" {
+				t.Fatalf("denial reason must be set locally before the proxy: %v", values)
+			}
+			fileLog := &fileaccesslogv3.FileAccessLog{}
+			if err := deny.AccessLog[0].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+				t.Fatal(err)
+			}
+			if got := fileLog.GetLogFormat().GetJsonFormat().GetFields()["denial_reason"].GetStringValue(); got != "%FILTER_STATE("+values[0].GetObjectKey()+":PLAIN)%" {
+				t.Fatalf("denial log does not read the captured reason: %q", got)
 			}
 			if tt.filter == nil {
 				if deny.AccessLog[0].GetFilter() != nil {

@@ -32,17 +32,19 @@ import (
 
 const fileAccessLogName = "envoy.access_loggers.file"
 
+// DenialReasonFilterStateKey carries a gateway policy rejection reason for logs.
+const DenialReasonFilterStateKey = "io.kruise.egress_denial_reason"
+
 // The TLS termination chain shares the original ClientHello SNI with the
 // plaintext internal listener. Keep it separate from the HTTP authority, which
 // can differ (for example, an explicit proxy CONNECT target).
-var chartAccessLogLabels = map[string]string{
+var defaultAccessLogLabels = map[string]string{
 	"scheme":                         "%REQ(:SCHEME)%",
 	"original_destination":           "%DOWNSTREAM_LOCAL_ADDRESS%",
 	"upstream_host":                  "%UPSTREAM_HOST%",
-	"upstream_cluster":               "%UPSTREAM_CLUSTER%",
+	"denial_reason":                  "%FILTER_STATE(" + DenialReasonFilterStateKey + ":PLAIN)%",
 	"response_code_details":          "%RESPONSE_CODE_DETAILS%",
 	"connection_termination_details": "%CONNECTION_TERMINATION_DETAILS%",
-	"filter_chain":                   "%FILTER_CHAIN_NAME%",
 	"log_type":                       "%ACCESS_LOG_TYPE%",
 
 	"authority_for":            "%REQ(:AUTHORITY)%",
@@ -69,8 +71,8 @@ var chartAccessLogLabels = map[string]string{
 // defaultTelemetryProviders returns a fresh provider graph with the gateway's
 // format applied to the built-in envoy logger. Callers may mutate it safely.
 func defaultTelemetryProviders(format *configv1.AccessLogFormat) model.TelemetryProviders {
-	fields := make(map[string]*structpb.Value, len(chartAccessLogLabels))
-	for name, value := range chartAccessLogLabels {
+	fields := make(map[string]*structpb.Value, len(defaultAccessLogLabels))
+	for name, value := range defaultAccessLogLabels {
 		fields[name] = structpb.NewStringValue(value)
 	}
 	fileLog := &fileaccesslogv3.FileAccessLog{

@@ -204,6 +204,7 @@ egressGateways:
       requested_server_name: "%CEL('io.kruise.outer_sni' in filter_state ? string(filter_state['io.kruise.outer_sni']) : connection.requested_server_name)%"
       upstream_address: "%UPSTREAM_REMOTE_ADDRESS%"
       response_code: "%RESPONSE_CODE%"
+      denial_reason: "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%"
 ```
 
 The JSON object replaces the complete default format; its fields are not merged with the defaults. Nested objects and typed values are supported. Values that evaluate to null are omitted, as in the default JSON format. This example's illustrative output after HTTPS termination is:
@@ -213,6 +214,15 @@ The JSON object replaces the complete default format; its fields are not merged 
 ```
 
 `scheme` distinguishes HTTP from terminated HTTPS; `protocol` is the HTTP version. The SNI expression preserves the original ClientHello name after TLS termination and falls back to the current connection's SNI for passthrough TLS. HTTP authority remains a separate field. TCP logs have no HTTP scheme or request headers.
+
+The default format includes `denial_reason: "sni_policy_denied"` for connections rejected by SNI policy. The field is absent on other paths; HTTP errors and connection failures continue to use their existing response and transport fields. Custom formats can retain this reason with the `denial_reason` entry shown above.
+
+Internal upstream cluster and filter-chain names are omitted from the default format. For debugging, add these entries to your custom `accessLogFormat.json` object:
+
+```yaml
+upstream_cluster: "%UPSTREAM_CLUSTER%"
+filter_chain: "%FILTER_CHAIN_NAME%"
+```
 
 To use text output instead, replace `accessLogFormat` with:
 

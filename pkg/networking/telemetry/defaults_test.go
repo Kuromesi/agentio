@@ -25,7 +25,7 @@ import (
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 )
 
-func TestDefaultProvidersMatchAgentioChart(t *testing.T) {
+func TestDefaultProviders(t *testing.T) {
 	defaults := defaultTelemetryProviders(nil)
 	if !slices.Equal(defaults.DefaultMetrics, []string{"prometheus"}) {
 		t.Fatalf("default metrics = %v", defaults.DefaultMetrics)
@@ -55,9 +55,9 @@ func TestDefaultProvidersMatchAgentioChart(t *testing.T) {
 		fields := fileLog.GetLogFormat().GetJsonFormat().GetFields()
 		want := map[string]string{
 			"scheme": "%REQ(:SCHEME)%", "original_destination": "%DOWNSTREAM_LOCAL_ADDRESS%",
-			"upstream_host": "%UPSTREAM_HOST%", "upstream_cluster": "%UPSTREAM_CLUSTER%",
+			"upstream_host": "%UPSTREAM_HOST%", "denial_reason": "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%",
 			"response_code_details": "%RESPONSE_CODE_DETAILS%", "connection_termination_details": "%CONNECTION_TERMINATION_DETAILS%",
-			"filter_chain": "%FILTER_CHAIN_NAME%", "log_type": "%ACCESS_LOG_TYPE%",
+			"log_type":      "%ACCESS_LOG_TYPE%",
 			"authority_for": "%REQ(:AUTHORITY)%", "bytes_received": "%BYTES_RECEIVED%", "bytes_sent": "%BYTES_SENT%",
 			"downstream_address": "%DOWNSTREAM_REMOTE_ADDRESS%", "duration": "%DURATION%", "method": "%REQ(:METHOD)%",
 			"path": "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%", "protocol": "%PROTOCOL%", "request_id": "%REQ(X-REQUEST-ID)%",
