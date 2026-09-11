@@ -64,7 +64,7 @@ var (
 	RequestRateLimit = effectiveRequestRateLimit(env.Register(
 		"AGENTIO_MAX_REQUESTS_PER_SECOND",
 		0.0,
-		"Maximum incoming xDS requests accepted per second across the process. "+
+		"Maximum new xDS streams accepted per second across the process; does not throttle ACKs or server pushes. "+
 			"Zero automatically derives the limit from the available CPU count.",
 	).Get())
 )
