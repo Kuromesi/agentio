@@ -142,12 +142,15 @@ func resolvePolicyBindings(ctx krt.HandlerContext, kind TargetKind, uid, namespa
 	if kind == PolicyTargetSandbox {
 		keys = append(keys, sandboxPolicyAttachmentKeyPrefix+uid)
 	}
+	// Include target matching in selector discovery's dependency filter instead
+	// of invalidating every binding in a namespace. KRT checks old and new targets.
+	selectsTarget := krt.FilterGeneric(func(value any) bool {
+		return value.(PolicyAttachment).selects(kind, uid, namespace, targetLabels)
+	})
 	matchedByName := make(map[string]PolicyAttachment)
 	for _, key := range keys {
-		for _, attachment := range krt.Fetch(ctx, attachments, krt.FilterIndex(byTarget, key)) {
-			if attachment.selects(kind, uid, namespace, targetLabels) {
-				matchedByName[attachment.ResourceName()] = attachment
-			}
+		for _, attachment := range krt.Fetch(ctx, attachments, krt.FilterIndex(byTarget, key), selectsTarget) {
+			matchedByName[attachment.ResourceName()] = attachment
 		}
 	}
 	matched := make([]PolicyAttachment, 0, len(matchedByName))

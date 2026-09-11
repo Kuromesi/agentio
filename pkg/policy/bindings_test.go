@@ -18,14 +18,133 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
+
+// This unmatched policy is examined once per binding recomputation, but is
+// never changed itself. It detects unnecessary recomputation even when Equals
+// suppresses the resulting binding events.
+type bindingRecomputeSelector struct {
+	labels.Selector
+	calls *atomic.Int64
+}
+
+func (s bindingRecomputeSelector) Matches(values labels.Labels) bool {
+	s.calls.Add(1)
+	return s.Selector.Matches(values)
+}
+
+func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
+	for _, kind := range []TargetKind{PolicyTargetWorkload, PolicyTargetSandbox} {
+		for _, global := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/global=%t", kind, global), func(t *testing.T) {
+				const count = 32
+				stop := make(chan struct{})
+				t.Cleanup(func() { close(stop) })
+				options := []krt.CollectionOption{krt.WithStop(stop)}
+				var pods []model.Workload
+				var subjects []model.Sandbox
+				for index := range count {
+					uid := fmt.Sprintf("subject-%d", index)
+					values := map[string]string{"app": uid}
+					if kind == PolicyTargetWorkload {
+						pods = append(pods, model.Workload{UID: uid, Namespace: "demo", Labels: values})
+					} else {
+						subjects = append(subjects, model.Sandbox{UID: uid, Namespace: "demo", Labels: values})
+					}
+				}
+				workloads := krt.NewStaticCollection(nil, pods, options...)
+				sandboxes := krt.NewStaticCollection(nil, subjects, options...)
+				makePolicy := func(selector metav1.LabelSelector) PolicyAttachment {
+					t.Helper()
+					target := AttachmentTarget{Kind: kind, Selector: selector, Global: global}
+					if !global {
+						target.Namespaces = []string{"demo"}
+					}
+					attachment, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindAuthorization, Name: "demo/selected", Target: target})
+					if err != nil {
+						t.Fatal(err)
+					}
+					return attachment
+				}
+				selectApp := func(app string) metav1.LabelSelector {
+					return metav1.LabelSelector{MatchLabels: map[string]string{"app": app}}
+				}
+				var recomputes atomic.Int64
+				witness := makePolicy(selectApp("unmatched"))
+				witness.Name = "demo/witness"
+				witness.selector = bindingRecomputeSelector{Selector: witness.selector, calls: &recomputes}
+				initial := makePolicy(selectApp("subject-0"))
+				attachments := krt.NewStaticCollection(nil, []PolicyAttachment{initial, witness}, options...)
+				bindings := NewPolicyBindingsCollection(workloads, sandboxes, attachments, krt.NewOptionsBuilder(stop, "test", nil))
+				if !bindings.WaitUntilSynced(stop) {
+					t.Fatal("bindings did not sync")
+				}
+				events := make(chan krt.Event[Bindings], count*2)
+				registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
+					for _, event := range batch {
+						events <- event
+					}
+				}, false)
+				t.Cleanup(registration.UnregisterHandler)
+				check := func(eventCount, wantRecomputes int, selected func(int) bool) {
+					t.Helper()
+					for range eventCount {
+						awaitBindingEvent(t, events)
+					}
+					if got := recomputes.Swap(0); got != int64(wantRecomputes) {
+						t.Fatalf("recomputed %d bindings, want %d", got, wantRecomputes)
+					}
+					for index := range count {
+						binding := bindings.GetKey(BindingsKey(kind, fmt.Sprintf("subject-%d", index)))
+						if binding == nil || !binding.Valid() {
+							t.Fatalf("subject-%d has no valid binding", index)
+						}
+						var want []string
+						if selected(index) {
+							want = []string{initial.Name}
+						}
+						if got := binding.PolicyNames(PolicyKindAuthorization); !reflect.DeepEqual(got, want) {
+							t.Fatalf("subject-%d policies = %v, want %v", index, got, want)
+						}
+					}
+				}
+				check(0, count, func(index int) bool { return index == 0 })
+				// Both the old and new selector must invalidate their matching subject.
+				attachments.ConditionalUpdateObject(makePolicy(metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key: "app", Operator: metav1.LabelSelectorOpIn, Values: []string{"subject-1"},
+				}}}))
+				check(2, 2, func(index int) bool { return index == 1 })
+				// A primary label update must still detach the policy.
+				if kind == PolicyTargetWorkload {
+					updated := pods[1]
+					updated.Labels = map[string]string{"app": "disabled"}
+					workloads.ConditionalUpdateObject(updated)
+				} else {
+					updated := subjects[1]
+					updated.Labels = map[string]string{"app": "disabled"}
+					sandboxes.ConditionalUpdateObject(updated)
+				}
+				check(1, 1, func(int) bool { return false })
+				attachments.ConditionalUpdateObject(makePolicy(selectApp("subject-2")))
+				check(1, 1, func(index int) bool { return index == 2 })
+				attachments.DeleteObject(initial.ResourceName())
+				check(1, 1, func(int) bool { return false })
+				// Empty selectors retain namespace-wide/global semantics on recreation.
+				attachments.ConditionalUpdateObject(makePolicy(metav1.LabelSelector{}))
+				check(count, count, func(int) bool { return true })
+			})
+		}
+	}
+}
 
 func TestPolicyBindingsExactTargetFanout(t *testing.T) {
 	stop := make(chan struct{})
@@ -206,6 +325,7 @@ func TestPolicyBindingsRejectUnresolvedExplicitReference(t *testing.T) {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	builder := krt.NewOptionsBuilder(stop, "test", nil)
 	uid := "sandbox-a"
+	attachments := krt.NewStaticCollection[PolicyAttachment](nil, nil, options...)
 
 	bindings := NewPolicyBindingsCollection(
 		krt.NewStaticCollection[model.Workload](nil, nil, options...),
@@ -216,7 +336,7 @@ func TestPolicyBindingsRejectUnresolvedExplicitReference(t *testing.T) {
 				Name: "demo/missing",
 			}},
 		}}, options...),
-		krt.NewStaticCollection[PolicyAttachment](nil, nil, options...),
+		attachments,
 		builder,
 	)
 	if !bindings.WaitUntilSynced(stop) {
@@ -225,6 +345,36 @@ func TestPolicyBindingsRejectUnresolvedExplicitReference(t *testing.T) {
 	binding := bindings.GetKey(BindingsKey(PolicyTargetSandbox, uid))
 	if binding == nil || binding.Valid() || len(binding.Unresolved) != 1 {
 		t.Fatalf("binding = %+v, want one unresolved reference", binding)
+	}
+	events := make(chan krt.Event[Bindings], 1)
+	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
+		for _, event := range batch {
+			events <- event
+		}
+	}, false)
+	t.Cleanup(registration.UnregisterHandler)
+	// Explicit references must keep their key dependency even when selector
+	// discovery excludes the policy's namespace and labels.
+	explicit, err := NewPolicyAttachment(PolicyAttachment{
+		Kind: PolicyKindSNIPolicy,
+		Name: "demo/missing",
+		Target: AttachmentTarget{
+			Namespaces: []string{"elsewhere"},
+			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": "other"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachments.ConditionalUpdateObject(explicit)
+	resolved := awaitBindingEvent(t, events).Latest()
+	if !resolved.Valid() || !reflect.DeepEqual(resolved.PolicyNames(PolicyKindSNIPolicy), []string{explicit.Name}) {
+		t.Fatalf("explicit reference did not resolve: %+v", resolved)
+	}
+	attachments.DeleteObject(explicit.ResourceName())
+	unresolved := awaitBindingEvent(t, events).Latest()
+	if unresolved.Valid() || len(unresolved.Unresolved) != 1 {
+		t.Fatalf("deleted explicit reference remained valid: %+v", unresolved)
 	}
 }
 
