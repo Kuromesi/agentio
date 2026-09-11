@@ -49,6 +49,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/runnable"
 	runserver "github.com/openkruise/agentio/extensions/epe/pkg/server"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
+	"github.com/openkruise/agentio/pkg/envdoc"
 	"github.com/openkruise/agentio/pkg/kube"
 )
 
@@ -105,13 +106,19 @@ var (
 )
 
 func main() {
+	// Report flag and export errors on stderr before runtime logging is configured.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
 	if err := run(); err != nil {
-		setupLog.Error(err, "EPE run failed")
+		slog.Error("EPE run failed", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
+	printEnv := envdoc.Flags{}
+	printEnv.Bind(flag.CommandLine)
+
 	// Production defaults: JSON encoding and Info level. Development mode also
 	// lowers the stacktrace threshold to Warn, which attached a full stack to
 	// every request-path failure — see initLogging. -zap-devel still turns it on
@@ -119,6 +126,14 @@ func run() error {
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+	if err := printEnv.Validate(); err != nil {
+		return err
+	}
+	if printEnv.Enabled {
+		return printEnv.Write(os.Stdout, envdoc.Options{
+			Prefixes: []string{"IDENTITY_PROVIDER_", "TOKEN_CACHE_", "STS_CACHE_", "CREDENTIAL_PROVIDER_", "AUDIT_WEBHOOK_"},
+		})
+	}
 	initLogging(&opts)
 
 	flags := make(map[string]any)

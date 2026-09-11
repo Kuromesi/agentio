@@ -22,16 +22,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/openkruise/agentio/pkg/envdoc"
 	"github.com/openkruise/agentio/pkg/server"
 )
 
 func main() {
-	logger, err := newLogger(os.Stderr, logLevel, logFormat)
-	if err != nil {
-		slog.Error("configure logging", "error", err)
-		os.Exit(1)
-	}
-	installLogger(logger)
+	// Report flag and export errors on stderr before runtime logging is configured.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -48,17 +45,26 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if printEnv {
-		server.PrintEnvironment(os.Stdout)
-		return nil
+	if printEnv.Enabled {
+		return printEnv.Write(os.Stdout, envdoc.Options{
+			Prefixes: []string{"AGENTIO_"},
+			DefaultValues: map[string]string{
+				"AGENTIO_PUSH_CONCURRENCY": "automatic (see description)",
+			},
+		})
 	}
+	logger, err := newLogger(os.Stderr, logLevel, logFormat)
+	if err != nil {
+		return err
+	}
+	installLogger(logger)
 	return server.Run(ctx, options)
 }
 
 // parseFlags parses the wiring flags and -print-env.
-func parseFlags(args []string) (server.Options, bool, error) {
+func parseFlags(args []string) (server.Options, envdoc.Flags, error) {
 	options := server.DefaultOptions()
-	printEnv := false
+	printEnv := envdoc.Flags{}
 
 	flags := flag.NewFlagSet("agentiod", flag.ContinueOnError)
 	flags.StringVar(&options.DiscoveryAddress, "discovery-address", options.DiscoveryAddress,
@@ -75,10 +81,12 @@ func parseFlags(args []string) (server.Options, bool, error) {
 		"SPIFFE trust domain")
 	flags.StringVar(&options.Kubeconfig, "kubeconfig", os.Getenv("KUBECONFIG"),
 		"out-of-cluster kubeconfig; in-cluster configuration is used when empty")
-	flags.BoolVar(&printEnv, "print-env", false,
-		"print the environment variables that configure this binary, then exit")
+	printEnv.Bind(flags)
 	if err := flags.Parse(args); err != nil {
-		return server.Options{}, false, err
+		return server.Options{}, envdoc.Flags{}, err
+	}
+	if err := printEnv.Validate(); err != nil {
+		return server.Options{}, envdoc.Flags{}, err
 	}
 	return options, printEnv, nil
 }

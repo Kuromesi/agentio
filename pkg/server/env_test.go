@@ -174,7 +174,9 @@ func environmentWithout(environment []string, names ...string) []string {
 
 func TestPrintEnvironmentListsRegisteredVariables(t *testing.T) {
 	var out strings.Builder
-	PrintEnvironment(&out)
+	if err := PrintEnvironment(&out); err != nil {
+		t.Fatal(err)
+	}
 	body := out.String()
 	for _, variable := range []string{
 		"AGENTIO_TOKEN_AUDIENCE",

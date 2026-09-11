@@ -1,4 +1,4 @@
-.PHONY: build build.agentiod build.epe clean fmt format gen gen.crddocs lint lint.golangci lint.logging racetest test test.epe test.integration.agentio.kube test.integration.agentio.product tidy
+.PHONY: build build.agentiod build.epe clean fmt format gen gen.crddocs gen.envdocs check.envdocs lint lint.golangci lint.logging racetest test test.epe test.integration.agentio.kube test.integration.agentio.product tidy
 
 build: build.agentiod build.epe
 
@@ -59,9 +59,16 @@ lint.logging:
 gen:
 	./tools/generate-proto.sh
 	./tools/generate-crd-docs.sh
+	$(MAKE) gen.envdocs
 
 gen.crddocs:
 	./tools/generate-crd-docs.sh
+
+gen.envdocs:
+	go run ./tools/envdocs
+
+check.envdocs:
+	go run ./tools/envdocs -check
 
 format: fmt
 

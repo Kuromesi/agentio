@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"os"
 	"strings"
 	"testing"
@@ -41,35 +40,43 @@ func TestRunStopsWithCanceledContext(t *testing.T) {
 // The README tells an operator to discover configuration with -print-env, so the
 // flag has to produce the dump and return without contacting a cluster.
 func TestPrintEnvFlagDumpsTheEnvironment(t *testing.T) {
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	original := os.Stdout
-	os.Stdout = writer
-	runErr := run(context.Background(), []string{"-print-env"})
-	os.Stdout = original
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close pipe: %v", err)
-	}
-	dumped, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	if runErr != nil {
-		t.Fatalf("-print-env returned %v; it must not try to start the server", runErr)
-	}
-	for _, expected := range []string{
-		"VARIABLE",
-		"AGENTIO_PUSH_DEBOUNCE",
-		"AGENTIO_KRT_DEBOUNCE",
-		"AGENTIO_CA_ROOT_LIFETIME",
-		"AGENTIO_LOG_LEVEL",
-		"AGENTIO_LOG_FORMAT",
-	} {
-		if !strings.Contains(string(dumped), expected) {
-			t.Errorf("-print-env output is missing %s:\n%s", expected, dumped)
-		}
+	for _, format := range []string{"text", "markdown"} {
+		t.Run(format, func(t *testing.T) {
+			output, err := os.CreateTemp(t.TempDir(), "environment")
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := os.Stdout
+			os.Stdout = output
+			t.Cleanup(func() { os.Stdout = original })
+			// Export must work even when runtime configuration cannot start a server.
+			originalFormat := logFormat
+			logFormat = "invalid"
+			t.Cleanup(func() { logFormat = originalFormat })
+			runErr := run(context.Background(), []string{"-print-env", "-print-env-format=" + format, "-kubeconfig=/does/not/exist"})
+			os.Stdout = original
+			if err := output.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if runErr != nil {
+				t.Fatalf("-print-env must not start the server or configure logging: %v", runErr)
+			}
+			dumped, err := os.ReadFile(output.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, expected := range []string{
+				"AGENTIO_PUSH_DEBOUNCE", "AGENTIO_KRT_DEBOUNCE",
+				"AGENTIO_CA_ROOT_LIFETIME", "AGENTIO_LOG_LEVEL", "AGENTIO_LOG_FORMAT",
+			} {
+				if !strings.Contains(string(dumped), expected) {
+					t.Errorf("-print-env output is missing %s", expected)
+				}
+			}
+			if format == "markdown" && !strings.Contains(string(dumped), "automatic (see description)") {
+				t.Fatal("Markdown export froze a machine-specific default")
+			}
+		})
 	}
 }
 
@@ -87,7 +94,7 @@ func TestWiringFlagsReachOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
-	if printEnv {
+	if printEnv.Enabled {
 		t.Error("-print-env was not requested but came back set")
 	}
 	for _, check := range []struct {
