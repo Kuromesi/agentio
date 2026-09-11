@@ -22,7 +22,18 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	ktesting "k8s.io/client-go/testing"
+
+	"github.com/openkruise/agentio/test/e2e"
+	"github.com/openkruise/agentio/test/e2e/cluster"
+	"github.com/openkruise/agentio/test/e2e/components/namespace"
+	"github.com/openkruise/agentio/test/e2e/kube"
 
 	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
 )
@@ -167,4 +178,36 @@ func fixtureObject(t *testing.T, objects []*unstructured.Unstructured, kind, nam
 	}
 	t.Fatalf("%s %s not found", kind, name)
 	return nil
+}
+
+// Unit tests also run inside the live suite. Inspecting setup order must not
+// clear the namespace and clients needed by subsequent traffic scenarios.
+func TestSetupOrderPreservesRunningFixture(t *testing.T) {
+	saved := trafficFixture
+	t.Cleanup(func() { trafficFixture = saved })
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dynamicClient.PrependReactor("create", "namespaces", func(action ktesting.Action) (bool, runtime.Object, error) {
+		object := action.(ktesting.CreateAction).GetObject().DeepCopyObject().(*unstructured.Unstructured)
+		object.SetUID(types.UID("fixture-namespace"))
+		if err := unstructured.SetNestedField(object.Object, "Active", "status", "phase"); err != nil {
+			return true, nil, err
+		}
+		if err := dynamicClient.Tracker().Create(gvr, object, ""); err != nil {
+			return true, nil, err
+		}
+		return true, object, nil
+	})
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gvk.GroupVersion()})
+	mapper.Add(gvk, meta.RESTScopeRoot)
+	environment := &e2e.Environment{
+		RunID: "setup-order",
+		Kube:  kube.NewClient("setup-order", &cluster.Cluster{Dynamic: dynamicClient, Mapper: mapper}, kube.NewLedger()),
+	}
+	trafficFixture.Namespace = namespace.Create(t, environment, namespace.Config{Prefix: "running-fixture", StableName: true})
+	t.Run("inspect setup order", TestSetupOrder)
+	if got := trafficFixture.Namespace.Name(); got != "running-fixture" {
+		t.Fatalf("setup inspection cleared the running fixture namespace: got %q", got)
+	}
 }
