@@ -329,6 +329,27 @@ func TestRenderPrefersEgressGatewayValuesAndAcceptsLegacyWaypointValues(t *testi
 	}
 }
 
+func TestRenderUsesConfiguredTokenAudience(t *testing.T) {
+	values := testValues(t, map[string]any{
+		"global": map[string]any{"sds": map[string]any{"token": map[string]any{"aud": "custom-audience"}}},
+	})
+	renderer := testRenderer(t, values)
+	gateway := gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "agentio-egress",
+			Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+		},
+	}
+	docs, err := renderer.Render(egressGatewayTemplateName, buildTemplateInput(gateway, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(docs, "\n"), `audience: "custom-audience"`) {
+		t.Fatal("rendered gateway does not use the configured token audience")
+	}
+}
+
 func TestEmptyMatchesSprigDefaultSemantics(t *testing.T) {
 	var ptr *int
 	var iface any = ptr

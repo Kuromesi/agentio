@@ -190,7 +190,7 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 	filters = append(filters, b.httpFilter("envoy.filters.http.router", &routerv3.Router{}))
 	hcm := &hcmv3.HttpConnectionManager{
 		StatPrefix:        ConnectTerminate,
-		ServerName:        "istio-envoy",
+		ServerName:        "agentio-envoy",
 		RouteSpecifier:    &hcmv3.HttpConnectionManager_Rds{Rds: rds(ConnectTerminate)},
 		UseRemoteAddress:  wrapperspb.Bool(false),
 		StreamIdleTimeout: durationpb.New(0),
@@ -262,7 +262,7 @@ func (b *resourceBuilder) buildForwardHCM(routeName string, config effectiveConf
 	hcm := &hcmv3.HttpConnectionManager{
 		StatPrefix:        forwardHCMStatPrefix,
 		RouteSpecifier:    &hcmv3.HttpConnectionManager_Rds{Rds: rds(routeName)},
-		ServerName:        "istio-envoy",
+		ServerName:        "agentio-envoy",
 		Proxy_100Continue: true,
 		UseRemoteAddress:  wrapperspb.Bool(false),
 		StreamIdleTimeout: streamIdle,

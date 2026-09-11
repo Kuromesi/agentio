@@ -42,7 +42,7 @@ func TestDefaultOptionsContainsOnlyProcessWiring(t *testing.T) {
 
 func TestPilotCAConfigMapVariableIsIgnored(t *testing.T) {
 	if os.Getenv("AGENTIO_ENV_ALIAS_HELPER") == "true" {
-		if features.CAConfigMapName != "agentio-ca-certs" || features.TrustBundleConfigMapName != "istio-ca-root-cert" {
+		if features.CAConfigMapName != "agentio-ca-certs" || features.TrustBundleConfigMapName != "agentio-ca-root-cert" {
 			t.Fatalf("CA ConfigMaps = root %q distributed %q, want Agentio defaults",
 				features.CAConfigMapName, features.TrustBundleConfigMapName)
 		}

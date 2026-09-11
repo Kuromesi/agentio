@@ -24,7 +24,7 @@ import (
 var (
 	CASecretName = env.Register(
 		"AGENTIO_CA_SECRET_NAME",
-		"istio-ca-secret",
+		"agentio-ca-secret",
 		"Secret holding the workload root CA.",
 	).Get()
 	CAConfigMapName = env.Register(
@@ -39,7 +39,7 @@ var (
 	).Get()
 	TrustBundleConfigMapName = env.Register(
 		"AGENTIO_TRUST_BUNDLE_CONFIGMAP_NAME",
-		"istio-ca-root-cert",
+		"agentio-ca-root-cert",
 		"Per-namespace ConfigMap distributing the workload trust bundle to proxies.",
 	).Get()
 	TrustBundleLeaseName = env.Register(

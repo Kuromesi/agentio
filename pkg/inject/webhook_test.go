@@ -212,13 +212,13 @@ func TestInjectZtunnelTemplate(t *testing.T) {
 		volumes[v.Name] = v
 	}
 	trustVolume, ok := volumes["agentiod-ca-cert"]
-	if !ok || trustVolume.ConfigMap == nil || trustVolume.ConfigMap.Name != "istio-ca-root-cert" {
-		t.Fatalf("agentiod-ca-cert volume = %+v, want ConfigMap istio-ca-root-cert", trustVolume)
+	if !ok || trustVolume.ConfigMap == nil || trustVolume.ConfigMap.Name != "agentio-ca-root-cert" {
+		t.Fatalf("agentiod-ca-cert volume = %+v, want ConfigMap agentio-ca-root-cert", trustVolume)
 	}
 	tokenVolume, ok := volumes["agentio-token"]
 	if !ok || tokenVolume.Projected == nil ||
-		tokenVolume.Projected.Sources[0].ServiceAccountToken.Audience != "istio-ca" {
-		t.Fatalf("agentio-token volume = %+v, want projected token with audience istio-ca", tokenVolume)
+		tokenVolume.Projected.Sources[0].ServiceAccountToken.Audience != "agentio-ca" {
+		t.Fatalf("agentio-token volume = %+v, want projected token with audience agentio-ca", tokenVolume)
 	}
 
 	status := patched.Annotations["sidecar.istio.io/status"]
@@ -410,6 +410,43 @@ templates:
 	hello := FindContainer("hello", patched.Spec.Containers)
 	if got := hello.ReadinessProbe.HTTPGet.Port.IntValue(); got != 16020 {
 		t.Fatalf("rewritten readiness probe port = %d, want 16020", got)
+	}
+}
+
+func TestInjectUsesConfiguredTokenAudience(t *testing.T) {
+	for _, path := range []string{"testdata/ztunnel-injection-template.yaml", "../../manifests/charts/agentio/files/ztunnel-injection-template.yaml"} {
+		for _, audience := range []string{"istio-ca", "custom-audience", ""} {
+			t.Run(path+"/"+audience, func(t *testing.T) {
+				template, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				config, err := UnmarshalConfig([]byte("policy: enabled\ndefaultTemplates: [ztunnel]\ntemplates:\n  ztunnel: |\n" + indentLines(string(template), "    ")))
+				if err != nil {
+					t.Fatal(err)
+				}
+				values, err := os.ReadFile("testdata/values.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				custom := strings.Replace(string(values), `"aud": "agentio-ca"`, `"aud": "`+audience+`"`, 1)
+				webhook := newTestWebhookWithValues(t, NativeSidecarModeDisabled, config, custom)
+				pod := injectTestPod(t, webhook, testPod())
+				want := audience
+				if want == "" {
+					want = "agentio-ca"
+				}
+				for _, volume := range pod.Spec.Volumes {
+					if volume.Name == "agentio-token" && volume.Projected != nil {
+						if got := volume.Projected.Sources[0].ServiceAccountToken.Audience; got != want {
+							t.Fatalf("projected token audience = %q, want %q", got, want)
+						}
+						return
+					}
+				}
+				t.Fatal("projected agentio-token volume missing")
+			})
+		}
 	}
 }
 

@@ -15,6 +15,7 @@
 package features
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -124,8 +125,31 @@ func TestValidatePreservesFirstErrorOrder(t *testing.T) {
 	}
 }
 
+func TestValidateKubernetesAPILimits(t *testing.T) {
+	for _, qps := range []float64{0, -1, math.NaN(), math.Inf(1), math.MaxFloat64, math.SmallestNonzeroFloat64} {
+		t.Run("invalid QPS", func(t *testing.T) {
+			setValidFeatures(t)
+			test.SetForTest(t, &KubernetesAPIQPS, qps)
+			if err := Validate(); err == nil || !strings.Contains(err.Error(), "Kubernetes API QPS") {
+				t.Fatalf("Validate() with QPS %v = %v, want Kubernetes API QPS error", qps, err)
+			}
+		})
+	}
+	for _, burst := range []int{0, -1} {
+		t.Run("invalid burst", func(t *testing.T) {
+			setValidFeatures(t)
+			test.SetForTest(t, &KubernetesAPIBurst, burst)
+			if err := Validate(); err == nil || !strings.Contains(err.Error(), "Kubernetes API burst") {
+				t.Fatalf("Validate() with burst %v = %v, want Kubernetes API burst error", burst, err)
+			}
+		})
+	}
+}
+
 func setValidFeatures(t *testing.T) {
 	t.Helper()
+	test.SetForTest(t, &KubernetesAPIQPS, 80)
+	test.SetForTest(t, &KubernetesAPIBurst, 160)
 	test.SetForTest(t, &KRTDebounceAfter, time.Millisecond)
 	test.SetForTest(t, &KRTDebounceMax, 2*time.Millisecond)
 	test.SetForTest(t, &PushDebounceAfter, time.Millisecond)
@@ -150,7 +174,7 @@ func setValidFeatures(t *testing.T) {
 	test.SetForTest(t, &MITMSignConcurrency, 1)
 	test.SetForTest(t, &WorkloadCertLifetime, 2*time.Hour)
 	test.SetForTest(t, &WorkloadCertRenewBefore, time.Hour)
-	test.SetForTest(t, &TokenAudience, "istio-ca")
+	test.SetForTest(t, &TokenAudience, "agentio-ca")
 	test.SetForTest(t, &EnableGatewayDeployer, false)
 	test.SetForTest(t, &GatewayLeaseName, "agentiod-gateway-deployer-leader")
 }

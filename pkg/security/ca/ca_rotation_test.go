@@ -35,7 +35,7 @@ func TestLoadOrCreateAuthorityReusesAgentioCAByDefault(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	secret := newWorkloadCASecret(t, namespace, "istio-ca-secret", 24*time.Hour)
+	secret := newWorkloadCASecret(t, namespace, "agentio-ca-secret", 24*time.Hour)
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
 	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
@@ -77,7 +77,7 @@ func TestLoadOrCreateAuthorityBootstrapsMissingSecret(t *testing.T) {
 	if len(authority.RootPEM()) == 0 {
 		t.Fatal("bootstrapped authority has no root")
 	}
-	if _, err := client.Kube().CoreV1().Secrets(namespace).Get(ctx, "istio-ca-secret", metav1.GetOptions{}); err != nil {
+	if _, err := client.Kube().CoreV1().Secrets(namespace).Get(ctx, "agentio-ca-secret", metav1.GetOptions{}); err != nil {
 		t.Fatalf("bootstrapped CA Secret error = %v", err)
 	}
 }

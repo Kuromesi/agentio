@@ -64,13 +64,13 @@ spec:
   volumes:
   - name: agentiod-ca-cert
     configMap:
-      name: {{ .Values.global.trustBundleName | default "istio-ca-root-cert" }}
+      name: {{ .Values.global.trustBundleName | default "agentio-ca-root-cert" }}
 `
 
 const integrationValues = `
 global:
   hub: docker.io/agentio
-  trustBundleName: istio-ca-root-cert
+  trustBundleName: agentio-ca-root-cert
   proxyZtunnel:
     image: docker.io/agentio/ztunnel:test
 sidecarInjectorWebhook:

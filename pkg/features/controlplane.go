@@ -16,15 +16,28 @@ package features
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"istio.io/istio/pkg/env"
 )
 
 var (
+	// KubernetesAPIQPS configures client-side Kubernetes API request throttling.
+	KubernetesAPIQPS = env.Register(
+		"AGENTIO_KUBERNETES_API_QPS",
+		80.0,
+		"Client-side Kubernetes API requests per second. Must be finite and positive.",
+	).Get()
+	// KubernetesAPIBurst bounds bursts allowed by Kubernetes client throttling.
+	KubernetesAPIBurst = env.Register(
+		"AGENTIO_KUBERNETES_API_BURST",
+		160,
+		"Client-side Kubernetes API request burst. Must be positive.",
+	).Get()
 	TokenAudience = env.Register(
 		"AGENTIO_TOKEN_AUDIENCE",
-		"istio-ca",
+		"agentio-ca",
 		"Audience a client token must carry to be accepted.",
 	).Get()
 	ServiceName = env.Register(
@@ -69,6 +82,14 @@ var (
 func validateControlPlane() error {
 	if strings.TrimSpace(TokenAudience) == "" {
 		return fmt.Errorf("token audience is required")
+	}
+	// client-go stores QPS as float32; validate the value it will actually use.
+	qps := float32(KubernetesAPIQPS)
+	if qps <= 0 || math.IsNaN(float64(qps)) || math.IsInf(float64(qps), 0) {
+		return fmt.Errorf("Kubernetes API QPS must be finite and positive as a float32")
+	}
+	if KubernetesAPIBurst <= 0 {
+		return fmt.Errorf("Kubernetes API burst must be positive")
 	}
 	return nil
 }

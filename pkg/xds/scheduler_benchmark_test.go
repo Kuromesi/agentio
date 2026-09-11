@@ -53,3 +53,31 @@ func BenchmarkPushScheduler(b *testing.B) {
 		})
 	}
 }
+
+// Each producer owns a connection with pending work. Repeated publications
+// exercise merge contention without depending on generator or network speed.
+func BenchmarkPushSchedulerConcurrentMerge(b *testing.B) {
+	for _, size := range []int{1, 512} {
+		b.Run(fmt.Sprintf("changes=%d", size), func(b *testing.B) {
+			changes := make([]model.ResourceChange, size)
+			for i := range changes {
+				name := fmt.Sprintf("workload-%d", i)
+				older := addressResource(b, name, "old")
+				newer := addressResource(b, name, "new")
+				changes[i] = model.ResourceChange{Key: newer.Key, Old: &older, New: &newer}
+			}
+			update := updateFromChanges(b, changes)
+			scheduler := NewPushScheduler(1)
+			defer scheduler.Close()
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				connection := newPushConnection(context.Background())
+				scheduler.Enqueue(connection, update)
+				for pb.Next() {
+					scheduler.Enqueue(connection, update)
+				}
+			})
+		})
+	}
+}

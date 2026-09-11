@@ -56,8 +56,11 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		m := manifestAt(t, fixture.compiler, "actor")
-		return m != nil && len(m.TrafficPolicies) == 1 && len(m.GetEgressRouting().GetRoutes()) == 2
-	}, "Sandbox-scoped baseline and egress manifest")
+		// Workload policies are published independently of the Sandbox manifest.
+		snapshot := currentSnapshot(t, fixture.compiler)
+		return m != nil && len(m.TrafficPolicies) == 1 && len(m.GetEgressRouting().GetRoutes()) == 2 &&
+			len(snapshot.List(model.WorkloadAuthorizationType)) == 2
+	}, "Sandbox-scoped baseline and egress manifest with Workload baselines")
 	manifest := manifestAt(t, fixture.compiler, "actor")
 	var names []string
 	snapshot := currentSnapshot(t, fixture.compiler)

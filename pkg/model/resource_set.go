@@ -112,11 +112,10 @@ func (s ResourceSet) Lookup(typeURL, name string) []Resource {
 // ListWorkloads returns resources of the given type matching every query constraint.
 func (s ResourceSet) ListWorkloads(typeURL string, query WorkloadQuery) []Resource {
 	index := s.resources[typeURL]
-	keys, valid := workloadQueryFactKeys(query)
-	if index == nil || !valid {
+	if index == nil {
 		return nil
 	}
-	candidates := smallestPosting(&index.facts, keys)
+	candidates := workloadQueryCandidates(&index.facts, query)
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -134,11 +133,10 @@ func (s ResourceSet) ListWorkloads(typeURL string, query WorkloadQuery) []Resour
 // HasWorkload reports whether any resource of the type matches the query.
 func (s ResourceSet) HasWorkload(typeURL string, query WorkloadQuery) bool {
 	index := s.resources[typeURL]
-	keys, valid := workloadQueryFactKeys(query)
-	if index == nil || !valid {
+	if index == nil {
 		return false
 	}
-	for _, name := range smallestPosting(&index.facts, keys) {
+	for _, name := range workloadQueryCandidates(&index.facts, query) {
 		resource, found := index.shards[resourceShard(name)][name]
 		if found && workloadMatchesQuery(resource.Facts.Workload, query) {
 			return true

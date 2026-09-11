@@ -56,7 +56,7 @@ agentiod:
     capabilities:
       drop: [ALL]
     readOnlyRootFilesystem: true
-  tokenAudience: istio-ca
+  tokenAudience: agentio-ca
   logging:
     level: info
     format: text
@@ -68,10 +68,10 @@ agentiod:
   meshInternalTrafficPolicy: PEER_AWARE
   enableSNITrafficPolicy: false
   ca:
-    secretName: istio-ca-secret
+    secretName: agentio-ca-secret
     configMapName: ""
     leaseName: agentiod-ca-leader
-    trustBundleConfigMapName: istio-ca-root-cert
+    trustBundleConfigMapName: agentio-ca-root-cert
     trustBundleLeaseName: agentiod-trust-bundle-leader
   mitm:
     secretName: agentio-mitm-ca
@@ -124,6 +124,8 @@ cni:
   excludeNamespaces:
     - kube-system
     - agentio-system
+  # Existing Multus NetworkAttachmentDefinition, used by injection with the multus provider.
+  networkName: default/agentio-cni
   dnsCapture: true
   ipv6: true
   reconcileIptablesOnStartup: true
@@ -180,10 +182,10 @@ ztunnel:
     create: true
     name: ""
     annotations: {}
-  tokenAudience: istio-ca
+  tokenAudience: agentio-ca
   trustBundle:
     useClusterTrustBundle: false
-    clusterTrustBundleName: istio.io:istiod-ca:root-cert
+    clusterTrustBundleName: agentio-ca-root-cert
   enableFirewallRules: true
   logLevel: info
   logAsJson: true
@@ -233,7 +235,7 @@ egressGateway:
     name: proxyv2
     tag: ""
     digest: ""
-  tokenAudience: istio-ca
+  tokenAudience: agentio-ca
   replicaCount: 2
   serviceAccount:
     create: true

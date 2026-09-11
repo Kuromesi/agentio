@@ -35,6 +35,7 @@ data:
       caAddress: {{ printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain | quote }}
       xdsAddress: {{ printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain | quote }}
       trustBundleName: {{ .Values.agentiod.ca.trustBundleConfigMapName | quote }}
+      clusterTrustBundleName: {{ .Values.ztunnel.trustBundle.clusterTrustBundleName | quote }}
       nativeNftables: false
       logging:
         level: default:info
@@ -91,6 +92,7 @@ data:
       cni:
         enabled: {{ eq .Values.profile "ambient" }}
         provider: default
+        networkName: {{ .Values.cni.networkName | quote }}
     sidecarInjectorWebhook:
       rewriteAppHTTPProbe: true
 {{- if eq .Values.profile "sidecar" }}

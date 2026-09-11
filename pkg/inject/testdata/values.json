@@ -9,7 +9,7 @@
     },
     "caAddress": "agentiod.agentio-system.svc.cluster.local:15012",
     "xdsAddress": "agentiod.agentio-system.svc.cluster.local:15012",
-    "trustBundleName": "istio-ca-root-cert",
+    "trustBundleName": "agentio-ca-root-cert",
     "caName": "",
     "imagePullPolicy": "",
     "imagePullSecrets": [],
@@ -61,7 +61,7 @@
     },
     "sds": {
       "token": {
-        "aud": "istio-ca"
+        "aud": "agentio-ca"
       }
     }
   },
