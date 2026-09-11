@@ -2,7 +2,7 @@
 
 Agentio's gateway deployer supports the `agentio-agentgateway` GatewayClass. It provisions a ServiceAccount, Deployment, and Service, and runs agentgateway with a native YAML configuration file supplied through a ConfigMap.
 
-This class currently provides deployment management only. It does not translate HTTPRoute, SecurityProfile, EnvoyFilter, or Agentio egress configuration into agentgateway configuration. Sandbox identity and dynamic SNI policies are not supported by this path. Existing `agentio-egress` Gateways continue to use Envoy.
+This class provides deployment management and opt-in workload certificate bootstrap through Agentiod CA. It does not translate HTTPRoute, SecurityProfile, EnvoyFilter, or Agentio egress configuration into agentgateway configuration. Sandbox identity and dynamic SNI policies are not supported by this path. Existing `agentio-egress` Gateways continue to use Envoy.
 
 ## Enable the deployer
 
@@ -69,11 +69,83 @@ spec:
 
 The Gateway listeners determine the Service ports; the ConfigMap determines what the proxy actually listens on and how it routes. Keep them consistent. Keep readiness on port 15021 at `/healthz/ready` and metrics on port 15020 at `/metrics`, as expected by the deployment template.
 
-To configure an egress gateway, replace the example body with native agentgateway CONNECT/internal-listener configuration and corresponding Gateway ports. The deployment controller does not automatically connect application or ztunnel traffic to this gateway.
+To configure an egress gateway, replace the example body with the native HBONE/internal-listener configuration below and corresponding Gateway ports. The deployment controller does not automatically connect application or ztunnel traffic to this gateway.
 
 If Helm should also create the Gateway, set `egressGateway.gatewayAPI.create: true`, `gatewayClassName: agentio-agentgateway`, and `infrastructure.parametersRef` under `egressGateway.gatewayAPI`. The referenced ConfigMap remains operator-owned.
 
-## Mount certificates
+## Obtain HBONE certificates from Agentiod
+
+Enable the native Istio-compatible CA client for agentgateway deployments:
+
+```yaml
+egressGateway:
+  mode: gatewayAPI
+  agentgateway:
+    ca:
+      enabled: true
+```
+
+This option defaults to `false` to preserve existing file/Secret deployments. It applies to all `agentio-agentgateway` Gateways managed by this installation. It enables certificate bootstrap only; routes still come from the referenced ConfigMap and no agentgateway xDS connection is configured.
+
+Following Istio 1.31's bootstrap, the deployer supplies:
+
+- `CA_ADDRESS`: the HTTPS Agentiod endpoint from the injector's `global.caAddress`. A scheme-less address is normalized to HTTPS; plaintext endpoints are rejected.
+- `NAMESPACE` and `SERVICE_ACCOUNT`: downward API values from the Gateway Pod. The certificate identity is `spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>`, including any configured Gateway ServiceAccount override.
+- `TRUST_DOMAIN` and `CLUSTER_ID`: the configured mesh identity values.
+- `CA_AUTH_TOKEN`: a projected, 12-hour ServiceAccount token at `/var/run/secrets/tokens/istio-token`. Its audience uses `agentiod.tokenAudience`, as distributed through the injector values. Kubernetes refreshes the token and the native client rereads it when requesting certificates.
+- `CA_ROOT_CA`: the public trust bundle at `/var/run/secrets/istio/root-cert.pem`, from `agentiod.ca.trustBundleConfigMapName` in the Gateway namespace. Agentiod's trust-bundle distributor creates and updates this ConfigMap. The directory mount allows projected updates.
+
+The proxy generates its private key and CSR in memory and calls Agentiod's `IstioCertificateService/CreateCertificate`. Agentiod authenticates the token with TokenReview and restricts the CSR to that ServiceAccount's identity. The proxy does not read the CA Secret, mount a CA private key, create a leaf Secret, or need node impersonation privileges. Default Kubernetes token automount stays disabled.
+
+Configure the HBONE bind in the native ConfigMap as follows, and expose port 15008 with `protocol: HBONE` in the Gateway listeners:
+
+```yaml
+binds:
+- port: 15008
+  tunnelProtocol: hboneGateway
+  listeners:
+  - protocol: HBONE
+- port: 80
+  mode: internal
+  protocol: AUTO
+  listeners: &egress-listeners
+  - protocol: HTTP
+    routes:
+    - backends:
+      - dynamic:
+          target: 'string(destination.address) + ":" + string(destination.port)'
+  - protocol: TLS
+    hostname: "*"
+    tcpRoutes:
+    - backends:
+      - dynamic:
+          target: 'string(destination.address) + ":" + string(destination.port)'
+  - protocol: TCP
+    tcpRoutes:
+    - backends:
+      - dynamic:
+          target: 'string(destination.address) + ":" + string(destination.port)'
+- port: 443
+  mode: internal
+  protocol: AUTO
+  listeners: *egress-listeners
+```
+
+`hboneGateway` performs mTLS with the native workload certificate, verifies the client's trust domain, and dispatches the CONNECT destination to an internal bind. It requires an IP:port CONNECT authority and an explicit internal bind for each destination port in v1.5.0; it does not match a port-less wildcard internal bind. The example permits ports 80 and 443. Add internal binds for other required ports; internal binds do not open Pod sockets or require corresponding Service ports. It does not expose the generic `connect` tunnel's `source.connectHeaders`; configurations relying on an outer Host override or synthetic destination addresses need a separate routing integration. This example forwards to the original destination IP and passes inner HTTPS through unchanged. Scope permitted destinations using your egress configuration and native gateway policies.
+
+Use `hboneGateway` rather than keeping a `connect` + `tls.cert/key` bind: enabling the CA client alone does not replace certificates on static TLS listeners.
+
+### Renewal and operational boundaries
+
+The v1.5.0 native client requests a 24-hour certificate; Agentiod caps this at its configured workload certificate lifetime. The client checks every 30 seconds and renews at the certificate's midpoint. New connections use the updated certificate without a Deployment rollout; existing connections retain their negotiated TLS session.
+
+The following upstream behaviors matter when operating this mode:
+
+- A renewal failure replaces the cached certificate state with an error, even if the previous certificate has not expired. New HBONE connections fail until a retry succeeds. v1.5.0 does not provide last-valid-certificate fallback or jittered backoff.
+- `/healthz/ready` and Gateway `Programmed` do not verify certificate availability. Monitor CA fetch/renewal failures and run an authenticated HBONE probe; a ready Pod alone is insufficient proof of mesh connectivity.
+- The CA connection reads its root file for each certificate request, while peer trust roots come from the last successful CA response. Root replacement must keep old and new roots trusted throughout distribution and workload renewal. This change does not implement or validate a cross-root migration protocol.
+
+## Mount additional or externally managed certificates
 
 For configurations requiring TLS certificates or a MITM CA, reference a Secret in the Gateway namespace:
 
@@ -85,7 +157,7 @@ metadata:
 
 The Secret's keys are mounted as files beneath `/etc/agentgateway/certs`. Use those paths in `config.yaml`. The deployer does not issue certificates, read Secret contents, or manage Secret rotation. After rotating certificates, explicitly roll the Deployment to ensure the process reloads them. Clients must trust the appropriate server/MITM CA; upstream TLS verification is configured in the native file.
 
-File mode does not connect to Agentiod's xDS/CA endpoints or mount Kubernetes service-account tokens. The proxy runs as a non-root user with a read-only root filesystem.
+External Secret mounts can coexist with native CA mode, for example for a separate HTTPS listener or MITM CA. When `ca.enabled` is false, the generated bootstrap has no CA connection or projected ServiceAccount token. The proxy runs as a non-root user with a read-only root filesystem.
 
 ## Updates and status
 
@@ -106,4 +178,11 @@ The class/template structure and the proxy security context and probes are adapt
 
 ## End-to-end coverage
 
-The [standard agentgateway e2e suite](../../test/e2e/suites/agentgateway/README.md) installs the full production chart and exercises this controller with real ztunnel mTLS CONNECT traffic. It shares outbound protocol, ext-proc header mutation, and port-selection checks with the Envoy suite. The suite also covers 10 deployment/configuration lifecycle scenarios. Certificate issuance in this suite is a test fixture; it does not add a production certificate controller.
+The [standard agentgateway e2e suite](../../test/e2e/suites/agentgateway/README.md) installs the full production chart and exercises this controller with real ztunnel mTLS CONNECT traffic. It shares outbound protocol, ext-proc header mutation, and port-selection checks with the Envoy suite. The suite also covers 10 deployment/configuration lifecycle scenarios. The suite enables native CA mode: the Gateway Pod obtains its certificate from Agentiod using its own projected token. The fixture does not read CA private keys or issue gateway leaf Secrets.
+
+A separate local interoperability test runs a real v1.5.0 binary against Agentiod CA over TLS, with only the Kubernetes TokenReview API faked. It checks SPIFFE identity, mTLS CONNECT forwarding, refusal of unauthenticated clients, token refresh, certificate renewal without restart, and renewal failure/recovery:
+
+```bash
+AGENTIO_AGENTGATEWAY_BINARY=/absolute/path/to/agentgateway-v1.5.0 \
+  go test ./pkg/security/ca -run TestAgentgatewayNativeCACertificateRotation -count=1 -v -timeout=3m
+```

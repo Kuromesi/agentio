@@ -210,6 +210,9 @@ func TestAgentgatewayChartValues(t *testing.T) {
 	if gw["agentgateway"].(map[string]any)["image"] != config.GatewayImage {
 		t.Fatalf("native image missing: %v", gw)
 	}
+	if gw["agentgateway"].(map[string]any)["ca"].(map[string]any)["enabled"] != true {
+		t.Fatal("agentgateway must obtain its own workload certificate")
+	}
 	if values["agentiod"].(map[string]any)["enableSNITrafficPolicy"] != false {
 		t.Fatal("dynamic SNI is outside the native suite's scope")
 	}

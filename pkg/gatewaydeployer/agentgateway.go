@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -91,4 +92,27 @@ func (d *DeploymentController) setGatewayConfigError(gw gatewayv1.Gateway, confi
 		return err
 	}
 	return d.clients.Patcher(gatewayGVR, gw.Name, gw.Namespace, data, "status")
+}
+
+// AgentgatewayCAAddress resolves CA bootstrap on demand. Using a template data
+// method keeps this shared template parseable by the sidecar injector as well.
+func (in derivedInput) AgentgatewayCAAddress() (string, error) {
+	return agentgatewayCAAddress(nestedString(in.Values, "global", "caAddress"))
+}
+
+// agentgatewayCAAddress follows Istio's CA_ADDRESS bootstrap convention while
+// requiring TLS for the bearer credential sent to Agentiod.
+func agentgatewayCAAddress(address string) (string, error) {
+	if address == "" {
+		return "", fmt.Errorf("agentgateway CA requires global.caAddress")
+	}
+	if !strings.Contains(address, "://") {
+		address = "https://" + address
+	}
+	u, err := url.Parse(address)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("agentgateway CA address must be an HTTPS endpoint without credentials, query or path")
+	}
+	return strings.TrimSuffix(address, "/"), nil
 }
