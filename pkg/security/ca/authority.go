@@ -87,7 +87,7 @@ type Authority struct {
 // applyAuthorityDefaults fills in unset option defaults.
 func applyAuthorityDefaults(options *AuthorityOptions) {
 	if options.SecretName == "" {
-		options.SecretName = "istio-ca-secret"
+		options.SecretName = "agentio-ca-secret"
 	}
 	if options.ConfigMapName == "" {
 		options.ConfigMapName = "agentio-ca-certs"

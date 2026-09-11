@@ -150,7 +150,7 @@ func setValidFeatures(t *testing.T) {
 	test.SetForTest(t, &MITMSignConcurrency, 1)
 	test.SetForTest(t, &WorkloadCertLifetime, 2*time.Hour)
 	test.SetForTest(t, &WorkloadCertRenewBefore, time.Hour)
-	test.SetForTest(t, &TokenAudience, "istio-ca")
+	test.SetForTest(t, &TokenAudience, "agentio-ca")
 	test.SetForTest(t, &EnableGatewayDeployer, false)
 	test.SetForTest(t, &GatewayLeaseName, "agentiod-gateway-deployer-leader")
 }

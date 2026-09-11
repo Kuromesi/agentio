@@ -212,13 +212,13 @@ func TestInjectZtunnelTemplate(t *testing.T) {
 		volumes[v.Name] = v
 	}
 	trustVolume, ok := volumes["agentiod-ca-cert"]
-	if !ok || trustVolume.ConfigMap == nil || trustVolume.ConfigMap.Name != "istio-ca-root-cert" {
-		t.Fatalf("agentiod-ca-cert volume = %+v, want ConfigMap istio-ca-root-cert", trustVolume)
+	if !ok || trustVolume.ConfigMap == nil || trustVolume.ConfigMap.Name != "agentio-ca-root-cert" {
+		t.Fatalf("agentiod-ca-cert volume = %+v, want ConfigMap agentio-ca-root-cert", trustVolume)
 	}
 	tokenVolume, ok := volumes["agentio-token"]
 	if !ok || tokenVolume.Projected == nil ||
-		tokenVolume.Projected.Sources[0].ServiceAccountToken.Audience != "istio-ca" {
-		t.Fatalf("agentio-token volume = %+v, want projected token with audience istio-ca", tokenVolume)
+		tokenVolume.Projected.Sources[0].ServiceAccountToken.Audience != "agentio-ca" {
+		t.Fatalf("agentio-token volume = %+v, want projected token with audience agentio-ca", tokenVolume)
 	}
 
 	status := patched.Annotations["sidecar.istio.io/status"]

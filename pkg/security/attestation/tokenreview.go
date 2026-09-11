@@ -72,7 +72,7 @@ func NewTokenReviewer(client kubernetes.Interface, trustDomain string, audiences
 		return nil, fmt.Errorf("trust domain is required")
 	}
 	if len(audiences) == 0 {
-		audiences = []string{"istio-ca"}
+		audiences = []string{"agentio-ca"}
 	}
 	return &TokenReviewer{
 		client:      client,

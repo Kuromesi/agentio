@@ -24,7 +24,7 @@ import (
 var (
 	TokenAudience = env.Register(
 		"AGENTIO_TOKEN_AUDIENCE",
-		"istio-ca",
+		"agentio-ca",
 		"Audience a client token must carry to be accepted.",
 	).Get()
 	ServiceName = env.Register(

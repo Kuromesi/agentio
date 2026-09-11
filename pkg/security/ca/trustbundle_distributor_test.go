@@ -74,7 +74,7 @@ func TestTrustBundleDistributor(t *testing.T) {
 		}
 	}
 
-	const configMapName = "istio-ca-root-cert"
+	const configMapName = "agentio-ca-root-cert"
 	expectedData := map[string]string{trustBundleConfigMapKey: "caBundle"}
 	createDistributorNamespace(t, coreClient, "foo")
 	expectDistributedConfigMap(t, coreClient, "foo", configMapName, expectedData)

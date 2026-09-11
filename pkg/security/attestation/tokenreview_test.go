@@ -56,7 +56,7 @@ func newCountingReviewer(t *testing.T, authenticate func(token string) authentic
 		counter.mu.Unlock()
 		return true, &authenticationv1.TokenReview{Status: authenticate(review.Spec.Token)}, nil
 	})
-	reviewer, err := NewTokenReviewer(client, "cluster.local", []string{"istio-ca"})
+	reviewer, err := NewTokenReviewer(client, "cluster.local", []string{"agentio-ca"})
 	if err != nil {
 		t.Fatal(err)
 	}

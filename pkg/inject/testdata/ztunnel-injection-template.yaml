@@ -50,7 +50,7 @@ metadata:
     {{- end }}
 {{- if .Values.pilot.cni.enabled }}
     {{- if eq .Values.pilot.cni.provider "multus" }}
-    k8s.v1.cni.cncf.io/networks : '{{ appendMultusNetwork (index .ObjectMeta.Annotations `k8s.v1.cni.cncf.io/networks`) `default/istio-cni` }}',
+    k8s.v1.cni.cncf.io/networks : '{{ appendMultusNetwork (index .ObjectMeta.Annotations `k8s.v1.cni.cncf.io/networks`) (.Values.pilot.cni.networkName | default "default/agentio-cni") }}',
     {{- end }}
     {{ with annotation .ObjectMeta `traffic.sidecar.istio.io/includeOutboundIPRanges` .Values.global.proxy.includeIPRanges }}traffic.sidecar.istio.io/includeOutboundIPRanges: "{{.}}",{{ end }}
     {{ with annotation .ObjectMeta `traffic.sidecar.istio.io/excludeOutboundIPRanges` .Values.global.proxy.excludeIPRanges }}traffic.sidecar.istio.io/excludeOutboundIPRanges: "{{.}}",{{ end }}
@@ -331,17 +331,17 @@ spec:
       - serviceAccountToken:
           path: istio-token
           expirationSeconds: 43200
-          audience: istio-ca
+          audience: agentio-ca
   - name: agentiod-ca-cert
     {{- if eq (.Values.pilot.env).ENABLE_CLUSTER_TRUST_BUNDLE_API true }}
     projected:
       sources:
       - clusterTrustBundle:
-          name: istio.io:istiod-ca:{{ .Values.trustBundleName | default "root-cert" }}
+          name: {{ .Values.global.clusterTrustBundleName | default "agentio-ca-root-cert" }}
           path: root-cert.pem
     {{- else }}
     configMap:
-      name: {{ .Values.global.trustBundleName | default "istio-ca-root-cert" }}
+      name: {{ .Values.global.trustBundleName | default "agentio-ca-root-cert" }}
     {{- end }}
   # pprof needs a writable /tmp, and we don't have that thanks to `readOnlyRootFilesystem: true`, so mount one
   - name: tmp

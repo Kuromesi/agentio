@@ -77,7 +77,7 @@ func NewTrustBundleDistributor(client kube.Client, authority *Authority, options
 		return nil, fmt.Errorf("trust bundle distributor namespace is required")
 	}
 	if options.ConfigMapName == "" {
-		options.ConfigMapName = "istio-ca-root-cert"
+		options.ConfigMapName = "agentio-ca-root-cert"
 	}
 	if options.LeaseName == "" {
 		options.LeaseName = "agentiod-trust-bundle-leader"

@@ -630,7 +630,7 @@
                       "timeout": "20s"
                     }
                   },
-                  "server_name": "istio-envoy",
+                  "server_name": "agentio-envoy",
                   "stream_idle_timeout": "0s",
                   "use_remote_address": false,
                   "upgrade_configs": [
@@ -1076,7 +1076,7 @@
                   "http2_protocol_options": {
                     "allow_connect": true
                   },
-                  "server_name": "istio-envoy",
+                  "server_name": "agentio-envoy",
                   "scheme_header_transformation": {
                     "scheme_to_overwrite": "https"
                   },
@@ -1276,7 +1276,7 @@
                   "http2_protocol_options": {
                     "allow_connect": true
                   },
-                  "server_name": "istio-envoy",
+                  "server_name": "agentio-envoy",
                   "stream_idle_timeout": "180s",
                   "use_remote_address": false,
                   "proxy_100_continue": true,

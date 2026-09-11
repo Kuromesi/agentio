@@ -295,7 +295,7 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 
 	for _, name := range []string{MainInternal, MainForward} {
 		hcm := findHCM(t, listeners[name])
-		if hcm.GetServerName() != "istio-envoy" || !hcm.Proxy_100Continue {
+		if hcm.GetServerName() != "agentio-envoy" || !hcm.Proxy_100Continue {
 			t.Errorf("listener %s HCM server_name/proxy_100_continue = %q/%v", name, hcm.GetServerName(), hcm.Proxy_100Continue)
 		}
 		if len(hcm.GetUpgradeConfigs()) != 1 || hcm.GetUpgradeConfigs()[0].GetUpgradeType() != "websocket" {

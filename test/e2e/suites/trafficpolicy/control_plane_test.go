@@ -64,7 +64,7 @@ func TestControlPlaneConfigDebug(t *testing.T) {
 		token, err := environment.Cluster.Kube.CoreV1().ServiceAccounts(resolvedAgentioConfig.Namespace).CreateToken(
 			ctx,
 			"config-debug-reader",
-			&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{Audiences: []string{"istio-ca"}}},
+			&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{Audiences: []string{"agentio-ca"}}},
 			metav1.CreateOptions{},
 		)
 		if err != nil {
