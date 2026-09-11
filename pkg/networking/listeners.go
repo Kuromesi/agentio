@@ -130,14 +130,22 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 	}
 	internalChainMatcher := b.protocolMatcher(false)
 	if features.EnableSNITrafficPolicy {
+		denyProxy := &tcpproxyv3.TcpProxy{
+			StatPrefix:       sniDenyChain,
+			ClusterSpecifier: &tcpproxyv3.TcpProxy_Cluster{Cluster: BlackHoleCluster},
+		}
+		// A policy denial matched a chain, so the listener's NR-only log cannot
+		// record it. Honor the same providers and filters as application TCP.
+		if config.telemetry != nil {
+			for _, accessLog := range config.telemetry.TCPAccessLogs {
+				denyProxy.AccessLog = append(denyProxy.AccessLog, proto.Clone(accessLog).(*accesslogv3.AccessLog))
+			}
+		}
 		internalChains = append(internalChains,
 			b.buildTLSTerminateChain(connectionPool),
 			&listenerv3.FilterChain{
-				Name: sniDenyChain,
-				Filters: []*listenerv3.Filter{b.networkFilter("envoy.filters.network.tcp_proxy", &tcpproxyv3.TcpProxy{
-					StatPrefix:       sniDenyChain,
-					ClusterSpecifier: &tcpproxyv3.TcpProxy_Cluster{Cluster: BlackHoleCluster},
-				})},
+				Name:    sniDenyChain,
+				Filters: []*listenerv3.Filter{b.networkFilter("envoy.filters.network.tcp_proxy", denyProxy)},
 			},
 		)
 		internalChainMatcher = b.sniTrafficPolicyMatcher(config.gateway.GetTlsTermination().GetExcludeHosts())

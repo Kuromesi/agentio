@@ -336,6 +336,11 @@ func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T)
 	}
 	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
 
+	for name, want := range map[string]string{MainInternal: "", MainForward: "https"} {
+		if got := findHCM(t, listeners[name]).GetSchemeHeaderTransformation().GetSchemeToOverwrite(); got != want {
+			t.Errorf("%s scheme override = %q, want %q", name, got, want)
+		}
+	}
 	connect := findHCM(t, listeners[ConnectTerminate])
 	if slices.Contains(httpFilterNames(connect), "istio.stats") {
 		t.Fatalf("CONNECT Telemetry filters = %v", httpFilterNames(connect))
@@ -761,5 +766,70 @@ func TestBuildRejectsRelativeGatewayRootCAPath(t *testing.T) {
 	})
 	if err == nil || err.Error() != "gateway root CA path must be absolute" {
 		t.Fatalf("Build() error = %v, want gateway root CA path must be absolute", err)
+	}
+}
+
+func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
+	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
+	expression := "connection.requested_server_name != 'skip.example.com'"
+	for _, tt := range []struct {
+		name     string
+		disabled bool
+		filter   *string
+		want     int
+	}{
+		{name: "default", want: 1},
+		{name: "filtered", filter: &expression, want: 1},
+		{name: "disabled", disabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var policies []model.Telemetry
+			if tt.disabled || tt.filter != nil {
+				policy, err := model.NewTelemetry(model.TelemetryMetadata{
+					Namespace: "agentio-system", Name: "logs", Source: "agentio-system/logs",
+				}, []string{"agentio-system/egress"}, nil, nil, []model.TelemetryAccessLogging{{
+					Mode: model.TelemetryModeServer, Disabled: &tt.disabled, Filter: tt.filter,
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				policies = append(policies, policy)
+			}
+			resources, err := Build(Inputs{
+				DiscoveryAddress: "agentiod.agentio-system.svc:15012", TrustDomain: "cluster.local",
+				Gateway: testGateway(nil), TelemetryRootNamespace: "agentio-system", Telemetry: policies,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			chain := findFilterChain(t, listeners[MainInternal], sniDenyChain)
+			deny := &tcpproxyv3.TcpProxy{}
+			if err := chain.GetFilters()[0].GetTypedConfig().UnmarshalTo(deny); err != nil {
+				t.Fatal(err)
+			}
+			if chain.GetTransportSocket() != nil || deny.GetCluster() != BlackHoleCluster {
+				t.Fatal("denial must remain a raw black-hole connection")
+			}
+			if len(deny.GetAccessLog()) != tt.want {
+				t.Fatalf("deny logs = %d, want %d", len(deny.GetAccessLog()), tt.want)
+			}
+			if tt.want == 0 {
+				return
+			}
+			if tt.filter == nil {
+				if deny.AccessLog[0].GetFilter() != nil {
+					t.Fatal("default deny log must not be restricted to NR")
+				}
+			} else {
+				filter := &celv3.ExpressionFilter{}
+				if err := deny.AccessLog[0].GetFilter().GetExtensionFilter().GetTypedConfig().UnmarshalTo(filter); err != nil {
+					t.Fatal(err)
+				}
+				if filter.GetExpression() != expression {
+					t.Fatalf("deny filter = %q, want %q", filter.GetExpression(), expression)
+				}
+			}
+		})
 	}
 }
