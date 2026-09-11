@@ -83,15 +83,12 @@ func authorizationVisibleForScope(
 		scopeQuery.Namespace = authorization.Namespace
 		return resources.HasWorkload(model.AddressType, scopeQuery)
 	}
-	for _, name := range []string{resource.Key.Name, resource.XDSName} {
-		if name == "" {
-			continue
-		}
-		query := scopeQuery
-		query.AuthorizationReference = name
-		if resources.HasWorkload(model.AddressType, query) {
-			return true
-		}
+	scopeQuery.AuthorizationReference = resource.Key.Name
+	if resource.Key.Name != "" && resources.HasWorkload(model.AddressType, scopeQuery) {
+		return true
 	}
-	return false
+	// Canonical and wire names often coincide; avoid repeating the same query.
+	scopeQuery.AuthorizationReference = resource.XDSName
+	return resource.XDSName != "" && resource.XDSName != resource.Key.Name &&
+		resources.HasWorkload(model.AddressType, scopeQuery)
 }

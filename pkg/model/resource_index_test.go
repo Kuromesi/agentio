@@ -15,6 +15,7 @@
 package model
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -163,4 +164,68 @@ func assertLookupNames(t *testing.T, resources []Resource, want ...string) {
 			t.Fatalf("lookup names = %v, want %v", got, want)
 		}
 	}
+}
+
+// A singleton posting is only a candidate: every remaining predicate, including
+// invalid predicates after the UID, must still be checked before returning it.
+func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
+	raw := testWorkloadResource(t, "canonical", "value", "uid-a", "node-a", []string{"demo/service"}, []string{"demo/gateway"})
+	raw.Facts.Workload.SourceUID = "source-a"
+	raw.Facts.Workload.AuthorizationRefs = []string{"demo/policy"}
+	snapshot, err := NewResourceSet([]Resource{raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := testPrincipal()
+	matching := WorkloadQuery{WorkloadUID: "uid-a", SourceUID: "source-a", NodeName: "node-a", Principal: &principal,
+		Namespace: "demo", ServiceKey: "demo/service", GatewayReference: "demo/gateway", AuthorizationReference: "demo/policy", WorkloadPoliciesOnly: true}
+	check := func(t *testing.T, query WorkloadQuery, want bool) {
+		t.Helper()
+		if got := snapshot.HasWorkload(AddressType, query); got != want {
+			t.Fatalf("HasWorkload = %v, want %v", got, want)
+		}
+		results := snapshot.ListWorkloads(AddressType, query)
+		if (len(results) > 0) != want || (want && (len(results) != 1 || results[0].Key.Name != "canonical")) {
+			t.Fatalf("ListWorkloads = %#v, want match=%v", results, want)
+		}
+	}
+	check(t, matching, true)
+	for _, field := range []string{"source", "node", "namespace", "service", "gateway", "authorization", "principal"} {
+		for _, invalid := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/invalid=%v", field, invalid), func(t *testing.T) {
+				query := matching
+				value := "unrelated"
+				if invalid {
+					value = " \t "
+				}
+				switch field {
+				case "source":
+					query.SourceUID = value
+				case "node":
+					query.NodeName = value
+				case "namespace":
+					query.Namespace = value
+				case "service":
+					query.ServiceKey = value
+				case "gateway":
+					query.GatewayReference = value
+				case "authorization":
+					query.AuthorizationReference = value
+				case "principal":
+					other := principal
+					other.ServiceAccount.ServiceAccount = value
+					query.Principal = &other
+				}
+				check(t, query, false)
+			})
+		}
+	}
+	raw.Facts.Workload.SandboxManaged = true
+	snapshot, err = NewResourceSet([]Resource{raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, matching, false)
+	matching.WorkloadPoliciesOnly = false
+	check(t, matching, true)
 }

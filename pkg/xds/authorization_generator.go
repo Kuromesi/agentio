@@ -119,19 +119,20 @@ func generateAuthorizationIncremental(request GenerationRequest) GeneratedDelta 
 		return GeneratedDelta{}
 	}
 	if !scopeChanged {
-		candidates := sets.NewWithLength[model.ResourceKey](len(authorizationChanges))
+		// These changes already contain the exact old/new resources and are unique
+		// by key. Diff them directly rather than allocating a candidate set and
+		// looking the same resources up again in both publications.
+		visible := func(snapshot model.ResourceSet, resource *model.Resource) bool {
+			return resource != nil && request.Subscription.allows(*resource) &&
+				authorizationVisibleForScope(request.Scope, snapshot, *resource)
+		}
+		var selected map[string]model.Resource
+		var removed sets.Set[string]
+		before, after := request.Update.Before(), request.Update.After()
 		for _, change := range authorizationChanges {
-			candidates.Insert(change.Key)
+			addResourceTransition(&selected, &removed, change.Old, change.New,
+				visible(before, change.Old), visible(after, change.New))
 		}
-		visible := func(snapshot model.ResourceSet) func(model.Resource) bool {
-			return func(resource model.Resource) bool {
-				return authorizationVisibleForScope(request.Scope, snapshot, resource) &&
-					request.Subscription.allows(resource)
-			}
-		}
-		selected, removed := diffCandidateTransition(candidates,
-			request.Update.Before().Get, request.Update.After().Get,
-			visible(request.Update.Before()), visible(request.Update.After()))
 		return newSortedDelta(selected, removed, false)
 	}
 	after := newAuthorizationVisibility(request.Scope, request.Update.After())

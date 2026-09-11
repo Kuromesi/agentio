@@ -127,49 +127,50 @@ func resourceFactKeys(resource Resource) []string {
 	return result
 }
 
-func workloadQueryFactKeys(query WorkloadQuery) ([]string, bool) {
-	keys := make([]string, 0, 7)
-	add := func(kind resourceFactKind, key string) bool {
-		if key == "" {
-			return true
-		}
-		if strings.TrimSpace(key) == "" {
-			return false
-		}
-		keys = append(keys, resourceFactIndexKey(kind, key))
-		return true
+// workloadQueryCandidates finds a smallest fact posting without building a
+// temporary slice of index keys. A singleton is already minimal; the caller
+// still checks every query predicate against that candidate's Workload facts.
+func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []string {
+	fields := [...]struct {
+		kind  resourceFactKind
+		value string
+	}{
+		{resourceFactWorkloadUID, query.WorkloadUID},
+		{resourceFactSourceUID, query.SourceUID},
+		{resourceFactAuthorizationReference, query.AuthorizationReference},
+		{resourceFactNode, query.NodeName},
+		{resourceFactNamespace, query.Namespace},
+		{resourceFactService, query.ServiceKey},
+		{resourceFactGatewayReference, query.GatewayReference},
 	}
-	if query.WorkloadPoliciesOnly {
-		add(resourceFactWorkloadPolicies, "enabled")
-	}
-	if !add(resourceFactWorkloadUID, query.WorkloadUID) ||
-		!add(resourceFactSourceUID, query.SourceUID) ||
-		!add(resourceFactNode, query.NodeName) ||
-		!add(resourceFactNamespace, query.Namespace) ||
-		!add(resourceFactService, query.ServiceKey) ||
-		!add(resourceFactGatewayReference, query.GatewayReference) ||
-		!add(resourceFactAuthorizationReference, query.AuthorizationReference) {
-		return nil, false
-	}
-	if query.Principal != nil {
-		if err := query.Principal.Validate(); err != nil {
-			return nil, false
-		}
-		keys = append(keys, resourceFactIndexKey(resourceFactPrincipal, query.Principal.String()))
-	}
-	return keys, len(keys) > 0
-}
-
-func smallestPosting(index *resourceLookupIndex, keys []string) []string {
-	var candidates []string
-	for _, key := range keys {
-		names := lookupNames(index, key)
-		if len(names) == 0 {
+	// Validate all predicates before taking a shortcut. An invalid later field
+	// must still fail closed even if an earlier index has exactly one candidate.
+	for _, field := range fields {
+		if field.value != "" && strings.TrimSpace(field.value) == "" {
 			return nil
 		}
+	}
+	if query.Principal != nil && query.Principal.Validate() != nil {
+		return nil
+	}
+	var candidates []string
+	consider := func(kind resourceFactKind, value string) bool {
+		names := lookupNames(index, resourceFactIndexKey(kind, value))
 		if candidates == nil || len(names) < len(candidates) {
 			candidates = names
 		}
+		return len(names) <= 1
+	}
+	for _, field := range fields {
+		if field.value != "" && consider(field.kind, field.value) {
+			return candidates
+		}
+	}
+	if query.WorkloadPoliciesOnly && consider(resourceFactWorkloadPolicies, "enabled") {
+		return candidates
+	}
+	if query.Principal != nil {
+		consider(resourceFactPrincipal, query.Principal.String())
 	}
 	return candidates
 }

@@ -27,6 +27,9 @@ import (
 type pushConnection struct {
 	context context.Context
 	pushes  chan *scheduledPush
+	// Serialize enqueue operations for this stream while merges run outside
+	// the scheduler lock. Dispatch, completion, and cancellation never take it.
+	enqueueMu sync.Mutex
 }
 
 func newPushConnection(ctx context.Context) *pushConnection {
@@ -40,6 +43,9 @@ type scheduledPush struct {
 }
 
 type queuedUpdate struct {
+	// Distinguish queued work (including a zero Update) from an assigned
+	// connection that has received no later update.
+	present bool
 	Update  xdsstore.Update
 	Started time.Time
 }
@@ -48,14 +54,15 @@ type queuedUpdate struct {
 type PushScheduler struct {
 	mu sync.Mutex
 
-	// pending contains at most one merged update per queued connection. queue
-	// preserves the order in which distinct connections became pending.
+	// pending contains at most one entry per queued connection. enqueueMu
+	// prevents replacement during a merge. queue preserves the order in which
+	// distinct connections became pending.
 	pending map[*pushConnection]queuedUpdate
 	queue   []*pushConnection
 
-	// processing contains every assigned connection. A nil value means no later
+	// processing contains every assigned connection. A zero value means no later
 	// update has arrived; otherwise Done requeues the merged later update.
-	processing map[*pushConnection]*queuedUpdate
+	processing map[*pushConnection]queuedUpdate
 
 	cancellations map[*pushConnection]func() bool
 	slots         chan struct{}
@@ -70,7 +77,7 @@ func NewPushScheduler(concurrency int) *PushScheduler {
 	}
 	return &PushScheduler{
 		pending:       make(map[*pushConnection]queuedUpdate),
-		processing:    make(map[*pushConnection]*queuedUpdate),
+		processing:    make(map[*pushConnection]queuedUpdate),
 		cancellations: make(map[*pushConnection]func() bool),
 		slots:         make(chan struct{}, concurrency),
 		wake:          make(chan struct{}, 1),
@@ -81,37 +88,70 @@ func NewPushScheduler(concurrency int) *PushScheduler {
 // Enqueue adds a connection to the FIFO once and merges repeated updates into
 // either its pending work or the work accumulated while it is processing.
 func (s *PushScheduler) Enqueue(connection *pushConnection, update xdsstore.Update) {
+	s.enqueue(connection, update, xdsstore.Merge)
+}
+
+func (s *PushScheduler) enqueue(connection *pushConnection, update xdsstore.Update, merge func(xdsstore.Update, xdsstore.Update) xdsstore.Update) {
 	if connection == nil || connection.context.Err() != nil {
 		return
 	}
+	connection.enqueueMu.Lock()
+	defer connection.enqueueMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || connection.context.Err() != nil {
 		return
 	}
-	incoming := queuedUpdate{Update: update, Started: time.Now()}
+	started := time.Now()
 	if _, found := s.cancellations[connection]; !found {
 		s.cancellations[connection] = context.AfterFunc(connection.context, func() {
 			s.cancel(connection)
 		})
 	}
-	if later, found := s.processing[connection]; found {
-		if later == nil {
-			copy := incoming
-			s.processing[connection] = &copy
-		} else {
-			later.Update = xdsstore.Merge(later.Update, update)
+	for {
+		pending, processing := s.queuedLocked(connection)
+		if !pending.present {
+			incoming := queuedUpdate{present: true, Update: update, Started: started}
+			if processing {
+				s.processing[connection] = incoming
+			} else {
+				s.pending[connection] = incoming
+				s.queue = append(s.queue, connection)
+				s.signalLocked()
+			}
+			return
 		}
-		return
+
+		// Merge only reads immutable updates. Let other connections enqueue,
+		// dispatch and finish while its indexes are allocated and sorted.
+		s.mu.Unlock()
+		merged := queuedUpdate{present: true, Update: merge(pending.Update, update), Started: pending.Started}
+		s.mu.Lock()
+		if s.closing || connection.context.Err() != nil {
+			return
+		}
+		current, processing := s.queuedLocked(connection)
+		// Other Enqueue calls are excluded by enqueueMu. Next can only
+		// consume this entry; Done can only move it without replacing it.
+		// Cancellation and Close were checked above, so presence suffices
+		// to identify the entry we merged without allocating a pointer token.
+		if current.present {
+			if processing {
+				s.processing[connection] = merged
+			} else {
+				s.pending[connection] = merged
+			}
+			return
+		}
 	}
-	if pending, found := s.pending[connection]; found {
-		pending.Update = xdsstore.Merge(pending.Update, update)
-		s.pending[connection] = pending
-		return
+}
+
+// queuedLocked also follows an entry moved by Done from processing to pending.
+func (s *PushScheduler) queuedLocked(connection *pushConnection) (queuedUpdate, bool) {
+	if later, processing := s.processing[connection]; processing {
+		return later, true
 	}
-	s.pending[connection] = incoming
-	s.queue = append(s.queue, connection)
-	s.signalLocked()
+	return s.pending[connection], false
 }
 
 // Next waits for pending work and global capacity, acquiring capacity before it
@@ -150,7 +190,7 @@ func (s *PushScheduler) Next(ctx context.Context) *scheduledPush {
 			if connection.context.Err() != nil {
 				continue
 			}
-			s.processing[connection] = nil
+			s.processing[connection] = queuedUpdate{}
 			s.mu.Unlock()
 			return &scheduledPush{Connection: connection, Update: queued.Update, Started: queued.Started}
 		}
@@ -194,8 +234,8 @@ func (s *PushScheduler) Done(push *scheduledPush) {
 		return
 	}
 	delete(s.processing, push.Connection)
-	if later != nil && !s.closing && push.Connection.context.Err() == nil {
-		s.pending[push.Connection] = *later
+	if later.present && !s.closing && push.Connection.context.Err() == nil {
+		s.pending[push.Connection] = later
 		s.queue = append(s.queue, push.Connection)
 		s.signalLocked()
 	}
