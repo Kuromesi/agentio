@@ -331,7 +331,7 @@ spec:
       - serviceAccountToken:
           path: istio-token
           expirationSeconds: 43200
-          audience: agentio-ca
+          audience: {{ .Values.global.sds.token.aud | default "agentio-ca" | quote }}
   - name: agentiod-ca-cert
     {{- if eq (.Values.pilot.env).ENABLE_CLUSTER_TRUST_BUNDLE_API true }}
     projected:

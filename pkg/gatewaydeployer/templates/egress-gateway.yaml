@@ -288,7 +288,7 @@ spec:
         projected:
           sources:
           - serviceAccountToken:
-              audience: agentio-ca
+              audience: {{ .Values.global.sds.token.aud | default "agentio-ca" | quote }}
               expirationSeconds: 43200
               path: istio-token
       - name: agentiod-ca-cert

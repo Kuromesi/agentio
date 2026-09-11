@@ -209,7 +209,7 @@ spec:
         projected:
           sources:
           - serviceAccountToken:
-              audience: agentio-ca
+              audience: "agentio-ca"
               expirationSeconds: 43200
               path: istio-token
       - name: agentiod-ca-cert
