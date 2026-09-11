@@ -58,6 +58,9 @@ func decodeEgressGateway(content string) (*configv1.EgressGateway, error) {
 	if value.GetExtProc() != nil && strings.TrimSpace(value.GetExtProc().GetService()) == "" {
 		return nil, fmt.Errorf("ext_proc service must be non-empty when ext_proc is configured")
 	}
+	if err := model.ValidateUpstreamTLS(value.GetUpstreamTls()); err != nil {
+		return nil, err
+	}
 	normalized, err := model.NormalizeEgressGatewayServiceEntries(value)
 	if err != nil {
 		return nil, fmt.Errorf("egress gateway: %w", err)

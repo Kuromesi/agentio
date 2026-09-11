@@ -37,7 +37,7 @@ type suiteSetup struct {
 var trafficFixture harness.TrafficFixture
 
 func suiteSetupGraph(config agentiocomponent.Config) []suiteSetup {
-	trafficFixture = harness.TrafficFixture{}
+	// Building the setup plan must not reset fixtures already installed by TestMain.
 	return []suiteSetup{
 		{name: "agentio", setup: agentiocomponent.Setup(&agentioInstance, config)},
 		{name: "agentio-baseline", setup: harness.SetupBaseline(config.Namespace)},

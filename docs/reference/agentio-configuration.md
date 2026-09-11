@@ -13,7 +13,7 @@ The sources are applied in this order:
 | 1 | `agentio-config` | Contains chart-generated defaults plus the raw configuration under `agentiod.config.values`. |
 | 2 | `agentio-config-primary` | Optionally overrides the base configuration. |
 
-Both ConfigMaps are watched. A valid update is applied and distributed without restarting `agentiod`. If a layer cannot be parsed, Agentio logs a warning and retains the successfully applied lower-priority configuration for that reconciliation.
+Both ConfigMaps are watched. A valid update is applied and distributed without restarting `agentiod`. If a layer cannot be parsed or validated, Agentio logs a warning and retains the last successfully applied effective configuration.
 
 ## Merge behavior
 
@@ -179,6 +179,7 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `tlsTermination.includeHosts` | `string[]` | Empty | SNI host patterns selected for TLS termination. Wildcards such as `*.example.com` are supported. On-demand certificate issuance is authorized by gateway identity, not by this list. |
 | `tlsTermination.excludeHosts` | `string[]` | Empty | SNI host patterns forwarded without TLS termination. Wildcards are supported. |
 | `extProc` | `ExtProcProvider` | Inherit global | Per-gateway external-processing override. An explicitly empty provider disables it for this gateway. |
+| `upstreamTls` | `UpstreamTlsSettings` | TLS 1.2–1.3 and eight cipher suites | Per-gateway upstream TLS defaults and overrides; see below. |
 | `connectionPool` | `ConnectionPoolSettings` | See below | TCP and HTTP connection and route timeouts. |
 | `connectRateLimit` | `LocalRateLimitSettings` | Unset | Local token-bucket limit for new HTTP/2 CONNECT streams. |
 | `serviceEntries` | `EgressServiceEntry[]` | Empty | Static upstream endpoints that override DNS resolution for exact destination hosts at this gateway. |
@@ -213,6 +214,47 @@ agentiod:
 ```
 
 The Secret coordinates and gateway namespace must be consistent. See [MITM certificate environment variables](agentiod-environment-variables.md#on-demand-tls-certificates) for the complete signing settings.
+
+### Upstream TLS defaults
+
+When the sandbox egress gateway originates TLS to a destination or an HTTPS proxy, it explicitly allows TLS 1.2 through TLS 1.3. Its TLS 1.2 cipher list contains the six ECDHE AES-GCM and ChaCha20-Poly1305 suites, followed by `AES128-GCM-SHA256` and `AES256-GCM-SHA384` for older public servers without ECDHE support. Connections negotiating these two RSA suites do not provide forward secrecy. TLS 1.3 cipher suites are managed separately by Envoy.
+
+Upstream CA and hostname verification remain enabled, and the shared upstream TLS session cache remains disabled to prevent cross-host session reuse. These settings do not change downstream TLS termination or connections forwarded without termination.
+
+Override the upstream defaults per gateway with `upstreamTls`:
+
+```yaml
+agentiod:
+  config:
+    values:
+      egressGateways:
+      - name: agentio-egress
+        namespace: agentio-system
+        upstreamTls:
+          minProtocolVersion: TLSV1_2
+          maxProtocolVersion: TLSV1_3
+          cipherSuites:
+          - ECDHE-ECDSA-AES128-GCM-SHA256
+          - ECDHE-RSA-AES128-GCM-SHA256
+          - ECDHE-ECDSA-AES256-GCM-SHA384
+          - ECDHE-RSA-AES256-GCM-SHA384
+          - ECDHE-ECDSA-CHACHA20-POLY1305
+          - ECDHE-RSA-CHACHA20-POLY1305
+```
+
+This example removes RSA key-exchange suites. For a raw ConfigMap `data.config`, start at `egressGateways` without the Helm `agentiod.config.values` wrapper. Preserve the other gateway fields and gateway entries when replacing the list.
+
+| Field | Default | Behavior |
+| --- | --- | --- |
+| `minProtocolVersion` | `TLSV1_2` | Accepts `DEFAULT`, `TLSV1_2`, or `TLSV1_3`. |
+| `maxProtocolVersion` | `TLSV1_3` | Same values; cannot be below the effective minimum. |
+| `cipherSuites` | Eight suites described above | A non-empty list replaces the default list in order; omitted or empty lists restore defaults. Only affects TLS 1.2. |
+
+`DEFAULT` or an omitted version uses that field's default. Set only `maxProtocolVersion: TLSV1_2` for TLS 1.2 only, or only `minProtocolVersion: TLSV1_3` for TLS 1.3 only. Cipher names must be explicit Envoy/OpenSSL names recognized by the controller; unknown names, expressions such as `ALL`, and duplicates are rejected. Invalid settings reject the configuration layer and follow the fallback behavior described above.
+
+The override applies to both destination and HTTPS proxy TLS origination on the matching gateway. CA verification, hostname verification, and session cache behavior cannot be disabled through this API. Domain-specific TLS overrides are not currently supported; `tlsTermination.excludeHosts` selects TLS passthrough.
+
+Gateway API `parametersRef` ConfigMaps accept the same `upstreamTls` block in `data.config`, alongside `tlsTermination`, without an `egressGateways` wrapper or embedded gateway name and namespace. Invalid parameter updates retain the last successfully applied parameters.
 
 ### Connection pool and route settings
 

@@ -17,6 +17,7 @@ package networking
 import (
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -51,9 +52,9 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		b.buildInternalCluster(MainForward),
 		b.buildPassthroughCluster(),
 		buildBlackHoleCluster(),
-		b.buildDFPCluster(HTTPDynamicForwardProxy, true, false),
-		b.buildDFPCluster(TLSConnectOriginate, false, true),
-		b.buildTLSProxyOriginateCluster(),
+		b.buildDFPCluster(HTTPDynamicForwardProxy, true, false, nil),
+		b.buildDFPCluster(TLSConnectOriginate, false, true, config.gateway.GetUpstreamTls()),
+		b.buildTLSProxyOriginateCluster(config.gateway.GetUpstreamTls()),
 	}
 	if config.extProc != nil {
 		result = append(result, b.buildExtProcCluster(config.extProc))
@@ -119,7 +120,7 @@ func (b *resourceBuilder) buildPassthroughCluster() *clusterv3.Cluster {
 // buildTLSProxyOriginateCluster reconnects to the original HTTPS proxy while
 // request-scoped filter state supplies the outer SNI and SAN. The inner CONNECT
 // authority must never become the proxy certificate identity.
-func (b *resourceBuilder) buildTLSProxyOriginateCluster() *clusterv3.Cluster {
+func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.UpstreamTlsSettings) *clusterv3.Cluster {
 	cluster := b.buildPassthroughCluster()
 	cluster.Name = TLSProxyOriginate
 	cluster.AltStatName = delimitedStatsPrefix(TLSProxyOriginate)
@@ -138,7 +139,7 @@ func (b *resourceBuilder) buildTLSProxyOriginateCluster() *clusterv3.Cluster {
 	tlsConfig := b.pack(&tlsv3.UpstreamTlsContext{
 		MaxSessionKeys: wrapperspb.UInt32(0),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
+			TlsParams: upstreamTLSParameters(settings),
 			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
 				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
 			}},
@@ -162,7 +163,7 @@ func buildBlackHoleCluster() *clusterv3.Cluster {
 	}
 }
 
-func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateTLS bool) *clusterv3.Cluster {
+func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateTLS bool, settings *configv1.UpstreamTlsSettings) *clusterv3.Cluster {
 	typed := b.pack(&dfpclusterv3.ClusterConfig{
 		ClusterImplementationSpecifier: &dfpclusterv3.ClusterConfig_DnsCacheConfig{DnsCacheConfig: dnsCacheConfig()},
 		AllowInsecureClusterOptions:    allowInsecure,
@@ -201,7 +202,7 @@ func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateT
 	tlsConfig := b.pack(&tlsv3.UpstreamTlsContext{
 		MaxSessionKeys: wrapperspb.UInt32(0),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
+			TlsParams: upstreamTLSParameters(settings),
 			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
 				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
 			}},
@@ -304,4 +305,41 @@ func socketAddress(address string, port uint32) *corev3.Address {
 		Protocol:      corev3.SocketAddress_TCP,
 		PortSpecifier: &corev3.SocketAddress_PortValue{PortValue: port},
 	}}}
+}
+
+// upstreamTLSParameters explicitly enables TLS 1.3 for upstream clients.
+// Keep ECDHE suites first, with RSA-GCM for older public servers that do not
+// support ECDHE. RSA key exchange does not provide forward secrecy. This cipher
+// list applies only to TLS 1.2; Envoy manages TLS 1.3 cipher suites separately.
+func upstreamTLSParameters(settings *configv1.UpstreamTlsSettings) *tlsv3.TlsParameters {
+	params := &tlsv3.TlsParameters{
+		TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
+		TlsMaximumProtocolVersion: tlsv3.TlsParameters_TLSv1_3,
+		CipherSuites: []string{
+			"ECDHE-ECDSA-AES128-GCM-SHA256",
+			"ECDHE-RSA-AES128-GCM-SHA256",
+			"ECDHE-ECDSA-AES256-GCM-SHA384",
+			"ECDHE-RSA-AES256-GCM-SHA384",
+			"ECDHE-ECDSA-CHACHA20-POLY1305",
+			"ECDHE-RSA-CHACHA20-POLY1305",
+			"AES128-GCM-SHA256",
+			"AES256-GCM-SHA384",
+		},
+	}
+	switch settings.GetMinProtocolVersion() {
+	case configv1.UpstreamTlsSettings_TLSV1_2:
+		params.TlsMinimumProtocolVersion = tlsv3.TlsParameters_TLSv1_2
+	case configv1.UpstreamTlsSettings_TLSV1_3:
+		params.TlsMinimumProtocolVersion = tlsv3.TlsParameters_TLSv1_3
+	}
+	switch settings.GetMaxProtocolVersion() {
+	case configv1.UpstreamTlsSettings_TLSV1_2:
+		params.TlsMaximumProtocolVersion = tlsv3.TlsParameters_TLSv1_2
+	case configv1.UpstreamTlsSettings_TLSV1_3:
+		params.TlsMaximumProtocolVersion = tlsv3.TlsParameters_TLSv1_3
+	}
+	if len(settings.GetCipherSuites()) > 0 {
+		params.CipherSuites = slices.Clone(settings.GetCipherSuites())
+	}
+	return params
 }

@@ -15,6 +15,7 @@
 package kubernetes
 
 import (
+	"fmt"
 	"strings"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
@@ -106,6 +107,11 @@ func applyAgentioConfig(content string, base *configv1.AgentioConfig) (*configv1
 	}
 	if err := normalizeEgressServiceEntries(value.GetEgressGateways()); err != nil {
 		return nil, err
+	}
+	for i, gateway := range value.GetEgressGateways() {
+		if err := model.ValidateUpstreamTLS(gateway.GetUpstreamTls()); err != nil {
+			return nil, fmt.Errorf("egressGateways[%d].%w", i, err)
+		}
 	}
 	return value, nil
 }

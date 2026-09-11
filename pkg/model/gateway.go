@@ -74,6 +74,9 @@ func (g Gateway) ValidateForUse() error {
 	if g.Config.GetExtProc() != nil && strings.TrimSpace(g.Config.GetExtProc().GetService()) == "" {
 		return fmt.Errorf("gateway %s has an empty ext_proc provider", g.ResourceName())
 	}
+	if err := ValidateUpstreamTLS(g.Config.GetUpstreamTls()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
 	normalized, err := NormalizeEgressGatewayServiceEntries(g.Config)
 	if err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
