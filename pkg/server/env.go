@@ -15,28 +15,12 @@
 package server
 
 import (
-	"fmt"
 	"io"
-	"sort"
-	"strings"
 
-	"istio.io/istio/pkg/env"
+	"github.com/openkruise/agentio/pkg/envdoc"
 )
 
-// PrintEnvironment writes every registered variable, its default and its purpose.
-func PrintEnvironment(writer io.Writer) {
-	variables := env.VarDescriptions()
-	sort.Slice(variables, func(i, j int) bool { return variables[i].Name < variables[j].Name })
-	fmt.Fprintf(writer, "%-42s %-18s %s\n", "VARIABLE", "DEFAULT", "DESCRIPTION")
-	for _, variable := range variables {
-		if variable.Hidden {
-			continue
-		}
-		defaultValue := variable.DefaultValue
-		if defaultValue == "" {
-			defaultValue = "-"
-		}
-		fmt.Fprintf(writer, "%-42s %-18s %s\n", variable.Name, defaultValue,
-			strings.ReplaceAll(variable.Description, "\n", " "))
-	}
+// PrintEnvironment writes every visible registered variable, its default and its purpose.
+func PrintEnvironment(writer io.Writer) error {
+	return envdoc.Write(writer, "text", envdoc.Options{})
 }

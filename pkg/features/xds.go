@@ -59,13 +59,14 @@ var (
 	PushConcurrency = env.Register(
 		"AGENTIO_PUSH_CONCURRENCY",
 		defaultPushConcurrency(),
-		"Maximum number of client connections generating and sending pushed xDS responses concurrently.",
+		"Maximum number of client connections generating and sending pushed xDS responses concurrently. "+
+			"Defaults to min(15 + 5 * GOMAXPROCS, 100).",
 	).Get()
 	RequestRateLimit = effectiveRequestRateLimit(env.Register(
 		"AGENTIO_MAX_REQUESTS_PER_SECOND",
 		0.0,
 		"Maximum new xDS streams accepted per second across the process; does not throttle ACKs or server pushes. "+
-			"Zero automatically derives the limit from the available CPU count.",
+			"Zero automatically selects min(15 + 5 * GOMAXPROCS, 100).",
 	).Get())
 )
 
