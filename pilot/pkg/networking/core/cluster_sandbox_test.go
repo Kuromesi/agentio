@@ -15,6 +15,7 @@
 package core
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/util"
 	agentio "istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
+	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
 	v3 "istio.io/istio/pilot/pkg/xds/v3"
 	"istio.io/istio/pkg/security"
 	"istio.io/istio/pkg/wellknown"
@@ -40,7 +42,7 @@ func TestSandboxClusters_RegistersPlaintextHTTPDynamicForwardProxy(t *testing.T)
 	}}}
 
 	var got *cluster.Cluster
-	for _, c := range sandboxClusters(cb) {
+	for _, c := range sandboxClusters(cb, nil) {
 		if c.GetName() == "http_dynamic_forward_proxy" {
 			got = c
 			break
@@ -74,7 +76,7 @@ func TestSandboxClusters_TLSOriginationRequiresSecureClusterOptions(t *testing.T
 	}}}
 
 	var got *cluster.Cluster
-	for _, c := range sandboxClusters(cb) {
+	for _, c := range sandboxClusters(cb, nil) {
 		if c.GetName() == "tls_connect_originate" {
 			got = c
 			break
@@ -96,6 +98,7 @@ func TestSandboxClusters_TLSOriginationRequiresSecureClusterOptions(t *testing.T
 	if err := got.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
 		t.Fatalf("decode upstream TLS context: %v", err)
 	}
+	assertSandboxUpstreamTLSParameters(t, tlsContext.GetCommonTlsContext().GetTlsParams())
 	// An absent wrapper enables Envoy's default session cache; require explicit zero.
 	if keys := tlsContext.GetMaxSessionKeys(); keys == nil || keys.GetValue() != 0 {
 		t.Fatalf("max session keys = %v, want explicit zero to prevent cross-SNI session reuse", keys)
@@ -174,7 +177,7 @@ func TestSandboxClusters_TLSProxyOriginationUsesOriginalDestination(t *testing.T
 	}}}
 
 	var got *cluster.Cluster
-	for _, c := range sandboxClusters(cb) {
+	for _, c := range sandboxClusters(cb, nil) {
 		if c.GetName() == "tls_proxy_originate" {
 			got = c
 			break
@@ -214,6 +217,7 @@ func TestSandboxClusters_TLSProxyOriginationUsesOriginalDestination(t *testing.T
 	if err := got.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
 		t.Fatalf("decode upstream TLS context: %v", err)
 	}
+	assertSandboxUpstreamTLSParameters(t, tlsContext.GetCommonTlsContext().GetTlsParams())
 	// Proxy hostnames also share one TLS context; an absent wrapper enables the cache.
 	if keys := tlsContext.GetMaxSessionKeys(); keys == nil || keys.GetValue() != 0 {
 		t.Fatalf("max session keys = %v, want explicit zero to prevent cross-SNI session reuse", keys)
@@ -309,7 +313,7 @@ func TestSandboxClusters_SniTrafficPolicyDoesNotAddInternalCluster(t *testing.T)
 			Mesh: &meshconfig.MeshConfig{ConnectTimeout: durationpb.New(time.Second)},
 		}},
 	}
-	clusters := sandboxClusters(cb)
+	clusters := sandboxClusters(cb, nil)
 	if got, want := len(clusters), 5; got != want {
 		t.Fatalf("feature-enabled sandbox clusters = %d, want %d without a policy-only internal hop", got, want)
 	}
@@ -317,5 +321,88 @@ func TestSandboxClusters_SniTrafficPolicyDoesNotAddInternalCluster(t *testing.T)
 		if c.GetName() == "agentio-sni-tls-termination" {
 			t.Fatal("SNI policy must select the TLS termination chain directly, not an internal cluster")
 		}
+	}
+}
+
+func assertSandboxUpstreamTLSParameters(t *testing.T, params *tlsv3.TlsParameters) {
+	t.Helper()
+	if got := params.GetTlsMinimumProtocolVersion(); got != tlsv3.TlsParameters_TLSv1_2 {
+		t.Errorf("minimum TLS version = %v, want TLSv1_2", got)
+	}
+	if got := params.GetTlsMaximumProtocolVersion(); got != tlsv3.TlsParameters_TLSv1_3 {
+		t.Errorf("maximum TLS version = %v, want TLSv1_3", got)
+	}
+	want := []string{
+		"ECDHE-ECDSA-AES128-GCM-SHA256",
+		"ECDHE-RSA-AES128-GCM-SHA256",
+		"ECDHE-ECDSA-AES256-GCM-SHA384",
+		"ECDHE-RSA-AES256-GCM-SHA384",
+		"ECDHE-ECDSA-CHACHA20-POLY1305",
+		"ECDHE-RSA-CHACHA20-POLY1305",
+		"AES128-GCM-SHA256",
+		"AES256-GCM-SHA384",
+	}
+	if got := params.GetCipherSuites(); !slices.Equal(got, want) {
+		t.Errorf("upstream cipher suites = %v, want %v", got, want)
+	}
+}
+
+func TestSandboxClusters_UpstreamTLSPerGateway(t *testing.T) {
+	settings := &extensions.UpstreamTlsSettings{
+		MaxProtocolVersion: extensions.UpstreamTlsSettings_TLSV1_2,
+		CipherSuites:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+	}
+	push := &model.PushContext{
+		Mesh: &meshconfig.MeshConfig{ConnectTimeout: durationpb.New(time.Second)},
+		AgentioConfig: &model.AgentioConfig{AgentioConfig: &extensions.AgentioConfig{
+			EgressGateways: []*extensions.EgressGateway{{Name: "egress-gw", Namespace: "istio-system", UpstreamTls: settings}},
+		}},
+	}
+	cb := &ClusterBuilder{req: &model.PushRequest{Push: push}}
+	for _, tt := range []struct {
+		name    string
+		matched bool
+	}{{"matching gateway", true}, {"other gateway", false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			proxy := sandboxEgressNode()
+			if !tt.matched {
+				proxy.VerifiedIdentity.Namespace = "other"
+			}
+			count := 0
+			for _, c := range sandboxClusters(cb, proxy) {
+				if c.Name != tlsOriginateCluster && c.Name != tlsProxyOriginateCluster {
+					continue
+				}
+				count++
+				ctx := &tlsv3.UpstreamTlsContext{}
+				if err := c.GetTransportSocket().GetTypedConfig().UnmarshalTo(ctx); err != nil {
+					t.Fatal(err)
+				}
+				params := ctx.GetCommonTlsContext().GetTlsParams()
+				if !tt.matched {
+					assertSandboxUpstreamTLSParameters(t, params)
+					continue
+				}
+				if params.GetTlsMinimumProtocolVersion() != tlsv3.TlsParameters_TLSv1_2 || params.GetTlsMaximumProtocolVersion() != tlsv3.TlsParameters_TLSv1_2 {
+					t.Fatalf("unexpected TLS range: %v", params)
+				}
+				if !slices.Equal(params.GetCipherSuites(), settings.CipherSuites) {
+					t.Fatalf("cipher list was not replaced: %v", params)
+				}
+				if ctx.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename() != security.GetOSRootFilePath() || ctx.GetMaxSessionKeys() == nil || ctx.GetMaxSessionKeys().GetValue() != 0 {
+					t.Fatal("TLS security settings changed")
+				}
+			}
+			if count != 2 {
+				t.Fatalf("tested %d TLS clusters, want 2", count)
+			}
+		})
+	}
+	for _, settings := range []*extensions.UpstreamTlsSettings{nil, {}, {CipherSuites: []string{}}} {
+		assertSandboxUpstreamTLSParameters(t, sandboxUpstreamTLSParameters(settings))
+	}
+	params := sandboxUpstreamTLSParameters(&extensions.UpstreamTlsSettings{MinProtocolVersion: extensions.UpstreamTlsSettings_TLSV1_3})
+	if params.GetTlsMinimumProtocolVersion() != tlsv3.TlsParameters_TLSv1_3 || params.GetTlsMaximumProtocolVersion() != tlsv3.TlsParameters_TLSv1_3 {
+		t.Fatalf("TLS 1.3-only settings: %v", params)
 	}
 }

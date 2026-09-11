@@ -335,3 +335,35 @@ egressGateways:
 		})
 	}
 }
+
+func TestApplyAgentioConfig_UpstreamTLS(t *testing.T) {
+	for _, tt := range []struct {
+		name, settings string
+		invalid        bool
+	}{
+		{"defaults", "{}", false},
+		{"TLS12", "{maxProtocolVersion: TLSV1_2}", false},
+		{"TLS13", "{minProtocolVersion: TLSV1_3}", false},
+		{"replacement", "{cipherSuites: [ECDHE-RSA-AES128-GCM-SHA256]}", false},
+		{"empty list", "{cipherSuites: []}", false},
+		{"reversed", "{minProtocolVersion: TLSV1_3, maxProtocolVersion: TLSV1_2}", true},
+		{"unknown min", "{minProtocolVersion: 99}", true},
+		{"unknown max", "{maxProtocolVersion: 99}", true},
+		{"old protocol", "{minProtocolVersion: TLSV1_1}", true},
+		{"unknown cipher", "{cipherSuites: [invalid]}", true},
+		{"expression", "{cipherSuites: [ALL]}", true},
+		{"empty cipher", "{cipherSuites: ['']}", true},
+		{"duplicate", "{cipherSuites: [AES128-GCM-SHA256, AES128-GCM-SHA256]}", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := "egressGateways:\n- name: egress-gw\n  namespace: istio-system\n  upstreamTls: " + tt.settings
+			got, err := applyAgentioConfig(config, model.DefaultAgentioConfig())
+			if (err != nil) != tt.invalid {
+				t.Fatalf("config error = %v, want invalid=%v", err, tt.invalid)
+			}
+			if !tt.invalid && got.GetEgressGateways()[0].GetUpstreamTls() == nil {
+				t.Fatal("missing upstream TLS settings")
+			}
+		})
+	}
+}

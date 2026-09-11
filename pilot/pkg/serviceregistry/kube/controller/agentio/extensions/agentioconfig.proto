@@ -64,6 +64,31 @@ message EgressGateway {
   // original request port and detected protocol are preserved; only the
   // upstream address is replaced by the configured endpoint.
   repeated EgressServiceEntry service_entries = 7;
+
+  // TLS settings for connections originated to destinations and HTTPS proxies.
+  // Unset fields use the built-in upstream defaults; certificate verification
+  // and session cache behavior are not configurable here.
+  UpstreamTlsSettings upstream_tls = 8;
+}
+
+// UpstreamTlsSettings controls upstream TLS origination, not termination.
+message UpstreamTlsSettings {
+  enum ProtocolVersion {
+    DEFAULT = 0;
+    TLSV1_2 = 1;
+    TLSV1_3 = 2;
+  }
+
+  // DEFAULT means TLS 1.2. Only TLS 1.2 and TLS 1.3 are supported.
+  ProtocolVersion min_protocol_version = 1;
+
+  // DEFAULT means TLS 1.3. Must be >= the effective minimum version.
+  ProtocolVersion max_protocol_version = 2;
+
+  // Non-empty lists replace the built-in TLS 1.2 cipher list in order.
+  // Empty or omitted lists use the defaults. Use explicit Envoy/OpenSSL cipher
+  // names, not cipher expressions. This setting does not affect TLS 1.3.
+  repeated string cipher_suites = 3;
 }
 
 // EgressServiceEntry binds one or more HTTP host identities to static upstream

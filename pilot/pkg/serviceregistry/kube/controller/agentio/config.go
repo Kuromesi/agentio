@@ -24,6 +24,7 @@ import (
 
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+	configsecurity "istio.io/istio/pkg/config/security"
 	agentvalidation "istio.io/istio/pkg/config/validation/agent"
 	"istio.io/istio/pkg/env"
 	"istio.io/istio/pkg/kube"
@@ -77,6 +78,9 @@ func applyAgentioConfig(yml string, defaultConfig *model.AgentioConfig) (*model.
 		return nil, err
 	}
 	if err := normalizeEgressServiceEntries(out.AgentioConfig); err != nil {
+		return nil, err
+	}
+	if err := validateUpstreamTLS(out.AgentioConfig); err != nil {
 		return nil, err
 	}
 	log.Infof("Loaded agentio config: %v", out.AgentioConfig)
@@ -191,4 +195,41 @@ func newAgentioConfig(client kube.Client, rootNamespace string, opts krt.Options
 
 		return cfg
 	}, opts.WithName(fmt.Sprintf("ConfigMap_%s_%s", AgentioConfigMapName, AgentioConfigMapKey))...)
+}
+
+func validateUpstreamTLS(config *extensions.AgentioConfig) error {
+	for i, gateway := range config.GetEgressGateways() {
+		settings := gateway.GetUpstreamTls()
+		if settings == nil {
+			continue
+		}
+		field := fmt.Sprintf("egressGateways[%d].upstreamTls", i)
+		minVersion, maxVersion := settings.GetMinProtocolVersion(), settings.GetMaxProtocolVersion()
+		if minVersion < extensions.UpstreamTlsSettings_DEFAULT || minVersion > extensions.UpstreamTlsSettings_TLSV1_3 {
+			return fmt.Errorf("%s.minProtocolVersion must be DEFAULT, TLSV1_2, or TLSV1_3", field)
+		}
+		if maxVersion < extensions.UpstreamTlsSettings_DEFAULT || maxVersion > extensions.UpstreamTlsSettings_TLSV1_3 {
+			return fmt.Errorf("%s.maxProtocolVersion must be DEFAULT, TLSV1_2, or TLSV1_3", field)
+		}
+		if minVersion == extensions.UpstreamTlsSettings_DEFAULT {
+			minVersion = extensions.UpstreamTlsSettings_TLSV1_2
+		}
+		if maxVersion == extensions.UpstreamTlsSettings_DEFAULT {
+			maxVersion = extensions.UpstreamTlsSettings_TLSV1_3
+		}
+		if minVersion > maxVersion {
+			return fmt.Errorf("%s.minProtocolVersion must not exceed maxProtocolVersion", field)
+		}
+		seen := make(map[string]bool)
+		for j, cipher := range settings.GetCipherSuites() {
+			if !configsecurity.ValidCipherSuites.Contains(cipher) {
+				return fmt.Errorf("%s.cipherSuites[%d]: unsupported cipher name %q", field, j, cipher)
+			}
+			if seen[cipher] {
+				return fmt.Errorf("%s.cipherSuites[%d]: duplicate cipher %q", field, j, cipher)
+			}
+			seen[cipher] = true
+		}
+	}
+	return nil
 }

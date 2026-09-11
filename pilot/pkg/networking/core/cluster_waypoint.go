@@ -116,7 +116,7 @@ func (configgen *ConfigGeneratorImpl) buildWaypointInboundClusters(
 	}
 
 	if agentio.IsSandboxEgress(proxy) {
-		clusters = cp.conditionallyAppend(clusters, nil, sandboxClusters(cb)...)
+		clusters = cp.conditionallyAppend(clusters, nil, sandboxClusters(cb, proxy)...)
 	}
 
 	// This bit creates clusters needed to handle requests going to a remote network.
