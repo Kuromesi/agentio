@@ -81,6 +81,7 @@ func kubernetesRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 }
 
 func run(ctx context.Context, options Options, opts ...Option) error {
+	started := time.Now()
 	composition := applyOptions(opts)
 	if err := options.Validate(); err != nil {
 		return err
@@ -95,6 +96,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	if ctx.Err() != nil {
 		return nil
 	}
+	logStartup(options)
 	config, err := kubernetesRESTConfig(options.Kubeconfig)
 	if err != nil {
 		return err
@@ -399,6 +401,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	// reached would ship a partial configuration.
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
+	nextSyncLog := time.Now().Add(10 * time.Second)
 	for !registry.HasSynced() || !resourceCompiler.HasSynced() {
 		select {
 		case <-ctx.Done():
@@ -407,6 +410,11 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		case err := <-errorsChannel:
 			return err
 		case <-ticker.C:
+		}
+		if time.Now().After(nextSyncLog) {
+			log.Info("waiting for initial configuration sync", "elapsed", time.Since(started),
+				"registry_synced", registry.HasSynced(), "compiler_synced", resourceCompiler.HasSynced())
+			nextSyncLog = time.Now().Add(10 * time.Second)
 		}
 	}
 	initial, err := resourceCompiler.Snapshot()
@@ -422,7 +430,8 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		}
 	}()
 	log.Info("agentiod ready", "xds_address", options.DiscoveryAddress,
-		"monitoring_address", options.MonitoringAddress, "snapshot", initial.Version())
+		"monitoring_address", options.MonitoringAddress, "snapshot", initial.Version(),
+		"startup_duration", time.Since(started), "resources", initial.Len(), "resources_by_type", initial.CountsByType())
 
 	select {
 	case <-ctx.Done():

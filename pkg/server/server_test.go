@@ -15,17 +15,50 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/openkruise/agentio/pkg/features"
-	"github.com/openkruise/agentio/pkg/server/debug"
 	"istio.io/istio/pkg/test"
+
+	"github.com/openkruise/agentio/pkg/features"
+	agentlog "github.com/openkruise/agentio/pkg/log"
+	"github.com/openkruise/agentio/pkg/server/debug"
 )
+
+func TestStartupLogUsesEffectiveSettingsWithoutDumpingOptions(t *testing.T) {
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	previousLevel := agentlog.OutputLevel()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	agentlog.ConfigureOutputLevel(slog.LevelInfo)
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		agentlog.ConfigureOutputLevel(previousLevel)
+	})
+	test.SetForTest(t, &features.KubernetesAPIQPS, 123.0)
+	test.SetForTest(t, &features.KubernetesAPIBurst, 246)
+	test.SetForTest(t, &features.RequestRateLimit, 77.0)
+	test.SetForTest(t, &features.PushDebounceAfter, 321*time.Millisecond)
+	options := DefaultOptions()
+	options.Kubeconfig = "private-kubeconfig-path-must-not-be-logged"
+	logStartup(options)
+	for _, field := range []string{"kubernetes_api_qps=123", "kubernetes_api_burst=246",
+		"xds_request_rate_limit=77", "push_debounce=321ms", "revision=", "go_memory_limit_bytes="} {
+		if !strings.Contains(output.String(), field) {
+			t.Fatalf("startup summary lacks %q: %s", field, output.String())
+		}
+	}
+	if strings.Contains(output.String(), options.Kubeconfig) {
+		t.Fatalf("startup summary dumped private process options: %s", output.String())
+	}
+}
 
 func TestWithRunContextCancelsChildWhenRunReturns(t *testing.T) {
 	want := errors.New("initialization failed")

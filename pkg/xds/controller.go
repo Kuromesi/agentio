@@ -17,6 +17,7 @@ package xds
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -126,6 +127,13 @@ func (c *Controller) Run(ctx context.Context) error {
 	var quietTimer, maximumTimer *time.Timer
 	var quietChannel, maximumChannel <-chan time.Time
 	pending := false
+	var debounceStarted time.Time
+	markPending := func() {
+		if !pending {
+			debounceStarted = time.Now()
+		}
+		pending = true
+	}
 	stop := func(timer **time.Timer) {
 		if *timer != nil {
 			(*timer).Stop()
@@ -142,6 +150,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		quietChannel, maximumChannel = nil, nil
 		full, changes := c.takePending()
 		started := time.Now()
+		debounceDuration := started.Sub(debounceStarted)
 		var publication xdsstore.Publication
 		var err error
 		publishStarted := time.Now()
@@ -157,19 +166,16 @@ func (c *Controller) Run(ctx context.Context) error {
 		compileDuration := time.Since(started)
 		metrics.Default.RecordCompile(compileDuration, err, publication.Snapshot.Len())
 		if err != nil {
-			log.Error("configuration compilation failed; preserving last-known-good snapshot",
+			log.Error("xDS snapshot publication failed; preserving last-known-good snapshot",
 				"full", full, "changes", len(changes),
-				"duration", compileDuration, "error", err)
+				"debounce_duration", debounceDuration, "publication_duration", compileDuration, "error", err)
 			return
 		}
 		if publication.Changed {
 			metrics.Default.RecordPublish(time.Since(publishStarted))
 			metrics.Default.SetSnapshotResourcesByType(publication.Snapshot.CountsByType())
 		}
-		log.Debug("XDS configuration calculated", "full", full,
-			"changes", len(changes),
-			"resources", publication.Snapshot.Len(), "changed", publication.Changed,
-			"duration", time.Since(started))
+		logPublication(ctx, full, changes, publication, debounceDuration, compileDuration)
 	}
 	for {
 		select {
@@ -178,13 +184,13 @@ func (c *Controller) Run(ctx context.Context) error {
 			// while a trigger is still queued.
 			select {
 			case <-c.triggers:
-				pending = true
+				markPending()
 			default:
 			}
 			flush()
 			return nil
 		case <-c.triggers:
-			pending = true
+			markPending()
 			stop(&quietTimer)
 			quietTimer = time.NewTimer(c.quiet)
 			quietChannel = quietTimer.C
@@ -198,6 +204,37 @@ func (c *Controller) Run(ctx context.Context) error {
 			flush()
 		}
 	}
+}
+
+// Summarize one publication outside the Store lock. Publication is send-side
+// work only: it does not mean subscribers have received or ACKed the snapshot.
+func logPublication(ctx context.Context, full bool, changes []model.ResourceChange, publication xdsstore.Publication,
+	debounceDuration, publicationDuration time.Duration,
+) {
+	level, message := slog.LevelDebug, "xDS snapshot unchanged"
+	emit := log.Debug
+	if publication.Changed {
+		level, message, emit = slog.LevelInfo, "xDS snapshot published", log.Info
+	}
+	if !log.Enabled(ctx, level) {
+		return
+	}
+	// These are compiled input changes after coalescing, not counts of sends or
+	// all resources replaced by a full snapshot. Only sample a few keys; never
+	// format resource payloads or sort the entire change set just for logging.
+	byType := make(map[string]int)
+	sample := make([]model.ResourceKey, 0, min(3, len(changes)))
+	for _, change := range changes {
+		byType[change.Key.TypeURL]++
+		if len(sample) < 3 {
+			sample = append(sample, change.Key)
+		}
+	}
+	emit(message, "version", publication.Snapshot.Version(), "full", full,
+		"connected_endpoints", publication.SubscriberCount,
+		"changes", len(changes), "changes_by_type", byType, "resource_sample", sample,
+		"resources", publication.Snapshot.Len(),
+		"debounce_duration", debounceDuration, "publication_duration", publicationDuration)
 }
 
 func resourceChanges(events []krt.Event[model.Resource]) []model.ResourceChange {

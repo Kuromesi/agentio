@@ -17,6 +17,7 @@ package xds
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -244,7 +245,7 @@ func (f *fakeResourcePublisher) reset() {
 	f.full, f.delta = 0, 0
 }
 
-func TestControllerLogsConfigurationCalculationAtDebug(t *testing.T) {
+func TestControllerLogsPublishedSnapshotAtInfo(t *testing.T) {
 	var output synchronizedBuffer
 	previousLogger := slog.Default()
 	previousLevel := agentlog.OutputLevel()
@@ -266,18 +267,18 @@ func TestControllerLogsConfigurationCalculationAtDebug(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- controller.Run(ctx) }()
 	eventually(t, func() bool {
-		return strings.Contains(output.String(), `msg="XDS configuration calculated"`)
-	}, "configuration calculation logged")
+		return strings.Contains(output.String(), `msg="xDS snapshot published"`)
+	}, "snapshot publication logged")
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 
 	for _, line := range strings.Split(output.String(), "\n") {
-		if !strings.Contains(line, `msg="XDS configuration calculated"`) {
+		if !strings.Contains(line, `msg="xDS snapshot published"`) {
 			continue
 		}
-		for _, field := range []string{"level=DEBUG", "full=true", "changes=0", "resources=1", "changed=true", "duration="} {
+		for _, field := range []string{"level=INFO", "full=true", "changes=0", "resources=1", "version=", "debounce_duration=", "publication_duration="} {
 			if !strings.Contains(line, field) {
 				t.Fatalf("configuration calculation log missing %q: %s", field, line)
 			}
@@ -285,6 +286,68 @@ func TestControllerLogsConfigurationCalculationAtDebug(t *testing.T) {
 		return
 	}
 	t.Fatalf("missing configuration calculation log:\n%s", output.String())
+}
+
+func TestPublicationSummaryIsBoundedAndExcludesResourceContents(t *testing.T) {
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	previousLevel := agentlog.OutputLevel()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	agentlog.ConfigureOutputLevel(slog.LevelInfo)
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		agentlog.ConfigureOutputLevel(previousLevel)
+	})
+
+	changes := make([]model.ResourceChange, 100)
+	for i := range changes {
+		resource := addressResource(t, fmt.Sprintf("workload-%03d", i), "payload-must-not-appear-in-logs")
+		changes[i] = model.ResourceChange{Key: resource.Key, New: &resource}
+	}
+	store := xdsstore.New(newSnapshot(t))
+	store.Subscribe(t.Context()).Watch(model.AddressType)
+	store.Subscribe(t.Context()).Watch(model.ClusterType)
+	publication, err := store.Apply(changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Logging must retain the publication-time total, including the unaffected
+	// Cluster subscriber, even if another client connects before the log write.
+	store.Subscribe(t.Context()).Watch(model.AddressType)
+	logPublication(t.Context(), false, changes, publication, time.Second, time.Millisecond)
+	// Replaying the same changes must not emit a second INFO summary.
+	unchanged, err := store.Apply(changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPublication(t.Context(), false, changes, unchanged, time.Second, time.Millisecond)
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+	if len(lines) != 1 {
+		t.Fatalf("want one summary for the actual publication, got %d:\n%s", len(lines), output.String())
+	}
+	var entry struct {
+		Message            string              `json:"msg"`
+		Version            string              `json:"version"`
+		Changes            int                 `json:"changes"`
+		ConnectedEndpoints int                 `json:"connected_endpoints"`
+		ByType             map[string]int      `json:"changes_by_type"`
+		Sample             []model.ResourceKey `json:"resource_sample"`
+	}
+	if err := json.Unmarshal(lines[0], &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Message != "xDS snapshot published" || entry.Version != publication.Snapshot.Version() ||
+		entry.Changes != 100 || entry.ByType[model.AddressType] != 100 || len(entry.Sample) != 3 || entry.ConnectedEndpoints != 2 {
+		t.Fatalf("unexpected batch summary: %+v", entry)
+	}
+	for _, key := range entry.Sample {
+		if _, found := publication.Snapshot.Get(key); !found {
+			t.Fatalf("sample key does not belong to this snapshot: %+v", key)
+		}
+	}
+	if strings.Contains(output.String(), "payload-must-not-appear-in-logs") {
+		t.Fatalf("resource contents leaked into logs: %s", output.String())
+	}
 }
 
 func (f *fakeResourcePublisher) calls() (full, delta int) {

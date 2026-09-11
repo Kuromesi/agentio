@@ -182,6 +182,15 @@ func TestServeDeltaLogsConnectionLifecycleWithConnectionID(t *testing.T) {
 	authenticated := lineWith(`msg="authenticated Delta ADS client"`)
 	disconnected := lineWith(`msg="Delta ADS client disconnected"`)
 	push := lineWith(`msg="Delta ADS push"`)
+	for _, line := range []string{authenticated, disconnected, push} {
+		if !strings.Contains(line, "node_id="+nodeRequest(model.AddressType).Node.Id) ||
+			!strings.Contains(line, "client_class="+string(ztunnelScope().Class)) {
+			t.Fatalf("connection log cannot identify the workload: %s", line)
+		}
+	}
+	if !strings.Contains(push, "version="+stream.sent()[0].SystemVersionInfo) {
+		t.Fatalf("push log cannot be correlated with its snapshot: %s", push)
+	}
 
 	idPattern := regexp.MustCompile(`connection_id=(\d+)`)
 	connectionID := func(line string) string {
@@ -207,6 +216,56 @@ func TestServeDeltaLogsConnectionLifecycleWithConnectionID(t *testing.T) {
 	}
 	if !strings.Contains(disconnected, "level=INFO") {
 		t.Fatalf("clean shutdown log = %s, want INFO", disconnected)
+	}
+}
+
+func TestCanceledDeltaStreamLogsNormalDisconnect(t *testing.T) {
+	var output synchronizedBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	server := newTestServer(t, ztunnelScope(), nil, nil)
+	stream := newFakeStream(ctx, 1)
+	stream.send(nodeRequest(model.AddressType))
+	done := server.start(stream)
+	stream.awaitResponses(t, model.AddressType, 1)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("stream error = %v, want context cancellation", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("canceled stream did not finish")
+	}
+	logs := output.String()
+	if !strings.Contains(logs, `level=INFO msg="Delta ADS client disconnected"`) ||
+		strings.Contains(logs, "level=ERROR") || strings.Contains(logs, "level=WARN") {
+		t.Fatalf("normal cancellation logged as a failure:\n%s", logs)
+	}
+}
+
+func TestExpectedStreamErrorDistinguishesCancellationFromFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"native cancellation", context.Canceled, true},
+		{"wrapped cancellation", fmt.Errorf("send: %w", context.Canceled), true},
+		{"grpc cancellation", status.Error(codes.Canceled, "closed"), true},
+		{"operation timeout", context.DeadlineExceeded, false},
+		{"unavailable backend", status.Error(codes.Unavailable, "backend unavailable"), false},
+		{"unrelated error text", errors.New("compile failed: context canceled"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := expectedStreamError(tc.err); got != tc.want {
+				t.Fatalf("expectedStreamError(%v) = %t, want %t", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -284,7 +343,8 @@ func TestNACKLogIncludesStatusCode(t *testing.T) {
 
 	for _, line := range strings.Split(output.String(), "\n") {
 		if strings.Contains(line, `msg="xDS NACK"`) {
-			if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "code=InvalidArgument") {
+			if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "code=InvalidArgument") ||
+				!strings.Contains(line, "node_id="+nodeRequest(model.AddressType).Node.Id) {
 				t.Fatalf("NACK log = %s, want WARN with status code", line)
 			}
 			return

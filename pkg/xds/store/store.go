@@ -15,22 +15,21 @@
 package store
 
 import (
-	"sort"
 	"sync"
 
 	"istio.io/istio/pkg/util/sets"
 
-	agentlog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/model"
 )
-
-var log = agentlog.New("xds")
 
 // Publication is the result of atomically committing a snapshot change.
 // Snapshot is the exact last-known-good state after the attempted publication.
 type Publication struct {
 	Changed  bool
 	Snapshot model.ResourceSet
+	// SubscriberCount is the total at publication time, including subscribers
+	// not affected by this batch. It does not count completed sends or ACKs.
+	SubscriberCount int
 }
 
 // Store publishes immutable resource snapshots and notifies interested subscribers.
@@ -66,11 +65,11 @@ func (s *Store) Replace(snapshot model.ResourceSet) Publication {
 	before := s.current
 	changes := before.Diff(snapshot)
 	if len(changes) == 0 {
-		return Publication{Snapshot: s.current}
+		return Publication{Snapshot: s.current, SubscriberCount: len(s.subscribers)}
 	}
 	s.current = snapshot
 	s.notifyLocked(updateBetween(before, snapshot, changes))
-	return Publication{Changed: true, Snapshot: snapshot}
+	return Publication{Changed: true, Snapshot: snapshot, SubscriberCount: len(s.subscribers)}
 }
 
 // Apply publishes a compiled KRT batch without listing or rebuilding the full
@@ -81,12 +80,12 @@ func (s *Store) Apply(changes []model.ResourceChange) (Publication, error) {
 	defer s.mu.Unlock()
 	coalesced := coalesceChanges(changes)
 	if len(coalesced) == 0 {
-		return Publication{Snapshot: s.current}, nil
+		return Publication{Snapshot: s.current, SubscriberCount: len(s.subscribers)}, nil
 	}
 	before := s.current
 	next, changed, err := before.Apply(coalesced)
 	if err != nil || !changed {
-		return Publication{Snapshot: before}, err
+		return Publication{Snapshot: before, SubscriberCount: len(s.subscribers)}, err
 	}
 	effective := make([]model.ResourceChange, 0, len(coalesced))
 	for _, requested := range coalesced {
@@ -107,11 +106,11 @@ func (s *Store) Apply(changes []model.ResourceChange) (Publication, error) {
 		effective = append(effective, change)
 	}
 	if len(effective) == 0 {
-		return Publication{Snapshot: before}, nil
+		return Publication{Snapshot: before, SubscriberCount: len(s.subscribers)}, nil
 	}
 	s.current = next
 	s.notifyLocked(updateBetween(before, next, effective))
-	return Publication{Changed: true, Snapshot: next}, nil
+	return Publication{Changed: true, Snapshot: next, SubscriberCount: len(s.subscribers)}, nil
 }
 
 // Notify wakes subscribers when a dynamic resource outside the immutable
@@ -139,15 +138,6 @@ func (s *Store) NotifyType(typeURL string) {
 }
 
 func (s *Store) notifyLocked(update Update) {
-	if !update.full {
-		types := make([]string, 0, len(update.affectedTypes))
-		for typeURL := range update.affectedTypes {
-			types = append(types, typeURL)
-		}
-		sort.Strings(types)
-		log.Info("XDS: Incremental Pushing", "connected_endpoints", len(s.subscribers),
-			"version", update.version, "types", types)
-	}
 	for _, subscriber := range s.affectedSubscribersLocked(update) {
 		// Capacity-one, type-aware mailbox; the first coalescing boundary.
 		// PushScheduler merges later duplicates.
