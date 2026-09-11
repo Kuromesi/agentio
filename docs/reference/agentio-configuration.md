@@ -207,15 +207,15 @@ egressGateways:
       denial_reason: "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%"
 ```
 
-The JSON object replaces the complete default format; its fields are not merged with the defaults. Nested objects and typed values are supported. Values that evaluate to null are omitted, as in the default JSON format. This example's illustrative output after HTTPS termination is:
+The JSON object replaces the complete default format; its fields are not merged with the defaults. Nested objects and typed values are supported. Unavailable JSON values may be omitted or appear as `null`; log consumers should accept both. This example's illustrative output after HTTPS termination is:
 
 ```json
-{"start_time":"2026-09-11T10:00:00.000Z","scheme":"https","protocol":"HTTP/2","authority":"api.example.com","requested_server_name":"api.example.com","upstream_address":"203.0.113.10:443","response_code":200}
+{"start_time":"2026-09-11T10:00:00.000Z","scheme":"https","protocol":"HTTP/2","authority":"api.example.com","requested_server_name":"api.example.com","upstream_address":"203.0.113.10:443","response_code":200,"denial_reason":null}
 ```
 
 `scheme` distinguishes HTTP from terminated HTTPS; `protocol` is the HTTP version. The SNI expression preserves the original ClientHello name after TLS termination and falls back to the current connection's SNI for passthrough TLS. HTTP authority remains a separate field. TCP logs have no HTTP scheme or request headers.
 
-The default format includes `denial_reason: "sni_policy_denied"` for connections rejected by SNI policy. The field is absent on other paths; HTTP errors and connection failures continue to use their existing response and transport fields. Custom formats can retain this reason with the `denial_reason` entry shown above.
+The default format includes `denial_reason: "sni_policy_denied"` for connections rejected by SNI policy. The reason is unset on other paths; HTTP errors and connection failures continue to use their existing response and transport fields. Custom formats can retain this reason with the `denial_reason` entry shown above.
 
 Internal upstream cluster and filter-chain names are omitted from the default format. For debugging, add these entries to your custom `accessLogFormat.json` object:
 
