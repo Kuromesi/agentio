@@ -164,7 +164,7 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 								continue
 							}
 							dependencies := i.objectDependencies[iKey]
-							if changed := objectChanged(dependencies, sourceCollection, ev, true); changed {
+							if changed := objectChanged(dependencies, sourceCollection, item, ekey, key); changed {
 								changedInputKeys.Insert(iKey)
 							}
 						}
@@ -177,8 +177,11 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 				if changedInputKeys.Contains(iKey) {
 					continue
 				}
-				if changed := objectChanged(dependencies, sourceCollection, ev, false); changed {
-					changedInputKeys.Insert(iKey)
+				for _, item := range ev.Items() {
+					if changed := objectChanged(dependencies, sourceCollection, item, extractorKey{}, ""); changed {
+						changedInputKeys.Insert(iKey)
+						break
+					}
 				}
 			}
 		}
@@ -190,20 +193,20 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 	return changedInputKeys
 }
 
-func objectChanged(dependencies []*dependency, sourceCollection collectionUID, ev Event[any], preFiltered bool) bool {
+func objectChanged(dependencies []*dependency, sourceCollection collectionUID, item any, indexed extractorKey, key string) bool {
 	for _, dep := range dependencies {
 		id := dep.id
 		if id != sourceCollection {
 			continue
 		}
-		// For each input, we will check if it depends on this event.
-		// We use Items() to check both the old and new object; we will recompute if either matched
-		for _, item := range ev.Items() {
-			match := dep.filter.Matches(item, preFiltered)
-			if match {
-				// Its a match! Return now. We don't need to check all dependencies, since we just need to find if any of them changed
-				return true
-			}
+		// Only this item and the dependency using the matched index/key were
+		// prefiltered. Other dependencies must check their complete filters.
+		preFiltered := indexed.typ == getKeyType && dep.filter.keys.Contains(key)
+		if idx := dep.filter.index; indexed.typ == indexType && idx != nil {
+			preFiltered = dep.filter.keys.IsNil() && idx.filterUID == indexed.filterUID && idx.key == key
+		}
+		if dep.filter.Matches(item, preFiltered) {
+			return true
 		}
 	}
 	return false
