@@ -169,7 +169,8 @@ wins, including an explicitly empty value. Value formats and traffic capture
 semantics remain the same. Admission injection and Agentio CNI use the same
 precedence rules. Deploy matching control-plane, proxy-init, gateway/proxy, and (when enabled)
 CNI images alongside this chart. The proxy-init image must support the
-`agentio-iptables` command alias. Existing Pods retain
+`agentio-iptables` command alias. Gateway/proxy images must support `JWT_PATH`
+to read the projected `agentio-token` file. Existing Pods retain
 their current containers and rules until recreated.
 
 See [Chart naming compatibility](../reference/chart-naming-compatibility.md) for

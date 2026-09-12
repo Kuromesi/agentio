@@ -772,6 +772,7 @@ func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *t
 	if got := envValue(proxy.Env, "CA_ADDRESS"); got != "agentiod.agentio-system.svc.cluster.local:15012" {
 		t.Fatalf("CA_ADDRESS = %q, want cross-namespace Agentio address", got)
 	}
+	assertCredentialMounts(t, corev1.PodSpec{InitContainers: config.InitContainers, Volumes: config.Volumes}, "AUTH_TOKEN")
 	if !hasConfigMapVolume(config.Volumes, "agentio-ca-certs") {
 		t.Fatalf("traffic-proxy volumes do not mount the namespace-local agentio-ca-certs ConfigMap: %#v", config.Volumes)
 	}

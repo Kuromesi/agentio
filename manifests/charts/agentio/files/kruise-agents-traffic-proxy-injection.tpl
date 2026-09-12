@@ -100,6 +100,18 @@
           "value": "false"
         },
         {
+          "name": "AUTH_TOKEN",
+          "value": "/var/run/secrets/tokens/agentio-token"
+        },
+        {
+          "name": "CA_ROOT_CA",
+          "value": "/var/run/secrets/agentio/root-cert.pem"
+        },
+        {
+          "name": "XDS_ROOT_CA",
+          "value": "/var/run/secrets/agentio/root-cert.pem"
+        },
+        {
           "name": "CA_ADDRESS",
           "value": {{ .Values.agentio.trafficProxy.caAddress | default (printf "%s.%s.svc.cluster.local:15012" .Values.agentio.trafficProxy.controlPlaneService .Values.agentio.trafficProxy.controlPlaneNamespace) | quote }}
         },
@@ -216,13 +228,13 @@
       },
       "volumeMounts": [
         {
-          "mountPath": "/var/run/secrets/istio",
+          "mountPath": "/var/run/secrets/agentio",
           "name": "agentio-ca-certs",
           "readOnly": true
         },
         {
           "mountPath": "/var/run/secrets/tokens",
-          "name": "istio-token",
+          "name": "agentio-token",
           "readOnly": true
         },
         {
@@ -254,7 +266,7 @@
       "name": "pod-info"
     },
     {
-      "name": "istio-token",
+      "name": "agentio-token",
       "projected": {
         "defaultMode": 420,
         "sources": [
@@ -262,7 +274,7 @@
             "serviceAccountToken": {
               "audience": "istio-ca",
               "expirationSeconds": 43200,
-              "path": "istio-token"
+              "path": "agentio-token"
             }
           }
         ]
