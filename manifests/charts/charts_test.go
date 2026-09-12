@@ -515,7 +515,7 @@ func TestInvalidModesFailRendering(t *testing.T) {
 		{name: "profile", want: "profile", args: []string{"--set", "profile=invalid"}},
 		{name: "log level", want: "/agentiod/logging/level", args: []string{"--set", "agentiod.logging.level=verbose"}},
 		{name: "log format", want: "/agentiod/logging/format", args: []string{"--set", "agentiod.logging.format=console"}},
-		{name: "agentgateway CA boolean", want: "egressGateway/agentgateway/ca/enabled", args: []string{"--set-string", "egressGateway.agentgateway.ca.enabled=false"}},
+		{name: "agentgateway CA boolean", want: "/egressGateway/agentgateway/ca/enabled", args: []string{"--set-string", "egressGateway.agentgateway.ca.enabled=false"}},
 		{name: "egress gateway", want: "/egressGateway/mode", args: []string{"--set", "egressGateway.mode=invalid"}},
 		{name: "EPE", want: "/epe/mode", args: []string{"--set", "epe.mode=invalid"}},
 		{name: "external EPE address", want: "/epe/external/address", args: []string{"--set", "epe.mode=external"}},

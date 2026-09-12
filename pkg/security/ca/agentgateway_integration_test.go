@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package ca
 
@@ -13,6 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -100,8 +112,14 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 			return resp, err
 		}))
 	securityapi.RegisterIstioCertificateServiceServer(server, authority)
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(server.Stop)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve(listener) }()
+	t.Cleanup(func() {
+		server.Stop()
+		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("serve CA: %v", err)
+		}
+	})
 
 	dir := t.TempDir()
 	rootPath, tokenPath := filepath.Join(dir, "root-cert.pem"), filepath.Join(dir, "token")
@@ -151,15 +169,27 @@ binds:
 	}
 	cmd.Stdout, cmd.Stderr = logs, logs
 	if err := cmd.Start(); err != nil {
-		_ = logs.Close()
+		agentgatewayClose(t, logs)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = logs.Close()
+		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("stop agentgateway: %v", err)
+		}
+		if err := cmd.Wait(); err != nil {
+			// Killing the test process normally produces an ExitError.
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Errorf("wait for agentgateway: %v", err)
+			}
+		}
+		agentgatewayClose(t, logs)
 		if t.Failed() {
-			data, _ := os.ReadFile(logs.Name())
+			data, err := os.ReadFile(logs.Name())
+			if err != nil {
+				t.Logf("read agentgateway output: %v", err)
+				return
+			}
 			t.Logf("agentgateway output:\n%s", data)
 		}
 	})
@@ -168,7 +198,7 @@ binds:
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, _ := url.Parse("spiffe://mesh.example/ns/client/sa/app")
+	clientID := &url.URL{Scheme: "spiffe", Host: "mesh.example", Path: "/ns/client/sa/app"}
 	leaf, err := authority.ca.Sign(context.Background(), &key.PublicKey, pki.LeafOptions{URIs: []*url.URL{clientID}, Lifetime: time.Hour, Client: true})
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +235,7 @@ binds:
 	address := fmt.Sprintf("127.0.0.1:%d", port)
 	var firstSerial string
 	agentgatewayEventually(t, 15*time.Second, func() error {
-		serial, err := agentgatewayHBONERequest(address, tlsConfig)
+		serial, err := agentgatewayHBONERequest(t, address, tlsConfig)
 		if err == nil {
 			firstSerial = serial
 		}
@@ -214,10 +244,10 @@ binds:
 	t.Log("native CA issued gateway identity; mTLS HTTP/2 CONNECT reached internal HTTP route")
 	withoutClient := tlsConfig.Clone()
 	withoutClient.Certificates = nil
-	if _, err := agentgatewayHBONERequest(address, withoutClient); err == nil {
+	if _, err := agentgatewayHBONERequest(t, address, withoutClient); err == nil {
 		t.Fatal("HBONE accepted a client without a workload certificate")
 	}
-	otherID, _ := url.Parse("spiffe://other.example/ns/client/sa/app")
+	otherID := &url.URL{Scheme: "spiffe", Host: "other.example", Path: "/ns/client/sa/app"}
 	otherLeaf, err := authority.ca.Sign(context.Background(), &key.PublicKey, pki.LeafOptions{URIs: []*url.URL{otherID}, Lifetime: time.Hour, Client: true})
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +258,7 @@ binds:
 	}
 	otherDomain := tlsConfig.Clone()
 	otherDomain.Certificates = []tls.Certificate{otherCert}
-	if _, err := agentgatewayHBONERequest(address, otherDomain); err == nil {
+	if _, err := agentgatewayHBONERequest(t, address, otherDomain); err == nil {
 		t.Fatal("HBONE accepted a client from an untrusted SPIFFE trust domain")
 	}
 	// Rename models the projected token volume switching to its next token.
@@ -237,7 +267,7 @@ binds:
 		t.Fatal(err)
 	}
 	agentgatewayEventually(t, 50*time.Second, func() error {
-		serial, err := agentgatewayHBONERequest(address, tlsConfig)
+		serial, err := agentgatewayHBONERequest(t, address, tlsConfig)
 		if err != nil {
 			return err
 		}
@@ -256,13 +286,13 @@ binds:
 		if !rejected.Load() {
 			return fmt.Errorf("waiting for rejected renewal")
 		}
-		if _, err := agentgatewayHBONERequest(address, tlsConfig); err == nil {
+		if _, err := agentgatewayHBONERequest(t, address, tlsConfig); err == nil {
 			return fmt.Errorf("gateway still accepting new connections")
 		}
 		return nil
 	})
 	denyToken.Store(false)
-	agentgatewayEventually(t, 40*time.Second, func() error { _, err := agentgatewayHBONERequest(address, tlsConfig); return err })
+	agentgatewayEventually(t, 40*time.Second, func() error { _, err := agentgatewayHBONERequest(t, address, tlsConfig); return err })
 	t.Log("rejected renewal blocks new HBONE connections; automatic retry restores service")
 }
 
@@ -273,7 +303,7 @@ func agentgatewayTestPort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	agentgatewayClose(t, listener)
 	return port
 }
 
@@ -292,23 +322,33 @@ func agentgatewayEventually(t *testing.T, timeout time.Duration, check func() er
 	}
 }
 
-func agentgatewayHBONERequest(address string, config *tls.Config) (string, error) {
+func agentgatewayClose(t *testing.T, closer io.Closer) {
+	t.Helper()
+	if err := closer.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Errorf("close %T: %v", closer, err)
+	}
+}
+
+func agentgatewayHBONERequest(t *testing.T, address string, config *tls.Config) (string, error) {
+	t.Helper()
 	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", address, config)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	defer agentgatewayClose(t, conn)
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		return "", err
+	}
 	serial := conn.ConnectionState().PeerCertificates[0].SerialNumber.String()
 	transport := &http2.Transport{}
 	client, err := transport.NewClientConn(conn)
 	if err != nil {
 		return "", err
 	}
-	defer client.Close()
+	defer agentgatewayClose(t, client)
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	defer agentgatewayClose(t, reader)
+	defer agentgatewayClose(t, writer)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req := (&http.Request{Method: http.MethodConnect, URL: &url.URL{Host: "127.0.0.1:18080"}, Host: "127.0.0.1:18080", Body: reader}).WithContext(ctx)
@@ -316,7 +356,7 @@ func agentgatewayHBONERequest(address string, config *tls.Config) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer agentgatewayClose(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("CONNECT status: %s", resp.Status)
 	}
@@ -327,7 +367,7 @@ func agentgatewayHBONERequest(address string, config *tls.Config) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer inner.Body.Close()
+	defer agentgatewayClose(t, inner.Body)
 	body, err := io.ReadAll(inner.Body)
 	if err != nil {
 		return "", err
