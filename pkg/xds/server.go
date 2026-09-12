@@ -224,11 +224,11 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 	defer metrics.Default.AddXDSConnectionForClass(string(scope.Class), -1)
 	defer metrics.Default.AddXDSConnectionForVersion(versionLabel, -1)
 	nodeID := first.request.GetNode().GetId()
-	connLog := log.With("connection_id", s.connections.Add(1))
-	connLog.Info("authenticated Delta ADS client", "node_id", nodeID, "client_class", scope.Class, "data_plane_version", version)
+	connLog := log.With("connection_id", s.connections.Add(1), "node_id", nodeID, "client_class", scope.Class)
+	connLog.Info("authenticated Delta ADS client", "data_plane_version", version)
 	connected := time.Now()
 	defer func() {
-		attrs := []any{"node_id", nodeID, "client_class", scope.Class, "duration", time.Since(connected)}
+		attrs := []any{"duration", time.Since(connected)}
 		if err != nil {
 			attrs = append(attrs, "error", err)
 		}
@@ -293,7 +293,9 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 }
 
 func expectedStreamError(err error) bool {
-	if err == nil || errors.Is(err, io.EOF) {
+	// The stream loop also returns Context.Err directly, not just gRPC status
+	// errors. status.Code(context.Canceled) is Unknown.
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
 		return true
 	}
 	switch status.Code(err) {

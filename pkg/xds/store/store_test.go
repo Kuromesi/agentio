@@ -15,84 +15,24 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"log/slog"
-	"slices"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
-	agentlog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
 var _ Subscription = (*subscription)(nil)
-
-func TestStoreLogsOneIncrementalPushSummary(t *testing.T) {
-	var output bytes.Buffer
-	previousLogger := slog.Default()
-	previousLevel := agentlog.OutputLevel()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
-	agentlog.ConfigureOutputLevel(slog.LevelInfo)
-	t.Cleanup(func() {
-		slog.SetDefault(previousLogger)
-		agentlog.ConfigureOutputLevel(previousLevel)
-	})
-
-	store := New(newSnapshot(t))
-	subscription := store.Subscribe(t.Context())
-	subscription.Watch(model.ClusterType)
-	subscription.Watch(model.ListenerType)
-	cluster := updateTestResource(t, model.ClusterType, "cluster-key", "cluster", "cluster")
-	listener := updateTestResource(t, model.ListenerType, "listener-key", "listener", "listener")
-	publication, err := store.Apply([]model.ResourceChange{
-		{Key: listener.Key, New: &listener},
-		{Key: cluster.Key, New: &cluster},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	encoded := bytes.TrimSpace(output.Bytes())
-	if len(encoded) == 0 {
-		t.Fatal("incremental publication emitted no push summary log")
-	}
-	lines := bytes.Split(encoded, []byte{'\n'})
-	if len(lines) != 1 {
-		t.Fatalf("incremental publication logs = %d, want 1:\n%s", len(lines), output.String())
-	}
-	var entry struct {
-		Level              string   `json:"level"`
-		Message            string   `json:"msg"`
-		ConnectedEndpoints int      `json:"connected_endpoints"`
-		Version            string   `json:"version"`
-		Types              []string `json:"types"`
-	}
-	if err := json.Unmarshal(lines[0], &entry); err != nil {
-		t.Fatalf("decode incremental push log: %v\n%s", err, lines[0])
-	}
-	if entry.Level != "INFO" || entry.Message != "XDS: Incremental Pushing" {
-		t.Fatalf("incremental push log identity = (%q, %q), want (INFO, XDS: Incremental Pushing)", entry.Level, entry.Message)
-	}
-	if entry.ConnectedEndpoints != 1 || entry.Version != publication.Snapshot.Version() {
-		t.Fatalf("incremental push summary = endpoints:%d version:%q, want endpoints:1 version:%q",
-			entry.ConnectedEndpoints, entry.Version, publication.Snapshot.Version())
-	}
-	wantTypes := []string{model.ClusterType, model.ListenerType}
-	if !slices.Equal(entry.Types, wantTypes) {
-		t.Fatalf("incremental push types = %v, want %v", entry.Types, wantTypes)
-	}
-}
 
 // Publication returns the committed snapshot on every path, so Controller can
 // record metrics without racing a later Store commit by rereading it.
 func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 	initial := newSnapshot(t, "a")
 	store := New(initial)
+	store.Subscribe(t.Context()).Watch(model.ClusterType)
 
 	publication := store.Replace(newSnapshot(t, "a"))
 	if publication.Changed {
@@ -101,13 +41,16 @@ func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 	if got, want := publication.Snapshot.Version(), initial.Version(); got != want {
 		t.Fatalf("no-op snapshot version = %q, want %q", got, want)
 	}
+	if publication.SubscriberCount != 1 {
+		t.Fatalf("no-op publication subscribers = %d, want 1", publication.SubscriberCount)
+	}
 
 	resource := newSnapshot(t, "b").List(model.AddressType)[0]
 	publication, err := store.Apply([]model.ResourceChange{{Key: resource.Key, New: &resource}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !publication.Changed || publication.Snapshot.Len() != 2 {
+	if !publication.Changed || publication.Snapshot.Len() != 2 || publication.SubscriberCount != 1 {
 		t.Fatalf("Apply publication = %#v, want changed two-resource snapshot", publication)
 	}
 
@@ -115,8 +58,12 @@ func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid resource was accepted")
 	}
-	if publication.Changed || publication.Snapshot.Len() != 2 {
+	if publication.Changed || publication.Snapshot.Len() != 2 || publication.SubscriberCount != 1 {
 		t.Fatalf("failed Apply publication = %#v, want unchanged two-resource snapshot", publication)
+	}
+	publication = store.Replace(newSnapshot(t, "c"))
+	if !publication.Changed || publication.SubscriberCount != 1 {
+		t.Fatalf("Replace publication = %#v, want changed snapshot with one subscriber", publication)
 	}
 }
 

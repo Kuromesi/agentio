@@ -98,12 +98,12 @@ func (s *Server) handleRequest(stream DeltaStream,
 
 	if initial {
 		if known {
-			connLog.Debug("Delta ADS watch started", "client_class", scope.Class,
+			connLog.Debug("Delta ADS watch started",
 				"type_url", typeURL, "wildcard", watch.wildcard,
 				"resources", len(watch.names), "initial_versions", len(request.GetInitialResourceVersions()))
 		} else {
 			connLog.Warn("Delta ADS client subscribed to unsupported type; returning an empty response",
-				"client_class", scope.Class, "type_url", typeURL)
+				"type_url", typeURL)
 		}
 	}
 
@@ -273,7 +273,7 @@ func (s *Server) sendGeneratedDelta(
 		pushMode = "full"
 	}
 	pushLog("Delta ADS push", "principal", request.Scope.Principal.String(),
-		"type_url", request.TypeURL, "push", pushMode,
+		"type_url", request.TypeURL, "push", pushMode, "version", version,
 		"resources", len(resources), "removed", len(removed),
 		"size", byteSize(sizeBytes), "duration", duration,
 		"nonce_sent", nonce, "nonce_acked", watch.nonceAcked,

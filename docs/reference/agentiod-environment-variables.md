@@ -186,6 +186,36 @@ $ curl --request PUT \
 
 Loopback requests do not require credentials. Requests from any other address must pass the same TokenReview and root-namespace authorization as `/debug/configz`. A successful change returns HTTP 202 and affects existing loggers immediately. It is process-local and is not persisted: after an `agentiod` restart, `AGENTIO_LOG_LEVEL` supplies the level again.
 
+## Read startup and publication logs
+
+At INFO, `starting agentiod` reports effective rate limits, debounce periods,
+connection lifetime, Go runtime settings, and available build metadata. It uses
+an explicit list of diagnostic settings rather than dumping environment variables
+or kubeconfig contents. Missing build metadata is reported as `unknown`.
+`waiting for initial configuration sync` reports registry/compiler sync status
+at most every ten seconds while waiting. `agentiod ready` includes the total
+startup duration and initial resource counts.
+
+`xDS snapshot published` summarizes one changed snapshot after the publication
+call completes. `changes` and `changes_by_type` count coalesced compiled input
+changes; `resource_sample` contains at most three of their keys. For a full
+snapshot publication, those input changes need not describe every resource in
+the replacement snapshot. `resources` is the resulting snapshot size.
+`debounce_duration` starts when the controller observes the first trigger in
+that batch; `publication_duration` measures the snapshot assembly/publication
+call. Neither includes the preceding Kubernetes/KRT work, client ACK latency,
+or actual traffic enforcement. Unchanged snapshots are logged at DEBUG.
+
+This replaces the Store's `XDS: Incremental Pushing` line and retains
+`connected_endpoints`: the total number of Store subscribers at publication time,
+including those unaffected by this batch. It does not count completed sends or
+ACKs. The count is captured with the snapshot; the log is written outside the
+Store lock.
+Per-connection request, push, NACK, and disconnect records carry `connection_id`,
+`node_id`, and `client_class`; push records also carry the snapshot `version`.
+Normal context cancellation is INFO, while unexpected failures retain their
+warning/error levels. Ordinary incremental sends and ACKs remain at DEBUG.
+
 ## See also
 
 - [Agentio configuration](agentio-configuration.md)
