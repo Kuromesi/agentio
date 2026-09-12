@@ -11,7 +11,7 @@
   "initContainers": [
     {
       "args": [
-        "istio-iptables",
+        "agentio-iptables",
         "-p",
         "15001",
         "-z",
@@ -54,7 +54,7 @@
       ],
       "image": {{ .Values.agentio.trafficProxy.initImage | quote }},
       "imagePullPolicy": {{ .Values.agentio.trafficProxy.imagePullPolicy | quote }},
-      "name": "istio-init",
+      "name": "agentio-init",
       "resources": {{ .Values.agentio.trafficProxy.initResources | toJson }},
       "securityContext": {
         "allowPrivilegeEscalation": false,

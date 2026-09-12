@@ -325,7 +325,7 @@ kind: Service
 metadata:
   annotations:
     {{ toJsonMap
-      (strdict "networking.istio.io/traffic-distribution" "PreferClose")
+      (strdict "networking.agentio.kruise.io/traffic-distribution" "PreferClose")
       (omit .InfrastructureAnnotations
         "kubectl.kubernetes.io/last-applied-configuration"
         "gateway.istio.io/name-override"
