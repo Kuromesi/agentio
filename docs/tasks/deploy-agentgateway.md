@@ -175,8 +175,6 @@ kubectl -n agentio-system rollout status deployment/agentgateway
 kubectl -n agentio-system logs deployment/agentgateway
 ```
 
-The class/template structure and the proxy security context and probes are adapted from [Istio 1.31's deployment controller](https://github.com/istio/istio/blob/1.31.0/pilot/pkg/config/kube/gatewaycommon/deploymentcontroller.go) and [agentgateway template](https://github.com/istio/istio/blob/1.31.0/manifests/charts/istio-control/istio-discovery/files/agentgateway.yaml).
-
 ## End-to-end coverage
 
 The [standard agentgateway e2e suite](../../test/e2e/suites/agentgateway/README.md) installs the full production chart and exercises this controller with real ztunnel mTLS CONNECT traffic. It shares outbound protocol, ext-proc header mutation, and port-selection checks with the Envoy suite. The suite also covers 12 deployment/configuration lifecycle scenarios, including HPA/PDB recreation and garbage collection. The suite enables native CA mode: the Gateway Pod obtains its certificate from Agentiod using its own projected token. The fixture does not read CA private keys or issue gateway leaf Secrets.
