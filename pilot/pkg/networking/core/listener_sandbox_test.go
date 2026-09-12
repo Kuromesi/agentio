@@ -15,12 +15,14 @@
 package core
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 
 	typedstruct "github.com/cncf/xds/go/udpa/type/v1"
 	matcher "github.com/cncf/xds/go/xds/type/matcher/v3"
+	celv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/filters/cel/v3"
 	extensionmatching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
 	dfphttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
 	localratelimit "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
@@ -35,6 +37,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	meshconfig "istio.io/api/mesh/v1alpha1"
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
@@ -42,6 +45,7 @@ import (
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio"
 	"istio.io/istio/pilot/pkg/serviceregistry/kube/controller/agentio/extensions"
+	"istio.io/istio/pkg/config/mesh"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/config/xds"
 	"istio.io/istio/pkg/ptr"
@@ -235,6 +239,13 @@ func TestBuildMainForwardFilters_ProxiesConnect(t *testing.T) {
 				t.Fatalf("decode HTTP connection manager: %v", err)
 			}
 
+			wantScheme := ""
+			if tt.inner {
+				wantScheme = "https"
+			}
+			if got := h.GetSchemeHeaderTransformation().GetSchemeToOverwrite(); got != wantScheme {
+				t.Errorf("scheme override = %q, want %q", got, wantScheme)
+			}
 			vhost := h.GetRouteConfig().GetVirtualHosts()[0]
 			if got, want := vhost.GetName(), "inbound|http|0"; got != want {
 				t.Fatalf("default virtual host name = %q, want preserved sidecar inbound name %q", got, want)
@@ -1623,5 +1634,92 @@ func TestBuildSandboxHTTPRouteConfig_FullScenario(t *testing.T) {
 		for _, r := range vh.Routes {
 			assert.Equal(t, r.GetRoute().GetCluster(), "tls_connect_originate")
 		}
+	}
+}
+
+func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
+	previous := features.EnableSniTrafficPolicy
+	features.EnableSniTrafficPolicy = true
+	t.Cleanup(func() { features.EnableSniTrafficPolicy = previous })
+	expression := "connection.requested_server_name != 'skip.example.com'"
+	for _, tt := range []struct {
+		name, logging string
+		want          int
+		filtered      bool
+	}{
+		{name: "default", want: 1},
+		{name: "filtered", logging: "filter:\n      expression: \"" + expression + "\"", want: 1, filtered: true},
+		{name: "disabled", logging: "disabled: true"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := mesh.DefaultMeshConfig()
+			config.DefaultProviders = &meshconfig.MeshConfig_DefaultProviders{AccessLogging: []string{"envoy"}}
+			opts := TestOptions{MeshConfig: config}
+			if tt.logging != "" {
+				opts.ConfigString = fmt.Sprintf(`apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: logs
+  namespace: istio-system
+spec:
+  accessLogging:
+  - providers:
+    - name: envoy
+    %s
+`, tt.logging)
+			}
+			cg := NewConfigGenTest(t, opts)
+			lb := &ListenerBuilder{node: cg.SetupProxy(sandboxEgressNode()), push: cg.PushContext()}
+			chains := applySandboxInternalChains(lb, nil, &matcher.Matcher{})
+			chain := chains[len(chains)-1]
+			if chain.GetName() != sniTrafficPolicyDenyFilterChain {
+				t.Fatal("missing SNI deny chain")
+			}
+			if got := len(chain.GetFilters()); got != 1+tt.want {
+				t.Fatalf("deny filters = %d, want %d", got, 1+tt.want)
+			}
+			deny := &tcp.TcpProxy{}
+			if err := chain.GetFilters()[len(chain.GetFilters())-1].GetTypedConfig().UnmarshalTo(deny); err != nil {
+				t.Fatal(err)
+			}
+			if chain.GetTransportSocket() != nil || deny.GetCluster() != util.BlackHoleCluster {
+				t.Fatal("denial must remain a raw black-hole connection")
+			}
+			if len(deny.GetAccessLog()) != tt.want {
+				t.Fatalf("deny logs = %d, want %d", len(deny.GetAccessLog()), tt.want)
+			}
+			if tt.want == 0 {
+				return
+			}
+			state := &sfsnetwork.Config{}
+			if err := chain.GetFilters()[0].GetTypedConfig().UnmarshalTo(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.ValidateAll(); err != nil {
+				t.Fatal(err)
+			}
+			if len(state.GetOnNewConnection()) != 1 {
+				t.Fatal("denial must set one connection-local reason before the TCP proxy runs")
+			}
+			reason := state.GetOnNewConnection()[0]
+			if reason.GetObjectKey() != egressDenialReasonFilterStateKey || reason.GetFactoryKey() != "envoy.string" ||
+				reason.GetFormatString().GetTextFormatSource().GetInlineString() != "sni_policy_denied" ||
+				!reason.GetReadOnly() || reason.GetSharedWithUpstream() != 0 {
+				t.Fatalf("unexpected denial reason state: %v", reason)
+			}
+			if !tt.filtered {
+				if deny.AccessLog[0].GetFilter() != nil {
+					t.Fatal("default deny log must not be restricted to NR")
+				}
+			} else {
+				filter := &celv3.ExpressionFilter{}
+				if err := deny.AccessLog[0].GetFilter().GetExtensionFilter().GetTypedConfig().UnmarshalTo(filter); err != nil {
+					t.Fatal(err)
+				}
+				if filter.GetExpression() != expression {
+					t.Fatalf("deny filter = %q, want %q", filter.GetExpression(), expression)
+				}
+			}
+		})
 	}
 }

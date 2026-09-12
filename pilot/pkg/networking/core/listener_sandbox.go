@@ -117,7 +117,8 @@ const (
 	// reach main_forward. Custom (non-canonical) for readable config dumps.
 	connectDownstreamFilterName = "connect_downstream_peer"
 
-	sniTrafficPolicyDenyFilterChain = "sni-traffic-policy-deny"
+	sniTrafficPolicyDenyFilterChain  = "sni-traffic-policy-deny"
+	egressDenialReasonFilterStateKey = "io.kruise.egress_denial_reason"
 )
 
 func sniTrafficPolicyEnabled(metadata *model.NodeMetadata) bool {
@@ -437,16 +438,41 @@ func (lb *ListenerBuilder) buildMainForwardFilters(httpCluster, tcpCluster strin
 // selects for a denied connection. It is raw rather than TLS-terminating, so the
 // client is refused without first being handed a certificate, and the black hole
 // cluster closes the connection instead of forwarding it anywhere.
-func buildSandboxSniTrafficPolicyDenyFilterChain() *listener.FilterChain {
-	return &listener.FilterChain{
-		Name: sniTrafficPolicyDenyFilterChain,
-		Filters: []*listener.Filter{{
-			Name: wellknown.TCPProxy,
-			ConfigType: &listener.Filter_TypedConfig{TypedConfig: protoconv.MessageToAny(&tcp.TcpProxy{
-				StatPrefix:       sniTrafficPolicyDenyFilterChain,
-				ClusterSpecifier: &tcp.TcpProxy_Cluster{Cluster: util.BlackHoleCluster},
+func (lb *ListenerBuilder) buildSandboxSniTrafficPolicyDenyFilterChain() *listener.FilterChain {
+	tcpProxy := &tcp.TcpProxy{
+		StatPrefix:       sniTrafficPolicyDenyFilterChain,
+		ClusterSpecifier: &tcp.TcpProxy_Cluster{Cluster: util.BlackHoleCluster},
+	}
+	// A policy denial matched a chain, so the listener's NR-only log cannot
+	// record it. Honor the same providers and filters as application TCP.
+	accessLogBuilder.setTCPAccessLog(lb.push, lb.node, tcpProxy, istionetworking.ListenerClassSidecarInbound, nil)
+	var filters []*listener.Filter
+	if len(tcpProxy.AccessLog) > 0 {
+		// Capture the policy decision before the black-hole proxy closes the
+		// connection, so logs need not expose internal cluster or chain names.
+		filters = append(filters, &listener.Filter{
+			Name: "envoy.filters.network.set_filter_state",
+			ConfigType: &listener.Filter_TypedConfig{TypedConfig: protoconv.MessageToAny(&sfsnetwork.Config{
+				OnNewConnection: []*sfsvalue.FilterStateValue{{
+					Key:        &sfsvalue.FilterStateValue_ObjectKey{ObjectKey: egressDenialReasonFilterStateKey},
+					FactoryKey: "envoy.string",
+					Value: &sfsvalue.FilterStateValue_FormatString{FormatString: &core.SubstitutionFormatString{
+						Format: &core.SubstitutionFormatString_TextFormatSource{
+							TextFormatSource: &core.DataSource{Specifier: &core.DataSource_InlineString{InlineString: "sni_policy_denied"}},
+						},
+					}},
+					ReadOnly: true,
+				}},
 			})},
-		}},
+		})
+	}
+	filters = append(filters, &listener.Filter{
+		Name:       wellknown.TCPProxy,
+		ConfigType: &listener.Filter_TypedConfig{TypedConfig: protoconv.MessageToAny(tcpProxy)},
+	})
+	return &listener.FilterChain{
+		Name:    sniTrafficPolicyDenyFilterChain,
+		Filters: filters,
 	}
 }
 
@@ -670,7 +696,7 @@ func applySandboxInternalChains(
 		// a chain's transport socket, which is fixed before any network filter runs.
 		chains = append(chains,
 			lb.buildTlsTerminateFilterChain(gateway.GetConnectionPool()),
-			buildSandboxSniTrafficPolicyDenyFilterChain())
+			lb.buildSandboxSniTrafficPolicyDenyFilterChain())
 		var excludeHosts []string
 		if tlsTermCfg != nil {
 			excludeHosts = tlsTermCfg.GetExcludeHosts()
