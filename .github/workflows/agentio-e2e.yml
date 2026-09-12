@@ -101,30 +101,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.coverage.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: test/e2e/go.mod
+          cache-dependency-path: test/e2e/go.sum
+      - name: Generate product coverage plan
+        id: coverage
+        run: |
+          matrix=$(go -C test/e2e run ./cmd/product-e2e plan --format=json)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   product-e2e:
-    name: ${{ matrix.profile }}-${{ matrix.backend }}
+    needs: [plan]
+    name: ${{ matrix.id }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - profile: sidecar
-            backend: auto
-            cluster: agentio-sidecar-auto-e2e
-            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
-          - profile: sidecar
-            backend: iptables
-            cluster: agentio-sidecar-iptables-e2e
-            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
-          - profile: ambient
-            backend: auto
-            cluster: agentio-ambient-auto-e2e
-            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
-          - profile: ambient
-            backend: iptables
-            cluster: agentio-ambient-iptables-e2e
-            suites: ./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       E2E_CLUSTER_NAME: ${{ matrix.cluster }}
       E2E_REGISTRY_NAME: ${{ matrix.cluster }}-registry
@@ -133,7 +136,7 @@ jobs:
       E2E_DIAGNOSTICS_FULL_ON_FAILURE: "true"
       E2E_DIAGNOSTICS_MAX_FULL_DUMPS: "1"
       AGENTIO_E2E_PROFILE: ${{ matrix.profile }}
-      AGENTIO_E2E_SUITES: ${{ matrix.suites }}
+      AGENTIO_E2E_GROUP: ${{ matrix.id }}
       AGENTIO_E2E_AGENTIOD_IMAGE: ${{ inputs.agentiod_image }}
       AGENTIO_E2E_EPE_IMAGE: ${{ inputs.epe_image }}
       AGENTIO_E2E_CNI_IMAGE: ${{ inputs.cni_image }}
@@ -150,7 +153,7 @@ jobs:
           persist-credentials: false
       - name: Configure scenario artifact directory
         env:
-          SCENARIO: ${{ matrix.profile }}-${{ matrix.backend }}
+          SCENARIO: ${{ matrix.id }}
         run: echo "E2E_ARTIFACTS_DIR=${RUNNER_TEMP}/agentio-${SCENARIO}-e2e-artifacts" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -243,7 +246,7 @@ jobs:
           if [[ -n "${E2E_KIND_CONFIG:-}" ]]; then
             docker network connect kind "$E2E_REGISTRY_NAME"
           fi
-      - name: Run Agentio ${{ matrix.profile }}-${{ matrix.backend }} product E2E
+      - name: Run Agentio ${{ matrix.id }} product E2E
         run: make test.integration.agentio.product
       - name: Export KinD logs
         if: always()
@@ -252,8 +255,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: agentio-${{ matrix.profile }}-${{ matrix.backend }}-e2e-artifacts
-          path: ${{ runner.temp }}/agentio-${{ matrix.profile }}-${{ matrix.backend }}-e2e-artifacts
+          name: agentio-${{ matrix.id }}-e2e-artifacts
+          path: ${{ runner.temp }}/agentio-${{ matrix.id }}-e2e-artifacts
           if-no-files-found: warn
           retention-days: 7
       - name: Delete isolated KinD cluster

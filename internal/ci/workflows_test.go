@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
@@ -61,64 +62,41 @@ func TestReleasePromotesExactProductE2ECandidates(t *testing.T) {
 	}
 }
 
-func TestProductE2ERunsProfileAndFirewallMatrixOnSeparateClusters(t *testing.T) {
+func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 	workflow := loadWorkflow(t, "agentio-e2e.yml")
 	jobs := workflowJobs(t, workflow)
 	job := workflowJob(t, jobs, "product-e2e")
 	if condition, found := job["if"]; found {
 		t.Fatalf("reusable product E2E has job restriction %q; callers own branch policy", condition)
 	}
-	if got := stringValue(t, job, "name"); got != "${{ matrix.profile }}-${{ matrix.backend }}" {
-		t.Errorf("product E2E job name = %q, want concise profile/backend scenario", got)
+	if got := stringValue(t, job, "name"); got != "${{ matrix.id }}" {
+		t.Errorf("product E2E job name = %q, want generated group identity", got)
+	}
+	if !slices.Contains(jobNeeds(t, jobs, "product-e2e"), "plan") {
+		t.Fatal("product E2E must wait for coverage planning")
 	}
 	strategy := mapValue(t, job, "strategy")
-	matrix := mapValue(t, strategy, "matrix")
-	include, ok := matrix["include"].([]any)
-	if !ok {
-		t.Fatalf("product-e2e matrix.include has type %T, want list", matrix["include"])
+	if strategy["matrix"] != "${{ fromJSON(needs.plan.outputs.matrix) }}" {
+		t.Fatal("product E2E must consume the generated matrix")
 	}
-
-	clusters := map[string]string{}
-	suites := map[string]string{}
-	for _, raw := range include {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			t.Fatalf("matrix entry has type %T, want map", raw)
-		}
-		profile, _ := entry["profile"].(string)
-		backend, _ := entry["backend"].(string)
-		cluster, _ := entry["cluster"].(string)
-		scenario := profile + "-" + backend
-		if clusters[scenario] != "" {
-			t.Fatalf("duplicate product E2E scenario %q", scenario)
-		}
-		clusters[scenario] = cluster
-		suites[scenario], _ = entry["suites"].(string)
+	plan := workflowJob(t, jobs, "plan")
+	outputs := mapValue(t, plan, "outputs")
+	if outputs["matrix"] != "${{ steps.coverage.outputs.matrix }}" {
+		t.Fatal("plan must export the generated coverage matrix")
 	}
-	wantScenarios := []string{"sidecar-auto", "sidecar-iptables", "ambient-auto", "ambient-iptables"}
-	seenClusters := map[string]string{}
-	for _, scenario := range wantScenarios {
-		cluster := clusters[scenario]
-		if cluster == "" {
-			t.Errorf("product E2E matrix is missing %q", scenario)
-			continue
-		}
-		if prior := seenClusters[cluster]; prior != "" {
-			t.Errorf("scenarios %q and %q share KinD cluster %q", prior, scenario, cluster)
-		}
-		seenClusters[cluster] = scenario
-	}
-	if len(include) != len(wantScenarios) {
-		t.Errorf("product E2E matrix has %d entries, want exactly %d", len(include), len(wantScenarios))
-	}
-	wantSuites := "./suites/trafficpolicy ./suites/gateway ./suites/securitypolicy ./suites/epe"
-	for _, scenario := range wantScenarios {
-		if suites[scenario] != wantSuites {
-			t.Errorf("%s product E2E suites = %q, want shared product suites %q", scenario, suites[scenario], wantSuites)
-		}
+	planSteps := listValue(t, plan, "steps")
+	index := namedStepIndex(t, planSteps, "Generate product coverage plan")
+	if index < 0 || !strings.Contains(stringValue(t, planSteps[index].(map[string]any), "run"), "go -C test/e2e run ./cmd/product-e2e plan --format=json") {
+		t.Fatal("CI must use the same planner as local product runs")
 	}
 
 	environment := mapValue(t, job, "env")
+	if environment["AGENTIO_E2E_GROUP"] != "${{ matrix.id }}" {
+		t.Fatal("runner must execute the selected generated group")
+	}
+	if _, duplicated := environment["AGENTIO_E2E_SUITES"]; duplicated {
+		t.Fatal("workflow must not maintain a second suite list")
+	}
 	for _, variable := range []string{
 		"AGENTIO_E2E_AGENTIOD_IMAGE", "AGENTIO_E2E_EPE_IMAGE", "AGENTIO_E2E_CNI_IMAGE",
 		"AGENTIO_E2E_ZTUNNEL_IMAGE", "AGENTIO_E2E_PROXY_INIT_IMAGE", "AGENTIO_E2E_GATEWAY_IMAGE",
