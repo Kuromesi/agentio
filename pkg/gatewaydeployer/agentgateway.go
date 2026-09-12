@@ -104,8 +104,8 @@ func (in derivedInput) AgentgatewayCAAddress() (string, error) {
 	return agentgatewayCAAddress(nestedString(in.Values, "global", "caAddress"))
 }
 
-// agentgatewayCAAddress follows Istio's CA_ADDRESS bootstrap convention while
-// requiring TLS for the bearer credential sent to Agentiod.
+// agentgatewayCAAddress normalizes Agentiod's CA endpoint and requires TLS for
+// the proxy's bearer credential.
 func agentgatewayCAAddress(address string) (string, error) {
 	if address == "" {
 		return "", fmt.Errorf("agentgateway CA requires global.caAddress")

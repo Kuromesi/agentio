@@ -353,7 +353,7 @@ func TestAgentgatewayNativeCABootstrap(t *testing.T) {
 			}
 			for key, want := range map[string]string{
 				"CA_ADDRESS": "https://agentiod.control.svc:15012", "TRUST_DOMAIN": "mesh.example",
-				"CA_ROOT_CA": "/var/run/secrets/istio/root-cert.pem", "CA_AUTH_TOKEN": "/var/run/secrets/tokens/istio-token",
+				"CA_ROOT_CA": "/var/run/secrets/agentio/root-cert.pem", "CA_AUTH_TOKEN": "/var/run/secrets/tokens/agentio-token",
 			} {
 				if env[key].Value != want {
 					t.Errorf("%s = %q, want %q", key, env[key].Value, want)
@@ -380,14 +380,14 @@ func TestAgentgatewayNativeCABootstrap(t *testing.T) {
 				t.Fatalf("bad token projection: %+v", projection)
 			}
 			token := projection.Sources[0].ServiceAccountToken
-			if token == nil || token.Audience != "custom-ca" || token.Path != "istio-token" || token.ExpirationSeconds == nil || *token.ExpirationSeconds != 43200 {
+			if token == nil || token.Audience != "custom-ca" || token.Path != "agentio-token" || token.ExpirationSeconds == nil || *token.ExpirationSeconds != 43200 {
 				t.Fatalf("bad token: %+v", token)
 			}
 			mounts := map[string]corev1.VolumeMount{}
 			for _, m := range pod.Containers[0].VolumeMounts {
 				mounts[m.Name] = m
 			}
-			for key, path := range map[string]string{"agentio-ca-root": "/var/run/secrets/istio", "agentio-ca-token": "/var/run/secrets/tokens"} {
+			for key, path := range map[string]string{"agentio-ca-root": "/var/run/secrets/agentio", "agentio-ca-token": "/var/run/secrets/tokens"} {
 				m := mounts[key]
 				if m.MountPath != path || !m.ReadOnly || m.SubPath != "" {
 					t.Errorf("%s must be a read-only directory mount: %+v", key, m)

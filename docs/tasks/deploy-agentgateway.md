@@ -22,7 +22,7 @@ The image is an operator-controlled value; a Gateway annotation cannot override 
 
 The injector ConfigMap contains both the `egress-gateway` and `agentgateway` deployment templates. Older injector ConfigMaps without the new template remain usable for Envoy; an agentgateway Gateway reports an error until its template is installed.
 
-The generated HPA/PDB use Istio 1.31's template defaults: the HPA targets the Gateway Deployment with `maxReplicas: 1`, and the PDB specifies only the Gateway Pod selector. The Deployment template leaves `spec.replicas` unset.
+The generated HPA targets the Gateway Deployment with `maxReplicas: 1`, and the PDB specifies only the Gateway Pod selector. The Deployment template leaves `spec.replicas` unset.
 
 ## Supply file configuration
 
@@ -76,7 +76,7 @@ If Helm should also create the Gateway, set `egressGateway.gatewayAPI.create: tr
 
 ## Obtain HBONE certificates from Agentiod
 
-Enable the native Istio-compatible CA client for agentgateway deployments:
+Enable native certificate bootstrap from Agentiod for agentgateway deployments:
 
 ```yaml
 egressGateway:
@@ -88,13 +88,13 @@ egressGateway:
 
 This option defaults to `false` to preserve existing file/Secret deployments. It applies to all `agentio-agentgateway` Gateways managed by this installation. It enables certificate bootstrap only; routes still come from the referenced ConfigMap and no agentgateway xDS connection is configured.
 
-Following Istio 1.31's bootstrap, the deployer supplies:
+Agentio supplies the following settings:
 
 - `CA_ADDRESS`: the HTTPS Agentiod endpoint from the injector's `global.caAddress`. A scheme-less address is normalized to HTTPS; plaintext endpoints are rejected.
 - `NAMESPACE` and `SERVICE_ACCOUNT`: downward API values from the Gateway Pod. The certificate identity is `spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>`, including any configured Gateway ServiceAccount override.
 - `TRUST_DOMAIN` and `CLUSTER_ID`: the configured mesh identity values.
-- `CA_AUTH_TOKEN`: a projected, 12-hour ServiceAccount token at `/var/run/secrets/tokens/istio-token`. Its audience uses `agentiod.tokenAudience`, as distributed through the injector values. Kubernetes refreshes the token and the native client rereads it when requesting certificates.
-- `CA_ROOT_CA`: the public trust bundle at `/var/run/secrets/istio/root-cert.pem`, from `agentiod.ca.trustBundleConfigMapName` in the Gateway namespace. Agentiod's trust-bundle distributor creates and updates this ConfigMap. The directory mount allows projected updates.
+- `CA_AUTH_TOKEN`: a projected, 12-hour ServiceAccount token at `/var/run/secrets/tokens/agentio-token`. Its audience uses `agentiod.tokenAudience`, as distributed through the injector values. Kubernetes refreshes the token and the native client rereads it when requesting certificates.
+- `CA_ROOT_CA`: the public trust bundle at `/var/run/secrets/agentio/root-cert.pem`, from `agentiod.ca.trustBundleConfigMapName` in the Gateway namespace. Agentiod's trust-bundle distributor creates and updates this ConfigMap. The directory mount allows projected updates.
 
 The proxy generates its private key and CSR in memory and calls Agentiod's `IstioCertificateService/CreateCertificate`. Agentiod authenticates the token with TokenReview and restricts the CSR to that ServiceAccount's identity. The proxy does not read the CA Secret, mount a CA private key, create a leaf Secret, or need node impersonation privileges. Default Kubernetes token automount stays disabled.
 
@@ -175,7 +175,7 @@ kubectl -n agentio-system rollout status deployment/agentgateway
 kubectl -n agentio-system logs deployment/agentgateway
 ```
 
-The class/template structure and the proxy security context and probes are adapted from [Istio 1.31's deployment controller](https://github.com/istio/istio/blob/1.31.0/pilot/pkg/config/kube/gatewaycommon/deploymentcontroller.go) and [agentgateway template](https://github.com/istio/istio/blob/1.31.0/manifests/charts/istio-control/istio-discovery/files/agentgateway.yaml). Agentio uses file configuration for this class, rather than Istio's xDS bootstrap.
+The class/template structure and the proxy security context and probes are adapted from [Istio 1.31's deployment controller](https://github.com/istio/istio/blob/1.31.0/pilot/pkg/config/kube/gatewaycommon/deploymentcontroller.go) and [agentgateway template](https://github.com/istio/istio/blob/1.31.0/manifests/charts/istio-control/istio-discovery/files/agentgateway.yaml).
 
 ## End-to-end coverage
 

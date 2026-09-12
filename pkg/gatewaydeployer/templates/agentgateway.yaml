@@ -126,9 +126,9 @@ spec:
         - name: CA_ADDRESS
           value: {{ .AgentgatewayCAAddress | quote }}
         - name: CA_AUTH_TOKEN
-          value: /var/run/secrets/tokens/istio-token
+          value: /var/run/secrets/tokens/agentio-token
         - name: CA_ROOT_CA
-          value: /var/run/secrets/istio/root-cert.pem
+          value: /var/run/secrets/agentio/root-cert.pem
         {{- end }}
         - name: CPU_LIMIT
           valueFrom:
@@ -151,7 +151,7 @@ spec:
           mountPath: /tmp
         {{- if $ca.enabled }}
         - name: agentio-ca-root
-          mountPath: /var/run/secrets/istio
+          mountPath: /var/run/secrets/agentio
           readOnly: true
         - name: agentio-ca-token
           mountPath: /var/run/secrets/tokens
@@ -183,7 +183,7 @@ spec:
           defaultMode: 0440
           sources:
           - serviceAccountToken:
-              path: istio-token
+              path: agentio-token
               expirationSeconds: 43200
               audience: {{ $token.aud | default "agentio-ca" | quote }}
       {{- end }}
