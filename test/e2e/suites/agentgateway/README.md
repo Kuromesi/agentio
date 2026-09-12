@@ -6,6 +6,8 @@ The suite reuses `harness.RunGatewayTraffic`, `RunGatewayExtProc`, and `RunGatew
 
 `TestAgentgatewayDeploymentLifecycle` covers class acceptance, missing config, initial provisioning, config rollout, invalid YAML, rejection by the native binary while the old replica continues serving, recovery, Service/HPA/PDB recreation, Gateway deletion/child garbage collection, and Gateway recreation. Rollout checks require the expected config hash and fully updated Deployment replicas; a stale `Programmed=True` does not count as completion.
 
+Certificate renewal and failure recovery are covered separately by `TestAgentgatewayNativeCACertificateRotation`. See the [deployment guide](../../../../docs/tasks/deploy-agentgateway.md#end-to-end-coverage) for how to run it.
+
 ## Run
 
 Use an isolated Kubernetes cluster with Gateway API v1.4.1 standard CRDs already installed. As with the other suites, provide immutable images for Agentiod, EPE, ext-proc, ztunnel, proxy-init, and CNI using the component flags or an `-agentio.config` file. Set `gateway-image` to an agentgateway digest (verified with v1.5.0), not the Envoy image. From `test/e2e`:
@@ -22,7 +24,3 @@ AGENTIO_E2E=1 go test ./suites/agentgateway -v -timeout=25m \
 ```
 
 A cross-compiled `go test -c` binary accepts the same flags, with `-test.v` and `-test.timeout` instead of `-v` and `-timeout`. To run remotely, copy the binary and production chart to the test host and supply its kubeconfig and chart path.
-
-## Scope
-
-The suite uses the production native CA bootstrap; it does not read CA private keys or create gateway certificate Secrets. The native HBONE gateway routes using the CONNECT destination IP and port, with explicit internal binds for the echo fixture ports; outer CONNECT Host overrides and synthetic destinations are outside this suite's scope. Long-running certificate renewal and rejection/recovery are exercised separately by `TestAgentgatewayNativeCACertificateRotation` in `pkg/security/ca` (see the [deployment guide](../../../../docs/tasks/deploy-agentgateway.md#end-to-end-coverage)). The suite does not test per-Sandbox identity authorization, dynamic SNI policy, SecurityProfile/EPE policy translation, TLS interception, or Gateway API HTTPRoute translation. Native ext-proc header mutations do not claim compatibility with the full EPE suite. The suite targets the sidecar profile; ambient needs a separate run.
