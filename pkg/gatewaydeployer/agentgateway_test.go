@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,12 +42,9 @@ func agentgatewayFixture() (*gatewayv1.Gateway, *corev1.ConfigMap) {
 	return gw, cm
 }
 
-func agentgatewayRenderer(t *testing.T, overlays ...map[string]any) *renderer {
+func agentgatewayRenderer(t *testing.T) *renderer {
 	t.Helper()
-	values := testValues(t, map[string]any{"global": map[string]any{"agentgateway": map[string]any{"image": "example.com/agentgateway:tested", "replicaCount": 2}}})
-	for _, overlay := range overlays {
-		values = mergeMaps(values, map[string]any{"global": map[string]any{"agentgateway": overlay}})
-	}
+	values := testValues(t, map[string]any{"global": map[string]any{"agentgateway": map[string]any{"image": "example.com/agentgateway:tested"}}})
 	r := testRenderer(t, values)
 	contents := map[string]string{}
 	for _, name := range []string{egressGatewayTemplateName, agentgatewayTemplateName} {
@@ -114,91 +112,47 @@ func TestAgentgatewayDeploymentUsesFileConfig(t *testing.T) {
 	}
 }
 
-func TestAgentgatewayAvailabilityResources(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		values        map[string]any
-		min, max, cpu int32
-		budget        string
-	}{
-		{name: "fixed replicas", min: 2, max: 2, cpu: 80, budget: "1"},
-		{name: "autoscaling", values: map[string]any{"autoscaling": map[string]any{"minReplicas": 3, "maxReplicas": 5, "targetCPUUtilizationPercentage": 70}, "podDisruptionBudget": map[string]any{"maxUnavailable": "25%"}}, min: 3, max: 5, cpu: 70, budget: "25%"},
-		{name: "null bounds", values: map[string]any{"autoscaling": map[string]any{"minReplicas": nil, "maxReplicas": nil}, "podDisruptionBudget": map[string]any{"maxUnavailable": 0}}, min: 2, max: 2, cpu: 80, budget: "0"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			gw, cm := agentgatewayFixture()
-			gw.Annotations = map[string]string{"gateway.agentio.kruise.io/name-override": "custom-gateway"}
-			gw.Spec.Infrastructure.Labels = map[gatewayv1.LabelKey]gatewayv1.LabelValue{"team": "test"}
-			rig := newControllerTestRig(t, gw, cm)
-			defer rig.close()
-			d := rig.newController()
-			d.renderer = agentgatewayRenderer(t, tc.values)
-			if err := d.Reconcile(types.NamespacedName{Namespace: gw.Namespace, Name: gw.Name}); err != nil {
-				t.Fatal(err)
-			}
-			hpaPatch, pdbPatch := rig.patcher.find("horizontalpodautoscalers"), rig.patcher.find("poddisruptionbudgets")
-			if hpaPatch == nil || pdbPatch == nil {
-				t.Fatal("missing HPA/PDB")
-			}
-			var hpa autoscalingv2.HorizontalPodAutoscaler
-			var pdb policyv1.PodDisruptionBudget
-			if err := json.Unmarshal(hpaPatch.data, &hpa); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(pdbPatch.data, &pdb); err != nil {
-				t.Fatal(err)
-			}
-			for _, meta := range []metav1.ObjectMeta{hpa.ObjectMeta, pdb.ObjectMeta} {
-				if meta.Name != "custom-gateway" || meta.Namespace != gw.Namespace || meta.Labels["team"] != "test" || len(meta.OwnerReferences) != 1 || meta.OwnerReferences[0].UID != gw.UID {
-					t.Fatalf("incorrect child metadata: %+v", meta)
-				}
-			}
-			if hpa.Spec.ScaleTargetRef != (autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "custom-gateway"}) || hpa.Spec.MinReplicas == nil || *hpa.Spec.MinReplicas != tc.min || hpa.Spec.MaxReplicas != tc.max {
-				t.Fatalf("incorrect HPA target or bounds: %+v", hpa.Spec)
-			}
-			if len(hpa.Spec.Metrics) != 1 || hpa.Spec.Metrics[0].Resource == nil || hpa.Spec.Metrics[0].Resource.Name != corev1.ResourceCPU || hpa.Spec.Metrics[0].Resource.Target.AverageUtilization == nil || *hpa.Spec.Metrics[0].Resource.Target.AverageUtilization != tc.cpu {
-				t.Fatalf("incorrect HPA metric: %+v", hpa.Spec.Metrics)
-			}
-			if pdb.Spec.MaxUnavailable == nil || pdb.Spec.MaxUnavailable.String() != tc.budget || pdb.Spec.Selector == nil || pdb.Spec.Selector.MatchLabels["gateway.networking.k8s.io/gateway-name"] != gw.Name || len(pdb.Spec.Selector.MatchLabels) != 1 {
-				t.Fatalf("incorrect PDB: %+v", pdb.Spec)
-			}
-		})
+// Pin the HPA/PDB specs to Istio 1.31's agentgateway template defaults.
+func TestAgentgatewayHPAPDB(t *testing.T) {
+	gw, cm := agentgatewayFixture()
+	gw.Annotations = map[string]string{"gateway.agentio.kruise.io/name-override": "custom-gateway"}
+	gw.Spec.Infrastructure.Labels = map[gatewayv1.LabelKey]gatewayv1.LabelValue{"team": "test"}
+	rig := newControllerTestRig(t, gw, cm)
+	defer rig.close()
+	d := rig.newController()
+	d.renderer = agentgatewayRenderer(t)
+	if err := d.Reconcile(types.NamespacedName{Namespace: gw.Namespace, Name: gw.Name}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestAgentgatewayInvalidAvailabilityDoesNotDeploy(t *testing.T) {
-	for _, values := range []map[string]any{
-		{"replicaCount": 0},
-		{"autoscaling": map[string]any{"minReplicas": 0}},
-		{"autoscaling": map[string]any{"minReplicas": 3, "maxReplicas": 2}},
-		{"autoscaling": map[string]any{"maxReplicas": 1}},
-		{"autoscaling": map[string]any{"maxReplicas": 2.5}},
-		{"autoscaling": map[string]any{"targetCPUUtilizationPercentage": 0}},
-		{"podDisruptionBudget": map[string]any{"maxUnavailable": -1}},
-		{"podDisruptionBudget": map[string]any{"maxUnavailable": "101%"}},
-		{"podDisruptionBudget": map[string]any{"maxUnavailable": "one"}},
-	} {
-		t.Run(fmt.Sprint(values), func(t *testing.T) {
-			gw, cm := agentgatewayFixture()
-			rig := newControllerTestRig(t, gw, cm)
-			defer rig.close()
-			d := rig.newController()
-			d.renderer = agentgatewayRenderer(t, values)
-			if err := d.Reconcile(types.NamespacedName{Namespace: gw.Namespace, Name: gw.Name}); err != nil {
-				t.Fatal(err)
-			}
-			for _, resource := range []string{"deployments", "services", "serviceaccounts", "horizontalpodautoscalers", "poddisruptionbudgets"} {
-				if rig.patcher.find(resource) != nil {
-					t.Fatalf("applied %s despite invalid availability values", resource)
-				}
-			}
-			for _, p := range rig.patcher.all() {
-				if p.gvr.Resource == "gateways" && len(p.subresources) == 1 && p.subresources[0] == "status" && strings.Contains(string(p.data), "InvalidParameters") {
-					return
-				}
-			}
-			t.Fatal("missing InvalidParameters condition")
-		})
+	hpaPatch, pdbPatch := rig.patcher.find("horizontalpodautoscalers"), rig.patcher.find("poddisruptionbudgets")
+	if hpaPatch == nil || pdbPatch == nil {
+		t.Fatal("missing HPA/PDB")
+	}
+	var hpa autoscalingv2.HorizontalPodAutoscaler
+	var pdb policyv1.PodDisruptionBudget
+	if err := json.Unmarshal(hpaPatch.data, &hpa); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(pdbPatch.data, &pdb); err != nil {
+		t.Fatal(err)
+	}
+	for _, meta := range []metav1.ObjectMeta{hpa.ObjectMeta, pdb.ObjectMeta} {
+		if meta.Name != "custom-gateway" || meta.Namespace != gw.Namespace || meta.Labels["team"] != "test" || len(meta.OwnerReferences) != 1 || meta.OwnerReferences[0].UID != gw.UID {
+			t.Fatalf("incorrect child metadata: %+v", meta)
+		}
+	}
+	wantHPA := autoscalingv2.HorizontalPodAutoscalerSpec{
+		ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "custom-gateway"},
+		MaxReplicas:    1,
+	}
+	if !reflect.DeepEqual(hpa.Spec, wantHPA) {
+		t.Fatalf("HPA spec = %+v, want %+v", hpa.Spec, wantHPA)
+	}
+	wantPDB := policyv1.PodDisruptionBudgetSpec{
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"gateway.networking.k8s.io/gateway-name": gw.Name}},
+	}
+	if !reflect.DeepEqual(pdb.Spec, wantPDB) {
+		t.Fatalf("PDB spec = %+v, want %+v", pdb.Spec, wantPDB)
 	}
 }
 
@@ -233,6 +187,13 @@ func TestAgentgatewayInvalidConfigReportsStatusWithoutDeploying(t *testing.T) {
 			p := rig.patcher.find("gateways")
 			if p == nil || !strings.Contains(string(p.data), "InvalidParameters") || !strings.Contains(string(p.data), `"status":"False"`) {
 				t.Fatalf("missing failure status: %v", p)
+			}
+			var patched gatewayv1.Gateway
+			if err := json.Unmarshal(p.data, &patched); err != nil {
+				t.Fatal(err)
+			}
+			if patched.Name != gw.Name || patched.Namespace != gw.Namespace || patched.Annotations[ControllerVersionAnnotation] != fmt.Sprint(ControllerVersion) {
+				t.Fatalf("status apply must identify the Gateway and retain its controller version: %+v", patched.ObjectMeta)
 			}
 		})
 	}

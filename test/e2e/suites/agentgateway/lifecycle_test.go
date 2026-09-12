@@ -176,11 +176,11 @@ func TestAgentgatewayDeploymentLifecycle(t *testing.T) {
 		})
 		probe(t, "version-three")
 	})
-	availabilityResources := []schema.GroupVersionResource{
+	hpaAndPDBResources := []schema.GroupVersionResource{
 		{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
 		{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
 	}
-	for _, resource := range availabilityResources {
+	for _, resource := range hpaAndPDBResources {
 		step("deleted "+resource.Resource+" reconciled", func(t *testing.T) {
 			child, err := env.Kube.Get(ctx, resource, config.Namespace, name)
 			if err != nil {
@@ -188,7 +188,7 @@ func TestAgentgatewayDeploymentLifecycle(t *testing.T) {
 			}
 			owners := child.GetOwnerReferences()
 			if len(owners) != 1 || owners[0].UID != gwRecord.UID || owners[0].Kind != "Gateway" || owners[0].Name != name {
-				t.Fatal("availability resource is not owned by the fixture Gateway")
+				t.Fatal("HPA/PDB is not owned by the fixture Gateway")
 			}
 			uid := child.GetUID()
 			if err := env.Cluster.Dynamic.Resource(resource).Namespace(config.Namespace).Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
@@ -212,7 +212,7 @@ func TestAgentgatewayDeploymentLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		harness.RetryAssertion(t, time.Minute, time.Second, func() error {
-			children := append([]schema.GroupVersionResource{deployments, {Version: "v1", Resource: "services"}, {Version: "v1", Resource: "serviceaccounts"}}, availabilityResources...)
+			children := append([]schema.GroupVersionResource{deployments, {Version: "v1", Resource: "services"}, {Version: "v1", Resource: "serviceaccounts"}}, hpaAndPDBResources...)
 			for _, r := range children {
 				_, err := env.Kube.Get(ctx, r, config.Namespace, name)
 				if !apierrors.IsNotFound(err) {

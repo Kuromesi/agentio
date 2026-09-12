@@ -13,7 +13,6 @@ egressGateway:
   mode: gatewayAPI
   agentgateway:
     image: cr.agentgateway.dev/agentgateway:v1.5.0
-    replicaCount: 1
     resources:
       requests: {cpu: 100m, memory: 128Mi}
       limits: {cpu: "2", memory: 1Gi}
@@ -23,24 +22,7 @@ The image is an operator-controlled value; a Gateway annotation cannot override 
 
 The injector ConfigMap contains both the `egress-gateway` and `agentgateway` deployment templates. Older injector ConfigMaps without the new template remain usable for Envoy; an agentgateway Gateway reports an error until its template is installed.
 
-## Configure availability and autoscaling
-
-Each Gateway always gets an `autoscaling/v2` HPA and a `policy/v1` PDB. By default, both HPA bounds use `replicaCount` (1), preserving a fixed size. The Deployment template omits `spec.replicas` so gateway reconciliation does not overwrite HPA scaling decisions. Unset or null bounds fall back to `replicaCount`; set both bounds to configure a scaling range:
-
-```yaml
-egressGateway:
-  agentgateway:
-    autoscaling:
-      minReplicas: 2
-      maxReplicas: 5
-      targetCPUUtilizationPercentage: 80
-    podDisruptionBudget:
-      maxUnavailable: 1
-```
-
-CPU-based scaling requires a working resource metrics API (usually Metrics Server) and CPU requests on the Pods. The default container requests include `100m` CPU. The HPA enforces fixed replica bounds without requiring metrics. These values apply to all agentgateway Gateways managed by this installation; the separate `egressGateway.autoscaling` and `egressGateway.podDisruptionBudget` values configure the static Envoy deployment.
-
-The PDB selects only its Gateway's Pods. `maxUnavailable` accepts a non-negative integer or a percentage from `0%` to `100%`, and defaults to 1. A single replica can therefore be evicted; for availability during voluntary disruptions, use at least two replicas and spread them across nodes or zones. PDBs govern voluntary evictions, not node failures or Deployment rolling updates. Set equal HPA bounds to return to a fixed size; these resources have no `enabled` switch.
+The generated HPA/PDB use Istio 1.31's template defaults: the HPA targets the Gateway Deployment with `maxReplicas: 1`, and the PDB specifies only the Gateway Pod selector. The Deployment template leaves `spec.replicas` unset.
 
 ## Supply file configuration
 

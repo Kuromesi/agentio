@@ -516,9 +516,6 @@ func TestInvalidModesFailRendering(t *testing.T) {
 		{name: "log level", want: "/agentiod/logging/level", args: []string{"--set", "agentiod.logging.level=verbose"}},
 		{name: "log format", want: "/agentiod/logging/format", args: []string{"--set", "agentiod.logging.format=console"}},
 		{name: "agentgateway CA boolean", want: "/egressGateway/agentgateway/ca/enabled", args: []string{"--set-string", "egressGateway.agentgateway.ca.enabled=false"}},
-		{name: "agentgateway HPA minimum", want: "/egressGateway/agentgateway/autoscaling/minReplicas", args: []string{"--set", "egressGateway.agentgateway.autoscaling.minReplicas=0"}},
-		{name: "agentgateway HPA CPU target", want: "/egressGateway/agentgateway/autoscaling/targetCPUUtilizationPercentage", args: []string{"--set", "egressGateway.agentgateway.autoscaling.targetCPUUtilizationPercentage=0"}},
-		{name: "agentgateway PDB budget", want: "/egressGateway/agentgateway/podDisruptionBudget/maxUnavailable", args: []string{"--set-string", "egressGateway.agentgateway.podDisruptionBudget.maxUnavailable=101%"}},
 		{name: "egress gateway", want: "/egressGateway/mode", args: []string{"--set", "egressGateway.mode=invalid"}},
 		{name: "EPE", want: "/epe/mode", args: []string{"--set", "epe.mode=invalid"}},
 		{name: "external EPE address", want: "/epe/external/address", args: []string{"--set", "epe.mode=external"}},
@@ -572,10 +569,6 @@ func TestAgentgatewayCAInjectorValues(t *testing.T) {
 				"--set", fmt.Sprintf("egressGateway.agentgateway.ca.enabled=%t", enabled),
 				"--set", "agentiod.tokenAudience=gateway-ca",
 				"--set", "agentiod.ca.trustBundleConfigMapName=gateway-root",
-				"--set", "egressGateway.agentgateway.autoscaling.minReplicas=2",
-				"--set", "egressGateway.agentgateway.autoscaling.maxReplicas=5",
-				"--set", "egressGateway.agentgateway.autoscaling.targetCPUUtilizationPercentage=75",
-				"--set-string", "egressGateway.agentgateway.podDisruptionBudget.maxUnavailable=25%",
 			)
 			for _, doc := range strings.Split(manifest, "\n---") {
 				var cm struct {
@@ -590,11 +583,7 @@ func TestAgentgatewayCAInjectorValues(t *testing.T) {
 				}
 				var values struct {
 					Global struct {
-						Agentgateway struct {
-							CA                  struct{ Enabled bool }
-							Autoscaling         struct{ MinReplicas, MaxReplicas, TargetCPUUtilizationPercentage int }
-							PodDisruptionBudget struct{ MaxUnavailable string }
-						}
+						Agentgateway    struct{ CA struct{ Enabled bool } }
 						CAAddress       string
 						TrustBundleName string
 						SDS             struct{ Token struct{ Aud string } }
@@ -606,10 +595,6 @@ func TestAgentgatewayCAInjectorValues(t *testing.T) {
 				g := values.Global
 				if g.Agentgateway.CA.Enabled != enabled || g.SDS.Token.Aud != "gateway-ca" || g.TrustBundleName != "gateway-root" || g.CAAddress != "agentiod.agentio-system.svc.cluster.local:15012" {
 					t.Fatalf("incorrect CA bootstrap values: %+v", g)
-				}
-				a := g.Agentgateway.Autoscaling
-				if a.MinReplicas != 2 || a.MaxReplicas != 5 || a.TargetCPUUtilizationPercentage != 75 || g.Agentgateway.PodDisruptionBudget.MaxUnavailable != "25%" {
-					t.Fatalf("incorrect availability values: %+v", g.Agentgateway)
 				}
 				return
 			}

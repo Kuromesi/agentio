@@ -224,16 +224,6 @@ egressGateway:
     # Native config must use tunnelProtocol: hboneGateway for HBONE termination.
     ca:
       enabled: false
-    replicaCount: 1
-    # HPA is always generated. Unset bounds use replicaCount (fixed size).
-    # Set both bounds to enable a scaling range; CPU scaling needs Metrics Server.
-    autoscaling:
-      minReplicas: null
-      maxReplicas: null
-      targetCPUUtilizationPercentage: 80
-    # Always generated; permits one voluntary disruption by default.
-    podDisruptionBudget:
-      maxUnavailable: 1
     terminationGracePeriodSeconds: 30
     resources:
       requests: {cpu: 100m, memory: 128Mi}
