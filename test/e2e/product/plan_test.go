@@ -17,6 +17,7 @@ package product
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,7 +45,7 @@ func TestRequiredCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
-		"sidecar-auto":     {"trafficpolicy", "gateway", "securitypolicy", "epe"},
+		"sidecar-auto":     {"trafficpolicy", "gateway", "securitypolicy", "epe", "clienttrust"},
 		"ambient-auto":     {"trafficpolicy", "gateway", "securitypolicy", "epe"},
 		"sidecar-iptables": {"trafficpolicy"},
 		"ambient-iptables": {"trafficpolicy"},
@@ -71,15 +72,19 @@ func TestRequiredCoverage(t *testing.T) {
 		if !reflect.DeepEqual(suites, want[group.ID]) {
 			t.Fatalf("%s: %v", group.ID, suites)
 		}
+		if slices.Contains(group.Fixtures, "clienttrust") != (group.ID == "sidecar-auto") {
+			t.Fatal("clienttrust fixture scheduled unnecessarily")
+		}
 	}
-	if invocations != 10 {
-		t.Fatalf("invocations=%d, want 10", invocations)
+	if invocations != 11 {
+		t.Fatalf("invocations=%d, want 11", invocations)
 	}
 	for test, want := range map[string]int{
 		"trafficpolicy/TestControlPlaneConfigDebug":      1,
 		"trafficpolicy/TestSandboxTrafficPolicyProtocol": 4,
 		"epe/TestEPEServiceAccountCanWatchItsInputs":     1,
 		"epe/TestPodIdentityReachesEPE":                  2,
+		"clienttrust/TestClientTrustHTTPS":               1,
 	} {
 		if counts[test] != want {
 			t.Errorf("%s scheduled %d times, want %d", test, counts[test], want)
@@ -100,9 +105,11 @@ func TestSelectionAndManualCoverage(t *testing.T) {
 	}{
 		{"ambient", Selection{Profile: "ambient"}, 2, ""},
 		{"iptables", Selection{Backend: "iptables"}, 2, ""},
+		{"clienttrust", Selection{Suites: []string{"clienttrust"}}, 1, ""},
 		{"opt-in", Selection{Suites: []string{"agentgateway"}}, 2, ""},
-		{"outside-coverage", Selection{Suites: []string{"gateway"}, Backend: "iptables"}, 0, "no tests"},
-		{"manual-backend", Selection{Suites: []string{"gateway"}, Profile: "sidecar", Backend: "iptables", Force: true}, 1, ""},
+		{"outside-coverage", Selection{Suites: []string{"clienttrust"}, Backend: "iptables"}, 0, "no tests"},
+		{"manual-backend", Selection{Suites: []string{"clienttrust"}, Profile: "sidecar", Backend: "iptables", Force: true}, 1, ""},
+		{"unsupported-profile", Selection{Suites: []string{"clienttrust"}, Profile: "ambient", Backend: "auto", Force: true}, 0, "no tests"},
 		{"incomplete-force", Selection{Force: true}, 0, "force requires"},
 		{"missing-test", Selection{Tests: "^TestRenamed$"}, 0, "no tests"},
 		{"unknown-suite", Selection{Suites: []string{"typo"}}, 0, "unknown suite"},
@@ -140,10 +147,10 @@ func TestInvalidCoverageFailsBeforeExecution(t *testing.T) {
 	}{
 		{"renamed-test", func(c []Suite, i map[string][]string) []Suite { i["epe"] = []string{"TestRenamed"}; return c }},
 		{"unregistered-suite", func(c []Suite, i map[string][]string) []Suite { i["newfeature"] = []string{"TestFeature"}; return c }},
-		{"missing-suite", func(c []Suite, i map[string][]string) []Suite { delete(i, "gateway"); return c }},
+		{"missing-suite", func(c []Suite, i map[string][]string) []Suite { delete(i, "clienttrust"); return c }},
 		{"duplicate-suite", func(c []Suite, _ map[string][]string) []Suite { return append(c, c[0]) }},
 		{"duplicate-test", func(c []Suite, i map[string][]string) []Suite {
-			i["gateway"] = []string{"TestX", "TestX"}
+			i["clienttrust"] = []string{"TestX", "TestX"}
 			return c
 		}},
 		{"duplicate-backend", func(c []Suite, _ map[string][]string) []Suite {

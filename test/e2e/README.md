@@ -32,13 +32,14 @@ The Agentio product tests are split into per-domain suites. Each suite is an ind
 
 - `suites/trafficpolicy`: sandbox TrafficPolicy matrix (12 top-level tests with 50 scoped subscenarios plus one whole-test lifecycle scenario) and the control-plane config debug surface. The fixture contains `client`, `server`, `another-server`, and two `workload-target` Pods using the selected dataplane path. The matrix covers basic ingress and egress rules, global policy and priority, selector expressions, workload and service peers, TCP/UDP/ICMP protocol rules, policy interaction, Cartesian port/source cases, and selectorless Services with manual EndpointSlices. It preserves the policy documents and assertions from Agentio commit `4e6107d0444555a193b1a9224626a0e59d79b34c`.
 - `suites/gateway`: egress gateway configuration, TLS termination and on-demand certificates, DFP routing, static ServiceEntries, ext-proc, and egress policies.
+- `suites/clienttrust`: sidecar CA injection, container/template selection, runtime environment variables, verified Python/Node/curl HTTPS, and CA source update/retention. Runs in the sidecar-auto CI scenario; see [client trust suite](suites/clienttrust/README.md).
 - `suites/agentgateway`: native static configuration, Gateway API deployment lifecycle, and shared outbound protocol/ext-proc/port-selection checks. See [agentgateway suite](suites/agentgateway/README.md) for its separate image input and scope.
 - `suites/securitypolicy`: SNI SecurityProfile and GlobalSecurityProfile lifecycle against dedicated SNI fixture namespaces.
 - `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, and profile-priority contracts against Envoy. Agentgateway EPE coverage is deferred until production peer attributes are available.
 
 The shared product conventions (the `AGENTIO_E2E` gate, baseline ConfigMap, scenario ledgers with contamination tracking, and profile-neutral echo fixtures) live in `suites/internal/harness`. Each product fixture namespace is enrolled with `agentio.kruise.io/dataplane-mode`; ordinary Echo workloads carry only workload labels. In sidecar mode the namespace selector activates the default ztunnel injection template, while ambient mode uses CNI redirection and the node-level ztunnel. Every scenario owns its transient policies and endpoint objects through a scoped ledger: successful scenarios clean up before the next scenario, while a failed scenario retains its evidence and causes later scenarios in the same suite to skip instead of running against contaminated state.
 
-All supplied suite images must be immutable digest references. The forward proxy fixture uses a framework-owned Envoy digest by default; set `AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. CI generates four isolated environment groups from the same planner used locally. The two `auto` groups run the suites that require their profile; the two `iptables` groups run only trafficpolicy. This schedules 10 suite executions instead of 16. Suite setup verifies the requested `FIREWALL_BACKEND` on the injected sidecar or ambient ztunnel Pod before any product assertion runs.
+All supplied suite images must be immutable digest references. The forward proxy fixture uses a framework-owned Envoy digest by default; set `AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. CI generates four isolated environment groups from the same planner used locally. The two `auto` groups run the suites that require their profile; the two `iptables` groups run only trafficpolicy. This schedules 11 suite executions instead of 18. clienttrust runs only in `sidecar-auto`. Suite setup verifies the requested `FIREWALL_BACKEND` on the injected sidecar or ambient ztunnel Pod before any product assertion runs.
 
 Pull requests and master pushes use `agentio-e2e-presubmit.yml`. It builds the repository-owned agentiod and EPE images plus the repository-owned ext-proc test fixture once, transfers them to each matrix job as a same-run artifact, and publishes them only to that job's KinD-local registry. CNI, proxy-init, gateway, and ztunnel remain the immutable public images recorded in `agentio.deps`, so presubmit needs no registry credentials. Release calls the same product workflow with an immutable candidate BOM and promotes only the digests that passed it.
 
@@ -53,6 +54,7 @@ export AGENTIO_E2E_PROXY_INIT_IMAGE='registry.example/proxy-init@sha256:<64-hex-
 export AGENTIO_E2E_GATEWAY_IMAGE='registry.example/gateway@sha256:<64-hex-digest>'
 export AGENTIO_E2E_EPE_IMAGE='registry.example/epe@sha256:<64-hex-digest>'
 export AGENTIO_E2E_EXT_PROC_IMAGE='registry.example/ext-proc@sha256:<64-hex-digest>'
+export AGENTIO_E2E_CLIENT_TRUST_IMAGE='registry.example/clienttrust@sha256:<64-hex-digest>'
 # Preview all required combinations without installing anything.
 go run ./cmd/product-e2e plan
 # Execute the same coverage plan used by CI.
@@ -61,9 +63,9 @@ go run ./cmd/product-e2e run
 
 From the repository root, `make test.integration.agentio.plan` and
 `make test.integration.agentio.product` call the same entry point. Pass planner
-options with `AGENTIO_E2E_ARGS='--suites gateway'`. `AGENTIO_E2E_SUITES`
+options with `AGENTIO_E2E_ARGS='--suites clienttrust'`. `AGENTIO_E2E_SUITES`
 continues to accept comma- or space-separated names or `./suites/<name>` paths.
-The default selects the four required Envoy product suites; agentgateway is
+The default selects the five required Envoy product suites; agentgateway is
 explicitly selected with `--suites agentgateway` and its own immutable images.
 
 Examples from this module directory:
@@ -73,7 +75,7 @@ Examples from this module directory:
 go run ./cmd/product-e2e plan --group ambient-iptables --format=json
 go run ./cmd/product-e2e run --suites trafficpolicy --tests '^TestSandboxTrafficPolicyProtocol$'
 # Manually verify a supported backend beyond the required CI coverage.
-go run ./cmd/product-e2e run --suites gateway --profile sidecar --backend iptables --force
+go run ./cmd/product-e2e run --suites clienttrust --profile sidecar --backend iptables --force
 ```
 
 `--profile`, `--backend`, and `--group` also read `AGENTIO_E2E_PROFILE`,

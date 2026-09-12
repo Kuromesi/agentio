@@ -46,6 +46,7 @@ func Catalog() []Suite {
 		{Name: "securitypolicy", Coverage: Coverage{Profiles: both}},
 		{Name: "epe", Coverage: Coverage{Profiles: both},
 			Overrides: map[string]Coverage{"TestEPEServiceAccountCanWatchItsInputs": once}},
+		{Name: "clienttrust", Coverage: once, SupportedProfiles: []string{"sidecar"}, Fixtures: []string{"clienttrust"}},
 		{Name: "agentgateway", Coverage: Coverage{Profiles: both}, GatewayDataplane: "agentgateway", Fixtures: []string{"extproc"}, OptIn: true},
 	}
 }

@@ -127,6 +127,33 @@ func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 	}
 }
 
+func TestClientTrustFixtureIsAvailableForReleaseAndPresubmit(t *testing.T) {
+	jobs := workflowJobs(t, loadWorkflow(t, "agentio-e2e.yml"))
+	if !slices.Contains(jobNeeds(t, jobs, "product-e2e"), "build-client-trust-fixture") {
+		t.Fatal("product E2E can run before its client fixture is built")
+	}
+	build := workflowJob(t, jobs, "build-client-trust-fixture")
+	if _, conditional := build["if"]; conditional {
+		t.Fatal("client fixture must be available to all workflow callers")
+	}
+	steps := listValue(t, workflowJob(t, jobs, "product-e2e"), "steps")
+	for _, name := range []string{"Download client trust fixture", "Publish client trust fixture to local registry"} {
+		index := namedStepIndex(t, steps, name)
+		if index < 0 {
+			t.Fatalf("missing %s", name)
+		}
+		if steps[index].(map[string]any)["if"] != "contains(matrix.fixtures, 'clienttrust')" {
+			t.Fatalf("%s must follow the selected fixture requirements", name)
+		}
+	}
+	for _, name := range []string{"Start local image registry", "Delete local image registry"} {
+		index := namedStepIndex(t, steps, name)
+		if index < 0 || !strings.Contains(stringValue(t, steps[index].(map[string]any), "if"), "contains(matrix.fixtures, 'clienttrust')") {
+			t.Fatalf("%s must support release sidecar jobs without candidate archives", name)
+		}
+	}
+}
+
 func TestProductE2EPresubmitBuildsLocalCandidatesAndUsesDependencyBOM(t *testing.T) {
 	workflow := loadWorkflow(t, "agentio-e2e-presubmit.yml")
 	triggers := workflowTriggers(t, workflow)
@@ -197,9 +224,10 @@ func TestExternalDependencyUpdatesAreReleaseDriven(t *testing.T) {
 	want := map[string]bool{
 		"ZTUNNEL_IMAGE": false, "CNI_IMAGE": false,
 		"PROXY_INIT_IMAGE": false, "GATEWAY_IMAGE": false,
+		"TRUST_PACKAGE_IMAGE": false,
 	}
 	if len(pins) != len(want) {
-		t.Fatalf("agentio.deps has %d entries, want exactly the four externally owned image pins", len(pins))
+		t.Fatalf("agentio.deps has %d entries, want exactly the five externally owned image pins", len(pins))
 	}
 	for _, pin := range pins {
 		if _, found := want[pin.Name]; !found {

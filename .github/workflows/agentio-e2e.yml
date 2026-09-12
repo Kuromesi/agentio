@@ -120,8 +120,29 @@ jobs:
           matrix=$(go -C test/e2e run ./cmd/product-e2e plan --format=json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+  build-client-trust-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Build client trust fixture
+        run: |
+          docker build --file test/fixtures/clienttrust/Dockerfile \
+            --tag "agentio-e2e.local/clienttrust:${GITHUB_SHA}" .
+          docker save --output "${RUNNER_TEMP}/clienttrust-image.tar" \
+            "agentio-e2e.local/clienttrust:${GITHUB_SHA}"
+      - name: Upload client trust fixture
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: agentio-clienttrust-fixture
+          path: ${{ runner.temp }}/clienttrust-image.tar
+          if-no-files-found: error
+          retention-days: 1
+
   product-e2e:
-    needs: [plan]
+    needs: [plan, build-client-trust-fixture]
     name: ${{ matrix.id }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -172,6 +193,40 @@ jobs:
         run: |
           go install sigs.k8s.io/kind@v0.24.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Download client trust fixture
+        if: contains(matrix.fixtures, 'clienttrust')
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: agentio-clienttrust-fixture
+          path: ${{ runner.temp }}/agentio-clienttrust-fixture
+      - name: Start local image registry
+        if: inputs.candidate_image_artifact != '' || contains(matrix.fixtures, 'clienttrust')
+        run: |
+          docker run -d --restart=always \
+            -p 127.0.0.1:5001:5000 \
+            --name "$E2E_REGISTRY_NAME" \
+            registry:2.8.3
+          kind_config="${RUNNER_TEMP}/agentio-kind-registry.yaml"
+          cat >"$kind_config" <<EOF
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          containerdConfigPatches:
+          - |-
+            [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
+              endpoint = ["http://${E2E_REGISTRY_NAME}:5000"]
+          EOF
+          echo "E2E_KIND_CONFIG=$kind_config" >> "$GITHUB_ENV"
+      - name: Publish client trust fixture to local registry
+        if: contains(matrix.fixtures, 'clienttrust')
+        run: |
+          docker load --input "${RUNNER_TEMP}/agentio-clienttrust-fixture/clienttrust-image.tar"
+          target="localhost:5001/clienttrust:${GITHUB_SHA}"
+          docker tag "agentio-e2e.local/clienttrust:${GITHUB_SHA}" "$target"
+          docker push "$target"
+          digest_ref=$(docker image inspect "$target" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+            grep -m 1 -E '^localhost:5001/clienttrust@sha256:[0-9a-f]{64}$')
+          test -n "$digest_ref"
+          echo "AGENTIO_E2E_CLIENT_TRUST_IMAGE=$digest_ref" >> "$GITHUB_ENV"
       - name: Download local candidate images
         if: inputs.candidate_image_artifact != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -187,10 +242,6 @@ jobs:
             exit 1
           fi
           docker load --input "$archive"
-          docker run -d --restart=always \
-            -p 127.0.0.1:5001:5000 \
-            --name "$E2E_REGISTRY_NAME" \
-            registry:2.8.3
 
           for image in agentiod agentio-epe ext-proc; do
             source="agentio-e2e.local/${image}:${GITHUB_SHA}"
@@ -210,17 +261,6 @@ jobs:
               ext-proc) echo "AGENTIO_E2E_EXT_PROC_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
             esac
           done
-
-          kind_config="${RUNNER_TEMP}/agentio-kind-registry.yaml"
-          cat >"$kind_config" <<EOF
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          containerdConfigPatches:
-          - |-
-            [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
-              endpoint = ["http://${E2E_REGISTRY_NAME}:5000"]
-          EOF
-          echo "E2E_KIND_CONFIG=$kind_config" >> "$GITHUB_ENV"
       - name: Download prepared release chart
         if: inputs.chart_artifact != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -267,6 +307,6 @@ jobs:
             echo "KinD cluster $E2E_CLUSTER_NAME still exists after deletion" >&2
             exit 1
           fi
-      - name: Delete local candidate registry
-        if: always() && inputs.candidate_image_artifact != ''
+      - name: Delete local image registry
+        if: always() && (inputs.candidate_image_artifact != '' || contains(matrix.fixtures, 'clienttrust'))
         run: docker rm --force "$E2E_REGISTRY_NAME" || true
