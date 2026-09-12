@@ -115,6 +115,7 @@ func chartValues(config Config) ([]byte, error) {
 			"gatewayAPI": map[string]any{"create": false},
 			"agentgateway": map[string]any{
 				"image":        config.GatewayImage,
+				"ca":           map[string]any{"enabled": true},
 				"replicaCount": 1,
 				"resources": map[string]any{
 					"requests": map[string]any{"cpu": "100m", "memory": "128Mi"},

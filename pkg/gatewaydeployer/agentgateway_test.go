@@ -17,13 +17,17 @@ package gatewaydeployer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -40,7 +44,7 @@ func agentgatewayFixture() (*gatewayv1.Gateway, *corev1.ConfigMap) {
 
 func agentgatewayRenderer(t *testing.T) *renderer {
 	t.Helper()
-	values := testValues(t, map[string]any{"global": map[string]any{"agentgateway": map[string]any{"image": "example.com/agentgateway:tested", "replicaCount": 2}}})
+	values := testValues(t, map[string]any{"global": map[string]any{"agentgateway": map[string]any{"image": "example.com/agentgateway:tested"}}})
 	r := testRenderer(t, values)
 	contents := map[string]string{}
 	for _, name := range []string{egressGatewayTemplateName, agentgatewayTemplateName} {
@@ -80,7 +84,7 @@ func TestAgentgatewayDeploymentUsesFileConfig(t *testing.T) {
 	if c.Name != "agentgateway" || c.Image != "example.com/agentgateway:tested" || strings.Join(c.Args, " ") != "-f /etc/agentgateway/config.yaml" {
 		t.Fatalf("wrong container: %+v", c)
 	}
-	if *dep.Spec.Replicas != 2 || pod.Annotations["gateway.agentio.kruise.io/config-hash"] == "" {
+	if dep.Spec.Replicas != nil || pod.Annotations["gateway.agentio.kruise.io/config-hash"] == "" {
 		t.Fatalf("bad rollout configuration: %+v", pod.ObjectMeta)
 	}
 	if pod.Labels[dataplaneModeLabel] != "none" {
@@ -105,6 +109,50 @@ func TestAgentgatewayDeploymentUsesFileConfig(t *testing.T) {
 	}
 	if rig.patcher.find("services") == nil || rig.patcher.find("serviceaccounts") == nil {
 		t.Fatal("missing gateway children")
+	}
+}
+
+// Pin the HPA/PDB specs to Istio 1.31's agentgateway template defaults.
+func TestAgentgatewayHPAPDB(t *testing.T) {
+	gw, cm := agentgatewayFixture()
+	gw.Annotations = map[string]string{"gateway.agentio.kruise.io/name-override": "custom-gateway"}
+	gw.Spec.Infrastructure.Labels = map[gatewayv1.LabelKey]gatewayv1.LabelValue{"team": "test"}
+	rig := newControllerTestRig(t, gw, cm)
+	defer rig.close()
+	d := rig.newController()
+	d.renderer = agentgatewayRenderer(t)
+	if err := d.Reconcile(types.NamespacedName{Namespace: gw.Namespace, Name: gw.Name}); err != nil {
+		t.Fatal(err)
+	}
+	hpaPatch, pdbPatch := rig.patcher.find("horizontalpodautoscalers"), rig.patcher.find("poddisruptionbudgets")
+	if hpaPatch == nil || pdbPatch == nil {
+		t.Fatal("missing HPA/PDB")
+	}
+	var hpa autoscalingv2.HorizontalPodAutoscaler
+	var pdb policyv1.PodDisruptionBudget
+	if err := json.Unmarshal(hpaPatch.data, &hpa); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(pdbPatch.data, &pdb); err != nil {
+		t.Fatal(err)
+	}
+	for _, meta := range []metav1.ObjectMeta{hpa.ObjectMeta, pdb.ObjectMeta} {
+		if meta.Name != "custom-gateway" || meta.Namespace != gw.Namespace || meta.Labels["team"] != "test" || len(meta.OwnerReferences) != 1 || meta.OwnerReferences[0].UID != gw.UID {
+			t.Fatalf("incorrect child metadata: %+v", meta)
+		}
+	}
+	wantHPA := autoscalingv2.HorizontalPodAutoscalerSpec{
+		ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "custom-gateway"},
+		MaxReplicas:    1,
+	}
+	if !reflect.DeepEqual(hpa.Spec, wantHPA) {
+		t.Fatalf("HPA spec = %+v, want %+v", hpa.Spec, wantHPA)
+	}
+	wantPDB := policyv1.PodDisruptionBudgetSpec{
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"gateway.networking.k8s.io/gateway-name": gw.Name}},
+	}
+	if !reflect.DeepEqual(pdb.Spec, wantPDB) {
+		t.Fatalf("PDB spec = %+v, want %+v", pdb.Spec, wantPDB)
 	}
 }
 
@@ -139,6 +187,13 @@ func TestAgentgatewayInvalidConfigReportsStatusWithoutDeploying(t *testing.T) {
 			p := rig.patcher.find("gateways")
 			if p == nil || !strings.Contains(string(p.data), "InvalidParameters") || !strings.Contains(string(p.data), `"status":"False"`) {
 				t.Fatalf("missing failure status: %v", p)
+			}
+			var patched gatewayv1.Gateway
+			if err := json.Unmarshal(p.data, &patched); err != nil {
+				t.Fatal(err)
+			}
+			if patched.Name != gw.Name || patched.Namespace != gw.Namespace || patched.Annotations[ControllerVersionAnnotation] != fmt.Sprint(ControllerVersion) {
+				t.Fatalf("status apply must identify the Gateway and retain its controller version: %+v", patched.ObjectMeta)
 			}
 		})
 	}
@@ -246,5 +301,118 @@ func TestAgentgatewayProgrammedWaitsForNewConfig(t *testing.T) {
 	dep.Status.AvailableReplicas = 0
 	if agentgatewayRolloutReady(dep, "new") {
 		t.Fatal("unavailable deployment reported ready")
+	}
+}
+
+func TestAgentgatewayNativeCABootstrap(t *testing.T) {
+	for _, extraSecret := range []bool{false, true} {
+		t.Run(fmt.Sprint("extra-secret-", extraSecret), func(t *testing.T) {
+			gw, cm := agentgatewayFixture()
+			gw.Annotations = map[string]string{"gateway.agentio.kruise.io/service-account": "gateway-identity"}
+			if extraSecret {
+				gw.Annotations["gateway.agentio.kruise.io/agentgateway-certs"] = "application-tls"
+			}
+			rig := newControllerTestRig(t, gw, cm)
+			defer rig.close()
+			d := rig.newController()
+			values := mergeMaps(testValues(t, nil), map[string]any{"global": map[string]any{
+				"agentgateway": map[string]any{"ca": map[string]any{"enabled": true}},
+				"caAddress":    "agentiod.control.svc:15012", "trustBundleName": "custom-root",
+				"sds": map[string]any{"token": map[string]any{"aud": "custom-ca"}},
+			}})
+			r, err := newRenderer(func() map[string]any { return values }, defaultProxyConfig(), "mesh.example")
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, err := os.ReadFile("templates/agentgateway.yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.update(agentgatewayTemplateName, string(content), values, defaultProxyConfig()); err != nil {
+				t.Fatal(err)
+			}
+			d.renderer = r
+			if err := d.Reconcile(types.NamespacedName{Namespace: gw.Namespace, Name: gw.Name}); err != nil {
+				t.Fatal(err)
+			}
+			patch := rig.patcher.find("deployments")
+			if patch == nil {
+				t.Fatal("missing Deployment")
+			}
+			var dep appsv1.Deployment
+			if err := json.Unmarshal(patch.data, &dep); err != nil {
+				t.Fatal(err)
+			}
+			pod := dep.Spec.Template.Spec
+			if pod.ServiceAccountName != "gateway-identity" || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+				t.Fatalf("incorrect service account bootstrap: %+v", pod)
+			}
+			env := map[string]corev1.EnvVar{}
+			for _, e := range pod.Containers[0].Env {
+				env[e.Name] = e
+			}
+			for key, want := range map[string]string{
+				"CA_ADDRESS": "https://agentiod.control.svc:15012", "TRUST_DOMAIN": "mesh.example",
+				"CA_ROOT_CA": "/var/run/secrets/agentio/root-cert.pem", "CA_AUTH_TOKEN": "/var/run/secrets/tokens/agentio-token",
+			} {
+				if env[key].Value != want {
+					t.Errorf("%s = %q, want %q", key, env[key].Value, want)
+				}
+			}
+			for key, field := range map[string]string{"NAMESPACE": "metadata.namespace", "SERVICE_ACCOUNT": "spec.serviceAccountName"} {
+				if env[key].ValueFrom == nil || env[key].ValueFrom.FieldRef == nil || env[key].ValueFrom.FieldRef.FieldPath != field {
+					t.Errorf("%s must use downward API %s", key, field)
+				}
+			}
+			if _, found := env["XDS_ADDRESS"]; found {
+				t.Fatal("CA bootstrap must not enable xDS")
+			}
+			volumes := map[string]corev1.Volume{}
+			for _, v := range pod.Volumes {
+				volumes[v.Name] = v
+			}
+			root := volumes["agentio-ca-root"].ConfigMap
+			if root == nil || root.Name != "custom-root" || len(root.Items) != 1 || root.Items[0].Key != "root-cert.pem" {
+				t.Fatalf("bad root mount: %+v", root)
+			}
+			projection := volumes["agentio-ca-token"].Projected
+			if projection == nil || len(projection.Sources) != 1 || projection.DefaultMode == nil || *projection.DefaultMode != 0440 {
+				t.Fatalf("bad token projection: %+v", projection)
+			}
+			token := projection.Sources[0].ServiceAccountToken
+			if token == nil || token.Audience != "custom-ca" || token.Path != "agentio-token" || token.ExpirationSeconds == nil || *token.ExpirationSeconds != 43200 {
+				t.Fatalf("bad token: %+v", token)
+			}
+			mounts := map[string]corev1.VolumeMount{}
+			for _, m := range pod.Containers[0].VolumeMounts {
+				mounts[m.Name] = m
+			}
+			for key, path := range map[string]string{"agentio-ca-root": "/var/run/secrets/agentio", "agentio-ca-token": "/var/run/secrets/tokens"} {
+				m := mounts[key]
+				if m.MountPath != path || !m.ReadOnly || m.SubPath != "" {
+					t.Errorf("%s must be a read-only directory mount: %+v", key, m)
+				}
+			}
+			if extraSecret && (volumes["certs"].Secret == nil || volumes["certs"].Secret.SecretName != "application-tls") {
+				t.Fatal("external TLS Secret must coexist with workload CA")
+			}
+			if rig.patcher.find("secrets") != nil || rig.patcher.find("configmaps") != nil {
+				t.Fatal("CA bootstrap must not create or adopt credentials")
+			}
+		})
+	}
+}
+
+func TestAgentgatewayCAAddress(t *testing.T) {
+	for _, input := range []string{"agentiod.ns.svc:15012", "https://agentiod.ns.svc:15012/"} {
+		got, err := agentgatewayCAAddress(input)
+		if err != nil || got != "https://agentiod.ns.svc:15012" {
+			t.Fatalf("%q: %q, %v", input, got, err)
+		}
+	}
+	for _, input := range []string{"", "http://agentiod:15012", "https://", "https://user:password@agentiod", "https://agentiod/path", "https://agentiod?token=bad", "https://agentiod#fragment"} {
+		if _, err := agentgatewayCAAddress(input); err == nil {
+			t.Errorf("accepted invalid CA address %q", input)
+		}
 	}
 }

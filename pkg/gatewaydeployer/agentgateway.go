@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -74,12 +75,16 @@ func (d *DeploymentController) agentgatewayInput(input *TemplateInput) error {
 
 func (d *DeploymentController) setGatewayConfigError(gw gatewayv1.Gateway, configErr error) error {
 	patch := struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
+		APIVersion string            `json:"apiVersion"`
+		Kind       string            `json:"kind"`
+		Metadata   metav1.ObjectMeta `json:"metadata"`
 		Status     struct {
 			Conditions []metav1.Condition `json:"conditions"`
 		} `json:"status"`
-	}{APIVersion: gatewayv1.GroupVersion.String(), Kind: "Gateway"}
+	}{APIVersion: gatewayv1.GroupVersion.String(), Kind: "Gateway", Metadata: metav1.ObjectMeta{
+		Name: gw.Name, Namespace: gw.Namespace,
+		Annotations: map[string]string{ControllerVersionAnnotation: fmt.Sprint(ControllerVersion)},
+	}}
 	patch.Status.Conditions = []metav1.Condition{
 		gatewayCondition(gw.Status.Conditions, string(gatewayv1.GatewayConditionAccepted), metav1.ConditionFalse,
 			gw.Generation, string(gatewayv1.GatewayReasonInvalidParameters), configErr.Error()),
@@ -91,4 +96,27 @@ func (d *DeploymentController) setGatewayConfigError(gw gatewayv1.Gateway, confi
 		return err
 	}
 	return d.clients.Patcher(gatewayGVR, gw.Name, gw.Namespace, data, "status")
+}
+
+// AgentgatewayCAAddress resolves CA bootstrap on demand. Using a template data
+// method keeps this shared template parseable by the sidecar injector as well.
+func (in derivedInput) AgentgatewayCAAddress() (string, error) {
+	return agentgatewayCAAddress(nestedString(in.Values, "global", "caAddress"))
+}
+
+// agentgatewayCAAddress normalizes Agentiod's CA endpoint and requires TLS for
+// the proxy's bearer credential.
+func agentgatewayCAAddress(address string) (string, error) {
+	if address == "" {
+		return "", fmt.Errorf("agentgateway CA requires global.caAddress")
+	}
+	if !strings.Contains(address, "://") {
+		address = "https://" + address
+	}
+	u, err := url.Parse(address)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("agentgateway CA address must be an HTTPS endpoint without credentials, query or path")
+	}
+	return strings.TrimSuffix(address, "/"), nil
 }

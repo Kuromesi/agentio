@@ -1,8 +1,11 @@
 # Copyright Istio Authors
 # Modifications Copyright 2026 The Kruise Authors
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from Istio 1.31.0's agentgateway deployment template for file configuration.
+# Adapted from Istio 1.31.0's agentgateway deployment template for file configuration and native workload certificate management.
 {{- $agentgateway := .Values.global.agentgateway | default (strdict) }}
+{{- $ca := $agentgateway.ca | default (strdict) }}
+{{- $sds := .Values.global.sds | default (strdict) }}
+{{- $token := $sds.token | default (strdict) }}
 {{- $certs := annotation .ObjectMeta "gateway.agentio.kruise.io/agentgateway-certs" "" }}
 {{- $annotations := omit .InfrastructureAnnotations "kubectl.kubernetes.io/last-applied-configuration" "gateway.agentio.kruise.io/name-override" "gateway.agentio.kruise.io/service-account" "gateway.agentio.kruise.io/controller-version" "gateway.agentio.kruise.io/agentgateway-certs" }}
 {{- $labels := strdict "gateway.networking.k8s.io/gateway-name" .Name "gateway.networking.k8s.io/gateway-class-name" .GatewayClass "gateway.agentio.kruise.io/managed" .ControllerLabel "agentio.kruise.io/dataplane-mode" "none" }}
@@ -35,7 +38,6 @@ metadata:
     name: {{ .Name | quote }}
     uid: {{ .UID | quote }}
 spec:
-  replicas: {{ $agentgateway.replicaCount | default 1 }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -108,6 +110,26 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        {{- if $ca.enabled }}
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: SERVICE_ACCOUNT
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
+        - name: TRUST_DOMAIN
+          value: {{ (valueOrDefault .TrustDomain .Values.global.trustDomain) | quote }}
+        - name: CLUSTER_ID
+          value: {{ .ClusterID | quote }}
+        - name: CA_ADDRESS
+          value: {{ .AgentgatewayCAAddress | quote }}
+        - name: CA_AUTH_TOKEN
+          value: /var/run/secrets/tokens/agentio-token
+        - name: CA_ROOT_CA
+          value: /var/run/secrets/agentio/root-cert.pem
+        {{- end }}
         - name: CPU_LIMIT
           valueFrom:
             resourceFieldRef:
@@ -127,6 +149,14 @@ spec:
           readOnly: true
         - name: tmp
           mountPath: /tmp
+        {{- if $ca.enabled }}
+        - name: agentio-ca-root
+          mountPath: /var/run/secrets/agentio
+          readOnly: true
+        - name: agentio-ca-token
+          mountPath: /var/run/secrets/tokens
+          readOnly: true
+        {{- end }}
         {{- if $certs }}
         - name: certs
           mountPath: /etc/agentgateway/certs
@@ -141,6 +171,22 @@ spec:
             path: config.yaml
       - name: tmp
         emptyDir: {}
+      {{- if $ca.enabled }}
+      - name: agentio-ca-root
+        configMap:
+          name: {{ .Values.global.trustBundleName | default "agentio-ca-root-cert" | quote }}
+          items:
+          - key: root-cert.pem
+            path: root-cert.pem
+      - name: agentio-ca-token
+        projected:
+          defaultMode: 0440
+          sources:
+          - serviceAccountToken:
+              path: agentio-token
+              expirationSeconds: 43200
+              audience: {{ $token.aud | default "agentio-ca" | quote }}
+      {{- end }}
       {{- if $certs }}
       - name: certs
         secret:
@@ -165,3 +211,39 @@ spec:
   selector:
     {{ .GatewayNameLabel | quote }}: {{ .Name | quote }}
   ports: {{ toJson .Ports }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .DeploymentName | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .DeploymentName | quote }}
+  maxReplicas: 1
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .DeploymentName | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: {{ .Name | quote }}

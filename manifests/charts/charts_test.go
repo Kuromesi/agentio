@@ -515,6 +515,7 @@ func TestInvalidModesFailRendering(t *testing.T) {
 		{name: "profile", want: "profile", args: []string{"--set", "profile=invalid"}},
 		{name: "log level", want: "/agentiod/logging/level", args: []string{"--set", "agentiod.logging.level=verbose"}},
 		{name: "log format", want: "/agentiod/logging/format", args: []string{"--set", "agentiod.logging.format=console"}},
+		{name: "agentgateway CA boolean", want: "/egressGateway/agentgateway/ca/enabled", args: []string{"--set-string", "egressGateway.agentgateway.ca.enabled=false"}},
 		{name: "egress gateway", want: "/egressGateway/mode", args: []string{"--set", "egressGateway.mode=invalid"}},
 		{name: "EPE", want: "/epe/mode", args: []string{"--set", "epe.mode=invalid"}},
 		{name: "external EPE address", want: "/epe/external/address", args: []string{"--set", "epe.mode=external"}},
@@ -556,6 +557,48 @@ func TestEveryProfileAndModeCombinationRendersUniqueObjects(t *testing.T) {
 			if len(seen) == 0 {
 				t.Fatal("chart rendered no Kubernetes objects")
 			}
+		})
+	}
+}
+
+func TestAgentgatewayCAInjectorValues(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			manifest := renderAgentio(t,
+				"--set", "egressGateway.mode=gatewayAPI",
+				"--set", fmt.Sprintf("egressGateway.agentgateway.ca.enabled=%t", enabled),
+				"--set", "agentiod.tokenAudience=gateway-ca",
+				"--set", "agentiod.ca.trustBundleConfigMapName=gateway-root",
+			)
+			for _, doc := range strings.Split(manifest, "\n---") {
+				var cm struct {
+					Kind string
+					Data map[string]string
+				}
+				if err := yaml.Unmarshal([]byte(doc), &cm); err != nil {
+					t.Fatal(err)
+				}
+				if cm.Kind != "ConfigMap" || cm.Data["values"] == "" {
+					continue
+				}
+				var values struct {
+					Global struct {
+						Agentgateway    struct{ CA struct{ Enabled bool } }
+						CAAddress       string
+						TrustBundleName string
+						SDS             struct{ Token struct{ Aud string } }
+					}
+				}
+				if err := yaml.Unmarshal([]byte(cm.Data["values"]), &values); err != nil {
+					t.Fatal(err)
+				}
+				g := values.Global
+				if g.Agentgateway.CA.Enabled != enabled || g.SDS.Token.Aud != "gateway-ca" || g.TrustBundleName != "gateway-root" || g.CAAddress != "agentiod.agentio-system.svc.cluster.local:15012" {
+					t.Fatalf("incorrect CA bootstrap values: %+v", g)
+				}
+				return
+			}
+			t.Fatal("missing injector values")
 		})
 	}
 }

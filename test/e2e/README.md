@@ -1,6 +1,6 @@
 # Kubernetes E2E framework
 
-This nested Go module is the repository-owned Kubernetes E2E framework. Its core packages are product-neutral and use ordinary `testing.T`, `t.Run`, `t.Cleanup`, and `go test -run`. The reusable components cover Agentio installation, namespaces, Helm releases, strict manifest plans, network prefixes, the pinned Istio echo application, and retry-aware echo checks.
+This nested Go module is the repository-owned Kubernetes E2E framework. Its core packages are product-neutral and use ordinary `testing.T`, `t.Run`, `t.Cleanup`, and `go test -run`. The reusable components cover Agentio installation, namespaces, Helm releases, strict manifest plans, network prefixes, the pinned echo application, and retry-aware echo checks.
 
 The framework never imports Istio Pilot, operator, security, istioctl, or the Istio test framework. `go test . -run TestForbiddenDependencies` enforces that boundary.
 
@@ -16,7 +16,7 @@ The live suites are opt-in and skip by default.
 
 ## Reusable test helpers
 
-The helper surface follows the small, useful parts of Agentio's framework without importing Istio's `TestContext` or `Environment`:
+The framework provides the following helpers:
 
 - `config.New(scope).YAML/Eval/File/EvalFile(...).ApplyOrFail(...)` renders and applies ordered manifest plans. Explicit plan deletion and final `ResourceScope` cleanup share the same UID/run-label ownership records.
 - `echo.CallOptions.Check` is evaluated inside the call retry loop. `components/echo/check` provides `OK`, `NoError`, `Error`, `Status`, `And`, and workload-reachability checks; `Instance.CallOrFail` reports all attempts.
@@ -28,13 +28,13 @@ Consumer suites should keep only product semantics such as policy propagation or
 
 ## Agentio product suites
 
-The Agentio product tests are split into per-domain suites, mirroring Istio's `tests/integration` layout. Each suite is an independent Go package with its own `TestMain` and setup graph, installs the production chart through `components/agentio.Setup`, and uninstalls it on exit. The same suites run in both sidecar and ambient profiles on separate clusters:
+The Agentio product tests are split into per-domain suites. Each suite is an independent Go package with its own `TestMain` and setup graph, installs the production chart through `components/agentio.Setup`, and uninstalls it on exit. The same suites run in both sidecar and ambient profiles on separate clusters:
 
 - `suites/trafficpolicy`: sandbox TrafficPolicy matrix (12 top-level tests with 50 scoped subscenarios plus one whole-test lifecycle scenario) and the control-plane config debug surface. The fixture contains `client`, `server`, `another-server`, and two `workload-target` Pods using the selected dataplane path. The matrix covers basic ingress and egress rules, global policy and priority, selector expressions, workload and service peers, TCP/UDP/ICMP protocol rules, policy interaction, Cartesian port/source cases, and selectorless Services with manual EndpointSlices. It preserves the policy documents and assertions from Agentio commit `4e6107d0444555a193b1a9224626a0e59d79b34c`.
 - `suites/gateway`: egress gateway configuration, TLS termination and on-demand certificates, DFP routing, static ServiceEntries, ext-proc, and egress policies.
 - `suites/agentgateway`: native static configuration, Gateway API deployment lifecycle, and shared outbound protocol/ext-proc/port-selection checks. See [agentgateway suite](suites/agentgateway/README.md) for its separate image input and scope.
 - `suites/securitypolicy`: SNI SecurityProfile and GlobalSecurityProfile lifecycle against dedicated SNI fixture namespaces.
-- `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, and profile-priority contracts against Envoy. Agentgateway EPE coverage is [deferred](suites/agentgateway/README.md#scope) until production peer attributes are available.
+- `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, and profile-priority contracts against Envoy. Agentgateway EPE coverage is deferred until production peer attributes are available.
 
 The shared product conventions (the `AGENTIO_E2E` gate, baseline ConfigMap, scenario ledgers with contamination tracking, and profile-neutral echo fixtures) live in `suites/internal/harness`. Each product fixture namespace is enrolled with `agentio.kruise.io/dataplane-mode`; ordinary Echo workloads carry only workload labels. In sidecar mode the namespace selector activates the default ztunnel injection template, while ambient mode uses CNI redirection and the node-level ztunnel. Every scenario owns its transient policies and endpoint objects through a scoped ledger: successful scenarios clean up before the next scenario, while a failed scenario retains its evidence and causes later scenarios in the same suite to skip instead of running against contaminated state.
 
@@ -78,7 +78,7 @@ AGENTIO_E2E=1 AGENTIO_E2E_PROFILE=ambient go test -p 1 \
 
 `-p 1` is required for multi-suite runs: each suite is a separate test binary and concurrent binaries would race on the cluster and the Helm release name. A single suite can be run alone by naming just its package.
 
-By default every suite creates and deletes its own Kind cluster. To share one cluster across the suites — the same pattern Istio CI uses, where the CI script owns the cluster and each suite only installs its control plane — create the cluster first and borrow it:
+By default every suite creates and deletes its own Kind cluster. To share one cluster across the suites, create the cluster first and borrow it:
 
 ```bash
 kind create cluster --name dev-e2e

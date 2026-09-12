@@ -380,6 +380,11 @@ func TestReconcileReportsGatewayAcceptedAndProgrammedFromDeploymentReadiness(t *
 				if len(rawConditions) == 0 {
 					continue
 				}
+				meta, _ := obj["metadata"].(map[string]any)
+				annotations, _ := meta["annotations"].(map[string]any)
+				if meta["name"] != gw.Name || meta["namespace"] != gw.Namespace || annotations[ControllerVersionAnnotation] != fmt.Sprint(ControllerVersion) {
+					t.Fatalf("status apply must identify the Gateway and retain its controller version: %v", meta)
+				}
 				encoded, err := json.Marshal(rawConditions)
 				if err != nil {
 					t.Fatal(err)
@@ -577,8 +582,8 @@ func TestControllerVersionOwnership(t *testing.T) {
 			obj := p.unmarshal(t)
 			metadata, _ := obj["metadata"].(map[string]any)
 			annotations, _ := metadata["annotations"].(map[string]any)
-			if annotations[ControllerVersionAnnotation] != nil {
-				t.Fatalf("expected no version patch when already at current version, got %+v", p)
+			if annotations[ControllerVersionAnnotation] != nil && obj["status"] == nil {
+				t.Fatalf("expected no separate version patch when already at current version, got %+v", p)
 			}
 		}
 		if p := rig.patcher.find("deployments"); p == nil {

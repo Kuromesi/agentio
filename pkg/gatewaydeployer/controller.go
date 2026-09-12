@@ -500,13 +500,18 @@ func (d *DeploymentController) setGatewayStatus(gw gatewayv1.Gateway, input Temp
 		gatewayCondition(gw.Status.Conditions, string(gatewayv1.GatewayConditionProgrammed), programmedStatus,
 			gw.Generation, programmedReason, programmedMessage),
 	}
+	// Retain the controller-version annotation owned by the same SSA field manager.
 	patch := struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
+		APIVersion string            `json:"apiVersion"`
+		Kind       string            `json:"kind"`
+		Metadata   metav1.ObjectMeta `json:"metadata"`
 		Status     struct {
 			Conditions []metav1.Condition `json:"conditions"`
 		} `json:"status"`
-	}{APIVersion: gatewayv1.GroupVersion.String(), Kind: "Gateway"}
+	}{APIVersion: gatewayv1.GroupVersion.String(), Kind: "Gateway", Metadata: metav1.ObjectMeta{
+		Name: gw.Name, Namespace: gw.Namespace,
+		Annotations: map[string]string{ControllerVersionAnnotation: fmt.Sprint(ControllerVersion)},
+	}}
 	patch.Status.Conditions = conditions
 	data, err := json.Marshal(patch)
 	if err != nil {
