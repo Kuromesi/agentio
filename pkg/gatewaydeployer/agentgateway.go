@@ -19,15 +19,82 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 )
 
 const agentgatewayConfigKey = "config.yaml"
+
+type agentgatewayAvailability struct {
+	Autoscaling      autoscalingv2.HorizontalPodAutoscalerSpec
+	DisruptionBudget policyv1.PodDisruptionBudgetSpec
+}
+
+// AgentgatewayAvailability validates values before any generated child is applied.
+// A data method keeps the template parseable by both deployer and injector.
+func (in derivedInput) AgentgatewayAvailability() (agentgatewayAvailability, error) {
+	var result agentgatewayAvailability
+	config := struct {
+		ReplicaCount int32 `json:"replicaCount"`
+		Autoscaling  struct {
+			MinReplicas                    *int32 `json:"minReplicas"`
+			MaxReplicas                    *int32 `json:"maxReplicas"`
+			TargetCPUUtilizationPercentage int32  `json:"targetCPUUtilizationPercentage"`
+		} `json:"autoscaling"`
+		PodDisruptionBudget struct {
+			MaxUnavailable intstr.IntOrString `json:"maxUnavailable"`
+		} `json:"podDisruptionBudget"`
+	}{ReplicaCount: 1}
+	config.Autoscaling.TargetCPUUtilizationPercentage = 80
+	config.PodDisruptionBudget.MaxUnavailable = intstr.FromInt32(1)
+	global, _ := in.Values["global"].(map[string]any)
+	data, err := json.Marshal(global["agentgateway"])
+	if err != nil {
+		return result, fmt.Errorf("invalid agentgateway availability values: %w", err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return result, fmt.Errorf("invalid agentgateway availability values: %w", err)
+	}
+	minReplicas := ptr.Deref(config.Autoscaling.MinReplicas, config.ReplicaCount)
+	maxReplicas := ptr.Deref(config.Autoscaling.MaxReplicas, config.ReplicaCount)
+	if config.ReplicaCount < 1 || minReplicas < 1 || maxReplicas < minReplicas {
+		return result, fmt.Errorf("agentgateway requires replicaCount >= 1 and 1 <= autoscaling.minReplicas <= autoscaling.maxReplicas (unset bounds use replicaCount)")
+	}
+	if config.Autoscaling.TargetCPUUtilizationPercentage < 1 {
+		return result, fmt.Errorf("agentgateway autoscaling.targetCPUUtilizationPercentage must be positive")
+	}
+	budget := config.PodDisruptionBudget.MaxUnavailable
+	if (budget.Type == intstr.Int && budget.IntVal < 0) ||
+		(budget.Type == intstr.String && !regexp.MustCompile(`^(100|[0-9]{1,2})%$`).MatchString(budget.StrVal)) {
+		return result, fmt.Errorf("agentgateway podDisruptionBudget.maxUnavailable must be a non-negative integer or a percentage from 0%% to 100%%")
+	}
+	result.Autoscaling = autoscalingv2.HorizontalPodAutoscalerSpec{
+		ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: in.DeploymentName},
+		MinReplicas:    &minReplicas, MaxReplicas: maxReplicas,
+		Metrics: []autoscalingv2.MetricSpec{{
+			Type: autoscalingv2.ResourceMetricSourceType,
+			Resource: &autoscalingv2.ResourceMetricSource{
+				Name:   corev1.ResourceCPU,
+				Target: autoscalingv2.MetricTarget{Type: autoscalingv2.UtilizationMetricType, AverageUtilization: &config.Autoscaling.TargetCPUUtilizationPercentage},
+			},
+		}},
+	}
+	result.DisruptionBudget = policyv1.PodDisruptionBudgetSpec{
+		MaxUnavailable: &budget,
+		Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{in.GatewayNameLabel: in.Name}},
+	}
+	return result, nil
+}
 
 // An Available old ReplicaSet does not mean a newly supplied config is ready.
 func agentgatewayRolloutReady(deployment *appsv1.Deployment, hash string) bool {

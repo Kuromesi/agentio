@@ -39,6 +39,27 @@
               "properties": {"enabled": {"type": "boolean"}}
             },
             "replicaCount": {"type": "integer", "minimum": 1},
+            "autoscaling": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "minReplicas": {"type": ["integer", "null"], "minimum": 1},
+                "maxReplicas": {"type": ["integer", "null"], "minimum": 1},
+                "targetCPUUtilizationPercentage": {"type": "integer", "minimum": 1}
+              }
+            },
+            "podDisruptionBudget": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "maxUnavailable": {
+                  "oneOf": [
+                    {"type": "integer", "minimum": 0},
+                    {"type": "string", "pattern": "^(100|[0-9]{1,2})%$"}
+                  ]
+                }
+              }
+            },
             "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1}
           }
         },

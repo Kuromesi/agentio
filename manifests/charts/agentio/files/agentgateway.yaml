@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from Istio 1.31.0's agentgateway deployment template for file configuration and native workload certificate management.
 {{- $agentgateway := .Values.global.agentgateway | default (strdict) }}
+{{- $availability := .AgentgatewayAvailability }}
 {{- $ca := $agentgateway.ca | default (strdict) }}
 {{- $sds := .Values.global.sds | default (strdict) }}
 {{- $token := $sds.token | default (strdict) }}
@@ -38,7 +39,6 @@ metadata:
     name: {{ .Name | quote }}
     uid: {{ .UID | quote }}
 spec:
-  replicas: {{ $agentgateway.replicaCount | default 1 }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -212,3 +212,31 @@ spec:
   selector:
     {{ .GatewayNameLabel | quote }}: {{ .Name | quote }}
   ports: {{ toJson .Ports }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .DeploymentName | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+spec: {{ toJson $availability.Autoscaling }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .DeploymentName | quote }}
+  namespace: {{ .Namespace | quote }}
+  labels: {{ toJsonMap .InfrastructureLabels $labels }}
+  annotations: {{ toJsonMap $annotations }}
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: {{ .Name | quote }}
+    uid: {{ .UID | quote }}
+spec: {{ toJson $availability.DisruptionBudget }}

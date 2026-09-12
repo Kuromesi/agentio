@@ -1,6 +1,6 @@
 # Deploy agentgateway with the Gateway API
 
-Agentio's gateway deployer supports the `agentio-agentgateway` GatewayClass. It provisions a ServiceAccount, Deployment, and Service, and runs agentgateway with a native YAML configuration file supplied through a ConfigMap.
+Agentio's gateway deployer supports the `agentio-agentgateway` GatewayClass. It provisions a ServiceAccount, Deployment, Service, HorizontalPodAutoscaler (HPA), and PodDisruptionBudget (PDB), and runs agentgateway with a native YAML configuration file supplied through a ConfigMap.
 
 This class provides deployment management and opt-in workload certificate bootstrap through Agentiod CA. It does not translate HTTPRoute, SecurityProfile, EnvoyFilter, or Agentio egress configuration into agentgateway configuration. Sandbox identity and dynamic SNI policies are not supported by this path. Existing `agentio-egress` Gateways continue to use Envoy.
 
@@ -22,6 +22,25 @@ egressGateway:
 The image is an operator-controlled value; a Gateway annotation cannot override it. Scheduling can be configured with `egressGateway.agentgateway.nodeSelector`, `tolerations`, `affinity`, and `topologySpreadConstraints`.
 
 The injector ConfigMap contains both the `egress-gateway` and `agentgateway` deployment templates. Older injector ConfigMaps without the new template remain usable for Envoy; an agentgateway Gateway reports an error until its template is installed.
+
+## Configure availability and autoscaling
+
+Each Gateway always gets an `autoscaling/v2` HPA and a `policy/v1` PDB. By default, both HPA bounds use `replicaCount` (1), preserving a fixed size. The Deployment template omits `spec.replicas` so gateway reconciliation does not overwrite HPA scaling decisions. Unset or null bounds fall back to `replicaCount`; set both bounds to configure a scaling range:
+
+```yaml
+egressGateway:
+  agentgateway:
+    autoscaling:
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 80
+    podDisruptionBudget:
+      maxUnavailable: 1
+```
+
+CPU-based scaling requires a working resource metrics API (usually Metrics Server) and CPU requests on the Pods. The default container requests include `100m` CPU. The HPA enforces fixed replica bounds without requiring metrics. These values apply to all agentgateway Gateways managed by this installation; the separate `egressGateway.autoscaling` and `egressGateway.podDisruptionBudget` values configure the static Envoy deployment.
+
+The PDB selects only its Gateway's Pods. `maxUnavailable` accepts a non-negative integer or a percentage from `0%` to `100%`, and defaults to 1. A single replica can therefore be evicted; for availability during voluntary disruptions, use at least two replicas and spread them across nodes or zones. PDBs govern voluntary evictions, not node failures or Deployment rolling updates. Set equal HPA bounds to return to a fixed size; these resources have no `enabled` switch.
 
 ## Supply file configuration
 
@@ -166,7 +185,7 @@ Updating the referenced `config.yaml` triggers reconciliation and changes the Po
 - Missing references, empty configuration, or invalid YAML report `Accepted=False` and `Programmed=False`, without replacing the Deployment configuration.
 - YAML syntax is checked by Agentio; agentgateway validates its configuration schema during startup. A schema-invalid configuration can create a failing new Pod while the old replica continues serving. Correct the ConfigMap to recover.
 - `Programmed=True` means the desired configuration's Deployment rollout is available. It does not assert HTTPRoute attachment, policy enforcement, or end-to-end application connectivity.
-- Removing the Gateway allows Kubernetes to garbage-collect its owned Deployment, Service, and ServiceAccount. ConfigMaps and Secrets are not adopted or deleted.
+- Deleted HPA/PDB resources are recreated by the deployer. Removing the Gateway allows Kubernetes to garbage-collect its owned Deployment, Service, ServiceAccount, HPA, and PDB. ConfigMaps and Secrets are not adopted or deleted.
 
 ```bash
 kubectl -n agentio-system get gateway agentgateway -o yaml
@@ -178,7 +197,7 @@ The class/template structure and the proxy security context and probes are adapt
 
 ## End-to-end coverage
 
-The [standard agentgateway e2e suite](../../test/e2e/suites/agentgateway/README.md) installs the full production chart and exercises this controller with real ztunnel mTLS CONNECT traffic. It shares outbound protocol, ext-proc header mutation, and port-selection checks with the Envoy suite. The suite also covers 10 deployment/configuration lifecycle scenarios. The suite enables native CA mode: the Gateway Pod obtains its certificate from Agentiod using its own projected token. The fixture does not read CA private keys or issue gateway leaf Secrets.
+The [standard agentgateway e2e suite](../../test/e2e/suites/agentgateway/README.md) installs the full production chart and exercises this controller with real ztunnel mTLS CONNECT traffic. It shares outbound protocol, ext-proc header mutation, and port-selection checks with the Envoy suite. The suite also covers 12 deployment/configuration lifecycle scenarios, including HPA/PDB recreation and garbage collection. The suite enables native CA mode: the Gateway Pod obtains its certificate from Agentiod using its own projected token. The fixture does not read CA private keys or issue gateway leaf Secrets.
 
 A separate local interoperability test runs a real v1.5.0 binary against Agentiod CA over TLS, with only the Kubernetes TokenReview API faked. It checks SPIFFE identity, mTLS CONNECT forwarding, refusal of unauthenticated clients, token refresh, certificate renewal without restart, and renewal failure/recovery:
 

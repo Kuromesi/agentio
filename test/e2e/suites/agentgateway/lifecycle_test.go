@@ -176,12 +176,44 @@ func TestAgentgatewayDeploymentLifecycle(t *testing.T) {
 		})
 		probe(t, "version-three")
 	})
+	availabilityResources := []schema.GroupVersionResource{
+		{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
+		{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
+	}
+	for _, resource := range availabilityResources {
+		step("deleted "+resource.Resource+" reconciled", func(t *testing.T) {
+			child, err := env.Kube.Get(ctx, resource, config.Namespace, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owners := child.GetOwnerReferences()
+			if len(owners) != 1 || owners[0].UID != gwRecord.UID || owners[0].Kind != "Gateway" || owners[0].Name != name {
+				t.Fatal("availability resource is not owned by the fixture Gateway")
+			}
+			uid := child.GetUID()
+			if err := env.Cluster.Dynamic.Resource(resource).Namespace(config.Namespace).Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
+				t.Fatal(err)
+			}
+			harness.RetryAssertion(t, time.Minute, time.Second, func() error {
+				current, err := env.Kube.Get(ctx, resource, config.Namespace, name)
+				if err != nil {
+					return err
+				}
+				if current.GetUID() == uid {
+					return fmt.Errorf("%s not recreated", resource.Resource)
+				}
+				return nil
+			})
+			probe(t, "version-three")
+		})
+	}
 	step("gateway deletion collects children and preserves config", func(t *testing.T) {
 		if err := env.Kube.DeleteOwned(ctx, gwRecord); err != nil {
 			t.Fatal(err)
 		}
 		harness.RetryAssertion(t, time.Minute, time.Second, func() error {
-			for _, r := range []schema.GroupVersionResource{deployments, {Version: "v1", Resource: "services"}, {Version: "v1", Resource: "serviceaccounts"}} {
+			children := append([]schema.GroupVersionResource{deployments, {Version: "v1", Resource: "services"}, {Version: "v1", Resource: "serviceaccounts"}}, availabilityResources...)
+			for _, r := range children {
 				_, err := env.Kube.Get(ctx, r, config.Namespace, name)
 				if !apierrors.IsNotFound(err) {
 					return fmt.Errorf("child %s still exists: %v", r.Resource, err)
