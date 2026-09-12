@@ -26,6 +26,7 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 	celv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/filters/cel/v3"
 	dfpclusterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
 	dfpcommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/dynamic_forward_proxy/v3"
@@ -33,6 +34,7 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -323,6 +325,32 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayFormatWithoutTelemetryInputs(t *testing.T) {
+	format := "%REQ(:SCHEME)% %PROTOCOL%"
+	resources, err := Build(Inputs{
+		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+		TrustDomain:      "cluster.local",
+		Gateway: testGateway(&configv1.EgressGateway{
+			AccessLogFormat: &configv1.AccessLogFormat{Text: &format},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	logs := findHCM(t, listeners[MainForward]).GetAccessLog()
+	if len(logs) != 1 {
+		t.Fatalf("HTTP logs = %d, want 1", len(logs))
+	}
+	fileLog := &fileaccesslogv3.FileAccessLog{}
+	if err := logs[0].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+		t.Fatal(err)
+	}
+	if got := fileLog.GetLogFormat().GetTextFormatSource().GetInlineString(); got != format+"\n" {
+		t.Fatalf("text format = %q", got)
+	}
+}
+
 func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T) {
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	resources, err := Build(Inputs{
@@ -336,6 +364,11 @@ func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T)
 	}
 	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
 
+	for name, want := range map[string]string{MainInternal: "", MainForward: "https"} {
+		if got := findHCM(t, listeners[name]).GetSchemeHeaderTransformation().GetSchemeToOverwrite(); got != want {
+			t.Errorf("%s scheme override = %q, want %q", name, got, want)
+		}
+	}
 	connect := findHCM(t, listeners[ConnectTerminate])
 	if slices.Contains(httpFilterNames(connect), "istio.stats") {
 		t.Fatalf("CONNECT Telemetry filters = %v", httpFilterNames(connect))
@@ -761,5 +794,95 @@ func TestBuildRejectsRelativeGatewayRootCAPath(t *testing.T) {
 	})
 	if err == nil || err.Error() != "gateway root CA path must be absolute" {
 		t.Fatalf("Build() error = %v, want gateway root CA path must be absolute", err)
+	}
+}
+
+func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
+	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
+	expression := "connection.requested_server_name != 'skip.example.com'"
+	for _, tt := range []struct {
+		name     string
+		disabled bool
+		filter   *string
+		want     int
+	}{
+		{name: "default", want: 1},
+		{name: "filtered", filter: &expression, want: 1},
+		{name: "disabled", disabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var policies []model.Telemetry
+			if tt.disabled || tt.filter != nil {
+				policy, err := model.NewTelemetry(model.TelemetryMetadata{
+					Namespace: "agentio-system", Name: "logs", Source: "agentio-system/logs",
+				}, []string{"agentio-system/egress"}, nil, nil, []model.TelemetryAccessLogging{{
+					Mode: model.TelemetryModeServer, Disabled: &tt.disabled, Filter: tt.filter,
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				policies = append(policies, policy)
+			}
+			resources, err := Build(Inputs{
+				DiscoveryAddress: "agentiod.agentio-system.svc:15012", TrustDomain: "cluster.local",
+				Gateway: testGateway(nil), TelemetryRootNamespace: "agentio-system", Telemetry: policies,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			chain := findFilterChain(t, listeners[MainInternal], sniDenyChain)
+			deny := &tcpproxyv3.TcpProxy{}
+			filters := chain.GetFilters()
+			if len(filters) != tt.want+1 {
+				t.Fatalf("deny chain filters = %d, want %d", len(filters), tt.want+1)
+			}
+			if err := filters[len(filters)-1].GetTypedConfig().UnmarshalTo(deny); err != nil {
+				t.Fatal(err)
+			}
+			if chain.GetTransportSocket() != nil || deny.GetCluster() != BlackHoleCluster {
+				t.Fatal("denial must remain a raw black-hole connection")
+			}
+			if len(deny.GetAccessLog()) != tt.want {
+				t.Fatalf("deny logs = %d, want %d", len(deny.GetAccessLog()), tt.want)
+			}
+			if tt.want == 0 {
+				return
+			}
+			state := &setstatenetworkv3.Config{}
+			if err := filters[0].GetTypedConfig().UnmarshalTo(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.ValidateAll(); err != nil {
+				t.Fatal(err)
+			}
+			values := state.GetOnNewConnection()
+			if len(values) != 1 || values[0].GetObjectKey() != telemetry.DenialReasonFilterStateKey ||
+				values[0].GetFactoryKey() != "envoy.string" || !values[0].GetReadOnly() ||
+				values[0].GetSharedWithUpstream() != 0 ||
+				values[0].GetFormatString().GetTextFormatSource().GetInlineString() != "sni_policy_denied" {
+				t.Fatalf("denial reason must be set locally before the proxy: %v", values)
+			}
+			fileLog := &fileaccesslogv3.FileAccessLog{}
+			if err := deny.AccessLog[0].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+				t.Fatal(err)
+			}
+			if got := fileLog.GetLogFormat().GetJsonFormat().GetFields()["denial_reason"].GetStringValue(); got != "%FILTER_STATE("+values[0].GetObjectKey()+":PLAIN)%" {
+				t.Fatalf("denial log does not read the captured reason: %q", got)
+			}
+			if tt.filter == nil {
+				if deny.AccessLog[0].GetFilter() != nil {
+					t.Fatal("default deny log must not be restricted to NR")
+				}
+			} else {
+				filter := &celv3.ExpressionFilter{}
+				if err := deny.AccessLog[0].GetFilter().GetExtensionFilter().GetTypedConfig().UnmarshalTo(filter); err != nil {
+					t.Fatal(err)
+				}
+				if filter.GetExpression() != expression {
+					t.Fatalf("deny filter = %q, want %q", filter.GetExpression(), expression)
+				}
+			}
+		})
 	}
 }

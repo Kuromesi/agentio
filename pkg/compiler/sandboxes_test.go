@@ -61,9 +61,10 @@ func TestSandboxInlinePoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 		return a != nil && len(a.TrafficPolicies) == 1 && b != nil && len(b.TrafficPolicies) == 0
 	}, "paused Sandbox manifests compiled independently")
 	first := manifestAt(t, fixture.compiler, "a").TrafficPolicies[0]
-	if len(currentSnapshot(t, fixture.compiler).List(model.WorkloadAuthorizationType)) != 1 {
-		t.Fatal("Workload Authorization must be published independently")
-	}
+	// Sandbox and Authorization resources are published by separate collections.
+	eventually(t, func() bool {
+		return len(currentSnapshot(t, fixture.compiler).List(model.WorkloadAuthorizationType)) == 1
+	}, "Workload Authorization published independently")
 	worker := testWorkload("workers", "worker", "10.1.0.1")
 	for _, uid := range []string{"a", "b"} {
 		sandbox := *fixture.sandboxes.GetKey(uid)

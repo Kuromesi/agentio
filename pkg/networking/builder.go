@@ -91,7 +91,7 @@ func Build(inputs Inputs) ([]model.Resource, error) {
 	if err != nil {
 		return nil, err
 	}
-	if inputs.TelemetryRootNamespace != "" || inputs.Telemetry != nil || inputs.TelemetryProviderOverrides != nil {
+	if inputs.TelemetryRootNamespace != "" || inputs.Telemetry != nil || inputs.TelemetryProviderOverrides != nil || inputs.Gateway.Config.GetAccessLogFormat() != nil {
 		effective.telemetry, err = telemetry.Build(telemetry.Inputs{
 			Gateway:           inputs.Gateway,
 			RootNamespace:     inputs.TelemetryRootNamespace,

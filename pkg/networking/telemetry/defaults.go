@@ -15,6 +15,10 @@
 package telemetry
 
 import (
+	"strings"
+
+	configv1 "github.com/openkruise/agentio/api/config/v1"
+
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
@@ -28,7 +32,22 @@ import (
 
 const fileAccessLogName = "envoy.access_loggers.file"
 
-var chartAccessLogLabels = map[string]string{
+// DenialReasonFilterStateKey carries a gateway policy rejection reason for logs.
+const DenialReasonFilterStateKey = "io.kruise.egress_denial_reason"
+
+// The TLS termination chain shares the original ClientHello SNI with the
+// plaintext internal listener. Keep it separate from the HTTP authority, which
+// can differ (for example, an explicit proxy CONNECT target). Envoy disables CEL
+// string() conversion by default, but its CEL formatter prints bytes directly.
+var defaultAccessLogLabels = map[string]string{
+	"scheme":                         "%REQ(:SCHEME)%",
+	"original_destination":           "%DOWNSTREAM_LOCAL_ADDRESS%",
+	"upstream_host":                  "%UPSTREAM_HOST%",
+	"denial_reason":                  "%FILTER_STATE(" + DenialReasonFilterStateKey + ":PLAIN)%",
+	"response_code_details":          "%RESPONSE_CODE_DETAILS%",
+	"connection_termination_details": "%CONNECTION_TERMINATION_DETAILS%",
+	"log_type":                       "%ACCESS_LOG_TYPE%",
+
 	"authority_for":            "%REQ(:AUTHORITY)%",
 	"bytes_received":           "%BYTES_RECEIVED%",
 	"bytes_sent":               "%BYTES_SENT%",
@@ -38,23 +57,23 @@ var chartAccessLogLabels = map[string]string{
 	"path":                     "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
 	"protocol":                 "%PROTOCOL%",
 	"request_id":               "%REQ(X-REQUEST-ID)%",
-	"requested_server_name":    "%REQUESTED_SERVER_NAME%",
+	"requested_server_name":    "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%",
 	"response_code":            "%RESPONSE_CODE%",
 	"response_flags":           "%RESPONSE_FLAGS%",
 	"start_time":               "%START_TIME%",
 	"trace_id":                 "%TRACE_ID%",
-	"upstream_address":         "%DOWNSTREAM_LOCAL_ADDRESS%",
+	"upstream_address":         "%UPSTREAM_REMOTE_ADDRESS%",
 	"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%",
 	"user_agent":               "%REQ(USER-AGENT)%",
 	"sandbox_name":             "%CEL(filter_state['downstream_peer'].name)%",
 	"sandbox_namespace":        "%CEL(filter_state['downstream_peer'].namespace)%",
 }
 
-// defaultTelemetryProviders returns a fresh provider graph equivalent to the Agentio
-// chart MeshConfig defaults. Callers may mutate the result safely.
-func defaultTelemetryProviders() model.TelemetryProviders {
-	fields := make(map[string]*structpb.Value, len(chartAccessLogLabels))
-	for name, value := range chartAccessLogLabels {
+// defaultTelemetryProviders returns a fresh provider graph with the gateway's
+// format applied to the built-in envoy logger. Callers may mutate it safely.
+func defaultTelemetryProviders(format *configv1.AccessLogFormat) model.TelemetryProviders {
+	fields := make(map[string]*structpb.Value, len(defaultAccessLogLabels))
+	for name, value := range defaultAccessLogLabels {
 		fields[name] = structpb.NewStringValue(value)
 	}
 	fileLog := &fileaccesslogv3.FileAccessLog{
@@ -64,6 +83,22 @@ func defaultTelemetryProviders() model.TelemetryProviders {
 			JsonFormatOptions: &corev3.JsonFormatOptions{SortProperties: false},
 			OmitEmptyValues:   true,
 		}},
+	}
+	switch {
+	case format != nil && format.Text != nil:
+		text := format.GetText()
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		fileLog.GetLogFormat().Format = &corev3.SubstitutionFormatString_TextFormatSource{
+			TextFormatSource: &corev3.DataSource{Specifier: &corev3.DataSource_InlineString{InlineString: text}},
+		}
+		fileLog.GetLogFormat().OmitEmptyValues = false
+		fileLog.GetLogFormat().JsonFormatOptions = nil
+	case format.GetJson() != nil:
+		fileLog.GetLogFormat().Format = &corev3.SubstitutionFormatString_JsonFormat{
+			JsonFormat: proto.Clone(format.GetJson()).(*structpb.Struct),
+		}
 	}
 	typed, err := protoutil.MarshalAny(fileLog)
 	if err != nil {

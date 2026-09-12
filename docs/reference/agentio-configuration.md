@@ -183,6 +183,60 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `connectionPool` | `ConnectionPoolSettings` | See below | TCP and HTTP connection and route timeouts. |
 | `connectRateLimit` | `LocalRateLimitSettings` | Unset | Local token-bucket limit for new HTTP/2 CONNECT streams. |
 | `serviceEntries` | `EgressServiceEntry[]` | Empty | Static upstream endpoints that override DNS resolution for exact destination hosts at this gateway. |
+| `accessLogFormat` | `AccessLogFormat` | Built-in JSON | Format of the built-in `envoy` access-log provider on stdout for this gateway. See below. |
+
+### Access-log format
+
+Set `egressGateways[].accessLogFormat` in AgentioConfig to customize a gateway's access logs. Choose either `json` for a JSON object or `text` for a text template. Both support [Envoy access-log substitution operators](https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage). The format applies to HTTP and TCP logs, CONNECT failures, listener filter-chain misses, and SNI denials when SNI policy enforcement is enabled. The TLS-termination relay itself does not emit duplicate application logs.
+
+For example, put this AgentioConfig fragment in the `data.config` of `agentio-config` or `agentio-config-primary`. With Helm, put the same fragment under `agentiod.config.values`. Preserve the other gateway entries and settings when updating the list, because `egressGateways` uses list replacement semantics.
+
+```yaml
+egressGateways:
+- name: agentio-egress
+  namespace: agentio-system
+  accessLogFormat:
+    json:
+      start_time: "%START_TIME%"
+      scheme: "%REQ(:SCHEME)%"
+      protocol: "%PROTOCOL%"
+      authority: "%REQ(:AUTHORITY)%"
+      requested_server_name: "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%"
+      upstream_address: "%UPSTREAM_REMOTE_ADDRESS%"
+      response_code: "%RESPONSE_CODE%"
+      denial_reason: "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%"
+```
+
+The JSON object replaces the complete default format; its fields are not merged with the defaults. Nested objects and typed values are supported. Unavailable JSON values may be omitted or appear as `null`; log consumers should accept both. This example's illustrative output after HTTPS termination is:
+
+```json
+{"start_time":"2026-09-11T10:00:00.000Z","scheme":"https","protocol":"HTTP/2","authority":"api.example.com","requested_server_name":"api.example.com","upstream_address":"203.0.113.10:443","response_code":200,"denial_reason":null}
+```
+
+`scheme` distinguishes HTTP from terminated HTTPS; `protocol` is the HTTP version. The SNI expression preserves the original ClientHello name after TLS termination and falls back to the current connection's SNI for passthrough TLS. HTTP authority remains a separate field. TCP logs have no HTTP scheme or request headers.
+
+The default format includes `denial_reason: "sni_policy_denied"` for connections rejected by SNI policy. The reason is unset on other paths; HTTP errors and connection failures continue to use their existing response and transport fields. Custom formats can retain this reason with the `denial_reason` entry shown above.
+
+Internal upstream cluster and filter-chain names are omitted from the default format. For debugging, add these entries to your custom `accessLogFormat.json` object:
+
+```yaml
+upstream_cluster: "%UPSTREAM_CLUSTER%"
+filter_chain: "%FILTER_CHAIN_NAME%"
+```
+
+To use text output instead, replace `accessLogFormat` with:
+
+```yaml
+accessLogFormat:
+  text: |
+    [%START_TIME%] %REQ(:SCHEME)% %REQ(:METHOD)% %REQ(:AUTHORITY)% %PROTOCOL% %RESPONSE_CODE% upstream=%UPSTREAM_REMOTE_ADDRESS%
+```
+
+Agentio appends a trailing newline if it is missing. Unavailable values in text output use Envoy's `-` placeholder. Do not set `text` and `json` together; blank text and an empty `json` object are rejected. Omitting `accessLogFormat` or setting it to `{}` restores the built-in JSON format.
+
+ConfigMap updates take effect through xDS without restarting agentiod or the gateway. Formatting is scoped to the configured gateway. Telemetry still controls whether the logs are enabled and which requests are logged, including the existing CONNECT and listener failure filters. Explicit provider overrides keep their own formats, and EnvoyFilter patches run after format generation. Gateway API `parametersRef` ConfigMaps accept the same `accessLogFormat` field.
+
+Agentio validates the configuration structure; Envoy validates substitution operators and CEL expressions when it receives xDS. An unsupported operator or malformed expression can cause Envoy to reject the listener update.
 
 ### TLS termination for HTTPS inspection
 

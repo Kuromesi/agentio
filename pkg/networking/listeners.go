@@ -59,6 +59,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
+	"github.com/openkruise/agentio/pkg/networking/telemetry"
 )
 
 const (
@@ -130,14 +131,29 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 	}
 	internalChainMatcher := b.protocolMatcher(false)
 	if features.EnableSNITrafficPolicy {
+		denyProxy := &tcpproxyv3.TcpProxy{
+			StatPrefix:       sniDenyChain,
+			ClusterSpecifier: &tcpproxyv3.TcpProxy_Cluster{Cluster: BlackHoleCluster},
+		}
+		// A policy denial matched a chain, so the listener's NR-only log cannot
+		// record it. Honor the same providers and filters as application TCP.
+		if config.telemetry != nil {
+			for _, accessLog := range config.telemetry.TCPAccessLogs {
+				denyProxy.AccessLog = append(denyProxy.AccessLog, proto.Clone(accessLog).(*accesslogv3.AccessLog))
+			}
+		}
+		var denyFilters []*listenerv3.Filter
+		if len(denyProxy.AccessLog) > 0 {
+			// Capture the policy decision before the black-hole proxy closes the
+			// connection, so logs need not expose internal cluster or chain names.
+			denyFilters = append(denyFilters, b.sniDenialReasonFilter())
+		}
+		denyFilters = append(denyFilters, b.networkFilter("envoy.filters.network.tcp_proxy", denyProxy))
 		internalChains = append(internalChains,
 			b.buildTLSTerminateChain(connectionPool),
 			&listenerv3.FilterChain{
-				Name: sniDenyChain,
-				Filters: []*listenerv3.Filter{b.networkFilter("envoy.filters.network.tcp_proxy", &tcpproxyv3.TcpProxy{
-					StatPrefix:       sniDenyChain,
-					ClusterSpecifier: &tcpproxyv3.TcpProxy_Cluster{Cluster: BlackHoleCluster},
-				})},
+				Name:    sniDenyChain,
+				Filters: denyFilters,
 			},
 		)
 		internalChainMatcher = b.sniTrafficPolicyMatcher(config.gateway.GetTlsTermination().GetExcludeHosts())
@@ -522,6 +538,15 @@ func (b *resourceBuilder) relayDownstreamFilter() *listenerv3.Filter {
 		})
 	}
 	return b.networkFilter("connect_downstream_peer", &setstatenetworkv3.Config{OnNewConnection: values})
+}
+
+func (b *resourceBuilder) sniDenialReasonFilter() *listenerv3.Filter {
+	return b.networkFilter("envoy.filters.network.set_filter_state", &setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{{
+		Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: telemetry.DenialReasonFilterStateKey},
+		FactoryKey: "envoy.string",
+		Value:      &setstatecommonv3.FilterStateValue_FormatString{FormatString: formatString("sni_policy_denied")},
+		ReadOnly:   true,
+	}}})
 }
 
 func (b *resourceBuilder) captureSNIFilter() *listenerv3.Filter {

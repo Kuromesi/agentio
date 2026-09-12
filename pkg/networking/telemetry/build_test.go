@@ -114,7 +114,7 @@ func TestBuildAccessLoggingAndTracing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := defaultTelemetryProviders()
+	base := defaultTelemetryProviders(nil)
 	baseTrace := model.TelemetryProvider{
 		Name: "trace",
 		Tracing: &model.TelemetryTracingProvider{

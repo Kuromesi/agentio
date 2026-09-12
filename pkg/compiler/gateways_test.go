@@ -24,8 +24,12 @@ import (
 	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
+	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"istio.io/istio/pkg/test"
 
@@ -261,6 +265,69 @@ func TestGatewayResourcesCarryClusterOptions(t *testing.T) {
 	}
 	if got := tlsContext.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename(); got != rootCAPath {
 		t.Fatalf("TLS origination root CA = %q, want %q", got, rootCAPath)
+	}
+}
+
+func TestGatewayAccessLogFormatUpdateAndReset(t *testing.T) {
+	fixture := newIncrementalFixture(t)
+	config := &configv1.AgentioConfig{
+		EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress-a"}, {Namespace: "demo", Name: "egress-b"}},
+	}
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "defaults", Value: config})
+	wantA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.MainForward)
+	wantB := gatewayResourceName(model.ListenerType, "demo/egress-b", networking.MainForward)
+	waitSynced(t, fixture.compiler)
+	awaitSteadyState(t, fixture.compiler, wantA, wantB)
+	beforeA := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a")
+	beforeB := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-b")
+	recorder := newRecorder(fixture.compiler.Resources())
+
+	updated := proto.Clone(config).(*configv1.AgentioConfig)
+	updated.EgressGateways[0].AccessLogFormat = &configv1.AccessLogFormat{Text: proto.String("%REQ(:SCHEME)% %PROTOCOL%")}
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "custom-format", Value: updated})
+	eventually(t, func() bool {
+		resource := fixture.compiler.graph.resources.GetKey(wantA)
+		if resource == nil || !recorder.has(wantA) {
+			return false
+		}
+		listener := &listenerv3.Listener{}
+		if err := resource.Value.UnmarshalTo(listener); err != nil {
+			t.Fatal(err)
+		}
+		for _, chain := range listener.GetFilterChains() {
+			for _, filter := range chain.GetFilters() {
+				if filter.GetName() != "envoy.filters.network.http_connection_manager" {
+					continue
+				}
+				hcm := &hcmv3.HttpConnectionManager{}
+				if err := filter.GetTypedConfig().UnmarshalTo(hcm); err != nil {
+					t.Fatal(err)
+				}
+				if len(hcm.GetAccessLog()) != 1 {
+					return false
+				}
+				fileLog := &fileaccesslogv3.FileAccessLog{}
+				if err := hcm.GetAccessLog()[0].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+					t.Fatal(err)
+				}
+				return fileLog.GetLogFormat().GetTextFormatSource().GetInlineString() == "%REQ(:SCHEME)% %PROTOCOL%\n"
+			}
+		}
+		return false
+	}, "gateway format change to publish a new listener with the custom template")
+
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "reset-format", Value: config})
+	eventually(t, func() bool {
+		return maps.Equal(beforeA, gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a"))
+	}, "removing the override to restore the default gateway graph")
+	settle()
+	for _, changed := range recorder.names() {
+		if strings.Contains(changed, "|demo/egress-b|") {
+			t.Fatalf("format change invalidated the other gateway: %v", recorder.names())
+		}
+	}
+	if afterB := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-b"); !maps.Equal(beforeB, afterB) {
+		t.Fatalf("other gateway changed: before=%v after=%v", beforeB, afterB)
 	}
 }
 
