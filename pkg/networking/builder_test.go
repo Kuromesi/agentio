@@ -746,30 +746,53 @@ func TestBuildSupportsDeployedSandboxConnectPatch(t *testing.T) {
 	}
 }
 
-func TestGatewayExtProcOverridesGlobalFallback(t *testing.T) {
-	resources, err := Build(Inputs{
-		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local",
-		Gateway: testGateway(&configv1.EgressGateway{
-			ExtProc: &configv1.ExtProcProvider{
-				Service: "gateway-ext-proc.agentio-system.svc",
-				Port:    9003,
-			},
-		}),
-		GlobalExtProc: &configv1.ExtProcProvider{
-			Service: "global-ext-proc.agentio-system.svc",
-			Port:    9002,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	cluster := messagesOf(t, resources, model.ClusterType,
-		func() *clusterv3.Cluster { return &clusterv3.Cluster{} })[ExtProcCluster]
-	socket := cluster.GetLoadAssignment().GetEndpoints()[0].GetLbEndpoints()[0].
-		GetEndpoint().GetAddress().GetSocketAddress()
-	if socket.GetAddress() != "gateway-ext-proc.agentio-system.svc" || socket.GetPortValue() != 9003 {
-		t.Fatalf("gateway ext_proc endpoint = %s:%d", socket.GetAddress(), socket.GetPortValue())
+func TestGatewayExtProcOverride(t *testing.T) {
+	global := &configv1.ExtProcProvider{Service: "global-ext-proc.agentio-system.svc", Port: 9002}
+	override := &configv1.ExtProcProvider{Service: "gateway-ext-proc.agentio-system.svc", Port: 9003}
+	for _, tt := range []struct {
+		name     string
+		global   *configv1.ExtProcProvider
+		override *configv1.ExtProcProvider
+		want     *configv1.ExtProcProvider
+	}{
+		{name: "unconfigured"},
+		{name: "inherit", global: global, want: global},
+		{name: "disable global", global: global, override: &configv1.ExtProcProvider{}},
+		{name: "disable without global", override: &configv1.ExtProcProvider{}},
+		// release-0.1 treats an empty service as disabled, even with other fields set.
+		{name: "empty service with settings", global: global, override: &configv1.ExtProcProvider{Port: 9003, MessageTimeout: "unused"}},
+		{name: "override global", global: global, override: override, want: override},
+		{name: "override without global", override: override, want: override},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resources, err := Build(Inputs{
+				DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+				TrustDomain:      "cluster.local",
+				Gateway:          testGateway(&configv1.EgressGateway{ExtProc: tt.override}),
+				GlobalExtProc:    tt.global,
+			})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			cluster := messagesOf(t, resources, model.ClusterType,
+				func() *clusterv3.Cluster { return &clusterv3.Cluster{} })[ExtProcCluster]
+			if (cluster != nil) != (tt.want != nil) {
+				t.Fatalf("ext_proc cluster present = %v, want %v", cluster != nil, tt.want != nil)
+			}
+			if tt.want != nil {
+				socket := cluster.GetLoadAssignment().GetEndpoints()[0].GetLbEndpoints()[0].
+					GetEndpoint().GetAddress().GetSocketAddress()
+				if socket.GetAddress() != tt.want.GetService() || socket.GetPortValue() != tt.want.GetPort() {
+					t.Errorf("ext_proc endpoint = %s:%d, want %s:%d", socket.GetAddress(), socket.GetPortValue(), tt.want.GetService(), tt.want.GetPort())
+				}
+			}
+			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			for _, name := range []string{MainInternal, MainForward} {
+				if got := hasHTTPFilter(findHCM(t, listeners[name]), "envoy.filters.http.ext_proc"); got != (tt.want != nil) {
+					t.Errorf("listener %s ext_proc filter present = %v, want %v", name, got, tt.want != nil)
+				}
+			}
+		})
 	}
 }
 

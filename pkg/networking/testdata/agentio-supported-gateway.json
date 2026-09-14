@@ -1238,6 +1238,7 @@
       "name": "main_internal",
       "resource": {
         "name": "main_internal",
+        "listener_filters_timeout": "0s",
         "filter_chains": [
           {
             "filters": [

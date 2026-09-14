@@ -249,8 +249,15 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 
 	for _, name := range []string{MainInternal, MainForward} {
 		listener := listeners[name]
-		if listener.GetListenerFiltersTimeout() != nil || listener.GetContinueOnListenerFiltersTimeout() {
-			t.Errorf("listener %s does not use Envoy's fail-closed listener-filter defaults", name)
+		if name == MainInternal {
+			if timeout := listener.GetListenerFiltersTimeout(); timeout == nil || timeout.AsDuration() != 0 {
+				t.Errorf("main_internal must explicitly disable the protocol detection timeout, got %v", timeout)
+			}
+		} else if listener.GetListenerFiltersTimeout() != nil {
+			t.Errorf("listener %s must retain Envoy's default listener-filter timeout", name)
+		}
+		if listener.GetContinueOnListenerFiltersTimeout() {
+			t.Errorf("listener %s must not continue on listener-filter timeout", name)
 		}
 	}
 	for name, want := range map[string][]string{

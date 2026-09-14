@@ -71,8 +71,8 @@ func (g Gateway) ValidateForUse() error {
 	if g.Config.GetName() != "" || g.Config.GetNamespace() != "" {
 		return fmt.Errorf("gateway %s configuration contains source identity", g.ResourceName())
 	}
-	if g.Config.GetExtProc() != nil && strings.TrimSpace(g.Config.GetExtProc().GetService()) == "" {
-		return fmt.Errorf("gateway %s has an empty ext_proc provider", g.ResourceName())
+	if service := g.Config.GetExtProc().GetService(); service != "" && strings.TrimSpace(service) == "" {
+		return fmt.Errorf("gateway %s has a whitespace-only ext_proc service", g.ResourceName())
 	}
 	if err := ValidateUpstreamTLS(g.Config.GetUpstreamTls()); err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)

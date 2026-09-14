@@ -168,6 +168,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFilters:    b.inspectorFilters(true),
 		FilterChains:       internalChains,
 		FilterChainMatcher: internalChainMatcher,
+		// Disable the protocol detection timeout so connections waiting for
+		// application data are not closed by Envoy's default 15s timeout.
+		ListenerFiltersTimeout: durationpb.New(0),
 	}
 	mainForward := &listenerv3.Listener{
 		Name:              MainForward,
