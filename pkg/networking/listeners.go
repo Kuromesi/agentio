@@ -521,6 +521,10 @@ func (b *resourceBuilder) connectAuthorityFilter() *hcmv3.HttpFilter {
 		value("sandbox.token", "%REQ(X-AGENTIO-SANDBOX-TOKEN)%", "envoy.string", setstatecommonv3.FilterStateValue_TRANSITIVE),
 		value("sandbox.labels", "%REQ(X-AGENTIO-SANDBOX-LABELS)%", "envoy.string", setstatecommonv3.FilterStateValue_TRANSITIVE),
 		value("sandbox.id", "%REQ(X-AGENTIO-SANDBOX-ID)%", "envoy.string", setstatecommonv3.FilterStateValue_TRANSITIVE),
+		// Preserve the ztunnel-attested pod across internal HTTP/TLS hops.
+		// Hashable values keep different source pods out of the same upstream pool.
+		value("agentio.workload.name", "%REQ(X-AGENTIO-WORKLOAD-NAME)%", "istio.hashable_string", setstatecommonv3.FilterStateValue_TRANSITIVE),
+		value("agentio.workload.namespace", "%REQ(X-AGENTIO-WORKLOAD-NAMESPACE)%", "istio.hashable_string", setstatecommonv3.FilterStateValue_TRANSITIVE),
 	}})
 }
 

@@ -41,6 +41,10 @@ const (
 
 	FilterStateDownstreamPeerName      = "filter_state['downstream_peer'].name"
 	FilterStateDownstreamPeerNamespace = "filter_state['downstream_peer'].namespace"
+	// FilterStateWorkloadName carries the source pod name captured on HBONE CONNECT.
+	FilterStateWorkloadName = "filter_state['agentio.workload.name']"
+	// FilterStateWorkloadNamespace carries the source pod namespace captured on HBONE CONNECT.
+	FilterStateWorkloadNamespace = "filter_state['agentio.workload.namespace']"
 	// AttrSourceAddress is Envoy's standard CEL attribute for the
 	// connection peer (the calling Sandbox pod, from the egress gateway's
 	// perspective). It is delivered as "<ip>:<port>"; only the IP half is
@@ -70,8 +74,14 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	logger := log.FromContext(ctx)
 	loggerD := logger.V(logging.DEBUG)
 
-	podNamespace := extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace)
-	podName := extractFilterStateString(attrs, FilterStateDownstreamPeerName)
+	podNamespace := extractFilterStateString(attrs, FilterStateWorkloadNamespace)
+	if podNamespace == "" {
+		podNamespace = extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace)
+	}
+	podName := extractFilterStateString(attrs, FilterStateWorkloadName)
+	if podName == "" {
+		podName = extractFilterStateString(attrs, FilterStateDownstreamPeerName)
+	}
 	peer := filter.Peer{
 		Pod: types.NamespacedName{Namespace: podNamespace, Name: podName},
 		IP:  extractPodIP(attrs),
@@ -79,10 +89,9 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	sandboxLabelsEncoded := extractFilterStateString(attrs, FilterStateSandboxLabels)
 
 	if podNamespace == "" || podName == "" {
-		// The ext-proc filter relies on Envoy populating
-		// filter_state['downstream_peer'] (e.g. via the Istio metadata
-		// exchange filter or an equivalent). Without it the caller decides
-		// the disposition and logs it at the operator-visible level.
+		// Envoy must supply the captured workload headers or legacy peer
+		// metadata. Without a complete identity the caller decides the
+		// disposition and logs it at the operator-visible level.
 		loggerD.Info("pod identity missing from filter_state",
 			"podNamespace", podNamespace, "podName", podName)
 		return peer, httpreq.HTTPRequest{}

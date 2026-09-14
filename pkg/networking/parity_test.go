@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -33,6 +34,7 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	dfpclusterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
+	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
@@ -426,6 +428,11 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					if err := filter.GetTypedConfig().UnmarshalTo(config); err != nil {
 						t.Fatalf("decode CONNECT filter state: %v", err)
 					}
+					// The legacy snapshot predates workload headers. Their capture
+					// and propagation are pinned by TestWorkloadHeaderFilterState.
+					config.OnRequestHeaders = slices.DeleteFunc(config.OnRequestHeaders, func(state *setstatecommonv3.FilterStateValue) bool {
+						return state.GetObjectKey() == "agentio.workload.name" || state.GetObjectKey() == "agentio.workload.namespace"
+					})
 					for _, state := range config.GetOnRequestHeaders() {
 						state.GetFormatString().OmitEmptyValues = false
 					}

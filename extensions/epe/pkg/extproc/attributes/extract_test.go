@@ -480,3 +480,80 @@ func TestExtractAttributeInt_ZeroValue(t *testing.T) {
 		t.Errorf("expected 0 for nil attrs, got %d", v)
 	}
 }
+
+func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		fields map[string]any
+		want   types.NamespacedName
+	}{
+		{
+			name: "workload headers override conflicting peer metadata",
+			fields: map[string]any{
+				FilterStateWorkloadName: "source-pod", FilterStateWorkloadNamespace: "source-ns",
+				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+			},
+			want: types.NamespacedName{Name: "source-pod", Namespace: "source-ns"},
+		},
+		{
+			name:   "workload headers work without peer metadata",
+			fields: map[string]any{FilterStateWorkloadName: "source-pod", FilterStateWorkloadNamespace: "source-ns"},
+			want:   types.NamespacedName{Name: "source-pod", Namespace: "source-ns"},
+		},
+		{
+			name:   "missing headers use legacy metadata",
+			fields: map[string]any{FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns"},
+			want:   types.NamespacedName{Name: "peer-pod", Namespace: "peer-ns"},
+		},
+		{
+			name: "empty headers use legacy metadata",
+			fields: map[string]any{
+				FilterStateWorkloadName: "", FilterStateWorkloadNamespace: "",
+				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+			},
+			want: types.NamespacedName{Name: "peer-pod", Namespace: "peer-ns"},
+		},
+		{
+			name: "namespace falls back independently",
+			fields: map[string]any{
+				FilterStateWorkloadName: "source-pod", FilterStateWorkloadNamespace: "",
+				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+			},
+			want: types.NamespacedName{Name: "source-pod", Namespace: "peer-ns"},
+		},
+		{
+			name: "name falls back independently",
+			fields: map[string]any{
+				FilterStateWorkloadNamespace:  "source-ns",
+				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+			},
+			want: types.NamespacedName{Name: "peer-pod", Namespace: "source-ns"},
+		},
+		{
+			name:   "partial identity remains invalid",
+			fields: map[string]any{FilterStateWorkloadName: "source-pod"},
+			want:   types.NamespacedName{Name: "source-pod"},
+		},
+		{name: "application headers alone cannot supply identity", fields: map[string]any{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// These inner request headers must never override the captured
+			// CONNECT context, including when that context is missing.
+			headers := makeHTTPHeaders(map[string]string{
+				":method": "GET", ":authority": "api.example.com", ":path": "/",
+				"x-agentio-workload-name": "application-pod", "x-agentio-workload-namespace": "application-ns",
+			})
+			peer, req := Extract(context.Background(), headers, makeAttrs(t, tt.fields))
+			if peer.Pod != tt.want {
+				t.Fatalf("source pod = %v, want %v", peer.Pod, tt.want)
+			}
+			wantValid := tt.want.Name != "" && tt.want.Namespace != ""
+			if peer.Valid() != wantValid {
+				t.Fatalf("Valid = %t, want %t", peer.Valid(), wantValid)
+			}
+			if wantValid && req.Host != "api.example.com" {
+				t.Fatalf("valid workload identity did not reach request extraction: %+v", req)
+			}
+		})
+	}
+}
