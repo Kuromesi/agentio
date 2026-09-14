@@ -55,6 +55,7 @@ func newClientTrustTest(t *testing.T, objects ...runtime.Object) *clientTrustTes
 
 func newClientTrustTestWithClient(t *testing.T, client kube.Client, secretNamespace string) *clientTrustTest {
 	t.Helper()
+	// Configure fake reactors before calling this helper, which starts informers.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	root := clientTrustTestCA(t)
@@ -235,18 +236,19 @@ func TestClientTrustBundleEvents(t *testing.T) {
 }
 
 func TestClientTrustTargetRetriesAndOwnership(t *testing.T) {
-	rig := newClientTrustTest(t,
+	client := kube.NewFakeClient(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "app"}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "foreign"}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentio-client-ca", Namespace: "foreign"}, Data: map[string]string{"ca-bundle.pem": "foreign"}},
 	)
 	var attempts atomic.Int32
-	rig.client.Kube().(*kubefake.Clientset).PrependReactor("create", "configmaps", func(action kubetesting.Action) (bool, runtime.Object, error) {
+	client.Kube().(*kubefake.Clientset).PrependReactor("create", "configmaps", func(action kubetesting.Action) (bool, runtime.Object, error) {
 		if action.GetNamespace() == "app" && attempts.Add(1) == 1 {
 			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, "agentio-client-ca", nil)
 		}
 		return false, nil, nil
 	})
+	rig := newClientTrustTestWithClient(t, client, "")
 	rig.run(t)
 	rig.waitBundle(t, "app", rig.initial)
 	if attempts.Load() < 2 {
@@ -259,15 +261,16 @@ func TestClientTrustTargetRetriesAndOwnership(t *testing.T) {
 }
 
 func TestClientTrustReconcileCancellation(t *testing.T) {
-	rig := newClientTrustTest(t,
+	client := kube.NewFakeClient(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "first"}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "second"}},
 	)
-	waitForCondition(t, rig.distributor.targets.HasSynced, "desired targets")
-	cycle, cancel := context.WithCancel(rig.ctx)
+	cycle, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	writes := 0
-	rig.client.Kube().(*kubefake.Clientset).PrependReactor("create", "configmaps", func(kubetesting.Action) (bool, runtime.Object, error) { writes++; cancel(); return false, nil, nil })
+	client.Kube().(*kubefake.Clientset).PrependReactor("create", "configmaps", func(kubetesting.Action) (bool, runtime.Object, error) { writes++; cancel(); return false, nil, nil })
+	rig := newClientTrustTestWithClient(t, client, "")
+	waitForCondition(t, rig.distributor.targets.HasSynced, "desired targets")
 	if err := rig.distributor.reconcile(cycle, types.NamespacedName{Namespace: "first", Name: "agentio-client-ca"}); err != nil {
 		t.Fatal(err)
 	}
