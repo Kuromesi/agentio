@@ -65,8 +65,8 @@ func TestDefaultProviders(t *testing.T) {
 			"requested_server_name": "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%", "response_code": "%RESPONSE_CODE%", "response_flags": "%RESPONSE_FLAGS%",
 			"start_time": "%START_TIME%", "trace_id": "%TRACE_ID%", "upstream_address": "%UPSTREAM_REMOTE_ADDRESS%",
 			"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%", "user_agent": "%REQ(USER-AGENT)%",
-			"workload_name":      "%CEL('workload.name' in filter_state && size(filter_state['workload.name']) > 0 ? filter_state['workload.name'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].name : ''))%",
-			"workload_namespace": "%CEL('workload.namespace' in filter_state && size(filter_state['workload.namespace']) > 0 ? filter_state['workload.namespace'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].namespace : ''))%",
+			"workload_name":      "%CEL('agentio.workload.name' in filter_state && size(filter_state['agentio.workload.name']) > 0 ? filter_state['agentio.workload.name'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].name : ''))%",
+			"workload_namespace": "%CEL('agentio.workload.namespace' in filter_state && size(filter_state['agentio.workload.namespace']) > 0 ? filter_state['agentio.workload.namespace'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].namespace : ''))%",
 		}
 		if len(fields) != len(want) {
 			t.Fatalf("%s JSON label count = %d, want %d: %v", protocol, len(fields), len(want), fields)
@@ -182,13 +182,13 @@ func TestDefaultAccessLogWorkloadIdentity(t *testing.T) {
 				state map[string]any
 				want  string
 			}{
-				{"header overrides peer", map[string]any{"workload." + field: []byte("source"), "downstream_peer": map[string]string{field: "peer"}}, "source"},
-				{"header without peer", map[string]any{"workload." + field: []byte("source")}, "source"},
+				{"header overrides peer", map[string]any{"agentio.workload." + field: []byte("source"), "downstream_peer": map[string]string{field: "peer"}}, "source"},
+				{"header without peer", map[string]any{"agentio.workload." + field: []byte("source")}, "source"},
 				{"missing header", map[string]any{"downstream_peer": map[string]string{field: "peer"}}, "peer"},
-				{"empty header", map[string]any{"workload." + field: []byte{}, "downstream_peer": map[string]string{field: "peer"}}, "peer"},
-				{"empty string header", map[string]any{"workload." + field: "", "downstream_peer": map[string]string{field: "peer"}}, "peer"},
+				{"empty header", map[string]any{"agentio.workload." + field: []byte{}, "downstream_peer": map[string]string{field: "peer"}}, "peer"},
+				{"empty string header", map[string]any{"agentio.workload." + field: "", "downstream_peer": map[string]string{field: "peer"}}, "peer"},
 				{"no identity", map[string]any{}, ""},
-				{"empty header without peer", map[string]any{"workload." + field: []byte{}}, ""},
+				{"empty header without peer", map[string]any{"agentio.workload." + field: []byte{}}, ""},
 			} {
 				t.Run(tt.name, func(t *testing.T) {
 					got, _, err := program.Eval(map[string]any{"filter_state": tt.state})

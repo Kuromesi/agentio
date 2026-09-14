@@ -42,8 +42,8 @@ const (
 	FilterStateDownstreamPeerName      = "filter_state['downstream_peer'].name"
 	FilterStateDownstreamPeerNamespace = "filter_state['downstream_peer'].namespace"
 	// Workload attributes carry the source pod headers captured on HBONE CONNECT.
-	FilterStateWorkloadName      = "filter_state['workload.name']"
-	FilterStateWorkloadNamespace = "filter_state['workload.namespace']"
+	FilterStateWorkloadName      = "filter_state['agentio.workload.name']"
+	FilterStateWorkloadNamespace = "filter_state['agentio.workload.namespace']"
 	// AttrSourceAddress is Envoy's standard CEL attribute for the
 	// connection peer (the calling Sandbox pod, from the egress gateway's
 	// perspective). It is delivered as "<ip>:<port>"; only the IP half is

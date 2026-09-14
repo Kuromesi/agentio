@@ -431,7 +431,7 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					// The legacy snapshot predates workload headers. Their capture
 					// and propagation are pinned by TestWorkloadHeaderFilterState.
 					config.OnRequestHeaders = slices.DeleteFunc(config.OnRequestHeaders, func(state *setstatecommonv3.FilterStateValue) bool {
-						return state.GetObjectKey() == "workload.name" || state.GetObjectKey() == "workload.namespace"
+						return state.GetObjectKey() == "agentio.workload.name" || state.GetObjectKey() == "agentio.workload.namespace"
 					})
 					for _, state := range config.GetOnRequestHeaders() {
 						state.GetFormatString().OmitEmptyValues = false

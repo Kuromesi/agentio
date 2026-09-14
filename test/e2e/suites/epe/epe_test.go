@@ -560,8 +560,8 @@ data:
         - filter_state['sandbox.id']
         - filter_state['sandbox.token']
         - filter_state['sandbox.labels']
-        - filter_state['workload.name']
-        - filter_state['workload.namespace']
+        - filter_state['agentio.workload.name']
+        - filter_state['agentio.workload.namespace']
         - filter_state['downstream_peer'].name
         - filter_state['downstream_peer'].namespace
         - destination.port

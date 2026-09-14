@@ -26,8 +26,8 @@ import (
 // embeds Peer, so anything imported here lands in every filter's dependency
 // closure (see the arch guards).
 type Peer struct {
-	// Pod identifies the source pod from filter_state['workload.name'] and
-	// filter_state['workload.namespace'], falling back per field to
+	// Pod identifies the source pod from filter_state['agentio.workload.name'] and
+	// filter_state['agentio.workload.namespace'], falling back per field to
 	// filter_state['downstream_peer']. Either half may be empty; see Valid.
 	Pod types.NamespacedName
 	// IP is the source pod IP, extracted from Envoy's source.address

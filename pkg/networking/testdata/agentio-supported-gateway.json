@@ -560,7 +560,7 @@
                             "shared_with_upstream": "TRANSITIVE"
                           },
                           {
-                            "object_key": "workload.name",
+                            "object_key": "agentio.workload.name",
                             "factory_key": "istio.hashable_string",
                             "format_string": {
                               "text_format_source": {
@@ -571,7 +571,7 @@
                             "shared_with_upstream": "TRANSITIVE"
                           },
                           {
-                            "object_key": "workload.namespace",
+                            "object_key": "agentio.workload.namespace",
                             "factory_key": "istio.hashable_string",
                             "format_string": {
                               "text_format_source": {

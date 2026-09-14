@@ -54,8 +54,8 @@ sandboxExtProc:
       - filter_state['sandbox.id']
       - filter_state['sandbox.token']
       - filter_state['sandbox.labels']
-      - filter_state['workload.name']
-      - filter_state['workload.namespace']
+      - filter_state['agentio.workload.name']
+      - filter_state['agentio.workload.namespace']
       - filter_state['downstream_peer'].name
       - filter_state['downstream_peer'].namespace
       - destination.port
@@ -66,7 +66,7 @@ sandboxExtProc:
 
 The service name uses the chart namespace, so `agentio-system` above is only the standard installation namespace. `agentiod.config.values` deep-merges over this chart-generated ConfigMap, and `agentio-config-primary`, if present, has runtime precedence. A per-gateway `egressGateways[].extProc` replaces the global `sandboxExtProc`; an explicitly empty gateway provider disables external processing for that gateway. See [Agentio configuration](agentio-configuration.md) for ConfigMap precedence and provider fields.
 
-When upgrading a custom provider or overriding `request.attributes`, include `filter_state['workload.name']` and `filter_state['workload.namespace']` to forward the source Pod headers captured by the gateway. Keep the two `downstream_peer` attributes for fallback when the headers are missing or empty.
+When upgrading a custom provider or overriding `request.attributes`, include `filter_state['agentio.workload.name']` and `filter_state['agentio.workload.namespace']` to forward the source Pod headers captured by the gateway. Keep the two `downstream_peer` attributes for fallback when the headers are missing or empty.
 
 The generated provider leaves `failureModeAllow` unset, so its effective default is `false`. An unavailable EPE service, gRPC processing error, or ext_proc message timeout therefore fails the gateway request closed. Setting `agentiod.config.values.sandboxExtProc.failureModeAllow: true` keeps traffic moving but bypasses all EPE enforcement during those failures. A per-gateway override can choose differently through `egressGateways[].extProc.failureModeAllow`, but it must also repeat the complete provider service, port, modes, attributes, and timeout because the gateway provider replaces the global one. This provider outage setting is separate from a matched token transformation's `failStrategy`, which handles request-time transformation failures after EPE has received and projected the policy.
 

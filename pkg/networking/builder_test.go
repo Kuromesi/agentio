@@ -904,8 +904,8 @@ func TestWorkloadHeaderFilterState(t *testing.T) {
 		states = config.GetOnRequestHeaders()
 	}
 	for key, header := range map[string]string{
-		"workload.name":      "X-AGENTIO-WORKLOAD-NAME",
-		"workload.namespace": "X-AGENTIO-WORKLOAD-NAMESPACE",
+		"agentio.workload.name":      "X-AGENTIO-WORKLOAD-NAME",
+		"agentio.workload.namespace": "X-AGENTIO-WORKLOAD-NAMESPACE",
 	} {
 		index := slices.IndexFunc(states, func(state *setstatecommonv3.FilterStateValue) bool { return state.GetObjectKey() == key })
 		if index < 0 {
