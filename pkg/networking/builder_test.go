@@ -30,6 +30,7 @@ import (
 	celv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/filters/cel/v3"
 	dfpclusterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
 	dfpcommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/dynamic_forward_proxy/v3"
+	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	dfphttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
@@ -884,5 +885,44 @@ func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWorkloadHeaderFilterState(t *testing.T) {
+	resources := buildCompleteGatewayGraph(t)
+	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	hcm := findHCM(t, listeners[ConnectTerminate])
+	var states []*setstatecommonv3.FilterStateValue
+	for _, filter := range hcm.GetHttpFilters() {
+		if filter.GetName() != "connect_authority" {
+			continue
+		}
+		config := &setstatehttpv3.Config{}
+		if err := filter.GetTypedConfig().UnmarshalTo(config); err != nil {
+			t.Fatal(err)
+		}
+		states = config.GetOnRequestHeaders()
+	}
+	for key, header := range map[string]string{
+		"workload.name":      "X-AGENTIO-WORKLOAD-NAME",
+		"workload.namespace": "X-AGENTIO-WORKLOAD-NAMESPACE",
+	} {
+		index := slices.IndexFunc(states, func(state *setstatecommonv3.FilterStateValue) bool { return state.GetObjectKey() == key })
+		if index < 0 {
+			t.Fatalf("CONNECT did not capture %s", key)
+		}
+		state := states[index]
+		if got := state.GetFormatString().GetTextFormatSource().GetInlineString(); got != "%REQ("+header+")%" {
+			t.Errorf("%s capture = %q", key, got)
+		}
+		if !state.GetFormatString().GetOmitEmptyValues() {
+			t.Errorf("%s must preserve missing headers as empty values", key)
+		}
+		if state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_TRANSITIVE {
+			t.Errorf("%s must survive every internal HTTP/TLS hop", key)
+		}
+		if state.GetFactoryKey() != "istio.hashable_string" {
+			t.Errorf("%s must distinguish upstream pools", key)
+		}
 	}
 }

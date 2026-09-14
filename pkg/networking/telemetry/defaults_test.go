@@ -65,8 +65,8 @@ func TestDefaultProviders(t *testing.T) {
 			"requested_server_name": "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%", "response_code": "%RESPONSE_CODE%", "response_flags": "%RESPONSE_FLAGS%",
 			"start_time": "%START_TIME%", "trace_id": "%TRACE_ID%", "upstream_address": "%UPSTREAM_REMOTE_ADDRESS%",
 			"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%", "user_agent": "%REQ(USER-AGENT)%",
-			"sandbox_name":      "%CEL(filter_state['downstream_peer'].name)%",
-			"sandbox_namespace": "%CEL(filter_state['downstream_peer'].namespace)%",
+			"workload_name":      "%CEL('workload.name' in filter_state && size(filter_state['workload.name']) > 0 ? filter_state['workload.name'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].name : ''))%",
+			"workload_namespace": "%CEL('workload.namespace' in filter_state && size(filter_state['workload.namespace']) > 0 ? filter_state['workload.namespace'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].namespace : ''))%",
 		}
 		if len(fields) != len(want) {
 			t.Fatalf("%s JSON label count = %d, want %d: %v", protocol, len(fields), len(want), fields)
@@ -146,6 +146,68 @@ func testAccessLogSNI(t *testing.T, format string) {
 			}
 			if printed != tt.want {
 				t.Errorf("SNI = %q, want %q", printed, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultAccessLogWorkloadIdentity(t *testing.T) {
+	// Match Envoy's CEL environment: filter-state strings are bytes and
+	// string() conversion is unavailable. This also covers TCP access logs,
+	// where request.headers does not exist.
+	environment, err := cel.NewCustomEnv(
+		cel.StdLib(cel.StdLibSubset(celenv.NewLibrarySubset().AddExcludedFunctions(celenv.NewFunction("string")))),
+		cel.Variable("filter_state", cel.MapType(cel.StringType, cel.DynType)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileLog := &fileaccesslogv3.FileAccessLog{}
+	if err := defaultTelemetryProviders(nil).Provider("envoy").HTTPAccessLog.GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"name", "namespace"} {
+		t.Run(field, func(t *testing.T) {
+			format := fileLog.GetLogFormat().GetJsonFormat().GetFields()["workload_"+field].GetStringValue()
+			ast, issues := environment.Compile(strings.TrimSuffix(strings.TrimPrefix(format, "%CEL("), ")%"))
+			if issues.Err() != nil {
+				t.Fatal(issues.Err())
+			}
+			program, err := environment.Program(ast)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tt := range []struct {
+				name  string
+				state map[string]any
+				want  string
+			}{
+				{"header overrides peer", map[string]any{"workload." + field: []byte("source"), "downstream_peer": map[string]string{field: "peer"}}, "source"},
+				{"header without peer", map[string]any{"workload." + field: []byte("source")}, "source"},
+				{"missing header", map[string]any{"downstream_peer": map[string]string{field: "peer"}}, "peer"},
+				{"empty header", map[string]any{"workload." + field: []byte{}, "downstream_peer": map[string]string{field: "peer"}}, "peer"},
+				{"empty string header", map[string]any{"workload." + field: "", "downstream_peer": map[string]string{field: "peer"}}, "peer"},
+				{"no identity", map[string]any{}, ""},
+				{"empty header without peer", map[string]any{"workload." + field: []byte{}}, ""},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					got, _, err := program.Eval(map[string]any{"filter_state": tt.state})
+					if err != nil {
+						t.Fatal(err)
+					}
+					var printed string
+					switch value := got.Value().(type) {
+					case string:
+						printed = value
+					case []byte:
+						printed = string(value)
+					default:
+						t.Fatalf("unexpected result type %T", value)
+					}
+					if printed != tt.want {
+						t.Errorf("workload_%s = %q, want %q", field, printed, tt.want)
+					}
+				})
 			}
 		})
 	}

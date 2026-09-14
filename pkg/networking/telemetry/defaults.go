@@ -65,8 +65,8 @@ var defaultAccessLogLabels = map[string]string{
 	"upstream_address":         "%UPSTREAM_REMOTE_ADDRESS%",
 	"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%",
 	"user_agent":               "%REQ(USER-AGENT)%",
-	"sandbox_name":             "%CEL(filter_state['downstream_peer'].name)%",
-	"sandbox_namespace":        "%CEL(filter_state['downstream_peer'].namespace)%",
+	"workload_name":            "%CEL('workload.name' in filter_state && size(filter_state['workload.name']) > 0 ? filter_state['workload.name'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].name : ''))%",
+	"workload_namespace":       "%CEL('workload.namespace' in filter_state && size(filter_state['workload.namespace']) > 0 ? filter_state['workload.namespace'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].namespace : ''))%",
 }
 
 // defaultTelemetryProviders returns a fresh provider graph with the gateway's

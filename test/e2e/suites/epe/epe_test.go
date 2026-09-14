@@ -231,13 +231,14 @@ func waitForPrometheusMetrics(
 	return output, err
 }
 
-// TestPodIdentityReachesEPE proves that downstream_peer.name and .namespace
-// reach EPE. An empty selector on a namespaced profile matches only Pods in that
-// namespace, so this fails open if either identity attribute is absent.
+// TestPodIdentityReachesEPE proves that source pod name and namespace
+// reach EPE through workload attributes (or legacy downstream_peer metadata).
+// An empty selector on a namespaced profile matches only Pods in that namespace,
+// so this fails open if either identity attribute is absent.
 func TestPodIdentityReachesEPE(t *testing.T) {
 	_, scope := beginEPEDataPathScenario(t,
 		"EPE container log follows; look for 'Pod identity missing from filter_state', which means the "+
-			"downstream_peer attributes did not reach EPE")
+			"source workload attributes did not reach EPE")
 
 	e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{
 		"Namespace": trafficFixture.Namespace.Name(),
@@ -559,6 +560,8 @@ data:
         - filter_state['sandbox.id']
         - filter_state['sandbox.token']
         - filter_state['sandbox.labels']
+        - filter_state['workload.name']
+        - filter_state['workload.namespace']
         - filter_state['downstream_peer'].name
         - filter_state['downstream_peer'].namespace
         - destination.port
