@@ -135,6 +135,9 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 func TestSupportedGatewayListenerRouteParity(t *testing.T) {
 	got := supportedListenerRouteParityView(t, normalizeGatewayResources(buildCompleteGatewayGraph(t)))
 	want := supportedListenerRouteParityView(t, readNormalizedGatewayGolden(t, "testdata/legacy-agentio-supported-gateway.json"))
+	// The legacy fixture omitted MeshConfig.protocol_detection_timeout;
+	// release-0.1's production MeshConfig defaults it to an explicit 0s.
+	want[gatewayResourceKey(model.ListenerType, MainInternal)].(*listenerv3.Listener).ListenerFiltersTimeout = durationpb.New(0)
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
 		t.Fatalf("supported gateway listener/route differences:\n%s", strings.Join(diff, "\n"))
 	}

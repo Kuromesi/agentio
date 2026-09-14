@@ -168,6 +168,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFilters:    b.inspectorFilters(true),
 		FilterChains:       internalChains,
 		FilterChainMatcher: internalChainMatcher,
+		// Match release-0.1's default: wait for protocol detection without
+		// Envoy's implicit 15s timeout closing connections before their first byte.
+		ListenerFiltersTimeout: durationpb.New(0),
 	}
 	mainForward := &listenerv3.Listener{
 		Name:              MainForward,
