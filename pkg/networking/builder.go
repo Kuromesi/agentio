@@ -206,8 +206,12 @@ func validatePatchedGroup[T interface{ ValidateAll() error }](messages []T) erro
 
 func resolveConfig(gateway model.Gateway, globalExtProc *configv1.ExtProcProvider) (effectiveConfig, error) {
 	result := effectiveConfig{gateway: gateway.Config}
-	if gateway.Config.GetExtProc() != nil {
-		result.extProc = gateway.Config.GetExtProc()
+	if override := gateway.Config.GetExtProc(); override != nil {
+		// An explicit empty service disables ext_proc for this gateway;
+		// only an absent override inherits the global provider.
+		if override.GetService() != "" {
+			result.extProc = override
+		}
 	} else if globalExtProc.GetService() != "" {
 		result.extProc = globalExtProc
 	}

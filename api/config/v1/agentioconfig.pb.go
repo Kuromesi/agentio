@@ -240,6 +240,7 @@ type EgressGateway struct {
 	// Per-gateway ext_proc override. When set, this gateway uses its own
 	// ext_proc endpoint instead of the global AgentioConfig.sandbox_ext_proc.
 	// nil means fall back to the global configuration.
+	// An explicit provider with an empty service disables ext_proc for this gateway.
 	ExtProc *ExtProcProvider `protobuf:"bytes,4,opt,name=ext_proc,json=extProc,proto3" json:"ext_proc,omitempty"`
 	// Per-gateway connection pool and timeout settings. Controls HCM
 	// StreamIdleTimeout, TCPProxy idle/max-connection-duration, and

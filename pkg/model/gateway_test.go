@@ -54,6 +54,27 @@ func TestGatewaysFromAgentioConfigNormalizesAndClones(t *testing.T) {
 	}
 }
 
+func TestGatewayValidateForUseAllowsExtProcDisable(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		provider *configv1.ExtProcProvider
+		wantErr  bool
+	}{
+		{name: "inherit"},
+		{name: "disable", provider: &configv1.ExtProcProvider{}},
+		{name: "empty service with settings", provider: &configv1.ExtProcProvider{Port: 9002}},
+		{name: "override", provider: &configv1.ExtProcProvider{Service: "epe.demo.svc"}},
+		{name: "whitespace is invalid", provider: &configv1.ExtProcProvider{Service: " \t"}, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gateway := Gateway{Namespace: "demo", Name: "egress", Config: &configv1.EgressGateway{ExtProc: tt.provider}}
+			if err := gateway.ValidateForUse(); (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateForUse() = %v, want error = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestGatewaysFromAgentioConfigMarksDuplicateIdentityAsConflict(t *testing.T) {
 	gateways := GatewaysFromAgentioConfig(&configv1.AgentioConfig{
 		EgressGateways: []*configv1.EgressGateway{

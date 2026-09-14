@@ -331,6 +331,44 @@ func TestGatewayAccessLogFormatUpdateAndReset(t *testing.T) {
 	}
 }
 
+func TestGatewayExtProcDisableAndRestoreInheritance(t *testing.T) {
+	fixture := newIncrementalFixture(t)
+	config := &configv1.AgentioConfig{
+		SandboxExtProc: &configv1.ExtProcProvider{Service: "epe.demo.svc.cluster.local", Port: 9002},
+		EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress-a"}, {Namespace: "demo", Name: "egress-b"}},
+	}
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "inherit", Value: config})
+	clusterA := gatewayResourceName(model.ClusterType, "demo/egress-a", networking.ExtProcCluster)
+	clusterB := gatewayResourceName(model.ClusterType, "demo/egress-b", networking.ExtProcCluster)
+	internalA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.MainInternal)
+	forwardA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.MainForward)
+	waitSynced(t, fixture.compiler)
+	awaitSteadyState(t, fixture.compiler, clusterA, clusterB, internalA, forwardA)
+	beforeA := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a")
+	beforeB := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-b")
+
+	disabled := proto.Clone(config).(*configv1.AgentioConfig)
+	disabled.EgressGateways[0].ExtProc = &configv1.ExtProcProvider{}
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "disable", Value: disabled})
+	eventually(t, func() bool {
+		after := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a")
+		return after[clusterA] == "" &&
+			after[internalA] != "" && after[internalA] != beforeA[internalA] &&
+			after[forwardA] != "" && after[forwardA] != beforeA[forwardA]
+	}, "empty override removes the ext_proc cluster and updates both listeners")
+	if failures := fixture.compiler.Failures(); len(failures) != 0 {
+		t.Fatalf("empty ext_proc override rejected: %v", failures)
+	}
+	if afterB := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-b"); !maps.Equal(beforeB, afterB) {
+		t.Fatalf("disabling egress-a changed egress-b: before=%v after=%v", beforeB, afterB)
+	}
+
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "inherit-again", Value: config})
+	eventually(t, func() bool {
+		return maps.Equal(beforeA, gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a"))
+	}, "removing the override restores the inherited ext_proc graph")
+}
+
 func TestGatewayTelemetryChangeAffectsOnlyTargetGateway(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{

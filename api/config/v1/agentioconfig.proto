@@ -66,6 +66,7 @@ message EgressGateway {
   // Per-gateway ext_proc override. When set, this gateway uses its own
   // ext_proc endpoint instead of the global AgentioConfig.sandbox_ext_proc.
   // nil means fall back to the global configuration.
+  // An explicit provider with an empty service disables ext_proc for this gateway.
   ExtProcProvider ext_proc = 4;
 
   // Per-gateway connection pool and timeout settings. Controls HCM

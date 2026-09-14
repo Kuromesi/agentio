@@ -82,6 +82,12 @@ func TestDecodeEgressGatewayRejectsEmbeddedIdentity(t *testing.T) {
 	}
 }
 
+func TestDecodeEgressGatewayRejectsWhitespaceExtProcService(t *testing.T) {
+	if _, err := decodeEgressGateway(`extProc: {service: " "}`); err == nil {
+		t.Fatal("decodeEgressGateway accepted a whitespace-only ext_proc service")
+	}
+}
+
 func TestGatewayAPIConfigurationsResolveSameNamespaceParameters(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -144,6 +150,24 @@ func TestGatewayAPIConfigurationsResolveSameNamespaceParameters(t *testing.T) {
 			gateway.Source == model.GatewaySourceGatewayAPI &&
 			gateway.Config.GetExtProc().GetService() == "gateway-ext-proc.demo.svc.cluster.local"
 	}, "same-namespace Gateway parameters")
+
+	for _, content := range []string{"extProc: {}", "{}"} {
+		configMaps.ConditionalUpdateObject(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "egress-parameters"},
+			Data:       map[string]string{gatewayConfigKey: content},
+		})
+		eventually(t, func() bool {
+			gateway := configurations.GetKey("demo/egress")
+			if gateway == nil || gateway.ValidateForUse() != nil {
+				return false
+			}
+			provider := gateway.Config.GetExtProc()
+			if content == "extProc: {}" {
+				return provider != nil && provider.GetService() == ""
+			}
+			return provider == nil
+		}, "Gateway parameters update to "+content)
+	}
 }
 
 func TestGatewayAPIConfigurationsRetainLastKnownGoodParameters(t *testing.T) {
