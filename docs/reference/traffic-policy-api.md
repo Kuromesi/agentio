@@ -15,48 +15,58 @@ Resource types in `agents.kruise.io/v1alpha1`:
 GlobalTrafficPolicy defines bidirectional traffic rules cluster-wide.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-      <td><b>apiVersion</b></td>
-      <td>string</td>
-      <td>agents.kruise.io/v1alpha1</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b>kind</b></td>
-      <td>string</td>
-      <td>GlobalTrafficPolicy</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
-      <td>object</td>
-      <td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
-      <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspec">spec</a></b></td>
-        <td>object</td>
-        <td>
-          TrafficPolicySpec defines bidirectional policy state on selected pods.<br/>
-          <br/>
-            <i>Validations</i>:<li>has(self.ingress) || has(self.egress): at least one of ingress or egress must be specified</li>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicystatus">status</a></b></td>
-        <td>object</td>
-        <td>
-          TrafficPolicyStatus captures the observed state of TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>apiVersion</b></td>
+<td>string</td>
+<td>agents.kruise.io/v1alpha1</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>kind</b></td>
+<td>string</td>
+<td>GlobalTrafficPolicy</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
+<td>object</td>
+<td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspec">spec</a></b></td>
+<td>object</td>
+<td>
+
+TrafficPolicySpec defines bidirectional policy state on selected pods.
+
+<i>Validations</i>:
+<ul>
+<li>has(self.ingress) || has(self.egress): at least one of ingress or egress must be specified</li>
+</ul>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicystatus">status</a></b></td>
+<td>object</td>
+<td>
+
+TrafficPolicyStatus captures the observed state of TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec
@@ -64,52 +74,64 @@ GlobalTrafficPolicy defines bidirectional traffic rules cluster-wide.
 TrafficPolicySpec defines bidirectional policy state on selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globaltrafficpolicyspecselector">selector</a></b></td>
-        <td>object</td>
-        <td>
-          Selector chooses the pods this policy applies to. Standard
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecselector">selector</a></b></td>
+<td>object</td>
+<td>
+
+Selector chooses the pods this policy applies to. Standard
 LabelSelector semantics: an EMPTY selector matches EVERY pod within
 the policy's scope (namespace for TrafficPolicy, cluster-wide for
-GlobalTrafficPolicy).<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegress">egress</a></b></td>
-        <td>object</td>
-        <td>
-          Egress defines rules applied to outbound traffic of selected pods.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingress">ingress</a></b></td>
-        <td>object</td>
-        <td>
-          Ingress defines rules applied to inbound traffic of selected pods.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>priority</b></td>
-        <td>integer</td>
-        <td>
-          Priority determines the evaluation order when multiple TrafficPolicies
+GlobalTrafficPolicy).
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegress">egress</a></b></td>
+<td>object</td>
+<td>
+
+Egress defines rules applied to outbound traffic of selected pods.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingress">ingress</a></b></td>
+<td>object</td>
+<td>
+
+Ingress defines rules applied to inbound traffic of selected pods.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>priority</b></td>
+<td>integer</td>
+<td>
+
+Priority determines the evaluation order when multiple TrafficPolicies
 match the same pod. Higher values are evaluated first. When two
-policies share the same priority, the result is implementation-defined.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 1000<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+policies share the same priority, the result is implementation-defined.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 1000<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.selector
@@ -120,31 +142,38 @@ the policy's scope (namespace for TrafficPolicy, cluster-wide for
 GlobalTrafficPolicy).
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globaltrafficpolicyspecselectormatchexpressions">matchExpressions</a></b></td>
-        <td>[]object</td>
-        <td>
-          matchExpressions is a list of label selector requirements. The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>matchLabels</b></td>
-        <td>map[string]string</td>
-        <td>
-          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecselectormatchexpressions">matchExpressions</a></b></td>
+<td>[]object</td>
+<td>
+
+matchExpressions is a list of label selector requirements. The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>matchLabels</b></td>
+<td>map[string]string</td>
+<td>
+
+matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
 map is equivalent to an element of matchExpressions, whose key field is "key", the
-operator is "In", and the values array contains only "value". The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+operator is "In", and the values array contains only "value". The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.selector.matchExpressions[]
@@ -153,40 +182,50 @@ A label selector requirement is a selector that contains values, a key, and an o
 relates the key and values.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>key</b></td>
-        <td>string</td>
-        <td>
-          key is the label key that the selector applies to.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>operator</b></td>
-        <td>string</td>
-        <td>
-          operator represents a key's relationship to a set of values.
-Valid operators are In, NotIn, Exists and DoesNotExist.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>values</b></td>
-        <td>[]string</td>
-        <td>
-          values is an array of string values. If the operator is In or NotIn,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>key</b></td>
+<td>string</td>
+<td>
+
+key is the label key that the selector applies to.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>operator</b></td>
+<td>string</td>
+<td>
+
+operator represents a key's relationship to a set of values.
+Valid operators are In, NotIn, Exists and DoesNotExist.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>values</b></td>
+<td>[]string</td>
+<td>
+
+values is an array of string values. If the operator is In or NotIn,
 the values array must be non-empty. If the operator is Exists or DoesNotExist,
 the values array must be empty. This array is replaced during a strategic
-merge patch.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+merge patch.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress
@@ -194,22 +233,26 @@ merge patch.<br/>
 Egress defines rules applied to outbound traffic of selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules is the ordered rule list for this direction.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules is the ordered rule list for this direction.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[]
@@ -220,46 +263,58 @@ When From/To/Ports are all empty, the action applies to all traffic in
 that direction.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>action</b></td>
-        <td>enum</td>
-        <td>
-          Action determines whether matched traffic is allowed or denied.<br/>
-          <br/>
-            <i>Enum</i>: allow, reject<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulesfrom">from</a></b></td>
-        <td>[]object</td>
-        <td>
-          From lists source peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulesports">ports</a></b></td>
-        <td>[]object</td>
-        <td>
-          Ports restricts this rule to specific L4 protocol/port combinations.
-Multiple entries are ORed. If empty, the rule matches all ports.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulesto">to</a></b></td>
-        <td>[]object</td>
-        <td>
-          To lists destination peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>action</b></td>
+<td>enum</td>
+<td>
+
+Action determines whether matched traffic is allowed or denied.
+
+<i>Enum</i>: allow, reject<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulesfrom">from</a></b></td>
+<td>[]object</td>
+<td>
+
+From lists source peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulesports">ports</a></b></td>
+<td>[]object</td>
+<td>
+
+Ports restricts this rule to specific L4 protocol/port combinations.
+Multiple entries are ORed. If empty, the rule matches all ports.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulesto">to</a></b></td>
+<td>[]object</td>
+<td>
+
+To lists destination peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].from[]
@@ -268,44 +323,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulesfromservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulesfromworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulesfromservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulesfromworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].from[].service
@@ -313,30 +381,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].from[].workload
@@ -345,29 +420,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].ports[]
@@ -376,49 +458,56 @@ TrafficPolicyPort restricts a rule to specific protocol/port combinations.
 If Protocol is non-empty and Port is nil, matches all ports of that protocol.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>endPort</b></td>
-        <td>integer</td>
-        <td>
-          EndPort defines the upper bound of a port range (inclusive). When set,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>endPort</b></td>
+<td>integer</td>
+<td>
+
+EndPort defines the upper bound of a port range (inclusive). When set,
 the rule matches destination ports from Port to EndPort. Requires Port
-to be set and must be >= Port.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>port</b></td>
-        <td>integer</td>
-        <td>
-          Port is the destination port number. When nil, the rule applies to all
-TCP ports.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>protocol</b></td>
-        <td>enum</td>
-        <td>
-          <br/>
-          <br/>
-            <i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+to be set and must be >= Port.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>port</b></td>
+<td>integer</td>
+<td>
+
+Port is the destination port number. When nil, the rule applies to all
+TCP ports.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>protocol</b></td>
+<td>enum</td>
+<td>
+
+
+
+<i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].to[]
@@ -427,44 +516,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulestoservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecegressrulestoworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulestoservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecegressrulestoworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].to[].service
@@ -472,30 +574,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.egress.rules[].to[].workload
@@ -504,29 +613,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress
@@ -534,22 +650,26 @@ the peer address set.
 Ingress defines rules applied to inbound traffic of selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules is the ordered rule list for this direction.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules is the ordered rule list for this direction.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[]
@@ -560,46 +680,58 @@ When From/To/Ports are all empty, the action applies to all traffic in
 that direction.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>action</b></td>
-        <td>enum</td>
-        <td>
-          Action determines whether matched traffic is allowed or denied.<br/>
-          <br/>
-            <i>Enum</i>: allow, reject<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulesfrom">from</a></b></td>
-        <td>[]object</td>
-        <td>
-          From lists source peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulesports">ports</a></b></td>
-        <td>[]object</td>
-        <td>
-          Ports restricts this rule to specific L4 protocol/port combinations.
-Multiple entries are ORed. If empty, the rule matches all ports.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulesto">to</a></b></td>
-        <td>[]object</td>
-        <td>
-          To lists destination peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>action</b></td>
+<td>enum</td>
+<td>
+
+Action determines whether matched traffic is allowed or denied.
+
+<i>Enum</i>: allow, reject<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulesfrom">from</a></b></td>
+<td>[]object</td>
+<td>
+
+From lists source peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulesports">ports</a></b></td>
+<td>[]object</td>
+<td>
+
+Ports restricts this rule to specific L4 protocol/port combinations.
+Multiple entries are ORed. If empty, the rule matches all ports.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulesto">to</a></b></td>
+<td>[]object</td>
+<td>
+
+To lists destination peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].from[]
@@ -608,44 +740,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulesfromservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulesfromworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulesfromservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulesfromworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].from[].service
@@ -653,30 +798,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].from[].workload
@@ -685,29 +837,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].ports[]
@@ -716,49 +875,56 @@ TrafficPolicyPort restricts a rule to specific protocol/port combinations.
 If Protocol is non-empty and Port is nil, matches all ports of that protocol.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>endPort</b></td>
-        <td>integer</td>
-        <td>
-          EndPort defines the upper bound of a port range (inclusive). When set,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>endPort</b></td>
+<td>integer</td>
+<td>
+
+EndPort defines the upper bound of a port range (inclusive). When set,
 the rule matches destination ports from Port to EndPort. Requires Port
-to be set and must be >= Port.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>port</b></td>
-        <td>integer</td>
-        <td>
-          Port is the destination port number. When nil, the rule applies to all
-TCP ports.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>protocol</b></td>
-        <td>enum</td>
-        <td>
-          <br/>
-          <br/>
-            <i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+to be set and must be >= Port.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>port</b></td>
+<td>integer</td>
+<td>
+
+Port is the destination port number. When nil, the rule applies to all
+TCP ports.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>protocol</b></td>
+<td>enum</td>
+<td>
+
+
+
+<i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].to[]
@@ -767,44 +933,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulestoservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globaltrafficpolicyspecingressrulestoworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulestoservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globaltrafficpolicyspecingressrulestoworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].to[].service
@@ -812,30 +991,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.spec.ingress.rules[].to[].workload
@@ -844,29 +1030,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.status
@@ -874,23 +1067,27 @@ the peer address set.
 TrafficPolicyStatus captures the observed state of TrafficPolicy.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globaltrafficpolicystatusconditions">conditions</a></b></td>
-        <td>[]object</td>
-        <td>
-          Conditions summarises the policy's current state. Standard types are
-Accepted and Programmed (see TrafficPolicyCondition* constants).<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globaltrafficpolicystatusconditions">conditions</a></b></td>
+<td>[]object</td>
+<td>
+
+Conditions summarises the policy's current state. Standard types are
+Accepted and Programmed (see TrafficPolicyCondition* constants).
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalTrafficPolicy.status.conditions[]
@@ -898,72 +1095,88 @@ Accepted and Programmed (see TrafficPolicyCondition* constants).<br/>
 Condition contains details for one aspect of the current state of this API Resource.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>lastTransitionTime</b></td>
-        <td>string</td>
-        <td>
-          lastTransitionTime is the last time the condition transitioned from one status to another.
-This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.<br/>
-          <br/>
-            <i>Format</i>: date-time<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>message</b></td>
-        <td>string</td>
-        <td>
-          message is a human readable message indicating details about the transition.
-This may be an empty string.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>reason</b></td>
-        <td>string</td>
-        <td>
-          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>lastTransitionTime</b></td>
+<td>string</td>
+<td>
+
+lastTransitionTime is the last time the condition transitioned from one status to another.
+This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+
+<i>Format</i>: date-time<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>message</b></td>
+<td>string</td>
+<td>
+
+message is a human readable message indicating details about the transition.
+This may be an empty string.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>reason</b></td>
+<td>string</td>
+<td>
+
+reason contains a programmatic identifier indicating the reason for the condition's last transition.
 Producers of specific condition types may define expected values and meanings for this field,
 and whether the values are considered a guaranteed API.
 The value should be a CamelCase string.
-This field may not be empty.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>status</b></td>
-        <td>enum</td>
-        <td>
-          status of the condition, one of True, False, Unknown.<br/>
-          <br/>
-            <i>Enum</i>: True, False, Unknown<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>string</td>
-        <td>
-          type of condition in CamelCase or in foo.example.com/CamelCase.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>observedGeneration</b></td>
-        <td>integer</td>
-        <td>
-          observedGeneration represents the .metadata.generation that the condition was set based upon.
+This field may not be empty.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>status</b></td>
+<td>enum</td>
+<td>
+
+status of the condition, one of True, False, Unknown.
+
+<i>Enum</i>: True, False, Unknown<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>string</td>
+<td>
+
+type of condition in CamelCase or in foo.example.com/CamelCase.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>observedGeneration</b></td>
+<td>integer</td>
+<td>
+
+observedGeneration represents the .metadata.generation that the condition was set based upon.
 For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-with respect to the current state of the instance.<br/>
-          <br/>
-            <i>Format</i>: int64<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+with respect to the current state of the instance.
+
+<i>Format</i>: int64<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 
@@ -972,48 +1185,58 @@ with respect to the current state of the instance.<br/>
 TrafficPolicy defines bidirectional traffic rules for selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-      <td><b>apiVersion</b></td>
-      <td>string</td>
-      <td>agents.kruise.io/v1alpha1</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b>kind</b></td>
-      <td>string</td>
-      <td>TrafficPolicy</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
-      <td>object</td>
-      <td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
-      <td>true</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspec">spec</a></b></td>
-        <td>object</td>
-        <td>
-          TrafficPolicySpec defines bidirectional policy state on selected pods.<br/>
-          <br/>
-            <i>Validations</i>:<li>has(self.ingress) || has(self.egress): at least one of ingress or egress must be specified</li>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicystatus">status</a></b></td>
-        <td>object</td>
-        <td>
-          TrafficPolicyStatus captures the observed state of TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>apiVersion</b></td>
+<td>string</td>
+<td>agents.kruise.io/v1alpha1</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>kind</b></td>
+<td>string</td>
+<td>TrafficPolicy</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
+<td>object</td>
+<td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspec">spec</a></b></td>
+<td>object</td>
+<td>
+
+TrafficPolicySpec defines bidirectional policy state on selected pods.
+
+<i>Validations</i>:
+<ul>
+<li>has(self.ingress) || has(self.egress): at least one of ingress or egress must be specified</li>
+</ul>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicystatus">status</a></b></td>
+<td>object</td>
+<td>
+
+TrafficPolicyStatus captures the observed state of TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec
@@ -1021,52 +1244,64 @@ TrafficPolicy defines bidirectional traffic rules for selected pods.
 TrafficPolicySpec defines bidirectional policy state on selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#trafficpolicyspecselector">selector</a></b></td>
-        <td>object</td>
-        <td>
-          Selector chooses the pods this policy applies to. Standard
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#trafficpolicyspecselector">selector</a></b></td>
+<td>object</td>
+<td>
+
+Selector chooses the pods this policy applies to. Standard
 LabelSelector semantics: an EMPTY selector matches EVERY pod within
 the policy's scope (namespace for TrafficPolicy, cluster-wide for
-GlobalTrafficPolicy).<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegress">egress</a></b></td>
-        <td>object</td>
-        <td>
-          Egress defines rules applied to outbound traffic of selected pods.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingress">ingress</a></b></td>
-        <td>object</td>
-        <td>
-          Ingress defines rules applied to inbound traffic of selected pods.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>priority</b></td>
-        <td>integer</td>
-        <td>
-          Priority determines the evaluation order when multiple TrafficPolicies
+GlobalTrafficPolicy).
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegress">egress</a></b></td>
+<td>object</td>
+<td>
+
+Egress defines rules applied to outbound traffic of selected pods.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingress">ingress</a></b></td>
+<td>object</td>
+<td>
+
+Ingress defines rules applied to inbound traffic of selected pods.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>priority</b></td>
+<td>integer</td>
+<td>
+
+Priority determines the evaluation order when multiple TrafficPolicies
 match the same pod. Higher values are evaluated first. When two
-policies share the same priority, the result is implementation-defined.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 1000<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+policies share the same priority, the result is implementation-defined.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 1000<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.selector
@@ -1077,31 +1312,38 @@ the policy's scope (namespace for TrafficPolicy, cluster-wide for
 GlobalTrafficPolicy).
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#trafficpolicyspecselectormatchexpressions">matchExpressions</a></b></td>
-        <td>[]object</td>
-        <td>
-          matchExpressions is a list of label selector requirements. The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>matchLabels</b></td>
-        <td>map[string]string</td>
-        <td>
-          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#trafficpolicyspecselectormatchexpressions">matchExpressions</a></b></td>
+<td>[]object</td>
+<td>
+
+matchExpressions is a list of label selector requirements. The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>matchLabels</b></td>
+<td>map[string]string</td>
+<td>
+
+matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
 map is equivalent to an element of matchExpressions, whose key field is "key", the
-operator is "In", and the values array contains only "value". The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+operator is "In", and the values array contains only "value". The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.selector.matchExpressions[]
@@ -1110,40 +1352,50 @@ A label selector requirement is a selector that contains values, a key, and an o
 relates the key and values.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>key</b></td>
-        <td>string</td>
-        <td>
-          key is the label key that the selector applies to.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>operator</b></td>
-        <td>string</td>
-        <td>
-          operator represents a key's relationship to a set of values.
-Valid operators are In, NotIn, Exists and DoesNotExist.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>values</b></td>
-        <td>[]string</td>
-        <td>
-          values is an array of string values. If the operator is In or NotIn,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>key</b></td>
+<td>string</td>
+<td>
+
+key is the label key that the selector applies to.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>operator</b></td>
+<td>string</td>
+<td>
+
+operator represents a key's relationship to a set of values.
+Valid operators are In, NotIn, Exists and DoesNotExist.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>values</b></td>
+<td>[]string</td>
+<td>
+
+values is an array of string values. If the operator is In or NotIn,
 the values array must be non-empty. If the operator is Exists or DoesNotExist,
 the values array must be empty. This array is replaced during a strategic
-merge patch.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+merge patch.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress
@@ -1151,22 +1403,26 @@ merge patch.<br/>
 Egress defines rules applied to outbound traffic of selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#trafficpolicyspecegressrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules is the ordered rule list for this direction.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules is the ordered rule list for this direction.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[]
@@ -1177,46 +1433,58 @@ When From/To/Ports are all empty, the action applies to all traffic in
 that direction.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>action</b></td>
-        <td>enum</td>
-        <td>
-          Action determines whether matched traffic is allowed or denied.<br/>
-          <br/>
-            <i>Enum</i>: allow, reject<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulesfrom">from</a></b></td>
-        <td>[]object</td>
-        <td>
-          From lists source peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulesports">ports</a></b></td>
-        <td>[]object</td>
-        <td>
-          Ports restricts this rule to specific L4 protocol/port combinations.
-Multiple entries are ORed. If empty, the rule matches all ports.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulesto">to</a></b></td>
-        <td>[]object</td>
-        <td>
-          To lists destination peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>action</b></td>
+<td>enum</td>
+<td>
+
+Action determines whether matched traffic is allowed or denied.
+
+<i>Enum</i>: allow, reject<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulesfrom">from</a></b></td>
+<td>[]object</td>
+<td>
+
+From lists source peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulesports">ports</a></b></td>
+<td>[]object</td>
+<td>
+
+Ports restricts this rule to specific L4 protocol/port combinations.
+Multiple entries are ORed. If empty, the rule matches all ports.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulesto">to</a></b></td>
+<td>[]object</td>
+<td>
+
+To lists destination peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].from[]
@@ -1225,44 +1493,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulesfromservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulesfromworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulesfromservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulesfromworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].from[].service
@@ -1270,30 +1551,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].from[].workload
@@ -1302,29 +1590,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].ports[]
@@ -1333,49 +1628,56 @@ TrafficPolicyPort restricts a rule to specific protocol/port combinations.
 If Protocol is non-empty and Port is nil, matches all ports of that protocol.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>endPort</b></td>
-        <td>integer</td>
-        <td>
-          EndPort defines the upper bound of a port range (inclusive). When set,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>endPort</b></td>
+<td>integer</td>
+<td>
+
+EndPort defines the upper bound of a port range (inclusive). When set,
 the rule matches destination ports from Port to EndPort. Requires Port
-to be set and must be >= Port.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>port</b></td>
-        <td>integer</td>
-        <td>
-          Port is the destination port number. When nil, the rule applies to all
-TCP ports.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>protocol</b></td>
-        <td>enum</td>
-        <td>
-          <br/>
-          <br/>
-            <i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+to be set and must be >= Port.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>port</b></td>
+<td>integer</td>
+<td>
+
+Port is the destination port number. When nil, the rule applies to all
+TCP ports.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>protocol</b></td>
+<td>enum</td>
+<td>
+
+
+
+<i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].to[]
@@ -1384,44 +1686,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulestoservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecegressrulestoworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulestoservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecegressrulestoworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].to[].service
@@ -1429,30 +1744,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.egress.rules[].to[].workload
@@ -1461,29 +1783,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress
@@ -1491,22 +1820,26 @@ the peer address set.
 Ingress defines rules applied to inbound traffic of selected pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#trafficpolicyspecingressrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules is the ordered rule list for this direction.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules is the ordered rule list for this direction.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[]
@@ -1517,46 +1850,58 @@ When From/To/Ports are all empty, the action applies to all traffic in
 that direction.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>action</b></td>
-        <td>enum</td>
-        <td>
-          Action determines whether matched traffic is allowed or denied.<br/>
-          <br/>
-            <i>Enum</i>: allow, reject<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulesfrom">from</a></b></td>
-        <td>[]object</td>
-        <td>
-          From lists source peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulesports">ports</a></b></td>
-        <td>[]object</td>
-        <td>
-          Ports restricts this rule to specific L4 protocol/port combinations.
-Multiple entries are ORed. If empty, the rule matches all ports.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulesto">to</a></b></td>
-        <td>[]object</td>
-        <td>
-          To lists destination peers. Multiple entries are ORed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>action</b></td>
+<td>enum</td>
+<td>
+
+Action determines whether matched traffic is allowed or denied.
+
+<i>Enum</i>: allow, reject<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulesfrom">from</a></b></td>
+<td>[]object</td>
+<td>
+
+From lists source peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulesports">ports</a></b></td>
+<td>[]object</td>
+<td>
+
+Ports restricts this rule to specific L4 protocol/port combinations.
+Multiple entries are ORed. If empty, the rule matches all ports.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulesto">to</a></b></td>
+<td>[]object</td>
+<td>
+
+To lists destination peers. Multiple entries are ORed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].from[]
@@ -1565,44 +1910,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulesfromservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulesfromworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulesfromservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulesfromworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].from[].service
@@ -1610,30 +1968,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].from[].workload
@@ -1642,29 +2007,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].ports[]
@@ -1673,49 +2045,56 @@ TrafficPolicyPort restricts a rule to specific protocol/port combinations.
 If Protocol is non-empty and Port is nil, matches all ports of that protocol.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>endPort</b></td>
-        <td>integer</td>
-        <td>
-          EndPort defines the upper bound of a port range (inclusive). When set,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>endPort</b></td>
+<td>integer</td>
+<td>
+
+EndPort defines the upper bound of a port range (inclusive). When set,
 the rule matches destination ports from Port to EndPort. Requires Port
-to be set and must be >= Port.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>port</b></td>
-        <td>integer</td>
-        <td>
-          Port is the destination port number. When nil, the rule applies to all
-TCP ports.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Minimum</i>: 1<br/>
-            <i>Maximum</i>: 65535<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>protocol</b></td>
-        <td>enum</td>
-        <td>
-          <br/>
-          <br/>
-            <i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+to be set and must be >= Port.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>port</b></td>
+<td>integer</td>
+<td>
+
+Port is the destination port number. When nil, the rule applies to all
+TCP ports.
+
+<i>Format</i>: int32<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 65535<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>protocol</b></td>
+<td>enum</td>
+<td>
+
+
+
+<i>Enum</i>: TCP, UDP, ICMP, SCTP<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].to[]
@@ -1724,44 +2103,57 @@ TrafficPolicyPeer identifies a traffic source or destination. Exactly one
 of CIDR, FQDN, Service, or Workload must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cidr</b></td>
-        <td>string</td>
-        <td>
-          CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>fqdn</b></td>
-        <td>string</td>
-        <td>
-          FQDN is a fully qualified domain name to match (e.g. "api.example.com").<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulestoservice">service</a></b></td>
-        <td>object</td>
-        <td>
-          Service references a Kubernetes Service and its selected endpoints.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#trafficpolicyspecingressrulestoworkload">workload</a></b></td>
-        <td>object</td>
-        <td>
-          Workload selects pods by namespace and labels; their IP addresses form
-the peer address set.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cidr</b></td>
+<td>string</td>
+<td>
+
+CIDR is an IP address range in CIDR notation (e.g. "10.0.0.0/8").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>fqdn</b></td>
+<td>string</td>
+<td>
+
+FQDN is a fully qualified domain name to match (e.g. "api.example.com").
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulestoservice">service</a></b></td>
+<td>object</td>
+<td>
+
+Service references a Kubernetes Service and its selected endpoints.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#trafficpolicyspecingressrulestoworkload">workload</a></b></td>
+<td>object</td>
+<td>
+
+Workload selects pods by namespace and labels; their IP addresses form
+the peer address set.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].to[].service
@@ -1769,30 +2161,37 @@ the peer address set.<br/>
 Service references a Kubernetes Service and its selected endpoints.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Service resource name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace of the target Service. When omitted, defaults
-to the namespace of the enclosing TrafficPolicy.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Service resource name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the namespace of the target Service. When omitted, defaults
+to the namespace of the enclosing TrafficPolicy.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.spec.ingress.rules[].to[].workload
@@ -1801,29 +2200,36 @@ Workload selects pods by namespace and labels; their IP addresses form
 the peer address set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace of the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>selector</b></td>
-        <td>map[string]string</td>
-        <td>
-          Selector is a label selector that matches the target pods.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace of the target pods.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>selector</b></td>
+<td>map[string]string</td>
+<td>
+
+Selector is a label selector that matches the target pods.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.status
@@ -1831,23 +2237,27 @@ the peer address set.
 TrafficPolicyStatus captures the observed state of TrafficPolicy.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#trafficpolicystatusconditions">conditions</a></b></td>
-        <td>[]object</td>
-        <td>
-          Conditions summarises the policy's current state. Standard types are
-Accepted and Programmed (see TrafficPolicyCondition* constants).<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#trafficpolicystatusconditions">conditions</a></b></td>
+<td>[]object</td>
+<td>
+
+Conditions summarises the policy's current state. Standard types are
+Accepted and Programmed (see TrafficPolicyCondition* constants).
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### TrafficPolicy.status.conditions[]
@@ -1855,71 +2265,87 @@ Accepted and Programmed (see TrafficPolicyCondition* constants).<br/>
 Condition contains details for one aspect of the current state of this API Resource.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>lastTransitionTime</b></td>
-        <td>string</td>
-        <td>
-          lastTransitionTime is the last time the condition transitioned from one status to another.
-This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.<br/>
-          <br/>
-            <i>Format</i>: date-time<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>message</b></td>
-        <td>string</td>
-        <td>
-          message is a human readable message indicating details about the transition.
-This may be an empty string.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>reason</b></td>
-        <td>string</td>
-        <td>
-          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>lastTransitionTime</b></td>
+<td>string</td>
+<td>
+
+lastTransitionTime is the last time the condition transitioned from one status to another.
+This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+
+<i>Format</i>: date-time<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>message</b></td>
+<td>string</td>
+<td>
+
+message is a human readable message indicating details about the transition.
+This may be an empty string.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>reason</b></td>
+<td>string</td>
+<td>
+
+reason contains a programmatic identifier indicating the reason for the condition's last transition.
 Producers of specific condition types may define expected values and meanings for this field,
 and whether the values are considered a guaranteed API.
 The value should be a CamelCase string.
-This field may not be empty.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>status</b></td>
-        <td>enum</td>
-        <td>
-          status of the condition, one of True, False, Unknown.<br/>
-          <br/>
-            <i>Enum</i>: True, False, Unknown<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>string</td>
-        <td>
-          type of condition in CamelCase or in foo.example.com/CamelCase.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>observedGeneration</b></td>
-        <td>integer</td>
-        <td>
-          observedGeneration represents the .metadata.generation that the condition was set based upon.
+This field may not be empty.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>status</b></td>
+<td>enum</td>
+<td>
+
+status of the condition, one of True, False, Unknown.
+
+<i>Enum</i>: True, False, Unknown<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>string</td>
+<td>
+
+type of condition in CamelCase or in foo.example.com/CamelCase.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>observedGeneration</b></td>
+<td>integer</td>
+<td>
+
+observedGeneration represents the .metadata.generation that the condition was set based upon.
 For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-with respect to the current state of the instance.<br/>
-          <br/>
-            <i>Format</i>: int64<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+with respect to the current state of the instance.
+
+<i>Format</i>: int64<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
