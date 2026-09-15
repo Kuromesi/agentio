@@ -81,3 +81,12 @@ sed -i.bak \
 		-e "/^epe:/,$ s|^    digest:.*$|    digest: \"${epe_digest}\"|" \
 		"${chart_dir}/values.yaml"
 rm -f "${chart_dir}/Chart.yaml.bak" "${chart_dir}/values.yaml.bak"
+
+# Build the embedded integrations only after all release images are pinned.
+repo_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+chart_dir=$(CDPATH= cd -- "$chart_dir" && pwd)
+(
+  cd "$repo_dir"
+  go run ./tools/agentio-chart-sync build --chart "$chart_dir"
+  go run ./tools/agentio-chart-sync verify --bundle "$chart_dir/integrations/openkruise"
+)

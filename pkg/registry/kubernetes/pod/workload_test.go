@@ -170,6 +170,14 @@ func TestHasInjectedZTunnelUsesRuntimeMode(t *testing.T) {
 	legacy := dedicatedZTunnelContainer()
 	legacy.Name = "istio-proxy"
 	legacyContainer.Spec.Containers = []corev1.Container{legacy}
+	kruiseContainer := dedicatedZTunnelContainer()
+	kruiseContainer.Name = "traffic-proxy"
+	kruisePod := workloadTestPod(corev1.PodRunning, "10.0.0.6")
+	kruisePod.Spec.InitContainers = []corev1.Container{kruiseContainer}
+	nonZTunnel := kruisePod.DeepCopy()
+	nonZTunnel.Spec.InitContainers[0].Args = []string{"proxy", "sidecar"}
+	sharedKruise := kruisePod.DeepCopy()
+	sharedKruise.Spec.InitContainers[0].Env = nil
 
 	for _, test := range []struct {
 		name string
@@ -180,6 +188,9 @@ func TestHasInjectedZTunnelUsesRuntimeMode(t *testing.T) {
 		{name: "dedicated native sidecar", pod: nativeSidecar, want: true},
 		{name: "shared runtime mode", pod: sharedMode},
 		{name: "legacy dedicated container", pod: legacyContainer, want: true},
+		{name: "Kruise dedicated native sidecar", pod: kruisePod, want: true},
+		{name: "Kruise name without ztunnel args", pod: nonZTunnel},
+		{name: "Kruise name without dedicated runtime", pod: sharedKruise},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := HasInjectedZTunnel(test.pod); got != test.want {

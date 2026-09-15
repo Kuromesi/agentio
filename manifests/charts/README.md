@@ -187,6 +187,13 @@ kubectl rollout restart deployment -n demo
 
 Profile switching is not currently an ordered, zero-downtime migration.
 
+## OpenKruise Agents integration
+
+To embed Agentio in the sandbox-manager chart and provide sandbox-controller's
+`traffic-proxy` runtime, follow [OpenKruise chart integration](OPENKRUISE.md).
+The generated bundle uses the same component modes and release image digests as
+this chart.
+
 ## Local verification
 
 ```bash

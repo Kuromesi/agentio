@@ -1,0 +1,208 @@
+# BEGIN GENERATED AGENTIO VALUES - DO NOT EDIT
+agentio:
+  enabled: false
+  global:
+    hub: docker.io/openkruise
+    tag: latest
+    imagePullPolicy: IfNotPresent
+    imagePullSecrets: []
+    clusterId: Kubernetes
+    trustDomain: cluster.local
+    clusterDomain: cluster.local
+    caCertConfigMap: agentio-ca-certs
+    namespace: agentio-system
+    createNamespace: true
+  agentiod:
+    nameOverride: agentiod
+    fullnameOverride: ""
+    replicaCount: 1
+    image:
+      repository: ""
+      name: agentiod
+      tag: ""
+      digest: ""
+    serviceAccount:
+      create: true
+      name: ""
+      annotations: {}
+    service:
+      annotations: {}
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 80
+    podDisruptionBudget:
+      enabled: false
+      minAvailable: 1
+    rollingUpdate:
+      maxSurge: 100%
+      maxUnavailable: 25%
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1337
+      runAsGroup: 1337
+      fsGroup: 1337
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      readOnlyRootFilesystem: true
+    tokenAudience: agentio-ca
+    logging:
+      level: info
+      format: text
+    keepalive:
+      # Set to 0s to disable periodic server-side gRPC connection expiry.
+      maxServerConnectionAge: 30m
+    enableDebugOnHTTP: true
+    meshInternalTrafficPolicy: PEER_AWARE
+    enableSNITrafficPolicy: false
+    ca:
+      secretName: agentio-ca-secret
+      configMapName: ""
+      leaseName: agentiod-ca-leader
+      trustBundleConfigMapName: agentio-ca-root-cert
+      trustBundleLeaseName: agentiod-trust-bundle-leader
+    mitm:
+      secretName: agentio-mitm-ca
+      secretNamespace: ""
+      signMode: SELF_SIGN
+    config:
+      name: agentio-config
+      primaryName: agentio-config-primary
+      values: {}
+      sourcesName: agentio-config-sources
+      sources: ""
+    gatewayDeployer:
+      leaseName: agentiod-gateway-deployer-leader
+    networkPolicy:
+      enabled: false
+    env: {}
+  egressGateway:
+    mode: disabled
+    nameOverride: agentio-egress
+    fullnameOverride: ""
+    image:
+      repository: ""
+      name: proxyv2
+      tag: ""
+      digest: ""
+    tokenAudience: agentio-ca
+    replicaCount: 2
+    serviceAccount:
+      create: true
+      name: ""
+      annotations: {}
+    rbac:
+      readSecrets: false
+    service:
+      type: ClusterIP
+      annotations: {}
+      ports:
+        status: 15021
+        mesh: 15008
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 80
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    terminationGracePeriodSeconds: 30
+    statsFlushInterval: ""
+    statsEvictionInterval: ""
+    sniTrafficPolicy:
+      enabled: false
+    env: {}
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    networkPolicy:
+      enabled: false
+    gatewayAPI:
+      create: false
+      name: agentio-egress
+      gatewayClassName: agentio-egress
+      infrastructure: {}
+      annotations: {}
+      labels: {}
+      listeners:
+        - name: mesh
+          port: 15008
+          protocol: HBONE
+  epe:
+    mode: disabled
+    nameOverride: agentio-epe
+    fullnameOverride: ""
+    image:
+      repository: ""
+      name: agentio-epe
+      tag: ""
+      digest: ""
+    replicaCount: 1
+    serviceAccount:
+      create: true
+      name: ""
+      annotations: {}
+    service:
+      grpcPort: 9002
+      healthPort: 9003
+      metricsPort: 9090
+    external:
+      address: ""
+      port: 9002
+    messageTimeout: 5s
+    credentialProvider:
+      url: ""
+      mtls:
+        source: files
+        secretName: ""
+        secret:
+          namespace: ""
+          name: ""
+        insecureSkipVerify: false
+    tokenCacheTTL: 15m
+    tokenCacheMaxSize: 10000
+    auditWebhook:
+      insecureSkipVerify: false
+    env: {}
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 20
+      targetCPUUtilizationPercentage: 80
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    networkPolicy:
+      enabled: false
+# END GENERATED AGENTIO VALUES
