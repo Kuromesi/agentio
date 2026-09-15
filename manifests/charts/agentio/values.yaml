@@ -1,4 +1,4 @@
-profile: ambient
+profile: sidecar
 
 global:
   hub: docker.io/openkruise

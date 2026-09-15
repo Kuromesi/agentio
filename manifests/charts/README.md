@@ -1,10 +1,11 @@
 # Agentio Helm chart
 
-Agentio is installed as one Helm release. The `profile` value selects the data
-plane, while egress gateway and EPE use explicit modes.
+Agentio is installed as one Helm release. The `profile` value selects the data plane, while egress gateway and EPE use explicit modes.
+
+**Sidecar mode is the default and recommended deployment mode. Ambient mode is in Alpha and does not yet have full feature parity with sidecar mode.** Keep the selected profile in your values file:
 
 ```yaml
-profile: ambient # ambient | sidecar
+profile: sidecar # recommended; ambient is in Alpha
 
 egressGateway:
   mode: disabled # disabled | static | gatewayAPI
@@ -16,38 +17,14 @@ epe:
 ## Prerequisites
 
 - Kubernetes and Helm 3.6 or later (Helm 4 is supported).
-- Install the [Kubernetes Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api)
-  before selecting `egressGateway.mode=gatewayAPI`.
-- Install the [Kruise Agents API](https://github.com/openkruise/agents-api)
-  `sandboxes.agents.kruise.io` CRD before using Sandbox-backed policy.
+- Install the [Kubernetes Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) before selecting `egressGateway.mode=gatewayAPI`.
+- Install the [Kruise Agents API](https://github.com/openkruise/agents-api) `sandboxes.agents.kruise.io` CRD before using Sandbox-backed policy.
 
-The chart installs the four Agentio policy CRDs. Helm retains resources from
-the chart's `crds/` directory when the release is uninstalled.
-
-## Ambient mode
-
-Ambient is the default profile. It installs `agentiod`, the Agentio CNI node
-agent, and the node ztunnel:
-
-```bash
-helm upgrade --install agentio manifests/charts/agentio \
-  --namespace agentio-system \
-  --create-namespace \
-  --atomic \
-  --wait
-```
-
-Enroll a workload namespace after the release is ready:
-
-```bash
-kubectl label namespace demo agentio.kruise.io/dataplane-mode=ambient --overwrite
-kubectl rollout restart deployment -n demo
-```
+The chart installs the four Agentio policy CRDs. Helm retains resources from the chart's `crds/` directory when the release is uninstalled.
 
 ## Sidecar mode
 
-Sidecar mode installs `agentiod` and its injection webhook, without the ambient
-CNI or node ztunnel:
+Sidecar mode installs `agentiod` and its injection webhook, without the ambient CNI or node ztunnel:
 
 ```bash
 helm upgrade --install agentio manifests/charts/agentio \
@@ -65,13 +42,33 @@ kubectl label namespace demo agentio.kruise.io/dataplane-mode=sidecar --overwrit
 kubectl rollout restart deployment -n demo
 ```
 
-In this chart, `sidecar` means the existing Agentio per-Pod ztunnel injection
-path. It is not a traditional Envoy sidecar.
+In this chart, `sidecar` means the existing Agentio per-Pod ztunnel injection path. It is not a traditional Envoy sidecar.
+
+## Ambient mode
+
+> **Alpha:** Ambient mode does not yet have full feature parity with sidecar mode. Prefer [sidecar mode](#sidecar-mode) for deployments.
+
+Ambient mode installs `agentiod`, the Agentio CNI node agent, and the node ztunnel. Select it explicitly with `--set profile=ambient`:
+
+```bash
+helm upgrade --install agentio manifests/charts/agentio \
+  --namespace agentio-system \
+  --create-namespace \
+  --set profile=ambient \
+  --atomic \
+  --wait
+```
+
+Enroll a workload namespace after the release is ready:
+
+```bash
+kubectl label namespace demo agentio.kruise.io/dataplane-mode=ambient --overwrite
+kubectl rollout restart deployment -n demo
+```
 
 ## Egress gateway
 
-The default mode is disabled. Static mode renders one gateway workload in the
-same release:
+The default mode is disabled. Static mode renders one gateway workload in the same release:
 
 ```yaml
 egressGateway:
@@ -85,8 +82,7 @@ helm upgrade --install agentio manifests/charts/agentio \
   -f values-prod.yaml --atomic --wait
 ```
 
-Gateway API mode enables the `agentiod` Gateway Deployer. It can either watch
-Gateway objects managed elsewhere or create one Gateway from chart values:
+Gateway API mode enables the `agentiod` Gateway Deployer. It can either watch Gateway objects managed elsewhere or create one Gateway from chart values:
 
 ```yaml
 egressGateway:
@@ -101,13 +97,11 @@ egressGateway:
         protocol: HBONE
 ```
 
-This mode requires the external Gateway API CRDs. The controller creates and
-accepts the built-in `agentio-egress` GatewayClass.
+This mode requires the external Gateway API CRDs. The controller creates and accepts the built-in `agentio-egress` GatewayClass.
 
 ## EPE
 
-Managed mode deploys EPE and automatically writes its endpoint into the
-control-plane Agentio configuration:
+Managed mode deploys EPE and automatically writes its endpoint into the control-plane Agentio configuration:
 
 ```yaml
 epe:
@@ -120,12 +114,9 @@ epe:
       source: files # files | secret | none
 ```
 
-HTTPS audit webhooks verify the receiver certificate by default. Keep
-`epe.auditWebhook.insecureSkipVerify: false` in production.
+HTTPS audit webhooks verify the receiver certificate by default. Keep `epe.auditWebhook.insecureSkipVerify: false` in production.
 
-For `source: files`, the default Secret name is
-`agentio-epe-mtls-client-cert`. Set `secretName` to override it. For
-`source: secret`, configure the credential provider's source Secret:
+For `source: files`, the default Secret name is `agentio-epe-mtls-client-cert`. Set `secretName` to override it. For `source: secret`, configure the credential provider's source Secret:
 
 ```yaml
 epe:
@@ -139,8 +130,7 @@ epe:
         name: epe-client
 ```
 
-External mode deploys no EPE workload and points the control plane and static
-gateway at an existing endpoint:
+External mode deploys no EPE workload and points the control plane and static gateway at an existing endpoint:
 
 ```yaml
 epe:
@@ -150,13 +140,11 @@ epe:
     port: 9002
 ```
 
-User settings under `agentiod.config.values` override the generated
-`sandboxExtProc` defaults when custom request or response behavior is needed.
+User settings under `agentiod.config.values` override the generated `sandboxExtProc` defaults when custom request or response behavior is needed.
 
 ## Logging
 
-Agentiod emits structured logs through Go's `log/slog`. Text output at info
-level is the default; JSON is recommended for production log collectors:
+Agentiod emits structured logs through Go's `log/slog`. Text output at info level is the default; JSON is recommended for production log collectors:
 
 ```yaml
 agentiod:
@@ -165,14 +153,13 @@ agentiod:
     format: json # text | json
 ```
 
-The chart maps these values to `AGENTIO_LOG_LEVEL` and
-`AGENTIO_LOG_FORMAT`. Standard-library logs and Kubernetes `klog` output use
-the same handler and format.
+The chart maps these values to `AGENTIO_LOG_LEVEL` and `AGENTIO_LOG_FORMAT`. Standard-library logs and Kubernetes `klog` output use the same handler and format.
 
 ## Upgrades and profile changes
 
-Keep release values in a file and use the same command for installation and
-upgrade:
+To keep an existing ambient installation in ambient mode when upgrading, set `profile: ambient` in your release values. The chart now defaults to `sidecar`.
+
+Keep release values in a file and use the same command for installation and upgrade:
 
 ```bash
 helm upgrade --install agentio manifests/charts/agentio \
@@ -182,15 +169,9 @@ helm upgrade --install agentio manifests/charts/agentio \
   --wait
 ```
 
-This is one Helm release. Component image tags can be set independently, but
-the release has one values set and one rollback history. Helm does not wait for
-`agentiod` before creating the CNI, ztunnel, gateway, or EPE resources;
-readiness and client retries provide convergence, and `--wait` waits for the
-whole release.
+This is one Helm release. Component image tags can be set independently, but the release has one values set and one rollback history. Helm does not wait for `agentiod` before creating the CNI, ztunnel, gateway, or EPE resources; readiness and client retries provide convergence, and `--wait` waits for the whole release.
 
-Changing `profile` does not relabel namespaces or recreate business Pods. For
-sidecar to ambient, switch the dataplane-mode label and restart the workloads
-after the upgraded Agentio release is ready:
+Changing `profile` does not relabel namespaces or recreate business Pods. For sidecar to ambient, switch the dataplane-mode label and restart the workloads after the upgraded Agentio release is ready:
 
 ```bash
 kubectl label namespace demo agentio.kruise.io/dataplane-mode=ambient --overwrite
@@ -212,5 +193,4 @@ Profile switching is not currently an ordered, zero-downtime migration.
 sh manifests/charts/verify.sh
 ```
 
-This lints the unified chart, runs its render contract tests, and runs the
-complete Go test suite.
+This lints the unified chart, runs its render contract tests, and runs the complete Go test suite.

@@ -10,12 +10,14 @@ Install the [Kruise Agents API](https://github.com/openkruise/agents-api) before
 
 ## Choose a profile
 
+**Use sidecar mode as the preferred deployment mode. Ambient mode is in Alpha and does not yet have full feature parity with sidecar mode.**
+
 | Profile | Traffic capture | Start here |
 | --- | --- | --- |
-| Ambient | Agentio CNI and one ztunnel per node | [Get started with ambient mode](getting-started/ambient-mode.md) |
-| Sidecar | One injected ztunnel per workload Pod | [Get started with sidecar mode](getting-started/sidecar-mode.md) |
+| Sidecar (recommended) | One injected ztunnel per workload Pod | [Get started with sidecar mode](getting-started/sidecar-mode.md) |
+| Ambient (Alpha) | Agentio CNI and one ztunnel per node | [Get started with ambient mode](getting-started/ambient-mode.md) |
 
-The chart installs one profile at a time. Keep the selected profile in a values file so later upgrades use the same mode explicitly.
+The chart installs one profile at a time and defaults to `sidecar`. To use the Alpha ambient mode, set `profile: ambient` in your values file or pass `--set profile=ambient`. Keep the selected profile in a values file so later upgrades use the same mode explicitly.
 
 If OpenKruise Agents creates the workload, also read [Integrate OpenKruise Agents](integrations/openkruise-agents.md) after installing Agentio. That integration changes the workload source, not the Agentio data-plane profile.
 

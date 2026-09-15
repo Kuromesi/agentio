@@ -1,5 +1,5 @@
 # Complete values skeleton for the single Agentio Helm release.
-profile: ambient
+profile: sidecar
 
 global:
   hub: docker.io/openkruise
