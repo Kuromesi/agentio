@@ -50,7 +50,7 @@ var supportedConfigDebugKinds = map[string]struct{}{
 	"SecurityProfile":       {},
 	"GlobalSecurityProfile": {},
 	"Gateway":               {},
-	"EnvoyFilter":           {},
+	"GatewayPatch":          {},
 	"Telemetry":             {},
 }
 

@@ -38,7 +38,7 @@ func configDebugGatewayPatch(patch model.GatewayPatch) (configDebugItem, error) 
 		Patches:        patches,
 	})
 	return configDebugItem{
-		Kind: "EnvoyFilter",
+		Kind: "GatewayPatch",
 		Metadata: configDebugMetadata{
 			Namespace:         patch.Namespace,
 			Name:              patch.Name,

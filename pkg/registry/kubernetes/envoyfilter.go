@@ -22,35 +22,10 @@ import (
 	networking "istio.io/api/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-const (
-	KubeSourceConfigMapLabel = "manifests.agents.kruise.io/kube-source"
-	KubeSourceDataKey        = "sources"
-	envoyFilterAPIGroup      = "networking.istio.io"
-)
-
-func newEnvoyFiltersCollection(
-	configMaps krt.Collection[*corev1.ConfigMap],
-	rootNamespace string,
-	options ...krt.CollectionOption,
-) krt.Collection[model.GatewayPatch] {
-	return krt.NewManyCollection(configMaps,
-		func(ctx krt.HandlerContext, configMap *corev1.ConfigMap) []model.GatewayPatch {
-			if configMap.Namespace != rootNamespace {
-				return nil
-			}
-			filters, err := decodeEnvoyFilters(configMap)
-			if err != nil {
-				log.Warn("retain last-known-good EnvoyFilters", "namespace", configMap.Namespace, "configmap", configMap.Name, "error", err)
-				ctx.DiscardResult()
-				return nil
-			}
-			return filters
-		}, options...)
-}
+const envoyFilterAPIGroup = "networking.istio.io"
 
 func decodeEnvoyFilters(configMap *corev1.ConfigMap) ([]model.GatewayPatch, error) {
 	return decodeConfigSources(configMap, "EnvoyFilter", decodeEnvoyFilterDocument)

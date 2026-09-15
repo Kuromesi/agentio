@@ -27,12 +27,24 @@ import (
 	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
+const (
+	// ManifestTypeConfigMapLabel selects the configuration type in a ConfigMap.
+	ManifestTypeConfigMapLabel = "manifests.agentio.kruise.io/type"
+	// GatewayPatchManifestType selects Envoy patch configuration.
+	GatewayPatchManifestType = "gateway-patch"
+	// KubeSourceConfigMapLabel selects ConfigMaps containing legacy control-plane sources.
+	KubeSourceConfigMapLabel = "manifests.agents.kruise.io/kube-source"
+	// KubeSourceDataKey contains legacy embedded Kubernetes configuration documents.
+	KubeSourceDataKey = "sources"
+	// KubePatchDataKey contains plain Envoy patch configuration.
+	KubePatchDataKey = "patches"
+)
+
 type configSourceDocument struct {
 	APIVersion string            `json:"apiVersion"`
 	Kind       string            `json:"kind"`
 	Metadata   metav1.ObjectMeta `json:"metadata"`
 	Spec       json.RawMessage   `json:"spec"`
-	Items      []json.RawMessage `json:"items"`
 }
 
 // decodeConfigSources preserves document order and aggregates errors. Callers
@@ -86,19 +98,6 @@ func decodeConfigSourceDocument[T any](configMap *corev1.ConfigMap, raw json.Raw
 	var document configSourceDocument
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("decode Kubernetes object: %w", err)
-	}
-	if document.Kind == "List" {
-		var result []T
-		var parseErrors []error
-		for index, item := range document.Items {
-			objects, err := decodeConfigSourceDocument(configMap, item, kind, group, convert)
-			if err != nil {
-				parseErrors = append(parseErrors, fmt.Errorf("list item %d: %w", index, err))
-				continue
-			}
-			result = append(result, objects...)
-		}
-		return result, errors.Join(parseErrors...)
 	}
 	if document.Kind != kind || apiGroup(document.APIVersion) != group {
 		return nil, nil

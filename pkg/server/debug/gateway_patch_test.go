@@ -16,6 +16,7 @@ package debug
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ import (
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 
+	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
@@ -74,5 +76,24 @@ func TestConfigDebugPatchSupportsEverySealedTarget(t *testing.T) {
 	}
 	if unknown.Operation != "UNKNOWN(255)" || !strings.Contains(string(match), `"action":"UNKNOWN(255)"`) {
 		t.Fatalf("unknown enum adaptation = %#v match=%s", unknown, match)
+	}
+}
+
+func TestConfigDebugPatchesUseGatewayPatchKind(t *testing.T) {
+	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
+		patches := sources.GatewayPatches.List()
+		patches[0].ResourceVersion = "accepted-1"
+		sources.GatewayPatches = krt.NewStaticCollection[model.GatewayPatch](nil, patches, krt.WithStop(stop))
+		return sources
+	}, true)
+	got, err := configDebugSnapshotAt(configDebugTestTime, fixture.sources, fixture.compiler, configDebugFilter{Kind: "GatewayPatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Kind != "GatewayPatch" || got.Items[0].Metadata.ResourceVersion != "accepted-1" {
+		t.Fatalf("accepted patches = %#v", got.Items)
+	}
+	if _, err := parseConfigDebugFilter(url.Values{"kind": []string{"GatewayPatch"}}); err != nil {
+		t.Fatal(err)
 	}
 }
