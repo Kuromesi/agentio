@@ -2,12 +2,15 @@
 
 This chart installs Agentio.
 
+**Sidecar mode is the default and recommended deployment mode. Ambient mode is in Alpha and does not yet have full feature parity with sidecar mode.** Install with the sidecar profile:
+
 ```bash
 helm upgrade --install agentio . \
-  -n agentio-system --create-namespace --atomic --wait
+  -n agentio-system --create-namespace \
+  --set profile=sidecar --atomic --wait
 ```
 
-The default `profile: ambient` installs CNI and node ztunnel. Select the injected per-Pod ztunnel profile with `--set profile=sidecar`. Optional components use `egressGateway.mode` and `epe.mode` rather than overlapping boolean switches.
+The default `profile: sidecar` enables per-Pod ztunnel injection. Select the Alpha ambient profile with `--set profile=ambient` to install CNI and node ztunnel. Optional components use `egressGateway.mode` and `epe.mode` rather than overlapping boolean switches.
 
 Agentiod logging is configured with `agentiod.logging.level` (`debug`, `info`, `warn`, or `error`) and `agentiod.logging.format` (`text` or `json`).
 

@@ -1,5 +1,7 @@
 # Get started with ambient mode
 
+> **Alpha:** Ambient mode does not yet have full feature parity with sidecar mode. Prefer [sidecar mode](sidecar-mode.md) for deployments.
+
 This guide installs the Agentio ambient mode, enrolls a namespace, and creates a test workload for the shared egress and policy tasks.
 
 ## Before you begin

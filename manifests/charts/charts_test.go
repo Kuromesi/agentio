@@ -212,7 +212,7 @@ func TestAgentiodMaxServerConnectionAgeConfiguration(t *testing.T) {
 }
 
 func TestAmbientProfile(t *testing.T) {
-	manifest := renderAgentio(t)
+	manifest := renderAgentio(t, "--set", "profile=ambient")
 	if got, want := objectNamesByKind(t, manifest, "DaemonSet"), []string{"agentio-cni", "ztunnel"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ambient DaemonSets = %v, want %v", got, want)
 	}
@@ -232,23 +232,33 @@ func TestAmbientProfile(t *testing.T) {
 }
 
 func TestSidecarProfile(t *testing.T) {
-	manifest := renderAgentio(t, "--set", "profile=sidecar")
-	if got := objectNamesByKind(t, manifest, "DaemonSet"); len(got) != 0 {
-		t.Fatalf("sidecar DaemonSets = %v, want none", got)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "default"},
+		{name: "explicit", args: []string{"--set", "profile=sidecar"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := renderAgentio(t, tc.args...)
+			if got := objectNamesByKind(t, manifest, "DaemonSet"); len(got) != 0 {
+				t.Fatalf("sidecar DaemonSets = %v, want none", got)
+			}
+			if got := objectNamesByKind(t, manifest, "MutatingWebhookConfiguration"); len(got) != 1 {
+				t.Fatalf("sidecar webhooks = %v, want one", got)
+			}
+			requireContains(t, manifest,
+				"containerPort: 15017",
+				"name: AGENTIO_ENABLE_SIDECAR_INJECTOR\n              value: \"true\"",
+				"ztunnel: |",
+			)
+		})
 	}
-	if got := objectNamesByKind(t, manifest, "MutatingWebhookConfiguration"); len(got) != 1 {
-		t.Fatalf("sidecar webhooks = %v, want one", got)
-	}
-	requireContains(t, manifest,
-		"containerPort: 15017",
-		"name: AGENTIO_ENABLE_SIDECAR_INJECTOR",
-		"value: \"true\"",
-		"ztunnel: |",
-	)
 }
 
 func TestCNIAndZtunnelOverrides(t *testing.T) {
 	manifest := renderAgentio(t,
+		"--set", "profile=ambient",
 		"--set", "cni.cniBinDir=/custom/bin",
 		"--set", "cni.cniConfDir=/custom/net.d",
 		"--set", "ztunnel.trustBundle.useClusterTrustBundle=true",
@@ -360,6 +370,7 @@ func TestManagedEPECanExplicitlySkipAuditWebhookTLSVerification(t *testing.T) {
 func TestImmutableImageDigests(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := renderAgentio(t,
+		"--set", "profile=ambient",
 		"--set", "egressGateway.mode=static",
 		"--set", "epe.mode=managed",
 		"--set-string", "agentiod.image.repository=registry.example/agentiod",
@@ -425,7 +436,7 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 		return manifest
 	}
 	manifest := append(
-		render("--set", "egressGateway.mode=static", "--set", "epe.mode=managed"),
+		render("--set", "profile=ambient", "--set", "egressGateway.mode=static", "--set", "epe.mode=managed"),
 		render("--set", "profile=sidecar")...,
 	)
 	for _, image := range []string{
@@ -544,6 +555,7 @@ func TestInvalidModesFailRendering(t *testing.T) {
 func TestEveryProfileAndModeCombinationRendersUniqueObjects(t *testing.T) {
 	tests := [][]string{
 		nil,
+		{"--set", "profile=ambient"},
 		{"--set", "profile=sidecar"},
 		{"--set", "egressGateway.mode=static", "--set", "epe.mode=managed", "--set", "epe.credentialProvider.url=https://credentials.example"},
 		{"--set", "egressGateway.mode=gatewayAPI", "--set", "egressGateway.gatewayAPI.create=true", "--set", "epe.mode=external", "--set", "epe.external.address=epe.example.internal"},

@@ -31,7 +31,7 @@ For a detailed comparison, see [Why not just Istio?](docs/concepts/why-not-just-
 
 ## Quick Start
 
-Install Agentio in ambient or sidecar mode, enroll a workload, and apply your first traffic policy with the [getting started guide](docs/getting-started.md).
+Install Agentio, enroll a workload, and apply your first traffic policy with the [getting started guide](docs/getting-started.md).
 
 ## License & Attribution
 
