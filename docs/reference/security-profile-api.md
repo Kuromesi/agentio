@@ -17,46 +17,54 @@ selected Pods in all namespaces. Global and namespaced profiles share the
 same priority ordering.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-      <td><b>apiVersion</b></td>
-      <td>string</td>
-      <td>agents.kruise.io/v1alpha1</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b>kind</b></td>
-      <td>string</td>
-      <td>GlobalSecurityProfile</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
-      <td>object</td>
-      <td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
-      <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespec">spec</a></b></td>
-        <td>object</td>
-        <td>
-          SecurityProfileSpec defines L7 security policy for selected Pods.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilestatus">status</a></b></td>
-        <td>object</td>
-        <td>
-          SecurityProfileStatus captures the observed state of a SecurityProfile.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>apiVersion</b></td>
+<td>string</td>
+<td>agents.kruise.io/v1alpha1</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>kind</b></td>
+<td>string</td>
+<td>GlobalSecurityProfile</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
+<td>object</td>
+<td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespec">spec</a></b></td>
+<td>object</td>
+<td>
+
+SecurityProfileSpec defines L7 security policy for selected Pods.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilestatus">status</a></b></td>
+<td>object</td>
+<td>
+
+SecurityProfileStatus captures the observed state of a SecurityProfile.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec
@@ -64,61 +72,76 @@ same priority ordering.
 SecurityProfileSpec defines L7 security policy for selected Pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecselector">selector</a></b></td>
-        <td>object</td>
-        <td>
-          Selector chooses the Pods to which this profile applies. An empty
-selector matches every Pod in scope.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecaudit">audit</a></b></td>
-        <td>[]object</td>
-        <td>
-          Audit defines the audit actions inherited by rules that do not configure
-their own Audit list.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecinputs">inputs</a></b></td>
-        <td>[]object</td>
-        <td>
-          Inputs defines named values available to CEL expressions and Go
-templates in this profile.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>priority</b></td>
-        <td>integer</td>
-        <td>
-          Priority determines evaluation order when multiple profiles match a Pod.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecselector">selector</a></b></td>
+<td>object</td>
+<td>
+
+Selector chooses the Pods to which this profile applies. An empty
+selector matches every Pod in scope.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecaudit">audit</a></b></td>
+<td>[]object</td>
+<td>
+
+Audit defines the audit actions inherited by rules that do not configure
+their own Audit list.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecinputs">inputs</a></b></td>
+<td>[]object</td>
+<td>
+
+Inputs defines named values available to CEL expressions and Go
+templates in this profile.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>priority</b></td>
+<td>integer</td>
+<td>
+
+Priority determines evaluation order when multiple profiles match a Pod.
 Lower values run first. Ties are resolved by creation time, name, and
-namespace. Defaults to DefaultSecurityProfilePriority.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 1000<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules is the ordered rule chain. Every matching rule executes until an
+namespace. Defaults to DefaultSecurityProfilePriority.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 1000<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules is the ordered rule chain. Every matching rule executes until an
 action terminates the request. Rules from matching profiles are combined
-in profile evaluation order. An empty list forwards all traffic.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+in profile evaluation order. An empty list forwards all traffic.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.selector
@@ -127,31 +150,38 @@ Selector chooses the Pods to which this profile applies. An empty
 selector matches every Pod in scope.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecselectormatchexpressions">matchExpressions</a></b></td>
-        <td>[]object</td>
-        <td>
-          matchExpressions is a list of label selector requirements. The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>matchLabels</b></td>
-        <td>map[string]string</td>
-        <td>
-          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecselectormatchexpressions">matchExpressions</a></b></td>
+<td>[]object</td>
+<td>
+
+matchExpressions is a list of label selector requirements. The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>matchLabels</b></td>
+<td>map[string]string</td>
+<td>
+
+matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
 map is equivalent to an element of matchExpressions, whose key field is "key", the
-operator is "In", and the values array contains only "value". The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+operator is "In", and the values array contains only "value". The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.selector.matchExpressions[]
@@ -160,40 +190,50 @@ A label selector requirement is a selector that contains values, a key, and an o
 relates the key and values.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>key</b></td>
-        <td>string</td>
-        <td>
-          key is the label key that the selector applies to.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>operator</b></td>
-        <td>string</td>
-        <td>
-          operator represents a key's relationship to a set of values.
-Valid operators are In, NotIn, Exists and DoesNotExist.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>values</b></td>
-        <td>[]string</td>
-        <td>
-          values is an array of string values. If the operator is In or NotIn,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>key</b></td>
+<td>string</td>
+<td>
+
+key is the label key that the selector applies to.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>operator</b></td>
+<td>string</td>
+<td>
+
+operator represents a key's relationship to a set of values.
+Valid operators are In, NotIn, Exists and DoesNotExist.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>values</b></td>
+<td>[]string</td>
+<td>
+
+values is an array of string values. If the operator is In or NotIn,
 the values array must be non-empty. If the operator is Exists or DoesNotExist,
 the values array must be empty. This array is replaced during a strategic
-merge patch.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+merge patch.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.audit[]
@@ -211,33 +251,41 @@ Each action is evaluated for every matching rule. An empty When expression
 always matches.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies this action within its containing list.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecauditwebhook">webhook</a></b></td>
-        <td>object</td>
-        <td>
-          Webhook is the destination for this action.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>when</b></td>
-        <td>string</td>
-        <td>
-          When is a CEL expression that determines whether the event is emitted.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies this action within its containing list.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecauditwebhook">webhook</a></b></td>
+<td>object</td>
+<td>
+
+Webhook is the destination for this action.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>when</b></td>
+<td>string</td>
+<td>
+
+When is a CEL expression that determines whether the event is emitted.
 It must evaluate to a boolean. An empty expression evaluates to true.
 
 A compilation error prevents the profile from compiling. A runtime
@@ -256,10 +304,12 @@ Examples:
   result == "blocked"
   result in ["blocked", "bypassed"]
   pod.labels["team"] == "fraud" && result != "passthrough"
-  rule.name.startsWith("pii-")<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+  rule.name.startsWith("pii-")
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.audit[].webhook
@@ -267,42 +317,54 @@ Examples:
 Webhook is the destination for this action.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>url</b></td>
-        <td>string</td>
-        <td>
-          URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
-event is dropped if rendering fails or the rendered URL is invalid.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecauditwebhookrequest">request</a></b></td>
-        <td>object</td>
-        <td>
-          Request configures the HTTP request. When omitted, a POST request with an
-empty body is sent.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>timeout</b></td>
-        <td>string</td>
-        <td>
-          Timeout limits each HTTP attempt. Defaults to 2s and must be between
-500ms and 30s.<br/>
-          <br/>
-            <i>Validations</i>:<li>duration(self) >= duration('500ms') && duration(self) <= duration('30s'): timeout must be between 500ms and 30s</li>
-            <i>Default</i>: 2s<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>url</b></td>
+<td>string</td>
+<td>
+
+URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
+event is dropped if rendering fails or the rendered URL is invalid.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecauditwebhookrequest">request</a></b></td>
+<td>object</td>
+<td>
+
+Request configures the HTTP request. When omitted, a POST request with an
+empty body is sent.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>timeout</b></td>
+<td>string</td>
+<td>
+
+Timeout limits each HTTP attempt. Defaults to 2s and must be between
+500ms and 30s.
+
+<i>Validations</i>:
+<ul>
+<li>duration(self) &gt;= duration(&#39;500ms&#39;) &amp;&amp; duration(self) &lt;= duration(&#39;30s&#39;): timeout must be between 500ms and 30s</li>
+</ul>
+<i>Default</i>: 2s<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.audit[].webhook.request
@@ -311,41 +373,50 @@ Request configures the HTTP request. When omitted, a POST request with an
 empty body is sent.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecauditwebhookrequestbody">body</a></b></td>
-        <td>object</td>
-        <td>
-          Body configures the request body. When omitted, the request has an empty
-body.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecauditwebhookrequestheaders">headers</a></b></td>
-        <td>[]object</td>
-        <td>
-          Headers are appended to the request after the default Content-Type
-header.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>method</b></td>
-        <td>enum</td>
-        <td>
-          Method is the HTTP request method. Defaults to POST.<br/>
-          <br/>
-            <i>Enum</i>: POST, PUT, PATCH<br/>
-            <i>Default</i>: POST<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecauditwebhookrequestbody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body configures the request body. When omitted, the request has an empty
+body.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecauditwebhookrequestheaders">headers</a></b></td>
+<td>[]object</td>
+<td>
+
+Headers are appended to the request after the default Content-Type
+header.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>method</b></td>
+<td>enum</td>
+<td>
+
+Method is the HTTP request method. Defaults to POST.
+
+<i>Enum</i>: POST, PUT, PATCH<br/>
+<i>Default</i>: POST<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.audit[].webhook.request.body
@@ -354,30 +425,37 @@ Body configures the request body. When omitted, the request has an empty
 body.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>json</b></td>
-        <td>object</td>
-        <td>
-          JSON is a structured body. String values are rendered as Go templates;
-other values are preserved. The content type is application/json.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>text</b></td>
-        <td>string</td>
-        <td>
-          Text is a Go template rendered as a text/plain body.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>json</b></td>
+<td>object</td>
+<td>
+
+JSON is a structured body. String values are rendered as Go templates;
+other values are preserved. The content type is application/json.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>text</b></td>
+<td>string</td>
+<td>
+
+Text is a Go template rendered as a text/plain body.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.audit[].webhook.request.headers[]
@@ -385,30 +463,37 @@ other values are preserved. The content type is application/json.<br/>
 AuditHeader defines one HTTP header on an audit request.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name. Restricted to a safe subset of RFC 7230
-tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a Go template that renders the header value.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name. Restricted to a safe subset of RFC 7230
+tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a Go template that renders the header value.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.inputs[]
@@ -417,36 +502,46 @@ SecurityProfileInput defines one named input source. Exactly one of
 ConfigMap or Inline must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies this input within the profile.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecinputsconfigmap">configMap</a></b></td>
-        <td>object</td>
-        <td>
-          ConfigMap sources the input values from a ConfigMap's data.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>inline</b></td>
-        <td>map[string]string</td>
-        <td>
-          Inline declares the input values directly in the profile.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies this input within the profile.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecinputsconfigmap">configMap</a></b></td>
+<td>object</td>
+<td>
+
+ConfigMap sources the input values from a ConfigMap's data.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>inline</b></td>
+<td>map[string]string</td>
+<td>
+
+Inline declares the input values directly in the profile.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.inputs[].configMap
@@ -454,30 +549,37 @@ ConfigMap or Inline must be set.
 ConfigMap sources the input values from a ConfigMap's data.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the ConfigMap name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the ConfigMap namespace. When omitted, a SecurityProfile
-uses its own namespace. A GlobalSecurityProfile must set this field.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the ConfigMap name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the ConfigMap namespace. When omitted, a SecurityProfile
+uses its own namespace. A GlobalSecurityProfile must set this field.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[]
@@ -490,37 +592,47 @@ by Block. A wildcard match does not prevent later, more specific rules from
 matching.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactions">actions</a></b></td>
-        <td>object</td>
-        <td>
-          Actions configures the actions executed when this rule matches.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesmatch">match</a></b></td>
-        <td>[]object</td>
-        <td>
-          Match lists match conditions. Multiple entries are ORed.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies the rule within the profile. Used in
-metrics and events.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactions">actions</a></b></td>
+<td>object</td>
+<td>
+
+Actions configures the actions executed when this rule matches.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesmatch">match</a></b></td>
+<td>[]object</td>
+<td>
+
+Match lists match conditions. Multiple entries are ORed.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies the rule within the profile. Used in
+metrics and events.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions
@@ -528,66 +640,85 @@ metrics and events.<br/>
 Actions configures the actions executed when this rule matches.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsaudit">audit</a></b></td>
-        <td>[]object</td>
-        <td>
-          Audit lists rule-specific audit actions. A non-empty list replaces the
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsaudit">audit</a></b></td>
+<td>[]object</td>
+<td>
+
+Audit lists rule-specific audit actions. A non-empty list replaces the
 profile-level Audit list for this rule. An empty list inherits the
-profile-level list.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsblock">block</a></b></td>
-        <td>object</td>
-        <td>
-          Block is a terminal action that returns a configured HTTP response
-to the client without forwarding upstream.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>bypass</b></td>
-        <td>boolean</td>
-        <td>
-          Bypass forwards the request and skips all remaining actions and rules
-across matching profiles. False is equivalent to omission.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsheadermanipulation">headerManipulation</a></b></td>
-        <td>object</td>
-        <td>
-          HeaderManipulation sets or removes plaintext request headers.
+profile-level list.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsblock">block</a></b></td>
+<td>object</td>
+<td>
+
+Block is a terminal action that returns a configured HTTP response
+to the client without forwarding upstream.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>bypass</b></td>
+<td>boolean</td>
+<td>
+
+Bypass forwards the request and skips all remaining actions and rules
+across matching profiles. False is equivalent to omission.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsheadermanipulation">headerManipulation</a></b></td>
+<td>object</td>
+<td>
+
+HeaderManipulation sets or removes plaintext request headers.
 Non-terminal. Values are stored verbatim — use TokenTransformation
-for credentials.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicy">mcpToolPolicy</a></b></td>
-        <td>object</td>
-        <td>
-          MCPToolPolicy defines inline MCP tool access control rules.
+for credentials.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicy">mcpToolPolicy</a></b></td>
+<td>object</td>
+<td>
+
+MCPToolPolicy defines inline MCP tool access control rules.
 Non-terminal when the policy allows; terminal (like Block) when
-denied.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformation">tokenTransformation</a></b></td>
-        <td>object</td>
-        <td>
-          TokenTransformation rewrites request credentials.
-Non-terminal.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+denied.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformation">tokenTransformation</a></b></td>
+<td>object</td>
+<td>
+
+TokenTransformation rewrites request credentials.
+Non-terminal.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.audit[]
@@ -605,33 +736,41 @@ Each action is evaluated for every matching rule. An empty When expression
 always matches.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies this action within its containing list.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhook">webhook</a></b></td>
-        <td>object</td>
-        <td>
-          Webhook is the destination for this action.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>when</b></td>
-        <td>string</td>
-        <td>
-          When is a CEL expression that determines whether the event is emitted.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies this action within its containing list.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhook">webhook</a></b></td>
+<td>object</td>
+<td>
+
+Webhook is the destination for this action.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>when</b></td>
+<td>string</td>
+<td>
+
+When is a CEL expression that determines whether the event is emitted.
 It must evaluate to a boolean. An empty expression evaluates to true.
 
 A compilation error prevents the profile from compiling. A runtime
@@ -650,10 +789,12 @@ Examples:
   result == "blocked"
   result in ["blocked", "bypassed"]
   pod.labels["team"] == "fraud" && result != "passthrough"
-  rule.name.startsWith("pii-")<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+  rule.name.startsWith("pii-")
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.audit[].webhook
@@ -661,42 +802,54 @@ Examples:
 Webhook is the destination for this action.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>url</b></td>
-        <td>string</td>
-        <td>
-          URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
-event is dropped if rendering fails or the rendered URL is invalid.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhookrequest">request</a></b></td>
-        <td>object</td>
-        <td>
-          Request configures the HTTP request. When omitted, a POST request with an
-empty body is sent.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>timeout</b></td>
-        <td>string</td>
-        <td>
-          Timeout limits each HTTP attempt. Defaults to 2s and must be between
-500ms and 30s.<br/>
-          <br/>
-            <i>Validations</i>:<li>duration(self) >= duration('500ms') && duration(self) <= duration('30s'): timeout must be between 500ms and 30s</li>
-            <i>Default</i>: 2s<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>url</b></td>
+<td>string</td>
+<td>
+
+URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
+event is dropped if rendering fails or the rendered URL is invalid.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhookrequest">request</a></b></td>
+<td>object</td>
+<td>
+
+Request configures the HTTP request. When omitted, a POST request with an
+empty body is sent.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>timeout</b></td>
+<td>string</td>
+<td>
+
+Timeout limits each HTTP attempt. Defaults to 2s and must be between
+500ms and 30s.
+
+<i>Validations</i>:
+<ul>
+<li>duration(self) &gt;= duration(&#39;500ms&#39;) &amp;&amp; duration(self) &lt;= duration(&#39;30s&#39;): timeout must be between 500ms and 30s</li>
+</ul>
+<i>Default</i>: 2s<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.audit[].webhook.request
@@ -705,41 +858,50 @@ Request configures the HTTP request. When omitted, a POST request with an
 empty body is sent.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhookrequestbody">body</a></b></td>
-        <td>object</td>
-        <td>
-          Body configures the request body. When omitted, the request has an empty
-body.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhookrequestheaders">headers</a></b></td>
-        <td>[]object</td>
-        <td>
-          Headers are appended to the request after the default Content-Type
-header.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>method</b></td>
-        <td>enum</td>
-        <td>
-          Method is the HTTP request method. Defaults to POST.<br/>
-          <br/>
-            <i>Enum</i>: POST, PUT, PATCH<br/>
-            <i>Default</i>: POST<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhookrequestbody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body configures the request body. When omitted, the request has an empty
+body.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsauditwebhookrequestheaders">headers</a></b></td>
+<td>[]object</td>
+<td>
+
+Headers are appended to the request after the default Content-Type
+header.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>method</b></td>
+<td>enum</td>
+<td>
+
+Method is the HTTP request method. Defaults to POST.
+
+<i>Enum</i>: POST, PUT, PATCH<br/>
+<i>Default</i>: POST<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.audit[].webhook.request.body
@@ -748,30 +910,37 @@ Body configures the request body. When omitted, the request has an empty
 body.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>json</b></td>
-        <td>object</td>
-        <td>
-          JSON is a structured body. String values are rendered as Go templates;
-other values are preserved. The content type is application/json.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>text</b></td>
-        <td>string</td>
-        <td>
-          Text is a Go template rendered as a text/plain body.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>json</b></td>
+<td>object</td>
+<td>
+
+JSON is a structured body. String values are rendered as Go templates;
+other values are preserved. The content type is application/json.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>text</b></td>
+<td>string</td>
+<td>
+
+Text is a Go template rendered as a text/plain body.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.audit[].webhook.request.headers[]
@@ -779,30 +948,37 @@ other values are preserved. The content type is application/json.<br/>
 AuditHeader defines one HTTP header on an audit request.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name. Restricted to a safe subset of RFC 7230
-tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a Go template that renders the header value.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name. Restricted to a safe subset of RFC 7230
+tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a Go template that renders the header value.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.block
@@ -811,34 +987,40 @@ Block is a terminal action that returns a configured HTTP response
 to the client without forwarding upstream.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>body</b></td>
-        <td>string</td>
-        <td>
-          Body is an optional response body sent verbatim to the client.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>statusCode</b></td>
-        <td>integer</td>
-        <td>
-          StatusCode is the HTTP status returned to the client.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 403<br/>
-            <i>Minimum</i>: 100<br/>
-            <i>Maximum</i>: 599<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>body</b></td>
+<td>string</td>
+<td>
+
+Body is an optional response body sent verbatim to the client.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>statusCode</b></td>
+<td>integer</td>
+<td>
+
+StatusCode is the HTTP status returned to the client.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 403<br/>
+<i>Minimum</i>: 100<br/>
+<i>Maximum</i>: 599<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.headerManipulation
@@ -848,33 +1030,40 @@ Non-terminal. Values are stored verbatim — use TokenTransformation
 for credentials.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>remove</b></td>
-        <td>[]string</td>
-        <td>
-          Remove lists header names to strip from the request before it is
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>remove</b></td>
+<td>[]string</td>
+<td>
+
+Remove lists header names to strip from the request before it is
 forwarded upstream. Names must be lowercase; header names are
 case-insensitive on the wire. A name may not appear in both Set and
-Remove.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsheadermanipulationset">set</a></b></td>
-        <td>[]object</td>
-        <td>
-          Set adds or replaces headers. An existing header with the same
-name is replaced.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+Remove.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsheadermanipulationset">set</a></b></td>
+<td>[]object</td>
+<td>
+
+Set adds or replaces headers. An existing header with the same
+name is replaced.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.headerManipulation.set[]
@@ -882,32 +1071,39 @@ name is replaced.<br/>
 HeaderValue is one plaintext header assignment.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name. It must be lowercase so that the list map
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name. It must be lowercase so that the list map
 key matches HTTP's case-insensitive header semantics; the data plane
 emits it verbatim. Restricted to a safe lowercase subset of RFC 7230
-tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is stored and injected verbatim. NOT for credentials.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is stored and injected verbatim. NOT for credentials.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.mcpToolPolicy
@@ -917,52 +1113,63 @@ Non-terminal when the policy allows; terminal (like Block) when
 denied.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>defaultAction</b></td>
-        <td>enum</td>
-        <td>
-          DefaultAction is the decision applied when no rule matches.
-Defaults to "deny" (whitelist mode); set "allow" for blacklist mode.<br/>
-          <br/>
-            <i>Enum</i>: allow, deny<br/>
-            <i>Default</i>: deny<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicyrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules are evaluated in order. First match wins.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicydenyresponse">denyResponse</a></b></td>
-        <td>object</td>
-        <td>
-          DenyResponse configures the HTTP response when a tool is denied.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>unsupportedVersionAction</b></td>
-        <td>enum</td>
-        <td>
-          UnsupportedVersionAction determines how a tools/call request with a
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>defaultAction</b></td>
+<td>enum</td>
+<td>
+
+DefaultAction is the decision applied when no rule matches.
+Defaults to "deny" (whitelist mode); set "allow" for blacklist mode.
+
+<i>Enum</i>: allow, deny<br/>
+<i>Default</i>: deny<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicyrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules are evaluated in order. First match wins.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicydenyresponse">denyResponse</a></b></td>
+<td>object</td>
+<td>
+
+DenyResponse configures the HTTP response when a tool is denied.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>unsupportedVersionAction</b></td>
+<td>enum</td>
+<td>
+
+UnsupportedVersionAction determines how a tools/call request with a
 missing or unsupported MCP-Protocol-Version header is handled. "deny"
-rejects the request, while "passthrough" skips policy evaluation.<br/>
-          <br/>
-            <i>Enum</i>: deny, passthrough<br/>
-            <i>Default</i>: deny<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+rejects the request, while "passthrough" skips policy evaluation.
+
+<i>Enum</i>: deny, passthrough<br/>
+<i>Default</i>: deny<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.mcpToolPolicy.rules[]
@@ -970,40 +1177,49 @@ rejects the request, while "passthrough" skips policy evaluation.<br/>
 MCPToolPolicyRule defines one allow or deny rule for an MCP tool call.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>action</b></td>
-        <td>enum</td>
-        <td>
-          Action determines whether the matching tool call is allowed or denied.<br/>
-          <br/>
-            <i>Enum</i>: allow, deny<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>method</b></td>
-        <td>string</td>
-        <td>
-          Method is the JSON-RPC method. Only "tools/call" is currently enforced;
-other methods pass through without policy evaluation.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>toolNames</b></td>
-        <td>[]string</td>
-        <td>
-          ToolNames lists values matched against params.name. Multiple entries are
-ORed. An empty list matches any tool name.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>action</b></td>
+<td>enum</td>
+<td>
+
+Action determines whether the matching tool call is allowed or denied.
+
+<i>Enum</i>: allow, deny<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>method</b></td>
+<td>string</td>
+<td>
+
+Method is the JSON-RPC method. Only "tools/call" is currently enforced;
+other methods pass through without policy evaluation.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>toolNames</b></td>
+<td>[]string</td>
+<td>
+
+ToolNames lists values matched against params.name. Multiple entries are
+ORed. An empty list matches any tool name.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.mcpToolPolicy.denyResponse
@@ -1011,34 +1227,40 @@ ORed. An empty list matches any tool name.<br/>
 DenyResponse configures the HTTP response when a tool is denied.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>body</b></td>
-        <td>string</td>
-        <td>
-          Body is the optional response body sent to the client.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>statusCode</b></td>
-        <td>integer</td>
-        <td>
-          StatusCode is the HTTP status returned to the client. Defaults to 403.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 403<br/>
-            <i>Minimum</i>: 100<br/>
-            <i>Maximum</i>: 599<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>body</b></td>
+<td>string</td>
+<td>
+
+Body is the optional response body sent to the client.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>statusCode</b></td>
+<td>integer</td>
+<td>
+
+StatusCode is the HTTP status returned to the client. Defaults to 403.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 403<br/>
+<i>Minimum</i>: 100<br/>
+<i>Maximum</i>: 599<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation
@@ -1047,26 +1269,31 @@ TokenTransformation rewrites request credentials.
 Non-terminal.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialref">credentialRef</a></b></td>
-        <td>object</td>
-        <td>
-          CredentialRef identifies the credential source.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikey">apiKey</a></b></td>
-        <td>object</td>
-        <td>
-          ApiKey configures an ApiKey transformation. It is required for ApiKey and
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialref">credentialRef</a></b></td>
+<td>object</td>
+<td>
+
+CredentialRef identifies the credential source.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikey">apiKey</a></b></td>
+<td>object</td>
+<td>
+
+ApiKey configures an ApiKey transformation. It is required for ApiKey and
 ignored for AliyunSTS. When targetHeaders is set, targetHeaders and value
 take precedence and when, targetHeader, and valueTemplate are ignored.
 Otherwise, the legacy when, targetHeader, and valueTemplate fields apply
@@ -1096,40 +1323,48 @@ is the token placeholder and replaces each matched value with the token:
             request.headers[name] == "${AGENTIO_TOKEN}"
           )
       value:
-        template: "{{ .Token }}"<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>disabled</b></td>
-        <td>boolean</td>
-        <td>
-          Disabled skips the action without removing its configuration.<br/>
-          <br/>
-            <i>Default</i>: false<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>failStrategy</b></td>
-        <td>enum</td>
-        <td>
-          FailStrategy controls behavior when the transformation fails.
-Defaults to Block (fail closed).<br/>
-          <br/>
-            <i>Enum</i>: Allow, Block, Ignore<br/>
-            <i>Default</i>: Block<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type discriminates the transformation strategy. Defaults to ApiKey.<br/>
-          <br/>
-            <i>Enum</i>: ApiKey, AliyunSTS<br/>
-            <i>Default</i>: ApiKey<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+        template: "{{ .Token }}"
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>disabled</b></td>
+<td>boolean</td>
+<td>
+
+Disabled skips the action without removing its configuration.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>failStrategy</b></td>
+<td>enum</td>
+<td>
+
+FailStrategy controls behavior when the transformation fails.
+Defaults to Block (fail closed).
+
+<i>Enum</i>: Allow, Block, Ignore<br/>
+<i>Default</i>: Block<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type discriminates the transformation strategy. Defaults to ApiKey.
+
+<i>Enum</i>: ApiKey, AliyunSTS<br/>
+<i>Default</i>: ApiKey<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef
@@ -1137,56 +1372,71 @@ Defaults to Block (fail closed).<br/>
 CredentialRef identifies the credential source.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialrefcredentialprovider">credentialProvider</a></b></td>
-        <td>object</td>
-        <td>
-          CredentialProvider fetches credentials from an external provider.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>kind</b></td>
-        <td>enum</td>
-        <td>
-          Kind identifies the deprecated credential source type.
-Deprecated: use Secret or CredentialProvider.<br/>
-          <br/>
-            <i>Enum</i>: Secret, CredentialProvider<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name identifies the deprecated credential source.
-Deprecated: use Secret or CredentialProvider.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is used by deprecated Secret references. It is ignored by
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialrefcredentialprovider">credentialProvider</a></b></td>
+<td>object</td>
+<td>
+
+CredentialProvider fetches credentials from an external provider.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>kind</b></td>
+<td>enum</td>
+<td>
+
+Kind identifies the deprecated credential source type.
+Deprecated: use Secret or CredentialProvider.
+
+<i>Enum</i>: Secret, CredentialProvider<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name identifies the deprecated credential source.
+Deprecated: use Secret or CredentialProvider.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is used by deprecated Secret references. It is ignored by
 deprecated CredentialProvider references.
-Deprecated: use Secret.Namespace instead.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialrefsecret">secret</a></b></td>
-        <td>object</td>
-        <td>
-          Secret references credentials stored in a Kubernetes Secret.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+Deprecated: use Secret.Namespace instead.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialrefsecret">secret</a></b></td>
+<td>object</td>
+<td>
+
+Secret references credentials stored in a Kubernetes Secret.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef.credentialProvider
@@ -1194,38 +1444,48 @@ Deprecated: use Secret.Namespace instead.<br/>
 CredentialProvider fetches credentials from an external provider.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the provider name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is reserved for namespace-scoped provider lookup. It is
-currently ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialrefcredentialproviderparameterskey">parameters</a></b></td>
-        <td>map[string]object</td>
-        <td>
-          Parameters supplies values rendered into the provider request's
-extraMetadata field.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the provider name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is reserved for namespace-scoped provider lookup. It is
+currently ignored.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationcredentialrefcredentialproviderparameterskey">parameters</a></b></td>
+<td>map[string]object</td>
+<td>
+
+Parameters supplies values rendered into the provider request's
+extraMetadata field.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef.credentialProvider.parameters[key]
@@ -1235,38 +1495,48 @@ Template must be set. Value and Template produce strings. The containing
 field documents the evaluation context and required result type for Cel.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cel</b></td>
-        <td>string</td>
-        <td>
-          Cel is a CEL expression evaluated in the context documented by the
-containing field.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>template</b></td>
-        <td>string</td>
-        <td>
-          Template is a Go template evaluated in the context documented by the
-containing field. Its rendered output is the value.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a static string emitted verbatim.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cel</b></td>
+<td>string</td>
+<td>
+
+Cel is a CEL expression evaluated in the context documented by the
+containing field.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>template</b></td>
+<td>string</td>
+<td>
+
+Template is a Go template evaluated in the context documented by the
+containing field. Its rendered output is the value.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a static string emitted verbatim.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef.secret
@@ -1274,31 +1544,38 @@ containing field. Its rendered output is the value.<br/>
 Secret references credentials stored in a Kubernetes Secret.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Secret name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the Secret namespace. When omitted, a SecurityProfile uses
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Secret name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the Secret namespace. When omitted, a SecurityProfile uses
 its own namespace and a GlobalSecurityProfile uses the selected Pod's
-namespace.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+namespace.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.apiKey
@@ -1336,62 +1613,78 @@ is the token placeholder and replaces each matched value with the token:
         template: "{{ .Token }}"
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>targetHeader</b></td>
-        <td>string</td>
-        <td>
-          TargetHeader selects the request header replaced by the legacy
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>targetHeader</b></td>
+<td>string</td>
+<td>
+
+TargetHeader selects the request header replaced by the legacy
 single-header mode. It is used only when TargetHeaders is omitted and is
 otherwise ignored. When omitted in legacy mode, implementations preserve
-the legacy behavior of targeting Authorization.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikeytargetheaders">targetHeaders</a></b></td>
-        <td>object</td>
-        <td>
-          TargetHeaders enables selector mode and selects the request headers to
+the legacy behavior of targeting Authorization.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikeytargetheaders">targetHeaders</a></b></td>
+<td>object</td>
+<td>
+
+TargetHeaders enables selector mode and selects the request headers to
 replace. When set, Value supplies the value for every selected header and
-When, TargetHeader, and ValueTemplate are ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikeyvalue">value</a></b></td>
-        <td>object</td>
-        <td>
-          Value produces the replacement value for every header selected by
+When, TargetHeader, and ValueTemplate are ignored.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikeyvalue">value</a></b></td>
+<td>object</td>
+<td>
+
+Value produces the replacement value for every header selected by
 TargetHeaders. It is used only when TargetHeaders is set and is otherwise
 ignored. Its Cel branch must return a string and may read request, pod,
 profile, rule, inputs, token, header.name, and header.value. Its Template
-branch may read Request, Pod, Profile, Rule, Inputs, Token, and Header.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>valueTemplate</b></td>
-        <td>string</td>
-        <td>
-          ValueTemplate renders the replacement value in the legacy single-header
+branch may read Request, Pod, Profile, Rule, Inputs, Token, and Header.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>valueTemplate</b></td>
+<td>string</td>
+<td>
+
+ValueTemplate renders the replacement value in the legacy single-header
 mode. It is used only when TargetHeaders is omitted and is otherwise
-ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikeywhen">when</a></b></td>
-        <td>object</td>
-        <td>
-          When gates the legacy single-header mode on a matching request header.
-It is used only when TargetHeaders is omitted and is otherwise ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+ignored.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionstokentransformationapikeywhen">when</a></b></td>
+<td>object</td>
+<td>
+
+When gates the legacy single-header mode on a matching request header.
+It is used only when TargetHeaders is omitted and is otherwise ignored.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.apiKey.targetHeaders
@@ -1401,32 +1694,39 @@ replace. When set, Value supplies the value for every selected header and
 When, TargetHeader, and ValueTemplate are ignored.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cel</b></td>
-        <td>string</td>
-        <td>
-          Cel selects request header names dynamically and must return a
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cel</b></td>
+<td>string</td>
+<td>
+
+Cel selects request header names dynamically and must return a
 list<string>. The expression may read the request, Pod, profile, rule,
-and inputs context, but not the retrieved token.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>names</b></td>
-        <td>[]string</td>
-        <td>
-          Names is a static set of request header names. Every selected header uses
-the same value rule.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+and inputs context, but not the retrieved token.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>names</b></td>
+<td>[]string</td>
+<td>
+
+Names is a static set of request header names. Every selected header uses
+the same value rule.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.apiKey.value
@@ -1438,38 +1738,48 @@ profile, rule, inputs, token, header.name, and header.value. Its Template
 branch may read Request, Pod, Profile, Rule, Inputs, Token, and Header.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cel</b></td>
-        <td>string</td>
-        <td>
-          Cel is a CEL expression evaluated in the context documented by the
-containing field.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>template</b></td>
-        <td>string</td>
-        <td>
-          Template is a Go template evaluated in the context documented by the
-containing field. Its rendered output is the value.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a static string emitted verbatim.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cel</b></td>
+<td>string</td>
+<td>
+
+Cel is a CEL expression evaluated in the context documented by the
+containing field.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>template</b></td>
+<td>string</td>
+<td>
+
+Template is a Go template evaluated in the context documented by the
+containing field. Its rendered output is the value.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a static string emitted verbatim.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].actions.tokenTransformation.apiKey.when
@@ -1478,29 +1788,36 @@ When gates the legacy single-header mode on a matching request header.
 It is used only when TargetHeaders is omitted and is otherwise ignored.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>header</b></td>
-        <td>string</td>
-        <td>
-          Header is the request header name to inspect.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>pattern</b></td>
-        <td>string</td>
-        <td>
-          Pattern is an RE2 regex evaluated against the header value.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>header</b></td>
+<td>string</td>
+<td>
+
+Header is the request header name to inspect.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>pattern</b></td>
+<td>string</td>
+<td>
+
+Pattern is an RE2 regex evaluated against the header value.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].match[]
@@ -1511,76 +1828,97 @@ inside a rule's match list are ORed; fields inside one RuleMatch are ANDed.
 Domains is required. All other fields further restrict the match.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>domains</b></td>
-        <td>[]string</td>
-        <td>
-          Domains lists target host names. Supports "*" (any domain) and
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>domains</b></td>
+<td>[]string</td>
+<td>
+
+Domains lists target host names. Supports "*" (any domain) and
 "*.example.com" wildcard prefixes.
 
 CAUTION: wildcard and specific domains can both match the same request
-under Default Continue semantics, so rule ordering matters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesmatchheaders">headers</a></b></td>
-        <td>[]object</td>
-        <td>
-          Headers lists header matches; multiple entries are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>methods</b></td>
-        <td>[]enum</td>
-        <td>
-          Methods lists HTTP methods. Multiple entries are ORed.<br/>
-          <br/>
-            <i>Enum</i>: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT, TRACE<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesmatchpaths">paths</a></b></td>
-        <td>[]object</td>
-        <td>
-          Paths lists URL path matches. Multiple entries are ORed. The query
-string is excluded from path matching.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>ports</b></td>
-        <td>[]integer</td>
-        <td>
-          Ports lists destination ports. Multiple entries are ORed.
+under Default Continue semantics, so rule ordering matters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesmatchheaders">headers</a></b></td>
+<td>[]object</td>
+<td>
+
+Headers lists header matches; multiple entries are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>methods</b></td>
+<td>[]enum</td>
+<td>
+
+Methods lists HTTP methods. Multiple entries are ORed.
+
+<i>Enum</i>: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT, TRACE<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesmatchpaths">paths</a></b></td>
+<td>[]object</td>
+<td>
+
+Paths lists URL path matches. Multiple entries are ORed. The query
+string is excluded from path matching.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>ports</b></td>
+<td>[]integer</td>
+<td>
+
+Ports lists destination ports. Multiple entries are ORed.
 
 An explicit authority port is used directly. Otherwise, HTTP defaults
-to 80 and HTTPS defaults to 443. Other schemes have no default port.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#globalsecurityprofilespecrulesmatchqueryparams">queryParams</a></b></td>
-        <td>[]object</td>
-        <td>
-          QueryParams lists URL query parameter matches. Multiple entries are
-ANDed. Values are percent-decoded before matching.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>schemes</b></td>
-        <td>[]string</td>
-        <td>
-          Schemes lists request schemes, such as "http" and "https". Multiple
-entries are ORed, and matching is case-insensitive.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+to 80 and HTTPS defaults to 443. Other schemes have no default port.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesmatchqueryparams">queryParams</a></b></td>
+<td>[]object</td>
+<td>
+
+QueryParams lists URL query parameter matches. Multiple entries are
+ANDed. Values are percent-decoded before matching.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>schemes</b></td>
+<td>[]string</td>
+<td>
+
+Schemes lists request schemes, such as "http" and "https". Multiple
+entries are ORed, and matching is case-insensitive.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].match[].headers[]
@@ -1589,41 +1927,50 @@ HeaderMatch filters a request by a single header's value.
 Multiple HeaderMatch entries in one RuleMatch are ANDed.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name (case-insensitive). Restricted to a safe
-subset of RFC 7230 tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is the match operand. For Exact/Prefix it is compared
-verbatim; for Regex it is interpreted as an RE2 expression.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type selects the matching strategy. Defaults to Exact.<br/>
-          <br/>
-            <i>Enum</i>: Exact, Prefix, Regex<br/>
-            <i>Default</i>: Exact<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name (case-insensitive). Restricted to a safe
+subset of RFC 7230 tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is the match operand. For Exact/Prefix it is compared
+verbatim; for Regex it is interpreted as an RE2 expression.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type selects the matching strategy. Defaults to Exact.
+
+<i>Enum</i>: Exact, Prefix, Regex<br/>
+<i>Default</i>: Exact<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].match[].paths[]
@@ -1631,32 +1978,38 @@ verbatim; for Regex it is interpreted as an RE2 expression.<br/>
 PathMatch specifies how to match the request URL path.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type selects the path matching strategy. Defaults to Prefix.<br/>
-          <br/>
-            <i>Enum</i>: Prefix, Exact, Regex<br/>
-            <i>Default</i>: Prefix<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is the match value. For Regex, it is an RE2 expression.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type selects the path matching strategy. Defaults to Prefix.
+
+<i>Enum</i>: Prefix, Exact, Regex<br/>
+<i>Default</i>: Prefix<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is the match value. For Regex, it is an RE2 expression.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.spec.rules[].match[].queryParams[]
@@ -1667,41 +2020,50 @@ Multiple QueryParamMatch entries in one RuleMatch are ANDed.
 When a key appears more than once, only its first value is matched.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the case-sensitive query parameter name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is the match operand. For Exact/Prefix it is compared
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the case-sensitive query parameter name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is the match operand. For Exact/Prefix it is compared
 verbatim against the percent-decoded query value; for Regex it is
-interpreted as an RE2 expression.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type selects the matching strategy. Defaults to Exact.<br/>
-          <br/>
-            <i>Enum</i>: Exact, Prefix, Regex<br/>
-            <i>Default</i>: Exact<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+interpreted as an RE2 expression.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type selects the matching strategy. Defaults to Exact.
+
+<i>Enum</i>: Exact, Prefix, Regex<br/>
+<i>Default</i>: Exact<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.status
@@ -1709,31 +2071,37 @@ interpreted as an RE2 expression.<br/>
 SecurityProfileStatus captures the observed state of a SecurityProfile.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#globalsecurityprofilestatusconditions">conditions</a></b></td>
-        <td>[]object</td>
-        <td>
-          Conditions summarizes the profile's current state.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>observedGeneration</b></td>
-        <td>integer</td>
-        <td>
-          ObservedGeneration is the .metadata.generation last reconciled.<br/>
-          <br/>
-            <i>Format</i>: int64<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilestatusconditions">conditions</a></b></td>
+<td>[]object</td>
+<td>
+
+Conditions summarizes the profile's current state.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>observedGeneration</b></td>
+<td>integer</td>
+<td>
+
+ObservedGeneration is the .metadata.generation last reconciled.
+
+<i>Format</i>: int64<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### GlobalSecurityProfile.status.conditions[]
@@ -1741,72 +2109,88 @@ SecurityProfileStatus captures the observed state of a SecurityProfile.
 Condition contains details for one aspect of the current state of this API Resource.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>lastTransitionTime</b></td>
-        <td>string</td>
-        <td>
-          lastTransitionTime is the last time the condition transitioned from one status to another.
-This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.<br/>
-          <br/>
-            <i>Format</i>: date-time<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>message</b></td>
-        <td>string</td>
-        <td>
-          message is a human readable message indicating details about the transition.
-This may be an empty string.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>reason</b></td>
-        <td>string</td>
-        <td>
-          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>lastTransitionTime</b></td>
+<td>string</td>
+<td>
+
+lastTransitionTime is the last time the condition transitioned from one status to another.
+This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+
+<i>Format</i>: date-time<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>message</b></td>
+<td>string</td>
+<td>
+
+message is a human readable message indicating details about the transition.
+This may be an empty string.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>reason</b></td>
+<td>string</td>
+<td>
+
+reason contains a programmatic identifier indicating the reason for the condition's last transition.
 Producers of specific condition types may define expected values and meanings for this field,
 and whether the values are considered a guaranteed API.
 The value should be a CamelCase string.
-This field may not be empty.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>status</b></td>
-        <td>enum</td>
-        <td>
-          status of the condition, one of True, False, Unknown.<br/>
-          <br/>
-            <i>Enum</i>: True, False, Unknown<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>string</td>
-        <td>
-          type of condition in CamelCase or in foo.example.com/CamelCase.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>observedGeneration</b></td>
-        <td>integer</td>
-        <td>
-          observedGeneration represents the .metadata.generation that the condition was set based upon.
+This field may not be empty.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>status</b></td>
+<td>enum</td>
+<td>
+
+status of the condition, one of True, False, Unknown.
+
+<i>Enum</i>: True, False, Unknown<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>string</td>
+<td>
+
+type of condition in CamelCase or in foo.example.com/CamelCase.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>observedGeneration</b></td>
+<td>integer</td>
+<td>
+
+observedGeneration represents the .metadata.generation that the condition was set based upon.
 For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-with respect to the current state of the instance.<br/>
-          <br/>
-            <i>Format</i>: int64<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+with respect to the current state of the instance.
+
+<i>Format</i>: int64<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 
@@ -1815,46 +2199,54 @@ with respect to the current state of the instance.<br/>
 SecurityProfile defines namespaced L7 security policy for selected Pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-      <td><b>apiVersion</b></td>
-      <td>string</td>
-      <td>agents.kruise.io/v1alpha1</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b>kind</b></td>
-      <td>string</td>
-      <td>SecurityProfile</td>
-      <td>true</td>
-      </tr>
-      <tr>
-      <td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
-      <td>object</td>
-      <td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
-      <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespec">spec</a></b></td>
-        <td>object</td>
-        <td>
-          SecurityProfileSpec defines L7 security policy for selected Pods.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilestatus">status</a></b></td>
-        <td>object</td>
-        <td>
-          SecurityProfileStatus captures the observed state of a SecurityProfile.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>apiVersion</b></td>
+<td>string</td>
+<td>agents.kruise.io/v1alpha1</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>kind</b></td>
+<td>string</td>
+<td>SecurityProfile</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#objectmeta-v1-meta">metadata</a></b></td>
+<td>object</td>
+<td>Refer to the Kubernetes API documentation for the fields of the <code>metadata</code> field.</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespec">spec</a></b></td>
+<td>object</td>
+<td>
+
+SecurityProfileSpec defines L7 security policy for selected Pods.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilestatus">status</a></b></td>
+<td>object</td>
+<td>
+
+SecurityProfileStatus captures the observed state of a SecurityProfile.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec
@@ -1862,61 +2254,76 @@ SecurityProfile defines namespaced L7 security policy for selected Pods.
 SecurityProfileSpec defines L7 security policy for selected Pods.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecselector">selector</a></b></td>
-        <td>object</td>
-        <td>
-          Selector chooses the Pods to which this profile applies. An empty
-selector matches every Pod in scope.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecaudit">audit</a></b></td>
-        <td>[]object</td>
-        <td>
-          Audit defines the audit actions inherited by rules that do not configure
-their own Audit list.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecinputs">inputs</a></b></td>
-        <td>[]object</td>
-        <td>
-          Inputs defines named values available to CEL expressions and Go
-templates in this profile.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>priority</b></td>
-        <td>integer</td>
-        <td>
-          Priority determines evaluation order when multiple profiles match a Pod.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecselector">selector</a></b></td>
+<td>object</td>
+<td>
+
+Selector chooses the Pods to which this profile applies. An empty
+selector matches every Pod in scope.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecaudit">audit</a></b></td>
+<td>[]object</td>
+<td>
+
+Audit defines the audit actions inherited by rules that do not configure
+their own Audit list.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecinputs">inputs</a></b></td>
+<td>[]object</td>
+<td>
+
+Inputs defines named values available to CEL expressions and Go
+templates in this profile.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>priority</b></td>
+<td>integer</td>
+<td>
+
+Priority determines evaluation order when multiple profiles match a Pod.
 Lower values run first. Ties are resolved by creation time, name, and
-namespace. Defaults to DefaultSecurityProfilePriority.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 1000<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules is the ordered rule chain. Every matching rule executes until an
+namespace. Defaults to DefaultSecurityProfilePriority.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 1000<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules is the ordered rule chain. Every matching rule executes until an
 action terminates the request. Rules from matching profiles are combined
-in profile evaluation order. An empty list forwards all traffic.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+in profile evaluation order. An empty list forwards all traffic.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.selector
@@ -1925,31 +2332,38 @@ Selector chooses the Pods to which this profile applies. An empty
 selector matches every Pod in scope.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecselectormatchexpressions">matchExpressions</a></b></td>
-        <td>[]object</td>
-        <td>
-          matchExpressions is a list of label selector requirements. The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>matchLabels</b></td>
-        <td>map[string]string</td>
-        <td>
-          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecselectormatchexpressions">matchExpressions</a></b></td>
+<td>[]object</td>
+<td>
+
+matchExpressions is a list of label selector requirements. The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>matchLabels</b></td>
+<td>map[string]string</td>
+<td>
+
+matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
 map is equivalent to an element of matchExpressions, whose key field is "key", the
-operator is "In", and the values array contains only "value". The requirements are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+operator is "In", and the values array contains only "value". The requirements are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.selector.matchExpressions[]
@@ -1958,40 +2372,50 @@ A label selector requirement is a selector that contains values, a key, and an o
 relates the key and values.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>key</b></td>
-        <td>string</td>
-        <td>
-          key is the label key that the selector applies to.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>operator</b></td>
-        <td>string</td>
-        <td>
-          operator represents a key's relationship to a set of values.
-Valid operators are In, NotIn, Exists and DoesNotExist.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>values</b></td>
-        <td>[]string</td>
-        <td>
-          values is an array of string values. If the operator is In or NotIn,
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>key</b></td>
+<td>string</td>
+<td>
+
+key is the label key that the selector applies to.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>operator</b></td>
+<td>string</td>
+<td>
+
+operator represents a key's relationship to a set of values.
+Valid operators are In, NotIn, Exists and DoesNotExist.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>values</b></td>
+<td>[]string</td>
+<td>
+
+values is an array of string values. If the operator is In or NotIn,
 the values array must be non-empty. If the operator is Exists or DoesNotExist,
 the values array must be empty. This array is replaced during a strategic
-merge patch.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+merge patch.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.audit[]
@@ -2009,33 +2433,41 @@ Each action is evaluated for every matching rule. An empty When expression
 always matches.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies this action within its containing list.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecauditwebhook">webhook</a></b></td>
-        <td>object</td>
-        <td>
-          Webhook is the destination for this action.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>when</b></td>
-        <td>string</td>
-        <td>
-          When is a CEL expression that determines whether the event is emitted.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies this action within its containing list.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecauditwebhook">webhook</a></b></td>
+<td>object</td>
+<td>
+
+Webhook is the destination for this action.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>when</b></td>
+<td>string</td>
+<td>
+
+When is a CEL expression that determines whether the event is emitted.
 It must evaluate to a boolean. An empty expression evaluates to true.
 
 A compilation error prevents the profile from compiling. A runtime
@@ -2054,10 +2486,12 @@ Examples:
   result == "blocked"
   result in ["blocked", "bypassed"]
   pod.labels["team"] == "fraud" && result != "passthrough"
-  rule.name.startsWith("pii-")<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+  rule.name.startsWith("pii-")
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.audit[].webhook
@@ -2065,42 +2499,54 @@ Examples:
 Webhook is the destination for this action.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>url</b></td>
-        <td>string</td>
-        <td>
-          URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
-event is dropped if rendering fails or the rendered URL is invalid.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecauditwebhookrequest">request</a></b></td>
-        <td>object</td>
-        <td>
-          Request configures the HTTP request. When omitted, a POST request with an
-empty body is sent.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>timeout</b></td>
-        <td>string</td>
-        <td>
-          Timeout limits each HTTP attempt. Defaults to 2s and must be between
-500ms and 30s.<br/>
-          <br/>
-            <i>Validations</i>:<li>duration(self) >= duration('500ms') && duration(self) <= duration('30s'): timeout must be between 500ms and 30s</li>
-            <i>Default</i>: 2s<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>url</b></td>
+<td>string</td>
+<td>
+
+URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
+event is dropped if rendering fails or the rendered URL is invalid.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecauditwebhookrequest">request</a></b></td>
+<td>object</td>
+<td>
+
+Request configures the HTTP request. When omitted, a POST request with an
+empty body is sent.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>timeout</b></td>
+<td>string</td>
+<td>
+
+Timeout limits each HTTP attempt. Defaults to 2s and must be between
+500ms and 30s.
+
+<i>Validations</i>:
+<ul>
+<li>duration(self) &gt;= duration(&#39;500ms&#39;) &amp;&amp; duration(self) &lt;= duration(&#39;30s&#39;): timeout must be between 500ms and 30s</li>
+</ul>
+<i>Default</i>: 2s<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.audit[].webhook.request
@@ -2109,41 +2555,50 @@ Request configures the HTTP request. When omitted, a POST request with an
 empty body is sent.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecauditwebhookrequestbody">body</a></b></td>
-        <td>object</td>
-        <td>
-          Body configures the request body. When omitted, the request has an empty
-body.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecauditwebhookrequestheaders">headers</a></b></td>
-        <td>[]object</td>
-        <td>
-          Headers are appended to the request after the default Content-Type
-header.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>method</b></td>
-        <td>enum</td>
-        <td>
-          Method is the HTTP request method. Defaults to POST.<br/>
-          <br/>
-            <i>Enum</i>: POST, PUT, PATCH<br/>
-            <i>Default</i>: POST<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecauditwebhookrequestbody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body configures the request body. When omitted, the request has an empty
+body.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecauditwebhookrequestheaders">headers</a></b></td>
+<td>[]object</td>
+<td>
+
+Headers are appended to the request after the default Content-Type
+header.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>method</b></td>
+<td>enum</td>
+<td>
+
+Method is the HTTP request method. Defaults to POST.
+
+<i>Enum</i>: POST, PUT, PATCH<br/>
+<i>Default</i>: POST<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.audit[].webhook.request.body
@@ -2152,30 +2607,37 @@ Body configures the request body. When omitted, the request has an empty
 body.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>json</b></td>
-        <td>object</td>
-        <td>
-          JSON is a structured body. String values are rendered as Go templates;
-other values are preserved. The content type is application/json.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>text</b></td>
-        <td>string</td>
-        <td>
-          Text is a Go template rendered as a text/plain body.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>json</b></td>
+<td>object</td>
+<td>
+
+JSON is a structured body. String values are rendered as Go templates;
+other values are preserved. The content type is application/json.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>text</b></td>
+<td>string</td>
+<td>
+
+Text is a Go template rendered as a text/plain body.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.audit[].webhook.request.headers[]
@@ -2183,30 +2645,37 @@ other values are preserved. The content type is application/json.<br/>
 AuditHeader defines one HTTP header on an audit request.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name. Restricted to a safe subset of RFC 7230
-tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a Go template that renders the header value.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name. Restricted to a safe subset of RFC 7230
+tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a Go template that renders the header value.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.inputs[]
@@ -2215,36 +2684,46 @@ SecurityProfileInput defines one named input source. Exactly one of
 ConfigMap or Inline must be set.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies this input within the profile.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecinputsconfigmap">configMap</a></b></td>
-        <td>object</td>
-        <td>
-          ConfigMap sources the input values from a ConfigMap's data.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>inline</b></td>
-        <td>map[string]string</td>
-        <td>
-          Inline declares the input values directly in the profile.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies this input within the profile.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecinputsconfigmap">configMap</a></b></td>
+<td>object</td>
+<td>
+
+ConfigMap sources the input values from a ConfigMap's data.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>inline</b></td>
+<td>map[string]string</td>
+<td>
+
+Inline declares the input values directly in the profile.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.inputs[].configMap
@@ -2252,30 +2731,37 @@ ConfigMap or Inline must be set.
 ConfigMap sources the input values from a ConfigMap's data.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the ConfigMap name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the ConfigMap namespace. When omitted, a SecurityProfile
-uses its own namespace. A GlobalSecurityProfile must set this field.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the ConfigMap name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the ConfigMap namespace. When omitted, a SecurityProfile
+uses its own namespace. A GlobalSecurityProfile must set this field.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[]
@@ -2288,37 +2774,47 @@ by Block. A wildcard match does not prevent later, more specific rules from
 matching.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecrulesactions">actions</a></b></td>
-        <td>object</td>
-        <td>
-          Actions configures the actions executed when this rule matches.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesmatch">match</a></b></td>
-        <td>[]object</td>
-        <td>
-          Match lists match conditions. Multiple entries are ORed.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies the rule within the profile. Used in
-metrics and events.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactions">actions</a></b></td>
+<td>object</td>
+<td>
+
+Actions configures the actions executed when this rule matches.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesmatch">match</a></b></td>
+<td>[]object</td>
+<td>
+
+Match lists match conditions. Multiple entries are ORed.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies the rule within the profile. Used in
+metrics and events.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions
@@ -2326,66 +2822,85 @@ metrics and events.<br/>
 Actions configures the actions executed when this rule matches.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecrulesactionsaudit">audit</a></b></td>
-        <td>[]object</td>
-        <td>
-          Audit lists rule-specific audit actions. A non-empty list replaces the
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsaudit">audit</a></b></td>
+<td>[]object</td>
+<td>
+
+Audit lists rule-specific audit actions. A non-empty list replaces the
 profile-level Audit list for this rule. An empty list inherits the
-profile-level list.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsblock">block</a></b></td>
-        <td>object</td>
-        <td>
-          Block is a terminal action that returns a configured HTTP response
-to the client without forwarding upstream.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>bypass</b></td>
-        <td>boolean</td>
-        <td>
-          Bypass forwards the request and skips all remaining actions and rules
-across matching profiles. False is equivalent to omission.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsheadermanipulation">headerManipulation</a></b></td>
-        <td>object</td>
-        <td>
-          HeaderManipulation sets or removes plaintext request headers.
+profile-level list.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsblock">block</a></b></td>
+<td>object</td>
+<td>
+
+Block is a terminal action that returns a configured HTTP response
+to the client without forwarding upstream.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>bypass</b></td>
+<td>boolean</td>
+<td>
+
+Bypass forwards the request and skips all remaining actions and rules
+across matching profiles. False is equivalent to omission.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsheadermanipulation">headerManipulation</a></b></td>
+<td>object</td>
+<td>
+
+HeaderManipulation sets or removes plaintext request headers.
 Non-terminal. Values are stored verbatim — use TokenTransformation
-for credentials.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsmcptoolpolicy">mcpToolPolicy</a></b></td>
-        <td>object</td>
-        <td>
-          MCPToolPolicy defines inline MCP tool access control rules.
+for credentials.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsmcptoolpolicy">mcpToolPolicy</a></b></td>
+<td>object</td>
+<td>
+
+MCPToolPolicy defines inline MCP tool access control rules.
 Non-terminal when the policy allows; terminal (like Block) when
-denied.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformation">tokenTransformation</a></b></td>
-        <td>object</td>
-        <td>
-          TokenTransformation rewrites request credentials.
-Non-terminal.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+denied.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformation">tokenTransformation</a></b></td>
+<td>object</td>
+<td>
+
+TokenTransformation rewrites request credentials.
+Non-terminal.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.audit[]
@@ -2403,33 +2918,41 @@ Each action is evaluated for every matching rule. An empty When expression
 always matches.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name uniquely identifies this action within its containing list.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsauditwebhook">webhook</a></b></td>
-        <td>object</td>
-        <td>
-          Webhook is the destination for this action.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>when</b></td>
-        <td>string</td>
-        <td>
-          When is a CEL expression that determines whether the event is emitted.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name uniquely identifies this action within its containing list.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsauditwebhook">webhook</a></b></td>
+<td>object</td>
+<td>
+
+Webhook is the destination for this action.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>when</b></td>
+<td>string</td>
+<td>
+
+When is a CEL expression that determines whether the event is emitted.
 It must evaluate to a boolean. An empty expression evaluates to true.
 
 A compilation error prevents the profile from compiling. A runtime
@@ -2448,10 +2971,12 @@ Examples:
   result == "blocked"
   result in ["blocked", "bypassed"]
   pod.labels["team"] == "fraud" && result != "passthrough"
-  rule.name.startsWith("pii-")<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+  rule.name.startsWith("pii-")
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.audit[].webhook
@@ -2459,42 +2984,54 @@ Examples:
 Webhook is the destination for this action.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>url</b></td>
-        <td>string</td>
-        <td>
-          URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
-event is dropped if rendering fails or the rendered URL is invalid.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsauditwebhookrequest">request</a></b></td>
-        <td>object</td>
-        <td>
-          Request configures the HTTP request. When omitted, a POST request with an
-empty body is sent.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>timeout</b></td>
-        <td>string</td>
-        <td>
-          Timeout limits each HTTP attempt. Defaults to 2s and must be between
-500ms and 30s.<br/>
-          <br/>
-            <i>Validations</i>:<li>duration(self) >= duration('500ms') && duration(self) <= duration('30s'): timeout must be between 500ms and 30s</li>
-            <i>Default</i>: 2s<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>url</b></td>
+<td>string</td>
+<td>
+
+URL is an absolute HTTP or HTTPS URL rendered as a Go template. The
+event is dropped if rendering fails or the rendered URL is invalid.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsauditwebhookrequest">request</a></b></td>
+<td>object</td>
+<td>
+
+Request configures the HTTP request. When omitted, a POST request with an
+empty body is sent.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>timeout</b></td>
+<td>string</td>
+<td>
+
+Timeout limits each HTTP attempt. Defaults to 2s and must be between
+500ms and 30s.
+
+<i>Validations</i>:
+<ul>
+<li>duration(self) &gt;= duration(&#39;500ms&#39;) &amp;&amp; duration(self) &lt;= duration(&#39;30s&#39;): timeout must be between 500ms and 30s</li>
+</ul>
+<i>Default</i>: 2s<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.audit[].webhook.request
@@ -2503,41 +3040,50 @@ Request configures the HTTP request. When omitted, a POST request with an
 empty body is sent.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecrulesactionsauditwebhookrequestbody">body</a></b></td>
-        <td>object</td>
-        <td>
-          Body configures the request body. When omitted, the request has an empty
-body.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsauditwebhookrequestheaders">headers</a></b></td>
-        <td>[]object</td>
-        <td>
-          Headers are appended to the request after the default Content-Type
-header.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>method</b></td>
-        <td>enum</td>
-        <td>
-          Method is the HTTP request method. Defaults to POST.<br/>
-          <br/>
-            <i>Enum</i>: POST, PUT, PATCH<br/>
-            <i>Default</i>: POST<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsauditwebhookrequestbody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body configures the request body. When omitted, the request has an empty
+body.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsauditwebhookrequestheaders">headers</a></b></td>
+<td>[]object</td>
+<td>
+
+Headers are appended to the request after the default Content-Type
+header.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>method</b></td>
+<td>enum</td>
+<td>
+
+Method is the HTTP request method. Defaults to POST.
+
+<i>Enum</i>: POST, PUT, PATCH<br/>
+<i>Default</i>: POST<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.audit[].webhook.request.body
@@ -2546,30 +3092,37 @@ Body configures the request body. When omitted, the request has an empty
 body.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>json</b></td>
-        <td>object</td>
-        <td>
-          JSON is a structured body. String values are rendered as Go templates;
-other values are preserved. The content type is application/json.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>text</b></td>
-        <td>string</td>
-        <td>
-          Text is a Go template rendered as a text/plain body.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>json</b></td>
+<td>object</td>
+<td>
+
+JSON is a structured body. String values are rendered as Go templates;
+other values are preserved. The content type is application/json.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>text</b></td>
+<td>string</td>
+<td>
+
+Text is a Go template rendered as a text/plain body.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.audit[].webhook.request.headers[]
@@ -2577,30 +3130,37 @@ other values are preserved. The content type is application/json.<br/>
 AuditHeader defines one HTTP header on an audit request.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name. Restricted to a safe subset of RFC 7230
-tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a Go template that renders the header value.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name. Restricted to a safe subset of RFC 7230
+tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a Go template that renders the header value.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.block
@@ -2609,34 +3169,40 @@ Block is a terminal action that returns a configured HTTP response
 to the client without forwarding upstream.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>body</b></td>
-        <td>string</td>
-        <td>
-          Body is an optional response body sent verbatim to the client.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>statusCode</b></td>
-        <td>integer</td>
-        <td>
-          StatusCode is the HTTP status returned to the client.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 403<br/>
-            <i>Minimum</i>: 100<br/>
-            <i>Maximum</i>: 599<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>body</b></td>
+<td>string</td>
+<td>
+
+Body is an optional response body sent verbatim to the client.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>statusCode</b></td>
+<td>integer</td>
+<td>
+
+StatusCode is the HTTP status returned to the client.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 403<br/>
+<i>Minimum</i>: 100<br/>
+<i>Maximum</i>: 599<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.headerManipulation
@@ -2646,33 +3212,40 @@ Non-terminal. Values are stored verbatim — use TokenTransformation
 for credentials.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>remove</b></td>
-        <td>[]string</td>
-        <td>
-          Remove lists header names to strip from the request before it is
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>remove</b></td>
+<td>[]string</td>
+<td>
+
+Remove lists header names to strip from the request before it is
 forwarded upstream. Names must be lowercase; header names are
 case-insensitive on the wire. A name may not appear in both Set and
-Remove.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsheadermanipulationset">set</a></b></td>
-        <td>[]object</td>
-        <td>
-          Set adds or replaces headers. An existing header with the same
-name is replaced.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+Remove.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsheadermanipulationset">set</a></b></td>
+<td>[]object</td>
+<td>
+
+Set adds or replaces headers. An existing header with the same
+name is replaced.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.headerManipulation.set[]
@@ -2680,32 +3253,39 @@ name is replaced.<br/>
 HeaderValue is one plaintext header assignment.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name. It must be lowercase so that the list map
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name. It must be lowercase so that the list map
 key matches HTTP's case-insensitive header semantics; the data plane
 emits it verbatim. Restricted to a safe lowercase subset of RFC 7230
-tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is stored and injected verbatim. NOT for credentials.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is stored and injected verbatim. NOT for credentials.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.mcpToolPolicy
@@ -2715,52 +3295,63 @@ Non-terminal when the policy allows; terminal (like Block) when
 denied.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>defaultAction</b></td>
-        <td>enum</td>
-        <td>
-          DefaultAction is the decision applied when no rule matches.
-Defaults to "deny" (whitelist mode); set "allow" for blacklist mode.<br/>
-          <br/>
-            <i>Enum</i>: allow, deny<br/>
-            <i>Default</i>: deny<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsmcptoolpolicyrules">rules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Rules are evaluated in order. First match wins.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionsmcptoolpolicydenyresponse">denyResponse</a></b></td>
-        <td>object</td>
-        <td>
-          DenyResponse configures the HTTP response when a tool is denied.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>unsupportedVersionAction</b></td>
-        <td>enum</td>
-        <td>
-          UnsupportedVersionAction determines how a tools/call request with a
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>defaultAction</b></td>
+<td>enum</td>
+<td>
+
+DefaultAction is the decision applied when no rule matches.
+Defaults to "deny" (whitelist mode); set "allow" for blacklist mode.
+
+<i>Enum</i>: allow, deny<br/>
+<i>Default</i>: deny<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsmcptoolpolicyrules">rules</a></b></td>
+<td>[]object</td>
+<td>
+
+Rules are evaluated in order. First match wins.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionsmcptoolpolicydenyresponse">denyResponse</a></b></td>
+<td>object</td>
+<td>
+
+DenyResponse configures the HTTP response when a tool is denied.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>unsupportedVersionAction</b></td>
+<td>enum</td>
+<td>
+
+UnsupportedVersionAction determines how a tools/call request with a
 missing or unsupported MCP-Protocol-Version header is handled. "deny"
-rejects the request, while "passthrough" skips policy evaluation.<br/>
-          <br/>
-            <i>Enum</i>: deny, passthrough<br/>
-            <i>Default</i>: deny<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+rejects the request, while "passthrough" skips policy evaluation.
+
+<i>Enum</i>: deny, passthrough<br/>
+<i>Default</i>: deny<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.mcpToolPolicy.rules[]
@@ -2768,40 +3359,49 @@ rejects the request, while "passthrough" skips policy evaluation.<br/>
 MCPToolPolicyRule defines one allow or deny rule for an MCP tool call.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>action</b></td>
-        <td>enum</td>
-        <td>
-          Action determines whether the matching tool call is allowed or denied.<br/>
-          <br/>
-            <i>Enum</i>: allow, deny<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>method</b></td>
-        <td>string</td>
-        <td>
-          Method is the JSON-RPC method. Only "tools/call" is currently enforced;
-other methods pass through without policy evaluation.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>toolNames</b></td>
-        <td>[]string</td>
-        <td>
-          ToolNames lists values matched against params.name. Multiple entries are
-ORed. An empty list matches any tool name.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>action</b></td>
+<td>enum</td>
+<td>
+
+Action determines whether the matching tool call is allowed or denied.
+
+<i>Enum</i>: allow, deny<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>method</b></td>
+<td>string</td>
+<td>
+
+Method is the JSON-RPC method. Only "tools/call" is currently enforced;
+other methods pass through without policy evaluation.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>toolNames</b></td>
+<td>[]string</td>
+<td>
+
+ToolNames lists values matched against params.name. Multiple entries are
+ORed. An empty list matches any tool name.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.mcpToolPolicy.denyResponse
@@ -2809,34 +3409,40 @@ ORed. An empty list matches any tool name.<br/>
 DenyResponse configures the HTTP response when a tool is denied.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>body</b></td>
-        <td>string</td>
-        <td>
-          Body is the optional response body sent to the client.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>statusCode</b></td>
-        <td>integer</td>
-        <td>
-          StatusCode is the HTTP status returned to the client. Defaults to 403.<br/>
-          <br/>
-            <i>Format</i>: int32<br/>
-            <i>Default</i>: 403<br/>
-            <i>Minimum</i>: 100<br/>
-            <i>Maximum</i>: 599<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>body</b></td>
+<td>string</td>
+<td>
+
+Body is the optional response body sent to the client.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>statusCode</b></td>
+<td>integer</td>
+<td>
+
+StatusCode is the HTTP status returned to the client. Defaults to 403.
+
+<i>Format</i>: int32<br/>
+<i>Default</i>: 403<br/>
+<i>Minimum</i>: 100<br/>
+<i>Maximum</i>: 599<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation
@@ -2845,26 +3451,31 @@ TokenTransformation rewrites request credentials.
 Non-terminal.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialref">credentialRef</a></b></td>
-        <td>object</td>
-        <td>
-          CredentialRef identifies the credential source.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationapikey">apiKey</a></b></td>
-        <td>object</td>
-        <td>
-          ApiKey configures an ApiKey transformation. It is required for ApiKey and
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialref">credentialRef</a></b></td>
+<td>object</td>
+<td>
+
+CredentialRef identifies the credential source.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationapikey">apiKey</a></b></td>
+<td>object</td>
+<td>
+
+ApiKey configures an ApiKey transformation. It is required for ApiKey and
 ignored for AliyunSTS. When targetHeaders is set, targetHeaders and value
 take precedence and when, targetHeader, and valueTemplate are ignored.
 Otherwise, the legacy when, targetHeader, and valueTemplate fields apply
@@ -2894,40 +3505,48 @@ is the token placeholder and replaces each matched value with the token:
             request.headers[name] == "${AGENTIO_TOKEN}"
           )
       value:
-        template: "{{ .Token }}"<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>disabled</b></td>
-        <td>boolean</td>
-        <td>
-          Disabled skips the action without removing its configuration.<br/>
-          <br/>
-            <i>Default</i>: false<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>failStrategy</b></td>
-        <td>enum</td>
-        <td>
-          FailStrategy controls behavior when the transformation fails.
-Defaults to Block (fail closed).<br/>
-          <br/>
-            <i>Enum</i>: Allow, Block, Ignore<br/>
-            <i>Default</i>: Block<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type discriminates the transformation strategy. Defaults to ApiKey.<br/>
-          <br/>
-            <i>Enum</i>: ApiKey, AliyunSTS<br/>
-            <i>Default</i>: ApiKey<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+        template: "{{ .Token }}"
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>disabled</b></td>
+<td>boolean</td>
+<td>
+
+Disabled skips the action without removing its configuration.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>failStrategy</b></td>
+<td>enum</td>
+<td>
+
+FailStrategy controls behavior when the transformation fails.
+Defaults to Block (fail closed).
+
+<i>Enum</i>: Allow, Block, Ignore<br/>
+<i>Default</i>: Block<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type discriminates the transformation strategy. Defaults to ApiKey.
+
+<i>Enum</i>: ApiKey, AliyunSTS<br/>
+<i>Default</i>: ApiKey<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef
@@ -2935,56 +3554,71 @@ Defaults to Block (fail closed).<br/>
 CredentialRef identifies the credential source.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialrefcredentialprovider">credentialProvider</a></b></td>
-        <td>object</td>
-        <td>
-          CredentialProvider fetches credentials from an external provider.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>kind</b></td>
-        <td>enum</td>
-        <td>
-          Kind identifies the deprecated credential source type.
-Deprecated: use Secret or CredentialProvider.<br/>
-          <br/>
-            <i>Enum</i>: Secret, CredentialProvider<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name identifies the deprecated credential source.
-Deprecated: use Secret or CredentialProvider.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is used by deprecated Secret references. It is ignored by
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialrefcredentialprovider">credentialProvider</a></b></td>
+<td>object</td>
+<td>
+
+CredentialProvider fetches credentials from an external provider.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>kind</b></td>
+<td>enum</td>
+<td>
+
+Kind identifies the deprecated credential source type.
+Deprecated: use Secret or CredentialProvider.
+
+<i>Enum</i>: Secret, CredentialProvider<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name identifies the deprecated credential source.
+Deprecated: use Secret or CredentialProvider.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is used by deprecated Secret references. It is ignored by
 deprecated CredentialProvider references.
-Deprecated: use Secret.Namespace instead.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialrefsecret">secret</a></b></td>
-        <td>object</td>
-        <td>
-          Secret references credentials stored in a Kubernetes Secret.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+Deprecated: use Secret.Namespace instead.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialrefsecret">secret</a></b></td>
+<td>object</td>
+<td>
+
+Secret references credentials stored in a Kubernetes Secret.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef.credentialProvider
@@ -2992,38 +3626,48 @@ Deprecated: use Secret.Namespace instead.<br/>
 CredentialProvider fetches credentials from an external provider.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the provider name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is reserved for namespace-scoped provider lookup. It is
-currently ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialrefcredentialproviderparameterskey">parameters</a></b></td>
-        <td>map[string]object</td>
-        <td>
-          Parameters supplies values rendered into the provider request's
-extraMetadata field.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the provider name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is reserved for namespace-scoped provider lookup. It is
+currently ignored.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationcredentialrefcredentialproviderparameterskey">parameters</a></b></td>
+<td>map[string]object</td>
+<td>
+
+Parameters supplies values rendered into the provider request's
+extraMetadata field.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef.credentialProvider.parameters[key]
@@ -3033,38 +3677,48 @@ Template must be set. Value and Template produce strings. The containing
 field documents the evaluation context and required result type for Cel.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cel</b></td>
-        <td>string</td>
-        <td>
-          Cel is a CEL expression evaluated in the context documented by the
-containing field.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>template</b></td>
-        <td>string</td>
-        <td>
-          Template is a Go template evaluated in the context documented by the
-containing field. Its rendered output is the value.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a static string emitted verbatim.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cel</b></td>
+<td>string</td>
+<td>
+
+Cel is a CEL expression evaluated in the context documented by the
+containing field.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>template</b></td>
+<td>string</td>
+<td>
+
+Template is a Go template evaluated in the context documented by the
+containing field. Its rendered output is the value.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a static string emitted verbatim.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.credentialRef.secret
@@ -3072,31 +3726,38 @@ containing field. Its rendered output is the value.<br/>
 Secret references credentials stored in a Kubernetes Secret.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the Secret name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the Secret namespace. When omitted, a SecurityProfile uses
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the Secret name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>namespace</b></td>
+<td>string</td>
+<td>
+
+Namespace is the Secret namespace. When omitted, a SecurityProfile uses
 its own namespace and a GlobalSecurityProfile uses the selected Pod's
-namespace.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+namespace.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.apiKey
@@ -3134,62 +3795,78 @@ is the token placeholder and replaces each matched value with the token:
         template: "{{ .Token }}"
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>targetHeader</b></td>
-        <td>string</td>
-        <td>
-          TargetHeader selects the request header replaced by the legacy
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>targetHeader</b></td>
+<td>string</td>
+<td>
+
+TargetHeader selects the request header replaced by the legacy
 single-header mode. It is used only when TargetHeaders is omitted and is
 otherwise ignored. When omitted in legacy mode, implementations preserve
-the legacy behavior of targeting Authorization.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationapikeytargetheaders">targetHeaders</a></b></td>
-        <td>object</td>
-        <td>
-          TargetHeaders enables selector mode and selects the request headers to
+the legacy behavior of targeting Authorization.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationapikeytargetheaders">targetHeaders</a></b></td>
+<td>object</td>
+<td>
+
+TargetHeaders enables selector mode and selects the request headers to
 replace. When set, Value supplies the value for every selected header and
-When, TargetHeader, and ValueTemplate are ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationapikeyvalue">value</a></b></td>
-        <td>object</td>
-        <td>
-          Value produces the replacement value for every header selected by
+When, TargetHeader, and ValueTemplate are ignored.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationapikeyvalue">value</a></b></td>
+<td>object</td>
+<td>
+
+Value produces the replacement value for every header selected by
 TargetHeaders. It is used only when TargetHeaders is set and is otherwise
 ignored. Its Cel branch must return a string and may read request, pod,
 profile, rule, inputs, token, header.name, and header.value. Its Template
-branch may read Request, Pod, Profile, Rule, Inputs, Token, and Header.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>valueTemplate</b></td>
-        <td>string</td>
-        <td>
-          ValueTemplate renders the replacement value in the legacy single-header
+branch may read Request, Pod, Profile, Rule, Inputs, Token, and Header.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>valueTemplate</b></td>
+<td>string</td>
+<td>
+
+ValueTemplate renders the replacement value in the legacy single-header
 mode. It is used only when TargetHeaders is omitted and is otherwise
-ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesactionstokentransformationapikeywhen">when</a></b></td>
-        <td>object</td>
-        <td>
-          When gates the legacy single-header mode on a matching request header.
-It is used only when TargetHeaders is omitted and is otherwise ignored.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+ignored.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionstokentransformationapikeywhen">when</a></b></td>
+<td>object</td>
+<td>
+
+When gates the legacy single-header mode on a matching request header.
+It is used only when TargetHeaders is omitted and is otherwise ignored.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.apiKey.targetHeaders
@@ -3199,32 +3876,39 @@ replace. When set, Value supplies the value for every selected header and
 When, TargetHeader, and ValueTemplate are ignored.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cel</b></td>
-        <td>string</td>
-        <td>
-          Cel selects request header names dynamically and must return a
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cel</b></td>
+<td>string</td>
+<td>
+
+Cel selects request header names dynamically and must return a
 list<string>. The expression may read the request, Pod, profile, rule,
-and inputs context, but not the retrieved token.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>names</b></td>
-        <td>[]string</td>
-        <td>
-          Names is a static set of request header names. Every selected header uses
-the same value rule.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+and inputs context, but not the retrieved token.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>names</b></td>
+<td>[]string</td>
+<td>
+
+Names is a static set of request header names. Every selected header uses
+the same value rule.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.apiKey.value
@@ -3236,38 +3920,48 @@ profile, rule, inputs, token, header.name, and header.value. Its Template
 branch may read Request, Pod, Profile, Rule, Inputs, Token, and Header.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>cel</b></td>
-        <td>string</td>
-        <td>
-          Cel is a CEL expression evaluated in the context documented by the
-containing field.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>template</b></td>
-        <td>string</td>
-        <td>
-          Template is a Go template evaluated in the context documented by the
-containing field. Its rendered output is the value.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is a static string emitted verbatim.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>cel</b></td>
+<td>string</td>
+<td>
+
+Cel is a CEL expression evaluated in the context documented by the
+containing field.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>template</b></td>
+<td>string</td>
+<td>
+
+Template is a Go template evaluated in the context documented by the
+containing field. Its rendered output is the value.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is a static string emitted verbatim.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].actions.tokenTransformation.apiKey.when
@@ -3276,29 +3970,36 @@ When gates the legacy single-header mode on a matching request header.
 It is used only when TargetHeaders is omitted and is otherwise ignored.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>header</b></td>
-        <td>string</td>
-        <td>
-          Header is the request header name to inspect.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>pattern</b></td>
-        <td>string</td>
-        <td>
-          Pattern is an RE2 regex evaluated against the header value.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>header</b></td>
+<td>string</td>
+<td>
+
+Header is the request header name to inspect.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>pattern</b></td>
+<td>string</td>
+<td>
+
+Pattern is an RE2 regex evaluated against the header value.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].match[]
@@ -3309,76 +4010,97 @@ inside a rule's match list are ORed; fields inside one RuleMatch are ANDed.
 Domains is required. All other fields further restrict the match.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>domains</b></td>
-        <td>[]string</td>
-        <td>
-          Domains lists target host names. Supports "*" (any domain) and
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>domains</b></td>
+<td>[]string</td>
+<td>
+
+Domains lists target host names. Supports "*" (any domain) and
 "*.example.com" wildcard prefixes.
 
 CAUTION: wildcard and specific domains can both match the same request
-under Default Continue semantics, so rule ordering matters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesmatchheaders">headers</a></b></td>
-        <td>[]object</td>
-        <td>
-          Headers lists header matches; multiple entries are ANDed.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>methods</b></td>
-        <td>[]enum</td>
-        <td>
-          Methods lists HTTP methods. Multiple entries are ORed.<br/>
-          <br/>
-            <i>Enum</i>: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT, TRACE<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesmatchpaths">paths</a></b></td>
-        <td>[]object</td>
-        <td>
-          Paths lists URL path matches. Multiple entries are ORed. The query
-string is excluded from path matching.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>ports</b></td>
-        <td>[]integer</td>
-        <td>
-          Ports lists destination ports. Multiple entries are ORed.
+under Default Continue semantics, so rule ordering matters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesmatchheaders">headers</a></b></td>
+<td>[]object</td>
+<td>
+
+Headers lists header matches; multiple entries are ANDed.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>methods</b></td>
+<td>[]enum</td>
+<td>
+
+Methods lists HTTP methods. Multiple entries are ORed.
+
+<i>Enum</i>: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT, TRACE<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesmatchpaths">paths</a></b></td>
+<td>[]object</td>
+<td>
+
+Paths lists URL path matches. Multiple entries are ORed. The query
+string is excluded from path matching.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>ports</b></td>
+<td>[]integer</td>
+<td>
+
+Ports lists destination ports. Multiple entries are ORed.
 
 An explicit authority port is used directly. Otherwise, HTTP defaults
-to 80 and HTTPS defaults to 443. Other schemes have no default port.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#securityprofilespecrulesmatchqueryparams">queryParams</a></b></td>
-        <td>[]object</td>
-        <td>
-          QueryParams lists URL query parameter matches. Multiple entries are
-ANDed. Values are percent-decoded before matching.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>schemes</b></td>
-        <td>[]string</td>
-        <td>
-          Schemes lists request schemes, such as "http" and "https". Multiple
-entries are ORed, and matching is case-insensitive.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+to 80 and HTTPS defaults to 443. Other schemes have no default port.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesmatchqueryparams">queryParams</a></b></td>
+<td>[]object</td>
+<td>
+
+QueryParams lists URL query parameter matches. Multiple entries are
+ANDed. Values are percent-decoded before matching.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>schemes</b></td>
+<td>[]string</td>
+<td>
+
+Schemes lists request schemes, such as "http" and "https". Multiple
+entries are ORed, and matching is case-insensitive.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].match[].headers[]
@@ -3387,41 +4109,50 @@ HeaderMatch filters a request by a single header's value.
 Multiple HeaderMatch entries in one RuleMatch are ANDed.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the header name (case-insensitive). Restricted to a safe
-subset of RFC 7230 tchar characters.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is the match operand. For Exact/Prefix it is compared
-verbatim; for Regex it is interpreted as an RE2 expression.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type selects the matching strategy. Defaults to Exact.<br/>
-          <br/>
-            <i>Enum</i>: Exact, Prefix, Regex<br/>
-            <i>Default</i>: Exact<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the header name (case-insensitive). Restricted to a safe
+subset of RFC 7230 tchar characters.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is the match operand. For Exact/Prefix it is compared
+verbatim; for Regex it is interpreted as an RE2 expression.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type selects the matching strategy. Defaults to Exact.
+
+<i>Enum</i>: Exact, Prefix, Regex<br/>
+<i>Default</i>: Exact<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].match[].paths[]
@@ -3429,32 +4160,38 @@ verbatim; for Regex it is interpreted as an RE2 expression.<br/>
 PathMatch specifies how to match the request URL path.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type selects the path matching strategy. Defaults to Prefix.<br/>
-          <br/>
-            <i>Enum</i>: Prefix, Exact, Regex<br/>
-            <i>Default</i>: Prefix<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is the match value. For Regex, it is an RE2 expression.<br/>
-        </td>
-        <td>true</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type selects the path matching strategy. Defaults to Prefix.
+
+<i>Enum</i>: Prefix, Exact, Regex<br/>
+<i>Default</i>: Prefix<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is the match value. For Regex, it is an RE2 expression.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.spec.rules[].match[].queryParams[]
@@ -3465,41 +4202,50 @@ Multiple QueryParamMatch entries in one RuleMatch are ANDed.
 When a key appears more than once, only its first value is matched.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the case-sensitive query parameter name.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>value</b></td>
-        <td>string</td>
-        <td>
-          Value is the match operand. For Exact/Prefix it is compared
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name is the case-sensitive query parameter name.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>value</b></td>
+<td>string</td>
+<td>
+
+Value is the match operand. For Exact/Prefix it is compared
 verbatim against the percent-decoded query value; for Regex it is
-interpreted as an RE2 expression.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>enum</td>
-        <td>
-          Type selects the matching strategy. Defaults to Exact.<br/>
-          <br/>
-            <i>Enum</i>: Exact, Prefix, Regex<br/>
-            <i>Default</i>: Exact<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+interpreted as an RE2 expression.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>enum</td>
+<td>
+
+Type selects the matching strategy. Defaults to Exact.
+
+<i>Enum</i>: Exact, Prefix, Regex<br/>
+<i>Default</i>: Exact<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.status
@@ -3507,31 +4253,37 @@ interpreted as an RE2 expression.<br/>
 SecurityProfileStatus captures the observed state of a SecurityProfile.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#securityprofilestatusconditions">conditions</a></b></td>
-        <td>[]object</td>
-        <td>
-          Conditions summarizes the profile's current state.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>observedGeneration</b></td>
-        <td>integer</td>
-        <td>
-          ObservedGeneration is the .metadata.generation last reconciled.<br/>
-          <br/>
-            <i>Format</i>: int64<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilestatusconditions">conditions</a></b></td>
+<td>[]object</td>
+<td>
+
+Conditions summarizes the profile's current state.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>observedGeneration</b></td>
+<td>integer</td>
+<td>
+
+ObservedGeneration is the .metadata.generation last reconciled.
+
+<i>Format</i>: int64<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
 ### SecurityProfile.status.conditions[]
@@ -3539,71 +4291,87 @@ SecurityProfileStatus captures the observed state of a SecurityProfile.
 Condition contains details for one aspect of the current state of this API Resource.
 
 <table>
-    <thead>
-        <tr>
-            <th>Field</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>lastTransitionTime</b></td>
-        <td>string</td>
-        <td>
-          lastTransitionTime is the last time the condition transitioned from one status to another.
-This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.<br/>
-          <br/>
-            <i>Format</i>: date-time<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>message</b></td>
-        <td>string</td>
-        <td>
-          message is a human readable message indicating details about the transition.
-This may be an empty string.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>reason</b></td>
-        <td>string</td>
-        <td>
-          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>lastTransitionTime</b></td>
+<td>string</td>
+<td>
+
+lastTransitionTime is the last time the condition transitioned from one status to another.
+This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+
+<i>Format</i>: date-time<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>message</b></td>
+<td>string</td>
+<td>
+
+message is a human readable message indicating details about the transition.
+This may be an empty string.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>reason</b></td>
+<td>string</td>
+<td>
+
+reason contains a programmatic identifier indicating the reason for the condition's last transition.
 Producers of specific condition types may define expected values and meanings for this field,
 and whether the values are considered a guaranteed API.
 The value should be a CamelCase string.
-This field may not be empty.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>status</b></td>
-        <td>enum</td>
-        <td>
-          status of the condition, one of True, False, Unknown.<br/>
-          <br/>
-            <i>Enum</i>: True, False, Unknown<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>type</b></td>
-        <td>string</td>
-        <td>
-          type of condition in CamelCase or in foo.example.com/CamelCase.<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>observedGeneration</b></td>
-        <td>integer</td>
-        <td>
-          observedGeneration represents the .metadata.generation that the condition was set based upon.
+This field may not be empty.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>status</b></td>
+<td>enum</td>
+<td>
+
+status of the condition, one of True, False, Unknown.
+
+<i>Enum</i>: True, False, Unknown<br/>
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>type</b></td>
+<td>string</td>
+<td>
+
+type of condition in CamelCase or in foo.example.com/CamelCase.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>observedGeneration</b></td>
+<td>integer</td>
+<td>
+
+observedGeneration represents the .metadata.generation that the condition was set based upon.
 For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-with respect to the current state of the instance.<br/>
-          <br/>
-            <i>Format</i>: int64<br/>
-            <i>Minimum</i>: 0<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
+with respect to the current state of the instance.
+
+<i>Format</i>: int64<br/>
+<i>Minimum</i>: 0<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
 </table>
 
