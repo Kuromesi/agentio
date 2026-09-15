@@ -48,8 +48,8 @@ func TestConfigDebugSnapshotIncludesEffectiveKindsInStableOrder(t *testing.T) {
 	}
 	wantOrder := []string{
 		"AgentioConfig//effective",
-		"EnvoyFilter/demo/patch-a",
 		"Gateway/agentio-system/egress",
+		"GatewayPatch/demo/patch-a",
 		"GlobalSecurityProfile//global-security",
 		"GlobalTrafficPolicy//global-traffic",
 		"SecurityProfile/demo/security",
@@ -71,7 +71,7 @@ func TestConfigDebugSnapshotIncludesEffectiveKindsInStableOrder(t *testing.T) {
 	}
 	wantCounts := map[string]int{
 		"AgentioConfig":         1,
-		"EnvoyFilter":           1,
+		"GatewayPatch":          1,
 		"Gateway":               1,
 		"GlobalSecurityProfile": 1,
 		"GlobalTrafficPolicy":   1,
@@ -109,7 +109,7 @@ func TestConfigDebugSnapshotUsesSourceToBreakItemSortTies(t *testing.T) {
 	}
 
 	got, err := configDebugSnapshotAt(configDebugTestTime, fixture.sources, fixture.compiler, configDebugFilter{
-		Kind: "EnvoyFilter",
+		Kind: "GatewayPatch",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -387,20 +387,20 @@ func TestConfigDebugSnapshotUsesProtoJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var agentio, envoyFilter string
+	var agentio, gatewayPatch string
 	for _, item := range got.Items {
 		switch item.Kind {
 		case "AgentioConfig":
 			agentio = string(item.Spec)
-		case "EnvoyFilter":
-			envoyFilter = string(item.Spec)
+		case "GatewayPatch":
+			gatewayPatch = string(item.Spec)
 		}
 	}
 	if !strings.Contains(agentio, `"sandboxIgnoredLabels":["drop-me"]`) || strings.Contains(agentio, "sandbox_ignored_labels") {
 		t.Fatalf("AgentioConfig is not proto JSON: %s", agentio)
 	}
-	if !strings.Contains(envoyFilter, `"connectTimeout":"3s"`) || strings.Contains(envoyFilter, "connect_timeout") {
-		t.Fatalf("EnvoyFilter patch value is not nested proto JSON: %s", envoyFilter)
+	if !strings.Contains(gatewayPatch, `"connectTimeout":"3s"`) || strings.Contains(gatewayPatch, "connect_timeout") {
+		t.Fatalf("GatewayPatch patch value is not nested proto JSON: %s", gatewayPatch)
 	}
 }
 

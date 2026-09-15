@@ -296,7 +296,7 @@ spec:
 	}
 }
 
-func TestDecodeTelemetryAgentioDocumentShapes(t *testing.T) {
+func TestDecodeTelemetryReadsMultipleDocumentsAndTargetRefShapes(t *testing.T) {
 	configMap := telemetryConfigMap("document-shapes", `
 apiVersion: telemetry.istio.io/v1alpha1
 kind: Telemetry
@@ -312,25 +312,22 @@ spec:
   - overrides:
     - disabled: true
 ---
-apiVersion: v1
-kind: List
-items:
-- apiVersion: telemetry.istio.io/v1
-  kind: Telemetry
-  metadata:
-    namespace: demo
-    name: plural
-  spec:
-    targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: egress
-    tracing:
-    - providers:
-      - name: trace
-    accessLogging:
-    - providers:
-      - name: envoy
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  namespace: demo
+  name: plural
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: egress
+  tracing:
+  - providers:
+    - name: trace
+  accessLogging:
+  - providers:
+    - name: envoy
 `)
 
 	got, err := decodeTelemetries(configMap)
@@ -358,7 +355,7 @@ items:
 	if !slices.Equal(plural.TargetGateways, []string{"demo/egress"}) ||
 		len(plural.Tracing) != 1 || plural.Tracing[0].Mode != model.TelemetryModeClientAndServer ||
 		len(plural.AccessLogging) != 1 || plural.AccessLogging[0].Mode != model.TelemetryModeClientAndServer {
-		t.Fatalf("List/plural targetRefs Telemetry = %+v", plural)
+		t.Fatalf("plural targetRefs Telemetry = %+v", plural)
 	}
 }
 

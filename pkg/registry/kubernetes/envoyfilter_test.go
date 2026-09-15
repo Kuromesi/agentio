@@ -89,7 +89,7 @@ spec:
 	}
 }
 
-func TestDecodeConfigMapEnvoyFiltersExpandsList(t *testing.T) {
+func TestDecodeConfigMapEnvoyFiltersReadsMultipleDocuments(t *testing.T) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "istio-system",
@@ -97,34 +97,49 @@ func TestDecodeConfigMapEnvoyFiltersExpandsList(t *testing.T) {
 			Labels:    map[string]string{KubeSourceConfigMapLabel: ""},
 		},
 		Data: map[string]string{KubeSourceDataKey: `
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: first
+  namespace: demo
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: egress
+  configPatches:
+  - applyTo: CLUSTER
+    patch:
+      operation: ADD
+      value:
+        name: first
+---
 apiVersion: v1
-kind: List
-items:
-- apiVersion: networking.istio.io/v1alpha3
-  kind: EnvoyFilter
-  metadata:
-    name: first
-    namespace: demo
-  spec:
-    targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: egress
-    configPatches:
-    - applyTo: CLUSTER
-      patch:
-        operation: ADD
-        value:
-          name: first
-- apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: ignored
+kind: ConfigMap
+metadata:
+  name: ignored
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: second
+  namespace: demo
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: egress
+  configPatches:
+  - applyTo: CLUSTER
+    patch:
+      operation: ADD
+      value:
+        name: second
 `},
 	}
 
 	got, err := decodeEnvoyFilters(configMap)
-	if err != nil || len(got) != 1 || got[0].Name != "first" {
+	if err != nil || len(got) != 2 || got[0].Name != "first" || got[1].Name != "second" {
 		t.Fatalf("decode = %+v, %v", got, err)
 	}
 }
@@ -201,7 +216,8 @@ func TestEnvoyFilterCollectionUsesRootNamespaceAndRetainsLastKnownGood(t *testin
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	configMaps := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, options...)
-	filters := newEnvoyFiltersCollection(configMaps, "agentio-system", options...)
+	filters := newGatewayPatchesCollection(configMaps, "agentio-system", options...)
+	waitForUpdates := patchUpdateBarrier(t, configMaps, filters)
 
 	valid := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -271,14 +287,19 @@ spec:
   priority: not-an-integer
 `
 	configMaps.ConditionalUpdateObject(broken)
-
-	eventually(t, func() bool {
-		items := filters.List()
-		return len(items) == 1 && items[0].ResourceVersion == "1"
-	}, "partially malformed replacement retains the complete last-known-good source and non-root input is ignored")
+	waitForUpdates()
+	if items := patchesFromSource(filters, "agentio-system/config-sources"); len(items) != 1 || items[0].ResourceVersion != "1" {
+		t.Fatalf("partially malformed replacement changed last-known-good patches: %#v", items)
+	}
+	if items := patchesFromSource(filters, "other-system/ignored"); len(items) != 0 {
+		t.Fatalf("non-root patches were selected: %#v", items)
+	}
 
 	configMaps.DeleteObject("agentio-system/config-sources")
-	eventually(t, func() bool { return len(filters.List()) == 0 }, "deleting the source removes its EnvoyFilters")
+	waitForUpdates()
+	if items := patchesFromSource(filters, "agentio-system/config-sources"); len(items) != 0 {
+		t.Fatalf("deleting the source retained its EnvoyFilters: %#v", items)
+	}
 }
 
 func TestDecodeDeployedIPv4DynamicForwardProxyEnvoyFilter(t *testing.T) {

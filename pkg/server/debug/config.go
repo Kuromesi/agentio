@@ -110,7 +110,7 @@ func configDebugSnapshotAt(
 	for _, patch := range sources.GatewayPatches.List() {
 		item, err := configDebugGatewayPatch(patch)
 		if err != nil {
-			return configDebugResponse{}, fmt.Errorf("adapt EnvoyFilter %q: %w", patch.ResourceName(), err)
+			return configDebugResponse{}, fmt.Errorf("adapt gateway patch %q: %w", patch.ResourceName(), err)
 		}
 		appendItem(item)
 	}

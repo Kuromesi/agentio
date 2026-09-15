@@ -204,10 +204,10 @@ func New(
 	r.AgentioConfig = krt.NewSingleton(func(ctx krt.HandlerContext) *model.AgentioConfiguration {
 		return effectiveAgentioConfiguration(ctx, configMaps, rootNamespace, agentioConfigMaps)
 	}, derivedOptions("agentio-config")...).AsCollection()
-	r.GatewayPatches = newEnvoyFiltersCollection(
+	r.GatewayPatches = newGatewayPatchesCollection(
 		configMaps,
 		rootNamespace,
-		derivedOptions("config-map-envoy-filters")...,
+		derivedOptions("config-map-gateway-patches")...,
 	)
 	r.Telemetry = newTelemetriesCollection(
 		configMaps,
