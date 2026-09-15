@@ -6,8 +6,10 @@ on:
       - master
     paths:
       - "manifests/charts/agentio/**"
-      - "manifests/charts/charts_test.go"
+      - "manifests/charts/*_test.go"
+      - "tools/agentio-chart-sync/**"
       - "tools/prepare-release-chart.sh"
+      - ".github/workflows/sync-sandbox-manager-agentio-chart.yml"
       - ".github/workflows/agentio-release.yml"
       - ".github/workflows/agentio-chart.yml"
   push:
@@ -15,8 +17,10 @@ on:
       - master
     paths:
       - "manifests/charts/agentio/**"
-      - "manifests/charts/charts_test.go"
+      - "manifests/charts/*_test.go"
+      - "tools/agentio-chart-sync/**"
       - "tools/prepare-release-chart.sh"
+      - ".github/workflows/sync-sandbox-manager-agentio-chart.yml"
       - ".github/workflows/agentio-release.yml"
       - ".github/workflows/agentio-chart.yml"
 
@@ -44,7 +48,7 @@ jobs:
       - name: Helm lint
         run: helm lint "$CHART"
       - name: Run chart render contract tests
-        run: go test ./manifests/charts -count=1
+        run: go test ./manifests/charts ./tools/agentio-chart-sync -count=1
       - name: Helm template — defaults
         run: helm template agentio "$CHART" >/dev/null
       - name: Helm template — sidecar profile

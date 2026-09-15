@@ -19,6 +19,18 @@ $ kubectl get crd sandboxes.agents.kruise.io
 $ kubectl rollout status deployment/agentiod --namespace agentio-system --timeout=5m
 ```
 
+## Install the chart integration
+
+The Agentio chart includes generated integrations for the OpenKruise
+sandbox-manager and sandbox-controller charts. Follow
+[OpenKruise chart integration](../../manifests/charts/OPENKRUISE.md) to generate or
+synchronize these bundles and configure their releases. The manager runs Agentiod;
+the controller supplies the `traffic-proxy` runtime injection configuration.
+
+For this installation, configure bootstrap addresses, the token audience, and the
+workload CA bundle consistently in both releases. The default workload bundle is
+`agentio-ca-root-cert`, and the token audience is `agentio-ca`.
+
 ## Understand the identity boundary
 
 Agentio treats `Sandbox` as the policy subject and its backing Pod as the network endpoint and authenticated attester. The controller accepts the binding only when the Pod UID reported by the data plane matches the identity derived from the Sandbox, and the Sandbox is running with an initialized runtime.
