@@ -23,6 +23,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
+
+	"github.com/openkruise/agentio/pkg/model"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 func managerChart(t *testing.T, source string) string {
@@ -102,7 +105,7 @@ func TestManagerMasterModesAndConfiguration(t *testing.T) {
 						t.Errorf("rendered manager missing %s", want)
 					}
 				}
-				for _, bad := range []string{"parent.invalid", "parent-epe", "mutatingwebhookconfigurations", "15017", "AGENTIO_NATIVE_SIDECARS"} {
+				for _, bad := range []string{"parent.invalid", "parent-epe", "agentgateway", "mutatingwebhookconfigurations", "15017", "AGENTIO_NATIVE_SIDECARS", "AGENTIO_INJECTOR_CONFIGMAP_NAME", "egress-gateway: |", "sidecar-injector"} {
 					if strings.Contains(all, bad) {
 						t.Errorf("rendered manager contains %s", bad)
 					}
@@ -113,16 +116,7 @@ func TestManagerMasterModesAndConfiguration(t *testing.T) {
 				if epe == "external" && !strings.Contains(all, "epe.external") {
 					t.Error("external EPE is missing")
 				}
-				if gateway == "gatewayAPI" {
-					for _, want := range []string{"egress-gateway: |", "agentgateway: |", "agentiod.custom-agentio.svc.cluster.example:15012"} {
-						if !strings.Contains(all, want) {
-							t.Errorf("gateway deployer missing %s", want)
-						}
-					}
-					if strings.Contains(all, "ztunnel: |") {
-						t.Error("gateway config retains Sandbox injection template")
-					}
-				}
+
 			})
 		}
 	}
@@ -198,6 +192,17 @@ func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 	}
 	if !foundToken {
 		t.Fatal("no bound service account token")
+	}
+	for _, key := range []string{"networking.istio.io/tunnel", "security.istio.io/tlsMode", "networking.agents.kruise.io/proxy-type"} {
+		if _, found := config.Labels[key]; found {
+			t.Errorf("runtime template retains legacy label %s", key)
+		}
+	}
+	workloadPod := &corev1.Pod{Spec: corev1.PodSpec{InitContainers: config.InitContainers}}
+	workloadPod.Labels = config.Labels
+	workload := podsource.BaseWorkloadFromPod("test-cluster", "cluster.local", workloadPod)
+	if workload.TunnelProtocol != model.TunnelProtocolHBONE || !workload.NativeTunnel {
+		t.Fatalf("Kruise runtime is not recognized as native HBONE: protocol=%s native=%t", workload.TunnelProtocol, workload.NativeTunnel)
 	}
 	if config.Labels["agentio.kruise.io/dataplane-mode"] != "none" {
 		t.Error("Sandbox must opt out of duplicate admission/CNI injection")
@@ -280,4 +285,51 @@ func TestNamespaceRewritePreservesLiteralsAndRootContext(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("namespace rewrite = %s, want %s", got, want)
 	}
+}
+
+func TestManagerBundleOmitsAgentgateway(t *testing.T) {
+	target := managerChart(t, repositoryAgentioChart(t))
+	if strings.Contains(readTestTree(t, target), "agentgateway") {
+		t.Fatal("Kruise manager bundle must omit agentgateway values, configuration, and template files")
+	}
+}
+
+func TestManagerDefaultsDisableInjectionAndGatewayDeployer(t *testing.T) {
+	target := managerChart(t, repositoryAgentioChart(t))
+	var values map[string]any
+	if err := yaml.Unmarshal([]byte(readTestFile(t, target, "values.yaml")), &values); err != nil {
+		t.Fatal(err)
+	}
+	agentio := values["agentio"].(map[string]any)
+	agentiod := agentio["agentiod"].(map[string]any)
+	if _, ok := agentiod["injector"]; ok {
+		t.Fatal("manager exposes injector configuration")
+	}
+	rendered := renderChart(t, target, map[string]any{"agentio": map[string]any{"enabled": true}})
+	for _, content := range rendered {
+		for _, doc := range strings.Split(content, "\n---") {
+			var object struct {
+				Kind string
+				Spec struct{ Template struct{ Spec corev1.PodSpec } }
+			}
+			if err := yaml.Unmarshal([]byte(doc), &object); err != nil {
+				t.Fatal(err)
+			}
+			if object.Kind != "Deployment" {
+				continue
+			}
+			for _, container := range object.Spec.Template.Spec.Containers {
+				if container.Name != "discovery" {
+					continue
+				}
+				for _, name := range []string{"AGENTIO_ENABLE_SIDECAR_INJECTOR", "AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR", "AGENTIO_ENABLE_GATEWAY_DEPLOYER"} {
+					if got := envValue(container.Env, name); got != "false" {
+						t.Errorf("%s = %q, want false", name, got)
+					}
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("missing Agentiod deployment")
 }

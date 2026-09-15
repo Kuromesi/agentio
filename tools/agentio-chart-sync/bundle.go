@@ -47,10 +47,10 @@ var (
 	helperNamePattern = regexp.MustCompile(`((?:define|include|template)\s+")(agentiod|gateway|epe)\.`)
 
 	sandboxManagerExcludedTemplates = map[string]struct{}{
-		"cni": {}, "ztunnel": {}, "NOTES.txt": {},
+		"cni": {}, "ztunnel": {}, "NOTES.txt": {}, "agentiod/injector.yaml": {},
 	}
 	sandboxManagerExcludedFiles = map[string]struct{}{
-		trafficProxyTemplateFile: {}, "ztunnel-injection-template.yaml": {},
+		trafficProxyTemplateFile: {}, "ztunnel-injection-template.yaml": {}, "agentgateway.yaml": {}, "egress-gateway.yaml": {},
 	}
 )
 
@@ -706,6 +706,7 @@ func prepareSandboxManagerValues(content []byte) ([]byte, error) {
 	}
 	root := document.Content[0]
 	removeYAMLMappingKeys(root, "profile", "cni", "ztunnel")
+	removeYAMLMappingKeys(yamlMappingValue(root, "egressGateway"), "agentgateway")
 	if global := yamlMappingValue(root, "global"); global != nil {
 		global.Content = append(global.Content,
 			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "namespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: "agentio-system"},
@@ -713,13 +714,7 @@ func prepareSandboxManagerValues(content []byte) ([]byte, error) {
 	}
 	if agentiod := yamlMappingValue(root, "agentiod"); agentiod != nil {
 		removeYAMLMappingKeys(agentiod, "trustedNodeServiceAccount", "trustPackage", "clientTrustBundle")
-		if injector := yamlMappingValue(agentiod, "injector"); injector != nil {
-			for i := len(injector.Content) - 2; i >= 0; i -= 2 {
-				if injector.Content[i].Value != "configMapName" {
-					removeYAMLMappingKeys(injector, injector.Content[i].Value)
-				}
-			}
-		}
+		removeYAMLMappingKeys(agentiod, "injector")
 	}
 
 	var out bytes.Buffer
@@ -793,31 +788,10 @@ func prepareSandboxManagerTemplate(rel string, content []byte) ([]byte, error) {
 		}
 		content = content[start:]
 		removeBlock("{{- if $useTrustPackage }}")
-		for _, name := range []string{"AGENTIO_TRUSTED_NODE_ACCOUNTS", "AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME", "AGENTIO_NATIVE_SIDECARS"} {
+		for _, name := range []string{"AGENTIO_TRUSTED_NODE_ACCOUNTS", "AGENTIO_INJECTOR_CONFIGMAP_NAME", "AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME", "AGENTIO_NATIVE_SIDECARS"} {
 			content = regexp.MustCompile(`(?m)^            - name: `+name+`\n              value: [^\n]*\n`).ReplaceAll(content, nil)
 		}
 		content = bytes.ReplaceAll(content, []byte("$clientTrustEnabled"), []byte("false"))
-	case "agentiod/injector.yaml":
-		removeBlock(`{{- if eq .Values.profile "sidecar" }}`)
-		content = regexp.MustCompile(`(?m)^\{\{- \$(ztunnelImage|proxyInitImage) :=[^\n]*\n`).ReplaceAll(content, nil)
-		for _, pair := range [][2]string{
-			{"      ztunnel: |", "      egress-gateway: |"},
-			{"    clientTrust:", "    global:"},
-			{"      proxyInit:", "      sds:"},
-			{"    pilot:", "{{- end }}"},
-		} {
-			start := bytes.Index(content, []byte(pair[0]))
-			if start < 0 {
-				return nil, fmt.Errorf("missing gateway config section %q", pair[0])
-			}
-			end := bytes.Index(content[start:], []byte(pair[1]))
-			if end < 0 {
-				return nil, fmt.Errorf("missing gateway config boundary %q", pair[1])
-			}
-			content = append(content[:start], content[start+end:]...)
-		}
-		content = regexp.MustCompile(`(?m)^      clusterTrustBundleName:[^\n]*\n`).ReplaceAll(content, nil)
-		content = bytes.ReplaceAll(content, []byte("defaultTemplates: [ztunnel]"), []byte("defaultTemplates: [egress-gateway]"))
 	case "_helpers.tpl":
 		for _, prefix := range []string{"agentio-cni.", "ztunnel.", "agentiod.webhookName", "agentiod.componentImage", "agentio.sidecarEnabled"} {
 			for {

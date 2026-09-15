@@ -635,9 +635,7 @@ func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *t
 	if config.Annotations["networking.agents.kruise.io/sidecar-proxy"] != "traffic-proxy" {
 		t.Fatalf("sidecar-proxy annotation = %q, want traffic-proxy", config.Annotations["networking.agents.kruise.io/sidecar-proxy"])
 	}
-	if config.Labels["networking.agents.kruise.io/proxy-type"] != "ztunnel" {
-		t.Fatalf("proxy-type label = %q, want ztunnel", config.Labels["networking.agents.kruise.io/proxy-type"])
-	}
+
 	if len(config.InitContainers) != 2 {
 		t.Fatalf("injected init container count = %d, want agentio-init and traffic-proxy", len(config.InitContainers))
 	}

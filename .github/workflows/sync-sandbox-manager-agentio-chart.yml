@@ -138,13 +138,15 @@ jobs:
             exit 1
           fi
 
-          for unsupported in cni ztunnel NOTES.txt; do
+          for unsupported in cni ztunnel NOTES.txt agentiod/injector.yaml; do
             if [[ -e "$target/templates/agentio/$unsupported" ]]; then
               echo "Generated sandbox-manager chart contains unsupported template: $unsupported" >&2
               exit 1
             fi
           done
           for unsupported in \
+            egress-gateway.yaml \
+            agentgateway.yaml \
             kruise-agents-traffic-proxy-injection.tpl \
             waypoint-injection-template.yaml \
             ztunnel-injection-template.yaml; do
@@ -182,7 +184,7 @@ jobs:
           ' "$controller_rendered" >"$traffic_proxy_json"
           jq -e '
             .annotations["networking.agents.kruise.io/sidecar-proxy"] == "traffic-proxy" and
-            .labels["networking.agents.kruise.io/proxy-type"] == "ztunnel" and
+            (.labels | has("networking.agents.kruise.io/proxy-type") | not) and
             ([.initContainers[].name] == ["agentio-init", "traffic-proxy"]) and
             (.initContainers[1].restartPolicy == "Always") and
             ([.initContainers[1].env[] | select(.name == "XDS_ADDRESS") | .value] ==

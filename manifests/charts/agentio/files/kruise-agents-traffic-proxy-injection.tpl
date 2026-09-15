@@ -4,10 +4,7 @@
     "networking.agents.kruise.io/sidecar-proxy": "traffic-proxy"
   },
   "labels": {
-    "networking.agents.kruise.io/proxy-type": "ztunnel",
-    "agentio.kruise.io/dataplane-mode": "none",
-    "networking.istio.io/tunnel": "http",
-    "security.istio.io/tlsMode": "disabled"
+    "agentio.kruise.io/dataplane-mode": "none"
   },
   "initContainers": [
     {

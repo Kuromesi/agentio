@@ -117,8 +117,6 @@ spec:
               value: {{ false | quote }}
             - name: AGENTIO_ENABLE_SIDECAR_INJECTOR
               value: {{ false | quote }}
-            - name: AGENTIO_INJECTOR_CONFIGMAP_NAME
-              value: {{ .Values.agentio.agentiod.injector.configMapName | quote }}
             - name: AGENTIO_ENABLE_GATEWAY_DEPLOYER
               value: {{ (eq .Values.agentio.egressGateway.mode "gatewayAPI") | quote }}
             - name: AGENTIO_GATEWAY_LEASE_NAME

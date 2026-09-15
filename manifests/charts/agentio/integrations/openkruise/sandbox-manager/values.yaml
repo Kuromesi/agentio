@@ -84,8 +84,6 @@ agentio:
       values: {}
       sourcesName: agentio-config-sources
       sources: ""
-    injector:
-      configMapName: agentio-sidecar-injector
     gatewayDeployer:
       leaseName: agentiod-gateway-deployer-leader
     networkPolicy:
@@ -93,23 +91,6 @@ agentio:
     env: {}
   egressGateway:
     mode: disabled
-    # Used only by gatewaydeployer for the agentio-agentgateway GatewayClass.
-    # Native file configuration comes from the Gateway's parametersRef ConfigMap.
-    agentgateway:
-      image: cr.agentgateway.dev/agentgateway:v1.5.0
-      # Enable the native CA client using Agentiod's address, trust bundle,
-      # token audience and the Gateway Pod's ServiceAccount identity.
-      # Native config must use tunnelProtocol: hboneGateway for HBONE termination.
-      ca:
-        enabled: false
-      terminationGracePeriodSeconds: 30
-      resources:
-        requests: {cpu: 100m, memory: 128Mi}
-        limits: {cpu: "2", memory: 1Gi}
-      nodeSelector: {}
-      tolerations: []
-      affinity: {}
-      topologySpreadConstraints: []
     nameOverride: agentio-egress
     fullnameOverride: ""
     image:

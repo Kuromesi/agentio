@@ -77,8 +77,16 @@ The four policy CRDs always render, even when `agentio.enabled` is false, and ca
 
 The manager bundle omits the standalone `profile`, CNI, node ztunnel, admission
 webhook, and application client-trust injection settings. Sandbox injection is
-owned by sandbox-controller. Gateway API mode retains the configuration and
-RBAC needed by Agentiod's gateway deployer, including the agentgateway template.
+owned by sandbox-controller. The manager does not provide an injector ConfigMap,
+injector values, or gateway injection template files. Admission injection,
+application client-trust injection, and the gateway deployer are disabled by
+default. The Kruise integration does not include agentgateway templates or settings.
+
+Static gateway mode works without injector configuration. Explicitly selecting
+`gatewayAPI` enables Agentiod's gateway deployer and requires an externally managed
+gateway template ConfigMap; this bundle does not install one. Its default name is
+`agentio-sidecar-injector`; an existing ConfigMap with another name can be selected
+through `agentio.agentiod.env.AGENTIO_INJECTOR_CONFIGMAP_NAME`.
 
 Configure the sandbox-controller release separately when changing bootstrap
 settings in the manager:
