@@ -199,14 +199,29 @@ func TestOwnedImageWorkflowExportsImmutableReferences(t *testing.T) {
 	}
 }
 
-func TestExternalDependencyUpdatesAreReleaseDriven(t *testing.T) {
+func TestExternalDependencyUpdatesUsePublishedImages(t *testing.T) {
 	workflow := loadWorkflow(t, "sync-agentio-deps.yml")
 	triggers := workflowTriggers(t, workflow)
 	if _, found := triggers["repository_dispatch"]; !found {
 		t.Error("dependency sync must accept component release dispatches")
 	}
-	if _, found := triggers["schedule"]; found {
-		t.Error("dependency sync must not follow source repositories on a schedule")
+	schedules := listValue(t, triggers, "schedule")
+	if len(schedules) != 1 || stringValue(t, schedules[0].(map[string]any), "cron") != "23 2 * * *" {
+		t.Error("dependency sync must reconcile published ztunnel images daily at 02:23 UTC")
+	}
+	sync := workflowJob(t, workflowJobs(t, workflow), "sync")
+	steps := listValue(t, sync, "steps")
+	lookupIndex := namedStepIndex(t, steps, "Resolve published ztunnel image")
+	if lookupIndex < 0 {
+		t.Fatal("scheduled dependency sync must resolve the published image")
+	}
+	lookup := steps[lookupIndex].(map[string]any)
+	if stringValue(t, lookup, "if") != "github.event_name == 'schedule'" {
+		t.Error("scheduled image lookup must not override component dispatch inputs")
+	}
+	lookupScript := stringValue(t, lookup, "run")
+	if !strings.Contains(lookupScript, `crane digest "docker.io/openkruise/ztunnel:${sha}"`) {
+		t.Error("scheduled dependency sync must use the published image for the exact source commit")
 	}
 
 	data, err := os.ReadFile(filepath.Join("..", "..", "agentio.deps"))
