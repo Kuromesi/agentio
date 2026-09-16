@@ -180,15 +180,20 @@ func New(
 	})
 	r.delegationPodsByNodePrincipal = newDelegationTargetIndex(pods, options.TrustDomain)
 	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, derivedOptions("sandboxes-disabled")...)
+	securityProfiles := []krt.Collection[model.SecurityProfile]{
+		newSecurityProfileModels(securityProfileObjects, globalSecurityObjects, derivedOptions),
+	}
 	var sandboxManaged func(*corev1.Pod) bool
 	if options.SandboxMode {
 		sandboxManaged = kruise.OwnsPod
-		r.Sandboxes = kruise.NewSource(kubeClient, pods, kruise.Options{
+		sandboxSource := kruise.NewSource(kubeClient, pods, kruise.Options{
 			ClusterID:     options.ClusterID,
 			TrustDomain:   options.TrustDomain,
 			DebounceAfter: options.DebounceAfter,
 			DebounceMax:   options.DebounceMax,
-		}, stop).Sandboxes
+		}, stop)
+		r.Sandboxes = sandboxSource.Sandboxes
+		securityProfiles = append(securityProfiles, sandboxSource.SecurityProfiles)
 	}
 	// Every eligible Pod remains a communication endpoint, regardless of the
 	// runtime it hosts or the runtime's lifecycle.
@@ -234,7 +239,7 @@ func New(
 	)
 
 	r.TrafficPolicies = newTrafficPolicyModels(trafficPolicyObjects, globalTrafficObjects, derivedOptions)
-	r.SecurityProfiles = newSecurityProfileModels(securityProfileObjects, globalSecurityObjects, derivedOptions)
+	r.SecurityProfiles = krt.JoinCollection(securityProfiles, derivedOptions("all-security-profiles")...)
 
 	r.collections = []krt.Syncer{
 		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways,

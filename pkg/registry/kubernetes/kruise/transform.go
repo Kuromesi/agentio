@@ -15,6 +15,10 @@
 package kruise
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"maps"
 	"strings"
 
@@ -23,11 +27,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/openkruise/agentio/pkg/krt"
+	agentlog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/model"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 const podLabelCreatedBy = agentsv1alpha1.InternalPrefix + "created-by"
+
+var log = agentlog.New("registry")
 
 // isPodOwnedInternalLabel reports the Kruise-internal labels that deliberately
 // describe the backing Pod and may therefore override Sandbox CR metadata.
@@ -148,6 +155,52 @@ func newSandboxes(
 				Labels:    mergeSandboxLabels(sandbox.Labels, podLabels),
 			}
 		}, options...)
+}
+
+// newSecurityProfiles projects owned policy inputs independently of runtime metadata.
+func newSecurityProfiles(
+	sandboxes krt.IndexCollection[string, *agentsv1alpha1.Sandbox],
+	options ...krt.CollectionOption,
+) krt.Collection[model.SecurityProfile] {
+	return krt.NewCollection(sandboxes, func(_ krt.HandlerContext, group krt.IndexObject[string, *agentsv1alpha1.Sandbox]) *model.SecurityProfile {
+		if len(group.Objects) != 1 || !isPolicySubject(group.Objects[0]) {
+			return nil
+		}
+		sandbox := group.Objects[0]
+		rules, err := sandboxSecurityRules(sandbox)
+		if err != nil {
+			log.Warn("invalid Sandbox security rules; omitting inline profile",
+				"namespace", sandbox.Namespace, "sandbox", sandbox.Name, "error", err)
+			return nil
+		}
+		if len(rules) == 0 {
+			return nil
+		}
+		return &model.SecurityProfile{
+			Dedicated: true, SandboxUID: group.Key, Namespace: sandbox.Namespace, Name: sandbox.Name,
+			Spec: agentsv1alpha1.SecurityProfileSpec{Rules: rules},
+		}
+	}, options...)
+}
+
+func sandboxSecurityRules(sandbox *agentsv1alpha1.Sandbox) ([]agentsv1alpha1.SecurityRule, error) {
+	raw := sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules]
+	if raw == "" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var rules []agentsv1alpha1.SecurityRule
+	if err := decoder.Decode(&rules); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", agentsv1alpha1.AnnotationSecurityRules, err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s must contain a single JSON array", agentsv1alpha1.AnnotationSecurityRules)
+	}
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("%s contains no rules", agentsv1alpha1.AnnotationSecurityRules)
+	}
+	return rules, nil
 }
 
 func isPolicySubject(sandbox *agentsv1alpha1.Sandbox) bool {

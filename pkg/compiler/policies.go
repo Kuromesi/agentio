@@ -82,11 +82,13 @@ func newPolicyCollections(
 			compiled, err := policy.CompileTrafficPolicy(ctx, source, trafficPolicyInputs)
 			if err != nil {
 				failures.record("TrafficPolicy", source.ResourceName(), err)
-				ctx.DiscardResult()
+				if !source.Dedicated {
+					ctx.DiscardResult()
+				}
 				return nil
 			}
 			failures.clear("TrafficPolicy", source.ResourceName())
-			if compiled.Attachment.Target.SandboxUID != "" {
+			if compiled.Attachment != nil && compiled.Attachment.Target.SandboxUID != "" {
 				// Sandbox-specific policies have no legacy Workload projection.
 				compiled.AsAuthorization = nil
 			}
@@ -103,7 +105,9 @@ func newPolicyCollections(
 			compiled, err := policy.CompileSNIProfile(profile)
 			if err != nil {
 				failures.record("SecurityProfile", profile.ResourceName(), err)
-				ctx.DiscardResult()
+				if !profile.Dedicated {
+					ctx.DiscardResult()
+				}
 				return nil
 			}
 			failures.clear("SecurityProfile", profile.ResourceName())
@@ -124,7 +128,7 @@ func newPolicyCollections(
 	trafficAttachments := krt.NewManyCollection(trafficPolicies,
 		func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []policy.PolicyAttachment {
 			attachments := make([]policy.PolicyAttachment, 0, 3)
-			if inputs.SandboxMode || compiled.Attachment.Target.SandboxUID == "" {
+			if compiled.Attachment != nil && (inputs.SandboxMode || compiled.Attachment.Target.SandboxUID == "") {
 				attachments = append(attachments, *compiled.Attachment)
 			}
 			for _, authorization := range compiled.AsAuthorization {
@@ -206,6 +210,10 @@ func newTrafficPolicyResources(policies krt.Collection[policy.CompiledTrafficPol
 }
 
 func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Resource, error) {
+	if compiled.Attachment == nil {
+		// Sandbox-owned policies are emitted only inside their owner's resource.
+		return nil, nil
+	}
 	resources := make([]model.Resource, 0, 3)
 	value, err := marshalDeterministicAny(compiled.Policy)
 	if err != nil {

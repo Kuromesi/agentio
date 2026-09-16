@@ -1023,8 +1023,8 @@ func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testin
 	if _, found := failures["Bindings/"+policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID)]; !found {
 		t.Fatalf("Sandbox failure is missing: %v", failures)
 	}
-	if manifest := manifestAt(t, compiler, workload.UID); manifest != nil {
-		t.Fatal("invalid Sandbox policy binding must withdraw the manifest")
+	if manifest := manifestAt(t, compiler, workload.UID); manifest == nil {
+		t.Fatal("an unresolved policy reference must not withdraw the Sandbox")
 	}
 }
 

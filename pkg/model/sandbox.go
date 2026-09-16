@@ -17,7 +17,6 @@ package model
 import (
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -69,7 +68,8 @@ const (
 // Attester identifies the one Workload currently hosting a Sandbox.
 type Attester struct{ WorkloadUID string }
 
-// Sandbox is an explicitly discovered runtime and its policy configuration.
+// Sandbox is an explicitly discovered runtime and its shared policy references.
+// Owned policies enter the TrafficPolicy and SecurityProfile input collections.
 type Sandbox struct {
 	State      SandboxState
 	Attester   *Attester
@@ -77,9 +77,6 @@ type Sandbox struct {
 	Namespace  string
 	Labels     map[string]string
 	PolicyRefs []PolicyRef
-	// TrafficPolicy is owned by this Sandbox and compiled directly into its xDS payload.
-	// Nil means no inline policy. Shared policies are selected through PolicyRefs and labels.
-	TrafficPolicy *TrafficPolicyRules
 }
 
 func (s Sandbox) Validate() error {
@@ -116,7 +113,6 @@ func (s Sandbox) Equals(other Sandbox) bool {
 		s.UID == other.UID &&
 		s.Namespace == other.Namespace &&
 		attestersEqual(s.Attester, other.Attester) &&
-		reflect.DeepEqual(s.TrafficPolicy, other.TrafficPolicy) &&
 		(s.PolicyRefs == nil) == (other.PolicyRefs == nil) &&
 		slices.Equal(s.PolicyRefs, other.PolicyRefs) &&
 		(s.Labels == nil) == (other.Labels == nil) &&

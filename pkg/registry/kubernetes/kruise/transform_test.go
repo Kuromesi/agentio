@@ -16,6 +16,7 @@ package kruise
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -28,6 +29,107 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
+
+func TestSandboxSecurityRulesProjection(t *testing.T) {
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	options := []krt.CollectionOption{krt.WithStop(stop)}
+	source := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "demo", Name: "sandbox", UID: "object-uid",
+		Labels: map[string]string{agentsv1alpha1.LabelSandboxID: "delivery-uid"},
+	}}
+	objects := krt.NewStaticCollection[*agentsv1alpha1.Sandbox](nil, nil, options...)
+	pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, options...)
+	groups := newSandboxesByUID(objects).AsCollection(options...)
+	sandboxes := newSandboxes(groups, pods, newPodsByUID(pods), "cluster", options...)
+	profiles := newSecurityProfiles(groups, options...)
+	for _, step := range []struct {
+		raw  string
+		host string
+	}{
+		{},
+		{raw: `[{"name":"inline","match":[{"domains":["first.example"]}],"actions":{"block":{}}}]`, host: "first.example"},
+		{raw: `[{"name":`},
+		{raw: `[{"name":"inline","match":[{"domains":["second.example"]}],"actions":{"block":{}}}]`, host: "second.example"},
+		{},
+	} {
+		changed := source.DeepCopy()
+		// Runtime metadata must progress even when the annotation cannot be decoded.
+		changed.Labels["revision"] = step.raw
+		changed.Annotations = map[string]string{"unrelated": "drop"}
+		var wantAnnotations map[string]string
+		var want []agentsv1alpha1.SecurityRule
+		if step.raw != "" {
+			changed.Annotations[agentsv1alpha1.AnnotationSecurityRules] = step.raw
+			wantAnnotations = map[string]string{agentsv1alpha1.AnnotationSecurityRules: step.raw}
+		}
+		if step.host != "" {
+			want = []agentsv1alpha1.SecurityRule{{
+				Name: "inline", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{step.host}}},
+				Actions: agentsv1alpha1.SecurityRuleActions{Block: &agentsv1alpha1.BlockAction{}},
+			}}
+		}
+		stripped, err := stripSandbox(changed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj := stripped.(*agentsv1alpha1.Sandbox)
+		if !reflect.DeepEqual(obj.Annotations, wantAnnotations) {
+			t.Fatalf("stripped annotations = %v", obj.Annotations)
+		}
+		changed.Annotations[agentsv1alpha1.AnnotationSecurityRules] = "mutated"
+		if obj.Annotations[agentsv1alpha1.AnnotationSecurityRules] != step.raw {
+			t.Fatal("stripped annotations alias the original object")
+		}
+		objects.UpdateObject(obj)
+		if !sandboxes.WaitUntilSynced(stop) || !profiles.WaitUntilSynced(stop) {
+			t.Fatal("Sandbox collection did not sync")
+		}
+		err = wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
+			current := sandboxes.GetKey("delivery-uid")
+			profile := profiles.GetKey(model.SandboxSecurityProfileName("delivery-uid"))
+			validProfile := profile == nil && want == nil
+			if profile != nil {
+				validProfile = profile.Dedicated && profile.SandboxUID == "delivery-uid" && profile.Namespace == "demo" &&
+					reflect.DeepEqual(profile.Spec.Rules, want)
+			}
+			return current != nil && current.Attester == nil && current.Labels["revision"] == step.raw && validProfile, nil
+		})
+		if err != nil {
+			t.Fatalf("annotation %q: Sandbox = %+v, error = %v", step.raw, sandboxes.GetKey("delivery-uid"), err)
+		}
+	}
+	source.Annotations = map[string]string{agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["last.example"]}]}]`}
+	objects.UpdateObject(source)
+	if err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
+		return profiles.GetKey(model.SandboxSecurityProfileName("delivery-uid")) != nil, nil
+	}); err != nil {
+		t.Fatal("inline profile did not recover before deletion")
+	}
+	objects.DeleteObject("demo/sandbox")
+	err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
+		return sandboxes.GetKey("delivery-uid") == nil && profiles.GetKey(model.SandboxSecurityProfileName("delivery-uid")) == nil, nil
+	})
+	if err != nil {
+		t.Fatal("deleted Sandbox retained inline rules")
+	}
+}
+
+func TestSandboxSecurityRulesRejectInvalidAnnotation(t *testing.T) {
+	for _, raw := range []string{
+		`[]`, `null`, `{}`, `[{"name":`,
+		`[{"unknown":true}]`,
+		`[{"match":[{"domains":["api.example"],"unknown":true}]}]`,
+		`[{"match":[{"domains":["api.example"]}]}] []`,
+	} {
+		sandbox := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{agentsv1alpha1.AnnotationSecurityRules: raw},
+		}}
+		if _, err := sandboxSecurityRules(sandbox); err == nil {
+			t.Errorf("invalid security-rules accepted: %s", raw)
+		}
+	}
+}
 
 func TestSandboxUIDHonorsDeliveryIdentity(t *testing.T) {
 	for _, test := range []struct {

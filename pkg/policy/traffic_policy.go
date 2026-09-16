@@ -43,8 +43,23 @@ func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
 }
 
 // CompileTrafficPolicy preserves rule actions and both directions in one
-// payload. All policies, including global/namespace baselines, use attachments.
+// payload. Shared policies use attachments; dedicated policies are fetched by their Sandbox.
 func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, inputs TrafficPolicyInputs) (*CompiledTrafficPolicy, error) {
+	if source.Dedicated {
+		if strings.TrimSpace(source.SandboxUID) == "" {
+			return nil, fmt.Errorf("dedicated traffic policy requires a Sandbox UID")
+		}
+		payload, err := CompileTrafficPolicyRules(ctx, model.TrafficPolicyRules{
+			Ingress: source.Spec.Ingress, Egress: source.Spec.Egress,
+		}, source.Namespace, inputs)
+		if err != nil {
+			return nil, err
+		}
+		return &CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{
+			Name: source.ResourceName(), Policy: payload,
+		}}, nil
+	}
+
 	uid, err := policySandboxUID(source.SandboxUID, source.Spec.Selector)
 	if err != nil {
 		return nil, err

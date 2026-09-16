@@ -572,21 +572,12 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	workload := testWDSWorkload("client", "", "10.1.0.2")
 
 	workloads := krt.NewStaticCollection(nil, []model.Workload{workload}, options("workloads")...)
-	resolved := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *model.Resource {
-		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
-		if selected == nil || !selected.Valid() {
-			return nil
-		}
-		payload, err := workloadSNIPolicy(ctx, selected.PolicyNames(model.PolicyKindSNIPolicy), payloads)
-		if err != nil {
-			return nil
-		}
-		resources, err := buildWDSAddress(wdsProjection{Workload: workload, SNIPolicy: payload})
-		if err != nil {
-			t.Errorf("build Workload: %v", err)
-		}
-		return resources
-	}, options("workload-resources")...)
+	inputs := validCompilerInputs(stop)
+	inputs.Workloads = workloads
+	failures := newFailureRecorder()
+	metadata := krt.NewStatic[workloadMetadataConfiguration](nil, true, options("metadata")...)
+	resolved := newWorkloadResources(inputs, newBaseIndexes(inputs), metadata, inputs.Gateways,
+		policyCollections{policyBindings: bindings, sniPolicies: payloads}, failures, options)
 	getPolicy := func() *extensionsv1.SniTrafficPolicy {
 		resources := resolved.List()
 		if len(resources) == 0 {
@@ -607,8 +598,15 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		}
 		return nil
 	}
-	var changes atomic.Int64
-	resolved.RegisterBatch(func(events []krt.Event[model.Resource]) { changes.Add(int64(len(events))) }, false)
+	var changes, withdrawals atomic.Int64
+	resolved.RegisterBatch(func(events []krt.Event[model.Resource]) {
+		changes.Add(int64(len(events)))
+		for _, event := range events {
+			if event.New == nil {
+				withdrawals.Add(1)
+			}
+		}
+	}, false)
 	binding := func(names ...string) policy.Bindings {
 		return policy.Bindings{TargetKind: policy.PolicyTargetWorkload, TargetUID: workload.UID, Groups: []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
 	}
@@ -634,10 +632,11 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	if !resolved.WaitUntilSynced(stop) {
 		t.Fatal("sync failed")
 	}
-	if getPolicy() != nil {
-		t.Fatal("published incomplete policy")
+	if getPolicy() != nil || len(resolved.List()) != 1 {
+		t.Fatal("missing policies must not suppress the Workload")
 	}
 	payloads.UpdateObject(payload("first", "first.example"))
+	expect("first.example")
 	payloads.UpdateObject(payload("second", "second.example"))
 	expect("second.example", "first.example")
 	// Rules-only edits must propagate without a binding event.
@@ -651,18 +650,25 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	if changes.Load() != before {
 		t.Fatal("unrelated payload invalidated inline policy")
 	}
-	// Missing replacement withdraws the projection and watches the new key.
-	bindings.UpdateObject(binding("replacement"))
-	eventually(t, func() bool { return len(resolved.List()) == 0 }, "incomplete policy withdraws Workload")
+	// A missing replacement is omitted while unrelated policies keep enforcing.
+	bindings.UpdateObject(binding("second", "replacement"))
+	eventually(t, func() bool { return failures.snapshot()["WDSWorkload/"+workload.UID] != "" }, "missing replacement records a failure")
+	expect("second.example")
 	payloads.UpdateObject(payload("replacement", "replacement.example"))
-	expect("replacement.example")
+	expect("second.example", "replacement.example")
 	// Removing the attachment removes the extension instead of retaining old rules.
 	bindings.UpdateObject(binding())
 	eventually(t, func() bool { return getPolicy() == nil }, "policy removal")
 	bindings.UpdateObject(binding("first"))
 	expect("updated.example")
 	bindings.DeleteObject(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID))
-	eventually(t, func() bool { return getPolicy() == nil }, "Workload binding deletion")
+	eventually(t, func() bool { return getPolicy() == nil && len(resolved.List()) == 1 }, "binding removal preserves Workload networking")
+	settle()
+	if withdrawals.Load() != 0 {
+		t.Fatal("policy changes withdrew the Workload")
+	}
+	workloads.DeleteObject(workload.UID)
+	eventually(t, func() bool { return len(resolved.List()) == 0 }, "Workload deletion")
 }
 
 func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadAttachments(t *testing.T) {

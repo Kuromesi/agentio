@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -213,5 +215,62 @@ func TestDelegatedAuthorizationUsesNodePrincipalIndex(t *testing.T) {
 	}
 	if err := registry.DelegatedIdentityAuthorizer().Authorize(ctx, caller, requested); err != nil {
 		t.Fatalf("Authorize denied valid delegation: %v", err)
+	}
+}
+
+func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
+	for _, sandboxMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sandboxMode=%t", sandboxMode), func(t *testing.T) {
+			ctx := t.Context()
+			sandbox := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+				Name: "same-name", Namespace: "tenant", UID: "object-uid",
+				Labels:      map[string]string{agentsv1alpha1.LabelSandboxID: "sandbox-id"},
+				Annotations: map[string]string{agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["inline.example"]}]}]`},
+			}}
+			shared := &agentsv1alpha1.SecurityProfile{ObjectMeta: metav1.ObjectMeta{Name: sandbox.Name, Namespace: sandbox.Namespace},
+				Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"shared.example"}}}}}}}
+			client := &fakeKubeClient{
+				Client: kube.NewFakeClient(shared),
+				watcher: newFakeGatewayCRDWatcher(securityProfileResource,
+					agentsv1alpha1.GroupVersion.WithResource("sandboxes")),
+			}
+			// Use the generated client's GVR; the generic tracker guesses "sandboxs".
+			if _, err := client.AgentsAPI().AgentsV1alpha1().Sandboxes("tenant").Create(ctx, sandbox, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			r, err := New(client, Options{ClusterID: "test", TrustDomain: "cluster.local",
+				RootNamespace: "agentio-system", SandboxMode: sandboxMode}, ctx.Done())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Run(ctx.Done())
+			eventually(t, r.HasSynced, "registry synchronization")
+			sharedKey := "namespaced/tenant/same-name"
+			if p := r.SecurityProfiles.GetKey(sharedKey); p == nil || p.Dedicated {
+				t.Fatal("shared profile missing or replaced by inline profile")
+			}
+			inlineKey := model.SandboxSecurityProfileName("sandbox-id")
+			profile := r.SecurityProfiles.GetKey(inlineKey)
+			if !sandboxMode {
+				if profile != nil {
+					t.Fatal("Sandbox rules entered ordinary mode")
+				}
+				return
+			}
+			if profile == nil || !profile.Dedicated || profile.SandboxUID != "sandbox-id" ||
+				profile.Spec.Rules[0].Match[0].Domains[0] != "inline.example" {
+				t.Fatalf("owned profile not joined into SecurityProfiles: %+v", profile)
+			}
+			sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules] = `[{"name":`
+			sandbox.Status.Phase = agentsv1alpha1.SandboxPending
+			if _, err := client.AgentsAPI().AgentsV1alpha1().Sandboxes("tenant").Update(ctx, sandbox, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, func() bool {
+				current := r.Sandboxes.GetKey("sandbox-id")
+				return r.SecurityProfiles.GetKey(inlineKey) == nil && r.SecurityProfiles.GetKey(sharedKey) != nil &&
+					current != nil && current.State == model.SandboxStatePending
+			}, "invalid annotation removes only its own profile while runtime state advances")
+		})
 	}
 }
