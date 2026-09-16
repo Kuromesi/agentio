@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 // Package driver defines the Kubernetes orchestration side of a scenario.
 // Load processes do not import this package or concrete scenario driver packages.
@@ -9,19 +20,24 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/openkruise/agentio/bench/xds/loadapi"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/openkruise/agentio/bench/xds/loadapi"
 )
 
+// RunLabel identifies Kubernetes resources owned by a benchmark run.
 const RunLabel = "bench.agentio.io/run"
 
+// Resource identifies a Kubernetes object tracked for cleanup.
 type Resource struct {
 	GVR       schema.GroupVersionResource `json:"gvr"`
 	Namespace string                      `json:"namespace,omitempty"`
 	Name      string                      `json:"name"`
 }
+
+// Environment provides the clients and resource ownership of a benchmark run.
 type Environment struct {
 	Namespace string
 	Pods      []string
@@ -32,7 +48,7 @@ type Environment struct {
 	Track func(Resource)
 }
 
-// Each run gets a separate Driver; its methods are called sequentially.
+// Driver orchestrates one run; its methods are called sequentially.
 // Scenario parameters are opaque to the runner.
 type Driver interface {
 	// ClientConfig turns run options into the configuration for one load Pod.

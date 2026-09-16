@@ -35,7 +35,10 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 			Rules: []agentsv1alpha1.SecurityRule{{
 				Name: "hosts",
 				Match: []agentsv1alpha1.RuleMatch{
-					{Domains: []string{"API.Example.COM.", "*.Example.com", "api.example.com"}, Schemes: []string{"HTTPS"}},
+					{
+						Domains: []string{"API.Example.COM.", "*.Example.com", "api.example.com"},
+						Schemes: []string{"HTTPS"},
+					},
 					{Domains: []string{"http-only.example.com"}, Schemes: []string{"http"}},
 				},
 			}},
@@ -49,7 +52,8 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	}
 	got := compiled.Policy.GetRules()[0]
 	want := []string{"api.example.com", "*.example.com"}
-	if got.GetAction() != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION || len(got.GetMatch().GetSni()) != len(want) {
+	if got.GetAction() != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION ||
+		len(got.GetMatch().GetSni()) != len(want) {
 		t.Fatalf("SNI rule = %+v", got)
 	}
 	for i := range want {
@@ -77,6 +81,8 @@ func securitySpec(priority *int32, selector map[string]string) agentsv1alpha1.Se
 	return agentsv1alpha1.SecurityProfileSpec{
 		Priority: priority,
 		Selector: metav1.LabelSelector{MatchLabels: selector},
-		Rules:    []agentsv1alpha1.SecurityRule{{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
+		Rules: []agentsv1alpha1.SecurityRule{
+			{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}},
+		},
 	}
 }

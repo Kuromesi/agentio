@@ -28,7 +28,11 @@ type CompiledAuthorization = CompiledPolicy[*securityv1.Authorization]
 
 // TrafficPolicyAsAuthorizations projects one resolved policy into the legacy
 // wire format. Ordering and default decisions remain the data plane's job.
-func TrafficPolicyAsAuthorizations(compiled CompiledTrafficPolicy, source model.TrafficPolicy, rootNamespace string) ([]CompiledAuthorization, error) {
+func TrafficPolicyAsAuthorizations(
+	compiled CompiledTrafficPolicy,
+	source model.TrafficPolicy,
+	rootNamespace string,
+) ([]CompiledAuthorization, error) {
 	name, namespace, priority := source.Name, source.Namespace, source.Spec.Priority
 	scope := securityv1.Scope_NAMESPACE
 	if source.Global {
@@ -63,15 +67,18 @@ func TrafficPolicyAsAuthorizations(compiled CompiledTrafficPolicy, source model.
 			return nil, err
 		}
 		authorization := &securityv1.Authorization{
-			Name: name + "-" + direction.suffix, Namespace: namespace,
-			Scope: scope, Action: securityv1.Action_ALLOW,
+			Name:           name + "-" + direction.suffix,
+			Namespace:      namespace,
+			Scope:          scope,
+			Action:         securityv1.Action_ALLOW,
 			AuthExtensions: []*securityv1.Extension{extension},
 		}
 		for _, rule := range direction.rules.Rules {
 			authorization.Groups = append(authorization.Groups, asAuthorizationGroup(rule))
 		}
 		result = append(result, CompiledAuthorization{
-			Name: namespace + "/" + authorization.Name, Policy: authorization,
+			Name:   namespace + "/" + authorization.Name,
+			Policy: authorization,
 		})
 	}
 	return result, nil
@@ -138,7 +145,10 @@ func authorizationPortRanges(ports []*securityv1.TrafficPolicy_PortMatch) []*sec
 		if port.EndPort != nil {
 			end = *port.EndPort
 		}
-		result = append(result, &securityv1.PortRange{Start: start, End: end, Protocol: securityv1.Protocol(port.Protocol)})
+		result = append(
+			result,
+			&securityv1.PortRange{Start: start, End: end, Protocol: securityv1.Protocol(port.Protocol)},
+		)
 	}
 	return result
 }

@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package driver
 
@@ -27,8 +38,15 @@ func TestGeneratedPolicyCompilesIntoExpectedRound(t *testing.T) {
 	endpoints := krt.NewStaticCollection[*discoveryv1.EndpointSlice](nil, nil, options...)
 	pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, options...)
 	inputs := policycompiler.TrafficPolicyInputs{
-		RootNamespace: "agentio-system", Services: services, EndpointSlices: endpoints, Pods: pods,
-		ServicesByNamespace: krt.NewIndex(services, "services", func(s *corev1.Service) []string { return []string{s.Namespace} }),
+		RootNamespace:  "agentio-system",
+		Services:       services,
+		EndpointSlices: endpoints,
+		Pods:           pods,
+		ServicesByNamespace: krt.NewIndex(
+			services,
+			"services",
+			func(s *corev1.Service) []string { return []string{s.Namespace} },
+		),
 		EndpointSlicesByService: krt.NewIndex(endpoints, "endpoints", func(e *discoveryv1.EndpointSlice) []string {
 			return []string{e.Namespace + "/" + e.Labels[discoveryv1.LabelServiceName]}
 		}),
@@ -65,7 +83,11 @@ func TestGeneratedPolicyCompilesIntoExpectedRound(t *testing.T) {
 			if err = json.Unmarshal(data, &spec); err != nil {
 				t.Fatal(err)
 			}
-			compiled, err := policycompiler.CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{Name: "test", Global: true, Spec: spec}, inputs)
+			compiled, err := policycompiler.CompileTrafficPolicy(
+				krt.TestingDummyContext{},
+				model.TrafficPolicy{Name: "test", Global: true, Spec: spec},
+				inputs,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

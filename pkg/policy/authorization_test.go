@@ -80,16 +80,25 @@ func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testi
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Priority: 500,
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-				Action: agentsv1alpha1.RuleActionAllow,
-				From:   []agentsv1alpha1.TrafficPolicyPeer{{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{Namespace: "demo", Selector: map[string]string{"role": "source"}}}},
-				To: []agentsv1alpha1.TrafficPolicyPeer{
-					{CIDR: "10.0.0.0/24"},
-					{Service: &agentsv1alpha1.TrafficPolicyServiceRef{Namespace: "demo", Name: "backend"}},
-					{FQDN: "api.example.com"},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					Action: agentsv1alpha1.RuleActionAllow,
+					From: []agentsv1alpha1.TrafficPolicyPeer{
+						{
+							Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
+								Namespace: "demo",
+								Selector:  map[string]string{"role": "source"},
+							},
+						},
+					},
+					To: []agentsv1alpha1.TrafficPolicyPeer{
+						{CIDR: "10.0.0.0/24"},
+						{Service: &agentsv1alpha1.TrafficPolicyServiceRef{Namespace: "demo", Name: "backend"}},
+						{FQDN: "api.example.com"},
+					},
+					Ports: []agentsv1alpha1.TrafficPolicyPort{{Protocol: "TCP", Port: &start, EndPort: &end}},
 				},
-				Ports: []agentsv1alpha1.TrafficPolicyPort{{Protocol: "TCP", Port: &start, EndPort: &end}},
-			}}},
+			}},
 		},
 	}, testTrafficPolicyInputs(
 		"agentio-system",
@@ -106,13 +115,19 @@ func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testi
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{"10.2.0.2"}}},
 		}}),
-		krt.NewStaticCollection(nil, []*corev1.Pod{{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "source", Labels: map[string]string{"role": "source"}},
-			Status: corev1.PodStatus{
-				PodIP:      "10.1.0.5",
-				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		krt.NewStaticCollection(nil, []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "demo",
+					Name:      "source",
+					Labels:    map[string]string{"role": "source"},
+				},
+				Status: corev1.PodStatus{
+					PodIP:      "10.1.0.5",
+					Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+				},
 			},
-		}}),
+		}),
 		func(host string) []netip.Addr {
 			if host == "api.example.com" {
 				return []netip.Addr{netip.MustParseAddr("203.0.113.7")}
@@ -146,7 +161,8 @@ func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testi
 	if err := extension.GetConfig().UnmarshalTo(decoded); err != nil {
 		t.Fatalf("decode traffic policy extension: %v", err)
 	}
-	if extension.GetName() != "traffic-policy" || decoded.GetPriority() != 500 || decoded.GetMode() != extensionsv1.TrafficPolicyMode_CLIENT {
+	if extension.GetName() != "traffic-policy" || decoded.GetPriority() != 500 ||
+		decoded.GetMode() != extensionsv1.TrafficPolicyMode_CLIENT {
 		t.Fatalf("traffic policy extension = %+v / %+v", extension, decoded)
 	}
 }
@@ -168,15 +184,23 @@ func TestTrafficPolicyAsAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOf
 		"agentio-system", nil, nil,
 		krt.NewStaticCollection(nil, []*corev1.Pod{
 			{
-				ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "ready", Labels: map[string]string{"role": "backend"}},
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "demo",
+					Name:      "ready",
+					Labels:    map[string]string{"role": "backend"},
+				},
 				Status: corev1.PodStatus{
 					PodIP:      "10.1.0.5",
 					Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
 				},
 			},
 			{
-				ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "not-ready", Labels: map[string]string{"role": "backend"}},
-				Status:     corev1.PodStatus{PodIP: "10.1.0.6"},
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "demo",
+					Name:      "not-ready",
+					Labels:    map[string]string{"role": "backend"},
+				},
+				Status: corev1.PodStatus{PodIP: "10.1.0.6"},
 			},
 			{
 				ObjectMeta: metav1.ObjectMeta{
@@ -250,7 +274,8 @@ func TestTrafficPolicyAsAuthorizationRejectUsesNegativeMatches(t *testing.T) {
 		t.Fatalf("compile reject policy: %v", err)
 	}
 	matches := flattenMatches(compiledRuleAuthorization(t, compiled).Policy)
-	if !hasAddress(matches, "source", "192.0.2.0/24", true) || !hasPortRange(matches, 0, 65535, securityv1.Protocol_UDP, true) {
+	if !hasAddress(matches, "source", "192.0.2.0/24", true) ||
+		!hasPortRange(matches, 0, 65535, securityv1.Protocol_UDP, true) {
 		t.Fatalf("reject did not compile to negative matches: %+v", matches)
 	}
 }
@@ -260,10 +285,14 @@ func TestTrafficPolicyAsAuthorizationRejectIncludesNotReadyEndpoints(t *testing.
 		Name:      "deny-backend",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
-			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-				Action: agentsv1alpha1.RuleActionReject,
-				To:     []agentsv1alpha1.TrafficPolicyPeer{{Service: &agentsv1alpha1.TrafficPolicyServiceRef{Namespace: "demo", Name: "backend"}}},
-			}}},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					Action: agentsv1alpha1.RuleActionReject,
+					To: []agentsv1alpha1.TrafficPolicyPeer{
+						{Service: &agentsv1alpha1.TrafficPolicyServiceRef{Namespace: "demo", Name: "backend"}},
+					},
+				},
+			}},
 		},
 	}, testTrafficPolicyInputs(
 		"agentio-system",
@@ -280,7 +309,13 @@ func TestTrafficPolicyAsAuthorizationRejectIncludesNotReadyEndpoints(t *testing.
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Endpoints: []discoveryv1.Endpoint{
 				{Addresses: []string{"10.2.0.2"}},
-				{Addresses: []string{"10.2.0.3"}, Conditions: discoveryv1.EndpointConditions{Ready: func() *bool { value := false; return &value }()}},
+				{
+					Addresses: []string{"10.2.0.3"},
+					Conditions: discoveryv1.EndpointConditions{Ready: func() *bool {
+						value := false
+						return &value
+					}()},
+				},
 			},
 		}}),
 		nil, nil,
@@ -292,7 +327,8 @@ func TestTrafficPolicyAsAuthorizationRejectIncludesNotReadyEndpoints(t *testing.
 	if !hasAddress(matches, "destination", "10.2.0.3/32", true) {
 		t.Fatalf("not-ready endpoint missing from negative match, widening traffic: %+v", matches)
 	}
-	if !hasAddress(matches, "destination", "10.2.0.2/32", true) || !hasAddress(matches, "destination", "10.96.0.10/32", true) {
+	if !hasAddress(matches, "destination", "10.2.0.2/32", true) ||
+		!hasAddress(matches, "destination", "10.96.0.10/32", true) {
 		t.Fatalf("ready endpoint or VIP missing from negative match: %+v", matches)
 	}
 }
@@ -366,7 +402,12 @@ func TestCompileGlobalAuthorizationServiceUsesRootNamespaceByDefault(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasAddress(flattenMatches(compiledRuleAuthorization(t, compiled).Policy), "destination", "10.96.0.20/32", false) {
+	if !hasAddress(
+		flattenMatches(compiledRuleAuthorization(t, compiled).Policy),
+		"destination",
+		"10.96.0.20/32",
+		false,
+	) {
 		t.Fatalf("root-namespace Service peer address missing: %+v", compiledRuleAuthorization(t, compiled).Policy)
 	}
 }
@@ -388,16 +429,20 @@ func TestTrafficPolicyAsAuthorizationMissingServiceFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(compiledRuleAuthorization(t, compiled).Policy.GetGroups()) != 0 {
-		t.Fatalf("missing Service did not make the rule non-matching: %+v", compiledRuleAuthorization(t, compiled).Policy)
+		t.Fatalf(
+			"missing Service did not make the rule non-matching: %+v",
+			compiledRuleAuthorization(t, compiled).Policy,
+		)
 	}
 }
 
 func TestTrafficPolicyAttachmentScope(t *testing.T) {
 	inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil)
 	for _, tc := range []struct {
-		name, namespace string
-		selector        metav1.LabelSelector
-		global          bool
+		name      string
+		namespace string
+		selector  metav1.LabelSelector
+		global    bool
 	}{
 		{name: "root", namespace: "agentio-system", global: true},
 		{name: "namespace", namespace: "demo"},
@@ -405,13 +450,16 @@ func TestTrafficPolicyAttachmentScope(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
-				Name: tc.name, Namespace: tc.namespace, Spec: agentsv1alpha1.TrafficPolicySpec{Selector: tc.selector},
+				Name:      tc.name,
+				Namespace: tc.namespace,
+				Spec:      agentsv1alpha1.TrafficPolicySpec{Selector: tc.selector},
 			}, inputs)
 			if err != nil {
 				t.Fatal(err)
 			}
 			target := compiled.Attachment.Target
-			if target.Global != tc.global || (!tc.global && (len(target.Namespaces) != 1 || target.Namespaces[0] != tc.namespace)) {
+			if target.Global != tc.global ||
+				(!tc.global && (len(target.Namespaces) != 1 || target.Namespaces[0] != tc.namespace)) {
 				t.Fatalf("unexpected attachment target: %+v", target)
 			}
 			if !reflect.DeepEqual(target.Selector, tc.selector) {
@@ -438,7 +486,10 @@ func TestTrafficPolicyAsAuthorizationUnresolvedFQDNFailsClosed(t *testing.T) {
 		t.Fatalf("compile unresolved policy: %v", err)
 	}
 	if len(compiledRuleAuthorization(t, compiled).Policy.GetGroups()) != 0 {
-		t.Fatalf("unresolved FQDN did not make the rule non-matching: %+v", compiledRuleAuthorization(t, compiled).Policy)
+		t.Fatalf(
+			"unresolved FQDN did not make the rule non-matching: %+v",
+			compiledRuleAuthorization(t, compiled).Policy,
+		)
 	}
 	wire, err := proto.Marshal(compiledRuleAuthorization(t, compiled).Policy)
 	if err != nil {
@@ -473,7 +524,12 @@ func TestTrafficPolicyAsAuthorizationPassesFQDNUnchangedToResolver(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasAddress(flattenMatches(compiledRuleAuthorization(t, compiled).Policy), "destination", "203.0.113.7/32", false) {
+	if !hasAddress(
+		flattenMatches(compiledRuleAuthorization(t, compiled).Policy),
+		"destination",
+		"203.0.113.7/32",
+		false,
+	) {
 		t.Fatalf("resolver did not receive the declared FQDN: %+v", compiledRuleAuthorization(t, compiled).Policy)
 	}
 }
@@ -496,7 +552,9 @@ func TestTrafficPolicyAsAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			direction := &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-				Action: test.action, From: test.from, To: test.to,
+				Action: test.action,
+				From:   test.from,
+				To:     test.to,
 			}}}
 			source := model.TrafficPolicy{Name: "missing-peer", Namespace: "demo"}
 			if len(test.from) > 0 {
@@ -504,12 +562,19 @@ func TestTrafficPolicyAsAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing
 			} else {
 				source.Spec.Egress = direction
 			}
-			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, source, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
+			compiled, err := CompileTrafficPolicy(
+				krt.TestingDummyContext{},
+				source,
+				testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil),
+			)
 			if err != nil {
 				t.Fatalf("compile policy: %v", err)
 			}
 			if len(compiledRuleAuthorization(t, compiled).Policy.GetGroups()) != 0 {
-				t.Fatalf("unmatched workload peer did not make the rule non-matching: %+v", compiledRuleAuthorization(t, compiled).Policy)
+				t.Fatalf(
+					"unmatched workload peer did not make the rule non-matching: %+v",
+					compiledRuleAuthorization(t, compiled).Policy,
+				)
 			}
 		})
 	}
@@ -540,8 +605,14 @@ func TestTrafficPolicyAsAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *te
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
-				{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.invalid"}}},
-				{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.0.2.0/24"}}},
+				{
+					Action: agentsv1alpha1.RuleActionAllow,
+					To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.invalid"}},
+				},
+				{
+					Action: agentsv1alpha1.RuleActionAllow,
+					To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.0.2.0/24"}},
+				},
 			}},
 		},
 	}, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
@@ -549,7 +620,13 @@ func TestTrafficPolicyAsAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *te
 		t.Fatalf("compile mixed rules: %v", err)
 	}
 	groups := compiledRuleAuthorization(t, compiled).Policy.GetGroups()
-	if len(groups) != 1 || !hasAddress(flattenMatches(compiledRuleAuthorization(t, compiled).Policy), "destination", "192.0.2.0/24", false) {
+	if len(groups) != 1 ||
+		!hasAddress(
+			flattenMatches(compiledRuleAuthorization(t, compiled).Policy),
+			"destination",
+			"192.0.2.0/24",
+			false,
+		) {
 		t.Fatalf("unresolved rule affected valid sibling rule: %+v", compiledRuleAuthorization(t, compiled).Policy)
 	}
 }
@@ -572,7 +649,13 @@ func TestTrafficPolicyAsAuthorizationResolvedPeerKeepsMixedPeerListMatchable(t *
 		t.Fatalf("compile mixed peers: %v", err)
 	}
 	groups := compiledRuleAuthorization(t, compiled).Policy.GetGroups()
-	if len(groups) != 1 || !hasAddress(flattenMatches(compiledRuleAuthorization(t, compiled).Policy), "destination", "192.0.2.0/24", false) {
+	if len(groups) != 1 ||
+		!hasAddress(
+			flattenMatches(compiledRuleAuthorization(t, compiled).Policy),
+			"destination",
+			"192.0.2.0/24",
+			false,
+		) {
 		t.Fatalf("resolved peer list did not remain matchable: %+v", compiledRuleAuthorization(t, compiled).Policy)
 	}
 }

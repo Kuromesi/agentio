@@ -26,7 +26,12 @@ import (
 
 // Invalid policies are omitted independently. Runtime metadata and other policies
 // continue to be published; failed updates do not retain an earlier policy version.
-func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies policyCollections, failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
+func newSandboxResources(
+	sandboxes krt.Collection[model.Sandbox],
+	policies policyCollections,
+	failures *failureRecorder,
+	options collectionOptions,
+) krt.Collection[model.Resource] {
 	for _, kind := range []string{"SandboxResource", "SandboxInlinePolicies", "SandboxEgressPolicy", "SandboxSharedPolicies"} {
 		clearFailureOnSourceDelete(sandboxes, failures, kind)
 	}
@@ -46,11 +51,19 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 				failures.clearIf(kind, sandbox.UID, currentInput)
 			}
 		}
-		if compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID))); compiled != nil {
+		if compiled := krt.FetchOne(
+			ctx,
+			policies.trafficPolicies,
+			krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID)),
+		); compiled != nil {
 			payload.TrafficPolicy = compiled.Policy
 		}
 		var inlineErr error
-		if compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID))); compiled != nil {
+		if compiled := krt.FetchOne(
+			ctx,
+			policies.sniPolicies,
+			krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID)),
+		); compiled != nil {
 			extension, err := marshalDeterministicAny(compiled.Policy)
 			inlineErr = err
 			if err == nil {
@@ -74,7 +87,13 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 			record("SandboxResource", err)
 			return nil
 		}
-		resource, err := model.NewResource(model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.UID}, "", value, nil, model.ResourceFacts{Sandbox: facts})
+		resource, err := model.NewResource(
+			model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.UID},
+			"",
+			value,
+			nil,
+			model.ResourceFacts{Sandbox: facts},
+		)
 		if err != nil {
 			record("SandboxResource", err)
 			return nil
@@ -84,7 +103,11 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 	}, options("sandbox-resources")...)
 }
 
-func sandboxEgressRouting(ctx krt.HandlerContext, bindings *policy.Bindings, policies policyCollections) (*sandboxv1.EgressRouting, []string, error) {
+func sandboxEgressRouting(
+	ctx krt.HandlerContext,
+	bindings *policy.Bindings,
+	policies policyCollections,
+) (*sandboxv1.EgressRouting, []string, error) {
 	names := bindings.PolicyNames(model.PolicyKindEgressPolicy)
 	if len(names) == 0 {
 		return nil, nil, nil
@@ -104,7 +127,12 @@ func sandboxEgressRouting(ctx krt.HandlerContext, bindings *policy.Bindings, pol
 
 // loadSandboxPolicies copies ordered shared references and valid extension bodies.
 // Missing or invalid extensions do not suppress other policy families or profiles.
-func loadSandboxPolicies(ctx krt.HandlerContext, bindings *policy.Bindings, policies policyCollections, payload *sandboxv1.Sandbox) error {
+func loadSandboxPolicies(
+	ctx krt.HandlerContext,
+	bindings *policy.Bindings,
+	policies policyCollections,
+	payload *sandboxv1.Sandbox,
+) error {
 	// Bindings already carry control-plane order. Shared body updates must not
 	// invalidate the Sandbox, so do not read those bodies here.
 	if refs := bindings.PolicyNames(model.PolicyKindTrafficPolicy); len(refs) > 0 {

@@ -35,27 +35,36 @@ func TestPodSandboxEligibility(t *testing.T) {
 		{name: "injected", update: func(p *corev1.Pod) { p.Spec.Containers = []corev1.Container{dedicatedZTunnelContainer()} }, want: true, state: model.SandboxStateRunning},
 		{name: "native sidecar", update: func(p *corev1.Pod) { p.Spec.InitContainers = []corev1.Container{dedicatedZTunnelContainer()} }, want: true, state: model.SandboxStateRunning},
 		{name: "ambient", update: func(p *corev1.Pod) { p.Annotations[ambientRedirectionAnnotation] = "enabled" }, want: true, state: model.SandboxStateRunning},
-		{name: "pending", update: func(p *corev1.Pod) {
-			p.Annotations[ambientRedirectionAnnotation] = "enabled"
-			p.Status.Phase = corev1.PodPending
-		}, want: true, state: model.SandboxStatePending},
-		{name: "terminating", update: func(p *corev1.Pod) {
-			p.Annotations[ambientRedirectionAnnotation] = "enabled"
-			now := metav1.Now()
-			p.DeletionTimestamp = &now
-		}, want: true, state: model.SandboxStateRunning},
-		{name: "finished", update: func(p *corev1.Pod) {
-			p.Annotations[ambientRedirectionAnnotation] = "enabled"
-			p.Status.Phase = corev1.PodSucceeded
-		}},
-		{name: "missing address", update: func(p *corev1.Pod) {
-			p.Annotations[ambientRedirectionAnnotation] = "enabled"
-			p.Status.PodIP, p.Status.PodIPs = "", nil
-		}},
-		{name: "missing incarnation", update: func(p *corev1.Pod) {
-			p.Annotations[ambientRedirectionAnnotation] = "enabled"
-			p.UID = ""
-		}},
+		{name: "pending",
+			update: func(p *corev1.Pod) {
+				p.Annotations[ambientRedirectionAnnotation] = "enabled"
+				p.Status.Phase = corev1.PodPending
+			},
+			want:  true,
+			state: model.SandboxStatePending},
+		{name: "terminating",
+			update: func(p *corev1.Pod) {
+				p.Annotations[ambientRedirectionAnnotation] = "enabled"
+				now := metav1.Now()
+				p.DeletionTimestamp = &now
+			},
+			want:  true,
+			state: model.SandboxStateRunning},
+		{name: "finished",
+			update: func(p *corev1.Pod) {
+				p.Annotations[ambientRedirectionAnnotation] = "enabled"
+				p.Status.Phase = corev1.PodSucceeded
+			}},
+		{name: "missing address",
+			update: func(p *corev1.Pod) {
+				p.Annotations[ambientRedirectionAnnotation] = "enabled"
+				p.Status.PodIP, p.Status.PodIPs = "", nil
+			}},
+		{name: "missing incarnation",
+			update: func(p *corev1.Pod) {
+				p.Annotations[ambientRedirectionAnnotation] = "enabled"
+				p.UID = ""
+			}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := workloadTestPod(corev1.PodRunning, "10.0.0.1")

@@ -308,7 +308,11 @@ func (s ResourceSet) Apply(changes []ResourceChange) (ResourceSet, bool, error) 
 			delete(resources, typeURL)
 		}
 	}
-	return ResourceSet{resources: resources, version: incrementalVersion(s.version, effective), length: length}, true, nil
+	return ResourceSet{
+		resources: resources,
+		version:   incrementalVersion(s.version, effective),
+		length:    length,
+	}, true, nil
 }
 
 // Diff describes the key-level difference from s to next. It is intended for
@@ -394,7 +398,11 @@ func (s ResourceSet) computeVersion() string {
 
 func normalizeChangedResource(change ResourceChange) (Resource, error) {
 	if change.New.Key != change.Key {
-		return Resource{}, fmt.Errorf("resource change key %v does not match new resource key %v", change.Key, change.New.Key)
+		return Resource{}, fmt.Errorf(
+			"resource change key %v does not match new resource key %v",
+			change.Key,
+			change.New.Key,
+		)
 	}
 	normalized := *change.New
 	if normalized.Hash == "" {
@@ -413,5 +421,6 @@ func normalizeChangedResource(change ResourceChange) (Resource, error) {
 // every Sandbox that references the policy.
 func (s ResourceSet) HasTrafficPolicyReference(name string) bool {
 	index := s.resources[SandboxType]
-	return index != nil && len(lookupNames(&index.facts, resourceFactIndexKey(resourceFactTrafficPolicyReference, name))) > 0
+	return index != nil &&
+		len(lookupNames(&index.facts, resourceFactIndexKey(resourceFactTrafficPolicyReference, name))) > 0
 }

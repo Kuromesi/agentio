@@ -39,7 +39,12 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 			Name:      "baseline",
 			Namespace: namespace,
 			Spec: agentsv1alpha1.TrafficPolicySpec{Egress: &agentsv1alpha1.TrafficPolicyDirection{
-				Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}},
+				Rules: []agentsv1alpha1.TrafficPolicyRule{
+					{
+						Action: agentsv1alpha1.RuleActionAllow,
+						To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}},
+					},
+				},
 			}},
 		})
 	}
@@ -47,9 +52,21 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 		ResourceVersion: "egress",
 		Value: &configv1.AgentioConfig{
 			EgressPolicies: []*extensionsv1.EgressPolicy{
-				{Namespaces: []string{"tenant"}, MatchCidrs: []string{"203.0.113.1/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
-				{Namespaces: []string{"workers"}, MatchCidrs: []string{"203.0.113.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
-				{Namespaces: []string{"tenant"}, MatchCidrs: []string{"203.0.113.3/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+				{
+					Namespaces: []string{"tenant"},
+					MatchCidrs: []string{"203.0.113.1/32"},
+					Policy:     extensionsv1.EgressPolicyAction_PASSTHROUGH,
+				},
+				{
+					Namespaces: []string{"workers"},
+					MatchCidrs: []string{"203.0.113.2/32"},
+					Policy:     extensionsv1.EgressPolicyAction_PASSTHROUGH,
+				},
+				{
+					Namespaces: []string{"tenant"},
+					MatchCidrs: []string{"203.0.113.3/32"},
+					Policy:     extensionsv1.EgressPolicyAction_PASSTHROUGH,
+				},
 			},
 		},
 	})
@@ -113,7 +130,10 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 		return m != nil && m.TrafficPolicy == nil && len(m.GetEgressRouting().GetRoutes()) == 2
 	}, "ordered egress references")
 	eventually(t, func() bool {
-		r, ok := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: worker.UID})
+		r, ok := currentSnapshot(
+			t,
+			fixture.compiler,
+		).Get(model.ResourceKey{TypeURL: model.AddressType, Name: worker.UID})
 		if !ok || r.Facts.Workload == nil {
 			return false
 		}
@@ -153,7 +173,8 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 			if err := extension.Config.UnmarshalTo(payload); err != nil {
 				t.Fatal(err)
 			}
-			if len(payload.EgressPolicies) != 2 || payload.EgressPolicies[0].MatchCidrs[0] != "203.0.113.2/32" || payload.EgressPolicies[1].MatchCidrs[0] != "203.0.113.1/32" {
+			if len(payload.EgressPolicies) != 2 || payload.EgressPolicies[0].MatchCidrs[0] != "203.0.113.2/32" ||
+				payload.EgressPolicies[1].MatchCidrs[0] != "203.0.113.1/32" {
 				t.Fatalf("Workload compatibility must preserve Sandbox egress order: %v", payload)
 			}
 		}

@@ -43,7 +43,18 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				worker := testWorkload("demo", "client", "10.0.0.1")
 				inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{worker}, opts...)
 				if withSandbox {
-					inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: "actor", Namespace: "demo", Labels: worker.Labels, State: model.SandboxStateRunning, Attester: &model.Attester{WorkloadUID: worker.UID}}}, opts...)
+					inputs.Sandboxes = krt.NewStaticCollection(
+						nil,
+						[]model.Sandbox{
+							{
+								UID:       "actor",
+								Namespace: "demo",
+								Labels:    worker.Labels,
+								State:     model.SandboxStateRunning,
+								Attester:  &model.Attester{WorkloadUID: worker.UID},
+							},
+						},
+						opts...)
 				}
 				selector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}
 				inputs.TrafficPolicies = krt.NewStaticCollection(nil, []model.TrafficPolicy{{
@@ -51,14 +62,56 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 					Namespace: "demo",
 					Spec: agentsv1alpha1.TrafficPolicySpec{
 						Selector: selector,
-						Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}}}},
+						Egress: &agentsv1alpha1.TrafficPolicyDirection{
+							Rules: []agentsv1alpha1.TrafficPolicyRule{
+								{
+									Action: agentsv1alpha1.RuleActionAllow,
+									To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}},
+								},
+							},
+						},
 					},
 				}}, opts...)
 				inputs.SecurityProfiles = krt.NewStaticCollection(nil, []model.SecurityProfile{
-					{Name: "shared", Namespace: "demo", Spec: agentsv1alpha1.SecurityProfileSpec{Selector: selector, Rules: []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}}}},
-					{Name: "actor-only", Namespace: "demo", SandboxUID: "actor", Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{Name: "secret", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}}}}}},
+					{
+						Name:      "shared",
+						Namespace: "demo",
+						Spec: agentsv1alpha1.SecurityProfileSpec{
+							Selector: selector,
+							Rules: []agentsv1alpha1.SecurityRule{
+								{
+									Name:  "api",
+									Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}},
+								},
+							},
+						},
+					},
+					{
+						Name:       "actor-only",
+						Namespace:  "demo",
+						SandboxUID: "actor",
+						Spec: agentsv1alpha1.SecurityProfileSpec{
+							Rules: []agentsv1alpha1.SecurityRule{
+								{
+									Name:  "secret",
+									Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}},
+								},
+							},
+						},
+					},
 				}, opts...)
-				config := krt.NewStaticCollection(nil, []model.AgentioConfiguration{{Value: &configv1.AgentioConfig{EgressPolicies: []*extensionsv1.EgressPolicy{{Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH}}}}}, opts...)
+				config := krt.NewStaticCollection(
+					nil,
+					[]model.AgentioConfiguration{
+						{
+							Value: &configv1.AgentioConfig{
+								EgressPolicies: []*extensionsv1.EgressPolicy{
+									{Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+								},
+							},
+						},
+					},
+					opts...)
 				inputs.AgentioConfig = config
 				compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 				if err != nil {
@@ -80,7 +133,8 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				wantExtensions := []string{"workload-metadata"}
 				if withSandbox && !native {
 					wantExtensions = append(wantExtensions, "egress-policies", "sni-traffic-policy")
-					if len(wire.AuthorizationPolicies) != 1 || len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
+					if len(wire.AuthorizationPolicies) != 1 ||
+						len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
 						t.Fatalf("Sandbox compatibility Authorization output = %v", wire.AuthorizationPolicies)
 					}
 					sni := new(extensionsv1.SniTrafficPolicy)
@@ -98,11 +152,19 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				}
 				if withSandbox {
 					manifest := manifestAt(t, compiler, "actor")
-					if manifest == nil || manifest.State != sandboxv1.SandboxState_SANDBOX_STATE_RUNNING || manifest.GetAttester().GetWorkloadUid() != worker.UID || len(trafficPolicyRefs(manifest)) != 1 || len(manifest.Extensions) != 2 || len(manifest.GetEgressRouting().GetRoutes()) != 1 {
+					if manifest == nil || manifest.State != sandboxv1.SandboxState_SANDBOX_STATE_RUNNING ||
+						manifest.GetAttester().GetWorkloadUid() != worker.UID ||
+						len(trafficPolicyRefs(manifest)) != 1 ||
+						len(manifest.Extensions) != 2 ||
+						len(manifest.GetEgressRouting().GetRoutes()) != 1 {
 						t.Fatalf("Sandbox output = %v", manifest)
 					}
 					binding := compiler.Bindings().GetKey("actor")
-					if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policy.PolicyKindTrafficPolicy), []string{"namespaces/demo/trafficPolicies/allow"}) {
+					if binding == nil ||
+						!reflect.DeepEqual(
+							binding.PolicyNames(policy.PolicyKindTrafficPolicy),
+							[]string{"namespaces/demo/trafficPolicies/allow"},
+						) {
 						t.Fatalf("Sandbox authorization binding = %+v", binding)
 					}
 				} else {
@@ -120,7 +182,11 @@ func TestSandboxAttesterMovePreservesWorkloads(t *testing.T) {
 	a, b := testWorkload("demo", "a", "10.0.0.1"), testWorkload("demo", "b", "10.0.0.2")
 	fixture.workloads.UpdateObject(a)
 	fixture.workloads.UpdateObject(b)
-	sandbox := model.Sandbox{UID: "actor", State: model.SandboxStateRunning, Attester: &model.Attester{WorkloadUID: a.UID}}
+	sandbox := model.Sandbox{
+		UID:      "actor",
+		State:    model.SandboxStateRunning,
+		Attester: &model.Attester{WorkloadUID: a.UID},
+	}
 	fixture.sandboxes.UpdateObject(sandbox)
 	eventually(t, func() bool {
 		snapshot := currentSnapshot(t, fixture.compiler)
@@ -144,7 +210,8 @@ func TestSandboxAttesterMovePreservesWorkloads(t *testing.T) {
 				}
 			}
 			manifest := manifestAt(t, fixture.compiler, "actor")
-			return manifest != nil && int32(manifest.State) == int32(wantState) && manifest.GetAttester().GetWorkloadUid() == uid
+			return manifest != nil && int32(manifest.State) == int32(wantState) &&
+				manifest.GetAttester().GetWorkloadUid() == uid
 		}, "attester and lifecycle propagate independently of policies")
 	}
 	check(a.UID, model.SandboxStateRunning)
@@ -171,7 +238,14 @@ func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Selector: selector,
-			Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}}}},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{
+				Rules: []agentsv1alpha1.TrafficPolicyRule{
+					{
+						Action: agentsv1alpha1.RuleActionAllow,
+						To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}},
+					},
+				},
+			},
 		},
 	})
 	fixture.securityProfiles.UpdateObject(model.SecurityProfile{
@@ -179,10 +253,18 @@ func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
 		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Selector: selector,
-			Rules:    []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
+			Rules: []agentsv1alpha1.SecurityRule{
+				{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}},
+			},
 		},
 	})
-	fixture.agentioConfig.UpdateObject(model.AgentioConfiguration{Value: &configv1.AgentioConfig{EgressPolicies: []*extensionsv1.EgressPolicy{{Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH}}}})
+	fixture.agentioConfig.UpdateObject(
+		model.AgentioConfiguration{
+			Value: &configv1.AgentioConfig{
+				EgressPolicies: []*extensionsv1.EgressPolicy{{Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH}},
+			},
+		},
+	)
 	checkWorkloads := func() {
 		t.Helper()
 		eventually(t, func() bool {
@@ -197,7 +279,8 @@ func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
 					return false
 				}
 				binding := fixture.compiler.Bindings().GetKey(workload.UID)
-				if binding != nil || len(wire.GetWorkload().AuthorizationPolicies) != 0 || !reflect.DeepEqual(extensionNames(wire.GetWorkload().Extensions), []string{"workload-metadata"}) {
+				if binding != nil || len(wire.GetWorkload().AuthorizationPolicies) != 0 ||
+					!reflect.DeepEqual(extensionNames(wire.GetWorkload().Extensions), []string{"workload-metadata"}) {
 					return false
 				}
 			}
@@ -205,10 +288,18 @@ func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
 		}, "host and ordinary Workload policy ownership")
 	}
 	checkWorkloads() // Endpoints do not select policies before Sandbox discovery.
-	fixture.sandboxes.UpdateObject(model.Sandbox{UID: "actor", Namespace: "demo", Labels: host.Labels, Attester: &model.Attester{WorkloadUID: host.UID}})
+	fixture.sandboxes.UpdateObject(
+		model.Sandbox{
+			UID:       "actor",
+			Namespace: "demo",
+			Labels:    host.Labels,
+			Attester:  &model.Attester{WorkloadUID: host.UID},
+		},
+	)
 	eventually(t, func() bool {
 		manifest := manifestAt(t, fixture.compiler, "actor")
-		return manifest != nil && len(trafficPolicyRefs(manifest)) == 1 && len(manifest.Extensions) == 1 && len(manifest.GetEgressRouting().GetRoutes()) == 1
+		return manifest != nil && len(trafficPolicyRefs(manifest)) == 1 && len(manifest.Extensions) == 1 &&
+			len(manifest.GetEgressRouting().GetRoutes()) == 1
 	}, "Sandbox owns the complete policy set")
 	checkWorkloads()
 	fixture.sandboxes.DeleteObject("actor")
@@ -230,7 +321,12 @@ func TestSandboxOwnsOrderedTrafficPolicyReferences(t *testing.T) {
 		source.Spec.Egress = &agentsv1alpha1.TrafficPolicyDirection{}
 		fixture.trafficPolicies.UpdateObject(source)
 	}
-	want := []string{"trafficPolicies/global", "namespaces/demo/trafficPolicies/selector", "namespaces/agentio-system/trafficPolicies/root", "namespaces/demo/trafficPolicies/namespace"}
+	want := []string{
+		"trafficPolicies/global",
+		"namespaces/demo/trafficPolicies/selector",
+		"namespaces/agentio-system/trafficPolicies/root",
+		"namespaces/demo/trafficPolicies/namespace",
+	}
 	eventually(t, func() bool {
 		binding := fixture.compiler.Bindings().GetKey(worker.UID)
 		manifest := manifestAt(t, fixture.compiler, "actor")

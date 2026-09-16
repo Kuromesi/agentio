@@ -63,7 +63,8 @@ func TestConfigDebugSnapshotIncludesEffectiveKindsInStableOrder(t *testing.T) {
 	if !reflect.DeepEqual(gotOrder, wantOrder) {
 		t.Fatalf("item order = %v, want %v", gotOrder, wantOrder)
 	}
-	if !got.GeneratedAt.Equal(time.Date(2026, time.August, 31, 20, 5, 6, 0, time.UTC)) || got.GeneratedAt.Location() != time.UTC {
+	if !got.GeneratedAt.Equal(time.Date(2026, time.August, 31, 20, 5, 6, 0, time.UTC)) ||
+		got.GeneratedAt.Location() != time.UTC {
 		t.Fatalf("generatedAt = %v, want the supplied instant normalized to UTC", got.GeneratedAt)
 	}
 	if !got.Synced {
@@ -169,7 +170,8 @@ func TestConfigDebugSnapshotUsesInjectedFinalSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Items) != 1 || got.Items[0].Metadata.Namespace != "external" || got.Items[0].Metadata.Name != "injected" {
+	if len(got.Items) != 1 || got.Items[0].Metadata.Namespace != "external" ||
+		got.Items[0].Metadata.Name != "injected" {
 		t.Fatalf("injected TrafficPolicy items = %#v, want external/injected only", got.Items)
 	}
 }
@@ -177,13 +179,10 @@ func TestConfigDebugSnapshotUsesInjectedFinalSource(t *testing.T) {
 func TestConfigDebugSnapshotReportsCompilerFailures(t *testing.T) {
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		sources.TrafficPolicies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-			Name:       "broken-traffic",
-			Namespace:  "demo",
-			SandboxUID: "sandbox-a",
+			Name:      "broken-traffic",
+			Namespace: "demo",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
-				Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-					agentsv1alpha1.LabelSandboxID: "sandbox-b",
-				}},
+				Priority: -1,
 				Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 					Action: agentsv1alpha1.RuleActionAllow,
 					To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
@@ -231,13 +230,10 @@ func TestConfigDebugSnapshotRemovesRecoveredCompilerFailures(t *testing.T) {
 	var policies krt.StaticCollection[model.TrafficPolicy]
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		policies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
-			Name:       "recovering",
-			Namespace:  "demo",
-			SandboxUID: "sandbox-a",
+			Name:      "recovering",
+			Namespace: "demo",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
-				Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-					agentsv1alpha1.LabelSandboxID: "sandbox-b",
-				}},
+				Priority: -1,
 				Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 					Action: agentsv1alpha1.RuleActionAllow,
 					To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
@@ -276,7 +272,11 @@ func TestConfigDebugSnapshotRemovesRecoveredCompilerFailures(t *testing.T) {
 
 func TestConfigDebugSnapshotReportsUnsyncedInput(t *testing.T) {
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
-		sources.Telemetry = krt.NewStaticCollection[model.Telemetry](neverConfigDebugSynced{}, sources.Telemetry.List(), krt.WithStop(stop))
+		sources.Telemetry = krt.NewStaticCollection[model.Telemetry](
+			neverConfigDebugSynced{},
+			sources.Telemetry.List(),
+			krt.WithStop(stop),
+		)
 		return sources
 	}, false)
 
@@ -300,7 +300,8 @@ func TestConfigDebugSnapshotExcludesTelemetryProviderOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "TelemetryProviderOverrides") || strings.Contains(string(encoded), "provider-override-marker") {
+	if strings.Contains(string(encoded), "TelemetryProviderOverrides") ||
+		strings.Contains(string(encoded), "provider-override-marker") {
 		t.Fatalf("snapshot exposed TelemetryProviderOverrides: %s", encoded)
 	}
 }
@@ -331,7 +332,12 @@ func TestConfigDebugSnapshotDoesNotMutateSources(t *testing.T) {
 	beforeTelemetry := fixture.sources.Telemetry.List()[0].Clone()
 	beforeConfig := proto.Clone(fixture.sources.AgentioConfig.List()[0].Value)
 
-	if _, err := configDebugSnapshotAt(configDebugTestTime, fixture.sources, fixture.compiler, configDebugFilter{}); err != nil {
+	if _, err := configDebugSnapshotAt(
+		configDebugTestTime,
+		fixture.sources,
+		fixture.compiler,
+		configDebugFilter{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	afterPatch := fixture.sources.GatewayPatches.List()[0]
@@ -396,7 +402,8 @@ func TestConfigDebugSnapshotUsesProtoJSON(t *testing.T) {
 			gatewayPatch = string(item.Spec)
 		}
 	}
-	if !strings.Contains(agentio, `"sandboxIgnoredLabels":["drop-me"]`) || strings.Contains(agentio, "sandbox_ignored_labels") {
+	if !strings.Contains(agentio, `"sandboxIgnoredLabels":["drop-me"]`) ||
+		strings.Contains(agentio, "sandbox_ignored_labels") {
 		t.Fatalf("AgentioConfig is not proto JSON: %s", agentio)
 	}
 	if !strings.Contains(gatewayPatch, `"connectTimeout":"3s"`) || strings.Contains(gatewayPatch, "connect_timeout") {
@@ -482,8 +489,18 @@ func populatedConfigDebugSources(t *testing.T, stop <-chan struct{}) Sources {
 		},
 	}}, options...)
 	sources.TrafficPolicies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{
-		{Name: "traffic", Namespace: "demo", CreationTime: configDebugTestTime, Spec: validConfigDebugTrafficPolicySpec()},
-		{Name: "global-traffic", Global: true, CreationTime: configDebugTestTime, Spec: validConfigDebugTrafficPolicySpec()},
+		{
+			Name:         "traffic",
+			Namespace:    "demo",
+			CreationTime: configDebugTestTime,
+			Spec:         validConfigDebugTrafficPolicySpec(),
+		},
+		{
+			Name:         "global-traffic",
+			Global:       true,
+			CreationTime: configDebugTestTime,
+			Spec:         validConfigDebugTrafficPolicySpec(),
+		},
 	}, options...)
 	sources.SecurityProfiles = krt.NewStaticCollection[model.SecurityProfile](nil, []model.SecurityProfile{
 		{Name: "security", Namespace: "demo", CreationTime: configDebugTestTime},

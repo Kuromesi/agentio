@@ -202,7 +202,11 @@ func New(
 	r.Sandboxes = krt.JoinCollection(sandboxes, derivedOptions("sandboxes")...)
 	// Every eligible Pod remains a communication endpoint, regardless of the
 	// runtime it hosts or the runtime's lifecycle.
-	r.Workloads = podsource.NewWorkloads(pods, options.ClusterID, options.TrustDomain, derivedOptions("pod-workloads")...)
+	r.Workloads = podsource.NewWorkloads(
+		pods,
+		options.ClusterID,
+		options.TrustDomain,
+		derivedOptions("pod-workloads")...)
 
 	r.Services, r.Endpoints = newServiceCollections(services, slices, options.ClusterDomain, derivedOptions)
 

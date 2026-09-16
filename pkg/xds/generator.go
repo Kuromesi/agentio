@@ -179,7 +179,11 @@ func addResourceTransition(
 
 // newSortedDelta builds the deterministic delta; a name that is re-selected
 // drops out of the removal set.
-func newSortedDelta(selected map[string]model.Resource, removedSet sets.Set[string], elideSentState bool) GeneratedDelta {
+func newSortedDelta(
+	selected map[string]model.Resource,
+	removedSet sets.Set[string],
+	elideSentState bool,
+) GeneratedDelta {
 	resources := make([]model.Resource, 0, len(selected))
 	for name, resource := range selected {
 		removedSet.Delete(name)

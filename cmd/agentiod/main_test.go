@@ -53,7 +53,10 @@ func TestPrintEnvFlagDumpsTheEnvironment(t *testing.T) {
 			originalFormat := logFormat
 			logFormat = "invalid"
 			t.Cleanup(func() { logFormat = originalFormat })
-			runErr := run(context.Background(), []string{"-print-env", "-print-env-format=" + format, "-kubeconfig=/does/not/exist"})
+			runErr := run(
+				context.Background(),
+				[]string{"-print-env", "-print-env-format=" + format, "-kubeconfig=/does/not/exist"},
+			)
 			os.Stdout = original
 			if err := output.Close(); err != nil {
 				t.Fatal(err)

@@ -56,7 +56,11 @@ func TestPolicyModelsUseSelector(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, global := range []bool{false, true} {
-				traffic := trafficPolicyModel(metadata, &agentsv1alpha1.TrafficPolicySpec{Selector: test.selector}, global)
+				traffic := trafficPolicyModel(
+					metadata,
+					&agentsv1alpha1.TrafficPolicySpec{Selector: test.selector},
+					global,
+				)
 				profile := securityProfileModel(metadata, &agentsv1alpha1.SecurityProfileSpec{
 					Selector: test.selector,
 					Rules: []agentsv1alpha1.SecurityRule{
@@ -72,7 +76,8 @@ func TestPolicyModelsUseSelector(t *testing.T) {
 				if traffic.SandboxUID != "" || profile.SandboxUID != "" {
 					t.Fatalf("global=%t: annotation or selector inferred a Sandbox UID", global)
 				}
-				if !reflect.DeepEqual(traffic.Spec.Selector, test.selector) || !reflect.DeepEqual(profile.Spec.Selector, test.selector) {
+				if !reflect.DeepEqual(traffic.Spec.Selector, test.selector) ||
+					!reflect.DeepEqual(profile.Spec.Selector, test.selector) {
 					t.Fatal("policy model changed the selector")
 				}
 				compiled, err := policy.CompileSNIProfile(*profile)

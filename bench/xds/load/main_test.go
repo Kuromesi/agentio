@@ -1,10 +1,20 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"encoding/pem"
 	"net/http"
@@ -31,9 +41,21 @@ func TestReadinessTimeoutCountsFailure(t *testing.T) {
 	if err := os.WriteFile(token, []byte("test-token"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := config{target: certServer.Listener.Addr().String(), caFile: ca, tokenFile: token, scenario: "discovery", scenarioConfig: `{"types":["example.Resource"]}`, podName: "pod", namespace: "ns", podUID: "uid", nodeName: "node", podIP: "127.0.0.1", maxConnections: 1, readyTimeout: 50 * time.Millisecond}
+	ctx := t.Context()
+	c := config{
+		target:         certServer.Listener.Addr().String(),
+		caFile:         ca,
+		tokenFile:      token,
+		scenario:       "discovery",
+		scenarioConfig: `{"types":["example.Resource"]}`,
+		podName:        "pod",
+		namespace:      "ns",
+		podUID:         "uid",
+		nodeName:       "node",
+		podIP:          "127.0.0.1",
+		maxConnections: 1,
+		readyTimeout:   50 * time.Millisecond,
+	}
 	b, err := newBench(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -41,28 +63,38 @@ func TestReadinessTimeoutCountsFailure(t *testing.T) {
 	b.wg.Add(1)
 	go b.run(0)
 	done := make(chan struct{})
-	go func() { b.wg.Wait(); close(done) }()
+	go func() {
+		b.wg.Wait()
+		close(done)
+	}()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("readiness deadline did not release client")
 	}
 	if b.failures.Load() != 1 || b.ready.Load() != 0 || b.connected.Load() != 0 {
-		t.Fatalf("incorrect timeout accounting: failures=%d ready=%d connected=%d", b.failures.Load(), b.ready.Load(), b.connected.Load())
+		t.Fatalf(
+			"incorrect timeout accounting: failures=%d ready=%d connected=%d",
+			b.failures.Load(),
+			b.ready.Load(),
+			b.connected.Load(),
+		)
 	}
 }
 
 // The management API delegates opaque parameters without knowing a scenario name.
 func TestRoundUsesFactoryAndIsolatesEpochs(t *testing.T) {
-	b := &bench{target: 1, samples: map[int]sample{0: {ID: 0}}, factory: scenario.ClientFactory{
-		PrepareRound: func(raw json.RawMessage) (any, error) {
-			var expected struct {
-				Revision string `json:"revision"`
-			}
-			err := scenario.Decode(raw, &expected)
-			return expected.Revision, err
-		},
-	}}
+	b := &bench{target: 1,
+		samples: map[int]sample{0: {ID: 0}},
+		factory: scenario.ClientFactory{
+			PrepareRound: func(raw json.RawMessage) (any, error) {
+				var expected struct {
+					Revision string `json:"revision"`
+				}
+				err := scenario.Decode(raw, &expected)
+				return expected.Revision, err
+			},
+		}}
 	b.ready.Store(1)
 	handler := b.handler()
 	for _, test := range []struct {

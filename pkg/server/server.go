@@ -117,7 +117,11 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	})
 	kubeCoreClient := kubeClient.Kube()
 	krtBuilder := krt.NewOptionsBuilder(ctx.Done(), "", nil)
-	tokenReviewer, err := attestation.NewTokenReviewer(kubeCoreClient, options.TrustDomain, []string{features.TokenAudience})
+	tokenReviewer, err := attestation.NewTokenReviewer(
+		kubeCoreClient,
+		options.TrustDomain,
+		[]string{features.TokenAudience},
+	)
 	if err != nil {
 		return err
 	}
@@ -218,7 +222,11 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		go deployer.Run(ctx)
 	}
 
-	resolver, err := resolverdns.New(ctx, resolverdns.Options{}, nil, append(krtOptions, krt.WithName("dns-results"))...)
+	resolver, err := resolverdns.New(
+		ctx,
+		resolverdns.Options{},
+		nil,
+		append(krtOptions, krt.WithName("dns-results"))...)
 	if err != nil {
 		return err
 	}
@@ -384,7 +392,12 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			ConfigMapName:          features.InjectorConfigMapName,
 			WebhookConfigName:      features.InjectionWebhookConfigName,
 			NativeSidecarMode:      features.NativeSidecarMode,
-			DiscoveryAddress:       fmt.Sprintf("%s.%s.svc.%s:15012", features.ServiceName, options.RootNamespace, options.ClusterDomain),
+			DiscoveryAddress: fmt.Sprintf(
+				"%s.%s.svc.%s:15012",
+				features.ServiceName,
+				options.RootNamespace,
+				options.ClusterDomain,
+			),
 		}
 		serve, err := setupSidecarInjector(ctx, kubeClient, authority, injectorOptions)
 		if err != nil {
@@ -445,9 +458,21 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			errorsChannel <- fmt.Errorf("serve xDS: %w", err)
 		}
 	}()
-	log.Info("agentiod ready", "xds_address", options.DiscoveryAddress,
-		"monitoring_address", options.MonitoringAddress, "snapshot", initial.Version(),
-		"startup_duration", time.Since(started), "resources", initial.Len(), "resources_by_type", initial.CountsByType())
+	log.Info(
+		"agentiod ready",
+		"xds_address",
+		options.DiscoveryAddress,
+		"monitoring_address",
+		options.MonitoringAddress,
+		"snapshot",
+		initial.Version(),
+		"startup_duration",
+		time.Since(started),
+		"resources",
+		initial.Len(),
+		"resources_by_type",
+		initial.CountsByType(),
+	)
 
 	select {
 	case <-ctx.Done():

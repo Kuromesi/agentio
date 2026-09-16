@@ -76,7 +76,9 @@ func TestParseResponsesProjectsCurrentEchoBodyMetadata(t *testing.T) {
 		t.Fatalf("responses = %+v", responses)
 	}
 	response := responses[0]
-	if response.Hostname != "server-7645585ff8-cdwtz" || response.Host != "server.sandbox.svc.cluster.local:80" || response.URL != "/" || response.Protocol != "HTTP/1.1" {
+	if response.Hostname != "server-7645585ff8-cdwtz" || response.Host != "server.sandbox.svc.cluster.local:80" ||
+		response.URL != "/" ||
+		response.Protocol != "HTTP/1.1" {
 		t.Fatalf("response metadata = %+v", response)
 	}
 }
@@ -96,7 +98,7 @@ func TestParseResponsesAllowsFourMiBConfigDump(t *testing.T) {
 func TestParseResponsesPreservesJSONBodyWithoutFrameMetadata(t *testing.T) {
 	body := "{\n  \"value\": \"a=b\",\n  \"policies\": []\n}"
 	output := "[0] URL=http://localhost:15000/config_dump\n[0] StatusCode=200\n[0] ResponseHeader=content-type:application/json\n"
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		output += "[0 body] " + line + "\n"
 	}
 	responses, err := ParseResponses(output)

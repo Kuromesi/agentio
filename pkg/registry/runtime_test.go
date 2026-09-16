@@ -36,7 +36,14 @@ func TestParseSandboxRuntimes(t *testing.T) {
 		t.Run(tt.value, func(t *testing.T) {
 			got, err := ParseSandboxRuntimes(tt.value)
 			if (err != nil) != tt.wantErr || !slices.Equal(got, tt.want) {
-				t.Fatalf("ParseSandboxRuntimes(%q) = %v, %v; want %v, error=%t", tt.value, got, err, tt.want, tt.wantErr)
+				t.Fatalf(
+					"ParseSandboxRuntimes(%q) = %v, %v; want %v, error=%t",
+					tt.value,
+					got,
+					err,
+					tt.want,
+					tt.wantErr,
+				)
 			}
 		})
 	}

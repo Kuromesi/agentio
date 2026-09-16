@@ -35,8 +35,10 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	source := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "demo", Name: "sandbox", UID: "object-uid",
-		Labels: map[string]string{agentsv1alpha1.LabelSandboxID: "delivery-uid"},
+		Namespace: "demo",
+		Name:      "sandbox",
+		UID:       "object-uid",
+		Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: "delivery-uid"},
 	}}
 	objects := krt.NewStaticCollection[*agentsv1alpha1.Sandbox](nil, nil, options...)
 	pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, options...)
@@ -65,7 +67,8 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 		}
 		if step.host != "" {
 			want = []agentsv1alpha1.SecurityRule{{
-				Name: "inline", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{step.host}}},
+				Name:    "inline",
+				Match:   []agentsv1alpha1.RuleMatch{{Domains: []string{step.host}}},
 				Actions: agentsv1alpha1.SecurityRuleActions{Block: &agentsv1alpha1.BlockAction{}},
 			}}
 		}
@@ -85,31 +88,54 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 		if !sandboxes.WaitUntilSynced(stop) || !profiles.WaitUntilSynced(stop) {
 			t.Fatal("Sandbox collection did not sync")
 		}
-		err = wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-			current := sandboxes.GetKey("kruise:delivery-uid")
-			profile := profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid"))
-			validProfile := profile == nil && want == nil
-			if profile != nil {
-				validProfile = profile.Dedicated && profile.SandboxUID == "kruise:delivery-uid" && profile.Namespace == "demo" &&
-					reflect.DeepEqual(profile.Spec.Rules, want)
-			}
-			return current != nil && current.Attester == nil && current.Labels["revision"] == step.raw && validProfile, nil
-		})
+		err = wait.PollUntilContextTimeout(
+			t.Context(),
+			time.Millisecond,
+			time.Second,
+			true,
+			func(context.Context) (bool, error) {
+				current := sandboxes.GetKey("kruise:delivery-uid")
+				profile := profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid"))
+				validProfile := profile == nil && want == nil
+				if profile != nil {
+					validProfile = profile.Dedicated && profile.SandboxUID == "kruise:delivery-uid" &&
+						profile.Namespace == "demo" &&
+						reflect.DeepEqual(profile.Spec.Rules, want)
+				}
+				return current != nil && current.Attester == nil && current.Labels["revision"] == step.raw &&
+					validProfile, nil
+			},
+		)
 		if err != nil {
 			t.Fatalf("annotation %q: Sandbox = %+v, error = %v", step.raw, sandboxes.GetKey("kruise:delivery-uid"), err)
 		}
 	}
-	source.Annotations = map[string]string{agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["last.example"]}]}]`}
+	source.Annotations = map[string]string{
+		agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["last.example"]}]}]`,
+	}
 	objects.UpdateObject(source)
-	if err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-		return profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) != nil, nil
-	}); err != nil {
+	if err := wait.PollUntilContextTimeout(
+		t.Context(),
+		time.Millisecond,
+		time.Second,
+		true,
+		func(context.Context) (bool, error) {
+			return profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) != nil, nil
+		},
+	); err != nil {
 		t.Fatal("inline profile did not recover before deletion")
 	}
 	objects.DeleteObject("demo/sandbox")
-	err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-		return sandboxes.GetKey("kruise:delivery-uid") == nil && profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) == nil, nil
-	})
+	err := wait.PollUntilContextTimeout(
+		t.Context(),
+		time.Millisecond,
+		time.Second,
+		true,
+		func(context.Context) (bool, error) {
+			return sandboxes.GetKey("kruise:delivery-uid") == nil &&
+				profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) == nil, nil
+		},
+	)
 	if err != nil {
 		t.Fatal("deleted Sandbox retained inline rules")
 	}
@@ -329,7 +355,8 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	if workload.SourceUID != "pod-uid" || workload.Principal.String() != "spiffe://cluster.local/ns/demo/sa/default" {
 		t.Fatalf("Workload attester = %+v", workload)
 	}
-	if policySubject.Attester == nil || policySubject.Attester.WorkloadUID != workload.UID || policySubject.State != model.SandboxStateRunning {
+	if policySubject.Attester == nil || policySubject.Attester.WorkloadUID != workload.UID ||
+		policySubject.State != model.SandboxStateRunning {
 		t.Fatalf("Sandbox runtime = %+v", policySubject)
 	}
 
@@ -358,13 +385,25 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 		// Wait for this specific projection, not the preceding same-phase result.
 		changed.Labels["test-step"] = test.name
 		sandboxObjects.UpdateObject(changed)
-		err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-			current := sandboxes.GetKey("kruise:delivery-uid")
-			return current != nil && current.Labels["test-step"] == test.name && current.State == test.state && current.Attester != nil &&
-				current.Attester.WorkloadUID == workload.UID, nil
-		})
+		err := wait.PollUntilContextTimeout(
+			t.Context(),
+			time.Millisecond,
+			time.Second,
+			true,
+			func(context.Context) (bool, error) {
+				current := sandboxes.GetKey("kruise:delivery-uid")
+				return current != nil && current.Labels["test-step"] == test.name && current.State == test.state &&
+					current.Attester != nil &&
+					current.Attester.WorkloadUID == workload.UID, nil
+			},
+		)
 		if err != nil {
-			t.Fatalf("%s did not retain the Pod binding: Sandbox = %+v, error = %v", test.name, sandboxes.GetKey("kruise:delivery-uid"), err)
+			t.Fatalf(
+				"%s did not retain the Pod binding: Sandbox = %+v, error = %v",
+				test.name,
+				sandboxes.GetKey("kruise:delivery-uid"),
+				err,
+			)
 		}
 	}
 }
@@ -384,7 +423,9 @@ func TestKruiseRuntimeStateRequiresCompletedPause(t *testing.T) {
 	} {
 		sandbox := &agentsv1alpha1.Sandbox{Status: agentsv1alpha1.SandboxStatus{Phase: test.phase}}
 		if test.paused {
-			sandbox.Status.Conditions = []metav1.Condition{{Type: string(agentsv1alpha1.SandboxConditionPaused), Status: metav1.ConditionTrue}}
+			sandbox.Status.Conditions = []metav1.Condition{
+				{Type: string(agentsv1alpha1.SandboxConditionPaused), Status: metav1.ConditionTrue},
+			}
 		}
 		if got := runtimeState(sandbox); got != test.want {
 			t.Fatalf("phase %s paused %v: state %v, want %v", test.phase, test.paused, got, test.want)

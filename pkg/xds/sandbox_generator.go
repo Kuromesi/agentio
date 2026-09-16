@@ -61,8 +61,13 @@ func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest)
 			}
 		}
 
-		selected, removed := diffCandidateTransition(candidates, request.Update.Before().Get, request.Update.After().Get,
-			visible(request.Update.Before()), visible(request.Update.After()))
+		selected, removed := diffCandidateTransition(
+			candidates,
+			request.Update.Before().Get,
+			request.Update.After().Get,
+			visible(request.Update.Before()),
+			visible(request.Update.After()),
+		)
 		return newSortedDelta(selected, removed, false), nil
 	}
 	before := selectSandboxResources(request.Scope, request.Update.Before(), request.TypeURL, request.Subscription)
@@ -123,7 +128,12 @@ func sandboxGatewayReferenceKeys(snapshot model.ResourceSet, workloads []model.R
 	return result
 }
 
-func selectSandboxResources(scope model.ClientScope, snapshot model.ResourceSet, typeURL string, sub SubscriptionView) map[string]model.Resource {
+func selectSandboxResources(
+	scope model.ClientScope,
+	snapshot model.ResourceSet,
+	typeURL string,
+	sub SubscriptionView,
+) map[string]model.Resource {
 	result := make(map[string]model.Resource)
 	add := func(r model.Resource) {
 		if sub.allows(r) {

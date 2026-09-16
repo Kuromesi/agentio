@@ -28,8 +28,17 @@ import (
 
 func TestTrafficPolicyLegacyProjection(t *testing.T) {
 	body := &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: []*securityv1.TrafficPolicy_Rule{
-		{Match: &securityv1.TrafficPolicy_Match{DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: []byte{192, 0, 2, 0}, Length: 24}}}},
-		{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: make([]byte, 4)}}}},
+		{
+			Match: &securityv1.TrafficPolicy_Match{
+				DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: []byte{192, 0, 2, 0}, Length: 24}},
+			},
+		},
+		{
+			Action: securityv1.TrafficPolicy_DENY,
+			Match: &securityv1.TrafficPolicy_Match{
+				DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: make([]byte, 4)}},
+			},
+		},
 	}}}
 	before := proto.Clone(body)
 	for _, tc := range []struct {
@@ -48,7 +57,11 @@ func TestTrafficPolicyLegacyProjection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.source.Name, tc.source.Spec.Priority = "api", 42
-			converted, err := TrafficPolicyAsAuthorizations(CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Policy: body}}, tc.source, "agentio-system")
+			converted, err := TrafficPolicyAsAuthorizations(
+				CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Policy: body}},
+				tc.source,
+				"agentio-system",
+			)
 			if err != nil || len(converted) != 1 {
 				t.Fatalf("converted=%v err=%v", converted, err)
 			}
@@ -57,13 +70,15 @@ func TestTrafficPolicyLegacyProjection(t *testing.T) {
 			if err := a.AuthExtensions[0].Config.UnmarshalTo(ext); err != nil {
 				t.Fatal(err)
 			}
-			if a.Scope != tc.scope || a.Namespace != tc.namespace || ext.Priority != tc.priority || ext.Mode != extensionsv1.TrafficPolicyMode_CLIENT {
+			if a.Scope != tc.scope || a.Namespace != tc.namespace || ext.Priority != tc.priority ||
+				ext.Mode != extensionsv1.TrafficPolicyMode_CLIENT {
 				t.Fatalf("authorization=%v extension=%v", a, ext)
 			}
 			if !tc.source.Dedicated && a.Name != "api-egress" {
 				t.Fatalf("source name lost: %s", a.Name)
 			}
-			if len(a.Groups) != 2 || len(a.Groups[0].Rules[0].Matches[0].DestinationIps) != 1 || len(a.Groups[1].Rules[0].Matches[0].NotDestinationIps) != 1 {
+			if len(a.Groups) != 2 || len(a.Groups[0].Rules[0].Matches[0].DestinationIps) != 1 ||
+				len(a.Groups[1].Rules[0].Matches[0].NotDestinationIps) != 1 {
 				t.Fatalf("rules changed or fallback added: %v", a.Groups)
 			}
 			if !proto.Equal(body, before) {
@@ -84,7 +99,11 @@ func TestTrafficPolicyLegacyEmptyDirections(t *testing.T) {
 		{"unresolved both", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}, Ingress: &securityv1.TrafficPolicy_RuleSet{}}, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			converted, err := TrafficPolicyAsAuthorizations(CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Policy: tc.body}}, model.TrafficPolicy{Name: "api", Namespace: "demo"}, "agentio-system")
+			converted, err := TrafficPolicyAsAuthorizations(
+				CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Policy: tc.body}},
+				model.TrafficPolicy{Name: "api", Namespace: "demo"},
+				"agentio-system",
+			)
 			if err != nil || len(converted) != tc.count {
 				t.Fatalf("converted=%v err=%v", converted, err)
 			}

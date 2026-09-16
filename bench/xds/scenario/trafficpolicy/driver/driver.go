@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package driver
 
@@ -9,20 +20,26 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/openkruise/agentio/bench/xds/loadapi"
-	"github.com/openkruise/agentio/bench/xds/scenario"
-	"github.com/openkruise/agentio/bench/xds/scenario/driver"
-	"github.com/openkruise/agentio/bench/xds/scenario/trafficpolicy"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
+
+	"github.com/openkruise/agentio/bench/xds/loadapi"
+	"github.com/openkruise/agentio/bench/xds/scenario"
+	"github.com/openkruise/agentio/bench/xds/scenario/driver"
+	"github.com/openkruise/agentio/bench/xds/scenario/trafficpolicy"
 )
 
 var sandboxGVR = schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "sandboxes"}
-var policyGVR = schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "globaltrafficpolicies"}
 
+var policyGVR = schema.GroupVersionResource{
+	Group:    "agents.kruise.io",
+	Version:  "v1alpha1",
+	Resource: "globaltrafficpolicies",
+}
+
+// Options controls policy size for managed update rounds.
 type Options struct {
 	Rules        int   `json:"rules"`
 	PortsPerRule []int `json:"ports_per_rule"`
@@ -32,6 +49,7 @@ type policyDriver struct {
 	marker int
 }
 
+// New creates a driver that updates a GlobalTrafficPolicy bound to the load Pods.
 func New(raw json.RawMessage) (driver.Driver, error) {
 	cfg := Options{Rules: 50, PortsPerRule: []int{1, 20}}
 	if err := scenario.Decode(raw, &cfg); err != nil {
@@ -48,11 +66,24 @@ func New(raw json.RawMessage) (driver.Driver, error) {
 	return &policyDriver{cfg: cfg, marker: 10000}, nil
 }
 func (d *policyDriver) ClientConfig(namespace, pod string) (json.RawMessage, error) {
-	return json.Marshal(trafficpolicy.ClientOptions{PolicyName: "trafficPolicies/" + namespace, SandboxID: namespace + "--" + pod})
+	return json.Marshal(
+		trafficpolicy.ClientOptions{PolicyName: "trafficPolicies/" + namespace, SandboxID: namespace + "--" + pod},
+	)
 }
 func (d *policyDriver) Prepare(ctx context.Context, e driver.Environment) error {
 	for _, name := range e.Pods {
-		sb := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.kruise.io/v1alpha1", "kind": "Sandbox", "metadata": map[string]any{"name": name, "namespace": e.Namespace, "labels": map[string]any{driver.RunLabel: e.Namespace}}, "spec": map[string]any{}}}
+		sb := &unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": "agents.kruise.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]any{
+					"name":      name,
+					"namespace": e.Namespace,
+					"labels":    map[string]any{driver.RunLabel: e.Namespace},
+				},
+				"spec": map[string]any{},
+			},
+		}
 		sb, err := e.Dynamic.Resource(sandboxGVR).Namespace(e.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 		if err != nil {
 			return err
@@ -61,25 +92,48 @@ func (d *policyDriver) Prepare(ctx context.Context, e driver.Environment) error 
 		if err != nil {
 			return err
 		}
-		owner := map[string]any{"metadata": map[string]any{"ownerReferences": []metav1.OwnerReference{{APIVersion: "agents.kruise.io/v1alpha1", Kind: "Sandbox", Name: name, UID: sb.GetUID(), Controller: ptr.To(true)}}}}
+		owner := map[string]any{
+			"metadata": map[string]any{
+				"ownerReferences": []metav1.OwnerReference{
+					{
+						APIVersion: "agents.kruise.io/v1alpha1",
+						Kind:       "Sandbox",
+						Name:       name,
+						UID:        sb.GetUID(),
+						Controller: new(true),
+					},
+				},
+			},
+		}
 		data, err := json.Marshal(owner)
 		if err != nil {
 			return err
 		}
-		if _, err = e.Kube.CoreV1().Pods(e.Namespace).Patch(ctx, name, types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
+		if _, err = e.Kube.CoreV1().
+			Pods(e.Namespace).
+			Patch(ctx, name, types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
 			return err
 		}
-		status := map[string]any{"status": map[string]any{"phase": "Running", "observedGeneration": sb.GetGeneration(), "podInfo": map[string]any{"podUID": string(p.UID)}}}
+		status := map[string]any{
+			"status": map[string]any{
+				"phase":              "Running",
+				"observedGeneration": sb.GetGeneration(),
+				"podInfo":            map[string]any{"podUID": string(p.UID)},
+			},
+		}
 		data, err = json.Marshal(status)
 		if err != nil {
 			return err
 		}
-		if _, err = e.Dynamic.Resource(sandboxGVR).Namespace(e.Namespace).Patch(ctx, name, types.MergePatchType, data, metav1.PatchOptions{}, "status"); err != nil {
+		if _, err = e.Dynamic.Resource(sandboxGVR).
+			Namespace(e.Namespace).
+			Patch(ctx, name, types.MergePatchType, data, metav1.PatchOptions{}, "status"); err != nil {
 			return err
 		}
 	}
 	e.Track(driver.Resource{GVR: policyGVR, Name: e.Namespace})
-	_, err := e.Dynamic.Resource(policyGVR).Create(ctx, policy(e.Namespace, trafficpolicy.Round{Marker: uint32(d.marker), RuleCount: d.cfg.Rules, Ports: d.cfg.PortsPerRule[0]}), metav1.CreateOptions{})
+	_, err := e.Dynamic.Resource(policyGVR).
+		Create(ctx, policy(e.Namespace, trafficpolicy.Round{Marker: uint32(d.marker), RuleCount: d.cfg.Rules, Ports: d.cfg.PortsPerRule[0]}), metav1.CreateOptions{})
 	return err
 }
 func (d *policyDriver) Rounds(repeats int) ([]json.RawMessage, error) {
@@ -88,9 +142,14 @@ func (d *policyDriver) Rounds(repeats int) ([]json.RawMessage, error) {
 	}
 	var rounds []json.RawMessage
 	for _, ports := range d.cfg.PortsPerRule {
-		for i := 0; i < repeats; i++ {
+		for range repeats {
 			d.marker++
-			r := trafficpolicy.Round{Marker: uint32(d.marker), Action: int32(d.marker % 2), RuleCount: d.cfg.Rules, Ports: ports}
+			r := trafficpolicy.Round{
+				Marker:    uint32(d.marker),
+				Action:    int32(d.marker % 2),
+				RuleCount: d.cfg.Rules,
+				Ports:     ports,
+			}
 			raw, err := json.Marshal(r)
 			if err != nil {
 				return nil, err
@@ -166,5 +225,16 @@ func policy(name string, r trafficpolicy.Round) *unstructured.Unstructured {
 		action = "reject"
 	}
 	entries = append(entries, map[string]any{"action": action, "to": targets})
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.kruise.io/v1alpha1", "kind": "GlobalTrafficPolicy", "metadata": map[string]any{"name": name, "labels": map[string]any{driver.RunLabel: name}}, "spec": map[string]any{"priority": int64(10), "selector": map[string]any{"matchLabels": map[string]any{driver.RunLabel: name}}, "egress": map[string]any{"rules": entries}}}}
+	return &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "agents.kruise.io/v1alpha1",
+			"kind":       "GlobalTrafficPolicy",
+			"metadata":   map[string]any{"name": name, "labels": map[string]any{driver.RunLabel: name}},
+			"spec": map[string]any{
+				"priority": int64(10),
+				"selector": map[string]any{"matchLabels": map[string]any{driver.RunLabel: name}},
+				"egress":   map[string]any{"rules": entries},
+			},
+		},
+	}
 }

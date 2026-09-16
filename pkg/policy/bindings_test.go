@@ -62,7 +62,9 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 				if !global {
 					target.Namespaces = []string{"demo"}
 				}
-				attachment, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "demo/selected", Target: target})
+				attachment, err := NewPolicyAttachment(
+					PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "demo/selected", Target: target},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -112,9 +114,13 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 			}
 			check(0, count, func(index int) bool { return index == 0 })
 			// Both the old and new selector must invalidate their matching subject.
-			attachments.ConditionalUpdateObject(makePolicy(metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-				Key: "app", Operator: metav1.LabelSelectorOpIn, Values: []string{"subject-1"},
-			}}}))
+			attachments.ConditionalUpdateObject(
+				makePolicy(metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      "app",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{"subject-1"},
+				}}}),
+			)
 			check(2, 2, func(index int) bool { return index == 1 })
 			// A primary label update must still detach the policy.
 			updated := subjects[1]
@@ -217,7 +223,11 @@ func TestPolicyBindings(t *testing.T) {
 	}
 	demo.Namespace = "demo"
 	demo.Labels = map[string]string{"app": "client", "tier": "trusted"}
-	other := model.Sandbox{UID: "cluster//Pod/other/client", Namespace: "other", Labels: map[string]string{"app": "client"}}
+	other := model.Sandbox{
+		UID:       "cluster//Pod/other/client",
+		Namespace: "other",
+		Labels:    map[string]string{"app": "client"},
+	}
 	attachments := []PolicyAttachment{
 		{
 			Kind: PolicyKindSNIPolicy,
@@ -285,10 +295,29 @@ func TestPolicyBindings(t *testing.T) {
 	if got, want := demoBinding.PolicyNames(PolicyKindEgressPolicy), []string{"egress"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("demo egress names = %v, want %v", got, want)
 	}
-	if got, want := demoBinding.PolicyNames(PolicyKindSNIPolicy), []string{"explicit", "global", "selector", "demo"}; !reflect.DeepEqual(got, want) {
+	if got, want := demoBinding.PolicyNames(
+		PolicyKindSNIPolicy,
+	), []string{
+		"explicit",
+		"global",
+		"selector",
+		"demo",
+	}; !reflect.DeepEqual(
+		got,
+		want,
+	) {
 		t.Fatalf("demo SNI names = %v, want %v", got, want)
 	}
-	if got, want := []PolicyKind{demoBinding.Groups[0].Kind, demoBinding.Groups[1].Kind}, []PolicyKind{PolicyKindEgressPolicy, PolicyKindSNIPolicy}; !reflect.DeepEqual(got, want) {
+	if got, want := []PolicyKind{
+		demoBinding.Groups[0].Kind,
+		demoBinding.Groups[1].Kind,
+	}, []PolicyKind{
+		PolicyKindEgressPolicy,
+		PolicyKindSNIPolicy,
+	}; !reflect.DeepEqual(
+		got,
+		want,
+	) {
 		t.Fatalf("demo group order = %v, want %v", got, want)
 	}
 
@@ -366,7 +395,17 @@ func TestPolicyBindingsSelectSandboxLabelsAndExplicitReferences(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	sandboxes := krt.NewStaticCollection(nil, []model.Sandbox{{UID: "same", Namespace: "demo", Labels: map[string]string{"role": "sandbox"}, PolicyRefs: []model.PolicyRef{{Kind: PolicyKindSNIPolicy, Name: "explicit"}}}}, options...)
+	sandboxes := krt.NewStaticCollection(
+		nil,
+		[]model.Sandbox{
+			{
+				UID:        "same",
+				Namespace:  "demo",
+				Labels:     map[string]string{"role": "sandbox"},
+				PolicyRefs: []model.PolicyRef{{Kind: PolicyKindSNIPolicy, Name: "explicit"}},
+			},
+		},
+		options...)
 	var attachments []PolicyAttachment
 	for _, source := range []PolicyAttachment{
 		{Kind: PolicyKindTrafficPolicy, Name: "native", Target: AttachmentTarget{Global: true}},
@@ -381,7 +420,11 @@ func TestPolicyBindingsSelectSandboxLabelsAndExplicitReferences(t *testing.T) {
 		}
 		attachments = append(attachments, attachment)
 	}
-	bindings := NewPolicyBindingsCollection(sandboxes, krt.NewStaticCollection(nil, attachments, options...), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewPolicyBindingsCollection(
+		sandboxes,
+		krt.NewStaticCollection(nil, attachments, options...),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("bindings did not sync")
 	}

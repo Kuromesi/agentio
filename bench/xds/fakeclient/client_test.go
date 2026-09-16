@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package fakeclient
 
@@ -7,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -35,7 +47,9 @@ type server struct {
 	requests chan observed
 }
 
-func (s *server) DeltaAggregatedResources(stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer) error {
+func (s *server) DeltaAggregatedResources(
+	stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
+) error {
 	p, _ := peer.FromContext(stream.Context())
 	md, _ := metadata.FromIncomingContext(stream.Context())
 	for {
@@ -49,7 +63,13 @@ func (s *server) DeltaAggregatedResources(stream discovery.AggregatedDiscoverySe
 			return stream.Context().Err()
 		}
 		if r.ResponseNonce == "" && len(r.ResourceNamesSubscribe) > 0 {
-			if err := stream.Send(&discovery.DeltaDiscoveryResponse{TypeUrl: r.TypeUrl, Nonce: "nonce-1", RemovedResources: []string{"deleted-resource"}}); err != nil {
+			if err := stream.Send(
+				&discovery.DeltaDiscoveryResponse{
+					TypeUrl:          r.TypeUrl,
+					Nonce:            "nonce-1",
+					RemovedResources: []string{"deleted-resource"},
+				},
+			); err != nil {
 				return err
 			}
 		}
@@ -67,12 +87,27 @@ func testServer(t *testing.T) (Config, <-chan observed) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})))
+	grpcServer := grpc.NewServer(
+		grpc.Creds(
+			credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}),
+		),
+	)
 	s := &server{requests: make(chan observed, 20)}
 	discovery.RegisterAggregatedDiscoveryServiceServer(grpcServer, s)
-	go func() { _ = grpcServer.Serve(listener) }()
-	t.Cleanup(grpcServer.Stop)
-	return Config{Target: listener.Addr().String(), Node: &core.Node{Id: "fake-node"}, TLSConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, Token: func(context.Context) (string, error) { return "test-token", nil }}, s.requests
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- grpcServer.Serve(listener) }()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("serve: %v", err)
+		}
+	})
+	return Config{
+		Target:    listener.Addr().String(),
+		Node:      &core.Node{Id: "fake-node"},
+		TLSConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		Token:     func(context.Context) (string, error) { return "test-token", nil },
+	}, s.requests
 }
 func next(t *testing.T, ch <-chan observed) observed {
 	t.Helper()
@@ -92,14 +127,23 @@ func TestManualDeltaProtocolAndIndependentConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("close client: %v", err)
+		}
+	})
 	typeURL := "type.googleapis.com/example.CustomResource"
-	initial := &discovery.DeltaDiscoveryRequest{TypeUrl: typeURL, ResourceNamesSubscribe: []string{"*"}, InitialResourceVersions: map[string]string{"old": "v1"}}
+	initial := &discovery.DeltaDiscoveryRequest{
+		TypeUrl:                 typeURL,
+		ResourceNamesSubscribe:  []string{"*"},
+		InitialResourceVersions: map[string]string{"old": "v1"},
+	}
 	if err := c.Send(initial); err != nil {
 		t.Fatal(err)
 	}
 	first := next(t, requests)
-	if first.request.Node.GetId() != cfg.Node.Id || first.token != "Bearer test-token" || first.request.InitialResourceVersions["old"] != "v1" {
+	if first.request.Node.GetId() != cfg.Node.Id || first.token != "Bearer test-token" ||
+		first.request.InitialResourceVersions["old"] != "v1" {
 		t.Fatalf("initial request: %+v", first)
 	}
 	if initial.Node != nil {
@@ -122,7 +166,9 @@ func TestManualDeltaProtocolAndIndependentConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	nack := next(t, requests).request
-	if nack.TypeUrl != typeURL || nack.ResponseNonce != "nonce-1" || nack.ErrorDetail.GetCode() != int32(codes.InvalidArgument) || nack.Node != nil {
+	if nack.TypeUrl != typeURL || nack.ResponseNonce != "nonce-1" ||
+		nack.ErrorDetail.GetCode() != int32(codes.InvalidArgument) ||
+		nack.Node != nil {
 		t.Fatalf("NACK: %v", nack)
 	}
 	if err := c.ACK(response); err != nil {
@@ -142,7 +188,11 @@ func TestManualDeltaProtocolAndIndependentConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	t.Cleanup(func() {
+		if err := other.Close(); err != nil {
+			t.Errorf("close client: %v", err)
+		}
+	})
 	if err := other.Subscribe(typeURL, "named"); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +214,11 @@ func TestContextCancellationWithoutResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("close client: %v", err)
+		}
+	})
 	if err := c.Subscribe("type.googleapis.com/example.Silent"); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +248,9 @@ func TestFileTokenRotationAndInvalidTransport(t *testing.T) {
 		if got := next(t, requests).token; got != "Bearer "+token {
 			t.Fatalf("got %q", got)
 		}
-		_ = c.Close()
+		if err := c.Close(); err != nil {
+			t.Errorf("close client: %v", err)
+		}
 		cancel()
 	}
 	cfg.TLSConfig = nil

@@ -60,7 +60,12 @@ data:
         service: egress-gateway.{{ .Namespace }}.svc.cluster.local
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+			),
+		)
 	})
 
 	rig.RunScenario(t, "passthrough all", func(t *testing.T, scope *kube.ResourceScope) {
@@ -77,7 +82,12 @@ data:
     - policy: PASSTHROUGH
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader()))))
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader())),
+			),
+		)
 	})
 
 	rig.RunScenario(t, "match_cidrs gateway", func(t *testing.T, scope *kube.ResourceScope) {
@@ -100,7 +110,12 @@ data:
     - policy: PASSTHROUGH
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+			),
+		)
 	})
 
 	rig.RunScenario(t, "match_ports gateway", func(t *testing.T, scope *kube.ResourceScope) {
@@ -123,7 +138,12 @@ data:
 `)
 
 		t.Run("matched port uses gateway", func(t *testing.T) {
-			src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+			src.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+				),
+			)
 		})
 
 		t.Run("unmatched port passes through", func(t *testing.T) {
@@ -153,7 +173,12 @@ data:
     - policy: PASSTHROUGH
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+			),
+		)
 	})
 
 	rig.RunScenario(t, "match_hosts passthrough for unmatched host", func(t *testing.T, scope *kube.ResourceScope) {
@@ -175,7 +200,12 @@ data:
     - policy: PASSTHROUGH
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader()))))
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader())),
+			),
+		)
 	})
 
 	rig.RunScenario(t, "match_hosts gateway by hostname", func(t *testing.T, scope *kube.ResourceScope) {
@@ -255,7 +285,12 @@ data:
 `)
 
 		t.Run("matched host+port uses gateway", func(t *testing.T) {
-			src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+			src.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+				),
+			)
 		})
 
 		t.Run("matched host but unmatched port passes through", func(t *testing.T) {
@@ -265,10 +300,13 @@ data:
 		})
 	})
 
-	rig.RunScenario(t, "unresolvable match_hosts does not wildcard route", func(t *testing.T, scope *kube.ResourceScope) {
-		rig.ApplyConfig(t, scope, map[string]any{
-			"Namespace": resolvedAgentioConfig.Namespace,
-		}, `
+	rig.RunScenario(
+		t,
+		"unresolvable match_hosts does not wildcard route",
+		func(t *testing.T, scope *kube.ResourceScope) {
+			rig.ApplyConfig(t, scope, map[string]any{
+				"Namespace": resolvedAgentioConfig.Namespace,
+			}, `
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -284,8 +322,14 @@ data:
     - policy: PASSTHROUGH
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader()))))
-	})
+			src.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader())),
+				),
+			)
+		},
+	)
 
 	rig.RunScenario(t, "policy ordering first match wins", func(t *testing.T, scope *kube.ResourceScope) {
 		rig.ApplyConfig(t, scope, map[string]any{
@@ -307,8 +351,19 @@ data:
         service: egress-gateway.{{ .Namespace }}.svc.cluster.local
 `)
 
-		src.CallOrFail(t, withEgressPolicyRetry(trafficFixture.AnotherServer.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
-		src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader()))))
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				trafficFixture.AnotherServer.CallOptionsOrFail(t, "http").
+					WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+			),
+		)
+		src.CallOrFail(
+			t,
+			withEgressPolicyRetry(
+				dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), noEnvoyResponseHeader())),
+			),
+		)
 	})
 
 	rig.RunScenario(t, "namespace scoped policy", func(t *testing.T, scope *kube.ResourceScope) {
@@ -332,7 +387,12 @@ data:
 `)
 
 		t.Run("traffic from matching namespace uses gateway", func(t *testing.T) {
-			src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+			src.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+				),
+			)
 		})
 	})
 }
@@ -342,7 +402,12 @@ func TestTrafficPolicyWithEgressRouting(t *testing.T) {
 	rig.RequireLive(t)
 	rig.RequireUncontaminated(t)
 	src, dst := trafficFixture.Client, trafficFixture.Server
-	for _, tc := range []struct{ name, peer, ports, allowedPort string }{
+	for _, tc := range []struct {
+		name        string
+		peer        string
+		ports       string
+		allowedPort string
+	}{
 		{name: "deny all", peer: `cidr: "0.0.0.0/0"`},
 		{name: "deny destination CIDR", peer: fmt.Sprintf("cidr: %q", dst.ServiceIPOrFail(t))},
 		{name: "deny destination hostname", peer: fmt.Sprintf("fqdn: %q", dst.Address())},
@@ -361,8 +426,15 @@ data:
       gateway:
         service: egress-gateway.{{ .Namespace }}.svc.cluster.local
 `)
-			src.CallOrFail(t, withEgressPolicyRetry(echo.CallOptionsForAddress(echo.HTTP, dst.ServiceIPOrFail(t), 80).WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
-			e2econfig.New(scope).Eval(src.Namespace(), map[string]any{"App": src.Name(), "Peer": tc.peer, "Ports": tc.ports}, `
+			src.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					echo.CallOptionsForAddress(echo.HTTP, dst.ServiceIPOrFail(t), 80).
+						WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+				),
+			)
+			e2econfig.New(scope).
+				Eval(src.Namespace(), map[string]any{"App": src.Name(), "Peer": tc.peer, "Ports": tc.ports}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
@@ -381,14 +453,37 @@ spec:
       - action: allow
         to:
           - cidr: "0.0.0.0/0"
-`).ApplyOrFail(t, kube.CreateOnly)
+`).
+				ApplyOrFail(t, kube.CreateOnly)
 			// Use an IP so a DNS failure cannot masquerade as the HTTP denial.
-			src.CallOrFail(t, withEgressPolicyRetry(echo.CallOptionsForAddress(echo.HTTP, dst.ServiceIPOrFail(t), 80).WithCheck(check.Error())))
-			trafficFixture.AnotherServer.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+			src.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					echo.CallOptionsForAddress(echo.HTTP, dst.ServiceIPOrFail(t), 80).WithCheck(check.Error()),
+				),
+			)
+			trafficFixture.AnotherServer.CallOrFail(
+				t,
+				withEgressPolicyRetry(
+					dst.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+				),
+			)
 			if tc.allowedPort != "" {
-				src.CallOrFail(t, withEgressPolicyRetry(dst.CallOptionsOrFail(t, tc.allowedPort).WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+				src.CallOrFail(
+					t,
+					withEgressPolicyRetry(
+						dst.CallOptionsOrFail(t, tc.allowedPort).
+							WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+					),
+				)
 			} else if tc.name != "deny all" {
-				src.CallOrFail(t, withEgressPolicyRetry(trafficFixture.AnotherServer.CallOptionsOrFail(t, "http").WithCheck(check.And(check.OK(), hasEnvoyResponseHeader()))))
+				src.CallOrFail(
+					t,
+					withEgressPolicyRetry(
+						trafficFixture.AnotherServer.CallOptionsOrFail(t, "http").
+							WithCheck(check.And(check.OK(), hasEnvoyResponseHeader())),
+					),
+				)
 			}
 		})
 	}
@@ -415,6 +510,9 @@ func hasEnvoyResponseHeader() echo.Checker {
 				return nil
 			}
 		}
-		return fmt.Errorf("expected an x-envoy-* response header (proxied via envoy gateway), got: %v", response.ResponseHeaders)
+		return fmt.Errorf(
+			"expected an x-envoy-* response header (proxied via envoy gateway), got: %v",
+			response.ResponseHeaders,
+		)
 	})
 }

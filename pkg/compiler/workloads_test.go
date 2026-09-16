@@ -81,8 +81,16 @@ func TestEndpointTargetUIDMovementAndStalePodReplacementKeepDependencies(t *test
 	endpointA := incrementalTargetEndpoint("backend.alpha.svc.cluster.local", "uid-a", "pod-a")
 	fixture.endpoints.ConditionalUpdateObject(endpointA)
 	waitSynced(t, fixture.compiler)
-	awaitSteadyState(t, fixture.compiler,
-		addressResourceName("alpha", "pod-a"), addressResourceName("alpha", "pod-b"), addressResourceName("alpha", "pod-c"))
+	awaitSteadyState(
+		t,
+		fixture.compiler,
+		addressResourceName(
+			"alpha",
+			"pod-a",
+		),
+		addressResourceName("alpha", "pod-b"),
+		addressResourceName("alpha", "pod-c"),
+	)
 	eventually(t, func() bool {
 		return workloadHasTargetPort(t, fixture.compiler, podA, 8080)
 	}, "UID-targeted endpoint attached to pod-a")
@@ -122,8 +130,16 @@ func TestEndpointTargetNameMovementKeepsUIDLessDependencies(t *testing.T) {
 	endpointA := incrementalTargetEndpoint("backend.alpha.svc.cluster.local", "", "pod-a")
 	fixture.endpoints.ConditionalUpdateObject(endpointA)
 	waitSynced(t, fixture.compiler)
-	awaitSteadyState(t, fixture.compiler,
-		addressResourceName("alpha", "pod-a"), addressResourceName("alpha", "pod-b"), addressResourceName("alpha", "pod-c"))
+	awaitSteadyState(
+		t,
+		fixture.compiler,
+		addressResourceName(
+			"alpha",
+			"pod-a",
+		),
+		addressResourceName("alpha", "pod-b"),
+		addressResourceName("alpha", "pod-c"),
+	)
 	eventually(t, func() bool {
 		return workloadHasTargetPort(t, fixture.compiler, podA, 8080)
 	}, "UID-less endpoint attached to pod-a by namespace/name")
@@ -148,8 +164,12 @@ func TestServicePortAddUpdateDeleteKeepsWorkloadDependency(t *testing.T) {
 	podB := testWorkload("alpha", "pod-b", "10.1.0.2")
 	fixture.workloads.ConditionalUpdateObject(podA)
 	fixture.workloads.ConditionalUpdateObject(podB)
-	fixture.endpoints.ConditionalUpdateObject(incrementalAddressEndpoint("backend.alpha.svc.cluster.local", "10.1.0.1", 8080))
-	fixture.endpoints.ConditionalUpdateObject(incrementalAddressEndpoint("other.alpha.svc.cluster.local", "10.1.0.2", 7070))
+	fixture.endpoints.ConditionalUpdateObject(
+		incrementalAddressEndpoint("backend.alpha.svc.cluster.local", "10.1.0.1", 8080),
+	)
+	fixture.endpoints.ConditionalUpdateObject(
+		incrementalAddressEndpoint("other.alpha.svc.cluster.local", "10.1.0.2", 7070),
+	)
 	valid := incrementalService("backend", "backend.alpha.svc.cluster.local", 8080)
 	fixture.services.ConditionalUpdateObject(valid)
 	fixture.services.ConditionalUpdateObject(incrementalService("other", "other.alpha.svc.cluster.local", 7070))
@@ -461,14 +481,44 @@ func TestWorkloadServicePortsAreStableAcrossEndpointOrder(t *testing.T) {
 		{Name: "metrics", Port: 15020, TargetPortName: "metrics-backend", Protocol: "TCP"},
 	}
 	firstEndpoints := []model.Endpoint{
-		{ServiceKey: testServiceKey, SourceKey: "demo/backend-b", Address: "10.0.0.1", PortName: "metrics", Port: 15021, Protocol: "TCP", Ready: true},
-		{ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1", PortName: "http", Port: 8080, Protocol: "TCP", Ready: true},
+		{
+			ServiceKey: testServiceKey,
+			SourceKey:  "demo/backend-b",
+			Address:    "10.0.0.1",
+			PortName:   "metrics",
+			Port:       15021,
+			Protocol:   "TCP",
+			Ready:      true,
+		},
+		{
+			ServiceKey: testServiceKey,
+			SourceKey:  "demo/backend-a",
+			Address:    "10.0.0.1",
+			PortName:   "http",
+			Port:       8080,
+			Protocol:   "TCP",
+			Ready:      true,
+		},
 	}
 	secondEndpoints := []model.Endpoint{firstEndpoints[1], firstEndpoints[0]}
-	first, firstHash := compileWorkloadServices(t, ports, firstEndpoints, []model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")})
-	second, secondHash := compileWorkloadServices(t, []model.ServicePort{ports[1], ports[0]}, secondEndpoints, []model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")})
+	first, firstHash := compileWorkloadServices(
+		t,
+		ports,
+		firstEndpoints,
+		[]model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")},
+	)
+	second, secondHash := compileWorkloadServices(
+		t,
+		[]model.ServicePort{ports[1], ports[0]},
+		secondEndpoints,
+		[]model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")},
+	)
 	if !reflect.DeepEqual(first.GetServices(), second.GetServices()) {
-		t.Fatalf("service mappings differ by input order: first=%+v second=%+v", first.GetServices(), second.GetServices())
+		t.Fatalf(
+			"service mappings differ by input order: first=%+v second=%+v",
+			first.GetServices(),
+			second.GetServices(),
+		)
 	}
 	if firstHash != secondHash {
 		t.Fatalf("workload hashes differ by input order: %s != %s", firstHash, secondHash)
@@ -557,7 +607,11 @@ func TestEndpointTargetRefUsesNameOnlyWithoutUIDAndIPOnlyWithoutRef(t *testing.T
 	workloads = compileWorkloads(t, servicePorts, []model.Endpoint{base}, workloadInputs)
 	for _, name := range []string{"pod-a", "pod-b"} {
 		if _, found := workloads[name].GetServices()[testServiceKey]; !found {
-			t.Fatalf("targetRef-absent endpoint did not use IP fallback for %s: %+v", name, workloads[name].GetServices())
+			t.Fatalf(
+				"targetRef-absent endpoint did not use IP fallback for %s: %+v",
+				name,
+				workloads[name].GetServices(),
+			)
 		}
 	}
 }
@@ -575,10 +629,14 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	inputs := validCompilerInputs(stop)
 	inputs.Workloads = workloads
 	inputs.NativeSandboxPolicies = false
-	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: workload.UID, Attester: &model.Attester{WorkloadUID: workload.UID}}}, options("sandboxes")...)
+	inputs.Sandboxes = krt.NewStaticCollection(
+		nil,
+		[]model.Sandbox{{UID: workload.UID, Attester: &model.Attester{WorkloadUID: workload.UID}}},
+		options("sandboxes")...)
 	failures := newFailureRecorder()
 	policies := policyCollections{
-		policyBindings: bindings, sniPolicies: payloads,
+		policyBindings:  bindings,
+		sniPolicies:     payloads,
 		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
 	}
 	compatibility := newSandboxWorkloadPolicies(inputs, policies, failures, options)
@@ -615,10 +673,18 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		}
 	}, false)
 	binding := func(names ...string) policy.Bindings {
-		return policy.Bindings{SandboxUID: workload.UID, Groups: []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
+		return policy.Bindings{
+			SandboxUID: workload.UID,
+			Groups:     []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}},
+		}
 	}
 	payload := func(name, host string) policy.CompiledSNIPolicy {
-		return policy.CompiledSNIPolicy{Name: name, Policy: &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}}}}
+		return policy.CompiledSNIPolicy{
+			Name: name,
+			Policy: &extensionsv1.SniTrafficPolicy{
+				Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}},
+			},
+		}
 	}
 	expect := func(hosts ...string) {
 		t.Helper()
@@ -659,7 +725,11 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	}
 	// A missing replacement is omitted while unrelated policies keep enforcing.
 	bindings.UpdateObject(binding("second", "replacement"))
-	eventually(t, func() bool { return failures.snapshot()["SandboxWorkloadPolicies/"+workload.UID] != "" }, "missing replacement records a failure")
+	eventually(
+		t,
+		func() bool { return failures.snapshot()["SandboxWorkloadPolicies/"+workload.UID] != "" },
+		"missing replacement records a failure",
+	)
 	expect("second.example")
 	payloads.UpdateObject(payload("replacement", "replacement.example"))
 	expect("second.example", "replacement.example")
@@ -669,7 +739,11 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	bindings.UpdateObject(binding("first"))
 	expect("updated.example")
 	bindings.DeleteObject(workload.UID)
-	eventually(t, func() bool { return getPolicy() == nil && len(resolved.List()) == 1 }, "binding removal preserves Workload networking")
+	eventually(
+		t,
+		func() bool { return getPolicy() == nil && len(resolved.List()) == 1 },
+		"binding removal preserves Workload networking",
+	)
 	settle()
 	if withdrawals.Load() != 0 {
 		t.Fatal("policy changes withdrew the Workload")
@@ -694,7 +768,14 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeSandboxBindings(t *testing.T) {
 			Labels:    map[string]string{"app": "workload"},
 		})
 		uid := fmt.Sprintf("cluster//Pod/demo/workload-%d", index)
-		sandboxes.ConditionalUpdateObject(model.Sandbox{UID: uid, Namespace: "demo", Labels: map[string]string{"app": "workload"}, Attester: &model.Attester{WorkloadUID: uid}})
+		sandboxes.ConditionalUpdateObject(
+			model.Sandbox{
+				UID:       uid,
+				Namespace: "demo",
+				Labels:    map[string]string{"app": "workload"},
+				Attester:  &model.Attester{WorkloadUID: uid},
+			},
+		)
 	}
 	profiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
 	profile := model.SecurityProfile{
@@ -732,7 +813,8 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeSandboxBindings(t *testing.T) {
 	inputs.NativeSandboxPolicies = false
 	inputs.Workloads, inputs.Sandboxes = workloads, sandboxes
 	resources := newSandboxWorkloadPolicies(inputs, policyCollections{
-		policyBindings: bindings, sniPolicies: compiled,
+		policyBindings:  bindings,
+		sniPolicies:     compiled,
 		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options...),
 	}, newFailureRecorder(), builder.WithName)
 	if !observedBindings.WaitUntilSynced(stop) || !resources.WaitUntilSynced(stop) {

@@ -1,30 +1,50 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package trafficpolicy
 
 import (
 	"encoding/json"
-	ads "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
-	sandbox "github.com/openkruise/agentio/api/sandbox/v1"
-	"google.golang.org/protobuf/types/known/anypb"
 	"testing"
 
-	security "github.com/openkruise/agentio/api/security/v1"
+	ads "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"google.golang.org/protobuf/types/known/anypb"
+
+	sandbox "github.com/openkruise/agentio/api/sandbox/v1"
+
 	"google.golang.org/protobuf/proto"
+
+	security "github.com/openkruise/agentio/api/security/v1"
 )
 
 func TestPolicyValidatorChecksEveryRule(t *testing.T) {
 	r := Round{Marker: 10001, Action: 1, RuleCount: 3, Ports: 2}
 	p := &security.TrafficPolicy{Egress: &security.TrafficPolicy_RuleSet{}}
-	for i := 0; i < 2; i++ {
-		rule := &security.TrafficPolicy_Rule{Action: security.TrafficPolicy_DENY, Match: &security.TrafficPolicy_Match{}}
-		for j := 0; j < 2; j++ {
+	for i := range 2 {
+		rule := &security.TrafficPolicy_Rule{
+			Action: security.TrafficPolicy_DENY,
+			Match:  &security.TrafficPolicy_Match{},
+		}
+		for j := range 2 {
 			port := uint32(12000 + i*2 + j)
 			if i == 0 && j == 0 {
 				port = r.Marker
 			}
-			rule.Match.Ports = append(rule.Match.Ports, &security.TrafficPolicy_PortMatch{Protocol: security.TrafficPolicy_UDP, Port: &port})
+			rule.Match.Ports = append(
+				rule.Match.Ports,
+				&security.TrafficPolicy_PortMatch{Protocol: security.TrafficPolicy_UDP, Port: &port},
+			)
 		}
 		p.Egress.Rules = append(p.Egress.Rules, rule)
 	}
@@ -49,24 +69,45 @@ func TestClientRoundMatchesMarkerAndSandboxReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := f.New()
-	sb, err := anypb.New(&sandbox.Sandbox{Uid: "local", PolicyRefs: map[string]*sandbox.PolicyReference{PolicyType: {ResourceNames: []string{"trafficPolicies/test"}}}})
+	sb, err := anypb.New(
+		&sandbox.Sandbox{
+			Uid: "local",
+			PolicyRefs: map[string]*sandbox.PolicyReference{
+				PolicyType: {ResourceNames: []string{"trafficPolicies/test"}},
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.Observe(&ads.DeltaDiscoveryResponse{TypeUrl: SandboxType, Resources: []*ads.Resource{{Resource: sb}}}, nil)
+	got, err := c.Observe(
+		&ads.DeltaDiscoveryResponse{TypeUrl: SandboxType, Resources: []*ads.Resource{{Resource: sb}}},
+		nil,
+	)
 	if err != nil || got.Ready {
 		t.Fatalf("ready without policy: %+v %v", got, err)
 	}
 	for _, marker := range []uint32{10000, 10001} {
 		p := &security.TrafficPolicy{Egress: &security.TrafficPolicy_RuleSet{Rules: []*security.TrafficPolicy_Rule{
-			{Action: security.TrafficPolicy_DENY, Match: &security.TrafficPolicy_Match{Ports: []*security.TrafficPolicy_PortMatch{{Protocol: security.TrafficPolicy_UDP, Port: &marker}}}},
+			{
+				Action: security.TrafficPolicy_DENY,
+				Match: &security.TrafficPolicy_Match{
+					Ports: []*security.TrafficPolicy_PortMatch{{Protocol: security.TrafficPolicy_UDP, Port: &marker}},
+				},
+			},
 			{Action: security.TrafficPolicy_DENY},
 		}}}
 		body, err := anypb.New(p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err = c.Observe(&ads.DeltaDiscoveryResponse{TypeUrl: PolicyType, Resources: []*ads.Resource{{Name: "trafficPolicies/test", Version: "v1", Resource: body}}}, expected)
+		got, err = c.Observe(
+			&ads.DeltaDiscoveryResponse{
+				TypeUrl:   PolicyType,
+				Resources: []*ads.Resource{{Name: "trafficPolicies/test", Version: "v1", Resource: body}},
+			},
+			expected,
+		)
 		if err != nil || !got.Ready {
 			t.Fatalf("observation: %+v %v", got, err)
 		}

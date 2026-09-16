@@ -39,6 +39,7 @@ const (
 // attachment projection.
 type PolicyKind = model.PolicyKind
 
+// Supported policy families for attachments.
 const (
 	PolicyKindTrafficPolicy = model.PolicyKindTrafficPolicy
 	PolicyKindEgressPolicy  = model.PolicyKindEgressPolicy

@@ -38,7 +38,11 @@ func TestTrafficPolicyLowerPriorityWins(t *testing.T) {
 	// Use a literal address so a denied DNS lookup cannot masquerade as policy enforcement.
 	call := echo.CallOptionsForAddress(echo.HTTP, target, 80)
 
-	for _, tc := range []struct{ name, allowKind, denyKind string }{
+	for _, tc := range []struct {
+		name      string
+		allowKind string
+		denyKind  string
+	}{
 		{"namespaced allow versus global deny", "TrafficPolicy", "GlobalTrafficPolicy"},
 		{"global allow versus namespaced deny", "GlobalTrafficPolicy", "TrafficPolicy"},
 	} {

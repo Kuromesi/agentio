@@ -27,6 +27,7 @@ import (
 // Sandbox. The reference intentionally carries no policy payload.
 type PolicyKind string
 
+// Supported policy families for Sandbox references.
 const (
 	PolicyKindTrafficPolicy PolicyKind = "traffic-policy"
 	PolicyKindEgressPolicy  PolicyKind = "egress-policy"
@@ -67,6 +68,7 @@ const (
 // Attester identifies the one Workload currently hosting a Sandbox.
 type Attester struct{ WorkloadUID string }
 
+// Sandbox kinds identify the provider used to qualify an instance ID.
 const (
 	SandboxKindWorkload = "workload"
 	SandboxKindKruise   = "kruise"

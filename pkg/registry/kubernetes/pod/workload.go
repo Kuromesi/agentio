@@ -159,8 +159,10 @@ func HasInjectedZTunnel(pod *corev1.Pod) bool {
 }
 
 func isDedicatedZTunnelContainer(container corev1.Container) bool {
-	if (container.Name != "agentio-proxy" && container.Name != "istio-proxy" && container.Name != "traffic-proxy") || len(container.Args) < 2 ||
-		container.Args[0] != "proxy" || container.Args[1] != "ztunnel" {
+	if (container.Name != "agentio-proxy" && container.Name != "istio-proxy" && container.Name != "traffic-proxy") ||
+		len(container.Args) < 2 ||
+		container.Args[0] != "proxy" ||
+		container.Args[1] != "ztunnel" {
 		return false
 	}
 	sidecarMode, proxyMode := false, false

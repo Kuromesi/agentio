@@ -41,8 +41,11 @@ type policyCollections struct {
 func newTrafficPolicyInputs(inputs Inputs) policy.TrafficPolicyInputs {
 	podsByNamespace := krt.NewIndex(inputs.Pods, "trafficPolicyPodsByNamespace",
 		func(pod *corev1.Pod) []string { return []string{pod.Namespace} })
-	kubernetesServicesByNamespace := krt.NewIndex(inputs.KubernetesServices, "trafficPolicyKubernetesServicesByNamespace",
-		func(service *corev1.Service) []string { return []string{service.Namespace} })
+	kubernetesServicesByNamespace := krt.NewIndex(
+		inputs.KubernetesServices,
+		"trafficPolicyKubernetesServicesByNamespace",
+		func(service *corev1.Service) []string { return []string{service.Namespace} },
+	)
 	endpointSlicesByService := krt.NewIndex(inputs.EndpointSlices, "trafficPolicyEndpointSlicesByService",
 		func(slice *discoveryv1.EndpointSlice) []string {
 			serviceName, found := slice.Labels[discoveryv1.LabelServiceName]
@@ -81,7 +84,11 @@ func newPolicyCollections(
 		func(ctx krt.HandlerContext, source model.TrafficPolicy) *policy.CompiledTrafficPolicy {
 			compiled, err := policy.CompileTrafficPolicy(ctx, source, trafficPolicyInputs)
 			if err == nil && !inputs.NativeSandboxPolicies {
-				compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(*compiled, source, inputs.RootNamespace)
+				compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(
+					*compiled,
+					source,
+					inputs.RootNamespace,
+				)
 			}
 			if err != nil {
 				failures.record("TrafficPolicy", source.ResourceName(), err)
@@ -178,17 +185,24 @@ func authorizationResource(authorization policy.CompiledAuthorization) (model.Re
 
 // Shared policy bodies are serialized independently of Sandbox references.
 // Compatibility Authorizations are serialized once per source alongside them.
-func newTrafficPolicyResources(policies krt.Collection[policy.CompiledTrafficPolicy], failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
+func newTrafficPolicyResources(
+	policies krt.Collection[policy.CompiledTrafficPolicy],
+	failures *failureRecorder,
+	options collectionOptions,
+) krt.Collection[model.Resource] {
 	clearFailureOnSourceDelete(policies, failures, "TrafficPolicyResource")
-	return krt.NewManyCollection(policies, func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []model.Resource {
-		resources, err := trafficPolicyResources(compiled)
-		if err != nil {
-			failures.record("TrafficPolicyResource", compiled.Name, err)
-			return nil
-		}
-		failures.clear("TrafficPolicyResource", compiled.Name)
-		return resources
-	}, options("traffic-policy-resources")...)
+	return krt.NewManyCollection(
+		policies,
+		func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []model.Resource {
+			resources, err := trafficPolicyResources(compiled)
+			if err != nil {
+				failures.record("TrafficPolicyResource", compiled.Name, err)
+				return nil
+			}
+			failures.clear("TrafficPolicyResource", compiled.Name)
+			return resources
+		},
+		options("traffic-policy-resources")...)
 }
 
 func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Resource, error) {
@@ -208,7 +222,13 @@ func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Reso
 	if err != nil {
 		return nil, err
 	}
-	resource, err := model.NewResource(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: compiled.Name}, "", value, nil, model.ResourceFacts{})
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: compiled.Name},
+		"",
+		value,
+		nil,
+		model.ResourceFacts{},
+	)
 	if err != nil {
 		return nil, err
 	}

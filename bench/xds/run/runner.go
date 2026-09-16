@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
@@ -19,19 +30,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openkruise/agentio/bench/xds/loadapi"
-	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/openkruise/agentio/bench/xds/loadapi"
+	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 )
 
 type runner struct {
 	cfg                config
-	id, out            string
-	pods, urls         []string
+	id                 string
+	out                string
+	pods               []string
+	urls               []string
 	roundID            uint64
 	scenario           driver.Driver
 	resources          []driver.Resource
@@ -68,8 +82,15 @@ func newRunner(cfg config) (*runner, error) {
 	if err = os.Mkdir(out, 0755); err != nil {
 		return nil, fmt.Errorf("output must be a fresh directory: %w", err)
 	}
-	r := &runner{cfg: cfg, id: id, out: out, rest: rc, kube: k, dynamic: d, http: &http.Client{Timeout: 30 * time.Second}, scenario: sc,
-		result: result{RunID: id, Parameters: cfg, Stages: []stageResult{}, Rounds: []roundResult{}}}
+	r := &runner{cfg: cfg,
+		id:       id,
+		out:      out,
+		rest:     rc,
+		kube:     k,
+		dynamic:  d,
+		http:     &http.Client{Timeout: 30 * time.Second},
+		scenario: sc,
+		result:   result{RunID: id, Parameters: cfg, Stages: []stageResult{}, Rounds: []roundResult{}}}
 	for i := 0; i < cfg.Pods; i++ {
 		r.pods = append(r.pods, fmt.Sprintf("client-%d", i))
 	}
@@ -86,7 +107,7 @@ func (r *runner) save(name string, value any) error {
 	}
 	return os.WriteFile(filepath.Join(r.out, name), append(data, '\n'), 0644)
 }
-func emit(value any) { _ = json.NewEncoder(os.Stdout).Encode(value) }
+func emit(value any) error { return json.NewEncoder(os.Stdout).Encode(value) }
 
 func waitFor(parent context.Context, timeout time.Duration, fn func(context.Context) (bool, error)) error {
 	ctx, cancel := context.WithTimeout(parent, timeout)
@@ -118,7 +139,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (r *runner) request(ctx context.Context, url string, body, out any) error {
+func (r *runner) request(ctx context.Context, url string, body, out any) (err error) {
 	var reader io.Reader
 	method := http.MethodGet
 	if body != nil {
@@ -140,10 +161,10 @@ func (r *runner) request(ctx context.Context, url string, body, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("%s: HTTP %d: %s", url, resp.StatusCode, data)
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return errors.Join(fmt.Errorf("%s: HTTP %d: %s", url, resp.StatusCode, data), readErr)
 	}
 	if out == nil {
 		_, err = io.Copy(io.Discard, resp.Body)
@@ -178,8 +199,8 @@ func (r *runner) statuses(ctx context.Context, samples bool, expected int) ([]lo
 	return statuses, nil
 }
 
-func (r *runner) metrics(ctx context.Context, label string) (map[string]float64, error) {
-	values := map[string]float64{}
+func (r *runner) metrics(ctx context.Context, label string) (values map[string]float64, err error) {
+	values = map[string]float64{}
 	if r.cfg.MetricsURL == "" {
 		return values, nil
 	}
@@ -191,7 +212,7 @@ func (r *runner) metrics(ctx context.Context, label string) (map[string]float64,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("metrics HTTP %d", resp.StatusCode)
 	}
@@ -202,7 +223,7 @@ func (r *runner) metrics(ctx context.Context, label string) (map[string]float64,
 	if err = os.WriteFile(filepath.Join(r.out, label+".prom"), raw, 0644); err != nil {
 		return nil, err
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -230,7 +251,7 @@ func (r *runner) metrics(ctx context.Context, label string) (map[string]float64,
 func (r *runner) clockOffsets(ctx context.Context) ([]calibration, error) {
 	clocks := make([]calibration, len(r.urls))
 	for i, url := range r.urls {
-		for attempt := 0; attempt < 3; attempt++ {
+		for attempt := range 3 {
 			start := time.Now()
 			var status loadapi.Status
 			if err := r.request(ctx, url+"/status", nil, &status); err != nil {
@@ -240,7 +261,10 @@ func (r *runner) clockOffsets(ctx context.Context) ([]calibration, error) {
 			if status.NowNS <= 0 {
 				return nil, errors.New("missing client clock")
 			}
-			c := calibration{RTTNS: end.Sub(start).Nanoseconds(), OffsetNS: status.NowNS - (start.UnixNano()+end.UnixNano())/2}
+			c := calibration{
+				RTTNS:    end.Sub(start).Nanoseconds(),
+				OffsetNS: status.NowNS - (start.UnixNano()+end.UnixNano())/2,
+			}
 			if attempt == 0 || c.RTTNS < clocks[i].RTTNS {
 				clocks[i] = c
 			}
@@ -249,6 +273,7 @@ func (r *runner) clockOffsets(ctx context.Context) ([]calibration, error) {
 	return clocks, nil
 }
 
+//nolint:gocyclo,funlen // Keep the ordered measurement steps together so timing boundaries remain visible.
 func (r *runner) update(ctx context.Context, n int, parameters json.RawMessage) error {
 	r.roundID++
 	expected := loadapi.Round{ID: r.roundID, Parameters: parameters}
@@ -344,8 +369,18 @@ func (r *runner) update(ctx context.Context, n int, parameters json.RawMessage) 
 	for _, c := range clocks {
 		uncertainty = max(uncertainty, float64(c.RTTNS)/2e6)
 	}
-	record := roundResult{Connections: n, RoundID: r.roundID, Parameters: parameters, Checks: checks, StartNS: start.UnixNano(), SampleCount: len(samples),
-		ReceiveMS: quantiles(receive), AckSubmitMS: quantiles(ack), AllClientsObservedMS: observed, ServerACKObservedMS: serverObserved, ClockCalibration: clocks, ClockUncertaintyMS: uncertainty}
+	record := roundResult{Connections: n,
+		RoundID:              r.roundID,
+		Parameters:           parameters,
+		Checks:               checks,
+		StartNS:              start.UnixNano(),
+		SampleCount:          len(samples),
+		ReceiveMS:            quantiles(receive),
+		AckSubmitMS:          quantiles(ack),
+		AllClientsObservedMS: observed,
+		ServerACKObservedMS:  serverObserved,
+		ClockCalibration:     clocks,
+		ClockUncertaintyMS:   uncertainty}
 	if r.cfg.RawSamples {
 		if err = r.save("samples-"+label+".json", samples); err != nil {
 			return err
@@ -355,8 +390,7 @@ func (r *runner) update(ctx context.Context, n int, parameters json.RawMessage) 
 	if err = r.save("results.json", r.result); err != nil {
 		return err
 	}
-	emit(record)
-	return nil
+	return emit(record)
 }
 
 func (r *runner) run(ctx context.Context) error {
@@ -374,22 +408,26 @@ func (r *runner) run(ctx context.Context) error {
 		}
 		var statuses []loadapi.Status
 		var lastPrint time.Time
-		err := waitFor(ctx, r.cfg.timeout()+seconds(float64(n-previous)/r.cfg.Rate), func(ctx context.Context) (bool, error) {
-			var err error
-			statuses, err = r.statuses(ctx, false, -1)
-			if err != nil {
-				return false, err
-			}
-			ready := int64(0)
-			for _, s := range statuses {
-				ready += s.Ready
-			}
-			if time.Since(lastPrint) >= 10*time.Second {
-				emit(map[string]any{"target": n, "ready": ready})
-				lastPrint = time.Now()
-			}
-			return ready == int64(n), nil
-		})
+		err := waitFor(
+			ctx,
+			r.cfg.timeout()+seconds(float64(n-previous)/r.cfg.Rate),
+			func(ctx context.Context) (bool, error) {
+				var err error
+				statuses, err = r.statuses(ctx, false, -1)
+				if err != nil {
+					return false, err
+				}
+				ready := int64(0)
+				for _, s := range statuses {
+					ready += s.Ready
+				}
+				if time.Since(lastPrint) >= 10*time.Second {
+					lastPrint = time.Now()
+					return ready == int64(n), emit(map[string]any{"target": n, "ready": ready})
+				}
+				return ready == int64(n), nil
+			},
+		)
 		if err != nil {
 			return fmt.Errorf("ramp to %d: %w", n, err)
 		}
@@ -398,7 +436,10 @@ func (r *runner) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		r.result.Stages = append(r.result.Stages, stageResult{Connections: n, RampSeconds: elapsed, Clients: statuses, Metrics: metrics})
+		r.result.Stages = append(
+			r.result.Stages,
+			stageResult{Connections: n, RampSeconds: elapsed, Clients: statuses, Metrics: metrics},
+		)
 		if err = r.snapshot(ctx, strconv.Itoa(n)+"-ready"); err != nil {
 			return err
 		}
@@ -455,7 +496,11 @@ func (r *runner) execute(ctx context.Context) (err error) {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		cleanupErr := r.cleanup(cleanupCtx)
 		cancel()
-		r.result.Cleanup = cleanupResult{KeptResources: r.cfg.KeepResources, Errors: []string{}, NamespaceDeletionAsync: true}
+		r.result.Cleanup = cleanupResult{
+			KeptResources:          r.cfg.KeepResources,
+			Errors:                 []string{},
+			NamespaceDeletionAsync: true,
+		}
 		if cleanupErr != nil {
 			r.result.Cleanup.Errors = append(r.result.Cleanup.Errors, cleanupErr.Error())
 			err = errors.Join(err, fmt.Errorf("cleanup: %w", cleanupErr))
@@ -464,7 +509,17 @@ func (r *runner) execute(ctx context.Context) (err error) {
 		if r.cfg.Kubeconfig != "" {
 			prefix = append(prefix, "--kubeconfig", r.cfg.Kubeconfig)
 		}
-		saveErr := r.save("cleanup.json", map[string]any{"kubectl_prefix": prefix, "namespace": r.id, "resources": r.resources, "kept_resources": r.cfg.KeepResources, "errors": r.result.Cleanup.Errors, "namespace_deletion_is_async": true})
+		saveErr := r.save(
+			"cleanup.json",
+			map[string]any{
+				"kubectl_prefix":              prefix,
+				"namespace":                   r.id,
+				"resources":                   r.resources,
+				"kept_resources":              r.cfg.KeepResources,
+				"errors":                      r.result.Cleanup.Errors,
+				"namespace_deletion_is_async": true,
+			},
+		)
 		err = errors.Join(err, saveErr, r.save("results.json", r.result))
 		fmt.Println("Results:", r.out)
 	}()

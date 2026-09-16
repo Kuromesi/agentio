@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
@@ -14,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -28,7 +38,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
-	"k8s.io/utils/ptr"
+
+	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 )
 
 const runLabel = driver.RunLabel
@@ -38,7 +49,8 @@ var metricsGVR = schema.GroupVersionResource{Group: "metrics.k8s.io", Version: "
 func clients(c config) (*rest.Config, kubernetes.Interface, dynamic.Interface, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	rules.ExplicitPath = c.Kubeconfig
-	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: c.Context}).ClientConfig()
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: c.Context}).
+		ClientConfig()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -58,23 +70,93 @@ func (r *runner) pod(name string) (*corev1.Pod, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"--target=" + c.XDSAddress, "--server-name=" + c.ServerName, "--listen=0.0.0.0:8088", "--scenario=" + c.Scenario, "--scenario-config=" + string(parameters), "--ack-delay=" + c.AckDelay,
-		"--ready-timeout=" + c.timeout().String(), "--max-connections=" + strconv.Itoa(targetFor(c.Stages[len(c.Stages)-1], c.Pods, 0))}
+	args := []string{
+		"--target=" + c.XDSAddress,
+		"--server-name=" + c.ServerName,
+		"--listen=0.0.0.0:8088",
+		"--scenario=" + c.Scenario,
+		"--scenario-config=" + string(parameters),
+		"--ack-delay=" + c.AckDelay,
+		"--ready-timeout=" + c.timeout().
+			String(),
+		"--max-connections=" + strconv.Itoa(targetFor(c.Stages[len(c.Stages)-1], c.Pods, 0)),
+	}
 	var env []corev1.EnvVar
 	for _, kv := range [][2]string{{"POD_NAME", "metadata.name"}, {"POD_NAMESPACE", "metadata.namespace"}, {"POD_UID", "metadata.uid"}, {"NODE_NAME", "spec.nodeName"}, {"POD_IP", "status.podIP"}} {
-		env = append(env, corev1.EnvVar{Name: kv[0], ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: kv[1]}}})
+		env = append(
+			env,
+			corev1.EnvVar{
+				Name:      kv[0],
+				ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: kv[1]}},
+			},
+		)
 	}
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.id, Labels: map[string]string{runLabel: r.id}, Annotations: map[string]string{"sidecar.istio.io/inject": "false"}}, Spec: corev1.PodSpec{
-		TerminationGracePeriodSeconds: ptr.To(int64(10)),
-		Containers: []corev1.Container{{Name: "load", Image: c.Image, ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy), Args: args, Env: env,
-			Resources:      corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(c.CPULimit), corev1.ResourceMemory: resource.MustParse(c.MemoryLimit)}},
-			VolumeMounts:   []corev1.VolumeMount{{Name: "token", MountPath: "/var/run/ads", ReadOnly: true}, {Name: "ca", MountPath: "/var/run/ads/ca", ReadOnly: true}},
-			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/status", Port: intstr.FromInt32(8088)}}, PeriodSeconds: 2}}},
-		Volumes: []corev1.Volume{
-			{Name: "token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: c.TokenAudience, ExpirationSeconds: ptr.To(int64(3600)), Path: "token"}}}}}},
-			{Name: "ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "ads-ca"}}}},
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   r.id,
+			Labels:      map[string]string{runLabel: r.id},
+			Annotations: map[string]string{"sidecar.istio.io/inject": "false"},
 		},
-	}}, nil
+		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: new(int64(10)),
+			Containers: []corev1.Container{
+				{
+					Name:            "load",
+					Image:           c.Image,
+					ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
+					Args:            args,
+					Env:             env,
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("100m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse(c.CPULimit),
+							corev1.ResourceMemory: resource.MustParse(c.MemoryLimit),
+						},
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{Name: "token", MountPath: "/var/run/ads", ReadOnly: true},
+						{Name: "ca", MountPath: "/var/run/ads/ca", ReadOnly: true},
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{Path: "/status", Port: intstr.FromInt32(8088)},
+						},
+						PeriodSeconds: 2,
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "token",
+					VolumeSource: corev1.VolumeSource{
+						Projected: &corev1.ProjectedVolumeSource{
+							Sources: []corev1.VolumeProjection{
+								{
+									ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+										Audience:          c.TokenAudience,
+										ExpirationSeconds: new(int64(3600)),
+										Path:              "token",
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Name: "ca",
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "ads-ca"},
+						},
+					},
+				},
+			},
+		},
+	}, nil
 }
 
 func (r *runner) setup(ctx context.Context) error {
@@ -89,11 +171,15 @@ func (r *runner) setup(ctx context.Context) error {
 	// Mark intent before Create: a canceled request may still have persisted the object.
 	// Cleanup verifies the run label and uses a UID precondition before deleting it.
 	r.namespaceAttempted = true
-	_, err = r.kube.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: r.id, Labels: map[string]string{runLabel: r.id}}}, metav1.CreateOptions{})
+	_, err = r.kube.CoreV1().
+		Namespaces().
+		Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: r.id, Labels: map[string]string{runLabel: r.id}}}, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
-	_, err = r.kube.CoreV1().ConfigMaps(r.id).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ads-ca", Namespace: r.id}, Data: map[string]string{"root-cert.pem": pem}}, metav1.CreateOptions{})
+	_, err = r.kube.CoreV1().
+		ConfigMaps(r.id).
+		Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ads-ca", Namespace: r.id}, Data: map[string]string{"root-cert.pem": pem}}, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -185,7 +271,9 @@ func (r *runner) forward(parent context.Context, pod string) error {
 	cfg.Timeout = 0
 	// Bind upgrade requests to the run context too; client-go's Dial interface has no context.
 	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
-		return roundTripperFunc(func(req *http.Request) (*http.Response, error) { return rt.RoundTrip(req.WithContext(ctx)) })
+		return roundTripperFunc(
+			func(req *http.Request) (*http.Response, error) { return rt.RoundTrip(req.WithContext(ctx)) },
+		)
 	})
 	u := r.kube.CoreV1().RESTClient().Post().Namespace(r.id).Resource("pods").Name(pod).SubResource("portforward").URL()
 	rt, upgrader, err := spdy.RoundTripperFor(cfg)
@@ -199,7 +287,11 @@ func (r *runner) forward(parent context.Context, pod string) error {
 		return err
 	}
 	fallback := spdy.NewDialer(upgrader, &http.Client{Transport: rt}, http.MethodPost, u)
-	dialer := portforward.NewFallbackDialer(ws, fallback, func(err error) bool { return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err) })
+	dialer := portforward.NewFallbackDialer(
+		ws,
+		fallback,
+		func(err error) bool { return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err) },
+	)
 	log, err := os.Create(filepath.Join(r.out, pod+"-forward.log"))
 	if err != nil {
 		cancel()
@@ -207,14 +299,25 @@ func (r *runner) forward(parent context.Context, pod string) error {
 	}
 	ready := make(chan struct{})
 	done := make(chan error, 1)
-	pf, err := portforward.NewOnAddresses(dialer, []string{"127.0.0.1"}, []string{"0:8088"}, ctx.Done(), ready, log, log)
+	pf, err := portforward.NewOnAddresses(
+		dialer,
+		[]string{"127.0.0.1"},
+		[]string{"0:8088"},
+		ctx.Done(),
+		ready,
+		log,
+		log,
+	)
 	if err != nil {
 		cancel()
-		_ = log.Close()
-		return err
+		return errors.Join(err, log.Close())
 	}
 	r.forwards = append(r.forwards, forwardHandle{cancel: cancel, done: done})
-	go func() { defer close(done); defer log.Close(); done <- pf.ForwardPorts() }()
+	go func() {
+		defer close(done)
+		err := pf.ForwardPorts()
+		done <- errors.Join(err, log.Close())
+	}()
 	timer := time.NewTimer(r.cfg.timeout())
 	defer timer.Stop()
 	select {
@@ -226,7 +329,10 @@ func (r *runner) forward(parent context.Context, pod string) error {
 		return fmt.Errorf("port-forward %s readiness timed out", pod)
 	case err := <-done:
 		cancel()
-		return fmt.Errorf("port-forward %s exited before ready: %v", pod, err)
+		if err == nil {
+			return fmt.Errorf("port-forward %s exited before ready", pod)
+		}
+		return fmt.Errorf("port-forward %s exited before ready: %w", pod, err)
 	case <-ready:
 	}
 	ports, err := pf.GetPorts()
@@ -250,7 +356,9 @@ func (r *runner) cleanup(ctx context.Context) error {
 				if ns.Labels[runLabel] != r.id {
 					err = errors.New("refusing to delete namespace not owned by this run")
 				} else {
-					err = r.kube.CoreV1().Namespaces().Delete(ctx, r.id, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &ns.UID}})
+					err = r.kube.CoreV1().
+						Namespaces().
+						Delete(ctx, r.id, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &ns.UID}})
 				}
 			}
 			if err != nil && !apierrors.IsNotFound(err) {
@@ -265,7 +373,11 @@ func (r *runner) cleanup(ctx context.Context) error {
 					err = fmt.Errorf("refusing to delete resource %s not owned by this run", resource.Name)
 				} else {
 					uid := p.GetUID()
-					err = api.Delete(ctx, resource.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+					err = api.Delete(
+						ctx,
+						resource.Name,
+						metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}},
+					)
 				}
 			}
 			if err != nil && !apierrors.IsNotFound(err) {

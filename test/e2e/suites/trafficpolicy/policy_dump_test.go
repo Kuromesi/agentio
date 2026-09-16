@@ -106,7 +106,8 @@ func inspectPolicyDump(content, name string) (policyDumpView, error) {
 		}
 		key := policy.Namespace + "/" + policy.Name
 		referenced := refs[key]
-		if matchesName(policy.Name) && (referenced || policy.Scope == "Global" || policy.Scope == "Namespace" && policy.Namespace == dump.Workload.Namespace) {
+		if matchesName(policy.Name) &&
+			(referenced || policy.Scope == "Global" || policy.Scope == "Namespace" && policy.Namespace == dump.Workload.Namespace) {
 			bodies = append(bodies, raw)
 			delete(refs, key)
 		}

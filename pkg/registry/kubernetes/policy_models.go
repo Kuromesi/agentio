@@ -60,7 +60,11 @@ func newSecurityProfileModels(
 		derivedOptions("security-profiles")...)
 }
 
-func trafficPolicyModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.TrafficPolicySpec, global bool) *model.TrafficPolicy {
+func trafficPolicyModel(
+	metadata metav1.ObjectMeta,
+	spec *agentsv1alpha1.TrafficPolicySpec,
+	global bool,
+) *model.TrafficPolicy {
 	namespace := metadata.Namespace
 	if global {
 		namespace = ""
@@ -74,7 +78,11 @@ func trafficPolicyModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.Traffic
 	}
 }
 
-func securityProfileModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.SecurityProfileSpec, global bool) *model.SecurityProfile {
+func securityProfileModel(
+	metadata metav1.ObjectMeta,
+	spec *agentsv1alpha1.SecurityProfileSpec,
+	global bool,
+) *model.SecurityProfile {
 	namespace := metadata.Namespace
 	if global {
 		namespace = ""

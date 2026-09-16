@@ -28,11 +28,23 @@ import (
 
 func sharedTrafficResource(t *testing.T, name string, action securityv1.TrafficPolicy_Action) model.Resource {
 	t.Helper()
-	body, err := anypb.New(&securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: []*securityv1.TrafficPolicy_Rule{{Action: action, Match: &securityv1.TrafficPolicy_Match{}}}}})
+	body, err := anypb.New(
+		&securityv1.TrafficPolicy{
+			Egress: &securityv1.TrafficPolicy_RuleSet{
+				Rules: []*securityv1.TrafficPolicy_Rule{{Action: action, Match: &securityv1.TrafficPolicy_Match{}}},
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := model.NewResource(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name}, "", body, nil, model.ResourceFacts{})
+	r, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name},
+		"",
+		body,
+		nil,
+		model.ResourceFacts{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,11 +53,25 @@ func sharedTrafficResource(t *testing.T, name string, action securityv1.TrafficP
 
 func sandboxWithTrafficRefs(t *testing.T, uid, workload string, names ...string) model.Resource {
 	t.Helper()
-	body, err := anypb.New(&sandboxv1.Sandbox{Uid: uid, Attester: &sandboxv1.Sandbox_Attester{WorkloadUid: workload}, PolicyRefs: map[string]*sandboxv1.PolicyReference{model.TrafficPolicyType: {ResourceNames: names}}})
+	body, err := anypb.New(
+		&sandboxv1.Sandbox{
+			Uid:        uid,
+			Attester:   &sandboxv1.Sandbox_Attester{WorkloadUid: workload},
+			PolicyRefs: map[string]*sandboxv1.PolicyReference{model.TrafficPolicyType: {ResourceNames: names}},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := model.NewResource(model.ResourceKey{TypeURL: model.SandboxType, Name: uid}, "", body, nil, model.ResourceFacts{Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workload, TrafficPolicyRefs: names}})
+	r, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.SandboxType, Name: uid},
+		"",
+		body,
+		nil,
+		model.ResourceFacts{
+			Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workload, TrafficPolicyRefs: names},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +107,13 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 	if len(response.Resources) != 1 || response.Resources[0].Version != changed.Hash {
 		t.Fatalf("body update missing: %v", response)
 	}
-	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce, ResourceNamesSubscribe: []string{private.Key.Name}})
+	stream.send(
+		&discoveryv3.DeltaDiscoveryRequest{
+			TypeUrl:                model.TrafficPolicyType,
+			ResponseNonce:          response.Nonce,
+			ResourceNamesSubscribe: []string{private.Key.Name},
+		},
+	)
 	response = stream.awaitResponses(t, model.TrafficPolicyType, 4)[3]
 	if len(response.Resources) != 0 || !reflect.DeepEqual(response.RemovedResources, []string{private.Key.Name}) {
 		t.Fatalf("named subscribe widened scope: %v", response)
@@ -124,7 +156,16 @@ func TestSharedTrafficPolicyReferencesAuthorizeOnlyTheirResources(t *testing.T) 
 		{"removed reference", []model.Resource{worker, sandboxWithTrafficRefs(t, "a", "worker"), p}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			delta, err := generator.Generate(t.Context(), GenerationRequest{Scope: workerScope(worker), TypeURL: model.TrafficPolicyType, Snapshot: selectionSnapshot(t, tc.resources), Full: true, Subscription: SubscriptionView{wildcard: true, sent: map[string]string{p.Key.Name: "old"}}})
+			delta, err := generator.Generate(
+				t.Context(),
+				GenerationRequest{
+					Scope:        workerScope(worker),
+					TypeURL:      model.TrafficPolicyType,
+					Snapshot:     selectionSnapshot(t, tc.resources),
+					Full:         true,
+					Subscription: SubscriptionView{wildcard: true, sent: map[string]string{p.Key.Name: "old"}},
+				},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,7 +207,9 @@ func TestSandboxTrafficPolicyReferenceUpdates(t *testing.T) {
 			t.Fatalf("Sandbox policy body update missing: %v", response)
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
-		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, sandboxWithTrafficRefs(t, "sandbox", "worker"), body}))
+		server.resources.publish(
+			selectionSnapshot(t, []model.Resource{worker, sandboxWithTrafficRefs(t, "sandbox", "worker"), body}),
+		)
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 4)[3]
 		if !reflect.DeepEqual(response.RemovedResources, []string{name}) {
 			t.Fatalf("removed Sandbox reference retained visibility: %v", response)

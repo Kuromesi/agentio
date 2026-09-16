@@ -50,31 +50,44 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	client := priorityKubeClient{Client: kube.NewFakeClient()}
 	_, err := client.AgentsAPI().AgentsV1alpha1().Sandboxes("demo").Create(ctx, &agentsv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "priority", Namespace: "demo", UID: "sandbox-object-uid",
-			Labels: map[string]string{"app": "priority-client", agentsv1alpha1.LabelSandboxID: "demo--priority"},
+			Name:      "priority",
+			Namespace: "demo",
+			UID:       "sandbox-object-uid",
+			Labels:    map[string]string{"app": "priority-client", agentsv1alpha1.LabelSandboxID: "demo--priority"},
 		},
 	}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	registry, err := registrykube.New(client, registrykube.Options{
-		EnableKruise: true, ClusterID: "test", TrustDomain: "cluster.local",
-		RootNamespace: "agentio-system", DebounceAfter: time.Millisecond,
-		DebounceMax: 5 * time.Millisecond,
+		EnableKruise:  true,
+		ClusterID:     "test",
+		TrustDomain:   "cluster.local",
+		RootNamespace: "agentio-system",
+		DebounceAfter: time.Millisecond,
+		DebounceMax:   5 * time.Millisecond,
 	}, ctx.Done())
 	if err != nil {
 		t.Fatal(err)
 	}
 	client.Run(ctx.Done())
 	resourceCompiler, err := compiler.New(compiler.Inputs{
-		ClusterID: "test", TrustDomain: "cluster.local",
-		RootNamespace: "agentio-system", DiscoveryAddress: "agentiod:15012",
-		Pods: registry.Pods, KubernetesServices: registry.KubernetesServices,
-		EndpointSlices: registry.EndpointSlices, Sandboxes: registry.Sandboxes,
-		Workloads: registry.Workloads, Services: registry.Services,
-		Endpoints: registry.Endpoints, Gateways: registry.Gateways,
-		TrafficPolicies: registry.TrafficPolicies, SecurityProfiles: registry.SecurityProfiles,
-		GatewayPatches: registry.GatewayPatches, Telemetry: registry.Telemetry,
+		ClusterID:                  "test",
+		TrustDomain:                "cluster.local",
+		RootNamespace:              "agentio-system",
+		DiscoveryAddress:           "agentiod:15012",
+		Pods:                       registry.Pods,
+		KubernetesServices:         registry.KubernetesServices,
+		EndpointSlices:             registry.EndpointSlices,
+		Sandboxes:                  registry.Sandboxes,
+		Workloads:                  registry.Workloads,
+		Services:                   registry.Services,
+		Endpoints:                  registry.Endpoints,
+		Gateways:                   registry.Gateways,
+		TrafficPolicies:            registry.TrafficPolicies,
+		SecurityProfiles:           registry.SecurityProfiles,
+		GatewayPatches:             registry.GatewayPatches,
+		Telemetry:                  registry.Telemetry,
 		TelemetryProviderOverrides: registry.TelemetryProviderOverrides,
 		AgentioConfig:              registry.AgentioConfig,
 	}, krt.NewOptionsBuilder(ctx.Done(), "priority-e2e", nil))
@@ -98,10 +111,22 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	// Gateway scope can observe unbound Sandboxes. No runtime readiness or
 	// backing Pod is needed to validate the complete published policy view.
 	scope := gatewayScope()
-	server, err := NewServer(fakeAuthenticator{caller: model.PeerIdentity{
-		Principal: scope.Principal, AttestedBy: model.AttestationKubernetes,
-	}}, fakeResolver{scope: scope}.scopeFuncs(), store, resourceCompiler.HasSynced,
-		16, map[string]ResourceGenerator{model.SandboxType: SandboxGenerator{}, model.TrafficPolicyType: TrafficPolicyGenerator{}}, 1, 0)
+	server, err := NewServer(
+		fakeAuthenticator{caller: model.PeerIdentity{
+			Principal:  scope.Principal,
+			AttestedBy: model.AttestationKubernetes,
+		}},
+		fakeResolver{scope: scope}.scopeFuncs(),
+		store,
+		resourceCompiler.HasSynced,
+		16,
+		map[string]ResourceGenerator{
+			model.SandboxType:       SandboxGenerator{},
+			model.TrafficPolicyType: TrafficPolicyGenerator{},
+		},
+		1,
+		0,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +164,9 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	local, err := client.AgentsAPI().AgentsV1alpha1().TrafficPolicies("demo").Create(ctx,
 		&agentsv1alpha1.TrafficPolicy{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "a-local-allow", Namespace: "demo", CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
+				Name:              "a-local-allow",
+				Namespace:         "demo",
+				CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
 			},
 			Spec: localSpec,
 		}, metav1.CreateOptions{})
@@ -149,7 +176,8 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	global, err := client.AgentsAPI().AgentsV1alpha1().GlobalTrafficPolicies().Create(ctx,
 		&agentsv1alpha1.GlobalTrafficPolicy{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "z-global-deny", CreationTimestamp: metav1.NewTime(time.Unix(200, 0)),
+				Name:              "z-global-deny",
+				CreationTimestamp: metav1.NewTime(time.Unix(200, 0)),
 			},
 			Spec: priorityPolicySpec(10, agentsv1alpha1.RuleActionReject),
 		}, metav1.CreateOptions{})
@@ -182,7 +210,9 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("receive policies: %v; compiler failures: %v", err, resourceCompiler.Failures())
 		}
-		if err := stream.Send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: response.TypeUrl, ResponseNonce: response.Nonce}); err != nil {
+		if err := stream.Send(
+			&discoveryv3.DeltaDiscoveryRequest{TypeUrl: response.TypeUrl, ResponseNonce: response.Nonce},
+		); err != nil {
 			t.Fatal(err)
 		}
 		for _, resource := range response.Resources {
@@ -245,7 +275,10 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	// Alternate the effective order so each step publishes new Sandbox refs.
 	for _, priority := range []int32{0, 100, 10, 100, 0, 100, 10} {
 		local.Spec.Priority = priority
-		local, err = client.AgentsAPI().AgentsV1alpha1().TrafficPolicies("demo").Update(ctx, local, metav1.UpdateOptions{})
+		local, err = client.AgentsAPI().
+			AgentsV1alpha1().
+			TrafficPolicies("demo").
+			Update(ctx, local, metav1.UpdateOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -264,7 +297,8 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	newGlobal, err := client.AgentsAPI().AgentsV1alpha1().GlobalTrafficPolicies().Create(ctx,
 		&agentsv1alpha1.GlobalTrafficPolicy{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "a-new-global", CreationTimestamp: metav1.NewTime(time.Unix(300, 0)),
+				Name:              "a-new-global",
+				CreationTimestamp: metav1.NewTime(time.Unix(300, 0)),
 			},
 			Spec: priorityPolicySpec(10, agentsv1alpha1.RuleActionReject),
 		}, metav1.CreateOptions{})
@@ -284,7 +318,10 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 			t.Fatal("body-only change resent Sandbox")
 		}
 	}
-	if err := client.AgentsAPI().AgentsV1alpha1().GlobalTrafficPolicies().Delete(ctx, global.Name, metav1.DeleteOptions{}); err != nil {
+	if err := client.AgentsAPI().
+		AgentsV1alpha1().
+		GlobalTrafficPolicies().
+		Delete(ctx, global.Name, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	await(localRules[0], "trafficPolicies/"+newGlobal.Name)

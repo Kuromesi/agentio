@@ -130,7 +130,11 @@ func TestRegistrySyncDoesNotRequireSecrets(t *testing.T) {
 	}
 	fake := client.Kube().(*kubefake.Clientset)
 	fake.PrependReactor("list", "secrets", func(kubetesting.Action) (bool, runtime.Object, error) {
-		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", fmt.Errorf("access denied"))
+		return true, nil, apierrors.NewForbidden(
+			schema.GroupResource{Resource: "secrets"},
+			"",
+			fmt.Errorf("access denied"),
+		)
 	})
 	registry, err := New(client, Options{
 		ClusterID:     "test",
@@ -223,23 +227,38 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 		t.Run(fmt.Sprintf("kruise=%t", kruiseEnabled), func(t *testing.T) {
 			ctx := t.Context()
 			sandbox := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
-				Name: "same-name", Namespace: "tenant", UID: "object-uid",
-				Labels:      map[string]string{agentsv1alpha1.LabelSandboxID: "sandbox-id"},
-				Annotations: map[string]string{agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["inline.example"]}]}]`},
+				Name:      "same-name",
+				Namespace: "tenant",
+				UID:       "object-uid",
+				Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: "sandbox-id"},
+				Annotations: map[string]string{
+					agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["inline.example"]}]}]`,
+				},
 			}}
-			shared := &agentsv1alpha1.SecurityProfile{ObjectMeta: metav1.ObjectMeta{Name: sandbox.Name, Namespace: sandbox.Namespace},
-				Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"shared.example"}}}}}}}
+			shared := &agentsv1alpha1.SecurityProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: sandbox.Name, Namespace: sandbox.Namespace},
+				Spec: agentsv1alpha1.SecurityProfileSpec{
+					Rules: []agentsv1alpha1.SecurityRule{
+						{Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"shared.example"}}}},
+					},
+				},
+			}
 			client := &fakeKubeClient{
 				Client: kube.NewFakeClient(shared),
 				watcher: newFakeGatewayCRDWatcher(securityProfileResource,
 					agentsv1alpha1.GroupVersion.WithResource("sandboxes")),
 			}
 			// Use the generated client's GVR; the generic tracker guesses "sandboxs".
-			if _, err := client.AgentsAPI().AgentsV1alpha1().Sandboxes("tenant").Create(ctx, sandbox, metav1.CreateOptions{}); err != nil {
+			if _, err := client.AgentsAPI().
+				AgentsV1alpha1().
+				Sandboxes("tenant").
+				Create(ctx, sandbox, metav1.CreateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			r, err := New(client, Options{ClusterID: "test", TrustDomain: "cluster.local",
-				RootNamespace: "agentio-system", EnableKruise: kruiseEnabled}, ctx.Done())
+			r, err := New(client, Options{ClusterID: "test",
+				TrustDomain:   "cluster.local",
+				RootNamespace: "agentio-system",
+				EnableKruise:  kruiseEnabled}, ctx.Done())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -263,7 +282,10 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 			}
 			sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules] = `[{"name":`
 			sandbox.Status.Phase = agentsv1alpha1.SandboxPending
-			if _, err := client.AgentsAPI().AgentsV1alpha1().Sandboxes("tenant").Update(ctx, sandbox, metav1.UpdateOptions{}); err != nil {
+			if _, err := client.AgentsAPI().
+				AgentsV1alpha1().
+				Sandboxes("tenant").
+				Update(ctx, sandbox, metav1.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			eventually(t, func() bool {

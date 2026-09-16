@@ -60,7 +60,11 @@ func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	for _, resource := range snapshot.List(model.AddressType) {
 		if facts := resource.Facts.Workload; facts != nil {
 			if len(facts.AuthorizationRefs) != 0 {
-				t.Fatalf("native-only Workload %s has legacy policy references: %v", resource.Key.Name, facts.AuthorizationRefs)
+				t.Fatalf(
+					"native-only Workload %s has legacy policy references: %v",
+					resource.Key.Name,
+					facts.AuthorizationRefs,
+				)
 			}
 		}
 		if resource.Facts.Authorization != nil {
@@ -87,7 +91,11 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
 	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
 	for index := range count {
-		workload := testWDSWorkload(fmt.Sprintf("sandbox-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
+		workload := testWDSWorkload(
+			fmt.Sprintf("sandbox-%d", index),
+			"",
+			fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256),
+		)
 		workload.Labels = map[string]string{"app": "sandbox"}
 		if index%2 == 0 {
 			sandboxes.ConditionalUpdateObject(testSandboxForWorkload(workload))
@@ -132,7 +140,12 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 					To: []agentsv1alpha1.TrafficPolicyPeer{
 						{CIDR: fmt.Sprintf("10.%d.0.0/16", index%256)},
 						// A Service peer exercises the service-to-endpoint join.
-						{Service: &agentsv1alpha1.TrafficPolicyServiceRef{Namespace: "demo", Name: fmt.Sprintf("service-%d", index%scaleServices)}},
+						{
+							Service: &agentsv1alpha1.TrafficPolicyServiceRef{
+								Namespace: "demo",
+								Name:      fmt.Sprintf("service-%d", index%scaleServices),
+							},
+						},
 					},
 				}}},
 			},

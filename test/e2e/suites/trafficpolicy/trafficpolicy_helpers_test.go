@@ -110,7 +110,16 @@ func requirePingState(t *testing.T, source echo.Instance, address string, allowe
 		if allowed {
 			state = "allowed"
 		}
-		t.Fatalf("expected ping from %s to %s to be %s: %v; last error=%v stdout=%q stderr=%q", source.Name(), address, state, err, execErr, stdout, stderr)
+		t.Fatalf(
+			"expected ping from %s to %s to be %s: %v; last error=%v stdout=%q stderr=%q",
+			source.Name(),
+			address,
+			state,
+			err,
+			execErr,
+			stdout,
+			stderr,
+		)
 	}
 }
 

@@ -169,7 +169,15 @@ func assertLookupNames(t *testing.T, resources []Resource, want ...string) {
 // A singleton posting is only a candidate: every remaining predicate, including
 // invalid predicates after the UID, must still be checked before returning it.
 func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
-	raw := testWorkloadResource(t, "canonical", "value", "uid-a", "node-a", []string{"demo/service"}, []string{"demo/gateway"})
+	raw := testWorkloadResource(
+		t,
+		"canonical",
+		"value",
+		"uid-a",
+		"node-a",
+		[]string{"demo/service"},
+		[]string{"demo/gateway"},
+	)
 	raw.Facts.Workload.SourceUID = "source-a"
 	raw.Facts.Workload.AuthorizationRefs = []string{"demo/policy"}
 	snapshot, err := NewResourceSet([]Resource{raw})
@@ -177,8 +185,15 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := testPrincipal()
-	matching := WorkloadQuery{WorkloadUID: "uid-a", SourceUID: "source-a", NodeName: "node-a", Principal: &principal,
-		Namespace: "demo", ServiceKey: "demo/service", GatewayReference: "demo/gateway", AuthorizationReference: "demo/policy", AuthorizationRefsOnly: true}
+	matching := WorkloadQuery{WorkloadUID: "uid-a",
+		SourceUID:              "source-a",
+		NodeName:               "node-a",
+		Principal:              &principal,
+		Namespace:              "demo",
+		ServiceKey:             "demo/service",
+		GatewayReference:       "demo/gateway",
+		AuthorizationReference: "demo/policy",
+		AuthorizationRefsOnly:  true}
 	check := func(t *testing.T, query WorkloadQuery, want bool) {
 		t.Helper()
 		if got := snapshot.HasWorkload(AddressType, query); got != want {

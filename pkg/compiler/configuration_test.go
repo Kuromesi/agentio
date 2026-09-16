@@ -83,7 +83,12 @@ func TestWorkloadMetadataConfigurationLifecycle(t *testing.T) {
 		current := fixture.compiler.graph.configuration.Get()
 		return failed && current != nil && current.ResourceVersion == "ignore-a"
 	}, "invalid configuration retains the accepted configuration")
-	if labels, found := compiledWorkloadMetadataLabels(t, fixture.compiler, workload.UID); !found || !maps.Equal(labels, wantIgnoreA) {
+	if labels, found := compiledWorkloadMetadataLabels(
+		t,
+		fixture.compiler,
+		workload.UID,
+	); !found ||
+		!maps.Equal(labels, wantIgnoreA) {
 		t.Fatalf("metadata labels after rejected configuration = %v, found %v, want %v", labels, found, wantIgnoreA)
 	}
 
@@ -119,7 +124,10 @@ func TestDNSChangePropagatesThroughCollection(t *testing.T) {
 	})
 	waitSynced(t, fixture.compiler)
 
-	authorizationKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/alpha/trafficPolicies/fqdn"}
+	authorizationKey := model.ResourceKey{
+		TypeURL: model.TrafficPolicyType,
+		Name:    "namespaces/alpha/trafficPolicies/fqdn",
+	}
 	var unresolvedHash string
 	eventually(t, func() bool {
 		resource, found := currentSnapshot(t, fixture.compiler).Get(authorizationKey)
@@ -163,7 +171,10 @@ func TestDNSChangeOnlyRecompilesPoliciesForThatHostname(t *testing.T) {
 		return fixture.resolutionCount("api.example.com") > 0 && fixture.resolutionCount("database.example.com") > 0
 	}, "both policies compiled")
 
-	authorizationKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/alpha/trafficPolicies/api"}
+	authorizationKey := model.ResourceKey{
+		TypeURL: model.TrafficPolicyType,
+		Name:    "namespaces/alpha/trafficPolicies/api",
+	}
 	var unresolvedHash string
 	eventually(t, func() bool {
 		resource, found := currentSnapshot(t, fixture.compiler).Get(authorizationKey)

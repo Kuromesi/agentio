@@ -39,6 +39,7 @@ type Bindings struct {
 	InvalidReason string
 }
 
+// ResourceName identifies the Sandbox whose policy references are resolved.
 func (b Bindings) ResourceName() string { return b.SandboxUID }
 
 // Equals compares ordered policy references and resolution failures.
@@ -106,12 +107,25 @@ func NewPolicyBindingsCollection(
 				InvalidReason: err.Error(),
 			}
 		}
-		return resolvePolicyBindings(ctx, sandbox.UID, sandbox.Namespace, sandbox.Labels, sandbox.PolicyRefs, attachments, byTarget)
+		return resolvePolicyBindings(
+			ctx,
+			sandbox.UID,
+			sandbox.Namespace,
+			sandbox.Labels,
+			sandbox.PolicyRefs,
+			attachments,
+			byTarget,
+		)
 	}, options.WithName("sandbox-policy-bindings")...)
 }
 
-func resolvePolicyBindings(ctx krt.HandlerContext, uid, namespace string, targetLabels map[string]string,
-	references []model.PolicyRef, attachments krt.Collection[PolicyAttachment], byTarget krt.Index[string, PolicyAttachment],
+func resolvePolicyBindings(
+	ctx krt.HandlerContext,
+	uid, namespace string,
+	targetLabels map[string]string,
+	references []model.PolicyRef,
+	attachments krt.Collection[PolicyAttachment],
+	byTarget krt.Index[string, PolicyAttachment],
 ) *Bindings {
 	keys := []string{globalPolicyAttachmentIndexKey, namespacePolicyAttachmentKeyPrefix + namespace}
 	// Include target matching in selector discovery's dependency filter instead

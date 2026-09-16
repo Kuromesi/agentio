@@ -35,6 +35,7 @@ type CompiledTrafficPolicy struct {
 	AsAuthorization []CompiledAuthorization
 }
 
+// Equals compares native policy output and its legacy authorization projection.
 func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
 	return p.CompiledPolicy.Equals(other.CompiledPolicy) &&
 		slices.EqualFunc(p.AsAuthorization, other.AsAuthorization, CompiledAuthorization.Equals)
@@ -42,19 +43,25 @@ func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
 
 // CompileTrafficPolicy preserves rule actions and both directions in one
 // payload. Shared policies use attachments; dedicated policies are fetched by their Sandbox.
-func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, inputs TrafficPolicyInputs) (*CompiledTrafficPolicy, error) {
+func CompileTrafficPolicy(
+	ctx krt.HandlerContext,
+	source model.TrafficPolicy,
+	inputs TrafficPolicyInputs,
+) (*CompiledTrafficPolicy, error) {
 	if source.Dedicated {
 		if strings.TrimSpace(source.SandboxUID) == "" {
 			return nil, fmt.Errorf("dedicated traffic policy requires a Sandbox UID")
 		}
 		payload, err := CompileTrafficPolicyRules(ctx, model.TrafficPolicyRules{
-			Ingress: source.Spec.Ingress, Egress: source.Spec.Egress,
+			Ingress: source.Spec.Ingress,
+			Egress:  source.Spec.Egress,
 		}, source.Namespace, inputs)
 		if err != nil {
 			return nil, err
 		}
 		return &CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{
-			Name: source.ResourceName(), Policy: payload,
+			Name:   source.ResourceName(),
+			Policy: payload,
 		}}, nil
 	}
 
@@ -107,7 +114,12 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 
 // CompileTrafficPolicyRules compiles rule bodies without resource identity or
 // binding metadata. Sandbox-owned rules and shared policies use the same resolver.
-func CompileTrafficPolicyRules(ctx krt.HandlerContext, rules model.TrafficPolicyRules, namespace string, inputs TrafficPolicyInputs) (*securityv1.TrafficPolicy, error) {
+func CompileTrafficPolicyRules(
+	ctx krt.HandlerContext,
+	rules model.TrafficPolicyRules,
+	namespace string,
+	inputs TrafficPolicyInputs,
+) (*securityv1.TrafficPolicy, error) {
 	if err := inputs.validate(); err != nil {
 		return nil, err
 	}
@@ -122,7 +134,13 @@ func CompileTrafficPolicyRules(ctx krt.HandlerContext, rules model.TrafficPolicy
 	return result, nil
 }
 
-func compileNativeDirection(ctx krt.HandlerContext, direction *agentsv1alpha1.TrafficPolicyDirection, namespace string, inputs TrafficPolicyInputs, ingress bool) (*securityv1.TrafficPolicy_RuleSet, error) {
+func compileNativeDirection(
+	ctx krt.HandlerContext,
+	direction *agentsv1alpha1.TrafficPolicyDirection,
+	namespace string,
+	inputs TrafficPolicyInputs,
+	ingress bool,
+) (*securityv1.TrafficPolicy_RuleSet, error) {
 	if direction == nil {
 		return nil, nil
 	}
@@ -157,7 +175,11 @@ func compileNativeDirection(ctx krt.HandlerContext, direction *agentsv1alpha1.Tr
 		}
 		result.Rules = append(result.Rules, &securityv1.TrafficPolicy_Rule{
 			Action: action,
-			Match:  &securityv1.TrafficPolicy_Match{SourceIps: nativeAddresses(from), DestinationIps: nativeAddresses(to), Ports: ports},
+			Match: &securityv1.TrafficPolicy_Match{
+				SourceIps:      nativeAddresses(from),
+				DestinationIps: nativeAddresses(to),
+				Ports:          ports,
+			},
 		})
 	}
 	return result, nil

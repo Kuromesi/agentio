@@ -47,8 +47,12 @@ var pushOrder = []string{
 	model.ProxyConfigType,
 }
 
-func (s *Server) handleRequest(stream DeltaStream,
-	scope model.ClientScope, connLog *agentlog.Logger, watches map[string]*watchState, subscription xdsstore.Subscription,
+func (s *Server) handleRequest(
+	stream DeltaStream,
+	scope model.ClientScope,
+	connLog *agentlog.Logger,
+	watches map[string]*watchState,
+	subscription xdsstore.Subscription,
 	request *discoveryv3.DeltaDiscoveryRequest,
 ) error {
 	typeURL := request.GetTypeUrl()
@@ -168,8 +172,14 @@ func (s *Server) sendDiff(stream DeltaStream,
 	return s.sendDiffForNames(stream, scope, connLog, typeURL, watch, force, nil)
 }
 
-func (s *Server) sendDiffForNames(stream DeltaStream,
-	scope model.ClientScope, connLog *agentlog.Logger, typeURL string, watch *watchState, force bool, subscribedNames []string,
+func (s *Server) sendDiffForNames(
+	stream DeltaStream,
+	scope model.ClientScope,
+	connLog *agentlog.Logger,
+	typeURL string,
+	watch *watchState,
+	force bool,
+	subscribedNames []string,
 ) error {
 	snapshot := s.resources.Snapshot()
 	return s.generateAndSend(stream, connLog, watch, GenerationRequest{
@@ -338,13 +348,22 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 	names := sets.NewWithLength[string](len(resources))
 	for _, resource := range resources {
 		if resource.Key.TypeURL != typeURL || resource.Value == nil || resource.Value.GetTypeUrl() != typeURL {
-			return nil, nil, fmt.Errorf("generator for %s returned resource %q with mismatched type URL", typeURL, resource.XDSName)
+			return nil, nil, fmt.Errorf(
+				"generator for %s returned resource %q with mismatched type URL",
+				typeURL,
+				resource.XDSName,
+			)
 		}
-		if strings.TrimSpace(resource.Key.Name) == "" || strings.TrimSpace(resource.XDSName) == "" || resource.Hash == "" {
+		if strings.TrimSpace(resource.Key.Name) == "" || strings.TrimSpace(resource.XDSName) == "" ||
+			resource.Hash == "" {
 			return nil, nil, fmt.Errorf("generator for %s returned a resource with an invalid name or version", typeURL)
 		}
 		if names.Contains(resource.XDSName) {
-			return nil, nil, fmt.Errorf("generator for %s returned duplicate resource name %q", typeURL, resource.XDSName)
+			return nil, nil, fmt.Errorf(
+				"generator for %s returned duplicate resource name %q",
+				typeURL,
+				resource.XDSName,
+			)
 		}
 		names.Insert(resource.XDSName)
 		wire = append(wire, &discoveryv3.Resource{
@@ -370,7 +389,12 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 	return wire, removed, nil
 }
 
-func applyGenerationOutcomes(watch *watchState, scope model.ClientScope, connLog *agentlog.Logger, delta GeneratedDelta) {
+func applyGenerationOutcomes(
+	watch *watchState,
+	scope model.ClientScope,
+	connLog *agentlog.Logger,
+	delta GeneratedDelta,
+) {
 	for _, name := range delta.allowed {
 		watch.denied.Delete(name)
 	}

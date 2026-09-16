@@ -24,9 +24,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
 )
 
 func TestDataplaneNamespaceConfig(t *testing.T) {
@@ -251,11 +252,16 @@ func TestAgentioBaselineFixtureIsExactlyPassthroughAndGatewayRegistration(t *tes
 
 func TestProjectWorkloadConfigDumpPreservesNativeCapability(t *testing.T) {
 	for _, native := range []bool{false, true} {
-		raw := map[string]any{"workloads": []any{map[string]any{"uid": "client-uid", "name": "client", "namespace": "test"}}}
+		raw := map[string]any{
+			"workloads": []any{map[string]any{"uid": "client-uid", "name": "client", "namespace": "test"}},
+		}
 		if native {
 			raw["trafficPolicies"] = []any{}
 		}
-		body, _ := json.Marshal(raw)
+		body, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
 		projected, err := projectWorkloadConfigDump(body, "test", "client")
 		if err != nil {
 			t.Fatal(err)

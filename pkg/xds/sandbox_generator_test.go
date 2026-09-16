@@ -32,7 +32,11 @@ func sandboxResource(t *testing.T, uid string, policies ...*securityv1.TrafficPo
 	return sandboxResourceWithAttester(t, uid, "", policies...)
 }
 
-func sandboxResourceWithAttester(t *testing.T, uid, workloadUID string, policies ...*securityv1.TrafficPolicy) model.Resource {
+func sandboxResourceWithAttester(
+	t *testing.T,
+	uid, workloadUID string,
+	policies ...*securityv1.TrafficPolicy,
+) model.Resource {
 	t.Helper()
 	var trafficPolicy *securityv1.TrafficPolicy
 	if len(policies) > 1 {
@@ -41,11 +45,24 @@ func sandboxResourceWithAttester(t *testing.T, uid, workloadUID string, policies
 	if len(policies) == 1 {
 		trafficPolicy = policies[0]
 	}
-	value, err := anypb.New(&sandboxv1.Sandbox{Uid: uid, State: sandboxv1.SandboxState_SANDBOX_STATE_RUNNING, Attester: &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID}, TrafficPolicy: trafficPolicy})
+	value, err := anypb.New(
+		&sandboxv1.Sandbox{
+			Uid:           uid,
+			State:         sandboxv1.SandboxState_SANDBOX_STATE_RUNNING,
+			Attester:      &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID},
+			TrafficPolicy: trafficPolicy,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := model.NewResource(model.ResourceKey{TypeURL: model.SandboxType, Name: uid}, "", value, nil, model.ResourceFacts{Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workloadUID}})
+	r, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.SandboxType, Name: uid},
+		"",
+		value,
+		nil,
+		model.ResourceFacts{Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workloadUID}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +104,17 @@ func TestSandboxNamedDeltaResubscribeAndDeletion(t *testing.T) {
 	stream.send(request)
 	responses := stream.awaitResponses(t, model.SandboxType, 1)
 	first := responses[0]
-	if len(first.Resources) != 1 || first.Resources[0].Name != "a" || !reflect.DeepEqual(first.RemovedResources, []string{"missing"}) {
+	if len(first.Resources) != 1 || first.Resources[0].Name != "a" ||
+		!reflect.DeepEqual(first.RemovedResources, []string{"missing"}) {
 		t.Fatalf("unexpected initial response %v", first)
 	}
-	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: first.Nonce, ResourceNamesSubscribe: []string{"a"}})
+	stream.send(
+		&discoveryv3.DeltaDiscoveryRequest{
+			TypeUrl:                model.SandboxType,
+			ResponseNonce:          first.Nonce,
+			ResourceNamesSubscribe: []string{"a"},
+		},
+	)
 	responses = stream.awaitResponses(t, model.SandboxType, 2)
 	if len(responses[1].Resources) != 1 {
 		t.Fatal("repeated subscribe must resend cached resource")
@@ -118,7 +142,16 @@ func TestSandboxDynamicWorkerScopeAndPodReplacement(t *testing.T) {
 	}
 	sub := SubscriptionView{names: []string{"a", "b", "other"}, sent: map[string]string{}}
 	gen := SandboxGenerator{}
-	full, err := gen.Generate(t.Context(), GenerationRequest{Scope: scope, TypeURL: model.SandboxType, Subscription: sub, Snapshot: snapshots[0], Full: true})
+	full, err := gen.Generate(
+		t.Context(),
+		GenerationRequest{
+			Scope:        scope,
+			TypeURL:      model.SandboxType,
+			Subscription: sub,
+			Snapshot:     snapshots[0],
+			Full:         true,
+		},
+	)
 	if err != nil || len(full.Resources) != 0 {
 		t.Fatalf("empty worker: %+v %v", full, err)
 	}
@@ -128,7 +161,16 @@ func TestSandboxDynamicWorkerScopeAndPodReplacement(t *testing.T) {
 		if !update.Affects(model.SandboxType) {
 			t.Fatal("binding/source update did not wake Sandbox watch")
 		}
-		delta, err := gen.Generate(t.Context(), GenerationRequest{Scope: scope, TypeURL: model.SandboxType, Subscription: sub, Snapshot: after, Update: update})
+		delta, err := gen.Generate(
+			t.Context(),
+			GenerationRequest{
+				Scope:        scope,
+				TypeURL:      model.SandboxType,
+				Subscription: sub,
+				Snapshot:     after,
+				Update:       update,
+			},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,14 +255,20 @@ func TestSandboxImplicitWildcardDelivery(t *testing.T) {
 			if mode == "reconnect" {
 				wantRemoved = []string{"gone"}
 			}
-			if !slices.Equal(resourceNames(first), wantResources) || !slices.Equal(first.RemovedResources, wantRemoved) {
+			if !slices.Equal(resourceNames(first), wantResources) ||
+				!slices.Equal(first.RemovedResources, wantRemoved) {
 				t.Fatalf("initial response = %v, want resources %v, removed %v", first, wantResources, wantRemoved)
 			}
 			stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: first.Nonce})
 
 			// New bindings and policy updates must arrive without another subscription,
 			// including when the first response was empty or came from a reconnect.
-			changed := sandboxResourceWithAttester(t, "a", "worker", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}})
+			changed := sandboxResourceWithAttester(
+				t,
+				"a",
+				"worker",
+				&securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}},
+			)
 			b := sandboxResourceWithAttester(t, "b", "worker")
 			server.resources.publish(selectionSnapshot(t, []model.Resource{worker, changed, b, outside}))
 			updated := stream.awaitResponses(t, model.SandboxType, 2)[1]
@@ -247,7 +295,9 @@ func TestSandboxInlinePolicyChangeIsDeliveredWithoutPolicySubscriptions(t *testi
 	worker := workerResource(t, "pod-1")
 	policy := &securityv1.TrafficPolicy{
 		Egress: &securityv1.TrafficPolicy_RuleSet{
-			Rules: []*securityv1.TrafficPolicy_Rule{{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}}},
+			Rules: []*securityv1.TrafficPolicy_Rule{
+				{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}},
+			},
 		},
 	}
 	before := selectionSnapshot(t, []model.Resource{worker, sandboxResourceWithAttester(t, "a", "worker")})
@@ -327,7 +377,13 @@ func TestSandboxGatewayDiscoveryFollowsAttester(t *testing.T) {
 		sandbox := sandboxResourceWithAttester(t, "actor", workloadUID)
 		facts := *sandbox.Facts.Sandbox
 		facts.GatewayReferences = []string{"gateways/egress"}
-		r, err := model.NewResource(sandbox.Key, sandbox.XDSName, sandbox.Value, sandbox.Aliases, model.ResourceFacts{Sandbox: &facts})
+		r, err := model.NewResource(
+			sandbox.Key,
+			sandbox.XDSName,
+			sandbox.Value,
+			sandbox.Aliases,
+			model.ResourceFacts{Sandbox: &facts},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,14 +418,31 @@ func TestSandboxGatewayDiscoveryFollowsAttester(t *testing.T) {
 					oldSelection := selectWorkloadResources(scope, before, model.AddressType, selectionNames(sub))
 					newSelection := selectWorkloadResources(scope, after, model.AddressType, selectionNames(sub))
 					want := diffWDSSelections(oldSelection, newSelection, false)
-					got := generateWDSIncremental(GenerationRequest{Scope: scope, TypeURL: model.AddressType, Subscription: sub, Snapshot: after, Update: update}, false)
-					if !reflect.DeepEqual(selectedNames(got.Resources), selectedNames(want.Resources)) || !reflect.DeepEqual(got.Removed, want.Removed) {
-						t.Fatalf("%s wildcard=%t incremental delta = %+v, full selection diff = %+v", worker.Key.Name, wildcard, got, want)
+					got := generateWDSIncremental(
+						GenerationRequest{
+							Scope:        scope,
+							TypeURL:      model.AddressType,
+							Subscription: sub,
+							Snapshot:     after,
+							Update:       update,
+						},
+						false,
+					)
+					if !reflect.DeepEqual(selectedNames(got.Resources), selectedNames(want.Resources)) ||
+						!reflect.DeepEqual(got.Removed, want.Removed) {
+						t.Fatalf(
+							"%s wildcard=%t incremental delta = %+v, full selection diff = %+v",
+							worker.Key.Name,
+							wildcard,
+							got,
+							want,
+						)
 					}
 					if worker.Key.Name == "worker-a" && !slices.Contains(got.Removed, gateway.Key.Name) {
 						t.Fatalf("old attester retained Sandbox gateway: %+v", got)
 					}
-					if worker.Key.Name == "worker-b" && tc.name == "attester move" && !slices.Contains(selectedNames(got.Resources), gateway.Key.Name) {
+					if worker.Key.Name == "worker-b" && tc.name == "attester move" &&
+						!slices.Contains(selectedNames(got.Resources), gateway.Key.Name) {
 						t.Fatalf("new attester missing Sandbox gateway: %+v", got)
 					}
 				}

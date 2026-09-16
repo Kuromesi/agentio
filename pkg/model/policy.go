@@ -51,8 +51,11 @@ func (p TrafficPolicy) ResourceName() string {
 }
 
 func (p TrafficPolicy) Equals(other TrafficPolicy) bool {
-	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace && p.SandboxUID == other.SandboxUID && p.Global == other.Global &&
-		p.CreationTime.Equal(other.CreationTime) && reflect.DeepEqual(p.Spec, other.Spec)
+	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace &&
+		p.SandboxUID == other.SandboxUID &&
+		p.Global == other.Global &&
+		p.CreationTime.Equal(other.CreationTime) &&
+		reflect.DeepEqual(p.Spec, other.Spec)
 }
 
 type SecurityProfile struct {
@@ -77,8 +80,11 @@ func (p SecurityProfile) ResourceName() string {
 }
 
 func (p SecurityProfile) Equals(other SecurityProfile) bool {
-	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace && p.SandboxUID == other.SandboxUID && p.Global == other.Global &&
-		p.CreationTime.Equal(other.CreationTime) && reflect.DeepEqual(p.Spec, other.Spec)
+	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace &&
+		p.SandboxUID == other.SandboxUID &&
+		p.Global == other.Global &&
+		p.CreationTime.Equal(other.CreationTime) &&
+		reflect.DeepEqual(p.Spec, other.Spec)
 }
 
 // SandboxTrafficPolicyName identifies the one inline policy independently of CR names.

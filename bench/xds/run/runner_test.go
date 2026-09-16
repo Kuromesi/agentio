@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
@@ -15,8 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openkruise/agentio/bench/xds/loadapi"
-	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +35,9 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+
+	"github.com/openkruise/agentio/bench/xds/loadapi"
+	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 )
 
 func TestScenarioSelection(t *testing.T) {
@@ -54,7 +66,16 @@ func TestScenarioSelection(t *testing.T) {
 
 func testConfig(t *testing.T) config {
 	t.Helper()
-	c, err := parseConfig([]string{"--context=test", "--image=test", "--xds-address=cp:15012", "--server-name=cp", "--ca-namespace=system"}, io.Discard)
+	c, err := parseConfig(
+		[]string{
+			"--context=test",
+			"--image=test",
+			"--xds-address=cp:15012",
+			"--server-name=cp",
+			"--ca-namespace=system",
+		},
+		io.Discard,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +84,19 @@ func testConfig(t *testing.T) config {
 
 func TestCanceledCreateStillCleansPersistedNamespace(t *testing.T) {
 	c := testConfig(t)
-	k := kubefake.NewClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: c.CAConfigMap, Namespace: c.CANamespace}, Data: map[string]string{c.CAKey: "test-ca"}})
-	r := &runner{cfg: c, id: "ads-bench-test", out: t.TempDir(), kube: k, dynamic: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())}
+	k := kubefake.NewClientset(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: c.CAConfigMap, Namespace: c.CANamespace},
+			Data:       map[string]string{c.CAKey: "test-ca"},
+		},
+	)
+	r := &runner{
+		cfg:     c,
+		id:      "ads-bench-test",
+		out:     t.TempDir(),
+		kube:    k,
+		dynamic: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+	}
 	k.PrependReactor("create", "namespaces", func(action ktesting.Action) (bool, runtime.Object, error) {
 		ns := action.(ktesting.CreateAction).GetObject().(*corev1.Namespace).DeepCopy()
 		ns.UID = "persisted-uid"
@@ -89,7 +121,11 @@ func TestCanceledCreateStillCleansPersistedNamespace(t *testing.T) {
 	if deleteUID != "persisted-uid" {
 		t.Fatalf("missing UID precondition: %q", deleteUID)
 	}
-	if _, err := k.CoreV1().Namespaces().Get(context.Background(), r.id, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := k.CoreV1().
+		Namespaces().
+		Get(context.Background(), r.id, metav1.GetOptions{}); !apierrors.IsNotFound(
+		err,
+	) {
 		t.Fatalf("namespace leaked: %v", err)
 	}
 	if len(r.result.Cleanup.Errors) != 0 {
@@ -103,12 +139,33 @@ func TestCanceledCreateStillCleansPersistedNamespace(t *testing.T) {
 func TestCleanupPreservesForeignNamespaceAndStillDeletesTrackedResource(t *testing.T) {
 	c := testConfig(t)
 	id := "ads-bench-test"
-	k := kubefake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: id, UID: "foreign", Labels: map[string]string{runLabel: "different-run"}}})
+	k := kubefake.NewClientset(
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   id,
+				UID:    "foreign",
+				Labels: map[string]string{runLabel: "different-run"},
+			},
+		},
+	)
 	gvr := schema.GroupVersionResource{Group: "example.io", Version: "v1", Resource: "testresources"}
-	p := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "example.io/v1", "kind": "TestResource", "metadata": map[string]any{"name": id, "labels": map[string]any{runLabel: id}}}}
+	p := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "example.io/v1",
+			"kind":       "TestResource",
+			"metadata":   map[string]any{"name": id, "labels": map[string]any{runLabel: id}},
+		},
+	}
 	p.SetUID("resource-uid")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), p)
-	r := &runner{cfg: c, id: id, kube: k, dynamic: d, namespaceAttempted: true, resources: []driver.Resource{{GVR: gvr, Name: id}}}
+	r := &runner{
+		cfg:                c,
+		id:                 id,
+		kube:               k,
+		dynamic:            d,
+		namespaceAttempted: true,
+		resources:          []driver.Resource{{GVR: gvr, Name: id}},
+	}
 	if err := r.cleanup(context.Background()); err == nil {
 		t.Fatal("expected ownership error")
 	}
@@ -123,11 +180,27 @@ func TestCleanupPreservesForeignNamespaceAndStillDeletesTrackedResource(t *testi
 func TestKeepResourcesStopsForwardWithoutDeletingNamespace(t *testing.T) {
 	c := testConfig(t)
 	c.KeepResources = true
-	k := kubefake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ads-bench-test", Labels: map[string]string{runLabel: "ads-bench-test"}}})
+	k := kubefake.NewClientset(
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "ads-bench-test",
+				Labels: map[string]string{runLabel: "ads-bench-test"},
+			},
+		},
+	)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { <-ctx.Done(); close(done) }()
-	r := &runner{cfg: c, id: "ads-bench-test", kube: k, namespaceAttempted: true, forwards: []forwardHandle{{cancel: cancel, done: done}}}
+	go func() {
+		<-ctx.Done()
+		close(done)
+	}()
+	r := &runner{
+		cfg:                c,
+		id:                 "ads-bench-test",
+		kube:               k,
+		namespaceAttempted: true,
+		forwards:           []forwardHandle{{cancel: cancel, done: done}},
+	}
 	if err := r.cleanup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -137,11 +210,17 @@ func TestKeepResourcesStopsForwardWithoutDeletingNamespace(t *testing.T) {
 }
 
 func TestWaitDeadlineCancelsBlockedHTTPRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { <-req.Context().Done() }))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { <-req.Context().Done() }),
+	)
 	defer server.Close()
 	r := &runner{http: server.Client()}
 	started := time.Now()
-	err := waitFor(context.Background(), 100*time.Millisecond, func(ctx context.Context) (bool, error) { return false, r.request(ctx, server.URL, nil, nil) })
+	err := waitFor(
+		context.Background(),
+		100*time.Millisecond,
+		func(ctx context.Context) (bool, error) { return false, r.request(ctx, server.URL, nil, nil) },
+	)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline, got %v", err)
 	}
@@ -155,8 +234,11 @@ func sampleStatuses() []loadapi.Status {
 	for i := range result {
 		n := targetFor(5, 2, i)
 		result[i] = loadapi.Status{Target: n, Ready: int64(n)}
-		for id := 0; id < n; id++ {
-			result[i].Samples = append(result[i].Samples, loadapi.Sample{ID: id, Version: "v1", Bytes: 10, ReceiveNS: 100, AckNS: 120})
+		for id := range n {
+			result[i].Samples = append(
+				result[i].Samples,
+				loadapi.Sample{ID: id, Version: "v1", Bytes: 10, ReceiveNS: 100, AckNS: 120},
+			)
 		}
 	}
 	return result

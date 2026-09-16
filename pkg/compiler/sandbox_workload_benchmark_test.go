@@ -37,20 +37,30 @@ func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
 			b.Cleanup(func() { close(stop) })
 			opts := []krt.CollectionOption{krt.WithStop(stop)}
 			workload := testWorkload("demo", "client", "10.0.0.1")
-			sandbox := model.Sandbox{UID: "actor", Namespace: "demo", Attester: &model.Attester{WorkloadUID: workload.UID}}
+			sandbox := model.Sandbox{
+				UID:       "actor",
+				Namespace: "demo",
+				Attester:  &model.Attester{WorkloadUID: workload.UID},
+			}
 			rules := make([]*securityv1.TrafficPolicy_Rule, count)
 			for i := range count {
 				rules[i] = &securityv1.TrafficPolicy_Rule{Match: &securityv1.TrafficPolicy_Match{
-					DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: []byte{10, byte(i >> 8), byte(i), 0}, Length: 24}},
+					DestinationIps: []*securityv1.TrafficPolicy_Address{
+						{Address: []byte{10, byte(i >> 8), byte(i), 0}, Length: 24},
+					},
 				}}
 			}
 			compiled := policy.CompiledTrafficPolicy{CompiledPolicy: policy.CompiledPolicy[*securityv1.TrafficPolicy]{
-				Name: "trafficPolicies/shared", Policy: &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: rules}},
+				Name:   "trafficPolicies/shared",
+				Policy: &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: rules}},
 			}}
 			var err error
 			compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(compiled, model.TrafficPolicy{
-				Name: "shared", Namespace: "demo",
-				Spec: agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+				Name:      "shared",
+				Namespace: "demo",
+				Spec: agentsv1alpha1.TrafficPolicySpec{
+					Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+				},
 			}, "agentio-system")
 			if err != nil {
 				b.Fatal(err)
@@ -58,10 +68,14 @@ func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
 			policies := policyCollections{
 				trafficPolicies: krt.NewStaticCollection(nil, []policy.CompiledTrafficPolicy{compiled}, opts...),
 				sniPolicies:     krt.NewStaticCollection[policy.CompiledSNIPolicy](nil, nil, opts...),
-				policyBindings: krt.NewStaticCollection(nil, []policy.Bindings{{
-					SandboxUID: sandbox.UID,
-					Groups:     []policy.BindingGroup{{Kind: policy.PolicyKindTrafficPolicy, Names: []string{compiled.Name}}},
-				}}, opts...),
+				policyBindings: krt.NewStaticCollection(nil, []policy.Bindings{
+					{
+						SandboxUID: sandbox.UID,
+						Groups: []policy.BindingGroup{
+							{Kind: policy.PolicyKindTrafficPolicy, Names: []string{compiled.Name}},
+						},
+					},
+				}, opts...),
 			}
 			b.ReportAllocs()
 			b.ResetTimer()

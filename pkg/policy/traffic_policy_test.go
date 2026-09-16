@@ -34,16 +34,55 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 	// Arrival order, selector specificity, and AIP-122 prefixes must not override
 	// priority -> creation time -> source namespace -> source name.
 	sources := []model.TrafficPolicy{
-		{Name: "z-local", Namespace: "tenant", CreationTime: time.Unix(200, 0), Spec: agentsv1alpha1.TrafficPolicySpec{
-			Priority: 20, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-		}},
-		{Name: "z-global", Global: true, CreationTime: time.Unix(200, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20}},
-		{Name: "a-local", Namespace: "tenant", CreationTime: time.Unix(200, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20}},
-		{Name: "z-root", Namespace: rootNamespace, CreationTime: time.Unix(200, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20}},
-		{Name: "a-global", Global: true, CreationTime: time.Unix(200, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20}},
-		{Name: "z-old-local", Namespace: "tenant", CreationTime: time.Unix(100, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20}},
-		{Name: "z-old-global", Global: true, CreationTime: time.Unix(100, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20}},
-		{Name: "priority-first", Namespace: "tenant", CreationTime: time.Unix(300, 0), Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 10}},
+		{Name: "z-local",
+			Namespace:    "tenant",
+			CreationTime: time.Unix(200, 0),
+			Spec: agentsv1alpha1.TrafficPolicySpec{
+				Priority: 20,
+				Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+			}},
+		{
+			Name:         "z-global",
+			Global:       true,
+			CreationTime: time.Unix(200, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 20},
+		},
+		{
+			Name:         "a-local",
+			Namespace:    "tenant",
+			CreationTime: time.Unix(200, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 20},
+		},
+		{
+			Name:         "z-root",
+			Namespace:    rootNamespace,
+			CreationTime: time.Unix(200, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 20},
+		},
+		{
+			Name:         "a-global",
+			Global:       true,
+			CreationTime: time.Unix(200, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 20},
+		},
+		{
+			Name:         "z-old-local",
+			Namespace:    "tenant",
+			CreationTime: time.Unix(100, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 20},
+		},
+		{
+			Name:         "z-old-global",
+			Global:       true,
+			CreationTime: time.Unix(100, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 20},
+		},
+		{
+			Name:         "priority-first",
+			Namespace:    "tenant",
+			CreationTime: time.Unix(300, 0),
+			Spec:         agentsv1alpha1.TrafficPolicySpec{Priority: 10},
+		},
 	}
 	var attachments []PolicyAttachment
 	for _, source := range sources {
@@ -57,7 +96,9 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	bindings := NewPolicyBindingsCollection(
 		krt.NewStaticCollection(nil, []model.Sandbox{{
-			UID: "sandbox", Namespace: "tenant", Labels: map[string]string{"app": "client"},
+			UID:       "sandbox",
+			Namespace: "tenant",
+			Labels:    map[string]string{"app": "client"},
 		}}, options...),
 		krt.NewStaticCollection(nil, attachments, options...),
 		krt.NewOptionsBuilder(stop, "traffic-policy-order", nil),
@@ -96,7 +137,11 @@ func TestNativeTrafficPolicyPreservesActionsAndSkipsEmptyDirection(t *testing.T)
 			}},
 		},
 	}
-	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, source, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
+	compiled, err := CompileTrafficPolicy(
+		krt.TestingDummyContext{},
+		source,
+		testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +153,8 @@ func TestNativeTrafficPolicyPreservesActionsAndSkipsEmptyDirection(t *testing.T)
 		t.Fatal("allow rule lost address constraint")
 	}
 	deny := p.Egress.Rules[1]
-	if deny.Action != securityv1.TrafficPolicy_DENY || len(deny.GetMatch().GetDestinationIps()) != 1 || deny.Match.DestinationIps[0].Length != 0 {
+	if deny.Action != securityv1.TrafficPolicy_DENY || len(deny.GetMatch().GetDestinationIps()) != 1 ||
+		deny.Match.DestinationIps[0].Length != 0 {
 		t.Fatal("explicit reject-all lost its action or CIDR")
 	}
 	if compiled.Attachment == nil {
@@ -185,11 +231,28 @@ func TestTrafficPolicyEmptyPeerSemantics(t *testing.T) {
 
 func TestNativeTrafficPolicyOmitsUnresolvedRuleWithoutLosingDirection(t *testing.T) {
 	for _, action := range []string{"allow", "reject"} {
-		source := model.TrafficPolicy{Name: "p", Namespace: "tenant", Spec: agentsv1alpha1.TrafficPolicySpec{Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.example"}}}}}}}
+		source := model.TrafficPolicy{
+			Name:      "p",
+			Namespace: "tenant",
+			Spec: agentsv1alpha1.TrafficPolicySpec{
+				Egress: &agentsv1alpha1.TrafficPolicyDirection{
+					Rules: []agentsv1alpha1.TrafficPolicyRule{
+						{
+							Action: agentsv1alpha1.RuleActionAllow,
+							To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "missing.example"}},
+						},
+					},
+				},
+			},
+		}
 		if action == "reject" {
 			source.Spec.Egress.Rules[0].Action = agentsv1alpha1.RuleActionReject
 		}
-		compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, source, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
+		compiled, err := CompileTrafficPolicy(
+			krt.TestingDummyContext{},
+			source,
+			testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil),
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,12 +265,23 @@ func TestNativeTrafficPolicyOmitsUnresolvedRuleWithoutLosingDirection(t *testing
 func TestNativeTrafficPolicyPortPresence(t *testing.T) {
 	p, e := int32(80), int32(443)
 	ports, err := compileNativePorts([]agentsv1alpha1.TrafficPolicyPort{
-		{Protocol: "TCP", Port: &p}, {Protocol: "TCP", EndPort: &e}, {Protocol: "TCP", Port: &p, EndPort: &e}, {Protocol: "ICMP"}, {},
+		{
+			Protocol: "TCP",
+			Port:     &p,
+		},
+		{Protocol: "TCP", EndPort: &e},
+		{Protocol: "TCP", Port: &p, EndPort: &e},
+		{Protocol: "ICMP"},
+		{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ports[0].Port == nil || ports[0].EndPort != nil || ports[1].Port != nil || ports[1].EndPort == nil || ports[2].Port == nil || ports[2].EndPort == nil || ports[3].Port != nil || ports[3].EndPort != nil {
+	if ports[0].Port == nil || ports[0].EndPort != nil || ports[1].Port != nil || ports[1].EndPort == nil ||
+		ports[2].Port == nil ||
+		ports[2].EndPort == nil ||
+		ports[3].Port != nil ||
+		ports[3].EndPort != nil {
 		t.Fatalf("port presence lost: %v", ports)
 	}
 	if ports[4].Protocol != securityv1.TrafficPolicy_ALL || ports[4].Port != nil || ports[4].EndPort != nil {
@@ -223,7 +297,8 @@ func TestNativeTrafficPolicyPortPresence(t *testing.T) {
 func TestTrafficPolicyAuthorizationPortEncoding(t *testing.T) {
 	start, end := int32(80), int32(443)
 	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
-		Name: "ports", Namespace: "demo",
+		Name:      "ports",
+		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionReject,

@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
@@ -30,7 +41,7 @@ func (v *intList) String() string {
 }
 func (v *intList) Set(value string) error {
 	var result []int
-	for _, part := range strings.Split(value, ",") {
+	for part := range strings.SplitSeq(value, ",") {
 		n, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil || n < 1 {
 			return errors.New("expected comma-separated positive integers")
@@ -130,6 +141,24 @@ func (c config) validate() error {
 	if _, err := newScenario(c.Scenario, c.ScenarioConfig); err != nil {
 		return err
 	}
+	if err := c.validateLoad(); err != nil {
+		return err
+	}
+	for _, value := range []string{c.CPULimit, c.MemoryLimit} {
+		q, err := resource.ParseQuantity(value)
+		if err != nil || q.Sign() <= 0 {
+			return errors.New("invalid Pod resource limit")
+		}
+	}
+	if c.ControlPlane != "" {
+		parts := strings.Split(c.ControlPlane, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return errors.New("control-plane must be namespace/deployment")
+		}
+	}
+	return nil
+}
+func (c config) validateLoad() error {
 	if c.Pods < 1 || len(c.Stages) == 0 {
 		return errors.New("pods and stages must be positive")
 	}
@@ -155,20 +184,9 @@ func (c config) validate() error {
 	if delay, err := time.ParseDuration(c.AckDelay); err != nil || delay < 0 {
 		return errors.New("invalid ack-delay")
 	}
-	for _, value := range []string{c.CPULimit, c.MemoryLimit} {
-		q, err := resource.ParseQuantity(value)
-		if err != nil || q.Sign() <= 0 {
-			return errors.New("invalid Pod resource limit")
-		}
-	}
-	if c.ControlPlane != "" {
-		parts := strings.Split(c.ControlPlane, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return errors.New("control-plane must be namespace/deployment")
-		}
-	}
 	return nil
 }
+
 func validSeconds(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v < float64(math.MaxInt64)/float64(time.Second)
 }

@@ -163,25 +163,31 @@ func newSecurityProfiles(
 	sandboxes krt.IndexCollection[string, *agentsv1alpha1.Sandbox],
 	options ...krt.CollectionOption,
 ) krt.Collection[model.SecurityProfile] {
-	return krt.NewCollection(sandboxes, func(_ krt.HandlerContext, group krt.IndexObject[string, *agentsv1alpha1.Sandbox]) *model.SecurityProfile {
-		if len(group.Objects) != 1 || !isPolicySubject(group.Objects[0]) {
-			return nil
-		}
-		sandbox := group.Objects[0]
-		rules, err := sandboxSecurityRules(sandbox)
-		if err != nil {
-			log.Warn("invalid Sandbox security rules; omitting inline profile",
-				"namespace", sandbox.Namespace, "sandbox", sandbox.Name, "error", err)
-			return nil
-		}
-		if len(rules) == 0 {
-			return nil
-		}
-		return &model.SecurityProfile{
-			Dedicated: true, SandboxUID: group.Key, Namespace: sandbox.Namespace, Name: sandbox.Name,
-			Spec: agentsv1alpha1.SecurityProfileSpec{Rules: rules},
-		}
-	}, options...)
+	return krt.NewCollection(
+		sandboxes,
+		func(_ krt.HandlerContext, group krt.IndexObject[string, *agentsv1alpha1.Sandbox]) *model.SecurityProfile {
+			if len(group.Objects) != 1 || !isPolicySubject(group.Objects[0]) {
+				return nil
+			}
+			sandbox := group.Objects[0]
+			rules, err := sandboxSecurityRules(sandbox)
+			if err != nil {
+				log.Warn("invalid Sandbox security rules; omitting inline profile",
+					"namespace", sandbox.Namespace, "sandbox", sandbox.Name, "error", err)
+				return nil
+			}
+			if len(rules) == 0 {
+				return nil
+			}
+			return &model.SecurityProfile{
+				Dedicated:  true,
+				SandboxUID: group.Key,
+				Namespace:  sandbox.Namespace,
+				Name:       sandbox.Name,
+				Spec:       agentsv1alpha1.SecurityProfileSpec{Rules: rules},
+			}
+		},
+		options...)
 }
 
 func sandboxSecurityRules(sandbox *agentsv1alpha1.Sandbox) ([]agentsv1alpha1.SecurityRule, error) {
@@ -222,7 +228,8 @@ func runtimeState(sandbox *agentsv1alpha1.Sandbox) model.SandboxState {
 		return model.SandboxStateRunning
 	case agentsv1alpha1.SandboxPaused:
 		for _, condition := range sandbox.Status.Conditions {
-			if condition.Type == string(agentsv1alpha1.SandboxConditionPaused) && condition.Status == metav1.ConditionTrue {
+			if condition.Type == string(agentsv1alpha1.SandboxConditionPaused) &&
+				condition.Status == metav1.ConditionTrue {
 				return model.SandboxStatePaused
 			}
 		}

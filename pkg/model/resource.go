@@ -153,7 +153,13 @@ func (r Resource) Equals(other Resource) bool {
 // NewResource validates and hashes a resource once, at construction. Producers
 // should build resources through this function so that assembling a snapshot
 // never has to re-encode or re-hash anything.
-func NewResource(key ResourceKey, xdsName string, value *anypb.Any, aliases []string, facts ResourceFacts) (Resource, error) {
+func NewResource(
+	key ResourceKey,
+	xdsName string,
+	value *anypb.Any,
+	aliases []string,
+	facts ResourceFacts,
+) (Resource, error) {
 	return normalizeResource(Resource{
 		Key:     key,
 		XDSName: xdsName,
@@ -215,7 +221,11 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 			return fmt.Errorf("resource %s/%s carries Workload facts", key.TypeURL, key.Name)
 		}
 		if uid := facts.Workload.WorkloadUID; uid != strings.TrimSpace(uid) {
-			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical workload UID", key.TypeURL, key.Name)
+			return fmt.Errorf(
+				"resource %s/%s Workload facts contain a non-canonical workload UID",
+				key.TypeURL,
+				key.Name,
+			)
 		}
 		if facts.Workload.NodeName != strings.TrimSpace(facts.Workload.NodeName) {
 			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical node name", key.TypeURL, key.Name)
@@ -230,7 +240,12 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 		} {
 			for _, value := range values {
 				if strings.TrimSpace(value) == "" {
-					return fmt.Errorf("resource %s/%s Workload facts contain an empty %s key", key.TypeURL, key.Name, label)
+					return fmt.Errorf(
+						"resource %s/%s Workload facts contain an empty %s key",
+						key.TypeURL,
+						key.Name,
+						label,
+					)
 				}
 			}
 		}
@@ -250,14 +265,24 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 		switch facts.Authorization.Scope {
 		case AuthorizationScopeGlobal, AuthorizationScopeWorkload:
 			if facts.Authorization.Namespace != "" {
-				return fmt.Errorf("resource %s/%s %v Authorization must not carry a namespace", key.TypeURL, key.Name, facts.Authorization.Scope)
+				return fmt.Errorf(
+					"resource %s/%s %v Authorization must not carry a namespace",
+					key.TypeURL,
+					key.Name,
+					facts.Authorization.Scope,
+				)
 			}
 		case AuthorizationScopeNamespace:
 			if strings.TrimSpace(facts.Authorization.Namespace) == "" {
 				return fmt.Errorf("resource %s/%s namespace Authorization requires a namespace", key.TypeURL, key.Name)
 			}
 		default:
-			return fmt.Errorf("resource %s/%s has unknown Authorization scope %d", key.TypeURL, key.Name, facts.Authorization.Scope)
+			return fmt.Errorf(
+				"resource %s/%s has unknown Authorization scope %d",
+				key.TypeURL,
+				key.Name,
+				facts.Authorization.Scope,
+			)
 		}
 	}
 

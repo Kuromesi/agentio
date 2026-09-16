@@ -15,9 +15,11 @@
 package policy
 
 import (
-	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
-	"google.golang.org/protobuf/proto"
 	"testing"
+
+	"google.golang.org/protobuf/proto"
+
+	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 )
 
 func TestCompiledPolicyEqualityAndOptionalAttachment(t *testing.T) {

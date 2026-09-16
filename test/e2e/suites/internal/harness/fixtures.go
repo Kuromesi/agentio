@@ -56,7 +56,11 @@ func DataplaneNamespaceConfig(profile, prefix string) (namespace.Config, error) 
 
 func selectZtunnelPod(workload corev1.Pod, candidates []corev1.Pod) (corev1.Pod, error) {
 	if workload.Spec.NodeName == "" {
-		return corev1.Pod{}, fmt.Errorf("workload Pod %s/%s is not assigned to a node", workload.Namespace, workload.Name)
+		return corev1.Pod{}, fmt.Errorf(
+			"workload Pod %s/%s is not assigned to a node",
+			workload.Namespace,
+			workload.Name,
+		)
 	}
 	for _, candidate := range candidates {
 		if candidate.Spec.NodeName == workload.Spec.NodeName {
@@ -132,7 +136,11 @@ func (f *TrafficFixture) SetupEcho(name string, replicas int, capabilities []cor
 
 // VerifyTrafficFixture exercises the client-to-server baseline call and the
 // serving ztunnel's admin surface so scenarios start from a proven-good fixture.
-func (h *Harness) VerifyTrafficFixture(ctx context.Context, environment *e2e.Environment, fixture *TrafficFixture) error {
+func (h *Harness) VerifyTrafficFixture(
+	ctx context.Context,
+	environment *e2e.Environment,
+	fixture *TrafficFixture,
+) error {
 	if err := agentiocomponent.VerifyFirewallBackend(ctx, environment, h.Config); err != nil {
 		return fmt.Errorf("verify firewall backend: %w", err)
 	}
@@ -160,11 +168,20 @@ func (h *Harness) VerifyTrafficFixture(ctx context.Context, environment *e2e.Env
 // ConfigDump fetches the workload-scoped ztunnel config dump serving an echo workload.
 // Sidecar mode reaches the in-Pod admin port; ambient mode executes the admin
 // request in the node-level ztunnel scheduled beside the workload.
-func (h *Harness) ConfigDump(ctx context.Context, environment *e2e.Environment, instance echo.Instance) (string, error) {
+func (h *Harness) ConfigDump(
+	ctx context.Context,
+	environment *e2e.Environment,
+	instance echo.Instance,
+) (string, error) {
 	return configDump(ctx, environment, h.Config, instance)
 }
 
-func configDump(ctx context.Context, environment *e2e.Environment, config agentiocomponent.Config, instance echo.Instance) (string, error) {
+func configDump(
+	ctx context.Context,
+	environment *e2e.Environment,
+	config agentiocomponent.Config,
+	instance echo.Instance,
+) (string, error) {
 	switch config.Profile {
 	case agentiocomponent.ProfileSidecar:
 		return sidecarConfigDump(ctx, instance)
@@ -205,7 +222,12 @@ func sidecarConfigDump(ctx context.Context, instance echo.Instance) (string, err
 	return projectWorkloadConfigDump([]byte(result.Responses[0].BodyText), instance.Namespace(), pods[0])
 }
 
-func ambientConfigDump(ctx context.Context, environment *e2e.Environment, controlPlaneNamespace string, instance echo.Instance) (string, error) {
+func ambientConfigDump(
+	ctx context.Context,
+	environment *e2e.Environment,
+	controlPlaneNamespace string,
+	instance echo.Instance,
+) (string, error) {
 	if environment == nil || environment.Cluster == nil || environment.Cluster.Kube == nil || environment.Kube == nil {
 		return "", fmt.Errorf("ambient config dump requires an E2E Kubernetes environment")
 	}
@@ -233,11 +255,17 @@ func ambientConfigDump(ctx context.Context, environment *e2e.Environment, contro
 	}
 	projected, err := projectWorkloadConfigDump([]byte(stdout), workload.Namespace, workload.Name)
 	if err != nil {
-		return "", fmt.Errorf("project ambient ztunnel config dump for %s/%s: %w", workload.Namespace, workload.Name, err)
+		return "", fmt.Errorf(
+			"project ambient ztunnel config dump for %s/%s: %w",
+			workload.Namespace,
+			workload.Name,
+			err,
+		)
 	}
 	return projected, nil
 }
 
+//nolint:gocyclo // Keep legacy and native resource selection together to preserve dump compatibility.
 func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName string) (string, error) {
 	var dump struct {
 		Policies        []json.RawMessage `json:"policies"`
@@ -287,7 +315,8 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 			return "", fmt.Errorf("decode policy: %w", err)
 		}
 		_, referenced := policyReferences[policy.Namespace+"/"+policy.Name]
-		if referenced || policy.Scope == "Global" || policy.Scope == "Namespace" && policy.Namespace == workloadNamespace {
+		if referenced || policy.Scope == "Global" ||
+			policy.Scope == "Namespace" && policy.Namespace == workloadNamespace {
 			policies = append(policies, rawPolicy)
 		}
 	}
@@ -349,7 +378,12 @@ func verifyAmbientRedirection(ctx context.Context, environment *e2e.Environment,
 			return fmt.Errorf("get ambient workload Pod %s/%s: %w", instance.Namespace(), podName, err)
 		}
 		if got := pod.Annotations["ambient.istio.io/redirection"]; got != "enabled" {
-			return fmt.Errorf("ambient workload Pod %s/%s redirection annotation = %q, want enabled", instance.Namespace(), podName, got)
+			return fmt.Errorf(
+				"ambient workload Pod %s/%s redirection annotation = %q, want enabled",
+				instance.Namespace(),
+				podName,
+				got,
+			)
 		}
 	}
 	return nil

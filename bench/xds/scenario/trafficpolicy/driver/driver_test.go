@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package driver
 
@@ -55,7 +66,10 @@ func TestCheckRequiresConsistentPoliciesWithoutSandboxPushes(t *testing.T) {
 	before := []loadapi.Status{{}, {}}
 	for _, corruption := range []string{"", "version", "size", "sandbox"} {
 		t.Run(corruption, func(t *testing.T) {
-			after := []loadapi.Status{{Samples: []loadapi.Sample{{Version: "v1", Bytes: 10}}}, {Samples: []loadapi.Sample{{Version: "v1", Bytes: 10}}}}
+			after := []loadapi.Status{
+				{Samples: []loadapi.Sample{{Version: "v1", Bytes: 10}}},
+				{Samples: []loadapi.Sample{{Version: "v1", Bytes: 10}}},
+			}
 			switch corruption {
 			case "version":
 				after[1].Samples[0].Version = "v2"

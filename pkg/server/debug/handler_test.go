@@ -331,7 +331,8 @@ func TestConfigDebugHandlerFiltersAndPrettyPrints(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Items) != 1 || response.Items[0].Kind != "TrafficPolicy" || response.Items[0].Metadata.Name != "traffic" {
+	if len(response.Items) != 1 || response.Items[0].Kind != "TrafficPolicy" ||
+		response.Items[0].Metadata.Name != "traffic" {
 		t.Fatalf("filtered response items = %#v, want demo/traffic", response.Items)
 	}
 	wantCounts := map[string]int{"TrafficPolicy": 1}
@@ -422,7 +423,8 @@ func TestConfigDebugHandlerLogsConversionFailureWithoutLeakingDetailsToClient(t 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("response status = %d, want 500: %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(logs.String(), "class=snapshot_failed") || !strings.Contains(logs.String(), "UnknownDebugConfig") {
+	if !strings.Contains(logs.String(), "class=snapshot_failed") ||
+		!strings.Contains(logs.String(), "UnknownDebugConfig") {
 		t.Fatalf("conversion failure was not logged with detail: %s", logs.String())
 	}
 	for _, internal := range []string{"UnknownDebugConfig", "internal-protobuf-bytes"} {
@@ -490,7 +492,11 @@ func serveConfigDebugRequest(handler http.Handler, method, target, remoteAddr st
 	return serveDebugRequest(handler, method, target, remoteAddr, nil)
 }
 
-func serveDebugRequest(handler http.Handler, method, target, remoteAddr string, body []byte) *httptest.ResponseRecorder {
+func serveDebugRequest(
+	handler http.Handler,
+	method, target, remoteAddr string,
+	body []byte,
+) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, bytes.NewReader(body))
 	req.RemoteAddr = remoteAddr
 	recorder := httptest.NewRecorder()

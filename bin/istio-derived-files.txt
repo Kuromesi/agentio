@@ -1,6 +1,7 @@
 # Files that retain identifiable implementation or test code from Istio.
 # Keep this list sorted. Paths are relative to the repository root.
 api/security/v1/authorization.proto
+api/workload/v1/workload.proto
 pkg/gatewaydeployer/controller.go
 pkg/gatewaydeployer/render.go
 pkg/inject/app_probe.go

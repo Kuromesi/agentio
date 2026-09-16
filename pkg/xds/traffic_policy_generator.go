@@ -84,10 +84,17 @@ func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRe
 	return newSortedDelta(resources, removed, false), nil
 }
 
-func selectTrafficPolicyResources(scope model.ClientScope, snapshot model.ResourceSet, sub SubscriptionView) map[string]model.Resource {
+func selectTrafficPolicyResources(
+	scope model.ClientScope,
+	snapshot model.ResourceSet,
+	sub SubscriptionView,
+) map[string]model.Resource {
 	selected := make(map[string]model.Resource)
 	for name := range scopedTrafficPolicyNames(scope, snapshot) {
-		if resource, ok := snapshot.Get(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name}); ok && sub.allows(resource) {
+		if resource, ok := snapshot.Get(
+			model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name},
+		); ok &&
+			sub.allows(resource) {
 			selected[resource.XDSName] = resource
 		}
 	}

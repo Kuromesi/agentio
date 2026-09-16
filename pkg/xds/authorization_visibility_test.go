@@ -28,7 +28,12 @@ func TestAuthorizationVisibilityUsesScopedIdentityAndExactReferences(t *testing.
 	exact := selectionAuthorization(t, "demo/exact", model.AuthorizationScopeWorkload, "")
 	unrelated := selectionAuthorization(t, "other/unrelated", model.AuthorizationScopeNamespace, "other")
 	visibility := newAuthorizationVisibility(
-		model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"},
+		model.ClientScope{
+			Class:       model.ClientDedicatedZTunnel,
+			Principal:   serviceAccountPrincipal("demo", "default"),
+			WorkloadUID: "uid-a",
+			SourceUID:   "uid-a",
+		},
 		selectionSnapshot(t, []model.Resource{workload, global, namespace, exact, unrelated}),
 	)
 
@@ -50,7 +55,12 @@ func TestAuthorizationIncrementalDiffsExactReferenceTransition(t *testing.T) {
 	before := selectionSnapshot(t, []model.Resource{oldWorkload, oldPolicy, newPolicy})
 	after := selectionSnapshot(t, []model.Resource{newWorkload, oldPolicy, newPolicy})
 	request := GenerationRequest{
-		Scope:        model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"},
+		Scope: model.ClientScope{
+			Class:       model.ClientDedicatedZTunnel,
+			Principal:   serviceAccountPrincipal("demo", "default"),
+			WorkloadUID: "uid-a",
+			SourceUID:   "uid-a",
+		},
 		TypeURL:      model.WorkloadAuthorizationType,
 		Subscription: SubscriptionView{wildcard: true},
 		Snapshot:     after,
@@ -88,9 +98,11 @@ func TestAuthorizationIncludesBaselinesWithoutWorkloadReferences(t *testing.T) {
 				t.Fatalf("scope %+v: got %v, want %v", scope, got, want)
 			}
 			delta := generateAuthorizationIncremental(GenerationRequest{
-				Scope: scope, TypeURL: model.WorkloadAuthorizationType,
+				Scope:        scope,
+				TypeURL:      model.WorkloadAuthorizationType,
 				Subscription: SubscriptionView{wildcard: names == nil, names: names},
-				Snapshot:     after, Update: updateBetween(before, after, before.Diff(after)),
+				Snapshot:     after,
+				Update:       updateBetween(before, after, before.Diff(after)),
 			})
 			if len(delta.Resources) != 0 || !slices.Equal(delta.Removed, want) {
 				t.Fatalf("removed last workload: %+v", delta)
@@ -105,9 +117,11 @@ func TestAuthorizationIncludesBaselinesWithoutWorkloadReferences(t *testing.T) {
 			t.Fatal(err)
 		}
 		delta := generateAuthorizationIncremental(GenerationRequest{
-			Scope: scope, TypeURL: model.WorkloadAuthorizationType,
-			Subscription: SubscriptionView{wildcard: true}, Snapshot: latest,
-			Update: updateBetween(before, latest, before.Diff(latest)),
+			Scope:        scope,
+			TypeURL:      model.WorkloadAuthorizationType,
+			Subscription: SubscriptionView{wildcard: true},
+			Snapshot:     latest,
+			Update:       updateBetween(before, latest, before.Diff(latest)),
 		})
 		if !slices.Equal(selectedNames(delta.Resources), []string{"global"}) {
 			t.Fatalf("baseline update was not delivered: %+v", delta)
@@ -120,19 +134,37 @@ func TestSandboxHostExplicitAuthorizationVisibility(t *testing.T) {
 	facts := *host.Facts.Workload
 	compat := selectionAuthorization(t, "demo/compat", model.AuthorizationScopeWorkload, "")
 	unrelated := selectionAuthorization(t, "demo/unrelated", model.AuthorizationScopeWorkload, "")
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: "host", SourceUID: "host", Principal: facts.Principal}
+	scope := model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		WorkloadUID: "host",
+		SourceUID:   "host",
+		Principal:   facts.Principal,
+	}
 	before := selectionSnapshot(t, []model.Resource{host, compat, unrelated})
-	if got := selectedNames(selectAuthorizationResources(scope, before, nil)); !slices.Equal(got, []string{compat.Key.Name}) {
+	if got := selectedNames(
+		selectAuthorizationResources(scope, before, nil),
+	); !slices.Equal(
+		got,
+		[]string{compat.Key.Name},
+	) {
 		t.Fatalf("compatibility visibility = %v", got)
 	}
 	facts.AuthorizationRefs = nil
-	host, err := model.NewResource(host.Key, host.XDSName, host.Value, host.Aliases, model.ResourceFacts{Workload: &facts})
+	host, err := model.NewResource(
+		host.Key,
+		host.XDSName,
+		host.Value,
+		host.Aliases,
+		model.ResourceFacts{Workload: &facts},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	after := selectionSnapshot(t, []model.Resource{host, compat, unrelated})
 	delta, err := (AuthorizationGenerator{}).Generate(t.Context(), GenerationRequest{
-		Scope: scope, TypeURL: model.WorkloadAuthorizationType, Snapshot: after,
+		Scope:        scope,
+		TypeURL:      model.WorkloadAuthorizationType,
+		Snapshot:     after,
 		Update:       updateBetween(before, after, before.Diff(after)),
 		Subscription: SubscriptionView{wildcard: true, sent: map[string]string{compat.Key.Name: compat.Hash}},
 	})

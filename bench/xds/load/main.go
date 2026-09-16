@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 // xds-load runs discovery and TrafficPolicy scenarios using fakeclient.
 package main
@@ -25,19 +36,30 @@ import (
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"github.com/openkruise/agentio/bench/xds/fakeclient"
 	"github.com/openkruise/agentio/bench/xds/loadapi"
 	"github.com/openkruise/agentio/bench/xds/scenario"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type config struct {
-	target, serverName, caFile, tokenFile, listen        string
-	podName, namespace, podUID, nodeName, podIP, version string
-	scenario, scenarioConfig                             string
-	ackDelay                                             time.Duration
-	readyTimeout                                         time.Duration
-	maxConnections                                       int
+	target         string
+	serverName     string
+	caFile         string
+	tokenFile      string
+	listen         string
+	podName        string
+	namespace      string
+	podUID         string
+	nodeName       string
+	podIP          string
+	version        string
+	scenario       string
+	scenarioConfig string
+	ackDelay       time.Duration
+	readyTimeout   time.Duration
+	maxConnections int
 }
 
 func flags() config {
@@ -107,7 +129,11 @@ func newBench(ctx context.Context, c config) (*bench, error) {
 		return nil, err
 	}
 	if c.serverName == "" {
-		c.serverName, _, _ = net.SplitHostPort(c.target)
+		var err error
+		c.serverName, _, err = net.SplitHostPort(c.target)
+		if err != nil {
+			return nil, err
+		}
 	}
 	factory, err := newScenario(c.scenario, json.RawMessage(c.scenarioConfig))
 	if err != nil {
@@ -120,7 +146,15 @@ func newBench(ctx context.Context, c config) (*bench, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &bench{cfg: c, ctx: ctx, samples: map[int]sample{}, errors: map[string]int{}, tlsConfig: tlsConfig, factory: factory, responsesByType: map[string]int64{}}, nil
+	return &bench{
+		cfg:             c,
+		ctx:             ctx,
+		samples:         map[int]sample{},
+		errors:          map[string]int{},
+		tlsConfig:       tlsConfig,
+		factory:         factory,
+		responsesByType: map[string]int64{},
+	}, nil
 }
 
 func (b *bench) failure(err error) {
@@ -132,6 +166,7 @@ func (b *bench) failure(err error) {
 	}
 }
 
+//nolint:gocyclo,funlen // Keep receive, reply, readiness, and sample timing in stream order.
 func (b *bench) run(id int) {
 	defer b.wg.Done()
 	ctx, cancel := context.WithCancel(b.ctx)
@@ -139,10 +174,28 @@ func (b *bench) run(id int) {
 	// Include connection establishment in the per-client readiness deadline.
 	timer := time.AfterFunc(b.cfg.readyTimeout, cancel)
 	defer timer.Stop()
-	md, _ := structpb.NewStruct(map[string]any{"POD_NAME": b.cfg.podName, "POD_NAMESPACE": b.cfg.namespace, "POD_UID": b.cfg.podUID, "NODE_NAME": b.cfg.nodeName, "ISTIO_VERSION": b.cfg.version})
-	node := &core.Node{Id: fmt.Sprintf("ztunnel~%s~%s-%d~%s", b.cfg.podIP, b.cfg.podName, id, b.cfg.namespace), Metadata: md}
+	md, err := structpb.NewStruct(
+		map[string]any{
+			"POD_NAME":      b.cfg.podName,
+			"POD_NAMESPACE": b.cfg.namespace,
+			"POD_UID":       b.cfg.podUID,
+			"NODE_NAME":     b.cfg.nodeName,
+			"ISTIO_VERSION": b.cfg.version,
+		},
+	)
+	if err != nil {
+		b.failure(err)
+		return
+	}
+	node := &core.Node{
+		Id:       fmt.Sprintf("ztunnel~%s~%s-%d~%s", b.cfg.podIP, b.cfg.podName, id, b.cfg.namespace),
+		Metadata: md,
+	}
 	client, err := fakeclient.Open(ctx, fakeclient.Config{
-		Target: b.cfg.target, Node: node, TLSConfig: b.tlsConfig, Token: fakeclient.FileToken(b.cfg.tokenFile),
+		Target:    b.cfg.target,
+		Node:      node,
+		TLSConfig: b.tlsConfig,
+		Token:     fakeclient.FileToken(b.cfg.tokenFile),
 		DialContext: func(ctx context.Context, address string) (net.Conn, error) {
 			b.dials.Add(1)
 			return (&net.Dialer{}).DialContext(ctx, "tcp", address)
@@ -154,7 +207,11 @@ func (b *bench) run(id int) {
 		}
 		return
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			b.failure(err)
+		}
+	}()
 	b.connected.Add(1)
 	defer b.connected.Add(-1)
 	isReady := false
@@ -256,10 +313,12 @@ func (b *bench) scale(n int, rate float64) error {
 	start := b.target
 	b.target = n
 	b.ramping = true
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		defer func() { b.mu.Lock(); b.ramping = false; b.mu.Unlock() }()
+	b.wg.Go(func() {
+		defer func() {
+			b.mu.Lock()
+			b.ramping = false
+			b.mu.Unlock()
+		}()
 		ticker := time.NewTicker(time.Duration(float64(time.Second) / rate))
 		defer ticker.Stop()
 		for id := start; id < n; id++ {
@@ -271,7 +330,7 @@ func (b *bench) scale(n int, rate float64) error {
 			b.wg.Add(1)
 			go b.run(id)
 		}
-	}()
+	})
 	return nil
 }
 
@@ -334,17 +393,30 @@ func (b *bench) handler() http.Handler {
 				samples = append(samples, s)
 			}
 		}
-		writeJSON(w, loadapi.Status{NowNS: time.Now().UnixNano(), Target: b.target, Ramping: b.ramping,
-			Connected: b.connected.Load(), Ready: b.ready.Load(), Failures: b.failures.Load(), Errors: b.errors,
-			Dials: b.dials.Load(), Responses: b.responses.Load(), ResponsesByType: b.responsesByType,
-			Round: b.round, Received: len(b.samples), Samples: samples, HeapAlloc: mem.HeapAlloc, Goroutines: runtime.NumGoroutine()})
+		writeJSON(w, loadapi.Status{NowNS: time.Now().UnixNano(),
+			Target:          b.target,
+			Ramping:         b.ramping,
+			Connected:       b.connected.Load(),
+			Ready:           b.ready.Load(),
+			Failures:        b.failures.Load(),
+			Errors:          b.errors,
+			Dials:           b.dials.Load(),
+			Responses:       b.responses.Load(),
+			ResponsesByType: b.responsesByType,
+			Round:           b.round,
+			Received:        len(b.samples),
+			Samples:         samples,
+			HeapAlloc:       mem.HeapAlloc,
+			Goroutines:      runtime.NumGoroutine()})
 	})
 	return mux
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("write management response: %v", err)
+	}
 }
 
 func main() {
@@ -356,7 +428,12 @@ func main() {
 		log.Fatal(err)
 	}
 	server := &http.Server{Addr: c.listen, Handler: b.handler(), ReadHeaderTimeout: 5 * time.Second}
-	go func() { <-ctx.Done(); _ = server.Close() }()
+	go func() {
+		<-ctx.Done()
+		if err := server.Close(); err != nil {
+			log.Printf("close management server: %v", err)
+		}
+	}()
 	log.Printf("ADS load client listening on %s; target=%s", c.listen, c.target)
 	err = server.ListenAndServe()
 	cancel()

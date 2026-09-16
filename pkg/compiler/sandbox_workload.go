@@ -56,7 +56,10 @@ func newSandboxWorkloadPolicies(
 	options collectionOptions,
 ) krt.Collection[workloadSandboxPolicies] {
 	if inputs.NativeSandboxPolicies {
-		return krt.NewStaticCollection[workloadSandboxPolicies](nil, nil, options("sandbox-workload-policies-disabled")...)
+		return krt.NewStaticCollection[workloadSandboxPolicies](
+			nil,
+			nil,
+			options("sandbox-workload-policies-disabled")...)
 	}
 	byWorkload := krt.NewIndex(inputs.Sandboxes, "compatibilitySandboxesByWorkload", func(s model.Sandbox) []string {
 		if s.Attester != nil && s.Attester.WorkloadUID != "" {
@@ -65,35 +68,50 @@ func newSandboxWorkloadPolicies(
 		return nil
 	})
 	clearFailureOnSourceDelete(inputs.Workloads, failures, "SandboxWorkloadPolicies")
-	return krt.NewCollection(inputs.Workloads, func(ctx krt.HandlerContext, workload model.Workload) *workloadSandboxPolicies {
-		bound := krt.Fetch(ctx, inputs.Sandboxes, krt.FilterIndex(byWorkload, workload.UID))
-		currentInput := func() bool {
-			current := inputs.Workloads.GetKey(workload.UID)
-			return current != nil && current.Equals(workload)
-		}
-		var result *workloadSandboxPolicies
-		var err error
-		switch len(bound) {
-		case 0:
-		case 1:
-			result, err = sandboxAsWorkload(ctx, workload, bound[0], policies)
-		default:
-			err = fmt.Errorf("%d Sandboxes bind this Workload; compatibility requires one Sandbox per Workload", len(bound))
-		}
-		if err != nil {
-			failures.recordIf("SandboxWorkloadPolicies", workload.UID, err, currentInput)
-		} else {
-			failures.clearIf("SandboxWorkloadPolicies", workload.UID, currentInput)
-		}
-		return result
-	}, options("sandbox-workload-policies")...)
+	return krt.NewCollection(
+		inputs.Workloads,
+		func(ctx krt.HandlerContext, workload model.Workload) *workloadSandboxPolicies {
+			bound := krt.Fetch(ctx, inputs.Sandboxes, krt.FilterIndex(byWorkload, workload.UID))
+			currentInput := func() bool {
+				current := inputs.Workloads.GetKey(workload.UID)
+				return current != nil && current.Equals(workload)
+			}
+			var result *workloadSandboxPolicies
+			var err error
+			switch len(bound) {
+			case 0:
+			case 1:
+				result, err = sandboxAsWorkload(ctx, workload, bound[0], policies)
+			default:
+				err = fmt.Errorf(
+					"%d Sandboxes bind this Workload; compatibility requires one Sandbox per Workload",
+					len(bound),
+				)
+			}
+			if err != nil {
+				failures.recordIf("SandboxWorkloadPolicies", workload.UID, err, currentInput)
+			} else {
+				failures.clearIf("SandboxWorkloadPolicies", workload.UID, currentInput)
+			}
+			return result
+		},
+		options("sandbox-workload-policies")...)
 }
 
 // sandboxAsWorkload adapts existing Sandbox bindings and compiled bodies. It
 // never re-matches Pod labels, resolves peers, or parses source policies.
-func sandboxAsWorkload(ctx krt.HandlerContext, workload model.Workload, sandbox model.Sandbox, policies policyCollections) (*workloadSandboxPolicies, error) {
+func sandboxAsWorkload(
+	ctx krt.HandlerContext,
+	workload model.Workload,
+	sandbox model.Sandbox,
+	policies policyCollections,
+) (*workloadSandboxPolicies, error) {
 	result := &workloadSandboxPolicies{WorkloadUID: workload.UID}
-	if compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID))); compiled != nil {
+	if compiled := krt.FetchOne(
+		ctx,
+		policies.trafficPolicies,
+		krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID)),
+	); compiled != nil {
 		result.addAuthorizationReferences(compiled)
 	}
 	appendSNI := func(p *extensionsv1.SniTrafficPolicy) {
@@ -106,7 +124,11 @@ func sandboxAsWorkload(ctx krt.HandlerContext, workload model.Workload, sandbox 
 		// Compiled bodies are immutable: share rule pointers rather than cloning.
 		result.SNIPolicy.Rules = append(result.SNIPolicy.Rules, p.Rules...)
 	}
-	if compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID))); compiled != nil {
+	if compiled := krt.FetchOne(
+		ctx,
+		policies.sniPolicies,
+		krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID)),
+	); compiled != nil {
 		appendSNI(compiled.Policy)
 	}
 	var policyErr error

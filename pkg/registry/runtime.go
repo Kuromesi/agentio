@@ -32,7 +32,10 @@ func (r SandboxRuntime) validate() error {
 	case SandboxRuntimeKruise:
 		return nil
 	default:
-		return fmt.Errorf("unsupported sandbox runtime %q; supported runtimes: kruise (ordinary managed Pods are built in)", r)
+		return fmt.Errorf(
+			"unsupported sandbox runtime %q; supported runtimes: kruise (ordinary managed Pods are built in)",
+			r,
+		)
 	}
 }
 

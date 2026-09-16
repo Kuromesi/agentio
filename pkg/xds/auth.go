@@ -40,8 +40,14 @@ func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 	switch typeURL {
 	case model.AddressType, model.WorkloadAuthorizationType, model.SandboxType, model.TrafficPolicyType:
 		return true, true
-	case model.WorkloadType, model.ClusterType, model.EndpointType, model.ListenerType, model.RouteType, model.SecretType,
-		model.ExtensionConfigurationType, model.ProxyConfigType:
+	case model.WorkloadType,
+		model.ClusterType,
+		model.EndpointType,
+		model.ListenerType,
+		model.RouteType,
+		model.SecretType,
+		model.ExtensionConfigurationType,
+		model.ProxyConfigType:
 		return true, class == model.ClientEgressGateway
 	default:
 		return false, false

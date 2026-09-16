@@ -34,7 +34,13 @@ func TestApplySubscriptionRecognizesExplicitWildcard(t *testing.T) {
 		ResourceNamesSubscribe: []string{"*"},
 	})
 	if err != nil || !changed || !watch.wildcard || !watch.started {
-		t.Fatalf("wildcard subscription = changed:%v wildcard:%v started:%v err:%v", changed, watch.wildcard, watch.started, err)
+		t.Fatalf(
+			"wildcard subscription = changed:%v wildcard:%v started:%v err:%v",
+			changed,
+			watch.wildcard,
+			watch.started,
+			err,
+		)
 	}
 	if len(watch.names) != 0 {
 		t.Fatalf("explicit wildcard retained as a literal resource name: %v", watch.names)
@@ -64,7 +70,8 @@ func TestApplySubscriptionTypeAwareImplicitWildcard(t *testing.T) {
 					changed, watch.started, watch.wildcard, test.wildcard)
 			}
 			changed, err = applySubscription(watch, &discoveryv3.DeltaDiscoveryRequest{
-				TypeUrl: test.typeURL, ResponseNonce: "ack",
+				TypeUrl:       test.typeURL,
+				ResponseNonce: "ack",
 			})
 			if err != nil || changed || watch.wildcard != test.wildcard {
 				t.Fatalf("empty ACK changed subscription: changed:%t wildcard:%t err:%v", changed, watch.wildcard, err)
@@ -152,7 +159,11 @@ func TestApplySubscriptionRejectsNamesBeyondLimit(t *testing.T) {
 }
 
 func TestAcknowledgementWithoutMatchingSendDoesNotChangeState(t *testing.T) {
-	for _, tc := range []struct{ name, sent, response string }{
+	for _, tc := range []struct {
+		name     string
+		sent     string
+		response string
+	}{
 		{name: "spontaneous request", sent: "current"},
 		{name: "fresh stream", response: "previous-stream"},
 		{name: "fresh stream without nonce"},
@@ -160,10 +171,13 @@ func TestAcknowledgementWithoutMatchingSendDoesNotChangeState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			watch := &watchState{nonceSent: tc.sent}
 			for _, detail := range []*rpcstatus.Status{nil, {Code: int32(codes.InvalidArgument), Message: "rejected"}} {
-				if watch.recordAcknowledgement(&discoveryv3.DeltaDiscoveryRequest{ResponseNonce: tc.response, ErrorDetail: detail}) {
+				if watch.recordAcknowledgement(
+					&discoveryv3.DeltaDiscoveryRequest{ResponseNonce: tc.response, ErrorDetail: detail},
+				) {
 					t.Fatal("matched without a corresponding successful send")
 				}
-				if watch.nonceAcked != "" || watch.nonceNacked != "" || watch.lastError != "" || watch.lastErrorCode != codes.OK {
+				if watch.nonceAcked != "" || watch.nonceNacked != "" || watch.lastError != "" ||
+					watch.lastErrorCode != codes.OK {
 					t.Fatalf("unexpected acknowledgement state: %+v", watch)
 				}
 			}

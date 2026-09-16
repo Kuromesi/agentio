@@ -331,7 +331,12 @@ type testServer struct {
 	scope     model.ClientScope
 }
 
-func newTestServer(t testing.TB, scope model.ClientScope, resources []model.Resource, secrets DomainCertificateProvider) *testServer {
+func newTestServer(
+	t testing.TB,
+	scope model.ClientScope,
+	resources []model.Resource,
+	secrets DomainCertificateProvider,
+) *testServer {
 	return newTestServerWithScheduler(t, scope, resources, secrets, nil)
 }
 
@@ -711,7 +716,10 @@ type requestRecordingGenerator struct {
 	request GenerationRequest
 }
 
-func (g *subscriptionRecordingGenerator) Generate(_ context.Context, request GenerationRequest) (GeneratedDelta, error) {
+func (g *subscriptionRecordingGenerator) Generate(
+	_ context.Context,
+	request GenerationRequest,
+) (GeneratedDelta, error) {
 	g.sentNames = request.Subscription.SentNames()
 	request.Subscription.sent["cluster//Pod/demo/unrelated"] = "mutated"
 	return GeneratedDelta{}, nil
@@ -775,7 +783,12 @@ func selectionWorkload(t *testing.T, uid, namespace, node, service, policyName s
 	return resource
 }
 
-func projectedWorkloads(t *testing.T, scope model.ClientScope, snapshot model.ResourceSet, names []string) []model.Resource {
+func projectedWorkloads(
+	t *testing.T,
+	scope model.ClientScope,
+	snapshot model.ResourceSet,
+	names []string,
+) []model.Resource {
 	t.Helper()
 	subscription := SubscriptionView{wildcard: names == nil, names: append([]string(nil), names...)}
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
