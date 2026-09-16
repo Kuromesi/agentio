@@ -32,6 +32,9 @@ import (
 )
 
 var (
+	sandboxGVR = schema.GroupVersionResource{
+		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "sandboxes",
+	}
 	securityProfileGVR = schema.GroupVersionResource{
 		Group: "agents.kruise.io", Version: "v1alpha1", Resource: "securityprofiles",
 	}
@@ -45,6 +48,15 @@ var (
 		Group: "agents.kruise.io", Version: "v1alpha1", Kind: "GlobalSecurityProfile",
 	}
 )
+
+// Only metadata is needed for inline rules. Delay the informer so installations
+// without the optional Sandbox CRD can still finish initial synchronization.
+func newSandboxSecurityRulesCollection(client kube.Client, stop <-chan struct{}, opts krt.OptionsBuilder) krt.Collection[*metav1.PartialObjectMetadata] {
+	inf := kclient.NewDelayedInformer[*metav1.PartialObjectMetadata](client,
+		sandboxGVR, kubetypes.MetadataInformer, kclient.Filter{ObjectFilter: client.ObjectFilter()})
+	inf.Start(stop)
+	return krt.WrapClient(inf, opts.WithName("SandboxesForSniPolicy")...)
+}
 
 // registerSecurityProfileType registers the typed SecurityProfile List/Watch
 // path used by the optional SNI-policy pipeline.

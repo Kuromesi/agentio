@@ -22,6 +22,12 @@ This is one rule with no exceptions: every compile-time error — a bad selector
 
 Header-mutation values and API-key `value.template` values are additionally probe-rendered when the profile is compiled, including the legacy `apiKey.valueTemplate` after it is normalized to a header rule. That probe catches a reference to a field the render scope does not have. Credential-provider parameter templates and audit templates are compiled but not probe-rendered, so a bad field reference in those surfaces per request instead. The probe has no request data to work with, so it does not exercise helper behavior guarded on real request values: a guarded `fail` call and JSON extraction from a request value are accepted at compile time and evaluated for real per request.
 
+## TLS termination for Sandbox rules
+
+With `sniTrafficPolicy.enabled=true` (`ENABLE_SNI_TRAFFIC_POLICY` on agentiod), the control plane derives TLS-termination SNI rules from SecurityProfile and GlobalSecurityProfile resources and from the Sandbox Manager's `agents.kruise.io/security-rules` annotation. Matches with no `schemes` or with `https` contribute their normalized, deduplicated `domains`; HTTP-only matches contribute none. Request actions remain enforced by EPE.
+
+Sandbox-derived policies bind only to the Pod with the Sandbox's namespace and name, matching EPE's identity lookup; labels cannot attach them to other Pods. They coexist with independently selected profiles, including a SecurityProfile with the same namespace and name. Updating the annotation updates the Pod's SNI payload. Removing the annotation or deleting the Sandbox removes its SNI rules. Malformed JSON or invalid HTTPS domains retain the last valid SNI policy, if one exists. The Sandbox CRD is optional and its absence does not block control-plane startup.
+
 ## Rule structure and matching
 
 Every rule has a unique `name`, at least one `match` clause, and `actions`. The clauses in `match` are ORed. Within a clause, every populated field is ANDed:

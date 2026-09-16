@@ -23,6 +23,7 @@ import (
 	agentsclient "github.com/openkruise/agents-api/client/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	securityclient "istio.io/client-go/pkg/apis/security/v1"
 	"istio.io/istio/pilot/pkg/features"
@@ -90,6 +91,7 @@ type Controller struct {
 	workloadPolicyReferences krt.Collection[WorkloadPolicyReferences]
 	securityProfiles         krt.Collection[*agentsv1alpha1.SecurityProfile]
 	globalSecurityProfiles   krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+	sandboxSecurityRules     krt.Collection[*metav1.PartialObjectMetadata]
 
 	trafficPolicies       krt.Collection[*agentsv1alpha1.TrafficPolicy]
 	globalTrafficPolicies krt.Collection[*agentsv1alpha1.GlobalTrafficPolicy]
@@ -115,9 +117,11 @@ func NewController(options Options) (*Controller, error) {
 	GlobalTrafficPolicies := newGlobalTrafficPoliciesCollection(options.KubeClient, stop, opts)
 	var SecurityProfiles krt.Collection[*agentsv1alpha1.SecurityProfile]
 	var GlobalSecurityProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile]
+	var SandboxSecurityRules krt.Collection[*metav1.PartialObjectMetadata]
 	if features.EnableSniTrafficPolicy {
 		SecurityProfiles = newSecurityProfilesCollection(options.KubeClient, stop, opts)
 		GlobalSecurityProfiles = newGlobalSecurityProfilesCollection(options.KubeClient, stop, opts)
+		SandboxSecurityRules = newSandboxSecurityRulesCollection(options.KubeClient, stop, opts)
 	}
 
 	store := newConfigStore(options.KubeClient, options.MeshConfig.Get().RootNamespace, stop)
@@ -131,6 +135,7 @@ func NewController(options Options) (*Controller, error) {
 		globalTrafficPolicies:  GlobalTrafficPolicies,
 		securityProfiles:       SecurityProfiles,
 		globalSecurityProfiles: GlobalSecurityProfiles,
+		sandboxSecurityRules:   SandboxSecurityRules,
 		agentioConfig:          agentioConfig,
 	}
 

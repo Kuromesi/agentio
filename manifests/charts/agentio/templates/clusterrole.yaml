@@ -19,6 +19,7 @@ rules:
   resources:
   - securityprofiles
   - globalsecurityprofiles
+  - sandboxes
   verbs:
   - get
   - list

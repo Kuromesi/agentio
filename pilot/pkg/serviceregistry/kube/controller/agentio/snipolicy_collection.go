@@ -44,7 +44,10 @@ type BindablePolicy struct {
 	TypeURL    string
 	ConfigKind kind.Kind
 	Namespace  string
-	Priority   int32
+	// PodName binds inline Sandbox rules to the same namespace/name identity
+	// used by EPE. These policies never participate in label selection.
+	PodName  string
+	Priority int32
 	// CreationTime, SourceName, and SourceNamespace preserve the ordering
 	// metadata defined by the source policy API. They are not published in the
 	// policy resource; Workload policy references use them only to order names.
@@ -91,6 +94,7 @@ func (p BindablePolicy) Equals(other BindablePolicy) bool {
 		p.TypeURL == other.TypeURL &&
 		p.ConfigKind == other.ConfigKind &&
 		p.Namespace == other.Namespace &&
+		p.PodName == other.PodName &&
 		p.Priority == other.Priority &&
 		p.CreationTime.Equal(other.CreationTime) &&
 		p.SourceName == other.SourceName &&
@@ -101,8 +105,12 @@ func (p BindablePolicy) Equals(other BindablePolicy) bool {
 
 // Selects reports whether the policy applies to a workload with the given
 // namespace and labels. An empty policy namespace means all namespaces; an
-// empty selector matches every workload in that namespace scope.
+// empty selector matches every workload in that namespace scope. Pod-bound
+// policies are resolved by exact identity and never selected by labels.
 func (p BindablePolicy) Selects(namespace string, workloadLabels map[string]string) bool {
+	if p.PodName != "" {
+		return false
+	}
 	return policySelectsWorkload(p.Namespace, p.Selector, p.selector, namespace, workloadLabels)
 }
 
@@ -216,6 +224,7 @@ func bindablePolicyFromSecurityProfileSpec(
 func newBindablePoliciesCollection(
 	profiles krt.Collection[*agentsv1alpha1.SecurityProfile],
 	globalProfiles krt.Collection[*agentsv1alpha1.GlobalSecurityProfile],
+	sandboxes krt.Collection[*metav1.PartialObjectMetadata],
 	opts krt.OptionsBuilder,
 ) krt.Collection[BindablePolicy] {
 	securityProfilePolicies := krt.NewManyCollection(profiles, func(_ krt.HandlerContext, profile *agentsv1alpha1.SecurityProfile) []BindablePolicy {
@@ -253,6 +262,7 @@ func newBindablePoliciesCollection(
 	return krt.JoinCollection([]krt.Collection[BindablePolicy]{
 		securityProfilePolicies,
 		globalSecurityProfilePolicies,
+		newSandboxBindablePoliciesCollection(sandboxes, opts),
 	}, policyOpts...)
 }
 
@@ -264,6 +274,6 @@ func (c *Controller) initBindablePolicies(opts krt.OptionsBuilder) {
 		return
 	}
 
-	c.bindablePolicies = newBindablePoliciesCollection(c.securityProfiles, c.globalSecurityProfiles, opts)
+	c.bindablePolicies = newBindablePoliciesCollection(c.securityProfiles, c.globalSecurityProfiles, c.sandboxSecurityRules, opts)
 	c.policyAttachments = newPolicyAttachmentsCollection(c.bindablePolicies, opts)
 }

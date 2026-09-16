@@ -213,7 +213,8 @@ func TestWorkloadPolicyReferencesObserveGlobalSecurityProfileAddedAfterSync(t *t
 	profiles := krt.NewStaticCollection(nil, []*agentsv1alpha1.SecurityProfile{}, opts.WithName("SecurityProfiles")...)
 	globalProfiles := krt.NewStaticCollection(nil, []*agentsv1alpha1.GlobalSecurityProfile{},
 		opts.WithName("GlobalSecurityProfiles")...)
-	policies := newBindablePoliciesCollection(profiles, globalProfiles, opts)
+	sandboxes := krt.NewStaticCollection[*metav1.PartialObjectMetadata](nil, nil, opts.WithName("Sandboxes")...)
+	policies := newBindablePoliciesCollection(profiles, globalProfiles, sandboxes, opts)
 	attachments := newPolicyAttachmentsCollection(policies, opts)
 	references := newWorkloadPolicyReferencesCollection(workloads, attachments, opts)
 	if !references.WaitUntilSynced(stop) {

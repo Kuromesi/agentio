@@ -32,6 +32,7 @@ type PolicyAttachment struct {
 	Name      string
 	TypeURL   string
 	Namespace string
+	PodName   string
 	Priority  int32
 	// Ordering metadata is retained because changing any of these fields changes
 	// the ordered policy-reference extension emitted for matching workloads.
@@ -57,6 +58,7 @@ func (p PolicyAttachment) Equals(other PolicyAttachment) bool {
 	return p.Name == other.Name &&
 		p.TypeURL == other.TypeURL &&
 		p.Namespace == other.Namespace &&
+		p.PodName == other.PodName &&
 		p.Priority == other.Priority &&
 		p.CreationTime.Equal(other.CreationTime) &&
 		p.SourceName == other.SourceName &&
@@ -66,7 +68,11 @@ func (p PolicyAttachment) Equals(other PolicyAttachment) bool {
 
 // Selects reports whether the policy attachment applies to a workload. An
 // empty policy namespace is global and an empty selector matches its scope.
+// Pod-bound attachments are resolved separately by exact identity.
 func (p PolicyAttachment) Selects(namespace string, workloadLabels map[string]string) bool {
+	if p.PodName != "" {
+		return false
+	}
 	return policySelectsWorkload(p.Namespace, p.Selector, p.selector, namespace, workloadLabels)
 }
 
@@ -99,6 +105,7 @@ func policyAttachmentFromBindablePolicy(policy BindablePolicy) *PolicyAttachment
 		Name:            policy.Name,
 		TypeURL:         policy.TypeURL,
 		Namespace:       policy.Namespace,
+		PodName:         policy.PodName,
 		Priority:        policy.Priority,
 		CreationTime:    policy.CreationTime,
 		SourceName:      policy.SourceName,
