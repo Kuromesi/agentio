@@ -397,7 +397,7 @@ func TestConvertTrafficPolicyToWorkloadPolicies_IngressOnly(t *testing.T) {
 		Priority: 100,
 		Selector: metav1.LabelSelector{},
 		Ingress: &agentsv1alpha1.TrafficPolicyDirection{
-			Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}},
+			Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, From: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}},
 		},
 	}
 	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
@@ -421,8 +421,8 @@ func TestConvertTrafficPolicyToWorkloadPolicies_IngressOnly(t *testing.T) {
 func TestConvertTrafficPolicyToWorkloadPolicies_Both(t *testing.T) {
 	c := newControllerForTest(t, nil, nil, nil)
 	tp := agentsv1alpha1.TrafficPolicySpec{
-		Egress:  &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}}},
-		Ingress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}}},
+		Egress:  &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}}},
+		Ingress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, From: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}}},
 	}
 	transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
 		authz, _ := fakeTransform(ap)
@@ -463,6 +463,83 @@ func TestConvertTrafficPolicyToWorkloadPolicies_Neither(t *testing.T) {
 	)
 	if len(policies) != 0 {
 		t.Errorf("expected empty policies for no egress/ingress, got %d", len(policies))
+	}
+}
+
+func TestTrafficPolicyEmptyDirectionSemantics(t *testing.T) {
+	c := newControllerForTest(t, nil, nil, nil)
+	for _, ingress := range []bool{false, true} {
+		for _, action := range []agentsv1alpha1.RuleAction{agentsv1alpha1.RuleActionAllow, agentsv1alpha1.RuleActionReject} {
+			for _, scenario := range []string{"absent", "empty", "peerless", "ports-only", "opposite-peer", "unresolved-peer", "explicit-all", "mixed"} {
+				directionName := "egress"
+				if ingress {
+					directionName = "ingress"
+				}
+				t.Run(directionName+"/"+string(action)+"/"+scenario, func(t *testing.T) {
+					rule := agentsv1alpha1.TrafficPolicyRule{Action: action}
+					peers := []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}
+					if scenario == "unresolved-peer" {
+						peers = []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "unresolved.example"}}
+					}
+					switch scenario {
+					case "ports-only":
+						rule.Ports = []agentsv1alpha1.TrafficPolicyPort{{Protocol: "TCP"}}
+					case "opposite-peer":
+						if ingress {
+							rule.To = peers
+						} else {
+							rule.From = peers
+						}
+					case "unresolved-peer", "explicit-all", "mixed":
+						if ingress {
+							rule.From = peers
+						} else {
+							rule.To = peers
+						}
+					}
+					direction := &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{rule}}
+					switch scenario {
+					case "absent":
+						direction = nil
+					case "empty":
+						direction.Rules = nil
+					case "mixed":
+						direction.Rules = append([]agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionReject}}, rule)
+					}
+					tp := &agentsv1alpha1.TrafficPolicySpec{}
+					if ingress {
+						tp.Ingress = direction
+					} else {
+						tp.Egress = direction
+					}
+					var translated []*v1beta1.Rule
+					transform := func(_ krt.HandlerContext, _ metav1.ObjectMeta, _ *agentsv1alpha1.TrafficPolicySpec, ap *securityclient.AuthorizationPolicy) *model.WorkloadAuthorization {
+						translated = ap.Spec.Rules
+						authz, _ := fakeTransform(ap)
+						return &model.WorkloadAuthorization{Authorization: authz}
+					}
+					policies := c.convertTrafficPolicyToWorkloadPolicies(krt.TestingDummyContext{}, metav1.ObjectMeta{Name: "policy", Namespace: "demo"}, tp, "policy", "demo", fakeResolver, transform)
+					configured := scenario == "unresolved-peer" || scenario == "explicit-all" || scenario == "mixed"
+					if (len(policies) == 1) != configured {
+						t.Fatalf("policy count = %d, configured = %v", len(policies), configured)
+					}
+					if !configured {
+						return
+					}
+					if len(translated) != 1 || len(translated[0].When) != 1 {
+						t.Fatalf("unexpected translated rules: %v", translated)
+					}
+					condition := translated[0].When[0]
+					if scenario == "unresolved-peer" {
+						if len(condition.Values) != 0 || len(condition.NotValues) != 0 {
+							t.Fatalf("unresolved peer must never match: %v", condition)
+						}
+					} else if len(condition.Values)+len(condition.NotValues) != 1 {
+						t.Fatalf("explicit peer lost its condition: %v", condition)
+					}
+				})
+			}
+		}
 	}
 }
 

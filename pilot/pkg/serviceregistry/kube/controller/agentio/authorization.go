@@ -152,12 +152,24 @@ func (c *authorizationController) convertTrafficPolicyToWorkloadPolicies(
 		}
 	}
 
-	if tp.Egress != nil {
-		rules := []*v1beta1.Rule{}
-		for _, rule := range tp.Egress.Rules {
+	convertRules := func(direction *agentsv1alpha1.TrafficPolicyDirection, ingress bool) []*v1beta1.Rule {
+		var rules []*v1beta1.Rule
+		if direction == nil {
+			return nil
+		}
+		for _, rule := range direction.Rules {
+			// Skipped rules must not enable default deny for an empty direction.
+			if (ingress && len(rule.From) == 0) || (!ingress && len(rule.To) == 0) {
+				continue
+			}
+			// Declared but unresolved peers retain a never-matching rule, keeping
+			// default deny active until their dependencies resolve.
 			rules = append(rules, c.convertRule(ctx, rule, namespace, resolver))
 		}
+		return rules
+	}
 
+	if rules := convertRules(tp.Egress, false); len(rules) > 0 {
 		ap := &securityclient.AuthorizationPolicy{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        name + "-egress",
@@ -180,12 +192,7 @@ func (c *authorizationController) convertTrafficPolicyToWorkloadPolicies(
 		}
 	}
 
-	if tp.Ingress != nil {
-		rules := []*v1beta1.Rule{}
-		for _, rule := range tp.Ingress.Rules {
-			rules = append(rules, c.convertRule(ctx, rule, namespace, resolver))
-		}
-
+	if rules := convertRules(tp.Ingress, true); len(rules) > 0 {
 		ap := &securityclient.AuthorizationPolicy{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        name + "-ingress",
