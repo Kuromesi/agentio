@@ -26,8 +26,9 @@ on:
         default: ""
         type: string
       ext_proc_image:
-        description: Immutable ext-proc test fixture image
-        required: true
+        description: Optional immutable ext-proc fixture override; otherwise built from source
+        required: false
+        default: ""
         type: string
       forward_proxy_image:
         description: Optional immutable forward-proxy fixture override
@@ -123,7 +124,9 @@ jobs:
           CNI_IMAGE=$(resolve_pin cni CNI_IMAGE "$CNI_IMAGE")
           PROXY_INIT_IMAGE=$(resolve_pin proxy-init PROXY_INIT_IMAGE "$PROXY_INIT_IMAGE")
           GATEWAY_IMAGE=$(resolve_pin gateway GATEWAY_IMAGE "$GATEWAY_IMAGE")
-          EXT_PROC_IMAGE=$(resolve_pin ext-proc EXT_PROC_IMAGE "$EXT_PROC_IMAGE")
+          if [[ -n "$EXT_PROC_IMAGE" ]]; then
+            EXT_PROC_IMAGE=$(resolve_pin ext-proc EXT_PROC_IMAGE "$EXT_PROC_IMAGE")
+          fi
           if [[ -n "$FORWARD_PROXY_IMAGE" && ! "$FORWARD_PROXY_IMAGE" =~ $image_pattern ]]; then
             echo "Invalid immutable forward-proxy image: $FORWARD_PROXY_IMAGE" >&2
             exit 1

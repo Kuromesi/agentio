@@ -39,7 +39,7 @@ on:
         required: true
         type: string
       ext_proc_image:
-        description: Immutable ext-proc fixture image (repository@sha256:digest)
+        description: Optional immutable ext-proc fixture override; otherwise built from source
         required: false
         default: ""
         type: string
@@ -80,8 +80,9 @@ on:
         required: true
         type: string
       ext_proc_image:
-        description: Immutable ext-proc fixture image (repository@sha256:digest)
-        required: true
+        description: Optional immutable ext-proc fixture override; otherwise built from source
+        required: false
+        default: ""
         type: string
       forward_proxy_image:
         description: Optional immutable forward-proxy fixture override
@@ -142,8 +143,36 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-ext-proc-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact: ${{ steps.fixture.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.candidate_image_artifact == '' && inputs.ext_proc_image == ''
+        with:
+          persist-credentials: false
+      - name: Build ext-proc fixture
+        if: inputs.candidate_image_artifact == '' && inputs.ext_proc_image == ''
+        id: fixture
+        run: |
+          docker build --file test/fixtures/extproc/Dockerfile \
+            --tag "agentio-e2e.local/ext-proc:${GITHUB_SHA}" .
+          docker save --output "${RUNNER_TEMP}/ext-proc-image.tar" \
+            "agentio-e2e.local/ext-proc:${GITHUB_SHA}"
+          echo "artifact=agentio-ext-proc-fixture" >> "$GITHUB_OUTPUT"
+      - name: Upload ext-proc fixture
+        if: steps.fixture.outputs.artifact != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.fixture.outputs.artifact }}
+          path: ${{ runner.temp }}/ext-proc-image.tar
+          if-no-files-found: error
+          retention-days: 1
+
   product-e2e:
-    needs: [plan, build-client-trust-fixture]
+    needs: [plan, build-client-trust-fixture, build-ext-proc-fixture]
     name: ${{ matrix.id }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -201,7 +230,7 @@ jobs:
           name: agentio-clienttrust-fixture
           path: ${{ runner.temp }}/agentio-clienttrust-fixture
       - name: Start local image registry
-        if: inputs.candidate_image_artifact != '' || contains(matrix.fixtures, 'clienttrust')
+        if: inputs.candidate_image_artifact != '' || needs.build-ext-proc-fixture.outputs.artifact != '' || contains(matrix.fixtures, 'clienttrust')
         run: |
           docker run -d --restart=always \
             -p 127.0.0.1:5001:5000 \
@@ -228,6 +257,23 @@ jobs:
             grep -m 1 -E '^localhost:5001/clienttrust@sha256:[0-9a-f]{64}$')
           test -n "$digest_ref"
           echo "AGENTIO_E2E_CLIENT_TRUST_IMAGE=$digest_ref" >> "$GITHUB_ENV"
+      - name: Download ext-proc fixture
+        if: needs.build-ext-proc-fixture.outputs.artifact != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build-ext-proc-fixture.outputs.artifact }}
+          path: ${{ runner.temp }}/agentio-ext-proc-fixture
+      - name: Publish ext-proc fixture to local registry
+        if: needs.build-ext-proc-fixture.outputs.artifact != ''
+        run: |
+          docker load --input "${RUNNER_TEMP}/agentio-ext-proc-fixture/ext-proc-image.tar"
+          target="localhost:5001/ext-proc:${GITHUB_SHA}"
+          docker tag "agentio-e2e.local/ext-proc:${GITHUB_SHA}" "$target"
+          docker push "$target"
+          digest_ref=$(docker image inspect "$target" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+            grep -m 1 -E '^localhost:5001/ext-proc@sha256:[0-9a-f]{64}$')
+          test -n "$digest_ref"
+          echo "AGENTIO_E2E_EXT_PROC_IMAGE=$digest_ref" >> "$GITHUB_ENV"
       - name: Download local candidate images
         if: inputs.candidate_image_artifact != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -310,5 +356,5 @@ jobs:
             exit 1
           fi
       - name: Delete local image registry
-        if: always() && (inputs.candidate_image_artifact != '' || contains(matrix.fixtures, 'clienttrust'))
+        if: always() && (inputs.candidate_image_artifact != '' || needs.build-ext-proc-fixture.outputs.artifact != '' || contains(matrix.fixtures, 'clienttrust'))
         run: docker rm --force "$E2E_REGISTRY_NAME" || true
