@@ -3,4 +3,6 @@
 bin
 docs
 out
+ztunnel-src
+ztunnel-context
 **/*_test.go

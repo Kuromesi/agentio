@@ -1,9 +1,10 @@
 [
   {
-    "_comment": "Immutable digest of the multi-architecture ztunnel image.",
-    "name": "ZTUNNEL_IMAGE",
-    "repository": "docker.io/openkruise/ztunnel",
-    "digest": "sha256:d815079b8e5a55f3f0fe9026c4d0affcc2677d2fca481a82e54d707342898165"
+    "_comment": "Agentio-patched ztunnel source built and published by Agentio.",
+    "name": "ZTUNNEL_REPO_SHA",
+    "repoName": "openkruise/ztunnel",
+    "file": "",
+    "lastStableSHA": "cf600342e7f66d9f90013107767b68741fb80ba9"
   },
   {
     "_comment": "Immutable digest of the multi-architecture CNI image.",

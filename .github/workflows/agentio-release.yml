@@ -1,7 +1,7 @@
 name: agentio-release
 
-# Master releases only repository-owned agentiod and EPE images. Every other
-# runtime image is supplied by the immutable dependency BOM in agentio.deps.
+# Master builds agentiod, EPE, and pinned ztunnel source in Agentio. External
+# CNI, proxy-init, and gateway images come from the dependency BOM in agentio.deps.
 # Candidates are built once, tested by digest, and promoted without rebuilding.
 on:
   workflow_dispatch:
@@ -9,11 +9,6 @@ on:
       version:
         description: Semantic version to release (for example, 0.1.0 or 0.1.0-rc.1)
         required: true
-        type: string
-      ztunnel_image:
-        description: Optional immutable ztunnel override; defaults to agentio.deps
-        required: false
-        default: ""
         type: string
       cni_image:
         description: Optional immutable CNI override; defaults to agentio.deps
@@ -57,7 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      ztunnel_image: ${{ steps.images.outputs.ztunnel_image }}
       cni_image: ${{ steps.images.outputs.cni_image }}
       proxy_init_image: ${{ steps.images.outputs.proxy_init_image }}
       gateway_image: ${{ steps.images.outputs.gateway_image }}
@@ -78,7 +72,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-          ZTUNNEL_IMAGE: ${{ inputs.ztunnel_image }}
           CNI_IMAGE: ${{ inputs.cni_image }}
           PROXY_INIT_IMAGE: ${{ inputs.proxy_init_image }}
           GATEWAY_IMAGE: ${{ inputs.gateway_image }}
@@ -127,7 +120,6 @@ jobs:
             printf '%s\n' "$image"
           }
 
-          ZTUNNEL_IMAGE=$(resolve_pin ztunnel ZTUNNEL_IMAGE "$ZTUNNEL_IMAGE")
           CNI_IMAGE=$(resolve_pin cni CNI_IMAGE "$CNI_IMAGE")
           PROXY_INIT_IMAGE=$(resolve_pin proxy-init PROXY_INIT_IMAGE "$PROXY_INIT_IMAGE")
           GATEWAY_IMAGE=$(resolve_pin gateway GATEWAY_IMAGE "$GATEWAY_IMAGE")
@@ -137,7 +129,6 @@ jobs:
             exit 1
           fi
           {
-            echo "ztunnel_image=$ZTUNNEL_IMAGE"
             echo "cni_image=$CNI_IMAGE"
             echo "proxy_init_image=$PROXY_INIT_IMAGE"
             echo "gateway_image=$GATEWAY_IMAGE"
@@ -191,7 +182,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
           EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
-          ZTUNNEL_IMAGE: ${{ needs.validate-release.outputs.ztunnel_image }}
+          ZTUNNEL_IMAGE: ${{ needs.build-candidates.outputs.ztunnel_image }}
           CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
           PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
           GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}
@@ -213,7 +204,7 @@ jobs:
         env:
           AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
           EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
-          ZTUNNEL_IMAGE: ${{ needs.validate-release.outputs.ztunnel_image }}
+          ZTUNNEL_IMAGE: ${{ needs.build-candidates.outputs.ztunnel_image }}
           CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
           PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
           GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}
@@ -251,7 +242,7 @@ jobs:
       agentiod_image: ${{ needs.build-candidates.outputs.agentiod_image }}
       epe_image: ${{ needs.build-candidates.outputs.epe_image }}
       cni_image: ${{ needs.validate-release.outputs.cni_image }}
-      ztunnel_image: ${{ needs.validate-release.outputs.ztunnel_image }}
+      ztunnel_image: ${{ needs.build-candidates.outputs.ztunnel_image }}
       proxy_init_image: ${{ needs.validate-release.outputs.proxy_init_image }}
       gateway_image: ${{ needs.validate-release.outputs.gateway_image }}
       ext_proc_image: ${{ needs.validate-release.outputs.ext_proc_image }}
@@ -318,6 +309,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
           EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+          ZTUNNEL_IMAGE: ${{ needs.build-candidates.outputs.ztunnel_image }}
         run: |
           promote() {
             local source="$1" repository expected actual
@@ -332,6 +324,7 @@ jobs:
           }
           promote "$AGENTIOD_IMAGE"
           promote "$EPE_IMAGE"
+          promote "$ZTUNNEL_IMAGE"
 
   publish-chart:
     needs: [prepare-chart, promote-version-images]
@@ -387,13 +380,14 @@ jobs:
           VERSION: ${{ inputs.version }}
           AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
           EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
+          ZTUNNEL_IMAGE: ${{ needs.build-candidates.outputs.ztunnel_image }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "${VERSION} is a prerelease; latest will not be updated."
             exit 0
           fi
           echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
-          for source in "$AGENTIOD_IMAGE" "$EPE_IMAGE"; do
+          for source in "$AGENTIOD_IMAGE" "$EPE_IMAGE" "$ZTUNNEL_IMAGE"; do
             repository="${source%@*}"
             expected="${source##*@}"
             crane tag "$source" latest
@@ -421,7 +415,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
           EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
-          ZTUNNEL_IMAGE: ${{ needs.validate-release.outputs.ztunnel_image }}
+          ZTUNNEL_IMAGE: ${{ needs.build-candidates.outputs.ztunnel_image }}
           CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
           PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
           GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}

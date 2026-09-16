@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       candidate_image_artifact:
-        description: Optional same-run artifact containing local agentiod, EPE, and ext-proc images
+        description: Optional same-run artifact containing local agentiod, EPE, ztunnel, and ext-proc images
         required: false
         default: ""
         type: string
@@ -26,8 +26,9 @@ on:
         required: true
         type: string
       ztunnel_image:
-        description: Immutable ztunnel image (repository@sha256:digest)
-        required: true
+        description: Immutable ztunnel image; supplied by candidate archive for presubmit
+        required: false
+        default: ""
         type: string
       proxy_init_image:
         description: Immutable proxy-init image (repository@sha256:digest)
@@ -243,7 +244,7 @@ jobs:
           fi
           docker load --input "$archive"
 
-          for image in agentiod agentio-epe ext-proc; do
+          for image in agentiod agentio-epe ztunnel ext-proc; do
             source="agentio-e2e.local/${image}:${GITHUB_SHA}"
             target="localhost:5001/${image}:${GITHUB_SHA}"
             docker image inspect "$source" >/dev/null
@@ -258,6 +259,7 @@ jobs:
             case "$image" in
               agentiod) echo "AGENTIO_E2E_AGENTIOD_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
               agentio-epe) echo "AGENTIO_E2E_EPE_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
+              ztunnel) echo "AGENTIO_E2E_ZTUNNEL_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
               ext-proc) echo "AGENTIO_E2E_EXT_PROC_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
             esac
           done

@@ -1,0 +1,106 @@
+name: Sync ztunnel dependency
+
+# Run from the default branch, but update each maintained Agentio branch itself.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: Agentio branch to update
+        type: choice
+        default: all
+        options:
+          - all
+          - master
+          - release-0.1
+      dry_run:
+        description: Resolve and validate source updates without opening pull requests
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: github.repository == 'openkruise/agentio'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(inputs.target_branch != '' && inputs.target_branch != 'all' && format('["{0}"]', inputs.target_branch) || '["master","release-0.1"]') }}
+    concurrency:
+      group: sync-ztunnel-deps-${{ matrix.branch }}
+      cancel-in-progress: false
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AGENTIO_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIO_SYNC_APP_PRIVATE_KEY }}
+          owner: openkruise
+          repositories: agentio
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Checkout target Agentio branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.branch }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+      - name: Update pinned ztunnel source
+        id: update
+        run: |
+          if [[ "$(jq '[.[] | select(.name == "ZTUNNEL_REPO_SHA")] | length' agentio.deps)" != 1 ]]; then
+            echo "agentio.deps must contain exactly one ZTUNNEL_REPO_SHA entry" >&2
+            exit 1
+          fi
+          repository=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .repoName' agentio.deps)
+          current_sha=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
+          if [[ ! "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || [[ ! "$current_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid ztunnel source pin: ${repository}@${current_sha}" >&2
+            exit 1
+          fi
+          remote_head=$(git ls-remote --symref "https://github.com/${repository}.git" HEAD)
+          source_ref=$(awk '$1 == "ref:" && $3 == "HEAD" {print $2}' <<< "$remote_head")
+          sha=$(awk '$2 == "HEAD" && $1 != "ref:" {print $1}' <<< "$remote_head")
+          if [[ ! "$source_ref" =~ ^refs/heads/.+ ]] || [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve default branch of $repository" >&2
+            exit 1
+          fi
+          source_branch=${source_ref#refs/heads/}
+          git check-ref-format --branch "$source_branch" >/dev/null
+          {
+            echo "repository=$repository"
+            echo "sha=$sha"
+            echo "source_branch=$source_branch"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "$current_sha" == "$sha" ]]; then
+            echo "agentio.deps is already up to date"
+            exit 0
+          fi
+          jq --arg sha "$sha" \
+            'map(if .name == "ZTUNNEL_REPO_SHA" then .lastStableSHA = $sha else . end)' \
+            agentio.deps > agentio.deps.next
+          mv agentio.deps.next agentio.deps
+      - name: Create or update source dependency pull request
+        if: inputs.dry_run != true
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: ${{ matrix.branch }}
+          branch: automation/ztunnel-deps-${{ matrix.branch }}
+          delete-branch: true
+          add-paths: agentio.deps
+          commit-message: "chore: update pinned ztunnel source"
+          title: "chore: update ztunnel source on ${{ matrix.branch }}"
+          body: |
+            Updates the ztunnel source commit in `agentio.deps` on `${{ matrix.branch }}`.
+
+            - Source: [${{ steps.update.outputs.repository }}@${{ steps.update.outputs.sha }}](https://github.com/${{ steps.update.outputs.repository }}/commit/${{ steps.update.outputs.sha }})
+            - Tracked source branch: `${{ steps.update.outputs.source_branch }}`
+
+            Agentio compiles and publishes this source; no pre-published ztunnel image is required.
