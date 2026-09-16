@@ -46,9 +46,18 @@ helm lint "$CHARTS_REPO/versions/kruise-agents-sandbox-controller/next"
 
 `apply` replaces the marked Agentio values and the manager's `templates/agentio/`
 and `files/agentio/` directories. In the controller, it updates only the
-`traffic-proxy` entry and its marked values; other runtime entries are preserved.
+`traffic-proxy` entry, its marked values, and an Agentio image helper; other runtime
+entries are preserved. Image configuration is adapted to the parent charts'
+registry contract, including when applying an older published bundle.
 Repeated application of the same bundle is idempotent. Unmarked existing
 `agentio` values are rejected so they can be reconciled before synchronization.
+
+Applied images use `registry`, `repository`, `tag`, and `digest` fields. Docker Hub
+defaults inherit the parent chart's `image.registry`; a per-image `registry` takes
+precedence. The manager also supports `agentio.global.registry` between those two
+levels. A repository that already includes a registry hostname keeps that host.
+Released digests are preserved, so a mirror must contain the same manifests.
+To select a tag instead, clear that image's `digest` and set its `tag`.
 
 ## Configure the installation
 
@@ -156,3 +165,7 @@ published chart version. It pulls the OCI chart, verifies and applies its bundle
 integration, lints and renders the downstream charts, and opens a pull request in
 `openkruise/charts`. It requires the existing release environment's
 `AGENTIO_SYNC_APP_CLIENT_ID` variable and `AGENTIO_SYNC_APP_PRIVATE_KEY` secret.
+The corresponding GitHub App must be installed for `openkruise/charts` with
+Contents and Pull requests write access. A 404 while looking up the repository
+installation means this access is missing or the configured App is incorrect;
+rerunning the workflow alone cannot resolve it.

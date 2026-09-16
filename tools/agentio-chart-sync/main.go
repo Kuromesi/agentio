@@ -87,9 +87,15 @@ func runApply(args []string) error {
 	if err := Export(filepath.Join(*bundle, "sandbox-manager"), *managerChart); err != nil {
 		return fmt.Errorf("sync sandbox-manager integration: %w", err)
 	}
+	if err := adaptImageRegistry(*managerChart, false); err != nil {
+		return fmt.Errorf("adapt sandbox-manager image registry: %w", err)
+	}
 	if *controllerChart != "" {
 		if err := ExportSandboxController(filepath.Join(*bundle, "sandbox-controller"), *controllerChart); err != nil {
 			return fmt.Errorf("sync sandbox-controller integration: %w", err)
+		}
+		if err := adaptImageRegistry(*controllerChart, true); err != nil {
+			return fmt.Errorf("adapt sandbox-controller image registry: %w", err)
 		}
 	}
 	return nil
