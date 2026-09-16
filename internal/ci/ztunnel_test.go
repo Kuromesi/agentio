@@ -100,6 +100,43 @@ func TestZtunnelSyncTargetsEachMaintainedBranch(t *testing.T) {
 	}
 }
 
+func TestZtunnelPresubmitCachesOnlyTheExactSourceBinary(t *testing.T) {
+	w := loadWorkflow(t, "agentio-ztunnel.yml")
+	inputs := mapValue(t, mapValue(t, workflowTriggers(t, w), "workflow_call"), "inputs")
+	if mapValue(t, inputs, "cache_binary")["default"] != false {
+		t.Fatal("publication builds must not reuse presubmit binaries by default")
+	}
+	cache := workflowStep(t, w, "build", "Restore pinned ztunnel binary")
+	if cache["if"] != "inputs.cache_binary" {
+		t.Fatal("binary cache must be enabled explicitly by the caller")
+	}
+	settings := mapValue(t, cache, "with")
+	for _, input := range []string{"runner.os", "matrix.arch", "steps.source.outputs.repository", "steps.source.outputs.sha", "hashFiles('.github/workflows/agentio-ztunnel.yml')"} {
+		if !strings.Contains(stringValue(t, settings, "key"), input) {
+			t.Errorf("binary cache key is missing build input %s", input)
+		}
+	}
+	if _, found := settings["restore-keys"]; found {
+		t.Fatal("a finished binary must not fall back to another source or build configuration")
+	}
+	for _, name := range []string{"Checkout pinned ztunnel", "Build ztunnel", "Stage native binary"} {
+		if workflowStep(t, w, "build", name)["if"] != "steps.binary-cache.outputs.cache-hit != 'true'" {
+			t.Errorf("%s must run on a cache miss and skip on an exact hit", name)
+		}
+	}
+	if _, conditional := workflowStep(t, w, "build", "Verify native binary and runtime")["if"]; conditional {
+		t.Fatal("architecture verification and runtime smoke test must also run on cache hits")
+	}
+	presubmit := workflowJob(t, workflowJobs(t, loadWorkflow(t, "agentio-e2e-presubmit.yml")), "build-ztunnel")
+	if mapValue(t, presubmit, "with")["cache_binary"] != true {
+		t.Fatal("presubmit must opt into the pinned binary cache")
+	}
+	publish := workflowJob(t, workflowJobs(t, loadWorkflow(t, "agentio-image.yml")), "build-ztunnel")
+	if with, ok := publish["with"].(map[string]any); ok && with["cache_binary"] == true {
+		t.Fatal("published candidates must build from source")
+	}
+}
+
 func TestZtunnelSourceScriptsValidateAndUpdatePins(t *testing.T) {
 	for _, tool := range []string{"bash", "jq", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {

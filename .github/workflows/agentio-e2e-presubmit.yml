@@ -38,6 +38,7 @@ jobs:
     uses: ./.github/workflows/agentio-ztunnel.yml
     with:
       multi_arch: false
+      cache_binary: true
 
   build-candidates:
     needs: build-ztunnel
