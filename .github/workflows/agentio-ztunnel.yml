@@ -1,0 +1,110 @@
+name: agentio-ztunnel
+
+# Both publication and presubmit compile the source pinned by this Agentio commit.
+on:
+  workflow_call:
+    inputs:
+      multi_arch:
+        description: Build both native architectures; presubmit needs only amd64
+        type: boolean
+        default: true
+      cache_binary:
+        description: Reuse compiled binaries for presubmit; publication builds from source
+        type: boolean
+        default: false
+    outputs:
+      source_repository:
+        description: Pinned ztunnel source repository
+        value: ${{ jobs.build.outputs.source_repository }}
+      source_sha:
+        description: Pinned ztunnel source commit
+        value: ${{ jobs.build.outputs.source_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(inputs.multi_arch && '["amd64","arm64"]' || '["amd64"]') }}
+    outputs:
+      source_repository: ${{ steps.source.outputs.repository }}
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Checkout Agentio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve pinned ztunnel source
+        id: source
+        run: |
+          if [[ "$(jq '[.[] | select(.name == "ZTUNNEL_REPO_SHA")] | length' agentio.deps)" != 1 ]]; then
+            echo "agentio.deps must contain exactly one ZTUNNEL_REPO_SHA entry" >&2
+            exit 1
+          fi
+          repository=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .repoName' agentio.deps)
+          sha=$(jq -er '.[] | select(.name == "ZTUNNEL_REPO_SHA") | .lastStableSHA' agentio.deps)
+          if [[ ! "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid ztunnel source pin: ${repository}@${sha}" >&2
+            exit 1
+          fi
+          {
+            echo "repository=$repository"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+      # PR caches are scoped to the PR merge ref. Push runs seed the cache
+      # available to later PRs; image publication leaves this cache disabled.
+      - name: Restore pinned ztunnel binary
+        if: inputs.cache_binary
+        id: binary-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ztunnel-context/${{ matrix.arch }}/ztunnel
+          key: agentio-ztunnel-${{ runner.os }}-${{ matrix.arch }}-${{ steps.source.outputs.repository }}-${{ steps.source.outputs.sha }}-${{ hashFiles('.github/workflows/agentio-ztunnel.yml') }}
+      - name: Checkout pinned ztunnel
+        if: steps.binary-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repository }}
+          ref: ${{ steps.source.outputs.sha }}
+          path: ztunnel-src
+          persist-credentials: false
+      - name: Build ztunnel
+        if: steps.binary-cache.outputs.cache-hit != 'true'
+        working-directory: ztunnel-src
+        env:
+          FIPS_DIRECTORY: ${{ matrix.arch == 'arm64' && 'linux_arm64' || 'linux_x86_64' }}
+          VERSION: ${{ steps.source.outputs.sha }}
+        run: |
+          ./common/scripts/run.sh cargo \
+            --config "env.BORING_BSSL_FIPS_PATH.value=\"/work/vendor/boringssl-fips/${FIPS_DIRECTORY}\"" \
+            build --locked --release
+      - name: Stage native binary
+        if: steps.binary-cache.outputs.cache-hit != 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: install -D -m 0755 ztunnel-src/out/rust/release/ztunnel "ztunnel-context/${ARCH}/ztunnel"
+      - name: Verify native binary and runtime
+        env:
+          ARCH: ${{ matrix.arch }}
+          EXPECTED_PATTERN: ${{ matrix.arch == 'arm64' && 'aarch64' || 'x86-64' }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          binary="ztunnel-context/${ARCH}/ztunnel"
+          file "$binary" | grep -F "$EXPECTED_PATTERN"
+          docker build --file docker/Dockerfile.ztunnel \
+            --build-arg "TARGETARCH=$ARCH" \
+            --build-arg "ZTUNNEL_VERSION=$SOURCE_SHA" \
+            --tag ztunnel-smoke ztunnel-context
+          docker run --rm ztunnel-smoke version
+      - name: Upload native binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ztunnel-${{ matrix.arch }}
+          path: ztunnel-context/${{ matrix.arch }}/ztunnel
+          if-no-files-found: error
+          retention-days: 1

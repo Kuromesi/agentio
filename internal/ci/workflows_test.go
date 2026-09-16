@@ -29,12 +29,6 @@ func TestReleasePromotesExactProductE2ECandidates(t *testing.T) {
 	workflow := loadWorkflow(t, "agentio-release.yml")
 	jobs := workflowJobs(t, workflow)
 
-	for _, forbidden := range []string{"build-ztunnel", "publish-ztunnel"} {
-		if _, found := jobs[forbidden]; found {
-			t.Errorf("release workflow must not own external component job %q", forbidden)
-		}
-	}
-
 	build := workflowJob(t, jobs, "build-candidates")
 	if got := stringValue(t, build, "uses"); got != "./.github/workflows/agentio-image.yml" {
 		t.Errorf("build-candidates uses %q, want reusable owned-image workflow", got)
@@ -179,7 +173,7 @@ func TestProductE2EPresubmitBuildsLocalCandidatesAndUsesDependencyBOM(t *testing
 	}
 	inputs := mapValue(t, e2eJob, "with")
 	for _, input := range []string{
-		"candidate_image_artifact", "cni_image", "ztunnel_image", "proxy_init_image", "gateway_image",
+		"candidate_image_artifact", "cni_image", "proxy_init_image", "gateway_image",
 	} {
 		if _, found := inputs[input]; !found {
 			t.Errorf("presubmit product E2E does not pass %q", input)
@@ -192,7 +186,7 @@ func TestOwnedImageWorkflowExportsImmutableReferences(t *testing.T) {
 	jobs := workflowJobs(t, workflow)
 	job := workflowJob(t, jobs, "build-images")
 	outputs := mapValue(t, job, "outputs")
-	for _, output := range []string{"agentiod_image", "epe_image"} {
+	for _, output := range []string{"agentiod_image", "epe_image", "ztunnel_image"} {
 		if _, found := outputs[output]; !found {
 			t.Errorf("build-images is missing immutable output %q", output)
 		}
@@ -205,23 +199,11 @@ func TestExternalDependencyUpdatesUsePublishedImages(t *testing.T) {
 	if _, found := triggers["repository_dispatch"]; !found {
 		t.Error("dependency sync must accept component release dispatches")
 	}
-	schedules := listValue(t, triggers, "schedule")
-	if len(schedules) != 1 || stringValue(t, schedules[0].(map[string]any), "cron") != "23 2 * * *" {
-		t.Error("dependency sync must reconcile published ztunnel images daily at 02:23 UTC")
-	}
-	sync := workflowJob(t, workflowJobs(t, workflow), "sync")
-	steps := listValue(t, sync, "steps")
-	lookupIndex := namedStepIndex(t, steps, "Resolve published ztunnel image")
-	if lookupIndex < 0 {
-		t.Fatal("scheduled dependency sync must resolve the published image")
-	}
-	lookup := steps[lookupIndex].(map[string]any)
-	if stringValue(t, lookup, "if") != "github.event_name == 'schedule'" {
-		t.Error("scheduled image lookup must not override component dispatch inputs")
-	}
-	lookupScript := stringValue(t, lookup, "run")
-	if !strings.Contains(lookupScript, `crane digest "docker.io/openkruise/ztunnel:${sha}"`) {
-		t.Error("scheduled dependency sync must use the published image for the exact source commit")
+	options := listValue(t, mapValue(t, mapValue(t, triggers, "workflow_dispatch"), "inputs")["component"].(map[string]any), "options")
+	for _, option := range options {
+		if option == "ztunnel" {
+			t.Error("ztunnel source updates must not accept a published-image override")
+		}
 	}
 
 	data, err := os.ReadFile(filepath.Join("..", "..", "agentio.deps"))
@@ -232,27 +214,35 @@ func TestExternalDependencyUpdatesUsePublishedImages(t *testing.T) {
 		Name       string `json:"name"`
 		Repository string `json:"repository"`
 		Digest     string `json:"digest"`
+		RepoName   string `json:"repoName"`
+		SourceSHA  string `json:"lastStableSHA"`
 	}
 	if err := json.Unmarshal(data, &pins); err != nil {
 		t.Fatalf("parse agentio.deps: %v", err)
 	}
 	want := map[string]bool{
-		"ZTUNNEL_IMAGE": false, "CNI_IMAGE": false,
+		"ZTUNNEL_REPO_SHA": false, "CNI_IMAGE": false,
 		"PROXY_INIT_IMAGE": false, "GATEWAY_IMAGE": false,
 		"TRUST_PACKAGE_IMAGE": false,
 	}
 	if len(pins) != len(want) {
-		t.Fatalf("agentio.deps has %d entries, want exactly the five externally owned image pins", len(pins))
+		t.Fatalf("agentio.deps has %d entries, want one source pin and four external image pins", len(pins))
 	}
 	for _, pin := range pins {
 		if _, found := want[pin.Name]; !found {
-			t.Errorf("agentio.deps contains non-image or repository-owned pin %q", pin.Name)
+			t.Errorf("agentio.deps contains unexpected pin %q", pin.Name)
 			continue
 		}
 		if want[pin.Name] {
 			t.Errorf("agentio.deps contains duplicate pin %q", pin.Name)
 		}
 		want[pin.Name] = true
+		if pin.Name == "ZTUNNEL_REPO_SHA" {
+			if pin.RepoName != "openkruise/ztunnel" || len(pin.SourceSHA) != 40 || pin.Digest != "" {
+				t.Errorf("invalid ztunnel source pin: %+v", pin)
+			}
+			continue
+		}
 		if pin.Repository == "" || pin.Digest == "" {
 			t.Errorf("agentio.deps pin %q is incomplete", pin.Name)
 		}

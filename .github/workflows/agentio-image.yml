@@ -1,6 +1,6 @@
 name: agentio-image
 
-# Agentio master owns only the agentiod and EPE images. Release callers receive
+# Agentio builds agentiod, EPE, and the pinned ztunnel source. Release callers receive
 # immutable references so the exact candidates tested by E2E can be promoted.
 on:
   push:
@@ -25,6 +25,9 @@ on:
       epe_image:
         description: Immutable EPE image reference
         value: ${{ jobs.build-images.outputs.epe_image }}
+      ztunnel_image:
+        description: Immutable ztunnel image built from the pinned source
+        value: ${{ jobs.build-images.outputs.ztunnel_image }}
     secrets:
       HUB_KRUISE:
         description: Docker Hub access token
@@ -41,7 +44,12 @@ concurrency:
   cancel-in-progress: ${{ inputs.tag == '' }}
 
 jobs:
+  build-ztunnel:
+    if: github.ref == 'refs/heads/master'
+    uses: ./.github/workflows/agentio-ztunnel.yml
+
   build-images:
+    needs: build-ztunnel
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -49,10 +57,21 @@ jobs:
     outputs:
       agentiod_image: ${{ steps.images.outputs.agentiod_image }}
       epe_image: ${{ steps.images.outputs.epe_image }}
+      ztunnel_image: ${{ steps.images.outputs.ztunnel_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Download amd64 ztunnel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ztunnel-amd64
+          path: ztunnel-context/amd64
+      - name: Download arm64 ztunnel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ztunnel-arm64
+          path: ztunnel-context/arm64
       - name: Resolve candidate tag
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -77,9 +96,12 @@ jobs:
         id: images
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          ZTUNNEL_SOURCE_SHA: ${{ needs.build-ztunnel.outputs.source_sha }}
+          ZTUNNEL_SOURCE_REPOSITORY: ${{ needs.build-ztunnel.outputs.source_repository }}
         run: |
           build_image() {
-            local output_name="$1" image_name="$2" dockerfile="$3"
+            local output_name="$1" image_name="$2" dockerfile="$3" context="$4"
+            shift 4
             local destination metadata digest
             destination="${HUB}/${image_name}:${CANDIDATE_TAG}"
             metadata="${RUNNER_TEMP}/${image_name}-metadata.json"
@@ -93,8 +115,9 @@ jobs:
               --file "$dockerfile" \
               --metadata-file "$metadata" \
               "${tags[@]}" \
+              "$@" \
               --push \
-              .
+              "$context"
             digest=$(jq -er '."containerimage.digest"' "$metadata")
             if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
               echo "Unable to resolve immutable digest for ${image_name}: $digest" >&2
@@ -103,5 +126,9 @@ jobs:
             echo "${output_name}=${HUB}/${image_name}@${digest}" >> "$GITHUB_OUTPUT"
           }
 
-          build_image agentiod_image agentiod Dockerfile
-          build_image epe_image agentio-epe extensions/epe/docker/Dockerfile
+          build_image agentiod_image agentiod Dockerfile .
+          build_image epe_image agentio-epe extensions/epe/docker/Dockerfile .
+          build_image ztunnel_image ztunnel docker/Dockerfile.ztunnel ztunnel-context \
+            --build-arg "ZTUNNEL_VERSION=$ZTUNNEL_SOURCE_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/${ZTUNNEL_SOURCE_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=$ZTUNNEL_SOURCE_SHA"
