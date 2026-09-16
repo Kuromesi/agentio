@@ -16,6 +16,7 @@ package agentio
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metadatafake "k8s.io/client-go/metadata/fake"
+	"k8s.io/utils/ptr"
 
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/model"
@@ -241,4 +243,53 @@ func TestSandboxSNIPolicyLifecycle(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestSandboxSNIPolicyFollowsSystemProfiles(t *testing.T) {
+	for _, priority := range []int32{0, agentsv1alpha1.DefaultSecurityProfilePriority, math.MaxInt32} {
+		t.Run(fmt.Sprint(priority), func(t *testing.T) {
+			stop := test.NewStop(t)
+			opts := krt.NewOptionsBuilder(stop, "sandbox-sni-order", krt.GlobalDebugHandler)
+			// The Sandbox's earlier creation time and name would win a priority tie.
+			sandbox := sniTestSandbox("ns", "aaa-sandbox", `[{"name":"r","match":[{"domains":["sandbox.example.com"]}],"actions":{"block":{}}}]`)
+			sandbox.CreationTimestamp = metav1.Unix(1, 0)
+			policy, err := bindablePolicyFromSandbox(sandbox)
+			if err != nil || policy == nil {
+				t.Fatalf("Sandbox policy = %v, %v", policy, err)
+			}
+			metadata := metav1.ObjectMeta{Name: "system", CreationTimestamp: metav1.Unix(2, 0)}
+			spec := func(domain string) agentsv1alpha1.SecurityProfileSpec {
+				return agentsv1alpha1.SecurityProfileSpec{Priority: ptr.To(priority), Rules: []agentsv1alpha1.SecurityRule{{Match: []agentsv1alpha1.RuleMatch{{Domains: []string{domain}}}}}}
+			}
+			global, err := bindablePolicyFromGlobalSecurityProfile(&agentsv1alpha1.GlobalSecurityProfile{ObjectMeta: metadata, Spec: spec("global.example.com")})
+			if err != nil || global == nil {
+				t.Fatalf("global policy = %v, %v", global, err)
+			}
+			metadata.Namespace = "ns"
+			namespaced, err := bindablePolicyFromSecurityProfile(&agentsv1alpha1.SecurityProfile{ObjectMeta: metadata, Spec: spec("namespaced.example.com")})
+			if err != nil || namespaced == nil {
+				t.Fatalf("namespaced policy = %v, %v", namespaced, err)
+			}
+			policies := krt.NewStaticCollection(nil, []BindablePolicy{*policy, *namespaced, *global}, opts.WithName("policies")...)
+			workload := sniTestWorkload(sandbox.Name, sandbox.Namespace, nil)
+			workloads := krt.NewStaticCollection(nil, []model.WorkloadInfo{workload}, opts.WithName("workloads")...)
+			controller := &Controller{bindablePolicies: policies, policyAttachments: newPolicyAttachmentsCollection(policies, opts)}
+			inline := controller.BuildWorkloadSNIPoliciesCollection(workloads, opts)
+			if !inline.WaitUntilSynced(stop) {
+				t.Fatal("SNI payload collection did not sync")
+			}
+			want := &extensions.SniTrafficPolicy{Rules: []*extensions.SniRule{
+				sniRule(extensions.SniAction_SNI_ACTION_TLS_TERMINATION, "global.example.com"),
+				sniRule(extensions.SniAction_SNI_ACTION_TLS_TERMINATION, "namespaced.example.com"),
+				sniRule(extensions.SniAction_SNI_ACTION_TLS_TERMINATION, "sandbox.example.com"),
+			}}
+			retry.UntilSuccessOrFail(t, func() error {
+				got := inline.GetKey(workload.ResourceName())
+				if got == nil || !proto.Equal(got.Policy, want) {
+					return fmt.Errorf("policy = %v, want system profiles followed by Sandbox: %v", got, want)
+				}
+				return nil
+			})
+		})
+	}
 }

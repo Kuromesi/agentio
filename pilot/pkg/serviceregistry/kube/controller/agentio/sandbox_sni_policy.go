@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -57,6 +58,10 @@ func bindablePolicyFromSandbox(sandbox *metav1.PartialObjectMetadata) (*Bindable
 	// Three path segments cannot collide with namespaced or global profile names.
 	policy.Name = "sandbox/" + sandbox.Namespace + "/" + sandbox.Name
 	policy.PodName = sandbox.Name
+	// Profile API priorities are non-negative int32 values, negated internally.
+	// MinInt32 is below even -MaxInt32, so Sandbox rules always follow every
+	// system profile regardless of priority, creation time, or name.
+	policy.Priority = math.MinInt32
 	return policy, nil
 }
 
