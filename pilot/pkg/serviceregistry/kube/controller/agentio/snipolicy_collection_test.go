@@ -257,7 +257,8 @@ func TestBindablePoliciesFromSecurityProfilesLifecycle(t *testing.T) {
 	opts := krt.NewOptionsBuilder(stop, "bindable-policy-test", krt.GlobalDebugHandler)
 	profiles := newSecurityProfilesCollection(client, stop, opts)
 	globalProfiles := newGlobalSecurityProfilesCollection(client, stop, opts)
-	policies := newBindablePoliciesCollection(profiles, globalProfiles, opts)
+	sandboxes := krt.NewStaticCollection[*metav1.PartialObjectMetadata](nil, nil, opts.WithName("Sandboxes")...)
+	policies := newBindablePoliciesCollection(profiles, globalProfiles, sandboxes, opts)
 	client.RunAndWait(stop)
 	if !policies.WaitUntilSynced(stop) {
 		t.Fatal("BindablePolicies never synced")
@@ -413,7 +414,7 @@ func TestControllerDoesNotWatchSniPolicySourcesWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewController() failed: %v", err)
 	}
-	if c.securityProfiles != nil || c.globalSecurityProfiles != nil {
-		t.Fatalf("disabled SNI policy sources = (%v, %v), want both nil", c.securityProfiles, c.globalSecurityProfiles)
+	if c.securityProfiles != nil || c.globalSecurityProfiles != nil || c.sandboxSecurityRules != nil {
+		t.Fatalf("disabled SNI policy sources = (%v, %v, %v), want all nil", c.securityProfiles, c.globalSecurityProfiles, c.sandboxSecurityRules)
 	}
 }

@@ -32,6 +32,10 @@ import (
 // implementations even though initial Lookup("") succeeds.
 const globalPolicyAttachmentIndexKey = "@global"
 
+func podPolicyAttachmentIndexKey(namespace, name string) string {
+	return "@pod/" + namespace + "/" + name
+}
+
 // WorkloadPolicyReferences is the control-plane-only index used to enrich a
 // Workload WDS resource. It is not an xDS resource of its own.
 type WorkloadPolicyReferences struct {
@@ -61,6 +65,7 @@ func buildPolicyRefs(
 	policies krt.Collection[PolicyAttachment],
 	policiesByNamespace krt.Index[string, PolicyAttachment],
 	workloadNamespace string,
+	workloadName string,
 	workloadLabels map[string]string,
 ) []*extensions.PolicyReference {
 	selectorFilter := krt.FilterGeneric(func(a any) bool {
@@ -75,6 +80,10 @@ func buildPolicyRefs(
 		matched = append(matched, krt.Fetch(ctx, policies,
 			krt.FilterIndex(policiesByNamespace, globalPolicyAttachmentIndexKey), selectorFilter)...)
 	}
+	// Inline Sandbox policies are indexed by exact Pod identity, so Sandbox
+	// churn does not invalidate selectors for every Pod in the namespace.
+	matched = append(matched, krt.Fetch(ctx, policies,
+		krt.FilterIndex(policiesByNamespace, podPolicyAttachmentIndexKey(workloadNamespace, workloadName)))...)
 	if len(matched) == 0 {
 		return nil
 	}
@@ -123,6 +132,9 @@ func newWorkloadPolicyReferencesCollection(
 	opts krt.OptionsBuilder,
 ) krt.Collection[WorkloadPolicyReferences] {
 	policiesByNamespace := krt.NewIndex(policies, "policyAttachmentsByNamespace", func(policy PolicyAttachment) []string {
+		if policy.PodName != "" {
+			return []string{podPolicyAttachmentIndexKey(policy.Namespace, policy.PodName)}
+		}
 		if policy.Namespace == "" {
 			return []string{globalPolicyAttachmentIndexKey}
 		}
@@ -147,7 +159,7 @@ func workloadPolicyReferencesTransformation(
 		if namespace == "" || name == "" {
 			return nil
 		}
-		refs := buildPolicyRefs(ctx, policies, policiesByNamespace, namespace, w.Labels)
+		refs := buildPolicyRefs(ctx, policies, policiesByNamespace, namespace, name, w.Labels)
 		if len(refs) == 0 {
 			// A Workload without any policy-reference extension authoritatively
 			// has no policy references once initial WDS is complete.

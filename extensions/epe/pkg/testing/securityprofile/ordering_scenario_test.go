@@ -20,6 +20,8 @@
 package securityprofile
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	policysecurityprofile "istio.io/istio/extensions/epe/pkg/policy/securityprofile"
 	"istio.io/istio/extensions/epe/pkg/testing/enginetest"
 )
 
@@ -198,4 +201,53 @@ func TestHandleRequestHeaders_EqualPriorityUsesCreationTimestamp(t *testing.T) {
 	verdict := reversed.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys"))
 	verdict.RequireBypassed(t)
 	verdict.RequireAction(t, ":bypass:")
+}
+
+// Tenant rules remain behind system profiles even at the lowest system API
+// priority and when the Sandbox was created first.
+func TestHandleRequestHeaders_SystemProfilesPrecedeSandboxRules(t *testing.T) {
+	for _, scope := range []string{"namespaced", "global"} {
+		for _, systemBlocks := range []bool{true, false} {
+			name := "system bypass precedes tenant block"
+			if systemBlocks {
+				name = "system block precedes tenant bypass"
+			}
+			t.Run(scope+"/"+name, func(t *testing.T) {
+				h := New(t, Options{})
+				systemRule := bypassAdminRule("system")
+				tenantActions := v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 418}}
+				if systemBlocks {
+					systemRule = blockAdminRule("system", 403)
+					tenantActions = v1alpha1.SecurityRuleActions{Bypass: true}
+				}
+				raw, err := json.Marshal([]v1alpha1.SecurityRule{{Name: "tenant", Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}}, Actions: tenantActions}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				h.Store().SandboxProfileSet(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
+					Name: "pod-x", Namespace: "default", CreationTimestamp: metav1.Unix(1, 0),
+					Annotations: map[string]string{policysecurityprofile.AnnotationSecurityRules: string(raw)},
+				}})
+				rules := []v1alpha1.SecurityRule{systemRule}
+				if scope == "global" {
+					h.Fixture.ApplyGlobalProfile(globalSecurityProfile("system", math.MaxInt32, nil, rules))
+				} else {
+					h.Fixture.ApplyProfile(securityProfile("system", "default", ptr.To[int32](math.MaxInt32), nil, rules))
+				}
+				verdict := h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/admin/keys"))
+				if systemBlocks {
+					verdict.RequireBlocked(t, 403)
+				} else {
+					verdict.RequireBypassed(t)
+				}
+				// When the system rule does not match, tenant rules still run.
+				fallback := h.Run(t, sleepPeerRequest("default", "pod-x", "example.com", "/public"))
+				if systemBlocks {
+					fallback.RequireBypassed(t)
+				} else {
+					fallback.RequireBlocked(t, 418)
+				}
+			})
+		}
+	}
 }

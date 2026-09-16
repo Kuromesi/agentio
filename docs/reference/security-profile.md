@@ -8,7 +8,9 @@ The authoritative API schemas are [`SecurityProfile`](../../manifests/charts/age
 
 A `SecurityProfile` selects Pods only in its metadata namespace. A `GlobalSecurityProfile` has no namespace and its selector is considered for every Pod. An empty selector matches every Pod in that scope.
 
-All matching profiles are ordered by lower `spec.priority` first (default `1000`), then earlier creation time, name, and namespace. Global and namespaced profiles are merged into that one order; an exact ordering tie places the global profile first because its namespace is empty.
+Matching SecurityProfile and GlobalSecurityProfile resources are ordered by lower `spec.priority` first (default `1000`), then earlier creation time, name, and namespace. Global and namespaced profiles are merged into that one order; an exact ordering tie places the global profile first because its namespace is empty.
+
+Sandbox rules in `agents.kruise.io/security-rules` always run after all matching SecurityProfile and GlobalSecurityProfile resources, regardless of their numeric priority or creation time. This lets platform-managed profiles run before per-Sandbox user customizations. A system `block` or `bypass` terminates evaluation before Sandbox rules run; otherwise evaluation continues into the Sandbox's declared rule order. This is execution precedence: later non-terminal header mutations can still overwrite earlier mutations.
 
 For each selected request, EPE evaluates every matching rule from the first profile through the last, preserving rule order inside each profile. A terminal action stops the remaining chain. A later rule may still match after a broad earlier rule: matching is not first-rule-wins.
 
@@ -21,6 +23,12 @@ Because action payloads are projected at the collection boundary, a malformed ac
 This is one rule with no exceptions: every compile-time error — a bad selector, an uncompilable regex or CEL expression, a malformed action — rejects the version and keeps the last known good one, and every runtime error resolves through the failing action's own failure policy. Per-Sandbox rules obey it too: a Sandbox whose `agents.kruise.io/security-rules` annotation fails to compile or project keeps its previous rules when it has any and enforces none otherwise, reported by `epe_profile_stale` and `epe_profile_unenforced` under `scope="pod"`. Because those rules are authored when the Sandbox is created, a rejected first version simply not taking effect is the intended authoring feedback.
 
 Header-mutation values and API-key `value.template` values are additionally probe-rendered when the profile is compiled, including the legacy `apiKey.valueTemplate` after it is normalized to a header rule. That probe catches a reference to a field the render scope does not have. Credential-provider parameter templates and audit templates are compiled but not probe-rendered, so a bad field reference in those surfaces per request instead. The probe has no request data to work with, so it does not exercise helper behavior guarded on real request values: a guarded `fail` call and JSON extraction from a request value are accepted at compile time and evaluated for real per request.
+
+## TLS termination for Sandbox rules
+
+With `sniTrafficPolicy.enabled=true` (`ENABLE_SNI_TRAFFIC_POLICY` on agentiod), the control plane derives TLS-termination SNI rules from SecurityProfile and GlobalSecurityProfile resources and from the Sandbox Manager's `agents.kruise.io/security-rules` annotation. Matches with no `schemes` or with `https` contribute their normalized, deduplicated `domains`; HTTP-only matches contribute none. Request actions remain enforced by EPE.
+
+Sandbox-derived policies bind only to the Pod with the Sandbox's namespace and name, matching EPE's identity lookup; labels cannot attach them to other Pods. They coexist with independently selected profiles, including a SecurityProfile with the same namespace and name. Sandbox SNI rules always follow all SecurityProfile and GlobalSecurityProfile SNI rules, including profiles with the largest supported numeric priority, matching EPE's system-first ordering. Updating the annotation updates the Pod's SNI payload. Removing the annotation or deleting the Sandbox removes its SNI rules. Malformed JSON or invalid HTTPS domains retain the last valid SNI policy, if one exists. The Sandbox CRD is optional and its absence does not block control-plane startup.
 
 ## Rule structure and matching
 

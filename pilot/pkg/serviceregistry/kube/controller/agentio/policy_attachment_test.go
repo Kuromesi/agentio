@@ -146,7 +146,8 @@ func TestBindablePolicyCollectionDebouncesPolicyAndReferenceBranches(t *testing.
 		opts.WithName("SecurityProfileSource")...)
 	globalProfiles := krt.NewStaticCollection(nil, []*agentsv1alpha1.GlobalSecurityProfile{},
 		opts.WithName("GlobalSecurityProfileSource")...)
-	policies := newBindablePoliciesCollection(profiles, globalProfiles, opts)
+	sandboxes := krt.NewStaticCollection[*metav1.PartialObjectMetadata](nil, nil, opts.WithName("Sandboxes")...)
+	policies := newBindablePoliciesCollection(profiles, globalProfiles, sandboxes, opts)
 	attachments := newPolicyAttachmentsCollection(policies, opts)
 	workloads := krt.NewStaticCollection(nil, []model.WorkloadInfo{
 		sniTestWorkload("pod", "bench", map[string]string{"app": "agent"}),
