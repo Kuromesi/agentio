@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -26,6 +27,30 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
+
+func TestScenarioSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		valid  bool
+	}{
+		{"discovery", `{"types":["example.Resource"]}`, true},
+		{"trafficpolicy", `{"rules":3,"ports_per_rule":[2]}`, true},
+		{"missing", `{}`, false},
+		{"discovery", `{"typo":true}`, false},
+		{"trafficpolicy", `{"rules":1}`, false},
+	} {
+		scenario, err := newScenario(tc.name, json.RawMessage(tc.config))
+		if (err == nil) != tc.valid {
+			t.Fatalf("scenario %q config %s: %v", tc.name, tc.config, err)
+		}
+		if tc.valid {
+			if _, err := scenario.ClientConfig("test", "client"); err != nil {
+				t.Fatalf("scenario %q client config: %v", tc.name, err)
+			}
+		}
+	}
+}
 
 func testConfig(t *testing.T) config {
 	t.Helper()

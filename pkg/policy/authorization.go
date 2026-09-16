@@ -15,12 +15,67 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"fmt"
+
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // CompiledAuthorization is the authorization specialization of the shared compiled policy.
 type CompiledAuthorization = CompiledPolicy[*securityv1.Authorization]
+
+// TrafficPolicyAsAuthorizations projects one resolved policy into the legacy
+// wire format. Ordering and default decisions remain the data plane's job.
+func TrafficPolicyAsAuthorizations(compiled CompiledTrafficPolicy, source model.TrafficPolicy, rootNamespace string) ([]CompiledAuthorization, error) {
+	name, namespace, priority := source.Name, source.Namespace, source.Spec.Priority
+	scope := securityv1.Scope_NAMESPACE
+	if source.Global {
+		namespace = rootNamespace
+	}
+	if namespace == rootNamespace {
+		scope = securityv1.Scope_GLOBAL
+	}
+	if !selectorEmpty(source.Spec.Selector) {
+		scope = securityv1.Scope_WORKLOAD_SELECTOR
+	}
+	if source.Dedicated {
+		name = fmt.Sprintf("sandbox-%x", sha256.Sum256([]byte(source.SandboxUID)))
+		scope = securityv1.Scope_WORKLOAD_SELECTOR
+		// Inline rules precede shared policies, whose priorities are nonnegative.
+		priority = -1
+	}
+	result := make([]CompiledAuthorization, 0, 2)
+	for _, direction := range []struct {
+		suffix string
+		mode   extensionsv1.TrafficPolicyMode
+		rules  *securityv1.TrafficPolicy_RuleSet
+	}{
+		{"egress", extensionsv1.TrafficPolicyMode_CLIENT, compiled.Policy.GetEgress()},
+		{"ingress", extensionsv1.TrafficPolicyMode_SERVER, compiled.Policy.GetIngress()},
+	} {
+		if direction.rules == nil {
+			continue
+		}
+		extension, err := newTrafficPolicyExtension(priority, direction.mode)
+		if err != nil {
+			return nil, err
+		}
+		authorization := &securityv1.Authorization{
+			Name: name + "-" + direction.suffix, Namespace: namespace,
+			Scope: scope, Action: securityv1.Action_ALLOW,
+			AuthExtensions: []*securityv1.Extension{extension},
+		}
+		for _, rule := range direction.rules.Rules {
+			authorization.Groups = append(authorization.Groups, asAuthorizationGroup(rule))
+		}
+		result = append(result, CompiledAuthorization{
+			Name: namespace + "/" + authorization.Name, Policy: authorization,
+		})
+	}
+	return result, nil
+}
 
 // Preserve the legacy negative-match encoding of reject rules. Unresolved
 // rules have already been omitted by the TrafficPolicy compiler.

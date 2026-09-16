@@ -28,7 +28,6 @@ import (
 type PolicyKind string
 
 const (
-	PolicyKindAuthorization PolicyKind = "authorization"
 	PolicyKindTrafficPolicy PolicyKind = "traffic-policy"
 	PolicyKindEgressPolicy  PolicyKind = "egress-policy"
 	PolicyKindSNIPolicy     PolicyKind = "sni-policy"
@@ -43,7 +42,7 @@ func (r PolicyRef) ResourceName() string { return string(r.Kind) + "|" + r.Name 
 
 func (r PolicyRef) Validate() error {
 	switch r.Kind {
-	case PolicyKindAuthorization, PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
+	case PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
 	default:
 		return fmt.Errorf("unsupported policy kind %q", r.Kind)
 	}

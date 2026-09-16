@@ -16,23 +16,22 @@ package policy
 
 import (
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
-	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"google.golang.org/protobuf/proto"
 	"testing"
 )
 
 func TestCompiledPolicyEqualityAndOptionalAttachment(t *testing.T) {
-	base := CompiledAuthorization{
+	base := CompiledSNIPolicy{
 		Name:   "demo/allow",
-		Policy: &securityv1.Authorization{Name: "allow", Namespace: "demo"},
+		Policy: &extensionsv1.SniTrafficPolicy{},
 	}
 	clone := base
-	clone.Policy = proto.Clone(base.Policy).(*securityv1.Authorization)
+	clone.Policy = proto.Clone(base.Policy).(*extensionsv1.SniTrafficPolicy)
 	if !base.Equals(clone) || base.PolicyAttachment() != nil {
 		t.Fatal("equivalent unbound policies must compare equal and have no attachment")
 	}
 	bound := clone
-	bound.Attachment = &PolicyAttachment{Kind: PolicyKindAuthorization, Name: base.Name}
+	bound.Attachment = &PolicyAttachment{Kind: PolicyKindSNIPolicy, Name: base.Name}
 	if base.Equals(bound) || bound.Equals(base) {
 		t.Fatal("adding or removing an attachment must change the compiled policy")
 	}

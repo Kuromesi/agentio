@@ -73,88 +73,6 @@ func TestPolicyAttachmentTargets(t *testing.T) {
 	}
 }
 
-func TestPolicyAttachmentExactTarget(t *testing.T) {
-	exact, err := NewPolicyAttachment(PolicyAttachment{
-		Kind: PolicyKindAuthorization,
-		Name: "demo/allow-egress",
-		Target: AttachmentTarget{
-			SandboxUID: "sandbox-a",
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-				"tier": "trusted",
-			}},
-		},
-		Priority: 10,
-	})
-	if err != nil {
-		t.Fatalf("new exact policy attachment: %v", err)
-	}
-	for _, test := range []struct {
-		name    string
-		subject model.Sandbox
-		want    bool
-	}{
-		{
-			name: "exact UID and selector",
-			subject: model.Sandbox{
-				UID:    "sandbox-a",
-				Labels: map[string]string{"tier": "trusted"},
-			},
-			want: true,
-		},
-		{
-			name: "different UID",
-			subject: model.Sandbox{
-				UID:    "sandbox-b",
-				Labels: map[string]string{"tier": "trusted"},
-			},
-		},
-		{
-			name: "selector mismatch",
-			subject: model.Sandbox{
-				UID:    "sandbox-a",
-				Labels: map[string]string{"tier": "untrusted"},
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := exact.Selects(test.subject); got != test.want {
-				t.Fatalf("Selects() = %v, want %v", got, test.want)
-			}
-		})
-	}
-
-	selector, err := NewPolicyAttachment(PolicyAttachment{
-		Kind: PolicyKindAuthorization,
-		Name: "demo/selector-egress",
-		Target: AttachmentTarget{
-			Namespaces: []string{"demo"},
-			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"tier": "trusted"}},
-		},
-		Priority: 10,
-	})
-	if err != nil {
-		t.Fatalf("new selector policy attachment: %v", err)
-	}
-	if !policyAttachmentLess(exact, selector) {
-		t.Fatal("exact Sandbox target did not sort before selector target")
-	}
-
-	for _, target := range []AttachmentTarget{
-		{Global: true, SandboxUID: "sandbox-a"},
-		{Namespaces: []string{"demo"}, SandboxUID: "sandbox-a"},
-		{SandboxUID: " sandbox-a"},
-		{SandboxUID: " "},
-	} {
-		if _, err := NewPolicyAttachment(PolicyAttachment{
-			Kind:   PolicyKindAuthorization,
-			Name:   "invalid",
-			Target: target,
-		}); err == nil {
-			t.Fatalf("invalid exact target %+v was accepted", target)
-		}
-	}
-}
-
 func TestPolicyAttachmentValidation(t *testing.T) {
 	invalidSelector := metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
 		Key:      "app",
@@ -274,8 +192,6 @@ func TestPolicyAttachmentEqualityTracksOnlyReferenceFields(t *testing.T) {
 		{"priority", func(p *PolicyAttachment) { p.Priority++ }},
 		{"creation time", func(p *PolicyAttachment) { p.CreationTime = time.Unix(200, 0) }},
 		{"namespace", func(p *PolicyAttachment) { p.Target.Namespaces = []string{"other"} }},
-		{"target kind", func(p *PolicyAttachment) { p.Target.Kind = PolicyTargetWorkload }},
-		{"sandbox UID", func(p *PolicyAttachment) { p.Target.SandboxUID = "sandbox-a" }},
 		{"global scope", func(p *PolicyAttachment) { p.Target.Global = true }},
 		{"selector", func(p *PolicyAttachment) {
 			p.Target.Selector = metav1.LabelSelector{MatchLabels: map[string]string{"app": "other"}}

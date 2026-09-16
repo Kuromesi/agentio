@@ -16,6 +16,7 @@ package policy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -29,10 +30,14 @@ import (
 // CompiledTrafficPolicy is the shared, resolved Sandbox TrafficPolicy body.
 type CompiledTrafficPolicy struct {
 	CompiledPolicy[*securityv1.TrafficPolicy]
+
+	// Filled only in compatibility mode, once per source rather than per Workload.
+	AsAuthorization []CompiledAuthorization
 }
 
 func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
-	return p.CompiledPolicy.Equals(other.CompiledPolicy)
+	return p.CompiledPolicy.Equals(other.CompiledPolicy) &&
+		slices.EqualFunc(p.AsAuthorization, other.AsAuthorization, CompiledAuthorization.Equals)
 }
 
 // CompileTrafficPolicy preserves rule actions and both directions in one
@@ -68,8 +73,6 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 		peerNamespace = inputs.RootNamespace
 	}
 	switch {
-	case source.SandboxUID != "":
-		target.SandboxUID = source.SandboxUID
 	case source.Global || (peerNamespace == inputs.RootNamespace && selector.Empty()):
 		// Keep selector-less root-namespace baselines mesh-wide in both APIs.
 		target.Global = true

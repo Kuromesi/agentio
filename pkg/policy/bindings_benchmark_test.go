@@ -24,13 +24,13 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// One Sandbox commonly owns one policy; this benchmark prevents an exact
+// A selector can target one Sandbox; this benchmark prevents a selector
 // policy lifecycle event from restoring namespace-wide binding recomputation.
-func BenchmarkPolicyBindingsExactPolicyChurn(b *testing.B) {
-	b.Run("sandboxes=10000/policies=100", benchmarkPolicyBindingsExactPolicyChurn)
+func BenchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
+	b.Run("sandboxes=10000/policies=100", benchmarkPolicyBindingsSelectorPolicyChurn)
 }
 
-func benchmarkPolicyBindingsExactPolicyChurn(b *testing.B) {
+func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 	const (
 		sandboxCount = 10_000
 		policyCount  = 100
@@ -44,13 +44,13 @@ func benchmarkPolicyBindingsExactPolicyChurn(b *testing.B) {
 		sandboxes[index] = model.Sandbox{
 			UID:       fmt.Sprintf("sandbox-%d", index),
 			Namespace: "demo",
-			Labels:    map[string]string{"app": "sandbox"},
+			Labels:    map[string]string{"app": "sandbox", "sandbox": fmt.Sprintf("sandbox-%d", index)},
 		}
 	}
 	basePolicies := make([]PolicyAttachment, policyCount)
 	for index := range basePolicies {
 		attachment, err := NewPolicyAttachment(PolicyAttachment{
-			Kind: PolicyKindAuthorization,
+			Kind: PolicyKindTrafficPolicy,
 			Name: fmt.Sprintf("demo/policy-%d", index),
 			Target: AttachmentTarget{
 				Namespaces: []string{"demo"},
@@ -78,27 +78,27 @@ func benchmarkPolicyBindingsExactPolicyChurn(b *testing.B) {
 		}
 	}, false)
 	b.Cleanup(registration.UnregisterHandler)
-	exact, err := NewPolicyAttachment(PolicyAttachment{
-		Kind: PolicyKindAuthorization,
-		Name: "demo/exact-egress",
+	selected, err := NewPolicyAttachment(PolicyAttachment{
+		Kind: PolicyKindTrafficPolicy,
+		Name: "demo/selected-egress",
 		Target: AttachmentTarget{
-			SandboxUID: targetUID,
-			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": "sandbox"}},
+			Namespaces: []string{"demo"},
+			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"sandbox": targetUID}},
 		},
 	})
 	if err != nil {
-		b.Fatalf("new exact policy: %v", err)
+		b.Fatalf("new selector policy: %v", err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := range b.N {
 		if iteration%2 == 0 {
-			attachments.ConditionalUpdateObject(exact)
+			attachments.ConditionalUpdateObject(selected)
 		} else {
-			attachments.DeleteObject(exact.ResourceName())
+			attachments.DeleteObject(selected.ResourceName())
 		}
-		if event := awaitBindingEvent(b, events); event.Latest().TargetUID != targetUID {
+		if event := awaitBindingEvent(b, events); event.Latest().SandboxUID != targetUID {
 			b.Fatalf("binding event = %+v, want %s", event.Latest(), targetUID)
 		}
 	}

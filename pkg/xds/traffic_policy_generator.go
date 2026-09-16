@@ -17,7 +17,6 @@ package xds
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"istio.io/istio/pkg/util/sets"
 
@@ -37,7 +36,8 @@ func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRe
 		return GeneratedDelta{}, fmt.Errorf("traffic policy generator does not support type URL %q", request.TypeURL)
 	}
 	if request.Full || request.Update.FullFor(request.TypeURL) {
-		return generateTrafficPolicyFull(request), nil
+		selected := selectTrafficPolicyResources(request.Scope, request.Snapshot, request.Subscription)
+		return diffSubscribed(request.Subscription, selected, request.SubscribedNames), nil
 	}
 	candidates := sets.New[model.ResourceKey]()
 	for _, change := range request.Update.ReadOnlyChangesForType(request.TypeURL) {
@@ -82,24 +82,6 @@ func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRe
 	resources, removed := diffCandidateTransition(candidates, request.Update.Before().Get, request.Update.After().Get,
 		visible(request.Update.Before()), visible(request.Update.After()))
 	return newSortedDelta(resources, removed, false), nil
-}
-
-func generateTrafficPolicyFull(request GenerationRequest) GeneratedDelta {
-	selected := selectTrafficPolicyResources(request.Scope, request.Snapshot, request.Subscription)
-	delta := diffSelected(request.Subscription, selected)
-	for _, name := range request.SubscribedNames {
-		if name == "*" {
-			continue
-		}
-		if resource, ok := selected[name]; ok {
-			if !slices.ContainsFunc(delta.Resources, func(r model.Resource) bool { return r.XDSName == name }) {
-				delta.Resources = append(delta.Resources, resource)
-			}
-		} else if !slices.Contains(delta.Removed, name) {
-			delta.Removed = append(delta.Removed, name)
-		}
-	}
-	return delta
 }
 
 func selectTrafficPolicyResources(scope model.ClientScope, snapshot model.ResourceSet, sub SubscriptionView) map[string]model.Resource {

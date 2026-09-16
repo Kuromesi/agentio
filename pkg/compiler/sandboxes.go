@@ -60,7 +60,7 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 		record("SandboxInlinePolicies", inlineErr)
 
 		facts := &model.SandboxResourceFacts{AttesterWorkloadUID: payload.GetAttester().GetWorkloadUid()}
-		bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID)))
+		bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(sandbox.UID))
 		var routingErr, sharedErr error
 		if bindings != nil {
 			payload.EgressRouting, facts.GatewayReferences, routingErr = sandboxEgressRouting(ctx, bindings, policies)

@@ -52,7 +52,7 @@ func TestTrafficPolicyCompilesBothResourcesWithOneResolution(t *testing.T) {
 	})
 	waitSynced(t, fixture.compiler)
 	nativeKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/demo/trafficPolicies/api"}
-	legacyKey := model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: "demo/sandbox-" + workloadPolicyID(worker.UID) + "-egress"}
+	legacyKey := model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: "demo/api-egress"}
 	eventually(t, func() bool {
 		snapshot := currentSnapshot(t, fixture.compiler)
 		_, native := snapshot.Get(nativeKey)
@@ -61,7 +61,7 @@ func TestTrafficPolicyCompilesBothResourcesWithOneResolution(t *testing.T) {
 			return false
 		}
 		authorization := &securityv1.Authorization{}
-		return proto.Unmarshal(legacy.Value.Value, authorization) == nil && len(authorization.Groups[0].Rules[0].Matches[0].NotDestinationIps) != 0
+		return proto.Unmarshal(legacy.Value.Value, authorization) == nil && len(authorization.Groups) == 0
 	}, "compiled unresolved native policy and Sandbox compatibility")
 	settle()
 	if got := fixture.resolutionCount("api.example.com"); got != 1 {
@@ -156,26 +156,22 @@ func TestTrafficPolicyAuthorizationDirectionsUpdate(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, nativeFound := snapshot.Get(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/demo/trafficPolicies/api"})
-			want := []string{"demo/sandbox-" + workloadPolicyID(workload.UID) + "-egress", "demo/sandbox-" + workloadPolicyID(workload.UID) + "-ingress"}
+			var want []string
+			if !test.deleted && !test.empty && !test.peerless {
+				if test.egress {
+					want = append(want, "demo/api-egress")
+				}
+				if test.ingress {
+					want = append(want, "demo/api-ingress")
+				}
+			}
 			if nativeFound != !test.deleted || !slices.Equal(names, want) || !slices.Equal(wire.GetWorkload().AuthorizationPolicies, want) {
 				return false
 			}
-			for index, configured := range []bool{test.egress, test.ingress} {
-				configured = configured && !test.empty && !test.peerless && !test.deleted
-				resource, _ := snapshot.Get(model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: want[index]})
+			for _, name := range want {
+				resource, _ := snapshot.Get(model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name})
 				authorization := &securityv1.Authorization{}
-				if proto.Unmarshal(resource.Value.Value, authorization) != nil {
-					return false
-				}
-				wantGroups := 1
-				if configured {
-					wantGroups++
-				}
-				if len(authorization.Groups) != wantGroups {
-					return false
-				}
-				fallback := authorization.Groups[wantGroups-1].Rules[0].Matches[0]
-				if (len(fallback.NotDestinationIps) > 0) != configured {
+				if proto.Unmarshal(resource.Value.Value, authorization) != nil || len(authorization.Groups) != 1 {
 					return false
 				}
 			}
@@ -424,10 +420,10 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("alpha", "client", "10.1.0.1")))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("alpha", "client", "10.1.0.1"))
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name:       "broken",
-		Namespace:  "alpha",
-		SandboxUID: " kruise:sandbox-a",
+		Name:      "broken",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Priority: -1,
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
 				"app": "client",
 			}},
@@ -448,7 +444,7 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	}, "workload published despite the broken policy")
 
 	if compiled := fixture.compiler.graph.policies.trafficPolicies.GetKey("namespaces/alpha/trafficPolicies/broken"); compiled != nil {
-		t.Fatal("a policy with an invalid Sandbox UID produced a native TrafficPolicy")
+		t.Fatal("a policy with an invalid priority produced a native TrafficPolicy")
 	}
 	eventually(t, func() bool {
 		failures := fixture.compiler.Failures()
@@ -480,10 +476,10 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 func TestDeletingMalformedTrafficPolicyClearsFailure(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name:       "broken",
-		Namespace:  "alpha",
-		SandboxUID: " kruise:sandbox-a",
+		Name:      "broken",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Priority: -1,
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{
 				Rules: []agentsv1alpha1.TrafficPolicyRule{
 					{
@@ -584,7 +580,7 @@ func TestMalformedTrafficPolicyUpdatePreservesLastKnownGood(t *testing.T) {
 	baseline, _ := currentSnapshot(t, fixture.compiler).Get(key)
 
 	invalid := valid
-	invalid.SandboxUID = " kruise:sandbox-a"
+	invalid.Spec.Priority = -1
 	fixture.trafficPolicies.ConditionalUpdateObject(invalid)
 	eventually(t, func() bool {
 		_, found := fixture.compiler.Failures()["TrafficPolicy/namespaced/alpha/allow"]
@@ -1007,7 +1003,7 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	if len(payload.Rules) != 1 {
 		t.Fatalf("Sandbox SNI payload = %v", payload)
 	}
-	binding := compiler.Bindings().GetKey(policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID))
+	binding := compiler.Bindings().GetKey(workload.UID)
 	if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/terminate"}) {
 		t.Fatalf("Sandbox policy binding = %+v", binding)
 	}
@@ -1044,7 +1040,7 @@ func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testin
 		t.Fatal("networking must remain available when Sandbox policies are unavailable")
 	}
 	failures := compiler.Failures()
-	if _, found := failures["Bindings/"+policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID)]; !found {
+	if _, found := failures["Bindings/"+workload.UID]; !found {
 		t.Fatalf("Sandbox failure is missing: %v", failures)
 	}
 	if manifest := manifestAt(t, compiler, workload.UID); manifest == nil {

@@ -31,7 +31,6 @@ import (
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/model"
-	"github.com/openkruise/agentio/pkg/policy"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
@@ -214,7 +213,7 @@ func TestPodSandboxPoliciesReachCompiler(t *testing.T) {
 					if !slices.Equal(s.PolicyRefs[model.TrafficPolicyType].GetResourceNames(), refs) || len(s.Extensions) != 1 || len(s.GetEgressRouting().GetRoutes()) != 1 || w == nil {
 						return false
 					}
-					if !native && (len(w.AuthorizationPolicies) != 2 || len(w.Extensions) != 3) {
+					if !native && (!slices.Equal(w.AuthorizationPolicies, []string{"demo/selected-egress"}) || len(w.Extensions) != 3) {
 						return false
 					}
 				}
@@ -225,7 +224,7 @@ func TestPodSandboxPoliciesReachCompiler(t *testing.T) {
 				if s.State != sandboxv1.SandboxState_SANDBOX_STATE_PENDING || s.Attester.WorkloadUid != "test//Pod/demo/"+name || s.TrafficPolicy != nil {
 					t.Fatalf("derived Sandbox = %v", s)
 				}
-				if c.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetWorkload, "test//Pod/demo/"+name)) != nil {
+				if c.Bindings().GetKey("test//Pod/demo/"+name) != nil {
 					t.Fatal("managed Pod independently matches Workload policies")
 				}
 				w := getWorkload(name)

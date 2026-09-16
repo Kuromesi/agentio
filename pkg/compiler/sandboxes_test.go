@@ -568,7 +568,7 @@ func TestCompilerUsesOnlyProvidedSandboxes(t *testing.T) {
 	eventually(t, func() bool { return manifestAt(t, compiler, workload.UID) != nil }, "provider Sandbox appears")
 	sandboxes.DeleteObject(workload.UID)
 	eventually(t, func() bool {
-		return manifestAt(t, compiler, workload.UID) == nil && compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, workload.UID)) == nil
+		return manifestAt(t, compiler, workload.UID) == nil && compiler.Bindings().GetKey(workload.UID) == nil
 	}, "Sandbox deletion removes resource and bindings despite surviving Workload")
 	settle()
 	if manifestAt(t, compiler, workload.UID) != nil {
@@ -599,7 +599,7 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	})
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
-		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
+		binding := fixture.compiler.Bindings().GetKey(sandbox.UID)
 		return binding != nil && reflect.DeepEqual(
 			binding.PolicyNames(policy.PolicyKindTrafficPolicy),
 			[]string{"namespaces/sandbox-namespace/trafficPolicies/allow"},
@@ -609,7 +609,7 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	sandbox.Labels = map[string]string{"app": "other"}
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	eventually(t, func() bool {
-		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
+		binding := fixture.compiler.Bindings().GetKey(sandbox.UID)
 		return binding != nil && binding.Valid() && len(binding.PolicyNames(policy.PolicyKindTrafficPolicy)) == 0
 	}, "Sandbox label update removes selector-derived binding")
 }
@@ -645,7 +645,7 @@ func TestSandboxTrafficPolicyUsesUnifiedInputs(t *testing.T) {
 		a.TrafficPolicy.Egress.Rules[0].Action != securityv1.TrafficPolicy_ALLOW {
 		t.Fatalf("inline directions or action lost: %v", a.TrafficPolicy)
 	}
-	if got := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, "a")).PolicyNames(model.PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"trafficPolicies/global"}) {
+	if got := fixture.compiler.Bindings().GetKey("a").PolicyNames(model.PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"trafficPolicies/global"}) {
 		t.Fatalf("inline policy entered the shared binding graph: %v", got)
 	}
 	if got := currentSnapshot(t, fixture.compiler).List(model.TrafficPolicyType); len(got) != 1 {

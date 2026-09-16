@@ -17,7 +17,6 @@ package policy
 import (
 	"net/netip"
 	"reflect"
-	"strings"
 	"testing"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -72,78 +71,6 @@ func testTrafficPolicyInputs(
 		Resolve: hostnameResolver,
 	}
 }
-
-func TestTrafficPolicySandboxUIDAssociation(t *testing.T) {
-	inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil)
-	for _, test := range []struct {
-		name        string
-		declaredUID string
-		selectedUID *string
-		wantUID     string
-		wantErr     bool
-	}{
-		{
-			name:        "canonical UID",
-			declaredUID: "kruise:sandbox-a",
-			wantUID:     "kruise:sandbox-a",
-		},
-		{
-			name:        "selector does not infer UID",
-			selectedUID: stringPtr("sandbox-a"),
-		},
-		{
-			name:        "canonical UID with raw selector",
-			declaredUID: "kruise:sandbox-a",
-			selectedUID: stringPtr("sandbox-a"),
-			wantUID:     "kruise:sandbox-a",
-		},
-		{
-			name:        "UID and selector are independent constraints",
-			declaredUID: "workload:instance-a",
-			selectedUID: stringPtr("sandbox-a"),
-			wantUID:     "workload:instance-a",
-		},
-		{
-			name:        "declared whitespace",
-			declaredUID: " kruise:sandbox-a",
-			wantErr:     true,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			selector := metav1.LabelSelector{}
-			if test.selectedUID != nil {
-				selector.MatchLabels = map[string]string{agentsv1alpha1.LabelSandboxID: *test.selectedUID}
-			}
-			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
-				Name:       "allow",
-				Namespace:  "demo",
-				SandboxUID: test.declaredUID,
-				Spec: agentsv1alpha1.TrafficPolicySpec{
-					Selector: selector,
-					Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-						Action: agentsv1alpha1.RuleActionAllow,
-						To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
-					}}},
-				},
-			}, inputs)
-			if test.wantErr {
-				if err == nil || !strings.Contains(err.Error(), "sandbox UID") {
-					t.Fatalf("CompileTrafficPolicy() error = %v, want sandbox UID error", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("CompileTrafficPolicy(): %v", err)
-			}
-			attachment := compiled.PolicyAttachment()
-			if attachment == nil || attachment.Target.SandboxUID != test.wantUID {
-				t.Fatalf("attachment = %+v, want exact Sandbox UID %q", attachment, test.wantUID)
-			}
-		})
-	}
-}
-
-func stringPtr(value string) *string { return &value }
 
 func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
 	start, end := int32(8080), int32(8090)
@@ -219,7 +146,7 @@ func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testi
 	if err := extension.GetConfig().UnmarshalTo(decoded); err != nil {
 		t.Fatalf("decode traffic policy extension: %v", err)
 	}
-	if extension.GetName() != "traffic-policy" || decoded.GetPriority() != -1 || decoded.GetMode() != extensionsv1.TrafficPolicyMode_CLIENT {
+	if extension.GetName() != "traffic-policy" || decoded.GetPriority() != 500 || decoded.GetMode() != extensionsv1.TrafficPolicyMode_CLIENT {
 		t.Fatalf("traffic policy extension = %+v / %+v", extension, decoded)
 	}
 }
@@ -717,18 +644,21 @@ func hasPortRange(matches []*securityv1.Match, start, end uint32, protocol secur
 	return false
 }
 
-// Inspect source-rule encoding through the actual Sandbox compatibility path.
-// Terminal fallback behavior is tested separately in sandbox_authorization_test.go.
+// Inspect source-rule encoding without adding compatibility fallback rules.
 func compiledRuleAuthorization(t *testing.T, compiled *CompiledTrafficPolicy) CompiledAuthorization {
 	t.Helper()
-	converted, err := SandboxAsAuthorizations("test", "demo", []*securityv1.TrafficPolicy{compiled.Policy})
+	source := model.TrafficPolicy{Name: "test", Namespace: "demo"}
+	if attachment := compiled.Attachment; attachment != nil {
+		source.Name, source.Namespace = attachment.SourceName, attachment.SourceNamespace
+		source.Spec.Priority, source.Spec.Selector = attachment.Priority, attachment.Target.Selector
+		source.Global = attachment.Target.Global
+	}
+	converted, err := TrafficPolicyAsAuthorizations(*compiled, source, "agentio-system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := converted[0]
-	if compiled.Policy.Egress == nil {
-		result = converted[1]
+	if len(converted) == 0 {
+		return CompiledAuthorization{Policy: &securityv1.Authorization{}}
 	}
-	result.Policy.Groups = result.Policy.Groups[:len(result.Policy.Groups)-1]
-	return result
+	return converted[0]
 }

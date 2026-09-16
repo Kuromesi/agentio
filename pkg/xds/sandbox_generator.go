@@ -17,7 +17,6 @@ package xds
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"istio.io/istio/pkg/util/sets"
 
@@ -39,21 +38,7 @@ func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest)
 	}
 	if request.Full || request.Update.FullFor(request.TypeURL) {
 		selected := selectSandboxResources(request.Scope, request.Snapshot, request.TypeURL, request.Subscription)
-		delta := diffSelected(request.Subscription, selected)
-		// A repeated subscribe may mean the client evicted its local copy.
-		for _, name := range request.SubscribedNames {
-			if name == "*" {
-				continue
-			}
-			if r, ok := selected[name]; ok {
-				if !slices.ContainsFunc(delta.Resources, func(r model.Resource) bool { return r.XDSName == name }) {
-					delta.Resources = append(delta.Resources, r)
-				}
-			} else if !slices.Contains(delta.Removed, name) {
-				delta.Removed = append(delta.Removed, name)
-			}
-		}
-		return delta, nil
+		return diffSubscribed(request.Subscription, selected, request.SubscribedNames), nil
 	}
 	// Recompute visibility when attester Workloads change. Inline policy changes
 	// update the Sandbox; shared bodies have their own discovery type.

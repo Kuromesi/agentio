@@ -43,7 +43,7 @@ type config struct {
 func flags() config {
 	var c config
 	flag.StringVar(&c.scenarioConfig, "scenario-config", "{}", "scenario-specific JSON options")
-	flag.StringVar(&c.scenario, "scenario", "discovery", "registered client scenario")
+	flag.StringVar(&c.scenario, "scenario", "discovery", "client scenario: discovery or trafficpolicy")
 	flag.DurationVar(&c.ackDelay, "ack-delay", 0, "delay each ACK; bounds include this intentional delay")
 	flag.StringVar(&c.target, "target", "", "xDS host:port (required)")
 	flag.StringVar(&c.serverName, "server-name", "", "TLS server name; defaults to target hostname")
@@ -109,7 +109,7 @@ func newBench(ctx context.Context, c config) (*bench, error) {
 	if c.serverName == "" {
 		c.serverName, _, _ = net.SplitHostPort(c.target)
 	}
-	factory, err := scenario.New(c.scenario, json.RawMessage(c.scenarioConfig))
+	factory, err := newScenario(c.scenario, json.RawMessage(c.scenarioConfig))
 	if err != nil {
 		return nil, err
 	}

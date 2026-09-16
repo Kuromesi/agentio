@@ -59,7 +59,6 @@ func buildGraph(inputs Inputs, failures *failureRecorder, builder krt.OptionsBui
 	sandboxResources := newSandboxResources(inputs.Sandboxes, policies, failures, collectionOptions)
 	resources := krt.JoinCollection([]krt.Collection[model.Resource]{
 		sandboxResources,
-		newSandboxWorkloadResources(sandboxWorkloadPolicies, collectionOptions),
 		newTrafficPolicyResources(policies.trafficPolicies, failures, collectionOptions),
 		workloadResources,
 		newServiceResources(inputs, gateways, failures, collectionOptions),

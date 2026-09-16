@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 
 	"github.com/openkruise/agentio/bench/xds/loadapi"
-	"github.com/openkruise/agentio/bench/xds/scenario"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -46,19 +45,4 @@ type Driver interface {
 	Trigger(context.Context, Environment, json.RawMessage) error
 	// Check compares statuses before and after an update and returns report fields.
 	Check(parameters json.RawMessage, before, after []loadapi.Status) (map[string]any, error)
-}
-
-var drivers = scenario.NewRegistry[Driver]()
-
-// Register is called by a driver package's init function. Invalid or duplicate
-// registrations panic at startup; each New call still creates a fresh driver.
-func Register(name string, factory scenario.Factory[Driver]) {
-	if err := drivers.Register(name, factory); err != nil {
-		panic(err)
-	}
-}
-
-// New constructs an imported, registered driver for one run.
-func New(name string, config json.RawMessage) (Driver, error) {
-	return drivers.New(name, config)
 }

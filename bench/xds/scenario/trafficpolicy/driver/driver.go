@@ -32,10 +32,6 @@ type policyDriver struct {
 	marker int
 }
 
-func init() {
-	driver.Register(trafficpolicy.Name, New)
-}
-
 func New(raw json.RawMessage) (driver.Driver, error) {
 	cfg := Options{Rules: 50, PortsPerRule: []int{1, 20}}
 	if err := scenario.Decode(raw, &cfg); err != nil {

@@ -61,9 +61,7 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 		resourceName = profile.Namespace + "/" + profile.Name
 	}
 	target := AttachmentTarget{Selector: profile.Spec.Selector}
-	if profile.SandboxUID != "" {
-		target.SandboxUID = profile.SandboxUID
-	} else if profile.Global {
+	if profile.Global {
 		target.Global = true
 	} else {
 		target.Namespaces = []string{profile.Namespace}

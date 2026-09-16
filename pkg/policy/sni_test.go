@@ -15,7 +15,6 @@
 package policy
 
 import (
-	"strings"
 	"testing"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -24,69 +23,6 @@ import (
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
-
-func TestCompileSNIProfileSandboxUIDAssociation(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		declaredUID string
-		selectedUID *string
-		wantUID     string
-		wantErr     bool
-	}{
-		{
-			name:        "canonical UID",
-			declaredUID: "kruise:sandbox-a",
-			wantUID:     "kruise:sandbox-a",
-		},
-		{
-			name:        "selector does not infer UID",
-			selectedUID: stringPtr("sandbox-a"),
-		},
-		{
-			name:        "canonical UID with raw selector",
-			declaredUID: "kruise:sandbox-a",
-			selectedUID: stringPtr("sandbox-a"),
-			wantUID:     "kruise:sandbox-a",
-		},
-		{
-			name:        "UID and selector are independent constraints",
-			declaredUID: "workload:instance-a",
-			selectedUID: stringPtr("sandbox-a"),
-			wantUID:     "workload:instance-a",
-		},
-		{
-			name:        "declared whitespace",
-			declaredUID: "kruise:sandbox-a ",
-			wantErr:     true,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			selector := map[string]string{}
-			if test.selectedUID != nil {
-				selector[agentsv1alpha1.LabelSandboxID] = *test.selectedUID
-			}
-			compiled, err := CompileSNIProfile(model.SecurityProfile{
-				Name:       "profile",
-				Namespace:  "demo",
-				SandboxUID: test.declaredUID,
-				Spec:       securitySpec(nil, selector),
-			})
-			if test.wantErr {
-				if err == nil || !strings.Contains(err.Error(), "sandbox UID") {
-					t.Fatalf("CompileSNIProfile() error = %v, want sandbox UID error", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("CompileSNIProfile(): %v", err)
-			}
-			attachment := compiled.PolicyAttachment()
-			if attachment == nil || attachment.Target.SandboxUID != test.wantUID {
-				t.Fatalf("compiled/attachment = %+v / %+v, want exact Sandbox UID %q", compiled, attachment, test.wantUID)
-			}
-		})
-	}
-}
 
 func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	priority := int32(10)

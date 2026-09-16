@@ -90,6 +90,8 @@ func TestProjectWorkloadConfigDumpKeepsOnlyWorkloadPolicies(t *testing.T) {
   "policies": [
     {"namespace":"sandbox","name":"client-policy-egress","scope":"WorkloadSelector","rules":[{"destinationIps":["10.0.0.1/32"]}]},
     {"namespace":"sandbox","name":"server-policy-egress","scope":"WorkloadSelector","rules":[{"destinationIps":["10.0.0.2/32"]}]},
+    {"namespace":"sandbox","name":"namespace-policy-egress","scope":"Namespace"},
+    {"namespace":"other","name":"other-namespace-policy-egress","scope":"Namespace"},
     {"namespace":"agentio-system","name":"global-policy-egress","scope":"Global","rules":[{"destinationIps":["10.0.0.3/32"]}]}
   ],
   "workloads": [
@@ -101,12 +103,12 @@ func TestProjectWorkloadConfigDumpKeepsOnlyWorkloadPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"client-pod", "client-policy-egress", "10.0.0.1/32", "global-policy-egress", "10.0.0.3/32"} {
+	for _, want := range []string{"client-pod", "client-policy-egress", "10.0.0.1/32", "global-policy-egress", "10.0.0.3/32", "namespace-policy-egress"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("projected dump does not contain %q: %s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"server-pod", "server-policy-egress", "10.0.0.2/32"} {
+	for _, unwanted := range []string{"server-pod", "server-policy-egress", "10.0.0.2/32", "other-namespace-policy-egress"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("projected dump contains unrelated %q: %s", unwanted, got)
 		}

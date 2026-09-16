@@ -80,6 +80,9 @@ func newPolicyCollections(
 	trafficPolicies := krt.NewCollection(inputs.TrafficPolicies,
 		func(ctx krt.HandlerContext, source model.TrafficPolicy) *policy.CompiledTrafficPolicy {
 			compiled, err := policy.CompileTrafficPolicy(ctx, source, trafficPolicyInputs)
+			if err == nil && !inputs.NativeSandboxPolicies {
+				compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(*compiled, source, inputs.RootNamespace)
+			}
 			if err != nil {
 				failures.record("TrafficPolicy", source.ResourceName(), err)
 				if !source.Dedicated {
@@ -174,7 +177,7 @@ func authorizationResource(authorization policy.CompiledAuthorization) (model.Re
 }
 
 // Shared policy bodies are serialized independently of Sandbox references.
-// Legacy Authorizations are emitted only by the Sandbox compatibility branch.
+// Compatibility Authorizations are serialized once per source alongside them.
 func newTrafficPolicyResources(policies krt.Collection[policy.CompiledTrafficPolicy], failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
 	clearFailureOnSourceDelete(policies, failures, "TrafficPolicyResource")
 	return krt.NewManyCollection(policies, func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []model.Resource {
@@ -189,9 +192,17 @@ func newTrafficPolicyResources(policies krt.Collection[policy.CompiledTrafficPol
 }
 
 func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Resource, error) {
+	resources := make([]model.Resource, 0, 1+len(compiled.AsAuthorization))
+	for _, authorization := range compiled.AsAuthorization {
+		resource, err := authorizationResource(authorization)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, resource)
+	}
 	if compiled.Attachment == nil {
-		// Sandbox-owned policies are emitted only inside their owner's resource.
-		return nil, nil
+		// Native Sandbox-owned policies are embedded in their owner's resource.
+		return resources, nil
 	}
 	value, err := marshalDeterministicAny(compiled.Policy)
 	if err != nil {
@@ -201,5 +212,5 @@ func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Reso
 	if err != nil {
 		return nil, err
 	}
-	return []model.Resource{resource}, nil
+	return append(resources, resource), nil
 }

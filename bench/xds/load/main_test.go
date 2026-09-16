@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
-	"github.com/openkruise/agentio/bench/xds/scenario"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/openkruise/agentio/bench/xds/scenario"
 )
 
 func TestReadinessTimeoutCountsFailure(t *testing.T) {
@@ -52,7 +53,7 @@ func TestReadinessTimeoutCountsFailure(t *testing.T) {
 }
 
 // The management API delegates opaque parameters without knowing a scenario name.
-func TestRoundUsesRegisteredFactoryAndIsolatesEpochs(t *testing.T) {
+func TestRoundUsesFactoryAndIsolatesEpochs(t *testing.T) {
 	b := &bench{target: 1, samples: map[int]sample{0: {ID: 0}}, factory: scenario.ClientFactory{
 		PrepareRound: func(raw json.RawMessage) (any, error) {
 			var expected struct {
@@ -81,5 +82,27 @@ func TestRoundUsesRegisteredFactoryAndIsolatesEpochs(t *testing.T) {
 	}
 	if b.expected != "second" || b.round.ID != 2 || len(b.samples) != 0 {
 		t.Fatalf("round state: %+v expected=%v samples=%v", b.round, b.expected, b.samples)
+	}
+}
+
+func TestScenarioSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		valid  bool
+	}{
+		{"discovery", `{"types":["example.Resource"]}`, true},
+		{"trafficpolicy", `{"policy_name":"trafficPolicies/test","sandbox_id":"local"}`, true},
+		{"missing", `{}`, false},
+		{"discovery", `{"typo":true}`, false},
+		{"trafficpolicy", `{}`, false},
+	} {
+		factory, err := newScenario(tc.name, json.RawMessage(tc.config))
+		if (err == nil) != tc.valid {
+			t.Fatalf("scenario %q config %s: %v", tc.name, tc.config, err)
+		}
+		if tc.valid && len(factory.New().Subscriptions()) == 0 {
+			t.Fatalf("scenario %q has no subscriptions", tc.name)
+		}
 	}
 }

@@ -15,7 +15,6 @@
 package compiler
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"slices"
@@ -37,7 +36,6 @@ type workloadSandboxPolicies struct {
 	SNIPolicy          *extensionsv1.SniTrafficPolicy
 	EgressPolicies     *extensionsv1.EgressPolicies
 	GatewayReferences  []string
-	Resources          []model.Resource
 }
 
 func (p workloadSandboxPolicies) ResourceName() string { return p.WorkloadUID }
@@ -46,7 +44,7 @@ func (p workloadSandboxPolicies) Equals(other workloadSandboxPolicies) bool {
 	return p.WorkloadUID == other.WorkloadUID &&
 		slices.Equal(p.AuthorizationNames, other.AuthorizationNames) &&
 		slices.Equal(p.GatewayReferences, other.GatewayReferences) && proto.Equal(p.SNIPolicy, other.SNIPolicy) &&
-		proto.Equal(p.EgressPolicies, other.EgressPolicies) && slices.EqualFunc(p.Resources, other.Resources, model.Resource.Equals)
+		proto.Equal(p.EgressPolicies, other.EgressPolicies)
 }
 
 // This collection is an optional branch of the compiler graph. Native Sandbox
@@ -80,11 +78,7 @@ func newSandboxWorkloadPolicies(
 		case 1:
 			result, err = sandboxAsWorkload(ctx, workload, bound[0], policies)
 		default:
-			// Old proxies cannot identify the originating Sandbox. Do not union
-			// policies or pick an arbitrary owner: deny in the legacy projection.
-			result = &workloadSandboxPolicies{WorkloadUID: workload.UID}
-			err = result.setAuthorizations(workload.Namespace, []*securityv1.TrafficPolicy{nil})
-			err = errors.Join(err, fmt.Errorf("%d Sandboxes bind this Workload; compatibility requires one Sandbox per Workload", len(bound)))
+			err = fmt.Errorf("%d Sandboxes bind this Workload; compatibility requires one Sandbox per Workload", len(bound))
 		}
 		if err != nil {
 			failures.recordIf("SandboxWorkloadPolicies", workload.UID, err, currentInput)
@@ -99,9 +93,8 @@ func newSandboxWorkloadPolicies(
 // never re-matches Pod labels, resolves peers, or parses source policies.
 func sandboxAsWorkload(ctx krt.HandlerContext, workload model.Workload, sandbox model.Sandbox, policies policyCollections) (*workloadSandboxPolicies, error) {
 	result := &workloadSandboxPolicies{WorkloadUID: workload.UID}
-	var ordered []*securityv1.TrafficPolicy
 	if compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID))); compiled != nil {
-		ordered = append(ordered, compiled.Policy)
+		result.addAuthorizationReferences(compiled)
 	}
 	appendSNI := func(p *extensionsv1.SniTrafficPolicy) {
 		if len(p.GetRules()) == 0 {
@@ -117,14 +110,14 @@ func sandboxAsWorkload(ctx krt.HandlerContext, workload model.Workload, sandbox 
 		appendSNI(compiled.Policy)
 	}
 	var policyErr error
-	bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID)))
+	bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(sandbox.UID))
 	if bindings != nil {
 		for _, name := range bindings.PolicyNames(model.PolicyKindTrafficPolicy) {
 			compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(name))
 			if compiled == nil {
-				ordered = append(ordered, nil)
+				policyErr = errors.Join(policyErr, fmt.Errorf("TrafficPolicy %q is unavailable", name))
 			} else {
-				ordered = append(ordered, compiled.Policy)
+				result.addAuthorizationReferences(compiled)
 			}
 		}
 		for _, name := range bindings.PolicyNames(model.PolicyKindSNIPolicy) {
@@ -146,33 +139,15 @@ func sandboxAsWorkload(ctx krt.HandlerContext, workload model.Workload, sandbox 
 			policyErr = errors.Join(policyErr, err)
 		}
 	}
-	policyErr = errors.Join(policyErr, result.setAuthorizations(workload.Namespace, ordered))
 	return result, policyErr
 }
 
-func (p *workloadSandboxPolicies) setAuthorizations(namespace string, ordered []*securityv1.TrafficPolicy) error {
-	authorizations, err := policy.SandboxAsAuthorizations("sandbox-"+workloadPolicyID(p.WorkloadUID), namespace, ordered)
-	if err != nil {
-		return err
-	}
-	for _, authorization := range authorizations {
-		resource, err := authorizationResource(authorization)
-		if err != nil {
-			return err
+// Only selector policies need explicit Workload references. Namespace and global
+// scopes are evaluated by the legacy data plane without per-Workload attachment.
+func (p *workloadSandboxPolicies) addAuthorizationReferences(compiled *policy.CompiledTrafficPolicy) {
+	for _, authorization := range compiled.AsAuthorization {
+		if authorization.Policy.Scope == securityv1.Scope_WORKLOAD_SELECTOR {
+			p.AuthorizationNames = append(p.AuthorizationNames, authorization.Name)
 		}
-		p.Resources = append(p.Resources, resource)
-		p.AuthorizationNames = append(p.AuthorizationNames, authorization.Name)
 	}
-	return nil
-}
-
-// Workload UIDs can contain '/'; a stable digest keeps generated names canonical.
-func workloadPolicyID(workloadUID string) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(workloadUID)))
-}
-
-func newSandboxWorkloadResources(policies krt.Collection[workloadSandboxPolicies], options collectionOptions) krt.Collection[model.Resource] {
-	return krt.NewManyCollection(policies, func(_ krt.HandlerContext, p workloadSandboxPolicies) []model.Resource {
-		return p.Resources
-	}, options("sandbox-workload-resources")...)
 }

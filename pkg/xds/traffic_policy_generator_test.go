@@ -86,11 +86,20 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 	if len(response.Resources) != 0 || !reflect.DeepEqual(response.RemovedResources, []string{private.Key.Name}) {
 		t.Fatalf("named subscribe widened scope: %v", response)
 	}
+	stream.send(&discoveryv3.DeltaDiscoveryRequest{
+		TypeUrl:                model.TrafficPolicyType,
+		ResponseNonce:          response.Nonce,
+		ResourceNamesSubscribe: []string{name, name},
+	})
+	response = stream.awaitResponses(t, model.TrafficPolicyType, 5)[4]
+	if !reflect.DeepEqual(resourceNames(response), []string{name}) || len(response.RemovedResources) != 0 {
+		t.Fatalf("repeated subscribe must resend cached policy once: %v", response)
+	}
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
 	// The same Pod name with another source UID is no longer this client's host.
 	replacement := workerResource(t, "pod-2")
 	server.resources.publish(selectionSnapshot(t, []model.Resource{replacement, changed, private, outside, a, b}))
-	response = stream.awaitResponses(t, model.TrafficPolicyType, 5)[4]
+	response = stream.awaitResponses(t, model.TrafficPolicyType, 6)[5]
 	if len(response.Resources) != 0 || !reflect.DeepEqual(response.RemovedResources, []string{name}) {
 		t.Fatalf("lost scope did not withdraw policy: %v", response)
 	}

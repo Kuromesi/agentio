@@ -80,20 +80,20 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				wantExtensions := []string{"workload-metadata"}
 				if withSandbox && !native {
 					wantExtensions = append(wantExtensions, "egress-policies", "sni-traffic-policy")
-					if len(wire.AuthorizationPolicies) != 2 || len(snapshot.List(model.WorkloadAuthorizationType)) != 2 {
+					if len(wire.AuthorizationPolicies) != 1 || len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
 						t.Fatalf("Sandbox compatibility Authorization output = %v", wire.AuthorizationPolicies)
 					}
 					sni := new(extensionsv1.SniTrafficPolicy)
 					if !compatibilityExtension(t, wire, "sni-traffic-policy", sni) || len(sni.Rules) != 2 {
 						t.Fatalf("Sandbox compatibility SNI output = %v", sni)
 					}
-				} else if len(wire.AuthorizationPolicies) != 0 || len(snapshot.List(model.WorkloadAuthorizationType)) != 0 {
+				} else if len(wire.AuthorizationPolicies) != 0 || (native && len(snapshot.List(model.WorkloadAuthorizationType)) != 0) {
 					t.Fatalf("Workload without compatibility emitted policies: %v", wire.AuthorizationPolicies)
 				}
 				if !reflect.DeepEqual(extensionNames(wire.Extensions), wantExtensions) {
 					t.Fatalf("Workload extensions = %v, want %v", extensionNames(wire.Extensions), wantExtensions)
 				}
-				if compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetWorkload, worker.UID)) != nil {
+				if compiler.Bindings().GetKey(worker.UID) != nil {
 					t.Fatal("Workload independently matched policy attachments")
 				}
 				if withSandbox {
@@ -101,7 +101,7 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 					if manifest == nil || manifest.State != sandboxv1.SandboxState_SANDBOX_STATE_RUNNING || manifest.GetAttester().GetWorkloadUid() != worker.UID || len(trafficPolicyRefs(manifest)) != 1 || len(manifest.Extensions) != 2 || len(manifest.GetEgressRouting().GetRoutes()) != 1 {
 						t.Fatalf("Sandbox output = %v", manifest)
 					}
-					binding := compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, "actor"))
+					binding := compiler.Bindings().GetKey("actor")
 					if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policy.PolicyKindTrafficPolicy), []string{"namespaces/demo/trafficPolicies/allow"}) {
 						t.Fatalf("Sandbox authorization binding = %+v", binding)
 					}
@@ -196,7 +196,7 @@ func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
 				if r.Value.UnmarshalTo(wire) != nil {
 					return false
 				}
-				binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID))
+				binding := fixture.compiler.Bindings().GetKey(workload.UID)
 				if binding != nil || len(wire.GetWorkload().AuthorizationPolicies) != 0 || !reflect.DeepEqual(extensionNames(wire.GetWorkload().Extensions), []string{"workload-metadata"}) {
 					return false
 				}
@@ -232,7 +232,7 @@ func TestSandboxOwnsOrderedTrafficPolicyReferences(t *testing.T) {
 	}
 	want := []string{"trafficPolicies/global", "namespaces/demo/trafficPolicies/selector", "namespaces/agentio-system/trafficPolicies/root", "namespaces/demo/trafficPolicies/namespace"}
 	eventually(t, func() bool {
-		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetWorkload, worker.UID))
+		binding := fixture.compiler.Bindings().GetKey(worker.UID)
 		manifest := manifestAt(t, fixture.compiler, "actor")
 		return binding == nil && manifest != nil && reflect.DeepEqual(trafficPolicyRefs(manifest), want)
 	}, "Sandbox owns ordered global, namespace and selector policies")

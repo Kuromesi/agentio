@@ -15,12 +15,6 @@ import (
 	"github.com/openkruise/agentio/bench/xds/scenario"
 )
 
-const Name = "trafficpolicy"
-
-func init() {
-	scenario.Register(Name, New)
-}
-
 const PolicyType = "type.googleapis.com/agentio.security.TrafficPolicy"
 const SandboxType = "type.googleapis.com/agentio.sandbox.Sandbox"
 

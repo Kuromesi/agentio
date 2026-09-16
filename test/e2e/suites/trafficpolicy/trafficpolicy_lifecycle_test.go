@@ -609,7 +609,7 @@ spec:
 			if err != nil {
 				return err
 			}
-			if !view.found && !view.aggregated {
+			if !view.found {
 				return fmt.Errorf("policy tp-wl-dynamic is absent from config dump")
 			}
 			for _, workload := range workloads {

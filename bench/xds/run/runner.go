@@ -45,7 +45,7 @@ type runner struct {
 }
 
 func newRunner(cfg config) (*runner, error) {
-	sc, err := driver.New(cfg.Scenario, cfg.ScenarioConfig)
+	sc, err := newScenario(cfg.Scenario, cfg.ScenarioConfig)
 	if err != nil {
 		return nil, err
 	}

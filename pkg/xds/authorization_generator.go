@@ -79,12 +79,10 @@ func selectAuthorizationResources(
 // Gateways see compatibility Authorization references cluster-wide; other clients
 // are restricted to their authenticated workload or node scope.
 func authorizationWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
-	query := model.WorkloadQuery{AuthorizationRefsOnly: true}
 	if scope.Class == model.ClientEgressGateway {
-		return query, true
+		return model.WorkloadQuery{AuthorizationRefsOnly: true}, true
 	}
 	query, ok := workloadScopeQuery(scope)
-	query.AuthorizationRefsOnly = true
 	return query, ok
 }
 

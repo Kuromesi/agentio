@@ -115,9 +115,9 @@ func (c *Compiler) Bindings() krt.Collection[policy.Bindings] {
 	return c.graph.policies.policyBindings
 }
 
-// PolicyNames returns the policy names bound to the given target.
-func (c *Compiler) PolicyNames(targetKind policy.TargetKind, targetUID string, kind model.PolicyKind) []string {
-	binding := c.graph.policies.policyBindings.GetKey(policy.BindingsKey(targetKind, targetUID))
+// PolicyNames returns the policy names bound to the given Sandbox.
+func (c *Compiler) PolicyNames(sandboxUID string, kind model.PolicyKind) []string {
+	binding := c.graph.policies.policyBindings.GetKey(sandboxUID)
 	if binding == nil || !binding.Valid() {
 		return nil
 	}

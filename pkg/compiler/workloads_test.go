@@ -615,7 +615,7 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		}
 	}, false)
 	binding := func(names ...string) policy.Bindings {
-		return policy.Bindings{TargetKind: policy.PolicyTargetSandbox, TargetUID: workload.UID, Groups: []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
+		return policy.Bindings{SandboxUID: workload.UID, Groups: []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
 	}
 	payload := func(name, host string) policy.CompiledSNIPolicy {
 		return policy.CompiledSNIPolicy{Name: name, Policy: &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}}}}
@@ -668,7 +668,7 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	eventually(t, func() bool { return getPolicy() == nil }, "policy removal")
 	bindings.UpdateObject(binding("first"))
 	expect("updated.example")
-	bindings.DeleteObject(policy.BindingsKey(policy.PolicyTargetSandbox, workload.UID))
+	bindings.DeleteObject(workload.UID)
 	eventually(t, func() bool { return getPolicy() == nil && len(resolved.List()) == 1 }, "binding removal preserves Workload networking")
 	settle()
 	if withdrawals.Load() != 0 {

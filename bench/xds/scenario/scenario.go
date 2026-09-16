@@ -44,18 +44,3 @@ type ClientFactory struct {
 	New          func() Client
 	PrepareRound func(json.RawMessage) (any, error)
 }
-
-var clients = NewRegistry[ClientFactory]()
-
-// Register is called by a scenario package's init function. Invalid or duplicate
-// registrations panic at startup; only factories are stored, never client state.
-func Register(name string, factory Factory[ClientFactory]) {
-	if err := clients.Register(name, factory); err != nil {
-		panic(err)
-	}
-}
-
-// New constructs a client factory for an imported, registered scenario.
-func New(name string, config json.RawMessage) (ClientFactory, error) {
-	return clients.New(name, config)
-}

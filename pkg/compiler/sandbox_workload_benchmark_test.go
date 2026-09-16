@@ -18,14 +18,17 @@ import (
 	"fmt"
 	"testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policy"
 )
 
-// BenchmarkSandboxCompatibilityProjection includes legacy encoding and resource
-// hashing. Inputs are already compiled; no API decoding, selector matching, DNS,
+// BenchmarkSandboxCompatibilityProjection measures Workload reference projection.
+// Shared policy encoding is performed once upstream; no API decoding, selector matching, DNS,
 // or per-client ADS work belongs in this measurement.
 func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
 	for _, count := range []int{10, 100, 1000} {
@@ -44,19 +47,27 @@ func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
 			compiled := policy.CompiledTrafficPolicy{CompiledPolicy: policy.CompiledPolicy[*securityv1.TrafficPolicy]{
 				Name: "trafficPolicies/shared", Policy: &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: rules}},
 			}}
+			var err error
+			compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(compiled, model.TrafficPolicy{
+				Name: "shared", Namespace: "demo",
+				Spec: agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			}, "agentio-system")
+			if err != nil {
+				b.Fatal(err)
+			}
 			policies := policyCollections{
 				trafficPolicies: krt.NewStaticCollection(nil, []policy.CompiledTrafficPolicy{compiled}, opts...),
 				sniPolicies:     krt.NewStaticCollection[policy.CompiledSNIPolicy](nil, nil, opts...),
 				policyBindings: krt.NewStaticCollection(nil, []policy.Bindings{{
-					TargetKind: policy.PolicyTargetSandbox, TargetUID: sandbox.UID,
-					Groups: []policy.BindingGroup{{Kind: policy.PolicyKindTrafficPolicy, Names: []string{compiled.Name}}},
+					SandboxUID: sandbox.UID,
+					Groups:     []policy.BindingGroup{{Kind: policy.PolicyKindTrafficPolicy, Names: []string{compiled.Name}}},
 				}}, opts...),
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
 				projection, err := sandboxAsWorkload(krt.TestingDummyContext{}, workload, sandbox, policies)
-				if err != nil || len(projection.Resources) != 2 {
+				if err != nil || len(projection.AuthorizationNames) != 1 {
 					b.Fatalf("projection: %v", err)
 				}
 			}

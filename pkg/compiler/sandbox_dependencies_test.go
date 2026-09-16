@@ -62,7 +62,7 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 			len(snapshot.List(model.WorkloadAuthorizationType)) == 0
 	}, "Sandbox-scoped baseline and egress manifest")
 	manifest := manifestAt(t, fixture.compiler, "actor")
-	names := fixture.compiler.PolicyNames("sandbox", "actor", model.PolicyKindTrafficPolicy)
+	names := fixture.compiler.PolicyNames("actor", model.PolicyKindTrafficPolicy)
 	snapshot := currentSnapshot(t, fixture.compiler)
 	want := []string{"namespaces/tenant/trafficPolicies/baseline"}
 	if !reflect.DeepEqual(names, want) {
@@ -142,8 +142,8 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 	if err := r.Value.UnmarshalTo(address); err != nil {
 		t.Fatal(err)
 	}
-	if len(address.GetWorkload().AuthorizationPolicies) != 2 {
-		t.Fatal("Workload must reference Sandbox compatibility Authorizations")
+	if len(address.GetWorkload().AuthorizationPolicies) != 0 {
+		t.Fatal("Egress routing alone must not create TrafficPolicy Authorizations")
 	}
 	found := false
 	for _, extension := range address.GetWorkload().Extensions {

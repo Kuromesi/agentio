@@ -16,10 +16,8 @@ package trafficpolicy
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -174,14 +172,17 @@ func nativePolicyDump(bound, cached bool) string {
 	return string(body)
 }
 
-func legacyPolicyDump(complete bool) string {
-	aggregate := fmt.Sprintf("sandbox-%x", sha256.Sum256([]byte("client-uid")))
-	policies := []any{map[string]any{"namespace": "test", "name": aggregate + "-egress", "priority": -1}}
-	if complete {
-		policies = append(policies, map[string]any{"namespace": "test", "name": aggregate + "-ingress", "priority": -1})
+func legacyPolicyDump(bound, cached bool) string {
+	refs := []string{}
+	policies := []any{}
+	if bound {
+		refs = append(refs, "test/tp-target-egress")
+	}
+	if cached {
+		policies = append(policies, map[string]any{"namespace": "test", "name": "tp-target-egress", "scope": "WorkloadSelector", "priority": 100})
 	}
 	body, _ := json.Marshal(map[string]any{
-		"workload": map[string]any{"uid": "client-uid", "namespace": "test", "authorizationPolicies": []string{"test/" + aggregate + "-egress", "test/" + aggregate + "-ingress"}},
+		"workload": map[string]any{"uid": "client-uid", "namespace": "test", "authorizationPolicies": refs},
 		"policies": policies,
 	})
 	return string(body)
@@ -189,16 +190,19 @@ func legacyPolicyDump(complete bool) string {
 
 func TestInspectPolicyDumpRequiresBindingAndBody(t *testing.T) {
 	for _, tc := range []struct {
-		name, dump                 string
-		found, aggregated, wantErr bool
+		name, dump     string
+		found, wantErr bool
 	}{
 		{name: "native binding and body", dump: nativePolicyDump(true, true), found: true},
 		{name: "cached but unbound", dump: nativePolicyDump(false, true)},
 		{name: "missing referenced body", dump: nativePolicyDump(true, false), wantErr: true},
 		{name: "exact policy name", dump: strings.ReplaceAll(nativePolicyDump(true, true), "tp-target", "tp-target-extra")},
 		{name: "different workload", dump: strings.Replace(nativePolicyDump(true, true), `"workloadUid":"client-uid"`, `"workloadUid":"other-uid"`, 1), wantErr: true},
-		{name: "legacy aggregates are opaque", dump: legacyPolicyDump(true), aggregated: true},
-		{name: "incomplete legacy aggregates", dump: legacyPolicyDump(false), wantErr: true},
+		{name: "legacy reference and body", dump: legacyPolicyDump(true, true), found: true},
+		{name: "legacy unbound body", dump: legacyPolicyDump(false, true)},
+		{name: "legacy dangling reference", dump: legacyPolicyDump(true, false), wantErr: true},
+		{name: "legacy namespace scope", dump: strings.ReplaceAll(legacyPolicyDump(false, true), "WorkloadSelector", "Namespace"), found: true},
+		{name: "legacy global scope", dump: strings.ReplaceAll(legacyPolicyDump(false, true), "WorkloadSelector", "Global"), found: true},
 		{name: "invalid JSON", dump: `broken`, wantErr: true},
 		{name: "missing workload", dump: `{}`, wantErr: true},
 	} {
@@ -207,21 +211,28 @@ func TestInspectPolicyDumpRequiresBindingAndBody(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error=%v, want error=%v", err, tc.wantErr)
 			}
-			if err == nil && (got.found != tc.found || got.aggregated != tc.aggregated) {
+			if err == nil && got.found != tc.found {
 				t.Fatalf("view=%+v", got)
 			}
-			if (got.found || got.aggregated) && got.body == "" {
+			if got.found && got.body == "" {
 				t.Fatal("policy bodies are missing")
 			}
 		})
 	}
 }
 
-func TestWaitForPolicyStateReportsLegacyIdentityLimitation(t *testing.T) {
+func TestWaitForPolicyStateTracksLegacyPolicyNames(t *testing.T) {
 	for _, present := range []bool{true, false} {
-		err := waitForPolicyState(context.Background(), "tp-target", present, func(context.Context) (string, error) { return legacyPolicyDump(true), nil })
-		if !errors.Is(err, errAggregatedPolicyIdentity) {
-			t.Fatalf("error=%v, want explicit identity limitation", err)
+		calls := 0
+		err := waitForPolicyState(context.Background(), "tp-target", present, func(context.Context) (string, error) {
+			calls++
+			if calls == 1 {
+				return legacyPolicyDump(!present, true), nil
+			}
+			return legacyPolicyDump(present, true), nil
+		})
+		if err != nil || calls != 2 {
+			t.Fatalf("present=%v calls=%d error=%v", present, calls, err)
 		}
 	}
 }

@@ -287,7 +287,7 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 			return "", fmt.Errorf("decode policy: %w", err)
 		}
 		_, referenced := policyReferences[policy.Namespace+"/"+policy.Name]
-		if referenced || policy.Scope == "Global" {
+		if referenced || policy.Scope == "Global" || policy.Scope == "Namespace" && policy.Namespace == workloadNamespace {
 			policies = append(policies, rawPolicy)
 		}
 	}

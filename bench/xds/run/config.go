@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -85,7 +84,7 @@ func parseConfig(args []string, out io.Writer) (config, error) {
 	f.StringVar(&c.CAConfigMap, "ca-configmap", "agentio-ca-root-cert", "CA ConfigMap name")
 	f.StringVar(&c.CAKey, "ca-key", "root-cert.pem", "CA ConfigMap key")
 	f.StringVar(&c.TokenAudience, "token-audience", "agentio-ca", "projected token audience")
-	f.StringVar(&c.Scenario, "scenario", "trafficpolicy", "registered driver scenario")
+	f.StringVar(&c.Scenario, "scenario", "trafficpolicy", "driver scenario: discovery or trafficpolicy")
 	f.Func("scenario-config", "scenario-specific JSON options", func(v string) error {
 		if !json.Valid([]byte(v)) {
 			return errors.New("invalid scenario JSON")
@@ -128,7 +127,7 @@ func (c config) validate() error {
 	if !slices.Contains([]string{"Never", "IfNotPresent", "Always"}, c.ImagePullPolicy) {
 		return errors.New("invalid image-pull-policy")
 	}
-	if _, err := driver.New(c.Scenario, c.ScenarioConfig); err != nil {
+	if _, err := newScenario(c.Scenario, c.ScenarioConfig); err != nil {
 		return err
 	}
 	if c.Pods < 1 || len(c.Stages) == 0 {

@@ -15,226 +15,84 @@
 package policy
 
 import (
-	"net/netip"
-	"slices"
 	"testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"google.golang.org/protobuf/proto"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
-func TestSandboxAuthorizationDecisions(t *testing.T) {
-	allow := &securityv1.TrafficPolicy_Rule{Match: &securityv1.TrafficPolicy_Match{}}
-	deny := &securityv1.TrafficPolicy_Rule{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}}
-	ipAllow := &securityv1.TrafficPolicy_Rule{Match: &securityv1.TrafficPolicy_Match{DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: []byte{192, 0, 2, 0}, Length: 24}}}}
-	onPort := func(protocol securityv1.TrafficPolicy_Protocol, start, end uint32) *securityv1.TrafficPolicy_Rule {
-		p := &securityv1.TrafficPolicy_PortMatch{Protocol: protocol}
-		if start != 0 {
-			p.Port = &start
-		}
-		if end != 0 {
-			p.EndPort = &end
-		}
-		return &securityv1.TrafficPolicy_Rule{Match: &securityv1.TrafficPolicy_Match{Ports: []*securityv1.TrafficPolicy_PortMatch{p}}}
-	}
-	wildcardPort := onPort(securityv1.TrafficPolicy_TCP, 443, 0)
-	wildcardPort.Match.Ports = append(wildcardPort.Match.Ports, &securityv1.TrafficPolicy_PortMatch{})
-	p := func(rules ...*securityv1.TrafficPolicy_Rule) *securityv1.TrafficPolicy {
-		return &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: rules}}
-	}
+func TestTrafficPolicyLegacyProjection(t *testing.T) {
+	body := &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{Rules: []*securityv1.TrafficPolicy_Rule{
+		{Match: &securityv1.TrafficPolicy_Match{DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: []byte{192, 0, 2, 0}, Length: 24}}}},
+		{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{DestinationIps: []*securityv1.TrafficPolicy_Address{{Address: make([]byte, 4)}}}},
+	}}}
+	before := proto.Clone(body)
 	for _, tc := range []struct {
-		name     string
-		chain    []*securityv1.TrafficPolicy
-		ip       string
-		protocol securityv1.Protocol
-		port     uint32
-		allow    bool
+		name      string
+		source    model.TrafficPolicy
+		scope     securityv1.Scope
+		namespace string
+		priority  int32
 	}{
-		{
-			name:     "absent direction allows",
-			chain:    nil,
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    true,
-		},
-		{
-			name:     "empty direction denies",
-			chain:    []*securityv1.TrafficPolicy{p()},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    false,
-		},
-		{
-			name:     "dedicated wins over shared deny",
-			chain:    []*securityv1.TrafficPolicy{p(ipAllow), p(deny)},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    true,
-		},
-		{
-			name:     "miss continues to shared deny",
-			chain:    []*securityv1.TrafficPolicy{p(ipAllow), p(deny)},
-			ip:       "203.0.113.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    false,
-		},
-		{
-			name:     "empty policy continues",
-			chain:    []*securityv1.TrafficPolicy{p(), p(allow)},
-			ip:       "203.0.113.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    true,
-		},
-		{
-			name:     "unmatched chain denies",
-			chain:    []*securityv1.TrafficPolicy{p(ipAllow)},
-			ip:       "203.0.113.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    false,
-		},
-		{
-			name:     "IPv6 wildcard allow",
-			chain:    []*securityv1.TrafficPolicy{p(allow)},
-			ip:       "2001:db8::1",
-			protocol: securityv1.Protocol_UDP,
-			port:     53,
-			allow:    true,
-		},
-		{
-			name:     "IPv6 wildcard deny",
-			chain:    []*securityv1.TrafficPolicy{p(deny), p(allow)},
-			ip:       "2001:db8::1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    false,
-		},
-		{
-			name:     "missing reference denies",
-			chain:    []*securityv1.TrafficPolicy{nil, p(allow)},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    false,
-		},
-		{
-			name:     "earlier allow survives missing reference",
-			chain:    []*securityv1.TrafficPolicy{p(allow), nil},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     80,
-			allow:    true,
-		},
-		{
-			name:     "port range inclusive",
-			chain:    []*securityv1.TrafficPolicy{p(onPort(securityv1.TrafficPolicy_TCP, 80, 90))},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     90,
-			allow:    true,
-		},
-		{
-			name:     "port range miss",
-			chain:    []*securityv1.TrafficPolicy{p(onPort(securityv1.TrafficPolicy_TCP, 80, 90))},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     91,
-			allow:    false,
-		},
-		{
-			name:     "protocol mismatch",
-			chain:    []*securityv1.TrafficPolicy{p(onPort(securityv1.TrafficPolicy_UDP, 53, 0))},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_TCP,
-			port:     53,
-			allow:    false,
-		},
-		{
-			name:     "ICMP protocol only",
-			chain:    []*securityv1.TrafficPolicy{p(onPort(securityv1.TrafficPolicy_ICMP, 0, 0))},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_ICMP,
-			port:     0,
-			allow:    true,
-		},
-		{
-			name:     "unconstrained port alternative",
-			chain:    []*securityv1.TrafficPolicy{p(wildcardPort)},
-			ip:       "192.0.2.1",
-			protocol: securityv1.Protocol_UDP,
-			port:     53,
-			allow:    true,
-		},
+		{name: "namespace", source: model.TrafficPolicy{Namespace: "demo"}, scope: securityv1.Scope_NAMESPACE, namespace: "demo", priority: 42},
+		{name: "global", source: model.TrafficPolicy{Global: true}, scope: securityv1.Scope_GLOBAL, namespace: "agentio-system", priority: 42},
+		{name: "root namespace", source: model.TrafficPolicy{Namespace: "agentio-system"}, scope: securityv1.Scope_GLOBAL, namespace: "agentio-system", priority: 42},
+		{name: "selector", source: model.TrafficPolicy{Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}}, scope: securityv1.Scope_WORKLOAD_SELECTOR, namespace: "demo", priority: 42},
+		{name: "global selector", source: model.TrafficPolicy{Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "app", Operator: metav1.LabelSelectorOpExists}}}}}, scope: securityv1.Scope_WORKLOAD_SELECTOR, namespace: "agentio-system", priority: 42},
+		{name: "dedicated", source: model.TrafficPolicy{Dedicated: true, SandboxUID: "kruise:actor", Namespace: "demo"}, scope: securityv1.Scope_WORKLOAD_SELECTOR, namespace: "demo", priority: -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			before := make([]*securityv1.TrafficPolicy, len(tc.chain))
-			for i, p := range tc.chain {
-				if p != nil {
-					before[i] = proto.Clone(p).(*securityv1.TrafficPolicy)
-				}
+			tc.source.Name, tc.source.Spec.Priority = "api", 42
+			converted, err := TrafficPolicyAsAuthorizations(CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Policy: body}}, tc.source, "agentio-system")
+			if err != nil || len(converted) != 1 {
+				t.Fatalf("converted=%v err=%v", converted, err)
 			}
-			converted, err := SandboxAsAuthorizations("test", "demo", tc.chain)
-			if err != nil {
+			a := converted[0].Policy
+			ext := &extensionsv1.TrafficPolicyExtension{}
+			if err := a.AuthExtensions[0].Config.UnmarshalTo(ext); err != nil {
 				t.Fatal(err)
 			}
-			if got := legacySandboxDecision(converted[0].Policy, netip.MustParseAddr(tc.ip), tc.protocol, tc.port); got != tc.allow {
-				t.Fatalf("legacy allow=%v, expected %v; policy=%v", got, tc.allow, converted[0].Policy)
+			if a.Scope != tc.scope || a.Namespace != tc.namespace || ext.Priority != tc.priority || ext.Mode != extensionsv1.TrafficPolicyMode_CLIENT {
+				t.Fatalf("authorization=%v extension=%v", a, ext)
 			}
-			// No source configured ingress: the compatibility output preserves
-			// native Sandbox's allow behavior, even if legacy global rules exist.
-			if got := legacySandboxDecision(converted[1].Policy, netip.MustParseAddr(tc.ip), tc.protocol, tc.port); got != !slices.Contains(tc.chain, nil) {
-				t.Fatal("egress rules affected ingress")
+			if !tc.source.Dedicated && a.Name != "api-egress" {
+				t.Fatalf("source name lost: %s", a.Name)
 			}
-			for i, p := range tc.chain {
-				if !proto.Equal(p, before[i]) {
-					t.Fatal("projection mutated shared compiled policy")
-				}
+			if len(a.Groups) != 2 || len(a.Groups[0].Rules[0].Matches[0].DestinationIps) != 1 || len(a.Groups[1].Rules[0].Matches[0].NotDestinationIps) != 1 {
+				t.Fatalf("rules changed or fallback added: %v", a.Groups)
+			}
+			if !proto.Equal(body, before) {
+				t.Fatal("projection mutated shared body")
 			}
 		})
 	}
 }
 
-// Evaluate the legacy wire subset emitted above: OR of groups, AND of clauses,
-// OR of matches, and negative fields encoding a terminal rejection. Explicit
-// expectations above exercise behavior rather than copying the converter.
-func legacySandboxDecision(p *securityv1.Authorization, dst netip.Addr, protocol securityv1.Protocol, port uint32) bool {
-	for _, group := range p.Groups {
-		negative := false
-		for _, clause := range group.Rules {
-			for _, m := range clause.Matches {
-				negative = negative || len(m.NotDestinationIps) > 0 || len(m.NotDestinationPortRanges) > 0
+func TestTrafficPolicyLegacyEmptyDirections(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  *securityv1.TrafficPolicy
+		count int
+	}{
+		{"absent", &securityv1.TrafficPolicy{}, 0},
+		{"unresolved egress", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}}, 1},
+		{"unresolved both", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}, Ingress: &securityv1.TrafficPolicy_RuleSet{}}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			converted, err := TrafficPolicyAsAuthorizations(CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Policy: tc.body}}, model.TrafficPolicy{Name: "api", Namespace: "demo"}, "agentio-system")
+			if err != nil || len(converted) != tc.count {
+				t.Fatalf("converted=%v err=%v", converted, err)
 			}
-		}
-		matched := true
-		for _, clause := range group.Rules {
-			clauseMatched := false
-			for _, m := range clause.Matches {
-				ips, ports := m.DestinationIps, m.DestinationPortRanges
-				if negative {
-					ips, ports = m.NotDestinationIps, m.NotDestinationPortRanges
+			for _, a := range converted {
+				if len(a.Policy.Groups) != 0 {
+					t.Fatal("synthetic fallback added")
 				}
-				ipMatched := len(ips) == 0
-				for _, ip := range ips {
-					addr, valid := netip.AddrFromSlice(ip.Address)
-					ipMatched = ipMatched || (valid && netip.PrefixFrom(addr, int(ip.Length)).Contains(dst))
-				}
-				portMatched := len(ports) == 0
-				for _, pr := range ports {
-					portMatched = portMatched || ((pr.Protocol == securityv1.Protocol_ALL || pr.Protocol == protocol) && port >= pr.Start && port <= pr.End)
-				}
-				clauseMatched = clauseMatched || (ipMatched && portMatched)
 			}
-			matched = matched && clauseMatched
-		}
-		if matched {
-			return !negative
-		}
+		})
 	}
-	return false
 }

@@ -75,7 +75,7 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 		"namespaces/tenant/trafficPolicies/a-local",
 		"namespaces/tenant/trafficPolicies/z-local",
 	}
-	binding := bindings.GetKey(BindingsKey(PolicyTargetSandbox, "sandbox"))
+	binding := bindings.GetKey("sandbox")
 	if binding == nil || !binding.Valid() {
 		t.Fatalf("Sandbox has no valid binding: %+v", binding)
 	}

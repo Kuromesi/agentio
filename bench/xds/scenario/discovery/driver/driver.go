@@ -15,10 +15,6 @@ import (
 
 type discoveryDriver struct{ options discovery.Options }
 
-func init() {
-	driver.Register(discovery.Name, New)
-}
-
 func New(raw json.RawMessage) (driver.Driver, error) {
 	cfg, err := discovery.Parse(raw)
 	if err != nil {

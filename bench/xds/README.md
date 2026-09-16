@@ -11,14 +11,12 @@ The `scenario/` packages implement pluggable client behavior and Kubernetes driv
 
 The runner creates a unique namespace for each run; the TrafficPolicy driver also creates a uniquely named GlobalTrafficPolicy. It deletes its own resources on success, failure or interrupt. Namespace deletion is asynchronous. `--keep-resources` leaves the Pods/connections running; `cleanup.json` records their names and kubectl context for manual deletion. It never modifies control-plane resource limits, environment variables or images. Ctrl-C and SIGTERM cancel active work; cleanup runs with a separate deadline, checks run ownership and uses UID preconditions. A failed run retains both the original error and any cleanup errors in its artifacts.
 
-## Add a registered scenario
+## Add a scenario
 
 ```text
 scenario/
-  registry.go                 # named factories, duplicate/unknown-name checks
-  scenario.go                 # client contract and self-registration API
-  builtin/builtin.go          # imports all built-in client scenarios
-  builtin/driver/builtin.go   # imports all built-in Kubernetes drivers
+  scenario.go                 # client contract
+  decode.go                   # strict scenario-option decoding
   driver/driver.go            # Kubernetes driver contract and cleanup tracking
   discovery/
     client.go                 # configurable subscriptions and readiness
@@ -28,15 +26,15 @@ scenario/
     driver/driver.go          # resource creation, updates and cross-client checks
 ```
 
-Implement a client package under `scenario/<name>` and register its factory from `init()` with `scenario.Register(Name, New)`. Add its blank import to `scenario/builtin/builtin.go`; the load entry point already imports that catalog. The factory receives `--scenario-config` JSON and returns a `ClientFactory`. Its `New` function creates a separate `Client` for each ADS stream; its optional `PrepareRound` function parses expected round parameters once per load process. Factories hold immutable configuration, and the prepared round value is shared read-only; mutable response/readiness state belongs to each client.
+Implement a client package under `scenario/<name>` and add its constructor to the switch in `load/scenarios.go`. The factory receives `--scenario-config` JSON and returns a `ClientFactory`. Its `New` function creates a separate `Client` for each ADS stream; its optional `PrepareRound` function parses expected round parameters once per load process. Factories hold immutable configuration, and the prepared round value is shared read-only; mutable response/readiness state belongs to each client.
 
 A client exposes `Subscriptions()` and `Observe(response, expected)`. `Observe` decides readiness, ACK/NACK/no reply, and whether the response completes the current round. Return a sample only for a successfully validated response that should be ACKed; the load loop submits that ACK and fills in the client ID and timestamps. The load loop discards samples from observations started before the latest round was armed. Each scenario must also match arriving responses against the expected round, for example using a unique marker or resource version.
 
-For Kubernetes automation, implement `scenario/<name>/driver`, call `driver.Register(Name, New)` from its `init()`, and add a blank import to `scenario/builtin/driver/builtin.go`. The runner already imports that driver catalog. The driver implements `ClientConfig`, `Prepare`, `Rounds`, `Trigger` and `Check`: generate per-Pod client options, prepare resources, enumerate opaque round parameters, trigger an update and validate the resulting client statuses. `Rounds` returning an empty list supports discovery/connection-only scenarios. Each runner gets a fresh driver instance. New scenarios do not require switches in the load loop or runner.
+For Kubernetes automation, implement `scenario/<name>/driver` and add its constructor to the switch in `run/scenarios.go`. The driver implements `ClientConfig`, `Prepare`, `Rounds`, `Trigger` and `Check`: generate per-Pod client options, prepare resources, enumerate opaque round parameters, trigger an update and validate the resulting client statuses. `Rounds` returning an empty list supports discovery/connection-only scenarios. Each runner gets a fresh driver instance; the load loop and orchestration logic use the shared interfaces.
 
 `driver.Environment` provides Kubernetes clients, the run namespace and Pod names. Namespace deletion covers resources within the run namespace. Before attempting to create an extra cluster-scoped resource, call `Track` and label it with `driver.RunLabel: environment.Namespace`; tracking before the request ensures cleanup can find an object even if creation persists but its response is canceled. The runner checks that label and uses UID preconditions before deletion. Tracked resource references are included in `cleanup.json`.
 
-Keep Kubernetes imports in the driver subpackage: `load` imports only client factories and therefore does not pull client-go into the load binary. Each imported package registers itself during Go initialization; duplicate names or invalid factories panic at startup. Registries store only factories, so each run and stream still gets independent mutable state. Registration is restricted to initialization, before concurrent execution. Go only initializes imported packages: adding a directory alone does not register it, and the shared contract package cannot import its own implementations without an import cycle. The two `builtin` catalogs provide that import wiring without changes to application entry points or runtime plugin loading. Scenario-specific options go through `--scenario-config`, with misspelled JSON fields rejected by each built-in factory.
+Keep Kubernetes imports in the driver subpackage: `load` imports only client factories and therefore does not pull client-go into the load binary. The two entry points select constructors explicitly and reject unknown scenario names. Scenario-specific options go through `--scenario-config`, with misspelled JSON fields rejected by each factory.
 
 | Scenario | Runner `--scenario-config` | Direct load application `--scenario-config` |
 | --- | --- | --- |
@@ -166,4 +164,4 @@ go run ./bench/xds/run --help
 
 `loadapi/` holds the typed HTTP management messages shared by the load application and runner; the generic ADS client stays independent of that management API. Scenario parameters and check results are opaque to this protocol. `--timeout` and `--hold-seconds` still take numeric seconds.
 
-The client tests exercise real TLS/gRPC connections, arbitrary resource types, initial versions, ACK/NACK, unsubscribe, independent transports, token rotation, context cancellation and readiness timeout accounting. Registry and scenario tests cover duplicate/unknown registration, independent instances, per-stream readiness, round markers and policy consistency. Runner tests cover canceled creation cleanup, resource ownership, deadline propagation and incomplete samples. Functional Kubernetes smoke tests exercise both supplied scenarios. Keep benchmark output and binaries outside the tracked source tree; this directory does not contain credentials or historical performance artifacts.
+The client tests exercise real TLS/gRPC connections, arbitrary resource types, initial versions, ACK/NACK, unsubscribe, independent transports, token rotation, context cancellation and readiness timeout accounting. Entry-point and scenario tests cover scenario selection, invalid options, independent instances, per-stream readiness, round markers and policy consistency. Runner tests cover canceled creation cleanup, resource ownership, deadline propagation and incomplete samples. Functional Kubernetes smoke tests exercise both supplied scenarios. Keep benchmark output and binaries outside the tracked source tree; this directory does not contain credentials or historical performance artifacts.

@@ -44,11 +44,19 @@ racetest:
 GOLANGCI_LINT_VERSION := v2.13.2
 GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOLANGCI_LINT_ARGS ?=
+GO_STYLE_BASE ?= HEAD
+FMT_PATHS ?= .
+
+.PHONY: lint.style
 
 lint.golangci:
 	$(GOLANGCI_LINT) run $(GOLANGCI_LINT_ARGS) ./...
+	cd test/e2e && $(GOLANGCI_LINT) run --config ../../.golangci.yml $(GOLANGCI_LINT_ARGS) ./...
 
-lint:
+lint.style:
+	go run ./tools/gostyle -base "$(GO_STYLE_BASE)"
+
+lint: lint.style
 	go vet ./...
 	go -C test/e2e vet ./...
 
@@ -74,8 +82,7 @@ check.envdocs:
 format: fmt
 
 fmt:
-	go fmt ./...
-	go -C test/e2e fmt ./...
+	$(GOLANGCI_LINT) fmt $(FMT_PATHS)
 
 tidy:
 	go mod tidy

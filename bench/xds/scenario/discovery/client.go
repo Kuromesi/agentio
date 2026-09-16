@@ -12,12 +12,6 @@ import (
 	"github.com/openkruise/agentio/bench/xds/scenario"
 )
 
-const Name = "discovery"
-
-func init() {
-	scenario.Register(Name, New)
-}
-
 type Options struct {
 	Types []string `json:"types"`
 }
