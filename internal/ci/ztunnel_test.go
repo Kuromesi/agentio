@@ -181,7 +181,10 @@ func TestZtunnelSourceScriptsValidateAndUpdatePins(t *testing.T) {
 			}
 			remote := "ref: " + tc.remoteRef + "\tHEAD\n" + tc.remoteSHA + "\tHEAD\n"
 			writeTestFile(t, filepath.Join(dir, "remote"), remote, 0o600)
-			realGit, _ := exec.LookPath("git")
+			realGit, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
 			writeTestFile(t, filepath.Join(dir, "git"), "#!/bin/bash\nif [[ $1 == ls-remote ]]; then cat \"$TEST_REMOTE_HEAD\"; else exec \"$TEST_REAL_GIT\" \"$@\"; fi\n", 0o700)
 			for _, script := range []struct {
 				name, body string
