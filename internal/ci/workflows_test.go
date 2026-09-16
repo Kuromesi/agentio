@@ -17,6 +17,7 @@ package ci
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -145,6 +146,65 @@ func TestClientTrustFixtureIsAvailableForReleaseAndPresubmit(t *testing.T) {
 		if index < 0 || !strings.Contains(stringValue(t, steps[index].(map[string]any), "if"), "contains(matrix.fixtures, 'clienttrust')") {
 			t.Fatalf("%s must support release sidecar jobs without candidate archives", name)
 		}
+	}
+}
+
+func TestReleaseBuildsExtProcFixtureWhenNoOverrideIsSupplied(t *testing.T) {
+	release := loadWorkflow(t, "agentio-release.yml")
+	input := mapValue(t, mapValue(t, mapValue(t, workflowTriggers(t, release), "workflow_dispatch"), "inputs"), "ext_proc_image")
+	if input["required"] != false || input["default"] != "" {
+		t.Fatal("release must work without a previously published ext-proc fixture")
+	}
+	e2e := loadWorkflow(t, "agentio-e2e.yml")
+	jobs := workflowJobs(t, e2e)
+	if !slices.Contains(jobNeeds(t, jobs, "product-e2e"), "build-ext-proc-fixture") {
+		t.Fatal("E2E must wait for the source-built ext-proc fixture")
+	}
+	if _, conditional := workflowJob(t, jobs, "build-ext-proc-fixture")["if"]; conditional {
+		t.Fatal("skipping the fixture job would also skip E2E for image-override callers")
+	}
+	build := workflowStep(t, e2e, "build-ext-proc-fixture", "Build ext-proc fixture")
+	if build["if"] != "inputs.candidate_image_artifact == '' && inputs.ext_proc_image == ''" {
+		t.Fatal("source fixture must only be built when neither an image override nor candidates are supplied")
+	}
+	for _, name := range []string{"Download ext-proc fixture", "Publish ext-proc fixture to local registry", "Start local image registry", "Delete local image registry"} {
+		step := workflowStep(t, e2e, "product-e2e", name)
+		if !strings.Contains(stringValue(t, step, "if"), "needs.build-ext-proc-fixture.outputs.artifact != ''") {
+			t.Errorf("%s must support the source-built fixture", name)
+		}
+	}
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("release validation script test requires %s", tool)
+		}
+	}
+	script := stringValue(t, workflowStep(t, release, "validate-release", "Validate release version and resolve dependency BOM"), "run")
+	deps, err := os.ReadFile(filepath.Join("..", "..", "agentio.deps"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, image string
+		wantErr     bool
+	}{
+		{name: "build fixture locally"},
+		{name: "immutable override", image: "registry.example/ext-proc@sha256:" + strings.Repeat("a", 64)},
+		{name: "reject mutable override", image: "registry.example/ext-proc:latest", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "agentio.deps"), string(deps), 0o600)
+			writeTestFile(t, filepath.Join(dir, "gh"), "#!/bin/sh\nexit 1\n", 0o700)
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"VERSION=0.2.0", "GITHUB_REPOSITORY=openkruise/agentio", "GITHUB_OUTPUT="+filepath.Join(dir, "output"),
+				"CNI_IMAGE=", "PROXY_INIT_IMAGE=", "GATEWAY_IMAGE=", "FORWARD_PROXY_IMAGE=", "EXT_PROC_IMAGE="+tc.image)
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validation error = %v, wantErr %v; output: %s", err, tc.wantErr, out)
+			}
+		})
 	}
 }
 
