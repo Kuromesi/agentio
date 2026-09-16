@@ -56,9 +56,6 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 	stop := t.Context().Done()
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	bindings := NewPolicyBindingsCollection(
-		krt.NewStaticCollection(nil, []model.Workload{{
-			UID: "workload", Namespace: "tenant", Labels: map[string]string{"app": "client"},
-		}}, options...),
 		krt.NewStaticCollection(nil, []model.Sandbox{{
 			UID: "sandbox", Namespace: "tenant", Labels: map[string]string{"app": "client"},
 		}}, options...),
@@ -78,14 +75,12 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 		"namespaces/tenant/trafficPolicies/a-local",
 		"namespaces/tenant/trafficPolicies/z-local",
 	}
-	for _, kind := range []TargetKind{PolicyTargetWorkload, PolicyTargetSandbox} {
-		binding := bindings.GetKey(BindingsKey(kind, string(kind)))
-		if binding == nil || !binding.Valid() {
-			t.Fatalf("%s has no valid binding: %+v", kind, binding)
-		}
-		if got := binding.PolicyNames(PolicyKindTrafficPolicy); !slices.Equal(got, want) {
-			t.Fatalf("%s TrafficPolicy order = %v, want %v", kind, got, want)
-		}
+	binding := bindings.GetKey(BindingsKey(PolicyTargetSandbox, "sandbox"))
+	if binding == nil || !binding.Valid() {
+		t.Fatalf("Sandbox has no valid binding: %+v", binding)
+	}
+	if got := binding.PolicyNames(PolicyKindTrafficPolicy); !slices.Equal(got, want) {
+		t.Fatalf("Sandbox TrafficPolicy order = %v, want %v", got, want)
 	}
 }
 
@@ -173,13 +168,13 @@ func TestTrafficPolicyEmptyPeerSemantics(t *testing.T) {
 						body = compiled.Policy.Ingress
 					}
 					configured := name == "unresolved-peer" || name == "explicit-all"
-					if (body != nil) != configured || (len(compiled.AsAuthorization) == 1) != configured {
-						t.Fatalf("native/legacy direction presence disagrees with Poseidon: native=%v legacy=%v", compiled.Policy, compiled.AsAuthorization)
+					if (body != nil) != configured {
+						t.Fatalf("direction presence disagrees with Poseidon: %v", compiled.Policy)
 					}
-					if name == "unresolved-peer" && (len(body.Rules) != 0 || len(compiled.AsAuthorization[0].Policy.Groups) != 0) {
+					if name == "unresolved-peer" && len(body.Rules) != 0 {
 						t.Fatal("unresolved peers must remain non-matching in both formats")
 					}
-					if name == "explicit-all" && (len(body.Rules) != 1 || len(compiled.AsAuthorization[0].Policy.Groups) != 1) {
+					if name == "explicit-all" && len(body.Rules) != 1 {
 						t.Fatal("explicit match-all peer lost its rule")
 					}
 				})
@@ -235,7 +230,7 @@ func TestTrafficPolicyAuthorizationPortEncoding(t *testing.T) {
 				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}},
 				Ports: []agentsv1alpha1.TrafficPolicyPort{
 					{Port: &start}, {Protocol: "TCP", EndPort: &end},
-					{Protocol: "UDP", Port: &start, EndPort: &end}, {Protocol: "ICMP"}, {Protocol: "SCTP"}, {},
+					{Protocol: "UDP", Port: &start, EndPort: &end}, {Protocol: "ICMP"}, {Protocol: "SCTP"},
 				},
 			}}},
 		},
@@ -250,7 +245,7 @@ func TestTrafficPolicyAuthorizationPortEncoding(t *testing.T) {
 		{Start: 0, End: 65535, Protocol: securityv1.Protocol_ICMP},
 		{Start: 0, End: 65535, Protocol: securityv1.Protocol_SCTP},
 	}}
-	got := compiled.AsAuthorization[0].Policy.Groups[0].Rules[1].Matches[0]
+	got := compiledRuleAuthorization(t, compiled).Policy.Groups[0].Rules[1].Matches[0]
 	if !proto.Equal(got, want) {
 		t.Fatalf("legacy reject port encoding = %v, want %v", got, want)
 	}

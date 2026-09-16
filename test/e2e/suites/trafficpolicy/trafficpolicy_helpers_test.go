@@ -19,8 +19,8 @@ package trafficpolicy
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -35,7 +35,8 @@ func waitForPolicyState(ctx context.Context, policy string, present bool, dump c
 	if dump == nil {
 		return fmt.Errorf("config dump callback is required")
 	}
-	return retry.UntilSuccess(ctx, retry.Policy{
+	aggregated := false
+	err := retry.UntilSuccess(ctx, retry.Policy{
 		Timeout:  2 * time.Minute,
 		Delay:    200 * time.Millisecond,
 		Backoff:  1,
@@ -46,8 +47,15 @@ func waitForPolicyState(ctx context.Context, policy string, present bool, dump c
 		if err != nil {
 			return err
 		}
-		found := strings.Contains(content, policy)
-		if found == present {
+		view, err := inspectPolicyDump(content, policy)
+		if err != nil {
+			return err
+		}
+		if view.aggregated {
+			aggregated = true
+			return nil
+		}
+		if view.found == present {
 			return nil
 		}
 		if present {
@@ -55,6 +63,10 @@ func waitForPolicyState(ctx context.Context, policy string, present bool, dump c
 		}
 		return fmt.Errorf("policy %q remains in config dump", policy)
 	})
+	if err == nil && aggregated {
+		return errAggregatedPolicyIdentity
+	}
+	return err
 }
 
 func waitForPolicyPresent(t *testing.T, instance echo.Instance, policy string) {
@@ -64,7 +76,9 @@ func waitForPolicyPresent(t *testing.T, instance echo.Instance, policy string) {
 	environment := suite.Environment(t)
 	if err := waitForPolicyState(ctx, policy, true, func(ctx context.Context) (string, error) {
 		return rig.ConfigDump(ctx, environment, instance)
-	}); err != nil {
+	}); errors.Is(err, errAggregatedPolicyIdentity) {
+		t.Logf("legacy dump has workload policy aggregates; source %q is verified by the following traffic convergence assertions", policy)
+	} else if err != nil {
 		t.Fatalf("wait for policy %q in %s config dump: %v", policy, instance.Name(), err)
 	}
 }
@@ -76,7 +90,9 @@ func waitForPolicyGone(t *testing.T, instance echo.Instance, policy string) {
 	environment := suite.Environment(t)
 	if err := waitForPolicyState(ctx, policy, false, func(ctx context.Context) (string, error) {
 		return rig.ConfigDump(ctx, environment, instance)
-	}); err != nil {
+	}); errors.Is(err, errAggregatedPolicyIdentity) {
+		t.Logf("legacy dump has workload policy aggregates; source %q is verified by the following traffic convergence assertions", policy)
+	} else if err != nil {
 		t.Fatalf("wait for policy %q to leave %s config dump: %v", policy, instance.Name(), err)
 	}
 }

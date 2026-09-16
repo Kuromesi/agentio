@@ -64,7 +64,6 @@ func benchmarkPolicyBindingsExactPolicyChurn(b *testing.B) {
 	}
 	attachments := krt.NewStaticCollection(nil, basePolicies, options...)
 	bindings := NewPolicyBindingsCollection(
-		krt.NewStaticCollection[model.Workload](nil, nil, options...),
 		krt.NewStaticCollection(nil, sandboxes, options...),
 		attachments,
 		krt.NewOptionsBuilder(stop, "benchmark", nil),

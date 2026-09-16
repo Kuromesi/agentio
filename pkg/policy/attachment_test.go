@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
@@ -145,12 +144,6 @@ func TestPolicyAttachmentExactTarget(t *testing.T) {
 		{Namespaces: []string{"demo"}, SandboxUID: "sandbox-a"},
 		{SandboxUID: " sandbox-a"},
 		{SandboxUID: " "},
-		{
-			SandboxUID: "sandbox-a",
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-				agentsv1alpha1.LabelSandboxID: "sandbox-b",
-			}},
-		},
 	} {
 		if _, err := NewPolicyAttachment(PolicyAttachment{
 			Kind:   PolicyKindAuthorization,

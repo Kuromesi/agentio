@@ -129,19 +129,11 @@ func TestSharedTrafficPolicyReferencesAuthorizeOnlyTheirResources(t *testing.T) 
 	}
 }
 
-func TestWorkloadTrafficPolicyReferenceUpdatesWithoutSandbox(t *testing.T) {
+func TestSandboxTrafficPolicyReferenceUpdates(t *testing.T) {
 	worker := workerResource(t, "pod-1")
 	name := "trafficPolicies/global"
 	body := sharedTrafficResource(t, name, securityv1.TrafficPolicy_ALLOW)
-	withRefs := func(names ...string) model.Resource {
-		facts := *worker.Facts.Workload
-		facts.TrafficPolicyRefs = names
-		r, err := model.NewResource(worker.Key, worker.XDSName, worker.Value, worker.Aliases, model.ResourceFacts{Workload: &facts})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return r
-	}
+	sandbox := sandboxWithTrafficRefs(t, "sandbox", "worker", name)
 	for _, scope := range []model.ClientScope{workerScope(worker), gatewayScope()} {
 		server := newTestServer(t, scope, []model.Resource{worker, body}, nil)
 		stream := newFakeStream(t.Context(), 8)
@@ -152,23 +144,23 @@ func TestWorkloadTrafficPolicyReferenceUpdatesWithoutSandbox(t *testing.T) {
 			t.Fatal("unreferenced policy was exposed")
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
-		server.resources.publish(selectionSnapshot(t, []model.Resource{withRefs(name), body}))
+		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, sandbox, body}))
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 2)[1]
 		if !reflect.DeepEqual(resourceNames(response), []string{name}) {
-			t.Fatalf("Workload reference did not grant visibility: %v", response)
+			t.Fatalf("Sandbox reference did not grant visibility: %v", response)
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
 		body = sharedTrafficResource(t, name, securityv1.TrafficPolicy_DENY)
-		server.resources.publish(selectionSnapshot(t, []model.Resource{withRefs(name), body}))
+		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, sandbox, body}))
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 3)[2]
 		if len(response.Resources) != 1 || response.Resources[0].Version != body.Hash {
-			t.Fatalf("Workload policy body update missing: %v", response)
+			t.Fatalf("Sandbox policy body update missing: %v", response)
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
-		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, body}))
+		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, sandboxWithTrafficRefs(t, "sandbox", "worker"), body}))
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 4)[3]
 		if !reflect.DeepEqual(response.RemovedResources, []string{name}) {
-			t.Fatalf("removed Workload reference retained visibility: %v", response)
+			t.Fatalf("removed Sandbox reference retained visibility: %v", response)
 		}
 		if err := server.finish(t, stream, done); err != nil {
 			t.Fatal(err)

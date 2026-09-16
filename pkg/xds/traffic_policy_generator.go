@@ -25,7 +25,7 @@ import (
 )
 
 // TrafficPolicyGenerator serves shared policies referenced by authorized
-// Workloads and Sandboxes. Named subscriptions never widen that owner scope.
+// Sandboxes. Named subscriptions never widen that owner scope.
 type TrafficPolicyGenerator struct{}
 
 // Generate returns shared policy updates visible to the requesting client.
@@ -46,7 +46,7 @@ func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRe
 	// Derived visibility changes may not include a TrafficPolicy body change.
 	// Diff the publications directly; incremental subscription views only carry
 	// sent versions for changed bodies, not for these derived candidates.
-	if scopedWorkloadChanged(request.Scope, request.Update) {
+	if request.Scope.Class != model.ClientEgressGateway && scopedWorkloadChanged(request.Scope, request.Update) {
 		for _, snapshot := range []model.ResourceSet{request.Update.Before(), request.Update.After()} {
 			for _, resource := range selectTrafficPolicyResources(request.Scope, snapshot, request.Subscription) {
 				candidates.Insert(resource.Key)
@@ -114,11 +114,6 @@ func selectTrafficPolicyResources(scope model.ClientScope, snapshot model.Resour
 
 func scopedTrafficPolicyNames(scope model.ClientScope, snapshot model.ResourceSet) sets.Set[string] {
 	names := sets.New[string]()
-	if query, ok := authorizationWorkloadQuery(scope); ok {
-		for _, workload := range snapshot.ListWorkloads(model.AddressType, query) {
-			names.InsertAll(workload.Facts.Workload.TrafficPolicyRefs...)
-		}
-	}
 	add := func(sandbox model.Resource) {
 		if sandbox.Facts.Sandbox != nil {
 			names.InsertAll(sandbox.Facts.Sandbox.TrafficPolicyRefs...)

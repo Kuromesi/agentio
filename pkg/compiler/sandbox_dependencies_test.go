@@ -56,11 +56,11 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		m := manifestAt(t, fixture.compiler, "actor")
-		// Workload policies are published independently of the Sandbox manifest.
+		// Native-only compilation does not emit compatibility policies.
 		snapshot := currentSnapshot(t, fixture.compiler)
 		return m != nil && len(trafficPolicyRefs(m)) == 1 && len(m.GetEgressRouting().GetRoutes()) == 2 &&
-			len(snapshot.List(model.WorkloadAuthorizationType)) == 2
-	}, "Sandbox-scoped baseline and egress manifest with Workload baselines")
+			len(snapshot.List(model.WorkloadAuthorizationType)) == 0
+	}, "Sandbox-scoped baseline and egress manifest")
 	manifest := manifestAt(t, fixture.compiler, "actor")
 	names := fixture.compiler.PolicyNames("sandbox", "actor", model.PolicyKindTrafficPolicy)
 	snapshot := currentSnapshot(t, fixture.compiler)
@@ -68,8 +68,8 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("policies %v, want %v", names, want)
 	}
-	if len(snapshot.List(model.WorkloadAuthorizationType)) != 2 || len(snapshot.List(model.SniTrafficPolicyType)) != 0 {
-		t.Fatal("Workload baselines must coexist with embedded Sandbox policies")
+	if len(snapshot.List(model.WorkloadAuthorizationType)) != 0 || len(snapshot.List(model.SniTrafficPolicyType)) != 0 {
+		t.Fatal("native-only compilation emitted standalone compatibility policies")
 	}
 	var cidrs []string
 	for _, rule := range manifest.EgressRouting.Routes {
@@ -84,7 +84,7 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 }
 
 func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
-	fixture := newIncrementalFixture(t)
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
 		UID:       "actor",
 		Namespace: "tenant",
@@ -142,8 +142,8 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 	if err := r.Value.UnmarshalTo(address); err != nil {
 		t.Fatal(err)
 	}
-	if len(address.GetWorkload().AuthorizationPolicies) != 0 {
-		t.Fatal("Workload must not carry authorization references")
+	if len(address.GetWorkload().AuthorizationPolicies) != 2 {
+		t.Fatal("Workload must reference Sandbox compatibility Authorizations")
 	}
 	found := false
 	for _, extension := range address.GetWorkload().Extensions {
@@ -153,8 +153,8 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 			if err := extension.Config.UnmarshalTo(payload); err != nil {
 				t.Fatal(err)
 			}
-			if len(payload.EgressPolicies) != 2 || payload.EgressPolicies[0].MatchCidrs[0] != "203.0.113.1/32" || payload.EgressPolicies[1].MatchCidrs[0] != "203.0.113.2/32" {
-				t.Fatalf("Workload must retain its own egress order: %v", payload)
+			if len(payload.EgressPolicies) != 2 || payload.EgressPolicies[0].MatchCidrs[0] != "203.0.113.2/32" || payload.EgressPolicies[1].MatchCidrs[0] != "203.0.113.1/32" {
+				t.Fatalf("Workload compatibility must preserve Sandbox egress order: %v", payload)
 			}
 		}
 	}

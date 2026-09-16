@@ -157,7 +157,7 @@ func (h *Harness) VerifyTrafficFixture(ctx context.Context, environment *e2e.Env
 	return nil
 }
 
-// ConfigDump fetches the ztunnel Envoy config dump serving an echo workload.
+// ConfigDump fetches the workload-scoped ztunnel config dump serving an echo workload.
 // Sidecar mode reaches the in-Pod admin port; ambient mode executes the admin
 // request in the node-level ztunnel scheduled beside the workload.
 func (h *Harness) ConfigDump(ctx context.Context, environment *e2e.Environment, instance echo.Instance) (string, error) {
@@ -198,7 +198,11 @@ func sidecarConfigDump(ctx context.Context, instance echo.Instance) (string, err
 	if len(result.Responses) != 1 {
 		return "", fmt.Errorf("config dump returned %d responses", len(result.Responses))
 	}
-	return result.Responses[0].RawContent, nil
+	pods := instance.Pods()
+	if len(pods) == 0 {
+		return "", fmt.Errorf("echo instance %s has no ready workload Pod", instance.Name())
+	}
+	return projectWorkloadConfigDump([]byte(result.Responses[0].BodyText), instance.Namespace(), pods[0])
 }
 
 func ambientConfigDump(ctx context.Context, environment *e2e.Environment, controlPlaneNamespace string, instance echo.Instance) (string, error) {
@@ -227,44 +231,49 @@ func ambientConfigDump(ctx context.Context, environment *e2e.Environment, contro
 		return "", fmt.Errorf("request config dump from ambient ztunnel %s/%s: %w; stderr: %s",
 			controlPlaneNamespace, ztunnel.Name, err, stderr)
 	}
-	projected, err := projectAmbientConfigDump([]byte(stdout), workload.Namespace, workload.Name)
+	projected, err := projectWorkloadConfigDump([]byte(stdout), workload.Namespace, workload.Name)
 	if err != nil {
 		return "", fmt.Errorf("project ambient ztunnel config dump for %s/%s: %w", workload.Namespace, workload.Name, err)
 	}
 	return projected, nil
 }
 
-func projectAmbientConfigDump(raw []byte, workloadNamespace, workloadName string) (string, error) {
+func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName string) (string, error) {
 	var dump struct {
-		Policies  []json.RawMessage `json:"policies"`
-		Workloads []json.RawMessage `json:"workloads"`
+		Policies        []json.RawMessage `json:"policies"`
+		Workloads       []json.RawMessage `json:"workloads"`
+		Sandboxes       []json.RawMessage `json:"sandboxes"`
+		TrafficPolicies []json.RawMessage `json:"trafficPolicies"`
 	}
 	if err := json.Unmarshal(raw, &dump); err != nil {
-		return "", fmt.Errorf("decode ambient ztunnel config dump: %w", err)
+		return "", fmt.Errorf("decode ztunnel config dump: %w", err)
 	}
 
 	var selected json.RawMessage
+	var workloadUID string
 	policyReferences := map[string]struct{}{}
 	for _, rawWorkload := range dump.Workloads {
 		var workload struct {
+			UID                   string   `json:"uid"`
 			Name                  string   `json:"name"`
 			Namespace             string   `json:"namespace"`
 			AuthorizationPolicies []string `json:"authorizationPolicies"`
 		}
 		if err := json.Unmarshal(rawWorkload, &workload); err != nil {
-			return "", fmt.Errorf("decode ambient workload: %w", err)
+			return "", fmt.Errorf("decode workload: %w", err)
 		}
 		if workload.Namespace != workloadNamespace || workload.Name != workloadName {
 			continue
 		}
 		selected = rawWorkload
+		workloadUID = workload.UID
 		for _, reference := range workload.AuthorizationPolicies {
 			policyReferences[reference] = struct{}{}
 		}
 		break
 	}
 	if selected == nil {
-		return "", fmt.Errorf("workload %s/%s is absent from ambient ztunnel config dump", workloadNamespace, workloadName)
+		return "", fmt.Errorf("workload %s/%s is absent from ztunnel config dump", workloadNamespace, workloadName)
 	}
 
 	policies := make([]json.RawMessage, 0, len(policyReferences))
@@ -275,7 +284,7 @@ func projectAmbientConfigDump(raw []byte, workloadNamespace, workloadName string
 			Scope     string `json:"scope"`
 		}
 		if err := json.Unmarshal(rawPolicy, &policy); err != nil {
-			return "", fmt.Errorf("decode ambient policy: %w", err)
+			return "", fmt.Errorf("decode policy: %w", err)
 		}
 		_, referenced := policyReferences[policy.Namespace+"/"+policy.Name]
 		if referenced || policy.Scope == "Global" {
@@ -283,12 +292,49 @@ func projectAmbientConfigDump(raw []byte, workloadNamespace, workloadName string
 		}
 	}
 
+	sandboxes := make([]json.RawMessage, 0)
+	trafficReferences := map[string]struct{}{}
+	for _, rawSandbox := range dump.Sandboxes {
+		var sandbox struct {
+			WorkloadUID       string   `json:"workloadUid"`
+			TrafficPolicyRefs []string `json:"trafficPolicyRefs"`
+		}
+		if err := json.Unmarshal(rawSandbox, &sandbox); err != nil {
+			return "", fmt.Errorf("decode sandbox: %w", err)
+		}
+		if workloadUID == "" || sandbox.WorkloadUID != workloadUID {
+			continue
+		}
+		sandboxes = append(sandboxes, rawSandbox)
+		for _, reference := range sandbox.TrafficPolicyRefs {
+			trafficReferences[reference] = struct{}{}
+		}
+	}
+	trafficPolicies := make([]json.RawMessage, 0, len(trafficReferences))
+	for _, rawPolicy := range dump.TrafficPolicies {
+		var policy struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(rawPolicy, &policy); err != nil {
+			return "", fmt.Errorf("decode traffic policy: %w", err)
+		}
+		if _, referenced := trafficReferences[policy.Name]; referenced {
+			trafficPolicies = append(trafficPolicies, rawPolicy)
+		}
+	}
+	// Preserve whether the proxy supports native policy resources, even when its cache is empty.
+	var nativePolicies *[]json.RawMessage
+	if dump.TrafficPolicies != nil {
+		nativePolicies = &trafficPolicies
+	}
 	projected, err := json.Marshal(struct {
-		Workload json.RawMessage   `json:"workload"`
-		Policies []json.RawMessage `json:"policies"`
-	}{Workload: selected, Policies: policies})
+		Workload        json.RawMessage    `json:"workload"`
+		Policies        []json.RawMessage  `json:"policies"`
+		Sandboxes       []json.RawMessage  `json:"sandboxes"`
+		TrafficPolicies *[]json.RawMessage `json:"trafficPolicies,omitempty"`
+	}{Workload: selected, Policies: policies, Sandboxes: sandboxes, TrafficPolicies: nativePolicies})
 	if err != nil {
-		return "", fmt.Errorf("encode workload-scoped ambient config dump: %w", err)
+		return "", fmt.Errorf("encode workload-scoped config dump: %w", err)
 	}
 	return string(projected), nil
 }

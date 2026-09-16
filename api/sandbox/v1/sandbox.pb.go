@@ -104,7 +104,11 @@ func (SandboxState) EnumDescriptor() ([]byte, []int) {
 // their RuntimeAttachment independently of the reported lifecycle state.
 type Sandbox struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Uid   string                 `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty"`
+	// Stable, case-sensitive identity: <type>:<instance-id>.
+	// Types include workload (derived from a Workload) and kruise.
+	// Instances must be unique within their type across the discovery scope.
+	// Consumers use the complete value as an opaque key, without URI normalization.
+	Uid string `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty"`
 	// The single Workload currently hosting this Sandbox. Absent when unassigned.
 	// Replacing or clearing this field invalidates the previous host binding.
 	Attester *Sandbox_Attester `protobuf:"bytes,2,opt,name=attester,proto3" json:"attester,omitempty"`

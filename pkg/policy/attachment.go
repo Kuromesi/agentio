@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -134,8 +133,8 @@ func (p PolicyAttachment) validate() error {
 	}
 	if p.Target.SandboxUID != "" {
 		modes++
-		if _, err := policySandboxUID(p.Target.SandboxUID, p.Target.Selector); err != nil {
-			return fmt.Errorf("policy attachment %s: %w", p.Name, err)
+		if strings.TrimSpace(p.Target.SandboxUID) != p.Target.SandboxUID {
+			return fmt.Errorf("policy attachment %s: sandbox UID %q contains surrounding whitespace", p.Name, p.Target.SandboxUID)
 		}
 	}
 	if modes != 1 {
@@ -172,23 +171,6 @@ func equalStrings(left, right []string) bool {
 
 func selectorEmpty(selector metav1.LabelSelector) bool {
 	return len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0
-}
-
-func policySandboxUID(declared string, selector metav1.LabelSelector) (string, error) {
-	selected, selectedSet := selector.MatchLabels[agentsv1alpha1.LabelSandboxID]
-	if declared != "" && strings.TrimSpace(declared) != declared {
-		return "", fmt.Errorf("sandbox UID %q contains surrounding whitespace", declared)
-	}
-	if selectedSet && (selected == "" || strings.TrimSpace(selected) != selected) {
-		return "", fmt.Errorf("sandbox UID selector value %q is invalid", selected)
-	}
-	if declared != "" && selectedSet && declared != selected {
-		return "", fmt.Errorf("sandbox UID %q conflicts with selector value %q", declared, selected)
-	}
-	if declared != "" {
-		return declared, nil
-	}
-	return selected, nil
 }
 
 func containsString(values []string, value string) bool {

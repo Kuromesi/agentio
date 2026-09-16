@@ -178,7 +178,7 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 	}
 	principal := testPrincipal()
 	matching := WorkloadQuery{WorkloadUID: "uid-a", SourceUID: "source-a", NodeName: "node-a", Principal: &principal,
-		Namespace: "demo", ServiceKey: "demo/service", GatewayReference: "demo/gateway", AuthorizationReference: "demo/policy", WorkloadPoliciesOnly: true}
+		Namespace: "demo", ServiceKey: "demo/service", GatewayReference: "demo/gateway", AuthorizationReference: "demo/policy", AuthorizationRefsOnly: true}
 	check := func(t *testing.T, query WorkloadQuery, want bool) {
 		t.Helper()
 		if got := snapshot.HasWorkload(AddressType, query); got != want {
@@ -220,12 +220,13 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 			})
 		}
 	}
-	raw.Facts.Workload.SandboxManaged = true
+	raw.Facts.Workload.AuthorizationRefs = nil
 	snapshot, err = NewResourceSet([]Resource{raw})
 	if err != nil {
 		t.Fatal(err)
 	}
+	matching.AuthorizationReference = ""
 	check(t, matching, false)
-	matching.WorkloadPoliciesOnly = false
+	matching.AuthorizationRefsOnly = false
 	check(t, matching, true)
 }

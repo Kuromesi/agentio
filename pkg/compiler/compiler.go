@@ -26,10 +26,10 @@ import (
 )
 
 type Inputs struct {
-	// SandboxMode enables explicit Sandbox resources. Providers classify Sandbox-managed Workloads.
-	SandboxMode   bool
-	ClusterID     string
-	RootNamespace string
+	// NativeSandboxPolicies omits legacy Workload projections of bound Sandbox policies.
+	NativeSandboxPolicies bool
+	ClusterID             string
+	RootNamespace         string
 
 	Pods               krt.Collection[*corev1.Pod]
 	KubernetesServices krt.Collection[*corev1.Service]
@@ -64,9 +64,6 @@ type Compiler struct {
 func New(inputs Inputs, options krt.OptionsBuilder) (*Compiler, error) {
 	if options.Stop() == nil {
 		return nil, fmt.Errorf("KRT stop channel is required")
-	}
-	if !inputs.SandboxMode {
-		inputs.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, options.WithName("sandboxes-disabled")...)
 	}
 	if inputs.Sandboxes == nil || inputs.Workloads == nil || inputs.Pods == nil || inputs.KubernetesServices == nil ||
 		inputs.EndpointSlices == nil || inputs.Services == nil || inputs.Endpoints == nil ||

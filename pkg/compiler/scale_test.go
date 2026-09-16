@@ -48,8 +48,8 @@ func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	if got := len(snapshot.List(model.AddressType)); got != 5_000+scaleServices {
 		t.Fatalf("Address resources = %d, want %d", got, 5_000+scaleServices)
 	}
-	if got := len(snapshot.List(model.WorkloadAuthorizationType)); got != scalePolicies {
-		t.Fatalf("standalone Authorization resources = %d, want %d for ordinary Workloads", got, scalePolicies)
+	if got := len(snapshot.List(model.WorkloadAuthorizationType)); got != 0 {
+		t.Fatalf("native-only compilation emitted %d legacy Authorization resources", got)
 	}
 	if got := len(snapshot.List(model.SandboxType)); got != 2_500 {
 		t.Fatalf("Sandbox resources = %d, want 2500", got)
@@ -59,12 +59,8 @@ func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	}
 	for _, resource := range snapshot.List(model.AddressType) {
 		if facts := resource.Facts.Workload; facts != nil {
-			wantPolicies := scalePolicies
-			if facts.SandboxManaged {
-				wantPolicies = 0
-			}
-			if len(facts.AuthorizationRefs) != wantPolicies {
-				t.Fatalf("Workload %s managed=%t has %d policies, want %d", resource.Key.Name, facts.SandboxManaged, len(facts.AuthorizationRefs), wantPolicies)
+			if len(facts.AuthorizationRefs) != 0 {
+				t.Fatalf("native-only Workload %s has legacy policy references: %v", resource.Key.Name, facts.AuthorizationRefs)
 			}
 		}
 		if resource.Facts.Authorization != nil {
@@ -94,7 +90,6 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 		workload := testWDSWorkload(fmt.Sprintf("sandbox-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
 		workload.Labels = map[string]string{"app": "sandbox"}
 		if index%2 == 0 {
-			workload.SandboxManaged = true
 			sandboxes.ConditionalUpdateObject(testSandboxForWorkload(workload))
 		}
 		workloads.ConditionalUpdateObject(workload)

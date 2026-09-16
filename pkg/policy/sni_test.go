@@ -33,12 +33,32 @@ func TestCompileSNIProfileSandboxUIDAssociation(t *testing.T) {
 		wantUID     string
 		wantErr     bool
 	}{
-		{name: "declared UID", declaredUID: "sandbox-a", wantUID: "sandbox-a"},
-		{name: "selector UID", selectedUID: stringPtr("sandbox-a"), wantUID: "sandbox-a"},
-		{name: "equal declarations", declaredUID: "sandbox-a", selectedUID: stringPtr("sandbox-a"), wantUID: "sandbox-a"},
-		{name: "conflicting declarations", declaredUID: "sandbox-a", selectedUID: stringPtr("sandbox-b"), wantErr: true},
-		{name: "declared whitespace", declaredUID: "sandbox-a ", wantErr: true},
-		{name: "selector whitespace", selectedUID: stringPtr(" "), wantErr: true},
+		{
+			name:        "canonical UID",
+			declaredUID: "kruise:sandbox-a",
+			wantUID:     "kruise:sandbox-a",
+		},
+		{
+			name:        "selector does not infer UID",
+			selectedUID: stringPtr("sandbox-a"),
+		},
+		{
+			name:        "canonical UID with raw selector",
+			declaredUID: "kruise:sandbox-a",
+			selectedUID: stringPtr("sandbox-a"),
+			wantUID:     "kruise:sandbox-a",
+		},
+		{
+			name:        "UID and selector are independent constraints",
+			declaredUID: "workload:instance-a",
+			selectedUID: stringPtr("sandbox-a"),
+			wantUID:     "workload:instance-a",
+		},
+		{
+			name:        "declared whitespace",
+			declaredUID: "kruise:sandbox-a ",
+			wantErr:     true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			selector := map[string]string{}

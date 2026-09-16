@@ -46,19 +46,19 @@ import (
 func TestSandboxPriorityEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	const sandboxUID = "demo--priority"
+	const sandboxUID = "kruise:demo--priority"
 	client := priorityKubeClient{Client: kube.NewFakeClient()}
 	_, err := client.AgentsAPI().AgentsV1alpha1().Sandboxes("demo").Create(ctx, &agentsv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "priority", Namespace: "demo", UID: "sandbox-object-uid",
-			Labels: map[string]string{"app": "priority-client"},
+			Labels: map[string]string{"app": "priority-client", agentsv1alpha1.LabelSandboxID: "demo--priority"},
 		},
 	}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	registry, err := registrykube.New(client, registrykube.Options{
-		SandboxMode: true, ClusterID: "test", TrustDomain: "cluster.local",
+		EnableKruise: true, ClusterID: "test", TrustDomain: "cluster.local",
 		RootNamespace: "agentio-system", DebounceAfter: time.Millisecond,
 		DebounceMax: 5 * time.Millisecond,
 	}, ctx.Done())
@@ -67,7 +67,7 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	}
 	client.Run(ctx.Done())
 	resourceCompiler, err := compiler.New(compiler.Inputs{
-		SandboxMode: true, ClusterID: "test", TrustDomain: "cluster.local",
+		ClusterID: "test", TrustDomain: "cluster.local",
 		RootNamespace: "agentio-system", DiscoveryAddress: "agentiod:15012",
 		Pods: registry.Pods, KubernetesServices: registry.KubernetesServices,
 		EndpointSlices: registry.EndpointSlices, Sandboxes: registry.Sandboxes,
@@ -134,12 +134,14 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 
 	// Create the larger priority value first: priority must outrank creation time.
 	// The fake API does not assign creation timestamps, so supply them explicitly.
+	localSpec := priorityPolicySpec(100, agentsv1alpha1.RuleActionAllow)
+	localSpec.Selector.MatchLabels = map[string]string{agentsv1alpha1.LabelSandboxID: "demo--priority"}
 	local, err := client.AgentsAPI().AgentsV1alpha1().TrafficPolicies("demo").Create(ctx,
 		&agentsv1alpha1.TrafficPolicy{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "a-local-allow", Namespace: "demo", CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
 			},
-			Spec: priorityPolicySpec(100, agentsv1alpha1.RuleActionAllow),
+			Spec: localSpec,
 		}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -198,6 +200,9 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 				latest = new(sandboxv1.Sandbox)
 				if err := resource.Resource.UnmarshalTo(latest); err != nil {
 					t.Fatal(err)
+				}
+				if latest.Uid != resource.Name {
+					t.Fatalf("Sandbox uid = %q, resource name = %q", latest.Uid, resource.Name)
 				}
 				latestVersion = resource.Version
 				if latest.TrafficPolicy != nil {

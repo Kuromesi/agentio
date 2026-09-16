@@ -122,9 +122,7 @@ func securityProfileSpec(priority *int32) agentsv1alpha1.SecurityProfileSpec {
 func checkTrafficPolicy(t *testing.T, policy any) {
 	t.Helper()
 	meta := policy.(metav1.Object)
-	checkStrippedPolicyMeta(t, meta, map[string]string{
-		agentsv1alpha1.AnnotationSandboxID: "sandbox-a",
-	})
+	checkStrippedPolicyMeta(t, meta, nil)
 	switch traffic := policy.(type) {
 	case *agentsv1alpha1.TrafficPolicy:
 		if !reflect.DeepEqual(traffic.Spec, trafficPolicySpec()) || len(traffic.Status.Conditions) != 0 {
@@ -142,9 +140,7 @@ func checkTrafficPolicy(t *testing.T, policy any) {
 func checkSecurityProfile(t *testing.T, profile any) {
 	t.Helper()
 	meta := profile.(metav1.Object)
-	checkStrippedPolicyMeta(t, meta, map[string]string{
-		agentsv1alpha1.AnnotationSandboxID: "sandbox-a",
-	})
+	checkStrippedPolicyMeta(t, meta, nil)
 	switch security := profile.(type) {
 	case *agentsv1alpha1.SecurityProfile:
 		if !reflect.DeepEqual(security.Spec, securityProfileSpec(int32Ptr(23))) || !reflect.DeepEqual(security.Status, agentsv1alpha1.SecurityProfileStatus{}) {

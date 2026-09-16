@@ -24,8 +24,12 @@ import (
 )
 
 var (
-	// SandboxMode enables explicit Sandbox discovery and exclusive Sandbox policy delivery.
-	SandboxMode      = env.Register("AGENTIO_SANDBOX_MODE", false, "Publish explicit Sandbox resources and let runtime providers classify Sandbox hosts for exclusive Sandbox policies.").Get()
+	// NativeSandboxPolicies disables the Workload compatibility projection for Sandbox policies.
+	NativeSandboxPolicies = env.Register(
+		"AGENTIO_NATIVE_SANDBOX_POLICIES",
+		false,
+		"Deliver Sandbox policies only through Sandbox resources, without Workload compatibility output. Requires all Sandbox data planes to support native policies.",
+	).Get()
 	KRTDebounceAfter = env.Register(
 		"AGENTIO_KRT_DEBOUNCE",
 		200*time.Millisecond,

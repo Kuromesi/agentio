@@ -106,22 +106,15 @@ func attachmentIndexKeys(attachment PolicyAttachment) []string {
 	}
 }
 
-// NewPolicyBindingsCollection matches each source independently and joins their
-// results under kind-qualified keys. Workloads never inherit Sandbox references.
+// NewPolicyBindingsCollection selects policies for Sandboxes. Workload policy
+// output is derived separately from these bindings for legacy data planes.
 func NewPolicyBindingsCollection(
-	workloads krt.Collection[model.Workload],
 	sandboxes krt.Collection[model.Sandbox],
 	attachments krt.Collection[PolicyAttachment],
 	options krt.OptionsBuilder,
 ) krt.Collection[Bindings] {
 	byTarget := krt.NewIndex(attachments, "policyAttachmentsByTarget", attachmentIndexKeys)
-	workloadBindings := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *Bindings {
-		if workload.SandboxManaged {
-			return nil
-		}
-		return resolvePolicyBindings(ctx, PolicyTargetWorkload, workload.UID, workload.Namespace, workload.Labels, nil, attachments, byTarget)
-	}, options.WithName("workload-policy-bindings")...)
-	sandboxBindings := krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
+	return krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
 		if err := sandbox.Validate(); err != nil {
 			return &Bindings{
 				TargetKind:    PolicyTargetSandbox,
@@ -132,7 +125,6 @@ func NewPolicyBindingsCollection(
 		}
 		return resolvePolicyBindings(ctx, PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels, sandbox.PolicyRefs, attachments, byTarget)
 	}, options.WithName("sandbox-policy-bindings")...)
-	return krt.JoinCollection([]krt.Collection[Bindings]{workloadBindings, sandboxBindings}, options.WithName("policy-bindings")...)
 }
 
 func resolvePolicyBindings(ctx krt.HandlerContext, kind TargetKind, uid, namespace string, targetLabels map[string]string,

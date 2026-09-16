@@ -17,7 +17,7 @@ enrolled workload
 
 `TrafficPolicy` and `GlobalTrafficPolicy` govern L3/L4 egress authorization for selected workloads. `agentiod` compiles and distributes those resources to the Agentio data plane; EPE neither watches nor evaluates them.
 
-The ordered `AgentioConfig.egressPolicies` list independently decides whether matching traffic uses `PASSTHROUGH`, `DENY`, or `GATEWAY`. A `GATEWAY` decision sends traffic to an egress gateway whose Envoy configuration invokes EPE, but EPE does not select that route.
+The ordered `AgentioConfig.egressPolicies` list independently decides whether matching traffic uses `PASSTHROUGH` or `GATEWAY`. Native Sandbox routing does not support legacy egress `DENY`; express rejection in TrafficPolicy. A `GATEWAY` decision sends traffic to an egress gateway whose Envoy configuration invokes EPE, but EPE does not select that route.
 
 `SecurityProfile` and `GlobalSecurityProfile` provide the L7 rules that EPE evaluates. They select workloads, match HTTP requests, and can block a request, bypass remaining EPE work, manipulate request headers, transform credentials, enforce an MCP tool policy, or emit an audit event. A SecurityProfile cannot make an otherwise direct passthrough request visit EPE. Conversely, EPE cannot override a `TrafficPolicy` denial because the data plane enforces that decision before the request reaches EPE.
 

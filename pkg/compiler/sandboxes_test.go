@@ -374,10 +374,9 @@ func TestSandboxSharedPoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 		return a != nil && reflect.DeepEqual(trafficPolicyRefs(a), []string{"namespaces/tenant/trafficPolicies/allow"}) && a.TrafficPolicy == nil && b != nil && len(trafficPolicyRefs(b)) == 0 && trafficPolicyAt(t, fixture.compiler, "namespaces/tenant/trafficPolicies/allow") != nil
 	}, "paused Sandbox manifests compiled independently")
 	first := trafficPolicyAt(t, fixture.compiler, "namespaces/tenant/trafficPolicies/allow")
-	// Sandbox and Authorization resources are published by separate collections.
-	eventually(t, func() bool {
-		return len(currentSnapshot(t, fixture.compiler).List(model.WorkloadAuthorizationType)) == 1
-	}, "Workload Authorization published independently")
+	if len(currentSnapshot(t, fixture.compiler).List(model.WorkloadAuthorizationType)) != 0 {
+		t.Fatal("unbound Sandboxes emitted legacy Authorization")
+	}
 	worker := testWorkload("workers", "worker", "10.1.0.1")
 	for _, uid := range []string{"a", "b"} {
 		sandbox := *fixture.sandboxes.GetKey(uid)
@@ -404,7 +403,7 @@ func TestSandboxSharedPoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 	for _, change := range before.Diff(after) {
 		names = append(names, change.Key.TypeURL+"|"+change.Key.Name)
 	}
-	want := []string{model.TrafficPolicyType + "|namespaces/tenant/trafficPolicies/allow", model.WorkloadAuthorizationType + "|tenant/allow-egress"}
+	want := []string{model.TrafficPolicyType + "|namespaces/tenant/trafficPolicies/allow"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("changed resources %v, want %v", names, want)
 	}

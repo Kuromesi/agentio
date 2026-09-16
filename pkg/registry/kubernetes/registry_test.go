@@ -219,8 +219,8 @@ func TestDelegatedAuthorizationUsesNodePrincipalIndex(t *testing.T) {
 }
 
 func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
-	for _, sandboxMode := range []bool{false, true} {
-		t.Run(fmt.Sprintf("sandboxMode=%t", sandboxMode), func(t *testing.T) {
+	for _, kruiseEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("kruise=%t", kruiseEnabled), func(t *testing.T) {
 			ctx := t.Context()
 			sandbox := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
 				Name: "same-name", Namespace: "tenant", UID: "object-uid",
@@ -239,7 +239,7 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, err := New(client, Options{ClusterID: "test", TrustDomain: "cluster.local",
-				RootNamespace: "agentio-system", SandboxMode: sandboxMode}, ctx.Done())
+				RootNamespace: "agentio-system", EnableKruise: kruiseEnabled}, ctx.Done())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -249,15 +249,15 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 			if p := r.SecurityProfiles.GetKey(sharedKey); p == nil || p.Dedicated {
 				t.Fatal("shared profile missing or replaced by inline profile")
 			}
-			inlineKey := model.SandboxSecurityProfileName("sandbox-id")
+			inlineKey := model.SandboxSecurityProfileName("kruise:sandbox-id")
 			profile := r.SecurityProfiles.GetKey(inlineKey)
-			if !sandboxMode {
+			if !kruiseEnabled {
 				if profile != nil {
 					t.Fatal("Sandbox rules entered ordinary mode")
 				}
 				return
 			}
-			if profile == nil || !profile.Dedicated || profile.SandboxUID != "sandbox-id" ||
+			if profile == nil || !profile.Dedicated || profile.SandboxUID != "kruise:sandbox-id" ||
 				profile.Spec.Rules[0].Match[0].Domains[0] != "inline.example" {
 				t.Fatalf("owned profile not joined into SecurityProfiles: %+v", profile)
 			}
@@ -267,7 +267,7 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			eventually(t, func() bool {
-				current := r.Sandboxes.GetKey("sandbox-id")
+				current := r.Sandboxes.GetKey("kruise:sandbox-id")
 				return r.SecurityProfiles.GetKey(inlineKey) == nil && r.SecurityProfiles.GetKey(sharedKey) != nil &&
 					current != nil && current.State == model.SandboxStatePending
 			}, "invalid annotation removes only its own profile while runtime state advances")

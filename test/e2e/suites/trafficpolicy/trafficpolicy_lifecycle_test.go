@@ -591,7 +591,7 @@ spec:
 			src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, workload.Address, 18080).WithCheck(check.OK()))
 		}
 
-		// Verify the AuthorizationPolicy contains entries for all replicas.
+		// Verify the applicable policy bodies contain entries for all replicas.
 		ctx, cancel := e2e.Context(t, 2*time.Minute)
 		defer cancel()
 		if err := retry.UntilSuccess(ctx, retry.Policy{
@@ -605,11 +605,19 @@ spec:
 			if err != nil {
 				return err
 			}
-			if !strings.Contains(dump, "tp-wl-dynamic") {
+			view, err := inspectPolicyDump(dump, "tp-wl-dynamic")
+			if err != nil {
+				return err
+			}
+			if !view.found && !view.aggregated {
 				return fmt.Errorf("policy tp-wl-dynamic is absent from config dump")
 			}
 			for _, workload := range workloads {
-				if !strings.Contains(dump, workload.Address) {
+				cidr, err := network.HostCIDR(workload.Address)
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(view.body, `"`+cidr+`"`) {
 					return fmt.Errorf("workload IP %s is absent from tp-wl-dynamic config dump", workload.Address)
 				}
 			}

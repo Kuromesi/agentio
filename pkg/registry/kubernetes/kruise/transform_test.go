@@ -86,29 +86,29 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 			t.Fatal("Sandbox collection did not sync")
 		}
 		err = wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-			current := sandboxes.GetKey("delivery-uid")
-			profile := profiles.GetKey(model.SandboxSecurityProfileName("delivery-uid"))
+			current := sandboxes.GetKey("kruise:delivery-uid")
+			profile := profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid"))
 			validProfile := profile == nil && want == nil
 			if profile != nil {
-				validProfile = profile.Dedicated && profile.SandboxUID == "delivery-uid" && profile.Namespace == "demo" &&
+				validProfile = profile.Dedicated && profile.SandboxUID == "kruise:delivery-uid" && profile.Namespace == "demo" &&
 					reflect.DeepEqual(profile.Spec.Rules, want)
 			}
 			return current != nil && current.Attester == nil && current.Labels["revision"] == step.raw && validProfile, nil
 		})
 		if err != nil {
-			t.Fatalf("annotation %q: Sandbox = %+v, error = %v", step.raw, sandboxes.GetKey("delivery-uid"), err)
+			t.Fatalf("annotation %q: Sandbox = %+v, error = %v", step.raw, sandboxes.GetKey("kruise:delivery-uid"), err)
 		}
 	}
 	source.Annotations = map[string]string{agentsv1alpha1.AnnotationSecurityRules: `[{"match":[{"domains":["last.example"]}]}]`}
 	objects.UpdateObject(source)
 	if err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-		return profiles.GetKey(model.SandboxSecurityProfileName("delivery-uid")) != nil, nil
+		return profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) != nil, nil
 	}); err != nil {
 		t.Fatal("inline profile did not recover before deletion")
 	}
 	objects.DeleteObject("demo/sandbox")
 	err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-		return sandboxes.GetKey("delivery-uid") == nil && profiles.GetKey(model.SandboxSecurityProfileName("delivery-uid")) == nil, nil
+		return sandboxes.GetKey("kruise:delivery-uid") == nil && profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) == nil, nil
 	})
 	if err != nil {
 		t.Fatal("deleted Sandbox retained inline rules")
@@ -147,7 +147,7 @@ func TestSandboxUIDHonorsDeliveryIdentity(t *testing.T) {
 					agentsv1alpha1.LabelSandboxID: "delivery-uid",
 				},
 			}},
-			want:  "delivery-uid",
+			want:  "kruise:delivery-uid",
 			found: true,
 		},
 		{
@@ -156,7 +156,7 @@ func TestSandboxUIDHonorsDeliveryIdentity(t *testing.T) {
 				Namespace: "demo",
 				Name:      "sandbox",
 			}},
-			want:  "demo--sandbox",
+			want:  "kruise:demo--sandbox",
 			found: true,
 		},
 		{
@@ -269,13 +269,13 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{pod}, options...)
 	podsByUID := newPodsByUID(pods)
 	sandboxes := newSandboxes(sandboxGroups, pods, podsByUID, "cluster", options...)
-	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", OwnsPod, options...)
+	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", options...)
 	if !sandboxes.WaitUntilSynced(stop) || !workloads.WaitUntilSynced(stop) {
 		t.Fatal("Kruise runtime collections did not synchronize")
 	}
 
-	policySubject := sandboxes.GetKey("delivery-uid")
-	if policySubject == nil || policySubject.UID != "delivery-uid" {
+	policySubject := sandboxes.GetKey("kruise:delivery-uid")
+	if policySubject == nil || policySubject.UID != "kruise:delivery-uid" {
 		t.Fatalf("Sandbox = %+v, want delivery identity", policySubject)
 	}
 	if policySubject.Namespace != "demo" {
@@ -333,7 +333,7 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 		t.Fatalf("Sandbox runtime = %+v", policySubject)
 	}
 
-	if !workload.Ready || !workload.SandboxManaged || !OwnsPod(pod) {
+	if !workload.Ready || !OwnsPod(pod) {
 		t.Fatalf("Workload ready = %v, OwnsPod = %v", workload.Ready, OwnsPod(pod))
 	}
 
@@ -359,12 +359,12 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 		changed.Labels["test-step"] = test.name
 		sandboxObjects.UpdateObject(changed)
 		err := wait.PollUntilContextTimeout(t.Context(), time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-			current := sandboxes.GetKey("delivery-uid")
+			current := sandboxes.GetKey("kruise:delivery-uid")
 			return current != nil && current.Labels["test-step"] == test.name && current.State == test.state && current.Attester != nil &&
 				current.Attester.WorkloadUID == workload.UID, nil
 		})
 		if err != nil {
-			t.Fatalf("%s did not retain the Pod binding: Sandbox = %+v, error = %v", test.name, sandboxes.GetKey("delivery-uid"), err)
+			t.Fatalf("%s did not retain the Pod binding: Sandbox = %+v, error = %v", test.name, sandboxes.GetKey("kruise:delivery-uid"), err)
 		}
 	}
 }
@@ -417,13 +417,13 @@ func TestKruiseClassifiesHostWithoutSandboxDiscovery(t *testing.T) {
 	// A label alone cannot turn an ordinary Pod into a Sandbox host.
 	ordinary.Labels = map[string]string{agentsv1alpha1.LabelSandboxID: "claimed"}
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{host, ordinary}, krt.WithStop(stop))
-	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", OwnsPod, krt.WithStop(stop))
+	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", krt.WithStop(stop))
 	if !workloads.WaitUntilSynced(stop) {
 		t.Fatal("Workloads did not sync")
 	}
 	for _, pod := range []*corev1.Pod{host, ordinary} {
 		got := workloads.GetKey(podsource.WorkloadUID("cluster", pod))
-		if got == nil || got.SandboxManaged != (pod.Name == "host") {
+		if got == nil || OwnsPod(pod) != (pod.Name == "host") {
 			t.Fatalf("Pod %s classification = %+v", pod.Name, got)
 		}
 	}

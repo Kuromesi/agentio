@@ -70,15 +70,8 @@ func TestAuthorizationIncrementalDiffsExactReferenceTransition(t *testing.T) {
 	}
 }
 
-func TestAuthorizationExcludesSandboxManagedEndpoints(t *testing.T) {
-	host := selectionWorkload(t, "host", "sandbox-ns", "node-a", "", "sandbox-ns/exact")
-	facts := *host.Facts.Workload
-	facts.SandboxManaged = true
-	var err error
-	host, err = model.NewResource(host.Key, host.XDSName, host.Value, host.Aliases, model.ResourceFacts{Workload: &facts})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestAuthorizationExcludesEndpointsWithoutPolicyReferences(t *testing.T) {
+	host := selectionWorkload(t, "host", "sandbox-ns", "node-a", "", "")
 	ordinary := selectionWorkload(t, "ordinary", "pod-ns", "node-a", "", "pod-ns/exact")
 	policies := []model.Resource{
 		selectionAuthorization(t, "global", model.AuthorizationScopeGlobal, ""),
@@ -138,5 +131,31 @@ func TestAuthorizationExcludesSandboxManagedEndpoints(t *testing.T) {
 		if len(delta.Resources) != 0 {
 			t.Fatalf("policy-only update leaked to Sandbox hosts: %+v", delta)
 		}
+	}
+}
+
+func TestSandboxHostExplicitAuthorizationVisibility(t *testing.T) {
+	host := selectionWorkload(t, "host", "demo", "node-a", "", "demo/compat")
+	facts := *host.Facts.Workload
+	compat := selectionAuthorization(t, "demo/compat", model.AuthorizationScopeWorkload, "")
+	unrelated := selectionAuthorization(t, "demo/unrelated", model.AuthorizationScopeWorkload, "")
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: "host", SourceUID: "host", Principal: facts.Principal}
+	before := selectionSnapshot(t, []model.Resource{host, compat, unrelated})
+	if got := selectedNames(selectAuthorizationResources(scope, before, nil)); !slices.Equal(got, []string{compat.Key.Name}) {
+		t.Fatalf("compatibility visibility = %v", got)
+	}
+	facts.AuthorizationRefs = nil
+	host, err := model.NewResource(host.Key, host.XDSName, host.Value, host.Aliases, model.ResourceFacts{Workload: &facts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := selectionSnapshot(t, []model.Resource{host, compat, unrelated})
+	delta, err := (AuthorizationGenerator{}).Generate(t.Context(), GenerationRequest{
+		Scope: scope, TypeURL: model.WorkloadAuthorizationType, Snapshot: after,
+		Update:       updateBetween(before, after, before.Diff(after)),
+		Subscription: SubscriptionView{wildcard: true, sent: map[string]string{compat.Key.Name: compat.Hash}},
+	})
+	if err != nil || !slices.Equal(delta.Removed, []string{compat.Key.Name}) {
+		t.Fatalf("lost binding: delta=%v err=%v", delta, err)
 	}
 }

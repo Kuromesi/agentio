@@ -40,6 +40,17 @@ func TestDefaultOptionsContainsOnlyProcessWiring(t *testing.T) {
 	}
 }
 
+func TestSandboxRuntimesValidatedBeforeKubernetes(t *testing.T) {
+	original := features.SandboxRuntimes
+	t.Cleanup(func() { features.SandboxRuntimes = original })
+	features.SandboxRuntimes = "kruise,unknown"
+	options := DefaultOptions()
+	options.Kubeconfig = "/does/not/exist"
+	if err := run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "AGENTIO_SANDBOX_RUNTIMES: unsupported sandbox runtime") {
+		t.Fatalf("run() error = %v, want runtime configuration error before loading Kubernetes config", err)
+	}
+}
+
 func TestPilotCAConfigMapVariableIsIgnored(t *testing.T) {
 	if os.Getenv("AGENTIO_ENV_ALIAS_HELPER") == "true" {
 		if features.CAConfigMapName != "agentio-ca-certs" || features.TrustBundleConfigMapName != "agentio-ca-root-cert" {

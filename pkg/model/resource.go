@@ -63,7 +63,6 @@ type ResourceFacts struct {
 }
 
 type WorkloadResourceFacts struct {
-	SandboxManaged    bool
 	WorkloadUID       string
 	SourceUID         string
 	NodeName          string
@@ -71,7 +70,6 @@ type WorkloadResourceFacts struct {
 	ServiceKeys       []string
 	GatewayReferences []string
 	AuthorizationRefs []string
-	TrafficPolicyRefs []string
 }
 
 // SandboxResourceFacts records discovery dependencies owned by a Sandbox.
@@ -94,8 +92,8 @@ type AuthorizationResourceFacts struct {
 // typed query seam over Workload facts; arbitrary cross-family combinations
 // are intentionally not representable.
 type WorkloadQuery struct {
-	// WorkloadPoliciesOnly excludes endpoints whose policies belong to Sandboxes.
-	WorkloadPoliciesOnly   bool
+	// AuthorizationRefsOnly selects Workloads with Authorization references for older data planes.
+	AuthorizationRefsOnly  bool
 	WorkloadUID            string
 	SourceUID              string
 	NodeName               string
@@ -327,7 +325,6 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 		workload.ServiceKeys = append([]string(nil), workload.ServiceKeys...)
 		workload.GatewayReferences = append([]string(nil), workload.GatewayReferences...)
 		workload.AuthorizationRefs = append([]string(nil), workload.AuthorizationRefs...)
-		workload.TrafficPolicyRefs = append([]string(nil), workload.TrafficPolicyRefs...)
 		result.Workload = &workload
 	}
 	if facts.Service != nil {
@@ -352,7 +349,6 @@ func normalizeResourceFacts(facts *ResourceFacts) {
 	facts.Workload.ServiceKeys = sortedUnique(facts.Workload.ServiceKeys)
 	facts.Workload.GatewayReferences = sortedUnique(facts.Workload.GatewayReferences)
 	facts.Workload.AuthorizationRefs = sortedUnique(facts.Workload.AuthorizationRefs)
-	facts.Workload.TrafficPolicyRefs = sortedUnique(facts.Workload.TrafficPolicyRefs)
 }
 
 func sortedUnique(values []string) []string {
@@ -379,7 +375,6 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 	}
 	if facts.Workload != nil {
 		write("family", "workload")
-		write("sandbox-managed", fmt.Sprint(facts.Workload.SandboxManaged))
 		write("workload-uid", facts.Workload.WorkloadUID)
 		write("source-uid", facts.Workload.SourceUID)
 		write("node", facts.Workload.NodeName)
@@ -392,9 +387,6 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 		}
 		for _, value := range facts.Workload.AuthorizationRefs {
 			write("authorization-reference", value)
-		}
-		for _, value := range facts.Workload.TrafficPolicyRefs {
-			write("traffic-policy-reference", value)
 		}
 	}
 	if facts.Service != nil {
@@ -420,15 +412,13 @@ func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 		return false
 	}
 	if facts.Workload != nil &&
-		(facts.Workload.SandboxManaged != other.Workload.SandboxManaged ||
-			facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
+		(facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
 			facts.Workload.SourceUID != other.Workload.SourceUID ||
 			facts.Workload.NodeName != other.Workload.NodeName ||
 			facts.Workload.Principal != other.Workload.Principal ||
 			!slices.Equal(facts.Workload.ServiceKeys, other.Workload.ServiceKeys) ||
 			!slices.Equal(facts.Workload.GatewayReferences, other.Workload.GatewayReferences) ||
-			!slices.Equal(facts.Workload.AuthorizationRefs, other.Workload.AuthorizationRefs) ||
-			!slices.Equal(facts.Workload.TrafficPolicyRefs, other.Workload.TrafficPolicyRefs)) {
+			!slices.Equal(facts.Workload.AuthorizationRefs, other.Workload.AuthorizationRefs)) {
 		return false
 	}
 	if facts.Sandbox != nil && (facts.Sandbox.AttesterWorkloadUID != other.Sandbox.AttesterWorkloadUID ||

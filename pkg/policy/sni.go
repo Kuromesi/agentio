@@ -52,10 +52,6 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 	if priority < 0 {
 		return nil, fmt.Errorf("security profile %s priority %d is negative", profile.ResourceName(), priority)
 	}
-	sandboxUID, err := policySandboxUID(profile.SandboxUID, profile.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("security profile %s: %w", profile.ResourceName(), err)
-	}
 	selector, err := metav1.LabelSelectorAsSelector(&profile.Spec.Selector)
 	if err != nil {
 		return nil, fmt.Errorf("security profile %s selector: %w", profile.ResourceName(), err)
@@ -65,8 +61,8 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 		resourceName = profile.Namespace + "/" + profile.Name
 	}
 	target := AttachmentTarget{Selector: profile.Spec.Selector}
-	if sandboxUID != "" {
-		target.SandboxUID = sandboxUID
+	if profile.SandboxUID != "" {
+		target.SandboxUID = profile.SandboxUID
 	} else if profile.Global {
 		target.Global = true
 	} else {

@@ -88,15 +88,6 @@ func newPolicyCollections(
 				return nil
 			}
 			failures.clear("TrafficPolicy", source.ResourceName())
-			if compiled.Attachment != nil && compiled.Attachment.Target.SandboxUID != "" {
-				// Sandbox-specific policies have no legacy Workload projection.
-				compiled.AsAuthorization = nil
-			}
-			for _, authorization := range compiled.AsAuthorization {
-				if authorization.Attachment != nil {
-					authorization.Attachment.Target.Kind = policy.PolicyTargetWorkload
-				}
-			}
 			return compiled
 		}, options("traffic-policies")...)
 
@@ -125,25 +116,13 @@ func newPolicyCollections(
 			return compiled
 		}, options("bindable-egress-policies")...)
 	// Project only metadata, so rule-body updates do not invalidate bindings.
-	trafficAttachments := krt.NewManyCollection(trafficPolicies,
-		func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []policy.PolicyAttachment {
-			attachments := make([]policy.PolicyAttachment, 0, 3)
-			if compiled.Attachment != nil && (inputs.SandboxMode || compiled.Attachment.Target.SandboxUID == "") {
-				attachments = append(attachments, *compiled.Attachment)
-			}
-			for _, authorization := range compiled.AsAuthorization {
-				if authorization.Attachment != nil {
-					attachments = append(attachments, *authorization.Attachment)
-				}
-			}
-			return attachments
-		}, options("traffic-policy-attachments")...)
+	trafficAttachments := policy.NewPolicyAttachmentsCollection(trafficPolicies, builder, "traffic-policy-attachments")
 	sniAttachments := policy.NewPolicyAttachmentsCollection(sniPolicies, builder, "sni-policy-attachments")
 	egressAttachments := policy.NewPolicyAttachmentsCollection(egressPolicies, builder, "egress-policy-attachments")
 	attachments := krt.JoinCollection([]krt.Collection[policy.PolicyAttachment]{
 		trafficAttachments, sniAttachments, egressAttachments,
 	}, options("policy-attachments")...)
-	policyBindings := policy.NewPolicyBindingsCollection(inputs.Workloads, inputs.Sandboxes, attachments, builder)
+	policyBindings := policy.NewPolicyBindingsCollection(inputs.Sandboxes, attachments, builder)
 	policyBindings = krt.NewCollection(policyBindings,
 		func(_ krt.HandlerContext, binding policy.Bindings) *policy.Bindings {
 			if !binding.Valid() {
@@ -194,8 +173,8 @@ func authorizationResource(authorization policy.CompiledAuthorization) (model.Re
 		}, "", value, nil, facts)
 }
 
-// Both wire representations are serialized from the same compiled policy,
-// independently of its Sandbox and Workload references.
+// Shared policy bodies are serialized independently of Sandbox references.
+// Legacy Authorizations are emitted only by the Sandbox compatibility branch.
 func newTrafficPolicyResources(policies krt.Collection[policy.CompiledTrafficPolicy], failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
 	clearFailureOnSourceDelete(policies, failures, "TrafficPolicyResource")
 	return krt.NewManyCollection(policies, func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []model.Resource {
@@ -214,7 +193,6 @@ func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Reso
 		// Sandbox-owned policies are emitted only inside their owner's resource.
 		return nil, nil
 	}
-	resources := make([]model.Resource, 0, 3)
 	value, err := marshalDeterministicAny(compiled.Policy)
 	if err != nil {
 		return nil, err
@@ -223,13 +201,5 @@ func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Reso
 	if err != nil {
 		return nil, err
 	}
-	resources = append(resources, resource)
-	for _, authorization := range compiled.AsAuthorization {
-		resource, err := authorizationResource(authorization)
-		if err != nil {
-			return nil, err
-		}
-		resources = append(resources, resource)
-	}
-	return resources, nil
+	return []model.Resource{resource}, nil
 }

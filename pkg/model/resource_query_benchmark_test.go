@@ -49,14 +49,14 @@ func BenchmarkWorkloadQuery(b *testing.B) {
 		query WorkloadQuery
 		want  bool
 	}{
-		{"dedicated-match", WorkloadQuery{WorkloadUID: "uid-00001", SourceUID: "uid-00001", Principal: &principal, WorkloadPoliciesOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
-		{"dedicated-unrelated", WorkloadQuery{WorkloadUID: "uid-00001", SourceUID: "uid-00001", Principal: &principal, WorkloadPoliciesOnly: true, AuthorizationReference: "demo/policy-00002"}, false},
-		{"shared-match", WorkloadQuery{NodeName: "node-000", WorkloadPoliciesOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
-		{"shared-unrelated", WorkloadQuery{NodeName: "node-001", WorkloadPoliciesOnly: true, AuthorizationReference: "demo/policy-00001"}, false},
-		{"dedicated-long-names", WorkloadQuery{WorkloadUID: longUID, SourceUID: "source-long", Principal: &principal, WorkloadPoliciesOnly: true, AuthorizationReference: longPolicy}, true},
-		{"shared-long-names", WorkloadQuery{NodeName: "node-long", WorkloadPoliciesOnly: true, AuthorizationReference: longPolicy}, true},
+		{"dedicated-match", WorkloadQuery{WorkloadUID: "uid-00001", SourceUID: "uid-00001", Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
+		{"dedicated-unrelated", WorkloadQuery{WorkloadUID: "uid-00001", SourceUID: "uid-00001", Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00002"}, false},
+		{"shared-match", WorkloadQuery{NodeName: "node-000", AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
+		{"shared-unrelated", WorkloadQuery{NodeName: "node-001", AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, false},
+		{"dedicated-long-names", WorkloadQuery{WorkloadUID: longUID, SourceUID: "source-long", Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: longPolicy}, true},
+		{"shared-long-names", WorkloadQuery{NodeName: "node-long", AuthorizationRefsOnly: true, AuthorizationReference: longPolicy}, true},
 		{"principal", WorkloadQuery{Principal: &principal}, true},
-		{"global", WorkloadQuery{WorkloadPoliciesOnly: true}, true},
+		{"global", WorkloadQuery{AuthorizationRefsOnly: true}, true},
 	} {
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()

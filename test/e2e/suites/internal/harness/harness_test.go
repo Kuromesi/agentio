@@ -15,6 +15,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -84,7 +85,7 @@ func TestSelectZtunnelPodRejectsMissingWorkloadNode(t *testing.T) {
 	}
 }
 
-func TestProjectAmbientConfigDumpKeepsOnlyWorkloadPolicies(t *testing.T) {
+func TestProjectWorkloadConfigDumpKeepsOnlyWorkloadPolicies(t *testing.T) {
 	raw := []byte(`{
   "policies": [
     {"namespace":"sandbox","name":"client-policy-egress","scope":"WorkloadSelector","rules":[{"destinationIps":["10.0.0.1/32"]}]},
@@ -96,7 +97,7 @@ func TestProjectAmbientConfigDumpKeepsOnlyWorkloadPolicies(t *testing.T) {
     {"namespace":"sandbox","name":"server-pod","authorizationPolicies":["sandbox/server-policy-egress"]}
   ]
 }`)
-	got, err := projectAmbientConfigDump(raw, "sandbox", "client-pod")
+	got, err := projectWorkloadConfigDump(raw, "sandbox", "client-pod")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,10 +113,40 @@ func TestProjectAmbientConfigDumpKeepsOnlyWorkloadPolicies(t *testing.T) {
 	}
 }
 
-func TestProjectAmbientConfigDumpRejectsUnknownWorkload(t *testing.T) {
-	_, err := projectAmbientConfigDump([]byte(`{"policies":[],"workloads":[]}`), "sandbox", "missing")
+func TestProjectWorkloadConfigDumpRejectsUnknownWorkload(t *testing.T) {
+	_, err := projectWorkloadConfigDump([]byte(`{"policies":[],"workloads":[]}`), "sandbox", "missing")
 	if err == nil {
-		t.Fatal("projectAmbientConfigDump accepted an unknown workload")
+		t.Fatal("projectWorkloadConfigDump accepted an unknown workload")
+	}
+}
+
+func TestProjectWorkloadConfigDumpKeepsBoundSandboxPolicies(t *testing.T) {
+	raw := []byte(`{
+  "workloads": [{"uid":"client-uid","namespace":"sandbox","name":"client-pod"}],
+  "sandboxes": [
+    {"uid":"client-sandbox","workloadUid":"client-uid","trafficPolicyRefs":["trafficPolicies/client"]},
+    {"uid":"server-sandbox","workloadUid":"server-uid","trafficPolicyRefs":["trafficPolicies/server"]},
+    {"uid":"unbound-sandbox","trafficPolicyRefs":["trafficPolicies/unbound"]}
+  ],
+  "trafficPolicies": [
+    {"name":"trafficPolicies/client","egress":{"rules":[{"destinationIps":["10.0.0.1/32"]}]}},
+    {"name":"trafficPolicies/server","egress":{"rules":[{"destinationIps":["10.0.0.2/32"]}]}},
+    {"name":"trafficPolicies/unbound"}
+  ]
+}`)
+	got, err := projectWorkloadConfigDump(raw, "sandbox", "client-pod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"client-pod", "client-sandbox", "trafficPolicies/client", "10.0.0.1/32"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("projected dump does not contain %q: %s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"server-sandbox", "trafficPolicies/server", "10.0.0.2/32", "unbound-sandbox", "trafficPolicies/unbound"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("projected dump contains unrelated %q: %s", unwanted, got)
+		}
 	}
 }
 
@@ -213,5 +244,26 @@ func TestAgentioBaselineFixtureIsExactlyPassthroughAndGatewayRegistration(t *tes
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("baseline config = %#v, want %#v", got, want)
+	}
+}
+
+func TestProjectWorkloadConfigDumpPreservesNativeCapability(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		raw := map[string]any{"workloads": []any{map[string]any{"uid": "client-uid", "name": "client", "namespace": "test"}}}
+		if native {
+			raw["trafficPolicies"] = []any{}
+		}
+		body, _ := json.Marshal(raw)
+		projected, err := projectWorkloadConfigDump(body, "test", "client")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(projected), &got); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := got["trafficPolicies"]; present != native {
+			t.Fatalf("native=%v, projected=%s", native, projected)
+		}
 	}
 }

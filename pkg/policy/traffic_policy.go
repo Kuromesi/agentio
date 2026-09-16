@@ -16,7 +16,6 @@ package policy
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -27,19 +26,13 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// CompiledTrafficPolicy contains both wire representations of one resolved policy.
+// CompiledTrafficPolicy is the shared, resolved Sandbox TrafficPolicy body.
 type CompiledTrafficPolicy struct {
 	CompiledPolicy[*securityv1.TrafficPolicy]
-
-	// AsAuthorization is precomputed from Policy without resolving peers again.
-	// It contains at most two entries, in egress/ingress order.
-	AsAuthorization []CompiledAuthorization
 }
 
-// Equals compares the native policy and its legacy Authorization projections.
 func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
-	return p.CompiledPolicy.Equals(other.CompiledPolicy) &&
-		slices.EqualFunc(p.AsAuthorization, other.AsAuthorization, CompiledAuthorization.Equals)
+	return p.CompiledPolicy.Equals(other.CompiledPolicy)
 }
 
 // CompileTrafficPolicy preserves rule actions and both directions in one
@@ -60,10 +53,6 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 		}}, nil
 	}
 
-	uid, err := policySandboxUID(source.SandboxUID, source.Spec.Selector)
-	if err != nil {
-		return nil, err
-	}
 	selector, err := metav1.LabelSelectorAsSelector(&source.Spec.Selector)
 	if err != nil {
 		return nil, err
@@ -79,8 +68,8 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 		peerNamespace = inputs.RootNamespace
 	}
 	switch {
-	case uid != "":
-		target.SandboxUID = uid
+	case source.SandboxUID != "":
+		target.SandboxUID = source.SandboxUID
 	case source.Global || (peerNamespace == inputs.RootNamespace && selector.Empty()):
 		// Keep selector-less root-namespace baselines mesh-wide in both APIs.
 		target.Global = true
@@ -110,10 +99,6 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 	compiled := &CompiledTrafficPolicy{
 		CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Name: name, Policy: result, Attachment: &attachment},
 	}
-	compiled.AsAuthorization, err = asAuthorizations(*compiled, peerNamespace, inputs.RootNamespace)
-	if err != nil {
-		return nil, err
-	}
 	return compiled, nil
 }
 
@@ -140,7 +125,7 @@ func compileNativeDirection(ctx krt.HandlerContext, direction *agentsv1alpha1.Tr
 	}
 	var result *securityv1.TrafficPolicy_RuleSet
 	for _, rule := range direction.Rules {
-		// Match Poseidon: egress requires To peers, ingress requires From peers.
+		// Egress requires To peers and ingress requires From peers, even for port-only rules.
 		// A direction containing only skipped rules does not configure default deny.
 		if (ingress && len(rule.From) == 0) || (!ingress && len(rule.To) == 0) {
 			continue

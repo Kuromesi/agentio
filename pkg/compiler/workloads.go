@@ -15,28 +15,24 @@
 package compiler
 
 import (
-	"errors"
-	"fmt"
 	"sort"
 
-	"google.golang.org/protobuf/proto"
 	"istio.io/istio/pkg/util/sets"
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
-	"github.com/openkruise/agentio/pkg/policy"
 )
 
 // newWorkloadResources owns the incremental joins for WDS networking state
-// and gateway dependencies from its own policy bindings. Deterministic protobuf and
+// and gateway dependencies from Sandbox compatibility output. Deterministic protobuf and
 // Resource encoding lives in wds.go.
 func newWorkloadResources(
 	inputs Inputs,
 	base baseIndexes,
 	metadataConfiguration krt.Singleton[workloadMetadataConfiguration],
 	gateways krt.Collection[model.Gateway],
-	policies policyCollections,
+	sandboxPolicies krt.Collection[workloadSandboxPolicies],
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[model.Resource] {
@@ -47,25 +43,19 @@ func newWorkloadResources(
 				current := inputs.Workloads.GetKey(workload.ResourceName())
 				return current != nil && current.Equals(workload)
 			}
-			var egressGatewayKeys, authorizationNames, trafficPolicyNames []string
+			var egressGatewayKeys, authorizationNames []string
 			var egressPolicies *extensionsv1.EgressPolicies
 			var sniPolicy *extensionsv1.SniTrafficPolicy
-			var policyErr error
-			if !workload.SandboxManaged {
-				refs := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
-				if refs != nil {
-					authorizationNames = append([]string(nil), refs.PolicyNames(policy.PolicyKindAuthorization)...)
-					trafficPolicyNames = append([]string(nil), refs.PolicyNames(policy.PolicyKindTrafficPolicy)...)
-					names := refs.PolicyNames(policy.PolicyKindEgressPolicy)
-					if len(names) > 0 {
-						// FilterKeys sorts its input; binding order is shared and must stay immutable.
-						compiled := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(append([]string(nil), names...)...))
-						egressPolicies, egressGatewayKeys, policyErr = policy.SelectEgressPolicies(names, compiled)
-					}
-					var sniErr error
-					sniPolicy, sniErr = workloadSNIPolicy(ctx, refs.PolicyNames(model.PolicyKindSNIPolicy), policies.sniPolicies)
-					policyErr = errors.Join(policyErr, sniErr)
-				}
+			// Sandbox policies are attached to the Workload for compatibility with older data planes.
+			var workloadPolicies *workloadSandboxPolicies
+			if !inputs.NativeSandboxPolicies {
+				workloadPolicies = krt.FetchOne(ctx, sandboxPolicies, krt.FilterKey(workload.UID))
+			}
+			if workloadPolicies != nil {
+				authorizationNames = workloadPolicies.AuthorizationNames
+				sniPolicy = workloadPolicies.SNIPolicy
+				egressPolicies = workloadPolicies.EgressPolicies
+				egressGatewayKeys = workloadPolicies.GatewayReferences
 			}
 			ownedGatewayKey := gatewayKeyForWorkload(workload)
 			if ownedGatewayKey != "" {
@@ -125,7 +115,6 @@ func newWorkloadResources(
 				SNIPolicy:          sniPolicy,
 				EgressPolicies:     egressPolicies,
 				AuthorizationNames: authorizationNames,
-				TrafficPolicyNames: trafficPolicyNames,
 				Endpoints:          endpoints,
 				Services:           services,
 				EgressGatewayKeys:  egressGatewayKeys,
@@ -137,11 +126,7 @@ func newWorkloadResources(
 				failures.recordIf("WDSWorkload", workload.ResourceName(), err, currentInput)
 				return nil
 			}
-			if policyErr != nil {
-				failures.recordIf("WDSWorkload", workload.UID, policyErr, currentInput)
-			} else {
-				failures.clearIf("WDSWorkload", workload.UID, currentInput)
-			}
+			failures.clearIf("WDSWorkload", workload.UID, currentInput)
 			return resource
 		}, options("workload-resources")...)
 }
@@ -159,31 +144,4 @@ func gatewayKeyForWorkload(workload model.Workload) string {
 		return ""
 	}
 	return key
-}
-
-// workloadSNIPolicy projects available policies in order, omitting missing bodies.
-// Fetches register content dependencies directly on the Workload.
-func workloadSNIPolicy(ctx krt.HandlerContext, names []string, sniPolicies krt.Collection[policy.CompiledSNIPolicy]) (*extensionsv1.SniTrafficPolicy, error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
-	result := &extensionsv1.SniTrafficPolicy{}
-	complete := true
-	for _, name := range names {
-		compiled := krt.FetchOne(ctx, sniPolicies, krt.FilterKey(name))
-		if compiled == nil || compiled.Policy == nil {
-			complete = false
-			continue
-		}
-		for _, rule := range compiled.Policy.Rules {
-			result.Rules = append(result.Rules, proto.Clone(rule).(*extensionsv1.SniRule))
-		}
-	}
-	if !complete {
-		if len(result.Rules) == 0 {
-			result = nil
-		}
-		return result, fmt.Errorf("workload SNI policy content is incomplete: %v", names)
-	}
-	return result, nil
 }

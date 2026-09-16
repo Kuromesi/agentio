@@ -68,7 +68,19 @@ const (
 // Attester identifies the one Workload currently hosting a Sandbox.
 type Attester struct{ WorkloadUID string }
 
-// Sandbox is an explicitly discovered runtime and its shared policy references.
+const (
+	SandboxKindWorkload = "workload"
+	SandboxKindKruise   = "kruise"
+)
+
+// SandboxUID qualifies a provider's instance ID with its Sandbox kind. Providers
+// supply stable IDs unique within their kind; consumers compare the full string.
+func SandboxUID(kind, instanceID string) string {
+	return kind + ":" + instanceID
+}
+
+// Sandbox is an execution unit and its shared policy references. Providers may
+// discover it from a sandbox runtime or derive it from an ordinary managed Pod.
 // Owned policies enter the TrafficPolicy and SecurityProfile input collections.
 type Sandbox struct {
 	State      SandboxState

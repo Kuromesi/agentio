@@ -51,13 +51,14 @@ func isPodOwnedInternalLabel(key string) bool {
 	}
 }
 
-// sandboxUID returns the sandbox delivery identity: the sandbox-id label, or namespace--name for non-pooled sandboxes.
+// sandboxUID qualifies the delivery ID with the Kruise kind. Non-pooled
+// Sandboxes without a delivery label retain the namespace--name fallback.
 func sandboxUID(sandbox *agentsv1alpha1.Sandbox) (string, bool) {
 	if sandbox == nil {
 		return "", false
 	}
 	if sandboxID := sandbox.Labels[agentsv1alpha1.LabelSandboxID]; sandboxID != "" {
-		return sandboxID, true
+		return model.SandboxUID(model.SandboxKindKruise, sandboxID), true
 	}
 	if sandbox.Labels[agentsv1alpha1.LabelSandboxPool] != "" {
 		return "", false
@@ -65,7 +66,7 @@ func sandboxUID(sandbox *agentsv1alpha1.Sandbox) (string, bool) {
 	if sandbox.Namespace == "" || sandbox.Name == "" {
 		return "", false
 	}
-	return sandbox.Namespace + "--" + sandbox.Name, true
+	return model.SandboxUID(model.SandboxKindKruise, sandbox.Namespace+"--"+sandbox.Name), true
 }
 
 func newSandboxesByUID(

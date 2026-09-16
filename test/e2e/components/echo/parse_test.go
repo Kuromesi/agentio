@@ -92,3 +92,18 @@ func TestParseResponsesAllowsFourMiBConfigDump(t *testing.T) {
 		t.Fatalf("large response did not preserve marker; responses = %d", len(responses))
 	}
 }
+
+func TestParseResponsesPreservesJSONBodyWithoutFrameMetadata(t *testing.T) {
+	body := "{\n  \"value\": \"a=b\",\n  \"policies\": []\n}"
+	output := "[0] URL=http://localhost:15000/config_dump\n[0] StatusCode=200\n[0] ResponseHeader=content-type:application/json\n"
+	for _, line := range strings.Split(body, "\n") {
+		output += "[0 body] " + line + "\n"
+	}
+	responses, err := ParseResponses(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(responses) != 1 || responses[0].BodyText != body {
+		t.Fatalf("responses=%+v, want body=%q", responses, body)
+	}
+}

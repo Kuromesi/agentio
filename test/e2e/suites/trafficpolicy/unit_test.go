@@ -16,7 +16,10 @@ package trafficpolicy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,8 +119,8 @@ func TestWaitForPolicyStateObservesAppearanceAndRemoval(t *testing.T) {
 		present bool
 		dumps   []string
 	}{
-		{name: "appears", present: true, dumps: []string{"unrelated", "resource tp-target active"}},
-		{name: "disappears", present: false, dumps: []string{"resource tp-target active", "unrelated"}},
+		{name: "appears", present: true, dumps: []string{nativePolicyDump(false, false), nativePolicyDump(true, true)}},
+		{name: "disappears", present: false, dumps: []string{nativePolicyDump(true, true), nativePolicyDump(false, true)}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -151,5 +154,74 @@ func TestWaitForPolicyStateReturnsRecentDumpError(t *testing.T) {
 	})
 	if !errors.Is(err, want) {
 		t.Fatalf("waitForPolicyState() error = %v", err)
+	}
+}
+
+func nativePolicyDump(bound, cached bool) string {
+	refs := []string{}
+	policies := []map[string]any{}
+	if bound {
+		refs = append(refs, "namespaces/test/trafficPolicies/tp-target")
+	}
+	if cached {
+		policies = append(policies, map[string]any{"name": "namespaces/test/trafficPolicies/tp-target", "egress": map[string]any{"rules": []any{}}})
+	}
+	body, _ := json.Marshal(map[string]any{
+		"workload":        map[string]any{"uid": "client-uid", "namespace": "test"},
+		"sandboxes":       []any{map[string]any{"workloadUid": "client-uid", "trafficPolicyRefs": refs}},
+		"trafficPolicies": policies,
+	})
+	return string(body)
+}
+
+func legacyPolicyDump(complete bool) string {
+	aggregate := fmt.Sprintf("sandbox-%x", sha256.Sum256([]byte("client-uid")))
+	policies := []any{map[string]any{"namespace": "test", "name": aggregate + "-egress", "priority": -1}}
+	if complete {
+		policies = append(policies, map[string]any{"namespace": "test", "name": aggregate + "-ingress", "priority": -1})
+	}
+	body, _ := json.Marshal(map[string]any{
+		"workload": map[string]any{"uid": "client-uid", "namespace": "test", "authorizationPolicies": []string{"test/" + aggregate + "-egress", "test/" + aggregate + "-ingress"}},
+		"policies": policies,
+	})
+	return string(body)
+}
+
+func TestInspectPolicyDumpRequiresBindingAndBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, dump                 string
+		found, aggregated, wantErr bool
+	}{
+		{name: "native binding and body", dump: nativePolicyDump(true, true), found: true},
+		{name: "cached but unbound", dump: nativePolicyDump(false, true)},
+		{name: "missing referenced body", dump: nativePolicyDump(true, false), wantErr: true},
+		{name: "exact policy name", dump: strings.ReplaceAll(nativePolicyDump(true, true), "tp-target", "tp-target-extra")},
+		{name: "different workload", dump: strings.Replace(nativePolicyDump(true, true), `"workloadUid":"client-uid"`, `"workloadUid":"other-uid"`, 1), wantErr: true},
+		{name: "legacy aggregates are opaque", dump: legacyPolicyDump(true), aggregated: true},
+		{name: "incomplete legacy aggregates", dump: legacyPolicyDump(false), wantErr: true},
+		{name: "invalid JSON", dump: `broken`, wantErr: true},
+		{name: "missing workload", dump: `{}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := inspectPolicyDump(tc.dump, "tp-target")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error=%v, want error=%v", err, tc.wantErr)
+			}
+			if err == nil && (got.found != tc.found || got.aggregated != tc.aggregated) {
+				t.Fatalf("view=%+v", got)
+			}
+			if (got.found || got.aggregated) && got.body == "" {
+				t.Fatal("policy bodies are missing")
+			}
+		})
+	}
+}
+
+func TestWaitForPolicyStateReportsLegacyIdentityLimitation(t *testing.T) {
+	for _, present := range []bool{true, false} {
+		err := waitForPolicyState(context.Background(), "tp-target", present, func(context.Context) (string, error) { return legacyPolicyDump(true), nil })
+		if !errors.Is(err, errAggregatedPolicyIdentity) {
+			t.Fatalf("error=%v, want explicit identity limitation", err)
+		}
 	}
 }

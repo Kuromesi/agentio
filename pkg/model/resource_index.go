@@ -60,7 +60,7 @@ type resourceFactKind byte
 
 const (
 	resourceFactWorkloadUID resourceFactKind = iota + 1
-	resourceFactWorkloadPolicies
+	resourceFactWorkloadAuthorizationRefs
 	resourceFactAttesterWorkloadUID
 	resourceFactSourceUID
 	resourceFactNode
@@ -87,11 +87,8 @@ func resourceFactKeys(resource Resource) []string {
 		}
 	}
 	if workload := resource.Facts.Workload; workload != nil {
-		if !workload.SandboxManaged {
-			add(resourceFactWorkloadPolicies, "enabled")
-			for _, name := range workload.TrafficPolicyRefs {
-				add(resourceFactTrafficPolicyReference, name)
-			}
+		if workloadHasAuthorizationRefs(workload) {
+			add(resourceFactWorkloadAuthorizationRefs, "enabled")
 		}
 		add(resourceFactWorkloadUID, workload.WorkloadUID)
 		add(resourceFactSourceUID, workload.SourceUID)
@@ -173,7 +170,7 @@ func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []
 			return candidates
 		}
 	}
-	if query.WorkloadPoliciesOnly && consider(resourceFactWorkloadPolicies, "enabled") {
+	if query.AuthorizationRefsOnly && consider(resourceFactWorkloadAuthorizationRefs, "enabled") {
 		return candidates
 	}
 	if query.Principal != nil {
@@ -182,9 +179,14 @@ func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []
 	return candidates
 }
 
+// Authorization references are generated from Sandbox policies for older data planes.
+func workloadHasAuthorizationRefs(workload *WorkloadResourceFacts) bool {
+	return len(workload.AuthorizationRefs) > 0
+}
+
 func workloadMatchesQuery(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
 	if workload == nil ||
-		(query.WorkloadPoliciesOnly && workload.SandboxManaged) ||
+		(query.AuthorizationRefsOnly && !workloadHasAuthorizationRefs(workload)) ||
 		(query.WorkloadUID != "" && workload.WorkloadUID != query.WorkloadUID) ||
 		(query.SourceUID != "" && workload.SourceUID != query.SourceUID) ||
 		(query.NodeName != "" && workload.NodeName != query.NodeName) ||

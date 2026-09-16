@@ -38,6 +38,16 @@ The `-print-env` output is the authoritative reference. Registered settings are 
 - networking: `AGENTIO_GATEWAY_*`, `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`, and `AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY`;
 - logging and debug access: `AGENTIO_LOG_*` and `AGENTIO_ENABLE_DEBUG_ON_HTTP`.
 
+Ordinary Pods with an injected ztunnel or active ambient redirection automatically receive a derived Sandbox xDS resource; no Kubernetes Sandbox CR is created. Its identity is `workload:{podUID}`, its attester is the Pod Workload, and its namespace and labels select policies through the Sandbox binding path. Pod readiness does not gate policy attachment. `AGENTIO_SANDBOX_RUNTIMES` selects additional runtime integrations as a comma-separated list (currently `kruise`), defaulting to empty. Ordinary Pod discovery is built in and must not be listed as a runtime. Whitespace is trimmed, duplicates are ignored, and unknown or empty list entries fail startup. When `kruise` is enabled, its Pods (including unclaimed warm-pool Pods) are excluded from ordinary Pod Sandbox derivation. Without that integration, an injected or ambient Kruise-owned Pod follows the built-in Pod path; its Sandbox CR identity and inline rules are not consumed.
+
+Sandbox identities use `<type>:<instance-id>` and are compared as case-sensitive opaque strings. Kruise identities use `kruise:{sandbox-id}`; non-pooled Sandbox CRs without a sandbox-id label retain the `kruise:{namespace}--{name}` fallback. Runtime labels keep their original values, and policy selectors match those labels within the policy's scope. Namespace and organization metadata are not part of the identity. Instance IDs must be unique within their type across the discovery scope.
+
+`AGENTIO_NATIVE_SANDBOX_POLICIES=false` (the default) also projects each bound Sandbox's compiled policies into legacy Workload output. TrafficPolicy becomes workload-scoped Authorization resources; SNI and egress policies use the existing Workload extensions. Setting `AGENTIO_NATIVE_SANDBOX_POLICIES=true` disables this compatibility projection for both derived Pod Sandboxes and runtime Sandboxes. Workloads without a bound Sandbox retain networking and identity information only; they do not independently select policies. All policy selection uses Sandbox namespace, labels and explicit references.
+
+Compatibility requires one Sandbox per Workload. Ambiguous bindings produce legacy deny policies instead of merging permissions. The projection preserves native Sandbox ordering and per-direction defaults: an unconfigured direction allows traffic, while a configured direction denies after all rules miss. These terminal decisions precede legacy global/namespace TrafficPolicies and Istio AuthorizationPolicies for the bound Workload. Projection runs on configuration changes and is shared across ADS connections; global policy changes still require updating every affected legacy projection.
+
+Legacy egress `DENY` actions remain in Workload compatibility output. Native Sandbox EgressRouting cannot represent these actions and reports a compilation failure; migrate this access control to TrafficPolicy before relying on native Sandbox policies. Deriving a Sandbox does not make Workload, Sandbox and shared-policy xDS delivery atomic.
+
 ## Environment variable reference
 
 This table is generated from the binary's registered `AGENTIO_*` variables. Defaults are the values declared by the binary, before Helm overrides or runtime resolution. `AGENTIO_PUSH_CONCURRENCY` has a CPU-dependent default described in its row. Types describe the registered input, so a setting parsed as a duration after registration can appear as `String`.
@@ -96,12 +106,13 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_MITM_ROTATION_CHECK_INTERVAL</code> | Duration | <code>1h0m0s</code> | How often each replica checks whether the control-plane-managed MITM root CA needs CAS renewal. |
 | <code>AGENTIO_MITM_SIGN_CONCURRENCY</code> | Integer | <code>8</code> | Maximum number of on-demand certificates signed concurrently. |
 | <code>AGENTIO_MITM_SIGN_MODE</code> | String | <code>SELF&#95;SIGN</code> | MITM CA ownership mode: SECRET reads an externally managed Secret; SELF&#95;SIGN persists a control-plane-managed self-signed CA. |
+| <code>AGENTIO_NATIVE_SANDBOX_POLICIES</code> | Boolean | <code>false</code> | Deliver Sandbox policies only through Sandbox resources, without Workload compatibility output. Requires all Sandbox data planes to support native policies. |
 | <code>AGENTIO_NATIVE_SIDECARS</code> | String | <code>auto</code> | Native sidecar injection mode: true, false, or auto (per-node kubelet version detection). |
 | <code>AGENTIO_PRIMARY_CONFIGMAP_NAME</code> | String | <code>agentio-config-primary</code> | ConfigMap name of primary Agentio configuration. Empty disables the primary overlay. |
 | <code>AGENTIO_PUSH_CONCURRENCY</code> | Integer | <code>automatic (see description)</code> | Maximum number of client connections generating and sending pushed xDS responses concurrently. Defaults to min(15 + 5 &#42; GOMAXPROCS, 100). |
 | <code>AGENTIO_PUSH_DEBOUNCE</code> | Duration | <code>100ms</code> | Quiet period before compiled dirty resources are merged and published. |
 | <code>AGENTIO_PUSH_DEBOUNCE_MAX</code> | Duration | <code>10s</code> | Upper bound on the push quiet period. |
-| <code>AGENTIO_SANDBOX_MODE</code> | Boolean | <code>false</code> | Publish explicit Sandbox resources and let runtime providers classify Sandbox hosts for exclusive Sandbox policies. |
+| <code>AGENTIO_SANDBOX_RUNTIMES</code> | String | empty | Comma-separated optional Sandbox runtimes. Supported: kruise. Empty enables no optional runtimes; ordinary ztunnel-injected and ambient Pods always receive derived Sandbox resources. |
 | <code>AGENTIO_SCOPED_SECRETS</code> | Boolean | <code>true</code> | Watch only the root namespace in the shared Secret informer. False watches all namespaces and requires cluster-wide Secret list/watch RBAC. |
 | <code>AGENTIO_SERVICE_NAME</code> | String | <code>agentiod</code> | Kubernetes service name placed in the xDS server certificate. |
 | <code>AGENTIO_TOKEN_AUDIENCE</code> | String | <code>agentio-ca</code> | Audience a client token must carry to be accepted. |

@@ -136,7 +136,7 @@ type incrementalFixture struct {
 	resolveMu          sync.Mutex
 }
 
-func newIncrementalFixture(t testing.TB) *incrementalFixture {
+func newIncrementalFixture(t testing.TB, configure ...func(*Inputs)) *incrementalFixture {
 	t.Helper()
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -171,6 +171,9 @@ func newIncrementalFixture(t testing.TB) *incrementalFixture {
 	inputs.TelemetryProviderOverrides = fixture.telemetryProviders
 	inputs.AgentioConfig = fixture.agentioConfig
 	inputs.Resolve = fixture.resolve
+	for _, apply := range configure {
+		apply(&inputs)
+	}
 	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -501,7 +504,7 @@ func compileWorkloadsAndHashesForService(
 func validCompilerInputs(stop <-chan struct{}) Inputs {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	return Inputs{
-		SandboxMode:                true,
+		NativeSandboxPolicies:      true,
 		ClusterID:                  "cluster",
 		RootNamespace:              "agentio-system",
 		DiscoveryAddress:           "agentiod.agentio-system.svc:15012",
@@ -577,10 +580,12 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 ) *Compiler {
 	t.Helper()
 	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
 	for index := range count {
 		workload := testWDSWorkload(fmt.Sprintf("workload-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
 		workload.Labels = map[string]string{"app": "workload"}
 		workloads.ConditionalUpdateObject(workload)
+		sandboxes.ConditionalUpdateObject(testSandboxForWorkload(workload))
 	}
 	services := krt.NewStaticCollection[model.Service](nil, nil, options...)
 	endpoints := krt.NewStaticCollection[model.Endpoint](nil, nil, options...)
@@ -606,6 +611,8 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 	}}, options...)
 
 	inputs := validCompilerInputs(stop)
+	inputs.NativeSandboxPolicies = false
+	inputs.Sandboxes = sandboxes
 	inputs.Workloads = workloads
 	inputs.Services = services
 	inputs.Endpoints = endpoints
