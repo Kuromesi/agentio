@@ -35,55 +35,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type TrafficPolicy_Scope int32
-
-const (
-	TrafficPolicy_GLOBAL            TrafficPolicy_Scope = 0
-	TrafficPolicy_NAMESPACE         TrafficPolicy_Scope = 1
-	TrafficPolicy_WORKLOAD_SELECTOR TrafficPolicy_Scope = 2
-)
-
-// Enum value maps for TrafficPolicy_Scope.
-var (
-	TrafficPolicy_Scope_name = map[int32]string{
-		0: "GLOBAL",
-		1: "NAMESPACE",
-		2: "WORKLOAD_SELECTOR",
-	}
-	TrafficPolicy_Scope_value = map[string]int32{
-		"GLOBAL":            0,
-		"NAMESPACE":         1,
-		"WORKLOAD_SELECTOR": 2,
-	}
-)
-
-func (x TrafficPolicy_Scope) Enum() *TrafficPolicy_Scope {
-	p := new(TrafficPolicy_Scope)
-	*p = x
-	return p
-}
-
-func (x TrafficPolicy_Scope) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (TrafficPolicy_Scope) Descriptor() protoreflect.EnumDescriptor {
-	return file_api_security_v1_trafficpolicy_proto_enumTypes[0].Descriptor()
-}
-
-func (TrafficPolicy_Scope) Type() protoreflect.EnumType {
-	return &file_api_security_v1_trafficpolicy_proto_enumTypes[0]
-}
-
-func (x TrafficPolicy_Scope) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use TrafficPolicy_Scope.Descriptor instead.
-func (TrafficPolicy_Scope) EnumDescriptor() ([]byte, []int) {
-	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 0}
-}
-
 type TrafficPolicy_Action int32
 
 const (
@@ -114,11 +65,11 @@ func (x TrafficPolicy_Action) String() string {
 }
 
 func (TrafficPolicy_Action) Descriptor() protoreflect.EnumDescriptor {
-	return file_api_security_v1_trafficpolicy_proto_enumTypes[1].Descriptor()
+	return file_api_security_v1_trafficpolicy_proto_enumTypes[0].Descriptor()
 }
 
 func (TrafficPolicy_Action) Type() protoreflect.EnumType {
-	return &file_api_security_v1_trafficpolicy_proto_enumTypes[1]
+	return &file_api_security_v1_trafficpolicy_proto_enumTypes[0]
 }
 
 func (x TrafficPolicy_Action) Number() protoreflect.EnumNumber {
@@ -127,7 +78,7 @@ func (x TrafficPolicy_Action) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TrafficPolicy_Action.Descriptor instead.
 func (TrafficPolicy_Action) EnumDescriptor() ([]byte, []int) {
-	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 1}
+	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 0}
 }
 
 type TrafficPolicy_Protocol int32
@@ -169,11 +120,11 @@ func (x TrafficPolicy_Protocol) String() string {
 }
 
 func (TrafficPolicy_Protocol) Descriptor() protoreflect.EnumDescriptor {
-	return file_api_security_v1_trafficpolicy_proto_enumTypes[2].Descriptor()
+	return file_api_security_v1_trafficpolicy_proto_enumTypes[1].Descriptor()
 }
 
 func (TrafficPolicy_Protocol) Type() protoreflect.EnumType {
-	return &file_api_security_v1_trafficpolicy_proto_enumTypes[2]
+	return &file_api_security_v1_trafficpolicy_proto_enumTypes[1]
 }
 
 func (x TrafficPolicy_Protocol) Number() protoreflect.EnumNumber {
@@ -182,29 +133,27 @@ func (x TrafficPolicy_Protocol) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TrafficPolicy_Protocol.Descriptor instead.
 func (TrafficPolicy_Protocol) EnumDescriptor() ([]byte, []int) {
-	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 2}
+	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 1}
 }
 
-// One compiled TrafficPolicy/GlobalTrafficPolicy, retaining both directions.
-// Selection and explicit attachment are resolved before publication.
+// Traffic rules carried inline in a Sandbox or published as an independent
+// xDS resource. The resource name is carried by xDS, not this message.
+// Independent resource names follow the AIP-122 path convention:
+// - TrafficPolicy: namespaces/{namespace}/trafficPolicies/{name}.
+// - GlobalTrafficPolicy: trafficPolicies/{name}.
+// Namespace and name are the source object's identifiers. Selectors affect
+// attachment, not resource identity. Inline rules have no independent name.
+// Selection and ordering of predefined policies are resolved by the control
+// plane and published in Sandbox.policy_refs.
 type TrafficPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Stable identity, e.g. trafficpolicy/demo/internet or
-	// globaltrafficpolicy/platform-baseline.
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Source namespace; required for NAMESPACE scope.
-	// Empty for a cluster-scoped GlobalTrafficPolicy.
-	Namespace string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	// Nonnegative; lower values are evaluated first.
-	// The compiler materializes the source default (1000).
-	Priority int32 `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"`
-	// Absent = direction not configured; present with no rules = no rule matches.
-	Ingress *TrafficPolicy_PolicyRule `protobuf:"bytes,4,opt,name=ingress,proto3" json:"ingress,omitempty"`
-	Egress  *TrafficPolicy_PolicyRule `protobuf:"bytes,5,opt,name=egress,proto3" json:"egress,omitempty"`
-	// GLOBAL: applies to all workloads; NAMESPACE: applies within namespace.
-	// WORKLOAD_SELECTOR: applies through control-plane-generated workload refs,
-	// including selector-based GlobalTrafficPolicies. Do not infer scope from name.
-	Scope         TrafficPolicy_Scope `protobuf:"varint,6,opt,name=scope,proto3,enum=io.kruise.agentio.security.v1.TrafficPolicy_Scope" json:"scope,omitempty"`
+	// Absent = this policy does not configure the direction.
+	// Present (including an empty rule set) = this direction is configured.
+	// First matching rule wins; no match continues to the next referenced policy.
+	// Default deny applies only after every inline/referenced policy misses,
+	// provided at least one policy configures this direction.
+	Ingress       *TrafficPolicy_RuleSet `protobuf:"bytes,1,opt,name=ingress,proto3" json:"ingress,omitempty"`
+	Egress        *TrafficPolicy_RuleSet `protobuf:"bytes,2,opt,name=egress,proto3" json:"egress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -239,46 +188,18 @@ func (*TrafficPolicy) Descriptor() ([]byte, []int) {
 	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *TrafficPolicy) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *TrafficPolicy) GetNamespace() string {
-	if x != nil {
-		return x.Namespace
-	}
-	return ""
-}
-
-func (x *TrafficPolicy) GetPriority() int32 {
-	if x != nil {
-		return x.Priority
-	}
-	return 0
-}
-
-func (x *TrafficPolicy) GetIngress() *TrafficPolicy_PolicyRule {
+func (x *TrafficPolicy) GetIngress() *TrafficPolicy_RuleSet {
 	if x != nil {
 		return x.Ingress
 	}
 	return nil
 }
 
-func (x *TrafficPolicy) GetEgress() *TrafficPolicy_PolicyRule {
+func (x *TrafficPolicy) GetEgress() *TrafficPolicy_RuleSet {
 	if x != nil {
 		return x.Egress
 	}
 	return nil
-}
-
-func (x *TrafficPolicy) GetScope() TrafficPolicy_Scope {
-	if x != nil {
-		return x.Scope
-	}
-	return TrafficPolicy_GLOBAL
 }
 
 // An IPv4 or IPv6 network prefix.
@@ -336,29 +257,29 @@ func (x *TrafficPolicy_Address) GetLength() uint32 {
 	return 0
 }
 
-type TrafficPolicy_PolicyRule struct {
+type TrafficPolicy_RuleSet struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// First matching rule wins, in declaration order.
-	// No match continues to the next policy; no per-policy default.
+	// Declaration order within this policy. A matching ALLOW or DENY is terminal.
+	// No per-policy default action.
 	Rules         []*TrafficPolicy_Rule `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TrafficPolicy_PolicyRule) Reset() {
-	*x = TrafficPolicy_PolicyRule{}
+func (x *TrafficPolicy_RuleSet) Reset() {
+	*x = TrafficPolicy_RuleSet{}
 	mi := &file_api_security_v1_trafficpolicy_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TrafficPolicy_PolicyRule) String() string {
+func (x *TrafficPolicy_RuleSet) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TrafficPolicy_PolicyRule) ProtoMessage() {}
+func (*TrafficPolicy_RuleSet) ProtoMessage() {}
 
-func (x *TrafficPolicy_PolicyRule) ProtoReflect() protoreflect.Message {
+func (x *TrafficPolicy_RuleSet) ProtoReflect() protoreflect.Message {
 	mi := &file_api_security_v1_trafficpolicy_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -370,12 +291,12 @@ func (x *TrafficPolicy_PolicyRule) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TrafficPolicy_PolicyRule.ProtoReflect.Descriptor instead.
-func (*TrafficPolicy_PolicyRule) Descriptor() ([]byte, []int) {
+// Deprecated: Use TrafficPolicy_RuleSet.ProtoReflect.Descriptor instead.
+func (*TrafficPolicy_RuleSet) Descriptor() ([]byte, []int) {
 	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 1}
 }
 
-func (x *TrafficPolicy_PolicyRule) GetRules() []*TrafficPolicy_Rule {
+func (x *TrafficPolicy_RuleSet) GetRules() []*TrafficPolicy_Rule {
 	if x != nil {
 		return x.Rules
 	}
@@ -386,7 +307,7 @@ type TrafficPolicy_Rule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ALLOW/DENY correspond to source allow/reject; the compiler sets the action.
 	// The protobuf default is ALLOW. Unknown values are invalid.
-	Action TrafficPolicy_Action `protobuf:"varint,1,opt,name=action,proto3,enum=io.kruise.agentio.security.v1.TrafficPolicy_Action" json:"action,omitempty"`
+	Action TrafficPolicy_Action `protobuf:"varint,1,opt,name=action,proto3,enum=agentio.security.TrafficPolicy_Action" json:"action,omitempty"`
 	// Required presence. Explicit {} matches all traffic.
 	Match         *TrafficPolicy_Match `protobuf:"bytes,2,opt,name=match,proto3" json:"match,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -508,7 +429,7 @@ type TrafficPolicy_PortMatch struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unknown protocol values are invalid.
 	// ALL with a port constraint only matches protocols with destination ports.
-	Protocol TrafficPolicy_Protocol `protobuf:"varint,1,opt,name=protocol,proto3,enum=io.kruise.agentio.security.v1.TrafficPolicy_Protocol" json:"protocol,omitempty"`
+	Protocol TrafficPolicy_Protocol `protobuf:"varint,1,opt,name=protocol,proto3,enum=agentio.security.TrafficPolicy_Protocol" json:"protocol,omitempty"`
 	// Inclusive destination port bounds, when present, must be in 1..65535.
 	// Only port: match that single port.
 	// Only end_port: match 1..end_port.
@@ -575,39 +496,29 @@ var File_api_security_v1_trafficpolicy_proto protoreflect.FileDescriptor
 
 const file_api_security_v1_trafficpolicy_proto_rawDesc = "" +
 	"\n" +
-	"#api/security/v1/trafficpolicy.proto\x12\x1dio.kruise.agentio.security.v1\"\xd0\t\n" +
-	"\rTrafficPolicy\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x1a\n" +
-	"\bpriority\x18\x03 \x01(\x05R\bpriority\x12Q\n" +
-	"\aingress\x18\x04 \x01(\v27.io.kruise.agentio.security.v1.TrafficPolicy.PolicyRuleR\aingress\x12O\n" +
-	"\x06egress\x18\x05 \x01(\v27.io.kruise.agentio.security.v1.TrafficPolicy.PolicyRuleR\x06egress\x12H\n" +
-	"\x05scope\x18\x06 \x01(\x0e22.io.kruise.agentio.security.v1.TrafficPolicy.ScopeR\x05scope\x1a;\n" +
+	"#api/security/v1/trafficpolicy.proto\x12\x10agentio.security\"\xff\x06\n" +
+	"\rTrafficPolicy\x12A\n" +
+	"\aingress\x18\x01 \x01(\v2'.agentio.security.TrafficPolicy.RuleSetR\aingress\x12?\n" +
+	"\x06egress\x18\x02 \x01(\v2'.agentio.security.TrafficPolicy.RuleSetR\x06egress\x1a;\n" +
 	"\aAddress\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\fR\aaddress\x12\x16\n" +
-	"\x06length\x18\x02 \x01(\rR\x06length\x1aU\n" +
+	"\x06length\x18\x02 \x01(\rR\x06length\x1aE\n" +
+	"\aRuleSet\x12:\n" +
+	"\x05rules\x18\x01 \x03(\v2$.agentio.security.TrafficPolicy.RuleR\x05rules\x1a\x83\x01\n" +
+	"\x04Rule\x12>\n" +
+	"\x06action\x18\x01 \x01(\x0e2&.agentio.security.TrafficPolicy.ActionR\x06action\x12;\n" +
+	"\x05match\x18\x02 \x01(\v2%.agentio.security.TrafficPolicy.MatchR\x05match\x1a\xe2\x01\n" +
+	"\x05Match\x12F\n" +
 	"\n" +
-	"PolicyRule\x12G\n" +
-	"\x05rules\x18\x01 \x03(\v21.io.kruise.agentio.security.v1.TrafficPolicy.RuleR\x05rules\x1a\x9d\x01\n" +
-	"\x04Rule\x12K\n" +
-	"\x06action\x18\x01 \x01(\x0e23.io.kruise.agentio.security.v1.TrafficPolicy.ActionR\x06action\x12H\n" +
-	"\x05match\x18\x02 \x01(\v22.io.kruise.agentio.security.v1.TrafficPolicy.MatchR\x05match\x1a\x89\x02\n" +
-	"\x05Match\x12S\n" +
-	"\n" +
-	"source_ips\x18\x01 \x03(\v24.io.kruise.agentio.security.v1.TrafficPolicy.AddressR\tsourceIps\x12]\n" +
-	"\x0fdestination_ips\x18\x02 \x03(\v24.io.kruise.agentio.security.v1.TrafficPolicy.AddressR\x0edestinationIps\x12L\n" +
-	"\x05ports\x18\x03 \x03(\v26.io.kruise.agentio.security.v1.TrafficPolicy.PortMatchR\x05ports\x1a\xad\x01\n" +
-	"\tPortMatch\x12Q\n" +
-	"\bprotocol\x18\x01 \x01(\x0e25.io.kruise.agentio.security.v1.TrafficPolicy.ProtocolR\bprotocol\x12\x17\n" +
+	"source_ips\x18\x01 \x03(\v2'.agentio.security.TrafficPolicy.AddressR\tsourceIps\x12P\n" +
+	"\x0fdestination_ips\x18\x02 \x03(\v2'.agentio.security.TrafficPolicy.AddressR\x0edestinationIps\x12?\n" +
+	"\x05ports\x18\x03 \x03(\v2).agentio.security.TrafficPolicy.PortMatchR\x05ports\x1a\xa0\x01\n" +
+	"\tPortMatch\x12D\n" +
+	"\bprotocol\x18\x01 \x01(\x0e2(.agentio.security.TrafficPolicy.ProtocolR\bprotocol\x12\x17\n" +
 	"\x04port\x18\x02 \x01(\rH\x00R\x04port\x88\x01\x01\x12\x1e\n" +
 	"\bend_port\x18\x03 \x01(\rH\x01R\aendPort\x88\x01\x01B\a\n" +
 	"\x05_portB\v\n" +
-	"\t_end_port\"9\n" +
-	"\x05Scope\x12\n" +
-	"\n" +
-	"\x06GLOBAL\x10\x00\x12\r\n" +
-	"\tNAMESPACE\x10\x01\x12\x15\n" +
-	"\x11WORKLOAD_SELECTOR\x10\x02\"\x1d\n" +
+	"\t_end_port\"\x1d\n" +
 	"\x06Action\x12\t\n" +
 	"\x05ALLOW\x10\x00\x12\b\n" +
 	"\x04DENY\x10\x01\"9\n" +
@@ -630,35 +541,33 @@ func file_api_security_v1_trafficpolicy_proto_rawDescGZIP() []byte {
 	return file_api_security_v1_trafficpolicy_proto_rawDescData
 }
 
-var file_api_security_v1_trafficpolicy_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_api_security_v1_trafficpolicy_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_api_security_v1_trafficpolicy_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_api_security_v1_trafficpolicy_proto_goTypes = []any{
-	(TrafficPolicy_Scope)(0),         // 0: io.kruise.agentio.security.v1.TrafficPolicy.Scope
-	(TrafficPolicy_Action)(0),        // 1: io.kruise.agentio.security.v1.TrafficPolicy.Action
-	(TrafficPolicy_Protocol)(0),      // 2: io.kruise.agentio.security.v1.TrafficPolicy.Protocol
-	(*TrafficPolicy)(nil),            // 3: io.kruise.agentio.security.v1.TrafficPolicy
-	(*TrafficPolicy_Address)(nil),    // 4: io.kruise.agentio.security.v1.TrafficPolicy.Address
-	(*TrafficPolicy_PolicyRule)(nil), // 5: io.kruise.agentio.security.v1.TrafficPolicy.PolicyRule
-	(*TrafficPolicy_Rule)(nil),       // 6: io.kruise.agentio.security.v1.TrafficPolicy.Rule
-	(*TrafficPolicy_Match)(nil),      // 7: io.kruise.agentio.security.v1.TrafficPolicy.Match
-	(*TrafficPolicy_PortMatch)(nil),  // 8: io.kruise.agentio.security.v1.TrafficPolicy.PortMatch
+	(TrafficPolicy_Action)(0),       // 0: agentio.security.TrafficPolicy.Action
+	(TrafficPolicy_Protocol)(0),     // 1: agentio.security.TrafficPolicy.Protocol
+	(*TrafficPolicy)(nil),           // 2: agentio.security.TrafficPolicy
+	(*TrafficPolicy_Address)(nil),   // 3: agentio.security.TrafficPolicy.Address
+	(*TrafficPolicy_RuleSet)(nil),   // 4: agentio.security.TrafficPolicy.RuleSet
+	(*TrafficPolicy_Rule)(nil),      // 5: agentio.security.TrafficPolicy.Rule
+	(*TrafficPolicy_Match)(nil),     // 6: agentio.security.TrafficPolicy.Match
+	(*TrafficPolicy_PortMatch)(nil), // 7: agentio.security.TrafficPolicy.PortMatch
 }
 var file_api_security_v1_trafficpolicy_proto_depIdxs = []int32{
-	5,  // 0: io.kruise.agentio.security.v1.TrafficPolicy.ingress:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.PolicyRule
-	5,  // 1: io.kruise.agentio.security.v1.TrafficPolicy.egress:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.PolicyRule
-	0,  // 2: io.kruise.agentio.security.v1.TrafficPolicy.scope:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Scope
-	6,  // 3: io.kruise.agentio.security.v1.TrafficPolicy.PolicyRule.rules:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Rule
-	1,  // 4: io.kruise.agentio.security.v1.TrafficPolicy.Rule.action:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Action
-	7,  // 5: io.kruise.agentio.security.v1.TrafficPolicy.Rule.match:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Match
-	4,  // 6: io.kruise.agentio.security.v1.TrafficPolicy.Match.source_ips:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Address
-	4,  // 7: io.kruise.agentio.security.v1.TrafficPolicy.Match.destination_ips:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Address
-	8,  // 8: io.kruise.agentio.security.v1.TrafficPolicy.Match.ports:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.PortMatch
-	2,  // 9: io.kruise.agentio.security.v1.TrafficPolicy.PortMatch.protocol:type_name -> io.kruise.agentio.security.v1.TrafficPolicy.Protocol
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	4, // 0: agentio.security.TrafficPolicy.ingress:type_name -> agentio.security.TrafficPolicy.RuleSet
+	4, // 1: agentio.security.TrafficPolicy.egress:type_name -> agentio.security.TrafficPolicy.RuleSet
+	5, // 2: agentio.security.TrafficPolicy.RuleSet.rules:type_name -> agentio.security.TrafficPolicy.Rule
+	0, // 3: agentio.security.TrafficPolicy.Rule.action:type_name -> agentio.security.TrafficPolicy.Action
+	6, // 4: agentio.security.TrafficPolicy.Rule.match:type_name -> agentio.security.TrafficPolicy.Match
+	3, // 5: agentio.security.TrafficPolicy.Match.source_ips:type_name -> agentio.security.TrafficPolicy.Address
+	3, // 6: agentio.security.TrafficPolicy.Match.destination_ips:type_name -> agentio.security.TrafficPolicy.Address
+	7, // 7: agentio.security.TrafficPolicy.Match.ports:type_name -> agentio.security.TrafficPolicy.PortMatch
+	1, // 8: agentio.security.TrafficPolicy.PortMatch.protocol:type_name -> agentio.security.TrafficPolicy.Protocol
+	9, // [9:9] is the sub-list for method output_type
+	9, // [9:9] is the sub-list for method input_type
+	9, // [9:9] is the sub-list for extension type_name
+	9, // [9:9] is the sub-list for extension extendee
+	0, // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_api_security_v1_trafficpolicy_proto_init() }
@@ -672,7 +581,7 @@ func file_api_security_v1_trafficpolicy_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_security_v1_trafficpolicy_proto_rawDesc), len(file_api_security_v1_trafficpolicy_proto_rawDesc)),
-			NumEnums:      3,
+			NumEnums:      2,
 			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,

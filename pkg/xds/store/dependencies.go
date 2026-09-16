@@ -23,6 +23,9 @@ import (
 // indexDerivedSelectionChanges wakes dependent watches when Address scope or
 // Sandbox gateway dependencies change.
 func indexDerivedSelectionChanges(types sets.Set[string], change model.ResourceChange) {
+	if change.Key.TypeURL == model.SandboxType && (change.Old == nil || change.New == nil || !change.Old.Facts.Equal(change.New.Facts)) {
+		types.Insert(model.TrafficPolicyType)
+	}
 	if change.Key.TypeURL == model.SandboxType && sandboxGatewayFactsChanged([]model.ResourceChange{change}) {
 		types.Insert(model.AddressType)
 		types.Insert(model.WorkloadType)
@@ -38,6 +41,7 @@ func indexDerivedSelectionChanges(types sets.Set[string], change model.ResourceC
 			types.Insert(model.WorkloadType)
 			types.Insert(model.WorkloadAuthorizationType)
 			types.Insert(model.SandboxType)
+			types.Insert(model.TrafficPolicyType)
 		}
 		if resource.Facts.Service != nil {
 			// Service changes must wake Workload watches: on-demand names

@@ -429,6 +429,7 @@ func testGenerators(overrides map[string]ResourceGenerator) map[string]ResourceG
 		model.WorkloadType:              WorkloadGenerator{},
 		model.WorkloadAuthorizationType: AuthorizationGenerator{},
 		model.SandboxType:               SandboxGenerator{},
+		model.TrafficPolicyType:         TrafficPolicyGenerator{},
 	}
 	maps.Copy(result, overrides)
 	return result

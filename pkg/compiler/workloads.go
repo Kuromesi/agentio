@@ -46,7 +46,7 @@ func newWorkloadResources(
 				current := inputs.Workloads.GetKey(workload.ResourceName())
 				return current != nil && current.Equals(workload)
 			}
-			var egressGatewayKeys, authorizationNames []string
+			var egressGatewayKeys, authorizationNames, trafficPolicyNames []string
 			var egressPolicies *extensionsv1.EgressPolicies
 			var sniPolicy *extensionsv1.SniTrafficPolicy
 			var policyErr error
@@ -56,6 +56,7 @@ func newWorkloadResources(
 					return nil
 				}
 				authorizationNames = append([]string(nil), refs.PolicyNames(policy.PolicyKindAuthorization)...)
+				trafficPolicyNames = append([]string(nil), refs.PolicyNames(policy.PolicyKindTrafficPolicy)...)
 				names := refs.PolicyNames(policy.PolicyKindEgressPolicy)
 				if len(names) > 0 {
 					// FilterKeys sorts its input; binding order is shared and must stay immutable.
@@ -128,6 +129,7 @@ func newWorkloadResources(
 				SNIPolicy:          sniPolicy,
 				EgressPolicies:     egressPolicies,
 				AuthorizationNames: authorizationNames,
+				TrafficPolicyNames: trafficPolicyNames,
 				Endpoints:          endpoints,
 				Services:           services,
 				EgressGatewayKeys:  egressGatewayKeys,

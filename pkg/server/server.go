@@ -322,6 +322,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			model.WorkloadType:              workloadGenerator,
 			model.WorkloadAuthorizationType: xds.AuthorizationGenerator{},
 			model.SandboxType:               xds.SandboxGenerator{},
+			model.TrafficPolicyType:         xds.TrafficPolicyGenerator{},
 			model.SecretType:                sdsGenerator,
 		},
 		features.PushConcurrency,

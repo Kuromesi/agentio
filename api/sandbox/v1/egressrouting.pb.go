@@ -140,7 +140,7 @@ type EgressRouting_Route struct {
 	// Exact destination ports as decimal strings in 1..65535.
 	MatchPorts []string `protobuf:"bytes,2,rep,name=match_ports,json=matchPorts,proto3" json:"match_ports,omitempty"`
 	// Forwarding action for matching traffic.
-	Action EgressRouting_Action `protobuf:"varint,3,opt,name=action,proto3,enum=io.kruise.agentio.sandbox.v1.EgressRouting_Action" json:"action,omitempty"`
+	Action EgressRouting_Action `protobuf:"varint,3,opt,name=action,proto3,enum=agentio.sandbox.EgressRouting_Action" json:"action,omitempty"`
 	// Required for GATEWAY, absent for PASSTHROUGH. An unavailable selected gateway
 	// fails the connection; consumers must not fall back to PASSTHROUGH.
 	Gateway       *EgressRouting_GatewayAddress `protobuf:"bytes,4,opt,name=gateway,proto3" json:"gateway,omitempty"`
@@ -264,16 +264,16 @@ var File_api_sandbox_v1_egressrouting_proto protoreflect.FileDescriptor
 
 const file_api_sandbox_v1_egressrouting_proto_rawDesc = "" +
 	"\n" +
-	"\"api/sandbox/v1/egressrouting.proto\x12\x1cio.kruise.agentio.sandbox.v1\"\xb0\x03\n" +
-	"\rEgressRouting\x12I\n" +
-	"\x06routes\x18\x01 \x03(\v21.io.kruise.agentio.sandbox.v1.EgressRouting.RouteR\x06routes\x1a\xeb\x01\n" +
+	"\"api/sandbox/v1/egressrouting.proto\x12\x0fagentio.sandbox\"\x89\x03\n" +
+	"\rEgressRouting\x12<\n" +
+	"\x06routes\x18\x01 \x03(\v2$.agentio.sandbox.EgressRouting.RouteR\x06routes\x1a\xd1\x01\n" +
 	"\x05Route\x12\x1f\n" +
 	"\vmatch_cidrs\x18\x01 \x03(\tR\n" +
 	"matchCidrs\x12\x1f\n" +
 	"\vmatch_ports\x18\x02 \x03(\tR\n" +
-	"matchPorts\x12J\n" +
-	"\x06action\x18\x03 \x01(\x0e22.io.kruise.agentio.sandbox.v1.EgressRouting.ActionR\x06action\x12T\n" +
-	"\agateway\x18\x04 \x01(\v2:.io.kruise.agentio.sandbox.v1.EgressRouting.GatewayAddressR\agateway\x1a>\n" +
+	"matchPorts\x12=\n" +
+	"\x06action\x18\x03 \x01(\x0e2%.agentio.sandbox.EgressRouting.ActionR\x06action\x12G\n" +
+	"\agateway\x18\x04 \x01(\v2-.agentio.sandbox.EgressRouting.GatewayAddressR\agateway\x1a>\n" +
 	"\x0eGatewayAddress\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\"&\n" +
@@ -296,15 +296,15 @@ func file_api_sandbox_v1_egressrouting_proto_rawDescGZIP() []byte {
 var file_api_sandbox_v1_egressrouting_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_api_sandbox_v1_egressrouting_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_api_sandbox_v1_egressrouting_proto_goTypes = []any{
-	(EgressRouting_Action)(0),            // 0: io.kruise.agentio.sandbox.v1.EgressRouting.Action
-	(*EgressRouting)(nil),                // 1: io.kruise.agentio.sandbox.v1.EgressRouting
-	(*EgressRouting_Route)(nil),          // 2: io.kruise.agentio.sandbox.v1.EgressRouting.Route
-	(*EgressRouting_GatewayAddress)(nil), // 3: io.kruise.agentio.sandbox.v1.EgressRouting.GatewayAddress
+	(EgressRouting_Action)(0),            // 0: agentio.sandbox.EgressRouting.Action
+	(*EgressRouting)(nil),                // 1: agentio.sandbox.EgressRouting
+	(*EgressRouting_Route)(nil),          // 2: agentio.sandbox.EgressRouting.Route
+	(*EgressRouting_GatewayAddress)(nil), // 3: agentio.sandbox.EgressRouting.GatewayAddress
 }
 var file_api_sandbox_v1_egressrouting_proto_depIdxs = []int32{
-	2, // 0: io.kruise.agentio.sandbox.v1.EgressRouting.routes:type_name -> io.kruise.agentio.sandbox.v1.EgressRouting.Route
-	0, // 1: io.kruise.agentio.sandbox.v1.EgressRouting.Route.action:type_name -> io.kruise.agentio.sandbox.v1.EgressRouting.Action
-	3, // 2: io.kruise.agentio.sandbox.v1.EgressRouting.Route.gateway:type_name -> io.kruise.agentio.sandbox.v1.EgressRouting.GatewayAddress
+	2, // 0: agentio.sandbox.EgressRouting.routes:type_name -> agentio.sandbox.EgressRouting.Route
+	0, // 1: agentio.sandbox.EgressRouting.Route.action:type_name -> agentio.sandbox.EgressRouting.Action
+	3, // 2: agentio.sandbox.EgressRouting.Route.gateway:type_name -> agentio.sandbox.EgressRouting.GatewayAddress
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name

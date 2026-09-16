@@ -99,8 +99,8 @@ func (SandboxState) EnumDescriptor() ([]byte, []int) {
 	return file_api_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{0}
 }
 
-// Sandbox carries the current host binding and complete policy view for a
-// stable Sandbox UID. Consumers must authenticate the attester and validate
+// Sandbox carries the current host binding, inline policies and ordered policy
+// references for a stable Sandbox UID. Consumers must authenticate the attester and validate
 // their RuntimeAttachment independently of the reported lifecycle state.
 type Sandbox struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -110,18 +110,24 @@ type Sandbox struct {
 	Attester *Sandbox_Attester `protobuf:"bytes,2,opt,name=attester,proto3" json:"attester,omitempty"`
 	// Latest observed runtime lifecycle state, independent of policy compilation.
 	// Intermediate transitions may be coalesced during discovery delivery.
-	State SandboxState `protobuf:"varint,3,opt,name=state,proto3,enum=io.kruise.agentio.sandbox.v1.SandboxState" json:"state,omitempty"`
+	State SandboxState `protobuf:"varint,3,opt,name=state,proto3,enum=agentio.sandbox.SandboxState" json:"state,omitempty"`
 	// Effective exit routing, delivered atomically with this Sandbox.
 	EgressRouting *EgressRouting `protobuf:"bytes,4,opt,name=egress_routing,json=egressRouting,proto3" json:"egress_routing,omitempty"`
-	// Effective policies in evaluation order; rules retain their source order.
-	// All bodies are delivered together in this Sandbox resource.
-	TrafficPolicies []*v1.TrafficPolicy `protobuf:"bytes,5,rep,name=traffic_policies,json=trafficPolicies,proto3" json:"traffic_policies,omitempty"`
+	// Sandbox-owned traffic rules, delivered atomically with the host binding.
+	// Evaluated before referenced TrafficPolicies. A matching ALLOW or DENY is
+	// terminal; no match continues through the referenced policies in order.
+	TrafficPolicy *v1.TrafficPolicy `protobuf:"bytes,5,opt,name=traffic_policy,json=trafficPolicy,proto3" json:"traffic_policy,omitempty"`
 	// Inline extension policy bodies, replaced atomically with this Sandbox.
 	// Entries of the same type retain their evaluation order. Different types
 	// define their own execution stages; list order does not order those stages.
 	// Consumers must reject this Sandbox update if any extension is unsupported
 	// or cannot be decoded. Runtime state does not imply extension support.
-	Extensions    []*any1.Any `protobuf:"bytes,6,rep,name=extensions,proto3" json:"extensions,omitempty"`
+	Extensions []*any1.Any `protobuf:"bytes,6,rep,name=extensions,proto3" json:"extensions,omitempty"`
+	// Predefined policies selected and ordered by the control plane.
+	// Keys are full xDS type URLs, e.g.
+	// type.googleapis.com/agentio.security.TrafficPolicy.
+	// Map iteration order does not define execution order across policy types.
+	PolicyRefs    map[string]*PolicyReference `protobuf:"bytes,7,rep,name=policy_refs,json=policyRefs,proto3" json:"policy_refs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -184,9 +190,9 @@ func (x *Sandbox) GetEgressRouting() *EgressRouting {
 	return nil
 }
 
-func (x *Sandbox) GetTrafficPolicies() []*v1.TrafficPolicy {
+func (x *Sandbox) GetTrafficPolicy() *v1.TrafficPolicy {
 	if x != nil {
-		return x.TrafficPolicies
+		return x.TrafficPolicy
 	}
 	return nil
 }
@@ -194,6 +200,73 @@ func (x *Sandbox) GetTrafficPolicies() []*v1.TrafficPolicy {
 func (x *Sandbox) GetExtensions() []*any1.Any {
 	if x != nil {
 		return x.Extensions
+	}
+	return nil
+}
+
+func (x *Sandbox) GetPolicyRefs() map[string]*PolicyReference {
+	if x != nil {
+		return x.PolicyRefs
+	}
+	return nil
+}
+
+// Ordered references to resources of one policy type.
+type PolicyReference struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Stable xDS resource names, unique within this list, in evaluation order.
+	// Relative names follow the AIP-122 collection/ID path convention:
+	// https://google.aip.dev/122
+	// - Namespaced: namespaces/{namespace}/{collection}/{name}.
+	// - Global: {collection}/{name}.
+	// Collections are plural lowerCamelCase, e.g. trafficPolicies.
+	// Namespace and name IDs are lowercase DNS names, without '/' characters.
+	// No leading or trailing slash. Each name must exactly match the referenced
+	// xDS Resource.name under the type URL used as the policy_refs map key.
+	// Names remain stable across content, selector and priority changes; do not
+	// embed versions or content hashes. Consumers treat names as opaque lookup
+	// keys and must not infer policy scope or precedence from their format.
+	// An empty list is equivalent to no entry for the policy type.
+	// A referenced resource that has not arrived is an unresolved dependency,
+	// not an empty policy. Content updates do not require changing this list.
+	ResourceNames []string `protobuf:"bytes,1,rep,name=resource_names,json=resourceNames,proto3" json:"resource_names,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyReference) Reset() {
+	*x = PolicyReference{}
+	mi := &file_api_sandbox_v1_sandbox_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyReference) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyReference) ProtoMessage() {}
+
+func (x *PolicyReference) ProtoReflect() protoreflect.Message {
+	mi := &file_api_sandbox_v1_sandbox_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyReference.ProtoReflect.Descriptor instead.
+func (*PolicyReference) Descriptor() ([]byte, []int) {
+	return file_api_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *PolicyReference) GetResourceNames() []string {
+	if x != nil {
+		return x.ResourceNames
 	}
 	return nil
 }
@@ -209,7 +282,7 @@ type Sandbox_Attester struct {
 
 func (x *Sandbox_Attester) Reset() {
 	*x = Sandbox_Attester{}
-	mi := &file_api_sandbox_v1_sandbox_proto_msgTypes[1]
+	mi := &file_api_sandbox_v1_sandbox_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -221,7 +294,7 @@ func (x *Sandbox_Attester) String() string {
 func (*Sandbox_Attester) ProtoMessage() {}
 
 func (x *Sandbox_Attester) ProtoReflect() protoreflect.Message {
-	mi := &file_api_sandbox_v1_sandbox_proto_msgTypes[1]
+	mi := &file_api_sandbox_v1_sandbox_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -234,7 +307,7 @@ func (x *Sandbox_Attester) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Sandbox_Attester.ProtoReflect.Descriptor instead.
 func (*Sandbox_Attester) Descriptor() ([]byte, []int) {
-	return file_api_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{0, 0}
+	return file_api_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{0, 1}
 }
 
 func (x *Sandbox_Attester) GetWorkloadUid() string {
@@ -248,18 +321,25 @@ var File_api_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_api_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/sandbox/v1/sandbox.proto\x12\x1cio.kruise.agentio.sandbox.v1\x1a\"api/sandbox/v1/egressrouting.proto\x1a#api/security/v1/trafficpolicy.proto\x1a\x19google/protobuf/any.proto\"\xbb\x03\n" +
+	"\x1capi/sandbox/v1/sandbox.proto\x12\x0fagentio.sandbox\x1a\"api/sandbox/v1/egressrouting.proto\x1a#api/security/v1/trafficpolicy.proto\x1a\x19google/protobuf/any.proto\"\xaf\x04\n" +
 	"\aSandbox\x12\x10\n" +
-	"\x03uid\x18\x01 \x01(\tR\x03uid\x12J\n" +
-	"\battester\x18\x02 \x01(\v2..io.kruise.agentio.sandbox.v1.Sandbox.AttesterR\battester\x12@\n" +
-	"\x05state\x18\x03 \x01(\x0e2*.io.kruise.agentio.sandbox.v1.SandboxStateR\x05state\x12R\n" +
-	"\x0eegress_routing\x18\x04 \x01(\v2+.io.kruise.agentio.sandbox.v1.EgressRoutingR\regressRouting\x12W\n" +
-	"\x10traffic_policies\x18\x05 \x03(\v2,.io.kruise.agentio.security.v1.TrafficPolicyR\x0ftrafficPolicies\x124\n" +
+	"\x03uid\x18\x01 \x01(\tR\x03uid\x12=\n" +
+	"\battester\x18\x02 \x01(\v2!.agentio.sandbox.Sandbox.AttesterR\battester\x123\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x1d.agentio.sandbox.SandboxStateR\x05state\x12E\n" +
+	"\x0eegress_routing\x18\x04 \x01(\v2\x1e.agentio.sandbox.EgressRoutingR\regressRouting\x12F\n" +
+	"\x0etraffic_policy\x18\x05 \x01(\v2\x1f.agentio.security.TrafficPolicyR\rtrafficPolicy\x124\n" +
 	"\n" +
 	"extensions\x18\x06 \x03(\v2\x14.google.protobuf.AnyR\n" +
-	"extensions\x1a-\n" +
+	"extensions\x12I\n" +
+	"\vpolicy_refs\x18\a \x03(\v2(.agentio.sandbox.Sandbox.PolicyRefsEntryR\n" +
+	"policyRefs\x1a_\n" +
+	"\x0fPolicyRefsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x126\n" +
+	"\x05value\x18\x02 \x01(\v2 .agentio.sandbox.PolicyReferenceR\x05value:\x028\x01\x1a-\n" +
 	"\bAttester\x12!\n" +
-	"\fworkload_uid\x18\x01 \x01(\tR\vworkloadUid*\x98\x01\n" +
+	"\fworkload_uid\x18\x01 \x01(\tR\vworkloadUid\"8\n" +
+	"\x0fPolicyReference\x12%\n" +
+	"\x0eresource_names\x18\x01 \x03(\tR\rresourceNames*\x98\x01\n" +
 	"\fSandboxState\x12\x1d\n" +
 	"\x19SANDBOX_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SANDBOX_STATE_PENDING\x10\x01\x12\x19\n" +
@@ -280,26 +360,30 @@ func file_api_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_api_sandbox_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_api_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_api_sandbox_v1_sandbox_proto_goTypes = []any{
-	(SandboxState)(0),        // 0: io.kruise.agentio.sandbox.v1.SandboxState
-	(*Sandbox)(nil),          // 1: io.kruise.agentio.sandbox.v1.Sandbox
-	(*Sandbox_Attester)(nil), // 2: io.kruise.agentio.sandbox.v1.Sandbox.Attester
-	(*EgressRouting)(nil),    // 3: io.kruise.agentio.sandbox.v1.EgressRouting
-	(*v1.TrafficPolicy)(nil), // 4: io.kruise.agentio.security.v1.TrafficPolicy
-	(*any1.Any)(nil),         // 5: google.protobuf.Any
+	(SandboxState)(0),        // 0: agentio.sandbox.SandboxState
+	(*Sandbox)(nil),          // 1: agentio.sandbox.Sandbox
+	(*PolicyReference)(nil),  // 2: agentio.sandbox.PolicyReference
+	nil,                      // 3: agentio.sandbox.Sandbox.PolicyRefsEntry
+	(*Sandbox_Attester)(nil), // 4: agentio.sandbox.Sandbox.Attester
+	(*EgressRouting)(nil),    // 5: agentio.sandbox.EgressRouting
+	(*v1.TrafficPolicy)(nil), // 6: agentio.security.TrafficPolicy
+	(*any1.Any)(nil),         // 7: google.protobuf.Any
 }
 var file_api_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	2, // 0: io.kruise.agentio.sandbox.v1.Sandbox.attester:type_name -> io.kruise.agentio.sandbox.v1.Sandbox.Attester
-	0, // 1: io.kruise.agentio.sandbox.v1.Sandbox.state:type_name -> io.kruise.agentio.sandbox.v1.SandboxState
-	3, // 2: io.kruise.agentio.sandbox.v1.Sandbox.egress_routing:type_name -> io.kruise.agentio.sandbox.v1.EgressRouting
-	4, // 3: io.kruise.agentio.sandbox.v1.Sandbox.traffic_policies:type_name -> io.kruise.agentio.security.v1.TrafficPolicy
-	5, // 4: io.kruise.agentio.sandbox.v1.Sandbox.extensions:type_name -> google.protobuf.Any
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	4, // 0: agentio.sandbox.Sandbox.attester:type_name -> agentio.sandbox.Sandbox.Attester
+	0, // 1: agentio.sandbox.Sandbox.state:type_name -> agentio.sandbox.SandboxState
+	5, // 2: agentio.sandbox.Sandbox.egress_routing:type_name -> agentio.sandbox.EgressRouting
+	6, // 3: agentio.sandbox.Sandbox.traffic_policy:type_name -> agentio.security.TrafficPolicy
+	7, // 4: agentio.sandbox.Sandbox.extensions:type_name -> google.protobuf.Any
+	3, // 5: agentio.sandbox.Sandbox.policy_refs:type_name -> agentio.sandbox.Sandbox.PolicyRefsEntry
+	2, // 6: agentio.sandbox.Sandbox.PolicyRefsEntry.value:type_name -> agentio.sandbox.PolicyReference
+	7, // [7:7] is the sub-list for method output_type
+	7, // [7:7] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_api_sandbox_v1_sandbox_proto_init() }
@@ -314,7 +398,7 @@ func file_api_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_sandbox_v1_sandbox_proto_rawDesc), len(file_api_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

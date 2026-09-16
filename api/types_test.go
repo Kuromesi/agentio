@@ -33,9 +33,9 @@ func TestWireMessageNamesAndTypeURLs(t *testing.T) {
 		message proto.Message
 		want    string
 	}{
-		{&sandboxv1.Sandbox{}, "io.kruise.agentio.sandbox.v1.Sandbox"},
-		{&sandboxv1.EgressRouting{}, "io.kruise.agentio.sandbox.v1.EgressRouting"},
-		{&securityv1.TrafficPolicy{}, "io.kruise.agentio.security.v1.TrafficPolicy"},
+		{&sandboxv1.Sandbox{}, "agentio.sandbox.Sandbox"},
+		{&sandboxv1.EgressRouting{}, "agentio.sandbox.EgressRouting"},
+		{&securityv1.TrafficPolicy{}, "agentio.security.TrafficPolicy"},
 		{&workloadv1.Address{}, "istio.workload.Address"},
 		{&workloadv1.Workload{}, "istio.workload.Workload"},
 		// Control-plane-only configuration decoded from ConfigMap YAML by

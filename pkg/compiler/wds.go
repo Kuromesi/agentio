@@ -42,6 +42,7 @@ type wdsProjection struct {
 	SNIPolicy             *extensionsv1.SniTrafficPolicy
 	EgressPolicies        *extensionsv1.EgressPolicies
 	AuthorizationNames    []string
+	TrafficPolicyNames    []string
 	MetadataConfiguration *workloadMetadataConfiguration
 	EgressGatewayKeys     []string
 	OwnedGatewayKey       string
@@ -124,6 +125,15 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 			Config: config,
 		})
 	}
+	if len(input.TrafficPolicyNames) > 0 {
+		config, err := marshalDeterministicAny(&extensionsv1.PolicyReference{
+			TypeUrl: model.TrafficPolicyType, ResourceNames: input.TrafficPolicyNames,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal traffic policy references for workload %s: %w", input.Workload.UID, err)
+		}
+		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{Name: "traffic-policy-reference", Config: config})
+	}
 
 	addressValue, err := marshalDeterministicAny(address)
 	if err != nil {
@@ -132,6 +142,7 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 		SandboxManaged:    input.Workload.SandboxManaged,
 		AuthorizationRefs: append([]string(nil), input.AuthorizationNames...),
+		TrafficPolicyRefs: append([]string(nil), input.TrafficPolicyNames...),
 		WorkloadUID:       input.Workload.UID,
 		SourceUID:         input.Workload.SourceUID,
 		NodeName:          input.Workload.NodeName,

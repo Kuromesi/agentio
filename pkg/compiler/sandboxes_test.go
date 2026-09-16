@@ -15,6 +15,7 @@
 package compiler
 
 import (
+	"net/netip"
 	"reflect"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
+	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policy"
@@ -42,7 +44,24 @@ func manifestAt(t *testing.T, compiler *Compiler, uid string) *sandboxv1.Sandbox
 	return value
 }
 
-func TestSandboxInlinePoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
+func trafficPolicyRefs(sandbox *sandboxv1.Sandbox) []string {
+	return sandbox.GetPolicyRefs()[model.TrafficPolicyType].GetResourceNames()
+}
+
+func trafficPolicyAt(t *testing.T, compiler *Compiler, name string) *securityv1.TrafficPolicy {
+	t.Helper()
+	resource, ok := currentSnapshot(t, compiler).Get(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name})
+	if !ok {
+		return nil
+	}
+	value := new(securityv1.TrafficPolicy)
+	if err := resource.Value.UnmarshalTo(value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestSandboxSharedPoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "a", Namespace: "tenant", Labels: map[string]string{"app": "a"}})
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "b", Namespace: "tenant", Labels: map[string]string{"app": "b"}})
@@ -58,9 +77,9 @@ func TestSandboxInlinePoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		a, b := manifestAt(t, fixture.compiler, "a"), manifestAt(t, fixture.compiler, "b")
-		return a != nil && len(a.TrafficPolicies) == 1 && b != nil && len(b.TrafficPolicies) == 0
+		return a != nil && reflect.DeepEqual(trafficPolicyRefs(a), []string{"namespaces/tenant/trafficPolicies/allow"}) && a.TrafficPolicy == nil && b != nil && len(trafficPolicyRefs(b)) == 0 && trafficPolicyAt(t, fixture.compiler, "namespaces/tenant/trafficPolicies/allow") != nil
 	}, "paused Sandbox manifests compiled independently")
-	first := manifestAt(t, fixture.compiler, "a").TrafficPolicies[0]
+	first := trafficPolicyAt(t, fixture.compiler, "namespaces/tenant/trafficPolicies/allow")
 	// Sandbox and Authorization resources are published by separate collections.
 	eventually(t, func() bool {
 		return len(currentSnapshot(t, fixture.compiler).List(model.WorkloadAuthorizationType)) == 1
@@ -82,16 +101,16 @@ func TestSandboxInlinePoliciesWithoutWorkerAndBodyUpdate(t *testing.T) {
 	policy.Spec.Egress.Rules[0].To[0].CIDR = "10.2.0.0/24"
 	fixture.trafficPolicies.ConditionalUpdateObject(policy)
 	eventually(t, func() bool {
-		a := manifestAt(t, fixture.compiler, "a")
-		return a != nil && len(a.TrafficPolicies) == 1 && !proto.Equal(a.TrafficPolicies[0], first)
-	}, "manifest tracks changed payload")
+		current := trafficPolicyAt(t, fixture.compiler, "namespaces/tenant/trafficPolicies/allow")
+		return current != nil && !proto.Equal(current, first)
+	}, "independent policy tracks changed payload")
 	settle()
 	after := currentSnapshot(t, fixture.compiler)
 	var names []string
 	for _, change := range before.Diff(after) {
 		names = append(names, change.Key.TypeURL+"|"+change.Key.Name)
 	}
-	want := []string{model.SandboxType + "|a", model.WorkloadAuthorizationType + "|tenant/allow-egress"}
+	want := []string{model.TrafficPolicyType + "|namespaces/tenant/trafficPolicies/allow", model.WorkloadAuthorizationType + "|tenant/allow-egress"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("changed resources %v, want %v", names, want)
 	}
@@ -146,7 +165,7 @@ func TestMalformedSandboxUIDDoesNotStopCompiler(t *testing.T) {
 	eventually(t, func() bool { _, failed := fixture.compiler.Failures()["Sandbox/ "]; return !failed }, "removed malformed UID clears diagnostic")
 }
 
-func TestSandboxInlinePrioritySNIOrderAndUnavailableView(t *testing.T) {
+func TestSandboxReferencePrioritySNIOrderAndUnavailableView(t *testing.T) {
 	sniAt := func(manifest *sandboxv1.Sandbox, index int) *extensionsv1.SniTrafficPolicy {
 		t.Helper()
 		value := new(extensionsv1.SniTrafficPolicy)
@@ -165,8 +184,8 @@ func TestSandboxInlinePrioritySNIOrderAndUnavailableView(t *testing.T) {
 		},
 	})
 	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "b", Namespace: "other"})
-	global := model.TrafficPolicy{Name: "baseline", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 10, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionReject}}}}}
-	local := model.TrafficPolicy{Name: "local", Namespace: "tenant", Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 100, Ingress: &agentsv1alpha1.TrafficPolicyDirection{}, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}}}}}
+	global := model.TrafficPolicy{Name: "baseline", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 10, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionReject, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}}}}}
+	local := model.TrafficPolicy{Name: "local", Namespace: "tenant", Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 100, Ingress: &agentsv1alpha1.TrafficPolicyDirection{}, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}}}}}
 	fixture.trafficPolicies.ConditionalUpdateObject(global)
 	fixture.trafficPolicies.ConditionalUpdateObject(local)
 	profile := func(name, domain string) model.SecurityProfile {
@@ -185,12 +204,17 @@ func TestSandboxInlinePrioritySNIOrderAndUnavailableView(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		a, b := manifestAt(t, fixture.compiler, "a"), manifestAt(t, fixture.compiler, "b")
-		return a != nil && len(a.TrafficPolicies) == 2 && len(a.Extensions) == 2 && b != nil && len(b.TrafficPolicies) == 1
+		return a != nil && len(trafficPolicyRefs(a)) == 2 && len(a.Extensions) == 2 && b != nil && len(trafficPolicyRefs(b)) == 1
 	}, "inline global/local policies and explicit SNI order")
 	a := manifestAt(t, fixture.compiler, "a")
-	if a.TrafficPolicies[0].Name != "globaltrafficpolicy/baseline" || a.TrafficPolicies[1].Name != "trafficpolicy/tenant/local" {
-		t.Fatalf("traffic priority order: %v", a.TrafficPolicies)
+	if a.TrafficPolicy != nil || !reflect.DeepEqual(trafficPolicyRefs(a), []string{"trafficPolicies/baseline", "namespaces/tenant/trafficPolicies/local"}) {
+		t.Fatalf("traffic reference order: %v", a)
 	}
+	eventually(t, func() bool {
+		local := trafficPolicyAt(t, fixture.compiler, "namespaces/tenant/trafficPolicies/local")
+		global := trafficPolicyAt(t, fixture.compiler, "trafficPolicies/baseline")
+		return local != nil && local.Ingress == nil && global != nil && global.Ingress == nil
+	}, "shared bodies omit unconfigured and empty source directions")
 	if sniAt(a, 0).Rules[0].Match.Sni[0] != "second.example" || sniAt(a, 1).Rules[0].Match.Sni[0] != "first.example" {
 		t.Fatal("SNI explicit order was not preserved")
 	}
@@ -198,19 +222,16 @@ func TestSandboxInlinePrioritySNIOrderAndUnavailableView(t *testing.T) {
 	fixture.trafficPolicies.ConditionalUpdateObject(local)
 	eventually(t, func() bool {
 		a := manifestAt(t, fixture.compiler, "a")
-		return a != nil && len(a.TrafficPolicies) == 2 &&
-			a.TrafficPolicies[0].Name == "trafficpolicy/tenant/local" && a.TrafficPolicies[0].Priority == 0 &&
-			a.TrafficPolicies[1].Name == "globaltrafficpolicy/baseline"
+		return a != nil && len(trafficPolicyRefs(a)) == 2 &&
+			reflect.DeepEqual(trafficPolicyRefs(a), []string{"namespaces/tenant/trafficPolicies/local", "trafficPolicies/baseline"})
 	}, "lower numeric priority moves the local policy ahead of the global policy")
 	local.Spec.Priority = global.Spec.Priority
 	fixture.trafficPolicies.ConditionalUpdateObject(local)
 	eventually(t, func() bool {
 		a := manifestAt(t, fixture.compiler, "a")
-		return a != nil && len(a.TrafficPolicies) == 2 &&
-			a.TrafficPolicies[0].Name == "globaltrafficpolicy/baseline" &&
-			a.TrafficPolicies[1].Name == "trafficpolicy/tenant/local" &&
-			a.TrafficPolicies[1].Priority == global.Spec.Priority
-	}, "equal numeric priorities use stable policy-name ordering")
+		return a != nil && len(trafficPolicyRefs(a)) == 2 &&
+			reflect.DeepEqual(trafficPolicyRefs(a), []string{"trafficPolicies/baseline", "namespaces/tenant/trafficPolicies/local"})
+	}, "equal priorities and creation times use namespace/name ordering")
 	second.Spec = *second.Spec.DeepCopy()
 	second.Spec.Rules[0].Match[0].Domains = []string{"updated.example"}
 	fixture.securityProfiles.ConditionalUpdateObject(second)
@@ -229,7 +250,7 @@ func TestSandboxInlinePrioritySNIOrderAndUnavailableView(t *testing.T) {
 	fixture.securityProfiles.ConditionalUpdateObject(second)
 	eventually(t, func() bool {
 		a := manifestAt(t, fixture.compiler, "a")
-		return a != nil && len(a.TrafficPolicies) == 2 && len(a.Extensions) == 2
+		return a != nil && len(trafficPolicyRefs(a)) == 2 && len(a.Extensions) == 2
 	}, "complete inline view recovers")
 }
 
@@ -287,8 +308,8 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	eventually(t, func() bool {
 		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
 		return binding != nil && reflect.DeepEqual(
-			binding.PolicyNames(policy.PolicyKindAuthorization),
-			[]string{"trafficpolicy/sandbox-namespace/allow"},
+			binding.PolicyNames(policy.PolicyKindTrafficPolicy),
+			[]string{"namespaces/sandbox-namespace/trafficPolicies/allow"},
 		)
 	}, "explicit Sandbox namespace and labels select policy")
 
@@ -296,6 +317,103 @@ func TestSandboxSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	eventually(t, func() bool {
 		binding := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID))
-		return binding != nil && binding.Valid() && len(binding.PolicyNames(policy.PolicyKindAuthorization)) == 0
+		return binding != nil && binding.Valid() && len(binding.PolicyNames(policy.PolicyKindTrafficPolicy)) == 0
 	}, "Sandbox label update removes selector-derived binding")
+}
+
+func TestSandboxTrafficPolicyCompilesDirectly(t *testing.T) {
+	fixture := newIncrementalFixture(t)
+	sandbox := model.Sandbox{
+		UID: "a", Namespace: "tenant",
+		TrafficPolicy: &model.TrafficPolicyRules{
+			Ingress: &agentsv1alpha1.TrafficPolicyDirection{},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
+				Action: agentsv1alpha1.RuleActionAllow,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.0.2.0/24"}},
+			}}},
+		},
+	}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
+	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "b", Namespace: "tenant"})
+	shared := model.TrafficPolicy{Name: "global", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{
+		Priority: 0, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionReject, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}}}},
+	}}
+	fixture.trafficPolicies.ConditionalUpdateObject(shared)
+	waitSynced(t, fixture.compiler)
+	eventually(t, func() bool {
+		a, b := manifestAt(t, fixture.compiler, "a"), manifestAt(t, fixture.compiler, "b")
+		return a != nil && len(a.GetTrafficPolicy().GetEgress().GetRules()) == 1 && b != nil && b.TrafficPolicy == nil &&
+			reflect.DeepEqual(trafficPolicyRefs(a), []string{"trafficPolicies/global"}) && reflect.DeepEqual(trafficPolicyRefs(b), []string{"trafficPolicies/global"})
+	}, "direct Sandbox rules coexist with shared references")
+	a := manifestAt(t, fixture.compiler, "a")
+	if a.TrafficPolicy.Ingress != nil ||
+		a.TrafficPolicy.Egress.Rules[0].Action != securityv1.TrafficPolicy_ALLOW {
+		t.Fatalf("inline directions or action lost: %v", a.TrafficPolicy)
+	}
+	if got := fixture.compiler.Bindings().GetKey(policy.BindingsKey(policy.PolicyTargetSandbox, "a")).PolicyNames(model.PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"trafficPolicies/global"}) {
+		t.Fatalf("inline policy entered the shared binding graph: %v", got)
+	}
+	if got := currentSnapshot(t, fixture.compiler).List(model.TrafficPolicyType); len(got) != 1 {
+		t.Fatalf("inline policy produced an independent xDS resource: %v", got)
+	}
+	other := manifestAt(t, fixture.compiler, "b")
+
+	sandbox.TrafficPolicy = &model.TrafficPolicyRules{Egress: sandbox.TrafficPolicy.Egress.DeepCopy()}
+	sandbox.TrafficPolicy.Egress.Rules[0].Action = agentsv1alpha1.RuleActionReject
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
+	eventually(t, func() bool {
+		a := manifestAt(t, fixture.compiler, "a")
+		return len(a.GetTrafficPolicy().GetEgress().GetRules()) == 1 && a.TrafficPolicy.Egress.Rules[0].Action == securityv1.TrafficPolicy_DENY && a.TrafficPolicy.Ingress == nil
+	}, "Sandbox body update recompiles directly")
+
+	invalid := sandbox
+	invalid.TrafficPolicy = &model.TrafficPolicyRules{Egress: sandbox.TrafficPolicy.Egress.DeepCopy()}
+	invalid.TrafficPolicy.Egress.Rules[0].Action = "invalid"
+	fixture.sandboxes.ConditionalUpdateObject(invalid)
+	eventually(t, func() bool {
+		return manifestAt(t, fixture.compiler, "a") == nil && fixture.compiler.Failures()["SandboxResource/a"] != ""
+	}, "invalid inline rules are not published as an empty policy")
+
+	sandbox.TrafficPolicy = &model.TrafficPolicyRules{Egress: &agentsv1alpha1.TrafficPolicyDirection{}}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
+	eventually(t, func() bool {
+		a := manifestAt(t, fixture.compiler, "a")
+		return a != nil && a.TrafficPolicy != nil && a.TrafficPolicy.Egress == nil && fixture.compiler.Failures()["SandboxResource/a"] == ""
+	}, "empty source direction stops enforcement after recovery")
+
+	sandbox.TrafficPolicy = nil
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
+	eventually(t, func() bool {
+		a := manifestAt(t, fixture.compiler, "a")
+		return a != nil && a.TrafficPolicy == nil && reflect.DeepEqual(trafficPolicyRefs(a), []string{"trafficPolicies/global"})
+	}, "inline removal preserves shared references")
+	if !proto.Equal(other, manifestAt(t, fixture.compiler, "b")) {
+		t.Fatal("inline changes affected an unrelated Sandbox")
+	}
+}
+
+func TestSandboxTrafficPolicyTracksPeerUpdates(t *testing.T) {
+	fixture := newIncrementalFixture(t)
+	fixture.setResolved("api.example.com", netip.MustParseAddr("192.0.2.1"))
+	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
+		UID: "a", Namespace: "tenant",
+		TrafficPolicy: &model.TrafficPolicyRules{
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
+				Action: agentsv1alpha1.RuleActionAllow,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "api.example.com"}},
+			}}},
+		},
+	})
+	waitSynced(t, fixture.compiler)
+	awaitAddress := func(last byte) {
+		t.Helper()
+		eventually(t, func() bool {
+			rules := manifestAt(t, fixture.compiler, "a").GetTrafficPolicy().GetEgress().GetRules()
+			return len(rules) == 1 && len(rules[0].Match.DestinationIps) == 1 &&
+				reflect.DeepEqual(rules[0].Match.DestinationIps[0].Address, []byte{192, 0, 2, last})
+		}, "inline policy follows the peer resolver dependency")
+	}
+	awaitAddress(1)
+	fixture.setResolved("api.example.com", netip.MustParseAddr("192.0.2.2"))
+	awaitAddress(2)
 }

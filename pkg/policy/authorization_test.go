@@ -72,7 +72,7 @@ func testTrafficPolicyInputs(
 	}
 }
 
-func TestCompileAuthorizationSandboxUIDAssociation(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationSandboxUIDAssociation(t *testing.T) {
 	inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil)
 	for _, test := range []struct {
 		name        string
@@ -93,7 +93,7 @@ func TestCompileAuthorizationSandboxUIDAssociation(t *testing.T) {
 			if test.selectedUID != nil {
 				selector.MatchLabels = map[string]string{agentsv1alpha1.LabelSandboxID: *test.selectedUID}
 			}
-			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 				Name:       "allow",
 				Namespace:  "demo",
 				SandboxUID: test.declaredUID,
@@ -107,21 +107,21 @@ func TestCompileAuthorizationSandboxUIDAssociation(t *testing.T) {
 			}, inputs)
 			if test.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "sandbox UID") {
-					t.Fatalf("CompileAuthorization() error = %v, want sandbox UID error", err)
+					t.Fatalf("CompileTrafficPolicy() error = %v, want sandbox UID error", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("CompileAuthorization(): %v", err)
+				t.Fatalf("CompileTrafficPolicy(): %v", err)
 			}
-			if len(compiled) != 1 {
-				t.Fatalf("compiled policies = %d, want 1", len(compiled))
+			if len(compiled.AsAuthorization) != 1 {
+				t.Fatalf("compiled policies = %d, want 1", len(compiled.AsAuthorization))
 			}
-			attachment := compiled[0].PolicyAttachment()
+			attachment := compiled.AsAuthorization[0].PolicyAttachment()
 			if attachment == nil || attachment.Target.SandboxUID != test.wantUID {
 				t.Fatalf("attachment = %+v, want exact Sandbox UID %q", attachment, test.wantUID)
 			}
-			if got := compiled[0].Policy.GetScope(); got != securityv1.Scope_WORKLOAD_SELECTOR {
+			if got := compiled.AsAuthorization[0].Policy.GetScope(); got != securityv1.Scope_WORKLOAD_SELECTOR {
 				t.Fatalf("Authorization scope = %v, want WORKLOAD_SELECTOR", got)
 			}
 		})
@@ -130,9 +130,9 @@ func TestCompileAuthorizationSandboxUIDAssociation(t *testing.T) {
 
 func stringPtr(value string) *string { return &value }
 
-func TestCompileAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
 	start, end := int32(8080), int32(8090)
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "api",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -181,10 +181,10 @@ func TestCompileAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile policies: %v", err)
 	}
-	if len(compiled) != 1 {
-		t.Fatalf("compiled policies = %d, want 1", len(compiled))
+	if len(compiled.AsAuthorization) != 1 {
+		t.Fatalf("compiled policies = %d, want 1", len(compiled.AsAuthorization))
 	}
-	got := compiled[0]
+	got := compiled.AsAuthorization[0]
 	if got.ResourceName() != "demo/api-egress" || !got.Attachment.Selects(model.Sandbox{
 		Namespace: "demo",
 		Labels:    map[string]string{"app": "client"},
@@ -215,8 +215,8 @@ func TestCompileAuthorizationResolvesPeersAndPreservesDirection(t *testing.T) {
 	}
 }
 
-func TestCompileAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOfRuntimeState(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOfRuntimeState(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "pod-only",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -260,7 +260,7 @@ func TestCompileAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOfRuntimeS
 	if err != nil {
 		t.Fatal(err)
 	}
-	matches := flattenMatches(compiled[0].Policy)
+	matches := flattenMatches(compiled.AsAuthorization[0].Policy)
 	if !hasAddress(matches, "destination", "10.1.0.5/32", false) {
 		t.Fatalf("Pod peer address is missing: %+v", matches)
 	}
@@ -270,8 +270,8 @@ func TestCompileAuthorizationWorkloadPeerMatchesSelectedPodsRegardlessOfRuntimeS
 	}
 }
 
-func TestCompileAuthorizationSkipsInvalidPeerAddresses(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationSkipsInvalidPeerAddresses(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "pod-addresses",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -293,13 +293,13 @@ func TestCompileAuthorizationSkipsInvalidPeerAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid peer address rejected the TrafficPolicy: %v", err)
 	}
-	if !hasAddress(flattenMatches(compiled[0].Policy), "destination", "10.1.0.5/32", false) {
-		t.Fatalf("valid peer address was not preserved: %+v", compiled[0].Policy)
+	if !hasAddress(flattenMatches(compiled.AsAuthorization[0].Policy), "destination", "10.1.0.5/32", false) {
+		t.Fatalf("valid peer address was not preserved: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationRejectUsesNegativeMatches(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationRejectUsesNegativeMatches(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "deny",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -313,14 +313,14 @@ func TestCompileAuthorizationRejectUsesNegativeMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile reject policy: %v", err)
 	}
-	matches := flattenMatches(compiled[0].Policy)
+	matches := flattenMatches(compiled.AsAuthorization[0].Policy)
 	if !hasAddress(matches, "source", "192.0.2.0/24", true) || !hasPortRange(matches, 0, 65535, securityv1.Protocol_UDP, true) {
 		t.Fatalf("reject did not compile to negative matches: %+v", matches)
 	}
 }
 
-func TestCompileAuthorizationRejectIncludesNotReadyEndpoints(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationRejectIncludesNotReadyEndpoints(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "deny-backend",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -352,7 +352,7 @@ func TestCompileAuthorizationRejectIncludesNotReadyEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile reject policy: %v", err)
 	}
-	matches := flattenMatches(compiled[0].Policy)
+	matches := flattenMatches(compiled.AsAuthorization[0].Policy)
 	if !hasAddress(matches, "destination", "10.2.0.3/32", true) {
 		t.Fatalf("not-ready endpoint missing from negative match, widening traffic: %+v", matches)
 	}
@@ -361,7 +361,7 @@ func TestCompileAuthorizationRejectIncludesNotReadyEndpoints(t *testing.T) {
 	}
 }
 
-func TestCompileAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
 	inputs := testTrafficPolicyInputs("agentio-system", krt.NewStaticCollection(nil, []*corev1.Service{{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "backend"},
 		Spec: corev1.ServiceSpec{
@@ -383,7 +383,7 @@ func TestCompileAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
 	for _, serviceName := range []string{"backend", "*"} {
 		t.Run(serviceName, func(t *testing.T) {
 			serviceRef := &agentsv1alpha1.TrafficPolicyServiceRef{Name: serviceName}
-			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 				Name:      "service",
 				Namespace: "demo",
 				Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -399,7 +399,7 @@ func TestCompileAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
 			if serviceRef.Namespace != "" {
 				t.Fatalf("compiler mutated Service namespace to %q", serviceRef.Namespace)
 			}
-			matches := flattenMatches(compiled[0].Policy)
+			matches := flattenMatches(compiled.AsAuthorization[0].Policy)
 			if !hasAddress(matches, "destination", "10.96.0.10/32", false) ||
 				!hasAddress(matches, "destination", "10.2.0.2/32", false) {
 				t.Fatalf("Kubernetes Service peer addresses missing: %+v", matches)
@@ -412,7 +412,7 @@ func TestCompileAuthorizationServiceUsesPolicyNamespaceByDefault(t *testing.T) {
 }
 
 func TestCompileGlobalAuthorizationServiceUsesRootNamespaceByDefault(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:   "global-service",
 		Global: true,
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -430,13 +430,13 @@ func TestCompileGlobalAuthorizationServiceUsesRootNamespaceByDefault(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasAddress(flattenMatches(compiled[0].Policy), "destination", "10.96.0.20/32", false) {
-		t.Fatalf("root-namespace Service peer address missing: %+v", compiled[0].Policy)
+	if !hasAddress(flattenMatches(compiled.AsAuthorization[0].Policy), "destination", "10.96.0.20/32", false) {
+		t.Fatalf("root-namespace Service peer address missing: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationMissingServiceFailsClosed(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationMissingServiceFailsClosed(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "missing-service",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -451,12 +451,12 @@ func TestCompileAuthorizationMissingServiceFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compiled[0].Policy.GetGroups()) != 0 {
-		t.Fatalf("missing Service did not make the rule non-matching: %+v", compiled[0].Policy)
+	if len(compiled.AsAuthorization[0].Policy.GetGroups()) != 0 {
+		t.Fatalf("missing Service did not make the rule non-matching: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationRootNamespaceScope(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationRootNamespaceScope(t *testing.T) {
 	inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil)
 	direction := &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 		Action: agentsv1alpha1.RuleActionAllow,
@@ -491,30 +491,30 @@ func TestCompileAuthorizationRootNamespaceScope(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, test.policy, inputs)
+			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, test.policy, inputs)
 			if err != nil {
 				t.Fatalf("compile policy: %v", err)
 			}
-			if len(compiled) != 1 {
-				t.Fatalf("compiled = %d, want 1", len(compiled))
+			if len(compiled.AsAuthorization) != 1 {
+				t.Fatalf("compiled = %d, want 1", len(compiled.AsAuthorization))
 			}
-			if got := compiled[0].Policy.GetScope(); got != test.want {
+			if got := compiled.AsAuthorization[0].Policy.GetScope(); got != test.want {
 				t.Fatalf("scope = %v, want %v", got, test.want)
 			}
-			attachment := compiled[0].PolicyAttachment()
+			attachment := compiled.AsAuthorization[0].PolicyAttachment()
 			if (attachment != nil) != (test.want == securityv1.Scope_WORKLOAD_SELECTOR) {
 				t.Fatalf("scope %v produced unexpected attachment: %+v", test.want, attachment)
 			}
-			if attachment != nil && attachment.Name != compiled[0].ResourceName() {
-				t.Fatalf("attachment name %q differs from resource name %q", attachment.Name, compiled[0].ResourceName())
+			if attachment != nil && attachment.Name != compiled.AsAuthorization[0].ResourceName() {
+				t.Fatalf("attachment name %q differs from resource name %q", attachment.Name, compiled.AsAuthorization[0].ResourceName())
 			}
 		})
 	}
 }
 
-func TestCompileAuthorizationUnresolvedFQDNFailsClosed(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationUnresolvedFQDNFailsClosed(t *testing.T) {
 	port := int32(443)
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "fqdn",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -528,10 +528,10 @@ func TestCompileAuthorizationUnresolvedFQDNFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile unresolved policy: %v", err)
 	}
-	if len(compiled[0].Policy.GetGroups()) != 0 {
-		t.Fatalf("unresolved FQDN did not make the rule non-matching: %+v", compiled[0].Policy)
+	if len(compiled.AsAuthorization[0].Policy.GetGroups()) != 0 {
+		t.Fatalf("unresolved FQDN did not make the rule non-matching: %+v", compiled.AsAuthorization[0].Policy)
 	}
-	wire, err := proto.Marshal(compiled[0].Policy)
+	wire, err := proto.Marshal(compiled.AsAuthorization[0].Policy)
 	if err != nil {
 		t.Fatalf("marshal authorization: %v", err)
 	}
@@ -544,14 +544,14 @@ func TestCompileAuthorizationUnresolvedFQDNFailsClosed(t *testing.T) {
 	}
 }
 
-func TestCompileAuthorizationPassesFQDNUnchangedToResolver(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationPassesFQDNUnchangedToResolver(t *testing.T) {
 	inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, func(host string) []netip.Addr {
 		if host == "API.Example.COM." {
 			return []netip.Addr{netip.MustParseAddr("203.0.113.7")}
 		}
 		return nil
 	})
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "fqdn",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -564,12 +564,12 @@ func TestCompileAuthorizationPassesFQDNUnchangedToResolver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasAddress(flattenMatches(compiled[0].Policy), "destination", "203.0.113.7/32", false) {
-		t.Fatalf("resolver did not receive the declared FQDN: %+v", compiled[0].Policy)
+	if !hasAddress(flattenMatches(compiled.AsAuthorization[0].Policy), "destination", "203.0.113.7/32", false) {
+		t.Fatalf("resolver did not receive the declared FQDN: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing.T) {
+func TestTrafficPolicyAsAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing.T) {
 	peer := agentsv1alpha1.TrafficPolicyPeer{Workload: &agentsv1alpha1.TrafficPolicyWorkloadRef{
 		Namespace: "demo",
 		Selector:  map[string]string{"app": "missing"},
@@ -586,29 +586,28 @@ func TestCompileAuthorizationUnmatchedWorkloadPeerFailsClosed(t *testing.T) {
 		{name: "reject destination", action: agentsv1alpha1.RuleActionReject, to: []agentsv1alpha1.TrafficPolicyPeer{peer}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
-				Name:      "missing-peer",
-				Namespace: "demo",
-				Spec: agentsv1alpha1.TrafficPolicySpec{
-					Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-						Action: test.action,
-						From:   test.from,
-						To:     test.to,
-					}}},
-				},
-			}, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
+			direction := &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
+				Action: test.action, From: test.from, To: test.to,
+			}}}
+			source := model.TrafficPolicy{Name: "missing-peer", Namespace: "demo"}
+			if len(test.from) > 0 {
+				source.Spec.Ingress = direction
+			} else {
+				source.Spec.Egress = direction
+			}
+			compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, source, testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil))
 			if err != nil {
 				t.Fatalf("compile policy: %v", err)
 			}
-			if len(compiled[0].Policy.GetGroups()) != 0 {
-				t.Fatalf("unmatched workload peer did not make the rule non-matching: %+v", compiled[0].Policy)
+			if len(compiled.AsAuthorization[0].Policy.GetGroups()) != 0 {
+				t.Fatalf("unmatched workload peer did not make the rule non-matching: %+v", compiled.AsAuthorization[0].Policy)
 			}
 		})
 	}
 }
 
-func TestCompileAuthorizationInvalidCIDRFailsClosed(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationInvalidCIDRFailsClosed(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "invalid-cidr",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -621,13 +620,13 @@ func TestCompileAuthorizationInvalidCIDRFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile invalid CIDR policy: %v", err)
 	}
-	if len(compiled[0].Policy.GetGroups()) != 0 {
-		t.Fatalf("invalid CIDR did not make the rule non-matching: %+v", compiled[0].Policy)
+	if len(compiled.AsAuthorization[0].Policy.GetGroups()) != 0 {
+		t.Fatalf("invalid CIDR did not make the rule non-matching: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "mixed-rules",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -640,14 +639,14 @@ func TestCompileAuthorizationUnresolvedRuleDoesNotRemoveOtherRules(t *testing.T)
 	if err != nil {
 		t.Fatalf("compile mixed rules: %v", err)
 	}
-	groups := compiled[0].Policy.GetGroups()
-	if len(groups) != 1 || !hasAddress(flattenMatches(compiled[0].Policy), "destination", "192.0.2.0/24", false) {
-		t.Fatalf("unresolved rule affected valid sibling rule: %+v", compiled[0].Policy)
+	groups := compiled.AsAuthorization[0].Policy.GetGroups()
+	if len(groups) != 1 || !hasAddress(flattenMatches(compiled.AsAuthorization[0].Policy), "destination", "192.0.2.0/24", false) {
+		t.Fatalf("unresolved rule affected valid sibling rule: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationResolvedPeerKeepsMixedPeerListMatchable(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationResolvedPeerKeepsMixedPeerListMatchable(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "mixed-peers",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -663,14 +662,14 @@ func TestCompileAuthorizationResolvedPeerKeepsMixedPeerListMatchable(t *testing.
 	if err != nil {
 		t.Fatalf("compile mixed peers: %v", err)
 	}
-	groups := compiled[0].Policy.GetGroups()
-	if len(groups) != 1 || !hasAddress(flattenMatches(compiled[0].Policy), "destination", "192.0.2.0/24", false) {
-		t.Fatalf("resolved peer list did not remain matchable: %+v", compiled[0].Policy)
+	groups := compiled.AsAuthorization[0].Policy.GetGroups()
+	if len(groups) != 1 || !hasAddress(flattenMatches(compiled.AsAuthorization[0].Policy), "destination", "192.0.2.0/24", false) {
+		t.Fatalf("resolved peer list did not remain matchable: %+v", compiled.AsAuthorization[0].Policy)
 	}
 }
 
-func TestCompileAuthorizationRuleWithoutPeersRemainsWildcard(t *testing.T) {
-	compiled, err := CompileAuthorization(krt.TestingDummyContext{}, model.TrafficPolicy{
+func TestTrafficPolicyAsAuthorizationSkipsRuleWithoutPeers(t *testing.T) {
+	compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, model.TrafficPolicy{
 		Name:      "wildcard",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -682,9 +681,8 @@ func TestCompileAuthorizationRuleWithoutPeersRemainsWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile policy: %v", err)
 	}
-	group := compiled[0].Policy.GetGroups()[0]
-	if len(group.GetRules()) != 0 {
-		t.Fatalf("peerless wildcard rule gained constraints: %+v", group)
+	if compiled.Policy.Egress != nil || len(compiled.AsAuthorization) != 0 {
+		t.Fatalf("peerless rule must not configure native or legacy policy enforcement: %+v", compiled)
 	}
 }
 

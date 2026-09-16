@@ -34,7 +34,14 @@ func sandboxResource(t *testing.T, uid string, policies ...*securityv1.TrafficPo
 
 func sandboxResourceWithAttester(t *testing.T, uid, workloadUID string, policies ...*securityv1.TrafficPolicy) model.Resource {
 	t.Helper()
-	value, err := anypb.New(&sandboxv1.Sandbox{Uid: uid, State: sandboxv1.SandboxState_SANDBOX_STATE_RUNNING, Attester: &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID}, TrafficPolicies: policies})
+	var trafficPolicy *securityv1.TrafficPolicy
+	if len(policies) > 1 {
+		t.Fatal("expected one effective TrafficPolicy")
+	}
+	if len(policies) == 1 {
+		trafficPolicy = policies[0]
+	}
+	value, err := anypb.New(&sandboxv1.Sandbox{Uid: uid, State: sandboxv1.SandboxState_SANDBOX_STATE_RUNNING, Attester: &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID}, TrafficPolicy: trafficPolicy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +173,7 @@ func TestSandboxWatchStartsEmptyAndUnsubscribeStopsDelivery(t *testing.T) {
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResourceNamesUnsubscribe: []string{"a"}})
 	stream.awaitResponses(t, model.SandboxType, 3)
 	// A subsequent explicit request is a barrier proving the earlier update was processed.
-	changed := sandboxResource(t, "a", &securityv1.TrafficPolicy{Name: "p", Priority: 2})
+	changed := sandboxResource(t, "a", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}})
 	server.resources.publish(selectionSnapshot(t, []model.Resource{changed}))
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType})
 	responses := stream.awaitResponses(t, model.SandboxType, 4)
@@ -213,7 +220,7 @@ func TestSandboxImplicitWildcardDelivery(t *testing.T) {
 
 			// New bindings and policy updates must arrive without another subscription,
 			// including when the first response was empty or came from a reconnect.
-			changed := sandboxResourceWithAttester(t, "a", "worker", &securityv1.TrafficPolicy{Name: "p", Priority: 2})
+			changed := sandboxResourceWithAttester(t, "a", "worker", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}})
 			b := sandboxResourceWithAttester(t, "b", "worker")
 			server.resources.publish(selectionSnapshot(t, []model.Resource{worker, changed, b, outside}))
 			updated := stream.awaitResponses(t, model.SandboxType, 2)[1]
@@ -239,8 +246,7 @@ func TestSandboxImplicitWildcardDelivery(t *testing.T) {
 func TestSandboxInlinePolicyChangeIsDeliveredWithoutPolicySubscriptions(t *testing.T) {
 	worker := workerResource(t, "pod-1")
 	policy := &securityv1.TrafficPolicy{
-		Name: "trafficpolicy/tenant/p",
-		Egress: &securityv1.TrafficPolicy_PolicyRule{
+		Egress: &securityv1.TrafficPolicy_RuleSet{
 			Rules: []*securityv1.TrafficPolicy_Rule{{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}}},
 		},
 	}
@@ -264,7 +270,7 @@ func TestSandboxInlinePolicyChangeIsDeliveredWithoutPolicySubscriptions(t *testi
 	if err := delta.Resources[0].Value.UnmarshalTo(manifest); err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.TrafficPolicies) != 1 || manifest.TrafficPolicies[0].Egress.Rules[0].Action != securityv1.TrafficPolicy_DENY {
+	if manifest.TrafficPolicy == nil || manifest.TrafficPolicy.Egress.Rules[0].Action != securityv1.TrafficPolicy_DENY {
 		t.Fatal("Sandbox update lost the complete deny policy")
 	}
 }

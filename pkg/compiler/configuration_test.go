@@ -119,7 +119,7 @@ func TestDNSChangePropagatesThroughCollection(t *testing.T) {
 	})
 	waitSynced(t, fixture.compiler)
 
-	authorizationKey := model.ResourceKey{TypeURL: model.SandboxType, Name: "cluster//Pod/alpha/client"}
+	authorizationKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/alpha/trafficPolicies/fqdn"}
 	var unresolvedHash string
 	eventually(t, func() bool {
 		resource, found := currentSnapshot(t, fixture.compiler).Get(authorizationKey)
@@ -163,7 +163,7 @@ func TestDNSChangeOnlyRecompilesPoliciesForThatHostname(t *testing.T) {
 		return fixture.resolutionCount("api.example.com") > 0 && fixture.resolutionCount("database.example.com") > 0
 	}, "both policies compiled")
 
-	authorizationKey := model.ResourceKey{TypeURL: model.SandboxType, Name: "actor"}
+	authorizationKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/alpha/trafficPolicies/api"}
 	var unresolvedHash string
 	eventually(t, func() bool {
 		resource, found := currentSnapshot(t, fixture.compiler).Get(authorizationKey)

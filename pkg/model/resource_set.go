@@ -408,3 +408,15 @@ func normalizeChangedResource(change ResourceChange) (Resource, error) {
 	}
 	return normalized, nil
 }
+
+// HasTrafficPolicyReference checks both owner indexes without materializing
+// every Sandbox or Workload that uses a global policy.
+func (s ResourceSet) HasTrafficPolicyReference(name string) bool {
+	for _, typeURL := range []string{SandboxType, AddressType} {
+		index := s.resources[typeURL]
+		if index != nil && len(lookupNames(&index.facts, resourceFactIndexKey(resourceFactTrafficPolicyReference, name))) > 0 {
+			return true
+		}
+	}
+	return false
+}

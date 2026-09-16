@@ -17,6 +17,7 @@ package model
 import (
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -29,6 +30,7 @@ type PolicyKind string
 
 const (
 	PolicyKindAuthorization PolicyKind = "authorization"
+	PolicyKindTrafficPolicy PolicyKind = "traffic-policy"
 	PolicyKindEgressPolicy  PolicyKind = "egress-policy"
 	PolicyKindSNIPolicy     PolicyKind = "sni-policy"
 )
@@ -42,7 +44,7 @@ func (r PolicyRef) ResourceName() string { return string(r.Kind) + "|" + r.Name 
 
 func (r PolicyRef) Validate() error {
 	switch r.Kind {
-	case PolicyKindAuthorization, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
+	case PolicyKindAuthorization, PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
 	default:
 		return fmt.Errorf("unsupported policy kind %q", r.Kind)
 	}
@@ -75,6 +77,9 @@ type Sandbox struct {
 	Namespace  string
 	Labels     map[string]string
 	PolicyRefs []PolicyRef
+	// TrafficPolicy is owned by this Sandbox and compiled directly into its xDS payload.
+	// Nil means no inline policy. Shared policies are selected through PolicyRefs and labels.
+	TrafficPolicy *TrafficPolicyRules
 }
 
 func (s Sandbox) Validate() error {
@@ -111,6 +116,7 @@ func (s Sandbox) Equals(other Sandbox) bool {
 		s.UID == other.UID &&
 		s.Namespace == other.Namespace &&
 		attestersEqual(s.Attester, other.Attester) &&
+		reflect.DeepEqual(s.TrafficPolicy, other.TrafficPolicy) &&
 		(s.PolicyRefs == nil) == (other.PolicyRefs == nil) &&
 		slices.Equal(s.PolicyRefs, other.PolicyRefs) &&
 		(s.Labels == nil) == (other.Labels == nil) &&

@@ -19,6 +19,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 proto_files=(
+  api/workload/v1/workload.proto
   api/security/v1/authorization.proto
   api/security/v1/trafficpolicy.proto
   api/sandbox/v1/egressrouting.proto

@@ -43,6 +43,7 @@ type PolicyKind = model.PolicyKind
 
 const (
 	PolicyKindAuthorization = model.PolicyKindAuthorization
+	PolicyKindTrafficPolicy = model.PolicyKindTrafficPolicy
 	PolicyKindEgressPolicy  = model.PolicyKindEgressPolicy
 	PolicyKindSNIPolicy     = model.PolicyKindSNIPolicy
 )
@@ -235,8 +236,25 @@ func (p PolicyAttachment) specificity() int {
 }
 
 func policyAttachmentLess(left, right PolicyAttachment) bool {
+	if left.Kind != right.Kind {
+		return left.Kind < right.Kind
+	}
 	if left.Priority != right.Priority {
 		return left.Priority < right.Priority
+	}
+	if left.Kind == PolicyKindTrafficPolicy {
+		// Prefer older policies at equal priority so a newly created policy
+		// cannot take precedence merely through its namespace or name.
+		if !left.CreationTime.Equal(right.CreationTime) {
+			return left.CreationTime.Before(right.CreationTime)
+		}
+		if left.SourceNamespace != right.SourceNamespace {
+			return left.SourceNamespace < right.SourceNamespace
+		}
+		if left.SourceName != right.SourceName {
+			return left.SourceName < right.SourceName
+		}
+		return left.Name < right.Name
 	}
 	if left.specificity() != right.specificity() {
 		return left.specificity() > right.specificity()

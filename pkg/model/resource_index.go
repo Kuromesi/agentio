@@ -72,6 +72,7 @@ const (
 	resourceFactGatewayOwner
 	resourceFactAuthorizationGlobal
 	resourceFactAuthorizationNamespace
+	resourceFactTrafficPolicyReference
 )
 
 func resourceFactIndexKey(kind resourceFactKind, key string) string {
@@ -88,6 +89,9 @@ func resourceFactKeys(resource Resource) []string {
 	if workload := resource.Facts.Workload; workload != nil {
 		if !workload.SandboxManaged {
 			add(resourceFactWorkloadPolicies, "enabled")
+			for _, name := range workload.TrafficPolicyRefs {
+				add(resourceFactTrafficPolicyReference, name)
+			}
 		}
 		add(resourceFactWorkloadUID, workload.WorkloadUID)
 		add(resourceFactSourceUID, workload.SourceUID)
@@ -108,6 +112,9 @@ func resourceFactKeys(resource Resource) []string {
 	}
 	if sandbox := resource.Facts.Sandbox; sandbox != nil {
 		add(resourceFactAttesterWorkloadUID, sandbox.AttesterWorkloadUID)
+		for _, name := range sandbox.TrafficPolicyRefs {
+			add(resourceFactTrafficPolicyReference, name)
+		}
 		for _, key := range sandbox.GatewayReferences {
 			add(resourceFactGatewayReference, key)
 		}

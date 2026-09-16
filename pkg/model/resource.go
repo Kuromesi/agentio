@@ -36,7 +36,8 @@ const (
 	ExtensionConfigurationType = "type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig"
 	ProxyConfigType            = "type.googleapis.com/istio.mesh.v1alpha1.ProxyConfig"
 	AddressType                = "type.googleapis.com/istio.workload.Address"
-	SandboxType                = "type.googleapis.com/io.kruise.agentio.sandbox.v1.Sandbox"
+	TrafficPolicyType          = "type.googleapis.com/agentio.security.TrafficPolicy"
+	SandboxType                = "type.googleapis.com/agentio.sandbox.Sandbox"
 	WorkloadType               = "type.googleapis.com/istio.workload.Workload"
 	WorkloadAuthorizationType  = "type.googleapis.com/istio.security.Authorization"
 	SniTrafficPolicyType       = "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"
@@ -70,10 +71,12 @@ type WorkloadResourceFacts struct {
 	ServiceKeys       []string
 	GatewayReferences []string
 	AuthorizationRefs []string
+	TrafficPolicyRefs []string
 }
 
 // SandboxResourceFacts records discovery dependencies owned by a Sandbox.
 type SandboxResourceFacts struct {
+	TrafficPolicyRefs   []string
 	AttesterWorkloadUID string
 	GatewayReferences   []string
 }
@@ -316,6 +319,7 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 	if facts.Sandbox != nil {
 		sandbox := *facts.Sandbox
 		sandbox.GatewayReferences = append([]string(nil), sandbox.GatewayReferences...)
+		sandbox.TrafficPolicyRefs = append([]string(nil), sandbox.TrafficPolicyRefs...)
 		result.Sandbox = &sandbox
 	}
 	if facts.Workload != nil {
@@ -323,6 +327,7 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 		workload.ServiceKeys = append([]string(nil), workload.ServiceKeys...)
 		workload.GatewayReferences = append([]string(nil), workload.GatewayReferences...)
 		workload.AuthorizationRefs = append([]string(nil), workload.AuthorizationRefs...)
+		workload.TrafficPolicyRefs = append([]string(nil), workload.TrafficPolicyRefs...)
 		result.Workload = &workload
 	}
 	if facts.Service != nil {
@@ -339,6 +344,7 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 func normalizeResourceFacts(facts *ResourceFacts) {
 	if facts.Sandbox != nil {
 		facts.Sandbox.GatewayReferences = sortedUnique(facts.Sandbox.GatewayReferences)
+		facts.Sandbox.TrafficPolicyRefs = sortedUnique(facts.Sandbox.TrafficPolicyRefs)
 	}
 	if facts.Workload == nil {
 		return
@@ -346,6 +352,7 @@ func normalizeResourceFacts(facts *ResourceFacts) {
 	facts.Workload.ServiceKeys = sortedUnique(facts.Workload.ServiceKeys)
 	facts.Workload.GatewayReferences = sortedUnique(facts.Workload.GatewayReferences)
 	facts.Workload.AuthorizationRefs = sortedUnique(facts.Workload.AuthorizationRefs)
+	facts.Workload.TrafficPolicyRefs = sortedUnique(facts.Workload.TrafficPolicyRefs)
 }
 
 func sortedUnique(values []string) []string {
@@ -363,6 +370,9 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 	if facts.Sandbox != nil {
 		write("family", "sandbox")
 		write("attester-workload-uid", facts.Sandbox.AttesterWorkloadUID)
+		for _, name := range facts.Sandbox.TrafficPolicyRefs {
+			write("traffic-policy-reference", name)
+		}
 		for _, key := range facts.Sandbox.GatewayReferences {
 			write("gateway-reference", key)
 		}
@@ -382,6 +392,9 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 		}
 		for _, value := range facts.Workload.AuthorizationRefs {
 			write("authorization-reference", value)
+		}
+		for _, value := range facts.Workload.TrafficPolicyRefs {
+			write("traffic-policy-reference", value)
 		}
 	}
 	if facts.Service != nil {
@@ -414,11 +427,13 @@ func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 			facts.Workload.Principal != other.Workload.Principal ||
 			!slices.Equal(facts.Workload.ServiceKeys, other.Workload.ServiceKeys) ||
 			!slices.Equal(facts.Workload.GatewayReferences, other.Workload.GatewayReferences) ||
-			!slices.Equal(facts.Workload.AuthorizationRefs, other.Workload.AuthorizationRefs)) {
+			!slices.Equal(facts.Workload.AuthorizationRefs, other.Workload.AuthorizationRefs) ||
+			!slices.Equal(facts.Workload.TrafficPolicyRefs, other.Workload.TrafficPolicyRefs)) {
 		return false
 	}
 	if facts.Sandbox != nil && (facts.Sandbox.AttesterWorkloadUID != other.Sandbox.AttesterWorkloadUID ||
-		!slices.Equal(facts.Sandbox.GatewayReferences, other.Sandbox.GatewayReferences)) {
+		!slices.Equal(facts.Sandbox.GatewayReferences, other.Sandbox.GatewayReferences) ||
+		!slices.Equal(facts.Sandbox.TrafficPolicyRefs, other.Sandbox.TrafficPolicyRefs)) {
 		return false
 	}
 	if facts.Service != nil && *facts.Service != *other.Service {

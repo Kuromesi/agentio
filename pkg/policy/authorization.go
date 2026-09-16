@@ -15,84 +15,54 @@
 package policy
 
 import (
-	"fmt"
-	"strings"
-
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
-	"github.com/openkruise/agentio/pkg/krt"
-	"github.com/openkruise/agentio/pkg/model"
 )
 
 // CompiledAuthorization is the authorization specialization of the shared compiled policy.
 type CompiledAuthorization = CompiledPolicy[*securityv1.Authorization]
 
-// CompileAuthorization compiles one policy into up to two Authorizations, one
-// per direction.
-func CompileAuthorization(ctx krt.HandlerContext, source model.TrafficPolicy, inputs TrafficPolicyInputs) ([]CompiledAuthorization, error) {
-	if err := inputs.validate(); err != nil {
-		return nil, err
-	}
-	sandboxUID, err := policySandboxUID(source.SandboxUID, source.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("traffic policy %s: %w", source.ResourceName(), err)
-	}
-	source.SandboxUID = sandboxUID
-	selector, err := metav1.LabelSelectorAsSelector(&source.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("traffic policy %s selector: %w", source.ResourceName(), err)
-	}
-	namespace := source.Namespace
-	if source.Global {
-		namespace = inputs.RootNamespace
-	}
+func asAuthorizations(compiled CompiledTrafficPolicy, namespace, rootNamespace string) ([]CompiledAuthorization, error) {
 	result := make([]CompiledAuthorization, 0, 2)
-	if source.Spec.Egress != nil {
-		compiled, err := compileAuthorizationDirection(ctx, source, namespace, "egress", extensionsv1.TrafficPolicyMode_CLIENT, source.Spec.Egress, selector, inputs)
+	if compiled.Policy.Egress != nil {
+		authorization, err := asAuthorizationDirection(compiled.Attachment, namespace, rootNamespace, "egress", extensionsv1.TrafficPolicyMode_CLIENT, compiled.Policy.Egress)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, compiled)
+		result = append(result, authorization)
 	}
-	if source.Spec.Ingress != nil {
-		compiled, err := compileAuthorizationDirection(ctx, source, namespace, "ingress", extensionsv1.TrafficPolicyMode_SERVER, source.Spec.Ingress, selector, inputs)
+	if compiled.Policy.Ingress != nil {
+		authorization, err := asAuthorizationDirection(compiled.Attachment, namespace, rootNamespace, "ingress", extensionsv1.TrafficPolicyMode_SERVER, compiled.Policy.Ingress)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, compiled)
+		result = append(result, authorization)
 	}
 	return result, nil
 }
 
-func compileAuthorizationDirection(ctx krt.HandlerContext, source model.TrafficPolicy, namespace, suffix string,
-	mode extensionsv1.TrafficPolicyMode, direction *agentsv1alpha1.TrafficPolicyDirection,
-	selector labels.Selector, inputs TrafficPolicyInputs,
+func asAuthorizationDirection(source *PolicyAttachment, namespace, rootNamespace, suffix string,
+	mode extensionsv1.TrafficPolicyMode, direction *securityv1.TrafficPolicy_RuleSet,
 ) (CompiledAuthorization, error) {
 	scope := securityv1.Scope_NAMESPACE
 	// A selector-less policy in the root namespace applies mesh-wide, like a
 	// GlobalTrafficPolicy.
-	if source.Global || namespace == inputs.RootNamespace {
+	if source.Target.Global || namespace == rootNamespace {
 		scope = securityv1.Scope_GLOBAL
 	}
-	if source.SandboxUID != "" || !selector.Empty() {
+	if source.Target.SandboxUID != "" || !source.selector.Empty() {
 		scope = securityv1.Scope_WORKLOAD_SELECTOR
 	}
 	authorization := &securityv1.Authorization{
-		Name:      source.Name + "-" + suffix,
+		Name:      source.SourceName + "-" + suffix,
 		Namespace: namespace,
 		Scope:     scope,
 		Action:    securityv1.Action_ALLOW,
 	}
 	for _, rule := range direction.Rules {
-		if group := compileAuthorizationRule(ctx, rule, namespace, inputs); group != nil {
-			authorization.Groups = append(authorization.Groups, group)
-		}
+		authorization.Groups = append(authorization.Groups, asAuthorizationGroup(rule))
 	}
-	extension, err := newTrafficPolicyExtension(source.Spec.Priority, mode)
+	extension, err := newTrafficPolicyExtension(source.Priority, mode)
 	if err != nil {
 		return CompiledAuthorization{}, err
 	}
@@ -102,44 +72,19 @@ func compileAuthorizationDirection(ctx krt.HandlerContext, source model.TrafficP
 		Policy: authorization,
 	}
 	if scope == securityv1.Scope_WORKLOAD_SELECTOR {
-		target := AttachmentTarget{Selector: source.Spec.Selector}
-		if source.SandboxUID != "" {
-			target.SandboxUID = source.SandboxUID
-		} else if source.Global {
-			target.Global = true
-		} else {
-			target.Namespaces = []string{source.Namespace}
-		}
-		attachment, err := NewPolicyAttachment(PolicyAttachment{
-			Kind:            PolicyKindAuthorization,
-			Name:            compiled.Name,
-			Target:          target,
-			Priority:        source.Spec.Priority,
-			CreationTime:    source.CreationTime,
-			SourceName:      source.Name,
-			SourceNamespace: source.Namespace,
-			selector:        selector,
-		})
-		if err != nil {
-			return CompiledAuthorization{}, err
-		}
+		// Reuse the validated, immutable target and selector metadata.
+		attachment := *source
+		attachment.Kind = PolicyKindAuthorization
+		attachment.Name = compiled.Name
 		compiled.Attachment = &attachment
 	}
 	return compiled, nil
 }
 
-func compileAuthorizationRule(ctx krt.HandlerContext, rule agentsv1alpha1.TrafficPolicyRule, policyNamespace string, inputs TrafficPolicyInputs) *securityv1.Group {
-	negative := rule.Action == agentsv1alpha1.RuleActionReject
-	sourceAddresses := resolvePeers(ctx, rule.From, policyNamespace, inputs)
-	destinationAddresses := resolvePeers(ctx, rule.To, policyNamespace, inputs)
-	sourceUnresolved := len(rule.From) > 0 && len(sourceAddresses) == 0
-	destinationUnresolved := len(rule.To) > 0 && len(destinationAddresses) == 0
-	if sourceUnresolved || destinationUnresolved {
-		// Omit the complete group because an empty non-TCP match can match all.
-		// Keep the Authorization and its dependencies, but omit this group so
-		// every data-plane path treats the unresolved rule as no-match.
-		return nil
-	}
+// Preserve the legacy negative-match encoding of reject rules. Unresolved
+// rules have already been omitted by the TrafficPolicy compiler.
+func asAuthorizationGroup(rule *securityv1.TrafficPolicy_Rule) *securityv1.Group {
+	negative := rule.Action == securityv1.TrafficPolicy_DENY
 	group := &securityv1.Group{}
 	appendAddressRule := func(addresses []*securityv1.Address, source bool) {
 		if len(addresses) == 0 {
@@ -158,9 +103,9 @@ func compileAuthorizationRule(ctx krt.HandlerContext, rule agentsv1alpha1.Traffi
 		}
 		group.Rules = append(group.Rules, &securityv1.Rules{Matches: []*securityv1.Match{match}})
 	}
-	appendAddressRule(sourceAddresses, true)
-	appendAddressRule(destinationAddresses, false)
-	if ranges := compilePortRanges(rule.Ports); len(ranges) > 0 {
+	appendAddressRule(authorizationAddresses(rule.Match.SourceIps), true)
+	appendAddressRule(authorizationAddresses(rule.Match.DestinationIps), false)
+	if ranges := authorizationPortRanges(rule.Match.Ports); len(ranges) > 0 {
 		match := &securityv1.Match{}
 		if negative {
 			match.NotDestinationPortRanges = ranges
@@ -172,38 +117,34 @@ func compileAuthorizationRule(ctx krt.HandlerContext, rule agentsv1alpha1.Traffi
 	return group
 }
 
-func compilePortRanges(ports []agentsv1alpha1.TrafficPolicyPort) []*securityv1.PortRange {
-	result := make([]*securityv1.PortRange, 0, len(ports))
-	for _, port := range ports {
-		if port.Port == nil && port.EndPort == nil && port.Protocol == "" {
-			continue
-		}
-		start, end := uint32(0), uint32(65535)
-		if port.Port != nil {
-			start = uint32(*port.Port)
-			end = start
-		}
-		if port.EndPort != nil {
-			end = uint32(*port.EndPort)
-		}
-		result = append(result, &securityv1.PortRange{Start: start, End: end, Protocol: parseProtocol(port.Protocol)})
+func authorizationAddresses(addresses []*securityv1.TrafficPolicy_Address) []*securityv1.Address {
+	result := make([]*securityv1.Address, 0, len(addresses))
+	for _, address := range addresses {
+		// Both projections are immutable, so the address bytes can be shared.
+		result = append(result, &securityv1.Address{Address: address.Address, Length: address.Length})
 	}
 	return result
 }
 
-func parseProtocol(value string) securityv1.Protocol {
-	switch strings.ToUpper(value) {
-	case "TCP":
-		return securityv1.Protocol_TCP
-	case "UDP":
-		return securityv1.Protocol_UDP
-	case "ICMP":
-		return securityv1.Protocol_ICMP
-	case "SCTP":
-		return securityv1.Protocol_SCTP
-	default:
-		return securityv1.Protocol_ALL
+func authorizationPortRanges(ports []*securityv1.TrafficPolicy_PortMatch) []*securityv1.PortRange {
+	result := make([]*securityv1.PortRange, 0, len(ports))
+	for _, port := range ports {
+		// Keep the legacy encoding: omit empty entries and use 0 as an
+		// unspecified lower bound, including for protocol-only matches.
+		if port.Port == nil && port.EndPort == nil && port.Protocol == securityv1.TrafficPolicy_ALL {
+			continue
+		}
+		start, end := uint32(0), uint32(65535)
+		if port.Port != nil {
+			start = *port.Port
+			end = start
+		}
+		if port.EndPort != nil {
+			end = *port.EndPort
+		}
+		result = append(result, &securityv1.PortRange{Start: start, End: end, Protocol: securityv1.Protocol(port.Protocol)})
 	}
+	return result
 }
 
 func newTrafficPolicyExtension(priority int32, mode extensionsv1.TrafficPolicyMode) (*securityv1.Extension, error) {

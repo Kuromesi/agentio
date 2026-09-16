@@ -101,7 +101,7 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	server, err := NewServer(fakeAuthenticator{caller: model.PeerIdentity{
 		Principal: scope.Principal, AttestedBy: model.AttestationKubernetes,
 	}}, fakeResolver{scope: scope}.scopeFuncs(), store, resourceCompiler.HasSynced,
-		16, map[string]ResourceGenerator{model.SandboxType: SandboxGenerator{}}, 1, 0)
+		16, map[string]ResourceGenerator{model.SandboxType: SandboxGenerator{}, model.TrafficPolicyType: TrafficPolicyGenerator{}}, 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,19 +132,24 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 		}
 	})
 
-	// Create the larger value first: creation/arrival order must not win.
+	// Create the larger priority value first: priority must outrank creation time.
+	// The fake API does not assign creation timestamps, so supply them explicitly.
 	local, err := client.AgentsAPI().AgentsV1alpha1().TrafficPolicies("demo").Create(ctx,
 		&agentsv1alpha1.TrafficPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "a-local-allow", Namespace: "demo"},
-			Spec:       priorityPolicySpec(100, agentsv1alpha1.RuleActionAllow),
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "a-local-allow", Namespace: "demo", CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
+			},
+			Spec: priorityPolicySpec(100, agentsv1alpha1.RuleActionAllow),
 		}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	global, err := client.AgentsAPI().AgentsV1alpha1().GlobalTrafficPolicies().Create(ctx,
 		&agentsv1alpha1.GlobalTrafficPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "z-global-deny"},
-			Spec:       priorityPolicySpec(10, agentsv1alpha1.RuleActionReject),
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "z-global-deny", CreationTimestamp: metav1.NewTime(time.Unix(200, 0)),
+			},
+			Spec: priorityPolicySpec(10, agentsv1alpha1.RuleActionReject),
 		}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -156,81 +161,93 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := stream.Send(nodeRequest(model.TrafficPolicyType)); err != nil {
+		t.Fatal(err)
+	}
 	if err := stream.Send(nodeRequest(model.SandboxType, "*")); err != nil {
 		t.Fatal(err)
 	}
 
-	type policyOrder struct {
-		Name     string
-		Priority int32
-		Action   securityv1.TrafficPolicy_Action
-	}
-	globalPolicy := policyOrder{"globaltrafficpolicy/z-global-deny", 10, securityv1.TrafficPolicy_DENY}
-	localPolicy := policyOrder{"trafficpolicy/demo/a-local-allow", 100, securityv1.TrafficPolicy_ALLOW}
-	await := func(want ...policyOrder) string {
+	globalRules := []string{"trafficPolicies/" + global.Name}
+	localRules := []string{"namespaces/demo/trafficPolicies/" + local.Name}
+	previous := ""
+	bodies := map[string]*securityv1.TrafficPolicy{}
+	var latest *sandboxv1.Sandbox
+	var latestVersion string
+	receive := func() *discoveryv3.DeltaDiscoveryResponse {
 		t.Helper()
-		for {
-			response, err := stream.Recv()
-			if err != nil {
-				t.Fatalf("receive Sandbox policies %v: %v; compiler failures: %v", want, err, resourceCompiler.Failures())
-			}
-			if err := stream.Send(&discoveryv3.DeltaDiscoveryRequest{
-				TypeUrl: response.TypeUrl, ResponseNonce: response.Nonce,
-			}); err != nil {
-				t.Fatal(err)
-			}
-			for _, resource := range response.Resources {
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("receive policies: %v; compiler failures: %v", err, resourceCompiler.Failures())
+		}
+		if err := stream.Send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: response.TypeUrl, ResponseNonce: response.Nonce}); err != nil {
+			t.Fatal(err)
+		}
+		for _, resource := range response.Resources {
+			switch response.TypeUrl {
+			case model.TrafficPolicyType:
+				body := new(securityv1.TrafficPolicy)
+				if err := resource.Resource.UnmarshalTo(body); err != nil {
+					t.Fatal(err)
+				}
+				bodies[resource.Name] = body
+			case model.SandboxType:
 				if resource.Name != sandboxUID {
 					continue
 				}
-				var sandbox sandboxv1.Sandbox
-				if err := resource.Resource.UnmarshalTo(&sandbox); err != nil {
+				latest = new(sandboxv1.Sandbox)
+				if err := resource.Resource.UnmarshalTo(latest); err != nil {
 					t.Fatal(err)
 				}
-				got := make([]policyOrder, 0, len(sandbox.TrafficPolicies))
-				for _, policy := range sandbox.TrafficPolicies {
-					if len(policy.GetEgress().GetRules()) != 1 {
-						t.Fatalf("unexpected compiled rules: %v", policy)
-					}
-					got = append(got, policyOrder{policy.Name, policy.Priority, policy.Egress.Rules[0].Action})
+				latestVersion = resource.Version
+				if latest.TrafficPolicy != nil {
+					t.Fatal("predefined policies must not be copied inline")
 				}
-				// Ignore an earlier publication until all requested source values
-				// have arrived; then check order exactly, without sorting the result.
-				if len(got) != len(want) {
-					continue
-				}
-				complete := true
-				for _, expected := range want {
-					found := false
-					for _, actual := range got {
-						if actual == expected {
-							found = true
-							break
-						}
-					}
-					complete = complete && found
-				}
-				if !complete {
-					continue
-				}
-				if !reflect.DeepEqual(got, want) {
-					t.Fatalf("Sandbox TrafficPolicy order = %v, want %v", got, want)
-				}
-				return resource.Version
 			}
 		}
+		if response.TypeUrl == model.TrafficPolicyType {
+			for _, name := range response.RemovedResources {
+				delete(bodies, name)
+			}
+		}
+		return response
 	}
-	previous := await(globalPolicy, localPolicy)
-	for _, priority := range []int32{0, 10, 100} {
+	await := func(want ...string) string {
+		t.Helper()
+		for {
+			receive()
+			if latest == nil || latestVersion == previous {
+				continue
+			}
+			got := latest.GetPolicyRefs()[model.TrafficPolicyType].GetResourceNames()
+			if len(got) != len(want) {
+				continue
+			}
+			complete := true
+			for _, name := range want {
+				complete = complete && bodies[name] != nil
+			}
+			if !complete {
+				continue
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("TrafficPolicy reference order = %v, want %v", got, want)
+			}
+			return latestVersion
+		}
+	}
+	previous = await(append(globalRules, localRules...)...)
+	// Alternate the effective order so each step publishes new Sandbox refs.
+	for _, priority := range []int32{0, 100, 10, 100, 0, 100, 10} {
 		local.Spec.Priority = priority
 		local, err = client.AgentsAPI().AgentsV1alpha1().TrafficPolicies("demo").Update(ctx, local, metav1.UpdateOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		localPolicy.Priority = priority
-		want := []policyOrder{globalPolicy, localPolicy}
-		if priority < globalPolicy.Priority {
-			want = []policyOrder{localPolicy, globalPolicy}
+		want := append(globalRules, localRules...)
+		// At equal priority the older local policy precedes the global policy.
+		if priority <= global.Spec.Priority {
+			want = append(localRules, globalRules...)
 		}
 		version := await(want...)
 		if version == previous {
@@ -238,17 +255,48 @@ func TestSandboxPriorityEndToEnd(t *testing.T) {
 		}
 		previous = version
 	}
+	// A new same-priority policy with an earlier name must follow existing ones.
+	newGlobal, err := client.AgentsAPI().AgentsV1alpha1().GlobalTrafficPolicies().Create(ctx,
+		&agentsv1alpha1.GlobalTrafficPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "a-new-global", CreationTimestamp: metav1.NewTime(time.Unix(300, 0)),
+			},
+			Spec: priorityPolicySpec(10, agentsv1alpha1.RuleActionReject),
+		}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous = await(localRules[0], globalRules[0], "trafficPolicies/"+newGlobal.Name)
+	// A rule-body update is delivered independently, under the same AIP-122 name.
+	local.Spec.Egress.Rules[0].Action = agentsv1alpha1.RuleActionReject
+	local, err = client.AgentsAPI().AgentsV1alpha1().TrafficPolicies("demo").Update(ctx, local, metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for bodies[localRules[0]].Egress.Rules[0].Action != securityv1.TrafficPolicy_DENY {
+		response := receive()
+		if response.TypeUrl == model.SandboxType {
+			t.Fatal("body-only change resent Sandbox")
+		}
+	}
 	if err := client.AgentsAPI().AgentsV1alpha1().GlobalTrafficPolicies().Delete(ctx, global.Name, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	await(localPolicy)
+	await(localRules[0], "trafficPolicies/"+newGlobal.Name)
 }
 
 func priorityPolicySpec(priority int32, action agentsv1alpha1.RuleAction) agentsv1alpha1.TrafficPolicySpec {
+	fallback := agentsv1alpha1.RuleActionAllow
+	if action == agentsv1alpha1.RuleActionAllow {
+		fallback = agentsv1alpha1.RuleActionReject
+	}
 	return agentsv1alpha1.TrafficPolicySpec{
 		Priority: priority,
 		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "priority-client"}},
-		Egress:   &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: action}}},
+		Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+			{Action: action, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}}},
+			{Action: fallback, To: []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}}},
+		}},
 	}
 }
 

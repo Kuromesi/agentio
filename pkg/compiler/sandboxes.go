@@ -16,13 +16,11 @@ package compiler
 
 import (
 	"fmt"
-	"sort"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
-	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policy"
@@ -30,7 +28,7 @@ import (
 
 // Sandbox resources exist independently of active Workloads. Invalid or unresolved
 // policy views are withdrawn rather than published as empty policies.
-func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies policyCollections, failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
+func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies policyCollections, trafficPolicyInputs policy.TrafficPolicyInputs, failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
 	clearFailureOnSourceDelete(sandboxes, failures, "SandboxResource")
 	return krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *model.Resource {
 		payload := &sandboxv1.Sandbox{Uid: sandbox.UID, State: sandboxv1.SandboxState(sandbox.State)}
@@ -40,6 +38,14 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 		currentInput := func() bool {
 			current := sandboxes.GetKey(sandbox.ResourceName())
 			return current != nil && current.Equals(sandbox)
+		}
+		if sandbox.TrafficPolicy != nil {
+			compiled, err := policy.CompileTrafficPolicyRules(ctx, *sandbox.TrafficPolicy, sandbox.Namespace, trafficPolicyInputs)
+			if err != nil {
+				failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
+				return nil
+			}
+			payload.TrafficPolicy = compiled
 		}
 		facts := &model.SandboxResourceFacts{AttesterWorkloadUID: payload.GetAttester().GetWorkloadUid()}
 		policyAvailable := false
@@ -61,7 +67,7 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 					}
 				}
 			}
-			bodiesAvailable, bodiesInvalid := loadSandboxPolicyBodies(ctx, bindings, policies, payload)
+			bodiesAvailable, bodiesInvalid := loadSandboxPolicies(ctx, bindings, policies, payload)
 			policyAvailable = policyAvailable && bodiesAvailable
 			invalidPayload = invalidPayload || bodiesInvalid
 		}
@@ -73,6 +79,7 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 			failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
 			return nil
 		}
+		facts.TrafficPolicyRefs = payload.PolicyRefs[model.TrafficPolicyType].GetResourceNames()
 		value, err := marshalDeterministicAny(payload)
 		if err != nil {
 			failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
@@ -88,26 +95,16 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 	}, options("sandbox-resources")...)
 }
 
-// loadSandboxPolicyBodies resolves ordered native and extension policies from one binding set.
-func loadSandboxPolicyBodies(ctx krt.HandlerContext, bindings *policy.Bindings, policies policyCollections, payload *sandboxv1.Sandbox) (bool, bool) {
+// loadSandboxPolicies copies ordered shared references and loads extension bodies.
+func loadSandboxPolicies(ctx krt.HandlerContext, bindings *policy.Bindings, policies policyCollections, payload *sandboxv1.Sandbox) (bool, bool) {
 	policyAvailable, invalidPayload := true, false
-	for _, name := range bindings.PolicyNames(model.PolicyKindAuthorization) {
-		compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(name))
-		if compiled == nil {
-			policyAvailable = false
-			continue
+	// Bindings already carry control-plane order. Shared body updates must not
+	// invalidate the Sandbox, so do not read those bodies here.
+	if refs := bindings.PolicyNames(model.PolicyKindTrafficPolicy); len(refs) > 0 {
+		payload.PolicyRefs = map[string]*sandboxv1.PolicyReference{
+			model.TrafficPolicyType: {ResourceNames: append([]string(nil), refs...)},
 		}
-		payload.TrafficPolicies = append(payload.TrafficPolicies, proto.Clone(compiled.Policy).(*securityv1.TrafficPolicy))
 	}
-	// Native TrafficPolicy uses lower numeric priority first. Resolve ties
-	// by stable identity so attachment insertion order cannot change a decision.
-	sort.Slice(payload.TrafficPolicies, func(i, j int) bool {
-		left, right := payload.TrafficPolicies[i], payload.TrafficPolicies[j]
-		if left.Priority != right.Priority {
-			return left.Priority < right.Priority
-		}
-		return left.Name < right.Name
-	})
 	for _, name := range bindings.PolicyNames(model.PolicyKindSNIPolicy) {
 		compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(name))
 		if compiled == nil {

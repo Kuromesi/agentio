@@ -41,6 +41,7 @@ var pushOrder = []string{
 	model.AddressType,
 	model.WorkloadType,
 	model.WorkloadAuthorizationType,
+	model.TrafficPolicyType,
 	model.SandboxType,
 	model.ExtensionConfigurationType,
 	model.ProxyConfigType,

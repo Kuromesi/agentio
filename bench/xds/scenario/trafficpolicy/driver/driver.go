@@ -152,6 +152,8 @@ func (d *policyDriver) Check(_ json.RawMessage, before, after []loadapi.Status) 
 
 func policy(name string, r trafficpolicy.Round) *unstructured.Unstructured {
 	entries := make([]any, 0, r.RuleCount)
+	// Egress rules require explicit destination peers to configure the direction.
+	targets := []any{map[string]any{"cidr": "0.0.0.0/0"}, map[string]any{"cidr": "::/0"}}
 	for i := 0; i < r.RuleCount-1; i++ {
 		matches := make([]any, 0, r.Ports)
 		for j := 0; j < r.Ports; j++ {
@@ -161,12 +163,12 @@ func policy(name string, r trafficpolicy.Round) *unstructured.Unstructured {
 			}
 			matches = append(matches, map[string]any{"protocol": "UDP", "port": int64(p)})
 		}
-		entries = append(entries, map[string]any{"action": "reject", "ports": matches})
+		entries = append(entries, map[string]any{"action": "reject", "ports": matches, "to": targets})
 	}
 	action := "allow"
 	if r.Action == 1 {
 		action = "reject"
 	}
-	entries = append(entries, map[string]any{"action": action})
+	entries = append(entries, map[string]any{"action": action, "to": targets})
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.kruise.io/v1alpha1", "kind": "GlobalTrafficPolicy", "metadata": map[string]any{"name": name, "labels": map[string]any{driver.RunLabel: name}}, "spec": map[string]any{"priority": int64(10), "selector": map[string]any{"matchLabels": map[string]any{driver.RunLabel: name}}, "egress": map[string]any{"rules": entries}}}}
 }

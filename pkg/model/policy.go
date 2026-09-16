@@ -21,6 +21,14 @@ import (
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
+// TrafficPolicyRules carries source rules without selection or priority metadata.
+// Empty directions and rules without the direction's peers are ignored, as in Poseidon.
+// Declared peers that resolve to no addresses still configure default deny.
+type TrafficPolicyRules struct {
+	Ingress *agentsv1alpha1.TrafficPolicyDirection
+	Egress  *agentsv1alpha1.TrafficPolicyDirection
+}
+
 type TrafficPolicy struct {
 	Name         string
 	Namespace    string

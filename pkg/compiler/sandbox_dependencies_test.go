@@ -58,16 +58,13 @@ func TestSandboxManifestScopesBaselinesAndOrdersEgress(t *testing.T) {
 		m := manifestAt(t, fixture.compiler, "actor")
 		// Workload policies are published independently of the Sandbox manifest.
 		snapshot := currentSnapshot(t, fixture.compiler)
-		return m != nil && len(m.TrafficPolicies) == 1 && len(m.GetEgressRouting().GetRoutes()) == 2 &&
+		return m != nil && len(trafficPolicyRefs(m)) == 1 && len(m.GetEgressRouting().GetRoutes()) == 2 &&
 			len(snapshot.List(model.WorkloadAuthorizationType)) == 2
 	}, "Sandbox-scoped baseline and egress manifest with Workload baselines")
 	manifest := manifestAt(t, fixture.compiler, "actor")
-	var names []string
+	names := fixture.compiler.PolicyNames("sandbox", "actor", model.PolicyKindTrafficPolicy)
 	snapshot := currentSnapshot(t, fixture.compiler)
-	for _, policy := range manifest.TrafficPolicies {
-		names = append(names, policy.Name)
-	}
-	want := []string{"trafficpolicy/tenant/baseline"}
+	want := []string{"namespaces/tenant/trafficPolicies/baseline"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("policies %v, want %v", names, want)
 	}
@@ -113,7 +110,7 @@ func TestSandboxExplicitEgressOrderStaysInManifest(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		m := manifestAt(t, fixture.compiler, "actor")
-		return m != nil && len(m.TrafficPolicies) == 0 && len(m.GetEgressRouting().GetRoutes()) == 2
+		return m != nil && m.TrafficPolicy == nil && len(m.GetEgressRouting().GetRoutes()) == 2
 	}, "ordered egress references")
 	eventually(t, func() bool {
 		r, ok := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: worker.UID})
