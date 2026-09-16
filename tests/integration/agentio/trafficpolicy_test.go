@@ -1574,6 +1574,8 @@ spec:
   egress:
     rules:
       - action: reject
+        to:
+          - cidr: "0.0.0.0/0"
         ports:
           - protocol: UDP
             port: 53
@@ -1740,6 +1742,8 @@ spec:
   egress:
     rules:
       - action: allow
+        to:
+          - cidr: "0.0.0.0/0"
         ports:
           - protocol: UDP
       - action: reject
@@ -1798,6 +1802,8 @@ spec:
   egress:
     rules:
       - action: allow
+        to:
+          - cidr: "0.0.0.0/0"
         ports:
           - protocol: UDP
       - action: reject
