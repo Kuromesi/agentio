@@ -1,0 +1,116 @@
+name: agentio-dependency-tags
+
+# Add version aliases to the immutable external images of a published release.
+# Retagging preserves the original manifests, including multi-platform indexes.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published Agentio release whose dependency images should be tagged
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentio-release
+  cancel-in-progress: false
+
+jobs:
+  tag-dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Resolve published dependency images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+            echo "Dependency version tags are restricted to master" >&2
+            exit 1
+          fi
+          semver_core='(0|[1-9][0-9]*)'
+          semver_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver_pattern="^${semver_core}\\.${semver_core}\\.${semver_core}(-${semver_identifier}(\\.${semver_identifier})*)?$"
+          if [[ ! "$VERSION" =~ $semver_pattern ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft \
+            --jq '.isDraft == false' | grep -qx true
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern "agentio-${VERSION}-bom.json" --dir "$RUNNER_TEMP"
+          bom="$RUNNER_TEMP/agentio-${VERSION}-bom.json"
+          jq -e --arg version "$VERSION" '.version == $version' "$bom" >/dev/null
+          # Only these three dependency repositories receive Agentio version aliases.
+          for entry in cni:install-cni proxyInit:proxy-init gateway:proxyv2; do
+            key="${entry%%:*}"
+            repository="docker.io/openkruise/${entry#*:}"
+            source=$(jq -er --arg key "$key" '.images[$key]' "$bom")
+            if [[ "${source%@*}" != "$repository" || ! "${source##*@}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid released dependency: $source" >&2
+              exit 1
+            fi
+            printf '%s\n' "$source" >> "$RUNNER_TEMP/dependency-images"
+          done
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.8
+          cache: false
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+      - name: Login to Docker Hub
+        env:
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.HUB_KRUISE }}
+        run: |
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "DOCKERHUB_USERNAME and HUB_KRUISE must both be configured" >&2
+            exit 1
+          fi
+          echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
+      - name: Check and publish dependency version tags
+        run: |
+          # Check every source and destination before publishing any tag.
+          : > "$RUNNER_TEMP/dependency-tags-to-create"
+          while IFS= read -r source; do
+            repository="${source%@*}"
+            expected="${source##*@}"
+            target="${repository}:${VERSION}"
+            actual=$(crane digest "$source")
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Source digest mismatch for $source: $actual" >&2
+              exit 1
+            fi
+            if actual=$(crane digest "$target" 2>"$RUNNER_TEMP/dependency-tag-error"); then
+              if [[ "$actual" != "$expected" ]]; then
+                echo "Refusing to replace $target: $actual differs from $expected" >&2
+                exit 1
+              fi
+              echo "$target already matches the release BOM"
+            elif grep -q 'MANIFEST_UNKNOWN' "$RUNNER_TEMP/dependency-tag-error"; then
+              printf '%s\n' "$source" >> "$RUNNER_TEMP/dependency-tags-to-create"
+            else
+              cat "$RUNNER_TEMP/dependency-tag-error" >&2
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/dependency-images"
+
+          while IFS= read -r source; do
+            crane tag "$source" "$VERSION"
+          done < "$RUNNER_TEMP/dependency-tags-to-create"
+
+          while IFS= read -r source; do
+            target="${source%@*}:${VERSION}"
+            expected="${source##*@}"
+            actual=$(crane digest "$target")
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Published digest mismatch for $target: $actual" >&2
+              exit 1
+            fi
+            printf -- '- `%s` → `%s`\n' "$target" "$actual" >> "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/dependency-images"
