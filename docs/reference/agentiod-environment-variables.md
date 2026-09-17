@@ -78,7 +78,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_ENABLE_DEBUG_ON_HTTP</code> | Boolean | <code>true</code> | Enable authenticated debug handlers on the monitoring HTTP listener. |
 | <code>AGENTIO_ENABLE_GATEWAY_DEPLOYER</code> | Boolean | <code>false</code> | If true, run the Agentio Gateway API deployment controller that provisions egress gateway Deployments. |
 | <code>AGENTIO_ENABLE_SIDECAR_INJECTOR</code> | Boolean | <code>false</code> | If true, serve the Agentio ztunnel injection webhook at the Istio-compatible /inject endpoint. |
-| <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, translate and attach SNI traffic policies for enforcement in egress gateways. |
+| <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, enforce SNI traffic policies in egress gateways, using HBONE TLS action headers when present. |
 | <code>AGENTIO_GATEWAY_CONNECT_TIMEOUT</code> | Duration | <code>10s</code> | Connect timeout for passthrough and dynamic-forward-proxy gateway clusters. |
 | <code>AGENTIO_GATEWAY_LEASE_NAME</code> | String | <code>agentiod-gateway-deployer-leader</code> | Lease electing the single replica running the gateway deployment controller. |
 | <code>AGENTIO_GATEWAY_ROOT_CA_PATH</code> | String | empty | OS root CA bundle path used by gateway TLS origination. When empty the first existing well-known OS CA bundle is auto-detected, matching release-0.1. |

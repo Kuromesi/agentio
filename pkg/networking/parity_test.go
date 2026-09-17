@@ -276,12 +276,14 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		{"MainForward TCP fallback", forwardApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
 	}
 
+	// Pin the original gateway-policy behavior for connections without a
+	// ztunnel action. tls_action_test.go covers the action branch.
 	internalMatcher := listeners[MainInternal].GetFilterChainMatcher()
 	internalTree := internalMatcher.GetMatcherTree()
 	if got := internalTree.GetInput().GetTypedConfig().GetTypeUrl(); got != transportProtocolInputType {
 		t.Errorf("MainInternal outer matcher input = %q, want %q", got, transportProtocolInputType)
 	}
-	excludeMatcher := internalTree.GetExactMatchMap().GetMap()["tls"].GetMatcher()
+	excludeMatcher := internalTree.GetExactMatchMap().GetMap()["tls"].GetMatcher().GetOnNoMatch().GetMatcher()
 	if got := excludeMatcher.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != serverNameInputType {
 		t.Errorf("MainInternal exclusion matcher input = %q, want %q", got, serverNameInputType)
 	}
@@ -431,10 +433,14 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					if err := filter.GetTypedConfig().UnmarshalTo(config); err != nil {
 						t.Fatalf("decode CONNECT filter state: %v", err)
 					}
-					// The legacy snapshot predates workload headers. Their capture
-					// and propagation are pinned by TestWorkloadHeaderFilterState.
+					// Workload and TLS action headers postdate the legacy snapshot.
+					// Dedicated tests pin their capture and propagation.
 					config.OnRequestHeaders = slices.DeleteFunc(config.OnRequestHeaders, func(state *setstatecommonv3.FilterStateValue) bool {
-						return state.GetObjectKey() == "agentio.workload.name" || state.GetObjectKey() == "agentio.workload.namespace"
+						switch state.GetObjectKey() {
+						case "agentio.workload.name", "agentio.workload.namespace", tlsActionKey:
+							return true
+						}
+						return false
 					})
 					for _, state := range config.GetOnRequestHeaders() {
 						state.GetFormatString().OmitEmptyValues = false

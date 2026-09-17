@@ -64,15 +64,14 @@ jobs:
             echo "Invalid ztunnel source pin: ${repository}@${current_sha}" >&2
             exit 1
           fi
-          remote_head=$(git ls-remote --symref "https://github.com/${repository}.git" HEAD)
-          source_ref=$(awk '$1 == "ref:" && $3 == "HEAD" {print $2}' <<< "$remote_head")
-          sha=$(awk '$2 == "HEAD" && $1 != "ref:" {print $1}' <<< "$remote_head")
-          if [[ ! "$source_ref" =~ ^refs/heads/.+ ]] || [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Unable to resolve default branch of $repository" >&2
+          source_branch=master
+          source_ref="refs/heads/${source_branch}"
+          remote_head=$(git ls-remote --exit-code --heads "https://github.com/${repository}.git" "$source_ref")
+          sha=$(awk -v ref="$source_ref" '$2 == ref {print $1}' <<< "$remote_head")
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve ${repository}@${source_branch}" >&2
             exit 1
           fi
-          source_branch=${source_ref#refs/heads/}
-          git check-ref-format --branch "$source_branch" >/dev/null
           {
             echo "repository=$repository"
             echo "sha=$sha"
