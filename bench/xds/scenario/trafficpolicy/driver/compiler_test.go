@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 
+	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	"github.com/openkruise/agentio/bench/xds/scenario/trafficpolicy"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
@@ -95,11 +96,27 @@ func TestGeneratedPolicyCompilesIntoExpectedRound(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			observation, err := factory.New().Observe(&ads.DeltaDiscoveryResponse{
+			client := factory.New()
+			sandbox, err := anypb.New(&sandboxv1.Sandbox{
+				Uid: "kruise:test--client",
+				PolicyRefs: map[string]*sandboxv1.PolicyReference{
+					trafficpolicy.PolicyType: {ResourceNames: []string{compiled.Name}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = client.Observe(&ads.DeltaDiscoveryResponse{
+				TypeUrl:   trafficpolicy.SandboxType,
+				Resources: []*ads.Resource{{Name: "kruise:test--client", Resource: sandbox}},
+			}, expected); err != nil {
+				t.Fatal(err)
+			}
+			observation, err := client.Observe(&ads.DeltaDiscoveryResponse{
 				TypeUrl:   trafficpolicy.PolicyType,
 				Resources: []*ads.Resource{{Name: compiled.Name, Version: "test", Resource: body}},
 			}, expected)
-			if err != nil || observation.Sample == nil {
+			if err != nil || observation.Sample == nil || !observation.Ready {
 				t.Fatalf("compiled policy did not satisfy round: observation=%+v err=%v", observation, err)
 			}
 		})

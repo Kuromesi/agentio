@@ -106,7 +106,7 @@ kind load docker-image xds-load:dev --name my-test-cluster
   --scenario-config '{"rules":50,"ports_per_rule":[1,20]}'
 ```
 
-Replace the context, service/certificate name, CA ConfigMap location, deployment name and token audience with your installation's values. Load Pods need network access to xDS, and the control plane must trust their projected tokens. The trafficpolicy scenario requires Sandbox and GlobalTrafficPolicy CRDs and Agentio sandbox mode/shared TrafficPolicy discovery support. No Kruise Agents installation is required to make the manual Pod/Sandbox bindings. Use a test cluster without a Sandbox lifecycle controller taking over these manual bindings.
+Replace the context, service/certificate name, CA ConfigMap location, deployment name and token audience with your installation's values. Load Pods need network access to xDS, and the control plane must trust their projected tokens. The trafficpolicy scenario requires Sandbox and GlobalTrafficPolicy CRDs and Agentio `AGENTIO_SANDBOX_RUNTIMES=kruise` and shared TrafficPolicy discovery support. No Kruise Agents installation is required to make the manual Pod/Sandbox bindings. Use a test cluster without a Sandbox lifecycle controller taking over these manual bindings.
 
 For other Kubernetes installations, push the image to an accessible registry and omit `kind load`; `--image-pull-policy Always` is supported. The load application's HTTP API binds to loopback by default; the Kubernetes runner binds Pod port 8088 for readiness probes and accesses it through client-go port forwarding on an automatically allocated loopback port (WebSocket with SPDY fallback). This management API has no authentication and should remain inside the test environment.
 
@@ -124,6 +124,8 @@ Discovery readiness requires a response for **every configured type**, including
 For the previous 30,000-connection workload, use `--pods 4 --stages 1000,5000,10000,20000,30000 --rate 200 --rounds 3 --scenario-config '{"rules":50,"ports_per_rule":[1,20]}'`. This runner tests both payload sizes at every stage. Before running, size the control plane and its new-stream admission rate yourself. The earlier test used a 2 CPU limit, an 8 GiB memory limit, `GOMEMLIMIT=6GiB`, `AGENTIO_MAX_REQUESTS_PER_SECOND=500`, and default push concurrency 25. Those settings are test conditions, not universal production sizing recommendations. Default runner admission is a modest 10 new streams/sec total. Each stream has a readiness deadline; failures stop the run and remain in the report.
 
 `--pods` controls distinct Pod/token/Sandbox identities; `--stages` controls total ADS connections distributed across those identities. Increasing one does **not** simulate the other. Stages must strictly increase and be at least the Pod count. The application caps connections per process; the runner sets that cap from the largest stage. This is not a test of business traffic enforcement.
+
+`--setup-wait-seconds 10` optionally waits after creating resources and before opening the first connections. It defaults to zero and is recorded in the run parameters. Use it to separate steady-state push measurements from initial control-plane informer propagation. It is a fixed delay, not a readiness guarantee; connection failures still stop the run without automatic retries.
 
 ## Drive the load application directly
 

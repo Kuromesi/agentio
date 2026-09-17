@@ -53,32 +53,33 @@ func (v *intList) Set(value string) error {
 }
 
 type config struct {
-	Context         string          `json:"context"`
-	Kubeconfig      string          `json:"kubeconfig"`
-	Image           string          `json:"image"`
-	ImagePullPolicy string          `json:"image_pull_policy"`
-	XDSAddress      string          `json:"xds_address"`
-	ServerName      string          `json:"server_name"`
-	CANamespace     string          `json:"ca_namespace"`
-	CAConfigMap     string          `json:"ca_configmap"`
-	CAKey           string          `json:"ca_key"`
-	TokenAudience   string          `json:"token_audience"`
-	Scenario        string          `json:"scenario"`
-	ScenarioConfig  json.RawMessage `json:"scenario_config"`
-	Pods            int             `json:"pods"`
-	Stages          intList         `json:"stages"`
-	Rate            float64         `json:"rate"`
-	Rounds          int             `json:"rounds"`
-	TimeoutSeconds  float64         `json:"timeout"`
-	AckDelay        string          `json:"ack_delay"`
-	HoldSeconds     float64         `json:"hold_seconds"`
-	CPULimit        string          `json:"cpu_limit"`
-	MemoryLimit     string          `json:"memory_limit"`
-	MetricsURL      string          `json:"metrics_url"`
-	ControlPlane    string          `json:"control_plane"`
-	RawSamples      bool            `json:"raw_samples"`
-	KeepResources   bool            `json:"keep_resources"`
-	Output          string          `json:"output"`
+	Context          string          `json:"context"`
+	Kubeconfig       string          `json:"kubeconfig"`
+	Image            string          `json:"image"`
+	ImagePullPolicy  string          `json:"image_pull_policy"`
+	XDSAddress       string          `json:"xds_address"`
+	ServerName       string          `json:"server_name"`
+	CANamespace      string          `json:"ca_namespace"`
+	CAConfigMap      string          `json:"ca_configmap"`
+	CAKey            string          `json:"ca_key"`
+	TokenAudience    string          `json:"token_audience"`
+	Scenario         string          `json:"scenario"`
+	ScenarioConfig   json.RawMessage `json:"scenario_config"`
+	Pods             int             `json:"pods"`
+	Stages           intList         `json:"stages"`
+	Rate             float64         `json:"rate"`
+	Rounds           int             `json:"rounds"`
+	TimeoutSeconds   float64         `json:"timeout"`
+	AckDelay         string          `json:"ack_delay"`
+	HoldSeconds      float64         `json:"hold_seconds"`
+	SetupWaitSeconds float64         `json:"setup_wait_seconds"`
+	CPULimit         string          `json:"cpu_limit"`
+	MemoryLimit      string          `json:"memory_limit"`
+	MetricsURL       string          `json:"metrics_url"`
+	ControlPlane     string          `json:"control_plane"`
+	RawSamples       bool            `json:"raw_samples"`
+	KeepResources    bool            `json:"keep_resources"`
+	Output           string          `json:"output"`
 }
 
 func parseConfig(args []string, out io.Writer) (config, error) {
@@ -110,6 +111,12 @@ func parseConfig(args []string, out io.Writer) (config, error) {
 	f.Float64Var(&c.TimeoutSeconds, "timeout", 120, "ready/push timeout in seconds; ramp time added separately")
 	f.StringVar(&c.AckDelay, "ack-delay", "0s", "Go duration: intentional per-response ACK delay")
 	f.Float64Var(&c.HoldSeconds, "hold-seconds", 0, "hold final connection count while checking health")
+	f.Float64Var(
+		&c.SetupWaitSeconds,
+		"setup-wait-seconds",
+		0,
+		"wait after resource setup before opening connections; not a readiness check",
+	)
 	f.StringVar(&c.CPULimit, "cpu-limit", "2", "load Pod CPU limit")
 	f.StringVar(&c.MemoryLimit, "memory-limit", "3Gi", "load Pod memory limit")
 	f.StringVar(&c.MetricsURL, "metrics-url", "", "optional control-plane Prometheus URL reachable by runner")
@@ -174,6 +181,9 @@ func (c config) validateLoad() error {
 	}
 	if !validSeconds(c.TimeoutSeconds) || c.TimeoutSeconds == 0 || !validSeconds(c.HoldSeconds) {
 		return errors.New("invalid timeout/hold-seconds")
+	}
+	if !validSeconds(c.SetupWaitSeconds) {
+		return errors.New("invalid setup-wait-seconds")
 	}
 	if float64(c.Stages[len(c.Stages)-1])/c.Rate+c.TimeoutSeconds > float64(math.MaxInt64)/float64(time.Second) {
 		return errors.New("ramp duration overflows time.Duration")

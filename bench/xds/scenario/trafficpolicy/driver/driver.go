@@ -29,6 +29,7 @@ import (
 	"github.com/openkruise/agentio/bench/xds/scenario"
 	"github.com/openkruise/agentio/bench/xds/scenario/driver"
 	"github.com/openkruise/agentio/bench/xds/scenario/trafficpolicy"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 var sandboxGVR = schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "sandboxes"}
@@ -67,7 +68,10 @@ func New(raw json.RawMessage) (driver.Driver, error) {
 }
 func (d *policyDriver) ClientConfig(namespace, pod string) (json.RawMessage, error) {
 	return json.Marshal(
-		trafficpolicy.ClientOptions{PolicyName: "trafficPolicies/" + namespace, SandboxID: namespace + "--" + pod},
+		trafficpolicy.ClientOptions{
+			PolicyName: "trafficPolicies/" + namespace,
+			SandboxID:  model.SandboxUID(model.SandboxKindKruise, namespace+"--"+pod),
+		},
 	)
 }
 func (d *policyDriver) Prepare(ctx context.Context, e driver.Environment) error {

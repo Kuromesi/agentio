@@ -397,6 +397,9 @@ func (r *runner) run(ctx context.Context) error {
 	if err := r.setup(ctx); err != nil {
 		return err
 	}
+	if err := sleep(ctx, seconds(r.cfg.SetupWaitSeconds)); err != nil {
+		return err
+	}
 	previous := 0
 	for _, n := range r.cfg.Stages {
 		start := time.Now()
