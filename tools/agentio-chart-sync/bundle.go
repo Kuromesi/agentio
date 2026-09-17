@@ -205,6 +205,9 @@ func buildSandboxManagerBundle(source, target string) error {
 		return fmt.Errorf("validate source files: %w", statErr)
 	}
 
+	if err := addIntegrationEgressDefault(stagedTemplates); err != nil {
+		return err
+	}
 	if err := buildManagerSupport(source, stagedTemplates, stagedFiles); err != nil {
 		return err
 	}
@@ -401,7 +404,7 @@ func generatedSandboxControllerValuesBlock(content []byte) ([]byte, error) {
 	generated := map[string]any{
 		"agentio": map[string]any{
 			"trafficProxy": map[string]any{
-				"controlPlaneNamespace":   "agentio-system",
+				"controlPlaneNamespace":   "sandbox-system",
 				"controlPlaneService":     service,
 				"xdsAddress":              "",
 				"clusterDomain":           values.Global.ClusterDomain,
@@ -705,11 +708,12 @@ func prepareSandboxManagerValues(content []byte) ([]byte, error) {
 		return nil, errors.New("source values for sandbox-manager must be a YAML mapping")
 	}
 	root := document.Content[0]
+	setIntegrationGatewayModes(root)
 	removeYAMLMappingKeys(root, "profile", "cni", "ztunnel")
 	removeYAMLMappingKeys(yamlMappingValue(root, "egressGateway"), "agentgateway")
 	if global := yamlMappingValue(root, "global"); global != nil {
 		global.Content = append(global.Content,
-			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "namespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: "agentio-system"},
+			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "namespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: "sandbox-system"},
 			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "createNamespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!bool", Value: "true"})
 	}
 	if agentiod := yamlMappingValue(root, "agentiod"); agentiod != nil {

@@ -46,7 +46,7 @@ func TestZtunnelReleaseUsesBuiltAndTestedImage(t *testing.T) {
 	for _, check := range []struct{ job, step string }{
 		{"prepare-chart", "Prepare exact candidate chart"},
 		{"prepare-chart", "Verify candidate chart"},
-		{"promote-version-images", "Promote tested candidates to version tags"},
+		{"promote-version-images", "Promote tested images to version tags"},
 		{"promote-latest", "Promote stable release to latest"},
 		{"create-release", "Write released BOM"},
 	} {

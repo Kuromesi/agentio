@@ -10,7 +10,7 @@ agentio:
     trustDomain: cluster.local
     clusterDomain: cluster.local
     caCertConfigMap: agentio-ca-certs
-    namespace: agentio-system
+    namespace: sandbox-system
     createNamespace: true
   agentiod:
     nameOverride: agentiod
@@ -90,7 +90,7 @@ agentio:
       enabled: false
     env: {}
   egressGateway:
-    mode: disabled
+    mode: static
     nameOverride: agentio-egress
     fullnameOverride: ""
     image:
@@ -150,7 +150,7 @@ agentio:
           port: 15008
           protocol: HBONE
   epe:
-    mode: disabled
+    mode: managed
     nameOverride: agentio-epe
     fullnameOverride: ""
     image:

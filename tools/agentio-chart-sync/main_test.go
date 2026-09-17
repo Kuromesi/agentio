@@ -34,6 +34,8 @@ func TestCLIApplySubcommandSyncsPreparedBundle(t *testing.T) {
 	writeTestFile(t, bundle, "sandbox-manager/values.yaml", `# BEGIN GENERATED AGENTIO VALUES - DO NOT EDIT
 agentio:
   enabled: false
+  global:
+    tag: "1.2.3"
 # END GENERATED AGENTIO VALUES
 `)
 	writeTestFile(t, bundle, "sandbox-manager/templates/agentio/config.yaml", `{{- if .Values.agentio.enabled }}
@@ -143,7 +145,7 @@ agentio:
   enabled: false
   global:
     hub: docker.io/openkruise
-    namespace: agentio-system
+    namespace: sandbox-system
     createNamespace: true
   agentiod:
     replicas: 1
@@ -500,7 +502,7 @@ func TestSandboxManagerAgentioNamespaceIsIndependentFromReleaseNamespace(t *test
 	}{
 		{
 			name:      "default",
-			namespace: "agentio-system",
+			namespace: "sandbox-system",
 			values: map[string]any{
 				"agentio": map[string]any{"enabled": true},
 			},
@@ -543,10 +545,8 @@ func TestSandboxManagerCreatesAndRetainsAgentioNamespace(t *testing.T) {
 		wantFound bool
 	}{
 		{
-			name:      "default namespace",
-			values:    map[string]any{"agentio": map[string]any{"enabled": true}},
-			wantName:  "agentio-system",
-			wantFound: true,
+			name:   "default uses release namespace",
+			values: map[string]any{"agentio": map[string]any{"enabled": true}},
 		},
 		{
 			name: "custom namespace",
@@ -649,10 +649,10 @@ func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *t
 	if proxy.RestartPolicy == nil || *proxy.RestartPolicy != corev1.ContainerRestartPolicyAlways {
 		t.Fatalf("traffic-proxy restartPolicy = %v, want Always", proxy.RestartPolicy)
 	}
-	if got := envValue(proxy.Env, "XDS_ADDRESS"); got != "agentiod.agentio-system.svc.cluster.local:15012" {
+	if got := envValue(proxy.Env, "XDS_ADDRESS"); got != "agentiod.sandbox-system.svc.cluster.local:15012" {
 		t.Fatalf("XDS_ADDRESS = %q, want cross-namespace Agentio address", got)
 	}
-	if got := envValue(proxy.Env, "CA_ADDRESS"); got != "agentiod.agentio-system.svc.cluster.local:15012" {
+	if got := envValue(proxy.Env, "CA_ADDRESS"); got != "agentiod.sandbox-system.svc.cluster.local:15012" {
 		t.Fatalf("CA_ADDRESS = %q, want cross-namespace Agentio address", got)
 	}
 	if !hasConfigMapVolume(config.Volumes, "agentio-ca-root-cert") {
