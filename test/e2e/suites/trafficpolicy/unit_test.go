@@ -16,6 +16,7 @@ package trafficpolicy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -116,8 +117,16 @@ func TestWaitForPolicyStateObservesAppearanceAndRemoval(t *testing.T) {
 		present bool
 		dumps   []string
 	}{
-		{name: "appears", present: true, dumps: []string{"unrelated", "resource tp-target active"}},
-		{name: "disappears", present: false, dumps: []string{"resource tp-target active", "unrelated"}},
+		{
+			name:    "appears",
+			present: true,
+			dumps:   []string{nativePolicyDump(t, false, false), nativePolicyDump(t, true, true)},
+		},
+		{
+			name:    "disappears",
+			present: false,
+			dumps:   []string{nativePolicyDump(t, true, true), nativePolicyDump(t, false, true)},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -151,5 +160,111 @@ func TestWaitForPolicyStateReturnsRecentDumpError(t *testing.T) {
 	})
 	if !errors.Is(err, want) {
 		t.Fatalf("waitForPolicyState() error = %v", err)
+	}
+}
+
+func nativePolicyDump(t *testing.T, bound, cached bool) string {
+	t.Helper()
+	refs := []string{}
+	policies := []map[string]any{}
+	if bound {
+		refs = append(refs, "namespaces/test/trafficPolicies/tp-target")
+	}
+	if cached {
+		policies = append(
+			policies,
+			map[string]any{
+				"name":   "namespaces/test/trafficPolicies/tp-target",
+				"egress": map[string]any{"rules": []any{}},
+			},
+		)
+	}
+	body, err := json.Marshal(map[string]any{
+		"workload":        map[string]any{"uid": "client-uid", "namespace": "test"},
+		"sandboxes":       []any{map[string]any{"workloadUid": "client-uid", "trafficPolicyRefs": refs}},
+		"trafficPolicies": policies,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func legacyPolicyDump(t *testing.T, bound, cached bool) string {
+	t.Helper()
+	refs := []string{}
+	policies := []any{}
+	if bound {
+		refs = append(refs, "test/tp-target-egress")
+	}
+	if cached {
+		policies = append(
+			policies,
+			map[string]any{
+				"namespace": "test",
+				"name":      "tp-target-egress",
+				"scope":     "WorkloadSelector",
+				"priority":  100,
+			},
+		)
+	}
+	body, err := json.Marshal(map[string]any{
+		"workload": map[string]any{"uid": "client-uid", "namespace": "test", "authorizationPolicies": refs},
+		"policies": policies,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func TestInspectPolicyDumpRequiresBindingAndBody(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dump    string
+		found   bool
+		wantErr bool
+	}{
+		{name: "native binding and body", dump: nativePolicyDump(t, true, true), found: true},
+		{name: "cached but unbound", dump: nativePolicyDump(t, false, true)},
+		{name: "missing referenced body", dump: nativePolicyDump(t, true, false), wantErr: true},
+		{name: "exact policy name", dump: strings.ReplaceAll(nativePolicyDump(t, true, true), "tp-target", "tp-target-extra")},
+		{name: "different workload", dump: strings.Replace(nativePolicyDump(t, true, true), `"workloadUid":"client-uid"`, `"workloadUid":"other-uid"`, 1), wantErr: true},
+		{name: "legacy reference and body", dump: legacyPolicyDump(t, true, true), found: true},
+		{name: "legacy unbound body", dump: legacyPolicyDump(t, false, true)},
+		{name: "legacy dangling reference", dump: legacyPolicyDump(t, true, false), wantErr: true},
+		{name: "legacy namespace scope", dump: strings.ReplaceAll(legacyPolicyDump(t, false, true), "WorkloadSelector", "Namespace"), found: true},
+		{name: "legacy global scope", dump: strings.ReplaceAll(legacyPolicyDump(t, false, true), "WorkloadSelector", "Global"), found: true},
+		{name: "invalid JSON", dump: `broken`, wantErr: true},
+		{name: "missing workload", dump: `{}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := inspectPolicyDump(tc.dump, "tp-target")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error=%v, want error=%v", err, tc.wantErr)
+			}
+			if err == nil && got.found != tc.found {
+				t.Fatalf("view=%+v", got)
+			}
+			if got.found && got.body == "" {
+				t.Fatal("policy bodies are missing")
+			}
+		})
+	}
+}
+
+func TestWaitForPolicyStateTracksLegacyPolicyNames(t *testing.T) {
+	for _, present := range []bool{true, false} {
+		calls := 0
+		err := waitForPolicyState(context.Background(), "tp-target", present, func(context.Context) (string, error) {
+			calls++
+			if calls == 1 {
+				return legacyPolicyDump(t, !present, true), nil
+			}
+			return legacyPolicyDump(t, present, true), nil
+		})
+		if err != nil || calls != 2 {
+			t.Fatalf("present=%v calls=%d error=%v", present, calls, err)
+		}
 	}
 }

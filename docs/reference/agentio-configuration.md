@@ -115,7 +115,7 @@ In this example the primary `egressPolicies` list replaces the complete list gen
 
 ## Egress policies
 
-Agentio evaluates `egressPolicies` in document order. Put specific rules first and a broad `PASSTHROUGH` or `DENY` fallback last.
+Agentio evaluates `egressPolicies` in document order. Put specific rules first and a broad `PASSTHROUGH` or `GATEWAY` fallback last. Use TrafficPolicy for access control.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -123,17 +123,14 @@ Agentio evaluates `egressPolicies` in document order. Put specific rules first a
 | `matchHosts` | `string[]` | Empty | Destination hostnames. The control plane resolves them, refreshes results according to DNS TTL, and adds the addresses to the CIDR match. |
 | `matchCidrs` | `string[]` | Empty | Destination CIDRs. Empty matches every destination address. |
 | `matchPorts` | `string[]` | Empty | Decimal destination ports such as `"443"`. Empty matches every port. CIDR/host and port conditions must both match when both are set. |
-| `policy` | Enum | `PASSTHROUGH` | `PASSTHROUGH` connects directly, `DENY` blocks the connection, and `GATEWAY` forwards it to `gateway`. |
+| `policy` | Enum | `PASSTHROUGH` | `PASSTHROUGH` connects directly and `GATEWAY` forwards to `gateway`. Legacy `DENY` is not supported by native Sandbox routing; migrate rejection rules to TrafficPolicy. |
 | `gateway.service` | String | Empty | Fully qualified or resolvable Service name of the egress gateway used by a `GATEWAY` action. |
 | `gateway.port` | Integer | `0` | Gateway target port. Set it explicitly when the target does not use the data plane's standard gateway port. |
 
-Example with an explicit deny rule and gateway fallback:
+Example with a gateway route and passthrough fallback:
 
 ```yaml
 egressPolicies:
-  - namespaces: [agent-demo]
-    matchHosts: [blocked.example.com]
-    policy: DENY
   - namespaces: [agent-demo]
     matchHosts: [api.example.com]
     matchPorts: ["443"]
@@ -144,6 +141,28 @@ egressPolicies:
   - namespaces: [agent-demo]
     policy: PASSTHROUGH
 ```
+
+To reject a destination, create a separate TrafficPolicy in the source workload namespace. This policy applies to all workloads in `agent-demo`; add a selector to narrow its scope. The final allow rule preserves access to other destinations.
+
+```yaml
+apiVersion: agents.kruise.io/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: reject-blocked-host
+  namespace: agent-demo
+spec:
+  selector: {}
+  egress:
+    rules:
+      - action: reject
+        to:
+          - fqdn: blocked.example.com
+      - action: allow
+        to:
+          - cidr: 0.0.0.0/0
+```
+
+Legacy egress DENY may combine ordering with routing decisions. Review the effective access-control behavior when migrating overlapping rules; replacing an action without considering precedence is not a general translation.
 
 ## External processing provider
 

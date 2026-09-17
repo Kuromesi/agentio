@@ -112,7 +112,10 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal egress policies for workload %s: %w", input.Workload.UID, err)
 		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{Name: "egress-policies", Config: config})
+		wireWorkload.Extensions = append(
+			wireWorkload.Extensions,
+			&workloadv1.Extension{Name: "egress-policies", Config: config},
+		)
 	}
 	if input.SNIPolicy != nil {
 		config, err := marshalDeterministicAny(input.SNIPolicy)
@@ -130,7 +133,6 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		return nil, fmt.Errorf("marshal workload %s: %w", input.Workload.UID, err)
 	}
 	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-		SandboxManaged:    input.Workload.SandboxManaged,
 		AuthorizationRefs: append([]string(nil), input.AuthorizationNames...),
 		WorkloadUID:       input.Workload.UID,
 		SourceUID:         input.Workload.SourceUID,

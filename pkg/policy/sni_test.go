@@ -15,7 +15,6 @@
 package policy
 
 import (
-	"strings"
 	"testing"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -24,49 +23,6 @@ import (
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
-
-func TestCompileSNIProfileSandboxUIDAssociation(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		declaredUID string
-		selectedUID *string
-		wantUID     string
-		wantErr     bool
-	}{
-		{name: "declared UID", declaredUID: "sandbox-a", wantUID: "sandbox-a"},
-		{name: "selector UID", selectedUID: stringPtr("sandbox-a"), wantUID: "sandbox-a"},
-		{name: "equal declarations", declaredUID: "sandbox-a", selectedUID: stringPtr("sandbox-a"), wantUID: "sandbox-a"},
-		{name: "conflicting declarations", declaredUID: "sandbox-a", selectedUID: stringPtr("sandbox-b"), wantErr: true},
-		{name: "declared whitespace", declaredUID: "sandbox-a ", wantErr: true},
-		{name: "selector whitespace", selectedUID: stringPtr(" "), wantErr: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			selector := map[string]string{}
-			if test.selectedUID != nil {
-				selector[agentsv1alpha1.LabelSandboxID] = *test.selectedUID
-			}
-			compiled, err := CompileSNIProfile(model.SecurityProfile{
-				Name:       "profile",
-				Namespace:  "demo",
-				SandboxUID: test.declaredUID,
-				Spec:       securitySpec(nil, selector),
-			})
-			if test.wantErr {
-				if err == nil || !strings.Contains(err.Error(), "sandbox UID") {
-					t.Fatalf("CompileSNIProfile() error = %v, want sandbox UID error", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("CompileSNIProfile(): %v", err)
-			}
-			attachment := compiled.PolicyAttachment()
-			if attachment == nil || attachment.Target.SandboxUID != test.wantUID {
-				t.Fatalf("compiled/attachment = %+v / %+v, want exact Sandbox UID %q", compiled, attachment, test.wantUID)
-			}
-		})
-	}
-}
 
 func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	priority := int32(10)
@@ -79,7 +35,10 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 			Rules: []agentsv1alpha1.SecurityRule{{
 				Name: "hosts",
 				Match: []agentsv1alpha1.RuleMatch{
-					{Domains: []string{"API.Example.COM.", "*.Example.com", "api.example.com"}, Schemes: []string{"HTTPS"}},
+					{
+						Domains: []string{"API.Example.COM.", "*.Example.com", "api.example.com"},
+						Schemes: []string{"HTTPS"},
+					},
 					{Domains: []string{"http-only.example.com"}, Schemes: []string{"http"}},
 				},
 			}},
@@ -93,7 +52,8 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	}
 	got := compiled.Policy.GetRules()[0]
 	want := []string{"api.example.com", "*.example.com"}
-	if got.GetAction() != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION || len(got.GetMatch().GetSni()) != len(want) {
+	if got.GetAction() != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION ||
+		len(got.GetMatch().GetSni()) != len(want) {
 		t.Fatalf("SNI rule = %+v", got)
 	}
 	for i := range want {
@@ -121,6 +81,8 @@ func securitySpec(priority *int32, selector map[string]string) agentsv1alpha1.Se
 	return agentsv1alpha1.SecurityProfileSpec{
 		Priority: priority,
 		Selector: metav1.LabelSelector{MatchLabels: selector},
-		Rules:    []agentsv1alpha1.SecurityRule{{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
+		Rules: []agentsv1alpha1.SecurityRule{
+			{Name: "rule", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}},
+		},
 	}
 }

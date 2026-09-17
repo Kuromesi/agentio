@@ -112,19 +112,38 @@ func policyObjectMeta() metav1.ObjectMeta {
 }
 
 func trafficPolicySpec() agentsv1alpha1.TrafficPolicySpec {
-	return agentsv1alpha1.TrafficPolicySpec{Priority: 17, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}}, Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "api.example.com"}}}}}}
+	return agentsv1alpha1.TrafficPolicySpec{
+		Priority: 17,
+		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}},
+		Egress: &agentsv1alpha1.TrafficPolicyDirection{
+			Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					Action: agentsv1alpha1.RuleActionAllow,
+					To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "api.example.com"}},
+				},
+			},
+		},
+	}
 }
 
 func securityProfileSpec(priority *int32) agentsv1alpha1.SecurityProfileSpec {
-	return agentsv1alpha1.SecurityProfileSpec{Priority: priority, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}}, Rules: []agentsv1alpha1.SecurityRule{{Name: "block-api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}, Actions: agentsv1alpha1.SecurityRuleActions{Block: &agentsv1alpha1.BlockAction{StatusCode: 403}}}}}
+	return agentsv1alpha1.SecurityProfileSpec{
+		Priority: priority,
+		Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}},
+		Rules: []agentsv1alpha1.SecurityRule{
+			{
+				Name:    "block-api",
+				Match:   []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}},
+				Actions: agentsv1alpha1.SecurityRuleActions{Block: &agentsv1alpha1.BlockAction{StatusCode: 403}},
+			},
+		},
+	}
 }
 
 func checkTrafficPolicy(t *testing.T, policy any) {
 	t.Helper()
 	meta := policy.(metav1.Object)
-	checkStrippedPolicyMeta(t, meta, map[string]string{
-		agentsv1alpha1.AnnotationSandboxID: "sandbox-a",
-	})
+	checkStrippedPolicyMeta(t, meta, nil)
 	switch traffic := policy.(type) {
 	case *agentsv1alpha1.TrafficPolicy:
 		if !reflect.DeepEqual(traffic.Spec, trafficPolicySpec()) || len(traffic.Status.Conditions) != 0 {
@@ -142,16 +161,16 @@ func checkTrafficPolicy(t *testing.T, policy any) {
 func checkSecurityProfile(t *testing.T, profile any) {
 	t.Helper()
 	meta := profile.(metav1.Object)
-	checkStrippedPolicyMeta(t, meta, map[string]string{
-		agentsv1alpha1.AnnotationSandboxID: "sandbox-a",
-	})
+	checkStrippedPolicyMeta(t, meta, nil)
 	switch security := profile.(type) {
 	case *agentsv1alpha1.SecurityProfile:
-		if !reflect.DeepEqual(security.Spec, securityProfileSpec(int32Ptr(23))) || !reflect.DeepEqual(security.Status, agentsv1alpha1.SecurityProfileStatus{}) {
+		if !reflect.DeepEqual(security.Spec, securityProfileSpec(int32Ptr(23))) ||
+			!reflect.DeepEqual(security.Status, agentsv1alpha1.SecurityProfileStatus{}) {
 			t.Fatalf("security profile fields were not retained and stripped correctly: %+v", profile)
 		}
 	case *agentsv1alpha1.GlobalSecurityProfile:
-		if !reflect.DeepEqual(security.Spec, securityProfileSpec(int32Ptr(23))) || !reflect.DeepEqual(security.Status, agentsv1alpha1.SecurityProfileStatus{}) {
+		if !reflect.DeepEqual(security.Spec, securityProfileSpec(int32Ptr(23))) ||
+			!reflect.DeepEqual(security.Status, agentsv1alpha1.SecurityProfileStatus{}) {
 			t.Fatalf("global security profile fields were not retained and stripped correctly: %+v", profile)
 		}
 	default:
@@ -164,15 +183,22 @@ func int32Ptr(value int32) *int32 { return &value }
 func checkStrippedPolicyMeta(t *testing.T, meta metav1.Object, annotations map[string]string) {
 	t.Helper()
 	creationTime := meta.GetCreationTimestamp()
-	if meta.GetName() != "policy" || meta.GetNamespace() != "sandbox" || meta.GetUID() != "uid" || meta.GetResourceVersion() != "42" || meta.GetGeneration() != 7 || !creationTime.Time.Equal(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)) {
+	if meta.GetName() != "policy" || meta.GetNamespace() != "sandbox" || meta.GetUID() != "uid" ||
+		meta.GetResourceVersion() != "42" ||
+		meta.GetGeneration() != 7 ||
+		!creationTime.Time.Equal(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)) {
 		t.Fatalf("required metadata changed: %+v", meta)
 	}
-	if !reflect.DeepEqual(meta.GetAnnotations(), annotations) || meta.GetLabels() != nil || len(meta.GetFinalizers()) != 0 || len(meta.GetOwnerReferences()) != 0 || len(meta.GetManagedFields()) != 0 {
+	if !reflect.DeepEqual(meta.GetAnnotations(), annotations) || meta.GetLabels() != nil ||
+		len(meta.GetFinalizers()) != 0 ||
+		len(meta.GetOwnerReferences()) != 0 ||
+		len(meta.GetManagedFields()) != 0 {
 		t.Fatalf("unused metadata was not stripped: %+v", meta)
 	}
 }
 
 func hasPolicyMetadata(obj any) bool {
 	meta := obj.(metav1.Object)
-	return meta.GetLabels()["unused"] == "label" && meta.GetAnnotations()["unused"] == "annotation" && len(meta.GetManagedFields()) == 1
+	return meta.GetLabels()["unused"] == "label" && meta.GetAnnotations()["unused"] == "annotation" &&
+		len(meta.GetManagedFields()) == 1
 }

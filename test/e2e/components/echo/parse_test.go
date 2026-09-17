@@ -76,7 +76,9 @@ func TestParseResponsesProjectsCurrentEchoBodyMetadata(t *testing.T) {
 		t.Fatalf("responses = %+v", responses)
 	}
 	response := responses[0]
-	if response.Hostname != "server-7645585ff8-cdwtz" || response.Host != "server.sandbox.svc.cluster.local:80" || response.URL != "/" || response.Protocol != "HTTP/1.1" {
+	if response.Hostname != "server-7645585ff8-cdwtz" || response.Host != "server.sandbox.svc.cluster.local:80" ||
+		response.URL != "/" ||
+		response.Protocol != "HTTP/1.1" {
 		t.Fatalf("response metadata = %+v", response)
 	}
 }
@@ -90,5 +92,20 @@ func TestParseResponsesAllowsFourMiBConfigDump(t *testing.T) {
 	}
 	if len(responses) != 1 || !strings.Contains(responses[0].RawContent, marker) {
 		t.Fatalf("large response did not preserve marker; responses = %d", len(responses))
+	}
+}
+
+func TestParseResponsesPreservesJSONBodyWithoutFrameMetadata(t *testing.T) {
+	body := "{\n  \"value\": \"a=b\",\n  \"policies\": []\n}"
+	output := "[0] URL=http://localhost:15000/config_dump\n[0] StatusCode=200\n[0] ResponseHeader=content-type:application/json\n"
+	for line := range strings.SplitSeq(body, "\n") {
+		output += "[0 body] " + line + "\n"
+	}
+	responses, err := ParseResponses(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(responses) != 1 || responses[0].BodyText != body {
+		t.Fatalf("responses=%+v, want body=%q", responses, body)
 	}
 }

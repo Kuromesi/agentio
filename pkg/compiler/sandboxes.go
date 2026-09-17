@@ -15,23 +15,26 @@
 package compiler
 
 import (
+	"errors"
 	"fmt"
-	"sort"
-
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
-	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policy"
 )
 
-// Sandbox resources exist independently of active Workloads. Invalid or unresolved
-// policy views are withdrawn rather than published as empty policies.
-func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies policyCollections, failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
-	clearFailureOnSourceDelete(sandboxes, failures, "SandboxResource")
+// Invalid policies are omitted independently. Runtime metadata and other policies
+// continue to be published; failed updates do not retain an earlier policy version.
+func newSandboxResources(
+	sandboxes krt.Collection[model.Sandbox],
+	policies policyCollections,
+	failures *failureRecorder,
+	options collectionOptions,
+) krt.Collection[model.Resource] {
+	for _, kind := range []string{"SandboxResource", "SandboxInlinePolicies", "SandboxEgressPolicy", "SandboxSharedPolicies"} {
+		clearFailureOnSourceDelete(sandboxes, failures, kind)
+	}
 	return krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *model.Resource {
 		payload := &sandboxv1.Sandbox{Uid: sandbox.UID, State: sandboxv1.SandboxState(sandbox.State)}
 		if sandbox.Attester != nil {
@@ -41,96 +44,115 @@ func newSandboxResources(sandboxes krt.Collection[model.Sandbox], policies polic
 			current := sandboxes.GetKey(sandbox.ResourceName())
 			return current != nil && current.Equals(sandbox)
 		}
-		facts := &model.SandboxResourceFacts{AttesterWorkloadUID: payload.GetAttester().GetWorkloadUid()}
-		policyAvailable := false
-		var routingErr error
-		invalidPayload := false
-		bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetSandbox, sandbox.UID)))
-		if bindings != nil && bindings.Valid() {
-			policyAvailable = true
-			if names := bindings.PolicyNames(model.PolicyKindEgressPolicy); len(names) > 0 {
-				fetched := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(append([]string(nil), names...)...))
-				effective, gatewayKeys, err := policy.SelectEgressPolicies(names, fetched)
-				facts.GatewayReferences = gatewayKeys
-				if err != nil || len(fetched) != len(names) {
-					policyAvailable = false
-				} else {
-					payload.EgressRouting, routingErr = policy.CompileEgressRouting(effective)
-					if routingErr != nil {
-						invalidPayload = true
-					}
-				}
+		record := func(kind string, err error) {
+			if err != nil {
+				failures.recordIf(kind, sandbox.UID, err, currentInput)
+			} else {
+				failures.clearIf(kind, sandbox.UID, currentInput)
 			}
-			bodiesAvailable, bodiesInvalid := loadSandboxPolicyBodies(ctx, bindings, policies, payload)
-			policyAvailable = policyAvailable && bodiesAvailable
-			invalidPayload = invalidPayload || bodiesInvalid
 		}
-		if invalidPayload || (bindings != nil && bindings.InvalidReason != "") {
-			policyAvailable = false
+		if compiled := krt.FetchOne(
+			ctx,
+			policies.trafficPolicies,
+			krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID)),
+		); compiled != nil {
+			payload.TrafficPolicy = compiled.Policy
 		}
-		if !policyAvailable {
-			err := sandboxPolicyError(routingErr, bindings)
-			failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
-			return nil
+		var inlineErr error
+		if compiled := krt.FetchOne(
+			ctx,
+			policies.sniPolicies,
+			krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID)),
+		); compiled != nil {
+			extension, err := marshalDeterministicAny(compiled.Policy)
+			inlineErr = err
+			if err == nil {
+				payload.Extensions = append(payload.Extensions, extension)
+			}
 		}
+		record("SandboxInlinePolicies", inlineErr)
+
+		facts := &model.SandboxResourceFacts{AttesterWorkloadUID: payload.GetAttester().GetWorkloadUid()}
+		bindings := krt.FetchOne(ctx, policies.policyBindings, krt.FilterKey(sandbox.UID))
+		var routingErr, sharedErr error
+		if bindings != nil {
+			payload.EgressRouting, facts.GatewayReferences, routingErr = sandboxEgressRouting(ctx, bindings, policies)
+			sharedErr = loadSandboxPolicies(ctx, bindings, policies, payload)
+		}
+		record("SandboxEgressPolicy", routingErr)
+		record("SandboxSharedPolicies", sharedErr)
+		facts.TrafficPolicyRefs = payload.PolicyRefs[model.TrafficPolicyType].GetResourceNames()
 		value, err := marshalDeterministicAny(payload)
 		if err != nil {
-			failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
+			record("SandboxResource", err)
 			return nil
 		}
-		resource, err := model.NewResource(model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.UID}, "", value, nil, model.ResourceFacts{Sandbox: facts})
+		resource, err := model.NewResource(
+			model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.UID},
+			"",
+			value,
+			nil,
+			model.ResourceFacts{Sandbox: facts},
+		)
 		if err != nil {
-			failures.recordIf("SandboxResource", sandbox.UID, err, currentInput)
+			record("SandboxResource", err)
 			return nil
 		}
-		failures.clearIf("SandboxResource", sandbox.UID, currentInput)
+		record("SandboxResource", nil)
 		return &resource
 	}, options("sandbox-resources")...)
 }
 
-// loadSandboxPolicyBodies resolves ordered native and extension policies from one binding set.
-func loadSandboxPolicyBodies(ctx krt.HandlerContext, bindings *policy.Bindings, policies policyCollections, payload *sandboxv1.Sandbox) (bool, bool) {
-	policyAvailable, invalidPayload := true, false
-	for _, name := range bindings.PolicyNames(model.PolicyKindAuthorization) {
-		compiled := krt.FetchOne(ctx, policies.trafficPolicies, krt.FilterKey(name))
-		if compiled == nil {
-			policyAvailable = false
-			continue
-		}
-		payload.TrafficPolicies = append(payload.TrafficPolicies, proto.Clone(compiled.Policy).(*securityv1.TrafficPolicy))
+func sandboxEgressRouting(
+	ctx krt.HandlerContext,
+	bindings *policy.Bindings,
+	policies policyCollections,
+) (*sandboxv1.EgressRouting, []string, error) {
+	names := bindings.PolicyNames(model.PolicyKindEgressPolicy)
+	if len(names) == 0 {
+		return nil, nil, nil
 	}
-	// Native TrafficPolicy uses higher numeric priority first. Resolve ties
-	// by stable identity so attachment insertion order cannot change a decision.
-	sort.Slice(payload.TrafficPolicies, func(i, j int) bool {
-		left, right := payload.TrafficPolicies[i], payload.TrafficPolicies[j]
-		if left.Priority != right.Priority {
-			return left.Priority > right.Priority
+	// FilterKeys sorts its input; binding order must stay immutable.
+	fetched := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(append([]string(nil), names...)...))
+	effective, gatewayKeys, err := policy.SelectEgressPolicies(names, fetched)
+	if err != nil {
+		return nil, nil, err
+	}
+	routing, err := policy.CompileEgressRouting(effective)
+	if err != nil {
+		return nil, nil, err
+	}
+	return routing, gatewayKeys, nil
+}
+
+// loadSandboxPolicies copies ordered shared references and valid extension bodies.
+// Missing or invalid extensions do not suppress other policy families or profiles.
+func loadSandboxPolicies(
+	ctx krt.HandlerContext,
+	bindings *policy.Bindings,
+	policies policyCollections,
+	payload *sandboxv1.Sandbox,
+) error {
+	// Bindings already carry control-plane order. Shared body updates must not
+	// invalidate the Sandbox, so do not read those bodies here.
+	if refs := bindings.PolicyNames(model.PolicyKindTrafficPolicy); len(refs) > 0 {
+		payload.PolicyRefs = map[string]*sandboxv1.PolicyReference{
+			model.TrafficPolicyType: {ResourceNames: append([]string(nil), refs...)},
 		}
-		return left.Name < right.Name
-	})
+	}
+	var policyErr error
 	for _, name := range bindings.PolicyNames(model.PolicyKindSNIPolicy) {
 		compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(name))
-		if compiled == nil {
-			policyAvailable = false
+		if compiled == nil || compiled.Policy == nil {
+			policyErr = errors.Join(policyErr, fmt.Errorf("SNI policy %q is unavailable", name))
 			continue
 		}
-		extension := new(anypb.Any)
-		if err := anypb.MarshalFrom(extension, compiled.Policy, proto.MarshalOptions{Deterministic: true}); err != nil {
-			invalidPayload = true
+		extension, err := marshalDeterministicAny(compiled.Policy)
+		if err != nil {
+			policyErr = errors.Join(policyErr, fmt.Errorf("SNI policy %q: %w", name, err))
 			continue
 		}
 		payload.Extensions = append(payload.Extensions, extension)
 	}
-	return policyAvailable, invalidPayload
-}
-
-func sandboxPolicyError(routingErr error, bindings *policy.Bindings) error {
-	err := routingErr
-	if err == nil && bindings != nil && bindings.InvalidReason != "" {
-		err = fmt.Errorf("invalid sandbox policy bindings: %s", bindings.InvalidReason)
-	}
-	if err == nil {
-		err = fmt.Errorf("sandbox policy view is incomplete or invalid")
-	}
-	return err
+	return policyErr
 }

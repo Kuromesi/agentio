@@ -53,7 +53,10 @@ func TestPrintEnvFlagDumpsTheEnvironment(t *testing.T) {
 			originalFormat := logFormat
 			logFormat = "invalid"
 			t.Cleanup(func() { logFormat = originalFormat })
-			runErr := run(context.Background(), []string{"-print-env", "-print-env-format=" + format, "-kubeconfig=/does/not/exist"})
+			runErr := run(
+				context.Background(),
+				[]string{"-print-env", "-print-env-format=" + format, "-kubeconfig=/does/not/exist"},
+			)
 			os.Stdout = original
 			if err := output.Close(); err != nil {
 				t.Fatal(err)
@@ -67,6 +70,7 @@ func TestPrintEnvFlagDumpsTheEnvironment(t *testing.T) {
 			}
 			for _, expected := range []string{
 				"AGENTIO_PUSH_DEBOUNCE", "AGENTIO_KRT_DEBOUNCE",
+				"AGENTIO_SANDBOX_RUNTIMES",
 				"AGENTIO_CA_ROOT_LIFETIME", "AGENTIO_LOG_LEVEL", "AGENTIO_LOG_FORMAT",
 			} {
 				if !strings.Contains(string(dumped), expected) {

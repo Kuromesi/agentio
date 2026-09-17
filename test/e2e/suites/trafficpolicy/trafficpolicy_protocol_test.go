@@ -35,7 +35,8 @@ func TestSandboxTrafficPolicyProtocol(t *testing.T) {
 	}
 
 	rig.RunScenario(t, "allow all TCP only", func(t *testing.T, scope *kube.ResourceScope) {
-		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name(), "Dst": serviceIPBlock}, `
+		e2econfig.New(scope).
+			Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name(), "Dst": serviceIPBlock}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
@@ -60,7 +61,8 @@ spec:
       - action: reject
         to:
           - cidr: "0.0.0.0/0"
-`).ApplyOrFail(t, kube.CreateOnly)
+`).
+			ApplyOrFail(t, kube.CreateOnly)
 		waitForPolicyPresent(t, src, "tp-allow-all-tcp")
 		src.CallOrFail(t, dst.CallOptionsOrFail(t, "http").WithCheck(check.OK()))
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.TCP, dst.Address(), 9090).WithCheck(check.NoError()))
@@ -68,7 +70,8 @@ spec:
 	})
 
 	rig.RunScenario(t, "allow specific port with protocol", func(t *testing.T, scope *kube.ResourceScope) {
-		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name(), "Dst": serviceIPBlock}, `
+		e2econfig.New(scope).
+			Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name(), "Dst": serviceIPBlock}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
@@ -94,7 +97,8 @@ spec:
       - action: reject
         to:
           - cidr: "0.0.0.0/0"
-`).ApplyOrFail(t, kube.CreateOnly)
+`).
+			ApplyOrFail(t, kube.CreateOnly)
 		waitForPolicyPresent(t, src, "tp-port-with-proto")
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, dst.Address(), 80).WithCheck(check.OK()))
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTPS, dst.Address(), 9443).WithCheck(check.Error()))
@@ -115,6 +119,8 @@ spec:
   egress:
     rules:
       - action: reject
+        to:
+          - cidr: "0.0.0.0/0"
         ports:
           - protocol: UDP
             port: 9200
@@ -128,7 +134,8 @@ spec:
 	})
 
 	rig.RunScenario(t, "mixed protocol rules", func(t *testing.T, scope *kube.ResourceScope) {
-		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name(), "Dst": serviceIPBlock}, `
+		e2econfig.New(scope).
+			Eval(trafficFixture.Namespace.Name(), map[string]any{"App": src.Name(), "Dst": serviceIPBlock}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
@@ -156,7 +163,8 @@ spec:
       - action: reject
         to:
           - cidr: "0.0.0.0/0"
-`).ApplyOrFail(t, kube.CreateOnly)
+`).
+			ApplyOrFail(t, kube.CreateOnly)
 		waitForPolicyPresent(t, src, "tp-mixed-proto")
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, dst.Address(), 80).WithCheck(check.OK()))
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.TCP, dst.Address(), 9090).WithCheck(check.NoError()))
@@ -210,6 +218,8 @@ spec:
   egress:
     rules:
       - action: allow
+        to:
+          - cidr: "0.0.0.0/0"
         ports:
           - protocol: UDP
       - action: reject
@@ -245,6 +255,8 @@ spec:
   egress:
     rules:
       - action: allow
+        to:
+          - cidr: "0.0.0.0/0"
         ports:
           - protocol: UDP
       - action: reject

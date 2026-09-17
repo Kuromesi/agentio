@@ -76,15 +76,13 @@ func selectAuthorizationResources(
 	return orderedUnique(result)
 }
 
-// Gateways serve ordinary endpoints cluster-wide; other clients use their
-// authenticated endpoint/node scope. Sandbox-managed endpoints never contribute.
+// Gateways see compatibility Authorization references cluster-wide; other clients
+// are restricted to their authenticated workload or node scope.
 func authorizationWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
-	query := model.WorkloadQuery{WorkloadPoliciesOnly: true}
 	if scope.Class == model.ClientEgressGateway {
-		return query, true
+		return model.WorkloadQuery{AuthorizationRefsOnly: true}, true
 	}
 	query, ok := workloadScopeQuery(scope)
-	query.WorkloadPoliciesOnly = true
 	return query, ok
 }
 

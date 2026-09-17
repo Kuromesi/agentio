@@ -239,9 +239,15 @@ func TestApplyAgentioConfigRejectsInvalidStaticServiceEntries(t *testing.T) {
 		{name: "missing endpoints", entries: "- hosts: [api.example.com]"},
 		{name: "wildcard host", entries: "- hosts: ['*.example.com']\n  endpoints:\n  - address: 10.10.20.30"},
 		{name: "IPv6 endpoint", entries: "- hosts: [api.example.com]\n  endpoints:\n  - address: '2001:db8::1'"},
-		{name: "duplicate endpoint", entries: "- hosts: [api.example.com]\n  endpoints:\n  - address: 10.10.20.30\n  - address: ' 10.10.20.30 '"},
+		{
+			name:    "duplicate endpoint",
+			entries: "- hosts: [api.example.com]\n  endpoints:\n  - address: 10.10.20.30\n  - address: ' 10.10.20.30 '",
+		},
 		{name: "nil endpoint", entries: "- hosts: [api.example.com]\n  endpoints:\n  - null"},
-		{name: "duplicate host across entries", entries: "- hosts: [API.example.com.]\n  endpoints:\n  - address: 10.10.20.30\n- hosts: [api.example.com]\n  endpoints:\n  - address: 10.10.20.31"},
+		{
+			name:    "duplicate host across entries",
+			entries: "- hosts: [API.example.com.]\n  endpoints:\n  - address: 10.10.20.30\n- hosts: [api.example.com]\n  endpoints:\n  - address: 10.10.20.31",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -282,16 +288,16 @@ func TestPolicyCollectionsTrackTypedResources(t *testing.T) {
 		t.Fatalf("security profile collection size = %d, want 2", len(got))
 	}
 	if got := r.TrafficPolicies.GetKey("namespaced/demo/traffic"); got == nil || got.Namespace != "demo" ||
-		got.SandboxUID != "sandbox-a" || got.Global {
+		got.SandboxUID != "" || got.Global {
 		t.Fatalf("namespaced traffic policy = %+v", got)
 	}
-	if got := r.TrafficPolicies.GetKey("global/global-traffic"); got == nil || got.SandboxUID != "sandbox-b" || !got.Global {
+	if got := r.TrafficPolicies.GetKey("global/global-traffic"); got == nil || got.SandboxUID != "" || !got.Global {
 		t.Fatalf("global traffic policy = %+v", got)
 	}
-	if got := r.SecurityProfiles.GetKey("namespaced/demo/security"); got == nil || got.SandboxUID != "sandbox-c" || got.Global {
+	if got := r.SecurityProfiles.GetKey("namespaced/demo/security"); got == nil || got.SandboxUID != "" || got.Global {
 		t.Fatalf("namespaced security profile = %+v", got)
 	}
-	if got := r.SecurityProfiles.GetKey("global/global-security"); got == nil || got.SandboxUID != "sandbox-d" || !got.Global {
+	if got := r.SecurityProfiles.GetKey("global/global-security"); got == nil || got.SandboxUID != "" || !got.Global {
 		t.Fatalf("global security profile = %+v", got)
 	}
 }
@@ -319,14 +325,23 @@ func TestAgentioConfigRetainsLastKnownGoodOverlay(t *testing.T) {
 	}
 
 	primary.Data["config"] = "egressGateways: ["
-	if _, err := r.client.CoreV1().ConfigMaps(primary.Namespace).Update(ctx, primary, metav1.UpdateOptions{}); err != nil {
+	if _, err := r.client.CoreV1().
+		ConfigMaps(primary.Namespace).
+		Update(ctx, primary, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("update malformed primary ConfigMap: %v", err)
 	}
-	if err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-		current := r.AgentioConfig.GetKey("effective")
-		return current != nil && current.Value.GetSandboxExtProc().GetService() == "base.agentio-system.svc.cluster.local" &&
-			len(current.Value.GetEgressGateways()) == 1, nil
-	}); err != nil {
+	if err := wait.PollUntilContextTimeout(
+		ctx,
+		10*time.Millisecond,
+		time.Second,
+		true,
+		func(context.Context) (bool, error) {
+			current := r.AgentioConfig.GetKey("effective")
+			return current != nil &&
+				current.Value.GetSandboxExtProc().GetService() == "base.agentio-system.svc.cluster.local" &&
+				len(current.Value.GetEgressGateways()) == 1, nil
+		},
+	); err != nil {
 		t.Fatalf("last known good config was not retained: %v", err)
 	}
 }
@@ -369,9 +384,15 @@ func newTestRegistryWithAgentioConfigMaps(
 		t.Fatalf("new registry: %v", err)
 	}
 	client.Run(ctx.Done())
-	if err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, time.Second, true, func(context.Context) (bool, error) {
-		return r.HasSynced(), nil
-	}); err != nil {
+	if err := wait.PollUntilContextTimeout(
+		ctx,
+		10*time.Millisecond,
+		time.Second,
+		true,
+		func(context.Context) (bool, error) {
+			return r.HasSynced(), nil
+		},
+	); err != nil {
 		t.Fatalf("registry did not sync: %v", err)
 	}
 	return &testRegistry{

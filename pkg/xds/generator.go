@@ -16,6 +16,7 @@ package xds
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"istio.io/istio/pkg/util/sets"
@@ -84,6 +85,29 @@ func selectionNames(subscription SubscriptionView) []string {
 
 func diffSelected(subscription SubscriptionView, selected map[string]model.Resource) GeneratedDelta {
 	return diffResourceSelection(selected, subscription.SentNames(), subscription.SentVersion)
+}
+
+// diffSubscribed also resends explicitly subscribed names: the client may have
+// evicted its local copy. Only resources in the authorized selection are sent.
+func diffSubscribed(
+	subscription SubscriptionView,
+	selected map[string]model.Resource,
+	subscribedNames []string,
+) GeneratedDelta {
+	delta := diffSelected(subscription, selected)
+	for _, name := range subscribedNames {
+		if name == "*" {
+			continue
+		}
+		if resource, ok := selected[name]; ok {
+			if !slices.ContainsFunc(delta.Resources, func(r model.Resource) bool { return r.XDSName == name }) {
+				delta.Resources = append(delta.Resources, resource)
+			}
+		} else if !slices.Contains(delta.Removed, name) {
+			delta.Removed = append(delta.Removed, name)
+		}
+	}
+	return delta
 }
 
 func diffResourceSelection(
@@ -155,7 +179,11 @@ func addResourceTransition(
 
 // newSortedDelta builds the deterministic delta; a name that is re-selected
 // drops out of the removal set.
-func newSortedDelta(selected map[string]model.Resource, removedSet sets.Set[string], elideSentState bool) GeneratedDelta {
+func newSortedDelta(
+	selected map[string]model.Resource,
+	removedSet sets.Set[string],
+	elideSentState bool,
+) GeneratedDelta {
 	resources := make([]model.Resource, 0, len(selected))
 	for name, resource := range selected {
 		removedSet.Delete(name)

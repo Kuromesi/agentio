@@ -38,10 +38,16 @@ func metadataString(metadata *structpb.Struct, key string) string {
 
 func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 	switch typeURL {
-	case model.AddressType, model.WorkloadAuthorizationType, model.SandboxType:
+	case model.AddressType, model.WorkloadAuthorizationType, model.SandboxType, model.TrafficPolicyType:
 		return true, true
-	case model.WorkloadType, model.ClusterType, model.EndpointType, model.ListenerType, model.RouteType, model.SecretType,
-		model.ExtensionConfigurationType, model.ProxyConfigType:
+	case model.WorkloadType,
+		model.ClusterType,
+		model.EndpointType,
+		model.ListenerType,
+		model.RouteType,
+		model.SecretType,
+		model.ExtensionConfigurationType,
+		model.ProxyConfigType:
 		return true, class == model.ClientEgressGateway
 	default:
 		return false, false
@@ -49,7 +55,7 @@ func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 }
 
 // scopeAllows checks ownership of generic gateway resources. Workload,
-// Authorization, and Sandbox visibility is handled by their generators.
+// Authorization, Sandbox, and TrafficPolicy visibility is handled by their generators.
 func scopeAllows(scope model.ClientScope, resource model.Resource) bool {
 	return resource.Facts.GatewayOwner != "" &&
 		scope.Class == model.ClientEgressGateway && resource.Facts.GatewayOwner == scope.GatewayKey

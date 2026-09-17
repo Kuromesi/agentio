@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package pod translates ordinary Kubernetes Pods into Workload attesters.
+// Package pod translates Kubernetes Pods into Workload attesters and derives
+// Sandbox policy owners for ordinary managed Pods.
 package pod
 
 import (
@@ -31,21 +32,18 @@ const (
 	ambientRedirectionAnnotation = "ambient.istio.io/redirection"
 )
 
-// NewWorkloads translates all eligible Pods into Workloads. The runtime classifier
-// marks Sandbox-managed endpoints without depending on Sandbox discovery state.
+// NewWorkloads translates all eligible Pods into network endpoints independently
+// of Sandbox discovery and policy attachment.
 func NewWorkloads(
 	pods krt.Collection[*corev1.Pod],
 	clusterID, trustDomain string,
-	sandboxManaged func(*corev1.Pod) bool,
 	options ...krt.CollectionOption,
 ) krt.Collection[model.Workload] {
 	return krt.NewCollection(pods, func(_ krt.HandlerContext, pod *corev1.Pod) *model.Workload {
 		if !IsEligible(pod) {
 			return nil
 		}
-		workload := workloadFromPod(clusterID, trustDomain, pod)
-		workload.SandboxManaged = sandboxManaged != nil && sandboxManaged(pod)
-		return workload
+		return workloadFromPod(clusterID, trustDomain, pod)
 	}, options...)
 }
 
@@ -145,7 +143,7 @@ func firstNonEmptyLabel(labels map[string]string, keys ...string) string {
 	return ""
 }
 
-// HasInjectedZTunnel reports whether the Pod runs a sandbox-injected ztunnel.
+// HasInjectedZTunnel reports whether the Pod runs a dedicated ztunnel sidecar.
 func HasInjectedZTunnel(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false
@@ -161,8 +159,10 @@ func HasInjectedZTunnel(pod *corev1.Pod) bool {
 }
 
 func isDedicatedZTunnelContainer(container corev1.Container) bool {
-	if (container.Name != "agentio-proxy" && container.Name != "istio-proxy" && container.Name != "traffic-proxy") || len(container.Args) < 2 ||
-		container.Args[0] != "proxy" || container.Args[1] != "ztunnel" {
+	if (container.Name != "agentio-proxy" && container.Name != "istio-proxy" && container.Name != "traffic-proxy") ||
+		len(container.Args) < 2 ||
+		container.Args[0] != "proxy" ||
+		container.Args[1] != "ztunnel" {
 		return false
 	}
 	sidecarMode, proxyMode := false, false

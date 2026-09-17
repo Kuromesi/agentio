@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package io.kruise.agentio.sandbox.v1;
+package agentio.sandbox;
 
 option go_package = "github.com/openkruise/agentio/api/sandbox/v1;sandboxv1";
 

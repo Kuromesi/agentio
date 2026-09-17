@@ -81,8 +81,16 @@ func TestEndpointTargetUIDMovementAndStalePodReplacementKeepDependencies(t *test
 	endpointA := incrementalTargetEndpoint("backend.alpha.svc.cluster.local", "uid-a", "pod-a")
 	fixture.endpoints.ConditionalUpdateObject(endpointA)
 	waitSynced(t, fixture.compiler)
-	awaitSteadyState(t, fixture.compiler,
-		addressResourceName("alpha", "pod-a"), addressResourceName("alpha", "pod-b"), addressResourceName("alpha", "pod-c"))
+	awaitSteadyState(
+		t,
+		fixture.compiler,
+		addressResourceName(
+			"alpha",
+			"pod-a",
+		),
+		addressResourceName("alpha", "pod-b"),
+		addressResourceName("alpha", "pod-c"),
+	)
 	eventually(t, func() bool {
 		return workloadHasTargetPort(t, fixture.compiler, podA, 8080)
 	}, "UID-targeted endpoint attached to pod-a")
@@ -122,8 +130,16 @@ func TestEndpointTargetNameMovementKeepsUIDLessDependencies(t *testing.T) {
 	endpointA := incrementalTargetEndpoint("backend.alpha.svc.cluster.local", "", "pod-a")
 	fixture.endpoints.ConditionalUpdateObject(endpointA)
 	waitSynced(t, fixture.compiler)
-	awaitSteadyState(t, fixture.compiler,
-		addressResourceName("alpha", "pod-a"), addressResourceName("alpha", "pod-b"), addressResourceName("alpha", "pod-c"))
+	awaitSteadyState(
+		t,
+		fixture.compiler,
+		addressResourceName(
+			"alpha",
+			"pod-a",
+		),
+		addressResourceName("alpha", "pod-b"),
+		addressResourceName("alpha", "pod-c"),
+	)
 	eventually(t, func() bool {
 		return workloadHasTargetPort(t, fixture.compiler, podA, 8080)
 	}, "UID-less endpoint attached to pod-a by namespace/name")
@@ -148,8 +164,12 @@ func TestServicePortAddUpdateDeleteKeepsWorkloadDependency(t *testing.T) {
 	podB := testWorkload("alpha", "pod-b", "10.1.0.2")
 	fixture.workloads.ConditionalUpdateObject(podA)
 	fixture.workloads.ConditionalUpdateObject(podB)
-	fixture.endpoints.ConditionalUpdateObject(incrementalAddressEndpoint("backend.alpha.svc.cluster.local", "10.1.0.1", 8080))
-	fixture.endpoints.ConditionalUpdateObject(incrementalAddressEndpoint("other.alpha.svc.cluster.local", "10.1.0.2", 7070))
+	fixture.endpoints.ConditionalUpdateObject(
+		incrementalAddressEndpoint("backend.alpha.svc.cluster.local", "10.1.0.1", 8080),
+	)
+	fixture.endpoints.ConditionalUpdateObject(
+		incrementalAddressEndpoint("other.alpha.svc.cluster.local", "10.1.0.2", 7070),
+	)
 	valid := incrementalService("backend", "backend.alpha.svc.cluster.local", 8080)
 	fixture.services.ConditionalUpdateObject(valid)
 	fixture.services.ConditionalUpdateObject(incrementalService("other", "other.alpha.svc.cluster.local", 7070))
@@ -461,14 +481,44 @@ func TestWorkloadServicePortsAreStableAcrossEndpointOrder(t *testing.T) {
 		{Name: "metrics", Port: 15020, TargetPortName: "metrics-backend", Protocol: "TCP"},
 	}
 	firstEndpoints := []model.Endpoint{
-		{ServiceKey: testServiceKey, SourceKey: "demo/backend-b", Address: "10.0.0.1", PortName: "metrics", Port: 15021, Protocol: "TCP", Ready: true},
-		{ServiceKey: testServiceKey, SourceKey: "demo/backend-a", Address: "10.0.0.1", PortName: "http", Port: 8080, Protocol: "TCP", Ready: true},
+		{
+			ServiceKey: testServiceKey,
+			SourceKey:  "demo/backend-b",
+			Address:    "10.0.0.1",
+			PortName:   "metrics",
+			Port:       15021,
+			Protocol:   "TCP",
+			Ready:      true,
+		},
+		{
+			ServiceKey: testServiceKey,
+			SourceKey:  "demo/backend-a",
+			Address:    "10.0.0.1",
+			PortName:   "http",
+			Port:       8080,
+			Protocol:   "TCP",
+			Ready:      true,
+		},
 	}
 	secondEndpoints := []model.Endpoint{firstEndpoints[1], firstEndpoints[0]}
-	first, firstHash := compileWorkloadServices(t, ports, firstEndpoints, []model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")})
-	second, secondHash := compileWorkloadServices(t, []model.ServicePort{ports[1], ports[0]}, secondEndpoints, []model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")})
+	first, firstHash := compileWorkloadServices(
+		t,
+		ports,
+		firstEndpoints,
+		[]model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")},
+	)
+	second, secondHash := compileWorkloadServices(
+		t,
+		[]model.ServicePort{ports[1], ports[0]},
+		secondEndpoints,
+		[]model.Workload{testWDSWorkload("pod-a", "pod-a-uid", "10.0.0.1")},
+	)
 	if !reflect.DeepEqual(first.GetServices(), second.GetServices()) {
-		t.Fatalf("service mappings differ by input order: first=%+v second=%+v", first.GetServices(), second.GetServices())
+		t.Fatalf(
+			"service mappings differ by input order: first=%+v second=%+v",
+			first.GetServices(),
+			second.GetServices(),
+		)
 	}
 	if firstHash != secondHash {
 		t.Fatalf("workload hashes differ by input order: %s != %s", firstHash, secondHash)
@@ -557,7 +607,11 @@ func TestEndpointTargetRefUsesNameOnlyWithoutUIDAndIPOnlyWithoutRef(t *testing.T
 	workloads = compileWorkloads(t, servicePorts, []model.Endpoint{base}, workloadInputs)
 	for _, name := range []string{"pod-a", "pod-b"} {
 		if _, found := workloads[name].GetServices()[testServiceKey]; !found {
-			t.Fatalf("targetRef-absent endpoint did not use IP fallback for %s: %+v", name, workloads[name].GetServices())
+			t.Fatalf(
+				"targetRef-absent endpoint did not use IP fallback for %s: %+v",
+				name,
+				workloads[name].GetServices(),
+			)
 		}
 	}
 }
@@ -572,21 +626,23 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	workload := testWDSWorkload("client", "", "10.1.0.2")
 
 	workloads := krt.NewStaticCollection(nil, []model.Workload{workload}, options("workloads")...)
-	resolved := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *model.Resource {
-		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
-		if selected == nil || !selected.Valid() {
-			return nil
-		}
-		payload, err := workloadSNIPolicy(ctx, selected.PolicyNames(model.PolicyKindSNIPolicy), payloads)
-		if err != nil {
-			return nil
-		}
-		resources, err := buildWDSAddress(wdsProjection{Workload: workload, SNIPolicy: payload})
-		if err != nil {
-			t.Errorf("build Workload: %v", err)
-		}
-		return resources
-	}, options("workload-resources")...)
+	inputs := validCompilerInputs(stop)
+	inputs.Workloads = workloads
+	inputs.NativeSandboxPolicies = false
+	inputs.Sandboxes = krt.NewStaticCollection(
+		nil,
+		[]model.Sandbox{{UID: workload.UID, Attester: &model.Attester{WorkloadUID: workload.UID}}},
+		options("sandboxes")...)
+	failures := newFailureRecorder()
+	policies := policyCollections{
+		policyBindings:  bindings,
+		sniPolicies:     payloads,
+		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
+	}
+	compatibility := newSandboxWorkloadPolicies(inputs, policies, failures, options)
+	metadata := krt.NewStatic[workloadMetadataConfiguration](nil, true, options("metadata")...)
+	resolved := newWorkloadResources(inputs, newBaseIndexes(inputs), metadata, inputs.Gateways,
+		compatibility, failures, options)
 	getPolicy := func() *extensionsv1.SniTrafficPolicy {
 		resources := resolved.List()
 		if len(resources) == 0 {
@@ -607,13 +663,28 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		}
 		return nil
 	}
-	var changes atomic.Int64
-	resolved.RegisterBatch(func(events []krt.Event[model.Resource]) { changes.Add(int64(len(events))) }, false)
+	var changes, withdrawals atomic.Int64
+	resolved.RegisterBatch(func(events []krt.Event[model.Resource]) {
+		changes.Add(int64(len(events)))
+		for _, event := range events {
+			if event.New == nil {
+				withdrawals.Add(1)
+			}
+		}
+	}, false)
 	binding := func(names ...string) policy.Bindings {
-		return policy.Bindings{TargetKind: policy.PolicyTargetWorkload, TargetUID: workload.UID, Groups: []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}}}
+		return policy.Bindings{
+			SandboxUID: workload.UID,
+			Groups:     []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}},
+		}
 	}
 	payload := func(name, host string) policy.CompiledSNIPolicy {
-		return policy.CompiledSNIPolicy{Name: name, Policy: &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}}}}
+		return policy.CompiledSNIPolicy{
+			Name: name,
+			Policy: &extensionsv1.SniTrafficPolicy{
+				Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}},
+			},
+		}
 	}
 	expect := func(hosts ...string) {
 		t.Helper()
@@ -634,10 +705,11 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	if !resolved.WaitUntilSynced(stop) {
 		t.Fatal("sync failed")
 	}
-	if getPolicy() != nil {
-		t.Fatal("published incomplete policy")
+	if getPolicy() != nil || len(resolved.List()) != 1 {
+		t.Fatal("missing policies must not suppress the Workload")
 	}
 	payloads.UpdateObject(payload("first", "first.example"))
+	expect("first.example")
 	payloads.UpdateObject(payload("second", "second.example"))
 	expect("second.example", "first.example")
 	// Rules-only edits must propagate without a binding event.
@@ -651,34 +723,59 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	if changes.Load() != before {
 		t.Fatal("unrelated payload invalidated inline policy")
 	}
-	// Missing replacement withdraws the projection and watches the new key.
-	bindings.UpdateObject(binding("replacement"))
-	eventually(t, func() bool { return len(resolved.List()) == 0 }, "incomplete policy withdraws Workload")
+	// A missing replacement is omitted while unrelated policies keep enforcing.
+	bindings.UpdateObject(binding("second", "replacement"))
+	eventually(
+		t,
+		func() bool { return failures.snapshot()["SandboxWorkloadPolicies/"+workload.UID] != "" },
+		"missing replacement records a failure",
+	)
+	expect("second.example")
 	payloads.UpdateObject(payload("replacement", "replacement.example"))
-	expect("replacement.example")
+	expect("second.example", "replacement.example")
 	// Removing the attachment removes the extension instead of retaining old rules.
 	bindings.UpdateObject(binding())
 	eventually(t, func() bool { return getPolicy() == nil }, "policy removal")
 	bindings.UpdateObject(binding("first"))
 	expect("updated.example")
-	bindings.DeleteObject(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID))
-	eventually(t, func() bool { return getPolicy() == nil }, "Workload binding deletion")
+	bindings.DeleteObject(workload.UID)
+	eventually(
+		t,
+		func() bool { return getPolicy() == nil && len(resolved.List()) == 1 },
+		"binding removal preserves Workload networking",
+	)
+	settle()
+	if withdrawals.Load() != 0 {
+		t.Fatal("policy changes withdrew the Workload")
+	}
+	workloads.DeleteObject(workload.UID)
+	eventually(t, func() bool { return len(resolved.List()) == 0 }, "Workload deletion")
 }
 
-func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadAttachments(t *testing.T) {
-	const workloadCount = 250
+func TestSNIRulesOnlyUpdateDoesNotRecomputeSandboxBindings(t *testing.T) {
+	const sandboxCount = 250
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	builder := krt.NewOptionsBuilder(stop, "", nil)
 
 	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
-	for index := range workloadCount {
+	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
+	for index := range sandboxCount {
 		workloads.ConditionalUpdateObject(model.Workload{
 			UID:       fmt.Sprintf("cluster//Pod/demo/workload-%d", index),
 			Namespace: "demo",
 			Labels:    map[string]string{"app": "workload"},
 		})
+		uid := fmt.Sprintf("cluster//Pod/demo/workload-%d", index)
+		sandboxes.ConditionalUpdateObject(
+			model.Sandbox{
+				UID:       uid,
+				Namespace: "demo",
+				Labels:    map[string]string{"app": "workload"},
+				Attester:  &model.Attester{WorkloadUID: uid},
+			},
+		)
 	}
 	profiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
 	profile := model.SecurityProfile{
@@ -703,33 +800,31 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadAttachments(t *testing.T) {
 			return result
 		}, append(options, krt.WithName("test-sni-policies"))...)
 	projected := policy.NewPolicyAttachmentsCollection(compiled, builder, "sni-policy-attachments")
-	bindings := policy.NewPolicyBindingsCollection(workloads, krt.NewStaticCollection[model.Sandbox](nil, nil, options...), projected, builder)
+	bindings := policy.NewPolicyBindingsCollection(sandboxes, projected, builder)
 
-	var workloadAttachmentRecomputes atomic.Int64
-	workloadAttachments := krt.NewCollection(bindings,
+	var bindingRecomputes atomic.Int64
+	observedBindings := krt.NewCollection(bindings,
 		func(_ krt.HandlerContext, binding policy.Bindings) *policy.Bindings {
-			workloadAttachmentRecomputes.Add(1)
+			bindingRecomputes.Add(1)
 			return &binding
-		}, append(options, krt.WithName("test-workload-attachments"))...)
+		}, append(options, krt.WithName("test-sandbox-bindings"))...)
 	var inlineUpdates atomic.Int64
-	resources := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *policy.CompiledSNIPolicy {
-		selected := krt.FetchOne(ctx, bindings, krt.FilterKey(policy.BindingsKey(policy.PolicyTargetWorkload, workload.UID)))
-		if selected == nil || !selected.Valid() {
-			return nil
-		}
-		payload, err := workloadSNIPolicy(ctx, selected.PolicyNames(model.PolicyKindSNIPolicy), compiled)
-		if err != nil {
-			return nil
-		}
-		inlineUpdates.Add(1)
-		return &policy.CompiledSNIPolicy{Name: workload.UID, Policy: payload}
-	}, builder.WithName("observed-inline-policies")...)
-
-	if !workloadAttachments.WaitUntilSynced(stop) || !resources.WaitUntilSynced(stop) {
+	inputs := validCompilerInputs(stop)
+	inputs.NativeSandboxPolicies = false
+	inputs.Workloads, inputs.Sandboxes = workloads, sandboxes
+	resources := newSandboxWorkloadPolicies(inputs, policyCollections{
+		policyBindings:  bindings,
+		sniPolicies:     compiled,
+		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options...),
+	}, newFailureRecorder(), builder.WithName)
+	if !observedBindings.WaitUntilSynced(stop) || !resources.WaitUntilSynced(stop) {
 		t.Fatal("test policy graph did not sync")
 	}
-	workloadAttachmentRecomputes.Store(0)
-	inlineUpdates.Store(0)
+	settle()
+	resources.RegisterBatch(func(events []krt.Event[workloadSandboxPolicies]) {
+		inlineUpdates.Add(int64(len(events)))
+	}, false)
+	bindingRecomputes.Store(0)
 
 	updated := profile
 	updated.Spec = agentsv1alpha1.SecurityProfileSpec{
@@ -740,13 +835,13 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadAttachments(t *testing.T) {
 		}},
 	}
 	profiles.ConditionalUpdateObject(updated)
-	eventually(t, func() bool { return inlineUpdates.Load() == workloadCount }, "inline SNI payloads updated")
+	eventually(t, func() bool { return inlineUpdates.Load() == sandboxCount }, "inline SNI payloads updated")
 	settle()
 
-	if got := workloadAttachmentRecomputes.Load(); got != 0 {
-		t.Fatalf("workload attachment recomputes = %d, want 0", got)
+	if got := bindingRecomputes.Load(); got != 0 {
+		t.Fatalf("Sandbox binding recomputes = %d, want 0", got)
 	}
-	if got := inlineUpdates.Load(); got != workloadCount {
-		t.Fatalf("inline policy updates = %d, want %d", got, workloadCount)
+	if got := inlineUpdates.Load(); got != sandboxCount {
+		t.Fatalf("inline policy updates = %d, want %d", got, sandboxCount)
 	}
 }

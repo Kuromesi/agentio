@@ -41,7 +41,10 @@ func buildGraph(inputs Inputs, failures *failureRecorder, builder krt.OptionsBui
 	workloadMetadataConfiguration := newWorkloadMetadataConfiguration(configuration, collectionOptions)
 	gateways := newGatewayDeclarations(configuration, inputs.Gateways, collectionOptions)
 	gatewayGlobalExtProc := newGatewayGlobalExtProc(configuration, collectionOptions)
-	policies := newPolicyCollections(inputs, configuration, failures, collectionOptions, builder)
+	trafficPolicyInputs := newTrafficPolicyInputs(inputs)
+	policies := newPolicyCollections(inputs, configuration, trafficPolicyInputs, failures, collectionOptions, builder)
+
+	sandboxWorkloadPolicies := newSandboxWorkloadPolicies(inputs, policies, failures, collectionOptions)
 
 	// Each key must identify exactly one family; build resources via model.NewResource.
 	workloadResources := newWorkloadResources(
@@ -49,14 +52,14 @@ func buildGraph(inputs Inputs, failures *failureRecorder, builder krt.OptionsBui
 		base,
 		workloadMetadataConfiguration,
 		gateways,
-		policies,
+		sandboxWorkloadPolicies,
 		failures,
 		collectionOptions,
 	)
 	sandboxResources := newSandboxResources(inputs.Sandboxes, policies, failures, collectionOptions)
 	resources := krt.JoinCollection([]krt.Collection[model.Resource]{
 		sandboxResources,
-		newAuthorizationResources(policies.authorizations, failures, collectionOptions),
+		newTrafficPolicyResources(policies.trafficPolicies, failures, collectionOptions),
 		workloadResources,
 		newServiceResources(inputs, gateways, failures, collectionOptions),
 		newGatewayResources(inputs, base, gatewayGlobalExtProc, gateways, failures, collectionOptions),

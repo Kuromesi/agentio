@@ -45,8 +45,6 @@ type Workload struct {
 
 	// SourceUID identifies the current backing runtime object or activation.
 	// Kubernetes supplies the Pod UID; other runtimes supply their equivalent.
-	// SandboxManaged endpoints use Sandbox policies exclusively, even before a Sandbox is available.
-	SandboxManaged    bool
 	SourceUID         string
 	Namespace         string
 	Name              string
@@ -68,7 +66,6 @@ func (w Workload) ResourceName() string { return w.UID }
 func (w Workload) Equals(other Workload) bool {
 	return w.UID == other.UID &&
 		w.Principal == other.Principal &&
-		w.SandboxManaged == other.SandboxManaged &&
 		w.SourceUID == other.SourceUID &&
 		w.Namespace == other.Namespace &&
 		w.Name == other.Name &&

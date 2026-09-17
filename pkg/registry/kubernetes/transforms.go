@@ -73,13 +73,5 @@ func stripPolicyObjectMeta(meta *metav1.ObjectMeta) {
 	meta.Labels = nil
 	meta.OwnerReferences = nil
 	meta.Finalizers = nil
-	annotations := make(map[string]string, 2)
-	if value, found := meta.Annotations[agentsv1alpha1.AnnotationSandboxID]; found {
-		annotations[agentsv1alpha1.AnnotationSandboxID] = value
-	}
-	if len(annotations) == 0 {
-		meta.Annotations = nil
-	} else {
-		meta.Annotations = annotations
-	}
+	meta.Annotations = nil
 }

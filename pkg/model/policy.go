@@ -21,7 +21,17 @@ import (
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
+// TrafficPolicyRules carries source rules without selection or priority metadata.
+// Empty directions and rules without the direction's peers are ignored, as in Poseidon.
+// Declared peers that resolve to no addresses still configure default deny.
+type TrafficPolicyRules struct {
+	Ingress *agentsv1alpha1.TrafficPolicyDirection
+	Egress  *agentsv1alpha1.TrafficPolicyDirection
+}
+
 type TrafficPolicy struct {
+	// Dedicated policies belong exclusively to SandboxUID and are not shared.
+	Dedicated    bool
 	Name         string
 	Namespace    string
 	SandboxUID   string
@@ -31,6 +41,9 @@ type TrafficPolicy struct {
 }
 
 func (p TrafficPolicy) ResourceName() string {
+	if p.Dedicated {
+		return SandboxTrafficPolicyName(p.SandboxUID)
+	}
 	if p.Global {
 		return "global/" + p.Name
 	}
@@ -38,11 +51,16 @@ func (p TrafficPolicy) ResourceName() string {
 }
 
 func (p TrafficPolicy) Equals(other TrafficPolicy) bool {
-	return p.Name == other.Name && p.Namespace == other.Namespace && p.SandboxUID == other.SandboxUID && p.Global == other.Global &&
-		p.CreationTime.Equal(other.CreationTime) && reflect.DeepEqual(p.Spec, other.Spec)
+	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace &&
+		p.SandboxUID == other.SandboxUID &&
+		p.Global == other.Global &&
+		p.CreationTime.Equal(other.CreationTime) &&
+		reflect.DeepEqual(p.Spec, other.Spec)
 }
 
 type SecurityProfile struct {
+	// Dedicated profiles belong exclusively to SandboxUID and are not shared.
+	Dedicated    bool
 	Name         string
 	Namespace    string
 	SandboxUID   string
@@ -52,6 +70,9 @@ type SecurityProfile struct {
 }
 
 func (p SecurityProfile) ResourceName() string {
+	if p.Dedicated {
+		return SandboxSecurityProfileName(p.SandboxUID)
+	}
 	if p.Global {
 		return "global/" + p.Name
 	}
@@ -59,6 +80,19 @@ func (p SecurityProfile) ResourceName() string {
 }
 
 func (p SecurityProfile) Equals(other SecurityProfile) bool {
-	return p.Name == other.Name && p.Namespace == other.Namespace && p.SandboxUID == other.SandboxUID && p.Global == other.Global &&
-		p.CreationTime.Equal(other.CreationTime) && reflect.DeepEqual(p.Spec, other.Spec)
+	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace &&
+		p.SandboxUID == other.SandboxUID &&
+		p.Global == other.Global &&
+		p.CreationTime.Equal(other.CreationTime) &&
+		reflect.DeepEqual(p.Spec, other.Spec)
+}
+
+// SandboxTrafficPolicyName identifies the one inline policy independently of CR names.
+func SandboxTrafficPolicyName(uid string) string {
+	return "sandboxes/" + uid + "/trafficPolicies/inline"
+}
+
+// SandboxSecurityProfileName identifies the one inline profile independently of CR names.
+func SandboxSecurityProfileName(uid string) string {
+	return "sandboxes/" + uid + "/securityProfiles/inline"
 }

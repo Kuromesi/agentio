@@ -136,7 +136,7 @@ type incrementalFixture struct {
 	resolveMu          sync.Mutex
 }
 
-func newIncrementalFixture(t testing.TB) *incrementalFixture {
+func newIncrementalFixture(t testing.TB, configure ...func(*Inputs)) *incrementalFixture {
 	t.Helper()
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -171,6 +171,9 @@ func newIncrementalFixture(t testing.TB) *incrementalFixture {
 	inputs.TelemetryProviderOverrides = fixture.telemetryProviders
 	inputs.AgentioConfig = fixture.agentioConfig
 	inputs.Resolve = fixture.resolve
+	for _, apply := range configure {
+		apply(&inputs)
+	}
 	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +379,12 @@ func workloadHasService(t testing.TB, compiler *Compiler, workloadInput model.Wo
 	return found
 }
 
-func workloadServicePorts(t testing.TB, compiler *Compiler, workloadInput model.Workload, hostname string) []*workloadv1.Port {
+func workloadServicePorts(
+	t testing.TB,
+	compiler *Compiler,
+	workloadInput model.Workload,
+	hostname string,
+) []*workloadv1.Port {
 	t.Helper()
 	workload := compiledWorkload(t, compiler, workloadInput)
 	return workload.GetServices()[workloadInput.Namespace+"/"+hostname].GetPorts()
@@ -437,19 +445,34 @@ func testWDSWorkload(name, sourceUID, address string) model.Workload {
 	}
 }
 
-func compileWorkloadServices(t testing.TB, ports []model.ServicePort, endpoints []model.Endpoint, workloadInputs []model.Workload) (*workloadv1.Workload, string) {
+func compileWorkloadServices(
+	t testing.TB,
+	ports []model.ServicePort,
+	endpoints []model.Endpoint,
+	workloadInputs []model.Workload,
+) (*workloadv1.Workload, string) {
 	t.Helper()
 	workloads, hashes := compileWorkloadsAndHashes(t, ports, endpoints, workloadInputs)
 	return workloads[workloadInputs[0].Name], hashes[workloadInputs[0].Name]
 }
 
-func compileWorkloads(t testing.TB, ports []model.ServicePort, endpoints []model.Endpoint, workloadInputs []model.Workload) map[string]*workloadv1.Workload {
+func compileWorkloads(
+	t testing.TB,
+	ports []model.ServicePort,
+	endpoints []model.Endpoint,
+	workloadInputs []model.Workload,
+) map[string]*workloadv1.Workload {
 	t.Helper()
 	workloads, _ := compileWorkloadsAndHashes(t, ports, endpoints, workloadInputs)
 	return workloads
 }
 
-func compileWorkloadsAndHashes(t testing.TB, ports []model.ServicePort, endpoints []model.Endpoint, workloadInputs []model.Workload) (map[string]*workloadv1.Workload, map[string]string) {
+func compileWorkloadsAndHashes(
+	t testing.TB,
+	ports []model.ServicePort,
+	endpoints []model.Endpoint,
+	workloadInputs []model.Workload,
+) (map[string]*workloadv1.Workload, map[string]string) {
 	t.Helper()
 	return compileWorkloadsAndHashesForService(t, model.Service{
 		Namespace: "demo",
@@ -501,7 +524,7 @@ func compileWorkloadsAndHashesForService(
 func validCompilerInputs(stop <-chan struct{}) Inputs {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	return Inputs{
-		SandboxMode:                true,
+		NativeSandboxPolicies:      true,
 		ClusterID:                  "cluster",
 		RootNamespace:              "agentio-system",
 		DiscoveryAddress:           "agentiod.agentio-system.svc:15012",
@@ -551,7 +574,12 @@ func internalCollectionName(t testing.TB, collection any) string {
 
 // testSandboxForWorkload explicitly declares a Sandbox for a bound test fixture.
 func testSandboxForWorkload(workload model.Workload) model.Sandbox {
-	return model.Sandbox{Attester: &model.Attester{WorkloadUID: workload.UID}, UID: workload.UID, Namespace: workload.Namespace, Labels: workload.Labels}
+	return model.Sandbox{
+		Attester:  &model.Attester{WorkloadUID: workload.UID},
+		UID:       workload.UID,
+		Namespace: workload.Namespace,
+		Labels:    workload.Labels,
+	}
 }
 
 func waitForAddressUpdates(t testing.TB, updates *atomic.Uint64, target uint64) {
@@ -577,10 +605,16 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 ) *Compiler {
 	t.Helper()
 	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
 	for index := range count {
-		workload := testWDSWorkload(fmt.Sprintf("workload-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
+		workload := testWDSWorkload(
+			fmt.Sprintf("workload-%d", index),
+			"",
+			fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256),
+		)
 		workload.Labels = map[string]string{"app": "workload"}
 		workloads.ConditionalUpdateObject(workload)
+		sandboxes.ConditionalUpdateObject(testSandboxForWorkload(workload))
 	}
 	services := krt.NewStaticCollection[model.Service](nil, nil, options...)
 	endpoints := krt.NewStaticCollection[model.Endpoint](nil, nil, options...)
@@ -606,6 +640,8 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 	}}, options...)
 
 	inputs := validCompilerInputs(stop)
+	inputs.NativeSandboxPolicies = false
+	inputs.Sandboxes = sandboxes
 	inputs.Workloads = workloads
 	inputs.Services = services
 	inputs.Endpoints = endpoints

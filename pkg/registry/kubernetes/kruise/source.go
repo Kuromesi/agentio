@@ -51,7 +51,8 @@ type Options struct {
 
 // Source holds explicitly defined Kruise Sandboxes.
 type Source struct {
-	Sandboxes krt.Collection[model.Sandbox]
+	Sandboxes        krt.Collection[model.Sandbox]
+	SecurityProfiles krt.Collection[model.SecurityProfile]
 }
 
 // NewSource constructs the optional, delayed-informer-backed Kruise source.
@@ -87,6 +88,7 @@ func NewSource(
 	)
 	podsByUID := newPodsByUID(pods)
 	return Source{
+		SecurityProfiles: newSecurityProfiles(sandboxGroups, derivedOptions("kruise-security-profiles")...),
 		Sandboxes: newSandboxes(
 			sandboxGroups,
 			pods,
@@ -122,7 +124,7 @@ func newSandboxObjects(
 	return krt.WrapClient(informer, options...)
 }
 
-// stripSandbox keeps the selector labels, conditions, and Pod UID needed for projection.
+// stripSandbox keeps the selector labels, inline security rules, conditions, and Pod UID needed for projection.
 func stripSandbox(obj any) (any, error) {
 	sandbox, ok := obj.(*agentsv1alpha1.Sandbox)
 	if !ok || sandbox == nil {
@@ -145,6 +147,7 @@ func stripSandbox(obj any) (any, error) {
 			Generation:        sandbox.Generation,
 			DeletionTimestamp: sandbox.DeletionTimestamp.DeepCopy(),
 			Labels:            maps.Clone(sandbox.Labels),
+			Annotations:       sandboxSecurityAnnotations(sandbox),
 		},
 		Status: agentsv1alpha1.SandboxStatus{
 			ObservedGeneration: sandbox.Status.ObservedGeneration,
@@ -155,4 +158,11 @@ func stripSandbox(obj any) (any, error) {
 			},
 		},
 	}, nil
+}
+
+func sandboxSecurityAnnotations(sandbox *agentsv1alpha1.Sandbox) map[string]string {
+	if raw, found := sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules]; found {
+		return map[string]string{agentsv1alpha1.AnnotationSecurityRules: raw}
+	}
+	return nil
 }

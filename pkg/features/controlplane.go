@@ -23,6 +23,12 @@ import (
 )
 
 var (
+	// SandboxRuntimes selects optional integrations in addition to built-in Pod discovery.
+	SandboxRuntimes = env.Register(
+		"AGENTIO_SANDBOX_RUNTIMES",
+		"",
+		"Comma-separated optional Sandbox runtimes. Supported: kruise. Empty enables no optional runtimes; ordinary ztunnel-injected and ambient Pods always receive derived Sandbox resources.",
+	).Get()
 	// ScopedSecrets restricts the shared Secret informer to the control-plane namespace.
 	// Dedicated named Secret informers keep their own scope.
 	ScopedSecrets = env.Register(

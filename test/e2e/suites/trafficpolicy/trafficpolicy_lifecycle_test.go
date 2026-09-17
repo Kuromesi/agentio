@@ -550,21 +550,28 @@ spec:
 		}
 
 		// src should NOT reach anotherDst (not in workload selector).
-		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, anotherDst.WorkloadsOrFail(t)[0].Address, 18080).WithCheck(check.Error()))
+		src.CallOrFail(
+			t,
+			echo.CallOptionsForAddress(echo.HTTP, anotherDst.WorkloadsOrFail(t)[0].Address, 18080).
+				WithCheck(check.Error()),
+		)
 	})
 
-	rig.RunScenario(t, "dynamic pod lifecycle updates workload peer IPs", func(t *testing.T, scope *kube.ResourceScope) {
-		workloads := workloadTarget.WorkloadsOrFail(t)
-		initialCount := len(workloads)
-		if initialCount < 2 {
-			t.Fatalf("workload-target ready workloads = %d, want at least 2", initialCount)
-		}
+	rig.RunScenario(
+		t,
+		"dynamic pod lifecycle updates workload peer IPs",
+		func(t *testing.T, scope *kube.ResourceScope) {
+			workloads := workloadTarget.WorkloadsOrFail(t)
+			initialCount := len(workloads)
+			if initialCount < 2 {
+				t.Fatalf("workload-target ready workloads = %d, want at least 2", initialCount)
+			}
 
-		// Apply egress allow with workload peer.
-		e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{
-			"App":         src.Name(),
-			"WlNamespace": workloadTarget.Namespace(),
-		}, `
+			// Apply egress allow with workload peer.
+			e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{
+				"App":         src.Name(),
+				"WlNamespace": workloadTarget.Namespace(),
+			}, `
 apiVersion: agents.kruise.io/v1alpha1
 kind: TrafficPolicy
 metadata:
@@ -584,40 +591,49 @@ spec:
                 app: "workload-target"
 `).ApplyOrFail(t, kube.CreateOnly)
 
-		waitForPolicyPresent(t, src, "tp-wl-dynamic")
+			waitForPolicyPresent(t, src, "tp-wl-dynamic")
 
-		// Verify connectivity to all initial replicas.
-		for _, workload := range workloads {
-			src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, workload.Address, 18080).WithCheck(check.OK()))
-		}
-
-		// Verify the AuthorizationPolicy contains entries for all replicas.
-		ctx, cancel := e2e.Context(t, 2*time.Minute)
-		defer cancel()
-		if err := retry.UntilSuccess(ctx, retry.Policy{
-			Timeout:  2 * time.Minute,
-			Delay:    5 * time.Second,
-			Backoff:  1,
-			MaxDelay: 5 * time.Second,
-			Converge: 1,
-		}, func() error {
-			dump, err := rig.ConfigDump(ctx, environment, src)
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(dump, "tp-wl-dynamic") {
-				return fmt.Errorf("policy tp-wl-dynamic is absent from config dump")
-			}
+			// Verify connectivity to all initial replicas.
 			for _, workload := range workloads {
-				if !strings.Contains(dump, workload.Address) {
-					return fmt.Errorf("workload IP %s is absent from tp-wl-dynamic config dump", workload.Address)
-				}
+				src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, workload.Address, 18080).WithCheck(check.OK()))
 			}
-			return nil
-		}); err != nil {
-			t.Fatalf("wait for all workload-target replica IPs in config dump: %v", err)
-		}
-	})
+
+			// Verify the applicable policy bodies contain entries for all replicas.
+			ctx, cancel := e2e.Context(t, 2*time.Minute)
+			defer cancel()
+			if err := retry.UntilSuccess(ctx, retry.Policy{
+				Timeout:  2 * time.Minute,
+				Delay:    5 * time.Second,
+				Backoff:  1,
+				MaxDelay: 5 * time.Second,
+				Converge: 1,
+			}, func() error {
+				dump, err := rig.ConfigDump(ctx, environment, src)
+				if err != nil {
+					return err
+				}
+				view, err := inspectPolicyDump(dump, "tp-wl-dynamic")
+				if err != nil {
+					return err
+				}
+				if !view.found {
+					return fmt.Errorf("policy tp-wl-dynamic is absent from config dump")
+				}
+				for _, workload := range workloads {
+					cidr, err := network.HostCIDR(workload.Address)
+					if err != nil {
+						return err
+					}
+					if !strings.Contains(view.body, `"`+cidr+`"`) {
+						return fmt.Errorf("workload IP %s is absent from tp-wl-dynamic config dump", workload.Address)
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatalf("wait for all workload-target replica IPs in config dump: %v", err)
+			}
+		},
+	)
 
 	rig.RunScenario(t, "mixed workload and service peers", func(t *testing.T, scope *kube.ResourceScope) {
 		// Allow egress to server via workload peer AND to another-server
@@ -659,7 +675,10 @@ spec:
 		waitForPolicyPresent(t, src, "tp-wl-svc-mixed")
 
 		// src -> dst (workload peer) should be reachable.
-		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, dst.WorkloadsOrFail(t)[0].Address, 18080).WithCheck(check.OK()))
+		src.CallOrFail(
+			t,
+			echo.CallOptionsForAddress(echo.HTTP, dst.WorkloadsOrFail(t)[0].Address, 18080).WithCheck(check.OK()),
+		)
 
 		// src -> another-server (service peer) should be reachable.
 		src.CallOrFail(t, anotherDst.CallOptionsOrFail(t, "http").WithCheck(check.OK()))
@@ -711,7 +730,10 @@ spec:
 		waitForPolicyPresent(t, src, "tp-wl-cidr-mixed")
 
 		// src -> dst (workload peer) should be reachable.
-		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, dst.WorkloadsOrFail(t)[0].Address, 18080).WithCheck(check.OK()))
+		src.CallOrFail(
+			t,
+			echo.CallOptionsForAddress(echo.HTTP, dst.WorkloadsOrFail(t)[0].Address, 18080).WithCheck(check.OK()),
+		)
 
 		// src -> another-server (covered by CIDR) should be reachable.
 		src.CallOrFail(t, echo.CallOptionsForAddress(echo.HTTP, anotherWorkload.Address, 18080).WithCheck(check.OK()))

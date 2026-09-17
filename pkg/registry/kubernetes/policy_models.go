@@ -60,7 +60,11 @@ func newSecurityProfileModels(
 		derivedOptions("security-profiles")...)
 }
 
-func trafficPolicyModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.TrafficPolicySpec, global bool) *model.TrafficPolicy {
+func trafficPolicyModel(
+	metadata metav1.ObjectMeta,
+	spec *agentsv1alpha1.TrafficPolicySpec,
+	global bool,
+) *model.TrafficPolicy {
 	namespace := metadata.Namespace
 	if global {
 		namespace = ""
@@ -68,14 +72,17 @@ func trafficPolicyModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.Traffic
 	return &model.TrafficPolicy{
 		Name:         metadata.Name,
 		Namespace:    namespace,
-		SandboxUID:   metadata.Annotations[agentsv1alpha1.AnnotationSandboxID],
 		Global:       global,
 		CreationTime: metadata.CreationTimestamp.Time,
 		Spec:         *spec.DeepCopy(),
 	}
 }
 
-func securityProfileModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.SecurityProfileSpec, global bool) *model.SecurityProfile {
+func securityProfileModel(
+	metadata metav1.ObjectMeta,
+	spec *agentsv1alpha1.SecurityProfileSpec,
+	global bool,
+) *model.SecurityProfile {
 	namespace := metadata.Namespace
 	if global {
 		namespace = ""
@@ -83,7 +90,6 @@ func securityProfileModel(metadata metav1.ObjectMeta, spec *agentsv1alpha1.Secur
 	return &model.SecurityProfile{
 		Name:         metadata.Name,
 		Namespace:    namespace,
-		SandboxUID:   metadata.Annotations[agentsv1alpha1.AnnotationSandboxID],
 		Global:       global,
 		CreationTime: metadata.CreationTimestamp.Time,
 		Spec:         *spec.DeepCopy(),

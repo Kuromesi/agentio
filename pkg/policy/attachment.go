@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -34,26 +33,23 @@ import (
 const (
 	globalPolicyAttachmentIndexKey     = "@global"
 	namespacePolicyAttachmentKeyPrefix = "ns/"
-	sandboxPolicyAttachmentKeyPrefix   = "uid/"
 )
 
 // PolicyKind identifies a typed consumer of the shared payload-free
 // attachment projection.
 type PolicyKind = model.PolicyKind
 
+// Supported policy families for attachments.
 const (
-	PolicyKindAuthorization = model.PolicyKindAuthorization
+	PolicyKindTrafficPolicy = model.PolicyKindTrafficPolicy
 	PolicyKindEgressPolicy  = model.PolicyKindEgressPolicy
 	PolicyKindSNIPolicy     = model.PolicyKindSNIPolicy
 )
 
 // AttachmentTarget describes selector-derived policy attachment (global, namespaces, or label selector).
 type AttachmentTarget struct {
-	// Kind restricts the payload consumer; empty allows both Workload and Sandbox.
-	Kind       TargetKind
 	Global     bool
 	Namespaces []string
-	SandboxUID string
 	Selector   metav1.LabelSelector
 }
 
@@ -82,11 +78,9 @@ func (p PolicyAttachment) ResourceName() string {
 func (p PolicyAttachment) Equals(other PolicyAttachment) bool {
 	return p.Kind == other.Kind &&
 		p.Name == other.Name &&
-		p.Target.Kind == other.Target.Kind &&
 		p.Target.Global == other.Target.Global &&
 		equalStrings(p.Target.Namespaces, other.Target.Namespaces) &&
 		apiequality.Semantic.DeepEqual(p.Target.Selector, other.Target.Selector) &&
-		p.Target.SandboxUID == other.Target.SandboxUID &&
 		p.Priority == other.Priority &&
 		p.CreationTime.Equal(other.CreationTime) &&
 		p.SourceName == other.SourceName &&
@@ -121,21 +115,12 @@ func (p PolicyAttachment) validate() error {
 	}).Validate(); err != nil {
 		return fmt.Errorf("policy attachment: %w", err)
 	}
-	if p.Target.Kind != "" && p.Target.Kind != PolicyTargetWorkload && p.Target.Kind != PolicyTargetSandbox {
-		return fmt.Errorf("policy attachment %s has unknown target kind %q", p.Name, p.Target.Kind)
-	}
 	modes := 0
 	if p.Target.Global {
 		modes++
 	}
 	if len(p.Target.Namespaces) > 0 {
 		modes++
-	}
-	if p.Target.SandboxUID != "" {
-		modes++
-		if _, err := policySandboxUID(p.Target.SandboxUID, p.Target.Selector); err != nil {
-			return fmt.Errorf("policy attachment %s: %w", p.Name, err)
-		}
 	}
 	if modes != 1 {
 		return fmt.Errorf("policy attachment %s must use exactly one target mode", p.Name)
@@ -173,23 +158,6 @@ func selectorEmpty(selector metav1.LabelSelector) bool {
 	return len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0
 }
 
-func policySandboxUID(declared string, selector metav1.LabelSelector) (string, error) {
-	selected, selectedSet := selector.MatchLabels[agentsv1alpha1.LabelSandboxID]
-	if declared != "" && strings.TrimSpace(declared) != declared {
-		return "", fmt.Errorf("sandbox UID %q contains surrounding whitespace", declared)
-	}
-	if selectedSet && (selected == "" || strings.TrimSpace(selected) != selected) {
-		return "", fmt.Errorf("sandbox UID selector value %q is invalid", selected)
-	}
-	if declared != "" && selectedSet && declared != selected {
-		return "", fmt.Errorf("sandbox UID %q conflicts with selector value %q", declared, selected)
-	}
-	if declared != "" {
-		return declared, nil
-	}
-	return selected, nil
-}
-
 func containsString(values []string, value string) bool {
 	_, found := slices.BinarySearch(values, value)
 	return found
@@ -197,17 +165,11 @@ func containsString(values []string, value string) bool {
 
 // Selects reports whether this attachment applies to the sandbox.
 func (p PolicyAttachment) Selects(sandbox model.Sandbox) bool {
-	return p.selects(PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels)
+	return p.selects(sandbox.Namespace, sandbox.Labels)
 }
 
-func (p PolicyAttachment) selects(kind TargetKind, uid, namespace string, targetLabels map[string]string) bool {
-	if p.Target.Kind != "" && p.Target.Kind != kind {
-		return false
-	}
-	if p.Target.SandboxUID != "" && (kind != PolicyTargetSandbox || p.Target.SandboxUID != uid) {
-		return false
-	}
-	if p.Target.SandboxUID == "" && !p.Target.Global && !containsString(p.Target.Namespaces, namespace) {
+func (p PolicyAttachment) selects(namespace string, targetLabels map[string]string) bool {
+	if !p.Target.Global && !containsString(p.Target.Namespaces, namespace) {
 		return false
 	}
 	selector := p.selector
@@ -222,9 +184,6 @@ func (p PolicyAttachment) selects(kind TargetKind, uid, namespace string, target
 }
 
 func (p PolicyAttachment) specificity() int {
-	if p.Target.SandboxUID != "" {
-		return 3
-	}
 	if !selectorEmpty(p.Target.Selector) {
 		return 2
 	}
@@ -235,8 +194,25 @@ func (p PolicyAttachment) specificity() int {
 }
 
 func policyAttachmentLess(left, right PolicyAttachment) bool {
+	if left.Kind != right.Kind {
+		return left.Kind < right.Kind
+	}
 	if left.Priority != right.Priority {
 		return left.Priority < right.Priority
+	}
+	if left.Kind == PolicyKindTrafficPolicy {
+		// Prefer older policies at equal priority so a newly created policy
+		// cannot take precedence merely through its namespace or name.
+		if !left.CreationTime.Equal(right.CreationTime) {
+			return left.CreationTime.Before(right.CreationTime)
+		}
+		if left.SourceNamespace != right.SourceNamespace {
+			return left.SourceNamespace < right.SourceNamespace
+		}
+		if left.SourceName != right.SourceName {
+			return left.SourceName < right.SourceName
+		}
+		return left.Name < right.Name
 	}
 	if left.specificity() != right.specificity() {
 		return left.specificity() > right.specificity()

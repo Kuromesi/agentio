@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,7 @@ import (
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
 	kubernetesregistry "github.com/openkruise/agentio/pkg/registry/kubernetes"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/ca"
@@ -89,6 +91,10 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	if err := features.Validate(); err != nil {
 		return err
 	}
+	sandboxRuntimes, err := registry.ParseSandboxRuntimes(features.SandboxRuntimes)
+	if err != nil {
+		return fmt.Errorf("AGENTIO_SANDBOX_RUNTIMES: %w", err)
+	}
 	ztunnelAccount, err := trustedNodeServiceAccount(options.RootNamespace, features.ZTunnelAccount)
 	if err != nil {
 		return err
@@ -111,7 +117,11 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	})
 	kubeCoreClient := kubeClient.Kube()
 	krtBuilder := krt.NewOptionsBuilder(ctx.Done(), "", nil)
-	tokenReviewer, err := attestation.NewTokenReviewer(kubeCoreClient, options.TrustDomain, []string{features.TokenAudience})
+	tokenReviewer, err := attestation.NewTokenReviewer(
+		kubeCoreClient,
+		options.TrustDomain,
+		[]string{features.TokenAudience},
+	)
 	if err != nil {
 		return err
 	}
@@ -156,7 +166,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return err
 	}
 	registry, err := kubernetesregistry.New(kubeClient, kubernetesregistry.Options{
-		SandboxMode:           features.SandboxMode,
+		EnableKruise:          slices.Contains(sandboxRuntimes, registry.SandboxRuntimeKruise),
 		ClusterID:             options.ClusterID,
 		TrustDomain:           options.TrustDomain,
 		RootNamespace:         options.RootNamespace,
@@ -212,7 +222,11 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		go deployer.Run(ctx)
 	}
 
-	resolver, err := resolverdns.New(ctx, resolverdns.Options{}, nil, append(krtOptions, krt.WithName("dns-results"))...)
+	resolver, err := resolverdns.New(
+		ctx,
+		resolverdns.Options{},
+		nil,
+		append(krtOptions, krt.WithName("dns-results"))...)
 	if err != nil {
 		return err
 	}
@@ -223,7 +237,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	dnsReferenceRegistration := resolver.Track(dnsReferences)
 	defer dnsReferenceRegistration.UnregisterHandler()
 	resourceCompiler, err := compiler.New(compiler.Inputs{
-		SandboxMode:                features.SandboxMode,
+		NativeSandboxPolicies:      features.NativeSandboxPolicies,
 		ClusterID:                  options.ClusterID,
 		RootNamespace:              options.RootNamespace,
 		Sandboxes:                  sources.Sandboxes,
@@ -322,6 +336,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			model.WorkloadType:              workloadGenerator,
 			model.WorkloadAuthorizationType: xds.AuthorizationGenerator{},
 			model.SandboxType:               xds.SandboxGenerator{},
+			model.TrafficPolicyType:         xds.TrafficPolicyGenerator{},
 			model.SecretType:                sdsGenerator,
 		},
 		features.PushConcurrency,
@@ -377,7 +392,12 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			ConfigMapName:          features.InjectorConfigMapName,
 			WebhookConfigName:      features.InjectionWebhookConfigName,
 			NativeSidecarMode:      features.NativeSidecarMode,
-			DiscoveryAddress:       fmt.Sprintf("%s.%s.svc.%s:15012", features.ServiceName, options.RootNamespace, options.ClusterDomain),
+			DiscoveryAddress: fmt.Sprintf(
+				"%s.%s.svc.%s:15012",
+				features.ServiceName,
+				options.RootNamespace,
+				options.ClusterDomain,
+			),
 		}
 		serve, err := setupSidecarInjector(ctx, kubeClient, authority, injectorOptions)
 		if err != nil {
@@ -438,9 +458,21 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			errorsChannel <- fmt.Errorf("serve xDS: %w", err)
 		}
 	}()
-	log.Info("agentiod ready", "xds_address", options.DiscoveryAddress,
-		"monitoring_address", options.MonitoringAddress, "snapshot", initial.Version(),
-		"startup_duration", time.Since(started), "resources", initial.Len(), "resources_by_type", initial.CountsByType())
+	log.Info(
+		"agentiod ready",
+		"xds_address",
+		options.DiscoveryAddress,
+		"monitoring_address",
+		options.MonitoringAddress,
+		"snapshot",
+		initial.Version(),
+		"startup_duration",
+		time.Since(started),
+		"resources",
+		initial.Len(),
+		"resources_by_type",
+		initial.CountsByType(),
+	)
 
 	select {
 	case <-ctx.Done():

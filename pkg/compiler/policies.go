@@ -29,28 +29,23 @@ import (
 )
 
 type policyCollections struct {
-	authorizations  krt.Collection[policy.CompiledAuthorization]
 	trafficPolicies krt.Collection[policy.CompiledTrafficPolicy]
 	sniPolicies     krt.Collection[policy.CompiledSNIPolicy]
 	egressPolicies  krt.Collection[policy.CompiledEgressPolicy]
 
+	// Shared binding metadata for all policy families, without rule bodies.
 	policyBindings krt.Collection[policy.Bindings]
 }
 
-// newPolicyCollections builds the compiled-policy stages and the attachment
-// indexes over them. The graph retains the result because both the workload
-// family and the policy resource families consume it after construction.
-func newPolicyCollections(
-	inputs Inputs,
-	configurations krt.Singleton[configuration],
-	failures *failureRecorder,
-	options collectionOptions,
-	builder krt.OptionsBuilder,
-) policyCollections {
+// newTrafficPolicyInputs shares peer-resolution indexes across Sandbox and shared-policy compilation.
+func newTrafficPolicyInputs(inputs Inputs) policy.TrafficPolicyInputs {
 	podsByNamespace := krt.NewIndex(inputs.Pods, "trafficPolicyPodsByNamespace",
 		func(pod *corev1.Pod) []string { return []string{pod.Namespace} })
-	kubernetesServicesByNamespace := krt.NewIndex(inputs.KubernetesServices, "trafficPolicyKubernetesServicesByNamespace",
-		func(service *corev1.Service) []string { return []string{service.Namespace} })
+	kubernetesServicesByNamespace := krt.NewIndex(
+		inputs.KubernetesServices,
+		"trafficPolicyKubernetesServicesByNamespace",
+		func(service *corev1.Service) []string { return []string{service.Namespace} },
+	)
 	endpointSlicesByService := krt.NewIndex(inputs.EndpointSlices, "trafficPolicyEndpointSlicesByService",
 		func(slice *discoveryv1.EndpointSlice) []string {
 			serviceName, found := slice.Labels[discoveryv1.LabelServiceName]
@@ -59,7 +54,7 @@ func newPolicyCollections(
 			}
 			return []string{slice.Namespace + "/" + serviceName}
 		})
-	trafficPolicyInputs := policy.TrafficPolicyInputs{
+	return policy.TrafficPolicyInputs{
 		RootNamespace:           inputs.RootNamespace,
 		Services:                inputs.KubernetesServices,
 		EndpointSlices:          inputs.EndpointSlices,
@@ -69,53 +64,51 @@ func newPolicyCollections(
 		PodsByNamespace:         podsByNamespace,
 		Resolve:                 inputs.Resolve,
 	}
+}
+
+// newPolicyCollections builds the compiled-policy stages and the attachment
+// indexes over them. The graph retains the result because both the workload
+// family and the policy resource families consume it after construction.
+func newPolicyCollections(
+	inputs Inputs,
+	configurations krt.Singleton[configuration],
+	trafficPolicyInputs policy.TrafficPolicyInputs,
+	failures *failureRecorder,
+	options collectionOptions,
+	builder krt.OptionsBuilder,
+) policyCollections {
 	clearFailureOnSourceDelete(inputs.TrafficPolicies, failures, "TrafficPolicy")
-	clearFailureOnSourceDelete(inputs.TrafficPolicies, failures, "NativeTrafficPolicy")
 	clearFailureOnSourceDelete(inputs.SecurityProfiles, failures, "SecurityProfile")
 
 	trafficPolicies := krt.NewCollection(inputs.TrafficPolicies,
 		func(ctx krt.HandlerContext, source model.TrafficPolicy) *policy.CompiledTrafficPolicy {
-			if !inputs.SandboxMode {
-				return nil
-			}
 			compiled, err := policy.CompileTrafficPolicy(ctx, source, trafficPolicyInputs)
+			if err == nil && !inputs.NativeSandboxPolicies {
+				compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(
+					*compiled,
+					source,
+					inputs.RootNamespace,
+				)
+			}
 			if err != nil {
-				failures.record("NativeTrafficPolicy", source.ResourceName(), err)
-				ctx.DiscardResult()
+				failures.record("TrafficPolicy", source.ResourceName(), err)
+				if !source.Dedicated {
+					ctx.DiscardResult()
+				}
 				return nil
 			}
-			failures.clear("NativeTrafficPolicy", source.ResourceName())
-			if compiled != nil && compiled.Attachment != nil {
-				compiled.Attachment.Target.Kind = policy.PolicyTargetSandbox
-			}
+			failures.clear("TrafficPolicy", source.ResourceName())
 			return compiled
 		}, options("traffic-policies")...)
-
-	authorizations := krt.NewManyCollection(inputs.TrafficPolicies, func(ctx krt.HandlerContext, source model.TrafficPolicy) []policy.CompiledAuthorization {
-		compiled, err := policy.CompileAuthorization(ctx, source, trafficPolicyInputs)
-		if err != nil {
-			failures.record("TrafficPolicy", source.ResourceName(), err)
-			ctx.DiscardResult()
-			return nil
-		}
-		failures.clear("TrafficPolicy", source.ResourceName())
-		for _, value := range compiled {
-			if value.Attachment != nil {
-				value.Attachment.Target.Kind = policy.PolicyTargetWorkload
-			}
-			if value.Attachment != nil && value.Attachment.Target.SandboxUID != "" {
-				return nil
-			}
-		}
-		return compiled
-	}, options("authorizations")...)
 
 	sniPolicies := krt.NewCollection(inputs.SecurityProfiles,
 		func(ctx krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSNIPolicy {
 			compiled, err := policy.CompileSNIProfile(profile)
 			if err != nil {
 				failures.record("SecurityProfile", profile.ResourceName(), err)
-				ctx.DiscardResult()
+				if !profile.Dedicated {
+					ctx.DiscardResult()
+				}
 				return nil
 			}
 			failures.clear("SecurityProfile", profile.ResourceName())
@@ -132,14 +125,14 @@ func newPolicyCollections(
 			failures.clear("AgentioConfig", "configuration")
 			return compiled
 		}, options("bindable-egress-policies")...)
-	authorizationAttachments := policy.NewPolicyAttachmentsCollection(authorizations, builder, "authorization-policy-attachments")
+	// Project only metadata, so rule-body updates do not invalidate bindings.
 	trafficAttachments := policy.NewPolicyAttachmentsCollection(trafficPolicies, builder, "traffic-policy-attachments")
 	sniAttachments := policy.NewPolicyAttachmentsCollection(sniPolicies, builder, "sni-policy-attachments")
 	egressAttachments := policy.NewPolicyAttachmentsCollection(egressPolicies, builder, "egress-policy-attachments")
 	attachments := krt.JoinCollection([]krt.Collection[policy.PolicyAttachment]{
-		authorizationAttachments, trafficAttachments, sniAttachments, egressAttachments,
+		trafficAttachments, sniAttachments, egressAttachments,
 	}, options("policy-attachments")...)
-	policyBindings := policy.NewPolicyBindingsCollection(inputs.Workloads, inputs.Sandboxes, attachments, builder)
+	policyBindings := policy.NewPolicyBindingsCollection(inputs.Sandboxes, attachments, builder)
 	policyBindings = krt.NewCollection(policyBindings,
 		func(_ krt.HandlerContext, binding policy.Bindings) *policy.Bindings {
 			if !binding.Valid() {
@@ -156,7 +149,6 @@ func newPolicyCollections(
 		}, options("validated-policy-bindings")...)
 	clearFailureOnSourceDelete(policyBindings, failures, "Bindings")
 	return policyCollections{
-		authorizations:  authorizations,
 		trafficPolicies: trafficPolicies,
 		sniPolicies:     sniPolicies,
 		egressPolicies:  egressPolicies,
@@ -191,15 +183,54 @@ func authorizationResource(authorization policy.CompiledAuthorization) (model.Re
 		}, "", value, nil, facts)
 }
 
-func newAuthorizationResources(authorizations krt.Collection[policy.CompiledAuthorization], failures *failureRecorder, options collectionOptions) krt.Collection[model.Resource] {
-	clearFailureOnSourceDelete(authorizations, failures, "Authorization")
-	return krt.NewCollection(authorizations, func(_ krt.HandlerContext, compiled policy.CompiledAuthorization) *model.Resource {
-		resource, err := authorizationResource(compiled)
+// Shared policy bodies are serialized independently of Sandbox references.
+// Compatibility Authorizations are serialized once per source alongside them.
+func newTrafficPolicyResources(
+	policies krt.Collection[policy.CompiledTrafficPolicy],
+	failures *failureRecorder,
+	options collectionOptions,
+) krt.Collection[model.Resource] {
+	clearFailureOnSourceDelete(policies, failures, "TrafficPolicyResource")
+	return krt.NewManyCollection(
+		policies,
+		func(_ krt.HandlerContext, compiled policy.CompiledTrafficPolicy) []model.Resource {
+			resources, err := trafficPolicyResources(compiled)
+			if err != nil {
+				failures.record("TrafficPolicyResource", compiled.Name, err)
+				return nil
+			}
+			failures.clear("TrafficPolicyResource", compiled.Name)
+			return resources
+		},
+		options("traffic-policy-resources")...)
+}
+
+func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Resource, error) {
+	resources := make([]model.Resource, 0, 1+len(compiled.AsAuthorization))
+	for _, authorization := range compiled.AsAuthorization {
+		resource, err := authorizationResource(authorization)
 		if err != nil {
-			failures.record("Authorization", compiled.Name, err)
-			return nil
+			return nil, err
 		}
-		failures.clear("Authorization", compiled.Name)
-		return &resource
-	}, options("authorization-resources")...)
+		resources = append(resources, resource)
+	}
+	if compiled.Attachment == nil {
+		// Native Sandbox-owned policies are embedded in their owner's resource.
+		return resources, nil
+	}
+	value, err := marshalDeterministicAny(compiled.Policy)
+	if err != nil {
+		return nil, err
+	}
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: compiled.Name},
+		"",
+		value,
+		nil,
+		model.ResourceFacts{},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return append(resources, resource), nil
 }

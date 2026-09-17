@@ -31,33 +31,20 @@ type BindingGroup struct {
 	Names []string
 }
 
-// TargetKind distinguishes policy owners, even when their UIDs coincide.
-type TargetKind string
-
-// Supported owners of policy bindings.
-const (
-	PolicyTargetWorkload TargetKind = "workload"
-	PolicyTargetSandbox  TargetKind = "sandbox"
-)
-
-// BindingsKey creates a collection key separating Workload and Sandbox UIDs.
-func BindingsKey(kind TargetKind, uid string) string { return string(kind) + "/" + uid }
-
-// Bindings contains the ordered policy references for one Workload or Sandbox.
+// Bindings contains the ordered policy references for one Sandbox.
 type Bindings struct {
-	TargetKind    TargetKind
-	TargetUID     string
+	SandboxUID    string
 	Groups        []BindingGroup
 	Unresolved    []model.PolicyRef
 	InvalidReason string
 }
 
-// ResourceName returns the target kind and UID collection key.
-func (b Bindings) ResourceName() string { return BindingsKey(b.TargetKind, b.TargetUID) }
+// ResourceName identifies the Sandbox whose policy references are resolved.
+func (b Bindings) ResourceName() string { return b.SandboxUID }
 
 // Equals compares ordered policy references and resolution failures.
 func (b Bindings) Equals(other Bindings) bool {
-	if b.TargetKind != other.TargetKind || b.TargetUID != other.TargetUID || b.InvalidReason != other.InvalidReason ||
+	if b.SandboxUID != other.SandboxUID || b.InvalidReason != other.InvalidReason ||
 		len(b.Groups) != len(other.Groups) || len(b.Unresolved) != len(other.Unresolved) {
 		return false
 	}
@@ -93,8 +80,6 @@ func (b Bindings) PolicyNames(kind PolicyKind) []string {
 
 func attachmentIndexKeys(attachment PolicyAttachment) []string {
 	switch {
-	case attachment.Target.SandboxUID != "":
-		return []string{sandboxPolicyAttachmentKeyPrefix + attachment.Target.SandboxUID}
 	case attachment.Target.Global:
 		return []string{globalPolicyAttachmentIndexKey}
 	default:
@@ -106,46 +91,47 @@ func attachmentIndexKeys(attachment PolicyAttachment) []string {
 	}
 }
 
-// NewPolicyBindingsCollection matches each source independently and joins their
-// results under kind-qualified keys. Workloads never inherit Sandbox references.
+// NewPolicyBindingsCollection selects policies for Sandboxes. Workload policy
+// output is derived separately from these bindings for legacy data planes.
 func NewPolicyBindingsCollection(
-	workloads krt.Collection[model.Workload],
 	sandboxes krt.Collection[model.Sandbox],
 	attachments krt.Collection[PolicyAttachment],
 	options krt.OptionsBuilder,
 ) krt.Collection[Bindings] {
 	byTarget := krt.NewIndex(attachments, "policyAttachmentsByTarget", attachmentIndexKeys)
-	workloadBindings := krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *Bindings {
-		if workload.SandboxManaged {
-			return nil
-		}
-		return resolvePolicyBindings(ctx, PolicyTargetWorkload, workload.UID, workload.Namespace, workload.Labels, nil, attachments, byTarget)
-	}, options.WithName("workload-policy-bindings")...)
-	sandboxBindings := krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
+	return krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
 		if err := sandbox.Validate(); err != nil {
 			return &Bindings{
-				TargetKind:    PolicyTargetSandbox,
-				TargetUID:     sandbox.UID,
+				SandboxUID:    sandbox.UID,
 				Unresolved:    append([]model.PolicyRef(nil), sandbox.PolicyRefs...),
 				InvalidReason: err.Error(),
 			}
 		}
-		return resolvePolicyBindings(ctx, PolicyTargetSandbox, sandbox.UID, sandbox.Namespace, sandbox.Labels, sandbox.PolicyRefs, attachments, byTarget)
+		return resolvePolicyBindings(
+			ctx,
+			sandbox.UID,
+			sandbox.Namespace,
+			sandbox.Labels,
+			sandbox.PolicyRefs,
+			attachments,
+			byTarget,
+		)
 	}, options.WithName("sandbox-policy-bindings")...)
-	return krt.JoinCollection([]krt.Collection[Bindings]{workloadBindings, sandboxBindings}, options.WithName("policy-bindings")...)
 }
 
-func resolvePolicyBindings(ctx krt.HandlerContext, kind TargetKind, uid, namespace string, targetLabels map[string]string,
-	references []model.PolicyRef, attachments krt.Collection[PolicyAttachment], byTarget krt.Index[string, PolicyAttachment],
+func resolvePolicyBindings(
+	ctx krt.HandlerContext,
+	uid, namespace string,
+	targetLabels map[string]string,
+	references []model.PolicyRef,
+	attachments krt.Collection[PolicyAttachment],
+	byTarget krt.Index[string, PolicyAttachment],
 ) *Bindings {
 	keys := []string{globalPolicyAttachmentIndexKey, namespacePolicyAttachmentKeyPrefix + namespace}
-	if kind == PolicyTargetSandbox {
-		keys = append(keys, sandboxPolicyAttachmentKeyPrefix+uid)
-	}
 	// Include target matching in selector discovery's dependency filter instead
 	// of invalidating every binding in a namespace. KRT checks old and new targets.
 	selectsTarget := krt.FilterGeneric(func(value any) bool {
-		return value.(PolicyAttachment).selects(kind, uid, namespace, targetLabels)
+		return value.(PolicyAttachment).selects(namespace, targetLabels)
 	})
 	matchedByName := make(map[string]PolicyAttachment)
 	for _, key := range keys {
@@ -164,7 +150,7 @@ func resolvePolicyBindings(ctx krt.HandlerContext, kind TargetKind, uid, namespa
 	for _, reference := range references {
 		key := reference.ResourceName()
 		attachment := krt.FetchOne(ctx, attachments, krt.FilterKey(key))
-		if attachment == nil || (attachment.Target.Kind != "" && attachment.Target.Kind != kind) {
+		if attachment == nil {
 			unresolved = append(unresolved, reference)
 			continue
 		}
@@ -191,5 +177,5 @@ func resolvePolicyBindings(ctx krt.HandlerContext, kind TargetKind, uid, namespa
 	for _, kind := range kinds {
 		groups = append(groups, BindingGroup{Kind: kind, Names: byKind[kind]})
 	}
-	return &Bindings{TargetKind: kind, TargetUID: uid, Groups: groups, Unresolved: unresolved}
+	return &Bindings{SandboxUID: uid, Groups: groups, Unresolved: unresolved}
 }

@@ -20,7 +20,6 @@ package trafficpolicy
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -46,8 +45,11 @@ func waitForPolicyState(ctx context.Context, policy string, present bool, dump c
 		if err != nil {
 			return err
 		}
-		found := strings.Contains(content, policy)
-		if found == present {
+		view, err := inspectPolicyDump(content, policy)
+		if err != nil {
+			return err
+		}
+		if view.found == present {
 			return nil
 		}
 		if present {
@@ -108,7 +110,16 @@ func requirePingState(t *testing.T, source echo.Instance, address string, allowe
 		if allowed {
 			state = "allowed"
 		}
-		t.Fatalf("expected ping from %s to %s to be %s: %v; last error=%v stdout=%q stderr=%q", source.Name(), address, state, err, execErr, stdout, stderr)
+		t.Fatalf(
+			"expected ping from %s to %s to be %s: %v; last error=%v stdout=%q stderr=%q",
+			source.Name(),
+			address,
+			state,
+			err,
+			execErr,
+			stdout,
+			stderr,
+		)
 	}
 }
 

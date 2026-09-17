@@ -36,7 +36,8 @@ const (
 	ExtensionConfigurationType = "type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig"
 	ProxyConfigType            = "type.googleapis.com/istio.mesh.v1alpha1.ProxyConfig"
 	AddressType                = "type.googleapis.com/istio.workload.Address"
-	SandboxType                = "type.googleapis.com/io.kruise.agentio.sandbox.v1.Sandbox"
+	TrafficPolicyType          = "type.googleapis.com/agentio.security.TrafficPolicy"
+	SandboxType                = "type.googleapis.com/agentio.sandbox.Sandbox"
 	WorkloadType               = "type.googleapis.com/istio.workload.Workload"
 	WorkloadAuthorizationType  = "type.googleapis.com/istio.security.Authorization"
 	SniTrafficPolicyType       = "type.googleapis.com/kruise.networking.extensions.v1.SniTrafficPolicy"
@@ -62,7 +63,6 @@ type ResourceFacts struct {
 }
 
 type WorkloadResourceFacts struct {
-	SandboxManaged    bool
 	WorkloadUID       string
 	SourceUID         string
 	NodeName          string
@@ -74,6 +74,7 @@ type WorkloadResourceFacts struct {
 
 // SandboxResourceFacts records discovery dependencies owned by a Sandbox.
 type SandboxResourceFacts struct {
+	TrafficPolicyRefs   []string
 	AttesterWorkloadUID string
 	GatewayReferences   []string
 }
@@ -91,8 +92,8 @@ type AuthorizationResourceFacts struct {
 // typed query seam over Workload facts; arbitrary cross-family combinations
 // are intentionally not representable.
 type WorkloadQuery struct {
-	// WorkloadPoliciesOnly excludes endpoints whose policies belong to Sandboxes.
-	WorkloadPoliciesOnly   bool
+	// AuthorizationRefsOnly selects Workloads with Authorization references for older data planes.
+	AuthorizationRefsOnly  bool
 	WorkloadUID            string
 	SourceUID              string
 	NodeName               string
@@ -152,7 +153,13 @@ func (r Resource) Equals(other Resource) bool {
 // NewResource validates and hashes a resource once, at construction. Producers
 // should build resources through this function so that assembling a snapshot
 // never has to re-encode or re-hash anything.
-func NewResource(key ResourceKey, xdsName string, value *anypb.Any, aliases []string, facts ResourceFacts) (Resource, error) {
+func NewResource(
+	key ResourceKey,
+	xdsName string,
+	value *anypb.Any,
+	aliases []string,
+	facts ResourceFacts,
+) (Resource, error) {
 	return normalizeResource(Resource{
 		Key:     key,
 		XDSName: xdsName,
@@ -214,7 +221,11 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 			return fmt.Errorf("resource %s/%s carries Workload facts", key.TypeURL, key.Name)
 		}
 		if uid := facts.Workload.WorkloadUID; uid != strings.TrimSpace(uid) {
-			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical workload UID", key.TypeURL, key.Name)
+			return fmt.Errorf(
+				"resource %s/%s Workload facts contain a non-canonical workload UID",
+				key.TypeURL,
+				key.Name,
+			)
 		}
 		if facts.Workload.NodeName != strings.TrimSpace(facts.Workload.NodeName) {
 			return fmt.Errorf("resource %s/%s Workload facts contain a non-canonical node name", key.TypeURL, key.Name)
@@ -229,7 +240,12 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 		} {
 			for _, value := range values {
 				if strings.TrimSpace(value) == "" {
-					return fmt.Errorf("resource %s/%s Workload facts contain an empty %s key", key.TypeURL, key.Name, label)
+					return fmt.Errorf(
+						"resource %s/%s Workload facts contain an empty %s key",
+						key.TypeURL,
+						key.Name,
+						label,
+					)
 				}
 			}
 		}
@@ -249,14 +265,24 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 		switch facts.Authorization.Scope {
 		case AuthorizationScopeGlobal, AuthorizationScopeWorkload:
 			if facts.Authorization.Namespace != "" {
-				return fmt.Errorf("resource %s/%s %v Authorization must not carry a namespace", key.TypeURL, key.Name, facts.Authorization.Scope)
+				return fmt.Errorf(
+					"resource %s/%s %v Authorization must not carry a namespace",
+					key.TypeURL,
+					key.Name,
+					facts.Authorization.Scope,
+				)
 			}
 		case AuthorizationScopeNamespace:
 			if strings.TrimSpace(facts.Authorization.Namespace) == "" {
 				return fmt.Errorf("resource %s/%s namespace Authorization requires a namespace", key.TypeURL, key.Name)
 			}
 		default:
-			return fmt.Errorf("resource %s/%s has unknown Authorization scope %d", key.TypeURL, key.Name, facts.Authorization.Scope)
+			return fmt.Errorf(
+				"resource %s/%s has unknown Authorization scope %d",
+				key.TypeURL,
+				key.Name,
+				facts.Authorization.Scope,
+			)
 		}
 	}
 
@@ -316,6 +342,7 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 	if facts.Sandbox != nil {
 		sandbox := *facts.Sandbox
 		sandbox.GatewayReferences = append([]string(nil), sandbox.GatewayReferences...)
+		sandbox.TrafficPolicyRefs = append([]string(nil), sandbox.TrafficPolicyRefs...)
 		result.Sandbox = &sandbox
 	}
 	if facts.Workload != nil {
@@ -339,6 +366,7 @@ func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
 func normalizeResourceFacts(facts *ResourceFacts) {
 	if facts.Sandbox != nil {
 		facts.Sandbox.GatewayReferences = sortedUnique(facts.Sandbox.GatewayReferences)
+		facts.Sandbox.TrafficPolicyRefs = sortedUnique(facts.Sandbox.TrafficPolicyRefs)
 	}
 	if facts.Workload == nil {
 		return
@@ -363,13 +391,15 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 	if facts.Sandbox != nil {
 		write("family", "sandbox")
 		write("attester-workload-uid", facts.Sandbox.AttesterWorkloadUID)
+		for _, name := range facts.Sandbox.TrafficPolicyRefs {
+			write("traffic-policy-reference", name)
+		}
 		for _, key := range facts.Sandbox.GatewayReferences {
 			write("gateway-reference", key)
 		}
 	}
 	if facts.Workload != nil {
 		write("family", "workload")
-		write("sandbox-managed", fmt.Sprint(facts.Workload.SandboxManaged))
 		write("workload-uid", facts.Workload.WorkloadUID)
 		write("source-uid", facts.Workload.SourceUID)
 		write("node", facts.Workload.NodeName)
@@ -407,8 +437,7 @@ func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 		return false
 	}
 	if facts.Workload != nil &&
-		(facts.Workload.SandboxManaged != other.Workload.SandboxManaged ||
-			facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
+		(facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
 			facts.Workload.SourceUID != other.Workload.SourceUID ||
 			facts.Workload.NodeName != other.Workload.NodeName ||
 			facts.Workload.Principal != other.Workload.Principal ||
@@ -418,7 +447,8 @@ func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 		return false
 	}
 	if facts.Sandbox != nil && (facts.Sandbox.AttesterWorkloadUID != other.Sandbox.AttesterWorkloadUID ||
-		!slices.Equal(facts.Sandbox.GatewayReferences, other.Sandbox.GatewayReferences)) {
+		!slices.Equal(facts.Sandbox.GatewayReferences, other.Sandbox.GatewayReferences) ||
+		!slices.Equal(facts.Sandbox.TrafficPolicyRefs, other.Sandbox.TrafficPolicyRefs)) {
 		return false
 	}
 	if facts.Service != nil && *facts.Service != *other.Service {

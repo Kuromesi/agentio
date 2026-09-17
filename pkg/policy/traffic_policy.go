@@ -16,6 +16,7 @@ package policy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -26,55 +27,74 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// CompiledTrafficPolicy contains a native TrafficPolicy and its attachment metadata.
-type CompiledTrafficPolicy = CompiledPolicy[*securityv1.TrafficPolicy]
+// CompiledTrafficPolicy is the shared, resolved Sandbox TrafficPolicy body.
+type CompiledTrafficPolicy struct {
+	CompiledPolicy[*securityv1.TrafficPolicy]
+
+	// Filled only in compatibility mode, once per source rather than per Workload.
+	AsAuthorization []CompiledAuthorization
+}
+
+// Equals compares native policy output and its legacy authorization projection.
+func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
+	return p.CompiledPolicy.Equals(other.CompiledPolicy) &&
+		slices.EqualFunc(p.AsAuthorization, other.AsAuthorization, CompiledAuthorization.Equals)
+}
 
 // CompileTrafficPolicy preserves rule actions and both directions in one
-// payload. All policies, including global/namespace baselines, use attachments.
-func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, inputs TrafficPolicyInputs) (*CompiledTrafficPolicy, error) {
-	if err := inputs.validate(); err != nil {
-		return nil, err
+// payload. Shared policies use attachments; dedicated policies are fetched by their Sandbox.
+func CompileTrafficPolicy(
+	ctx krt.HandlerContext,
+	source model.TrafficPolicy,
+	inputs TrafficPolicyInputs,
+) (*CompiledTrafficPolicy, error) {
+	if source.Dedicated {
+		if strings.TrimSpace(source.SandboxUID) == "" {
+			return nil, fmt.Errorf("dedicated traffic policy requires a Sandbox UID")
+		}
+		payload, err := CompileTrafficPolicyRules(ctx, model.TrafficPolicyRules{
+			Ingress: source.Spec.Ingress,
+			Egress:  source.Spec.Egress,
+		}, source.Namespace, inputs)
+		if err != nil {
+			return nil, err
+		}
+		return &CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{
+			Name:   source.ResourceName(),
+			Policy: payload,
+		}}, nil
 	}
-	uid, err := policySandboxUID(source.SandboxUID, source.Spec.Selector)
-	if err != nil {
-		return nil, err
-	}
+
 	selector, err := metav1.LabelSelectorAsSelector(&source.Spec.Selector)
 	if err != nil {
 		return nil, err
 	}
-	if source.Spec.Priority < 0 || (source.Spec.Ingress == nil && source.Spec.Egress == nil) {
-		return nil, fmt.Errorf("traffic policy %s requires a nonnegative priority and at least one direction", source.ResourceName())
+	if source.Spec.Priority < 0 {
+		return nil, fmt.Errorf("traffic policy %s requires a nonnegative priority", source.ResourceName())
 	}
-	name := "trafficpolicy/" + source.Namespace + "/" + source.Name
-	namespace, peerNamespace := source.Namespace, source.Namespace
-	scope := securityv1.TrafficPolicy_NAMESPACE
+	name := "namespaces/" + source.Namespace + "/trafficPolicies/" + source.Name
+	peerNamespace := source.Namespace
 	target := AttachmentTarget{Selector: source.Spec.Selector}
 	if source.Global {
-		name = "globaltrafficpolicy/" + source.Name
-		namespace, peerNamespace = "", inputs.RootNamespace
-		scope = securityv1.TrafficPolicy_GLOBAL
+		name = "trafficPolicies/" + source.Name
+		peerNamespace = inputs.RootNamespace
 	}
 	switch {
-	case uid != "":
-		target.SandboxUID = uid
-	case source.Global:
+	case source.Global || (peerNamespace == inputs.RootNamespace && selector.Empty()):
+		// Keep selector-less root-namespace baselines mesh-wide in both APIs.
 		target.Global = true
 	default:
 		target.Namespaces = []string{source.Namespace}
 	}
-	if uid != "" || !selector.Empty() {
-		scope = securityv1.TrafficPolicy_WORKLOAD_SELECTOR
-	}
-	result := &securityv1.TrafficPolicy{Name: name, Namespace: namespace, Priority: source.Spec.Priority, Scope: scope}
-	if result.Ingress, err = compileNativeDirection(ctx, source.Spec.Ingress, peerNamespace, inputs); err != nil {
-		return nil, err
-	}
-	if result.Egress, err = compileNativeDirection(ctx, source.Spec.Egress, peerNamespace, inputs); err != nil {
+	result, err := CompileTrafficPolicyRules(ctx, model.TrafficPolicyRules{
+		Ingress: source.Spec.Ingress,
+		Egress:  source.Spec.Egress,
+	}, peerNamespace, inputs)
+	if err != nil {
 		return nil, err
 	}
 	attachment, err := NewPolicyAttachment(PolicyAttachment{
-		Kind:            PolicyKindAuthorization,
+		Kind:            PolicyKindTrafficPolicy,
 		Name:            name,
 		Target:          target,
 		Priority:        source.Spec.Priority,
@@ -86,15 +106,51 @@ func CompileTrafficPolicy(ctx krt.HandlerContext, source model.TrafficPolicy, in
 	if err != nil {
 		return nil, err
 	}
-	return &CompiledTrafficPolicy{Name: name, Policy: result, Attachment: &attachment}, nil
+	compiled := &CompiledTrafficPolicy{
+		CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{Name: name, Policy: result, Attachment: &attachment},
+	}
+	return compiled, nil
 }
 
-func compileNativeDirection(ctx krt.HandlerContext, direction *agentsv1alpha1.TrafficPolicyDirection, namespace string, inputs TrafficPolicyInputs) (*securityv1.TrafficPolicy_PolicyRule, error) {
+// CompileTrafficPolicyRules compiles rule bodies without resource identity or
+// binding metadata. Sandbox-owned rules and shared policies use the same resolver.
+func CompileTrafficPolicyRules(
+	ctx krt.HandlerContext,
+	rules model.TrafficPolicyRules,
+	namespace string,
+	inputs TrafficPolicyInputs,
+) (*securityv1.TrafficPolicy, error) {
+	if err := inputs.validate(); err != nil {
+		return nil, err
+	}
+	result := &securityv1.TrafficPolicy{}
+	var err error
+	if result.Ingress, err = compileNativeDirection(ctx, rules.Ingress, namespace, inputs, true); err != nil {
+		return nil, err
+	}
+	if result.Egress, err = compileNativeDirection(ctx, rules.Egress, namespace, inputs, false); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func compileNativeDirection(
+	ctx krt.HandlerContext,
+	direction *agentsv1alpha1.TrafficPolicyDirection,
+	namespace string,
+	inputs TrafficPolicyInputs,
+	ingress bool,
+) (*securityv1.TrafficPolicy_RuleSet, error) {
 	if direction == nil {
 		return nil, nil
 	}
-	result := &securityv1.TrafficPolicy_PolicyRule{}
+	var result *securityv1.TrafficPolicy_RuleSet
 	for _, rule := range direction.Rules {
+		// Egress requires To peers and ingress requires From peers, even for port-only rules.
+		// A direction containing only skipped rules does not configure default deny.
+		if (ingress && len(rule.From) == 0) || (!ingress && len(rule.To) == 0) {
+			continue
+		}
 		action := securityv1.TrafficPolicy_ALLOW
 		switch rule.Action {
 		case agentsv1alpha1.RuleActionAllow:
@@ -107,6 +163,11 @@ func compileNativeDirection(ctx krt.HandlerContext, direction *agentsv1alpha1.Tr
 		if err != nil {
 			return nil, err
 		}
+		// Preserve a configured direction even when its declared peers resolve to
+		// no addresses: those rules do not match, but default deny still applies.
+		if result == nil {
+			result = &securityv1.TrafficPolicy_RuleSet{}
+		}
 		from := resolvePeers(ctx, rule.From, namespace, inputs)
 		to := resolvePeers(ctx, rule.To, namespace, inputs)
 		if (len(rule.From) > 0 && len(from) == 0) || (len(rule.To) > 0 && len(to) == 0) {
@@ -114,7 +175,11 @@ func compileNativeDirection(ctx krt.HandlerContext, direction *agentsv1alpha1.Tr
 		}
 		result.Rules = append(result.Rules, &securityv1.TrafficPolicy_Rule{
 			Action: action,
-			Match:  &securityv1.TrafficPolicy_Match{SourceIps: nativeAddresses(from), DestinationIps: nativeAddresses(to), Ports: ports},
+			Match: &securityv1.TrafficPolicy_Match{
+				SourceIps:      nativeAddresses(from),
+				DestinationIps: nativeAddresses(to),
+				Ports:          ports,
+			},
 		})
 	}
 	return result, nil

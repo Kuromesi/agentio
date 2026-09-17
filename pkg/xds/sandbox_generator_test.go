@@ -32,13 +32,37 @@ func sandboxResource(t *testing.T, uid string, policies ...*securityv1.TrafficPo
 	return sandboxResourceWithAttester(t, uid, "", policies...)
 }
 
-func sandboxResourceWithAttester(t *testing.T, uid, workloadUID string, policies ...*securityv1.TrafficPolicy) model.Resource {
+func sandboxResourceWithAttester(
+	t *testing.T,
+	uid, workloadUID string,
+	policies ...*securityv1.TrafficPolicy,
+) model.Resource {
 	t.Helper()
-	value, err := anypb.New(&sandboxv1.Sandbox{Uid: uid, State: sandboxv1.SandboxState_SANDBOX_STATE_RUNNING, Attester: &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID}, TrafficPolicies: policies})
+	var trafficPolicy *securityv1.TrafficPolicy
+	if len(policies) > 1 {
+		t.Fatal("expected one effective TrafficPolicy")
+	}
+	if len(policies) == 1 {
+		trafficPolicy = policies[0]
+	}
+	value, err := anypb.New(
+		&sandboxv1.Sandbox{
+			Uid:           uid,
+			State:         sandboxv1.SandboxState_SANDBOX_STATE_RUNNING,
+			Attester:      &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID},
+			TrafficPolicy: trafficPolicy,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := model.NewResource(model.ResourceKey{TypeURL: model.SandboxType, Name: uid}, "", value, nil, model.ResourceFacts{Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workloadUID}})
+	r, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.SandboxType, Name: uid},
+		"",
+		value,
+		nil,
+		model.ResourceFacts{Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workloadUID}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +104,17 @@ func TestSandboxNamedDeltaResubscribeAndDeletion(t *testing.T) {
 	stream.send(request)
 	responses := stream.awaitResponses(t, model.SandboxType, 1)
 	first := responses[0]
-	if len(first.Resources) != 1 || first.Resources[0].Name != "a" || !reflect.DeepEqual(first.RemovedResources, []string{"missing"}) {
+	if len(first.Resources) != 1 || first.Resources[0].Name != "a" ||
+		!reflect.DeepEqual(first.RemovedResources, []string{"missing"}) {
 		t.Fatalf("unexpected initial response %v", first)
 	}
-	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: first.Nonce, ResourceNamesSubscribe: []string{"a"}})
+	stream.send(
+		&discoveryv3.DeltaDiscoveryRequest{
+			TypeUrl:                model.SandboxType,
+			ResponseNonce:          first.Nonce,
+			ResourceNamesSubscribe: []string{"a"},
+		},
+	)
 	responses = stream.awaitResponses(t, model.SandboxType, 2)
 	if len(responses[1].Resources) != 1 {
 		t.Fatal("repeated subscribe must resend cached resource")
@@ -111,7 +142,16 @@ func TestSandboxDynamicWorkerScopeAndPodReplacement(t *testing.T) {
 	}
 	sub := SubscriptionView{names: []string{"a", "b", "other"}, sent: map[string]string{}}
 	gen := SandboxGenerator{}
-	full, err := gen.Generate(t.Context(), GenerationRequest{Scope: scope, TypeURL: model.SandboxType, Subscription: sub, Snapshot: snapshots[0], Full: true})
+	full, err := gen.Generate(
+		t.Context(),
+		GenerationRequest{
+			Scope:        scope,
+			TypeURL:      model.SandboxType,
+			Subscription: sub,
+			Snapshot:     snapshots[0],
+			Full:         true,
+		},
+	)
 	if err != nil || len(full.Resources) != 0 {
 		t.Fatalf("empty worker: %+v %v", full, err)
 	}
@@ -121,7 +161,16 @@ func TestSandboxDynamicWorkerScopeAndPodReplacement(t *testing.T) {
 		if !update.Affects(model.SandboxType) {
 			t.Fatal("binding/source update did not wake Sandbox watch")
 		}
-		delta, err := gen.Generate(t.Context(), GenerationRequest{Scope: scope, TypeURL: model.SandboxType, Subscription: sub, Snapshot: after, Update: update})
+		delta, err := gen.Generate(
+			t.Context(),
+			GenerationRequest{
+				Scope:        scope,
+				TypeURL:      model.SandboxType,
+				Subscription: sub,
+				Snapshot:     after,
+				Update:       update,
+			},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,17 +203,19 @@ func TestSandboxWatchStartsEmptyAndUnsubscribeStopsDelivery(t *testing.T) {
 	server := newTestServer(t, scope, []model.Resource{a}, nil)
 	stream := newFakeStream(ctx, 8)
 	done := server.start(stream)
-	stream.send(nodeRequest(model.SandboxType))
+	request := nodeRequest(model.SandboxType, "*")
+	request.ResourceNamesUnsubscribe = []string{"*"}
+	stream.send(request)
 	first := stream.awaitResponses(t, model.SandboxType, 1)[0]
 	if len(first.Resources) != 0 {
-		t.Fatal("empty Sandbox subscription must not become wildcard")
+		t.Fatal("simultaneous wildcard subscribe/unsubscribe must start an empty watch")
 	}
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResourceNamesSubscribe: []string{"a"}})
 	stream.awaitResponses(t, model.SandboxType, 2)
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResourceNamesUnsubscribe: []string{"a"}})
 	stream.awaitResponses(t, model.SandboxType, 3)
 	// A subsequent explicit request is a barrier proving the earlier update was processed.
-	changed := sandboxResource(t, "a", &securityv1.TrafficPolicy{Name: "p", Priority: 2})
+	changed := sandboxResource(t, "a", &securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}})
 	server.resources.publish(selectionSnapshot(t, []model.Resource{changed}))
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType})
 	responses := stream.awaitResponses(t, model.SandboxType, 4)
@@ -178,12 +229,75 @@ func TestSandboxWatchStartsEmptyAndUnsubscribeStopsDelivery(t *testing.T) {
 	}
 }
 
+func TestSandboxImplicitWildcardDelivery(t *testing.T) {
+	for _, mode := range []string{"existing", "warm pool", "reconnect"} {
+		t.Run(mode, func(t *testing.T) {
+			worker := workerResource(t, "pod-1")
+			a := sandboxResourceWithAttester(t, "a", "worker")
+			outside := sandboxResourceWithAttester(t, "outside", "another-worker")
+			resources := []model.Resource{worker, outside}
+			if mode != "warm pool" {
+				resources = append(resources, a)
+			}
+			server := newTestServer(t, workerScope(worker), resources, nil)
+			stream := newFakeStream(t.Context(), 8)
+			done := server.start(stream)
+			request := nodeRequest(model.SandboxType)
+			if mode == "reconnect" {
+				request.InitialResourceVersions = map[string]string{"a": a.Hash, "gone": "old-version"}
+			}
+			stream.send(request)
+			first := stream.awaitResponses(t, model.SandboxType, 1)[0]
+			var wantResources, wantRemoved []string
+			if mode == "existing" {
+				wantResources = []string{"a"}
+			}
+			if mode == "reconnect" {
+				wantRemoved = []string{"gone"}
+			}
+			if !slices.Equal(resourceNames(first), wantResources) ||
+				!slices.Equal(first.RemovedResources, wantRemoved) {
+				t.Fatalf("initial response = %v, want resources %v, removed %v", first, wantResources, wantRemoved)
+			}
+			stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: first.Nonce})
+
+			// New bindings and policy updates must arrive without another subscription,
+			// including when the first response was empty or came from a reconnect.
+			changed := sandboxResourceWithAttester(
+				t,
+				"a",
+				"worker",
+				&securityv1.TrafficPolicy{Egress: &securityv1.TrafficPolicy_RuleSet{}},
+			)
+			b := sandboxResourceWithAttester(t, "b", "worker")
+			server.resources.publish(selectionSnapshot(t, []model.Resource{worker, changed, b, outside}))
+			updated := stream.awaitResponses(t, model.SandboxType, 2)[1]
+			if !slices.Equal(resourceNames(updated), []string{"a", "b"}) || len(updated.RemovedResources) != 0 {
+				t.Fatalf("incremental response = %v, want only a and b", updated)
+			}
+			if updated.Resources[0].Version == a.Hash {
+				t.Fatal("policy update delivered the old Sandbox version")
+			}
+			stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: updated.Nonce})
+			server.resources.publish(selectionSnapshot(t, []model.Resource{worker, b, outside}))
+			removed := stream.awaitResponses(t, model.SandboxType, 3)[2]
+			if len(removed.Resources) != 0 || !slices.Equal(removed.RemovedResources, []string{"a"}) {
+				t.Fatalf("deletion response = %v, want only a removed", removed)
+			}
+			if err := server.finish(t, stream, done); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSandboxInlinePolicyChangeIsDeliveredWithoutPolicySubscriptions(t *testing.T) {
 	worker := workerResource(t, "pod-1")
 	policy := &securityv1.TrafficPolicy{
-		Name: "trafficpolicy/tenant/p",
-		Egress: &securityv1.TrafficPolicy_PolicyRule{
-			Rules: []*securityv1.TrafficPolicy_Rule{{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}}},
+		Egress: &securityv1.TrafficPolicy_RuleSet{
+			Rules: []*securityv1.TrafficPolicy_Rule{
+				{Action: securityv1.TrafficPolicy_DENY, Match: &securityv1.TrafficPolicy_Match{}},
+			},
 		},
 	}
 	before := selectionSnapshot(t, []model.Resource{worker, sandboxResourceWithAttester(t, "a", "worker")})
@@ -206,7 +320,7 @@ func TestSandboxInlinePolicyChangeIsDeliveredWithoutPolicySubscriptions(t *testi
 	if err := delta.Resources[0].Value.UnmarshalTo(manifest); err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.TrafficPolicies) != 1 || manifest.TrafficPolicies[0].Egress.Rules[0].Action != securityv1.TrafficPolicy_DENY {
+	if manifest.TrafficPolicy == nil || manifest.TrafficPolicy.Egress.Rules[0].Action != securityv1.TrafficPolicy_DENY {
 		t.Fatal("Sandbox update lost the complete deny policy")
 	}
 }
@@ -263,7 +377,13 @@ func TestSandboxGatewayDiscoveryFollowsAttester(t *testing.T) {
 		sandbox := sandboxResourceWithAttester(t, "actor", workloadUID)
 		facts := *sandbox.Facts.Sandbox
 		facts.GatewayReferences = []string{"gateways/egress"}
-		r, err := model.NewResource(sandbox.Key, sandbox.XDSName, sandbox.Value, sandbox.Aliases, model.ResourceFacts{Sandbox: &facts})
+		r, err := model.NewResource(
+			sandbox.Key,
+			sandbox.XDSName,
+			sandbox.Value,
+			sandbox.Aliases,
+			model.ResourceFacts{Sandbox: &facts},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,14 +418,31 @@ func TestSandboxGatewayDiscoveryFollowsAttester(t *testing.T) {
 					oldSelection := selectWorkloadResources(scope, before, model.AddressType, selectionNames(sub))
 					newSelection := selectWorkloadResources(scope, after, model.AddressType, selectionNames(sub))
 					want := diffWDSSelections(oldSelection, newSelection, false)
-					got := generateWDSIncremental(GenerationRequest{Scope: scope, TypeURL: model.AddressType, Subscription: sub, Snapshot: after, Update: update}, false)
-					if !reflect.DeepEqual(selectedNames(got.Resources), selectedNames(want.Resources)) || !reflect.DeepEqual(got.Removed, want.Removed) {
-						t.Fatalf("%s wildcard=%t incremental delta = %+v, full selection diff = %+v", worker.Key.Name, wildcard, got, want)
+					got := generateWDSIncremental(
+						GenerationRequest{
+							Scope:        scope,
+							TypeURL:      model.AddressType,
+							Subscription: sub,
+							Snapshot:     after,
+							Update:       update,
+						},
+						false,
+					)
+					if !reflect.DeepEqual(selectedNames(got.Resources), selectedNames(want.Resources)) ||
+						!reflect.DeepEqual(got.Removed, want.Removed) {
+						t.Fatalf(
+							"%s wildcard=%t incremental delta = %+v, full selection diff = %+v",
+							worker.Key.Name,
+							wildcard,
+							got,
+							want,
+						)
 					}
 					if worker.Key.Name == "worker-a" && !slices.Contains(got.Removed, gateway.Key.Name) {
 						t.Fatalf("old attester retained Sandbox gateway: %+v", got)
 					}
-					if worker.Key.Name == "worker-b" && tc.name == "attester move" && !slices.Contains(selectedNames(got.Resources), gateway.Key.Name) {
+					if worker.Key.Name == "worker-b" && tc.name == "attester move" &&
+						!slices.Contains(selectedNames(got.Resources), gateway.Key.Name) {
 						t.Fatalf("new attester missing Sandbox gateway: %+v", got)
 					}
 				}

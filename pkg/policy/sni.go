@@ -32,12 +32,18 @@ type CompiledSNIPolicy = CompiledPolicy[*extensionsv1.SniTrafficPolicy]
 
 // CompileSNIProfile compiles one profile; profiles with no HTTPS-capable hosts return nil, nil.
 func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error) {
-	hosts, err := sniHosts(profile)
+	payload, err := CompileSNIRules(profile.Spec.Rules)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("security profile %s: %w", profile.ResourceName(), err)
 	}
-	if len(hosts) == 0 {
+	if payload == nil {
 		return nil, nil
+	}
+	if profile.Dedicated {
+		if strings.TrimSpace(profile.SandboxUID) == "" {
+			return nil, fmt.Errorf("dedicated security profile requires a Sandbox UID")
+		}
+		return &CompiledSNIPolicy{Name: profile.ResourceName(), Policy: payload}, nil
 	}
 	priority := agentsv1alpha1.DefaultSecurityProfilePriority
 	if profile.Spec.Priority != nil {
@@ -45,10 +51,6 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 	}
 	if priority < 0 {
 		return nil, fmt.Errorf("security profile %s priority %d is negative", profile.ResourceName(), priority)
-	}
-	sandboxUID, err := policySandboxUID(profile.SandboxUID, profile.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("security profile %s: %w", profile.ResourceName(), err)
 	}
 	selector, err := metav1.LabelSelectorAsSelector(&profile.Spec.Selector)
 	if err != nil {
@@ -59,9 +61,7 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 		resourceName = profile.Namespace + "/" + profile.Name
 	}
 	target := AttachmentTarget{Selector: profile.Spec.Selector}
-	if sandboxUID != "" {
-		target.SandboxUID = sandboxUID
-	} else if profile.Global {
+	if profile.Global {
 		target.Global = true
 	} else {
 		target.Namespaces = []string{profile.Namespace}
@@ -82,17 +82,27 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 	return &CompiledSNIPolicy{
 		Name:       resourceName,
 		Attachment: &attachment,
-		Policy: &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{
-			Match:  &extensionsv1.SniMatch{Sni: hosts},
-			Action: extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION,
-		}}},
+		Policy:     payload,
 	}, nil
 }
 
-func sniHosts(profile model.SecurityProfile) ([]string, error) {
+// CompileSNIRules projects HTTPS-capable security matches into SNI termination rules.
+// Sandbox-owned rules and shared SecurityProfiles use the same projection.
+func CompileSNIRules(rules []agentsv1alpha1.SecurityRule) (*extensionsv1.SniTrafficPolicy, error) {
+	hosts, err := sniHosts(rules)
+	if err != nil || len(hosts) == 0 {
+		return nil, err
+	}
+	return &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{
+		Match:  &extensionsv1.SniMatch{Sni: hosts},
+		Action: extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION,
+	}}}, nil
+}
+
+func sniHosts(rules []agentsv1alpha1.SecurityRule) ([]string, error) {
 	seen := sets.New[string]()
 	result := make([]string, 0)
-	for ruleIndex, rule := range profile.Spec.Rules {
+	for ruleIndex, rule := range rules {
 		for matchIndex, match := range rule.Match {
 			if !mayMatchHTTPS(match.Schemes) {
 				continue
@@ -100,8 +110,8 @@ func sniHosts(profile model.SecurityProfile) ([]string, error) {
 			for domainIndex, domain := range match.Domains {
 				normalized, err := normalizeSNI(domain)
 				if err != nil {
-					return nil, fmt.Errorf("security profile %s rules[%d].match[%d].domains[%d]: %w",
-						profile.ResourceName(), ruleIndex, matchIndex, domainIndex, err)
+					return nil, fmt.Errorf("rules[%d].match[%d].domains[%d]: %w",
+						ruleIndex, matchIndex, domainIndex, err)
 				}
 				if seen.Contains(normalized) {
 					continue

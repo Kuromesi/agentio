@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -35,8 +36,175 @@ import (
 	policypkg "github.com/openkruise/agentio/pkg/policy"
 )
 
+func TestTrafficPolicyCompilesBothResourcesWithOneResolution(t *testing.T) {
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
+	worker := testWorkload("demo", "client", "10.0.0.1")
+	fixture.workloads.UpdateObject(worker)
+	fixture.sandboxes.UpdateObject(testSandboxForWorkload(worker))
+	fixture.trafficPolicies.UpdateObject(model.TrafficPolicy{
+		Name:      "api",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
+				Action: agentsv1alpha1.RuleActionAllow,
+				To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "api.example.com"}},
+			}}},
+		},
+	})
+	waitSynced(t, fixture.compiler)
+	nativeKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/demo/trafficPolicies/api"}
+	legacyKey := model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: "demo/api-egress"}
+	eventually(t, func() bool {
+		snapshot := currentSnapshot(t, fixture.compiler)
+		_, native := snapshot.Get(nativeKey)
+		legacy, found := snapshot.Get(legacyKey)
+		if !native || !found {
+			return false
+		}
+		authorization := &securityv1.Authorization{}
+		return proto.Unmarshal(legacy.Value.Value, authorization) == nil && len(authorization.Groups) == 0
+	}, "compiled unresolved native policy and Sandbox compatibility")
+	settle()
+	if got := fixture.resolutionCount("api.example.com"); got != 1 {
+		t.Fatalf("initial resolution calls = %d, want one for both wire representations", got)
+	}
+	before := currentSnapshot(t, fixture.compiler)
+	oldNative, _ := before.Get(nativeKey)
+	oldLegacy, _ := before.Get(legacyKey)
+	fixture.setResolved("api.example.com", netip.MustParseAddr("203.0.113.7"))
+	eventually(t, func() bool {
+		current := currentSnapshot(t, fixture.compiler)
+		native, nativeFound := current.Get(nativeKey)
+		legacy, legacyFound := current.Get(legacyKey)
+		return nativeFound && legacyFound && native.Hash != oldNative.Hash && legacy.Hash != oldLegacy.Hash
+	}, "DNS update changes both wire representations")
+	settle()
+	if got := fixture.resolutionCount("api.example.com"); got != 2 {
+		t.Fatalf("resolution calls after DNS update = %d, want one additional compilation", got)
+	}
+	native := trafficPolicyAt(t, fixture.compiler, nativeKey.Name)
+	resource, _ := currentSnapshot(t, fixture.compiler).Get(legacyKey)
+	legacy := new(securityv1.Authorization)
+	if err := proto.Unmarshal(resource.Value.Value, legacy); err != nil {
+		t.Fatal(err)
+	}
+	wantAddress := []byte{203, 0, 113, 7}
+	nativeAddress := native.GetEgress().GetRules()[0].GetMatch().GetDestinationIps()[0]
+	legacyAddress := legacy.GetGroups()[0].GetRules()[0].GetMatches()[0].GetDestinationIps()[0]
+	if !slices.Equal(nativeAddress.Address, wantAddress) || !slices.Equal(legacyAddress.Address, wantAddress) ||
+		nativeAddress.Length != 32 ||
+		legacyAddress.Length != 32 {
+		t.Fatalf("resolved addresses differ: native=%v legacy=%v", nativeAddress, legacyAddress)
+	}
+}
+
+func TestTrafficPolicyAuthorizationDirectionsUpdate(t *testing.T) {
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
+	workload := testWorkload("demo", "client", "10.0.0.1")
+	fixture.workloads.UpdateObject(workload)
+	fixture.sandboxes.UpdateObject(testSandboxForWorkload(workload))
+	source := model.TrafficPolicy{
+		Name:      "api",
+		Namespace: "demo",
+		Spec:      agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchLabels: workload.Labels}},
+	}
+	for _, test := range []struct {
+		egress   bool
+		ingress  bool
+		empty    bool
+		peerless bool
+		deleted  bool
+	}{
+		{egress: true},
+		{egress: true, ingress: true},
+		{ingress: true},
+		{egress: true, ingress: true, empty: true},
+		{egress: true},
+		{egress: true, ingress: true, peerless: true},
+		{}, // No directions remains a valid no-op native resource.
+		{deleted: true},
+	} {
+		source.Spec.Egress, source.Spec.Ingress = nil, nil
+		if test.egress {
+			source.Spec.Egress = &agentsv1alpha1.TrafficPolicyDirection{
+				Rules: []agentsv1alpha1.TrafficPolicyRule{
+					{
+						Action: agentsv1alpha1.RuleActionReject,
+						To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}},
+					},
+				},
+			}
+		}
+		if test.ingress {
+			source.Spec.Ingress = &agentsv1alpha1.TrafficPolicyDirection{
+				Rules: []agentsv1alpha1.TrafficPolicyRule{
+					{
+						Action: agentsv1alpha1.RuleActionReject,
+						From:   []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "0.0.0.0/0"}},
+					},
+				},
+			}
+		}
+		for _, direction := range []*agentsv1alpha1.TrafficPolicyDirection{source.Spec.Egress, source.Spec.Ingress} {
+			if direction == nil {
+				continue
+			}
+			if test.empty {
+				direction.Rules = nil
+			} else if test.peerless {
+				direction.Rules[0].From, direction.Rules[0].To = nil, nil
+			}
+		}
+		if !test.deleted {
+			fixture.trafficPolicies.UpdateObject(source)
+		} else {
+			fixture.trafficPolicies.DeleteObject(source.ResourceName())
+		}
+		eventually(t, func() bool {
+			snapshot := currentSnapshot(t, fixture.compiler)
+			var names []string
+			for _, resource := range snapshot.List(model.WorkloadAuthorizationType) {
+				names = append(names, resource.Key.Name)
+			}
+			slices.Sort(names)
+			resource, found := snapshot.Get(model.ResourceKey{TypeURL: model.AddressType, Name: workload.UID})
+			if !found {
+				return false
+			}
+			wire := new(workloadv1.Address)
+			if err := resource.Value.UnmarshalTo(wire); err != nil {
+				t.Fatal(err)
+			}
+			_, nativeFound := snapshot.Get(
+				model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/demo/trafficPolicies/api"},
+			)
+			var want []string
+			if !test.deleted && !test.empty && !test.peerless {
+				if test.egress {
+					want = append(want, "demo/api-egress")
+				}
+				if test.ingress {
+					want = append(want, "demo/api-ingress")
+				}
+			}
+			if nativeFound != !test.deleted || !slices.Equal(names, want) ||
+				!slices.Equal(wire.GetWorkload().AuthorizationPolicies, want) {
+				return false
+			}
+			for _, name := range want {
+				resource, _ := snapshot.Get(model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name})
+				authorization := &securityv1.Authorization{}
+				if proto.Unmarshal(resource.Value.Value, authorization) != nil || len(authorization.Groups) != 1 {
+					return false
+				}
+			}
+			return true
+		}, "direction changes update policy resources and Workload bindings")
+	}
+}
+
 func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
-	fixture := newIncrementalFixture(t)
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
 	client := testWorkload("demo", "client", "10.0.0.2")
 	other := testWorkload("other", "client", "10.0.1.2")
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(client))
@@ -56,11 +224,19 @@ func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
 			}},
 		}
 	}
-	fixture.agentioConfig.ConditionalUpdateObject(valid("valid", "203.0.113.1/32", "egress-a.agentio-system.svc.cluster.local"))
+	fixture.agentioConfig.ConditionalUpdateObject(
+		valid("valid", "203.0.113.1/32", "egress-a.agentio-system.svc.cluster.local"),
+	)
 	waitSynced(t, fixture.compiler)
 	awaitSteadyState(t, fixture.compiler, addressResourceName("demo", "client"), addressResourceName("other", "client"))
-	baseline, _ := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
-	otherBaseline, _ := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: other.UID})
+	baseline, _ := currentSnapshot(
+		t,
+		fixture.compiler,
+	).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
+	otherBaseline, _ := currentSnapshot(
+		t,
+		fixture.compiler,
+	).Get(model.ResourceKey{TypeURL: model.AddressType, Name: other.UID})
 	if !resourceReferencesGateway(baseline, "agentio-system/egress-a") {
 		t.Fatalf("valid facts = %+v", baseline.Facts)
 	}
@@ -69,25 +245,41 @@ func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
 	fixture.compiler.graph.policies.policyBindings.RegisterBatch(func(events []krt.Event[policy.Bindings]) {
 		bindingEvents.Add(int64(len(events)))
 	}, false)
-	fixture.agentioConfig.ConditionalUpdateObject(valid("rules", "203.0.113.2/32", "egress-a.agentio-system.svc.cluster.local"))
+	fixture.agentioConfig.ConditionalUpdateObject(
+		valid("rules", "203.0.113.2/32", "egress-a.agentio-system.svc.cluster.local"),
+	)
 	eventually(t, func() bool {
-		resource, found := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
+		resource, found := currentSnapshot(
+			t,
+			fixture.compiler,
+		).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
 		return found && resource.Hash != baseline.Hash
 	}, "rules-only egress update changes matching workload")
 	settle()
 	if got := bindingEvents.Load(); got != 0 {
 		t.Fatalf("rules-only egress update emitted %d workload binding events, want 0", got)
 	}
-	if current, _ := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: other.UID}); current.Hash != otherBaseline.Hash {
+	if current, _ := currentSnapshot(
+		t,
+		fixture.compiler,
+	).Get(model.ResourceKey{TypeURL: model.AddressType, Name: other.UID}); current.Hash != otherBaseline.Hash {
 		t.Fatal("rules-only demo egress update changed unrelated namespace")
 	}
 
-	fixture.agentioConfig.ConditionalUpdateObject(valid("gateway", "203.0.113.2/32", "egress-b.agentio-system.svc.cluster.local"))
+	fixture.agentioConfig.ConditionalUpdateObject(
+		valid("gateway", "203.0.113.2/32", "egress-b.agentio-system.svc.cluster.local"),
+	)
 	eventually(t, func() bool {
-		resource, found := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
+		resource, found := currentSnapshot(
+			t,
+			fixture.compiler,
+		).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
 		return found && resourceReferencesGateway(resource, "agentio-system/egress-b")
 	}, "gateway reference changes")
-	lastGood, _ := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
+	lastGood, _ := currentSnapshot(
+		t,
+		fixture.compiler,
+	).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
 	if resourceReferencesGateway(lastGood, "agentio-system/egress-a") {
 		t.Fatalf("old gateway reference remains: %+v", lastGood.Facts)
 	}
@@ -98,13 +290,16 @@ func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
 		return found
 	}, "malformed gateway records configuration failure")
 	settle()
-	retained, _ := currentSnapshot(t, fixture.compiler).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
+	retained, _ := currentSnapshot(
+		t,
+		fixture.compiler,
+	).Get(model.ResourceKey{TypeURL: model.AddressType, Name: client.UID})
 	if retained.Hash != lastGood.Hash {
 		t.Fatalf("malformed gateway replaced last-known-good workload: %s != %s", retained.Hash, lastGood.Hash)
 	}
 }
 
-// A namespaced policy edit must invalidate only the workloads of that namespace.
+// Body edits update the shared policy without invalidating Workloads or Sandboxes.
 func TestPolicyEditInvalidatesOnlyItsNamespace(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("alpha", "client", "10.1.0.1")))
@@ -130,8 +325,7 @@ func TestPolicyEditInvalidatesOnlyItsNamespace(t *testing.T) {
 
 	recorder := newRecorder(fixture.compiler.Resources())
 
-	// Widen the alpha policy. Only alpha's workload and the alpha Authorization
-	// depend on it.
+	// Widen the alpha policy. Only its native and legacy policy bodies change.
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
 		Name:      "allow",
 		Namespace: "alpha",
@@ -145,7 +339,7 @@ func TestPolicyEditInvalidatesOnlyItsNamespace(t *testing.T) {
 	})
 
 	eventually(t, func() bool {
-		return recorder.has(model.SandboxType + "|cluster//Pod/alpha/client")
+		return recorder.has(model.TrafficPolicyType + "|namespaces/alpha/trafficPolicies/allow")
 	}, "alpha authorization recompiled")
 	settle()
 
@@ -194,17 +388,33 @@ func TestExactSandboxPolicyLifecycleAffectsOnlyTarget(t *testing.T) {
 		},
 	}
 	sandboxKey := model.SandboxType + "|" + firstUID
+	trafficPolicyKey := model.TrafficPolicyType + "|namespaces/demo/trafficPolicies/exact"
 	recorder := newRecorder(fixture.compiler.Resources())
 	fixture.trafficPolicies.ConditionalUpdateObject(policyInput)
 	eventually(t, func() bool {
 		return recorder.has(sandboxKey)
 	}, "exact policy attached to its Sandbox")
 	settle()
-	if got, want := recorder.names(), []string{sandboxKey}; !reflect.DeepEqual(got, want) {
+	if got, want := recorder.names(), []string{sandboxKey, trafficPolicyKey}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exact policy add changed %v, want %v", got, want)
 	}
 	if recorder.has(secondAddress) {
 		t.Fatalf("exact policy add invalidated unrelated Sandbox; changed=%v", recorder.names())
+	}
+
+	manifest := manifestAt(t, fixture.compiler, firstUID)
+	if manifest.TrafficPolicy != nil ||
+		!reflect.DeepEqual(trafficPolicyRefs(manifest), []string{"namespaces/demo/trafficPolicies/exact"}) {
+		t.Fatalf("a single-target CR must remain an independent policy reference: %v", manifest)
+	}
+	recorder.reset()
+	policyInput.Spec = *policyInput.Spec.DeepCopy()
+	policyInput.Spec.Egress.Rules[0].Action = agentsv1alpha1.RuleActionReject
+	fixture.trafficPolicies.ConditionalUpdateObject(policyInput)
+	eventually(t, func() bool { return recorder.has(trafficPolicyKey) }, "shared policy body updated")
+	settle()
+	if got, want := recorder.names(), []string{trafficPolicyKey}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("single-target shared body update changed %v, want %v", got, want)
 	}
 
 	recorder.reset()
@@ -213,7 +423,7 @@ func TestExactSandboxPolicyLifecycleAffectsOnlyTarget(t *testing.T) {
 		return recorder.has(sandboxKey)
 	}, "exact policy detached from its Sandbox")
 	settle()
-	if got, want := recorder.names(), []string{sandboxKey}; !reflect.DeepEqual(got, want) {
+	if got, want := recorder.names(), []string{sandboxKey, trafficPolicyKey}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exact policy delete changed %v, want %v", got, want)
 	}
 	if recorder.has(secondAddress) {
@@ -261,12 +471,12 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("alpha", "client", "10.1.0.1")))
 	fixture.workloads.ConditionalUpdateObject(testWorkload("alpha", "client", "10.1.0.1"))
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name:       "broken",
-		Namespace:  "alpha",
-		SandboxUID: "sandbox-a",
+		Name:      "broken",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Priority: -1,
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-				"app": "client", agentsv1alpha1.LabelSandboxID: "sandbox-b",
+				"app": "client",
 			}},
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
@@ -284,13 +494,15 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 		return found
 	}, "workload published despite the broken policy")
 
-	if compiled := fixture.compiler.graph.policies.trafficPolicies.GetKey("trafficpolicy/alpha/broken"); compiled != nil {
-		t.Fatal("a policy with conflicting Sandbox UIDs produced a native TrafficPolicy")
+	if compiled := fixture.compiler.graph.policies.trafficPolicies.GetKey(
+		"namespaces/alpha/trafficPolicies/broken",
+	); compiled != nil {
+		t.Fatal("a policy with an invalid priority produced a native TrafficPolicy")
 	}
 	eventually(t, func() bool {
 		failures := fixture.compiler.Failures()
-		return failures["TrafficPolicy/namespaced/alpha/broken"] != "" && failures["NativeTrafficPolicy/namespaced/alpha/broken"] != ""
-	}, "both policy compilation stages report the invalid source")
+		return failures["TrafficPolicy/namespaced/alpha/broken"] != ""
+	}, "policy compilation reports the invalid source")
 
 	failures := fixture.compiler.Failures()
 	if _, found := failures["TrafficPolicy/namespaced/alpha/broken"]; !found {
@@ -310,20 +522,17 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	})
 	eventually(t, func() bool {
 		manifest := manifestAt(t, fixture.compiler, "cluster//Pod/alpha/client")
-		return manifest != nil && len(manifest.TrafficPolicies) == 1 && len(fixture.compiler.Failures()) == 0
+		return manifest != nil && len(trafficPolicyRefs(manifest)) == 1 && len(fixture.compiler.Failures()) == 0
 	}, "fixed policy publishes and clears the failure")
 }
 
 func TestDeletingMalformedTrafficPolicyClearsFailure(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name:       "broken",
-		Namespace:  "alpha",
-		SandboxUID: "sandbox-a",
+		Name:      "broken",
+		Namespace: "alpha",
 		Spec: agentsv1alpha1.TrafficPolicySpec{
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-				agentsv1alpha1.LabelSandboxID: "sandbox-b",
-			}},
+			Priority: -1,
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{
 				Rules: []agentsv1alpha1.TrafficPolicyRule{
 					{
@@ -424,9 +633,7 @@ func TestMalformedTrafficPolicyUpdatePreservesLastKnownGood(t *testing.T) {
 	baseline, _ := currentSnapshot(t, fixture.compiler).Get(key)
 
 	invalid := valid
-	invalid.SandboxUID = "sandbox-a"
-	invalid.Spec = *valid.Spec.DeepCopy()
-	invalid.Spec.Selector.MatchLabels[agentsv1alpha1.LabelSandboxID] = "sandbox-b"
+	invalid.Spec.Priority = -1
 	fixture.trafficPolicies.ConditionalUpdateObject(invalid)
 	eventually(t, func() bool {
 		_, found := fixture.compiler.Failures()["TrafficPolicy/namespaced/alpha/allow"]
@@ -537,7 +744,7 @@ func TestWorkloadPeerResolutionUsesPodMetadata(t *testing.T) {
 	}
 
 	compileSynced(t, compiler)
-	compiled := compiler.graph.policies.trafficPolicies.GetKey("trafficpolicy/demo/allow-peers")
+	compiled := compiler.graph.policies.trafficPolicies.GetKey("namespaces/demo/trafficPolicies/allow-peers")
 	if compiled == nil {
 		t.Fatal("compiled native TrafficPolicy missing")
 	}
@@ -574,7 +781,11 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 	inputs.Workloads = krt.NewStaticCollection(nil, workloads, options...)
 	inputs.Pods = krt.NewStaticCollection(nil, []*corev1.Pod{
 		{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "static-control-plane", Labels: map[string]string{"role": "control-plane"}},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "demo",
+				Name:      "static-control-plane",
+				Labels:    map[string]string{"role": "control-plane"},
+			},
 			Status: corev1.PodStatus{
 				PodIP: "10.1.0.9",
 				Conditions: []corev1.PodCondition{{
@@ -584,7 +795,11 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 			},
 		},
 		{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "opaque-endpoint", Labels: map[string]string{"role": "control-plane"}},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "demo",
+				Name:      "opaque-endpoint",
+				Labels:    map[string]string{"role": "control-plane"},
+			},
 			Status: corev1.PodStatus{
 				PodIP: "10.1.0.10",
 				Conditions: []corev1.PodCondition{{
@@ -628,7 +843,7 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 		}
 	}
 
-	compiled := compiler.graph.policies.trafficPolicies.GetKey("trafficpolicy/demo/allow-control-plane")
+	compiled := compiler.graph.policies.trafficPolicies.GetKey("namespaces/demo/trafficPolicies/allow-control-plane")
 	if compiled == nil {
 		t.Fatal("compiled native TrafficPolicy missing")
 	}
@@ -651,7 +866,7 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 	}
 }
 
-func TestCompilerInlinesTrafficPolicyInSandbox(t *testing.T) {
+func TestCompilerReferencesSharedTrafficPolicyInSandbox(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
@@ -675,7 +890,12 @@ func TestCompilerInlinesTrafficPolicyInSandbox(t *testing.T) {
 	})
 
 	inputs := validCompilerInputs(stop)
-	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: "cluster//Pod/demo/client", Namespace: "demo", Labels: map[string]string{"app": "client"}}}, options...)
+	inputs.Sandboxes = krt.NewStaticCollection(
+		nil,
+		[]model.Sandbox{
+			{UID: "cluster//Pod/demo/client", Namespace: "demo", Labels: map[string]string{"app": "client"}},
+		},
+		options...)
 	inputs.Workloads = workloads
 	inputs.Services = services
 	inputs.Endpoints = endpoints
@@ -688,8 +908,8 @@ func TestCompilerInlinesTrafficPolicyInSandbox(t *testing.T) {
 		t.Fatalf("new compiler: %v", err)
 	}
 	snapshot := compileSynced(t, compiler)
-	if len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
-		t.Fatal("Workload Authorization must be published independently")
+	if len(snapshot.List(model.WorkloadAuthorizationType)) != 0 {
+		t.Fatal("native-only compilation must not publish Workload Authorization")
 	}
 	workloadResource, found := snapshot.Get(model.ResourceKey{
 		TypeURL: model.AddressType,
@@ -703,14 +923,13 @@ func TestCompilerInlinesTrafficPolicyInSandbox(t *testing.T) {
 		t.Fatalf("unmarshal Workload: %v", err)
 	}
 	got := address.GetWorkload().GetAuthorizationPolicies()
-	if !reflect.DeepEqual(got, []string{"demo/allow-egress"}) {
+	if len(got) != 0 {
 		t.Fatalf("workload authorization policies = %v", got)
 	}
 	manifest := manifestAt(t, compiler, "cluster//Pod/demo/client")
-	if manifest == nil || !slices.ContainsFunc(manifest.TrafficPolicies, func(policy *securityv1.TrafficPolicy) bool {
-		return policy.Name == "trafficpolicy/demo/allow"
-	}) {
-		t.Fatalf("Sandbox is missing inline TrafficPolicy: %+v", manifest)
+	if manifest == nil || manifest.TrafficPolicy != nil ||
+		!reflect.DeepEqual(trafficPolicyRefs(manifest), []string{"namespaces/demo/trafficPolicies/allow"}) {
+		t.Fatalf("Sandbox is missing shared TrafficPolicy reference: %+v", manifest)
 	}
 }
 
@@ -785,7 +1004,9 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "does-not-match"}},
-			Rules:    []agentsv1alpha1.SecurityRule{{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}}},
+			Rules: []agentsv1alpha1.SecurityRule{
+				{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}},
+			},
 		},
 	})
 	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
@@ -793,7 +1014,9 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-			Rules:    []agentsv1alpha1.SecurityRule{{Name: "pod", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"pod.example.com"}}}}},
+			Rules: []agentsv1alpha1.SecurityRule{
+				{Name: "pod", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"pod.example.com"}}}},
+			},
 		},
 	})
 	agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{Value: &configv1.AgentioConfig{
@@ -834,17 +1057,17 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	if err := workloadResource.Value.UnmarshalTo(address); err != nil {
 		t.Fatalf("unmarshal Workload: %v", err)
 	}
-	if got := extensionNames(address.GetWorkload().GetExtensions()); !reflect.DeepEqual(got, []string{"workload-metadata", "egress-policies", "sni-traffic-policy"}) {
-		t.Fatalf("Address workload extensions = %v, want independently matched Workload policies", got)
+	if got := extensionNames(
+		address.GetWorkload().GetExtensions(),
+	); !reflect.DeepEqual(
+		got,
+		[]string{"workload-metadata"},
+	) {
+		t.Fatalf("native-only Workload has policy extensions: %v", got)
 	}
-	workloadSNI := new(extensionsv1.SniTrafficPolicy)
-	if err := address.GetWorkload().Extensions[2].Config.UnmarshalTo(workloadSNI); err != nil {
-		t.Fatal(err)
-	}
-	if len(workloadSNI.Rules) != 1 || !reflect.DeepEqual(workloadSNI.Rules[0].Match.Sni, []string{"pod.example.com"}) {
-		t.Fatalf("Workload SNI must use its own selector: %v", workloadSNI)
-	}
-	if _, found := snapshot.Get(model.ResourceKey{TypeURL: model.WorkloadType, Name: "cluster//Pod/demo/client"}); found {
+	if _, found := snapshot.Get(
+		model.ResourceKey{TypeURL: model.WorkloadType, Name: "cluster//Pod/demo/client"},
+	); found {
 		t.Fatal("compiler retained a direct Workload resource")
 	}
 	manifest := manifestAt(t, compiler, workload.UID)
@@ -858,8 +1081,9 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	if len(payload.Rules) != 1 {
 		t.Fatalf("Sandbox SNI payload = %v", payload)
 	}
-	binding := compiler.Bindings().GetKey(policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID))
-	if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/terminate"}) {
+	binding := compiler.Bindings().GetKey(workload.UID)
+	if binding == nil ||
+		!reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/terminate"}) {
 		t.Fatalf("Sandbox policy binding = %+v", binding)
 	}
 }
@@ -895,11 +1119,11 @@ func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testin
 		t.Fatal("networking must remain available when Sandbox policies are unavailable")
 	}
 	failures := compiler.Failures()
-	if _, found := failures["Bindings/"+policypkg.BindingsKey(policypkg.PolicyTargetSandbox, workload.UID)]; !found {
+	if _, found := failures["Bindings/"+workload.UID]; !found {
 		t.Fatalf("Sandbox failure is missing: %v", failures)
 	}
-	if manifest := manifestAt(t, compiler, workload.UID); manifest != nil {
-		t.Fatal("invalid Sandbox policy binding must withdraw the manifest")
+	if manifest := manifestAt(t, compiler, workload.UID); manifest == nil {
+		t.Fatal("an unresolved policy reference must not withdraw the Sandbox")
 	}
 }
 
@@ -918,21 +1142,34 @@ func TestCompilerPublishesWorkloadEgressPolicies(t *testing.T) {
 				Namespaces: []string{"demo-a"},
 				MatchCidrs: []string{"203.0.113.1/32"},
 				Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
-				Gateway:    &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008},
+				Gateway: &extensionsv1.GatewayAddress{
+					Service: "egress-a.agentio-system.svc.cluster.local",
+					Port:    15008,
+				},
 			},
 			{
 				Namespaces: []string{"demo-a"},
 				MatchCidrs: []string{"203.0.113.2/32"},
 				Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
-				Gateway:    &extensionsv1.GatewayAddress{Service: "egress-a.agentio-system.svc.cluster.local", Port: 15008},
+				Gateway: &extensionsv1.GatewayAddress{
+					Service: "egress-a.agentio-system.svc.cluster.local",
+					Port:    15008,
+				},
 			},
 			{
 				Namespaces: []string{"demo-b"},
 				MatchCidrs: []string{"198.51.100.1/32"},
 				Policy:     extensionsv1.EgressPolicyAction_GATEWAY,
-				Gateway:    &extensionsv1.GatewayAddress{Service: "egress-b.agentio-system.svc.cluster.local", Port: 15008},
+				Gateway: &extensionsv1.GatewayAddress{
+					Service: "egress-b.agentio-system.svc.cluster.local",
+					Port:    15008,
+				},
 			},
-			{Namespaces: []string{"demo-b"}, MatchCidrs: []string{"198.51.100.2/32"}, Policy: extensionsv1.EgressPolicyAction_PASSTHROUGH},
+			{
+				Namespaces: []string{"demo-b"},
+				MatchCidrs: []string{"198.51.100.2/32"},
+				Policy:     extensionsv1.EgressPolicyAction_PASSTHROUGH,
+			},
 		}},
 	}}, options...)
 	emptyServices := krt.NewStaticCollection[model.Service](nil, nil, options...)
@@ -941,9 +1178,21 @@ func TestCompilerPublishesWorkloadEgressPolicies(t *testing.T) {
 	emptySecurity := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
 	inputs := validCompilerInputs(stop)
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{
-		{UID: "cluster//Pod/demo-a/client", Namespace: "demo-a", Attester: &model.Attester{WorkloadUID: "cluster//Pod/demo-a/client"}},
-		{UID: "cluster//Pod/demo-b/client", Namespace: "demo-b", Attester: &model.Attester{WorkloadUID: "cluster//Pod/demo-b/client"}},
-		{UID: "cluster//Pod/other/client", Namespace: "other", Attester: &model.Attester{WorkloadUID: "cluster//Pod/other/client"}},
+		{
+			UID:       "cluster//Pod/demo-a/client",
+			Namespace: "demo-a",
+			Attester:  &model.Attester{WorkloadUID: "cluster//Pod/demo-a/client"},
+		},
+		{
+			UID:       "cluster//Pod/demo-b/client",
+			Namespace: "demo-b",
+			Attester:  &model.Attester{WorkloadUID: "cluster//Pod/demo-b/client"},
+		},
+		{
+			UID:       "cluster//Pod/other/client",
+			Namespace: "other",
+			Attester:  &model.Attester{WorkloadUID: "cluster//Pod/other/client"},
+		},
 	}, options...)
 	inputs.Workloads = workloads
 	inputs.Services = emptyServices
@@ -1044,18 +1293,22 @@ func TestTrafficRulesOnlyUpdateDoesNotInvalidateWorkloads(t *testing.T) {
 	settle()
 	recorder := newRecorder(fixture.compiler.Resources())
 	oldSandbox, _ := currentSnapshot(t, fixture.compiler).Get(sandboxKey)
+	policyKey := model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: "namespaces/demo/trafficPolicies/allow"}
+	oldPolicy, _ := currentSnapshot(t, fixture.compiler).Get(policyKey)
 
 	updated := policyInput
 	updated.Spec.Egress = policyInput.Spec.Egress.DeepCopy()
 	updated.Spec.Egress.Rules[0].To[0].CIDR = "10.0.0.0/8"
 	fixture.trafficPolicies.ConditionalUpdateObject(updated)
 	eventually(t, func() bool {
-		current, found := currentSnapshot(t, fixture.compiler).Get(sandboxKey)
-		return found && current.Hash != oldSandbox.Hash
+		current, found := currentSnapshot(t, fixture.compiler).Get(policyKey)
+		return found && current.Hash != oldPolicy.Hash
 	}, "authorization rules update")
 	settle()
 
-	if recorder.has(addressResourceName("demo", "client")) {
-		t.Fatalf("rules-only TrafficPolicy update invalidated workload; changed=%v", recorder.names())
+	currentSandbox, _ := currentSnapshot(t, fixture.compiler).Get(sandboxKey)
+	if currentSandbox.Hash != oldSandbox.Hash || recorder.has(sandboxKey.TypeURL+"|"+sandboxKey.Name) ||
+		recorder.has(addressResourceName("demo", "client")) {
+		t.Fatalf("rules-only TrafficPolicy update invalidated workload or Sandbox; changed=%v", recorder.names())
 	}
 }

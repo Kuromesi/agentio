@@ -64,9 +64,7 @@ jobs:
         run: make build
       - name: Run unit tests
         run: make test
-      - name: Run linters
-        run: make lint
-      - name: Check new Go lint findings
+      - name: Run linters and check new Go style findings
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BASE: ${{ github.event.before }}
@@ -75,6 +73,7 @@ jobs:
           if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
             base="$(git rev-parse HEAD^)"
           fi
+          make lint GO_STYLE_BASE="$base"
           make lint.golangci GOLANGCI_LINT_ARGS="--new-from-rev=$base"
       - name: Run tests with the race detector
         run: make racetest

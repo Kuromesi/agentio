@@ -33,6 +33,7 @@ type Response struct {
 	Protocol        string
 	URL             string
 	RawContent      string
+	BodyText        string
 	Body            map[string]string
 	RequestHeaders  http.Header
 	ResponseHeaders http.Header
@@ -76,11 +77,13 @@ func ParseResponses(output string) ([]Response, error) {
 			ResponseHeaders: make(http.Header),
 		}
 		response.RawContent = strings.Join(frames[id], "\n")
+		var bodyLines []string
 		for _, line := range frames[id] {
 			body := false
 			if strings.HasPrefix(line, "body] ") {
 				body = true
 				line = strings.TrimPrefix(line, "body] ")
+				bodyLines = append(bodyLines, line)
 			}
 			key, value, found := strings.Cut(line, "=")
 			if !found {
@@ -112,6 +115,7 @@ func ParseResponses(output string) ([]Response, error) {
 				addHeader(response.ResponseHeaders, value)
 			}
 		}
+		response.BodyText = strings.Join(bodyLines, "\n")
 		responses = append(responses, response)
 	}
 	return responses, nil
