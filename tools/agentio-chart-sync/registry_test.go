@@ -35,6 +35,13 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 		t.Fatalf("prepare released bundle: %v\n%s", err, output)
 	}
 	bundle := filepath.Join(source, "integrations", "openkruise")
+	// Simulate the published 0.2.0 bundle's previous namespace default.
+	for _, component := range []string{"sandbox-manager", "sandbox-controller"} {
+		path := filepath.Join(component, "values.yaml")
+		writeTestFile(t, bundle, path, strings.ReplaceAll(readTestFile(t, bundle, path), "sandbox-system", "agentio-system"))
+	}
+	namespaceHelper := "sandbox-manager/templates/agentio/_namespace.tpl"
+	writeTestFile(t, bundle, namespaceHelper, strings.ReplaceAll(readTestFile(t, bundle, namespaceHelper), "sandbox-system", "agentio-system"))
 	beforeBundle := readTestTree(t, bundle)
 	manager, controller := t.TempDir(), newSandboxControllerChart(t)
 	writeTestFile(t, manager, "Chart.yaml", "apiVersion: v2\nname: sandbox-manager\nversion: 1.0.0\n")
@@ -43,6 +50,20 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 	args := []string{"--bundle", bundle, "--manager-chart", manager, "--controller-chart", controller}
 	if err := runApply(args); err != nil {
 		t.Fatal(err)
+	}
+	for _, chart := range []string{manager, controller} {
+		if strings.Contains(readTestFile(t, chart, "values.yaml"), "agentio-system") {
+			t.Fatal("apply retained the previous namespace default")
+		}
+	}
+	config := renderSandboxInjectionConfig(t, controller)
+	if !strings.Contains(config.Data["traffic-proxy"], "agentiod.sandbox-system.svc.cluster.local:15012") {
+		t.Fatal("controller does not target the default control-plane namespace")
+	}
+	for resource, namespace := range renderAgentioResourceNamespaces(t, manager, map[string]any{"agentio": map[string]any{"enabled": true, "global": map[string]any{"namespace": ""}}}) {
+		if namespace != "sandbox-system" {
+			t.Errorf("%s namespace = %s", resource, namespace)
+		}
 	}
 	beforeManager, beforeController := readTestTree(t, manager), readTestTree(t, controller)
 	if err := runApply(args); err != nil {

@@ -52,8 +52,8 @@ func integrationImageTag(bundle string) (string, error) {
 
 // adaptImageRegistry maps released image defaults to the parent charts' registry
 // contract. It runs after copying the bundle, so existing releases work without
-// republishing them. Only image values and their rendering helpers are adapted;
-// repositories and non-image templates stay intact. Defaults use the release tag.
+// republishing them. Image and namespace defaults and their rendering helpers are adapted;
+// repositories and workload templates stay intact. Defaults use the release tag.
 func adaptImageRegistry(target string, controller bool, tag string) error {
 	valuesPath := filepath.Join(target, "values.yaml")
 	content, err := os.ReadFile(valuesPath)
@@ -118,10 +118,28 @@ func adaptImageRegistry(target string, controller bool, tag string) error {
 			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "registry"},
 			&yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: ""})
 	}
+	if err := adaptIntegrationNamespace(target, agentio, controller); err != nil {
+		return err
+	}
 	if err := writeRegistryValues(valuesPath, content, agentio, begin, end); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(helperDir, "_agentio-registry.tpl"), []byte(warning+registryImageHelper), 0o644)
+}
+
+// Apply current integration defaults even when importing an older release bundle.
+func adaptIntegrationNamespace(target string, agentio *yamlv3.Node, controller bool) error {
+	parent, key := "global", "namespace"
+	if controller {
+		parent, key = "trafficProxy", "controlPlaneNamespace"
+	}
+	if namespace := yamlMappingValue(yamlMappingValue(agentio, parent), key); namespace != nil {
+		namespace.Value = "sandbox-system"
+	}
+	if controller {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(target, "templates", "agentio", "_namespace.tpl"), []byte(warning+integrationNamespaceTemplate), 0o644)
 }
 
 func writeRegistryValues(path string, content []byte, agentio *yamlv3.Node, begin, end string) error {

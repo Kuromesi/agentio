@@ -21,6 +21,11 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const integrationNamespaceTemplate = `{{- define "agentio.namespace" -}}
+{{- default "sandbox-system" .Values.agentio.global.namespace -}}
+{{- end -}}
+`
+
 // CRDs stay installed while the optional control plane is disabled. The keep
 // annotation also preserves policy objects if the manager release is removed.
 func buildManagerSupport(source, templates, files string) error {
@@ -75,10 +80,7 @@ func buildManagerSupport(source, templates, files string) error {
 {{ $.Files.Get $path }}
 {{- end }}
 `,
-		"_namespace.tpl": `{{- define "agentio.namespace" -}}
-{{- default "agentio-system" .Values.agentio.global.namespace -}}
-{{- end -}}
-`,
+		"_namespace.tpl": integrationNamespaceTemplate,
 		"namespace.yaml": `{{- if and .Values.agentio.enabled .Values.agentio.global.createNamespace (ne (include "agentio.namespace" .) .Release.Namespace) }}
 apiVersion: v1
 kind: Namespace

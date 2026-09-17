@@ -401,7 +401,7 @@ func generatedSandboxControllerValuesBlock(content []byte) ([]byte, error) {
 	generated := map[string]any{
 		"agentio": map[string]any{
 			"trafficProxy": map[string]any{
-				"controlPlaneNamespace":   "agentio-system",
+				"controlPlaneNamespace":   "sandbox-system",
 				"controlPlaneService":     service,
 				"xdsAddress":              "",
 				"clusterDomain":           values.Global.ClusterDomain,
@@ -709,7 +709,7 @@ func prepareSandboxManagerValues(content []byte) ([]byte, error) {
 	removeYAMLMappingKeys(yamlMappingValue(root, "egressGateway"), "agentgateway")
 	if global := yamlMappingValue(root, "global"); global != nil {
 		global.Content = append(global.Content,
-			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "namespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: "agentio-system"},
+			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "namespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: "sandbox-system"},
 			&yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "createNamespace"}, &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!bool", Value: "true"})
 	}
 	if agentiod := yamlMappingValue(root, "agentiod"); agentiod != nil {

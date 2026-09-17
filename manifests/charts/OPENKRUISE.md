@@ -71,7 +71,7 @@ Enable Agentio in the sandbox-manager release values:
 agentio:
   enabled: true
   global:
-    namespace: agentio-system
+    namespace: sandbox-system
     createNamespace: true
   egressGateway:
     mode: static
@@ -82,7 +82,7 @@ agentio:
 ```
 
 The gateway and EPE default to `disabled`; select the modes your deployment uses.
-The Agentio namespace defaults to `agentio-system`, independently of the manager's
+The Agentio namespace defaults to `sandbox-system`, independently of the manager's
 Helm release namespace. The chart creates and retains that namespace unless
 `agentio.global.createNamespace` is false or it is already the release namespace.
 The four policy CRDs always render, even when `agentio.enabled` is false, and carry
@@ -113,7 +113,7 @@ settings in the manager:
 | `agentio.agentiod.tokenAudience` | `agentio.trafficProxy.tokenAudience` |
 | `agentio.agentiod.ca.trustBundleConfigMapName` | `agentio.trafficProxy.caCertConfigMap` |
 
-The defaults use `agentiod.agentio-system.svc.cluster.local:15012`, token audience
+The defaults use `agentiod.sandbox-system.svc.cluster.local:15012`, token audience
 `agentio-ca`, and the namespace-local `agentio-ca-root-cert` trust bundle.
 `xdsAddress` and `caAddress` can override the derived addresses. The runtime adds
 an `agentio-init` container and a native `traffic-proxy` sidecar. Its
