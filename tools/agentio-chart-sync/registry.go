@@ -24,11 +24,37 @@ import (
 	yamlv3 "go.yaml.in/yaml/v3"
 )
 
+// integrationImageTag rejects development bundles before changing either chart.
+func integrationImageTag(bundle string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(bundle, "sandbox-manager", "values.yaml"))
+	if err != nil {
+		return "", err
+	}
+	var values struct {
+		Agentio struct {
+			Global struct {
+				Tag string `yaml:"tag"`
+			} `yaml:"global"`
+		} `yaml:"agentio"`
+	}
+	if err := yamlv3.Unmarshal(content, &values); err != nil {
+		return "", err
+	}
+	tag := values.Agentio.Global.Tag
+	core := `(0|[1-9][0-9]*)`
+	identifier := `(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`
+	pattern := `^` + core + `\.` + core + `\.` + core + `(-` + identifier + `(\.` + identifier + `)*)?$`
+	if !regexp.MustCompile(pattern).MatchString(tag) {
+		return "", fmt.Errorf("integration requires a fixed release version in agentio.global.tag, got %q", tag)
+	}
+	return tag, nil
+}
+
 // adaptImageRegistry maps released image defaults to the parent charts' registry
 // contract. It runs after copying the bundle, so existing releases work without
 // republishing them. Only image values and their rendering helpers are adapted;
-// the released repositories, digests, and non-image templates stay intact.
-func adaptImageRegistry(target string, controller bool) error {
+// repositories and non-image templates stay intact. Defaults use the release tag.
+func adaptImageRegistry(target string, controller bool, tag string) error {
 	valuesPath := filepath.Join(target, "values.yaml")
 	content, err := os.ReadFile(valuesPath)
 	if err != nil {
@@ -66,7 +92,7 @@ func adaptImageRegistry(target string, controller bool) error {
 			if image == nil {
 				continue
 			}
-			if err := adaptImageValues(image, hub); err != nil {
+			if err := adaptImageValues(image, hub, tag); err != nil {
 				return err
 			}
 			if controller {
@@ -120,17 +146,12 @@ func writeRegistryValues(path string, content []byte, agentio *yamlv3.Node, begi
 	return os.WriteFile(path, next, 0o644)
 }
 
-func adaptImageValues(image *yamlv3.Node, hub string) error {
+func adaptImageValues(image *yamlv3.Node, hub, tag string) error {
 	values := chartImageValues{}
 	if image.Kind == yamlv3.ScalarNode {
-		values.Repository, values.Digest, _ = strings.Cut(image.Value, "@")
-		if values.Digest == "" {
-			colon := strings.LastIndex(values.Repository, ":")
-			if colon > strings.LastIndex(values.Repository, "/") {
-				values.Repository, values.Tag = values.Repository[:colon], values.Repository[colon+1:]
-			} else {
-				values.Tag = "latest"
-			}
+		values.Repository, _, _ = strings.Cut(image.Value, "@")
+		if colon := strings.LastIndex(values.Repository, ":"); colon > strings.LastIndex(values.Repository, "/") {
+			values.Repository = values.Repository[:colon]
 		}
 	} else if err := image.Decode(&values); err != nil {
 		return err
@@ -142,7 +163,7 @@ func adaptImageValues(image *yamlv3.Node, hub string) error {
 	// explicitly chosen host keep that host, just like other chart images.
 	return image.Encode(map[string]string{
 		"registry": "", "repository": strings.TrimPrefix(values.Repository, "docker.io/"),
-		"tag": values.Tag, "digest": values.Digest,
+		"tag": tag, "digest": "",
 	})
 }
 

@@ -33,9 +33,11 @@ In a local checkout of `openkruise/charts`, the destination charts are
 
 ```bash
 export CHARTS_REPO=/path/to/charts
+helm pull oci://docker.io/openkruise/agentio --version 0.2.0 \
+  --untar --untardir /tmp/agentio-release
 
 go run ./tools/agentio-chart-sync apply \
-  --bundle manifests/charts/agentio/integrations/openkruise \
+  --bundle /tmp/agentio-release/agentio/integrations/openkruise \
   --manager-chart "$CHARTS_REPO/versions/kruise-agents-sandbox-manager/next" \
   --controller-chart "$CHARTS_REPO/versions/kruise-agents-sandbox-controller/next"
 
@@ -56,8 +58,10 @@ Applied images use `registry`, `repository`, `tag`, and `digest` fields. Docker 
 defaults inherit the parent chart's `image.registry`; a per-image `registry` takes
 precedence. The manager also supports `agentio.global.registry` between those two
 levels. A repository that already includes a registry hostname keeps that host.
-Released digests are preserved, so a mirror must contain the same manifests.
-To select a tag instead, clear that image's `digest` and set its `tag`.
+Each image defaults to the bundle's fixed release version, such as `0.2.0`, with
+an empty `digest`. `apply` rejects bundles with a missing or moving global tag
+such as `latest`. Mirrors must contain these version tags. A user-supplied
+`digest` still takes precedence over `tag`.
 
 ## Configure the installation
 
@@ -158,11 +162,16 @@ Pods need recreation to receive an updated runtime injection template.
 `tools/prepare-release-chart.sh` pins the standalone chart's images first, then
 rebuilds and verifies the embedded integrations. Both controller images retain
 the exact ztunnel and proxy-init digests used by the standalone sidecar injector.
-The release workflow packages this prepared chart without rebuilding it.
+The release workflow packages this prepared chart without rebuilding it and
+publishes matching version tags for all six images, including external
+dependencies. The standalone chart remains digest-pinned; downstream `apply`
+converts its image defaults to the fixed release tag. For older releases, run
+`agentio-dependency-tags` first if dependency version tags are missing.
 
 The `sync-sandbox-manager-agentio-chart` workflow can be dispatched with a
-published chart version. It pulls the OCI chart, verifies and applies its bundled
-integration, lints and renders the downstream charts, and opens a pull request in
+published chart version. It pulls the OCI chart, checks that all version tags
+match the published BOM digests, verifies and applies its bundled integration,
+lints and renders the downstream charts, and opens a pull request in
 `openkruise/charts`. It requires the existing release environment's
 `AGENTIO_SYNC_APP_CLIENT_ID` variable and `AGENTIO_SYNC_APP_PRIVATE_KEY` secret.
 The corresponding GitHub App must be installed for `openkruise/charts` with

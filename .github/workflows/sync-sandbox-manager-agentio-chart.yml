@@ -81,6 +81,30 @@ jobs:
             --untar \
             --untardir "$RUNNER_TEMP/released-agentio"
 
+      - name: Verify release image tags against the published BOM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern "agentio-${VERSION}-bom.json" --dir "$RUNNER_TEMP/released-agentio"
+          bom="$RUNNER_TEMP/released-agentio/agentio-${VERSION}-bom.json"
+          jq -e --arg version "$VERSION" '.version == $version and (.images | length == 6)' "$bom" >/dev/null
+          jq -er '.images[]' "$bom" > "$RUNNER_TEMP/released-agentio/images"
+          while IFS= read -r source; do
+            if [[ ! "$source" =~ ^docker\.io/openkruise/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid released image: $source" >&2
+              exit 1
+            fi
+            target="${source%@*}:${VERSION}"
+            actual=$(crane digest "$target")
+            if [[ "$actual" != "${source##*@}" ]]; then
+              echo "Version tag $target does not match the release BOM: $actual" >&2
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/released-agentio/images"
+
       - name: Sync released OpenKruise integration bundle
         working-directory: agentio
         env:

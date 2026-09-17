@@ -58,14 +58,15 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 		t.Fatal("apply changed parent values outside the generated block")
 	}
 	for _, test := range []struct {
-		name, chartRegistry, globalRegistry, imageRegistry, repository, tag string
-		managerPrefix, controllerPrefix                                     string
+		name, chartRegistry, globalRegistry, imageRegistry, repository, tag, digest string
+		managerPrefix, controllerPrefix                                             string
 	}{
 		{name: "released defaults", managerPrefix: "docker.io/openkruise/", controllerPrefix: "docker.io/openkruise/"},
 		{name: "chart registry", chartRegistry: "mirror.example:5000", managerPrefix: "mirror.example:5000/openkruise/", controllerPrefix: "mirror.example:5000/openkruise/"},
 		{name: "agentio registry", chartRegistry: "chart.example", globalRegistry: "agentio.example", managerPrefix: "agentio.example/openkruise/", controllerPrefix: "chart.example/openkruise/"},
 		{name: "per-image registry", chartRegistry: "chart.example", globalRegistry: "agentio.example", imageRegistry: "image.example", managerPrefix: "image.example/openkruise/", controllerPrefix: "image.example/openkruise/"},
 		{name: "qualified repository", chartRegistry: "chart.example", globalRegistry: "agentio.example", imageRegistry: "image.example", repository: "explicit.example:5000/team/image"},
+		{name: "digest override", digest: digest, tag: "2.3.4", managerPrefix: "docker.io/openkruise/", controllerPrefix: "docker.io/openkruise/"},
 		{name: "tag override", chartRegistry: "mirror.example", tag: "2.3.4", managerPrefix: "mirror.example/openkruise/", controllerPrefix: "mirror.example/openkruise/"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -73,10 +74,14 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 			if test.repository != "" {
 				imageValues["repository"] = test.repository
 			}
-			suffix := "@" + digest
+			suffix := ":1.2.3"
 			if test.tag != "" {
-				imageValues["digest"], imageValues["tag"] = "", test.tag
+				imageValues["tag"] = test.tag
 				suffix = ":" + test.tag
+			}
+			if test.digest != "" {
+				imageValues["digest"] = test.digest
+				suffix = "@" + test.digest
 			}
 			managerValues := map[string]any{
 				"image": map[string]any{"registry": test.chartRegistry},
@@ -115,5 +120,28 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestApplyRequiresFixedReleaseTag(t *testing.T) {
+	for _, tag := range []string{"", "latest", "main", "0.2", "01.2.3", "1.2.3-01", "1.2.3+build"} {
+		t.Run(tag, func(t *testing.T) {
+			bundle, target := t.TempDir(), t.TempDir()
+			writeTestFile(t, bundle, "sandbox-manager/values.yaml", "agentio:\n  global:\n    tag: \""+tag+"\"\n")
+			before := readTestTree(t, target)
+			if err := runApply([]string{"--bundle", bundle, "--manager-chart", target}); err == nil || !strings.Contains(err.Error(), "fixed release version") {
+				t.Fatalf("expected release tag validation error, got %v", err)
+			}
+			if readTestTree(t, target) != before {
+				t.Fatal("invalid release tag changed target")
+			}
+		})
+	}
+	for _, tag := range []string{"0.2.0", "1.2.3-rc.1"} {
+		bundle := t.TempDir()
+		writeTestFile(t, bundle, "sandbox-manager/values.yaml", "agentio:\n  global:\n    tag: \""+tag+"\"\n")
+		if actual, err := integrationImageTag(bundle); err != nil || actual != tag {
+			t.Fatalf("tag %q: got %q, %v", tag, actual, err)
+		}
 	}
 }

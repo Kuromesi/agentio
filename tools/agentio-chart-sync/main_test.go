@@ -34,6 +34,8 @@ func TestCLIApplySubcommandSyncsPreparedBundle(t *testing.T) {
 	writeTestFile(t, bundle, "sandbox-manager/values.yaml", `# BEGIN GENERATED AGENTIO VALUES - DO NOT EDIT
 agentio:
   enabled: false
+  global:
+    tag: "1.2.3"
 # END GENERATED AGENTIO VALUES
 `)
 	writeTestFile(t, bundle, "sandbox-manager/templates/agentio/config.yaml", `{{- if .Values.agentio.enabled }}

@@ -286,7 +286,7 @@ jobs:
             -f sha="$tag_object_sha" >/dev/null
 
   promote-version-images:
-    needs: [tag-agentio, build-candidates]
+    needs: [validate-release, tag-agentio, build-candidates]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
@@ -307,12 +307,15 @@ jobs:
             exit 1
           fi
           echo "$HUB_TOKEN" | crane auth login docker.io -u "$HUB_USERNAME" --password-stdin
-      - name: Promote tested candidates to version tags
+      - name: Promote tested images to version tags
         env:
           VERSION: ${{ inputs.version }}
           AGENTIOD_IMAGE: ${{ needs.build-candidates.outputs.agentiod_image }}
           EPE_IMAGE: ${{ needs.build-candidates.outputs.epe_image }}
           ZTUNNEL_IMAGE: ${{ needs.build-candidates.outputs.ztunnel_image }}
+          CNI_IMAGE: ${{ needs.validate-release.outputs.cni_image }}
+          PROXY_INIT_IMAGE: ${{ needs.validate-release.outputs.proxy_init_image }}
+          GATEWAY_IMAGE: ${{ needs.validate-release.outputs.gateway_image }}
         run: |
           promote() {
             local source="$1" repository expected actual
@@ -325,9 +328,23 @@ jobs:
               return 1
             fi
           }
-          promote "$AGENTIOD_IMAGE"
-          promote "$EPE_IMAGE"
-          promote "$ZTUNNEL_IMAGE"
+          images=("$AGENTIOD_IMAGE" "$EPE_IMAGE" "$ZTUNNEL_IMAGE" "$CNI_IMAGE" "$PROXY_INIT_IMAGE" "$GATEWAY_IMAGE")
+          # Reject any conflicting version tag before promoting any image.
+          for source in "${images[@]}"; do
+            target="${source%@*}:${VERSION}"
+            if actual=$(crane digest "$target" 2>"$RUNNER_TEMP/version-tag-error"); then
+              if [[ "$actual" != "${source##*@}" ]]; then
+                echo "Refusing to replace $target: $actual differs from ${source##*@}" >&2
+                exit 1
+              fi
+            elif ! grep -q 'MANIFEST_UNKNOWN' "$RUNNER_TEMP/version-tag-error"; then
+              cat "$RUNNER_TEMP/version-tag-error" >&2
+              exit 1
+            fi
+          done
+          for source in "${images[@]}"; do
+            promote "$source"
+          done
 
   publish-chart:
     needs: [prepare-chart, promote-version-images]
