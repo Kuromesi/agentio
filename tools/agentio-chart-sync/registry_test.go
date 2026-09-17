@@ -82,8 +82,15 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 		t.Fatal("apply changed parent values outside the generated block")
 	}
 	for _, test := range []struct {
-		name, chartRegistry, globalRegistry, imageRegistry, repository, tag, digest string
-		managerPrefix, controllerPrefix                                             string
+		name             string
+		chartRegistry    string
+		globalRegistry   string
+		imageRegistry    string
+		repository       string
+		tag              string
+		digest           string
+		managerPrefix    string
+		controllerPrefix string
 	}{
 		{name: "released defaults", managerPrefix: "docker.io/openkruise/", controllerPrefix: "docker.io/openkruise/"},
 		{name: "chart registry", chartRegistry: "mirror.example:5000", managerPrefix: "mirror.example:5000/openkruise/", controllerPrefix: "mirror.example:5000/openkruise/"},
@@ -122,9 +129,10 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 				"agentio": map[string]any{"trafficProxy": map[string]any{"image": imageValues, "initImage": imageValues}},
 			}
 			for _, chart := range []struct {
-				path, prefix string
-				values       map[string]any
-				names        []string
+				path   string
+				prefix string
+				values map[string]any
+				names  []string
 			}{
 				{manager, test.managerPrefix, managerValues, []string{"agentiod", "agentio-epe", "proxyv2"}},
 				{controller, test.controllerPrefix, controllerValues, []string{"ztunnel", "proxy-init"}},
@@ -173,9 +181,10 @@ func TestApplyRequiresFixedReleaseTag(t *testing.T) {
 func testIntegrationEgressDefaults(t *testing.T, chart string) {
 	t.Helper()
 	for _, test := range []struct {
-		name            string
-		agentio         map[string]any
-		policy, service string
+		name    string
+		agentio map[string]any
+		policy  string
+		service string
 	}{
 		{name: "default gateway and EPE", policy: "GATEWAY", service: "agentio-egress.sandbox-system.svc.cluster.local"},
 		{name: "custom gateway address", agentio: map[string]any{"global": map[string]any{"namespace": "custom", "clusterDomain": "example.internal"}, "egressGateway": map[string]any{"fullnameOverride": "my-egress"}}, policy: "GATEWAY", service: "my-egress.custom.svc.example.internal"},

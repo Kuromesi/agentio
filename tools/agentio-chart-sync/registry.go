@@ -148,9 +148,12 @@ func adaptIntegrationNamespace(target string, agentio *yamlv3.Node, controller b
 }
 
 func writeRegistryValues(path string, content []byte, agentio *yamlv3.Node, begin, end string) error {
-	root := &yamlv3.Node{Kind: yamlv3.MappingNode, Content: []*yamlv3.Node{
-		{Kind: yamlv3.ScalarNode, Value: "agentio"}, agentio,
-	}}
+	root := &yamlv3.Node{
+		Kind: yamlv3.MappingNode,
+		Content: []*yamlv3.Node{
+			{Kind: yamlv3.ScalarNode, Value: "agentio"}, agentio,
+		},
+	}
 	var block bytes.Buffer
 	fmt.Fprintln(&block, begin)
 	encoder := yamlv3.NewEncoder(&block)
@@ -185,8 +188,10 @@ func adaptImageValues(image *yamlv3.Node, hub, tag string) error {
 	// Docker Hub defaults inherit the parent's registry. References to an
 	// explicitly chosen host keep that host, just like other chart images.
 	return image.Encode(map[string]string{
-		"registry": "", "repository": strings.TrimPrefix(values.Repository, "docker.io/"),
-		"tag": tag, "digest": "",
+		"registry":   "",
+		"repository": strings.TrimPrefix(values.Repository, "docker.io/"),
+		"tag":        tag,
+		"digest":     "",
 	})
 }
 
