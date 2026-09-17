@@ -460,16 +460,7 @@ func (r *runner) run(ctx context.Context) error {
 		}
 		previous = n
 	}
-	end := time.Now().Add(seconds(r.cfg.HoldSeconds))
-	for time.Now().Before(end) {
-		if _, err := r.statuses(ctx, false, previous); err != nil {
-			return err
-		}
-		if err := sleep(ctx, min(time.Second, time.Until(end))); err != nil {
-			return err
-		}
-	}
-	if _, err := r.statuses(ctx, false, previous); err != nil {
+	if err := r.hold(ctx, previous); err != nil {
 		return err
 	}
 	if err := r.snapshot(ctx, "final"); err != nil {
@@ -477,6 +468,20 @@ func (r *runner) run(ctx context.Context) error {
 	}
 	r.result.Complete = true
 	return nil
+}
+
+func (r *runner) hold(ctx context.Context, connections int) error {
+	end := time.Now().Add(seconds(r.cfg.HoldSeconds))
+	for time.Now().Before(end) {
+		if _, err := r.statuses(ctx, false, connections); err != nil {
+			return err
+		}
+		if err := sleep(ctx, min(time.Second, time.Until(end))); err != nil {
+			return err
+		}
+	}
+	_, err := r.statuses(ctx, false, connections)
+	return err
 }
 
 func (r *runner) execute(ctx context.Context) (err error) {
