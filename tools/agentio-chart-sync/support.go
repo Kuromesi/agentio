@@ -118,7 +118,11 @@ func addIntegrationEgressDefault(templates string) error {
 	if bytes.Count(content, marker) != 1 {
 		return fmt.Errorf("expected one Agentio config merge in %s", path)
 	}
-	return os.WriteFile(path, bytes.Replace(content, marker, append([]byte(integrationEgressDefault), marker...), 1), 0o644)
+	return os.WriteFile(
+		path,
+		bytes.Replace(content, marker, append([]byte(integrationEgressDefault), marker...), 1),
+		0o644,
+	)
 }
 
 const integrationEgressDefault = `{{/* BEGIN INTEGRATION EGRESS DEFAULT */}}

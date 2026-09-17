@@ -33,17 +33,29 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 	for _, name := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "proxyv2"} {
 		images = append(images, "docker.io/openkruise/"+name+"@"+digest)
 	}
-	if output, err := exec.Command("../prepare-release-chart.sh", append([]string{source, "1.2.3"}, images...)...).CombinedOutput(); err != nil {
+	if output, err := exec.Command("../prepare-release-chart.sh", append([]string{source, "1.2.3"}, images...)...).
+		CombinedOutput(); err != nil {
 		t.Fatalf("prepare released bundle: %v\n%s", err, output)
 	}
 	bundle := filepath.Join(source, "integrations", "openkruise")
 	// Simulate the published 0.2.0 bundle's previous namespace default.
 	for _, component := range []string{"sandbox-manager", "sandbox-controller"} {
 		path := filepath.Join(component, "values.yaml")
-		writeTestFile(t, bundle, path, strings.NewReplacer("sandbox-system", "agentio-system", "mode: static", "mode: disabled", "mode: managed", "mode: disabled").Replace(readTestFile(t, bundle, path)))
+		writeTestFile(
+			t,
+			bundle,
+			path,
+			strings.NewReplacer("sandbox-system", "agentio-system", "mode: static", "mode: disabled", "mode: managed", "mode: disabled").
+				Replace(readTestFile(t, bundle, path)),
+		)
 	}
 	namespaceHelper := "sandbox-manager/templates/agentio/_namespace.tpl"
-	writeTestFile(t, bundle, namespaceHelper, strings.ReplaceAll(readTestFile(t, bundle, namespaceHelper), "sandbox-system", "agentio-system"))
+	writeTestFile(
+		t,
+		bundle,
+		namespaceHelper,
+		strings.ReplaceAll(readTestFile(t, bundle, namespaceHelper), "sandbox-system", "agentio-system"),
+	)
 	beforeBundle := readTestTree(t, bundle)
 	manager, controller := t.TempDir(), newSandboxControllerChart(t)
 	writeTestFile(t, manager, "Chart.yaml", "apiVersion: v2\nname: sandbox-manager\nversion: 1.0.0\n")
@@ -78,7 +90,10 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 	if readTestTree(t, bundle) != beforeBundle {
 		t.Fatal("apply mutated the released bundle")
 	}
-	if !strings.HasPrefix(readTestFile(t, manager, "values.yaml"), "image: {registry: docker.io}\nparent: unchanged\n") {
+	if !strings.HasPrefix(
+		readTestFile(t, manager, "values.yaml"),
+		"image: {registry: docker.io}\nparent: unchanged\n",
+	) {
 		t.Fatal("apply changed parent values outside the generated block")
 	}
 	for _, test := range []struct {
@@ -125,8 +140,10 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 				},
 			}
 			controllerValues := map[string]any{
-				"image":   map[string]any{"registry": test.chartRegistry},
-				"agentio": map[string]any{"trafficProxy": map[string]any{"image": imageValues, "initImage": imageValues}},
+				"image": map[string]any{"registry": test.chartRegistry},
+				"agentio": map[string]any{
+					"trafficProxy": map[string]any{"image": imageValues, "initImage": imageValues},
+				},
 			}
 			for _, chart := range []struct {
 				path   string
@@ -161,7 +178,10 @@ func TestApplyRequiresFixedReleaseTag(t *testing.T) {
 			bundle, target := t.TempDir(), t.TempDir()
 			writeTestFile(t, bundle, "sandbox-manager/values.yaml", "agentio:\n  global:\n    tag: \""+tag+"\"\n")
 			before := readTestTree(t, target)
-			if err := runApply([]string{"--bundle", bundle, "--manager-chart", target}); err == nil || !strings.Contains(err.Error(), "fixed release version") {
+			if err := runApply(
+				[]string{"--bundle", bundle, "--manager-chart", target},
+			); err == nil ||
+				!strings.Contains(err.Error(), "fixed release version") {
 				t.Fatalf("expected release tag validation error, got %v", err)
 			}
 			if readTestTree(t, target) != before {
@@ -200,7 +220,7 @@ func testIntegrationEgressDefaults(t *testing.T, chart string) {
 			rendered := renderChart(t, chart, map[string]any{"agentio": test.agentio})
 			found := false
 			for _, content := range rendered {
-				for _, doc := range strings.Split(content, "\n---") {
+				for doc := range strings.SplitSeq(content, "\n---") {
 					var object struct {
 						Kind string
 						Data map[string]string

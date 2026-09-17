@@ -232,7 +232,10 @@ func adaptControllerImage(target, key string) error {
 	if bytes.Count(content, []byte(old)) != 1 {
 		return fmt.Errorf("expected one traffic-proxy %s reference", key)
 	}
-	replacement := fmt.Sprintf(`{{ include "agentio.registryImage" (dict "root" . "image" .Values.agentio.trafficProxy.%s) | quote }}`, key)
+	replacement := fmt.Sprintf(
+		`{{ include "agentio.registryImage" (dict "root" . "image" .Values.agentio.trafficProxy.%s) | quote }}`,
+		key,
+	)
 	return os.WriteFile(path, bytes.Replace(content, []byte(old), []byte(replacement), 1), 0o644)
 }
 
