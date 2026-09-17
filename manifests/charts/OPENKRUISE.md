@@ -81,7 +81,13 @@ agentio:
       url: https://credentials.example.com
 ```
 
-The gateway and EPE default to `disabled`; select the modes your deployment uses.
+When Agentio is enabled, the gateway defaults to `static` and EPE to `managed`.
+A catch-all egress policy routes outbound traffic to the integrated gateway.
+Explicit `agentio.agentiod.config.values.egressPolicies` replace that default
+(including an empty list); custom gateway names, namespaces, and cluster domains
+are reflected in the generated Service address. Setting the gateway mode to
+`disabled` suppresses the generated gateway route. Existing
+`agentio-config-primary` routing overrides still take precedence.
 The Agentio namespace defaults to `sandbox-system`, independently of the manager's
 Helm release namespace. The chart creates and retains that namespace unless
 `agentio.global.createNamespace` is false or it is already the release namespace.

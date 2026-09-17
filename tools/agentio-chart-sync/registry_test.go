@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
@@ -38,7 +40,7 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 	// Simulate the published 0.2.0 bundle's previous namespace default.
 	for _, component := range []string{"sandbox-manager", "sandbox-controller"} {
 		path := filepath.Join(component, "values.yaml")
-		writeTestFile(t, bundle, path, strings.ReplaceAll(readTestFile(t, bundle, path), "sandbox-system", "agentio-system"))
+		writeTestFile(t, bundle, path, strings.NewReplacer("sandbox-system", "agentio-system", "mode: static", "mode: disabled", "mode: managed", "mode: disabled").Replace(readTestFile(t, bundle, path)))
 	}
 	namespaceHelper := "sandbox-manager/templates/agentio/_namespace.tpl"
 	writeTestFile(t, bundle, namespaceHelper, strings.ReplaceAll(readTestFile(t, bundle, namespaceHelper), "sandbox-system", "agentio-system"))
@@ -65,6 +67,7 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 			t.Errorf("%s namespace = %s", resource, namespace)
 		}
 	}
+	testIntegrationEgressDefaults(t, manager)
 	beforeManager, beforeController := readTestTree(t, manager), readTestTree(t, controller)
 	if err := runApply(args); err != nil {
 		t.Fatal(err)
@@ -164,5 +167,67 @@ func TestApplyRequiresFixedReleaseTag(t *testing.T) {
 		if actual, err := integrationImageTag(bundle); err != nil || actual != tag {
 			t.Fatalf("tag %q: got %q, %v", tag, actual, err)
 		}
+	}
+}
+
+func testIntegrationEgressDefaults(t *testing.T, chart string) {
+	t.Helper()
+	for _, test := range []struct {
+		name            string
+		agentio         map[string]any
+		policy, service string
+	}{
+		{name: "default gateway and EPE", policy: "GATEWAY", service: "agentio-egress.sandbox-system.svc.cluster.local"},
+		{name: "custom gateway address", agentio: map[string]any{"global": map[string]any{"namespace": "custom", "clusterDomain": "example.internal"}, "egressGateway": map[string]any{"fullnameOverride": "my-egress"}}, policy: "GATEWAY", service: "my-egress.custom.svc.example.internal"},
+		{name: "explicit passthrough", agentio: map[string]any{"agentiod": map[string]any{"config": map[string]any{"values": map[string]any{"egressPolicies": []any{map[string]any{"policy": "PASSTHROUGH"}}}}}}, policy: "PASSTHROUGH"},
+		{name: "explicit empty routes", agentio: map[string]any{"agentiod": map[string]any{"config": map[string]any{"values": map[string]any{"egressPolicies": []any{}}}}}},
+		{name: "gateway and EPE disabled", agentio: map[string]any{"egressGateway": map[string]any{"mode": "disabled"}, "epe": map[string]any{"mode": "disabled"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.agentio == nil {
+				test.agentio = map[string]any{}
+			}
+			test.agentio["enabled"] = true
+			rendered := renderChart(t, chart, map[string]any{"agentio": test.agentio})
+			found := false
+			for _, content := range rendered {
+				for _, doc := range strings.Split(content, "\n---") {
+					var object struct {
+						Kind string
+						Data map[string]string
+					}
+					if err := yaml.Unmarshal([]byte(doc), &object); err != nil {
+						t.Fatal(err)
+					}
+					if object.Kind != "ConfigMap" || object.Data["config"] == "" {
+						continue
+					}
+					found = true
+					var config struct {
+						EgressPolicies []struct {
+							Policy  string
+							Gateway struct{ Service string }
+						}
+						SandboxExtProc map[string]any
+					}
+					if err := yaml.Unmarshal([]byte(object.Data["config"]), &config); err != nil {
+						t.Fatal(err)
+					}
+					if test.policy == "" {
+						if len(config.EgressPolicies) != 0 {
+							t.Fatal("unexpected default egress route")
+						}
+					} else if len(config.EgressPolicies) != 1 || config.EgressPolicies[0].Policy != test.policy || config.EgressPolicies[0].Gateway.Service != test.service {
+						t.Fatalf("unexpected egress policies: %+v", config.EgressPolicies)
+					}
+					if test.name == "default gateway and EPE" && len(config.SandboxExtProc) == 0 {
+						t.Fatal("default EPE provider missing")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("Agentio ConfigMap missing")
+			}
+		})
 	}
 }

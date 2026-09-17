@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,3 +99,32 @@ metadata:
 	}
 	return nil
 }
+
+// addIntegrationEgressDefault keeps the default gateway reference aligned with
+// Helm name/namespace overrides and leaves explicit routing rules authoritative.
+func addIntegrationEgressDefault(templates string) error {
+	path := filepath.Join(templates, "agentiod", "configmaps.yaml")
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	} // Minimal exporter fixtures have no control plane.
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(content, []byte("BEGIN INTEGRATION EGRESS DEFAULT")) {
+		return nil
+	}
+	marker := []byte(`{{- $config := mergeOverwrite`)
+	if bytes.Count(content, marker) != 1 {
+		return fmt.Errorf("expected one Agentio config merge in %s", path)
+	}
+	return os.WriteFile(path, bytes.Replace(content, marker, append([]byte(integrationEgressDefault), marker...), 1), 0o644)
+}
+
+const integrationEgressDefault = `{{/* BEGIN INTEGRATION EGRESS DEFAULT */}}
+{{- if and (eq .Values.agentio.egressGateway.mode "static") (not (hasKey (.Values.agentio.agentiod.config.values | default dict) "egressPolicies")) -}}
+{{- $service := printf "%s.%s.svc.%s" (include "agentio.gateway.fullname" .) (include "agentio.namespace" .) .Values.agentio.global.clusterDomain -}}
+{{- $_ := set $defaults "egressPolicies" (list (dict "policy" "GATEWAY" "gateway" (dict "service" $service))) -}}
+{{- end -}}
+{{/* END INTEGRATION EGRESS DEFAULT */}}
+`

@@ -205,6 +205,9 @@ func buildSandboxManagerBundle(source, target string) error {
 		return fmt.Errorf("validate source files: %w", statErr)
 	}
 
+	if err := addIntegrationEgressDefault(stagedTemplates); err != nil {
+		return err
+	}
 	if err := buildManagerSupport(source, stagedTemplates, stagedFiles); err != nil {
 		return err
 	}
@@ -705,6 +708,7 @@ func prepareSandboxManagerValues(content []byte) ([]byte, error) {
 		return nil, errors.New("source values for sandbox-manager must be a YAML mapping")
 	}
 	root := document.Content[0]
+	setIntegrationGatewayModes(root)
 	removeYAMLMappingKeys(root, "profile", "cni", "ztunnel")
 	removeYAMLMappingKeys(yamlMappingValue(root, "egressGateway"), "agentgateway")
 	if global := yamlMappingValue(root, "global"); global != nil {

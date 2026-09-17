@@ -139,7 +139,12 @@ func adaptIntegrationNamespace(target string, agentio *yamlv3.Node, controller b
 	if controller {
 		return nil
 	}
-	return os.WriteFile(filepath.Join(target, "templates", "agentio", "_namespace.tpl"), []byte(warning+integrationNamespaceTemplate), 0o644)
+	setIntegrationGatewayModes(agentio)
+	templates := filepath.Join(target, "templates", "agentio")
+	if err := addIntegrationEgressDefault(templates); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(templates, "_namespace.tpl"), []byte(warning+integrationNamespaceTemplate), 0o644)
 }
 
 func writeRegistryValues(path string, content []byte, agentio *yamlv3.Node, begin, end string) error {
@@ -243,3 +248,11 @@ Qualified repositories retain their host. Digests take precedence over tags. */}
 {{- end -}}
 {{- end -}}
 `
+
+func setIntegrationGatewayModes(root *yamlv3.Node) {
+	for component, value := range map[string]string{"egressGateway": "static", "epe": "managed"} {
+		if mode := yamlMappingValue(yamlMappingValue(root, component), "mode"); mode != nil {
+			mode.Value = value
+		}
+	}
+}
