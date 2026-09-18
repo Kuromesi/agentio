@@ -787,10 +787,13 @@ func TestSandboxTrafficPolicyUsesUnifiedInputs(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		a, b := manifestAt(t, fixture.compiler, "a"), manifestAt(t, fixture.compiler, "b")
+		// The shared policy's own xDS resource comes from a separate collection
+		// and can trail the Sandbox references that point at it.
 		return a != nil && len(a.GetTrafficPolicy().GetEgress().GetRules()) == 1 && b != nil &&
 			b.TrafficPolicy == nil &&
 			reflect.DeepEqual(trafficPolicyRefs(a), []string{"trafficPolicies/global"}) &&
-			reflect.DeepEqual(trafficPolicyRefs(b), []string{"trafficPolicies/global"})
+			reflect.DeepEqual(trafficPolicyRefs(b), []string{"trafficPolicies/global"}) &&
+			len(currentSnapshot(t, fixture.compiler).List(model.TrafficPolicyType)) == 1
 	}, "direct Sandbox rules coexist with shared references")
 	a := manifestAt(t, fixture.compiler, "a")
 	if a.TrafficPolicy.Ingress != nil ||
