@@ -626,9 +626,11 @@ func TestMalformedTrafficPolicyUpdatePreservesLastKnownGood(t *testing.T) {
 		TypeURL: model.SandboxType,
 		Name:    "cluster//Pod/alpha/client",
 	}
+	// The Sandbox can appear before krt folds the policy reference into it, so
+	// wait for the reference rather than for the resource alone.
 	eventually(t, func() bool {
-		_, found := currentSnapshot(t, fixture.compiler).Get(key)
-		return found
+		manifest := manifestAt(t, fixture.compiler, key.Name)
+		return manifest != nil && len(trafficPolicyRefs(manifest)) == 1
 	}, "initial authorization resource")
 	baseline, _ := currentSnapshot(t, fixture.compiler).Get(key)
 
