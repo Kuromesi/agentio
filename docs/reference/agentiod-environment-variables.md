@@ -80,6 +80,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_ENABLE_SIDECAR_INJECTOR</code> | Boolean | <code>false</code> | If true, serve the Agentio ztunnel injection webhook at the Istio-compatible /inject endpoint. |
 | <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, enforce SNI traffic policies in egress gateways, using HBONE TLS action headers when present. |
 | <code>AGENTIO_GATEWAY_CONNECT_TIMEOUT</code> | Duration | <code>10s</code> | Connect timeout for passthrough and dynamic-forward-proxy gateway clusters. |
+| <code>AGENTIO_GATEWAY_ENABLE_UDP_PROXY</code> | Boolean | <code>false</code> | If enabled, egress gateways terminate experimental IPv4 CONNECT-UDP sessions from ztunnel and forward datagrams directly to the MASQUE target without inspection. |
 | <code>AGENTIO_GATEWAY_LEASE_NAME</code> | String | <code>agentiod-gateway-deployer-leader</code> | Lease electing the single replica running the gateway deployment controller. |
 | <code>AGENTIO_GATEWAY_ROOT_CA_PATH</code> | String | empty | OS root CA bundle path used by gateway TLS origination. When empty the first existing well-known OS CA bundle is auto-detected, matching release-0.1. |
 | <code>AGENTIO_IGNORE_RESOURCES</code> | String | empty | Comma-separated CRD names excluded from the CRD watcher; a &#34;&#42;.&#34; prefix excludes a whole group by suffix (e.g. &#34;&#42;.istio.io&#34;). |
@@ -160,6 +161,20 @@ not construct the distributor or allow CA injection, even with a Pod opt-in.
 The chart also omits the public CA package init container. Secret CA sources
 reuse existing system-namespace RBAC; the chart grants no additional source permissions.
 Disabling retains existing bundle ConfigMaps but stops updating them.
+
+## Experimental UDP sessions
+
+`AGENTIO_GATEWAY_ENABLE_UDP_PROXY` defaults to `false`. When enabled, every egress gateway accepts IPv4 CONNECT-UDP sessions on its HBONE listener. ztunnel opens one extended CONNECT stream per UDP flow with the MASQUE path `/.well-known/masque/udp/{ip}/{port}/`; the gateway validates the numeric destination, terminates the capsule stream, and sends the datagrams from one shared ORIGINAL_DST UDP cluster. Hostnames and IPv6 targets are rejected.
+
+UDP sessions are forwarded directly. Neither the CONNECT-UDP request nor the datagrams pass through `extProc`; EPE policies continue to apply only to the inner HTTP of ordinary TCP HBONE.
+
+The flag only changes the gateway. Enable `ENABLE_UDP_PROXY=true` on each ztunnel and configure source Pod UDP TPROXY capture to port `15002`, preserving the original destination. Keep the capture mark distinct from ztunnel's `PACKET_MARK` (default `1337`) so the proxy's own sockets are not routed back into its listener. The default sidecar init only captures TCP; UDP capture requires a UDP-capable init or CNI. Keep DNS capture and exclusions separate.
+
+```yaml
+agentiod:
+  env:
+    AGENTIO_GATEWAY_ENABLE_UDP_PROXY: "true"
+```
 
 ## On-demand TLS certificates
 

@@ -195,6 +195,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 	if err != nil {
 		return nil, err
 	}
+	if features.EnableUDPProxy {
+		configureUDPHCM(connectHCM)
+	}
 	httpInternal, err := b.buildForwardHCM(HTTPDynamicForwardProxy, config, false)
 	if err != nil {
 		return nil, err
