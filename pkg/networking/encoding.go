@@ -19,7 +19,6 @@ import (
 
 	"github.com/openkruise/agentio/pkg/util/protoutil"
 
-	xdscorev3 "github.com/cncf/xds/go/xds/core/v3"
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -47,6 +46,16 @@ func (b *resourceBuilder) pack(message proto.Message) *anypb.Any {
 	return value
 }
 
+// mustPack is for fixed configuration encoded during package initialization.
+// Dynamic configuration must use resourceBuilder.pack so errors reach the caller.
+func mustPack(message proto.Message) *anypb.Any {
+	value, err := protoutil.MarshalAny(message)
+	if err != nil {
+		panic(fmt.Errorf("marshal static gateway extension %T: %w", message, err))
+	}
+	return value
+}
+
 func buildClusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
 	b := &resourceBuilder{}
 	result, err := b.buildClusters(config)
@@ -63,17 +72,6 @@ func buildListeners(config effectiveConfig, trustDomain string) ([]*listenerv3.L
 		return nil, b.err
 	}
 	return result, err
-}
-
-// staticTypedExtension is only for the fixed, empty matcher inputs below.
-// User configuration must use a per-build resourceBuilder so errors propagate.
-func staticTypedExtension(name string, message proto.Message) *xdscorev3.TypedExtensionConfig {
-	b := &resourceBuilder{}
-	result := b.typedExtension(name, message)
-	if b.err != nil {
-		panic(b.err)
-	}
-	return result
 }
 
 func buildRoutes(config *configv1.EgressGateway) ([]*routev3.RouteConfiguration, error) {

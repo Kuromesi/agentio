@@ -41,7 +41,7 @@ var (
 	EnableSNITrafficPolicy = env.Register(
 		"AGENTIO_ENABLE_SNI_TRAFFIC_POLICY",
 		false,
-		"If enabled, translate and attach SNI traffic policies for enforcement in egress gateways.",
+		"If enabled, enforce SNI traffic policies in egress gateways, using HBONE TLS action headers when present.",
 	).Get()
 	MeshInternalTrafficPolicy = meshInternalTrafficPolicyFromString(env.Register(
 		"AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY",

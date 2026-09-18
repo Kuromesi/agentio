@@ -144,12 +144,24 @@ func TestZtunnelSourceScriptsValidateAndUpdatePins(t *testing.T) {
 		}
 	}
 	oldSHA, newSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
-	other := map[string]any{"name": "CNI_IMAGE", "repository": "example/cni", "digest": "sha256:" + strings.Repeat("c", 64)}
+	other := map[string]any{
+		"name":       "CNI_IMAGE",
+		"repository": "example/cni",
+		"digest":     "sha256:" + strings.Repeat("c", 64),
+	}
 	source := func(sha string) map[string]any {
 		return map[string]any{"name": "ZTUNNEL_REPO_SHA", "repoName": "openkruise/ztunnel", "lastStableSHA": sha}
 	}
-	resolve := stringValue(t, workflowStep(t, loadWorkflow(t, "agentio-ztunnel.yml"), "build", "Resolve pinned ztunnel source"), "run")
-	update := stringValue(t, workflowStep(t, loadWorkflow(t, "sync-ztunnel-deps.yml"), "sync", "Update pinned ztunnel source"), "run")
+	resolve := stringValue(
+		t,
+		workflowStep(t, loadWorkflow(t, "agentio-ztunnel.yml"), "build", "Resolve pinned ztunnel source"),
+		"run",
+	)
+	update := stringValue(
+		t,
+		workflowStep(t, loadWorkflow(t, "sync-ztunnel-deps.yml"), "sync", "Update pinned ztunnel source"),
+		"run",
+	)
 	for _, tc := range []struct {
 		name       string
 		pins       []map[string]any
@@ -158,7 +170,7 @@ func TestZtunnelSourceScriptsValidateAndUpdatePins(t *testing.T) {
 		resolveErr bool
 		updateErr  bool
 	}{
-		{name: "update", pins: []map[string]any{source(oldSHA), other}, remoteSHA: newSHA},
+		{name: "update master despite different default branch", pins: []map[string]any{source(oldSHA), other}, remoteSHA: newSHA},
 		{name: "unchanged", pins: []map[string]any{source(newSHA), other}, remoteSHA: newSHA},
 		{name: "missing source", pins: []map[string]any{other}, resolveErr: true, updateErr: true},
 		{name: "duplicate source", pins: []map[string]any{source(oldSHA), source(oldSHA)}, resolveErr: true, updateErr: true},
@@ -167,6 +179,7 @@ func TestZtunnelSourceScriptsValidateAndUpdatePins(t *testing.T) {
 		{name: "missing remote", pins: []map[string]any{source(oldSHA)}, updateErr: true},
 		{name: "invalid remote sha", pins: []map[string]any{source(oldSHA)}, remoteSHA: "latest", updateErr: true},
 		{name: "invalid remote branch", pins: []map[string]any{source(oldSHA)}, remoteSHA: newSHA, remoteRef: "refs/heads/bad branch", updateErr: true},
+		{name: "master missing with another branch present", pins: []map[string]any{source(oldSHA)}, remoteSHA: newSHA, remoteRef: "refs/heads/release-0.1", updateErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -177,26 +190,50 @@ func TestZtunnelSourceScriptsValidateAndUpdatePins(t *testing.T) {
 			}
 			writeTestFile(t, deps, string(before), 0o600)
 			if tc.remoteRef == "" {
-				tc.remoteRef = "refs/heads/release-0.1"
+				tc.remoteRef = "refs/heads/master"
 			}
-			remote := "ref: " + tc.remoteRef + "\tHEAD\n" + tc.remoteSHA + "\tHEAD\n"
+			remote := "ref: refs/heads/release-0.1\tHEAD\n" + oldSHA + "\tHEAD\n" + tc.remoteSHA + "\t" + tc.remoteRef + "\n"
 			writeTestFile(t, filepath.Join(dir, "remote"), remote, 0o600)
 			realGit, err := exec.LookPath("git")
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeTestFile(t, filepath.Join(dir, "git"), "#!/bin/bash\nif [[ $1 == ls-remote ]]; then cat \"$TEST_REMOTE_HEAD\"; else exec \"$TEST_REAL_GIT\" \"$@\"; fi\n", 0o700)
+			writeTestFile(t, filepath.Join(dir, "git"), `#!/bin/bash
+if [[ $1 == ls-remote ]]; then
+  [[ "${@: -1}" == refs/heads/master ]] || exit 1
+  cat "$TEST_REMOTE_HEAD"
+else
+  exec "$TEST_REAL_GIT" "$@"
+fi
+`, 0o700)
 			for _, script := range []struct {
 				name, body string
 				wantErr    bool
 			}{{"resolve", resolve, tc.resolveErr}, {"update", update, tc.updateErr}} {
 				cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script.body)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
-					"GITHUB_OUTPUT="+filepath.Join(dir, script.name+"-output"), "TEST_REAL_GIT="+realGit, "TEST_REMOTE_HEAD="+filepath.Join(dir, "remote"))
+				cmd.Env = append(
+					os.Environ(),
+					"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+					"GITHUB_OUTPUT="+filepath.Join(
+						dir,
+						script.name+"-output",
+					),
+					"TEST_REAL_GIT="+realGit,
+					"TEST_REMOTE_HEAD="+filepath.Join(dir, "remote"),
+				)
 				out, err := cmd.CombinedOutput()
 				if (err != nil) != script.wantErr {
 					t.Fatalf("%s error = %v, wantErr %v; output: %s", script.name, err, script.wantErr, out)
+				}
+				if script.name == "update" && !script.wantErr {
+					output, err := os.ReadFile(filepath.Join(dir, "update-output"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !strings.Contains(string(output), "source_branch=master\n") {
+						t.Fatalf("update did not report master as its source: %s", output)
+					}
 				}
 			}
 			after, err := os.ReadFile(deps)
