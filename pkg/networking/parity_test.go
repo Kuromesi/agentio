@@ -276,14 +276,14 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		{"MainForward TCP fallback", forwardApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
 	}
 
-	// Pin the original gateway-policy behavior for connections without a
-	// ztunnel action. tls_action_test.go covers the action branch.
+	// Gateway exclusions retain precedence over both ztunnel actions and
+	// gateway policy. tls_action_test.go covers the action branch.
 	internalMatcher := listeners[MainInternal].GetFilterChainMatcher()
 	internalTree := internalMatcher.GetMatcherTree()
 	if got := internalTree.GetInput().GetTypedConfig().GetTypeUrl(); got != transportProtocolInputType {
 		t.Errorf("MainInternal outer matcher input = %q, want %q", got, transportProtocolInputType)
 	}
-	excludeMatcher := internalTree.GetExactMatchMap().GetMap()["tls"].GetMatcher().GetOnNoMatch().GetMatcher()
+	excludeMatcher := internalTree.GetExactMatchMap().GetMap()["tls"].GetMatcher()
 	if got := excludeMatcher.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != serverNameInputType {
 		t.Errorf("MainInternal exclusion matcher input = %q, want %q", got, serverNameInputType)
 	}
@@ -297,7 +297,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	decisions = append(decisions, struct{ name, got, want string }{
 		"MainInternal excluded SNI", excludes.GetDomainMatchers()[0].GetOnMatch().GetAction().GetName(), forwardTCPChain,
 	})
-	policyMatcher := excludeMatcher.GetOnNoMatch().GetMatcher()
+	policyMatcher := excludeMatcher.GetOnNoMatch().GetMatcher().GetOnNoMatch().GetMatcher()
 	if got := policyMatcher.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != serverNameInputType {
 		t.Errorf("MainInternal SNI policy matcher input = %q, want %q", got, serverNameInputType)
 	}

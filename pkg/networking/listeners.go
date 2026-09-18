@@ -81,6 +81,9 @@ const (
 	dynamicHostKey                  = "envoy.upstream.dynamic_host"
 	dynamicPortKey                  = "envoy.upstream.dynamic_port"
 	staticEndpointFilterStateFilter = "agentio.static_endpoint_filter_state"
+
+	tlsActionHeaderFormat = `%CEL('x-agentio-tls' in request.headers ? ` +
+		`re.extract(request.headers['x-agentio-tls'], '^action=([^;]+)(;sni=[^;]+)?$', r'\1') : '')%`
 )
 
 // Package-level filters and their encoded configurations are shared read-only.
@@ -257,8 +260,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 				Filters: denyFilters,
 			},
 		)
-		gatewayPolicy := toMatcher(b.sniTrafficPolicyMatcher(config.gateway.GetTlsTermination().GetExcludeHosts()))
-		internalChainMatcher = b.protocolMatcher(toMatcher(b.tlsActionMatcher(gatewayPolicy)))
+		internalChainMatcher = b.protocolMatcher(toMatcher(
+			b.sniTrafficPolicyMatcher(config.gateway.GetTlsTermination().GetExcludeHosts()),
+		))
 	} else if tlsTermination := config.gateway.GetTlsTermination(); tlsTermination != nil {
 		internalChains = append(internalChains, b.buildTLSTerminateChain(connectionPool))
 		internalChainMatcher = b.staticSNIMatcher(tlsTermination)
@@ -721,11 +725,12 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 	if sniPolicy {
 		// Hashable so internal upstream pools never reuse another CONNECT
 		// stream's TLS decision; SkipIfEmpty so an absent header leaves no state.
+		// ztunnel sends x-agentio-tls: action=<action>;sni=<name>.
 		values = append(values, &setstatecommonv3.FilterStateValue{
 			Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: tlsActionKey},
 			FactoryKey: "istio.hashable_string",
 			Value: &setstatecommonv3.FilterStateValue_FormatString{
-				FormatString: formatString("%REQ(X-AGENTIO-SNI-ACTION)%"),
+				FormatString: formatString(tlsActionHeaderFormat),
 			},
 			SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
 			ReadOnly:           true,
@@ -853,10 +858,10 @@ func (b *resourceBuilder) applicationTCPFilters(config effectiveConfig, prefix [
 	return append(result, b.tcpProxy(cluster, pool, accessLogs))
 }
 
-// sniTrafficPolicyMatcher is the gateway-side TLS decision for connections
-// that carry no ztunnel action.
+// sniTrafficPolicyMatcher preserves gateway exclusions before consulting the
+// ztunnel action, falling back to gateway policy when no action is recognized.
 func (b *resourceBuilder) sniTrafficPolicyMatcher(excludeHosts []string) *xdsmatcherv3.Matcher {
-	policy := b.sniPolicyMatcher()
+	policy := b.tlsActionMatcher(toMatcher(b.sniPolicyMatcher()))
 	if len(excludeHosts) == 0 {
 		return policy
 	}

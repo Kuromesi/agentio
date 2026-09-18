@@ -8,7 +8,7 @@
     "Agentio retains its explicit 10s timeout for main_internal and main_forward because the gateway connect timeout applies only to Passthrough and the two DFP clusters; unsetting the internal-hop timeout has no supported-path benefit and would change current failure behavior.",
     "Agentio retains BlackHoleCluster because the SNI deny chain references it; the legacy Agentio graph omitted that referenced cluster.",
     "Agentio matches release-0.1 sandbox route timeouts: explicit route timeouts also set max_grpc_timeout, and routes without a configured timeout explicitly disable the request timeout (timeout 0s plus zero-valued max_stream_duration) instead of falling back to Envoy default 15s.",
-    "ztunnel TLS actions carried in the HBONE CONNECT header select the TLS chain first; connections without a recognized action fall back to the gateway SNI policy matcher."
+    "Gateway SNI exclusions take precedence over ztunnel TLS actions carried in the HBONE CONNECT header; connections without a recognized action fall back to the gateway SNI policy matcher."
   ],
   "resources": [
     {
@@ -587,7 +587,7 @@
                             "factory_key": "istio.hashable_string",
                             "format_string": {
                               "text_format_source": {
-                                "inline_string": "%REQ(X-AGENTIO-SNI-ACTION)%"
+                                "inline_string": "%CEL('x-agentio-tls' in request.headers ? re.extract(request.headers['x-agentio-tls'], '^action=([^;]+)(;sni=[^;]+)?$', r'\\1') : '')%"
                               },
                               "omit_empty_values": true
                             },
@@ -1502,41 +1502,31 @@
                   "matcher": {
                     "matcher_tree": {
                       "input": {
-                        "name": "tls-action",
+                        "name": "sni",
                         "typed_config": {
-                          "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.FilterStateInput",
-                          "key": "agentio.tls.action"
+                          "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.ServerNameInput"
                         }
                       },
-                      "exact_match_map": {
-                        "map": {
-                          "deny": {
-                            "action": {
-                              "name": "sni-traffic-policy-deny",
-                              "typed_config": {
-                                "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                "value": "sni-traffic-policy-deny"
+                      "custom_match": {
+                        "name": "sni",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/xds.type.matcher.v3.ServerNameMatcher",
+                          "domain_matchers": [
+                            {
+                              "domains": [
+                                "legacy.example.com"
+                              ],
+                              "on_match": {
+                                "action": {
+                                  "name": "forward-tcp",
+                                  "typed_config": {
+                                    "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                    "value": "forward-tcp"
+                                  }
+                                }
                               }
                             }
-                          },
-                          "passthrough": {
-                            "action": {
-                              "name": "forward-tcp",
-                              "typed_config": {
-                                "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                "value": "forward-tcp"
-                              }
-                            }
-                          },
-                          "terminate": {
-                            "action": {
-                              "name": "tls-terminate",
-                              "typed_config": {
-                                "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                "value": "tls-terminate"
-                              }
-                            }
-                          }
+                          ]
                         }
                       }
                     },
@@ -1544,31 +1534,41 @@
                       "matcher": {
                         "matcher_tree": {
                           "input": {
-                            "name": "sni",
+                            "name": "tls-action",
                             "typed_config": {
-                              "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.ServerNameInput"
+                              "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.FilterStateInput",
+                              "key": "agentio.tls.action"
                             }
                           },
-                          "custom_match": {
-                            "name": "sni",
-                            "typed_config": {
-                              "@type": "type.googleapis.com/xds.type.matcher.v3.ServerNameMatcher",
-                              "domain_matchers": [
-                                {
-                                  "domains": [
-                                    "legacy.example.com"
-                                  ],
-                                  "on_match": {
-                                    "action": {
-                                      "name": "forward-tcp",
-                                      "typed_config": {
-                                        "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                        "value": "forward-tcp"
-                                      }
-                                    }
+                          "exact_match_map": {
+                            "map": {
+                              "deny": {
+                                "action": {
+                                  "name": "sni-traffic-policy-deny",
+                                  "typed_config": {
+                                    "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                    "value": "sni-traffic-policy-deny"
                                   }
                                 }
-                              ]
+                              },
+                              "passthrough": {
+                                "action": {
+                                  "name": "forward-tcp",
+                                  "typed_config": {
+                                    "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                    "value": "forward-tcp"
+                                  }
+                                }
+                              },
+                              "terminate": {
+                                "action": {
+                                  "name": "tls-terminate",
+                                  "typed_config": {
+                                    "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                    "value": "tls-terminate"
+                                  }
+                                }
+                              }
                             }
                           }
                         },

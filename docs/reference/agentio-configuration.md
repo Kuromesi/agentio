@@ -204,29 +204,6 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `serviceEntries` | `EgressServiceEntry[]` | Empty | Static upstream endpoints that override DNS resolution for exact destination hosts at this gateway. |
 | `accessLogFormat` | `AccessLogFormat` | Built-in JSON | Format of the built-in `envoy` access-log provider on stdout for this gateway. See below. |
 
-### TLS actions from ztunnel
-
-When `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY=true`, the gateway applies the TLS
-decision ztunnel made from the ClientHello SNI, carried in the HBONE CONNECT
-header `x-agentio-sni-action`, before its own SNI policy. For TLS connections,
-`terminate` selects the TLS termination chain, `passthrough` forwards the raw
-TLS stream, and `deny` selects the SNI denial chain. Any other value, including
-an empty header, and connections without the header fall back to the existing
-gateway path: static exclusions, the SNI policy matcher, and its failure
-handling. Plaintext HTTP/TCP keeps its existing routing regardless of the
-header. TLS termination and certificate issuance still run at the gateway.
-
-The gateway copies the header into read-only filter state `agentio.tls.action`,
-shared once with the internal listener as `istio.hashable_string` so internal
-connection pools never mix decisions. The outer HTTP/2 connection can carry
-streams with and without actions.
-
-Old ztunnels and connections without an action continue to use gateway policy,
-so its policy distribution and execution must remain enabled during migration.
-This is an authenticated HBONE CONNECT header, not an inner application header.
-With SNI traffic policy disabled, the existing static TLS configuration is
-unchanged and the header is ignored.
-
 ### Access-log format
 
 Set `egressGateways[].accessLogFormat` in AgentioConfig to customize a gateway's access logs. Choose either `json` for a JSON object or `text` for a text template. Both support [Envoy access-log substitution operators](https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage). The format applies to HTTP and TCP logs, CONNECT failures, listener filter-chain misses, and SNI denials when SNI policy enforcement is enabled. The TLS-termination relay itself does not emit duplicate application logs.
@@ -257,7 +234,7 @@ The JSON object replaces the complete default format; its fields are not merged 
 
 `scheme` distinguishes HTTP from terminated HTTPS; `protocol` is the HTTP version. The SNI expression preserves the original ClientHello name after TLS termination and falls back to the current connection's SNI for passthrough TLS. HTTP authority remains a separate field. TCP logs have no HTTP scheme or request headers.
 
-The default format includes `denial_reason: "sni_policy_denied"` for connections rejected by SNI policy or by a ztunnel `deny` action. The reason is unset on other paths; HTTP errors and connection failures continue to use their existing response and transport fields. Custom formats can retain this reason with the `denial_reason` entry shown above.
+The default format includes `denial_reason: "sni_policy_denied"` for connections rejected by SNI policy. The reason is unset on other paths; HTTP errors and connection failures continue to use their existing response and transport fields. Custom formats can retain this reason with the `denial_reason` entry shown above.
 
 Internal upstream cluster and filter-chain names are omitted from the default format. For debugging, add these entries to your custom `accessLogFormat.json` object:
 

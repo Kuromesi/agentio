@@ -17,6 +17,7 @@ package networking
 import (
 	"testing"
 
+	xdsmatcherv3 "github.com/cncf/xds/go/xds/type/matcher/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
@@ -55,12 +56,25 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	state := connectAuthorityStates(t, listeners[ConnectTerminate])[tlsActionKey]
 	if state.GetFactoryKey() != "istio.hashable_string" || !state.GetReadOnly() || !state.GetSkipIfEmpty() ||
 		state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_ONCE ||
-		state.GetFormatString().GetTextFormatSource().GetInlineString() != "%REQ(X-AGENTIO-SNI-ACTION)%" {
+		state.GetFormatString().GetTextFormatSource().GetInlineString() != tlsActionHeaderFormat {
 		t.Fatalf("CONNECT state %s = %v", tlsActionKey, state)
 	}
 
 	root := listeners[MainInternal].GetFilterChainMatcher()
-	action := root.GetMatcherTree().GetExactMatchMap().GetMap()["tls"].GetMatcher()
+	exclusions := root.GetMatcherTree().GetExactMatchMap().GetMap()["tls"].GetMatcher()
+	domains := &xdsmatcherv3.ServerNameMatcher{}
+	if err := exclusions.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(domains); err != nil {
+		t.Fatalf("gateway exclusions must precede the ztunnel action: %v", err)
+	}
+	if len(domains.GetDomainMatchers()) == 0 {
+		t.Fatal("expected gateway exclusions before the ztunnel action")
+	}
+	for _, match := range domains.GetDomainMatchers() {
+		if got := match.GetOnMatch().GetAction().GetName(); got != forwardTCPChain {
+			t.Fatalf("excluded SNI selects %q, want passthrough regardless of ztunnel action", got)
+		}
+	}
+	action := exclusions.GetOnNoMatch().GetMatcher()
 	input := &matchinginputv3.FilterStateInput{}
 	if err := action.GetMatcherTree().GetInput().GetTypedConfig().UnmarshalTo(input); err != nil {
 		t.Fatal(err)
@@ -79,6 +93,18 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	}
 	if action.GetOnNoMatch().GetMatcher() == nil {
 		t.Fatal("connections without a ztunnel action must fall back to gateway policy")
+	}
+}
+
+func TestTLSActionWithoutGatewayExclusions(t *testing.T) {
+	b := &resourceBuilder{}
+	matcher := b.sniTrafficPolicyMatcher(nil)
+	input := &matchinginputv3.FilterStateInput{}
+	if err := matcher.GetMatcherTree().GetInput().GetTypedConfig().UnmarshalTo(input); err != nil {
+		t.Fatal(err)
+	}
+	if input.GetKey() != tlsActionKey || matcher.GetOnNoMatch().GetMatcher() == nil {
+		t.Fatal("without exclusions, consult ztunnel action with gateway policy fallback")
 	}
 }
 
