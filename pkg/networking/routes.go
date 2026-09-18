@@ -30,6 +30,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/pkg/features"
 )
 
 var previousHostsRetryPredicate = func() *routev3.RetryPolicy_RetryHostPredicate {
@@ -72,6 +73,10 @@ func (b *resourceBuilder) buildRoutes(gateway *configv1.EgressGateway) ([]*route
 				}},
 			}},
 		}},
+	}
+	if features.EnableUDPProxy {
+		vhost := connect.VirtualHosts[0]
+		vhost.Routes = append([]*routev3.Route{connectUDPRoute()}, vhost.Routes...)
 	}
 	http := b.buildForwardRoute(HTTPDynamicForwardProxy, gateway)
 	tls := b.buildForwardRoute(TLSConnectOriginate, gateway)

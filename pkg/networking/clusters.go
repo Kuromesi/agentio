@@ -59,6 +59,9 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 	if config.extProc != nil {
 		result = append(result, b.buildExtProcCluster(config.extProc))
 	}
+	if features.EnableUDPProxy {
+		result = append(result, b.buildUDPCluster())
+	}
 	if config.telemetry != nil {
 		names := sets.NewWithLength[string](len(result) + len(config.telemetry.Clusters))
 		for _, cluster := range result {

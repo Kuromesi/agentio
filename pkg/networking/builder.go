@@ -46,6 +46,7 @@ const (
 	TLSConnectOriginate     = "tls_connect_originate"
 	TLSProxyOriginate       = "tls_proxy_originate"
 	ExtProcCluster          = "sandbox-ext-proc"
+	UDPPassthroughCluster   = "agentio_udp_passthrough"
 	DNSCacheName            = "agentio_dns_cache"
 )
 
