@@ -23,11 +23,17 @@ import (
 )
 
 var (
-	// SandboxRuntimes selects optional integrations in addition to built-in Pod discovery.
+	// SandboxMode enables runtime discovery and Sandbox resources alongside Workloads.
+	SandboxMode = env.Register(
+		"AGENTIO_SANDBOX_MODE",
+		false,
+		"Enable Sandbox discovery and xDS resources. Sandbox-owned inline policies stay on Sandboxes; shared policies always remain on Workloads.",
+	).Get()
+	// SandboxRuntimes selects integrations used when SandboxMode is enabled.
 	SandboxRuntimes = env.Register(
 		"AGENTIO_SANDBOX_RUNTIMES",
 		"",
-		"Comma-separated optional Sandbox runtimes. Supported: kruise. Empty enables no optional runtimes; ordinary ztunnel-injected and ambient Pods always receive derived Sandbox resources.",
+		"Comma-separated Sandbox runtimes used when AGENTIO_SANDBOX_MODE is true. Supported: kruise. Empty enables no runtime integrations.",
 	).Get()
 	// ScopedSecrets restricts the shared Secret informer to the control-plane namespace.
 	// Dedicated named Secret informers keep their own scope.

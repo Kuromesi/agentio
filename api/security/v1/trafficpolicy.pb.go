@@ -136,22 +136,17 @@ func (TrafficPolicy_Protocol) EnumDescriptor() ([]byte, []int) {
 	return file_api_security_v1_trafficpolicy_proto_rawDescGZIP(), []int{0, 1}
 }
 
-// Traffic rules carried inline in a Sandbox or published as an independent
-// xDS resource. The resource name is carried by xDS, not this message.
-// Independent resource names follow the AIP-122 path convention:
-// - TrafficPolicy: namespaces/{namespace}/trafficPolicies/{name}.
-// - GlobalTrafficPolicy: trafficPolicies/{name}.
-// Namespace and name are the source object's identifiers. Selectors affect
-// attachment, not resource identity. Inline rules have no independent name.
-// Selection and ordering of predefined policies are resolved by the control
-// plane and published in Sandbox.policy_refs.
+// Traffic rules shared by native Workloads or carried inline in a Sandbox.
+// Shared policies are independent xDS resources. Each Workload carries their
+// complete ordered references, including global and namespace policies; scope
+// and selector matching stay in the control plane. Authorizations are a separate
+// compatibility projection for older data planes.
 type TrafficPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Absent = this policy does not configure the direction.
 	// Present (including an empty rule set) = this direction is configured.
-	// First matching rule wins; no match continues to the next referenced policy.
-	// Default deny applies only after every inline/referenced policy misses,
-	// provided at least one policy configures this direction.
+	// First matching rule decides this policy. The enclosing policy stage defines
+	// how the result and an unmatched direction compose with Workload policies.
 	Ingress       *TrafficPolicy_RuleSet `protobuf:"bytes,1,opt,name=ingress,proto3" json:"ingress,omitempty"`
 	Egress        *TrafficPolicy_RuleSet `protobuf:"bytes,2,opt,name=egress,proto3" json:"egress,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -259,7 +254,7 @@ func (x *TrafficPolicy_Address) GetLength() uint32 {
 
 type TrafficPolicy_RuleSet struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Declaration order within this policy. A matching ALLOW or DENY is terminal.
+	// Declaration order within this policy. The first matching rule returns its action.
 	// No per-policy default action.
 	Rules         []*TrafficPolicy_Rule `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
 	unknownFields protoimpl.UnknownFields

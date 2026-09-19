@@ -33,8 +33,6 @@ func TestModelEqualsPreservesDeepEqualSemantics(t *testing.T) {
 		{{}, {Attester: &Attester{}}},
 		{{Attester: &Attester{WorkloadUID: "a"}}, {Attester: &Attester{WorkloadUID: "a"}}},
 		{{Attester: &Attester{WorkloadUID: "a"}}, {Attester: &Attester{WorkloadUID: "b"}}},
-		{{}, {Labels: map[string]string{}}},
-		{{}, {PolicyRefs: []PolicyRef{}}},
 	})
 	checkEqualityPairs(t, Service.Equals, [][2]Service{
 		{{}, {Addresses: []string{}}},

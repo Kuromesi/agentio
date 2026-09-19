@@ -94,9 +94,9 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 	}
 	stop := t.Context().Done()
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	bindings := NewPolicyBindingsCollection(
-		krt.NewStaticCollection(nil, []model.Sandbox{{
-			UID:       "sandbox",
+	bindings := NewWorkloadPolicyBindingsCollection(
+		krt.NewStaticCollection(nil, []model.Workload{{
+			UID:       "workload",
 			Namespace: "tenant",
 			Labels:    map[string]string{"app": "client"},
 		}}, options...),
@@ -116,12 +116,12 @@ func TestTrafficPolicyBindingsPriorityCreationTimeOrder(t *testing.T) {
 		"namespaces/tenant/trafficPolicies/a-local",
 		"namespaces/tenant/trafficPolicies/z-local",
 	}
-	binding := bindings.GetKey("sandbox")
-	if binding == nil || !binding.Valid() {
-		t.Fatalf("Sandbox has no valid binding: %+v", binding)
+	binding := bindings.GetKey("workload")
+	if binding == nil {
+		t.Fatalf("Workload has no binding: %+v", binding)
 	}
 	if got := binding.PolicyNames(PolicyKindTrafficPolicy); !slices.Equal(got, want) {
-		t.Fatalf("Sandbox TrafficPolicy order = %v, want %v", got, want)
+		t.Fatalf("Workload TrafficPolicy order = %v, want %v", got, want)
 	}
 }
 

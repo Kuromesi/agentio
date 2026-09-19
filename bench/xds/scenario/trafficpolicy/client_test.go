@@ -59,7 +59,7 @@ func TestPolicyValidatorChecksEveryRule(t *testing.T) {
 	}
 }
 
-func TestClientRoundMatchesMarkerAndSandboxReference(t *testing.T) {
+func TestClientRoundMatchesMarkerAndSandboxBinding(t *testing.T) {
 	f, err := New(json.RawMessage(`{"policy_name":"trafficPolicies/test","sandbox_id":"local"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -71,10 +71,8 @@ func TestClientRoundMatchesMarkerAndSandboxReference(t *testing.T) {
 	c := f.New()
 	sb, err := anypb.New(
 		&sandbox.Sandbox{
-			Uid: "local",
-			PolicyRefs: map[string]*sandbox.PolicyReference{
-				PolicyType: {ResourceNames: []string{"trafficPolicies/test"}},
-			},
+			Uid:      "local",
+			Attester: &sandbox.Sandbox_Attester{WorkloadUid: "worker"},
 		},
 	)
 	if err != nil {

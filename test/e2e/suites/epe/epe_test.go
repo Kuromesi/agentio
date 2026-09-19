@@ -268,6 +268,55 @@ spec:
 		"/epe-identity", statusIdentityBlock, "epe-identity-block")
 }
 
+// Secret credentials can be injected for ordinary Pods without a Sandbox token.
+func TestWorkloadSecretTokenInjection(t *testing.T) {
+	_, scope := beginEPEDataPathScenario(t, "EPE Secret token injection failed")
+	e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{
+		"Namespace":     trafficFixture.Namespace.Name(),
+		"TokenTemplate": "Bearer {{ .Token }}",
+	}, `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workload-api-key
+  namespace: {{ .Namespace }}
+stringData:
+  apiKey: workload-e2e-test-token
+---
+apiVersion: agents.kruise.io/v1alpha1
+kind: SecurityProfile
+metadata:
+  name: workload-token-injection
+  namespace: {{ .Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: client
+  rules:
+  - name: inject-api-key
+    match:
+    - domains: ["*"]
+      paths:
+      - type: Exact
+        value: /workload-token
+    actions:
+      tokenTransformation:
+        type: ApiKey
+        credentialRef:
+          secret:
+            name: workload-api-key
+        apiKey:
+          targetHeader: Authorization
+          valueTemplate: "{{ .TokenTemplate }}"
+`).ApplyOrFail(t, kube.CreateOnly)
+	options := trafficFixture.Server.CallOptionsOrFail(t, "http")
+	options.Count = 1
+	options.Path = "/workload-token"
+	options.Check = check.And(check.OK(), check.RequestHeader("Authorization", "Bearer workload-e2e-test-token"))
+	options.Retry = harness.FixedRetry(3*time.Minute, 5*time.Second)
+	trafficFixture.Client.CallOrFail(t, options)
+}
+
 // TestSandboxLabelsReachEPE proves the sandbox.labels attribute contract. The
 // Positive calls through both matching callers are the propagation barriers
 // for the subsequent one-shot negative assertion: the shared caller proves the

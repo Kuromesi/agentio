@@ -34,7 +34,6 @@ func TestWireMessageNamesAndTypeURLs(t *testing.T) {
 		want    string
 	}{
 		{&sandboxv1.Sandbox{}, "agentio.sandbox.Sandbox"},
-		{&sandboxv1.EgressRouting{}, "agentio.sandbox.EgressRouting"},
 		{&securityv1.TrafficPolicy{}, "agentio.security.TrafficPolicy"},
 		{&workloadv1.Address{}, "istio.workload.Address"},
 		{&workloadv1.Workload{}, "istio.workload.Workload"},

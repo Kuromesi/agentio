@@ -27,11 +27,11 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// CompiledTrafficPolicy is the shared, resolved Sandbox TrafficPolicy body.
+// CompiledTrafficPolicy contains native rules and their optional shared attachment.
 type CompiledTrafficPolicy struct {
 	CompiledPolicy[*securityv1.TrafficPolicy]
 
-	// Filled only in compatibility mode, once per source rather than per Workload.
+	// Legacy compatibility projection, compiled once per shared source.
 	AsAuthorization []CompiledAuthorization
 }
 

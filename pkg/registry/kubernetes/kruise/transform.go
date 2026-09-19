@@ -19,12 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	agentlog "github.com/openkruise/agentio/pkg/log"
@@ -32,24 +30,7 @@ import (
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
-const podLabelCreatedBy = agentsv1alpha1.InternalPrefix + "created-by"
-
 var log = agentlog.New("registry")
-
-// isPodOwnedInternalLabel reports the Kruise-internal labels that deliberately
-// describe the backing Pod and may therefore override Sandbox CR metadata.
-// Unknown internal labels remain Sandbox-owned by default.
-func isPodOwnedInternalLabel(key string) bool {
-	switch key {
-	case agentsv1alpha1.LabelSandboxName,
-		agentsv1alpha1.LabelAllowInternetAccess,
-		agentsv1alpha1.AnnotationOwner,
-		podLabelCreatedBy:
-		return true
-	default:
-		return false
-	}
-}
 
 // sandboxUID qualifies the delivery ID with the Kruise kind. Non-pooled
 // Sandboxes without a delivery label retain the namespace--name fallback.
@@ -109,20 +90,6 @@ func backingPod(
 	return matches[0]
 }
 
-func mergeSandboxLabels(sandboxLabels, podLabels map[string]string) map[string]string {
-	merged := maps.Clone(sandboxLabels)
-	for key, value := range podLabels {
-		if strings.HasPrefix(key, agentsv1alpha1.InternalPrefix) && !isPodOwnedInternalLabel(key) {
-			continue
-		}
-		if merged == nil {
-			merged = make(map[string]string, len(podLabels))
-		}
-		merged[key] = value
-	}
-	return merged
-}
-
 func newSandboxes(
 	sandboxesByUID krt.IndexCollection[string, *agentsv1alpha1.Sandbox],
 	pods krt.Collection[*corev1.Pod],
@@ -140,20 +107,14 @@ func newSandboxes(
 				return nil
 			}
 			pod := backingPod(ctx, pods, podsByUID, sandbox)
-			var podLabels map[string]string
-			if pod != nil {
-				podLabels = pod.Labels
-			}
 			var attester *model.Attester
 			if pod != nil && pod.DeletionTimestamp == nil && podsource.IsEligible(pod) {
 				attester = &model.Attester{WorkloadUID: podsource.WorkloadUID(clusterID, pod)}
 			}
 			return &model.Sandbox{
-				State:     runtimeState(sandbox),
 				Attester:  attester,
 				UID:       group.Key,
 				Namespace: sandbox.Namespace,
-				Labels:    mergeSandboxLabels(sandbox.Labels, podLabels),
 			}
 		}, options...)
 }
@@ -218,26 +179,6 @@ func isPolicySubject(sandbox *agentsv1alpha1.Sandbox) bool {
 		return true
 	}
 	return sandbox.Labels[agentsv1alpha1.LabelSandboxIsClaimed] == agentsv1alpha1.True
-}
-
-func runtimeState(sandbox *agentsv1alpha1.Sandbox) model.SandboxState {
-	switch sandbox.Status.Phase {
-	case agentsv1alpha1.SandboxPending:
-		return model.SandboxStatePending
-	case agentsv1alpha1.SandboxRunning:
-		return model.SandboxStateRunning
-	case agentsv1alpha1.SandboxPaused:
-		for _, condition := range sandbox.Status.Conditions {
-			if condition.Type == string(agentsv1alpha1.SandboxConditionPaused) &&
-				condition.Status == metav1.ConditionTrue {
-				return model.SandboxStatePaused
-			}
-		}
-	case agentsv1alpha1.SandboxSucceeded, agentsv1alpha1.SandboxFailed:
-		return model.SandboxStateStopped
-	}
-	// Transitional phases do not prove a completed lifecycle state.
-	return model.SandboxStateUnspecified
 }
 
 func ownedPod(pod *corev1.Pod, sandbox *agentsv1alpha1.Sandbox) bool {

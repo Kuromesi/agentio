@@ -53,7 +53,7 @@ func TestTrafficPolicyLegacyProjection(t *testing.T) {
 		{name: "root namespace", source: model.TrafficPolicy{Namespace: "agentio-system"}, scope: securityv1.Scope_GLOBAL, namespace: "agentio-system", priority: 42},
 		{name: "selector", source: model.TrafficPolicy{Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}}, scope: securityv1.Scope_WORKLOAD_SELECTOR, namespace: "demo", priority: 42},
 		{name: "global selector", source: model.TrafficPolicy{Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Selector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "app", Operator: metav1.LabelSelectorOpExists}}}}}, scope: securityv1.Scope_WORKLOAD_SELECTOR, namespace: "agentio-system", priority: 42},
-		{name: "dedicated", source: model.TrafficPolicy{Dedicated: true, SandboxUID: "kruise:actor", Namespace: "demo"}, scope: securityv1.Scope_WORKLOAD_SELECTOR, namespace: "demo", priority: -1},
+		{name: "dedicated", source: model.TrafficPolicy{Dedicated: true, SandboxUID: "kruise:actor", Namespace: "demo"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.source.Name, tc.source.Spec.Priority = "api", 42
@@ -62,6 +62,12 @@ func TestTrafficPolicyLegacyProjection(t *testing.T) {
 				tc.source,
 				"agentio-system",
 			)
+			if tc.source.Dedicated {
+				if err != nil || len(converted) != 0 {
+					t.Fatalf("Sandbox-owned policy produced Workload Authorizations: %v, %v", converted, err)
+				}
+				return
+			}
 			if err != nil || len(converted) != 1 {
 				t.Fatalf("converted=%v err=%v", converted, err)
 			}
@@ -74,7 +80,7 @@ func TestTrafficPolicyLegacyProjection(t *testing.T) {
 				ext.Mode != extensionsv1.TrafficPolicyMode_CLIENT {
 				t.Fatalf("authorization=%v extension=%v", a, ext)
 			}
-			if !tc.source.Dedicated && a.Name != "api-egress" {
+			if a.Name != "api-egress" {
 				t.Fatalf("source name lost: %s", a.Name)
 			}
 			if len(a.Groups) != 2 || len(a.Groups[0].Rules[0].Matches[0].DestinationIps) != 1 ||

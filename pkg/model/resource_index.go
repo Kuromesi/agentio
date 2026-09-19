@@ -61,6 +61,7 @@ type resourceFactKind byte
 const (
 	resourceFactWorkloadUID resourceFactKind = iota + 1
 	resourceFactWorkloadAuthorizationRefs
+	resourceFactWorkloadTrafficPolicyRefs
 	resourceFactAttesterWorkloadUID
 	resourceFactSourceUID
 	resourceFactNode
@@ -69,10 +70,10 @@ const (
 	resourceFactService
 	resourceFactGatewayReference
 	resourceFactAuthorizationReference
+	resourceFactTrafficPolicyReference
 	resourceFactGatewayOwner
 	resourceFactAuthorizationGlobal
 	resourceFactAuthorizationNamespace
-	resourceFactTrafficPolicyReference
 )
 
 func resourceFactIndexKey(kind resourceFactKind, key string) string {
@@ -90,6 +91,9 @@ func resourceFactKeys(resource Resource) []string {
 		if workloadHasAuthorizationRefs(workload) {
 			add(resourceFactWorkloadAuthorizationRefs, "enabled")
 		}
+		if len(workload.TrafficPolicyRefs) > 0 {
+			add(resourceFactWorkloadTrafficPolicyRefs, "enabled")
+		}
 		add(resourceFactWorkloadUID, workload.WorkloadUID)
 		add(resourceFactSourceUID, workload.SourceUID)
 		add(resourceFactNode, workload.NodeName)
@@ -106,15 +110,12 @@ func resourceFactKeys(resource Resource) []string {
 		for _, key := range workload.AuthorizationRefs {
 			add(resourceFactAuthorizationReference, key)
 		}
+		for _, key := range workload.TrafficPolicyRefs {
+			add(resourceFactTrafficPolicyReference, key)
+		}
 	}
 	if sandbox := resource.Facts.Sandbox; sandbox != nil {
 		add(resourceFactAttesterWorkloadUID, sandbox.AttesterWorkloadUID)
-		for _, name := range sandbox.TrafficPolicyRefs {
-			add(resourceFactTrafficPolicyReference, name)
-		}
-		for _, key := range sandbox.GatewayReferences {
-			add(resourceFactGatewayReference, key)
-		}
 	}
 	if resource.Facts.Service != nil {
 		add(resourceFactService, resource.Facts.Service.ServiceKey)
@@ -142,6 +143,7 @@ func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []
 		{resourceFactWorkloadUID, query.WorkloadUID},
 		{resourceFactSourceUID, query.SourceUID},
 		{resourceFactAuthorizationReference, query.AuthorizationReference},
+		{resourceFactTrafficPolicyReference, query.TrafficPolicyReference},
 		{resourceFactNode, query.NodeName},
 		{resourceFactNamespace, query.Namespace},
 		{resourceFactService, query.ServiceKey},
@@ -173,13 +175,16 @@ func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []
 	if query.AuthorizationRefsOnly && consider(resourceFactWorkloadAuthorizationRefs, "enabled") {
 		return candidates
 	}
+	if query.TrafficPolicyRefsOnly && consider(resourceFactWorkloadTrafficPolicyRefs, "enabled") {
+		return candidates
+	}
 	if query.Principal != nil {
 		consider(resourceFactPrincipal, query.Principal.String())
 	}
 	return candidates
 }
 
-// Authorization references are generated from Sandbox policies for older data planes.
+// Authorization references are generated from shared policies for older data planes.
 func workloadHasAuthorizationRefs(workload *WorkloadResourceFacts) bool {
 	return len(workload.AuthorizationRefs) > 0
 }
@@ -187,6 +192,7 @@ func workloadHasAuthorizationRefs(workload *WorkloadResourceFacts) bool {
 func workloadMatchesQuery(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
 	if workload == nil ||
 		(query.AuthorizationRefsOnly && !workloadHasAuthorizationRefs(workload)) ||
+		(query.TrafficPolicyRefsOnly && len(workload.TrafficPolicyRefs) == 0) ||
 		(query.WorkloadUID != "" && workload.WorkloadUID != query.WorkloadUID) ||
 		(query.SourceUID != "" && workload.SourceUID != query.SourceUID) ||
 		(query.NodeName != "" && workload.NodeName != query.NodeName) ||
@@ -371,7 +377,8 @@ func updateLookupMembership(
 func workloadReferencesMatch(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
 	if (query.ServiceKey != "" && !slices.Contains(workload.ServiceKeys, query.ServiceKey)) ||
 		(query.GatewayReference != "" && !slices.Contains(workload.GatewayReferences, query.GatewayReference)) ||
-		(query.AuthorizationReference != "" && !slices.Contains(workload.AuthorizationRefs, query.AuthorizationReference)) {
+		(query.AuthorizationReference != "" && !slices.Contains(workload.AuthorizationRefs, query.AuthorizationReference)) ||
+		(query.TrafficPolicyReference != "" && !slices.Contains(workload.TrafficPolicyRefs, query.TrafficPolicyReference)) {
 		return false
 	}
 	return true

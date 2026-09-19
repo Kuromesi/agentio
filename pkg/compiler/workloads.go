@@ -25,14 +25,14 @@ import (
 )
 
 // newWorkloadResources owns the incremental joins for WDS networking state
-// and gateway dependencies from Sandbox compatibility output. Deterministic protobuf and
+// and gateway dependencies from Workload policy selections. Deterministic protobuf and
 // Resource encoding lives in wds.go.
 func newWorkloadResources(
 	inputs Inputs,
 	base baseIndexes,
 	metadataConfiguration krt.Singleton[workloadMetadataConfiguration],
 	gateways krt.Collection[model.Gateway],
-	sandboxPolicies krt.Collection[workloadSandboxPolicies],
+	workloadPolicies krt.Collection[workloadPolicies],
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[model.Resource] {
@@ -43,19 +43,15 @@ func newWorkloadResources(
 				current := inputs.Workloads.GetKey(workload.ResourceName())
 				return current != nil && current.Equals(workload)
 			}
-			var egressGatewayKeys, authorizationNames []string
+			var egressGatewayKeys, trafficPolicyNames, authorizationNames []string
 			var egressPolicies *extensionsv1.EgressPolicies
 			var sniPolicy *extensionsv1.SniTrafficPolicy
-			// Sandbox policies are attached to the Workload for compatibility with older data planes.
-			var workloadPolicies *workloadSandboxPolicies
-			if !inputs.NativeSandboxPolicies {
-				workloadPolicies = krt.FetchOne(ctx, sandboxPolicies, krt.FilterKey(workload.UID))
-			}
-			if workloadPolicies != nil {
-				authorizationNames = workloadPolicies.AuthorizationNames
-				sniPolicy = workloadPolicies.SNIPolicy
-				egressPolicies = workloadPolicies.EgressPolicies
-				egressGatewayKeys = workloadPolicies.GatewayReferences
+			if selected := krt.FetchOne(ctx, workloadPolicies, krt.FilterKey(workload.UID)); selected != nil {
+				trafficPolicyNames = selected.TrafficPolicyNames
+				authorizationNames = selected.AuthorizationNames
+				sniPolicy = selected.SNIPolicy
+				egressPolicies = selected.EgressPolicies
+				egressGatewayKeys = selected.GatewayReferences
 			}
 			ownedGatewayKey := gatewayKeyForWorkload(workload)
 			if ownedGatewayKey != "" {
@@ -115,6 +111,7 @@ func newWorkloadResources(
 				SNIPolicy:          sniPolicy,
 				EgressPolicies:     egressPolicies,
 				AuthorizationNames: authorizationNames,
+				TrafficPolicyNames: trafficPolicyNames,
 				Endpoints:          endpoints,
 				Services:           services,
 				EgressGatewayKeys:  egressGatewayKeys,

@@ -123,11 +123,11 @@ func TestProjectWorkloadConfigDumpRejectsUnknownWorkload(t *testing.T) {
 	}
 }
 
-func TestProjectWorkloadConfigDumpKeepsBoundSandboxPolicies(t *testing.T) {
+func TestProjectWorkloadConfigDumpKeepsWorkloadReferencesAndBoundSandbox(t *testing.T) {
 	raw := []byte(`{
-  "workloads": [{"uid":"client-uid","namespace":"sandbox","name":"client-pod"}],
+  "workloads": [{"uid":"client-uid","namespace":"sandbox","name":"client-pod","trafficPolicyRefs":["trafficPolicies/client"]}],
   "sandboxes": [
-    {"uid":"client-sandbox","workloadUid":"client-uid","trafficPolicyRefs":["trafficPolicies/client"]},
+    {"uid":"client-sandbox","workloadUid":"client-uid","trafficPolicy":{"egress":{"rules":[]}}},
     {"uid":"server-sandbox","workloadUid":"server-uid","trafficPolicyRefs":["trafficPolicies/server"]},
     {"uid":"unbound-sandbox","trafficPolicyRefs":["trafficPolicies/unbound"]}
   ],

@@ -119,7 +119,7 @@ func TestPolicyModelsUseSelector(t *testing.T) {
 						want:      global,
 					},
 				} {
-					selected := compiled.Attachment.Selects(model.Sandbox{
+					selected := compiled.Attachment.Selects(model.Workload{
 						UID:       subject.uid,
 						Namespace: subject.namespace,
 						Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: subject.label},

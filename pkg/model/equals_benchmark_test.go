@@ -24,7 +24,7 @@ func BenchmarkModelEquals(b *testing.B) {
 		benchmarkEquals(b, Workload{UID: "pod-uid", Namespace: "default", Name: "pod", SourceUID: "pod-uid", Addresses: []string{"10.0.0.1", "2001:db8::1"}, Labels: map[string]string{"app": "worker", "version": "v1", "team": "platform"}, Ready: true}, Workload.Equals)
 	})
 	b.Run("Sandbox", func(b *testing.B) {
-		benchmarkEquals(b, Sandbox{UID: "sandbox-uid", Namespace: "default", Attester: &Attester{WorkloadUID: "pod-uid"}, Labels: map[string]string{"app": "worker", "version": "v1", "team": "platform"}, PolicyRefs: []PolicyRef{{Kind: PolicyKind("TrafficPolicy"), Name: "allow"}}}, Sandbox.Equals)
+		benchmarkEquals(b, Sandbox{UID: "sandbox-uid", Namespace: "default", Attester: &Attester{WorkloadUID: "pod-uid"}}, Sandbox.Equals)
 	})
 	b.Run("Service", func(b *testing.B) {
 		benchmarkEquals(b, Service{Namespace: "default", Name: "api", Hostname: "api.default.svc.cluster.local", Addresses: []string{"10.0.0.2", "2001:db8::2"}, Ports: []ServicePort{{Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP"}}, Canonical: true}, Service.Equals)

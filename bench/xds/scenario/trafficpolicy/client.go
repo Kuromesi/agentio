@@ -125,12 +125,8 @@ func (c *client) Observe(response *ads.DeltaDiscoveryResponse, expected any) (sc
 			if err := r.Resource.UnmarshalTo(&s); err != nil {
 				return result, err
 			}
-			if s.Uid == c.cfg.SandboxID {
-				for _, name := range s.PolicyRefs[PolicyType].GetResourceNames() {
-					if name == c.cfg.PolicyName {
-						c.seenSandbox = true
-					}
-				}
+			if s.Uid == c.cfg.SandboxID && s.GetAttester().GetWorkloadUid() != "" {
+				c.seenSandbox = true
 			}
 		}
 	}

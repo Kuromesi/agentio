@@ -37,7 +37,7 @@ import (
 )
 
 func TestTrafficPolicyCompilesBothResourcesWithOneResolution(t *testing.T) {
-	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.SandboxMode = false })
 	worker := testWorkload("demo", "client", "10.0.0.1")
 	fixture.workloads.UpdateObject(worker)
 	fixture.sandboxes.UpdateObject(testSandboxForWorkload(worker))
@@ -99,7 +99,7 @@ func TestTrafficPolicyCompilesBothResourcesWithOneResolution(t *testing.T) {
 }
 
 func TestTrafficPolicyAuthorizationDirectionsUpdate(t *testing.T) {
-	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.SandboxMode = false })
 	workload := testWorkload("demo", "client", "10.0.0.1")
 	fixture.workloads.UpdateObject(workload)
 	fixture.sandboxes.UpdateObject(testSandboxForWorkload(workload))
@@ -204,7 +204,7 @@ func TestTrafficPolicyAuthorizationDirectionsUpdate(t *testing.T) {
 }
 
 func TestEgressPolicyIncrementalAttachmentAndLastKnownGood(t *testing.T) {
-	fixture := newIncrementalFixture(t, func(i *Inputs) { i.NativeSandboxPolicies = false })
+	fixture := newIncrementalFixture(t, func(i *Inputs) { i.SandboxMode = false })
 	client := testWorkload("demo", "client", "10.0.0.2")
 	other := testWorkload("other", "client", "10.0.1.2")
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(client))
@@ -348,91 +348,8 @@ func TestPolicyEditInvalidatesOnlyItsNamespace(t *testing.T) {
 	}
 }
 
-func TestExactSandboxPolicyLifecycleAffectsOnlyTarget(t *testing.T) {
-	fixture := newIncrementalFixture(t)
-	first := testWorkload("demo", "first", "10.1.0.1")
-	second := testWorkload("demo", "second", "10.1.0.2")
-	firstUID := "sandbox-first"
-	secondUID := "sandbox-second"
-	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
-		UID:       firstUID,
-		Attester:  &model.Attester{WorkloadUID: first.UID},
-		Namespace: "demo",
-		Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: firstUID},
-	})
-	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{
-		UID:       secondUID,
-		Attester:  &model.Attester{WorkloadUID: second.UID},
-		Namespace: "demo",
-		Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: secondUID},
-	})
-	fixture.workloads.ConditionalUpdateObject(first)
-	fixture.workloads.ConditionalUpdateObject(second)
-	waitSynced(t, fixture.compiler)
-	firstAddress := addressResourceName("demo", "first")
-	secondAddress := addressResourceName("demo", "second")
-	awaitSteadyState(t, fixture.compiler, firstAddress, secondAddress)
-
-	policyInput := model.TrafficPolicy{
-		Name:       "exact",
-		Namespace:  "demo",
-		SandboxUID: firstUID,
-		Spec: agentsv1alpha1.TrafficPolicySpec{
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-				agentsv1alpha1.LabelSandboxID: firstUID,
-			}},
-			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-				Action: agentsv1alpha1.RuleActionAllow,
-				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "10.0.0.0/24"}},
-			}}},
-		},
-	}
-	sandboxKey := model.SandboxType + "|" + firstUID
-	trafficPolicyKey := model.TrafficPolicyType + "|namespaces/demo/trafficPolicies/exact"
-	recorder := newRecorder(fixture.compiler.Resources())
-	fixture.trafficPolicies.ConditionalUpdateObject(policyInput)
-	eventually(t, func() bool {
-		return recorder.has(sandboxKey)
-	}, "exact policy attached to its Sandbox")
-	settle()
-	if got, want := recorder.names(), []string{sandboxKey, trafficPolicyKey}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("exact policy add changed %v, want %v", got, want)
-	}
-	if recorder.has(secondAddress) {
-		t.Fatalf("exact policy add invalidated unrelated Sandbox; changed=%v", recorder.names())
-	}
-
-	manifest := manifestAt(t, fixture.compiler, firstUID)
-	if manifest.TrafficPolicy != nil ||
-		!reflect.DeepEqual(trafficPolicyRefs(manifest), []string{"namespaces/demo/trafficPolicies/exact"}) {
-		t.Fatalf("a single-target CR must remain an independent policy reference: %v", manifest)
-	}
-	recorder.reset()
-	policyInput.Spec = *policyInput.Spec.DeepCopy()
-	policyInput.Spec.Egress.Rules[0].Action = agentsv1alpha1.RuleActionReject
-	fixture.trafficPolicies.ConditionalUpdateObject(policyInput)
-	eventually(t, func() bool { return recorder.has(trafficPolicyKey) }, "shared policy body updated")
-	settle()
-	if got, want := recorder.names(), []string{trafficPolicyKey}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("single-target shared body update changed %v, want %v", got, want)
-	}
-
-	recorder.reset()
-	fixture.trafficPolicies.DeleteObject(policyInput.ResourceName())
-	eventually(t, func() bool {
-		return recorder.has(sandboxKey)
-	}, "exact policy detached from its Sandbox")
-	settle()
-	if got, want := recorder.names(), []string{sandboxKey, trafficPolicyKey}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("exact policy delete changed %v, want %v", got, want)
-	}
-	if recorder.has(secondAddress) {
-		t.Fatalf("exact policy delete invalidated unrelated Sandbox; changed=%v", recorder.names())
-	}
-}
-
 // A global policy legitimately attaches everywhere, so it must invalidate
-// Sandbox views in every namespace.
+// Workload bindings in every namespace.
 func TestGlobalPolicyInvalidatesEveryNamespace(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("alpha", "client", "10.1.0.1")))
@@ -459,9 +376,9 @@ func TestGlobalPolicyInvalidatesEveryNamespace(t *testing.T) {
 	})
 
 	for _, namespace := range []string{"alpha", "beta"} {
-		expected := model.SandboxType + "|cluster//Pod/" + namespace + "/client"
+		expected := addressResourceName(namespace, "client")
 		eventually(t, func() bool { return recorder.has(expected) },
-			"global policy invalidated Sandbox in "+namespace)
+			"global policy invalidated Workload in "+namespace)
 	}
 }
 
@@ -522,7 +439,7 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	})
 	eventually(t, func() bool {
 		manifest := manifestAt(t, fixture.compiler, "cluster//Pod/alpha/client")
-		return manifest != nil && len(trafficPolicyRefs(manifest)) == 1 && len(fixture.compiler.Failures()) == 0
+		return manifest != nil && len(fixture.compiler.PolicyNames("cluster//Pod/alpha/client", model.PolicyKindTrafficPolicy)) == 1 && len(fixture.compiler.Failures()) == 0
 	}, "fixed policy publishes and clears the failure")
 }
 
@@ -623,13 +540,13 @@ func TestMalformedTrafficPolicyUpdatePreservesLastKnownGood(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 
 	key := model.ResourceKey{
-		TypeURL: model.SandboxType,
-		Name:    "cluster//Pod/alpha/client",
+		TypeURL: model.TrafficPolicyType,
+		Name:    "namespaces/alpha/trafficPolicies/allow",
 	}
 	eventually(t, func() bool {
 		_, found := currentSnapshot(t, fixture.compiler).Get(key)
 		return found
-	}, "initial authorization resource")
+	}, "initial native TrafficPolicy resource")
 	baseline, _ := currentSnapshot(t, fixture.compiler).Get(key)
 
 	invalid := valid
@@ -643,10 +560,10 @@ func TestMalformedTrafficPolicyUpdatePreservesLastKnownGood(t *testing.T) {
 
 	retained, found := currentSnapshot(t, fixture.compiler).Get(key)
 	if !found {
-		t.Fatal("invalid update removed the last-known-good Authorization")
+		t.Fatal("invalid update removed the last-known-good TrafficPolicy")
 	}
 	if retained.Hash != baseline.Hash {
-		t.Fatalf("invalid update replaced the last-known-good Authorization: %s != %s", retained.Hash, baseline.Hash)
+		t.Fatalf("invalid update replaced the last-known-good TrafficPolicy: %s != %s", retained.Hash, baseline.Hash)
 	}
 }
 
@@ -713,7 +630,6 @@ func TestWorkloadPeerResolutionUsesPodMetadata(t *testing.T) {
 		UID:       "sandbox-bound",
 		Attester:  &model.Attester{WorkloadUID: bound.UID},
 		Namespace: "sandbox-namespace",
-		Labels:    map[string]string{"role": "not-peer"},
 	}}, options...)
 	inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{bound}, options...)
 	inputs.Pods = krt.NewStaticCollection(nil, []*corev1.Pod{{
@@ -866,73 +782,6 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 	}
 }
 
-func TestCompilerReferencesSharedTrafficPolicyInSandbox(t *testing.T) {
-	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
-	options := []krt.CollectionOption{krt.WithStop(stop)}
-	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
-	services := krt.NewStaticCollection[model.Service](nil, nil, options...)
-	endpoints := krt.NewStaticCollection[model.Endpoint](nil, nil, options...)
-	trafficPolicies := krt.NewStaticCollection[model.TrafficPolicy](nil, nil, options...)
-	securityProfiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
-	agentioConfig := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
-	workloads.ConditionalUpdateObject(testWorkload("demo", "client", "10.1.0.2"))
-	trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Name:      "allow",
-		Namespace: "demo",
-		Spec: agentsv1alpha1.TrafficPolicySpec{
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-				Action: agentsv1alpha1.RuleActionAllow,
-				To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}},
-			}}},
-		},
-	})
-
-	inputs := validCompilerInputs(stop)
-	inputs.Sandboxes = krt.NewStaticCollection(
-		nil,
-		[]model.Sandbox{
-			{UID: "cluster//Pod/demo/client", Namespace: "demo", Labels: map[string]string{"app": "client"}},
-		},
-		options...)
-	inputs.Workloads = workloads
-	inputs.Services = services
-	inputs.Endpoints = endpoints
-	inputs.Gateways = testGatewaySource(agentioConfig, options...)
-	inputs.TrafficPolicies = trafficPolicies
-	inputs.SecurityProfiles = securityProfiles
-	inputs.AgentioConfig = agentioConfig
-	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
-	if err != nil {
-		t.Fatalf("new compiler: %v", err)
-	}
-	snapshot := compileSynced(t, compiler)
-	if len(snapshot.List(model.WorkloadAuthorizationType)) != 0 {
-		t.Fatal("native-only compilation must not publish Workload Authorization")
-	}
-	workloadResource, found := snapshot.Get(model.ResourceKey{
-		TypeURL: model.AddressType,
-		Name:    "cluster//Pod/demo/client",
-	})
-	if !found {
-		t.Fatal("compiled Workload resource not found")
-	}
-	address := &workloadv1.Address{}
-	if err := workloadResource.Value.UnmarshalTo(address); err != nil {
-		t.Fatalf("unmarshal Workload: %v", err)
-	}
-	got := address.GetWorkload().GetAuthorizationPolicies()
-	if len(got) != 0 {
-		t.Fatalf("workload authorization policies = %v", got)
-	}
-	manifest := manifestAt(t, compiler, "cluster//Pod/demo/client")
-	if manifest == nil || manifest.TrafficPolicy != nil ||
-		!reflect.DeepEqual(trafficPolicyRefs(manifest), []string{"namespaces/demo/trafficPolicies/allow"}) {
-		t.Fatalf("Sandbox is missing shared TrafficPolicy reference: %+v", manifest)
-	}
-}
-
 func TestAuthorizationResourceCarriesScopeFacts(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1000,8 +849,10 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	workload := testWorkload("demo", "client", "10.1.0.2")
 	workloads.ConditionalUpdateObject(workload)
 	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
-		Name:      "terminate",
-		Namespace: "demo",
+		Name:       "terminate",
+		Dedicated:  true,
+		SandboxUID: workload.UID,
+		Namespace:  "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "does-not-match"}},
 			Rules: []agentsv1alpha1.SecurityRule{
@@ -1026,10 +877,6 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{
 		UID:      workload.UID,
 		Attester: &model.Attester{WorkloadUID: workload.UID},
-		PolicyRefs: []model.PolicyRef{{
-			Kind: model.PolicyKindSNIPolicy,
-			Name: "demo/terminate",
-		}},
 	}}, options...)
 	inputs.Workloads = workloads
 	inputs.Services = services
@@ -1061,9 +908,9 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 		address.GetWorkload().GetExtensions(),
 	); !reflect.DeepEqual(
 		got,
-		[]string{"workload-metadata"},
+		[]string{"workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"},
 	) {
-		t.Fatalf("native-only Workload has policy extensions: %v", got)
+		t.Fatalf("Workload extensions: %v", got)
 	}
 	if _, found := snapshot.Get(
 		model.ResourceKey{TypeURL: model.WorkloadType, Name: "cluster//Pod/demo/client"},
@@ -1083,47 +930,8 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	}
 	binding := compiler.Bindings().GetKey(workload.UID)
 	if binding == nil ||
-		!reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/terminate"}) {
-		t.Fatalf("Sandbox policy binding = %+v", binding)
-	}
-}
-
-func TestCompilerRetainsNetworkingWithUnresolvedSandboxPolicyReference(t *testing.T) {
-	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
-	options := []krt.CollectionOption{krt.WithStop(stop)}
-	workload := testWorkload("demo", "client", "10.1.0.2")
-	inputs := validCompilerInputs(stop)
-	inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{workload}, options...)
-	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{
-		UID: workload.UID,
-		PolicyRefs: []model.PolicyRef{{
-			Kind: model.PolicyKindSNIPolicy,
-			Name: "demo/missing",
-		}},
-	}}, options...)
-
-	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitSynced(t, compiler)
-	snapshot, err := compiler.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r, found := snapshot.Get(model.ResourceKey{
-		TypeURL: model.AddressType,
-		Name:    workload.UID,
-	}); !found || r.Facts.Workload == nil {
-		t.Fatal("networking must remain available when Sandbox policies are unavailable")
-	}
-	failures := compiler.Failures()
-	if _, found := failures["Bindings/"+workload.UID]; !found {
-		t.Fatalf("Sandbox failure is missing: %v", failures)
-	}
-	if manifest := manifestAt(t, compiler, workload.UID); manifest == nil {
-		t.Fatal("an unresolved policy reference must not withdraw the Sandbox")
+		!reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/pod-policy"}) {
+		t.Fatalf("Workload policy binding = %+v", binding)
 	}
 }
 
@@ -1235,27 +1043,23 @@ func TestCompilerPublishesWorkloadEgressPolicies(t *testing.T) {
 		if err := resource.Value.UnmarshalTo(address); err != nil {
 			t.Fatal(err)
 		}
-		manifest := manifestAt(t, compiler, test.uid)
-		if manifest == nil {
-			t.Fatalf("Sandbox %s is missing", test.uid)
-		}
-		effective := manifest.EgressRouting
+		effective := new(extensionsv1.EgressPolicies)
+		hasEgress := compatibilityExtension(t, address.GetWorkload(), "egress-policies", effective)
 		if test.wantPolicies == 0 {
-			if effective != nil {
+			if hasEgress {
 				t.Fatalf("%s received unrelated egress policies: %+v", test.uid, effective)
 			}
 			continue
 		}
-		if got := len(effective.GetRoutes()); got != test.wantPolicies {
+		if got := len(effective.GetEgressPolicies()); got != test.wantPolicies {
 			t.Fatalf("%s policy count = %d, want %d", test.uid, got, test.wantPolicies)
 		}
-		sandboxResource, _ := snapshot.Get(model.ResourceKey{TypeURL: model.SandboxType, Name: test.uid})
-		if sandboxResource.Facts.Sandbox == nil ||
-			!slices.Contains(sandboxResource.Facts.Sandbox.GatewayReferences, test.wantGateway) {
-			t.Fatalf("%s facts = %+v, missing Gateway reference %s", test.uid, sandboxResource.Facts, test.wantGateway)
+		if resource.Facts.Workload == nil ||
+			!slices.Contains(resource.Facts.Workload.GatewayReferences, test.wantGateway) {
+			t.Fatalf("%s facts = %+v, missing Gateway reference %s", test.uid, resource.Facts, test.wantGateway)
 		}
 		count := 0
-		for _, current := range sandboxResource.Facts.Sandbox.GatewayReferences {
+		for _, current := range resource.Facts.Workload.GatewayReferences {
 			if current == test.wantGateway {
 				count++
 			}
@@ -1266,8 +1070,8 @@ func TestCompilerPublishesWorkloadEgressPolicies(t *testing.T) {
 	}
 }
 
-// Rule payload changes update the owning Sandbox without
-// invalidating canonical Workload Addresses.
+// Shared rule payload changes update the native and legacy policy resources
+// without invalidating Workload Addresses or Sandboxes.
 func TestTrafficRulesOnlyUpdateDoesNotInvalidateWorkloads(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.sandboxes.ConditionalUpdateObject(testSandboxForWorkload(testWorkload("demo", "client", "10.1.0.1")))
@@ -1303,7 +1107,7 @@ func TestTrafficRulesOnlyUpdateDoesNotInvalidateWorkloads(t *testing.T) {
 	eventually(t, func() bool {
 		current, found := currentSnapshot(t, fixture.compiler).Get(policyKey)
 		return found && current.Hash != oldPolicy.Hash
-	}, "authorization rules update")
+	}, "native policy rules update")
 	settle()
 
 	currentSandbox, _ := currentSnapshot(t, fixture.compiler).Get(sandboxKey)

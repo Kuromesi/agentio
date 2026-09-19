@@ -291,8 +291,8 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 			eventually(t, func() bool {
 				current := r.Sandboxes.GetKey("kruise:sandbox-id")
 				return r.SecurityProfiles.GetKey(inlineKey) == nil && r.SecurityProfiles.GetKey(sharedKey) != nil &&
-					current != nil && current.State == model.SandboxStatePending
-			}, "invalid annotation removes only its own profile while runtime state advances")
+					current != nil
+			}, "invalid annotation removes only its own profile and preserves Sandbox identity")
 		})
 	}
 }

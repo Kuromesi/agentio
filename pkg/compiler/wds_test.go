@@ -72,8 +72,10 @@ func TestBuildWDSAddressPublishesDiscoveryOnlyWorkload(t *testing.T) {
 	if got := wireWorkload.GetServiceAccount(); got != "" {
 		t.Fatalf("service account = %q, want empty", got)
 	}
-	if got := extensionNames(wireWorkload.GetExtensions()); len(got) != 0 {
-		t.Fatalf("extensions = %v, want none", got)
+	refs := new(extensionsv1.PolicyReference)
+	if !compatibilityExtension(t, wireWorkload, "traffic-policy-reference", refs) ||
+		refs.TypeUrl != model.TrafficPolicyType || len(refs.ResourceNames) != 0 {
+		t.Fatalf("native empty policy binding = %v", refs)
 	}
 	if resource.Facts.Workload == nil {
 		t.Fatal("discovery-only Address lost its Workload facts")

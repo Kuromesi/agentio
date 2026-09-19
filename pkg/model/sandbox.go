@@ -16,53 +16,7 @@ package model
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
-
-	"istio.io/istio/pkg/util/sets"
-)
-
-// PolicyKind identifies the independently stored policy family referenced by a
-// Sandbox. The reference intentionally carries no policy payload.
-type PolicyKind string
-
-// Supported policy families for Sandbox references.
-const (
-	PolicyKindTrafficPolicy PolicyKind = "traffic-policy"
-	PolicyKindEgressPolicy  PolicyKind = "egress-policy"
-	PolicyKindSNIPolicy     PolicyKind = "sni-policy"
-)
-
-type PolicyRef struct {
-	Kind PolicyKind
-	Name string
-}
-
-func (r PolicyRef) ResourceName() string { return string(r.Kind) + "|" + r.Name }
-
-func (r PolicyRef) Validate() error {
-	switch r.Kind {
-	case PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
-	default:
-		return fmt.Errorf("unsupported policy kind %q", r.Kind)
-	}
-	if strings.TrimSpace(r.Name) == "" {
-		return fmt.Errorf("%s policy name is required", r.Kind)
-	}
-	return nil
-}
-
-// SandboxState is the observed runtime lifecycle, independent of policy validity.
-type SandboxState int32
-
-// Sandbox lifecycle states match the wire SandboxState values.
-const (
-	SandboxStateUnspecified SandboxState = iota
-	SandboxStatePending
-	SandboxStateRunning
-	SandboxStatePaused
-	SandboxStateStopped
 )
 
 // Attester identifies the one Workload currently hosting a Sandbox.
@@ -80,38 +34,20 @@ func SandboxUID(kind, instanceID string) string {
 	return kind + ":" + instanceID
 }
 
-// Sandbox is an execution unit and its shared policy references. Providers may
-// discover it from a sandbox runtime or derive it from an ordinary managed Pod.
+// Sandbox is an execution unit discovered from a sandbox runtime.
 // Owned policies enter the TrafficPolicy and SecurityProfile input collections.
 type Sandbox struct {
-	State      SandboxState
-	Attester   *Attester
-	UID        string
-	Namespace  string
-	Labels     map[string]string
-	PolicyRefs []PolicyRef
+	Attester  *Attester
+	UID       string
+	Namespace string
 }
 
 func (s Sandbox) Validate() error {
 	if strings.TrimSpace(s.UID) == "" {
 		return fmt.Errorf("sandbox UID is required")
 	}
-	if s.State < SandboxStateUnspecified || s.State > SandboxStateStopped {
-		return fmt.Errorf("unknown sandbox state %d", s.State)
-	}
 	if s.Attester != nil && strings.TrimSpace(s.Attester.WorkloadUID) == "" {
 		return fmt.Errorf("attester workload UID is required")
-	}
-	seen := sets.NewWithLength[string](len(s.PolicyRefs))
-	for index, reference := range s.PolicyRefs {
-		if err := reference.Validate(); err != nil {
-			return fmt.Errorf("policy reference %d: %w", index, err)
-		}
-		key := reference.ResourceName()
-		if seen.Contains(key) {
-			return fmt.Errorf("policy reference %s/%s is duplicated", reference.Kind, reference.Name)
-		}
-		seen.Insert(key)
 	}
 	return nil
 }
@@ -120,16 +56,11 @@ func (s Sandbox) ResourceName() string {
 	return s.UID
 }
 
-// Equals compares all fields, preserving the distinction between nil and empty collections.
+// Equals compares identity and host binding.
 func (s Sandbox) Equals(other Sandbox) bool {
-	return s.State == other.State &&
-		s.UID == other.UID &&
+	return s.UID == other.UID &&
 		s.Namespace == other.Namespace &&
-		attestersEqual(s.Attester, other.Attester) &&
-		(s.PolicyRefs == nil) == (other.PolicyRefs == nil) &&
-		slices.Equal(s.PolicyRefs, other.PolicyRefs) &&
-		(s.Labels == nil) == (other.Labels == nil) &&
-		maps.Equal(s.Labels, other.Labels)
+		attestersEqual(s.Attester, other.Attester)
 }
 
 func attestersEqual(left, right *Attester) bool {

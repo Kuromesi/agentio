@@ -163,9 +163,9 @@ func containsString(values []string, value string) bool {
 	return found
 }
 
-// Selects reports whether this attachment applies to the sandbox.
-func (p PolicyAttachment) Selects(sandbox model.Sandbox) bool {
-	return p.selects(sandbox.Namespace, sandbox.Labels)
+// Selects reports whether this attachment applies to the Workload.
+func (p PolicyAttachment) Selects(workload model.Workload) bool {
+	return p.selects(workload.Namespace, workload.Labels)
 }
 
 func (p PolicyAttachment) selects(namespace string, targetLabels map[string]string) bool {

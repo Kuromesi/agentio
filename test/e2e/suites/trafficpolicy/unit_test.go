@@ -29,6 +29,8 @@ import (
 )
 
 func TestSetupOrder(t *testing.T) {
+	fixture := trafficFixture
+	t.Cleanup(func() { trafficFixture = fixture })
 	digest := "registry.example/test@sha256:" + strings.Repeat("b", 64)
 	setups := suiteSetupGraph(agentiocomponent.Config{
 		Namespace:         "agentio-system",
@@ -180,8 +182,8 @@ func nativePolicyDump(t *testing.T, bound, cached bool) string {
 		)
 	}
 	body, err := json.Marshal(map[string]any{
-		"workload":        map[string]any{"uid": "client-uid", "namespace": "test"},
-		"sandboxes":       []any{map[string]any{"workloadUid": "client-uid", "trafficPolicyRefs": refs}},
+		"workload":        map[string]any{"uid": "client-uid", "namespace": "test", "trafficPolicyRefs": refs},
+		"sandboxes":       []any{},
 		"trafficPolicies": policies,
 	})
 	if err != nil {
@@ -229,7 +231,7 @@ func TestInspectPolicyDumpRequiresBindingAndBody(t *testing.T) {
 		{name: "cached but unbound", dump: nativePolicyDump(t, false, true)},
 		{name: "missing referenced body", dump: nativePolicyDump(t, true, false), wantErr: true},
 		{name: "exact policy name", dump: strings.ReplaceAll(nativePolicyDump(t, true, true), "tp-target", "tp-target-extra")},
-		{name: "different workload", dump: strings.Replace(nativePolicyDump(t, true, true), `"workloadUid":"client-uid"`, `"workloadUid":"other-uid"`, 1), wantErr: true},
+		{name: "missing native binding", dump: strings.Replace(nativePolicyDump(t, true, true), `"trafficPolicyRefs":["namespaces/test/trafficPolicies/tp-target"],`, "", 1), wantErr: true},
 		{name: "legacy reference and body", dump: legacyPolicyDump(t, true, true), found: true},
 		{name: "legacy unbound body", dump: legacyPolicyDump(t, false, true)},
 		{name: "legacy dangling reference", dump: legacyPolicyDump(t, true, false), wantErr: true},

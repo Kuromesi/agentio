@@ -25,12 +25,12 @@ import (
 )
 
 func TestPolicyAttachmentTargets(t *testing.T) {
-	demo := model.Sandbox{
+	demo := model.Workload{
 		UID:       "cluster//Pod/demo/client",
 		Namespace: "demo",
 		Labels:    map[string]string{"app": "client", "tier": "trusted"},
 	}
-	other := model.Sandbox{
+	other := model.Workload{
 		UID:       "cluster//Pod/other/client",
 		Namespace: "other",
 		Labels:    map[string]string{"app": "client"},

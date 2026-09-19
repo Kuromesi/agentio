@@ -166,7 +166,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return err
 	}
 	registry, err := kubernetesregistry.New(kubeClient, kubernetesregistry.Options{
-		EnableKruise:          slices.Contains(sandboxRuntimes, registry.SandboxRuntimeKruise),
+		EnableKruise:          features.SandboxMode && slices.Contains(sandboxRuntimes, registry.SandboxRuntimeKruise),
 		ClusterID:             options.ClusterID,
 		TrustDomain:           options.TrustDomain,
 		RootNamespace:         options.RootNamespace,
@@ -237,7 +237,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	dnsReferenceRegistration := resolver.Track(dnsReferences)
 	defer dnsReferenceRegistration.UnregisterHandler()
 	resourceCompiler, err := compiler.New(compiler.Inputs{
-		NativeSandboxPolicies:      features.NativeSandboxPolicies,
+		SandboxMode:                features.SandboxMode,
 		ClusterID:                  options.ClusterID,
 		RootNamespace:              options.RootNamespace,
 		Sandboxes:                  sources.Sandboxes,
@@ -335,8 +335,8 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			model.AddressType:               workloadGenerator,
 			model.WorkloadType:              workloadGenerator,
 			model.WorkloadAuthorizationType: xds.AuthorizationGenerator{},
-			model.SandboxType:               xds.SandboxGenerator{},
 			model.TrafficPolicyType:         xds.TrafficPolicyGenerator{},
+			model.SandboxType:               xds.SandboxGenerator{},
 			model.SecretType:                sdsGenerator,
 		},
 		features.PushConcurrency,

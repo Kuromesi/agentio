@@ -27,9 +27,9 @@ func IsManaged(pod *corev1.Pod) bool {
 	return HasInjectedZTunnel(pod) || AmbientRedirectionEnabled(pod)
 }
 
-// NewSandboxes derives a policy owner for each ordinary managed Pod. Hosts of
-// enabled runtimes are excluded even before their Sandbox has been discovered.
-// These are internal resources; no Kubernetes Sandbox objects are created.
+// NewSandboxes is the legacy ordinary-Pod Sandbox derivation helper.
+// The registry no longer calls it: ordinary Pods select policies as Workloads.
+// Retained temporarily while the Sandbox-centric tests are migrated.
 func NewSandboxes(
 	pods krt.Collection[*corev1.Pod],
 	clusterID string,
@@ -48,19 +48,10 @@ func sandboxFromPod(clusterID string, pod *corev1.Pod) *model.Sandbox {
 	if !IsEligible(pod) || !IsManaged(pod) || pod.UID == "" {
 		return nil
 	}
-	state := model.SandboxStateUnspecified
-	switch pod.Status.Phase {
-	case corev1.PodPending:
-		state = model.SandboxStatePending
-	case corev1.PodRunning:
-		state = model.SandboxStateRunning
-	}
 	return &model.Sandbox{
 		// Pod UID prevents a same-name replacement from reusing policy identity.
 		UID:       model.SandboxUID(model.SandboxKindWorkload, string(pod.UID)),
 		Namespace: pod.Namespace,
-		Labels:    cloneStringMap(pod.Labels),
-		State:     state,
 		Attester:  &model.Attester{WorkloadUID: WorkloadUID(clusterID, pod)},
 	}
 }

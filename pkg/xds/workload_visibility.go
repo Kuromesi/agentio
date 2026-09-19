@@ -52,13 +52,6 @@ func (v workloadVisibility) visible(resource model.Resource) bool {
 	}) {
 		return true
 	}
-	if resource.Facts.GatewayOwner != "" {
-		for _, sandbox := range v.resources.ListSandboxesReferencingGateway(resource.Facts.GatewayOwner) {
-			if sandboxResourceVisible(v.scope, v.resources, sandbox) {
-				return true
-			}
-		}
-	}
 	if resource.IsWorkloadAddress() {
 		return workloadMatchesScope(v.scope, resource)
 	}

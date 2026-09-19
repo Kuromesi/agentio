@@ -27,21 +27,16 @@ import (
 	"github.com/openkruise/agentio/pkg/policy"
 )
 
-// BenchmarkSandboxCompatibilityProjection measures Workload reference projection.
+// BenchmarkWorkloadPolicyProjection measures Workload reference projection.
 // Shared policy encoding is performed once upstream; no API decoding, selector matching, DNS,
 // or per-client ADS work belongs in this measurement.
-func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
+func BenchmarkWorkloadPolicyProjection(b *testing.B) {
 	for _, count := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("rules=%d", count), func(b *testing.B) {
 			stop := make(chan struct{})
 			b.Cleanup(func() { close(stop) })
 			opts := []krt.CollectionOption{krt.WithStop(stop)}
 			workload := testWorkload("demo", "client", "10.0.0.1")
-			sandbox := model.Sandbox{
-				UID:       "actor",
-				Namespace: "demo",
-				Attester:  &model.Attester{WorkloadUID: workload.UID},
-			}
 			rules := make([]*securityv1.TrafficPolicy_Rule, count)
 			for i := range count {
 				rules[i] = &securityv1.TrafficPolicy_Rule{Match: &securityv1.TrafficPolicy_Match{
@@ -70,7 +65,7 @@ func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
 				sniPolicies:     krt.NewStaticCollection[policy.CompiledSNIPolicy](nil, nil, opts...),
 				policyBindings: krt.NewStaticCollection(nil, []policy.Bindings{
 					{
-						SandboxUID: sandbox.UID,
+						TargetUID: workload.UID,
 						Groups: []policy.BindingGroup{
 							{Kind: policy.PolicyKindTrafficPolicy, Names: []string{compiled.Name}},
 						},
@@ -80,7 +75,7 @@ func BenchmarkSandboxCompatibilityProjection(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				projection, err := sandboxAsWorkload(krt.TestingDummyContext{}, workload, sandbox, policies)
+				projection, err := compileWorkloadPolicies(krt.TestingDummyContext{}, workload, policies)
 				if err != nil || len(projection.AuthorizationNames) != 1 {
 					b.Fatalf("projection: %v", err)
 				}

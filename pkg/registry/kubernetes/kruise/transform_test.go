@@ -56,8 +56,6 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 		{},
 	} {
 		changed := source.DeepCopy()
-		// Runtime metadata must progress even when the annotation cannot be decoded.
-		changed.Labels["revision"] = step.raw
 		changed.Annotations = map[string]string{"unrelated": "drop"}
 		var wantAnnotations map[string]string
 		var want []agentsv1alpha1.SecurityRule
@@ -102,7 +100,7 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 						profile.Namespace == "demo" &&
 						reflect.DeepEqual(profile.Spec.Rules, want)
 				}
-				return current != nil && current.Attester == nil && current.Labels["revision"] == step.raw &&
+				return current != nil && current.Attester == nil &&
 					validProfile, nil
 			},
 		)
@@ -307,47 +305,6 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	if policySubject.Namespace != "demo" {
 		t.Fatalf("Sandbox namespace = %q, want demo", policySubject.Namespace)
 	}
-	if got := policySubject.Labels["app"]; got != "pod-value" {
-		t.Fatalf("Sandbox app label = %q, want pod-value", got)
-	}
-	if got := policySubject.Labels["sandbox-only"]; got != "kept" {
-		t.Fatalf("Sandbox-only label = %q, want kept", got)
-	}
-	if got := policySubject.Labels["pod-only"]; got != "included" {
-		t.Fatalf("Pod-only label = %q, want included", got)
-	}
-	if got := policySubject.Labels[agentsv1alpha1.LabelSandboxID]; got != "delivery-uid" {
-		t.Fatalf("Sandbox ID label = %q, want delivery-uid", got)
-	}
-	if got := policySubject.Labels[agentsv1alpha1.LabelSandboxIsClaimed]; got != agentsv1alpha1.True {
-		t.Fatalf("Sandbox claimed label = %q, want true", got)
-	}
-	if got, found := policySubject.Labels[agentsv1alpha1.LabelSandboxUpdateOps]; found {
-		t.Fatalf("Pod-only protected label leaked into Sandbox: %q", got)
-	}
-	if got := policySubject.Labels[agentsv1alpha1.LabelSandboxName]; got != "sandbox" {
-		t.Fatalf("Sandbox name label = %q, want sandbox", got)
-	}
-	if got := policySubject.Labels[agentsv1alpha1.LabelAllowInternetAccess]; got != agentsv1alpha1.True {
-		t.Fatalf("Allow internet label = %q, want true", got)
-	}
-	if got := policySubject.Labels[agentsv1alpha1.AnnotationOwner]; got != "claim-uid" {
-		t.Fatalf("Owner label = %q, want claim-uid", got)
-	}
-	if got := policySubject.Labels[podCreatedByLabel]; got != "sandbox" {
-		t.Fatalf("Created-by label = %q, want sandbox", got)
-	}
-	if got, found := policySubject.Labels[futureInternalLabel]; found {
-		t.Fatalf("Unknown Pod-only internal label leaked into Sandbox: %q", got)
-	}
-	sandbox.Labels["sandbox-only"] = "mutated"
-	pod.Labels["pod-only"] = "mutated"
-	if got := policySubject.Labels["sandbox-only"]; got != "kept" {
-		t.Fatalf("published Sandbox labels aliased Sandbox source map: sandbox-only = %q", got)
-	}
-	if got := policySubject.Labels["pod-only"]; got != "included" {
-		t.Fatalf("published Sandbox labels aliased Pod source map: pod-only = %q", got)
-	}
 	workload := workloads.GetKey("cluster//Pod/demo/sandbox-runtime")
 	if workload == nil {
 		t.Fatal("Kruise runtime produced no Workload attester")
@@ -355,8 +312,7 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	if workload.SourceUID != "pod-uid" || workload.Principal.String() != "spiffe://cluster.local/ns/demo/sa/default" {
 		t.Fatalf("Workload attester = %+v", workload)
 	}
-	if policySubject.Attester == nil || policySubject.Attester.WorkloadUID != workload.UID ||
-		policySubject.State != model.SandboxStateRunning {
+	if policySubject.Attester == nil || policySubject.Attester.WorkloadUID != workload.UID {
 		t.Fatalf("Sandbox runtime = %+v", policySubject)
 	}
 
@@ -369,30 +325,36 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		phase      agentsv1alpha1.SandboxPhase
-		state      model.SandboxState
 		generation int64
 		observed   int64
 	}{
-		{"pending", agentsv1alpha1.SandboxPending, model.SandboxStatePending, 3, 3},
-		{"running", agentsv1alpha1.SandboxRunning, model.SandboxStateRunning, 3, 3},
-		{"timeout extended", agentsv1alpha1.SandboxRunning, model.SandboxStateRunning, 4, 3},
-		{"timeout observed", agentsv1alpha1.SandboxRunning, model.SandboxStateRunning, 4, 4},
+		{"pending", agentsv1alpha1.SandboxPending, 3, 3},
+		{"running", agentsv1alpha1.SandboxRunning, 3, 3},
+		{"timeout extended", agentsv1alpha1.SandboxRunning, 4, 3},
+		{"timeout observed", agentsv1alpha1.SandboxRunning, 4, 4},
 	} {
 		changed := sandbox.DeepCopy()
 		changed.Status.Phase = test.phase
 		changed.Generation = test.generation
 		changed.Status.ObservedGeneration = test.observed
-		// Wait for this specific projection, not the preceding same-phase result.
-		changed.Labels["test-step"] = test.name
-		sandboxObjects.UpdateObject(changed)
-		err := wait.PollUntilContextTimeout(
+		stripped, err := stripSandbox(changed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projected := stripped.(*agentsv1alpha1.Sandbox)
+		wantStatus := agentsv1alpha1.SandboxStatus{PodInfo: agentsv1alpha1.PodInfo{PodUID: pod.UID}}
+		if !reflect.DeepEqual(projected.Status, wantStatus) {
+			t.Fatalf("runtime status must retain only the host Pod UID: %+v", projected.Status)
+		}
+		sandboxObjects.UpdateObject(projected)
+		err = wait.PollUntilContextTimeout(
 			t.Context(),
 			time.Millisecond,
 			time.Second,
 			true,
 			func(context.Context) (bool, error) {
 				current := sandboxes.GetKey("kruise:delivery-uid")
-				return current != nil && current.Labels["test-step"] == test.name && current.State == test.state &&
+				return current != nil &&
 					current.Attester != nil &&
 					current.Attester.WorkloadUID == workload.UID, nil
 			},
@@ -404,31 +366,6 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 				sandboxes.GetKey("kruise:delivery-uid"),
 				err,
 			)
-		}
-	}
-}
-
-func TestKruiseRuntimeStateRequiresCompletedPause(t *testing.T) {
-	for _, test := range []struct {
-		phase  agentsv1alpha1.SandboxPhase
-		paused bool
-		want   model.SandboxState
-	}{
-		{agentsv1alpha1.SandboxPending, false, model.SandboxStatePending},
-		{agentsv1alpha1.SandboxRunning, false, model.SandboxStateRunning},
-		{agentsv1alpha1.SandboxPaused, false, model.SandboxStateUnspecified},
-		{agentsv1alpha1.SandboxPaused, true, model.SandboxStatePaused},
-		{agentsv1alpha1.SandboxSucceeded, false, model.SandboxStateStopped},
-		{agentsv1alpha1.SandboxFailed, false, model.SandboxStateStopped},
-	} {
-		sandbox := &agentsv1alpha1.Sandbox{Status: agentsv1alpha1.SandboxStatus{Phase: test.phase}}
-		if test.paused {
-			sandbox.Status.Conditions = []metav1.Condition{
-				{Type: string(agentsv1alpha1.SandboxConditionPaused), Status: metav1.ConditionTrue},
-			}
-		}
-		if got := runtimeState(sandbox); got != test.want {
-			t.Fatalf("phase %s paused %v: state %v, want %v", test.phase, test.paused, got, test.want)
 		}
 	}
 }

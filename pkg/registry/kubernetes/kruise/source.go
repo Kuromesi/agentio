@@ -124,18 +124,11 @@ func newSandboxObjects(
 	return krt.WrapClient(informer, options...)
 }
 
-// stripSandbox keeps the selector labels, inline security rules, conditions, and Pod UID needed for projection.
+// stripSandbox keeps runtime identity labels, inline security rules, and the Pod UID needed for host binding.
 func stripSandbox(obj any) (any, error) {
 	sandbox, ok := obj.(*agentsv1alpha1.Sandbox)
 	if !ok || sandbox == nil {
 		return obj, nil
-	}
-	conditions := make([]metav1.Condition, 0, 2)
-	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(agentsv1alpha1.SandboxConditionReady) ||
-			condition.Type == string(agentsv1alpha1.RuntimeInitialized) {
-			conditions = append(conditions, condition)
-		}
 	}
 	return &agentsv1alpha1.Sandbox{
 		TypeMeta: sandbox.TypeMeta,
@@ -150,9 +143,6 @@ func stripSandbox(obj any) (any, error) {
 			Annotations:       sandboxSecurityAnnotations(sandbox),
 		},
 		Status: agentsv1alpha1.SandboxStatus{
-			ObservedGeneration: sandbox.Status.ObservedGeneration,
-			Phase:              sandbox.Status.Phase,
-			Conditions:         conditions,
 			PodInfo: agentsv1alpha1.PodInfo{
 				PodUID: sandbox.Status.PodInfo.PodUID,
 			},

@@ -48,8 +48,8 @@ func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	if got := len(snapshot.List(model.AddressType)); got != 5_000+scaleServices {
 		t.Fatalf("Address resources = %d, want %d", got, 5_000+scaleServices)
 	}
-	if got := len(snapshot.List(model.WorkloadAuthorizationType)); got != 0 {
-		t.Fatalf("native-only compilation emitted %d legacy Authorization resources", got)
+	if got := len(snapshot.List(model.WorkloadAuthorizationType)); got != scalePolicies {
+		t.Fatalf("Authorization resources = %d, want %d", got, scalePolicies)
 	}
 	if got := len(snapshot.List(model.SandboxType)); got != 2_500 {
 		t.Fatalf("Sandbox resources = %d, want 2500", got)
@@ -59,9 +59,9 @@ func TestCompileMixedEndpointsAtScale(t *testing.T) {
 	}
 	for _, resource := range snapshot.List(model.AddressType) {
 		if facts := resource.Facts.Workload; facts != nil {
-			if len(facts.AuthorizationRefs) != 0 {
+			if len(facts.AuthorizationRefs) != scalePolicies || len(facts.TrafficPolicyRefs) != scalePolicies {
 				t.Fatalf(
-					"native-only Workload %s has legacy policy references: %v",
+					"Workload %s must have complete native and compatibility references: %v",
 					resource.Key.Name,
 					facts.AuthorizationRefs,
 				)
