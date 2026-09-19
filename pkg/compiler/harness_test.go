@@ -524,7 +524,7 @@ func compileWorkloadsAndHashesForService(
 func validCompilerInputs(stop <-chan struct{}) Inputs {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	return Inputs{
-		NativeSandboxPolicies:      true,
+		SandboxMode:                true,
 		ClusterID:                  "cluster",
 		RootNamespace:              "agentio-system",
 		DiscoveryAddress:           "agentiod.agentio-system.svc:15012",
@@ -578,7 +578,6 @@ func testSandboxForWorkload(workload model.Workload) model.Sandbox {
 		Attester:  &model.Attester{WorkloadUID: workload.UID},
 		UID:       workload.UID,
 		Namespace: workload.Namespace,
-		Labels:    workload.Labels,
 	}
 }
 
@@ -640,7 +639,7 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 	}}, options...)
 
 	inputs := validCompilerInputs(stop)
-	inputs.NativeSandboxPolicies = false
+	inputs.SandboxMode = false
 	inputs.Sandboxes = sandboxes
 	inputs.Workloads = workloads
 	inputs.Services = services

@@ -42,6 +42,7 @@ type wdsProjection struct {
 	SNIPolicy             *extensionsv1.SniTrafficPolicy
 	EgressPolicies        *extensionsv1.EgressPolicies
 	AuthorizationNames    []string
+	TrafficPolicyNames    []string
 	MetadataConfiguration *workloadMetadataConfiguration
 	EgressGatewayKeys     []string
 	OwnedGatewayKey       string
@@ -107,6 +108,20 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		wireWorkload.Extensions = append(wireWorkload.Extensions, metadata)
 	}
 
+	// Always publish the native binding, even when empty. Native clients must
+	// distinguish no applicable policies from a referenced body not yet received.
+	trafficPolicyRefs, err := marshalDeterministicAny(&extensionsv1.PolicyReference{
+		TypeUrl:       model.TrafficPolicyType,
+		ResourceNames: append([]string(nil), input.TrafficPolicyNames...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal traffic policy references for workload %s: %w", input.Workload.UID, err)
+	}
+	wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
+		Name:   "traffic-policy-reference",
+		Config: trafficPolicyRefs,
+	})
+
 	if input.EgressPolicies != nil {
 		config, err := marshalDeterministicAny(input.EgressPolicies)
 		if err != nil {
@@ -133,6 +148,7 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		return nil, fmt.Errorf("marshal workload %s: %w", input.Workload.UID, err)
 	}
 	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+		TrafficPolicyRefs: append([]string(nil), input.TrafficPolicyNames...),
 		AuthorizationRefs: append([]string(nil), input.AuthorizationNames...),
 		WorkloadUID:       input.Workload.UID,
 		SourceUID:         input.Workload.SourceUID,

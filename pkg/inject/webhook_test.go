@@ -413,6 +413,50 @@ templates:
 	}
 }
 
+func TestInjectSandboxMode(t *testing.T) {
+	for _, path := range []string{"testdata/ztunnel-injection-template.yaml", "../../manifests/charts/agentio/files/ztunnel-injection-template.yaml"} {
+		for _, mode := range []string{"default", "false", "true"} {
+			t.Run(path+"/"+mode, func(t *testing.T) {
+				template, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				config, err := UnmarshalConfig([]byte(
+					"policy: enabled\ndefaultTemplates: [ztunnel]\ntemplates:\n  ztunnel: |\n" +
+						indentLines(string(template), "    "),
+				))
+				if err != nil {
+					t.Fatal(err)
+				}
+				values, err := os.ReadFile("testdata/values.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				custom := string(values)
+				want := "false"
+				if mode != "default" {
+					custom = strings.Replace(custom,
+						`"proxyZtunnel": {`, `"proxyZtunnel": {"sandboxMode": "`+mode+`",`, 1,
+					)
+					want = mode
+				}
+				webhook := newTestWebhookWithValues(t, NativeSidecarModeDisabled, config, custom)
+				pod := injectTestPod(t, webhook, testPod())
+				proxy := FindContainer("agentio-proxy", pod.Spec.Containers)
+				for _, env := range proxy.Env {
+					if env.Name == "AGENTIO_SANDBOX_MODE" {
+						if env.Value != want {
+							t.Fatalf("sandbox mode = %q, want %q", env.Value, want)
+						}
+						return
+					}
+				}
+				t.Fatal("injected ztunnel has no Sandbox mode setting")
+			})
+		}
+	}
+}
+
 func TestInjectUsesConfiguredTokenAudience(t *testing.T) {
 	for _, path := range []string{"testdata/ztunnel-injection-template.yaml", "../../manifests/charts/agentio/files/ztunnel-injection-template.yaml"} {
 		for _, audience := range []string{"istio-ca", "custom-audience", ""} {

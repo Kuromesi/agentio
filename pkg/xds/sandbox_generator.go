@@ -23,7 +23,7 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// SandboxGenerator serves bindings, inline rules and policy references from one immutable
+// SandboxGenerator serves bindings and inline rules from one immutable
 // publication. Scope is recomputed from Sandbox attesters, never from a UID claimed
 // in a subscribe request. Gateways retain their existing cluster discovery scope.
 type SandboxGenerator struct{}
@@ -41,7 +41,7 @@ func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest)
 		return diffSubscribed(request.Subscription, selected, request.SubscribedNames), nil
 	}
 	// Recompute visibility when attester Workloads change. Inline policy changes
-	// update the Sandbox; shared bodies have their own discovery type.
+	// update the Sandbox; shared Workload policies are independent.
 	scopeChanged := scopedWorkloadChanged(request.Scope, request.Update)
 	if request.Scope.Class == model.ClientEgressGateway {
 		scopeChanged = false
@@ -116,16 +116,6 @@ func sandboxResourceVisible(scope model.ClientScope, snapshot model.ResourceSet,
 	}
 	query.WorkloadUID = facts.AttesterWorkloadUID
 	return snapshot.HasWorkload(model.AddressType, query)
-}
-
-func sandboxGatewayReferenceKeys(snapshot model.ResourceSet, workloads []model.Resource) sets.Set[string] {
-	result := sets.New[string]()
-	for _, workload := range workloads {
-		for _, sandbox := range snapshot.ListSandboxesByAttester(workload.Facts.Workload.WorkloadUID) {
-			result.InsertAll(sandbox.Facts.Sandbox.GatewayReferences...)
-		}
-	}
-	return result
 }
 
 func selectSandboxResources(

@@ -24,12 +24,6 @@ import (
 )
 
 var (
-	// NativeSandboxPolicies disables the Workload compatibility projection for Sandbox policies.
-	NativeSandboxPolicies = env.Register(
-		"AGENTIO_NATIVE_SANDBOX_POLICIES",
-		false,
-		"Deliver Sandbox policies only through Sandbox resources, without Workload compatibility output. Requires all Sandbox data planes to support native policies.",
-	).Get()
 	KRTDebounceAfter = env.Register(
 		"AGENTIO_KRT_DEBOUNCE",
 		200*time.Millisecond,

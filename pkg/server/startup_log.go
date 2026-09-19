@@ -44,7 +44,7 @@ func logStartup(options Options) {
 		"xds_address", options.DiscoveryAddress, "monitoring_address", options.MonitoringAddress,
 		"cluster_id", options.ClusterID, "namespace", options.RootNamespace, "trust_domain", options.TrustDomain,
 		"sandbox_runtimes", features.SandboxRuntimes, "sidecar_injector", features.EnableSidecarInjector,
-		"native_sandbox_policies", features.NativeSandboxPolicies,
+		"sandbox_mode", features.SandboxMode,
 		"kubernetes_api_qps", features.KubernetesAPIQPS, "kubernetes_api_burst", features.KubernetesAPIBurst,
 		"xds_request_rate_limit", features.RequestRateLimit, "push_concurrency", features.PushConcurrency,
 		"max_connection_age", features.MaxServerConnectionAge,

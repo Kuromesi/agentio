@@ -16,103 +16,28 @@ package model
 
 import "testing"
 
-func TestSandboxContainsUIDLabelsAndPolicyReferences(t *testing.T) {
-	sandbox := Sandbox{
-		UID:       "sandbox-a",
-		Namespace: "demo",
-		Labels:    map[string]string{"app": "client"},
-		PolicyRefs: []PolicyRef{{
-			Kind: PolicyKindSNIPolicy,
-			Name: "demo/security",
-		}},
-	}
+func TestSandboxContainsUIDAndNamespace(t *testing.T) {
+	sandbox := Sandbox{UID: "sandbox-a", Namespace: "demo"}
 	if got := sandbox.ResourceName(); got != "sandbox-a" {
-		t.Fatalf("resource name = %q, want sandbox-a", got)
+		t.Fatalf("resource name = %q", got)
 	}
-	if !sandbox.Equals(Sandbox{
-		UID:       "sandbox-a",
-		Namespace: "demo",
-		Labels:    map[string]string{"app": "client"},
-		PolicyRefs: []PolicyRef{{
-			Kind: PolicyKindSNIPolicy,
-			Name: "demo/security",
-		}},
-	}) {
-		t.Fatal("equal identity, namespace, labels, and policy references must compare equal")
+	if !sandbox.Equals(Sandbox{UID: "sandbox-a", Namespace: "demo"}) {
+		t.Fatal("equal identity and namespace must compare equal")
 	}
 	changed := sandbox
 	changed.Namespace = "other"
 	if sandbox.Equals(changed) {
 		t.Fatal("namespace change must change Sandbox equality")
 	}
-	changed = sandbox
-	changed.Labels = map[string]string{"app": "other"}
-	if sandbox.Equals(changed) {
-		t.Fatal("label change must change Sandbox equality")
-	}
-	changed = sandbox
-	changed.PolicyRefs = []PolicyRef{{
-		Kind: PolicyKindSNIPolicy,
-		Name: "demo/other",
-	}}
-	if sandbox.Equals(changed) {
-		t.Fatal("policy reference change must change Sandbox equality")
-	}
-}
-
-func TestSandboxValidationRejectsInvalidPolicyReferences(t *testing.T) {
-	valid := Sandbox{
-		UID: "sandbox-a",
-		PolicyRefs: []PolicyRef{{
-			Kind: PolicyKindSNIPolicy,
-			Name: "demo/security",
-		}},
-	}
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("valid Sandbox rejected: %v", err)
-	}
-
-	for _, sandbox := range []Sandbox{
-		{},
-		{
-			UID: "sandbox-a",
-			PolicyRefs: []PolicyRef{{
-				Name: "demo/security",
-			}},
-		},
-		{
-			UID: "sandbox-a",
-			PolicyRefs: []PolicyRef{{
-				Kind: PolicyKindSNIPolicy,
-			}},
-		},
-		{
-			UID: "sandbox-a",
-			PolicyRefs: []PolicyRef{
-				{
-					Kind: PolicyKindSNIPolicy,
-					Name: "demo/security",
-				},
-				{
-					Kind: PolicyKindSNIPolicy,
-					Name: "demo/security",
-				},
-			},
-		},
-	} {
-		if err := sandbox.Validate(); err == nil {
-			t.Fatalf("invalid Sandbox accepted: %+v", sandbox)
-		}
-	}
 }
 
 func TestSandboxAttesterValidation(t *testing.T) {
-	for _, sandbox := range []Sandbox{{UID: "a", Attester: &Attester{}}, {UID: "a", State: SandboxState(99)}} {
+	for _, sandbox := range []Sandbox{{}, {UID: " "}, {UID: "a", Attester: &Attester{}}} {
 		if sandbox.Validate() == nil {
 			t.Fatalf("invalid Sandbox accepted: %+v", sandbox)
 		}
 	}
-	if err := (Sandbox{UID: "a", State: SandboxStatePaused}).Validate(); err != nil {
+	if err := (Sandbox{UID: "a"}).Validate(); err != nil {
 		t.Fatal(err)
 	}
 }

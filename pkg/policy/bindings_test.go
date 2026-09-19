@@ -17,7 +17,6 @@ package policy
 import (
 	"fmt"
 	"reflect"
-	"sort"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,13 +48,13 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 			stop := make(chan struct{})
 			t.Cleanup(func() { close(stop) })
 			options := []krt.CollectionOption{krt.WithStop(stop)}
-			var subjects []model.Sandbox
+			var subjects []model.Workload
 			for index := range count {
 				uid := fmt.Sprintf("subject-%d", index)
 				values := map[string]string{"app": uid}
-				subjects = append(subjects, model.Sandbox{UID: uid, Namespace: "demo", Labels: values})
+				subjects = append(subjects, model.Workload{UID: uid, Namespace: "demo", Labels: values})
 			}
-			sandboxes := krt.NewStaticCollection(nil, subjects, options...)
+			workloades := krt.NewStaticCollection(nil, subjects, options...)
 			makePolicy := func(selector metav1.LabelSelector) PolicyAttachment {
 				t.Helper()
 				target := AttachmentTarget{Selector: selector, Global: global}
@@ -79,7 +78,11 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 			witness.selector = bindingRecomputeSelector{Selector: witness.selector, calls: &recomputes}
 			initial := makePolicy(selectApp("subject-0"))
 			attachments := krt.NewStaticCollection(nil, []PolicyAttachment{initial, witness}, options...)
-			bindings := NewPolicyBindingsCollection(sandboxes, attachments, krt.NewOptionsBuilder(stop, "test", nil))
+			bindings := NewWorkloadPolicyBindingsCollection(
+				workloades,
+				attachments,
+				krt.NewOptionsBuilder(stop, "test", nil),
+			)
 			if !bindings.WaitUntilSynced(stop) {
 				t.Fatal("bindings did not sync")
 			}
@@ -100,7 +103,7 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 				}
 				for index := range count {
 					binding := bindings.GetKey(fmt.Sprintf("subject-%d", index))
-					if binding == nil || !binding.Valid() {
+					if binding == nil {
 						t.Fatalf("subject-%d has no valid binding", index)
 					}
 					var want []string
@@ -125,7 +128,7 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 			// A primary label update must still detach the policy.
 			updated := subjects[1]
 			updated.Labels = map[string]string{"app": "disabled"}
-			sandboxes.ConditionalUpdateObject(updated)
+			workloades.ConditionalUpdateObject(updated)
 			check(1, 1, func(int) bool { return false })
 			attachments.ConditionalUpdateObject(makePolicy(selectApp("subject-2")))
 			check(1, 1, func(index int) bool { return index == 2 })
@@ -142,22 +145,22 @@ func TestPolicyBindingsSelectorTargetFanout(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	subjects := make([]model.Sandbox, 100)
+	subjects := make([]model.Workload, 100)
 	for index := range subjects {
-		subjects[index] = model.Sandbox{
-			UID:       fmt.Sprintf("sandbox-%d", index),
+		subjects[index] = model.Workload{
+			UID:       fmt.Sprintf("workload-%d", index),
 			Namespace: "demo",
-			Labels:    map[string]string{"sandbox": fmt.Sprintf("sandbox-%d", index)},
+			Labels:    map[string]string{"workload": fmt.Sprintf("workload-%d", index)},
 		}
 	}
 	attachments := krt.NewStaticCollection[PolicyAttachment](nil, nil, options...)
-	bindings := NewPolicyBindingsCollection(
+	bindings := NewWorkloadPolicyBindingsCollection(
 		krt.NewStaticCollection(nil, subjects, options...),
 		attachments,
 		krt.NewOptionsBuilder(stop, "test", nil),
 	)
 	if !bindings.WaitUntilSynced(stop) {
-		t.Fatal("Sandbox policy bindings did not sync")
+		t.Fatal("Workload policy bindings did not sync")
 	}
 	events := make(chan krt.Event[Bindings], 1)
 	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
@@ -173,7 +176,7 @@ func TestPolicyBindingsSelectorTargetFanout(t *testing.T) {
 		Target: AttachmentTarget{
 			Namespaces: []string{"demo"},
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{
-				"sandbox": "sandbox-42",
+				"workload": "workload-42",
 			}},
 		},
 	})
@@ -181,13 +184,13 @@ func TestPolicyBindingsSelectorTargetFanout(t *testing.T) {
 		t.Fatalf("new selector attachment: %v", err)
 	}
 	attachments.ConditionalUpdateObject(selected)
-	if event := awaitBindingEvent(t, events); event.Latest().SandboxUID != "sandbox-42" {
-		t.Fatalf("added binding event = %+v, want sandbox-42", event.Latest())
+	if event := awaitBindingEvent(t, events); event.Latest().TargetUID != "workload-42" {
+		t.Fatalf("added binding event = %+v, want workload-42", event.Latest())
 	}
 
 	attachments.DeleteObject(selected.ResourceName())
-	if event := awaitBindingEvent(t, events); event.Latest().SandboxUID != "sandbox-42" {
-		t.Fatalf("deleted binding event = %+v, want sandbox-42", event.Latest())
+	if event := awaitBindingEvent(t, events); event.Latest().TargetUID != "workload-42" {
+		t.Fatalf("deleted binding event = %+v, want workload-42", event.Latest())
 	}
 }
 
@@ -197,7 +200,7 @@ func awaitBindingEvent(t testing.TB, events <-chan krt.Event[Bindings]) krt.Even
 	case event := <-events:
 		return event
 	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for Sandbox binding event")
+		t.Fatal("timed out waiting for Workload binding event")
 		return krt.Event[Bindings]{}
 	}
 }
@@ -208,22 +211,12 @@ func TestPolicyBindings(t *testing.T) {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	builder := krt.NewOptionsBuilder(stop, "test", nil)
 
-	demo := model.Sandbox{
+	demo := model.Workload{
 		UID: "cluster//Pod/demo/client",
-		PolicyRefs: []model.PolicyRef{
-			{
-				Kind: model.PolicyKindSNIPolicy,
-				Name: "explicit",
-			},
-			{
-				Kind: model.PolicyKindSNIPolicy,
-				Name: "global",
-			},
-		},
 	}
 	demo.Namespace = "demo"
 	demo.Labels = map[string]string{"app": "client", "tier": "trusted"}
-	other := model.Sandbox{
+	other := model.Workload{
 		UID:       "cluster//Pod/other/client",
 		Namespace: "other",
 		Labels:    map[string]string{"app": "client"},
@@ -281,11 +274,11 @@ func TestPolicyBindings(t *testing.T) {
 		attachments[index] = normalized
 	}
 
-	sandboxes := krt.NewStaticCollection(nil, []model.Sandbox{demo, other}, options...)
+	workloades := krt.NewStaticCollection(nil, []model.Workload{demo, other}, options...)
 	policies := krt.NewStaticCollection(nil, attachments, options...)
-	bindings := NewPolicyBindingsCollection(sandboxes, policies, builder)
+	bindings := NewWorkloadPolicyBindingsCollection(workloades, policies, builder)
 	if !bindings.WaitUntilSynced(stop) {
-		t.Fatal("sandbox policy bindings did not sync")
+		t.Fatal("workload policy bindings did not sync")
 	}
 
 	demoBinding := bindings.GetKey(demo.UID)
@@ -298,10 +291,9 @@ func TestPolicyBindings(t *testing.T) {
 	if got, want := demoBinding.PolicyNames(
 		PolicyKindSNIPolicy,
 	), []string{
-		"explicit",
-		"global",
 		"selector",
 		"demo",
+		"global",
 	}; !reflect.DeepEqual(
 		got,
 		want,
@@ -330,118 +322,5 @@ func TestPolicyBindings(t *testing.T) {
 	}
 	if got := otherBinding.PolicyNames(PolicyKindEgressPolicy); len(got) != 0 {
 		t.Fatalf("other egress names = %v, want none", got)
-	}
-}
-
-func TestPolicyBindingsRejectUnresolvedExplicitReference(t *testing.T) {
-	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
-	options := []krt.CollectionOption{krt.WithStop(stop)}
-	builder := krt.NewOptionsBuilder(stop, "test", nil)
-	uid := "sandbox-a"
-	attachments := krt.NewStaticCollection[PolicyAttachment](nil, nil, options...)
-
-	bindings := NewPolicyBindingsCollection(
-		krt.NewStaticCollection(nil, []model.Sandbox{{
-			UID: uid,
-			PolicyRefs: []model.PolicyRef{{
-				Kind: model.PolicyKindSNIPolicy,
-				Name: "demo/missing",
-			}},
-		}}, options...),
-		attachments,
-		builder,
-	)
-	if !bindings.WaitUntilSynced(stop) {
-		t.Fatal("Sandbox policy bindings did not sync")
-	}
-	binding := bindings.GetKey(uid)
-	if binding == nil || binding.Valid() || len(binding.Unresolved) != 1 {
-		t.Fatalf("binding = %+v, want one unresolved reference", binding)
-	}
-	events := make(chan krt.Event[Bindings], 1)
-	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
-		for _, event := range batch {
-			events <- event
-		}
-	}, false)
-	t.Cleanup(registration.UnregisterHandler)
-	// Explicit references must keep their key dependency even when selector
-	// discovery excludes the policy's namespace and labels.
-	explicit, err := NewPolicyAttachment(PolicyAttachment{
-		Kind: PolicyKindSNIPolicy,
-		Name: "demo/missing",
-		Target: AttachmentTarget{
-			Namespaces: []string{"elsewhere"},
-			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": "other"}},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	attachments.ConditionalUpdateObject(explicit)
-	resolved := awaitBindingEvent(t, events).Latest()
-	if !resolved.Valid() || !reflect.DeepEqual(resolved.PolicyNames(PolicyKindSNIPolicy), []string{explicit.Name}) {
-		t.Fatalf("explicit reference did not resolve: %+v", resolved)
-	}
-	attachments.DeleteObject(explicit.ResourceName())
-	unresolved := awaitBindingEvent(t, events).Latest()
-	if unresolved.Valid() || len(unresolved.Unresolved) != 1 {
-		t.Fatalf("deleted explicit reference remained valid: %+v", unresolved)
-	}
-}
-
-func TestPolicyBindingsSelectSandboxLabelsAndExplicitReferences(t *testing.T) {
-	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
-	options := []krt.CollectionOption{krt.WithStop(stop)}
-	sandboxes := krt.NewStaticCollection(
-		nil,
-		[]model.Sandbox{
-			{
-				UID:        "same",
-				Namespace:  "demo",
-				Labels:     map[string]string{"role": "sandbox"},
-				PolicyRefs: []model.PolicyRef{{Kind: PolicyKindSNIPolicy, Name: "explicit"}},
-			},
-		},
-		options...)
-	var attachments []PolicyAttachment
-	for _, source := range []PolicyAttachment{
-		{Kind: PolicyKindTrafficPolicy, Name: "native", Target: AttachmentTarget{Global: true}},
-		{Kind: PolicyKindSNIPolicy, Name: "global", Target: AttachmentTarget{Global: true}},
-		{Kind: PolicyKindSNIPolicy, Name: "pod", Target: AttachmentTarget{Namespaces: []string{"demo"}, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"role": "pod"}}}},
-		{Kind: PolicyKindSNIPolicy, Name: "sandbox", Target: AttachmentTarget{Namespaces: []string{"demo"}, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"role": "sandbox"}}}},
-		{Kind: PolicyKindSNIPolicy, Name: "explicit", Target: AttachmentTarget{Namespaces: []string{"elsewhere"}}},
-	} {
-		attachment, err := NewPolicyAttachment(source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		attachments = append(attachments, attachment)
-	}
-	bindings := NewPolicyBindingsCollection(
-		sandboxes,
-		krt.NewStaticCollection(nil, attachments, options...),
-		krt.NewOptionsBuilder(stop, "test", nil),
-	)
-	if !bindings.WaitUntilSynced(stop) {
-		t.Fatal("bindings did not sync")
-	}
-	got := bindings.GetKey("same")
-	if got == nil || !got.Valid() {
-		t.Fatalf("Sandbox bindings = %+v", got)
-	}
-	if !reflect.DeepEqual(got.PolicyNames(PolicyKindTrafficPolicy), []string{"native"}) {
-		t.Fatalf("Sandbox TrafficPolicy bindings: %+v", got)
-	}
-	names := append([]string(nil), got.PolicyNames(PolicyKindSNIPolicy)...)
-	sort.Strings(names)
-	want := []string{"explicit", "global", "sandbox"}
-	if !reflect.DeepEqual(names, want) {
-		t.Fatalf("Sandbox policies = %v, want %v", names, want)
-	}
-	if len(bindings.List()) != 1 {
-		t.Fatal("unexpected Workload binding")
 	}
 }

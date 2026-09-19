@@ -268,6 +268,7 @@ func ambientConfigDump(
 //nolint:gocyclo // Keep legacy and native resource selection together to preserve dump compatibility.
 func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName string) (string, error) {
 	var dump struct {
+		Config          json.RawMessage   `json:"config"`
 		Policies        []json.RawMessage `json:"policies"`
 		Workloads       []json.RawMessage `json:"workloads"`
 		Sandboxes       []json.RawMessage `json:"sandboxes"`
@@ -280,18 +281,23 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 	var selected json.RawMessage
 	var workloadUID string
 	policyReferences := map[string]struct{}{}
+	trafficReferences := map[string]struct{}{}
 	for _, rawWorkload := range dump.Workloads {
 		var workload struct {
 			UID                   string   `json:"uid"`
 			Name                  string   `json:"name"`
 			Namespace             string   `json:"namespace"`
 			AuthorizationPolicies []string `json:"authorizationPolicies"`
+			TrafficPolicyRefs     []string `json:"trafficPolicyRefs"`
 		}
 		if err := json.Unmarshal(rawWorkload, &workload); err != nil {
 			return "", fmt.Errorf("decode workload: %w", err)
 		}
 		if workload.Namespace != workloadNamespace || workload.Name != workloadName {
 			continue
+		}
+		for _, reference := range workload.TrafficPolicyRefs {
+			trafficReferences[reference] = struct{}{}
 		}
 		selected = rawWorkload
 		workloadUID = workload.UID
@@ -322,11 +328,9 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 	}
 
 	sandboxes := make([]json.RawMessage, 0)
-	trafficReferences := map[string]struct{}{}
 	for _, rawSandbox := range dump.Sandboxes {
 		var sandbox struct {
-			WorkloadUID       string   `json:"workloadUid"`
-			TrafficPolicyRefs []string `json:"trafficPolicyRefs"`
+			WorkloadUID string `json:"workloadUid"`
 		}
 		if err := json.Unmarshal(rawSandbox, &sandbox); err != nil {
 			return "", fmt.Errorf("decode sandbox: %w", err)
@@ -335,9 +339,6 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 			continue
 		}
 		sandboxes = append(sandboxes, rawSandbox)
-		for _, reference := range sandbox.TrafficPolicyRefs {
-			trafficReferences[reference] = struct{}{}
-		}
 	}
 	trafficPolicies := make([]json.RawMessage, 0, len(trafficReferences))
 	for _, rawPolicy := range dump.TrafficPolicies {
@@ -357,11 +358,18 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 		nativePolicies = &trafficPolicies
 	}
 	projected, err := json.Marshal(struct {
+		Config          json.RawMessage    `json:"config,omitempty"`
 		Workload        json.RawMessage    `json:"workload"`
 		Policies        []json.RawMessage  `json:"policies"`
 		Sandboxes       []json.RawMessage  `json:"sandboxes"`
 		TrafficPolicies *[]json.RawMessage `json:"trafficPolicies,omitempty"`
-	}{Workload: selected, Policies: policies, Sandboxes: sandboxes, TrafficPolicies: nativePolicies})
+	}{
+		Config:          dump.Config,
+		Workload:        selected,
+		Policies:        policies,
+		Sandboxes:       sandboxes,
+		TrafficPolicies: nativePolicies,
+	})
 	if err != nil {
 		return "", fmt.Errorf("encode workload-scoped config dump: %w", err)
 	}

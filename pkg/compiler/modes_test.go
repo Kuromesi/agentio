@@ -24,7 +24,6 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
-	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
@@ -32,14 +31,17 @@ import (
 )
 
 func TestCompilerOptionalSandboxInputs(t *testing.T) {
-	for _, native := range []bool{false, true} {
+	for _, sandboxMode := range []bool{false, true} {
 		for _, withSandbox := range []bool{false, true} {
-			t.Run(fmt.Sprintf("native=%v/bound=%v", native, withSandbox), func(t *testing.T) {
+			t.Run(fmt.Sprintf("sandboxMode=%v/bound=%v", sandboxMode, withSandbox), func(t *testing.T) {
 				stop := make(chan struct{})
 				t.Cleanup(func() { close(stop) })
 				opts := []krt.CollectionOption{krt.WithStop(stop)}
 				inputs := validCompilerInputs(stop)
-				inputs.NativeSandboxPolicies = native
+				inputs.SandboxMode = sandboxMode
+				if !sandboxMode {
+					inputs.Sandboxes = nil // Ordinary mode requires no Sandbox source.
+				}
 				worker := testWorkload("demo", "client", "10.0.0.1")
 				inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{worker}, opts...)
 				if withSandbox {
@@ -49,8 +51,6 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 							{
 								UID:       "actor",
 								Namespace: "demo",
-								Labels:    worker.Labels,
-								State:     model.SandboxStateRunning,
 								Attester:  &model.Attester{WorkloadUID: worker.UID},
 							},
 						},
@@ -71,6 +71,15 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 							},
 						},
 					},
+				}, {
+					Dedicated:  true,
+					SandboxUID: "actor",
+					Namespace:  "demo",
+					Spec: agentsv1alpha1.TrafficPolicySpec{
+						Egress: &agentsv1alpha1.TrafficPolicyDirection{
+							Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}},
+						},
+					},
 				}}, opts...)
 				inputs.SecurityProfiles = krt.NewStaticCollection(nil, []model.SecurityProfile{
 					{
@@ -88,6 +97,7 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 					},
 					{
 						Name:       "actor-only",
+						Dedicated:  true,
 						Namespace:  "demo",
 						SandboxUID: "actor",
 						Spec: agentsv1alpha1.SecurityProfileSpec{
@@ -130,48 +140,53 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				if len(snapshot.List(model.TrafficPolicyType)) != 1 {
 					t.Fatal("shared TrafficPolicy resource missing")
 				}
-				wantExtensions := []string{"workload-metadata"}
-				if withSandbox && !native {
-					wantExtensions = append(wantExtensions, "egress-policies", "sni-traffic-policy")
-					if len(wire.AuthorizationPolicies) != 1 ||
-						len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
-						t.Fatalf("Sandbox compatibility Authorization output = %v", wire.AuthorizationPolicies)
-					}
-					sni := new(extensionsv1.SniTrafficPolicy)
-					if !compatibilityExtension(t, wire, "sni-traffic-policy", sni) || len(sni.Rules) != 2 {
-						t.Fatalf("Sandbox compatibility SNI output = %v", sni)
-					}
-				} else if len(wire.AuthorizationPolicies) != 0 || (native && len(snapshot.List(model.WorkloadAuthorizationType)) != 0) {
-					t.Fatalf("Workload without compatibility emitted policies: %v", wire.AuthorizationPolicies)
+				wantExtensions := []string{
+					"workload-metadata",
+					"traffic-policy-reference",
+					"egress-policies",
+					"sni-traffic-policy",
 				}
 				if !reflect.DeepEqual(extensionNames(wire.Extensions), wantExtensions) {
 					t.Fatalf("Workload extensions = %v, want %v", extensionNames(wire.Extensions), wantExtensions)
 				}
-				if compiler.Bindings().GetKey(worker.UID) != nil {
-					t.Fatal("Workload independently matched policy attachments")
+				refs := new(extensionsv1.PolicyReference)
+				if !compatibilityExtension(t, wire, "traffic-policy-reference", refs) ||
+					refs.TypeUrl != model.TrafficPolicyType ||
+					!reflect.DeepEqual(refs.ResourceNames, []string{"namespaces/demo/trafficPolicies/allow"}) {
+					t.Fatalf("native Workload references = %v", refs)
 				}
-				if withSandbox {
+				if len(wire.AuthorizationPolicies) != 1 || len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
+					t.Fatalf(
+						"shared Authorizations missing in sandboxMode=%v, bound=%v: %v",
+						sandboxMode,
+						withSandbox,
+						wire.AuthorizationPolicies,
+					)
+				}
+				sni := new(extensionsv1.SniTrafficPolicy)
+				wantSNIRules := 1
+				if !compatibilityExtension(t, wire, "sni-traffic-policy", sni) || len(sni.Rules) != wantSNIRules {
+					t.Fatalf("Workload SNI rules = %v, want %d", sni, wantSNIRules)
+				}
+				binding := compiler.Bindings().GetKey(worker.UID)
+				if binding == nil || !reflect.DeepEqual(binding.PolicyNames(policy.PolicyKindTrafficPolicy),
+					[]string{"namespaces/demo/trafficPolicies/allow"}) {
+					t.Fatalf("Workload policy binding = %+v", binding)
+				}
+				if sandboxMode && withSandbox {
 					manifest := manifestAt(t, compiler, "actor")
-					if manifest == nil || manifest.State != sandboxv1.SandboxState_SANDBOX_STATE_RUNNING ||
-						manifest.GetAttester().GetWorkloadUid() != worker.UID ||
-						len(trafficPolicyRefs(manifest)) != 1 ||
-						len(manifest.Extensions) != 2 ||
-						len(manifest.GetEgressRouting().GetRoutes()) != 1 {
-						t.Fatalf("Sandbox output = %v", manifest)
+					if manifest == nil ||
+						manifest.GetAttester().GetWorkloadUid() != worker.UID || len(manifest.Extensions) != 1 ||
+						manifest.TrafficPolicy == nil {
+						t.Fatalf("Sandbox inline output = %v", manifest)
 					}
-					binding := compiler.Bindings().GetKey("actor")
-					if binding == nil ||
-						!reflect.DeepEqual(
-							binding.PolicyNames(policy.PolicyKindTrafficPolicy),
-							[]string{"namespaces/demo/trafficPolicies/allow"},
-						) {
-						t.Fatalf("Sandbox authorization binding = %+v", binding)
+					if compiler.Bindings().GetKey("actor") != nil {
+						t.Fatalf("Sandbox retained system policy selection: %v", manifest)
 					}
-				} else {
-					if len(snapshot.List(model.SandboxType)) != 0 {
-						t.Fatal("ordinary mode published Sandbox state")
-					}
+				} else if len(snapshot.List(model.SandboxType)) != 0 {
+					t.Fatal("ordinary Workload published a Sandbox")
 				}
+
 			})
 		}
 	}
@@ -184,7 +199,6 @@ func TestSandboxAttesterMovePreservesWorkloads(t *testing.T) {
 	fixture.workloads.UpdateObject(b)
 	sandbox := model.Sandbox{
 		UID:      "actor",
-		State:    model.SandboxStateRunning,
 		Attester: &model.Attester{WorkloadUID: a.UID},
 	}
 	fixture.sandboxes.UpdateObject(sandbox)
@@ -195,7 +209,7 @@ func TestSandboxAttesterMovePreservesWorkloads(t *testing.T) {
 		return hasA && hasB && manifestAt(t, fixture.compiler, sandbox.UID) != nil
 	}, "initial Workloads and Sandbox ready")
 	baseline := currentSnapshot(t, fixture.compiler)
-	check := func(uid string, wantState model.SandboxState) {
+	check := func(uid string) {
 		t.Helper()
 		eventually(t, func() bool {
 			snapshot := currentSnapshot(t, fixture.compiler)
@@ -210,21 +224,20 @@ func TestSandboxAttesterMovePreservesWorkloads(t *testing.T) {
 				}
 			}
 			manifest := manifestAt(t, fixture.compiler, "actor")
-			return manifest != nil && int32(manifest.State) == int32(wantState) &&
+			return manifest != nil &&
 				manifest.GetAttester().GetWorkloadUid() == uid
-		}, "attester and lifecycle propagate independently of policies")
+		}, "attester changes propagate independently of policies")
 	}
-	check(a.UID, model.SandboxStateRunning)
+	check(a.UID)
 	sandbox.Attester = &model.Attester{WorkloadUID: b.UID}
 	fixture.sandboxes.UpdateObject(sandbox)
-	check(b.UID, model.SandboxStateRunning)
+	check(b.UID)
 	sandbox.Attester = nil
-	sandbox.State = model.SandboxStatePaused
 	fixture.sandboxes.UpdateObject(sandbox)
-	check("", model.SandboxStatePaused)
+	check("")
 }
 
-func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
+func TestSandboxLifecyclePreservesWorkloadPolicies(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	host := testWorkload("demo", "host", "10.0.0.1")
 	host.Labels = map[string]string{"app": "shared"}
@@ -279,39 +292,45 @@ func TestNativeWorkloadsNeverSelectPolicies(t *testing.T) {
 					return false
 				}
 				binding := fixture.compiler.Bindings().GetKey(workload.UID)
-				if binding != nil || len(wire.GetWorkload().AuthorizationPolicies) != 0 ||
-					!reflect.DeepEqual(extensionNames(wire.GetWorkload().Extensions), []string{"workload-metadata"}) {
+				if binding == nil || len(wire.GetWorkload().AuthorizationPolicies) != 1 ||
+					!reflect.DeepEqual(
+						extensionNames(wire.GetWorkload().Extensions),
+						[]string{
+							"workload-metadata",
+							"traffic-policy-reference",
+							"egress-policies",
+							"sni-traffic-policy",
+						},
+					) {
 					return false
 				}
 			}
 			return true
 		}, "host and ordinary Workload policy ownership")
 	}
-	checkWorkloads() // Endpoints do not select policies before Sandbox discovery.
+	checkWorkloads() // Shared policies apply before Sandbox discovery.
 	fixture.sandboxes.UpdateObject(
 		model.Sandbox{
 			UID:       "actor",
 			Namespace: "demo",
-			Labels:    host.Labels,
 			Attester:  &model.Attester{WorkloadUID: host.UID},
 		},
 	)
 	eventually(t, func() bool {
 		manifest := manifestAt(t, fixture.compiler, "actor")
-		return manifest != nil && len(trafficPolicyRefs(manifest)) == 1 && len(manifest.Extensions) == 1 &&
-			len(manifest.GetEgressRouting().GetRoutes()) == 1
-	}, "Sandbox owns the complete policy set")
+		return manifest != nil && manifest.TrafficPolicy == nil && len(manifest.Extensions) == 0
+	}, "Sandbox only carries its own policies")
 	checkWorkloads()
 	fixture.sandboxes.DeleteObject("actor")
 	eventually(t, func() bool { return manifestAt(t, fixture.compiler, "actor") == nil }, "Sandbox removed")
-	checkWorkloads() // Deletion must not re-enable Workload policy fallback.
+	checkWorkloads() // Shared policies survive Sandbox deletion.
 }
 
-func TestSandboxOwnsOrderedTrafficPolicyReferences(t *testing.T) {
+func TestWorkloadOwnsOrderedTrafficPolicyBindings(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	worker := testWorkload("demo", "client", "10.0.0.1")
 	fixture.workloads.UpdateObject(worker)
-	fixture.sandboxes.UpdateObject(model.Sandbox{UID: "actor", Namespace: "demo", Labels: worker.Labels})
+	fixture.sandboxes.UpdateObject(model.Sandbox{UID: "actor", Namespace: "demo"})
 	for _, source := range []model.TrafficPolicy{
 		{Name: "namespace", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 40}},
 		{Name: "selector", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 20, Selector: metav1.LabelSelector{MatchLabels: worker.Labels}}},
@@ -330,6 +349,46 @@ func TestSandboxOwnsOrderedTrafficPolicyReferences(t *testing.T) {
 	eventually(t, func() bool {
 		binding := fixture.compiler.Bindings().GetKey(worker.UID)
 		manifest := manifestAt(t, fixture.compiler, "actor")
-		return binding == nil && manifest != nil && reflect.DeepEqual(trafficPolicyRefs(manifest), want)
-	}, "Sandbox owns ordered global, namespace and selector policies")
+		workload, _ := compatibilityWorkload(t, currentSnapshot(t, fixture.compiler), worker.UID)
+		refs := new(extensionsv1.PolicyReference)
+		return binding != nil && manifest != nil && workload != nil &&
+			compatibilityExtension(t, workload, "traffic-policy-reference", refs) &&
+			refs.TypeUrl == model.TrafficPolicyType && reflect.DeepEqual(refs.ResourceNames, want) &&
+			reflect.DeepEqual(binding.PolicyNames(model.PolicyKindTrafficPolicy), want)
+	}, "Workload owns ordered global, namespace and selector policies")
+}
+
+func TestWorkloadTrafficPolicyBindingUpdates(t *testing.T) {
+	fixture := newIncrementalFixture(t, func(inputs *Inputs) { inputs.SandboxMode = false })
+	worker := testWorkload("demo", "client", "10.0.0.1")
+	fixture.workloads.UpdateObject(worker)
+	global := model.TrafficPolicy{Name: "global", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 10}}
+	selected := model.TrafficPolicy{
+		Name:      "selected",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Priority: 20,
+			Selector: metav1.LabelSelector{MatchLabels: worker.Labels},
+		},
+	}
+	fixture.trafficPolicies.UpdateObject(global)
+	fixture.trafficPolicies.UpdateObject(selected)
+	check := func(want []string) {
+		t.Helper()
+		eventually(t, func() bool {
+			workload, _ := compatibilityWorkload(t, currentSnapshot(t, fixture.compiler), worker.UID)
+			refs := new(extensionsv1.PolicyReference)
+			return workload != nil && compatibilityExtension(t, workload, "traffic-policy-reference", refs) &&
+				reflect.DeepEqual(refs.ResourceNames, want)
+		}, "native Workload references converge")
+	}
+	check([]string{"trafficPolicies/global", "namespaces/demo/trafficPolicies/selected"})
+	global.Spec.Priority = 30
+	fixture.trafficPolicies.UpdateObject(global)
+	check([]string{"namespaces/demo/trafficPolicies/selected", "trafficPolicies/global"})
+	worker.Labels = map[string]string{"app": "other"}
+	fixture.workloads.UpdateObject(worker)
+	check([]string{"trafficPolicies/global"})
+	fixture.trafficPolicies.DeleteObject(global.ResourceName())
+	check(nil)
 }

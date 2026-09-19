@@ -48,7 +48,6 @@ func sandboxResourceWithAttester(
 	value, err := anypb.New(
 		&sandboxv1.Sandbox{
 			Uid:           uid,
-			State:         sandboxv1.SandboxState_SANDBOX_STATE_RUNNING,
 			Attester:      &sandboxv1.Sandbox_Attester{WorkloadUid: workloadUID},
 			TrafficPolicy: trafficPolicy,
 		},
@@ -366,87 +365,5 @@ func TestSandboxAttesterMigrationUpdatesVisibilityWithoutWorkloadChanges(t *test
 				t.Fatalf("new attester did not gain visibility: %+v", delta)
 			}
 		}
-	}
-}
-
-func TestSandboxGatewayDiscoveryFollowsAttester(t *testing.T) {
-	a := selectionWorkload(t, "worker-a", "workers", "node-a", "", "")
-	b := selectionWorkload(t, "worker-b", "workers", "node-b", "", "")
-	gateway := selectionOwnedByGateway(t, selectionService(t, "gateways/egress"), "gateways/egress")
-	withGateway := func(workloadUID string) model.Resource {
-		sandbox := sandboxResourceWithAttester(t, "actor", workloadUID)
-		facts := *sandbox.Facts.Sandbox
-		facts.GatewayReferences = []string{"gateways/egress"}
-		r, err := model.NewResource(
-			sandbox.Key,
-			sandbox.XDSName,
-			sandbox.Value,
-			sandbox.Aliases,
-			model.ResourceFacts{Sandbox: &facts},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return r
-	}
-	boundA, boundB := withGateway("worker-a"), withGateway("worker-b")
-	cases := []struct {
-		name          string
-		before, after []model.Resource
-	}{
-		{"attester move", []model.Resource{a, b, gateway, boundA}, []model.Resource{a, b, gateway, boundB}},
-		{"attester removed", []model.Resource{a, b, gateway, boundA}, []model.Resource{a, b, gateway, withGateway("")}},
-		{"sandbox removed", []model.Resource{a, b, gateway, boundA}, []model.Resource{a, b, gateway}},
-		{"workload removed", []model.Resource{a, b, gateway, boundA}, []model.Resource{b, gateway, boundA}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			before, after := selectionSnapshot(t, tc.before), selectionSnapshot(t, tc.after)
-			update := updateBetween(before, after, before.Diff(after))
-			if !update.Affects(model.AddressType) || !update.Affects(model.WorkloadType) {
-				t.Fatal("gateway dependency change did not wake networking watches")
-			}
-			for _, worker := range []model.Resource{a, b} {
-				scope := model.ClientScope{
-					Class:       model.ClientDedicatedZTunnel,
-					Principal:   worker.Facts.Workload.Principal,
-					WorkloadUID: worker.Facts.Workload.WorkloadUID,
-					SourceUID:   worker.Facts.Workload.SourceUID,
-				}
-				for _, wildcard := range []bool{false, true} {
-					sub := SubscriptionView{wildcard: wildcard, names: []string{worker.Key.Name}}
-					oldSelection := selectWorkloadResources(scope, before, model.AddressType, selectionNames(sub))
-					newSelection := selectWorkloadResources(scope, after, model.AddressType, selectionNames(sub))
-					want := diffWDSSelections(oldSelection, newSelection, false)
-					got := generateWDSIncremental(
-						GenerationRequest{
-							Scope:        scope,
-							TypeURL:      model.AddressType,
-							Subscription: sub,
-							Snapshot:     after,
-							Update:       update,
-						},
-						false,
-					)
-					if !reflect.DeepEqual(selectedNames(got.Resources), selectedNames(want.Resources)) ||
-						!reflect.DeepEqual(got.Removed, want.Removed) {
-						t.Fatalf(
-							"%s wildcard=%t incremental delta = %+v, full selection diff = %+v",
-							worker.Key.Name,
-							wildcard,
-							got,
-							want,
-						)
-					}
-					if worker.Key.Name == "worker-a" && !slices.Contains(got.Removed, gateway.Key.Name) {
-						t.Fatalf("old attester retained Sandbox gateway: %+v", got)
-					}
-					if worker.Key.Name == "worker-b" && tc.name == "attester move" &&
-						!slices.Contains(selectedNames(got.Resources), gateway.Key.Name) {
-						t.Fatalf("new attester missing Sandbox gateway: %+v", got)
-					}
-				}
-			}
-		})
 	}
 }

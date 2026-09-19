@@ -24,10 +24,9 @@ import (
 )
 
 // TrafficPolicyGenerator serves shared policies referenced by authorized
-// Sandboxes. Named subscriptions never widen that owner scope.
+// Workloads. Named subscriptions never widen that scope.
 type TrafficPolicyGenerator struct{}
 
-// Generate returns shared policy updates visible to the requesting client.
 func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedDelta{}, err
@@ -43,40 +42,26 @@ func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRe
 	for _, change := range request.Update.ReadOnlyChangesForType(request.TypeURL) {
 		candidates.Insert(change.Key)
 	}
-	// Derived visibility changes may not include a TrafficPolicy body change.
-	// Diff the publications directly; incremental subscription views only carry
-	// sent versions for changed bodies, not for these derived candidates.
-	if request.Scope.Class != model.ClientEgressGateway && scopedWorkloadChanged(request.Scope, request.Update) {
-		for _, snapshot := range []model.ResourceSet{request.Update.Before(), request.Update.After()} {
-			for _, resource := range selectTrafficPolicyResources(request.Scope, snapshot, request.Subscription) {
-				candidates.Insert(resource.Key)
+	// Both sides matter: a reference removal or a Workload moving out of the
+	// client's scope can withdraw a policy without changing its body.
+	for _, change := range request.Update.ReadOnlyChangesForType(model.AddressType) {
+		for _, resource := range []*model.Resource{change.Old, change.New} {
+			if resource == nil || resource.Facts.Workload == nil {
+				continue
 			}
-		}
-	} else {
-		for _, change := range request.Update.ReadOnlyChangesForType(model.SandboxType) {
-			for _, resource := range []*model.Resource{change.Old, change.New} {
-				if resource == nil || resource.Facts.Sandbox == nil {
-					continue
-				}
-				for _, name := range resource.Facts.Sandbox.TrafficPolicyRefs {
-					candidates.Insert(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name})
-				}
+			for _, name := range resource.Facts.Workload.TrafficPolicyRefs {
+				candidates.Insert(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name})
 			}
 		}
 	}
 	visible := func(snapshot model.ResourceSet) func(model.Resource) bool {
-		var names sets.Set[string]
-		if request.Scope.Class != model.ClientEgressGateway {
-			names = scopedTrafficPolicyNames(request.Scope, snapshot)
-		}
+		query, ok := trafficPolicyWorkloadQuery(request.Scope)
 		return func(resource model.Resource) bool {
-			if !request.Subscription.allows(resource) {
+			if !ok || !request.Subscription.allows(resource) {
 				return false
 			}
-			if request.Scope.Class == model.ClientEgressGateway {
-				return snapshot.HasTrafficPolicyReference(resource.Key.Name)
-			}
-			return names.Contains(resource.Key.Name)
+			query.TrafficPolicyReference = resource.Key.Name
+			return snapshot.HasWorkload(model.AddressType, query)
 		}
 	}
 	resources, removed := diffCandidateTransition(candidates, request.Update.Before().Get, request.Update.After().Get,
@@ -90,7 +75,15 @@ func selectTrafficPolicyResources(
 	sub SubscriptionView,
 ) map[string]model.Resource {
 	selected := make(map[string]model.Resource)
-	for name := range scopedTrafficPolicyNames(scope, snapshot) {
+	query, ok := trafficPolicyWorkloadQuery(scope)
+	if !ok {
+		return selected
+	}
+	names := sets.New[string]()
+	for _, workload := range snapshot.ListWorkloads(model.AddressType, query) {
+		names.InsertAll(workload.Facts.Workload.TrafficPolicyRefs...)
+	}
+	for name := range names {
 		if resource, ok := snapshot.Get(
 			model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name},
 		); ok &&
@@ -101,23 +94,11 @@ func selectTrafficPolicyResources(
 	return selected
 }
 
-func scopedTrafficPolicyNames(scope model.ClientScope, snapshot model.ResourceSet) sets.Set[string] {
-	names := sets.New[string]()
-	add := func(sandbox model.Resource) {
-		if sandbox.Facts.Sandbox != nil {
-			names.InsertAll(sandbox.Facts.Sandbox.TrafficPolicyRefs...)
-		}
-	}
+// Egress gateways consume Workload policies cluster-wide. Other clients use
+// their authenticated node or Workload scope, not remote address visibility.
+func trafficPolicyWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
 	if scope.Class == model.ClientEgressGateway {
-		for _, sandbox := range snapshot.List(model.SandboxType) {
-			add(sandbox)
-		}
-	} else {
-		for uid := range scopedSandboxNames(scope, snapshot) {
-			if sandbox, ok := snapshot.Get(model.ResourceKey{TypeURL: model.SandboxType, Name: uid}); ok {
-				add(sandbox)
-			}
-		}
+		return model.WorkloadQuery{TrafficPolicyRefsOnly: true}, true
 	}
-	return names
+	return workloadScopeQuery(scope)
 }

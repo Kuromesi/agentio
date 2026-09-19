@@ -180,12 +180,8 @@ func New(
 		return []string{pod.Spec.NodeName}
 	})
 	r.delegationPodsByNodePrincipal = newDelegationTargetIndex(pods, options.TrustDomain)
-	runtimeManaged := func(pod *corev1.Pod) bool {
-		return options.EnableKruise && kruise.OwnsPod(pod)
-	}
-	sandboxes := []krt.Collection[model.Sandbox]{
-		podsource.NewSandboxes(pods, options.ClusterID, runtimeManaged, derivedOptions("pod-sandboxes")...),
-	}
+	// Ordinary Pods are Workloads only. Runtime integration adds real Sandboxes.
+	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, derivedOptions("sandboxes")...)
 	securityProfiles := []krt.Collection[model.SecurityProfile]{
 		newSecurityProfileModels(securityProfileObjects, globalSecurityObjects, derivedOptions),
 	}
@@ -196,10 +192,9 @@ func New(
 			DebounceAfter: options.DebounceAfter,
 			DebounceMax:   options.DebounceMax,
 		}, stop)
-		sandboxes = append(sandboxes, sandboxSource.Sandboxes)
+		r.Sandboxes = sandboxSource.Sandboxes
 		securityProfiles = append(securityProfiles, sandboxSource.SecurityProfiles)
 	}
-	r.Sandboxes = krt.JoinCollection(sandboxes, derivedOptions("sandboxes")...)
 	// Every eligible Pod remains a communication endpoint, regardless of the
 	// runtime it hosts or the runtime's lifecycle.
 	r.Workloads = podsource.NewWorkloads(

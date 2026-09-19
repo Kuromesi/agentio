@@ -139,7 +139,7 @@ func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testi
 		t.Fatalf("compile policies: %v", err)
 	}
 	got := compiledRuleAuthorization(t, compiled)
-	if !compiled.Attachment.Selects(model.Sandbox{Namespace: "demo", Labels: map[string]string{"app": "client"}}) {
+	if !compiled.Attachment.Selects(model.Workload{Namespace: "demo", Labels: map[string]string{"app": "client"}}) {
 		t.Fatalf("compiled selector = %+v", compiled.Attachment)
 	}
 	if got.Policy.GetScope() != securityv1.Scope_WORKLOAD_SELECTOR || len(got.Policy.GetGroups()) != 1 {

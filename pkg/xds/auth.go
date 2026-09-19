@@ -38,7 +38,7 @@ func metadataString(metadata *structpb.Struct, key string) string {
 
 func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 	switch typeURL {
-	case model.AddressType, model.WorkloadAuthorizationType, model.SandboxType, model.TrafficPolicyType:
+	case model.AddressType, model.WorkloadAuthorizationType, model.TrafficPolicyType, model.SandboxType:
 		return true, true
 	case model.WorkloadType,
 		model.ClusterType,

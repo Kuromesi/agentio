@@ -24,27 +24,27 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// A selector can target one Sandbox; this benchmark prevents a selector
+// A selector can target one Workload; this benchmark prevents a selector
 // policy lifecycle event from restoring namespace-wide binding recomputation.
 func BenchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
-	b.Run("sandboxes=10000/policies=100", benchmarkPolicyBindingsSelectorPolicyChurn)
+	b.Run("workloades=10000/policies=100", benchmarkPolicyBindingsSelectorPolicyChurn)
 }
 
 func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 	const (
-		sandboxCount = 10_000
-		policyCount  = 100
-		targetUID    = "sandbox-42"
+		workloadCount = 10_000
+		policyCount   = 100
+		targetUID     = "workload-42"
 	)
 	stop := make(chan struct{})
 	b.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	sandboxes := make([]model.Sandbox, sandboxCount)
-	for index := range sandboxes {
-		sandboxes[index] = model.Sandbox{
-			UID:       fmt.Sprintf("sandbox-%d", index),
+	workloades := make([]model.Workload, workloadCount)
+	for index := range workloades {
+		workloades[index] = model.Workload{
+			UID:       fmt.Sprintf("workload-%d", index),
 			Namespace: "demo",
-			Labels:    map[string]string{"app": "sandbox", "sandbox": fmt.Sprintf("sandbox-%d", index)},
+			Labels:    map[string]string{"app": "workload", "workload": fmt.Sprintf("workload-%d", index)},
 		}
 	}
 	basePolicies := make([]PolicyAttachment, policyCount)
@@ -54,7 +54,7 @@ func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 			Name: fmt.Sprintf("demo/policy-%d", index),
 			Target: AttachmentTarget{
 				Namespaces: []string{"demo"},
-				Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": "sandbox"}},
+				Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": "workload"}},
 			},
 		})
 		if err != nil {
@@ -63,13 +63,13 @@ func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 		basePolicies[index] = attachment
 	}
 	attachments := krt.NewStaticCollection(nil, basePolicies, options...)
-	bindings := NewPolicyBindingsCollection(
-		krt.NewStaticCollection(nil, sandboxes, options...),
+	bindings := NewWorkloadPolicyBindingsCollection(
+		krt.NewStaticCollection(nil, workloades, options...),
 		attachments,
 		krt.NewOptionsBuilder(stop, "benchmark", nil),
 	)
 	if !bindings.WaitUntilSynced(stop) {
-		b.Fatal("Sandbox policy bindings did not sync")
+		b.Fatal("Workload policy bindings did not sync")
 	}
 	events := make(chan krt.Event[Bindings], 1)
 	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
@@ -83,7 +83,7 @@ func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 		Name: "demo/selected-egress",
 		Target: AttachmentTarget{
 			Namespaces: []string{"demo"},
-			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"sandbox": targetUID}},
+			Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"workload": targetUID}},
 		},
 	})
 	if err != nil {
@@ -98,7 +98,7 @@ func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 		} else {
 			attachments.DeleteObject(selected.ResourceName())
 		}
-		if event := awaitBindingEvent(b, events); event.Latest().SandboxUID != targetUID {
+		if event := awaitBindingEvent(b, events); event.Latest().TargetUID != targetUID {
 			b.Fatalf("binding event = %+v, want %s", event.Latest(), targetUID)
 		}
 	}

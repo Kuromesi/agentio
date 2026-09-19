@@ -123,11 +123,12 @@ func TestProjectWorkloadConfigDumpRejectsUnknownWorkload(t *testing.T) {
 	}
 }
 
-func TestProjectWorkloadConfigDumpKeepsBoundSandboxPolicies(t *testing.T) {
+func TestProjectWorkloadConfigDumpKeepsWorkloadReferencesAndBoundSandbox(t *testing.T) {
 	raw := []byte(`{
-  "workloads": [{"uid":"client-uid","namespace":"sandbox","name":"client-pod"}],
+  "config": {"sandboxMode": false},
+  "workloads": [{"uid":"client-uid","namespace":"sandbox","name":"client-pod","trafficPolicyRefs":["trafficPolicies/client"]}],
   "sandboxes": [
-    {"uid":"client-sandbox","workloadUid":"client-uid","trafficPolicyRefs":["trafficPolicies/client"]},
+    {"uid":"client-sandbox","workloadUid":"client-uid","trafficPolicy":{"egress":{"rules":[]}}},
     {"uid":"server-sandbox","workloadUid":"server-uid","trafficPolicyRefs":["trafficPolicies/server"]},
     {"uid":"unbound-sandbox","trafficPolicyRefs":["trafficPolicies/unbound"]}
   ],
@@ -141,7 +142,7 @@ func TestProjectWorkloadConfigDumpKeepsBoundSandboxPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"client-pod", "client-sandbox", "trafficPolicies/client", "10.0.0.1/32"} {
+	for _, want := range []string{"client-pod", "client-sandbox", "trafficPolicies/client", "10.0.0.1/32", `"sandboxMode":false`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("projected dump does not contain %q: %s", want, got)
 		}

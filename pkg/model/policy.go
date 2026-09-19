@@ -15,11 +15,45 @@
 package model
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
+
+// PolicyKind identifies an independently stored shared policy family.
+type PolicyKind string
+
+// Supported shared policy families.
+const (
+	PolicyKindTrafficPolicy PolicyKind = "traffic-policy"
+	PolicyKindEgressPolicy  PolicyKind = "egress-policy"
+	PolicyKindSNIPolicy     PolicyKind = "sni-policy"
+)
+
+// PolicyRef identifies a shared policy by family and resource name.
+type PolicyRef struct {
+	Kind PolicyKind
+	Name string
+}
+
+// ResourceName returns the collection key for this policy reference.
+func (r PolicyRef) ResourceName() string { return string(r.Kind) + "|" + r.Name }
+
+// Validate checks that the reference has a supported family and a nonempty name.
+func (r PolicyRef) Validate() error {
+	switch r.Kind {
+	case PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
+	default:
+		return fmt.Errorf("unsupported policy kind %q", r.Kind)
+	}
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("%s policy name is required", r.Kind)
+	}
+	return nil
+}
 
 // TrafficPolicyRules carries source rules without selection or priority metadata.
 // Empty directions and rules without the direction's peers are ignored, as in Poseidon.

@@ -98,10 +98,8 @@ func TestGeneratedPolicyCompilesIntoExpectedRound(t *testing.T) {
 			}
 			client := factory.New()
 			sandbox, err := anypb.New(&sandboxv1.Sandbox{
-				Uid: "kruise:test--client",
-				PolicyRefs: map[string]*sandboxv1.PolicyReference{
-					trafficpolicy.PolicyType: {ResourceNames: []string{compiled.Name}},
-				},
+				Uid:      "kruise:test--client",
+				Attester: &sandboxv1.Sandbox_Attester{WorkloadUid: "worker"},
 			})
 			if err != nil {
 				t.Fatal(err)

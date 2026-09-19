@@ -38,10 +38,7 @@ func inspectPolicyDump(content, name string) (policyDumpView, error) {
 			AuthorizationPolicies []string `json:"authorizationPolicies"`
 			TrafficPolicyRefs     []string `json:"trafficPolicyRefs"`
 		} `json:"workload"`
-		Sandboxes []struct {
-			WorkloadUID       string   `json:"workloadUid"`
-			TrafficPolicyRefs []string `json:"trafficPolicyRefs"`
-		} `json:"sandboxes"`
+
 		TrafficPolicies *[]json.RawMessage `json:"trafficPolicies"`
 		Policies        []json.RawMessage  `json:"policies"`
 	}
@@ -53,14 +50,7 @@ func inspectPolicyDump(content, name string) (policyDumpView, error) {
 	}
 	if dump.TrafficPolicies != nil {
 		refs := dump.Workload.TrafficPolicyRefs
-		bound := false
-		for _, sandbox := range dump.Sandboxes {
-			if sandbox.WorkloadUID == dump.Workload.UID {
-				bound = true
-				refs = append(refs, sandbox.TrafficPolicyRefs...)
-			}
-		}
-		if !bound && refs == nil {
+		if refs == nil {
 			return policyDumpView{}, fmt.Errorf("workload has no native policy binding yet")
 		}
 		var target string

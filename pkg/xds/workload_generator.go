@@ -167,7 +167,6 @@ func selectWorkloadResources(
 
 	workloads := scopedWorkloads(scope, snapshot, typeURL)
 	referencedGateways := gatewayReferenceKeys(workloads)
-	referencedGateways.Merge(sandboxGatewayReferenceKeys(snapshot, workloads))
 	withGateways := func(selected []model.Resource) []model.Resource {
 		selected = append(selected, gatewayResourcesForKeys(snapshot, typeURL, referencedGateways)...)
 		return orderedUnique(selected)
@@ -278,7 +277,9 @@ func workloadMatchesScope(scope model.ClientScope, resource model.Resource) bool
 	}
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
-		return scope.WorkloadUID != "" && scope.SourceUID != "" && workload.WorkloadUID == scope.WorkloadUID && workload.SourceUID == scope.SourceUID && workload.Principal == scope.Principal
+		return scope.WorkloadUID != "" && scope.SourceUID != "" && workload.WorkloadUID == scope.WorkloadUID &&
+			workload.SourceUID == scope.SourceUID &&
+			workload.Principal == scope.Principal
 	case model.ClientSharedZTunnel:
 		return workload.NodeName == scope.NodeName
 	default:
@@ -298,7 +299,11 @@ func workloadScopeQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
 		if scope.WorkloadUID != "" && scope.SourceUID != "" {
-			return model.WorkloadQuery{WorkloadUID: scope.WorkloadUID, SourceUID: scope.SourceUID, Principal: &scope.Principal}, true
+			return model.WorkloadQuery{
+				WorkloadUID: scope.WorkloadUID,
+				SourceUID:   scope.SourceUID,
+				Principal:   &scope.Principal,
+			}, true
 		}
 		return model.WorkloadQuery{}, false
 	case model.ClientSharedZTunnel:
@@ -371,33 +376,11 @@ func generateWDSIncremental(request GenerationRequest, workloadsOnly bool) Gener
 	before := newWorkloadVisibility(request.Scope, request.Update.Before(), request.TypeURL)
 	after := newWorkloadVisibility(request.Scope, request.Update.After(), request.TypeURL)
 	changes := request.Update.ReadOnlyChangesForType(request.TypeURL)
-	sandboxChanges := request.Update.ReadOnlyChangesForType(model.SandboxType)
-	if stableWDSFacts(changes) && !request.Update.SandboxGatewayFactsChanged() {
+	if stableWDSFacts(changes) {
 		return diffWDSChanges(before, after, changes, workloadsOnly)
 	}
 	candidates := affectedWDSCandidates(before, after, changes)
-	addSandboxGatewayCandidates(candidates, before, after, sandboxChanges)
 	return diffWDSCandidates(before, after, candidates, workloadsOnly)
-}
-
-func addSandboxGatewayCandidates(candidates sets.Set[model.ResourceKey], before, after workloadVisibility, changes []model.ResourceChange) {
-	for _, change := range changes {
-		if change.Old != nil && change.New != nil && change.Old.Facts.Equal(change.New.Facts) {
-			continue
-		}
-		for _, sandbox := range []*model.Resource{change.Old, change.New} {
-			if sandbox == nil || sandbox.Facts.Sandbox == nil {
-				continue
-			}
-			for _, key := range sandbox.Facts.Sandbox.GatewayReferences {
-				for _, visibility := range []workloadVisibility{before, after} {
-					for _, resource := range visibility.ownedByGateway(key) {
-						candidates.Insert(resource.Key)
-					}
-				}
-			}
-		}
-	}
 }
 
 func stableWDSFacts(changes []model.ResourceChange) bool {
@@ -420,7 +403,10 @@ func serviceResourcesForKey(snapshot model.ResourceSet, serviceKey string) []mod
 	return result
 }
 
-func affectedWDSCandidates(before, after workloadVisibility, changes []model.ResourceChange) sets.Set[model.ResourceKey] {
+func affectedWDSCandidates(
+	before, after workloadVisibility,
+	changes []model.ResourceChange,
+) sets.Set[model.ResourceKey] {
 	candidates := sets.NewWithLength[model.ResourceKey](len(changes))
 	add := func(resource *model.Resource) {
 		if resource != nil && resource.Key.TypeURL == before.typeURL {
@@ -452,8 +438,6 @@ func affectedWDSCandidates(before, after workloadVisibility, changes []model.Res
 				}
 			}
 			gateways := sets.New(workload.Facts.Workload.GatewayReferences...)
-			gateways.Merge(sandboxGatewayReferenceKeys(before.resources, []model.Resource{*workload}))
-			gateways.Merge(sandboxGatewayReferenceKeys(after.resources, []model.Resource{*workload}))
 			for gatewayKey := range gateways {
 				addResources(before.ownedByGateway(gatewayKey))
 				addResources(after.ownedByGateway(gatewayKey))

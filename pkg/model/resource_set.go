@@ -150,11 +150,6 @@ func (s ResourceSet) ListSandboxesByAttester(workloadUID string) []Resource {
 	return s.listByFact(SandboxType, resourceFactAttesterWorkloadUID, workloadUID)
 }
 
-// ListSandboxesReferencingGateway returns Sandboxes whose policies reference the gateway.
-func (s ResourceSet) ListSandboxesReferencingGateway(gatewayKey string) []Resource {
-	return s.listByFact(SandboxType, resourceFactGatewayReference, gatewayKey)
-}
-
 // ListServiceMembers returns resources of the type belonging to a Service.
 func (s ResourceSet) ListServiceMembers(typeURL, serviceKey string) []Resource {
 	return s.listByFact(typeURL, resourceFactService, serviceKey)
@@ -415,12 +410,4 @@ func normalizeChangedResource(change ResourceChange) (Resource, error) {
 		return Resource{}, err
 	}
 	return normalized, nil
-}
-
-// HasTrafficPolicyReference checks the Sandbox index without materializing
-// every Sandbox that references the policy.
-func (s ResourceSet) HasTrafficPolicyReference(name string) bool {
-	index := s.resources[SandboxType]
-	return index != nil &&
-		len(lookupNames(&index.facts, resourceFactIndexKey(resourceFactTrafficPolicyReference, name))) > 0
 }

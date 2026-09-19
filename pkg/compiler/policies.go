@@ -33,7 +33,7 @@ type policyCollections struct {
 	sniPolicies     krt.Collection[policy.CompiledSNIPolicy]
 	egressPolicies  krt.Collection[policy.CompiledEgressPolicy]
 
-	// Shared binding metadata for all policy families, without rule bodies.
+	// Shared policy selections keyed by Workload UID, without rule bodies.
 	policyBindings krt.Collection[policy.Bindings]
 }
 
@@ -82,8 +82,11 @@ func newPolicyCollections(
 
 	trafficPolicies := krt.NewCollection(inputs.TrafficPolicies,
 		func(ctx krt.HandlerContext, source model.TrafficPolicy) *policy.CompiledTrafficPolicy {
+			if source.Dedicated && !inputs.SandboxMode {
+				return nil
+			}
 			compiled, err := policy.CompileTrafficPolicy(ctx, source, trafficPolicyInputs)
-			if err == nil && !inputs.NativeSandboxPolicies {
+			if err == nil && !source.Dedicated {
 				compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(
 					*compiled,
 					source,
@@ -103,6 +106,9 @@ func newPolicyCollections(
 
 	sniPolicies := krt.NewCollection(inputs.SecurityProfiles,
 		func(ctx krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSNIPolicy {
+			if profile.Dedicated && !inputs.SandboxMode {
+				return nil
+			}
 			compiled, err := policy.CompileSNIProfile(profile)
 			if err != nil {
 				failures.record("SecurityProfile", profile.ResourceName(), err)
@@ -132,22 +138,7 @@ func newPolicyCollections(
 	attachments := krt.JoinCollection([]krt.Collection[policy.PolicyAttachment]{
 		trafficAttachments, sniAttachments, egressAttachments,
 	}, options("policy-attachments")...)
-	policyBindings := policy.NewPolicyBindingsCollection(inputs.Sandboxes, attachments, builder)
-	policyBindings = krt.NewCollection(policyBindings,
-		func(_ krt.HandlerContext, binding policy.Bindings) *policy.Bindings {
-			if !binding.Valid() {
-				reason := binding.InvalidReason
-				if reason == "" {
-					reason = fmt.Sprintf("unresolved policy references: %v", binding.Unresolved)
-				}
-				failures.record("Bindings", binding.ResourceName(),
-					fmt.Errorf("invalid policy bindings: %s", reason))
-			} else {
-				failures.clear("Bindings", binding.ResourceName())
-			}
-			return &binding
-		}, options("validated-policy-bindings")...)
-	clearFailureOnSourceDelete(policyBindings, failures, "Bindings")
+	policyBindings := policy.NewWorkloadPolicyBindingsCollection(inputs.Workloads, attachments, builder)
 	return policyCollections{
 		trafficPolicies: trafficPolicies,
 		sniPolicies:     sniPolicies,
@@ -183,8 +174,8 @@ func authorizationResource(authorization policy.CompiledAuthorization) (model.Re
 		}, "", value, nil, facts)
 }
 
-// Shared policy bodies are serialized independently of Sandbox references.
-// Compatibility Authorizations are serialized once per source alongside them.
+// Shared policy bodies are serialized independently of Workload bindings.
+// Legacy Authorizations are serialized once per shared source alongside them.
 func newTrafficPolicyResources(
 	policies krt.Collection[policy.CompiledTrafficPolicy],
 	failures *failureRecorder,

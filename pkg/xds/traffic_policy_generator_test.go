@@ -21,8 +21,9 @@ import (
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
+	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
+	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
@@ -51,31 +52,30 @@ func sharedTrafficResource(t *testing.T, name string, action securityv1.TrafficP
 	return r
 }
 
-func sandboxWithTrafficRefs(t *testing.T, uid, workload string, names ...string) model.Resource {
+func workloadWithTrafficRefs(t *testing.T, workload model.Resource, names ...string) model.Resource {
 	t.Helper()
-	body, err := anypb.New(
-		&sandboxv1.Sandbox{
-			Uid:        uid,
-			Attester:   &sandboxv1.Sandbox_Attester{WorkloadUid: workload},
-			PolicyRefs: map[string]*sandboxv1.PolicyReference{model.TrafficPolicyType: {ResourceNames: names}},
-		},
-	)
+	address := new(workloadv1.Address)
+	if err := workload.Value.UnmarshalTo(address); err != nil {
+		t.Fatal(err)
+	}
+	reference, err := anypb.New(&extensionsv1.PolicyReference{TypeUrl: model.TrafficPolicyType, ResourceNames: names})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := model.NewResource(
-		model.ResourceKey{TypeURL: model.SandboxType, Name: uid},
-		"",
-		body,
-		nil,
-		model.ResourceFacts{
-			Sandbox: &model.SandboxResourceFacts{AttesterWorkloadUID: workload, TrafficPolicyRefs: names},
-		},
-	)
+	address.GetWorkload().Extensions = append(address.GetWorkload().Extensions,
+		&workloadv1.Extension{Name: "traffic-policy-reference", Config: reference})
+	body, err := anypb.New(address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r
+	facts := *workload.Facts.Workload
+	facts.TrafficPolicyRefs = names
+	result, err := model.NewResource(workload.Key, workload.XDSName, body, workload.Aliases,
+		model.ResourceFacts{Workload: &facts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
@@ -83,7 +83,11 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 	name := "namespaces/demo/trafficPolicies/shared"
 	shared := sharedTrafficResource(t, name, securityv1.TrafficPolicy_ALLOW)
 	private := sharedTrafficResource(t, "namespaces/other/trafficPolicies/private", securityv1.TrafficPolicy_DENY)
-	outside := sandboxWithTrafficRefs(t, "outside", "other-worker", private.Key.Name)
+	outside := workloadWithTrafficRefs(
+		t,
+		selectionWorkload(t, "outside", "other", "other-node", "", ""),
+		private.Key.Name,
+	)
 	server := newTestServer(t, workerScope(worker), []model.Resource{worker, shared, private, outside}, nil)
 	stream := newFakeStream(t.Context(), 8)
 	done := server.start(stream)
@@ -93,16 +97,15 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 		t.Fatalf("warm pool received unrelated policies: %v", first)
 	}
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: first.Nonce})
-	a := sandboxWithTrafficRefs(t, "a", "worker", name)
-	b := sandboxWithTrafficRefs(t, "b", "worker", name)
-	server.resources.publish(selectionSnapshot(t, []model.Resource{worker, shared, private, outside, a, b}))
+	bound := workloadWithTrafficRefs(t, worker, name, name)
+	server.resources.publish(selectionSnapshot(t, []model.Resource{bound, shared, private, outside}))
 	response := stream.awaitResponses(t, model.TrafficPolicyType, 2)[1]
 	if !reflect.DeepEqual(resourceNames(response), []string{name}) {
 		t.Fatalf("shared policy should be delivered once: %v", response)
 	}
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
 	changed := sharedTrafficResource(t, name, securityv1.TrafficPolicy_DENY)
-	server.resources.publish(selectionSnapshot(t, []model.Resource{worker, changed, private, outside, a, b}))
+	server.resources.publish(selectionSnapshot(t, []model.Resource{bound, changed, private, outside}))
 	response = stream.awaitResponses(t, model.TrafficPolicyType, 3)[2]
 	if len(response.Resources) != 1 || response.Resources[0].Version != changed.Hash {
 		t.Fatalf("body update missing: %v", response)
@@ -129,8 +132,8 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 	}
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
 	// The same Pod name with another source UID is no longer this client's host.
-	replacement := workerResource(t, "pod-2")
-	server.resources.publish(selectionSnapshot(t, []model.Resource{replacement, changed, private, outside, a, b}))
+	replacement := workloadWithTrafficRefs(t, workerResource(t, "pod-2"), name)
+	server.resources.publish(selectionSnapshot(t, []model.Resource{replacement, changed, private, outside}))
 	response = stream.awaitResponses(t, model.TrafficPolicyType, 6)[5]
 	if len(response.Resources) != 0 || !reflect.DeepEqual(response.RemovedResources, []string{name}) {
 		t.Fatalf("lost scope did not withdraw policy: %v", response)
@@ -143,7 +146,7 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 func TestSharedTrafficPolicyReferencesAuthorizeOnlyTheirResources(t *testing.T) {
 	worker := workerResource(t, "pod-1")
 	p := sharedTrafficResource(t, "trafficPolicies/global", securityv1.TrafficPolicy_DENY)
-	sandbox := sandboxWithTrafficRefs(t, "a", "worker", p.Key.Name)
+	bound := workloadWithTrafficRefs(t, worker, p.Key.Name)
 	generator := TrafficPolicyGenerator{}
 	for _, tc := range []struct {
 		name      string
@@ -151,9 +154,9 @@ func TestSharedTrafficPolicyReferencesAuthorizeOnlyTheirResources(t *testing.T) 
 		want      int
 	}{
 		{"unreferenced", []model.Resource{worker, p}, 0},
-		{"missing body", []model.Resource{worker, sandbox}, 0},
-		{"resolved", []model.Resource{worker, sandbox, p}, 1},
-		{"removed reference", []model.Resource{worker, sandboxWithTrafficRefs(t, "a", "worker"), p}, 0},
+		{"missing body", []model.Resource{bound}, 0},
+		{"resolved", []model.Resource{bound, p}, 1},
+		{"removed reference", []model.Resource{workloadWithTrafficRefs(t, worker), p}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			delta, err := generator.Generate(
@@ -179,11 +182,11 @@ func TestSharedTrafficPolicyReferencesAuthorizeOnlyTheirResources(t *testing.T) 
 	}
 }
 
-func TestSandboxTrafficPolicyReferenceUpdates(t *testing.T) {
+func TestWorkloadTrafficPolicyReferenceUpdates(t *testing.T) {
 	worker := workerResource(t, "pod-1")
 	name := "trafficPolicies/global"
 	body := sharedTrafficResource(t, name, securityv1.TrafficPolicy_ALLOW)
-	sandbox := sandboxWithTrafficRefs(t, "sandbox", "worker", name)
+	bound := workloadWithTrafficRefs(t, worker, name)
 	for _, scope := range []model.ClientScope{workerScope(worker), gatewayScope()} {
 		server := newTestServer(t, scope, []model.Resource{worker, body}, nil)
 		stream := newFakeStream(t.Context(), 8)
@@ -194,29 +197,60 @@ func TestSandboxTrafficPolicyReferenceUpdates(t *testing.T) {
 			t.Fatal("unreferenced policy was exposed")
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
-		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, sandbox, body}))
+		server.resources.publish(selectionSnapshot(t, []model.Resource{bound, body}))
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 2)[1]
 		if !reflect.DeepEqual(resourceNames(response), []string{name}) {
-			t.Fatalf("Sandbox reference did not grant visibility: %v", response)
+			t.Fatalf("Workload reference did not grant visibility: %v", response)
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
 		body = sharedTrafficResource(t, name, securityv1.TrafficPolicy_DENY)
-		server.resources.publish(selectionSnapshot(t, []model.Resource{worker, sandbox, body}))
+		server.resources.publish(selectionSnapshot(t, []model.Resource{bound, body}))
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 3)[2]
 		if len(response.Resources) != 1 || response.Resources[0].Version != body.Hash {
-			t.Fatalf("Sandbox policy body update missing: %v", response)
+			t.Fatalf("Workload policy body update missing: %v", response)
 		}
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
 		server.resources.publish(
-			selectionSnapshot(t, []model.Resource{worker, sandboxWithTrafficRefs(t, "sandbox", "worker"), body}),
+			selectionSnapshot(t, []model.Resource{workloadWithTrafficRefs(t, worker), body}),
 		)
 		response = stream.awaitResponses(t, model.TrafficPolicyType, 4)[3]
 		if !reflect.DeepEqual(response.RemovedResources, []string{name}) {
-			t.Fatalf("removed Sandbox reference retained visibility: %v", response)
+			t.Fatalf("removed Workload reference retained visibility: %v", response)
 		}
 		if err := server.finish(t, stream, done); err != nil {
 			t.Fatal(err)
 		}
 		body = sharedTrafficResource(t, name, securityv1.TrafficPolicy_ALLOW)
+	}
+}
+
+func TestSharedTrafficPolicyLastWorkloadReferenceRemoval(t *testing.T) {
+	policy := sharedTrafficResource(t, "trafficPolicies/shared", securityv1.TrafficPolicy_ALLOW)
+	a := workloadWithTrafficRefs(t, selectionWorkload(t, "a", "demo", "node-a", "", ""), policy.Key.Name)
+	b := workloadWithTrafficRefs(t, selectionWorkload(t, "b", "demo", "node-a", "", ""), policy.Key.Name)
+	both := selectionSnapshot(t, []model.Resource{a, b, policy})
+	one := selectionSnapshot(t, []model.Resource{b, policy})
+	none := selectionSnapshot(t, []model.Resource{policy})
+	for _, scope := range []model.ClientScope{{Class: model.ClientSharedZTunnel, NodeName: "node-a"}, gatewayScope()} {
+		for _, tc := range []struct {
+			before  model.ResourceSet
+			after   model.ResourceSet
+			removed bool
+		}{{both, one, false}, {one, none, true}} {
+			delta, err := (TrafficPolicyGenerator{}).Generate(t.Context(), GenerationRequest{
+				Scope:        scope,
+				TypeURL:      model.TrafficPolicyType,
+				Subscription: SubscriptionView{wildcard: true},
+				Snapshot:     tc.after,
+				Update:       updateBetween(tc.before, tc.after, tc.before.Diff(tc.after)),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(delta.Resources) != 0 || (len(delta.Removed) == 1) != tc.removed ||
+				(tc.removed && delta.Removed[0] != policy.Key.Name) {
+				t.Fatalf("scope %v, last reference=%v: delta=%+v", scope.Class, tc.removed, delta)
+			}
+		}
 	}
 }

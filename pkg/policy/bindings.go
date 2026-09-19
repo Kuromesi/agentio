@@ -18,8 +18,6 @@ import (
 	"slices"
 	"sort"
 
-	"istio.io/istio/pkg/util/sets"
-
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -31,21 +29,18 @@ type BindingGroup struct {
 	Names []string
 }
 
-// Bindings contains the ordered policy references for one Sandbox.
+// Bindings contains the ordered policy references for one policy target.
 type Bindings struct {
-	SandboxUID    string
-	Groups        []BindingGroup
-	Unresolved    []model.PolicyRef
-	InvalidReason string
+	TargetUID string
+	Groups    []BindingGroup
 }
 
-// ResourceName identifies the Sandbox whose policy references are resolved.
-func (b Bindings) ResourceName() string { return b.SandboxUID }
+// ResourceName identifies the target whose policy references are resolved.
+func (b Bindings) ResourceName() string { return b.TargetUID }
 
-// Equals compares ordered policy references and resolution failures.
+// Equals compares ordered policy references.
 func (b Bindings) Equals(other Bindings) bool {
-	if b.SandboxUID != other.SandboxUID || b.InvalidReason != other.InvalidReason ||
-		len(b.Groups) != len(other.Groups) || len(b.Unresolved) != len(other.Unresolved) {
+	if b.TargetUID != other.TargetUID || len(b.Groups) != len(other.Groups) {
 		return false
 	}
 	for index := range b.Groups {
@@ -54,17 +49,7 @@ func (b Bindings) Equals(other Bindings) bool {
 			return false
 		}
 	}
-	for index := range b.Unresolved {
-		if b.Unresolved[index] != other.Unresolved[index] {
-			return false
-		}
-	}
 	return true
-}
-
-// Valid reports whether every policy reference was resolved without validation errors.
-func (b Bindings) Valid() bool {
-	return b.InvalidReason == "" && len(b.Unresolved) == 0
 }
 
 // PolicyNames returns the ordered names for a kind; callers must not mutate the slice.
@@ -91,39 +76,23 @@ func attachmentIndexKeys(attachment PolicyAttachment) []string {
 	}
 }
 
-// NewPolicyBindingsCollection selects policies for Sandboxes. Workload policy
-// output is derived separately from these bindings for legacy data planes.
-func NewPolicyBindingsCollection(
-	sandboxes krt.Collection[model.Sandbox],
+// NewWorkloadPolicyBindingsCollection selects shared policies from the Workload's
+// namespace and labels. It does not depend on Sandbox discovery or lifecycle.
+func NewWorkloadPolicyBindingsCollection(
+	workloads krt.Collection[model.Workload],
 	attachments krt.Collection[PolicyAttachment],
 	options krt.OptionsBuilder,
 ) krt.Collection[Bindings] {
-	byTarget := krt.NewIndex(attachments, "policyAttachmentsByTarget", attachmentIndexKeys)
-	return krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *Bindings {
-		if err := sandbox.Validate(); err != nil {
-			return &Bindings{
-				SandboxUID:    sandbox.UID,
-				Unresolved:    append([]model.PolicyRef(nil), sandbox.PolicyRefs...),
-				InvalidReason: err.Error(),
-			}
-		}
-		return resolvePolicyBindings(
-			ctx,
-			sandbox.UID,
-			sandbox.Namespace,
-			sandbox.Labels,
-			sandbox.PolicyRefs,
-			attachments,
-			byTarget,
-		)
-	}, options.WithName("sandbox-policy-bindings")...)
+	byTarget := krt.NewIndex(attachments, "workloadPolicyAttachmentsByTarget", attachmentIndexKeys)
+	return krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *Bindings {
+		return resolvePolicyBindings(ctx, workload.UID, workload.Namespace, workload.Labels, attachments, byTarget)
+	}, options.WithName("workload-policy-bindings")...)
 }
 
 func resolvePolicyBindings(
 	ctx krt.HandlerContext,
 	uid, namespace string,
 	targetLabels map[string]string,
-	references []model.PolicyRef,
 	attachments krt.Collection[PolicyAttachment],
 	byTarget krt.Index[string, PolicyAttachment],
 ) *Bindings {
@@ -145,27 +114,7 @@ func resolvePolicyBindings(
 	}
 	sort.Slice(matched, func(i, j int) bool { return policyAttachmentLess(matched[i], matched[j]) })
 	byKind := make(map[PolicyKind][]string)
-	seen := sets.New[string]()
-	unresolved := make([]model.PolicyRef, 0)
-	for _, reference := range references {
-		key := reference.ResourceName()
-		attachment := krt.FetchOne(ctx, attachments, krt.FilterKey(key))
-		if attachment == nil {
-			unresolved = append(unresolved, reference)
-			continue
-		}
-		if seen.Contains(key) {
-			continue
-		}
-		seen.Insert(key)
-		byKind[reference.Kind] = append(byKind[reference.Kind], reference.Name)
-	}
 	for _, attachment := range matched {
-		key := attachment.ResourceName()
-		if seen.Contains(key) {
-			continue
-		}
-		seen.Insert(key)
 		byKind[attachment.Kind] = append(byKind[attachment.Kind], attachment.Name)
 	}
 	kinds := make([]PolicyKind, 0, len(byKind))
@@ -177,5 +126,5 @@ func resolvePolicyBindings(
 	for _, kind := range kinds {
 		groups = append(groups, BindingGroup{Kind: kind, Names: byKind[kind]})
 	}
-	return &Bindings{SandboxUID: uid, Groups: groups, Unresolved: unresolved}
+	return &Bindings{TargetUID: uid, Groups: groups}
 }

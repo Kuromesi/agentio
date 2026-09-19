@@ -20,8 +20,8 @@ import (
 	"strings"
 )
 
-// SandboxRuntime identifies an optional runtime integration. Ordinary managed
-// Pods always produce Sandboxes and are not a configurable runtime.
+// SandboxRuntime identifies an optional integration used in Sandbox mode.
+// Ordinary managed Pods remain Workloads and are not a configurable runtime.
 type SandboxRuntime string
 
 // SandboxRuntimeKruise discovers Kruise Agents Sandbox resources.
@@ -33,7 +33,7 @@ func (r SandboxRuntime) validate() error {
 		return nil
 	default:
 		return fmt.Errorf(
-			"unsupported sandbox runtime %q; supported runtimes: kruise (ordinary managed Pods are built in)",
+			"unsupported sandbox runtime %q; supported runtimes: kruise",
 			r,
 		)
 	}

@@ -15,9 +15,6 @@
 package policy
 
 import (
-	"crypto/sha256"
-	"fmt"
-
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/model"
@@ -26,13 +23,16 @@ import (
 // CompiledAuthorization is the authorization specialization of the shared compiled policy.
 type CompiledAuthorization = CompiledPolicy[*securityv1.Authorization]
 
-// TrafficPolicyAsAuthorizations projects one resolved policy into the legacy
-// wire format. Ordering and default decisions remain the data plane's job.
+// TrafficPolicyAsAuthorizations projects a shared policy into the Workload wire
+// format. Dedicated policies stay on their Sandbox and produce no Authorizations.
 func TrafficPolicyAsAuthorizations(
 	compiled CompiledTrafficPolicy,
 	source model.TrafficPolicy,
 	rootNamespace string,
 ) ([]CompiledAuthorization, error) {
+	if source.Dedicated {
+		return nil, nil
+	}
 	name, namespace, priority := source.Name, source.Namespace, source.Spec.Priority
 	scope := securityv1.Scope_NAMESPACE
 	if source.Global {
@@ -43,12 +43,6 @@ func TrafficPolicyAsAuthorizations(
 	}
 	if !selectorEmpty(source.Spec.Selector) {
 		scope = securityv1.Scope_WORKLOAD_SELECTOR
-	}
-	if source.Dedicated {
-		name = fmt.Sprintf("sandbox-%x", sha256.Sum256([]byte(source.SandboxUID)))
-		scope = securityv1.Scope_WORKLOAD_SELECTOR
-		// Inline rules precede shared policies, whose priorities are nonnegative.
-		priority = -1
 	}
 	result := make([]CompiledAuthorization, 0, 2)
 	for _, direction := range []struct {

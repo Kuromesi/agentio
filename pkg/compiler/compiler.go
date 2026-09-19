@@ -26,10 +26,11 @@ import (
 )
 
 type Inputs struct {
-	// NativeSandboxPolicies omits legacy Workload projections of bound Sandbox policies.
-	NativeSandboxPolicies bool
-	ClusterID             string
-	RootNamespace         string
+	// SandboxMode enables Sandbox resources and their dedicated inline policies.
+	// Shared system policies remain on Workload resources in both modes.
+	SandboxMode   bool
+	ClusterID     string
+	RootNamespace string
 
 	Pods               krt.Collection[*corev1.Pod]
 	KubernetesServices krt.Collection[*corev1.Service]
@@ -64,6 +65,9 @@ type Compiler struct {
 func New(inputs Inputs, options krt.OptionsBuilder) (*Compiler, error) {
 	if options.Stop() == nil {
 		return nil, fmt.Errorf("KRT stop channel is required")
+	}
+	if !inputs.SandboxMode {
+		inputs.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, options.WithName("disabled-sandboxes")...)
 	}
 	if inputs.Sandboxes == nil || inputs.Workloads == nil || inputs.Pods == nil || inputs.KubernetesServices == nil ||
 		inputs.EndpointSlices == nil || inputs.Services == nil || inputs.Endpoints == nil ||
@@ -110,15 +114,15 @@ func (c *Compiler) Gateways() krt.Collection[model.Gateway] {
 	return c.graph.gateways
 }
 
-// Bindings exposes policy selections keyed by target kind and UID.
+// Bindings exposes shared policy selections keyed by Workload UID.
 func (c *Compiler) Bindings() krt.Collection[policy.Bindings] {
 	return c.graph.policies.policyBindings
 }
 
-// PolicyNames returns the policy names bound to the given Sandbox.
-func (c *Compiler) PolicyNames(sandboxUID string, kind model.PolicyKind) []string {
-	binding := c.graph.policies.policyBindings.GetKey(sandboxUID)
-	if binding == nil || !binding.Valid() {
+// PolicyNames returns the shared policy names bound to the given Workload.
+func (c *Compiler) PolicyNames(workloadUID string, kind model.PolicyKind) []string {
+	binding := c.graph.policies.policyBindings.GetKey(workloadUID)
+	if binding == nil {
 		return nil
 	}
 	return append([]string(nil), binding.PolicyNames(kind)...)
