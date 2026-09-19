@@ -439,7 +439,9 @@ func TestMalformedPolicyIsOmittedWhileRestPublishes(t *testing.T) {
 	})
 	eventually(t, func() bool {
 		manifest := manifestAt(t, fixture.compiler, "cluster//Pod/alpha/client")
-		return manifest != nil && len(fixture.compiler.PolicyNames("cluster//Pod/alpha/client", model.PolicyKindTrafficPolicy)) == 1 && len(fixture.compiler.Failures()) == 0
+		return manifest != nil &&
+			len(fixture.compiler.PolicyNames("cluster//Pod/alpha/client", model.PolicyKindTrafficPolicy)) == 1 &&
+			len(fixture.compiler.Failures()) == 0
 	}, "fixed policy publishes and clears the failure")
 }
 

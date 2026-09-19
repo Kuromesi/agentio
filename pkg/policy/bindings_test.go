@@ -78,7 +78,11 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 			witness.selector = bindingRecomputeSelector{Selector: witness.selector, calls: &recomputes}
 			initial := makePolicy(selectApp("subject-0"))
 			attachments := krt.NewStaticCollection(nil, []PolicyAttachment{initial, witness}, options...)
-			bindings := NewWorkloadPolicyBindingsCollection(workloades, attachments, krt.NewOptionsBuilder(stop, "test", nil))
+			bindings := NewWorkloadPolicyBindingsCollection(
+				workloades,
+				attachments,
+				krt.NewOptionsBuilder(stop, "test", nil),
+			)
 			if !bindings.WaitUntilSynced(stop) {
 				t.Fatal("bindings did not sync")
 			}

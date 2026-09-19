@@ -84,7 +84,10 @@ func selectTrafficPolicyResources(
 		names.InsertAll(workload.Facts.Workload.TrafficPolicyRefs...)
 	}
 	for name := range names {
-		if resource, ok := snapshot.Get(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name}); ok && sub.allows(resource) {
+		if resource, ok := snapshot.Get(
+			model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name},
+		); ok &&
+			sub.allows(resource) {
 			selected[resource.XDSName] = resource
 		}
 	}

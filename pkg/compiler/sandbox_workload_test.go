@@ -113,7 +113,8 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 			w, _ := compatibilityWorkload(t, snap, uid)
 			sni := &extensionsv1.SniTrafficPolicy{}
 			compatibilityExtension(t, w, "sni-traffic-policy", sni)
-			return len(w.GetAuthorizationPolicies()) == 1 && len(sni.Rules) == 0 && len(manifestAt(t, f.compiler, s.UID).GetExtensions()) == sniCount &&
+			return len(w.GetAuthorizationPolicies()) == 1 && len(sni.Rules) == 0 &&
+				len(manifestAt(t, f.compiler, s.UID).GetExtensions()) == sniCount &&
 				len(snap.List(model.SniTrafficPolicyType)) == 0
 		}, "Sandbox owns inline SNI while Workload retains shared policy")
 		return snap

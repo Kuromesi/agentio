@@ -265,7 +265,8 @@ func TestPodPoliciesReachWorkloadsWithoutSandboxes(t *testing.T) {
 				}
 				for _, name := range []string{"injected", "ambient"} {
 					w := getWorkload(name)
-					if w == nil || !slices.Equal(w.AuthorizationPolicies, []string{"demo/selected-egress"}) || len(w.Extensions) != 4 {
+					if w == nil || !slices.Equal(w.AuthorizationPolicies, []string{"demo/selected-egress"}) ||
+						len(w.Extensions) != 4 {
 						return false
 					}
 					if !slices.Equal(c.PolicyNames(w.Uid, model.PolicyKindTrafficPolicy), refs) {

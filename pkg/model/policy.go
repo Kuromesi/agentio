@@ -33,13 +33,16 @@ const (
 	PolicyKindSNIPolicy     PolicyKind = "sni-policy"
 )
 
+// PolicyRef identifies a shared policy by family and resource name.
 type PolicyRef struct {
 	Kind PolicyKind
 	Name string
 }
 
+// ResourceName returns the collection key for this policy reference.
 func (r PolicyRef) ResourceName() string { return string(r.Kind) + "|" + r.Name }
 
+// Validate checks that the reference has a supported family and a nonempty name.
 func (r PolicyRef) Validate() error {
 	switch r.Kind {
 	case PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:

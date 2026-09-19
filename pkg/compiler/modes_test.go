@@ -140,7 +140,12 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				if len(snapshot.List(model.TrafficPolicyType)) != 1 {
 					t.Fatal("shared TrafficPolicy resource missing")
 				}
-				wantExtensions := []string{"workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"}
+				wantExtensions := []string{
+					"workload-metadata",
+					"traffic-policy-reference",
+					"egress-policies",
+					"sni-traffic-policy",
+				}
 				if !reflect.DeepEqual(extensionNames(wire.Extensions), wantExtensions) {
 					t.Fatalf("Workload extensions = %v, want %v", extensionNames(wire.Extensions), wantExtensions)
 				}
@@ -151,7 +156,12 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 					t.Fatalf("native Workload references = %v", refs)
 				}
 				if len(wire.AuthorizationPolicies) != 1 || len(snapshot.List(model.WorkloadAuthorizationType)) != 1 {
-					t.Fatalf("shared Authorizations missing in sandboxMode=%v, bound=%v: %v", sandboxMode, withSandbox, wire.AuthorizationPolicies)
+					t.Fatalf(
+						"shared Authorizations missing in sandboxMode=%v, bound=%v: %v",
+						sandboxMode,
+						withSandbox,
+						wire.AuthorizationPolicies,
+					)
 				}
 				sni := new(extensionsv1.SniTrafficPolicy)
 				wantSNIRules := 1
@@ -283,7 +293,15 @@ func TestSandboxLifecyclePreservesWorkloadPolicies(t *testing.T) {
 				}
 				binding := fixture.compiler.Bindings().GetKey(workload.UID)
 				if binding == nil || len(wire.GetWorkload().AuthorizationPolicies) != 1 ||
-					!reflect.DeepEqual(extensionNames(wire.GetWorkload().Extensions), []string{"workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"}) {
+					!reflect.DeepEqual(
+						extensionNames(wire.GetWorkload().Extensions),
+						[]string{
+							"workload-metadata",
+							"traffic-policy-reference",
+							"egress-policies",
+							"sni-traffic-policy",
+						},
+					) {
 					return false
 				}
 			}
@@ -345,9 +363,14 @@ func TestWorkloadTrafficPolicyBindingUpdates(t *testing.T) {
 	worker := testWorkload("demo", "client", "10.0.0.1")
 	fixture.workloads.UpdateObject(worker)
 	global := model.TrafficPolicy{Name: "global", Global: true, Spec: agentsv1alpha1.TrafficPolicySpec{Priority: 10}}
-	selected := model.TrafficPolicy{Name: "selected", Namespace: "demo", Spec: agentsv1alpha1.TrafficPolicySpec{
-		Priority: 20, Selector: metav1.LabelSelector{MatchLabels: worker.Labels},
-	}}
+	selected := model.TrafficPolicy{
+		Name:      "selected",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Priority: 20,
+			Selector: metav1.LabelSelector{MatchLabels: worker.Labels},
+		},
+	}
 	fixture.trafficPolicies.UpdateObject(global)
 	fixture.trafficPolicies.UpdateObject(selected)
 	check := func(want []string) {

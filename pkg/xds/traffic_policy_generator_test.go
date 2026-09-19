@@ -83,7 +83,11 @@ func TestSharedTrafficPolicyWildcardUpdatesAndScope(t *testing.T) {
 	name := "namespaces/demo/trafficPolicies/shared"
 	shared := sharedTrafficResource(t, name, securityv1.TrafficPolicy_ALLOW)
 	private := sharedTrafficResource(t, "namespaces/other/trafficPolicies/private", securityv1.TrafficPolicy_DENY)
-	outside := workloadWithTrafficRefs(t, selectionWorkload(t, "outside", "other", "other-node", "", ""), private.Key.Name)
+	outside := workloadWithTrafficRefs(
+		t,
+		selectionWorkload(t, "outside", "other", "other-node", "", ""),
+		private.Key.Name,
+	)
 	server := newTestServer(t, workerScope(worker), []model.Resource{worker, shared, private, outside}, nil)
 	stream := newFakeStream(t.Context(), 8)
 	done := server.start(stream)
@@ -229,13 +233,16 @@ func TestSharedTrafficPolicyLastWorkloadReferenceRemoval(t *testing.T) {
 	none := selectionSnapshot(t, []model.Resource{policy})
 	for _, scope := range []model.ClientScope{{Class: model.ClientSharedZTunnel, NodeName: "node-a"}, gatewayScope()} {
 		for _, tc := range []struct {
-			before, after model.ResourceSet
-			removed       bool
+			before  model.ResourceSet
+			after   model.ResourceSet
+			removed bool
 		}{{both, one, false}, {one, none, true}} {
 			delta, err := (TrafficPolicyGenerator{}).Generate(t.Context(), GenerationRequest{
-				Scope: scope, TypeURL: model.TrafficPolicyType,
-				Subscription: SubscriptionView{wildcard: true}, Snapshot: tc.after,
-				Update: updateBetween(tc.before, tc.after, tc.before.Diff(tc.after)),
+				Scope:        scope,
+				TypeURL:      model.TrafficPolicyType,
+				Subscription: SubscriptionView{wildcard: true},
+				Snapshot:     tc.after,
+				Update:       updateBetween(tc.before, tc.after, tc.before.Diff(tc.after)),
 			})
 			if err != nil {
 				t.Fatal(err)

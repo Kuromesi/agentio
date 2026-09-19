@@ -277,7 +277,9 @@ func workloadMatchesScope(scope model.ClientScope, resource model.Resource) bool
 	}
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
-		return scope.WorkloadUID != "" && scope.SourceUID != "" && workload.WorkloadUID == scope.WorkloadUID && workload.SourceUID == scope.SourceUID && workload.Principal == scope.Principal
+		return scope.WorkloadUID != "" && scope.SourceUID != "" && workload.WorkloadUID == scope.WorkloadUID &&
+			workload.SourceUID == scope.SourceUID &&
+			workload.Principal == scope.Principal
 	case model.ClientSharedZTunnel:
 		return workload.NodeName == scope.NodeName
 	default:
@@ -297,7 +299,11 @@ func workloadScopeQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
 		if scope.WorkloadUID != "" && scope.SourceUID != "" {
-			return model.WorkloadQuery{WorkloadUID: scope.WorkloadUID, SourceUID: scope.SourceUID, Principal: &scope.Principal}, true
+			return model.WorkloadQuery{
+				WorkloadUID: scope.WorkloadUID,
+				SourceUID:   scope.SourceUID,
+				Principal:   &scope.Principal,
+			}, true
 		}
 		return model.WorkloadQuery{}, false
 	case model.ClientSharedZTunnel:
@@ -397,7 +403,10 @@ func serviceResourcesForKey(snapshot model.ResourceSet, serviceKey string) []mod
 	return result
 }
 
-func affectedWDSCandidates(before, after workloadVisibility, changes []model.ResourceChange) sets.Set[model.ResourceKey] {
+func affectedWDSCandidates(
+	before, after workloadVisibility,
+	changes []model.ResourceChange,
+) sets.Set[model.ResourceKey] {
 	candidates := sets.NewWithLength[model.ResourceKey](len(changes))
 	add := func(resource *model.Resource) {
 		if resource != nil && resource.Key.TypeURL == before.typeURL {

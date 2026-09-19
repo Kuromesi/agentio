@@ -118,7 +118,8 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		return nil, fmt.Errorf("marshal traffic policy references for workload %s: %w", input.Workload.UID, err)
 	}
 	wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
-		Name: "traffic-policy-reference", Config: trafficPolicyRefs,
+		Name:   "traffic-policy-reference",
+		Config: trafficPolicyRefs,
 	})
 
 	if input.EgressPolicies != nil {
