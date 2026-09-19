@@ -231,6 +231,32 @@ func TestAmbientProfile(t *testing.T) {
 	)
 }
 
+func TestSandboxModePropagation(t *testing.T) {
+	for _, profile := range []string{"sidecar", "ambient"} {
+		for _, mode := range []string{"default", "false", "true"} {
+			t.Run(profile+"/"+mode, func(t *testing.T) {
+				args := []string{"--set", "profile=" + profile}
+				if profile == "ambient" {
+					args = append(args, "--show-only", "templates/ztunnel/daemonset.yaml")
+				}
+				want := "false"
+				if mode != "default" {
+					args = append(args, "--set-string", "agentiod.env.AGENTIO_SANDBOX_MODE="+mode)
+					want = mode
+				}
+				manifest := renderAgentio(t, args...)
+				if profile == "sidecar" {
+					requireContains(t, manifest, "sandboxMode: "+fmt.Sprintf("%q", want))
+				} else {
+					requireContains(t, manifest,
+						"name: AGENTIO_SANDBOX_MODE\n              value: "+fmt.Sprintf("%q", want),
+					)
+				}
+			})
+		}
+	}
+}
+
 func TestSidecarProfile(t *testing.T) {
 	for _, tc := range []struct {
 		name string

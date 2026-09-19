@@ -162,6 +162,7 @@ func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 	}
 	proxy := config.InitContainers[1]
 	for name, want := range map[string]string{
+		"AGENTIO_SANDBOX_MODE":  "true",
 		"CA_ADDRESS":            "custom-agentiod.sandbox-system.svc.example.internal:15012",
 		"XDS_ADDRESS":           "custom-agentiod.sandbox-system.svc.example.internal:15012",
 		"ISTIO_META_CLUSTER_ID": "test-cluster", "ENABLE_FIREWALL_RULES": "false", "FIREWALL_BACKEND": "nftables",

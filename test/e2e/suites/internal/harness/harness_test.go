@@ -125,6 +125,7 @@ func TestProjectWorkloadConfigDumpRejectsUnknownWorkload(t *testing.T) {
 
 func TestProjectWorkloadConfigDumpKeepsWorkloadReferencesAndBoundSandbox(t *testing.T) {
 	raw := []byte(`{
+  "config": {"sandboxMode": false},
   "workloads": [{"uid":"client-uid","namespace":"sandbox","name":"client-pod","trafficPolicyRefs":["trafficPolicies/client"]}],
   "sandboxes": [
     {"uid":"client-sandbox","workloadUid":"client-uid","trafficPolicy":{"egress":{"rules":[]}}},
@@ -141,7 +142,7 @@ func TestProjectWorkloadConfigDumpKeepsWorkloadReferencesAndBoundSandbox(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"client-pod", "client-sandbox", "trafficPolicies/client", "10.0.0.1/32"} {
+	for _, want := range []string{"client-pod", "client-sandbox", "trafficPolicies/client", "10.0.0.1/32", `"sandboxMode":false`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("projected dump does not contain %q: %s", want, got)
 		}

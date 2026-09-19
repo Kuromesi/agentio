@@ -138,6 +138,8 @@ agentiod:
     leaseName: agentiod-gateway-deployer-leader
   networkPolicy:
     enabled: false
+  # AGENTIO_SANDBOX_MODE also configures injected and ambient ztunnel discovery.
+  # Set it to "true" and AGENTIO_SANDBOX_RUNTIMES to "kruise" for runtime Sandboxes.
   env: {}
 
 cni:

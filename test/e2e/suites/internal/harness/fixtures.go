@@ -268,6 +268,7 @@ func ambientConfigDump(
 //nolint:gocyclo // Keep legacy and native resource selection together to preserve dump compatibility.
 func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName string) (string, error) {
 	var dump struct {
+		Config          json.RawMessage   `json:"config"`
 		Policies        []json.RawMessage `json:"policies"`
 		Workloads       []json.RawMessage `json:"workloads"`
 		Sandboxes       []json.RawMessage `json:"sandboxes"`
@@ -357,11 +358,18 @@ func projectWorkloadConfigDump(raw []byte, workloadNamespace, workloadName strin
 		nativePolicies = &trafficPolicies
 	}
 	projected, err := json.Marshal(struct {
+		Config          json.RawMessage    `json:"config,omitempty"`
 		Workload        json.RawMessage    `json:"workload"`
 		Policies        []json.RawMessage  `json:"policies"`
 		Sandboxes       []json.RawMessage  `json:"sandboxes"`
 		TrafficPolicies *[]json.RawMessage `json:"trafficPolicies,omitempty"`
-	}{Workload: selected, Policies: policies, Sandboxes: sandboxes, TrafficPolicies: nativePolicies})
+	}{
+		Config:          dump.Config,
+		Workload:        selected,
+		Policies:        policies,
+		Sandboxes:       sandboxes,
+		TrafficPolicies: nativePolicies,
+	})
 	if err != nil {
 		return "", fmt.Errorf("encode workload-scoped config dump: %w", err)
 	}

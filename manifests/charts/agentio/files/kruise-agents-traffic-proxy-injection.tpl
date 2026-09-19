@@ -82,6 +82,10 @@
           "value": "true"
         },
         {
+          "name": "AGENTIO_SANDBOX_MODE",
+          "value": "true"
+        },
+        {
           "name": "ENABLE_FIREWALL_RULES",
           "value": {{ .Values.agentio.trafficProxy.enableFirewallRules | toString | quote }}
         },

@@ -71,6 +71,7 @@ data:
         forceApplyIptables: false
       proxyZtunnel:
         image: {{ $ztunnelImage | quote }}
+        sandboxMode: {{ index .Values.agentiod.env "AGENTIO_SANDBOX_MODE" | default false | quote }}
         enableFirewallRules: {{ .Values.agentiod.injector.ztunnel.enableFirewallRules }}
         firewallBackend: {{ .Values.agentiod.injector.ztunnel.firewallBackend | quote }}
         logAsJson: true

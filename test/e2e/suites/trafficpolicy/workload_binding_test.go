@@ -34,6 +34,9 @@ func TestWorkloadNativeBindingsWithoutSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	var dump struct {
+		Config struct {
+			SandboxMode *bool `json:"sandboxMode"`
+		} `json:"config"`
 		Workload struct {
 			TrafficPolicyRefs *[]string `json:"trafficPolicyRefs"`
 		} `json:"workload"`
@@ -44,6 +47,9 @@ func TestWorkloadNativeBindingsWithoutSandbox(t *testing.T) {
 	}
 	if dump.Workload.TrafficPolicyRefs == nil {
 		t.Fatal("ordinary Workload has no explicit native TrafficPolicy binding")
+	}
+	if dump.Config.SandboxMode == nil || *dump.Config.SandboxMode {
+		t.Fatal("ordinary Workload proxy must disable Sandbox discovery")
 	}
 	if len(dump.Sandboxes) != 0 {
 		t.Fatalf("ordinary Workload has %d synthetic Sandboxes", len(dump.Sandboxes))
