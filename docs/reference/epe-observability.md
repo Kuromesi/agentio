@@ -78,7 +78,7 @@ Use plugin duration and outcome series together. A growing `error` outcome or du
 
 EPE uses controller-runtime Zap logging in JSON production mode. By default `-v=2` controls verbosity; `--zap-log-level` takes precedence over `-v` when provided. The code uses verbosity levels 2 (default), 3 (verbose), 4 (debug), and 5 (trace). `--zap-stacktrace-level` can override the production default, which emits stack traces only at `DPanic` and above.
 
-With debug endpoints enabled, [GET/PUT `/debug/logging`](epe-admin-api.md#runtime-log-level) on the admin listener inspects or changes the running process's log level. PUT `{"level":"4"}` for EPE debug diagnostics; `{"level":"debug"}` is Zap verbosity 1 and does not enable EPE's `V(4)` records. PUT `{"level":"2"}` to restore default verbosity. Updates affect existing loggers immediately and reset to the startup flags after a restart.
+With debug endpoints enabled, [GET/PUT `/debug/logging/default`](epe-admin-api.md#runtime-log-level) on the admin listener inspects or changes the running process's log level. Use the same request format as agentiod: PUT `{"output_level":"debug"}` for EPE debug diagnostics at `V(4)`, then PUT `{"output_level":"info"}` to restore default verbosity. EPE exposes only the process-wide `default` scope. Updates affect existing loggers immediately and reset to the startup flags after a restart.
 
 Every successfully handled request-header stream submits an INFO access-log record with message `egress request handled`. Its fields are `requestID`, `pod`, `method`, `host`, `path`, `units`, `outcome`, `actions`, `skipped`, and an optional `error`. This is an output surface, not a durable audit store: its bounded in-memory queue may drop entries under load.
 

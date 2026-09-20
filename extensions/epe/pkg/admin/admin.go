@@ -71,7 +71,8 @@ func NewHandler(opts Options) http.Handler {
 	if opts.EnableDebug {
 		mux.HandleFunc("/debug/profiles", h.handleList)
 		if h.logLevel != nil {
-			mux.HandleFunc("/debug/logging", h.handleLogging)
+			mux.HandleFunc(loggingPath, h.handleLogging)
+			mux.HandleFunc(loggingPath+"/", h.handleLogging)
 		}
 	}
 	return mux
@@ -91,7 +92,7 @@ func (h *handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		if h.logLevel != nil {
 			if _, err := fmt.Fprintf(
 				w,
-				"  GET|PUT /debug/logging                           inspect or change the log level\n",
+				"  GET|HEAD|PUT /debug/logging[/default]             inspect or change the log level\n",
 			); err != nil {
 				return
 			}

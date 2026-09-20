@@ -160,10 +160,10 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		existing := ctrllog.Log.WithName("ext-proc").WithValues("requestID", "already-created")
 		existingSlog := slog.Default().With("source", "already-created")
 		shared := agentlog.New("krt")
-		update := func(name string) {
+		update := func(field, name string) {
 			t.Helper()
-			request, err := http.NewRequest(http.MethodPut, server.URL+"/debug/logging",
-				strings.NewReader(`{"level":"`+name+`"}`))
+			request, err := http.NewRequest(http.MethodPut, server.URL+"/debug/logging/default",
+				strings.NewReader(`{"`+field+`":"`+name+`"}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,14 +177,18 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			if response.StatusCode != http.StatusOK {
-				t.Fatalf("PUT level %q: status=%d", name, response.StatusCode)
+			want := http.StatusOK
+			if field == "output_level" {
+				want = http.StatusAccepted
+			}
+			if response.StatusCode != want {
+				t.Fatalf("PUT %s %q: status=%d, want %d", field, name, response.StatusCode, want)
 			}
 		}
 
 		out.Reset()
 		existing.V(logging.DEBUG).Info("hidden before update")
-		update("4")
+		update("output_level", "debug")
 		existing.V(logging.DEBUG).Info("debug enabled")
 		existing.V(logging.TRACE).Info("trace still hidden")
 		got := records(t)
@@ -193,14 +197,14 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 
 		out.Reset()
-		update("5")
+		update("level", "5")
 		existing.V(logging.TRACE).Info("trace enabled")
 		if got := records(t); len(got) != 1 || got[0]["msg"] != "trace enabled" {
 			t.Fatalf("trace update records = %v", got)
 		}
 
 		out.Reset()
-		update("error")
+		update("output_level", "error")
 		existing.Info("hidden logr")
 		existingSlog.Info("hidden slog")
 		klog.InfoS("hidden klog")
@@ -215,17 +219,30 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 
 		out.Reset()
-		update("info")
+		update("output_level", "info")
+		existing.V(logging.DEFAULT).Info("restored EPE default")
+		existing.V(logging.VERBOSE).Info("verbose hidden after info reset")
+		existing.V(logging.DEBUG).Info("debug hidden after info reset")
 		existing.Info("restored logr")
 		existingSlog.Info("restored slog")
 		klog.InfoS("restored klog")
 		shared.Info("restored shared package")
-		if got := records(t); len(got) != 4 {
+		if got := records(t); len(got) != 5 {
 			t.Fatalf("restored logger records = %v", got)
 		}
 
 		out.Reset()
-		update("debug")
+		update("output_level", "none")
+		existing.Error(io.EOF, "hidden logr error")
+		existingSlog.Error("hidden slog error")
+		klog.ErrorS(io.EOF, "hidden klog error")
+		shared.Error("hidden shared error")
+		if got := records(t); len(got) != 0 {
+			t.Fatalf("none should suppress every record: %v", got)
+		}
+
+		out.Reset()
+		update("level", "debug")
 		existingSlog.Debug("slog debug enabled")
 		existing.V(logging.DEBUG).Info("EPE V4 still hidden")
 		if got := records(t); len(got) != 1 || got[0]["msg"] != "slog debug enabled" {

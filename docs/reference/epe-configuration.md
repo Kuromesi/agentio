@@ -94,7 +94,7 @@ The generated `5s` message timeout must remain above EPE's default `--plugin-bud
 
 The binary also accepts controller-runtime Zap flags, including `--zap-log-level` and `--zap-stacktrace-level`. The metrics and health listeners bind all interfaces because they are constructed from their port numbers. The chart exposes both through its headless Service. The admin listener is loopback-only by default and is not in that Service. pprof binds all interfaces by default when enabled; only enable it with an intentionally restricted bind address and network exposure.
 
-Use the [runtime logging admin endpoint](epe-admin-api.md#runtime-log-level) to inspect or change verbosity without restarting EPE. For example, PUT `{"level":"4"}` to `/debug/logging` to enable EPE debug logs, then PUT `{"level":"2"}` to restore the default. Changes apply to one process and are lost on restart.
+Use the [runtime logging admin endpoint](epe-admin-api.md#runtime-log-level) to inspect or change verbosity without restarting EPE. For example, PUT `{"output_level":"debug"}` to `/debug/logging/default` to enable EPE debug logs, then PUT `{"output_level":"info"}` to restore the default. The request format matches agentiod; EPE exposes only the process-wide `default` scope. Changes apply to one process and are lost on restart.
 
 ## TLS for ext_proc
 

@@ -30,25 +30,29 @@ func TestLoggingLevelUpdates(t *testing.T) {
 	level := zap.NewAtomicLevelAt(zapcore.Level(-2))
 	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
 	initial := loggingRequest(h, http.MethodGet, "/debug/logging", "")
-	assertLoggingResponse(t, initial, "2")
+	assertScopeResponse(t, initial, "info", true)
 
 	for _, tc := range []struct {
-		input string
-		want  string
-		level zapcore.Level
+		input  string
+		want   string
+		output string
+		level  zapcore.Level
 	}{
-		{input: "4", want: "4", level: -4},
-		{input: "5", want: "5", level: -5},
-		{input: "127", want: "127", level: -127},
-		{input: "0", want: "info", level: zapcore.InfoLevel},
-		{input: "1", want: "debug", level: zapcore.DebugLevel},
-		{input: " DEBUG ", want: "debug", level: zapcore.DebugLevel},
-		{input: "info", want: "info", level: zapcore.InfoLevel},
-		{input: "warn", want: "warn", level: zapcore.WarnLevel},
-		{input: "error", want: "error", level: zapcore.ErrorLevel},
-		{input: "dpanic", want: "dpanic", level: zapcore.DPanicLevel},
-		{input: "panic", want: "panic", level: zapcore.PanicLevel},
-		{input: "fatal", want: "fatal", level: zapcore.FatalLevel},
+		{input: "4", want: "4", output: "debug", level: -4},
+		{input: "2", want: "2", output: "info", level: -2},
+		{input: "3", want: "3", output: "3", level: -3},
+		{input: "5", want: "5", output: "5", level: -5},
+		{input: "127", want: "127", output: "127", level: -127},
+		{input: "0", want: "info", output: "0", level: zapcore.InfoLevel},
+		{input: "1", want: "debug", output: "1", level: zapcore.DebugLevel},
+		{input: " DEBUG ", want: "debug", output: "1", level: zapcore.DebugLevel},
+		{input: "info", want: "info", output: "0", level: zapcore.InfoLevel},
+		{input: "warn", want: "warn", output: "warn", level: zapcore.WarnLevel},
+		{input: "error", want: "error", output: "error", level: zapcore.ErrorLevel},
+		{input: "dpanic", want: "dpanic", output: "dpanic", level: zapcore.DPanicLevel},
+		{input: "panic", want: "panic", output: "panic", level: zapcore.PanicLevel},
+		{input: "fatal", want: "fatal", output: "fatal", level: zapcore.FatalLevel},
+		{input: "none", want: "none", output: "none", level: disabledLoggingLevel},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			response := loggingRequest(h, http.MethodPut, "/debug/logging", `{"level":"`+tc.input+`"}`)
@@ -56,12 +60,46 @@ func TestLoggingLevelUpdates(t *testing.T) {
 			if got := level.Level(); got != tc.level {
 				t.Fatalf("logger level = %v, want %v", got, tc.level)
 			}
-			get := loggingRequest(h, http.MethodGet, "/debug/logging", "")
-			assertLoggingResponse(t, get, tc.want)
-			// GET's canonical representation can be sent back unchanged.
-			roundTrip := loggingRequest(h, http.MethodPut, "/debug/logging", get.Body.String())
-			assertLoggingResponse(t, roundTrip, tc.want)
+			get := loggingRequest(h, http.MethodGet, "/debug/logging/default", "")
+			assertScopeResponse(t, get, tc.output, false)
+			// The agentiod-style representation preserves even custom Zap levels.
+			roundTrip := loggingRequest(h, http.MethodPut, "/debug/logging/default", get.Body.String())
+			if roundTrip.Code != http.StatusAccepted || level.Level() != tc.level {
+				t.Fatalf("round trip: status=%d, level=%v, want %v", roundTrip.Code, level.Level(), tc.level)
+			}
 		})
+	}
+}
+
+func TestAgentiodLoggingAPI(t *testing.T) {
+	level := zap.NewAtomicLevelAt(-2)
+	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
+	for _, path := range []string{"/debug/logging", "/debug/logging/", "/debug/logging/default"} {
+		for _, tc := range []struct {
+			input string
+			want  string
+			level zapcore.Level
+		}{
+			{input: "debug", want: "debug", level: -4},
+			{input: "info", want: "info", level: -2},
+			{input: "warn", want: "warn", level: zapcore.WarnLevel},
+			{input: "error", want: "error", level: zapcore.ErrorLevel},
+			{input: "none", want: "none", level: disabledLoggingLevel},
+			{input: " DEBUG ", want: "debug", level: -4},
+		} {
+			for _, name := range []string{"", "default"} {
+				body := `{"name":"` + name + `","output_level":"` + tc.input + `"}`
+				response := loggingRequest(h, http.MethodPut, path, body)
+				if response.Code != http.StatusAccepted || response.Body.Len() != 0 {
+					t.Fatalf("PUT %s %s: status=%d, body=%s", path, body, response.Code, response.Body.String())
+				}
+				if response.Header().Get("Cache-Control") != "no-store" || level.Level() != tc.level {
+					t.Fatalf("PUT %s %s: headers=%v, level=%v", path, body, response.Header(), level.Level())
+				}
+				get := loggingRequest(h, http.MethodGet, path, "")
+				assertScopeResponse(t, get, tc.want, path != "/debug/logging/default")
+			}
+		}
 	}
 }
 
@@ -75,6 +113,13 @@ func TestLoggingRejectsInvalidUpdatesWithoutChangingLevel(t *testing.T) {
 		`{"level":"4","unknown":true}`, `{"level":"4"} {}`, `{"level":"4"} trailing`,
 		`{"level":"` + strings.Repeat("x", maxLoggingBodyBytes) + `"}`,
 		`{"level":"4"}` + strings.Repeat(" ", maxLoggingBodyBytes),
+		`{"output_level":null}`, `{"output_level":""}`, `{"output_level":4}`,
+		`{"output_level":"verbose"}`, `{"output_level":"-1"}`, `{"output_level":"128"}`,
+		`{"output_level":"debug","level":"4"}`, `{"output_level":"debug","level":""}`,
+		`{"name":"krt","output_level":"debug"}`, `{"name":"krt","level":"4"}`,
+		`{"output_level":"debug","unknown":true}`, `{"output_level":"debug"} {}`,
+		`{"output_level":"debug"} trailing`,
+		`{"output_level":"debug"}` + strings.Repeat(" ", maxLoggingBodyBytes),
 	} {
 		response := loggingRequest(h, http.MethodPut, "/debug/logging", body)
 		if response.Code != http.StatusBadRequest {
@@ -104,10 +149,12 @@ func TestLoggingRouteAndMethods(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewHandler(Options{EnableDebug: tc.enabled, LogLevel: tc.level})
-			for _, method := range []string{http.MethodGet, http.MethodPut} {
-				response := loggingRequest(h, method, "/debug/logging", `{"level":"info"}`)
-				if response.Code != tc.want {
-					t.Fatalf("%s status=%d, want %d", method, response.Code, tc.want)
+			for _, path := range []string{"/debug/logging", "/debug/logging/", "/debug/logging/default"} {
+				for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut} {
+					response := loggingRequest(h, method, path, `{"level":"info"}`)
+					if response.Code != tc.want {
+						t.Fatalf("%s %s status=%d, want %d", method, path, response.Code, tc.want)
+					}
 				}
 			}
 			index := loggingRequest(h, http.MethodGet, "/", "")
@@ -121,16 +168,34 @@ func TestLoggingRouteAndMethods(t *testing.T) {
 	}
 
 	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
-	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPatch, http.MethodHead} {
+	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPatch} {
 		response := loggingRequest(h, method, "/debug/logging", `{"level":"error"}`)
-		if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, PUT" {
+		if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD, PUT" {
 			t.Fatalf("%s response=%d, Allow=%q", method, response.Code, response.Header().Get("Allow"))
 		}
 	}
-	for _, path := range []string{"/debug/logging/default", "/debug/logging/"} {
-		response := loggingRequest(h, http.MethodPut, path, `{"level":"error"}`)
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("%s status=%d, want 404", path, response.Code)
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{path: "/debug/logging", want: http.StatusOK},
+		{path: "/debug/logging/", want: http.StatusOK},
+		{path: "/debug/logging/default", want: http.StatusOK},
+		{path: "/debug/logging/krt", want: http.StatusBadRequest},
+		{path: "/debug/logging/default/", want: http.StatusNotFound},
+		{path: "/debug/logging/default/extra", want: http.StatusNotFound},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut} {
+			if method == http.MethodPut && tc.want == http.StatusOK {
+				continue
+			}
+			response := loggingRequest(h, method, tc.path, `{"output_level":"error"}`)
+			if response.Code != tc.want {
+				t.Fatalf("%s %s status=%d, want %d", method, tc.path, response.Code, tc.want)
+			}
+			if method == http.MethodHead && response.Body.Len() != 0 {
+				t.Fatalf("HEAD %s has body %s", tc.path, response.Body.String())
+			}
 		}
 	}
 	if level.Level() != zapcore.InfoLevel {
@@ -146,9 +211,13 @@ func TestLoggingConcurrentReadsAndUpdates(t *testing.T) {
 		workers.Go(func() {
 			for range 50 {
 				for _, method := range []string{http.MethodPut, http.MethodGet} {
-					response := loggingRequest(h, method, "/debug/logging", `{"level":"4"}`)
-					if response.Code != http.StatusOK {
-						t.Errorf("concurrent %s status=%d", method, response.Code)
+					response := loggingRequest(h, method, "/debug/logging/default", `{"output_level":"debug"}`)
+					want := http.StatusOK
+					if method == http.MethodPut {
+						want = http.StatusAccepted
+					}
+					if response.Code != want {
+						t.Errorf("concurrent %s status=%d, want %d", method, response.Code, want)
 					}
 				}
 			}
@@ -180,5 +249,31 @@ func assertLoggingResponse(t *testing.T, response *httptest.ResponseRecorder, wa
 	}
 	if result.Level != want {
 		t.Fatalf("level=%q, want %q", result.Level, want)
+	}
+}
+
+func assertScopeResponse(t *testing.T, response *httptest.ResponseRecorder, want string, list bool) {
+	t.Helper()
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d, body=%s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" ||
+		!strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("unexpected response headers: %v", response.Header())
+	}
+	var scopes []loggingInfo
+	if list {
+		if err := json.Unmarshal(response.Body.Bytes(), &scopes); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		var scope loggingInfo
+		if err := json.Unmarshal(response.Body.Bytes(), &scope); err != nil {
+			t.Fatal(err)
+		}
+		scopes = []loggingInfo{scope}
+	}
+	if len(scopes) != 1 || scopes[0].Name != "default" || scopes[0].OutputLevel != want {
+		t.Fatalf("scopes=%+v, want only default with output_level=%q", scopes, want)
 	}
 }
