@@ -40,16 +40,6 @@ type loggingInfo struct {
 	OutputLevel string `json:"output_level"`
 }
 
-type loggingConfig struct {
-	Level string `json:"level"`
-}
-
-type loggingUpdate struct {
-	Name        string  `json:"name"`
-	OutputLevel *string `json:"output_level"`
-	Level       *string `json:"level"`
-}
-
 func (h *handler) handleLogging(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodHead {
@@ -87,7 +77,7 @@ func (h *handler) handleLogging(w http.ResponseWriter, r *http.Request) {
 func (h *handler) updateLogging(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLoggingBodyBytes))
 	decoder.DisallowUnknownFields()
-	var requested loggingUpdate
+	var requested loggingInfo
 	if err := decoder.Decode(&requested); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid logging configuration: "+err.Error())
 		return
@@ -101,48 +91,25 @@ func (h *handler) updateLogging(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "logging name must match URL scope \"default\"")
 		return
 	}
-	if (requested.OutputLevel == nil) == (requested.Level == nil) {
-		writeError(w, http.StatusBadRequest, "specify exactly one of output_level or level")
-		return
-	}
-	var level zapcore.Level
-	var err error
-	if requested.OutputLevel != nil {
-		level, err = parseOutputLevel(*requested.OutputLevel)
-	} else {
-		level, err = parseLoggingLevel(*requested.Level)
-	}
+	level, err := parseOutputLevel(requested.OutputLevel)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.logLevel.SetLevel(level)
-	if requested.OutputLevel != nil {
-		w.WriteHeader(http.StatusAccepted)
-		return
-	}
-	writeJSON(w, http.StatusOK, loggingConfig{Level: loggingLevelName(level)})
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // parseOutputLevel uses agentiod's names, mapping debug and info to EPE's
 // verbosity constants. Numeric verbosity and other Zap names are EPE extensions.
 func parseOutputLevel(name string) (zapcore.Level, error) {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
 	case "debug":
 		return -logging.DEBUG, nil
 	case "info":
 		return -logging.DEFAULT, nil
-	default:
-		return parseLoggingLevel(name)
-	}
-}
-
-// parseLoggingLevel follows --zap-log-level: names use Zap's levels, while a
-// numeric string is a positive logr verbosity, e.g. "4" enables V(4).
-// It also accepts none to disable output, as supported by agentiod.
-func parseLoggingLevel(name string) (zapcore.Level, error) {
-	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "none" {
+	case "none":
 		return disabledLoggingLevel, nil
 	}
 	if name != "" {
@@ -165,20 +132,12 @@ func outputLevelName(level zapcore.Level) string {
 		return "debug"
 	case -logging.DEFAULT:
 		return "info"
-	case zapcore.DebugLevel, zapcore.InfoLevel:
-		// Preserve the precise threshold when a Zap flag or the level field was
-		// used: output_level's named debug/info have different verbosity.
-		return strconv.Itoa(-int(level))
-	default:
-		return loggingLevelName(level)
-	}
-}
-
-func loggingLevelName(level zapcore.Level) string {
-	if level == disabledLoggingLevel {
+	case disabledLoggingLevel:
 		return "none"
 	}
-	if level < zapcore.DebugLevel {
+	if level <= zapcore.InfoLevel {
+		// Preserve exact verbosity, including Zap flag values 0 and 1:
+		// output_level's named info/debug mean EPE verbosity 2 and 4.
 		return strconv.Itoa(-int(level))
 	}
 	return level.String()

@@ -57,9 +57,7 @@ The PUT body may include `"name":"default"`, so a scope object returned by GET c
 
 EPE additionally accepts numeric strings from `"0"` through `"127"` for exact logr verbosity, and Zap's `"dpanic"`, `"panic"`, and `"fatal"` thresholds. For example, `"3"` enables verbose records and `"5"` enables trace records. GET reports EPE verbosity 2 as `"info"` and verbosity 4 as `"debug"`; other verbosity thresholds remain numeric, including `"0"` and `"1"`, so reading and writing a scope preserves its exact threshold.
 
-The `level` PUT field is also supported for callers using the Zap convention: `{"level":"4"}` enables EPE debug, while `{"level":"debug"}` means only Zap verbosity 1. A `level` update returns `200 OK` with a JSON `level` string, such as `{"level":"4"}`. Prefer `output_level` for the agentiod-compatible interface.
-
-Send exactly one JSON object with one non-null `output_level` or `level` string. Invalid values, unknown fields, a mismatched `name`, trailing JSON, and bodies larger than 4 KiB return `400` without changing the level. Unknown scopes return `400`; nested scope paths return `404`. Unsupported HTTP methods return `405` with `Allow: GET, HEAD, PUT`.
+Send exactly one JSON object with a non-empty `output_level` string and an optional `name`. Invalid values, unknown fields, a mismatched `name`, trailing JSON, and bodies larger than 4 KiB return `400` without changing the level. Unknown scopes return `400`; nested scope paths return `404`. Unsupported HTTP methods return `405` with `Allow: GET, HEAD, PUT`.
 
 To restore the default EPE verbosity, PUT `{"output_level":"info"}`. A runtime change applies immediately to existing loggers in the EPE process reached by this request; configure each replica separately if necessary. Changes are not persisted: a restart restores `-v` or the overriding `--zap-log-level`. Encoding, stacktrace thresholds, and startup sampling configuration stay unchanged.
 

@@ -160,10 +160,10 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		existing := ctrllog.Log.WithName("ext-proc").WithValues("requestID", "already-created")
 		existingSlog := slog.Default().With("source", "already-created")
 		shared := agentlog.New("krt")
-		update := func(field, name string) {
+		update := func(name string) {
 			t.Helper()
 			request, err := http.NewRequest(http.MethodPut, server.URL+"/debug/logging/default",
-				strings.NewReader(`{"`+field+`":"`+name+`"}`))
+				strings.NewReader(`{"output_level":"`+name+`"}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,18 +177,14 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			want := http.StatusOK
-			if field == "output_level" {
-				want = http.StatusAccepted
-			}
-			if response.StatusCode != want {
-				t.Fatalf("PUT %s %q: status=%d, want %d", field, name, response.StatusCode, want)
+			if response.StatusCode != http.StatusAccepted {
+				t.Fatalf("PUT output_level %q: status=%d, want 202", name, response.StatusCode)
 			}
 		}
 
 		out.Reset()
 		existing.V(logging.DEBUG).Info("hidden before update")
-		update("output_level", "debug")
+		update("debug")
 		existing.V(logging.DEBUG).Info("debug enabled")
 		existing.V(logging.TRACE).Info("trace still hidden")
 		got := records(t)
@@ -197,14 +193,14 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 
 		out.Reset()
-		update("level", "5")
+		update("5")
 		existing.V(logging.TRACE).Info("trace enabled")
 		if got := records(t); len(got) != 1 || got[0]["msg"] != "trace enabled" {
 			t.Fatalf("trace update records = %v", got)
 		}
 
 		out.Reset()
-		update("output_level", "error")
+		update("error")
 		existing.Info("hidden logr")
 		existingSlog.Info("hidden slog")
 		klog.InfoS("hidden klog")
@@ -219,7 +215,7 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 
 		out.Reset()
-		update("output_level", "info")
+		update("info")
 		existing.V(logging.DEFAULT).Info("restored EPE default")
 		existing.V(logging.VERBOSE).Info("verbose hidden after info reset")
 		existing.V(logging.DEBUG).Info("debug hidden after info reset")
@@ -232,7 +228,7 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 
 		out.Reset()
-		update("output_level", "none")
+		update("none")
 		existing.Error(io.EOF, "hidden logr error")
 		existingSlog.Error("hidden slog error")
 		klog.ErrorS(io.EOF, "hidden klog error")
@@ -242,11 +238,11 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 
 		out.Reset()
-		update("level", "debug")
+		update("1")
 		existingSlog.Debug("slog debug enabled")
 		existing.V(logging.DEBUG).Info("EPE V4 still hidden")
 		if got := records(t); len(got) != 1 || got[0]["msg"] != "slog debug enabled" {
-			t.Fatalf("Zap debug records = %v", got)
+			t.Fatalf("verbosity 1 records = %v", got)
 		}
 	})
 }

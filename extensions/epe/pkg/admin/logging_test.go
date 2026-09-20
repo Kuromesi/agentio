@@ -34,29 +34,25 @@ func TestLoggingLevelUpdates(t *testing.T) {
 
 	for _, tc := range []struct {
 		input  string
-		want   string
 		output string
 		level  zapcore.Level
 	}{
-		{input: "4", want: "4", output: "debug", level: -4},
-		{input: "2", want: "2", output: "info", level: -2},
-		{input: "3", want: "3", output: "3", level: -3},
-		{input: "5", want: "5", output: "5", level: -5},
-		{input: "127", want: "127", output: "127", level: -127},
-		{input: "0", want: "info", output: "0", level: zapcore.InfoLevel},
-		{input: "1", want: "debug", output: "1", level: zapcore.DebugLevel},
-		{input: " DEBUG ", want: "debug", output: "1", level: zapcore.DebugLevel},
-		{input: "info", want: "info", output: "0", level: zapcore.InfoLevel},
-		{input: "warn", want: "warn", output: "warn", level: zapcore.WarnLevel},
-		{input: "error", want: "error", output: "error", level: zapcore.ErrorLevel},
-		{input: "dpanic", want: "dpanic", output: "dpanic", level: zapcore.DPanicLevel},
-		{input: "panic", want: "panic", output: "panic", level: zapcore.PanicLevel},
-		{input: "fatal", want: "fatal", output: "fatal", level: zapcore.FatalLevel},
-		{input: "none", want: "none", output: "none", level: disabledLoggingLevel},
+		{input: "4", output: "debug", level: -4},
+		{input: "2", output: "info", level: -2},
+		{input: "3", output: "3", level: -3},
+		{input: "5", output: "5", level: -5},
+		{input: "127", output: "127", level: -127},
+		{input: "0", output: "0", level: zapcore.InfoLevel},
+		{input: "1", output: "1", level: zapcore.DebugLevel},
+		{input: "dpanic", output: "dpanic", level: zapcore.DPanicLevel},
+		{input: "panic", output: "panic", level: zapcore.PanicLevel},
+		{input: "fatal", output: "fatal", level: zapcore.FatalLevel},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
-			response := loggingRequest(h, http.MethodPut, "/debug/logging", `{"level":"`+tc.input+`"}`)
-			assertLoggingResponse(t, response, tc.want)
+			response := loggingRequest(h, http.MethodPut, "/debug/logging", `{"output_level":"`+tc.input+`"}`)
+			if response.Code != http.StatusAccepted || response.Body.Len() != 0 {
+				t.Fatalf("status=%d, body=%s", response.Code, response.Body.String())
+			}
 			if got := level.Level(); got != tc.level {
 				t.Fatalf("logger level = %v, want %v", got, tc.level)
 			}
@@ -107,19 +103,17 @@ func TestLoggingRejectsInvalidUpdatesWithoutChangingLevel(t *testing.T) {
 	level := zap.NewAtomicLevelAt(zapcore.WarnLevel)
 	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
 	for _, body := range []string{
-		``, `{`, `null`, `[]`, `{}`, `{"level":null}`, `{"level":""}`, `{"level":4}`,
-		`{"level":"verbose"}`, `{"level":"-1"}`, `{"level":"128"}`, `{"level":"256"}`,
-		`{"level":"4.0"}`, `{"level":"999999999999999999999999"}`,
-		`{"level":"4","unknown":true}`, `{"level":"4"} {}`, `{"level":"4"} trailing`,
-		`{"level":"` + strings.Repeat("x", maxLoggingBodyBytes) + `"}`,
-		`{"level":"4"}` + strings.Repeat(" ", maxLoggingBodyBytes),
+		``, `{`, `null`, `[]`, `{}`, `{"name":"default"}`,
 		`{"output_level":null}`, `{"output_level":""}`, `{"output_level":4}`,
 		`{"output_level":"verbose"}`, `{"output_level":"-1"}`, `{"output_level":"128"}`,
-		`{"output_level":"debug","level":"4"}`, `{"output_level":"debug","level":""}`,
-		`{"name":"krt","output_level":"debug"}`, `{"name":"krt","level":"4"}`,
+		`{"output_level":"256"}`, `{"output_level":"4.0"}`, `{"output_level":"999999999999999999999999"}`,
+		`{"name":"krt","output_level":"debug"}`,
 		`{"output_level":"debug","unknown":true}`, `{"output_level":"debug"} {}`,
 		`{"output_level":"debug"} trailing`,
+		`{"output_level":"` + strings.Repeat("x", maxLoggingBodyBytes) + `"}`,
 		`{"output_level":"debug"}` + strings.Repeat(" ", maxLoggingBodyBytes),
+		// Only output_level is accepted, including when both fields are supplied.
+		`{"level":"debug"}`, `{"level":"4"}`, `{"output_level":"debug","level":"4"}`,
 	} {
 		response := loggingRequest(h, http.MethodPut, "/debug/logging", body)
 		if response.Code != http.StatusBadRequest {
@@ -151,9 +145,13 @@ func TestLoggingRouteAndMethods(t *testing.T) {
 			h := NewHandler(Options{EnableDebug: tc.enabled, LogLevel: tc.level})
 			for _, path := range []string{"/debug/logging", "/debug/logging/", "/debug/logging/default"} {
 				for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut} {
-					response := loggingRequest(h, method, path, `{"level":"info"}`)
-					if response.Code != tc.want {
-						t.Fatalf("%s %s status=%d, want %d", method, path, response.Code, tc.want)
+					response := loggingRequest(h, method, path, `{"output_level":"info"}`)
+					want := tc.want
+					if method == http.MethodPut && want == http.StatusOK {
+						want = http.StatusAccepted
+					}
+					if response.Code != want {
+						t.Fatalf("%s %s status=%d, want %d", method, path, response.Code, want)
 					}
 				}
 			}
@@ -168,8 +166,9 @@ func TestLoggingRouteAndMethods(t *testing.T) {
 	}
 
 	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
+	previousLevel := level.Level()
 	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPatch} {
-		response := loggingRequest(h, method, "/debug/logging", `{"level":"error"}`)
+		response := loggingRequest(h, method, "/debug/logging", `{"output_level":"error"}`)
 		if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD, PUT" {
 			t.Fatalf("%s response=%d, Allow=%q", method, response.Code, response.Header().Get("Allow"))
 		}
@@ -198,7 +197,7 @@ func TestLoggingRouteAndMethods(t *testing.T) {
 			}
 		}
 	}
-	if level.Level() != zapcore.InfoLevel {
+	if level.Level() != previousLevel {
 		t.Fatalf("rejected request changed level to %v", level.Level())
 	}
 }
@@ -232,24 +231,6 @@ func loggingRequest(h http.Handler, method, path, body string) *httptest.Respons
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	return response
-}
-
-func assertLoggingResponse(t *testing.T, response *httptest.ResponseRecorder, want string) {
-	t.Helper()
-	if response.Code != http.StatusOK {
-		t.Fatalf("status=%d, body=%s", response.Code, response.Body.String())
-	}
-	if response.Header().Get("Cache-Control") != "no-store" ||
-		!strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") {
-		t.Fatalf("unexpected response headers: %v", response.Header())
-	}
-	var result loggingConfig
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Level != want {
-		t.Fatalf("level=%q, want %q", result.Level, want)
-	}
 }
 
 func assertScopeResponse(t *testing.T, response *httptest.ResponseRecorder, want string, list bool) {
