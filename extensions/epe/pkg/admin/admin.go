@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.uber.org/zap"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,8 +31,9 @@ import (
 
 	agentsclient "github.com/openkruise/agents-api/client/clientset/versioned"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 )
 
 // Options configures the admin HTTP handler.
@@ -42,6 +45,8 @@ type Options struct {
 	// Client is a typed clientset used to fetch full CR content in
 	// full mode. May be nil when EnableDebug is false.
 	Client agentsclient.Interface
+	// LogLevel controls the running process's logger. Nil omits /debug/logging.
+	LogLevel *zap.AtomicLevel
 }
 
 // handler holds the dependencies shared by the admin endpoints.
@@ -49,6 +54,7 @@ type handler struct {
 	store       profilestore.Store
 	client      agentsclient.Interface
 	enableDebug bool
+	logLevel    *zap.AtomicLevel
 }
 
 // NewHandler builds the admin HTTP handler. The index ("/") is always served;
@@ -58,11 +64,15 @@ func NewHandler(opts Options) http.Handler {
 		store:       opts.Store,
 		client:      opts.Client,
 		enableDebug: opts.EnableDebug,
+		logLevel:    opts.LogLevel,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.handleIndex)
 	if opts.EnableDebug {
 		mux.HandleFunc("/debug/profiles", h.handleList)
+		if h.logLevel != nil {
+			mux.HandleFunc("/debug/logging", h.handleLogging)
+		}
 	}
 	return mux
 }
@@ -78,6 +88,14 @@ func (h *handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "epe admin\n\n")
 	fmt.Fprintf(w, "debug endpoints: %s\n", enabledText(h.enableDebug))
 	if h.enableDebug {
+		if h.logLevel != nil {
+			if _, err := fmt.Fprintf(
+				w,
+				"  GET|PUT /debug/logging                           inspect or change the log level\n",
+			); err != nil {
+				return
+			}
+		}
 		fmt.Fprintf(w, "  GET|POST /debug/profiles                          list all loaded profiles\n")
 		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>           filter by namespace\n")
 		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>&pod_labels=k=v,k=v  match profiles for pod labels\n")
