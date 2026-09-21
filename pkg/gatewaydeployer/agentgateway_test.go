@@ -112,7 +112,7 @@ func TestAgentgatewayDeploymentUsesFileConfig(t *testing.T) {
 	}
 }
 
-// As in Istio, HPA/PDB are opt-in; an empty patch enables the template defaults.
+// HPA/PDB are opt-in; an empty patch enables the template defaults.
 func TestAgentgatewayHPAPDB(t *testing.T) {
 	gw, cm := agentgatewayFixture()
 	cm.Data["horizontalPodAutoscaler"] = "{}"

@@ -47,7 +47,7 @@ import (
 
 const gatewayClassDefaults = "gateway.agentio.kruise.io/defaults-for-class"
 
-// overlayObject supplies the metadata used by IstioKind in the source implementation.
+// overlayObject holds resource identity and metadata for patch validation.
 type overlayObject struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata"`
@@ -107,7 +107,7 @@ var requiredOverlays = sets.New(
 	"podDisruptionBudget",
 )
 
-// Keep Istio's merge and metadata validation together to make upstream comparison straightforward.
+// Keep merge and metadata validation together to simplify comparison with the source implementation.
 //
 //nolint:gocyclo
 func applyOverlay(object string, overlaysList []map[string]string) (string, error) {

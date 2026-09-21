@@ -140,7 +140,7 @@ func TestGatewayOverlayInvalidParameters(t *testing.T) {
 			}
 			for _, p := range rig.patcher.all() {
 				if strings.Contains(string(p.data), "InvalidParameters") {
-					t.Fatal("overlay rendering errors should only be logged, as in Istio")
+					t.Fatal("overlay rendering errors should only be logged")
 				}
 			}
 		})

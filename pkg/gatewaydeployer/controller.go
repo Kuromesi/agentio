@@ -391,7 +391,7 @@ func (d *DeploymentController) configureGateway(gw gatewayv1.Gateway, ci classIn
 
 	rendered, err := d.renderGateway(ci.templateName, input)
 	if err != nil {
-		// Match Istio: rendering errors are not transient, so log without retrying.
+		// Rendering errors are not transient, so log without retrying.
 		log.Error("error rendering templates", "namespace", gw.Namespace, "name", gw.Name, "error", err)
 		return nil
 	}

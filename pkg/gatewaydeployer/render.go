@@ -467,7 +467,7 @@ func extractInfrastructureAnnotations(gw gatewayv1.Gateway) map[string]string {
 }
 func extractInfrastructureMetadata(infra *gatewayv1.GatewayInfrastructure, labels bool, gw gatewayv1.Gateway) map[string]string {
 	out := map[string]string{}
-	// Match Istio: unset fields inherit Gateway metadata even when parametersRef is set.
+	// Unset fields inherit Gateway metadata even when parametersRef is set.
 	if infra != nil && labels && infra.Labels != nil {
 		for k, v := range infra.Labels {
 			if !strings.HasPrefix(string(k), "gateway.networking.k8s.io/") {
