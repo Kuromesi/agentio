@@ -140,7 +140,7 @@ Use `hboneGateway` rather than keeping a `connect` + `tls.cert/key` bind: enabli
 
 The v1.5.0 native client requests a 24-hour certificate; Agentiod caps this at its configured workload certificate lifetime. The client checks every 30 seconds and renews at the certificate's midpoint. New connections use the updated certificate without a Deployment rollout; existing connections retain their negotiated TLS session.
 
-The following upstream behaviors matter when operating this mode:
+The following behaviors matter when operating this mode:
 
 - A renewal failure replaces the cached certificate state with an error, even if the previous certificate has not expired. New HBONE connections fail until a retry succeeds. v1.5.0 does not provide last-valid-certificate fallback or jittered backoff.
 - `/healthz/ready` and Gateway `Programmed` do not verify certificate availability. Monitor CA fetch/renewal failures and run an authenticated HBONE probe; a ready Pod alone is insufficient proof of mesh connectivity.
