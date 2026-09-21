@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strings"
 
-	"istio.io/api/annotation"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -120,8 +119,7 @@ func internalTrafficPolicyLocal(service *corev1.Service) bool {
 	return policy != nil && *policy == corev1.ServiceInternalTrafficPolicyLocal
 }
 
-// trafficDistribution resolves the native field and then the legacy
-// networking.istio.io/traffic-distribution annotation fallback.
+// trafficDistribution resolves the Service's native topology preference.
 func trafficDistribution(service *corev1.Service) model.TrafficDistribution {
 	if value := service.Spec.TrafficDistribution; value != nil {
 		switch *value {
@@ -131,15 +129,7 @@ func trafficDistribution(service *corev1.Service) model.TrafficDistribution {
 			return model.TrafficDistributionPreferSameNode
 		}
 	}
-	switch strings.ToLower(service.Annotations[annotation.NetworkingTrafficDistribution.Name]) {
-	case strings.ToLower(corev1.ServiceTrafficDistributionPreferClose),
-		strings.ToLower(corev1.ServiceTrafficDistributionPreferSameZone):
-		return model.TrafficDistributionPreferSameZone
-	case strings.ToLower(corev1.ServiceTrafficDistributionPreferSameNode):
-		return model.TrafficDistributionPreferSameNode
-	default:
-		return model.TrafficDistributionAny
-	}
+	return model.TrafficDistributionAny
 }
 
 func serviceIPFamilies(service *corev1.Service) model.IPFamilies {

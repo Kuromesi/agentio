@@ -84,7 +84,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_GATEWAY_CONNECT_TIMEOUT</code> | Duration | <code>10s</code> | Connect timeout for passthrough and dynamic-forward-proxy gateway clusters. |
 | <code>AGENTIO_GATEWAY_ENABLE_UDP_PROXY</code> | Boolean | <code>false</code> | If enabled, egress gateways terminate experimental IPv4 CONNECT-UDP sessions from ztunnel and forward datagrams directly to the MASQUE target without inspection. |
 | <code>AGENTIO_GATEWAY_LEASE_NAME</code> | String | <code>agentiod-gateway-deployer-leader</code> | Lease electing the single replica running the gateway deployment controller. |
-| <code>AGENTIO_GATEWAY_ROOT_CA_PATH</code> | String | empty | OS root CA bundle path used by gateway TLS origination. When empty the first existing well-known OS CA bundle is auto-detected, matching release-0.1. |
+| <code>AGENTIO_GATEWAY_ROOT_CA_PATH</code> | String | empty | OS root CA bundle path used by gateway TLS origination. When empty the first existing well-known OS CA bundle is auto-detected. |
 | <code>AGENTIO_IGNORE_RESOURCES</code> | String | empty | Comma-separated CRD names excluded from the CRD watcher; a &#34;&#42;.&#34; prefix excludes a whole group by suffix (e.g. &#34;&#42;.istio.io&#34;). |
 | <code>AGENTIO_INCLUDE_RESOURCES</code> | String | empty | Comma-separated CRD names always admitted to the CRD watcher, overriding AGENTIO&#95;IGNORE&#95;RESOURCES; same &#34;&#42;.&#34; group-suffix syntax. |
 | <code>AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME</code> | String | empty | Istio-compatible MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root. |
@@ -129,7 +129,7 @@ $ agentiod -print-env -print-env-format=markdown
 
 ## Kubernetes API and xDS connection limits
 
-Agentiod configures its Kubernetes clients with **80 QPS** and a **burst of 160**, matching the release-0.1 control-plane defaults. This avoids falling back to client-go's lower defaults during informer startup, relists, and TokenReview calls. Both settings must be positive; QPS must also be finite and representable as a positive float32.
+Agentiod configures its Kubernetes clients with **80 QPS** and a **burst of 160**. This avoids falling back to client-go's lower defaults during informer startup, relists, and TokenReview calls. Both settings must be positive; QPS must also be finite and representable as a positive float32.
 
 Override them through the existing Helm environment map:
 
@@ -213,7 +213,7 @@ Values populated through `valueFrom`, such as `POD_NAME`, are shown without thei
 
 ## Adjust the log level at runtime
 
-When `AGENTIO_ENABLE_DEBUG_ON_HTTP` is enabled, the monitoring listener exposes an authenticated logging endpoint at `/debug/logging`. Like Istio's logging scopes, each registered Agentio component has an independent output level. List the available components and their current levels with GET:
+When `AGENTIO_ENABLE_DEBUG_ON_HTTP` is enabled, the monitoring listener exposes an authenticated logging endpoint at `/debug/logging`. Each registered Agentio component has an independent output level. List the available components and their current levels with GET:
 
 ```console
 $ curl http://127.0.0.1:15014/debug/logging | jq '.[] | select(.name == "default" or .name == "krt")'

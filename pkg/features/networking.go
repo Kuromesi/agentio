@@ -36,7 +36,7 @@ var (
 		"AGENTIO_GATEWAY_ROOT_CA_PATH",
 		"",
 		"OS root CA bundle path used by gateway TLS origination. When empty the "+
-			"first existing well-known OS CA bundle is auto-detected, matching release-0.1.",
+			"first existing well-known OS CA bundle is auto-detected.",
 	).Get()
 	EnableSNITrafficPolicy = env.Register(
 		"AGENTIO_ENABLE_SNI_TRAFFIC_POLICY",

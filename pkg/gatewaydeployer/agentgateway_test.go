@@ -112,9 +112,11 @@ func TestAgentgatewayDeploymentUsesFileConfig(t *testing.T) {
 	}
 }
 
-// Pin the HPA/PDB specs to Istio 1.31's agentgateway template defaults.
+// HPA/PDB are opt-in; an empty patch enables the template defaults.
 func TestAgentgatewayHPAPDB(t *testing.T) {
 	gw, cm := agentgatewayFixture()
+	cm.Data["horizontalPodAutoscaler"] = "{}"
+	cm.Data["podDisruptionBudget"] = "{}"
 	gw.Annotations = map[string]string{"gateway.agentio.kruise.io/name-override": "custom-gateway"}
 	gw.Spec.Infrastructure.Labels = map[gatewayv1.LabelKey]gatewayv1.LabelValue{"team": "test"}
 	rig := newControllerTestRig(t, gw, cm)

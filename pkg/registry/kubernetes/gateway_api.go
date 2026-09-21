@@ -101,7 +101,11 @@ func newGatewayAPIConfigurations(
 					ctx.DiscardResult()
 					return nil
 				}
-				content := (*configMap).Data[gatewayConfigKey]
+				content, hasConfig := (*configMap).Data[gatewayConfigKey]
+				if !hasConfig {
+					// parametersRef may customize only Kubernetes resources.
+					content = "{}"
+				}
 				if strings.TrimSpace(content) == "" {
 					log.Warn("retain last-known-good Gateway: parameters ConfigMap has no configuration data",
 						"namespace", gateway.Namespace, "gateway", gateway.Name,

@@ -247,6 +247,10 @@ func (r *controllerTestRig) close() {
 }
 
 func (r *controllerTestRig) newController() *DeploymentController {
+	return r.newControllerInNamespace("agentio-system")
+}
+
+func (r *controllerTestRig) newControllerInNamespace(systemNamespace string) *DeploymentController {
 	rend := testRenderer(r.t, testValues(r.t, parityValuesOverlay()))
 	clients := controllerClients{
 		Gateways:        r.gateways,
@@ -259,7 +263,14 @@ func (r *controllerTestRig) newController() *DeploymentController {
 		ConfigMaps:      r.configMaps,
 		Patcher:         r.patcher.patch,
 	}
-	d, _ := NewDeploymentController(clients, rend, "test-cluster", parityKubeVersion, func(func()) func() { return func() {} })
+	d, _ := NewDeploymentController(
+		clients,
+		rend,
+		"test-cluster",
+		systemNamespace,
+		parityKubeVersion,
+		func(func()) func() { return func() {} },
+	)
 	return d
 }
 
@@ -600,7 +611,10 @@ func TestReconcileContinuesOnParametersRef(t *testing.T) {
 			Name: "gw-params",
 		},
 	}
-	rig := newControllerTestRig(t, gw)
+	rig := newControllerTestRig(t, gw, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-params", Namespace: gw.Namespace},
+		Data:       map[string]string{"config": "extProc: {service: epe.demo.svc.cluster.local}"},
+	})
 	defer rig.close()
 	d := rig.newController()
 

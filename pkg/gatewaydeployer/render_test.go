@@ -15,6 +15,7 @@
 package gatewaydeployer
 
 import (
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -27,6 +28,77 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 )
+
+func TestInfrastructureMetadataInheritance(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		infra       *gatewayv1.GatewayInfrastructure
+		labels      map[string]string
+		annotations map[string]string
+	}{
+		{
+			name:        "no infrastructure",
+			labels:      map[string]string{"team": "platform"},
+			annotations: map[string]string{"example.com/setting": "inherited"},
+		},
+		{
+			name: "parameters only",
+			infra: &gatewayv1.GatewayInfrastructure{
+				ParametersRef: &gatewayv1.LocalParametersReference{Kind: "ConfigMap", Name: "params"},
+			},
+			labels:      map[string]string{"team": "platform"},
+			annotations: map[string]string{"example.com/setting": "inherited"},
+		},
+		{
+			name: "labels override independently",
+			infra: &gatewayv1.GatewayInfrastructure{
+				Labels: map[gatewayv1.LabelKey]gatewayv1.LabelValue{
+					"custom":                                 "label",
+					"gateway.networking.k8s.io/gateway-name": "ignored",
+				},
+			},
+			labels:      map[string]string{"custom": "label"},
+			annotations: map[string]string{"example.com/setting": "inherited"},
+		},
+		{
+			name: "annotations override independently",
+			infra: &gatewayv1.GatewayInfrastructure{
+				Annotations: map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue{
+					"custom":                            "annotation",
+					"gateway.networking.k8s.io/managed": "ignored",
+				},
+			},
+			labels:      map[string]string{"team": "platform"},
+			annotations: map[string]string{"custom": "annotation"},
+		},
+		{
+			name: "explicit empty maps",
+			infra: &gatewayv1.GatewayInfrastructure{
+				Labels:      map[gatewayv1.LabelKey]gatewayv1.LabelValue{},
+				Annotations: map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue{},
+			},
+			labels:      map[string]string{},
+			annotations: map[string]string{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gw := egressGatewayFixture("egress", "demo")
+			gw.Labels = map[string]string{"team": "platform"}
+			gw.Annotations = map[string]string{"example.com/setting": "inherited"}
+			gw.Spec.Infrastructure = tc.infra
+			labels, annotations := extractInfrastructureLabels(*gw), extractInfrastructureAnnotations(*gw)
+			if !maps.Equal(labels, tc.labels) || !maps.Equal(annotations, tc.annotations) {
+				t.Fatalf(
+					"labels=%v annotations=%v, want labels=%v annotations=%v",
+					labels,
+					annotations,
+					tc.labels,
+					tc.annotations,
+				)
+			}
+		})
+	}
+}
 
 func testValues(t testing.TB, overlay map[string]any) map[string]any {
 	t.Helper()
