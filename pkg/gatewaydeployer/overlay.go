@@ -42,11 +42,10 @@ import (
 // Based on Istio's gateway deployment controller in upstream/release-0.1:
 // https://github.com/openkruise/agentio/blob/169bad3c36783711989757cd907465b8fe9cfc3a/pilot/pkg/config/kube/gateway/deploymentcontroller.go
 // Preserve its class-default ordering, required overlays, strategic merge and
-// metadata checks. Agentio adapts the renderer/client types and reserves the
-// per-Gateway config/config.yaml keys for its proxy configuration.
+// metadata checks. Agentio adapts the renderer/client types and class-default
+// label, and reserves config/config.yaml for its per-Gateway proxy configuration.
 
-// Keep the Istio label for compatibility with the source implementation.
-const gatewayClassDefaults = "gateway.istio.io/defaults-for-class"
+const gatewayClassDefaults = "gateway.agentio.kruise.io/defaults-for-class"
 
 // overlayObject supplies the metadata used by IstioKind in the source implementation.
 type overlayObject struct {

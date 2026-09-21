@@ -253,7 +253,7 @@ func TestGatewayClassOverlayPrecedence(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "defaults",
 			Namespace:         "custom-system",
-			Labels:            map[string]string{gatewayClassDefaults: "agentio-egress"},
+			Labels:            map[string]string{"gateway.agentio.kruise.io/defaults-for-class": "agentio-egress"},
 			CreationTimestamp: metav1.NewTime(time.Unix(1, 0)),
 		},
 		Data: map[string]string{

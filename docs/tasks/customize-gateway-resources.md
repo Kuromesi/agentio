@@ -66,7 +66,7 @@ The same ConfigMap may also contain `data.config` for Envoy's xDS settings or `d
 
 ## Set GatewayClass defaults
 
-Create a ConfigMap in the control-plane namespace (`agentio-system` by default) with the `gateway.istio.io/defaults-for-class` label:
+Create a ConfigMap in the control-plane namespace (`agentio-system` by default) with the `gateway.agentio.kruise.io/defaults-for-class` label:
 
 ```yaml
 apiVersion: v1
@@ -75,7 +75,7 @@ metadata:
   name: egress-defaults
   namespace: agentio-system
   labels:
-    gateway.istio.io/defaults-for-class: agentio-egress
+    gateway.agentio.kruise.io/defaults-for-class: agentio-egress
 data:
   horizontalPodAutoscaler: |
     spec:
@@ -94,7 +94,7 @@ HPA and PDB are generated only when their respective patch key is present in the
 
 ConfigMap creation, updates, and deletion trigger reconciliation. Deployment Pod template changes trigger a rollout; Envoy `config`-only updates use xDS without changing the Pod template. Native `config.yaml` changes still trigger a rollout.
 
-Changing or removing the `gateway.istio.io/defaults-for-class` label reconciles Gateways from both the old and new classes. The old class falls back to its next-oldest matching ConfigMap, or to the template if none remain.
+Changing or removing the `gateway.agentio.kruise.io/defaults-for-class` label reconciles Gateways from both the old and new classes. The old class falls back to its next-oldest matching ConfigMap, or to the template if none remain.
 
 Removing a Deployment, Service, or ServiceAccount patch restores the fields owned by the controller to the template plus any remaining class defaults. Gateway deletion allows Kubernetes to garbage-collect owned resources; input ConfigMaps are not adopted or deleted.
 
