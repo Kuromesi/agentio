@@ -330,7 +330,13 @@ func (d *Deployer) runControllers(leaderCtx context.Context) {
 	leaderStop := leaderCtx.Done()
 	classController := NewClassController(d.clients.GatewayClasses)
 	controller, deregisterRequeueAll := NewDeploymentController(
-		d.clients, d.provider.Renderer(), d.options.ClusterID, d.kubeVersion, d.provider.AddHandler)
+		d.clients,
+		d.provider.Renderer(),
+		d.options.ClusterID,
+		d.options.SystemNamespace,
+		d.kubeVersion,
+		d.provider.AddHandler,
+	)
 	// Unregister this cycle's requeueAll handler so a dead queue stops receiving values reloads.
 	defer deregisterRequeueAll()
 

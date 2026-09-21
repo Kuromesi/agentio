@@ -131,6 +131,8 @@ $ kubectl get service/agentio-egress \
 
 If the GatewayClass check fails because `agentio-egress` already belongs to another controller, resolve that ownership conflict before continuing. Delete the existing GatewayClass only when you have confirmed that no other workloads depend on it; `agentiod` then recreates the class with the expected controller name.
 
+To customize the generated Deployment, Service, ServiceAccount, HPA, or PDB, see [Customize Gateway resources](customize-gateway-resources.md).
+
 ## Configure egress routing
 
 Create a values file that routes only `www.example.com` from the selected workload namespace to the gateway. Agentio evaluates egress policies in order, so keep the `PASSTHROUGH` fallback last:

@@ -1,6 +1,6 @@
 # Deploy agentgateway with the Gateway API
 
-Agentio's gateway deployer supports the `agentio-agentgateway` GatewayClass. It provisions a ServiceAccount, Deployment, Service, HorizontalPodAutoscaler (HPA), and PodDisruptionBudget (PDB), and runs agentgateway with a native YAML configuration file supplied through a ConfigMap.
+Agentio's gateway deployer supports the `agentio-agentgateway` GatewayClass. It provisions a ServiceAccount, Deployment, and Service, and runs agentgateway with a native YAML configuration file supplied through a ConfigMap. HorizontalPodAutoscaler (HPA) and PodDisruptionBudget (PDB) are opt-in resources.
 
 This class provides deployment management and opt-in workload certificate bootstrap through Agentiod CA. It does not translate HTTPRoute, SecurityProfile, EnvoyFilter, or Agentio egress configuration into agentgateway configuration. Sandbox identity and dynamic SNI policies are not supported by this path. Existing `agentio-egress` Gateways continue to use Envoy.
 
@@ -22,7 +22,7 @@ The image is an operator-controlled value; a Gateway annotation cannot override 
 
 The injector ConfigMap contains both the `egress-gateway` and `agentgateway` deployment templates. Older injector ConfigMaps without the new template remain usable for Envoy; an agentgateway Gateway reports an error until its template is installed.
 
-The generated HPA targets the Gateway Deployment with `maxReplicas: 1`, and the PDB specifies only the Gateway Pod selector. The Deployment template leaves `spec.replicas` unset.
+The Deployment template leaves `spec.replicas` unset. To create an HPA or PDB, add a `horizontalPodAutoscaler` or `podDisruptionBudget` resource patch to the parameters ConfigMap or GatewayClass defaults. An empty `{}` patch enables the template defaults: HPA `maxReplicas: 1` and a PDB with only the Gateway Pod selector. See [Customize Gateway resources](customize-gateway-resources.md).
 
 ## Supply file configuration
 
@@ -167,7 +167,7 @@ Updating the referenced `config.yaml` triggers reconciliation and changes the Po
 - Missing references, empty configuration, or invalid YAML report `Accepted=False` and `Programmed=False`, without replacing the Deployment configuration.
 - YAML syntax is checked by Agentio; agentgateway validates its configuration schema during startup. A schema-invalid configuration can create a failing new Pod while the old replica continues serving. Correct the ConfigMap to recover.
 - `Programmed=True` means the desired configuration's Deployment rollout is available. It does not assert HTTPRoute attachment, policy enforcement, or end-to-end application connectivity.
-- Deleted HPA/PDB resources are recreated by the deployer. Removing the Gateway allows Kubernetes to garbage-collect its owned Deployment, Service, ServiceAccount, HPA, and PDB. ConfigMaps and Secrets are not adopted or deleted.
+- Deleted HPA/PDB resources are recreated while their corresponding patch keys are configured. Removing a patch key does not delete an existing HPA/PDB. Removing the Gateway allows Kubernetes to garbage-collect its owned Deployment, Service, ServiceAccount, HPA, and PDB. ConfigMaps and Secrets are not adopted or deleted.
 
 ```bash
 kubectl -n agentio-system get gateway agentgateway -o yaml

@@ -168,6 +168,22 @@ func TestGatewayAPIConfigurationsResolveSameNamespaceParameters(t *testing.T) {
 			return provider == nil
 		}, "Gateway parameters update to "+content)
 	}
+	configMaps.ConditionalUpdateObject(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "egress-parameters"},
+		Data:       map[string]string{gatewayConfigKey: "extProc: {service: before-overlay.demo.svc.cluster.local}"},
+	})
+	eventually(t, func() bool {
+		gateway := configurations.GetKey("demo/egress")
+		return gateway != nil && gateway.Config.GetExtProc().GetService() == "before-overlay.demo.svc.cluster.local"
+	}, "proxy configuration before switching to deployment-only parameters")
+	configMaps.ConditionalUpdateObject(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "egress-parameters"},
+		Data:       map[string]string{"deployment": "spec: {replicas: 2}"},
+	})
+	eventually(t, func() bool {
+		gateway := configurations.GetKey("demo/egress")
+		return gateway != nil && gateway.ValidateForUse() == nil && gateway.Config.GetExtProc() == nil
+	}, "deployment-only parameters use default proxy configuration")
 }
 
 func TestGatewayAPIConfigurationsRetainLastKnownGoodParameters(t *testing.T) {

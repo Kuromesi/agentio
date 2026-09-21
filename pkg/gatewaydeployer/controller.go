@@ -165,11 +165,12 @@ type kindTarget struct {
 // DeploymentController materializes a Gateway into a Deployment/Service/
 // ServiceAccount trio via Server-Side Apply.
 type DeploymentController struct {
-	clients     controllerClients
-	renderer    *renderer
-	clusterID   string
-	kubeVersion int
-	queue       controllers.Queue
+	clients         controllerClients
+	renderer        *renderer
+	clusterID       string
+	systemNamespace string
+	kubeVersion     int
+	queue           controllers.Queue
 
 	targets map[string]kindTarget
 }
@@ -178,13 +179,14 @@ type DeploymentController struct {
 // values-reload hook and returns a deregister func the caller must invoke
 // when the lease cycle ends.
 func NewDeploymentController(clients controllerClients, renderer *renderer,
-	clusterID string, kubeVersion int, requeueAll func(fn func()) func(),
+	clusterID, systemNamespace string, kubeVersion int, requeueAll func(fn func()) func(),
 ) (*DeploymentController, func()) {
 	d := &DeploymentController{
-		clients:     clients,
-		renderer:    renderer,
-		clusterID:   clusterID,
-		kubeVersion: kubeVersion,
+		clients:         clients,
+		renderer:        renderer,
+		clusterID:       clusterID,
+		systemNamespace: systemNamespace,
+		kubeVersion:     kubeVersion,
 	}
 	d.targets = map[string]kindTarget{
 		"Deployment":              {gvr: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, get: deploymentGetter{clients.Deployments}},
@@ -193,6 +195,15 @@ func NewDeploymentController(clients controllerClients, renderer *renderer,
 		"HorizontalPodAutoscaler": {gvr: schema.GroupVersionResource{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}, get: hpaGetter{clients.HPAs}},
 		"PodDisruptionBudget":     {gvr: schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}, get: pdbGetter{clients.PDBs}},
 	}
+	// Based on Istio's upstream/release-0.1 deployment controller (see overlay.go).
+	// Agentio's informer exposes a raw string index instead of kclient.CreateIndex.
+	gatewaysByParamsRef := clients.Gateways.Index("parametersRef", func(gw *gatewayv1.Gateway) []string {
+		p, err := fetchParameters(gw)
+		if p == nil || err != nil {
+			return nil
+		}
+		return []string{p.String()}
+	})
 	d.queue = controllers.NewQueue("gateway deployment",
 		controllers.WithReconciler(d.Reconcile),
 		controllers.WithMaxAttempts(5))
@@ -211,11 +222,15 @@ func NewDeploymentController(clients controllerClients, renderer *renderer,
 	clients.HPAs.AddEventHandler(parentHandler)
 	clients.PDBs.AddEventHandler(parentHandler)
 	clients.ConfigMaps.AddEventHandler(controllers.ObjectHandler(func(o controllers.Object) {
-		for _, gw := range clients.Gateways.List(o.GetNamespace(), klabels.Everything()) {
-			ci, ok := classFor(gw, clients.GatewayClasses)
-			if ok && ci.templateName == agentgatewayTemplateName && gw.Spec.Infrastructure != nil {
-				ref := gw.Spec.Infrastructure.ParametersRef
-				if ref != nil && ref.Group == "" && ref.Kind == "ConfigMap" && string(ref.Name) == o.GetName() {
+		// This may be a per-Gateway parametersRef or a global GatewayClass default.
+		key := types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}
+		for _, gw := range gatewaysByParamsRef.Lookup(key.String()) {
+			d.queue.AddObject(gw.(*gatewayv1.Gateway))
+		}
+		classDefaults, found := o.GetLabels()[gatewayClassDefaults]
+		if found && o.GetNamespace() == d.systemNamespace {
+			for _, gw := range clients.Gateways.List(metav1.NamespaceAll, klabels.Everything()) {
+				if string(gw.Spec.GatewayClassName) == classDefaults {
 					d.queue.AddObject(gw)
 				}
 			}
@@ -361,14 +376,10 @@ func (d *DeploymentController) configureGateway(gw gatewayv1.Gateway, ci classIn
 		}
 	}
 
-	rendered, err := d.renderer.Render(ci.templateName, input)
+	rendered, err := d.renderGateway(ci.templateName, input)
 	if err != nil {
-		if ci.templateName == agentgatewayTemplateName {
-			return d.setGatewayConfigError(gw, err)
-		}
-		// Rendering errors are not ephemeral; log and do not retry.
-		log.Error("render gateway templates",
-			"namespace", gw.Namespace, "name", gw.Name, "error", err)
+		// Match Istio: rendering errors are not transient, so log without retrying.
+		log.Error("error rendering templates", "namespace", gw.Namespace, "name", gw.Name, "error", err)
 		return nil
 	}
 	for _, doc := range rendered {

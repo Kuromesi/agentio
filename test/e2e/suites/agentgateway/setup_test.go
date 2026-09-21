@@ -40,7 +40,12 @@ func requireGatewayAPI(ctx context.Context, env *e2e.Environment) (e2e.CleanupFu
 }
 func gateway(name string) *unstructured.Unstructured { return native.Gateway(config.Namespace, name) }
 func configuration(name, content string) *unstructured.Unstructured {
-	return native.Configuration(config.Namespace, name, content)
+	cm := native.Configuration(config.Namespace, name, content)
+	// The lifecycle suite verifies reconciliation of these opt-in resources.
+	data := cm.Object["data"].(map[string]any)
+	data["horizontalPodAutoscaler"] = "{}"
+	data["podDisruptionBudget"] = "{}"
+	return cm
 }
 func nativeConfig(version string, ext bool) string {
 	var p map[string]any

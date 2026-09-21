@@ -3,6 +3,7 @@
 api/security/v1/authorization.proto
 api/workload/v1/workload.proto
 pkg/gatewaydeployer/controller.go
+pkg/gatewaydeployer/overlay.go
 pkg/gatewaydeployer/render.go
 pkg/inject/app_probe.go
 pkg/inject/config.go
