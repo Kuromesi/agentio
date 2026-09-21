@@ -17,13 +17,21 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"go.uber.org/zap/zapcore"
+	"k8s.io/klog/v2"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/openkruise/agentio/extensions/epe/pkg/admin"
+	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 	agentlog "github.com/openkruise/agentio/pkg/log"
 )
 
@@ -40,14 +48,26 @@ import (
 // silent no-op. Subtests share one buffer and reset it between cases.
 func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 	previousSlog := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(previousSlog) })
+	previousFlags := flag.CommandLine
+	t.Cleanup(func() {
+		klog.ClearLogger()
+		slog.SetDefault(previousSlog)
+		flag.CommandLine = previousFlags
+	})
 	// The controller-runtime root logger cannot be restored for the same
 	// one-shot reason, so it is left pointing at this buffer. Nothing else in
 	// this package logs after the test binary finishes.
 
 	var out bytes.Buffer
 	opts := ctrlzap.Options{Development: false, DestWriter: &out}
-	initLogging(&opts)
+	flag.CommandLine = flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	opts.BindFlags(flag.CommandLine)
+	// Starting at info installs controller-runtime's production sampler. Runtime
+	// changes must still admit EPE's custom V(4)/V(5) levels through that core.
+	if err := flag.CommandLine.Parse([]string{"--zap-log-level=info"}); err != nil {
+		t.Fatal(err)
+	}
+	level := initLogging(&opts)
 
 	records := func(t *testing.T) []map[string]any {
 		t.Helper()
@@ -133,4 +153,129 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 			t.Errorf("msg = %v, want %q", got[0]["msg"], "watch started")
 		}
 	})
+
+	t.Run("admin updates existing loggers across the bridges", func(t *testing.T) {
+		server := httptest.NewServer(admin.NewHandler(admin.Options{EnableDebug: true, LogLevel: &level}))
+		defer server.Close()
+		existing := ctrllog.Log.WithName("ext-proc").WithValues("requestID", "already-created")
+		existingSlog := slog.Default().With("source", "already-created")
+		shared := agentlog.New("krt")
+		update := func(name string) {
+			t.Helper()
+			request, err := http.NewRequest(http.MethodPut, server.URL+"/debug/logging/default",
+				strings.NewReader(`{"output_level":"`+name+`"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Content-Type", "application/json")
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := response.Body.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if response.StatusCode != http.StatusAccepted {
+				t.Fatalf("PUT output_level %q: status=%d, want 202", name, response.StatusCode)
+			}
+		}
+
+		out.Reset()
+		existing.V(logging.DEBUG).Info("hidden before update")
+		update("debug")
+		existing.V(logging.DEBUG).Info("debug enabled")
+		existing.V(logging.TRACE).Info("trace still hidden")
+		got := records(t)
+		if len(got) != 1 || got[0]["msg"] != "debug enabled" || got[0]["requestID"] != "already-created" {
+			t.Fatalf("debug update records = %v", got)
+		}
+
+		out.Reset()
+		update("5")
+		existing.V(logging.TRACE).Info("trace enabled")
+		if got := records(t); len(got) != 1 || got[0]["msg"] != "trace enabled" {
+			t.Fatalf("trace update records = %v", got)
+		}
+
+		out.Reset()
+		update("error")
+		existing.Info("hidden logr")
+		existingSlog.Info("hidden slog")
+		klog.InfoS("hidden klog")
+		shared.Info("hidden shared package")
+		existing.Error(io.EOF, "visible error")
+		got = records(t)
+		if len(got) != 1 || got[0]["msg"] != "visible error" {
+			t.Fatalf("error update records = %v", got)
+		}
+		if _, found := got[0]["stacktrace"]; found {
+			t.Fatal("changing level enabled error stacktraces")
+		}
+
+		out.Reset()
+		update("info")
+		existing.V(logging.DEFAULT).Info("restored EPE default")
+		existing.V(logging.VERBOSE).Info("verbose hidden after info reset")
+		existing.V(logging.DEBUG).Info("debug hidden after info reset")
+		existing.Info("restored logr")
+		existingSlog.Info("restored slog")
+		klog.InfoS("restored klog")
+		shared.Info("restored shared package")
+		if got := records(t); len(got) != 5 {
+			t.Fatalf("restored logger records = %v", got)
+		}
+
+		out.Reset()
+		update("none")
+		existing.Error(io.EOF, "hidden logr error")
+		existingSlog.Error("hidden slog error")
+		klog.ErrorS(io.EOF, "hidden klog error")
+		shared.Error("hidden shared error")
+		if got := records(t); len(got) != 0 {
+			t.Fatalf("none should suppress every record: %v", got)
+		}
+
+		out.Reset()
+		update("1")
+		existingSlog.Debug("slog debug enabled")
+		existing.V(logging.DEBUG).Info("EPE V4 still hidden")
+		if got := records(t); len(got) != 1 || got[0]["msg"] != "slog debug enabled" {
+			t.Fatalf("verbosity 1 records = %v", got)
+		}
+	})
+}
+
+func TestNewLogLevelHonorsStartupFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want zapcore.Level
+	}{
+		{name: "default", want: -2},
+		{name: "verbosity", args: []string{"-v=4"}, want: -4},
+		{name: "info overrides verbosity", args: []string{"-v=5", "--zap-log-level=info"}, want: zapcore.InfoLevel},
+		{name: "numeric zap level", args: []string{"--zap-log-level=3", "-v=5"}, want: -3},
+		{name: "named zap level", args: []string{"--zap-log-level=debug"}, want: zapcore.DebugLevel},
+		{name: "development preserves verbosity", args: []string{"--zap-devel"}, want: -2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousFlags, previousVerbosity := flag.CommandLine, *logVerbosity
+			t.Cleanup(func() {
+				flag.CommandLine = previousFlags
+				*logVerbosity = previousVerbosity
+			})
+			flag.CommandLine = flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+			flag.IntVar(logVerbosity, "v", 2, "log verbosity")
+			opts := ctrlzap.Options{}
+			opts.BindFlags(flag.CommandLine)
+			if err := flag.CommandLine.Parse(tc.args); err != nil {
+				t.Fatal(err)
+			}
+			if got := newLogLevel(&opts).Level(); got != tc.want {
+				t.Fatalf("startup level = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

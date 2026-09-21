@@ -18,7 +18,50 @@ $ kubectl port-forward --namespace agentio-system "$EPE_POD" 15000:15000
 $ curl --fail --silent http://127.0.0.1:15000/
 ```
 
-The binary defaults `--enable-debug=true`. Starting it with `--enable-debug=false` leaves the index available but does not register debug paths; requests to `/debug/profiles` then return 404.
+The binary defaults `--enable-debug=true`. Starting it with `--enable-debug=false` leaves the index available but does not register debug paths; requests to `/debug/profiles` and `/debug/logging` then return 404.
+
+## Runtime log level
+
+EPE supports agentiod's logging API format on its admin listener. EPE exposes one process-wide scope, `default`; component scopes such as `krt` are not available here.
+
+| Request | Response |
+| --- | --- |
+| `GET /debug/logging` or `GET /debug/logging/` | `200 OK`, a list of scopes. |
+| `GET /debug/logging/default` | `200 OK`, the `default` scope object. |
+| `HEAD` on either route | Same status as GET, without a body. |
+| `PUT` on either route with `output_level` | Applies immediately, then returns `202 Accepted` without a body. |
+
+All logging responses have `Cache-Control: no-store`. For example, at the default startup verbosity:
+
+```console
+$ curl --fail --silent http://127.0.0.1:15000/debug/logging
+[{"name":"default","output_level":"info"}]
+
+$ curl --fail --silent --request PUT \
+    --header 'Content-Type: application/json' \
+    --data '{"output_level":"debug"}' \
+    http://127.0.0.1:15000/debug/logging/default
+
+$ curl --fail --silent http://127.0.0.1:15000/debug/logging/default
+{"name":"default","output_level":"debug"}
+```
+
+The PUT body may include `"name":"default"`, so a scope object returned by GET can be sent back unchanged. Omitting `/default` from the PUT URL has the same effect.
+
+| `output_level` value | Effect in EPE |
+| --- | --- |
+| `"debug"` | Enables EPE debug records at `V(4)`, including token-transformation and ext_proc diagnostics. |
+| `"info"` | Restores EPE's default verbosity, equivalent to `-v=2`. |
+| `"warn"`, `"error"` | Sets the corresponding Zap minimum level. |
+| `"none"` | Suppresses all log output. Panic/fatal control flow is unchanged. |
+
+EPE additionally accepts numeric strings from `"0"` through `"127"` for exact logr verbosity, and Zap's `"dpanic"`, `"panic"`, and `"fatal"` thresholds. For example, `"3"` enables verbose records and `"5"` enables trace records. GET reports EPE verbosity 2 as `"info"` and verbosity 4 as `"debug"`; other verbosity thresholds remain numeric, including `"0"` and `"1"`, so reading and writing a scope preserves its exact threshold.
+
+Send exactly one JSON object with a non-empty `output_level` string and an optional `name`. Invalid values, unknown fields, a mismatched `name`, trailing JSON, and bodies larger than 4 KiB return `400` without changing the level. Unknown scopes return `400`; nested scope paths return `404`. Unsupported HTTP methods return `405` with `Allow: GET, HEAD, PUT`.
+
+To restore the default EPE verbosity, PUT `{"output_level":"info"}`. A runtime change applies immediately to existing loggers in the EPE process reached by this request; configure each replica separately if necessary. Changes are not persisted: a restart restores `-v` or the overriding `--zap-log-level`. Encoding, stacktrace thresholds, and startup sampling configuration stay unchanged.
+
+The endpoint controls EPE's shared Zap core, including existing controller-runtime loggers and the slog/klog bridge. Shared Agentio packages such as `pkg/krt` retain their separate INFO scope gate, so increasing EPE verbosity does not enable those packages' DEBUG records. This endpoint does not change agentiod logging.
 
 ## Profile inspection endpoint
 
@@ -89,9 +132,11 @@ If EPE cannot fetch one profile's live content, the response remains `200 OK` an
 | Labels supplied without `namespace` | `400` JSON error |
 | Malformed POST JSON | `400` JSON error |
 | POST body larger than 1 MiB | `400` JSON error from the request decoder |
+| Invalid logging configuration or PUT body larger than 4 KiB on `/debug/logging` | `400` JSON error; current level is unchanged |
+| Unsupported method on `/debug/logging` | `405` JSON error and `Allow: GET, HEAD, PUT` |
 | Unknown path, or debug path while disabled | `404` |
 
-The API is read-only, but it exposes profile selectors, ordering, and, in full mode, complete policy specifications. Do not set `--admin-addr=:15000` or any other non-loopback address without restrictive NetworkPolicies, service exposure controls, and authentication in an enclosing trusted boundary. The server itself provides no authentication or authorization.
+The API exposes profile selectors, ordering, and, in full mode, complete policy specifications. It also permits runtime log-level changes, which can increase log volume or suppress diagnostics. Do not set `--admin-addr=:15000` or any other non-loopback address without restrictive NetworkPolicies, service exposure controls, and authentication in an enclosing trusted boundary. The server itself provides no authentication or authorization.
 
 ## See also
 

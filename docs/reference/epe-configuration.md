@@ -80,7 +80,7 @@ The generated `5s` message timeout must remain above EPE's default `--plugin-bud
 | `--grpc-health-port` | `9003` | gRPC health listener used by Kubernetes probes. |
 | `--metrics-port` | `9090` | HTTP listener serving only `/metrics`. |
 | `--admin-addr` | `127.0.0.1:15000` | Admin HTTP bind address. |
-| `--enable-debug` | `true` | Registers the `/debug/profiles` admin endpoint. |
+| `--enable-debug` | `true` | Registers the `/debug/profiles` and `/debug/logging` admin endpoints. |
 | `--enable-pprof` | `false` | Starts Go pprof on `--pprof-addr`. |
 | `--pprof-addr` | `:6060` | pprof listener address when enabled. |
 | `--observe-responses` | `false` | Requests response headers through ext_proc so audit can record upstream status. |
@@ -93,6 +93,8 @@ The generated `5s` message timeout must remain above EPE's default `--plugin-bud
 | `--audit-webhook-insecure-skip-verify` | `false` | Skips TLS certificate verification for every HTTPS audit webhook when explicitly enabled. |
 
 The binary also accepts controller-runtime Zap flags, including `--zap-log-level` and `--zap-stacktrace-level`. The metrics and health listeners bind all interfaces because they are constructed from their port numbers. The chart exposes both through its headless Service. The admin listener is loopback-only by default and is not in that Service. pprof binds all interfaces by default when enabled; only enable it with an intentionally restricted bind address and network exposure.
+
+Use the [runtime logging admin endpoint](epe-admin-api.md#runtime-log-level) to inspect or change verbosity without restarting EPE. For example, PUT `{"output_level":"debug"}` to `/debug/logging/default` to enable EPE debug logs, then PUT `{"output_level":"info"}` to restore the default. The request format matches agentiod; EPE exposes only the process-wide `default` scope. Changes apply to one process and are lost on restart.
 
 ## TLS for ext_proc
 

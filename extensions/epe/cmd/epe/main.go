@@ -67,15 +67,17 @@ var (
 	metricsPort = flag.Int(
 		"metrics-port", 9090, "The metrics port")
 	pluginBudget = flag.Duration(
-		"plugin-budget", 4500*time.Millisecond,
-		"Maximum duration of one evaluation phase (one ext_proc message), shared by every filter invocation in that phase; 0 disables. Must stay below Envoy's ext_proc message_timeout (shipped default 5s) so the plugin is cancelled before Envoy gives up. Lower it only with the failure-mode change in mind: a fetch that exceeds the budget becomes a fetch error, which the rule's failStrategy (CRD default Block) turns into a 403.")
+		"plugin-budget",
+		4500*time.Millisecond,
+		"Maximum duration of one evaluation phase (one ext_proc message), shared by every filter invocation in that phase; 0 disables. Must stay below Envoy's ext_proc message_timeout (shipped default 5s) so the plugin is cancelled before Envoy gives up. Lower it only with the failure-mode change in mind: a fetch that exceeds the budget becomes a fetch error, which the rule's failStrategy (CRD default Block) turns into a 403.",
+	)
 	kubeconfig  = flag.String("kubeconfig", "", "Path to a kubeconfig; empty means in-cluster config")
 	enablePprof = flag.Bool("enable-pprof", false, "Enable pprof profiling endpoint")
 	pprofAddr   = flag.String("pprof-addr", ":6060", "The address the pprof server binds to")
 	adminAddr   = flag.String("admin-addr", "127.0.0.1:15000",
 		"The address the admin HTTP server binds to (set to :15000 to listen on all interfaces)")
 	enableDebug = flag.Bool("enable-debug", true,
-		"Enable the /debug endpoints on the admin server (profile match/list)")
+		"Enable the /debug endpoints on the admin server (profile inspection and runtime log level)")
 	auditLogBufferSize = flag.Int("audit-log-buffer-size", accesslog.DefaultBufferSize,
 		"Audit log buffered channel capacity; entries are dropped when full")
 	auditWebhookBufferSize = flag.Int("audit-webhook-buffer-size", webhook.DefaultBufferSize,
@@ -131,10 +133,16 @@ func run() error {
 	}
 	if printEnv.Enabled {
 		return printEnv.Write(os.Stdout, envdoc.Options{
-			Prefixes: []string{"IDENTITY_PROVIDER_", "TOKEN_CACHE_", "STS_CACHE_", "CREDENTIAL_PROVIDER_", "AUDIT_WEBHOOK_"},
+			Prefixes: []string{
+				"IDENTITY_PROVIDER_",
+				"TOKEN_CACHE_",
+				"STS_CACHE_",
+				"CREDENTIAL_PROVIDER_",
+				"AUDIT_WEBHOOK_",
+			},
 		})
 	}
-	initLogging(&opts)
+	logLevel := initLogging(&opts)
 
 	flags := make(map[string]any)
 	flag.VisitAll(func(f *flag.Flag) {
@@ -200,6 +208,7 @@ func run() error {
 		EnableDebug: *enableDebug,
 		Store:       store,
 		Client:      agentsCS,
+		LogLevel:    &logLevel,
 	})
 	group.Add(runnable.HTTPServer("admin", adminHandler, *adminAddr))
 
@@ -277,19 +286,12 @@ func run() error {
 
 // initLogging maps the klog-style -v flag onto the zap level unless the user
 // explicitly set --zap-log-level, then installs the controller-runtime logger
-// process-wide and bridges slog and klog onto the same zap core.
-func initLogging(opts *zap.Options) {
-	useV := true
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "zap-log-level" {
-			useV = false
-		}
-	})
-	if useV {
-		// See https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/log/zap#Options.Level
-		lvl := -1 * (*logVerbosity)
-		opts.Level = uberzap.NewAtomicLevelAt(zapcore.Level(int8(lvl)))
-	}
+// process-wide and bridges slog and klog onto the same zap core. The returned
+// atomic level lets the admin handler update existing loggers without rebuilding
+// their cores or changing encoder and stacktrace options.
+func initLogging(opts *zap.Options) uberzap.AtomicLevel {
+	level := newLogLevel(opts)
+	opts.Level = level
 
 	// Keep stacktraces off every level the request path uses. The ext-proc
 	// handlers report broken streams, unreadable bodies and failed credential
@@ -311,12 +313,25 @@ func initLogging(opts *zap.Options) {
 
 	// Shared agentio packages linked into this binary — pkg/krt, pkg/kube,
 	// pkg/queue — log through pkg/log, which resolves slog.Default() per record.
-	// Left unconfigured they fall through to Go's built-in handler, so their
-	// lines land as text inside the JSON stream and ignore -v. pkg/log applies
-	// its own scope level before any handler sees the record, and that level
-	// stays at its info default here, so zap remains the only gate this process
-	// exposes.
+	// Its independent info-level scope gate remains in place; accepted records,
+	// direct slog calls, and klog all follow the same dynamic zap threshold.
 	slogLogger := slog.New(zapslog.NewHandler(raw.Core(), zapslog.WithCaller(true)))
 	slog.SetDefault(slogLogger)
 	klog.SetSlogLogger(slogLogger)
+	return level
+}
+
+func newLogLevel(opts *zap.Options) uberzap.AtomicLevel {
+	useV := true
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "zap-log-level" {
+			useV = false
+		}
+	})
+	if useV {
+		// See https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/log/zap#Options.Level
+		lvl := -1 * (*logVerbosity)
+		return uberzap.NewAtomicLevelAt(zapcore.Level(int8(lvl)))
+	}
+	return uberzap.NewAtomicLevelAt(zapcore.LevelOf(opts.Level))
 }
