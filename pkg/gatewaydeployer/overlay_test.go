@@ -57,6 +57,8 @@ func lastDeployment(p *recordingPatcher) *appsv1.Deployment {
 
 func TestGatewayDeploymentOverlayMergesContainers(t *testing.T) {
 	gw, cm := overlayFixture()
+	gw.Labels = map[string]string{"team": "platform"}
+	gw.Annotations = map[string]string{"example.com/setting": "inherited"}
 	cm.Data["deployment"] = `spec:
   template:
     spec:
@@ -84,6 +86,11 @@ func TestGatewayDeploymentOverlayMergesContainers(t *testing.T) {
 	dep := lastDeployment(rig.patcher)
 	if dep == nil {
 		t.Fatal("Deployment missing")
+	}
+	for _, meta := range []metav1.ObjectMeta{dep.ObjectMeta, dep.Spec.Template.ObjectMeta} {
+		if meta.Labels["team"] != "platform" || meta.Annotations["example.com/setting"] != "inherited" {
+			t.Fatalf("parametersRef lost inherited Gateway metadata: %+v", meta)
+		}
 	}
 	containers := dep.Spec.Template.Spec.Containers
 	if len(containers) != 2 || containers[1].Name != "helper-sidecar" {
@@ -398,6 +405,79 @@ func TestGatewayClassOverlayConfigMapEvents(t *testing.T) {
 	waitCondition(t, 5*time.Second, func() bool {
 		return lastDeployment(rig.patcher).Spec.Replicas == nil
 	}, "class defaults deletion")
+}
+
+func TestGatewayClassOverlayLabelChanges(t *testing.T) {
+	oldGateway := egressGatewayFixture("old-class", "one")
+	newGateway := egressGatewayFixture("new-class", "two")
+	newGateway.Spec.GatewayClassName = "other-egress"
+	class := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-egress"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: gatewayv1.GatewayController(builtinClasses["agentio-egress"].controller),
+		},
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "defaults",
+			Namespace:         "agentio-system",
+			Labels:            map[string]string{gatewayClassDefaults: "agentio-egress"},
+			CreationTimestamp: metav1.NewTime(time.Unix(1, 0)),
+		},
+		Data: map[string]string{"deployment": "spec: {replicas: 2}"},
+	}
+	fallback := cm.DeepCopy()
+	fallback.Name = "fallback"
+	fallback.CreationTimestamp = metav1.NewTime(time.Unix(2, 0))
+	fallback.Data["deployment"] = "spec: {replicas: 3}"
+	rig := newControllerTestRig(t, oldGateway, newGateway, class, cm, fallback)
+	defer rig.close()
+	d := rig.newController()
+	stop := make(chan struct{})
+	defer close(stop)
+	go d.Run(stop)
+	hasReplicas := func(gw *gatewayv1.Gateway, want *int32) bool {
+		for _, p := range slices.Backward(rig.patcher.all()) {
+			if p.gvr.Resource != "deployments" || p.namespace != gw.Namespace || p.name != gw.Name {
+				continue
+			}
+			var dep appsv1.Deployment
+			if err := json.Unmarshal(p.data, &dep); err != nil {
+				t.Fatal(err)
+			}
+			return equality.Semantic.DeepEqual(dep.Spec.Replicas, want)
+		}
+		return false
+	}
+	two, three := int32(2), int32(3)
+	waitCondition(t, 5*time.Second, func() bool {
+		return hasReplicas(oldGateway, &two) && hasReplicas(newGateway, nil)
+	}, "initial class defaults")
+	updateClass := func(className string) {
+		t.Helper()
+		cm = cm.DeepCopy()
+		if className == "" {
+			delete(cm.Labels, gatewayClassDefaults)
+		} else {
+			cm.Labels[gatewayClassDefaults] = className
+		}
+		if _, err := rig.kubeClient.CoreV1().ConfigMaps(cm.Namespace).
+			Update(context.Background(), cm, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	updateClass("other-egress")
+	waitCondition(t, 5*time.Second, func() bool {
+		return hasReplicas(oldGateway, &three) && hasReplicas(newGateway, &two)
+	}, "label reassignment updates both classes and selects the old class fallback")
+	updateClass("")
+	waitCondition(t, 5*time.Second, func() bool {
+		return hasReplicas(oldGateway, &three) && hasReplicas(newGateway, nil)
+	}, "label removal restores the new class template")
+	updateClass("agentio-egress")
+	waitCondition(t, 5*time.Second, func() bool {
+		return hasReplicas(oldGateway, &two) && hasReplicas(newGateway, nil)
+	}, "label addition restores the oldest class defaults")
 }
 
 func TestGatewayOverlayServiceDeleteDirective(t *testing.T) {

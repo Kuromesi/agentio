@@ -62,6 +62,8 @@ Each key contains a Strategic Merge Patch applied after template rendering:
 
 Containers and environment variables merge by `name`; a container entry with a new name adds a sidecar. Use `agentio-proxy` for the Envoy gateway and `agentgateway` for the native agentgateway. Strategic Merge Patch directives such as `$patch: delete` are supported. Patches may modify labels and annotations, but may not change resource identity or ownership metadata, such as name, namespace, owner references, or finalizers.
 
+As in Istio, unset `spec.infrastructure.labels` and `spec.infrastructure.annotations` inherit the corresponding Gateway metadata independently. Adding only `parametersRef` preserves that inheritance. An explicitly supplied map replaces the corresponding inherited map before resource patches are applied.
+
 The same ConfigMap may also contain `data.config` for Envoy's xDS settings or `data["config.yaml"]` for native agentgateway configuration. These keys are excluded from resource patching. Envoy resource-only ConfigMaps may omit `config` to use default proxy settings; an explicitly empty or invalid `config` retains the last valid proxy configuration. Native agentgateway still requires `config.yaml`; see [Deploy agentgateway](deploy-agentgateway.md).
 
 ## Set GatewayClass defaults
@@ -93,6 +95,8 @@ HPA and PDB are generated only when their respective patch key is present in the
 ## Updates and errors
 
 ConfigMap creation, updates, and deletion trigger reconciliation. Per-Gateway references use an informer index. Deployment Pod template changes trigger a rollout; Envoy `config`-only updates use xDS without changing the Pod template. Native `config.yaml` changes still trigger a rollout.
+
+Changing or removing the `gateway.istio.io/defaults-for-class` label reconciles Gateways from both the old and new classes. The old class falls back to its next-oldest matching ConfigMap, or to the template if none remain.
 
 Removing a Deployment, Service, or ServiceAccount patch restores the fields owned by the controller to the template plus any remaining class defaults. Gateway deletion allows Kubernetes to garbage-collect owned resources; input ConfigMaps are not adopted or deleted.
 

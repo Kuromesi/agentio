@@ -221,18 +221,31 @@ func NewDeploymentController(clients controllerClients, renderer *renderer,
 	clients.ServiceAccounts.AddEventHandler(parentHandler)
 	clients.HPAs.AddEventHandler(parentHandler)
 	clients.PDBs.AddEventHandler(parentHandler)
-	clients.ConfigMaps.AddEventHandler(controllers.ObjectHandler(func(o controllers.Object) {
+	clients.ConfigMaps.AddEventHandler(controllers.FromEventHandler(func(e controllers.Event) {
+		o := e.Latest()
 		// This may be a per-Gateway parametersRef or a global GatewayClass default.
 		key := types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}
 		for _, gw := range gatewaysByParamsRef.Lookup(key.String()) {
 			d.queue.AddObject(gw.(*gatewayv1.Gateway))
 		}
-		classDefaults, found := o.GetLabels()[gatewayClassDefaults]
-		if found && o.GetNamespace() == d.systemNamespace {
-			for _, gw := range clients.Gateways.List(metav1.NamespaceAll, klabels.Everything()) {
-				if string(gw.Spec.GatewayClassName) == classDefaults {
-					d.queue.AddObject(gw)
+		if o.GetNamespace() != d.systemNamespace {
+			return
+		}
+		// Reconcile both classes when the default label changes or is removed.
+		affectedClasses := map[string]struct{}{}
+		for _, obj := range []controllers.Object{e.Old, e.New} {
+			if obj != nil {
+				if class, found := obj.GetLabels()[gatewayClassDefaults]; found {
+					affectedClasses[class] = struct{}{}
 				}
+			}
+		}
+		if len(affectedClasses) == 0 {
+			return
+		}
+		for _, gw := range clients.Gateways.List(metav1.NamespaceAll, klabels.Everything()) {
+			if _, found := affectedClasses[string(gw.Spec.GatewayClassName)]; found {
+				d.queue.AddObject(gw)
 			}
 		}
 	}))
