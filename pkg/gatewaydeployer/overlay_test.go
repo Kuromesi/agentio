@@ -268,7 +268,7 @@ func TestGatewayClassOverlayPrecedence(t *testing.T) {
             cpu: 100m
             memory: 128Mi
 `,
-			"service":                 "spec: {type: NodePort}",
+			"service":                 "spec: {type: NodePort, trafficDistribution: PreferClose}",
 			"horizontalPodAutoscaler": "spec: {minReplicas: 2, maxReplicas: 3}",
 			"podDisruptionBudget":     "spec: {maxUnavailable: 1}",
 		},
@@ -309,6 +309,10 @@ func TestGatewayClassOverlayPrecedence(t *testing.T) {
 	}
 	if svc.Spec.Type != corev1.ServiceTypeNodePort {
 		t.Fatalf("class Service default missing: %s", svc.Spec.Type)
+	}
+	if svc.Spec.TrafficDistribution == nil ||
+		*svc.Spec.TrafficDistribution != corev1.ServiceTrafficDistributionPreferClose {
+		t.Fatalf("class Service traffic distribution missing: %+v", svc.Spec)
 	}
 	hpaPatch := rig.patcher.find("horizontalpodautoscalers")
 	if hpaPatch == nil || rig.patcher.find("poddisruptionbudgets") == nil {

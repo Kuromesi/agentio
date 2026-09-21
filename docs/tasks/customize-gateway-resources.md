@@ -60,6 +60,8 @@ Each key contains a Strategic Merge Patch applied after template rendering:
 
 Containers and environment variables merge by `name`; a container entry with a new name adds a sidecar. Use `agentio-proxy` for the Envoy gateway and `agentgateway` for the native agentgateway. Strategic Merge Patch directives such as `$patch: delete` are supported. Patches may modify labels and annotations, but may not change resource identity or ownership metadata, such as name, namespace, owner references, or finalizers.
 
+Generated gateway Services have no topology preference by default. To prefer nearby gateway replicas, set `spec.trafficDistribution: PreferClose` in a `service` patch on clusters that support the field. Agentio translates the native Service field into ztunnel's endpoint selection policy.
+
 Unset `spec.infrastructure.labels` and `spec.infrastructure.annotations` inherit the corresponding Gateway metadata independently. Adding only `parametersRef` preserves that inheritance. An explicitly supplied map replaces the corresponding inherited map before resource patches are applied.
 
 The same ConfigMap may also contain `data.config` for Envoy's xDS settings or `data["config.yaml"]` for native agentgateway configuration. These keys are excluded from resource patching. Envoy resource-only ConfigMaps may omit `config` to use default proxy settings; an explicitly empty or invalid `config` retains the last valid proxy configuration. Native agentgateway still requires `config.yaml`; see [Deploy agentgateway](deploy-agentgateway.md).

@@ -128,14 +128,25 @@ func TestServiceTrafficPolicyTranslation(t *testing.T) {
 		},
 		Spec: corev1.ServiceSpec{IPFamilies: []corev1.IPFamily{corev1.IPv6Protocol}},
 	})
-	if annotated.TrafficDistribution != model.TrafficDistributionPreferSameZone {
-		t.Fatalf("annotated traffic distribution = %v, want PreferSameZone", annotated.TrafficDistribution)
+	if annotated.TrafficDistribution != model.TrafficDistributionAny {
+		t.Fatalf("legacy annotation changed traffic distribution to %v", annotated.TrafficDistribution)
 	}
 	if annotated.IPFamilies != model.IPFamiliesIPv6Only {
 		t.Fatalf("annotated ip families = %v, want IPv6 only", annotated.IPFamilies)
 	}
 	if annotated.InternalTrafficPolicyLocal {
 		t.Fatal("cluster internal traffic policy became local")
+	}
+	for _, preference := range []string{corev1.ServiceTrafficDistributionPreferClose, corev1.ServiceTrafficDistributionPreferSameZone} {
+		t.Run(preference, func(t *testing.T) {
+			service := serviceFromKubernetes("cluster.local", &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "backend"},
+				Spec:       corev1.ServiceSpec{TrafficDistribution: &preference},
+			})
+			if service.TrafficDistribution != model.TrafficDistributionPreferSameZone {
+				t.Fatalf("native traffic distribution = %v, want PreferSameZone", service.TrafficDistribution)
+			}
+		})
 	}
 }
 
