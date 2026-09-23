@@ -23,6 +23,8 @@ pkg/krt/collection.go
 pkg/krt/core.go
 pkg/krt/debug.go
 pkg/krt/fetch.go
+pkg/krt/files/files.go
+pkg/krt/files/files_test.go
 pkg/krt/filter.go
 pkg/krt/helpers.go
 pkg/krt/helpers_shared_test.go
