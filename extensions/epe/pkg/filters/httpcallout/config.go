@@ -24,9 +24,7 @@ package httpcallout
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
-	"time"
 
 	"golang.org/x/net/http/httpguts"
 )
@@ -34,8 +32,6 @@ import (
 const (
 	// FilterName is the engine registration and attribution name.
 	FilterName = "httpcallout"
-	// DefaultTimeout bounds one callout invocation when Config.Timeout is zero.
-	DefaultTimeout = 500 * time.Millisecond
 	// DefaultMaxBodyBytes bounds one request or response body when
 	// Config.MaxBodyBytes is zero.
 	DefaultMaxBodyBytes int64 = 1 << 20
@@ -90,11 +86,10 @@ type PhaseConfig struct {
 }
 
 // Config is the CRD-free configuration for one policy unit's callout.
-// Endpoint is shared by the enabled request and response phases.
 type Config struct {
-	Endpoint string
+	// Provider selects a named HTTPCallout extension provider.
+	Provider string
 
-	Timeout      time.Duration
 	MaxBodyBytes int64
 	FailOpen     bool
 
@@ -111,17 +106,11 @@ func (c Config) Effective() (Config, error) {
 	if c.Request == nil && c.Response == nil {
 		return Config{}, fmt.Errorf("callout config must enable at least one phase")
 	}
-	if err := validateEndpoint(c.Endpoint); err != nil {
-		return Config{}, err
-	}
-	if c.Timeout < 0 {
-		return Config{}, fmt.Errorf("callout timeout must not be negative")
+	if c.Provider == "" {
+		return Config{}, fmt.Errorf("callout provider is required")
 	}
 	if c.MaxBodyBytes < 0 {
 		return Config{}, fmt.Errorf("callout maximum body bytes must not be negative")
-	}
-	if c.Timeout == 0 {
-		c.Timeout = DefaultTimeout
 	}
 	if c.MaxBodyBytes == 0 {
 		c.MaxBodyBytes = DefaultMaxBodyBytes
@@ -152,29 +141,6 @@ func effectivePhase(in *PhaseConfig, direction string) (*PhaseConfig, error) {
 		return nil, err
 	}
 	return &PhaseConfig{Headers: headers, Body: in.Body}, nil
-}
-
-func validateEndpoint(endpoint string) error {
-	if endpoint == "" {
-		return fmt.Errorf("callout endpoint is empty")
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return fmt.Errorf("parse callout endpoint: %w", err)
-	}
-	if !u.IsAbs() || u.Host == "" {
-		return fmt.Errorf("callout endpoint must be an absolute URL")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("callout endpoint scheme %q is not http or https", u.Scheme)
-	}
-	if u.User != nil {
-		return fmt.Errorf("callout endpoint must not contain user info")
-	}
-	if u.Fragment != "" {
-		return fmt.Errorf("callout endpoint must not contain a fragment")
-	}
-	return nil
 }
 
 // effectiveHeaders validates and normalizes one direction's disclosure config.

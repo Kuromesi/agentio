@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
-	"github.com/openkruise/agentio/extensions/epe/pkg/credential"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
@@ -29,20 +29,14 @@ import (
 
 // Options configures the SecurityProfile-specific test harness.
 type Options struct {
+	Providers *extensionprovider.Registry
 	// Filters overrides the production filter chain.
-	Filters          []filter.Registration
-	StreamLoggers    []filter.StreamLogger
-	AuditRouter      *audit.Router
-	CredentialClient *credential.Client
-	// Kube backs Secret reads in token plugins and, when the mTLS source is
-	// "secret", the credential provider's certificate material. Nil means an
-	// empty fake cluster.
+	Filters       []filter.Registration
+	StreamLoggers []filter.StreamLogger
+	AuditRouter   *audit.Router
+	// Kube backs Secret reads in token plugins. Nil means an empty fake cluster.
 	Kube                   kube.Client
 	DisableResolutionProbe bool
-	// Stop bounds the certificate-reload machinery BuildFilters starts. Nil
-	// means a stop channel tied to the test's lifetime, so the file watcher
-	// and its backstop ticker do not outlive the test.
-	Stop <-chan struct{}
 }
 
 // Harness adds a SecurityProfile fixture to the policy-neutral wire harness.
@@ -59,21 +53,20 @@ func New(t testing.TB, opts Options) *Harness {
 	if kubeClient == nil {
 		kubeClient = kube.NewFakeClient()
 	}
-	stop := opts.Stop
-	if stop == nil {
-		stop = t.Context().Done()
-	}
 	regs := opts.Filters
+	providers := opts.Providers
 	// len, not nil: an explicitly empty slice must take the same branch the
 	// fixture does, or the store would project against the default chain while
 	// the resolver evaluates against an empty one.
 	if len(regs) == 0 {
 		var err error
-		regs, err = wiring.BuildFilters(wiring.Deps{
-			Kube:             kubeClient,
-			Stop:             stop,
-			CredentialClient: opts.CredentialClient,
-		})
+		deps := wiring.Deps{Kube: kubeClient}
+		if providers == nil {
+			providers = &extensionprovider.Registry{}
+			t.Cleanup(providers.Close)
+		}
+		deps.Providers = providers
+		regs, err = wiring.BuildFilters(deps)
 		if err != nil {
 			t.Fatalf("securityprofile: BuildFilters: %v", err)
 		}

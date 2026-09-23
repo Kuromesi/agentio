@@ -26,7 +26,9 @@ sandbox ──> egress gateway ──ext_proc──> EPE ──HTTPS/mTLS──>
 
 ## Wire contract
 
-One endpoint, configured by the `IDENTITY_PROVIDER_URL` environment variable (chart value `epe.credentialProvider.url`). The environment variable's name predates the credential-provider naming and is retained for compatibility. EPE sends:
+EPEConfig supports multiple named credential services and selects the default through `defaultProviders.credentialProvider`. SecurityProfile's existing `name` field continues to select the remote credential configuration. Per-rule extension provider references are deferred to future SecurityProfile API work.
+
+EPE converts `IDENTITY_PROVIDER_URL` (chart value `epe.credentialProvider.url`) and its related environment settings into a default EPEConfig containing a credential provider named `agentio-default-credential-provider` and the corresponding `defaultProviders` selection. An unset URL generates no provider. Base and primary ConfigMaps overlay this default configuration; provider lists merge by name, with same-name entries replaced in full. Adding only HTTPCallout providers preserves the environment credential provider. An explicit `extensionProviders: []` clears the inherited list, and deleting a ConfigMap restores the lower layer. The registry consumes only the resulting configuration; the environment-generated name is ordinary and can be overridden like any other. See [EPE configuration](epe-configuration.md#watched-epeconfig) for default selection and clearing semantics. The environment variable's name predates the credential-provider naming and is retained for compatibility. EPE sends:
 
 ```text
 POST <IDENTITY_PROVIDER_URL>
@@ -76,17 +78,49 @@ Failure response — any non-200 status. The body is logged and surfaced in the 
 
 ## Transport security
 
-`CREDENTIAL_PROVIDER_MTLS_SOURCE` names the single source of EPE's mTLS material. There is deliberately no fallback between sources: a Secret missing its CA does not borrow the CA from disk.
+`CREDENTIAL_PROVIDER_MTLS_SOURCE` selects the TLS source for the environment-derived default provider. It supports `none` and `secret`; file sources are configured through EPEConfig.
 
 | Source | Where the material comes from |
 | --- | --- |
-| `files` (default) | `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `CREDENTIAL_PROVIDER_CLIENT_KEY_PATH` / `CREDENTIAL_PROVIDER_CA_CERT_PATH` (defaults `/etc/epe/credential-provider/{client.crt,client.key,ca.crt}`, where the chart mounts the optional `<name>-mtls-client-cert` Secret). |
-| `secret` | The Secret named by `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `CREDENTIAL_PROVIDER_SECRET_NAME`, data keys `ca.crt`, `client.crt`, `client.key`. Both variables are required. |
-| `none` | No material at all. |
+| `secret` | The Secret named by `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `CREDENTIAL_PROVIDER_SECRET_NAME`, fixed data keys `ca.crt`, `tls.crt`, `tls.key`. Both variables are required. |
+| `none` (default) | No client certificate; HTTPS uses the system trust store. |
 
 Within the chosen source the client identity and the trust anchors are independent: a source may supply anchors without an identity, or an identity without anchors. Material that is absent or unusable means EPE presents no client certificate and verifies the provider against the system trust store; it is never a startup failure. Only a misconfigured source is — an unrecognized `CREDENTIAL_PROVIDER_MTLS_SOURCE` value, or `secret` without both a namespace and a name.
 
-The chosen source is watched for the lifetime of the process, so material that appears or rotates after startup takes effect without a restart. A Secret that does not exist yet, or that the ServiceAccount may not read, degrades to no client identity while EPE keeps waiting for it. TLS 1.2 is the minimum in every case.
+EPE watches sources referenced by the effective configuration, so material that appears or rotates after startup takes effect without a restart. A Secret that does not exist yet leaves no client identity for the optional environment-derived provider while EPE watches for its creation. The EPE ServiceAccount needs list/watch permission for Secrets, including any explicitly configured namespace. TLS 1.2 is the minimum in every case.
+
+These settings become ordinary EPEConfig TLS fields: `caSecretRef` and `clientCertificateSecretRef`, each with an optional `namespace`. CA references read the fixed `ca.crt` data key; client references read the fixed `tls.crt` and `tls.key` data keys. These key names cannot be overridden, including for environment-derived default providers. Existing Secrets using `client.crt` and `client.key` must rename those entries to `tls.crt` and `tls.key`. Missing or empty entries are unavailable material, subject to `tls.optional` as described below.
+
+For server-only TLS, omit client identity fields. An HTTPS URL without TLS settings uses system roots. To use a ConfigMap trust bundle, place the PEM CA certificates in its fixed `data["ca.crt"]` entry and configure:
+
+```yaml
+tls:
+  caConfigMapRef:
+    name: provider-ca
+    namespace: security-system
+```
+
+The namespace defaults to the EPEConfig namespace. EPE watches this ConfigMap for creation, updates, and deletion. No client certificate or `optional: true` setting is required for server-only TLS.
+
+Both `credentialProvider.tls` and `httpCallout.tls` also accept PEM file paths in EPEConfig:
+
+```yaml
+extensionProviders:
+- name: corporate
+  credentialProvider:
+    url: https://credentials.example
+    tls:
+      caCertificateFile: /etc/epe/certs/ca.crt
+      clientCertificateFiles:
+        certificateFile: /etc/epe/certs/tls.crt
+        privateKeyFile: /etc/epe/certs/tls.key
+defaultProviders:
+  credentialProvider: corporate
+```
+
+Paths refer to files inside the EPE container; the deployment must provide them. EPEConfig does not create volume mounts. Changing a configured path updates its watch, and file contents reload on filesystem events with a 10-second polling backstop, including when a directory appears after startup. The CA source is a oneof: `caSecretRef`, `caConfigMapRef`, or `caCertificateFile`. The client identity source is a separate oneof: `clientCertificateSecretRef` or `clientCertificateFiles`, whose `certificateFile` and `privateKeyFile` are both required. Each group permits at most one source; CA and client identity sources can be mixed independently.
+
+Environment defaults set `tls.optional: true`: unavailable or invalid client material is dropped, and unavailable or invalid CA material falls back to system roots. Explicit EPEConfig TLS sources are strict unless marked optional; invalidating a required source makes the provider unavailable and prevents serving its cached credentials.
 
 `CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY=true` is an explicit exception for trusted test environments: it disables provider server-certificate verification while retaining any configured client certificate. It exposes the bearer token and returned credentials to an on-path attacker and must not be used in production.
 
@@ -95,6 +129,8 @@ Providers should require the client certificate and treat the bearer `accessToke
 ## Caching semantics
 
 Providers must tolerate credential reuse within a bounded window; EPE caches per `(providerName + hash(extraMetadata), resourceId)`:
+
+Each registered credential provider has its own caches. `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE`, and `STS_CACHE_MAX_SIZE` are read at process startup and apply to all credential providers, including those added later through EPEConfig. Capacity limits are per provider, not a shared process-wide budget. Changing these environment variables requires restarting EPE; EPEConfig does not expose cache settings.
 
 | Credential | Lifetime | Size bound |
 | --- | --- | --- |
@@ -116,9 +152,8 @@ Practical consequences:
 | Variable | Meaning |
 | --- | --- |
 | `IDENTITY_PROVIDER_URL` | Provider endpoint; unset means provider-backed rules fail through `failStrategy` |
-| `CREDENTIAL_PROVIDER_MTLS_SOURCE` | The single source of mTLS material: `files` (default), `secret`, or `none` |
+| `CREDENTIAL_PROVIDER_MTLS_SOURCE` | The single source of mTLS material: `none` (default) or `secret` |
 | `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `_NAME` | Secret holding mTLS material; both required by the `secret` source |
-| `CREDENTIAL_PROVIDER_CLIENT_CERT_PATH` / `_KEY_PATH` / `_CA_CERT_PATH` | Paths read by the `files` source |
 | `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE` | API-key cache tuning; `TOKEN_CACHE_TTL` is the fallback lifetime for responses without `cacheExpiresInSeconds` |
 | `STS_CACHE_MAX_SIZE` | STS cache tuning |
 

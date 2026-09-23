@@ -17,12 +17,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 	original := Config{
-		Endpoint: "https://callout.example.test/v1/check?tenant=a",
+		Provider: "scanner",
 		Request: &PhaseConfig{
 			Headers: HeadersConfig{
 				Mode:      HeaderModeAllowlist,
@@ -41,9 +40,6 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 	got, err := original.Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
-	}
-	if got.Timeout != 500*time.Millisecond {
-		t.Errorf("Timeout = %v, want 500ms", got.Timeout)
 	}
 	if got.MaxBodyBytes != 1<<20 {
 		t.Errorf("MaxBodyBytes = %d, want %d", got.MaxBodyBytes, 1<<20)
@@ -75,7 +71,7 @@ func TestConfigEffectiveAppliesDefaultsAndNormalizesAllowlist(t *testing.T) {
 // filter and break the "owned copy safe to retain" promise.
 func TestConfigEffectiveReturnsADeepCopy(t *testing.T) {
 	in := Config{
-		Endpoint: "https://callout.example.test/check",
+		Provider: "scanner",
 		Request: &PhaseConfig{
 			Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"X-Tenant"}},
 			Body:    true,
@@ -126,7 +122,7 @@ func TestConfigEffectiveReturnsADeepCopy(t *testing.T) {
 // set-cookie, so they are no more forwardable by default than request headers.
 func TestConfigEffectiveDefaultsBothDirectionsToNone(t *testing.T) {
 	got, err := (Config{
-		Endpoint: "http://callout.default.svc/check",
+		Provider: "scanner",
 		Request:  &PhaseConfig{},
 		Response: &PhaseConfig{},
 	}).Effective()
@@ -164,7 +160,7 @@ func TestConfigEffectiveDefaultsBothDirectionsToNone(t *testing.T) {
 func TestConfigEffectiveAcceptsEitherPhaseAlone(t *testing.T) {
 	t.Run("request only", func(t *testing.T) {
 		got, err := (Config{
-			Endpoint: "https://callout.example.test/check",
+			Provider: "scanner",
 			Request:  &PhaseConfig{},
 		}).Effective()
 		if err != nil {
@@ -180,7 +176,7 @@ func TestConfigEffectiveAcceptsEitherPhaseAlone(t *testing.T) {
 
 	t.Run("response only", func(t *testing.T) {
 		got, err := (Config{
-			Endpoint: "https://callout.example.test/check",
+			Provider: "scanner",
 			Response: &PhaseConfig{},
 		}).Effective()
 		if err != nil {
@@ -197,16 +193,15 @@ func TestConfigEffectiveAcceptsEitherPhaseAlone(t *testing.T) {
 
 func TestConfigEffectivePreservesExplicitOverrides(t *testing.T) {
 	got, err := (Config{
-		Endpoint:     "https://callout.example.test/check",
+		Provider:     "scanner",
 		Response:     &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true},
-		Timeout:      2 * time.Second,
 		MaxBodyBytes: 8 << 20,
 		FailOpen:     true,
 	}).Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
 	}
-	if got.Timeout != 2*time.Second || got.MaxBodyBytes != 8<<20 || !got.FailOpen {
+	if got.MaxBodyBytes != 8<<20 || !got.FailOpen {
 		t.Errorf("explicit settings were not preserved: %+v", got)
 	}
 	if !got.Response.Body {
@@ -215,7 +210,7 @@ func TestConfigEffectivePreservesExplicitOverrides(t *testing.T) {
 }
 
 func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
-	valid := Config{Endpoint: "https://callout.example.test/check", Request: &PhaseConfig{}}
+	valid := Config{Provider: "scanner", Request: &PhaseConfig{}}
 	tests := []struct {
 		name    string
 		mutate  func(*Config)
@@ -227,34 +222,9 @@ func TestConfigEffectiveRejectsInvalidConfiguration(t *testing.T) {
 			wantErr: "phase",
 		},
 		{
-			name:    "empty endpoint",
-			mutate:  func(c *Config) { c.Endpoint = "" },
-			wantErr: "endpoint",
-		},
-		{
-			name:    "relative endpoint",
-			mutate:  func(c *Config) { c.Endpoint = "/check" },
-			wantErr: "absolute",
-		},
-		{
-			name:    "unsupported endpoint scheme",
-			mutate:  func(c *Config) { c.Endpoint = "grpc://callout.example.test/check" },
-			wantErr: "scheme",
-		},
-		{
-			name:    "endpoint user info",
-			mutate:  func(c *Config) { c.Endpoint = "https://user:pass@callout.example.test/check" },
-			wantErr: "user info",
-		},
-		{
-			name:    "endpoint fragment",
-			mutate:  func(c *Config) { c.Endpoint += "#fragment" },
-			wantErr: "fragment",
-		},
-		{
-			name:    "negative timeout",
-			mutate:  func(c *Config) { c.Timeout = -time.Millisecond },
-			wantErr: "timeout",
+			name:    "empty provider",
+			mutate:  func(c *Config) { c.Provider = "" },
+			wantErr: "provider",
 		},
 		{
 			name:    "negative body limit",
@@ -388,7 +358,7 @@ func TestConfigEffectiveRejectsInvalidHeaderConfigInBothDirections(t *testing.T)
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					cfg := Config{
-						Endpoint: "https://callout.example.test/check",
+						Provider: "scanner",
 						Request:  &PhaseConfig{},
 						Response: &PhaseConfig{},
 					}
@@ -427,7 +397,7 @@ func TestConfigEffectiveAcceptsCredentialsInEitherList(t *testing.T) {
 				headers.Denylist = credentials
 			}
 			got, err := (Config{
-				Endpoint: "https://callout.example.test/check",
+				Provider: "scanner",
 				Request:  &PhaseConfig{Headers: headers},
 				Response: &PhaseConfig{Headers: headers},
 			}).Effective()
@@ -455,7 +425,7 @@ func TestConfigEffectiveAcceptsCredentialsInEitherList(t *testing.T) {
 // forwarding time never depends on the casing an operator happened to write.
 func TestConfigEffectiveNormalizesTheDenylist(t *testing.T) {
 	got, err := (Config{
-		Endpoint: "https://callout.example.test/check",
+		Provider: "scanner",
 		Request: &PhaseConfig{Headers: HeadersConfig{
 			Mode:     HeaderModeDenylist,
 			Denylist: []string{"Authorization", "authorization", "Cookie"},

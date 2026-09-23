@@ -28,8 +28,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 )
 
 // swappableSource is a certs.Provider whose material can appear or change while
@@ -165,7 +163,6 @@ func startMTLSServer(t *testing.T, f *tlsFixture, sawClientCert *atomic.Bool) *h
 }
 
 func TestBuildHTTPClientPresentsProviderCertificate(t *testing.T) {
-	testsupport.SetForTest(t, &insecureSkipVerify, false)
 	f := newTLSFixture(t)
 	var sawClientCert atomic.Bool
 	srv := startMTLSServer(t, f, &sawClientCert)
@@ -173,7 +170,7 @@ func TestBuildHTTPClientPresentsProviderCertificate(t *testing.T) {
 	src := &swappableSource{}
 	src.set(f.clientCert, f.caPool)
 
-	resp, err := buildHTTPClient(src, srv.URL).Get(srv.URL)
+	resp, err := NewHTTPClient(src, srv.URL, false).Get(srv.URL)
 	if err != nil {
 		t.Fatalf("request against the mTLS provider failed: %v", err)
 	}
@@ -190,13 +187,12 @@ func TestBuildHTTPClientPresentsProviderCertificate(t *testing.T) {
 // appears after the http.Client was built is used, with no rebuild and no
 // restart.
 func TestBuildHTTPClientUsesMaterialThatAppearsLater(t *testing.T) {
-	testsupport.SetForTest(t, &insecureSkipVerify, false)
 	f := newTLSFixture(t)
 	var sawClientCert atomic.Bool
 	srv := startMTLSServer(t, f, &sawClientCert)
 
 	src := &swappableSource{}
-	client := buildHTTPClient(src, srv.URL)
+	client := NewHTTPClient(src, srv.URL, false)
 
 	// Nothing loaded yet: no client identity and no trust anchors.
 	if resp, err := client.Get(srv.URL); err == nil {
@@ -220,7 +216,6 @@ func TestBuildHTTPClientUsesMaterialThatAppearsLater(t *testing.T) {
 // orthogonal and must still be presented, which is the combination a
 // self-signed provider requiring mTLS needs.
 func TestBuildHTTPClientInsecureStillPresentsClientCertificate(t *testing.T) {
-	testsupport.SetForTest(t, &insecureSkipVerify, true)
 	f := newTLSFixture(t)
 	var sawClientCert atomic.Bool
 	srv := startMTLSServer(t, f, &sawClientCert)
@@ -229,7 +224,7 @@ func TestBuildHTTPClientInsecureStillPresentsClientCertificate(t *testing.T) {
 	// No trust anchors at all: insecure mode must not need them.
 	src.set(f.clientCert, nil)
 
-	client := buildHTTPClient(src, srv.URL)
+	client := NewHTTPClient(src, srv.URL, true)
 	cfg := transportTLSConfig(t, client)
 	if !cfg.InsecureSkipVerify {
 		t.Error("InsecureSkipVerify is not set")
@@ -249,9 +244,8 @@ func TestBuildHTTPClientInsecureStillPresentsClientCertificate(t *testing.T) {
 }
 
 func TestBuildHTTPClientWithoutProviderPresentsNoIdentity(t *testing.T) {
-	testsupport.SetForTest(t, &insecureSkipVerify, false)
 
-	client := buildHTTPClient(nil, "https://provider.example.com")
+	client := NewHTTPClient(nil, "https://provider.example.com", false)
 
 	cfg := transportTLSConfig(t, client)
 	if cfg.GetClientCertificate == nil {
@@ -266,16 +260,10 @@ func TestBuildHTTPClientWithoutProviderPresentsNoIdentity(t *testing.T) {
 	}
 }
 
-// The verification pipeline fixes ServerName when the config is built, so the
-// client must be built after the options that can change the provider URL.
-func TestNewClientWithCacheDerivesServerNameFromOverriddenURL(t *testing.T) {
-	testsupport.SetForTest(t, &insecureSkipVerify, false)
-	testsupport.SetForTest(t, &identityProviderURL, "https://from-env.example.com/creds")
-
-	c := NewClientWithCache(nil, nil, nil, WithProviderURL("https://from-option.example.com/creds"))
-
-	if got := transportTLSConfig(t, c.httpClient).ServerName; got != "from-option.example.com" {
-		t.Errorf("ServerName = %q, want the host from WithProviderURL", got)
+func TestNewHTTPClientDerivesServerNameFromURL(t *testing.T) {
+	client := NewHTTPClient(nil, "https://provider.example.com/creds", false)
+	if got := transportTLSConfig(t, client).ServerName; got != "provider.example.com" {
+		t.Errorf("ServerName = %q, want the provider host", got)
 	}
 }
 
@@ -283,9 +271,9 @@ func TestNewClientWithCacheDerivesServerNameFromOverriddenURL(t *testing.T) {
 // connection reuse has to be bounded or a rotated certificate can sit unused
 // for as long as the provider keeps the connection open.
 func TestBuildHTTPClientBoundsIdleConnectionReuse(t *testing.T) {
-	tr, ok := buildHTTPClient(nil, "https://provider.example.com").Transport.(*http.Transport)
+	tr, ok := NewHTTPClient(nil, "https://provider.example.com", false).Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("transport is %T, want *http.Transport", buildHTTPClient(nil, "").Transport)
+		t.Fatalf("transport is %T, want *http.Transport", NewHTTPClient(nil, "", false).Transport)
 	}
 	if tr.IdleConnTimeout != 90*time.Second {
 		t.Errorf("IdleConnTimeout = %v, want 90s", tr.IdleConnTimeout)

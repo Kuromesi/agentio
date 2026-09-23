@@ -23,6 +23,8 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/pkg/config"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/kclient"
@@ -210,8 +212,11 @@ func New(
 	if options.AgentioConfigMaps != nil {
 		agentioConfigMaps = *options.AgentioConfigMaps
 	}
-	r.AgentioConfig = krt.NewSingleton(func(ctx krt.HandlerContext) *model.AgentioConfiguration {
-		return effectiveAgentioConfiguration(ctx, configMaps, rootNamespace, agentioConfigMaps)
+	r.AgentioConfig = config.NewCollection(configMaps, config.Options[*configv1.AgentioConfig]{
+		Namespace: rootNamespace,
+		Names:     []string{agentioConfigMaps.BaseName, agentioConfigMaps.PrimaryName},
+		Defaults:  defaultAgentioConfiguration(),
+		Validate:  validateAgentioConfig,
 	}, derivedOptions("agentio-config")...).AsCollection()
 	r.GatewayPatches = newGatewayPatchesCollection(
 		configMaps,

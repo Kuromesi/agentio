@@ -44,8 +44,16 @@ func Catalog() []Suite {
 			Overrides: map[string]Coverage{"TestControlPlaneConfigDebug": once}},
 		{Name: "gateway", Coverage: Coverage{Profiles: both}, Fixtures: []string{"extproc", "forwardproxy"}},
 		{Name: "securitypolicy", Coverage: Coverage{Profiles: both}},
-		{Name: "epe", Coverage: Coverage{Profiles: both},
-			Overrides: map[string]Coverage{"TestEPEServiceAccountCanWatchItsInputs": once}},
+		{
+			Name:     "epe",
+			Coverage: Coverage{Profiles: both},
+			Fixtures: []string{"extproc"},
+			Overrides: map[string]Coverage{
+				"TestEPEServiceAccountCanWatchItsInputs": once,
+				// The credential fixture mounts a sandbox token into the caller's
+				// dedicated sidecar; ambient token delivery is a separate contract.
+				"TestEPECredentialProviderConfigUpdates": once,
+			}},
 		{Name: "clienttrust", Coverage: once, SupportedProfiles: []string{"sidecar"}, Fixtures: []string{"clienttrust"}},
 		{Name: "agentgateway", Coverage: Coverage{Profiles: both}, GatewayDataplane: "agentgateway", Fixtures: []string{"extproc"}, OptIn: true},
 	}

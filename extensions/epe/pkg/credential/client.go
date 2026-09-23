@@ -33,7 +33,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential/tokencache"
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
-	"istio.io/istio/pkg/env"
 )
 
 const (
@@ -51,22 +50,6 @@ const (
 	// idle connections indefinitely, which would let a rotated certificate go
 	// unused until the provider chose to close the connection.
 	idleConnTimeout = 90 * time.Second
-)
-
-// Environment variables for the credential provider client. Resolved once at
-// init, as everywhere else in the tree; tests override the resulting values
-// directly with test.SetForTest rather than through the environment.
-var (
-	identityProviderURL = env.Register("IDENTITY_PROVIDER_URL", "",
-		"Base URL of the credential provider API. The client fails every credential lookup while it is unset").Get()
-
-	// insecureSkipVerify disables verification of the credential provider's
-	// server certificate. It is orthogonal to the client identity, which is
-	// still whatever the Provider supplies — see buildHTTPClient.
-	insecureSkipVerify = env.Register("CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY", false,
-		"Skip verification of the credential provider's server certificate. The client certificate, when one is "+
-			"configured, is still presented. Intended for self-signed providers on trusted networks; any on-path "+
-			"attacker can then read the bearer token and forge the credential response").Get()
 )
 
 // STSCredential is a complete STS triplet. GetSTSCredential returns one only
@@ -120,52 +103,26 @@ type Client struct {
 	stsCache    *tokencache.STSCache
 }
 
-// Option customizes a Client.
-type Option func(*Client)
-
-// WithProviderURL overrides the credential provider base URL, taking
-// precedence over the IDENTITY_PROVIDER_URL environment variable. For
-// tests and callers with explicit configuration.
-func WithProviderURL(url string) Option {
-	return func(c *Client) {
-		if url != "" {
-			c.providerURL = url
-		}
+// CloseIdleConnections retires this client's idle pool without interrupting
+// active calls. Registries call it after the last pinned exchange releases it.
+func (c *Client) CloseIdleConnections() {
+	if c.httpClient != nil {
+		c.httpClient.CloseIdleConnections()
 	}
 }
 
-// NewClient creates a credential provider client with no mTLS material, so it
-// presents no client identity and verifies the provider against the system
-// trust store.
-func NewClient() *Client {
-	return NewClientWithCache(nil, nil, nil)
+// NewClient constructs a provider instance without consulting process
+// environment. Its connection pool and caches belong to this configuration version.
+func NewClient(
+	endpoint string,
+	client *http.Client,
+	cache *tokencache.Cache,
+	sts *tokencache.STSCache,
+) *Client {
+	return &Client{providerURL: endpoint, httpClient: client, cache: cache, stsCache: sts}
 }
 
-// NewClientWithCache creates a credential provider client with optional token
-// caches and an optional certificate Provider supplying the mTLS material.
-//
-// The Provider is consulted on every handshake rather than read once here, so
-// material that appears or rotates after startup takes effect without a
-// restart. Where that material comes from — a Secret, files on disk, or
-// nothing — is the composition root's decision (see pkg/wiring); a nil Provider
-// means no client identity.
-func NewClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache, provider certs.Provider, opts ...Option) *Client {
-	c := &Client{
-		providerURL: identityProviderURL,
-		cache:       cache,
-		stsCache:    stsCache,
-	}
-	for _, opt := range opts {
-		opt(c)
-	}
-	// Built after the options on purpose: the verification pipeline fixes the
-	// expected server name when the config is assembled, and WithProviderURL
-	// can still change which host that is.
-	c.httpClient = buildHTTPClient(provider, c.providerURL)
-	return c
-}
-
-// buildHTTPClient constructs the HTTP client used to call the credential
+// NewHTTPClient constructs the HTTP client used to call the credential
 // provider. The client is built once; the certificate and the trust anchors are
 // resolved from the Provider on every handshake.
 //
@@ -179,7 +136,7 @@ func NewClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache, 
 // is that callers can never disable verification. Rather than punch a hole in
 // that package, the one place with a reason to skip verification assembles its
 // own config here and still sources the client identity from the Provider.
-func buildHTTPClient(provider certs.Provider, providerURL string) *http.Client {
+func NewHTTPClient(provider certs.Provider, providerURL string, insecureSkipVerify bool) *http.Client {
 	logger := log.Log.WithName("credential")
 	if provider == nil {
 		// No mTLS material configured: present no client identity and verify
@@ -190,7 +147,9 @@ func buildHTTPClient(provider certs.Provider, providerURL string) *http.Client {
 	if insecureSkipVerify {
 		logger.Info(
 			"credential provider server certificate verification is disabled; the bearer token and returned credentials are exposed to any on-path attacker. A configured client certificate is still presented",
-			"envVar", "CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY")
+			"envVar",
+			"CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY",
+		)
 		return newHTTPClient(&tls.Config{
 			MinVersion:           tls.VersionTLS12,
 			GetClientCertificate: provider.GetClientCertificate,
@@ -204,9 +163,12 @@ func buildHTTPClient(provider certs.Provider, providerURL string) *http.Client {
 		// Say why here. The empty server name below makes the verification
 		// pipeline fail closed, but on its own that surfaces as an opaque
 		// "no identity verification configured" on every single request.
-		logger.Error(hostErr,
+		logger.Error(
+			hostErr,
 			"cannot determine the credential provider host, so its certificate cannot be verified; every credential lookup will fail",
-			"envVar", "IDENTITY_PROVIDER_URL")
+			"envVar",
+			"IDENTITY_PROVIDER_URL",
+		)
 	}
 
 	cfg, err := certs.ClientTLSConfig(provider, certs.WithServerName(host))
@@ -214,7 +176,10 @@ func buildHTTPClient(provider certs.Provider, providerURL string) *http.Client {
 		// Unreachable: WithServerName always satisfies the identity requirement
 		// ClientTLSConfig enforces. Fail closed rather than fall back to an
 		// unverified client.
-		logger.Error(err, "building the credential provider TLS configuration failed; every credential lookup will fail")
+		logger.Error(
+			err,
+			"building the credential provider TLS configuration failed; every credential lookup will fail",
+		)
 		return newHTTPClient(failClosedTLSConfig())
 	}
 	return newHTTPClient(cfg)
@@ -244,7 +209,10 @@ func providerHost(rawURL string) (string, error) {
 		return "", fmt.Errorf("parsing %q: %w", rawURL, err)
 	}
 	if u.Hostname() == "" {
-		return "", fmt.Errorf("%q has no host; an absolute URL is required, e.g. https://provider.example.com/creds", rawURL)
+		return "", fmt.Errorf(
+			"%q has no host; an absolute URL is required, e.g. https://provider.example.com/creds",
+			rawURL,
+		)
 	}
 	return u.Hostname(), nil
 }
@@ -271,7 +239,11 @@ type credentialRequest struct {
 }
 
 // getCredential calls the GetResourceCredential API.
-func (c *Client) getCredential(ctx context.Context, accessToken, sandboxClientID, credentialProviderName, credentialType string, extraMetadata map[string]any) (*credentialResponse, error) {
+func (c *Client) getCredential(
+	ctx context.Context,
+	accessToken, sandboxClientID, credentialProviderName, credentialType string,
+	extraMetadata map[string]any,
+) (*credentialResponse, error) {
 	logger := log.FromContext(ctx)
 
 	if c.providerURL == "" {
@@ -327,13 +299,20 @@ func (c *Client) getCredential(ctx context.Context, accessToken, sandboxClientID
 }
 
 // GetToken retrieves an API key from the credential provider.
-func (c *Client) GetToken(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string) (string, error) {
+func (c *Client) GetToken(
+	ctx context.Context,
+	accessToken, sandboxClientID, credentialProviderName string,
+) (string, error) {
 	return c.GetTokenWithExtraMetadata(ctx, accessToken, sandboxClientID, credentialProviderName, nil)
 }
 
 // GetTokenWithExtraMetadata retrieves an API key and sends extraMetadata to
 // the credential provider. Metadata participates in the cache key.
-func (c *Client) GetTokenWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string, extraMetadata map[string]any) (string, error) {
+func (c *Client) GetTokenWithExtraMetadata(
+	ctx context.Context,
+	accessToken, sandboxClientID, credentialProviderName string,
+	extraMetadata map[string]any,
+) (string, error) {
 	logger := log.FromContext(ctx)
 	cacheProviderName, err := providerCacheKey(credentialProviderName, extraMetadata)
 	if err != nil {
@@ -348,7 +327,14 @@ func (c *Client) GetTokenWithExtraMetadata(ctx context.Context, accessToken, san
 		}
 	}
 
-	credResp, err := c.getCredential(ctx, accessToken, sandboxClientID, credentialProviderName, credentialTypeAPIKey, extraMetadata)
+	credResp, err := c.getCredential(
+		ctx,
+		accessToken,
+		sandboxClientID,
+		credentialProviderName,
+		credentialTypeAPIKey,
+		extraMetadata,
+	)
 	if err != nil {
 		return "", err
 	}
@@ -371,14 +357,21 @@ func (c *Client) GetTokenWithExtraMetadata(ctx context.Context, accessToken, san
 // GetSTSCredential retrieves STS credentials (AK/SK/SecurityToken triplet)
 // from the credential provider. Results are cached using the token's own
 // expiration timestamp when an STS cache is configured.
-func (c *Client) GetSTSCredential(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string) (STSCredential, error) {
+func (c *Client) GetSTSCredential(
+	ctx context.Context,
+	accessToken, sandboxClientID, credentialProviderName string,
+) (STSCredential, error) {
 	return c.GetSTSCredentialWithExtraMetadata(ctx, accessToken, sandboxClientID, credentialProviderName, nil)
 }
 
 // GetSTSCredentialWithExtraMetadata retrieves STS credentials and sends
 // extraMetadata to the credential provider. Metadata participates in the
 // cache key.
-func (c *Client) GetSTSCredentialWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, credentialProviderName string, extraMetadata map[string]any) (STSCredential, error) {
+func (c *Client) GetSTSCredentialWithExtraMetadata(
+	ctx context.Context,
+	accessToken, sandboxClientID, credentialProviderName string,
+	extraMetadata map[string]any,
+) (STSCredential, error) {
 	logger := log.FromContext(ctx)
 	cacheProviderName, err := providerCacheKey(credentialProviderName, extraMetadata)
 	if err != nil {
@@ -397,7 +390,14 @@ func (c *Client) GetSTSCredentialWithExtraMetadata(ctx context.Context, accessTo
 		}
 	}
 
-	credResp, err := c.getCredential(ctx, accessToken, sandboxClientID, credentialProviderName, credentialTypeStsToken, extraMetadata)
+	credResp, err := c.getCredential(
+		ctx,
+		accessToken,
+		sandboxClientID,
+		credentialProviderName,
+		credentialTypeStsToken,
+		extraMetadata,
+	)
 	if err != nil {
 		return STSCredential{}, err
 	}

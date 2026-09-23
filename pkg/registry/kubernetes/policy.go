@@ -16,22 +16,14 @@ package kubernetes
 
 import (
 	"fmt"
-	"strings"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
-
-	legacyproto "github.com/golang/protobuf/proto" //nolint:staticcheck // jsonpb accepts the legacy message adapter.
-	"google.golang.org/protobuf/proto"
-	corev1 "k8s.io/api/core/v1"
-
-	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
 const (
 	baseConfigMapName    = "agentio-config"
 	primaryConfigMapName = "agentio-config-primary"
-	agentioConfigKey     = "config"
 )
 
 // AgentioConfigMapOptions identifies the ordered Kubernetes sources for
@@ -59,62 +51,17 @@ func defaultAgentioConfiguration() *configv1.AgentioConfig {
 	}
 }
 
-// effectiveAgentioConfiguration merges defaults, the base ConfigMap, then the primary ConfigMap; parse failures discard the update (last known good).
-func effectiveAgentioConfiguration(
-	ctx krt.HandlerContext,
-	configMaps krt.Collection[*corev1.ConfigMap],
-	rootNamespace string,
-	configMapOptions AgentioConfigMapOptions,
-) *model.AgentioConfiguration {
-	value := defaultAgentioConfiguration()
-	resourceVersions := make([]string, 0, 2)
-	for _, name := range []string{configMapOptions.BaseName, configMapOptions.PrimaryName} {
-		if name == "" {
-			continue
-		}
-		configMap := krt.FetchOne(ctx, configMaps, krt.FilterKey(rootNamespace+"/"+name))
-		if configMap == nil {
-			continue
-		}
-		resourceVersions = append(resourceVersions, name+"="+(*configMap).ResourceVersion)
-		content := (*configMap).Data[agentioConfigKey]
-		if strings.TrimSpace(content) == "" {
-			continue
-		}
-		applied, err := applyAgentioConfig(content, value)
-		if err != nil {
-			log.Warn("retain last-known-good Agentio configuration",
-				"configmap", name, "error", err)
-			ctx.DiscardResult()
-			return nil
-		}
-		value = applied
-	}
-	return &model.AgentioConfiguration{
-		Value:           value,
-		ResourceVersion: strings.Join(resourceVersions, ","),
-	}
-}
-
-// applyAgentioConfig overlays YAML onto base using jsonpb merge semantics.
-func applyAgentioConfig(content string, base *configv1.AgentioConfig) (*configv1.AgentioConfig, error) {
-	value := &configv1.AgentioConfig{}
-	if base != nil {
-		value = proto.Clone(base).(*configv1.AgentioConfig)
-	}
-	if err := decodeAgentioYAML(content, "effective Agentio configuration", legacyproto.MessageV1(value)); err != nil {
-		return nil, err
-	}
+func validateAgentioConfig(value *configv1.AgentioConfig) error {
 	if err := normalizeEgressServiceEntries(value.GetEgressGateways()); err != nil {
-		return nil, err
+		return err
 	}
 	for i, gateway := range value.GetEgressGateways() {
 		if err := model.ValidateUpstreamTLS(gateway.GetUpstreamTls()); err != nil {
-			return nil, fmt.Errorf("egressGateways[%d].%w", i, err)
+			return fmt.Errorf("egressGateways[%d].%w", i, err)
 		}
 		if err := model.ValidateAccessLogFormat(gateway.GetAccessLogFormat()); err != nil {
-			return nil, fmt.Errorf("egressGateways[%d].%w", i, err)
+			return fmt.Errorf("egressGateways[%d].%w", i, err)
 		}
 	}
-	return value, nil
+	return nil
 }

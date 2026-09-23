@@ -18,8 +18,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 )
 
 func TestCache_BasicSetGet(t *testing.T) {
@@ -260,8 +258,7 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-// TestCache_DefaultParams verifies NewCache resolves a non-positive TTL to
-// cacheTTL and a non-positive max size to defaultMaxSize.
+// TestCache_DefaultParams verifies TTL is explicit and non-positive capacity uses the default.
 func TestCache_DefaultParams(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -272,26 +269,22 @@ func TestCache_DefaultParams(t *testing.T) {
 		{name: "negative values", ttl: -1 * time.Hour, maxSize: -5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Distinct from the 15m default so the assertion is specific to cacheTTL.
-			testsupport.SetForTest(t, &cacheTTL, 42*time.Minute)
 			c := NewCache(tc.ttl, tc.maxSize)
-			if c.ttl != 42*time.Minute {
-				t.Errorf("expected the configured cacheTTL 42m, got %v", c.ttl)
+			if c.ttl != tc.ttl {
+				t.Errorf("ttl = %v, want %v", c.ttl, tc.ttl)
 			}
 			// maxSize is internal to the golang-lru backing; verify via behavior.
-			fillAndVerifyCapacity(t, c, defaultMaxSize)
+			fillAndVerifyCapacity(t, c, DefaultMaxSize)
 		})
 	}
 }
 
-// TestCache_NonPositiveEnvTTLDisablesCaching asserts a non-positive
-// TOKEN_CACHE_TTL is not clamped, so it disables caching, while a per-entry TTL
-// still applies.
-func TestCache_NonPositiveEnvTTLDisablesCaching(t *testing.T) {
-	testsupport.SetForTest(t, &cacheTTL, time.Duration(0))
-	c := NewCacheFromEnv()
+// TestCache_NonPositiveTTLDisablesCaching verifies an explicit zero disables
+// the default lifetime while a per-entry TTL still applies.
+func TestCache_NonPositiveTTLDisablesCaching(t *testing.T) {
+	c := NewCache(0, 100)
 	if c.ttl != 0 {
-		t.Fatalf("ttl = %v, want 0 (a non-positive env TTL must not be clamped)", c.ttl)
+		t.Fatalf("ttl = %v, want 0 (a non-positive TTL must not be clamped)", c.ttl)
 	}
 
 	now := time.Unix(1000, 0)
@@ -320,7 +313,7 @@ func fillAndVerifyCapacity(t *testing.T, c *Cache, maxSize int) {
 		limit = 100 // test a reasonable subset
 	}
 	for i := 0; i < limit; i++ {
-		c.Set("default-test", fmt.Sprintf("r-%d", i), fmt.Sprintf("t-%d", i))
+		c.SetWithTTL("default-test", fmt.Sprintf("r-%d", i), fmt.Sprintf("t-%d", i), time.Minute)
 	}
 	expectedLen := limit
 	if c.Len() != expectedLen {
@@ -328,44 +321,11 @@ func fillAndVerifyCapacity(t *testing.T, c *Cache, maxSize int) {
 	}
 }
 
-// TestNewCacheFromEnv asserts the TTL is taken from the environment as-is,
-// including a non-positive value.
-func TestNewCacheFromEnv(t *testing.T) {
-	testsupport.SetForTest(t, &cacheTTL, 10*time.Minute)
-	testsupport.SetForTest(t, &cacheMaxSize, 500)
-	if got := NewCacheFromEnv().ttl; got != 10*time.Minute {
-		t.Errorf("expected 10m TTL, got %v", got)
-	}
-
-	testsupport.SetForTest(t, &cacheTTL, time.Duration(0))
-	testsupport.SetForTest(t, &cacheMaxSize, -1)
-	if got := NewCacheFromEnv().ttl; got != 0 {
-		t.Errorf("expected a non-positive env TTL to be honoured, got %v", got)
-	}
-}
-
-// TestConfigInfo asserts the logged config reports the raw environment input.
-func TestConfigInfo(t *testing.T) {
-	testsupport.SetForTest(t, &cacheTTL, 5*time.Minute)
-	testsupport.SetForTest(t, &cacheMaxSize, 42)
-	if got := ConfigInfo(); got != "fallbackTTL=5m0s, maxSize=42" {
-		t.Errorf("unexpected ConfigInfo: %q", got)
-	}
-
-	testsupport.SetForTest(t, &cacheTTL, time.Duration(-1))
-	testsupport.SetForTest(t, &cacheMaxSize, -1)
-	if got := ConfigInfo(); got != "fallbackTTL=-1ns, maxSize=-1" {
-		t.Errorf("ConfigInfo() = %q, want the raw non-positive values", got)
-	}
-}
-
 // TestNewCache_ClampsNonPositiveMaxSize asserts a non-positive
-// TOKEN_CACHE_MAX_SIZE yields a working cache rather than a panic from lru.New.
+// capacity yields a working cache rather than a panic from lru.New.
 func TestNewCache_ClampsNonPositiveMaxSize(t *testing.T) {
-	testsupport.SetForTest(t, &cacheTTL, time.Minute)
 	for _, maxSize := range []int{0, -1} {
-		testsupport.SetForTest(t, &cacheMaxSize, maxSize)
-		c := NewCacheFromEnv() // must not panic
+		c := NewCache(time.Minute, maxSize) // must not panic
 		c.Set("provider-a", "resource-1", "token-abc")
 		if _, ok := c.Get("provider-a", "resource-1"); !ok {
 			t.Errorf("maxSize %d: expected a usable cache after the clamp", maxSize)

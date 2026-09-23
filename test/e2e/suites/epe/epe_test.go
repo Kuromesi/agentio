@@ -541,7 +541,7 @@ func beginEPEDataPathScenario(t *testing.T, failureDiagnostic string) (*e2e.Envi
 	t.Helper()
 	environment, scope := rig.BeginScenario(t)
 	attachEPELogsOnFailure(t, environment, failureDiagnostic)
-	applyEPEProviderConfig(t, scope)
+	applyEPEProviderConfig(t, scope, epeName)
 	return environment, scope
 }
 
@@ -588,10 +588,11 @@ func applyEPESelectorProbe(t *testing.T, environment *e2e.Environment) echo.Inst
 
 // applyEPEProviderConfig configures this scenario to route EPE traffic through
 // the gateway. Cleanup restores the shared PASSTHROUGH baseline.
-func applyEPEProviderConfig(t *testing.T, scope *kube.ResourceScope) {
+func applyEPEProviderConfig(t *testing.T, scope *kube.ResourceScope, service string) {
 	t.Helper()
 	rig.ApplyConfig(t, scope, map[string]any{
 		"Namespace": resolvedAgentioConfig.Namespace,
+		"Service":   service,
 	}, `
 apiVersion: v1
 kind: ConfigMap
@@ -600,7 +601,7 @@ metadata:
 data:
   config: |
     sandboxExtProc:
-      service: agentio-epe.{{ .Namespace }}.svc.cluster.local
+      service: {{ .Service }}.{{ .Namespace }}.svc.cluster.local
       port: 9002
       messageTimeout: 5s
       request:

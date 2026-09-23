@@ -91,32 +91,21 @@ func FromFiles(certPath, keyPath, caPath string, stop <-chan struct{}) (certs.Pr
 	return p, nil
 }
 
-// FromFilesOptional is FromFiles without the requirement: absent material is a
-// valid resting state that fills in later.
-//
-// This is the shape a Kubernetes Secret volume mounted with optional: true
-// needs. The mount starts empty, kubelet populates it once the Secret exists,
-// and the watch picks it up — where reading once at startup would have pinned
-// "no client identity" for the life of the process.
-func FromFilesOptional(certPath, keyPath, caPath string, stop <-chan struct{}) certs.Provider {
-	return fromFiles(fileSource{certPath: certPath, keyPath: keyPath, caPath: caPath}, stop)
-}
-
 // fromFiles wires a file source to the shared holder, driving reloads from
 // filesystem events.
 func fromFiles(src fileSource, stop <-chan struct{}) *dynamicProvider {
-	triggers := watchPaths(stop, src.certPath, src.keyPath, src.caPath)
+	triggers := WatchFiles(stop, src.certPath, src.keyPath, src.caPath)
 	return newDynamic(src, triggers, stop, reloadPollInterval)
 }
 
-// watchPaths returns a channel that fires when any of paths changes.
+// WatchFiles returns a channel that fires when any of paths changes.
 //
 // The watcher keys on the parent directory, so a path that does not exist yet
 // still produces events once it appears — which is how a late-populated Secret
 // volume is noticed. A path whose watch cannot be registered at all (its
 // directory is missing too) is covered by the caller's backstop tick instead;
 // that fallback is why this returns no error.
-func watchPaths(stop <-chan struct{}, paths ...string) <-chan struct{} {
+func WatchFiles(stop <-chan struct{}, paths ...string) <-chan struct{} {
 	logger := ctrllog.Log.WithName("certs")
 	watcher := filewatcher.NewWatcher()
 	triggers := make(chan struct{}, 1)

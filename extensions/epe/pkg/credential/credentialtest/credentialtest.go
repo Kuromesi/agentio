@@ -111,16 +111,14 @@ func NewRawProvider(t testing.TB, body string) *FakeProvider {
 	return newFakeProvider(t, http.StatusOK, body)
 }
 
-// Client returns a cache-less credential.Client pointed at the fake server
-// via credential.WithProviderURL (no environment mutation).
-func (p *FakeProvider) Client(opts ...credential.Option) *credential.Client {
-	return p.ClientWithCache(nil, nil, opts...)
+// Client returns a cache-less credential.Client pointed at the fake server.
+func (p *FakeProvider) Client() *credential.Client {
+	return p.ClientWithCache(nil, nil)
 }
 
 // ClientWithCache is like Client but wires the given token caches.
-func (p *FakeProvider) ClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache, opts ...credential.Option) *credential.Client {
-	allOpts := append([]credential.Option{credential.WithProviderURL(p.Server.URL)}, opts...)
-	return credential.NewClientWithCache(cache, stsCache, nil, allOpts...)
+func (p *FakeProvider) ClientWithCache(cache *tokencache.Cache, stsCache *tokencache.STSCache) *credential.Client {
+	return credential.NewClient(p.Server.URL, p.Server.Client(), cache, stsCache)
 }
 
 // mustMarshal renders a response body. The fake builds the wire shape by hand

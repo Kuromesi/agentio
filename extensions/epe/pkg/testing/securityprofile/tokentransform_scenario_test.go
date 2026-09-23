@@ -23,10 +23,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential/credentialtest"
-	"github.com/openkruise/agentio/extensions/epe/pkg/credential/tokencache"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/pkg/kube"
 )
@@ -115,8 +115,7 @@ func TestScenario_MissingSecretFailStrategy(t *testing.T) {
 // request.
 func TestScenario_NewAPIKeySelectorWithCredentialProvider(t *testing.T) {
 	provider := credentialtest.NewAPIKeyProvider(t, "provider-token")
-	client := provider.ClientWithCache(tokencache.NewCache(time.Hour, 16), nil)
-	h := New(t, Options{CredentialClient: client})
+	h := New(t, Options{Providers: providerRegistry(t, provider.Server.URL)})
 	h.Fixture.ApplyYAML(fmt.Sprintf(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile
@@ -179,7 +178,7 @@ spec:
 // condition still fetches exactly once, while a non-match does not fetch.
 func TestScenario_LegacyApiKeyFieldsRemainAFullChainContract(t *testing.T) {
 	provider := credentialtest.NewAPIKeyProvider(t, "provider-token")
-	h := New(t, Options{CredentialClient: provider.Client()})
+	h := New(t, Options{Providers: providerRegistry(t, provider.Server.URL)})
 	h.Fixture.ApplyYAML(fmt.Sprintf(`
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile
@@ -269,4 +268,23 @@ spec:
 
 	h.Run(t, injectionRequest().Header("authorization", "Bearer fresh-xyz")).
 		RequirePassthrough(t)
+}
+
+func providerRegistry(t *testing.T, endpoint string) *extensionprovider.Registry {
+	t.Helper()
+	registry := &extensionprovider.Registry{}
+	t.Cleanup(registry.Close)
+	cfg := &configv1.EPEConfig{
+		ExtensionProviders: []*configv1.ExtensionProvider{{
+			Name: "default",
+			Provider: &configv1.ExtensionProvider_CredentialProvider{
+				CredentialProvider: &configv1.CredentialProvider{Url: endpoint},
+			},
+		}},
+		DefaultProviders: &configv1.DefaultExtensionProviders{CredentialProvider: "default"},
+	}
+	if err := registry.Apply(cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	return registry
 }

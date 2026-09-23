@@ -50,8 +50,8 @@
 {{- end -}}
 {{- if eq .Values.epe.mode "managed" -}}
 {{- $source := .Values.epe.credentialProvider.mtls.source -}}
-{{- if not (has $source (list "files" "secret" "none")) -}}
-{{- fail (printf "epe.credentialProvider.mtls.source must be files, secret, or none; got %q" $source) -}}
+{{- if not (has $source (list "secret" "none")) -}}
+{{- fail (printf "epe.credentialProvider.mtls.source must be secret or none; got %q" $source) -}}
 {{- end -}}
 {{- if and (eq $source "secret") (or (empty .Values.epe.credentialProvider.mtls.secret.namespace) (empty .Values.epe.credentialProvider.mtls.secret.name)) -}}
 {{- fail "epe.credentialProvider.mtls.secret.namespace and name are required when source=secret" -}}
@@ -179,7 +179,6 @@ networking.agents.kruise.io/sandbox-egress: "true"
 {{- define "epe.image" -}}
 {{- if .Values.epe.image.digest }}{{ printf "%s@%s" (required "epe.image.repository is required when digest is set" .Values.epe.image.repository) .Values.epe.image.digest }}{{ else if .Values.epe.image.repository }}{{ printf "%s:%s" .Values.epe.image.repository (.Values.epe.image.tag | default .Values.global.tag) }}{{ else }}{{ printf "%s/%s:%s" .Values.global.hub .Values.epe.image.name (.Values.epe.image.tag | default .Values.global.tag) }}{{ end }}
 {{- end -}}
-{{- define "epe.mtlsSecretName" -}}{{ default (printf "%s-mtls-client-cert" (include "epe.fullname" .)) .Values.epe.credentialProvider.mtls.secretName }}{{- end -}}
 {{- define "epe.labels" -}}
 helm.sh/chart: {{ include "agentio.chart" . }}
 app.kubernetes.io/name: {{ include "epe.name" . }}

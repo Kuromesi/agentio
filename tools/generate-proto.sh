@@ -26,6 +26,7 @@ proto_files=(
   api/extensions/v1/extensions.proto
   api/extensions/v1/egresspolicy.proto
   api/extensions/v1/snipolicy.proto
+  api/config/v1/epeconfig.proto
   api/config/v1/agentioconfig.proto
 )
 

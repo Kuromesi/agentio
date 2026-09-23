@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 )
 
@@ -44,7 +45,7 @@ var minimalPayloads = map[string]string{
 }
 
 func TestFilterContractConformance(t *testing.T) {
-	regs, err := BuildFilters(Deps{})
+	regs, err := BuildFilters(Deps{Providers: &extensionprovider.Registry{}})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

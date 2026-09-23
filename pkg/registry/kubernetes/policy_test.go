@@ -28,8 +28,20 @@ import (
 	kubeclient "k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/pkg/config"
 	"github.com/openkruise/agentio/pkg/kube"
 )
+
+func applyAgentioConfig(content string, base *configv1.AgentioConfig) (*configv1.AgentioConfig, error) {
+	if base == nil {
+		base = &configv1.AgentioConfig{}
+	}
+	value, err := config.Apply(content, base)
+	if err != nil {
+		return nil, err
+	}
+	return value, validateAgentioConfig(value)
+}
 
 func TestAgentioConfigStartsFromDefaults(t *testing.T) {
 	ctx := t.Context()

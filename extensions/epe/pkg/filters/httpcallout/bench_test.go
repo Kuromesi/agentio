@@ -127,7 +127,7 @@ func benchDenylist() []string {
 // benchmarked equals the default cap, and bodyText rejects rather than truncates.
 func benchConfig(b *testing.B, cfg Config) Config {
 	b.Helper()
-	cfg.Endpoint = "https://scanner.example.com/inspect"
+	cfg.Provider = "scanner"
 	if cfg.MaxBodyBytes == 0 {
 		cfg.MaxBodyBytes = 8 << 20
 	}
@@ -204,7 +204,7 @@ func (c *benchClient) decision(phase Phase) Decision {
 	return d
 }
 
-func (c *benchClient) Call(_ context.Context, _ Config, inv Invocation) (Decision, error) {
+func (c *benchClient) Call(_ context.Context, _ string, inv Invocation) (Decision, error) {
 	if !c.serialize {
 		return c.decision(inv.Phase), nil
 	}

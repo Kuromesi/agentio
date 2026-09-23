@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -62,15 +63,11 @@ type Fixture struct {
 // resolver under test uses; with none, the fixture builds the default chain,
 // which is what a test that only seeds and reads profiles wants.
 //
-// The default chain is built with a stop channel tied to the test's lifetime:
-// BuildFilters starts the credential provider's certificate file watcher and
-// its backstop ticker, and a nil stop channel would leave both running for the
-// rest of the test binary. Harness.New passes its own regs, so this path is
-// only for a fixture used on its own.
+// Standalone fixtures only project profiles, so their registry has no providers.
 func NewFixture(t testing.TB, regs ...filter.Registration) *Fixture {
 	t.Helper()
 	if len(regs) == 0 {
-		built, err := wiring.BuildFilters(wiring.Deps{Stop: t.Context().Done()})
+		built, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{}})
 		if err != nil {
 			t.Fatalf("securityprofile: BuildFilters: %v", err)
 		}

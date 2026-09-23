@@ -331,6 +331,12 @@ egressGateway:
         protocol: HBONE
 
 epe:
+  # EPE always watches <epe-name>-config and <epe-name>-config-primary in its namespace.
+  # Set config to have Helm create EPEConfig with extensionProviders and defaultProviders.
+  # null leaves the base externally managed; primary is always externally managed.
+  # Providers merge by name across environment defaults, base, and primary.
+  # The environment provider is named agentio-default-credential-provider.
+  config: null
   mode: disabled
   nameOverride: agentio-epe
   fullnameOverride: ""
@@ -355,8 +361,7 @@ epe:
   credentialProvider:
     url: ""
     mtls:
-      source: files
-      secretName: ""
+      source: none
       secret:
         namespace: ""
         name: ""

@@ -15,31 +15,25 @@ package credential
 
 import (
 	"context"
+	"net/http"
 	"testing"
-
-	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 )
 
-func TestNewClient_DefaultsAndExplicit(t *testing.T) {
-	testsupport.SetForTest(t, &identityProviderURL, "")
-	c := NewClient()
+func TestNewClientExplicitConfiguration(t *testing.T) {
+	c := NewClient("", &http.Client{}, nil, nil)
 	if c == nil || c.providerURL != "" {
 		t.Errorf("expected unset URL, got %q", c.providerURL)
 	}
 
-	testsupport.SetForTest(t, &identityProviderURL, "http://example.com/")
-	c2 := NewClientWithCache(nil, nil, nil)
+	c2 := NewClient("http://example.com/", &http.Client{}, nil, nil)
 	if c2 == nil || c2.providerURL != "http://example.com/" {
 		t.Errorf("expected explicit URL, got %q", c2.providerURL)
 	}
 }
 
 // TestGetToken_BadURL covers http.NewRequestWithContext failure (invalid URL).
-// A URL this malformed also has no host to verify, so the client is built with
-// an empty server name and fails closed; the request never gets that far.
 func TestGetToken_BadURL(t *testing.T) {
-	testsupport.SetForTest(t, &identityProviderURL, "http://[::1") // malformed
-	c := NewClient()
+	c := NewClient("http://[::1", &http.Client{}, nil, nil)
 	if _, err := c.GetToken(context.Background(), "a", "b", "c"); err == nil {
 		t.Fatal("expected error for malformed URL")
 	}

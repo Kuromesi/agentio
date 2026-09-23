@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/pkg/kube"
 )
 
@@ -46,7 +47,9 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 		"mcpacl":         "../filters/mcpacl",
 		"tokentransform": "../filters/tokentransform",
 	}
-	regs, err := BuildFilters(Deps{Kube: kube.NewFakeClient(), Stop: t.Context().Done()})
+	regs, err := BuildFilters(
+		Deps{Providers: &extensionprovider.Registry{}, Kube: kube.NewFakeClient()},
+	)
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

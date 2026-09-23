@@ -56,7 +56,7 @@ func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 			return &Filter{
 				sources: Sources{
 					Secret:   NewSecretSource(deps.Kube),
-					Provider: NewProviderSource(deps.Tokens, deps.STS),
+					Provider: deps.ProviderSource,
 				},
 				signers: signerMap(),
 				limiter: deps.Limiter,
@@ -133,7 +133,12 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 }
 
 // complete fetches the credential and signs for one claimed unit.
-func (f *Filter) complete(ctx context.Context, rc *filter.RuleConfig[Config], st *filter.Stream, body []byte) (filter.Action, error) {
+func (f *Filter) complete(
+	ctx context.Context,
+	rc *filter.RuleConfig[Config],
+	st *filter.Stream,
+	body []byte,
+) (filter.Action, error) {
 	cfg := rc.Cfg
 	signer := f.signers[cfg.Type]
 
@@ -167,7 +172,12 @@ func (f *Filter) complete(ctx context.Context, rc *filter.RuleConfig[Config], st
 // fetch resolves the rule's credential and sanitizes it. Every source funnels
 // through here, so this is the one place that has to guarantee the value is
 // usable as a header value — see Credential.sanitized.
-func (f *Filter) fetch(ctx context.Context, rc *filter.RuleConfig[Config], st *filter.Stream, kind CredentialKind) (Credential, error) {
+func (f *Filter) fetch(
+	ctx context.Context,
+	rc *filter.RuleConfig[Config],
+	st *filter.Stream,
+	kind CredentialKind,
+) (Credential, error) {
 	cred, err := f.fetchFromSource(ctx, rc, st, kind)
 	if err != nil {
 		return Credential{}, err
@@ -192,12 +202,20 @@ func secretNamespace(rc *filter.RuleConfig[Config], st *filter.Stream) string {
 
 // fetchFromSource reads the credential from the configured source, applying the
 // ref -> profile -> pod namespace fallback for Secrets.
-func (f *Filter) fetchFromSource(ctx context.Context, rc *filter.RuleConfig[Config], st *filter.Stream, kind CredentialKind) (Credential, error) {
+func (f *Filter) fetchFromSource(
+	ctx context.Context,
+	rc *filter.RuleConfig[Config],
+	st *filter.Stream,
+	kind CredentialKind,
+) (Credential, error) {
 	spec := rc.Cfg.Source
 	switch spec.Kind {
 	case SourceKindSecret:
 		return f.sources.Secret.Fetch(ctx, Ref{Kind: kind, Name: spec.Name, Namespace: secretNamespace(rc, st)})
 	case SourceKindProvider:
+		if f.sources.Provider == nil {
+			return Credential{}, fmt.Errorf("credential provider source is not configured")
+		}
 		extra, err := renderParams(spec.Parameters, rc.Scope)
 		if err != nil {
 			return Credential{}, err

@@ -152,6 +152,11 @@ agentio:
           port: 15008
           protocol: HBONE
   epe:
+    # EPE always watches <epe-name>-config and <epe-name>-config-primary in its namespace.
+    # Set config to have Helm create EPEConfig with extensionProviders and defaultProviders.
+    # null leaves the base externally managed; primary is always externally managed.
+    # With both ConfigMaps absent, EPE uses the environment credential provider named default.
+    config: null
     mode: managed
     nameOverride: agentio-epe
     fullnameOverride: ""
@@ -176,8 +181,7 @@ agentio:
     credentialProvider:
       url: ""
       mtls:
-        source: files
-        secretName: ""
+        source: none
         secret:
           namespace: ""
           name: ""

@@ -131,7 +131,15 @@ func headerResponse(headers map[string]string) *servicev3.HeadersResponse {
 
 func main() {
 	port := flag.Int("port", 9002, "gRPC port")
+	credentialPort := flag.Int(
+		"credential-provider-port",
+		0,
+		"serve the credential-provider HTTP fixture instead of ext-proc",
+	)
 	flag.Parse()
+	if *credentialPort != 0 {
+		log.Fatalf("serve credential provider: %v", serveCredentialProvider(*credentialPort))
+	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {

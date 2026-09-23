@@ -42,6 +42,9 @@ spec:
           image: {{ include "agentio.epe.image" . | quote }}
           imagePullPolicy: {{ .Values.agentio.global.imagePullPolicy }}
           args:
+            - -epe-config={{ include "agentio.epe.fullname" . }}-config
+            - -epe-config-primary={{ include "agentio.epe.fullname" . }}-config-primary
+            - -epe-config-namespace={{ (include "agentio.namespace" .) }}
             - -grpc-port={{ .Values.agentio.epe.service.grpcPort }}
             - -grpc-health-port={{ .Values.agentio.epe.service.healthPort }}
             - -metrics-port={{ .Values.agentio.epe.service.metricsPort }}
@@ -90,19 +93,6 @@ spec:
             runAsUser: 65532
             runAsGroup: 65532
             runAsNonRoot: true
-          {{- if eq $source "files" }}
-          volumeMounts:
-            - name: credential-provider-mtls
-              mountPath: /etc/epe/credential-provider
-              readOnly: true
-          {{- end }}
-      {{- if eq $source "files" }}
-      volumes:
-        - name: credential-provider-mtls
-          secret:
-            secretName: {{ include "agentio.epe.mtlsSecretName" . }}
-            optional: true
-      {{- end }}
       {{- with .Values.agentio.epe.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

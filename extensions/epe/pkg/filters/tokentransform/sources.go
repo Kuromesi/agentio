@@ -95,8 +95,8 @@ func secretValue(s *corev1.Secret, key string) (string, error) {
 	return string(v), nil
 }
 
-// ProviderSource calls the external credential-provider service through
-// the consumer-side client interfaces.
+// ProviderSource calls the external credential-provider service through clients
+// already selected by its caller. It does not resolve or validate ref.Provider.
 type ProviderSource struct {
 	tokens TokenProvider
 	sts    STSProvider
@@ -119,7 +119,13 @@ func (p *ProviderSource) Fetch(ctx context.Context, ref Ref) (Credential, error)
 		if p.tokens == nil {
 			return Credential{}, fmt.Errorf("credential client is not configured")
 		}
-		tok, err := p.tokens.GetTokenWithExtraMetadata(ctx, ref.AccessToken, ref.SandboxClientID, ref.Name, ref.ExtraMetadata)
+		tok, err := p.tokens.GetTokenWithExtraMetadata(
+			ctx,
+			ref.AccessToken,
+			ref.SandboxClientID,
+			ref.Name,
+			ref.ExtraMetadata,
+		)
 		if err != nil {
 			return Credential{}, fmt.Errorf("credential provider call failed: %w", err)
 		}
@@ -128,7 +134,13 @@ func (p *ProviderSource) Fetch(ctx context.Context, ref Ref) (Credential, error)
 		if p.sts == nil {
 			return Credential{}, fmt.Errorf("credential client is not configured")
 		}
-		sts, err := p.sts.GetSTSCredentialWithExtraMetadata(ctx, ref.AccessToken, ref.SandboxClientID, ref.Name, ref.ExtraMetadata)
+		sts, err := p.sts.GetSTSCredentialWithExtraMetadata(
+			ctx,
+			ref.AccessToken,
+			ref.SandboxClientID,
+			ref.Name,
+			ref.ExtraMetadata,
+		)
 		if err != nil {
 			return Credential{}, fmt.Errorf("credential provider call failed: %w", err)
 		}
