@@ -111,12 +111,12 @@ epe:
   credentialProvider:
     url: https://credentials.example.com
     mtls:
-      source: files # files | secret | none
+      source: none # none | secret
 ```
 
 HTTPS audit webhooks verify the receiver certificate by default. Keep `epe.auditWebhook.insecureSkipVerify: false` in production.
 
-For `source: files`, the default Secret name is `agentio-epe-mtls-client-cert`. Set `secretName` to override it. For `source: secret`, configure the credential provider's source Secret:
+The default `source: none` uses system trust roots without a client certificate. To watch a Secret directly for credential-provider TLS, configure `source: secret`:
 
 ```yaml
 epe:

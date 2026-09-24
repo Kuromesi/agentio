@@ -51,7 +51,8 @@ func TestPrintEnvironmentExitsBeforeStartup(t *testing.T) {
 			t.Fatalf("%s export attempted startup: %v\n%s", format, err, output)
 		}
 		for _, expected := range []string{"IDENTITY_PROVIDER_URL", "TOKEN_CACHE_TTL", "TOKEN_CACHE_MAX_SIZE",
-			"STS_CACHE_MAX_SIZE", "CREDENTIAL_PROVIDER_MTLS_SOURCE", "AUDIT_WEBHOOK_DIAL_TIMEOUT"} {
+			"STS_CACHE_MAX_SIZE", "CREDENTIAL_PROVIDER_MTLS_SOURCE", "AUDIT_WEBHOOK_DIAL_TIMEOUT",
+			"HTTP_CALLOUT_MAX_RESPONSE_BYTES"} {
 			if !strings.Contains(string(output), expected) {
 				t.Errorf("%s export missing %s", format, expected)
 			}

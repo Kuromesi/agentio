@@ -25,6 +25,7 @@ import (
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
@@ -72,7 +73,7 @@ func TestScenario_BlockRuleEnforcedWithUnavailableInputs(t *testing.T) {
 		Match:   []v1alpha1.RuleMatch{{Domains: []string{"evil.example.com"}}},
 		Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
 	}})
-	regs, err := wiring.BuildFilters(wiring.Deps{Kube: kube.NewFakeClient()})
+	regs, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{}, Kube: kube.NewFakeClient()})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
@@ -116,7 +117,7 @@ func TestScenario_TokenTransformFailStrategyWithUnavailableInputs(t *testing.T) 
 	}
 	run := func(t *testing.T, failStrategy v1alpha1.FailStrategy, valueTemplate string) *enginetest.Verdict {
 		t.Helper()
-		regs, err := wiring.BuildFilters(wiring.Deps{
+		regs, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{},
 			Kube: kube.NewFakeClient(newAPIKeySecret("test-ns", "api-cred", "secret-token-123")),
 		})
 		if err != nil {

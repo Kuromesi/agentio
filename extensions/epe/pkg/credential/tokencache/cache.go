@@ -20,26 +20,10 @@
 // github.com/hashicorp/golang-lru/v2.
 package tokencache
 
-import (
-	"fmt"
-	"time"
+import "time"
 
-	"istio.io/istio/pkg/env"
-)
-
-const defaultMaxSize = 100000
-
-// Environment variables for cache configuration. Resolved once at init, as
-// everywhere else in the tree; tests override the values with
-// testsupport.SetForTest.
-var (
-	// A non-positive cacheTTL is used as-is and disables caching.
-	cacheTTL = env.Register("TOKEN_CACHE_TTL", 15*time.Minute,
-		"Fallback time-to-live for cached credential provider API keys, used when the provider's response omits "+
-			"cacheExpiresInSeconds; a non-positive value disables caching").Get()
-	cacheMaxSize = env.Register("TOKEN_CACHE_MAX_SIZE", defaultMaxSize,
-		"Maximum number of cached credential provider API keys; a non-positive value falls back to the default").Get()
-)
+// DefaultMaxSize is the capacity used when none is specified.
+const DefaultMaxSize = 100000
 
 // Cache is a thread-safe LRU cache for tokens with configurable TTL and
 // capacity.
@@ -51,14 +35,11 @@ type Cache struct {
 }
 
 // NewCache creates a new token cache with the given fallback TTL and max size.
-// A non-positive ttl resolves to cacheTTL; a non-positive maxSize to
-// defaultMaxSize, which lru.New requires.
+// A non-positive ttl disables caching without a per-entry TTL. A non-positive
+// maxSize uses DefaultMaxSize, which keeps the LRU capacity valid.
 func NewCache(ttl time.Duration, maxSize int) *Cache {
-	if ttl <= 0 {
-		ttl = cacheTTL
-	}
 	if maxSize <= 0 {
-		maxSize = defaultMaxSize
+		maxSize = DefaultMaxSize
 	}
 	return &Cache{
 		store: newTTLCache[string](maxSize),
@@ -69,13 +50,6 @@ func NewCache(ttl time.Duration, maxSize int) *Cache {
 // SetClock replaces the cache's time source. For tests.
 func (c *Cache) SetClock(now func() time.Time) {
 	c.store.SetClock(now)
-}
-
-// NewCacheFromEnv creates a token cache configured from environment variables.
-// TOKEN_CACHE_TTL sets the fallback TTL (parsed via time.ParseDuration).
-// TOKEN_CACHE_MAX_SIZE overrides the default max size.
-func NewCacheFromEnv() *Cache {
-	return NewCache(cacheTTL, cacheMaxSize)
 }
 
 // Get retrieves a token from the cache by credentialProviderName and resourceID.
@@ -109,10 +83,4 @@ func (c *Cache) Delete(credentialProviderName, resourceID string) {
 // Len returns the current number of entries in the cache.
 func (c *Cache) Len() int {
 	return c.store.Len()
-}
-
-// ConfigInfo returns a human-readable string of cache configuration for logging.
-// Values are the raw env input; NewCache clamps a non-positive maxSize.
-func ConfigInfo() string {
-	return fmt.Sprintf("fallbackTTL=%s, maxSize=%d", cacheTTL, cacheMaxSize)
 }

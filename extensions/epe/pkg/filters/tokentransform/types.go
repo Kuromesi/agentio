@@ -83,6 +83,8 @@ var ErrNoPermission = errors.New("tokentransform: no permission to read credenti
 // SourceSpec.Kind to pick the CredentialSource, so by the time a Ref
 // reaches Fetch the receiver already encodes where the credential lives.
 type Ref struct {
+	// Provider selects an EPE extension; Name selects its remote credential configuration.
+	Provider string
 	// Kind is the credential form the signer asked for; a source reads it
 	// to decide which fields of Credential to populate.
 	Kind            CredentialKind
@@ -154,7 +156,14 @@ type CredentialSource interface {
 // the signer-specific value stored in Config.SignerCfg.
 type Signer interface {
 	Kind() CredentialKind
-	Sign(ctx context.Context, st *filter.Stream, body []byte, scope *inputs.Scope, cred Credential, cfg any) ([]filter.Mutation, error)
+	Sign(
+		ctx context.Context,
+		st *filter.Stream,
+		body []byte,
+		scope *inputs.Scope,
+		cred Credential,
+		cfg any,
+	) ([]filter.Mutation, error)
 }
 
 // SignerPreparer resolves request-dependent signer configuration before any
@@ -221,21 +230,28 @@ type Config struct {
 // TokenProvider and STSProvider are the consumer-side views of the
 // credential client; *credential.Client satisfies both unchanged.
 type TokenProvider interface {
-	GetTokenWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, providerName string, extraMetadata map[string]any) (string, error)
+	GetTokenWithExtraMetadata(
+		ctx context.Context,
+		accessToken, sandboxClientID, providerName string,
+		extraMetadata map[string]any,
+	) (string, error)
 }
 
 // STSProvider returns the credential client's STS credential type directly;
 // pkg/credential is agents-api-free, so this does not breach layering.
 type STSProvider interface {
-	GetSTSCredentialWithExtraMetadata(ctx context.Context, accessToken, sandboxClientID, providerName string, extraMetadata map[string]any) (credential.STSCredential, error)
+	GetSTSCredentialWithExtraMetadata(
+		ctx context.Context,
+		accessToken, sandboxClientID, providerName string,
+		extraMetadata map[string]any,
+	) (credential.STSCredential, error)
 }
 
-// Deps bundles the filter's external dependencies. Tokens/STS may be nil
-// (no credential client configured); the provider source then
-// errors, resolved through FailStrategy.
+// Deps bundles the filter's external dependencies. A missing ProviderSource
+// fails provider-backed lookups through the rule's FailStrategy.
 type Deps struct {
-	Kube    kubernetes.Interface
-	Tokens  TokenProvider
-	STS     STSProvider
-	Limiter *Limiter
+	// ProviderSource resolves credential references; production injects the registry.
+	ProviderSource CredentialSource
+	Kube           kubernetes.Interface
+	Limiter        *Limiter
 }

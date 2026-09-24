@@ -15,19 +15,9 @@
 package model
 
 import (
-	"google.golang.org/protobuf/proto"
-
 	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/pkg/config"
 )
 
-type AgentioConfiguration struct {
-	ResourceVersion string
-	Value           *configv1.AgentioConfig
-}
-
-func (c AgentioConfiguration) ResourceName() string { return "effective" }
-
-// Equals compares content only; ResourceVersion is diagnostic.
-func (c AgentioConfiguration) Equals(other AgentioConfiguration) bool {
-	return proto.Equal(c.Value, other.Value)
-}
+// AgentioConfiguration is the effective control-plane configuration.
+type AgentioConfiguration = config.Config[*configv1.AgentioConfig]

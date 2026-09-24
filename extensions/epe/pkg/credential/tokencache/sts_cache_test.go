@@ -14,12 +14,9 @@
 package tokencache
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 )
 
 func stsEntry(ak, sk, token string) STSCacheEntry {
@@ -258,36 +255,5 @@ func TestSTSCache_DefaultExpirationMargin(t *testing.T) {
 				t.Errorf("expected default expiration margin %v, got %v", defaultExpirationMargin, c.expirationMargin)
 			}
 		})
-	}
-}
-
-// TestNewSTSCacheFromEnv covers env-driven configuration: a valid override is
-// honoured and a non-positive value falls back to the default instead of
-// reaching lru.New, which rejects a non-positive size. Parsing of malformed
-// strings is pkg/env's contract and is covered there.
-func TestNewSTSCacheFromEnv(t *testing.T) {
-	testsupport.SetForTest(t, &stsCacheMaxSize, 500)
-	if c := NewSTSCacheFromEnv(); c.expirationMargin != defaultExpirationMargin {
-		t.Errorf("expected default margin, got %v", c.expirationMargin)
-	}
-
-	testsupport.SetForTest(t, &stsCacheMaxSize, -1)
-	if c := NewSTSCacheFromEnv(); c.expirationMargin != defaultExpirationMargin {
-		t.Errorf("expected default margin for a non-positive value, got %v", c.expirationMargin)
-	}
-}
-
-// TestSTSCacheConfigInfo asserts the logged config reports the value
-// NewSTSCacheFromEnv would actually build, not the raw env input.
-func TestSTSCacheConfigInfo(t *testing.T) {
-	testsupport.SetForTest(t, &stsCacheMaxSize, 42)
-	if got := STSCacheConfigInfo(); got != "expirationMargin=5m0s, maxSize=42" {
-		t.Errorf("unexpected STSCacheConfigInfo: %q", got)
-	}
-
-	testsupport.SetForTest(t, &stsCacheMaxSize, -1)
-	want := fmt.Sprintf("expirationMargin=%s, maxSize=%d", defaultExpirationMargin, defaultSTSMaxSize)
-	if got := STSCacheConfigInfo(); got != want {
-		t.Errorf("STSCacheConfigInfo() = %q, want %q", got, want)
 	}
 }

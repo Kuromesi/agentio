@@ -73,7 +73,7 @@ func testStream() *filter.Stream {
 
 func testConfig(t *testing.T, cfg Config) Config {
 	t.Helper()
-	cfg.Endpoint = "https://scanner.example.com/inspect"
+	cfg.Provider = "scanner"
 	effective, err := cfg.Effective()
 	if err != nil {
 		t.Fatalf("Effective: %v", err)

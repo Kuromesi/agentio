@@ -137,7 +137,11 @@ func TestScenario_ApiKeyHeaderSelectorFetchesOnceAndTouchesOnlySelectedHeaders(t
 			"value": {"template": "Bearer {{ .Token }}"}
 		}
 	}`
-	h := newInjectHarnessWithDeps(t, payload, tokentransform.Deps{Tokens: provider.Client()})
+	h := newInjectHarnessWithDeps(
+		t,
+		payload,
+		tokentransform.Deps{ProviderSource: tokentransform.NewProviderSource(provider.Client(), nil)},
+	)
 	verdict := h.Run(t, injectRequest().
 		SandboxToken("request-1", "sandbox-access-token", "sandbox-client").
 		Header("x-token-a", "caller-a").
@@ -164,7 +168,11 @@ func TestScenario_ApiKeyPlaceholderSelectorRewritesEveryOriginalPlaceholder(t *t
 			"value": {"template": "Bearer {{ .Token }}"}
 		}
 	}`
-	h := newInjectHarnessWithDeps(t, payload, tokentransform.Deps{Tokens: provider.Client()})
+	h := newInjectHarnessWithDeps(
+		t,
+		payload,
+		tokentransform.Deps{ProviderSource: tokentransform.NewProviderSource(provider.Client(), nil)},
+	)
 	verdict := h.Run(t, injectRequest().
 		SandboxToken("request-1", "sandbox-access-token", "sandbox-client").
 		Header("authorization", "${AGENTIO_TOKEN}").
@@ -191,7 +199,11 @@ func TestScenario_ApiKeySelectorWithNoTargetsSkipsProviderWithoutPeerToken(t *te
 			"value": {"value": "unused"}
 		}
 	}`
-	h := newInjectHarnessWithDeps(t, payload, tokentransform.Deps{Tokens: provider.Client()})
+	h := newInjectHarnessWithDeps(
+		t,
+		payload,
+		tokentransform.Deps{ProviderSource: tokentransform.NewProviderSource(provider.Client(), nil)},
+	)
 	verdict := h.Run(t, injectRequest().Header("x-other", "keep"))
 
 	verdict.RequirePassthrough(t)
@@ -213,7 +225,11 @@ func TestScenario_ApiKeyHeaderValueFailureIsAtomicUnderAllow(t *testing.T) {
 			"value": {"template": "{{ if eq .Header.Name \"x-second\" }}{{ fail \"second header failed\" }}{{ else }}first{{ end }}"}
 		}
 	}`
-	h := newInjectHarnessWithDeps(t, payload, tokentransform.Deps{Tokens: provider.Client()})
+	h := newInjectHarnessWithDeps(
+		t,
+		payload,
+		tokentransform.Deps{ProviderSource: tokentransform.NewProviderSource(provider.Client(), nil)},
+	)
 	verdict := h.Run(t, injectRequest().
 		SandboxToken("request-1", "sandbox-access-token", "sandbox-client"))
 
@@ -245,7 +261,11 @@ func TestScenario_ApiKeyDuplicateDynamicTargetFailsBeforeProviderFetch(t *testin
 					"value": {"value": "replacement"}
 				}
 			}`
-			h := newInjectHarnessWithDeps(t, payload, tokentransform.Deps{Tokens: provider.Client()})
+			h := newInjectHarnessWithDeps(
+				t,
+				payload,
+				tokentransform.Deps{ProviderSource: tokentransform.NewProviderSource(provider.Client(), nil)},
+			)
 			verdict := h.Run(t, injectRequest().
 				SandboxToken("request-1", "sandbox-access-token", "sandbox-client").
 				Header("x-token", "caller"))

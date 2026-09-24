@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 )
@@ -25,19 +24,14 @@ import (
 // spec is the wire form of Config. Field names mirror the Config fields so an
 // operator reading either one recognizes the other.
 type spec struct {
-	Endpoint string `json:"endpoint,omitempty"`
+	Provider string `json:"provider,omitempty"`
 	// Request and Response are pointers because presence is enablement: an absent
 	// key disables the direction, while "request": {} enables it with nothing
 	// disclosed and nothing buffered.
-	Request  *phaseSpec `json:"request,omitempty"`
-	Response *phaseSpec `json:"response,omitempty"`
-	// Timeout is a Go duration string ("500ms", "2s") rather than a number: a
-	// bare number would be ambiguous between seconds and milliseconds, and
-	// because zero means "use the default", a wrong guess would be silent
-	// instead of an error.
-	Timeout      string `json:"timeout,omitempty"`
-	MaxBodyBytes int64  `json:"maxBodyBytes,omitempty"`
-	FailOpen     bool   `json:"failOpen,omitempty"`
+	Request      *phaseSpec `json:"request,omitempty"`
+	Response     *phaseSpec `json:"response,omitempty"`
+	MaxBodyBytes int64      `json:"maxBodyBytes,omitempty"`
+	FailOpen     bool       `json:"failOpen,omitempty"`
 }
 
 // phaseSpec is the wire form of PhaseConfig.
@@ -59,13 +53,13 @@ type headersSpec struct {
 
 // empty reports whether the document says nothing at all. A payload under this
 // filter's name that carries no fields is an authoring mistake, not a request for
-// every default: there is no default endpoint to call.
+// every default: there is no default provider to call.
 //
 // Compared field by field rather than against a zero spec because the phase
 // pointers make the struct incomparable.
 func (s spec) empty() bool {
-	return s.Endpoint == "" && s.Request == nil && s.Response == nil &&
-		s.Timeout == "" && s.MaxBodyBytes == 0 && !s.FailOpen
+	return s.Provider == "" && s.Request == nil && s.Response == nil &&
+		s.MaxBodyBytes == 0 && !s.FailOpen
 }
 
 func parse(raw json.RawMessage) (Config, error) {
@@ -83,15 +77,10 @@ func parse(raw json.RawMessage) (Config, error) {
 		return Config{}, fmt.Errorf("callout config is empty")
 	}
 
-	timeout, err := parseTimeout(s.Timeout)
-	if err != nil {
-		return Config{}, err
-	}
 	cfg := Config{
-		Endpoint:     s.Endpoint,
+		Provider:     s.Provider,
 		Request:      phaseFromSpec(s.Request),
 		Response:     phaseFromSpec(s.Response),
-		Timeout:      timeout,
 		MaxBodyBytes: s.MaxBodyBytes,
 		FailOpen:     s.FailOpen,
 	}
@@ -115,19 +104,6 @@ func phaseFromSpec(s *phaseSpec) *PhaseConfig {
 		}
 	}
 	return phase
-}
-
-// parseTimeout maps an absent or empty value to zero, which Effective turns into
-// DefaultTimeout.
-func parseTimeout(raw string) (time.Duration, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	timeout, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("callout timeout %q is not a duration such as %q", raw, "500ms")
-	}
-	return timeout, nil
 }
 
 // NewDefinition binds the payload parser to the typed descriptor. Deps is

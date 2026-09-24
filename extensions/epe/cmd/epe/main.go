@@ -43,6 +43,8 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/accesslog"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/sinks/webhook"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
+	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout" // Register environment settings.
 	"github.com/openkruise/agentio/extensions/epe/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
@@ -54,6 +56,21 @@ import (
 )
 
 var (
+	epeConfigName = flag.String(
+		"epe-config",
+		"agentio-epe-config",
+		"Base EPEConfig ConfigMap for extension providers and default selection; absence leaves defaults unchanged",
+	)
+	epeConfigPrimaryName = flag.String(
+		"epe-config-primary",
+		"agentio-epe-config-primary",
+		"Primary EPEConfig ConfigMap applied after the base; empty disables the overlay",
+	)
+	epeConfigNamespace = flag.String(
+		"epe-config-namespace",
+		"agentio-system",
+		"Namespace of EPEConfig and its referenced Secrets",
+	)
 	logVerbosity = flag.Int("v", 2, "number for the log level verbosity")
 
 	grpcPort = flag.Int(
@@ -139,6 +156,7 @@ func run() error {
 				"STS_CACHE_",
 				"CREDENTIAL_PROVIDER_",
 				"AUDIT_WEBHOOK_",
+				"HTTP_CALLOUT_",
 			},
 		})
 	}
@@ -175,7 +193,19 @@ func run() error {
 	// a static authoring error is rejected at the collection boundary (with
 	// last-known-good retention) instead of on the first matching request.
 	// See wiring.BuildFilters for ordering semantics.
-	chainDeps := wiring.Deps{Kube: client, Stop: ctx.Done()}
+	defaults, err := wiring.DefaultEPEConfig()
+	if err != nil {
+		return fmt.Errorf("initialize extension providers: %w", err)
+	}
+	providers := &extensionprovider.Registry{}
+	defer providers.Close()
+	chainDeps := wiring.Deps{Kube: client, Providers: providers}
+	if *epeConfigName == "" || *epeConfigNamespace == "" {
+		return fmt.Errorf("--epe-config and --epe-config-namespace must not be empty")
+	}
+	providerConfigs := extensionprovider.NewCollection(client, *epeConfigNamespace,
+		[]string{*epeConfigName, *epeConfigPrimaryName}, defaults, nil, ctx.Done())
+	providerReg := providers.RegisterCollection(providerConfigs)
 	registrations, err := wiring.BuildFilters(chainDeps)
 	if err != nil {
 		setupLog.Error(err, "failed to build filter chain")
@@ -265,8 +295,11 @@ func run() error {
 	}
 
 	// Start the shared informer machinery and CRD watcher once. Each collection
-	// owns its sync condition, so readiness waits on the profile registration.
+	// owns its sync condition, so readiness waits on both registrations.
 	client.Run(ctx.Done())
+	if !providerReg.WaitUntilSynced(ctx.Done()) {
+		return fmt.Errorf("EPEConfig collection sync interrupted")
+	}
 
 	// Block until the initial profile state has been applied to the store so
 	// ext-proc never serves from an empty snapshot during startup.

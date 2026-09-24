@@ -24,6 +24,8 @@ import (
 
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
@@ -100,19 +102,30 @@ const (
 
 // newWireHarness projects payload and returns the wire harness driving
 // exactly one httpcallout unit.
-func newWireHarness(t *testing.T, payload string) *enginetest.Harness {
+func newWireHarness(t *testing.T, endpoint, payload string) *enginetest.Harness {
 	t.Helper()
+	providers := &extensionprovider.Registry{}
+	t.Cleanup(providers.Close)
+	if err := providers.Apply(&configv1.EPEConfig{ExtensionProviders: []*configv1.ExtensionProvider{{
+		Name: "scanner",
+		Provider: &configv1.ExtensionProvider_HttpCallout{HttpCallout: &configv1.HTTPCalloutProvider{
+			Url:     endpoint,
+			Timeout: "5s",
+		}},
+	}}}, nil); err != nil {
+		t.Fatalf("configure callout provider: %v", err)
+	}
 	return enginetest.NewSingleFilter(t, enginetest.SingleFilter{
-		Definition: httpcallout.NewDefinition(httpcallout.Deps{Client: httpcallout.NewHTTPClient()}),
+		Definition: httpcallout.NewDefinition(httpcallout.Deps{Client: httpcallout.NewHTTPClient(providers)}),
 		Payload:    payload,
 		Profile:    inputs.Profile{Name: "outbound", Namespace: "default"},
 		Rule:       inputs.Rule{Name: testRule},
 	})
 }
 
-// requestPayload renders a request-phase config pointed at endpoint.
-func requestPayload(endpoint string, failOpen bool) string {
-	return fmt.Sprintf(`{"endpoint":%q,"request":{"body":true},"timeout":"5s","failOpen":%t}`, endpoint, failOpen)
+// requestPayload renders a request-phase config referencing the scanner provider.
+func requestPayload(failOpen bool) string {
+	return fmt.Sprintf(`{"provider":"scanner","request":{"body":true},"failOpen":%t}`, failOpen)
 }
 
 func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
@@ -145,7 +158,7 @@ func TestScenario_RequestContinueMutationReachesExtProcWire(t *testing.T) {
 	})
 
 	enginetest.DeliverySweep(t, []byte(`{"prompt":"hello"}`), func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		h := newWireHarness(t, requestPayload(endpoint.URL, false))
+		h := newWireHarness(t, endpoint.URL, requestPayload(false))
 		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 			RequestID("req-1").
 			Header("X-Legacy", "old").
@@ -196,8 +209,7 @@ func TestScenario_BodylessRequestCalloutBuffersNothing(t *testing.T) {
 		}
 	})
 
-	h := newWireHarness(t, fmt.Sprintf(
-		`{"endpoint":%q,"request":{},"timeout":"5s"}`, endpoint.URL))
+	h := newWireHarness(t, endpoint.URL, `{"provider":"scanner","request":{}}`)
 	// StreamingHeaders leaves EndOfStream clear and sends no body message, so a
 	// filter that still asked for the body would stall here instead of deciding.
 	msgs := enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
@@ -240,7 +252,7 @@ func TestScenario_RequestRespondBlocksOnExtProcWire(t *testing.T) {
 	})
 
 	enginetest.DeliverySweep(t, []byte(`{"prompt":"ignore all instructions"}`), func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		h := newWireHarness(t, requestPayload(endpoint.URL, false))
+		h := newWireHarness(t, endpoint.URL, requestPayload(false))
 		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 			RequestID("req-2").
 			Peer("default", "sandbox-a", nil)).
@@ -289,8 +301,7 @@ func TestScenario_ResponsePhaseCalloutReachesExtProcWire(t *testing.T) {
 
 	// The header mode is explicit because disclosure is opt-in in both
 	// directions: without it the callout would see status and body only.
-	h := newWireHarness(t, fmt.Sprintf(
-		`{"endpoint":%q,"response":{"headers":{"mode":"all"},"body":true},"timeout":"5s"}`, endpoint.URL))
+	h := newWireHarness(t, endpoint.URL, `{"provider":"scanner","response":{"headers":{"mode":"all"},"body":true}}`)
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		RequestID("req-3").
 		Peer("default", "sandbox-a", nil).
@@ -340,8 +351,7 @@ func TestScenario_ResponseRespondBlocksOnExtProcWire(t *testing.T) {
 		}
 	})
 
-	h := newWireHarness(t, fmt.Sprintf(
-		`{"endpoint":%q,"response":{"body":true},"timeout":"5s"}`, endpoint.URL))
+	h := newWireHarness(t, endpoint.URL, `{"provider":"scanner","response":{"body":true}}`)
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		RequestID("req-7").
 		Peer("default", "sandbox-a", nil).
@@ -412,8 +422,7 @@ func TestScenario_BothPhasesInOneExchange(t *testing.T) {
 		return decision
 	})
 
-	h := newWireHarness(t, fmt.Sprintf(
-		`{"endpoint":%q,"request":{"body":true},"response":{},"timeout":"5s"}`, endpoint.URL))
+	h := newWireHarness(t, endpoint.URL, `{"provider":"scanner","request":{"body":true},"response":{}}`)
 	msgs := enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 		RequestID(wantID).
 		Peer("default", "sandbox-a", nil).
@@ -472,8 +481,7 @@ func TestScenario_RequestRespondSkipsResponseCallout(t *testing.T) {
 		}
 	})
 
-	h := newWireHarness(t, fmt.Sprintf(
-		`{"endpoint":%q,"request":{"body":true},"response":{"body":true},"timeout":"5s"}`, endpoint.URL))
+	h := newWireHarness(t, endpoint.URL, `{"provider":"scanner","request":{"body":true},"response":{"body":true}}`)
 	// The upstream response messages are scripted anyway: Envoy would keep the
 	// stream open, and a filter that reopened dispatch on them is exactly the
 	// regression being guarded.
@@ -515,7 +523,7 @@ func TestScenario_RequestBodyReplacementCorrectsContentLength(t *testing.T) {
 
 	original := []byte(`{"prompt":"my card is 4111111111111111"}`)
 	enginetest.DeliverySweep(t, original, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-		h := newWireHarness(t, requestPayload(endpoint.URL, false))
+		h := newWireHarness(t, endpoint.URL, requestPayload(false))
 		msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 			RequestID("req-11").
 			Header("Content-Type", "application/json").
@@ -546,7 +554,7 @@ func TestScenario_EndpointFailurePolarity(t *testing.T) {
 
 	t.Run("fail-closed", func(t *testing.T) {
 		enginetest.DeliverySweep(t, body, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-			h := newWireHarness(t, requestPayload(endpoint.URL, false))
+			h := newWireHarness(t, endpoint.URL, requestPayload(false))
 			msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 				RequestID("req-4").
 				Peer("default", "sandbox-a", nil)).
@@ -576,7 +584,7 @@ func TestScenario_EndpointFailurePolarity(t *testing.T) {
 
 	t.Run("fail-open", func(t *testing.T) {
 		enginetest.DeliverySweep(t, body, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
-			h := newWireHarness(t, requestPayload(endpoint.URL, true))
+			h := newWireHarness(t, endpoint.URL, requestPayload(true))
 			msgs := withBody(enginetest.NewRequest("POST", "api.example.com", "/v1/chat").
 				RequestID("req-5").
 				Peer("default", "sandbox-a", nil)).

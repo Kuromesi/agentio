@@ -374,14 +374,20 @@ func TestManagedEPE(t *testing.T) {
 		"filter_state['downstream_peer'].name",
 		"filter_state['downstream_peer'].namespace",
 		"port: 9002",
+		"- -epe-config=agentio-epe-config",
+		"- -epe-config-primary=agentio-epe-config-primary",
+		"- -epe-config-namespace=agentio-system",
 		"- -grpc-port=9002",
 		"- -grpc-health-port=9003",
 		"- -metrics-port=9090",
 		"- -audit-webhook-insecure-skip-verify=false",
 		"livenessProbe:",
 		"readinessProbe:",
-		"name: credential-provider-mtls",
+		"name: CREDENTIAL_PROVIDER_MTLS_SOURCE\n              value: \"none\"",
 	)
+	if strings.Contains(manifest, "credential-provider-mtls") {
+		t.Fatal("managed EPE must not mount credential-provider certificates")
+	}
 }
 
 func TestManagedEPECanExplicitlySkipAuditWebhookTLSVerification(t *testing.T) {
@@ -564,6 +570,11 @@ func TestInvalidModesFailRendering(t *testing.T) {
 			name: "Gateway API class",
 			want: "egressGateway.gatewayAPI.gatewayClassName is required",
 			args: []string{"--set", "egressGateway.mode=gatewayAPI", "--set", "egressGateway.gatewayAPI.create=true", "--set", "egressGateway.gatewayAPI.gatewayClassName="},
+		},
+		{
+			name: "managed EPE files source",
+			want: "epe.credentialProvider.mtls.source must be secret or none",
+			args: []string{"--set", "epe.mode=managed", "--set", "epe.credentialProvider.mtls.source=files"},
 		},
 		{
 			name: "managed EPE secret",

@@ -30,7 +30,7 @@ type fakeClient struct {
 	callCount int
 }
 
-func (f *fakeClient) Call(_ context.Context, _ Config, inv Invocation) (Decision, error) {
+func (f *fakeClient) Call(_ context.Context, _ string, inv Invocation) (Decision, error) {
 	f.calls = append(f.calls, inv)
 	f.callCount++
 	if f.decide == nil {
@@ -514,7 +514,6 @@ func TestFilterReturnsAnErrorForEveryFailureMode(t *testing.T) {
 // blockReply hygiene: the deny body reaches an untrusted client, so nothing on
 // this path may name the endpoint or quote the remote.
 func TestFilterErrorsHideTheEndpointAndRemoteText(t *testing.T) {
-	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
 	// The real HTTPClient scrubs the URL; this asserts the filter's own wrapping
 	// does not put the endpoint back, which is the mistake a well-meaning
 	// "include the URL so operators can debug it" edit would make.
@@ -526,9 +525,6 @@ func TestFilterErrorsHideTheEndpointAndRemoteText(t *testing.T) {
 	_, err := f.OnRequestBody(context.Background(), testStream(), filter.Body{Complete: true})
 	if err == nil {
 		t.Fatal("OnRequestBody succeeded, want an error")
-	}
-	if strings.Contains(err.Error(), cfg.Endpoint) {
-		t.Errorf("error = %q, want it to omit the endpoint URL", err.Error())
 	}
 	if strings.Contains(err.Error(), "scanner.example.com") {
 		t.Errorf("error = %q, want it to omit the endpoint host", err.Error())

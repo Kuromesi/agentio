@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	runserver "github.com/openkruise/agentio/extensions/epe/pkg/server"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
@@ -79,7 +80,10 @@ spec:
 `)
 
 	lis := listenLocal(t)
-	regs, err := wiring.BuildFilters(wiring.Deps{Kube: kube.NewFakeClient(), Stop: t.Context().Done()})
+	providers := &extensionprovider.Registry{}
+	t.Cleanup(providers.Close)
+	deps := wiring.Deps{Kube: kube.NewFakeClient(), Providers: providers}
+	regs, err := wiring.BuildFilters(deps)
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

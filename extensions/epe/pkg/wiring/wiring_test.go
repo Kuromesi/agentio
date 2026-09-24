@@ -16,13 +16,16 @@ package wiring
 import (
 	"testing"
 
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/pkg/kube"
 )
 
 // The action order inside one rule is a load-bearing, machine-checked
 // contract. Rules themselves are evaluated in policy order by the engine.
 func TestBuildFiltersOrderIsExplicit(t *testing.T) {
-	regs, err := BuildFilters(Deps{Kube: kube.NewFakeClient(), Stop: t.Context().Done()})
+	regs, err := BuildFilters(
+		Deps{Providers: &extensionprovider.Registry{}, Kube: kube.NewFakeClient()},
+	)
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

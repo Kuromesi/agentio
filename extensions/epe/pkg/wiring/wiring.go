@@ -20,12 +20,13 @@
 package wiring
 
 import (
+	"fmt"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/credential"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/bypass"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/headermutation"
@@ -37,20 +38,10 @@ import (
 
 // Deps carries what plugin builders may need.
 type Deps struct {
-	// Kube is the shared Agentio Kubernetes client. It backs the token filters' one-shot
-	// Secret reads (via its typed clientset) and, when
-	// CREDENTIAL_PROVIDER_MTLS_SOURCE is "secret", the scoped watch behind the
-	// credential provider's mTLS material. Tests may pass kube.NewFakeClient,
-	// or leave it nil to build a chain with no cluster.
+	// Providers resolves the effective EPEConfig. BuildFilters requires a registry.
+	Providers *extensionprovider.Registry
+	// Kube backs token filters' one-shot Secret reads. Nil disables Secret sources.
 	Kube kube.Client
-	// Stop bounds the lifetime of the certificate reload machinery Deps starts.
-	// A nil channel never closes, which is the right lifetime for a
-	// process-long provider and is what a zero-value Deps in tests gets.
-	Stop <-chan struct{}
-	// CredentialClient, when non-nil, is used as-is; tests use it to point
-	// token plugins at an in-process provider. When nil, BuildFilters
-	// builds a token-cache-backed client from the environment and Kube.
-	CredentialClient *credential.Client
 }
 
 // typedClientset returns the typed clientset for filters that do one-shot
@@ -72,21 +63,16 @@ func typedClientset(deps Deps) kubernetes.Interface {
 // header. Which transformation TYPES a rule can use is the tokentransform
 // signer registry's decision; an unregistered type fails closed at projection
 // time.
-//
-// The httpcallout filter is deliberately absent: no policy action can produce
-// its payload key yet, so registering it would build a shared HTTP client for
-// a filter that can never run. It returns to this chain when the policy API
-// grows the action, between header mutation and credential transforms.
+// HTTPCallout providers are available through the registry; the HTTPCallout filter is
+// not mounted until the SecurityProfile API and its payload conversion are added.
 func BuildFilters(deps Deps) ([]filter.Registration, error) {
-	credClient, err := credClientFor(deps)
-	if err != nil {
-		return nil, err
+	if deps.Providers == nil {
+		return nil, fmt.Errorf("provider registry is required")
 	}
 	ttDeps := tokentransform.Deps{
-		Kube:    typedClientset(deps),
-		Limiter: tokentransform.NewLimiter(time.Minute, nil),
-		Tokens:  credClient,
-		STS:     credClient,
+		Kube:           typedClientset(deps),
+		Limiter:        tokentransform.NewLimiter(time.Minute, nil),
+		ProviderSource: deps.Providers,
 	}
 	definitions := []filter.Definition{
 		bypass.Definition(),

@@ -2,18 +2,30 @@
 
 The Egress Policy Enforcer (EPE) is deployed by the Agentio chart as `agentio-epe` when `epe.mode` is `managed`. This reference separates the Helm surface from EPE process settings so operators can see which controls a normal chart upgrade can change.
 
+## Watched EPEConfig
+
+EPE always watches its base and primary configuration ConfigMaps and referenced Secrets, CA ConfigMaps, and certificate files. The chart selects `<epe-name>-config` and `<epe-name>-config-primary` in the installation namespace; standalone EPE defaults to `agentio-epe-config` and `agentio-epe-config-primary` in `agentio-system`. Set `epe.config` to have Helm create the base with named `httpCallout` and `credentialProvider` extensions. SecurityProfile HTTPCallout API integration is deferred. `epe.config: null` leaves the base externally managed; primary is always externally managed.
+
+Environment settings supply the default EPEConfig layer, followed by base and primary. Missing ConfigMaps or blank `data.config` leave the lower layer unchanged; EPE watches for later creation. Invalid content is logged and discarded, retaining the last good configuration, or the defaults before any valid configuration has been loaded.
+
+`extensionProviders` merges by name across layers. New names are added; a same-name entry replaces the whole provider, including its type, timeout, and TLS settings. Omitted or null lists inherit the lower layer; an explicit `extensionProviders: []` clears the inherited list. Duplicate names within one layer are invalid. Each update recomputes from defaults: removing an entry or deleting a ConfigMap restores any lower-layer definition. Unchanged providers keep their clients and caches; replaced providers are recreated when restored.
+
+Environment defaults use the ordinary name `agentio-default-credential-provider`, which ConfigMaps may redefine. Adding only HTTPCallout providers preserves this credential provider and its default selection. No environment provider is generated when `IDENTITY_PROVIDER_URL` is empty. Omitting `defaultProviders` inherits the lower layer's selection; `defaultProviders: {credentialProvider: ""}` (or `defaultProviders: {}`) clears it. A missing or wrong-type selected default fails at call time; there is no fallback to another provider. TLS material or call failures likewise do not change the selected provider.
+
+An `httpCallout` provider owns its URL, timeout, and TLS settings. The HTTPCallout client implements the Invocation/Decision protocol and enforces the process-wide `HTTP_CALLOUT_MAX_RESPONSE_BYTES` response limit (default 1 MiB). Audit webhooks still use their existing configuration and do not yet reference EPEConfig providers.
+
 ## Helm values
 
 | Value | Default | Rendered effect |
 | --- | --- | --- |
 | `epe.mode` | `disabled` | `managed` creates the EPE ServiceAccount, cluster RBAC, headless Service, Deployment, and PodDisruptionBudget and writes `sandboxExtProc` into `agentio-config`; `external` wires the configured external address without deploying EPE. |
 | `epe.nameOverride` | `agentio-epe` | Names the Kubernetes objects and the generated ext_proc Service hostname. |
+| `epe.config` | `null` | When set, creates `<epe-name>-config` with EPEConfig in `data.config`. EPE watches this name even when the ConfigMap is absent. |
 | `epe.service.grpcPort` | `9002` | Service, container, EPE `-grpc-port`, and `sandboxExtProc.port`. |
 | `epe.service.healthPort`, `.metricsPort` | `9003`, `9090` | Health-probe and Prometheus listener ports. |
 | `epe.image.repository`, `.name`, `.tag` | empty, `agentio-epe`, empty | EPE container image. Empty repository and tag values inherit `global.hub` and `global.tag`. |
 | `epe.credentialProvider.url` | empty | Credential provider base URL, rendered as `IDENTITY_PROVIDER_URL`. Credential lookups fail while it is empty. |
-| `epe.credentialProvider.mtls.source` | `files` | The one source of credential-provider mTLS material: `files`, `secret`, or `none`. Always rendered as `CREDENTIAL_PROVIDER_MTLS_SOURCE`. Any other value fails rendering. |
-| `epe.credentialProvider.mtls.secretName` | empty | `source=files` only. Secret mounted at `/etc/epe/credential-provider`; empty means `<epe.nameOverride>-mtls-client-cert`. The chart never creates it. |
+| `epe.credentialProvider.mtls.source` | `none` | The source of credential-provider mTLS material: `none` or `secret`. Always rendered as `CREDENTIAL_PROVIDER_MTLS_SOURCE`. Any other value fails rendering. |
 | `epe.credentialProvider.mtls.secret.namespace`, `.name` | empty | `source=secret` only. The Secret EPE watches directly. Both are required for that source; rendering fails if either is missing. |
 | `epe.credentialProvider.mtls.insecureSkipVerify` | `false` | Rendered only when `true`. Disables provider server-certificate verification — exposes the bearer token to an on-path attacker. |
 | `epe.env` | `{}` | Adds arbitrary string environment variables to the container after the chart-managed variables, so a key set here overrides the same chart-managed variable. |
@@ -29,7 +41,7 @@ The Egress Policy Enforcer (EPE) is deployed by the Agentio chart as `agentio-ep
 | `epe.messageTimeout` | `5s` | Value used for generated `sandboxExtProc.messageTimeout`. |
 | `epe.auditWebhook.insecureSkipVerify` | `false` | Sets the EPE audit-webhook TLS verification flag. Keep `false` in production. |
 
-The chart supplies the three listener ports and `epe.auditWebhook.insecureSkipVerify` as container arguments. Use `epe.env` only for EPE environment variables. Other Go flags such as `--enable-pprof` or `--tls-cert-path` remain binary-only unless you add container arguments through an authorized deployment customization.
+The chart supplies the EPEConfig name and namespace, the three listener ports and `epe.auditWebhook.insecureSkipVerify` as container arguments. Use `epe.env` only for EPE environment variables. Other Go flags such as `--enable-pprof` or `--tls-cert-path` remain binary-only unless you add container arguments through an authorized deployment customization.
 
 ## Rendered Kubernetes behavior
 
@@ -37,7 +49,7 @@ The Service is headless (`clusterIP: None`) and exposes TCP ports named `extproc
 
 The chart grants the ServiceAccount `get/list/watch` on `SecurityProfile` and `GlobalSecurityProfile`, but only `get` on their status subresources. It also grants `get/list/watch` on CRDs, ConfigMaps, and Secrets. EPE needs the CRD watch before its delayed profile informers can synchronize; without it the process cannot complete startup.
 
-With the default `epe.credentialProvider.mtls.source=files`, the Pod mounts an optional Secret at `/etc/epe/credential-provider` — `epe.credentialProvider.mtls.secretName`, defaulting to `<epe.nameOverride>-mtls-client-cert`. The chart does not create that Secret. That mount is for the credential-provider client; it does not enable TLS on the ext_proc listener. An empty mount leaves the credential client with no client certificate, verifying the provider against the system trust store; because the mount is watched, the Secret appearing later takes effect without a restart. Setting the source to `secret` or `none` omits the volume and its mount entirely.
+With the default `epe.credentialProvider.mtls.source=none`, EPE presents no client certificate and verifies HTTPS credential providers against the system trust store. Set `source=secret` with `secret.namespace` and `secret.name` to watch TLS material directly through the Kubernetes API; the chart does not create or mount that Secret. EPEConfig also supports `caConfigMapRef` for a watched CA trust bundle, and `caCertificateFile` / `clientCertificateFiles` for provider TLS files; the deployment must supply these files inside the EPE container. See the [file configuration example](credential-provider.md#transport-security). Provider TLS settings do not enable TLS on the ext_proc listener.
 
 ## Agentio ext_proc wiring
 
@@ -76,6 +88,9 @@ The generated `5s` message timeout must remain above EPE's default `--plugin-bud
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
+| `--epe-config` | `agentio-epe-config` | Base ConfigMap for extension providers and default selection. An absent ConfigMap leaves defaults unchanged. |
+| `--epe-config-primary` | `agentio-epe-config-primary` | ConfigMap applied after base; empty disables the overlay. Missing or empty content leaves base unchanged. |
+| `--epe-config-namespace` | `agentio-system` | Namespace of EPEConfig; the default namespace for its Secret references. The chart sets this to the installation namespace. |
 | `--grpc-port` | `9002` | ext_proc gRPC listener. The chart sets it from `epe.service.grpcPort`. |
 | `--grpc-health-port` | `9003` | gRPC health listener used by Kubernetes probes. |
 | `--metrics-port` | `9090` | HTTP listener serving only `/metrics`. |
@@ -106,13 +121,17 @@ Without TLS flags, EPE serves plaintext ext_proc gRPC. This is the chart's defau
 | `--tls-ca-path` | Requires the serving certificate and key. It enables required, CA-verified client certificates; the CA bundle is re-read on every handshake. |
 | `--peer-spiffe-ids` | Comma-separated exact SPIFFE IDs. Requires `--tls-ca-path` and restricts verified client certificate URI SANs to the supplied IDs. |
 
-Invalid combinations, unreadable initial certificate/key files, or an invalid initial CA bundle fail EPE startup. A failed later certificate reload keeps the last good certificate. Neither the chart's optional credential-client Secret nor `epe.env` configures these flags directly.
+Invalid combinations, unreadable initial certificate/key files, or an invalid initial CA bundle fail EPE startup. A failed later certificate reload keeps the last good certificate. Neither provider TLS settings nor `epe.env` configures these flags directly.
 
 ## Credential-provider and webhook environment variables
 
 `IDENTITY_PROVIDER_URL`, `TOKEN_CACHE_TTL=15m`, and `TOKEN_CACHE_MAX_SIZE=10000` are set by the chart. `TOKEN_CACHE_TTL` applies only to `apiKey` responses that omit `cacheExpiresInSeconds`; see [caching semantics](credential-provider.md#caching-semantics). The `CREDENTIAL_PROVIDER_*` mTLS variables come from the typed `epe.credentialProvider.mtls` values described below. Everything else uses `epe.env` (or a non-chart deployment):
 
-The following table is generated from EPE's credential-provider, token-cache, STS-cache, and audit-webhook registrations. It shows binary defaults; in particular, the chart sets `TOKEN_CACHE_MAX_SIZE=10000` while the binary defaults to `100000`.
+The cache environment variables configure every credential provider, whether registered by the environment defaults or EPEConfig. Providers retain independent caches with the same limits. Cache settings are read at startup and require a restart to change; they are not part of EPEConfig.
+
+`HTTP_CALLOUT_MAX_RESPONSE_BYTES` bounds the Decision response read by each HTTPCallout client. It defaults to `1048576` bytes (1 MiB); non-positive or invalid values use that default. The client reads the setting once at initialization, so changing it in a deployment requires restarting EPE. It does not affect credential lookups or the rule's `maxBodyBytes` disclosure limit. The HTTPCallout client supports this setting; production SecurityProfile integration remains deferred.
+
+The following table is generated from EPE's credential-provider, token-cache, STS-cache, HTTPCallout, and audit-webhook registrations. It shows binary defaults; in particular, the chart sets `TOKEN_CACHE_MAX_SIZE=10000` while the binary defaults to `100000`.
 
 ```console
 $ epe -print-env -print-env-format=markdown
@@ -134,13 +153,11 @@ Use `epe -print-env` to inspect all visible registrations, including shared and 
 | <code>AUDIT_WEBHOOK_MAX_IDLE_CONNS_PER_HOST</code> | Integer | <code>64</code> | Maximum number of idle HTTP connections per host for the audit webhook client |
 | <code>AUDIT_WEBHOOK_RESPONSE_HEADER_TIMEOUT</code> | Duration | <code>10s</code> | Maximum time to wait for server response headers in the audit webhook client |
 | <code>AUDIT_WEBHOOK_TLS_HANDSHAKE_TIMEOUT</code> | Duration | <code>5s</code> | Maximum duration for a TLS handshake in the audit webhook client |
-| <code>CREDENTIAL_PROVIDER_CA_CERT_PATH</code> | String | <code>/etc/epe/credential-provider/ca.crt</code> | Path to the CA certificate used to verify the credential provider&#39;s server certificate |
-| <code>CREDENTIAL_PROVIDER_CLIENT_CERT_PATH</code> | String | <code>/etc/epe/credential-provider/client.crt</code> | Path to the client certificate presented to the credential provider |
-| <code>CREDENTIAL_PROVIDER_CLIENT_KEY_PATH</code> | String | <code>/etc/epe/credential-provider/client.key</code> | Path to the private key for CREDENTIAL&#95;PROVIDER&#95;CLIENT&#95;CERT&#95;PATH |
 | <code>CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY</code> | Boolean | <code>false</code> | Skip verification of the credential provider&#39;s server certificate. The client certificate, when one is configured, is still presented. Intended for self-signed providers on trusted networks; any on-path attacker can then read the bearer token and forge the credential response |
-| <code>CREDENTIAL_PROVIDER_MTLS_SOURCE</code> | String | <code>files</code> | Where the credential provider&#39;s mTLS material comes from: &#34;files&#34; (the CREDENTIAL&#95;PROVIDER&#95;&#42;&#95;PATH paths), &#34;secret&#34; (the Secret named by CREDENTIAL&#95;PROVIDER&#95;SECRET&#95;NAMESPACE and &#95;NAME), or &#34;none&#34;. Exactly one source is used; there is no fallback between them. Material that is absent or unusable means no client certificate is presented and the provider&#39;s certificate is verified against the system trust store |
+| <code>CREDENTIAL_PROVIDER_MTLS_SOURCE</code> | String | <code>none</code> | Where the credential provider&#39;s mTLS material comes from: &#34;secret&#34; (the Secret named by CREDENTIAL&#95;PROVIDER&#95;SECRET&#95;NAMESPACE and &#95;NAME), or &#34;none&#34;. Exactly one source is used; there is no fallback between them. Material that is absent or unusable means no client certificate is presented and the provider&#39;s certificate is verified against the system trust store |
 | <code>CREDENTIAL_PROVIDER_SECRET_NAME</code> | String | empty | Name of the Secret holding the credential provider mTLS certificate, key, and CA |
 | <code>CREDENTIAL_PROVIDER_SECRET_NAMESPACE</code> | String | empty | Namespace of the Secret holding the credential provider mTLS certificate, key, and CA |
+| <code>HTTP_CALLOUT_MAX_RESPONSE_BYTES</code> | Integer | <code>1048576</code> | Maximum response body bytes read by HTTP callouts; a non-positive value falls back to 1048576 bytes (1 MiB) |
 | <code>IDENTITY_PROVIDER_URL</code> | String | empty | Base URL of the credential provider API. The client fails every credential lookup while it is unset |
 | <code>STS_CACHE_MAX_SIZE</code> | Integer | <code>100000</code> | Maximum number of cached credential provider STS credentials; a non-positive value falls back to the default |
 | <code>TOKEN_CACHE_MAX_SIZE</code> | Integer | <code>100000</code> | Maximum number of cached credential provider API keys; a non-positive value falls back to the default |

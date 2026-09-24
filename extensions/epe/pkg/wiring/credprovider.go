@@ -16,51 +16,46 @@ package wiring
 
 import (
 	"fmt"
+	"strings"
 
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
-
-	"github.com/openkruise/agentio/extensions/epe/pkg/certs"
-	"github.com/openkruise/agentio/extensions/epe/pkg/certs/certsource"
-	"github.com/openkruise/agentio/extensions/epe/pkg/credential"
-	"github.com/openkruise/agentio/extensions/epe/pkg/credential/tokencache"
 	"istio.io/istio/pkg/env"
+
+	configv1 "github.com/openkruise/agentio/api/config/v1"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 )
 
-// Default credential-provider mTLS file paths when the env vars are not set.
-// They match the mount point the chart uses for the (optional) mTLS Secret
-// volume.
-const (
-	defaultCredProviderClientCertPath = "/etc/epe/credential-provider/client.crt"
-	defaultCredProviderClientKeyPath  = "/etc/epe/credential-provider/client.key"
-	defaultCredProviderCACertPath     = "/etc/epe/credential-provider/ca.crt"
+// Default-provider environment settings are resolved at the composition root.
+// Provider clients receive explicit values and never read process configuration.
+var (
+	identityProviderURL = env.Register("IDENTITY_PROVIDER_URL", "",
+		"Base URL of the credential provider API. The client fails every credential lookup while it is unset").Get()
+
+	// insecureSkipVerify disables verification of the credential provider's
+	// server certificate. It is orthogonal to the client identity, which is
+	// still supplied by the configured certificate source.
+	insecureSkipVerify = env.Register("CREDENTIAL_PROVIDER_INSECURE_SKIP_VERIFY", false,
+		"Skip verification of the credential provider's server certificate. The client certificate, when one is "+
+			"configured, is still presented. Intended for self-signed providers on trusted networks; any on-path "+
+			"attacker can then read the bearer token and forge the credential response").Get()
 )
 
 // Source names for CREDENTIAL_PROVIDER_MTLS_SOURCE.
 const (
 	credProviderSourceNone   = "none"
-	credProviderSourceFiles  = "files"
 	credProviderSourceSecret = "secret"
 )
 
+const defaultCredentialProviderName = "agentio-default-credential-provider"
+
 // Where the credential provider's mTLS material comes from. This is the
-// composition root's concern, which is why the variables live here rather than
-// in pkg/credential: that package only consumes a certs.Provider and does not
-// know whether the material behind it is a Secret, a file, or nothing.
+// default configuration's concern; resolution happens after all layers merge.
 var (
-	credProviderMTLSSource = env.Register("CREDENTIAL_PROVIDER_MTLS_SOURCE", credProviderSourceFiles,
-		"Where the credential provider's mTLS material comes from: \"files\" (the "+
-			"CREDENTIAL_PROVIDER_*_PATH paths), \"secret\" (the Secret named by "+
+	credProviderMTLSSource = env.Register("CREDENTIAL_PROVIDER_MTLS_SOURCE", credProviderSourceNone,
+		"Where the credential provider's mTLS material comes from: \"secret\" (the Secret named by "+
 			"CREDENTIAL_PROVIDER_SECRET_NAMESPACE and _NAME), or \"none\". Exactly one "+
 			"source is used; there is no fallback between them. Material that is absent "+
 			"or unusable means no client certificate is presented and the provider's "+
 			"certificate is verified against the system trust store").Get()
-
-	credProviderClientCertPath = env.Register("CREDENTIAL_PROVIDER_CLIENT_CERT_PATH", defaultCredProviderClientCertPath,
-		"Path to the client certificate presented to the credential provider").Get()
-	credProviderClientKeyPath = env.Register("CREDENTIAL_PROVIDER_CLIENT_KEY_PATH", defaultCredProviderClientKeyPath,
-		"Path to the private key for CREDENTIAL_PROVIDER_CLIENT_CERT_PATH").Get()
-	credProviderCACertPath = env.Register("CREDENTIAL_PROVIDER_CA_CERT_PATH", defaultCredProviderCACertPath,
-		"Path to the CA certificate used to verify the credential provider's server certificate").Get()
 
 	// Namespace and name of the Secret holding the credential provider's mTLS
 	// material. Both must be set for the Secret source to join the chain at all.
@@ -70,62 +65,49 @@ var (
 		"Name of the Secret holding the credential provider mTLS certificate, key, and CA").Get()
 )
 
-var wiringLog = ctrllog.Log.WithName("plugin-wiring")
-
-// credProviderFor builds the source of the credential provider's mTLS material.
-//
-// Exactly one source is used, named by CREDENTIAL_PROVIDER_MTLS_SOURCE. There
-// is deliberately no fallback between sources: a Secret that is missing its CA
-// does not silently borrow the CA from disk. Within the chosen source the client
-// identity and the trust anchors are independent — a source may supply anchors
-// without an identity, or an identity without anchors.
-//
-// The source is watched for the lifetime of deps.Stop, so material that appears
-// or rotates after startup takes effect without a restart. Material that is
-// absent or unusable means no client certificate is presented and the provider
-// is verified against the system trust store; it is never a startup failure.
-// Only a MISCONFIGURED source is, which is what the error return reports.
-func credProviderFor(deps Deps) (certs.Provider, error) {
-	switch credProviderMTLSSource {
-	case credProviderSourceNone:
-		wiringLog.Info("no credential provider mTLS material configured")
-		return nil, nil
-
-	case credProviderSourceFiles:
-		wiringLog.Info("watching files for credential provider mTLS material",
-			"certPath", credProviderClientCertPath, "keyPath", credProviderClientKeyPath, "caPath", credProviderCACertPath)
-		return certsource.FromFilesOptional(credProviderClientCertPath, credProviderClientKeyPath, credProviderCACertPath, deps.Stop), nil
-
-	case credProviderSourceSecret:
-		provider, err := certsource.FromSecret(deps.Kube, credProviderSecretNamespace, credProviderSecretName, deps.Stop)
-		if err != nil {
-			return nil, fmt.Errorf("%s=%s: %w", "CREDENTIAL_PROVIDER_MTLS_SOURCE", credProviderSourceSecret, err)
+// DefaultEPEConfig converts environment settings into the lowest configuration
+// layer. It neither resolves certificate material nor creates provider clients.
+func DefaultEPEConfig() (*configv1.EPEConfig, error) {
+	cfg := &configv1.EPEConfig{}
+	if identityProviderURL == "" {
+		return cfg, nil
+	}
+	provider := &configv1.CredentialProvider{
+		Url:     identityProviderURL,
+		Timeout: "10s",
+	}
+	if strings.HasPrefix(identityProviderURL, "https://") {
+		tlsConfig := &configv1.ProviderTLS{InsecureSkipVerify: insecureSkipVerify, Optional: true}
+		switch credProviderMTLSSource {
+		case credProviderSourceNone:
+		case credProviderSourceSecret:
+			if credProviderSecretNamespace == "" || credProviderSecretName == "" {
+				return nil, fmt.Errorf("CREDENTIAL_PROVIDER_MTLS_SOURCE=secret requires a namespace and a name")
+			}
+			tlsConfig.CaSource = &configv1.ProviderTLS_CaSecretRef{
+				CaSecretRef: &configv1.TargetReference{
+					Name:      credProviderSecretName,
+					Namespace: credProviderSecretNamespace,
+				},
+			}
+			tlsConfig.ClientCertificateSource = &configv1.ProviderTLS_ClientCertificateSecretRef{
+				ClientCertificateSecretRef: &configv1.TargetReference{
+					Name:      credProviderSecretName,
+					Namespace: credProviderSecretNamespace,
+				},
+			}
+		default:
+			return nil, fmt.Errorf(
+				"CREDENTIAL_PROVIDER_MTLS_SOURCE=%q is not one of secret or none",
+				credProviderMTLSSource,
+			)
 		}
-		wiringLog.Info("watching Secret for credential provider mTLS material",
-			"namespace", credProviderSecretNamespace, "name", credProviderSecretName)
-		return provider, nil
-
-	default:
-		return nil, fmt.Errorf("%s=%q is not one of %q, %q, or %q",
-			"CREDENTIAL_PROVIDER_MTLS_SOURCE", credProviderMTLSSource,
-			credProviderSourceNone, credProviderSourceFiles, credProviderSourceSecret)
+		provider.Tls = tlsConfig
 	}
-}
-
-// credClientFor returns the caller-supplied credential client or builds a
-// token-cache-backed one. When the provider URL is not configured,
-// provider-backed fetches fail through each rule's FailStrategy.
-func credClientFor(deps Deps) (*credential.Client, error) {
-	if deps.CredentialClient != nil {
-		return deps.CredentialClient, nil
-	}
-	provider, err := credProviderFor(deps)
-	if err != nil {
-		return nil, err
-	}
-	tokenCache := tokencache.NewCacheFromEnv()
-	wiringLog.Info("token cache configured", "config", tokencache.ConfigInfo())
-	stsTokenCache := tokencache.NewSTSCacheFromEnv()
-	wiringLog.Info("STS token cache configured", "config", tokencache.STSCacheConfigInfo())
-	return credential.NewClientWithCache(tokenCache, stsTokenCache, provider), nil
+	cfg.ExtensionProviders = []*configv1.ExtensionProvider{{
+		Name:     defaultCredentialProviderName,
+		Provider: &configv1.ExtensionProvider_CredentialProvider{CredentialProvider: provider},
+	}}
+	cfg.DefaultProviders = &configv1.DefaultExtensionProviders{CredentialProvider: defaultCredentialProviderName}
+	return cfg, extensionprovider.Validate(cfg)
 }

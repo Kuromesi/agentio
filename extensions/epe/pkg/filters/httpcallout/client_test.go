@@ -20,19 +20,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 )
 
 // calloutInvocation builds a valid request-phase invocation for client tests.
 func calloutInvocation(t *testing.T) Invocation {
 	t.Helper()
 	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
-	inv, err := buildRequestInvocation(cfg, testUnitID(), testStream(), filter.Body{Bytes: []byte("body"), Complete: true})
+	inv, err := buildRequestInvocation(
+		cfg,
+		testUnitID(),
+		testStream(),
+		filter.Body{Bytes: []byte("body"), Complete: true},
+	)
 	if err != nil {
 		t.Fatalf("buildRequestInvocation: %v", err)
 	}
@@ -48,7 +56,7 @@ func decisionFor() Decision {
 	}
 }
 
-func serveDecision(t *testing.T, handler http.HandlerFunc) (Config, *HTTPClient) {
+func serveDecision(t *testing.T, handler http.HandlerFunc) *testHTTPClient {
 	t.Helper()
 	done := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,11 +69,38 @@ func serveDecision(t *testing.T, handler http.HandlerFunc) (Config, *HTTPClient)
 	// Done would deadlock Close unless this releases it first.
 	t.Cleanup(func() { close(done) })
 
-	cfg, err := Config{Endpoint: server.URL, Request: &PhaseConfig{Body: true}}.Effective()
-	if err != nil {
-		t.Fatalf("Effective: %v", err)
+	return newTestHTTPClient(t, server.URL)
+}
+
+type testHTTPClient struct {
+	*HTTPClient
+	registry *extensionprovider.Registry
+	config   *configv1.HTTPCalloutProvider
+	endpoint string
+}
+
+func newTestHTTPClient(t *testing.T, endpoint string) *testHTTPClient {
+	t.Helper()
+	registry := &extensionprovider.Registry{}
+	t.Cleanup(registry.Close)
+	client := &testHTTPClient{
+		HTTPClient: NewHTTPClient(registry),
+		registry:   registry,
+		config:     &configv1.HTTPCalloutProvider{Url: endpoint, Timeout: "500ms"},
+		endpoint:   endpoint,
 	}
-	return cfg, NewHTTPClient()
+	client.configure(t)
+	return client
+}
+
+func (c *testHTTPClient) configure(t *testing.T) {
+	t.Helper()
+	if err := c.registry.Apply(&configv1.EPEConfig{ExtensionProviders: []*configv1.ExtensionProvider{{
+		Name:     "scanner",
+		Provider: &configv1.ExtensionProvider_HttpCallout{HttpCallout: c.config},
+	}}}, nil); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // withServerShutdown makes the handler's Done fire at test cleanup as well as on
@@ -91,7 +126,7 @@ func TestHTTPClientPostsTheInvocationAsJSON(t *testing.T) {
 		gotPath        string
 		gotBody        Invocation
 	)
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+	client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotContentType = r.Header.Get("Content-Type")
 		gotAccept = r.Header.Get("Accept")
@@ -101,7 +136,7 @@ func TestHTTPClientPostsTheInvocationAsJSON(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(decisionFor())
 	})
 
-	got, err := client.Call(context.Background(), cfg, inv)
+	got, err := client.Call(context.Background(), "scanner", inv)
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -125,25 +160,24 @@ func TestHTTPClientPostsTheInvocationAsJSON(t *testing.T) {
 	}
 }
 
-// TestHTTPClientHonoursThePerCallTimeout pins that Config.Timeout, which is
-// per-unit, actually bounds one call. A shared http.Client.Timeout cannot
-// express it, so the client must derive a context per call.
-func TestHTTPClientHonoursThePerCallTimeout(t *testing.T) {
+// The provider timeout bounds calls even when the caller has no deadline.
+func TestHTTPClientHonoursTheProviderTimeout(t *testing.T) {
 	inv := calloutInvocation(t)
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+	client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	})
-	cfg.Timeout = 50 * time.Millisecond
+	client.config.Timeout = "50ms"
+	client.configure(t)
 
 	start := time.Now()
-	_, err := client.Call(context.Background(), cfg, inv)
+	_, err := client.Call(context.Background(), "scanner", inv)
 	if err == nil {
 		t.Fatal("Call succeeded against a hanging endpoint, want a timeout error")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("Call took %v, want it bounded by the per-call timeout", elapsed)
+		t.Fatalf("Call took %v, want it bounded by the provider timeout", elapsed)
 	}
-	assertHidesEndpointBody(t, err, cfg.Endpoint, "")
+	assertHidesEndpointBody(t, err, client.endpoint, "")
 }
 
 func TestHTTPClientRejectsNon2xx(t *testing.T) {
@@ -151,7 +185,7 @@ func TestHTTPClientRejectsNon2xx(t *testing.T) {
 	const leaked = "internal scanner stack trace at /opt/scanner/main.py"
 	for _, status := range []int{http.StatusNoContent, http.StatusMovedPermanently, http.StatusBadRequest, http.StatusInternalServerError} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+			client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 				if status == http.StatusNoContent {
 					w.WriteHeader(status)
 					return
@@ -159,7 +193,7 @@ func TestHTTPClientRejectsNon2xx(t *testing.T) {
 				w.WriteHeader(status)
 				_, _ = w.Write([]byte(leaked))
 			})
-			_, err := client.Call(context.Background(), cfg, inv)
+			_, err := client.Call(context.Background(), "scanner", inv)
 			if status == http.StatusNoContent {
 				// 204 is 2xx but carries no decision; it must still fail.
 				if err == nil {
@@ -173,7 +207,7 @@ func TestHTTPClientRejectsNon2xx(t *testing.T) {
 			if !strings.Contains(err.Error(), http.StatusText(status)) && !strings.Contains(err.Error(), "status") {
 				t.Errorf("error = %q, want it to name the status", err.Error())
 			}
-			assertHidesEndpointBody(t, err, cfg.Endpoint, leaked)
+			assertHidesEndpointBody(t, err, client.endpoint, leaked)
 		})
 	}
 }
@@ -181,38 +215,57 @@ func TestHTTPClientRejectsNon2xx(t *testing.T) {
 func TestHTTPClientRejectsUnparseableBody(t *testing.T) {
 	inv := calloutInvocation(t)
 	const leaked = "<html>scanner-internal.corp.example.com is down</html>"
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+	client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(leaked))
 	})
 
-	_, err := client.Call(context.Background(), cfg, inv)
+	_, err := client.Call(context.Background(), "scanner", inv)
 	if err == nil {
 		t.Fatal("Call accepted a non-JSON body, want an error")
 	}
-	assertHidesEndpointBody(t, err, cfg.Endpoint, leaked)
+	assertHidesEndpointBody(t, err, client.endpoint, leaked)
 }
 
-// TestHTTPClientRejectsAnOversizedDecision pins that the read is bounded and
-// that hitting the bound is an error rather than a parse of a truncated body: a
-// truncated JSON that happened to parse would be a decision nobody sent.
-func TestHTTPClientRejectsAnOversizedDecision(t *testing.T) {
+// The limit comes from the environment and never permits a truncated decision,
+// even when the prefix is valid JSON. Non-positive values must not disable it.
+func TestHTTPClientResponseLimit(t *testing.T) {
 	inv := calloutInvocation(t)
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
-		decision := decisionFor()
-		decision.Action = actionPtr(ActionRespond)
-		status := 403
-		padding := strings.Repeat("a", 4096)
-		decision.Response = &ResponseMutation{StatusCode: &status, Body: &padding}
-		_ = json.NewEncoder(w).Encode(decision)
-	})
-	cfg.MaxBodyBytes = 64
-
-	_, err := client.Call(context.Background(), cfg, inv)
-	if err == nil {
-		t.Fatal("Call accepted a decision over the body limit, want an error")
+	raw, err := json.Marshal(decisionFor())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "64") {
-		t.Errorf("error = %q, want it to name the limit", err.Error())
+	for _, tc := range []struct {
+		name       string
+		configured string
+		limit      int
+		bodyBytes  int
+	}{
+		{name: "below", configured: "64", limit: 64, bodyBytes: 63},
+		{name: "exact", configured: "64", limit: 64, bodyBytes: 64},
+		{name: "oversized", configured: "64", limit: 64, bodyBytes: 65},
+		{name: "zero", configured: "0", limit: 1 << 20, bodyBytes: 1<<20 + 1},
+		{name: "negative", configured: "-1", limit: 1 << 20, bodyBytes: 1<<20 + 1},
+		{name: "invalid", configured: "invalid", limit: 1 << 20, bodyBytes: 1<<20 + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HTTP_CALLOUT_MAX_RESPONSE_BYTES", tc.configured)
+			body := string(raw) + strings.Repeat(" ", tc.bodyBytes-len(raw))
+			client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+				if _, err := io.WriteString(w, body); err != nil {
+					t.Error(err)
+				}
+			})
+			// Existing clients keep their limit after construction.
+			t.Setenv("HTTP_CALLOUT_MAX_RESPONSE_BYTES", "1")
+			got, err := client.Call(context.Background(), "scanner", inv)
+			if tc.bodyBytes <= tc.limit {
+				if err != nil || !reflect.DeepEqual(got, decisionFor()) {
+					t.Fatalf("decision within limit: got %#v, error %v", got, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), strconv.Itoa(tc.limit)+" byte limit") {
+				t.Fatalf("oversized decision: got error %v, want limit %d", err, tc.limit)
+			}
+		})
 	}
 }
 
@@ -221,12 +274,12 @@ func TestHTTPClientRejectsAnOversizedDecision(t *testing.T) {
 func TestHTTPClientDoesNotRetry(t *testing.T) {
 	inv := calloutInvocation(t)
 	var calls atomic.Int32
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+	client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	if _, err := client.Call(context.Background(), cfg, inv); err == nil {
+	if _, err := client.Call(context.Background(), "scanner", inv); err == nil {
 		t.Fatal("Call succeeded, want an error")
 	}
 	if got := calls.Load(); got != 1 {
@@ -246,11 +299,11 @@ func TestHTTPClientDoesNotFollowRedirects(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+	client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	})
 
-	if _, err := client.Call(context.Background(), cfg, inv); err == nil {
+	if _, err := client.Call(context.Background(), "scanner", inv); err == nil {
 		t.Fatal("Call followed a redirect, want an error")
 	}
 	if got := elsewhere.Load(); got != 0 {
@@ -264,11 +317,8 @@ func TestHTTPClientReportsATransportFailureWithoutTheEndpoint(t *testing.T) {
 	endpoint := server.URL
 	server.Close()
 
-	cfg, err := Config{Endpoint: endpoint, Request: &PhaseConfig{Body: true}}.Effective()
-	if err != nil {
-		t.Fatalf("Effective: %v", err)
-	}
-	_, err = NewHTTPClient().Call(context.Background(), cfg, inv)
+	client := newTestHTTPClient(t, endpoint)
+	_, err := client.Call(context.Background(), "scanner", inv)
 	if err == nil {
 		t.Fatal("Call reached a closed listener, want an error")
 	}
@@ -277,10 +327,11 @@ func TestHTTPClientReportsATransportFailureWithoutTheEndpoint(t *testing.T) {
 
 func TestHTTPClientHonoursCallerCancellation(t *testing.T) {
 	inv := calloutInvocation(t)
-	cfg, client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
+	client := serveDecision(t, func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	})
-	cfg.Timeout = 30 * time.Second
+	client.config.Timeout = "30s"
+	client.configure(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -288,7 +339,7 @@ func TestHTTPClientHonoursCallerCancellation(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	if _, err := client.Call(ctx, cfg, inv); err == nil {
+	if _, err := client.Call(ctx, "scanner", inv); err == nil {
 		t.Fatal("Call ignored the cancelled caller context, want an error")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {

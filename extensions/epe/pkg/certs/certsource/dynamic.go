@@ -27,9 +27,8 @@ import (
 	"github.com/openkruise/agentio/pkg/krt"
 )
 
-// reloadPollInterval is the backstop for reload drivers that can miss a change:
-// filesystem events when the watcher could not be registered, and the periodic
-// re-read the Secret source relies on entirely.
+// reloadPollInterval is the backstop for filesystem events that can be missed
+// when the watcher could not be registered.
 const reloadPollInterval = 10 * time.Second
 
 // Source supplies raw PEM material. Load is called on every reload.

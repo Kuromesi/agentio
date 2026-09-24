@@ -1,0 +1,183 @@
+// Copyright 2026 The Kruise Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+package agentio.config.v1;
+option go_package = "github.com/openkruise/agentio/api/config/v1;configv1";
+
+// EPEConfig is decoded from the watched ConfigMap's data.config entry.
+// Secret and ConfigMap references default to the configuration namespace.
+//
+// Example: register a callout service and a default credential service.
+//
+//   extensionProviders:
+//   - name: policy-check
+//     httpCallout:
+//       url: https://policy.example.com/check
+//       timeout: 500ms
+//   - name: corporate
+//     credentialProvider:
+//       url: https://credentials.example.com/get
+//       timeout: 2s
+//   defaultProviders:
+//     credentialProvider: corporate
+message EPEConfig {
+  // Named services available to EPE. Names must be unique across provider types.
+  // Layers merge by name; a same-name entry replaces the whole provider.
+  // Omitted or null lists inherit the lower layer; an explicit [] clears it.
+  repeated ExtensionProvider extension_providers = 1;
+  // Default services used when a caller does not select a provider explicitly.
+  DefaultExtensionProviders default_providers = 2;
+}
+
+// ExtensionProvider registers one typed service under a unique name.
+message ExtensionProvider {
+  // Local registration name, such as "corporate". Must be a DNS subdomain.
+  // Environment defaults use "agentio-default-credential-provider"; this is an
+  // ordinary name that configuration layers can override like any other.
+  string name = 1;
+  // Exactly one provider type must be configured.
+  oneof provider {
+    HTTPCalloutProvider http_callout = 2;
+    CredentialProvider credential_provider = 3;
+  }
+}
+
+// DefaultExtensionProviders selects services by their ExtensionProvider names.
+message DefaultExtensionProviders {
+  // Used only by credential references without an explicit provider.
+  // Omitting defaultProviders inherits the lower layer's selection. An explicit
+  // empty credentialProvider disables default selection.
+  // Must identify a credentialProvider to serve lookups. A missing or wrong-type
+  // provider fails at call time; no other provider is selected as a fallback.
+  string credential_provider = 1;
+}
+
+// HTTPCalloutProvider defines a service implementing EPE's HTTPCallout protocol:
+// EPE posts a JSON Invocation and expects a JSON Decision in response.
+// This is distinct from the Envoy ext_proc service that EPE implements.
+// Redirects are not followed. The client's response size limit is configured by
+// HTTP_CALLOUT_MAX_RESPONSE_BYTES, independently of the rule's body disclosure limit.
+message HTTPCalloutProvider {
+  // Absolute HTTP(S) endpoint, without userinfo or a fragment.
+  string url = 1;
+  // Positive Go duration, such as "500ms" or "2s". Defaults to 500ms.
+  // Bounds the HTTP request, including response body reads. An earlier caller
+  // deadline takes precedence; time spent queued by the caller is not included.
+  string timeout = 2;
+  // HTTPS transport settings. Omission uses system roots without a client certificate.
+  ProviderTLS tls = 4;
+}
+
+// CredentialProvider defines the connection to a credential service.
+// Its local ExtensionProvider name selects this connection; the credential
+// request's credentialProviderName selects the remote credential configuration.
+// Each provider has independent caches, configured process-wide at startup by
+// TOKEN_CACHE_TTL, TOKEN_CACHE_MAX_SIZE, and STS_CACHE_MAX_SIZE.
+message CredentialProvider {
+  // Absolute HTTP(S) endpoint, without userinfo or a fragment.
+  string url = 1;
+  // Positive Go duration, such as "2s". Defaults to 500ms.
+  string timeout = 2;
+  // HTTPS transport settings. Omission uses system roots without a client certificate.
+  ProviderTLS tls = 3;
+}
+
+// ProviderTLS configures HTTPS connections for either provider type. Referenced
+// Secrets, ConfigMaps, and files are watched; changes rebuild the affected provider and cache.
+// CA and client identity sources are independent, so a Secret CA can be combined
+// with a file-based client certificate, or vice versa.
+// Omitting client identity configures server-only TLS; a client certificate is
+// provided for mTLS only when configured and requested by the remote server.
+//
+// Example: verify only the server using a ConfigMap's ca.crt trust bundle.
+// Place this block under httpCallout or credentialProvider. Omitting tls entirely
+// for an HTTPS URL uses system roots and provides no client certificate.
+//
+//   tls:
+//     caConfigMapRef:
+//       name: provider-ca
+//
+// Example: use Secrets in the EPEConfig namespace for trust and client identity.
+//
+//   tls:
+//     caSecretRef:
+//       name: provider-ca
+//     clientCertificateSecretRef:
+//       name: epe-client
+//
+// Example: use PEM files supplied by the EPE deployment. Paths refer to the EPE
+// container filesystem; configuring a path does not create a volume mount.
+// Both path changes and certificate contents are reloaded without a restart.
+//
+//   tls:
+//     caCertificateFile: /etc/epe/certs/ca.crt
+//     clientCertificateFiles:
+//       certificateFile: /etc/epe/certs/tls.crt
+//       privateKeyFile: /etc/epe/certs/tls.key
+message ProviderTLS {
+  // Defaults to URL hostname. Mutually exclusive with peerSpiffeIDs.
+  string server_name = 1;
+  // Exact URI SAN allowlist, for example:
+  //   peerSpiffeIDs: ["spiffe://cluster.local/ns/agentio-system/sa/credential-provider"]
+  // Verifies the certificate chain and requires a matching SPIFFE ID instead of
+  // hostname verification. Mutually exclusive with serverName and insecureSkipVerify.
+  repeated string peer_spiffe_ids = 2 [json_name = "peerSpiffeIDs"];
+  // Selects at most one CA source. Omission uses system roots.
+  // An explicit but unavailable source fails unless optional is true.
+  oneof ca_source {
+    // PEM CA bundle from the Secret's fixed ca.crt data key. Missing or empty
+    // ca.crt is unavailable material, handled according to optional.
+    TargetReference ca_secret_ref = 3;
+    // PEM CA bundle from the ConfigMap's fixed data["ca.crt"] entry. Missing
+    // or empty ca.crt is unavailable material, handled according to optional.
+    TargetReference ca_config_map_ref = 4;
+    // Non-empty path to a PEM CA bundle inside the EPE container.
+    string ca_certificate_file = 5;
+  }
+  // Selects at most one client identity source. Omission provides no client
+  // certificate and does not require optional: true for server-only TLS.
+  oneof client_certificate_source {
+    // Client identity from the Secret's fixed tls.crt and tls.key data keys,
+    // including for environment-derived defaults. Missing or empty entries
+    // are unavailable material, handled according to optional.
+    TargetReference client_certificate_secret_ref = 6;
+    // Client certificate and private key files, configured together.
+    ProviderClientCertificateFiles client_certificate_files = 7;
+  }
+  // Disables server certificate verification; cannot be combined with peer IDs.
+  bool insecure_skip_verify = 8;
+  // Missing or unusable material uses system roots / no client certificate.
+  // By default explicit sources fail closed. This does not disable verification.
+  bool optional = 9;
+}
+
+// TargetReference identifies a Kubernetes object. The referring field defines
+// the resource kind and fixed data keys to read; key names cannot be configured.
+message TargetReference {
+  // Required resource name.
+  string name = 1;
+  // Defaults to the EPEConfig namespace, not the calling workload's namespace.
+  string namespace = 2;
+}
+
+// ProviderClientCertificateFiles reads a PEM client certificate/key pair from
+// the EPE container filesystem. Both paths are required. File names are arbitrary;
+// the fixed tls.crt/tls.key data keys apply only to Secret references.
+message ProviderClientCertificateFiles {
+  // Non-empty path to the PEM client certificate.
+  string certificate_file = 1;
+  // Non-empty path to the matching PEM private key.
+  string private_key_file = 2;
+}

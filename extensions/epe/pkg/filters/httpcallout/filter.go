@@ -145,7 +145,7 @@ func (f *Filter) callout(ctx context.Context, phase Phase, inv Invocation) (filt
 	if f.client == nil {
 		return filter.Action{}, fmt.Errorf("callout client is not configured")
 	}
-	decision, err := f.client.Call(ctx, f.cfg, inv)
+	decision, err := f.client.Call(ctx, f.cfg.Provider, inv)
 	if err != nil {
 		// Wrapping names the phase for the log; the client already scrubbed the
 		// endpoint out, and the client never sees this text because the

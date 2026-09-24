@@ -13,32 +13,9 @@
 // limitations under the License.
 package tokencache
 
-import (
-	"fmt"
-	"time"
+import "time"
 
-	"istio.io/istio/pkg/env"
-)
-
-const (
-	defaultSTSMaxSize       = 100000
-	defaultExpirationMargin = 5 * time.Minute
-)
-
-// stsCacheMaxSize is resolved once at init, as everywhere else in the tree;
-// tests override the value with testsupport.SetForTest.
-var stsCacheMaxSize = env.Register("STS_CACHE_MAX_SIZE", defaultSTSMaxSize,
-	"Maximum number of cached credential provider STS credentials; a non-positive value falls back to the default").Get()
-
-// effectiveSTSMaxSize applies the same non-positive fallback that NewSTSCache
-// applies, so STSCacheConfigInfo reports the value NewSTSCacheFromEnv would
-// actually build rather than the raw env input.
-func effectiveSTSMaxSize() int {
-	if stsCacheMaxSize > 0 {
-		return stsCacheMaxSize
-	}
-	return defaultSTSMaxSize
-}
+const defaultExpirationMargin = 5 * time.Minute
 
 // STSCacheEntry holds the STS credential triplet returned by the
 // credential provider.
@@ -61,7 +38,7 @@ type STSCache struct {
 // If maxSize is zero or negative, the default is used.
 func NewSTSCache(maxSize int) *STSCache {
 	if maxSize <= 0 {
-		maxSize = defaultSTSMaxSize
+		maxSize = DefaultMaxSize
 	}
 	return &STSCache{
 		store:            newTTLCache[STSCacheEntry](maxSize),
@@ -72,12 +49,6 @@ func NewSTSCache(maxSize int) *STSCache {
 // SetClock replaces the cache's time source. For tests.
 func (c *STSCache) SetClock(now func() time.Time) {
 	c.store.SetClock(now)
-}
-
-// NewSTSCacheFromEnv creates an STS cache configured from environment
-// variables. STS_CACHE_MAX_SIZE overrides the default max size.
-func NewSTSCacheFromEnv() *STSCache {
-	return NewSTSCache(effectiveSTSMaxSize())
 }
 
 // Get retrieves an STS credential from the cache. Returns the entry and
@@ -106,10 +77,4 @@ func (c *STSCache) Delete(credentialProviderName, resourceID string) {
 // Len returns the current number of entries in the cache.
 func (c *STSCache) Len() int {
 	return c.store.Len()
-}
-
-// STSCacheConfigInfo returns a human-readable string of STS cache
-// configuration for logging.
-func STSCacheConfigInfo() string {
-	return fmt.Sprintf("expirationMargin=%s, maxSize=%d", defaultExpirationMargin, effectiveSTSMaxSize())
 }

@@ -146,7 +146,13 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 			bodyLogger := logger.WithValues(logKeyRequestID, state.stream.RequestID)
 			bodyCtx := log.IntoContext(ctx, bodyLogger)
 			if bodyLoggerD := bodyLogger.V(logging.DEBUG); bodyLoggerD.Enabled() {
-				bodyLoggerD.Info("incoming body chunk", "body", string(v.RequestBody.Body), "EoS", v.RequestBody.EndOfStream)
+				bodyLoggerD.Info(
+					"incoming body chunk",
+					"body",
+					string(v.RequestBody.Body),
+					"EoS",
+					v.RequestBody.EndOfStream,
+				)
 			}
 			responses, err = s.processRequestBody(bodyCtx, req.GetRequestBody(), state, bodyLogger)
 		case *extProcPb.ProcessingRequest_RequestTrailers:
@@ -342,7 +348,12 @@ func (st *streamState) armFinalization(d engine.Disposition) {
 
 // processRequestBody dispatches the complete buffered body. BUFFERED may flush
 // before trailers with EndOfStream unset, so delivery is not gated on that flag.
-func (s *Server) processRequestBody(ctx context.Context, body *extProcPb.HttpBody, state *streamState, logger logr.Logger) ([]*extProcPb.ProcessingResponse, error) {
+func (s *Server) processRequestBody(
+	ctx context.Context,
+	body *extProcPb.HttpBody,
+	state *streamState,
+	logger logr.Logger,
+) ([]*extProcPb.ProcessingResponse, error) {
 	logger.V(logging.DEBUG).Info("dispatching request body",
 		"bytes", len(body.GetBody()), "endOfStream", body.EndOfStream)
 

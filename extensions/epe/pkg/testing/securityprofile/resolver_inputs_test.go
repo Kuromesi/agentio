@@ -22,6 +22,7 @@ import (
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
@@ -31,7 +32,7 @@ import (
 )
 
 func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
-	regs, err := wiring.BuildFilters(wiring.Deps{})
+	regs, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{}})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}

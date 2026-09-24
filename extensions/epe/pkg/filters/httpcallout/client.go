@@ -23,36 +23,50 @@ import (
 	"net/http"
 	"net/url"
 
+	"istio.io/istio/pkg/env"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpclient"
 )
+
+const defaultMaxResponseBytes = 1 << 20
+
+var maxResponseBytes = env.Register("HTTP_CALLOUT_MAX_RESPONSE_BYTES", defaultMaxResponseBytes,
+	"Maximum response body bytes read by HTTP callouts; a non-positive value falls back to 1048576 bytes (1 MiB)")
 
 // Client performs one callout. Implementations must not retry: a retry would
 // double a side effect the callout may have already taken.
 type Client interface {
-	Call(ctx context.Context, cfg Config, inv Invocation) (Decision, error)
+	Call(ctx context.Context, provider string, inv Invocation) (Decision, error)
 }
 
 // Deps carries what the filter needs from wiring. Client is shared across all
-// rules so one connection pool serves the process.
+// rules and resolves the named provider for each call.
 type Deps struct {
 	Client Client
 }
 
-// HTTPClient calls out over HTTP/JSON. One instance is shared by every rule, so
-// its connection pool is process-wide; the per-unit bounds come from Config on
-// each call.
-type HTTPClient struct {
-	client *http.Client
+// HTTPDoer sends requests through named HTTPCallout providers. Implementations own
+// endpoint selection, TLS and timeouts. They must not follow redirects or retry
+// failed HTTP responses.
+type HTTPDoer interface {
+	Do(ctx context.Context, provider, method string, headers http.Header, body io.Reader) (*http.Response, error)
 }
 
-var _ Client = (*HTTPClient)(nil)
+// HTTPClient encodes callout invocations and decodes decisions. Its providers
+// supply the HTTP connections independently of the callout protocol.
+type HTTPClient struct {
+	providers        HTTPDoer
+	maxResponseBytes int64
+}
 
-// NewHTTPClient builds the shared client once, on the pool defaults every EPE
-// outbound client shares. There is deliberately no http.Client.Timeout and no
-// ResponseHeaderTimeout: Config.Timeout is per-unit, so the deadline has to be
-// derived per call instead.
-func NewHTTPClient() *HTTPClient {
-	return &HTTPClient{client: httpclient.New(httpclient.DefaultOptions())}
+// NewHTTPClient constructs a callout protocol client over named HTTPCallout providers.
+// The response limit is read from the environment once when the client is created.
+func NewHTTPClient(providers HTTPDoer) *HTTPClient {
+	limit := maxResponseBytes.Get()
+	if limit <= 0 {
+		limit = defaultMaxResponseBytes
+	}
+	return &HTTPClient{providers: providers, maxResponseBytes: int64(limit)}
 }
 
 // Call sends one invocation and decodes the decision. Every failure is returned
@@ -62,25 +76,16 @@ func NewHTTPClient() *HTTPClient {
 // text: the same hygiene tokentransform's blockReply documents. The endpoint is
 // operator configuration and the response body is third-party text, and the
 // caller reading the resulting deny is untrusted.
-func (c *HTTPClient) Call(ctx context.Context, cfg Config, inv Invocation) (Decision, error) {
+func (c *HTTPClient) Call(ctx context.Context, provider string, inv Invocation) (Decision, error) {
 	payload, err := json.Marshal(inv)
 	if err != nil {
 		return Decision{}, fmt.Errorf("marshal callout invocation: %w", err)
 	}
 
-	// Per call, not on the shared client: Config.Timeout is per-unit, so one
-	// http.Client.Timeout could not express two rules with different bounds.
-	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.Endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return Decision{}, fmt.Errorf("build callout request: %w", scrubURL(err))
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.client.Do(req)
+	resp, err := c.providers.Do(ctx, provider, http.MethodPost, http.Header{
+		"Content-Type": {"application/json"},
+		"Accept":       {"application/json"},
+	}, bytes.NewReader(payload))
 	if err != nil {
 		return Decision{}, fmt.Errorf("callout request failed: %w", scrubURL(err))
 	}
@@ -91,15 +96,19 @@ func (c *HTTPClient) Call(ctx context.Context, cfg Config, inv Invocation) (Deci
 		return Decision{}, fmt.Errorf("callout endpoint returned status %d", resp.StatusCode)
 	}
 
-	// Read one byte past the limit so hitting it is distinguishable from a body
-	// that merely ends there. A truncated JSON that happened to parse would be a
-	// decision nobody sent.
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, cfg.MaxBodyBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes))
 	if err != nil {
 		return Decision{}, fmt.Errorf("read callout response: %w", scrubURL(err))
 	}
-	if int64(len(raw)) > cfg.MaxBodyBytes {
-		return Decision{}, fmt.Errorf("callout response body exceeds the %d byte limit", cfg.MaxBodyBytes)
+	if int64(len(raw)) == c.maxResponseBytes {
+		// Probe one more byte so an exact-size body succeeds, but a truncated
+		// document is never accepted even if the prefix happens to be valid JSON.
+		var extra [1]byte
+		if n, readErr := io.ReadFull(resp.Body, extra[:]); n > 0 {
+			return Decision{}, fmt.Errorf("callout response body exceeds the %d byte limit", c.maxResponseBytes)
+		} else if !errors.Is(readErr, io.EOF) {
+			return Decision{}, fmt.Errorf("read callout response: %w", scrubURL(readErr))
+		}
 	}
 
 	var decision Decision

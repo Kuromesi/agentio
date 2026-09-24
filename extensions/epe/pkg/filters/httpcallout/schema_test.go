@@ -17,18 +17,16 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestParseAppliesDefaults(t *testing.T) {
-	cfg, err := parse([]byte(`{"endpoint":"https://scanner.example.com/inspect","request":{}}`))
+	cfg, err := parse([]byte(`{"provider":"scanner","request":{}}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	want := Config{
-		Endpoint:     "https://scanner.example.com/inspect",
+		Provider:     "scanner",
 		Request:      &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeNone}},
-		Timeout:      DefaultTimeout,
 		MaxBodyBytes: DefaultMaxBodyBytes,
 	}
 	if !reflect.DeepEqual(cfg, want) {
@@ -41,7 +39,7 @@ func TestParseAppliesDefaults(t *testing.T) {
 // an empty object enables it with nothing disclosed and nothing buffered.
 func TestParsePhasePresenceIsEnablement(t *testing.T) {
 	t.Run("an absent key disables the phase", func(t *testing.T) {
-		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{}}`))
+		cfg, err := parse([]byte(`{"provider":"scanner","request":{}}`))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -51,7 +49,7 @@ func TestParsePhasePresenceIsEnablement(t *testing.T) {
 	})
 
 	t.Run("an empty object is the cheapest useful callout", func(t *testing.T) {
-		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","response":{}}`))
+		cfg, err := parse([]byte(`{"provider":"scanner","response":{}}`))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -66,19 +64,17 @@ func TestParsePhasePresenceIsEnablement(t *testing.T) {
 
 func TestParseReadsEveryField(t *testing.T) {
 	cfg, err := parse([]byte(`{
-		"endpoint":"https://scanner.example.com/inspect",
+		"provider":"scanner",
 		"request":{"headers":{"mode":"allowlist","allowlist":["X-Tenant","x-tenant","X-Trace"]},"body":true},
 		"response":{"headers":{"mode":"allowlist","allowlist":["X-Upstream","x-upstream","X-Trace"]}},
-		"timeout":"2s",
-		"maxBodyBytes":4096,
+				"maxBodyBytes":4096,
 		"failOpen":true
 	}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	want := Config{
-		Endpoint:     "https://scanner.example.com/inspect",
-		Timeout:      2 * time.Second,
+		Provider:     "scanner",
 		MaxBodyBytes: 4096,
 		FailOpen:     true,
 		Request: &PhaseConfig{
@@ -106,7 +102,7 @@ func TestParseReadsEveryField(t *testing.T) {
 // the trust boundary has to be writable in the payload an operator reviews.
 func TestParseReadsADenylist(t *testing.T) {
 	cfg, err := parse([]byte(`{
-		"endpoint":"https://scanner.example.com/inspect",
+		"provider":"scanner",
 		"request":{"headers":{"mode":"denylist","denylist":["Authorization","authorization","Proxy-Authorization","Cookie"]}},
 		"response":{"headers":{"mode":"denylist","denylist":["Set-Cookie"]}}
 	}`))
@@ -114,8 +110,7 @@ func TestParseReadsADenylist(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	want := Config{
-		Endpoint:     "https://scanner.example.com/inspect",
-		Timeout:      DefaultTimeout,
+		Provider:     "scanner",
 		MaxBodyBytes: DefaultMaxBodyBytes,
 		Request: &PhaseConfig{
 			Headers: HeadersConfig{
@@ -135,46 +130,6 @@ func TestParseReadsADenylist(t *testing.T) {
 	}
 }
 
-// TestParseTimeoutIsADurationString pins the wire representation. A bare JSON
-// number would be ambiguous between seconds, milliseconds, and nanoseconds, and
-// the zero-means-default rule makes a wrong guess silent.
-func TestParseTimeoutIsADurationString(t *testing.T) {
-	for _, tc := range []struct {
-		raw  string
-		want time.Duration
-	}{
-		{raw: `"250ms"`, want: 250 * time.Millisecond},
-		{raw: `"1.5s"`, want: 1500 * time.Millisecond},
-		{raw: `"1m"`, want: time.Minute},
-	} {
-		t.Run(tc.raw, func(t *testing.T) {
-			cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{},"timeout":` + tc.raw + `}`))
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			if cfg.Timeout != tc.want {
-				t.Fatalf("timeout = %v, want %v", cfg.Timeout, tc.want)
-			}
-		})
-	}
-
-	t.Run("empty string means the default", func(t *testing.T) {
-		cfg, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{},"timeout":""}`))
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		if cfg.Timeout != DefaultTimeout {
-			t.Fatalf("timeout = %v, want the default %v", cfg.Timeout, DefaultTimeout)
-		}
-	})
-
-	t.Run("a bare number is rejected rather than guessed", func(t *testing.T) {
-		if _, err := parse([]byte(`{"endpoint":"https://x.example.com","request":{},"timeout":500}`)); err == nil {
-			t.Fatal("parse accepted a unitless timeout, want an error naming the unit requirement")
-		}
-	})
-}
-
 func TestParseRejectsInvalidDocuments(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -188,7 +143,7 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 		},
 		{
 			name:    "unknown field",
-			raw:     `{"endpoint":"https://x.example.com","request":{},"retries":3}`,
+			raw:     `{"provider":"scanner","request":{},"retries":3}`,
 			wantErr: "retries",
 		},
 		{
@@ -200,76 +155,76 @@ func TestParseRejectsInvalidDocuments(t *testing.T) {
 		},
 		{
 			name:    "no phase enabled",
-			raw:     `{"endpoint":"https://x.example.com"}`,
+			raw:     `{"provider":"scanner"}`,
 			wantErr: "phase",
 		},
 		{
-			name:    "missing endpoint",
+			name:    "missing provider",
 			raw:     `{"request":{}}`,
+			wantErr: "provider",
+		},
+		{
+			name:    "endpoint belongs to provider",
+			raw:     `{"endpoint":"/inspect","request":{}}`,
 			wantErr: "endpoint",
 		},
 		{
-			name:    "relative endpoint",
-			raw:     `{"endpoint":"/inspect","request":{}}`,
-			wantErr: "absolute",
-		},
-		{
 			name:    "malformed timeout",
-			raw:     `{"endpoint":"https://x.example.com","request":{},"timeout":"soon"}`,
+			raw:     `{"provider":"scanner","request":{},"timeout":"soon"}`,
 			wantErr: "timeout",
 		},
 		{
 			name:    "negative timeout",
-			raw:     `{"endpoint":"https://x.example.com","request":{},"timeout":"-1s"}`,
-			wantErr: "negative",
+			raw:     `{"provider":"scanner","request":{},"timeout":"-1s"}`,
+			wantErr: "timeout",
 		},
 		{
 			name:    "negative body limit",
-			raw:     `{"endpoint":"https://x.example.com","request":{},"maxBodyBytes":-1}`,
+			raw:     `{"provider":"scanner","request":{},"maxBodyBytes":-1}`,
 			wantErr: "negative",
 		},
 		{
 			name:    "unknown header mode",
-			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"some"}}}`,
+			raw:     `{"provider":"scanner","request":{"headers":{"mode":"some"}}}`,
 			wantErr: "mode",
 		},
 		{
 			name:    "allowlist without allowlist mode",
-			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"all","allowlist":["x-a"]}}}`,
+			raw:     `{"provider":"scanner","request":{"headers":{"mode":"all","allowlist":["x-a"]}}}`,
 			wantErr: "allowlist",
 		},
 		{
 			name:    "denylist without denylist mode",
-			raw:     `{"endpoint":"https://x.example.com","request":{"headers":{"mode":"allowlist","allowlist":["x-a"],"denylist":["x-b"]}}}`,
+			raw:     `{"provider":"scanner","request":{"headers":{"mode":"allowlist","allowlist":["x-a"],"denylist":["x-b"]}}}`,
 			wantErr: "denylist",
 		},
 		{
 			name:    "unknown response header mode",
-			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"some"}}}`,
+			raw:     `{"provider":"scanner","response":{"headers":{"mode":"some"}}}`,
 			wantErr: "mode",
 		},
 		{
 			name:    "unknown field inside a phase's headers",
-			raw:     `{"endpoint":"https://x.example.com","response":{"headers":{"mode":"all","blocklist":["x-a"]}}}`,
+			raw:     `{"provider":"scanner","response":{"headers":{"mode":"all","blocklist":["x-a"]}}}`,
 			wantErr: "blocklist",
 		},
 		{
 			// The nested objects must reject typos as firmly as the top level, or
 			// "bodies":true would silently leave body collection off.
 			name:    "unknown field inside a phase",
-			raw:     `{"endpoint":"https://x.example.com","request":{"bodies":true}}`,
+			raw:     `{"provider":"scanner","request":{"bodies":true}}`,
 			wantErr: "bodies",
 		},
 		{
 			// The flat shape is what this change replaced; accepting it would let a
 			// stale payload enable a phase the new parser never sees.
 			name:    "the old flat boolean phase",
-			raw:     `{"endpoint":"https://x.example.com","request":true}`,
+			raw:     `{"provider":"scanner","request":true}`,
 			wantErr: "cannot unmarshal",
 		},
 		{
 			name:    "the old flat header field",
-			raw:     `{"endpoint":"https://x.example.com","request":{},"requestHeaders":{"mode":"all"}}`,
+			raw:     `{"provider":"scanner","request":{},"requestHeaders":{"mode":"all"}}`,
 			wantErr: "requestheaders",
 		},
 	} {
