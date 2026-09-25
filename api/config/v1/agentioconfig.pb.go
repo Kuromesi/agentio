@@ -149,6 +149,7 @@ func (UpstreamTlsSettings_ProtocolVersion) EnumDescriptor() ([]byte, []int) {
 type ExtProcTLSSettings_Mode int32
 
 const (
+	// Use plaintext. No peer SPIFFE IDs may be configured.
 	ExtProcTLSSettings_DISABLE ExtProcTLSSettings_Mode = 0
 	// Use the gateway's workload certificate and trust bundle from local SDS.
 	ExtProcTLSSettings_MUTUAL ExtProcTLSSettings_Mode = 1
@@ -811,9 +812,11 @@ func (x *ExtProcProvider) GetTls() *ExtProcTLSSettings {
 	return nil
 }
 
+// ExtProcTLSSettings configures the gateway's transport to an external processor.
 type ExtProcTLSSettings struct {
-	state protoimpl.MessageState  `protogen:"open.v1"`
-	Mode  ExtProcTLSSettings_Mode `protobuf:"varint,1,opt,name=mode,proto3,enum=agentio.config.v1.ExtProcTLSSettings_Mode" json:"mode,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Defaults to DISABLE when mode is omitted, including an empty tls object.
+	Mode ExtProcTLSSettings_Mode `protobuf:"varint,1,opt,name=mode,proto3,enum=agentio.config.v1.ExtProcTLSSettings_Mode" json:"mode,omitempty"`
 	// Required for MUTUAL: exact SPIFFE URI SANs accepted on the processor.
 	PeerSpiffeIds []string `protobuf:"bytes,2,rep,name=peer_spiffe_ids,json=peerSpiffeIDs,proto3" json:"peer_spiffe_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields

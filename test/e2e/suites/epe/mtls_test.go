@@ -153,6 +153,15 @@ func TestEPEGatewayMTLS(t *testing.T) {
 		apply(t, "ConfigMap", name+"-roots", map[string]any{"data": map[string]any{"root-cert.pem": value}}, mode)
 	}
 	applyRoots(t, rootPEM, kube.CreateOnly)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		logCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		defer stop()
+		logs, err := environment.Kube.Logs(logCtx, namespace, name, "epe", nil)
+		t.Logf("EPE logs (%v):\n%s", err, logs)
+	})
 	e2econfig.New(scope).
 		Eval(namespace, map[string]any{"Name": name, "Namespace": namespace, "Image": resolvedAgentioConfig.EPEImage}, mtlsEPEYAML).
 		ApplyOrFail(t, kube.CreateOnly)
@@ -163,12 +172,6 @@ func TestEPEGatewayMTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if t.Failed() {
-			logs, err := environment.Kube.Logs(context.Background(), namespace, name, "epe", nil)
-			t.Logf("EPE logs (%v):\n%s", err, logs)
-		}
-	})
 	e2econfig.New(scope).YAML(trafficFixture.Namespace.Name(), `
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile

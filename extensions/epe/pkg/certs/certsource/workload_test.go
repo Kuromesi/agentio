@@ -40,6 +40,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs/certstest"
+	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 )
 
 type workloadTestCA struct {
@@ -169,18 +170,6 @@ func writeWorkloadFile(t *testing.T, path string, value []byte) {
 	}
 }
 
-func waitWorkload(t *testing.T, check func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if check() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatal("workload certificate state did not converge")
-}
-
 func TestWorkloadAutomaticallyRenewsAndRecovers(t *testing.T) {
 	w, ca := workloadFixture(t, 4*time.Second)
 	if certs.CheckServing(w, true) == nil {
@@ -195,10 +184,15 @@ func TestWorkloadAutomaticallyRenewsAndRecovers(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	waitWorkload(t, func() bool { return certs.CheckServing(w, true) == nil })
+	testsupport.Eventually(t, 15*time.Second, func() error { return certs.CheckServing(w, true) })
 	first := w.current.Load().cert
 	writeWorkloadFile(t, w.options.TokenPath, []byte("token-two"))
-	waitWorkload(t, func() bool { return w.current.Load().cert != first })
+	testsupport.Eventually(t, 15*time.Second, func() error {
+		if w.current.Load().cert == first {
+			return fmt.Errorf("serving certificate has not rotated")
+		}
+		return nil
+	})
 	next := w.current.Load().cert
 	if bytes.Equal(first.Leaf.RawSubjectPublicKeyInfo, next.Leaf.RawSubjectPublicKeyInfo) {
 		t.Fatal("renewal reused private key")
@@ -213,11 +207,16 @@ func TestWorkloadAutomaticallyRenewsAndRecovers(t *testing.T) {
 	if certs.CheckServing(w, true) != nil {
 		t.Fatal("CA outage invalidated an unexpired identity")
 	}
-	waitWorkload(t, func() bool { return certs.CheckServing(w, true) != nil })
+	testsupport.Eventually(t, 15*time.Second, func() error {
+		if certs.CheckServing(w, true) == nil {
+			return fmt.Errorf("serving certificate has not expired")
+		}
+		return nil
+	})
 	ca.mu.Lock()
 	ca.fail = false
 	ca.mu.Unlock()
-	waitWorkload(t, func() bool { return certs.CheckServing(w, true) == nil })
+	testsupport.Eventually(t, 15*time.Second, func() error { return certs.CheckServing(w, true) })
 }
 
 func TestWorkloadRejectsInvalidIssuedCertificates(t *testing.T) {

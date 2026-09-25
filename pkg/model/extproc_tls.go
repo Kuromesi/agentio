@@ -34,10 +34,18 @@ func ValidateExtProcTLS(settings *configv1.ExtProcTLSSettings) error {
 		if len(settings.GetPeerSpiffeIds()) == 0 {
 			return fmt.Errorf("extProc.tls.peerSpiffeIDs must not be empty in MUTUAL mode")
 		}
-		for _, id := range settings.GetPeerSpiffeIds() {
+		for i, id := range settings.GetPeerSpiffeIds() {
 			uri, err := ParseSPIFFEID(id)
-			if err != nil || uri.String() != id {
-				return fmt.Errorf("extProc.tls has invalid SPIFFE ID %q", id)
+			if err != nil {
+				return fmt.Errorf("extProc.tls.peerSpiffeIDs[%d]: %w", i, err)
+			}
+			if uri.String() != id {
+				return fmt.Errorf(
+					"extProc.tls.peerSpiffeIDs[%d]: SPIFFE ID %q must use canonical form %q",
+					i,
+					id,
+					uri.String(),
+				)
 			}
 		}
 	default:

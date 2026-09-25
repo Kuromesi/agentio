@@ -198,7 +198,7 @@ func (w *Workload) renew(ctx context.Context, roots *x509.CertPool, digest [sha2
 	for _, der := range cert.Certificate[1:] {
 		parsed, err := x509.ParseCertificate(der)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse issued workload certificate chain: %w", err)
 		}
 		intermediates.AddCert(parsed)
 	}
@@ -267,7 +267,11 @@ func (w *Workload) loadRoots() (*x509.CertPool, [sha256.Size]byte, error) {
 			}
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				return nil, [sha256.Size]byte{}, err
+				return nil, [sha256.Size]byte{}, fmt.Errorf(
+					"parse workload trust bundle %q: %w",
+					w.options.RootPath,
+					err,
+				)
 			}
 			if !cert.IsCA {
 				return nil, [sha256.Size]byte{}, fmt.Errorf("workload trust bundle contains a non-CA certificate")

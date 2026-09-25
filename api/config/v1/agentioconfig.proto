@@ -204,12 +204,15 @@ message ExtProcProvider {
   ExtProcTLSSettings tls = 8;
 }
 
+// ExtProcTLSSettings configures the gateway's transport to an external processor.
 message ExtProcTLSSettings {
   enum Mode {
+    // Use plaintext. No peer SPIFFE IDs may be configured.
     DISABLE = 0;
     // Use the gateway's workload certificate and trust bundle from local SDS.
     MUTUAL = 1;
   }
+  // Defaults to DISABLE when mode is omitted, including an empty tls object.
   Mode mode = 1;
   // Required for MUTUAL: exact SPIFFE URI SANs accepted on the processor.
   repeated string peer_spiffe_ids = 2 [json_name = "peerSpiffeIDs"];

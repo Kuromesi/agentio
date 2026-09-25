@@ -87,7 +87,10 @@ func canonicalTrustDomain(trustDomain string) string {
 // ServiceAccount path. Formatting normalization is left to the caller.
 func ParseSPIFFEID(raw string) (*url.URL, error) {
 	identity, err := url.Parse(raw)
-	if err != nil || identity.Scheme != "spiffe" || identity.Hostname() == "" ||
+	if err != nil {
+		return nil, fmt.Errorf("invalid SPIFFE ID %q: %w", raw, err)
+	}
+	if identity.Scheme != "spiffe" || identity.Hostname() == "" ||
 		identity.Host != identity.Hostname() || identity.User != nil || identity.Path == "" ||
 		identity.RawQuery != "" || identity.ForceQuery || strings.Contains(raw, "#") {
 		return nil, fmt.Errorf(
