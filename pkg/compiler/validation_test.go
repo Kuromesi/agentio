@@ -50,12 +50,6 @@ func TestValidateDiscoveredWorkload(t *testing.T) {
 	}{
 		{name: "absent principal"},
 		{
-			name: "empty service-account identity",
-			mutate: func(workload *model.Workload) {
-				workload.Principal = model.Principal{Kind: model.PrincipalServiceAccount}
-			},
-		},
-		{
 			name: "empty UID",
 			mutate: func(workload *model.Workload) {
 				workload.UID = ""
@@ -66,20 +60,6 @@ func TestValidateDiscoveredWorkload(t *testing.T) {
 			name: "invalid tunnel",
 			mutate: func(workload *model.Workload) {
 				workload.TunnelProtocol = "invalid"
-			},
-			wantErr: true,
-		},
-		{
-			name: "identity fields without kind",
-			mutate: func(workload *model.Workload) {
-				workload.Principal = model.Principal{TrustDomain: "cluster.local"}
-			},
-			wantErr: true,
-		},
-		{
-			name: "unknown identity kind",
-			mutate: func(workload *model.Workload) {
-				workload.Principal = model.Principal{Kind: "unsupported"}
 			},
 			wantErr: true,
 		},
@@ -102,13 +82,6 @@ func validationTestWorkload(uid, sandboxUID string) model.Workload {
 	return model.Workload{
 		UID:       uid,
 		Namespace: "demo",
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "client",
-			},
-		},
+		Principal: mustTestPrincipal("cluster.local", "ns/"+("demo")+"/sa/"+("client")),
 	}
 }

@@ -63,7 +63,7 @@ const (
 	resourceFactWorkloadAuthorizationRefs
 	resourceFactWorkloadTrafficPolicyRefs
 	resourceFactAttesterWorkloadUID
-	resourceFactSourceUID
+	resourceFactSource
 	resourceFactNode
 	resourceFactPrincipal
 	resourceFactNamespace
@@ -95,12 +95,10 @@ func resourceFactKeys(resource Resource) []string {
 			add(resourceFactWorkloadTrafficPolicyRefs, "enabled")
 		}
 		add(resourceFactWorkloadUID, workload.WorkloadUID)
-		add(resourceFactSourceUID, workload.SourceUID)
+		add(resourceFactSource, workload.Source.String())
 		add(resourceFactNode, workload.NodeName)
 		add(resourceFactPrincipal, workload.Principal.String())
-		if workload.Principal.Kind == PrincipalServiceAccount {
-			add(resourceFactNamespace, workload.Principal.ServiceAccount.Namespace)
-		}
+		add(resourceFactNamespace, workload.Namespace)
 		for _, key := range workload.ServiceKeys {
 			add(resourceFactService, key)
 		}
@@ -141,7 +139,7 @@ func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []
 		value string
 	}{
 		{resourceFactWorkloadUID, query.WorkloadUID},
-		{resourceFactSourceUID, query.SourceUID},
+		{resourceFactSource, query.Source.String()},
 		{resourceFactAuthorizationReference, query.AuthorizationReference},
 		{resourceFactTrafficPolicyReference, query.TrafficPolicyReference},
 		{resourceFactNode, query.NodeName},
@@ -155,6 +153,9 @@ func workloadQueryCandidates(index *resourceLookupIndex, query WorkloadQuery) []
 		if field.value != "" && strings.TrimSpace(field.value) == "" {
 			return nil
 		}
+	}
+	if query.Source != (SourceRef{}) && query.Source.Validate() != nil {
+		return nil
 	}
 	if query.Principal != nil && query.Principal.Validate() != nil {
 		return nil
@@ -194,11 +195,10 @@ func workloadMatchesQuery(workload *WorkloadResourceFacts, query WorkloadQuery) 
 		(query.AuthorizationRefsOnly && !workloadHasAuthorizationRefs(workload)) ||
 		(query.TrafficPolicyRefsOnly && len(workload.TrafficPolicyRefs) == 0) ||
 		(query.WorkloadUID != "" && workload.WorkloadUID != query.WorkloadUID) ||
-		(query.SourceUID != "" && workload.SourceUID != query.SourceUID) ||
+		(query.Source != (SourceRef{}) && workload.Source != query.Source) ||
 		(query.NodeName != "" && workload.NodeName != query.NodeName) ||
 		(query.Principal != nil && workload.Principal != *query.Principal) ||
-		(query.Namespace != "" && (workload.Principal.Kind != PrincipalServiceAccount ||
-			workload.Principal.ServiceAccount.Namespace != query.Namespace)) ||
+		(query.Namespace != "" && workload.Namespace != query.Namespace) ||
 		!workloadReferencesMatch(workload, query) {
 		return false
 	}

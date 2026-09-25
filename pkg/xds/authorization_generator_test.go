@@ -42,7 +42,7 @@ func TestAuthorizationSelectionIncludesGlobalNamespaceAndWorkloadSelector(t *tes
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 
 	got := selectAuthorizationResources(scope, snapshot, nil)
@@ -133,7 +133,7 @@ func TestUnrelatedWorkloadAddressChangeDoesNotReconcileAuthorization(t *testing.
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 
 	delta, err := (AuthorizationGenerator{}).Generate(context.Background(), GenerationRequest{
@@ -203,7 +203,7 @@ func TestAuthorizationPolicyOnlyDeltaKeepsRenameAndRemovalSemantics(t *testing.T
 	workload := selectionWorkload(t, "uid-a", "demo", "node-a", "", oldPolicy.Key.Name)
 	before := selectionSnapshot(t, []model.Resource{workload, oldPolicy})
 	after := selectionSnapshot(t, []model.Resource{workload, newPolicy})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: workload.Facts.Workload.Principal, WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: workload.Facts.Workload.Principal, WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
 	for _, test := range []struct {
 		name                     string
 		names, selected, removed []string
@@ -227,5 +227,13 @@ func TestAuthorizationPolicyOnlyDeltaKeepsRenameAndRemovalSemantics(t *testing.T
 		Subscription: SubscriptionView{wildcard: true}, Snapshot: empty, Update: updateBetween(after, empty, after.Diff(empty))})
 	if len(deleted.Resources) != 0 || !slices.Equal(deleted.Removed, []string{"demo/renamed"}) {
 		t.Fatalf("delete = %#v", deleted)
+	}
+}
+
+func TestOpaquePrincipalKeepsSourceNamespacePolicySelection(t *testing.T) {
+	workload := selectionWorkload(t, "opaque", "demo", "node-a", "", "")
+	workload.Facts.Workload.Principal = mustTestPrincipal("cluster.local", "workload/app")
+	if got := workloadNamespaces([]model.Resource{workload}); !got.Contains("demo") {
+		t.Fatalf("source namespace lost for opaque principal: %v", got)
 	}
 }

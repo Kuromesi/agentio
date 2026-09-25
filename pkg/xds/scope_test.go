@@ -59,7 +59,7 @@ func TestScopeFuncsDispatchesByAuthenticatedAttestation(t *testing.T) {
 		calls++
 		return want, nil
 	}}
-	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Principal: want.Principal}
+	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
 
 	scope, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer)
 	if err != nil {
@@ -95,11 +95,7 @@ func TestScopeFuncsFailsClosedOnNilEntry(t *testing.T) {
 }
 
 func TestKubernetesScopeFuncVerifiesBoundIdentity(t *testing.T) {
-	peer := model.PeerIdentity{
-		Principal:  serviceAccountPrincipal("demo", "client"),
-		AttestedBy: model.AttestationKubernetes,
-		Kubernetes: model.KubernetesPeer{WorkloadName: "bound-pod", WorkloadUID: "bound-uid", NodeName: "node-a"},
-	}
+	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "bound-pod", WorkloadUID: "bound-uid", NodeName: "node-a", Namespace: "demo", ServiceAccount: "client"}}
 	tests := []struct {
 		name         string
 		metadata     map[string]string
@@ -174,10 +170,7 @@ func TestKubernetesScopeFuncVerifiesBoundIdentity(t *testing.T) {
 // An unbound token has no authenticated node; the client's asserted node name
 // passes through as the shared ztunnel role assertion.
 func TestKubernetesScopeFuncPassesAssertedNodeForUnboundToken(t *testing.T) {
-	peer := model.PeerIdentity{
-		Principal:  serviceAccountPrincipal("agentio-system", "ztunnel"),
-		AttestedBy: model.AttestationKubernetes,
-	}
+	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
 	resolver := &fakeNodeResolver{scope: model.ClientScope{Class: model.ClientSharedZTunnel}}
 	if _, err := KubernetesScopeFunc(resolver)(nodeWithMetadata(map[string]string{"NODE_NAME": "node-b"}), peer); err != nil {
 		t.Fatalf("unbound node assertion rejected: %v", err)
@@ -188,10 +181,7 @@ func TestKubernetesScopeFuncPassesAssertedNodeForUnboundToken(t *testing.T) {
 }
 
 func TestKubernetesScopeFuncMatchesProxyTypeToResolvedScope(t *testing.T) {
-	peer := model.PeerIdentity{
-		Principal:  serviceAccountPrincipal("demo", "egress"),
-		AttestedBy: model.AttestationKubernetes,
-	}
+	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "demo", ServiceAccount: "egress"}}
 	for _, test := range []struct {
 		name      string
 		nodeID    string

@@ -178,7 +178,7 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 		[]string{"demo/service"},
 		[]string{"demo/gateway"},
 	)
-	raw.Facts.Workload.SourceUID = "source-a"
+	raw.Facts.Workload.Source = SourceRef{Registry: "kubernetes/test", Key: "source-a"}
 	raw.Facts.Workload.AuthorizationRefs = []string{"demo/policy"}
 	snapshot, err := NewResourceSet([]Resource{raw})
 	if err != nil {
@@ -186,7 +186,7 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 	}
 	principal := testPrincipal()
 	matching := WorkloadQuery{WorkloadUID: "uid-a",
-		SourceUID:              "source-a",
+		Source:                 SourceRef{Registry: "kubernetes/test", Key: "source-a"},
 		NodeName:               "node-a",
 		Principal:              &principal,
 		Namespace:              "demo",
@@ -205,7 +205,7 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 		}
 	}
 	check(t, matching, true)
-	for _, field := range []string{"source", "node", "namespace", "service", "gateway", "authorization", "principal"} {
+	for _, field := range []string{"source", "source registry", "node", "namespace", "service", "gateway", "authorization", "principal"} {
 		for _, invalid := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/invalid=%v", field, invalid), func(t *testing.T) {
 				query := matching
@@ -215,7 +215,9 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 				}
 				switch field {
 				case "source":
-					query.SourceUID = value
+					query.Source.Key = value
+				case "source registry":
+					query.Source.Registry = value
 				case "node":
 					query.NodeName = value
 				case "namespace":
@@ -228,7 +230,7 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 					query.AuthorizationReference = value
 				case "principal":
 					other := principal
-					other.ServiceAccount.ServiceAccount = value
+					other, _ = NewPrincipal("cluster.local", "workload/test/"+value)
 					query.Principal = &other
 				}
 				check(t, query, false)
@@ -244,4 +246,18 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 	check(t, matching, false)
 	matching.AuthorizationRefsOnly = false
 	check(t, matching, true)
+}
+
+func TestOpaquePrincipalNamespaceComesFromSourceMetadata(t *testing.T) {
+	resource := testWorkloadResource(t, "opaque", "value", "uid", "node", nil, nil)
+	resource.Facts.Workload.Principal = mustTestPrincipal("cluster.local", "workload/app")
+	resource.Facts.Workload.Namespace = "source-namespace"
+	snapshot, err := NewResourceSet([]Resource{resource})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.HasWorkload(AddressType, WorkloadQuery{Namespace: "source-namespace"}) ||
+		snapshot.HasWorkload(AddressType, WorkloadQuery{Namespace: "demo"}) {
+		t.Fatal("namespace lookup depended on certificate naming")
+	}
 }

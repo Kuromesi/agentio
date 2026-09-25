@@ -47,13 +47,15 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
 // This opt-in interoperability test runs the real, unmodified agentgateway
-// binary against Agentiod's CA over TLS. Only the Kubernetes TokenReview API is
-// faked. No CA private key or pre-issued gateway certificate reaches the proxy.
+// binary against Agentiod's CA over TLS. TokenReview and target authorization
+// are faked here; registry tests cover live Pod ownership. No CA private key or
+// pre-issued gateway certificate reaches the proxy.
 // Run with AGENTIO_AGENTGATEWAY_BINARY=/absolute/path/to/agentgateway-v1.5.0.
 func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 	binary := os.Getenv("AGENTIO_AGENTGATEWAY_BINARY")
@@ -90,12 +92,21 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 			User: authenticationv1.UserInfo{Username: "system:serviceaccount:gateway-ns:gateway-account", Groups: []string{"system:serviceaccounts"}},
 		}}, nil
 	})
-	reviewer, err := attestation.NewTokenReviewer(client, "mesh.example", []string{audience})
+	reviewer, err := attestation.NewTokenReviewer(client, []string{audience})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authority := newTestAuthority(t, time.Hour, 20*time.Minute)
 	authority.authenticator = reviewer
+	authority.options.TrustDomain = "mesh.example"
+	authority.UseDelegatedIdentityAuthorizer(&fakeDelegatedIdentityAuthorizer{
+		authorize: func(_ context.Context, _ model.PeerIdentity, target model.Principal) error {
+			if target.String() != identity {
+				return fmt.Errorf("unexpected gateway identity %s", target)
+			}
+			return nil
+		},
+	})
 	// With Agentiod's one-minute clock skew, this reaches the native client's
 	// half-life renewal point before its first 30-second refresh tick.
 	authority.leafLifetime = 90 * time.Second

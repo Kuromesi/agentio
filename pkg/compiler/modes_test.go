@@ -141,7 +141,7 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 					t.Fatal("shared TrafficPolicy resource missing")
 				}
 				wantExtensions := []string{
-					"workload-metadata",
+					"workload-identity", "workload-metadata",
 					"traffic-policy-reference",
 					"egress-policies",
 					"sni-traffic-policy",
@@ -296,7 +296,7 @@ func TestSandboxLifecyclePreservesWorkloadPolicies(t *testing.T) {
 					!reflect.DeepEqual(
 						extensionNames(wire.GetWorkload().Extensions),
 						[]string{
-							"workload-metadata",
+							"workload-identity", "workload-metadata",
 							"traffic-policy-reference",
 							"egress-policies",
 							"sni-traffic-policy",

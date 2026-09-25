@@ -17,7 +17,6 @@ package compiler
 import (
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -100,27 +99,6 @@ func TestBuildPreservesEmptyNetworkAddressAlias(t *testing.T) {
 	}
 }
 
-func TestProjectWorkloadIdentityRejectsUnsupportedPrincipal(t *testing.T) {
-	workload := projectionTestWorkload()
-	workload.Principal = model.Principal{
-		Kind:        "workload-v1",
-		TrustDomain: "cluster.local",
-	}
-	_, _, err := projectWorkloadIdentity(workload)
-	if err == nil || !strings.Contains(err.Error(), "does not support") {
-		t.Fatalf("projectWorkloadIdentity() error = %v, want unsupported attester principal", err)
-	}
-}
-
-func TestBuildRejectsServiceAccountNamespaceMismatch(t *testing.T) {
-	workload := projectionTestWorkload()
-	workload.Principal.ServiceAccount.Namespace = "other"
-	_, err := buildWDSAddress(wdsProjection{Workload: workload})
-	if err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("buildWDSAddress() error = %v, want namespace mismatch", err)
-	}
-}
-
 func TestBuildProjectsHostNetworkMode(t *testing.T) {
 	workload := projectionTestWorkload()
 	workload.HostNetwork = true
@@ -170,14 +148,7 @@ func projectionTestWorkload() model.Workload {
 		Name:      "client",
 		Addresses: []string{"10.0.0.1"},
 		Ready:     true,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "client",
-			},
-		},
+		Principal: mustTestPrincipal("cluster.local", "ns/"+("demo")+"/sa/"+("client")),
 	}
 }
 
@@ -470,5 +441,26 @@ func TestBuildWDSAddressEncodingIsDeterministic(t *testing.T) {
 		if resource.Hash != first.Hash {
 			t.Fatalf("identical input changed hash at encoding %d: %s != %s", i, resource.Hash, first.Hash)
 		}
+	}
+}
+
+func TestExplicitWDSIdentityPreservesDiscoveryMetadata(t *testing.T) {
+	workload := projectionTestWorkload()
+	workload.Principal = mustTestPrincipal(workload.Principal.TrustDomain(), "workload/app")
+	resource, err := buildWDSAddress(wdsProjection{Workload: workload, ServiceAccount: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := &workloadv1.Address{}
+	if err := resource.Value.UnmarshalTo(address); err != nil {
+		t.Fatal(err)
+	}
+	wire := address.GetWorkload()
+	identity := new(extensionsv1.WorkloadIdentity)
+	if !compatibilityExtension(t, wire, "workload-identity", identity) || identity.SpiffeId != workload.Principal.String() {
+		t.Fatalf("identity: %v", identity)
+	}
+	if wire.ServiceAccount != "app" || wire.Namespace != workload.Namespace {
+		t.Fatal("Kubernetes discovery metadata changed")
 	}
 }

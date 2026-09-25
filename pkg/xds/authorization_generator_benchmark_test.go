@@ -39,9 +39,9 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 				Node:                  node,
 				AuthorizationPolicies: policies,
 			}}}), nil,
-			model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+			model.ResourceFacts{Workload: &model.WorkloadResourceFacts{Namespace: "demo",
 				WorkloadUID:       uid,
-				SourceUID:         uid,
+				Source:            model.SourceRef{Registry: "kubernetes/test", Key: uid},
 				NodeName:          node,
 				Principal:         serviceAccountPrincipal("demo", "default"),
 				AuthorizationRefs: policies,
@@ -105,7 +105,7 @@ func BenchmarkAuthorizationGeneratorIncremental(b *testing.B) {
 		New: &newRemote,
 	}})
 
-	dedicated := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-000", SourceUID: "uid-000"}
+	dedicated := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-000", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-000"}}
 	node := model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"}
 	for _, benchmark := range []struct {
 		name          string

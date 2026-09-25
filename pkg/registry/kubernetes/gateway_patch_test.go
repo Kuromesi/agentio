@@ -133,7 +133,7 @@ func TestGatewayPatchFormatSwitchesRetainLastGood(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]bool{}
 	patches.Register(func(event krt.Event[model.GatewayPatch]) {
-		if event.New != nil && event.New.Source == "agentio-system/patches" {
+		if event.New != nil && event.New.Source.Key == "agentio-system/patches" {
 			mu.Lock()
 			seen[event.New.ResourceVersion] = true
 			mu.Unlock()
@@ -203,7 +203,7 @@ func TestGatewayPatchFormatSwitchesRetainLastGood(t *testing.T) {
 	configMaps.ConditionalUpdateObject(outside)
 	waitForUpdates()
 	for _, patch := range patches.List() {
-		if patch.Source == "outside/patches" {
+		if patch.Source.Key == "outside/patches" {
 			t.Fatal("non-root source selected")
 		}
 	}

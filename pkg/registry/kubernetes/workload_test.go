@@ -29,8 +29,10 @@ func TestWorkloadsExcludeIneligiblePodsButRetainPodAuthorizationInputs(t *testin
 	terminal.Status.Phase = corev1.PodSucceeded
 	addressless := egressPod("demo", "waiting", "egress", "")
 	malformed := egressPod("demo", "bad-address", "egress", "not-an-ip")
+	valid := egressPod("demo", "valid", "egress", "10.0.0.1")
+	valid.UID = "valid-pod"
 	r := newTestRegistry(t, ctx, []runtime.Object{
-		egressPod("demo", "valid", "egress", "10.0.0.1"), terminal, addressless, malformed,
+		valid, terminal, addressless, malformed,
 	}, nil)
 
 	if got := len(r.Pods.List()); got != 4 {

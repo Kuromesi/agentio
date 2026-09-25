@@ -455,7 +455,7 @@ spec:
 			return false
 		}
 		for _, item := range items {
-			if item.Source == "agentio-system/first-arbitrary-name" {
+			if item.Source.Key == "agentio-system/first-arbitrary-name" {
 				return item.Name == "first" && item.ResourceVersion == "1"
 			}
 		}

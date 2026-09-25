@@ -293,7 +293,7 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{pod}, options...)
 	podsByUID := newPodsByUID(pods)
 	sandboxes := newSandboxes(sandboxGroups, pods, podsByUID, "cluster", options...)
-	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", options...)
+	workloads := podsource.NewWorkloads(pods, "cluster", options...)
 	if !sandboxes.WaitUntilSynced(stop) || !workloads.WaitUntilSynced(stop) {
 		t.Fatal("Kruise runtime collections did not synchronize")
 	}
@@ -309,7 +309,7 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 	if workload == nil {
 		t.Fatal("Kruise runtime produced no Workload attester")
 	}
-	if workload.SourceUID != "pod-uid" || workload.Principal.String() != "spiffe://cluster.local/ns/demo/sa/default" {
+	if workload.Source.Registry != "kubernetes/cluster" || workload.Source.Key != "pod-uid" {
 		t.Fatalf("Workload attester = %+v", workload)
 	}
 	if policySubject.Attester == nil || policySubject.Attester.WorkloadUID != workload.UID {
@@ -395,7 +395,7 @@ func TestKruiseClassifiesHostWithoutSandboxDiscovery(t *testing.T) {
 	// A label alone cannot turn an ordinary Pod into a Sandbox host.
 	ordinary.Labels = map[string]string{agentsv1alpha1.LabelSandboxID: "claimed"}
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{host, ordinary}, krt.WithStop(stop))
-	workloads := podsource.NewWorkloads(pods, "cluster", "cluster.local", krt.WithStop(stop))
+	workloads := podsource.NewWorkloads(pods, "cluster", krt.WithStop(stop))
 	if !workloads.WaitUntilSynced(stop) {
 		t.Fatal("Workloads did not sync")
 	}

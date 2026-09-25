@@ -23,15 +23,13 @@ import (
 
 // GatewayCertificateAuthorizer is the Kubernetes gateway certificate policy
 // view: an authenticated egress gateway may obtain MITM certificates only for
-// the gateway key its identity owns and only when that gateway is registered
-// in the conflict-free, source-merged Gateway collection.
+// the gateway key authorized when its connection was established, and only when
+// that gateway is registered in the conflict-free, source-merged Gateway collection.
 type GatewayCertificateAuthorizer struct {
 	gateways krt.Collection[model.Gateway]
 }
 
-func NewGatewayCertificateAuthorizer(
-	gateways krt.Collection[model.Gateway],
-) *GatewayCertificateAuthorizer {
+func NewGatewayCertificateAuthorizer(gateways krt.Collection[model.Gateway]) *GatewayCertificateAuthorizer {
 	return &GatewayCertificateAuthorizer{gateways: gateways}
 }
 
@@ -43,12 +41,11 @@ func (a *GatewayCertificateAuthorizer) Authorize(scope model.ClientScope) error 
 	if a == nil || a.gateways == nil {
 		return fmt.Errorf("authorize gateway certificate: registry is not configured")
 	}
-	if scope.Class != model.ClientEgressGateway || scope.Principal.Kind != model.PrincipalServiceAccount ||
-		scope.Principal.ServiceAccount.Namespace == "" || scope.Principal.ServiceAccount.ServiceAccount == "" {
-		return fmt.Errorf("authorize gateway certificate: only authenticated egress gateways are allowed")
+	if err := scope.Validate(); err != nil {
+		return err
 	}
-	if scope.GatewayKey != scope.Principal.ServiceAccount.Namespace+"/"+scope.Principal.ServiceAccount.ServiceAccount {
-		return fmt.Errorf("authorize gateway certificate: identity %s does not own %s", scope.Principal.String(), scope.GatewayKey)
+	if scope.Class != model.ClientEgressGateway {
+		return fmt.Errorf("authorize gateway certificate: an egress gateway scope is required")
 	}
 	gateway := a.gateways.GetKey(scope.GatewayKey)
 	if gateway != nil && gateway.ValidateForUse() == nil {

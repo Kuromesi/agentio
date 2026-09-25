@@ -32,6 +32,7 @@ type LeafOptions struct {
 	DNSNames           []string
 	IPAddresses        []net.IP
 	URIs               []*url.URL
+	ExtraExtensions    []pkix.Extension
 	CurrentTime        time.Time
 	Lifetime           time.Duration
 	IssuerExpiryMargin time.Duration
@@ -115,15 +116,16 @@ func (ca SigningCA) sign(ctx context.Context, publicKey any, privateKeyPEM []byt
 		extKeyUsage = append(extKeyUsage, x509.ExtKeyUsageClientAuth)
 	}
 	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: options.CommonName},
-		NotBefore:    now.Add(-clockSkew),
-		NotAfter:     notAfter,
-		DNSNames:     append([]string(nil), options.DNSNames...),
-		IPAddresses:  append([]net.IP(nil), options.IPAddresses...),
-		URIs:         append([]*url.URL(nil), options.URIs...),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  extKeyUsage,
+		SerialNumber:    serial,
+		Subject:         pkix.Name{CommonName: options.CommonName},
+		NotBefore:       now.Add(-clockSkew),
+		NotAfter:        notAfter,
+		DNSNames:        append([]string(nil), options.DNSNames...),
+		IPAddresses:     append([]net.IP(nil), options.IPAddresses...),
+		URIs:            append([]*url.URL(nil), options.URIs...),
+		ExtraExtensions: append([]pkix.Extension(nil), options.ExtraExtensions...),
+		KeyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:     extKeyUsage,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.certificate, publicKey, ca.privateKey)
 	if err != nil {

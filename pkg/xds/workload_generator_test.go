@@ -316,7 +316,7 @@ func TestDedicatedZTunnelReceivesOnlyWorkloadScope(t *testing.T) {
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 
 	got := selectWorkloadResources(scope, snapshot, model.AddressType, nil)
@@ -343,7 +343,7 @@ func TestWorkloadReferencedGatewaySelection(t *testing.T) {
 		gatewayAWorkload, gatewayAService, gatewayBWorkload, gatewayBService,
 		selectionWorkload(t, "unrelated", "unrelated", "node-z", "", ""),
 	})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
 
 	got := selectWorkloadResources(scope, snapshot, model.AddressType, nil)
 	want := []string{"agentio-system/egress-a.agentio-system.svc.cluster.local", "demo/svc-a", "gateway-a", "uid-a"}
@@ -387,14 +387,14 @@ func TestNamedWorkloadAlwaysIncludesReferencedGateways(t *testing.T) {
 	gateway := selectionOwnedByGateway(t,
 		selectionWorkload(t, "gateway-a", "agentio-system", "gateway-node", "", ""), "agentio-system/egress-a")
 	snapshot := selectionSnapshot(t, []model.Resource{own, gateway})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
 	if names := selectedNames(selectWorkloadResources(scope, snapshot, model.AddressType, []string{"uid-a"})); !slices.Equal(names, []string{"gateway-a", "uid-a"}) {
 		t.Fatalf("named selection = %v", names)
 	}
 }
 
 func TestNamedReferencedGatewayIncremental(t *testing.T) {
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
 	plain := selectionWorkload(t, "uid-a", "demo", "node-a", "", "")
 	own := selectionWithGatewayReference(t, plain, "agentio-system/egress-a")
 	oldGateway := selectionOwnedByGateway(t,
@@ -531,7 +531,7 @@ func TestNamedServiceSubscriptionExpandsSelectedEndpointWorkloads(t *testing.T) 
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 
 	got := selectWorkloadResources(scope, snapshot, model.AddressType, []string{"/10.96.0.1"})
@@ -753,7 +753,7 @@ func TestDedicatedWorkloadNamedServiceMembershipLossReconcilesRemovals(t *testin
 				case "local-to-remote":
 					facts := oldWorkload.Facts
 					workloadFacts := *facts.Workload
-					workloadFacts.SourceUID = "replacement-pod"
+					workloadFacts.Source.Key = "replacement-pod"
 					facts.Workload = &workloadFacts
 					updated, err := model.NewResource(
 						oldWorkload.Key, oldWorkload.XDSName, oldWorkload.Value,
@@ -785,7 +785,7 @@ func TestDedicatedWorkloadNamedServiceMembershipLossReconcilesRemovals(t *testin
 					Class:       client.class,
 					Principal:   serviceAccountPrincipal("demo", "default"),
 					WorkloadUID: "uid-local",
-					SourceUID:   "uid-local",
+					Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-local"},
 				}
 				watch := &watchState{
 					started: true,
@@ -876,7 +876,7 @@ func TestIncrementalPublicationTransitionAtTenThousandResources(t *testing.T) {
 			scope: model.ClientScope{
 				Class:       model.ClientDedicatedZTunnel,
 				WorkloadUID: target.Facts.Workload.WorkloadUID,
-				SourceUID:   target.Facts.Workload.SourceUID,
+				Source:      target.Facts.Workload.Source,
 				Principal:   target.Facts.Workload.Principal,
 			},
 		},

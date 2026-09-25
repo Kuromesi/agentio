@@ -36,14 +36,14 @@ const (
 // of Sandbox discovery and policy attachment.
 func NewWorkloads(
 	pods krt.Collection[*corev1.Pod],
-	clusterID, trustDomain string,
+	clusterID string,
 	options ...krt.CollectionOption,
 ) krt.Collection[model.Workload] {
 	return krt.NewCollection(pods, func(_ krt.HandlerContext, pod *corev1.Pod) *model.Workload {
 		if !IsEligible(pod) {
 			return nil
 		}
-		return workloadFromPod(clusterID, trustDomain, pod)
+		return BaseWorkloadFromPod(clusterID, pod)
 	}, options...)
 }
 
@@ -73,9 +73,9 @@ func WorkloadUID(clusterID string, pod *corev1.Pod) string {
 	return clusterID + "//Pod/" + pod.Namespace + "/" + pod.Name
 }
 
-// BaseWorkloadFromPod projects only the Pod-owned networking and
-// identity state. Runtime classification is applied by NewWorkloads.
-func BaseWorkloadFromPod(clusterID, trustDomain string, pod *corev1.Pod) *model.Workload {
+// BaseWorkloadFromPod projects Pod networking and its native source reference.
+// The registry assigns the effective Principal and gateway membership afterward.
+func BaseWorkloadFromPod(clusterID string, pod *corev1.Pod) *model.Workload {
 	addresses := make([]string, 0, len(pod.Status.PodIPs))
 	for _, address := range pod.Status.PodIPs {
 		if address.IP != "" {
@@ -96,17 +96,9 @@ func BaseWorkloadFromPod(clusterID, trustDomain string, pod *corev1.Pod) *model.
 	uid := WorkloadUID(clusterID, pod)
 	injected := HasInjectedZTunnel(pod)
 	canonicalName, canonicalRevision := canonicalIdentity(pod)
-	workload := &model.Workload{
-		UID: uid,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: trustDomain,
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      pod.Namespace,
-				ServiceAccount: pod.Spec.ServiceAccountName,
-			},
-		},
-		SourceUID:         string(pod.UID),
+	return &model.Workload{
+		UID:               uid,
+		Source:            SourceRef(clusterID, string(pod.UID)),
 		Namespace:         pod.Namespace,
 		Name:              pod.Name,
 		CanonicalName:     canonicalName,
@@ -119,7 +111,6 @@ func BaseWorkloadFromPod(clusterID, trustDomain string, pod *corev1.Pod) *model.
 		NativeTunnel:      injected,
 		Ready:             ready,
 	}
-	return workload
 }
 
 func canonicalIdentity(pod *corev1.Pod) (string, string) {
@@ -183,10 +174,6 @@ func AmbientRedirectionEnabled(pod *corev1.Pod) bool {
 	return pod != nil && pod.Annotations[ambientRedirectionAnnotation] == "enabled"
 }
 
-func workloadFromPod(clusterID, trustDomain string, pod *corev1.Pod) *model.Workload {
-	return BaseWorkloadFromPod(clusterID, trustDomain, pod)
-}
-
 func tunnelProtocol(pod *corev1.Pod, injected bool) model.TunnelProtocol {
 	if injected || AmbientRedirectionEnabled(pod) {
 		return model.TunnelProtocolHBONE
@@ -198,4 +185,9 @@ func cloneStringMap(input map[string]string) map[string]string {
 	result := make(map[string]string, len(input))
 	maps.Copy(result, input)
 	return result
+}
+
+// SourceRef distinguishes this Kubernetes cluster's Pod registry from other sources.
+func SourceRef(cluster, uid string) model.SourceRef {
+	return model.SourceRef{Registry: "kubernetes/" + cluster, Key: uid}
 }

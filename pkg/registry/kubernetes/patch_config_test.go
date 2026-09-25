@@ -58,7 +58,7 @@ func TestPatchConfigTargetsAndMetadata(t *testing.T) {
 		t.Fatalf("patches = %#v", patches)
 	}
 	p := patches[0]
-	if p.Namespace != cm.Namespace || p.Name != cm.Name || p.Source != "agentio-system/patches" ||
+	if p.Namespace != cm.Namespace || p.Name != cm.Name || p.Source.Key != "agentio-system/patches" ||
 		p.ResourceVersion != "1" || !p.CreationTime.IsZero() || p.Priority != -10 {
 		t.Fatalf("metadata = %#v", p)
 	}

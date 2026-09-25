@@ -14,24 +14,33 @@
 
 package model
 
+import "fmt"
+
 // Attestation names the infrastructure that authenticated a client.
 type Attestation string
 
 const AttestationKubernetes Attestation = "kubernetes"
 
-// PeerIdentity contains the identity and attestation-bound attributes established
-// by transport authentication.
+// PeerIdentity contains only verified authentication evidence. The registry
+// resolves it to the Workloads whose certificate identities the caller may use.
 type PeerIdentity struct {
-	Principal  Principal
 	AttestedBy Attestation
-	// Kubernetes holds Kubernetes attestation extras; other attestations ignore it.
 	Kubernetes KubernetesPeer
 }
 
-// KubernetesPeer is the Kubernetes attestation payload of a PeerIdentity: the pod and
-// node bindings a bound service-account token proves.
+// KubernetesPeer is produced by TokenReview, independently of certificate naming.
+// Pod bindings are required for workload issuance and xDS ownership resolution.
 type KubernetesPeer struct {
-	WorkloadName string
-	WorkloadUID  string
-	NodeName     string
+	Namespace      string
+	ServiceAccount string
+	WorkloadName   string
+	WorkloadUID    string
+	NodeName       string
+}
+
+func (p KubernetesPeer) Validate() error {
+	if p.Namespace == "" || p.ServiceAccount == "" {
+		return fmt.Errorf("Kubernetes namespace and service account are required")
+	}
+	return nil
 }

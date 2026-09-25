@@ -353,11 +353,7 @@ func newTestServerWithGenerators(
 	}
 	source := newFakeResourceStore(snapshot)
 	server, err := NewServer(
-		fakeAuthenticator{caller: model.PeerIdentity{
-			Principal:  scope.Principal,
-			AttestedBy: model.AttestationKubernetes,
-			Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod"},
-		}},
+		fakeAuthenticator{caller: model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod", Namespace: "demo", ServiceAccount: "app"}}},
 		fakeResolver{scope: scope}.scopeFuncs(),
 		source,
 		func() bool { return true },
@@ -386,11 +382,7 @@ func newTestServerWithScheduler(
 		t.Fatal(err)
 	}
 	source := newFakeResourceStore(snapshot)
-	authenticator := fakeAuthenticator{caller: model.PeerIdentity{
-		Principal:  scope.Principal,
-		AttestedBy: model.AttestationKubernetes,
-		Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod"},
-	}}
+	authenticator := fakeAuthenticator{caller: model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod", Namespace: "demo", ServiceAccount: "app"}}}
 	resolver := fakeResolver{scope: scope}
 	ready := func() bool { return true }
 	generators := testGenerators(nil)
@@ -567,9 +559,9 @@ func addressResource(t testing.TB, name, payload string, aliases ...string) mode
 		mustAny(&workloadv1.Address{Type: &workloadv1.Address_Workload{
 			Workload: &workloadv1.Workload{Uid: name, Name: payload, Namespace: "demo"},
 		}}), aliases,
-		model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+		model.ResourceFacts{Workload: &model.WorkloadResourceFacts{Namespace: "demo",
 			WorkloadUID: "cluster//Pod/demo/client-pod",
-			SourceUID:   "cluster//Pod/demo/client-pod",
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: "cluster//Pod/demo/client-pod"},
 			NodeName:    "node-a",
 			Principal:   serviceAccountPrincipal("demo", "default"),
 		}})
@@ -607,7 +599,8 @@ func gatewayResourceOfType(t testing.TB, typeURL, gatewayKey, xdsName, payload s
 
 func gatewayScope() model.ClientScope {
 	return model.ClientScope{
-		Class:      model.ClientEgressGateway,
+		Class:       model.ClientEgressGateway,
+		WorkloadUID: "gw", Source: model.SourceRef{Registry: "kubernetes/test", Key: "pod"},
 		Principal:  serviceAccountPrincipal("demo", "egress"),
 		GatewayKey: "demo/egress",
 	}
@@ -618,19 +611,12 @@ func ztunnelScope() model.ClientScope {
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "cluster//Pod/demo/client-pod",
-		SourceUID:   "cluster//Pod/demo/client-pod",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "cluster//Pod/demo/client-pod"},
 	}
 }
 
 func serviceAccountPrincipal(namespace, serviceAccount string) model.Principal {
-	return model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      namespace,
-			ServiceAccount: serviceAccount,
-		},
-	}
+	return mustTestPrincipal("cluster.local", "ns/"+(namespace)+"/sa/"+(serviceAccount))
 }
 
 func resourceNames(response *discoveryv3.DeltaDiscoveryResponse) []string {
@@ -755,9 +741,9 @@ func selectionSnapshot(t *testing.T, resources []model.Resource) model.ResourceS
 
 func selectionWorkload(t *testing.T, uid, namespace, node, service, policyName string) model.Resource {
 	t.Helper()
-	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{Namespace: namespace,
 		WorkloadUID: uid,
-		SourceUID:   uid,
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: uid},
 		NodeName:    node,
 		Principal:   serviceAccountPrincipal(namespace, "default"),
 	}}
@@ -881,9 +867,9 @@ func scaleWorkloadTransition(t testing.TB, resourceCount int) (
 			XDSName: name,
 			Value:   value,
 			Hash:    name + "-old",
-			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{Namespace: "demo",
 				WorkloadUID: name,
-				SourceUID:   name,
+				Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 				NodeName:    fmt.Sprintf("node-%03d", index%100),
 				Principal:   serviceAccountPrincipal("demo", "default"),
 			}},

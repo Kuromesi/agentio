@@ -30,6 +30,7 @@ import (
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 // wdsProjection contains the resolved inputs for one WDS Workload projection.
@@ -37,6 +38,7 @@ import (
 type wdsProjection struct {
 	ClusterID             string
 	Workload              model.Workload
+	ServiceAccount        string // Kubernetes discovery metadata, not the certificate principal.
 	Endpoints             []model.Endpoint
 	Services              []model.Service
 	SNIPolicy             *extensionsv1.SniTrafficPolicy
@@ -61,7 +63,7 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 	if len(addresses) == 0 {
 		return nil, nil
 	}
-	trustDomain, serviceAccount, err := projectWorkloadIdentity(input.Workload)
+	trustDomain, serviceAccount, err := projectWorkloadIdentity(input)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +101,13 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		wireWorkload.NetworkMode = workloadv1.NetworkMode_HOST_NETWORK
 	}
 	address := &workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: wireWorkload}}
+	if identity := input.Workload.Principal; identity != (model.Principal{}) {
+		config, err := marshalDeterministicAny(&extensionsv1.WorkloadIdentity{SpiffeId: identity.String()})
+		if err != nil {
+			return nil, err
+		}
+		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{Name: "workload-identity", Config: config})
+	}
 	if input.MetadataConfiguration != nil {
 		metadata, err := newWorkloadMetadataExtension(filteredWorkloadLabels(
 			input.Workload.Labels, input.MetadataConfiguration.IgnoredLabels))
@@ -150,8 +159,9 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 	facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 		TrafficPolicyRefs: append([]string(nil), input.TrafficPolicyNames...),
 		AuthorizationRefs: append([]string(nil), input.AuthorizationNames...),
+		Namespace:         input.Workload.Namespace,
 		WorkloadUID:       input.Workload.UID,
-		SourceUID:         input.Workload.SourceUID,
+		Source:            input.Workload.Source,
 		NodeName:          input.Workload.NodeName,
 		Principal:         input.Workload.Principal,
 		ServiceKeys:       serviceKeys,
@@ -454,20 +464,19 @@ func addressAlias(network, address string) string {
 	return network + "/" + address
 }
 
-func projectWorkloadIdentity(workload model.Workload) (string, string, error) {
-	principal := workload.Principal
-	if principal == (model.Principal{}) {
-		return "", "", nil
+// Full SPIFFE identity and Kubernetes discovery metadata are independent.
+func projectWorkloadIdentity(input wdsProjection) (string, string, error) {
+	principal := input.Workload.Principal
+	if namespace, account, kubernetes := podsource.ServiceAccountFromPrincipal(principal); kubernetes {
+		if namespace != input.Workload.Namespace {
+			return "", "", fmt.Errorf("workload %s namespace does not match service account principal", input.Workload.UID)
+		}
+		if input.ServiceAccount != "" && input.ServiceAccount != account {
+			return "", "", fmt.Errorf("workload %s source service account conflicts with certificate principal", input.Workload.UID)
+		}
+		return principal.TrustDomain(), account, nil
 	}
-	if principal.Kind != model.PrincipalServiceAccount {
-		return "", "", fmt.Errorf("current WDS Workload does not support %q workload principals",
-			principal.Kind)
-	}
-	if principal.ServiceAccount.Namespace != "" && principal.ServiceAccount.Namespace != workload.Namespace {
-		return "", "", fmt.Errorf("workload %s namespace %q does not match workload principal namespace %q",
-			workload.UID, workload.Namespace, principal.ServiceAccount.Namespace)
-	}
-	return principal.TrustDomain, principal.ServiceAccount.ServiceAccount, nil
+	return principal.TrustDomain(), input.ServiceAccount, nil
 }
 
 // marshalDeterministicAny encodes the payload before wrapping it: deterministic

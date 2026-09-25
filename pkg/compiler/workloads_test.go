@@ -110,7 +110,7 @@ func TestEndpointTargetUIDMovementAndStalePodReplacementKeepDependencies(t *test
 
 	recorder.reset()
 	replacementB := podB
-	replacementB.SourceUID = "uid-b-replacement"
+	replacementB.Source.Key = "uid-b-replacement"
 	fixture.workloads.ConditionalUpdateObject(replacementB)
 	assertWorkloadEvents(t, recorder, []model.Workload{replacementB}, []model.Workload{podA, podC})
 	if workloadHasService(t, fixture.compiler, replacementB, "backend.alpha.svc.cluster.local") {
@@ -225,7 +225,7 @@ func TestDeletingInvalidWorkloadClearsDomainAndWDSFailures(t *testing.T) {
 	t.Run("domain validation", func(t *testing.T) {
 		fixture := newIncrementalFixture(t)
 		workload := testWorkload("alpha", "client", "10.1.0.1")
-		workload.Principal.Kind = "unsupported"
+		workload.TunnelProtocol = "unsupported"
 		fixture.workloads.ConditionalUpdateObject(workload)
 		waitSynced(t, fixture.compiler)
 		eventually(t, func() bool {

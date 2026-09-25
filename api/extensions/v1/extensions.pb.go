@@ -241,6 +241,52 @@ func (x *WorkloadMetadata) GetMeshInternalTrafficPolicy() MeshInternalTrafficPol
 	return MeshInternalTrafficPolicy_MESH_INTERNAL_PEER_AWARE
 }
 
+// WorkloadIdentity carries the complete effective certificate identity.
+// Legacy proxies ignore it and use namespace/service_account wire fields.
+type WorkloadIdentity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SpiffeId      string                 `protobuf:"bytes,1,opt,name=spiffe_id,json=spiffeId,proto3" json:"spiffe_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkloadIdentity) Reset() {
+	*x = WorkloadIdentity{}
+	mi := &file_api_extensions_v1_extensions_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkloadIdentity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkloadIdentity) ProtoMessage() {}
+
+func (x *WorkloadIdentity) ProtoReflect() protoreflect.Message {
+	mi := &file_api_extensions_v1_extensions_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkloadIdentity.ProtoReflect.Descriptor instead.
+func (*WorkloadIdentity) Descriptor() ([]byte, []int) {
+	return file_api_extensions_v1_extensions_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *WorkloadIdentity) GetSpiffeId() string {
+	if x != nil {
+		return x.SpiffeId
+	}
+	return ""
+}
+
 var File_api_extensions_v1_extensions_proto protoreflect.FileDescriptor
 
 const file_api_extensions_v1_extensions_proto_rawDesc = "" +
@@ -254,7 +300,9 @@ const file_api_extensions_v1_extensions_proto_rawDesc = "" +
 	"\x1cmesh_internal_traffic_policy\x18\x02 \x01(\x0e2:.kruise.networking.extensions.v1.MeshInternalTrafficPolicyR\x19meshInternalTrafficPolicy\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*X\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"/\n" +
+	"\x10WorkloadIdentity\x12\x1b\n" +
+	"\tspiffe_id\x18\x01 \x01(\tR\bspiffeId*X\n" +
 	"\x19MeshInternalTrafficPolicy\x12\x1c\n" +
 	"\x18MESH_INTERNAL_PEER_AWARE\x10\x00\x12\x1d\n" +
 	"\x19MESH_INTERNAL_PASSTHROUGH\x10\x01*+\n" +
@@ -277,17 +325,18 @@ func file_api_extensions_v1_extensions_proto_rawDescGZIP() []byte {
 }
 
 var file_api_extensions_v1_extensions_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_extensions_v1_extensions_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_api_extensions_v1_extensions_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_api_extensions_v1_extensions_proto_goTypes = []any{
 	(MeshInternalTrafficPolicy)(0), // 0: kruise.networking.extensions.v1.MeshInternalTrafficPolicy
 	(TrafficPolicyMode)(0),         // 1: kruise.networking.extensions.v1.TrafficPolicyMode
 	(*TrafficPolicyExtension)(nil), // 2: kruise.networking.extensions.v1.TrafficPolicyExtension
 	(*WorkloadMetadata)(nil),       // 3: kruise.networking.extensions.v1.WorkloadMetadata
-	nil,                            // 4: kruise.networking.extensions.v1.WorkloadMetadata.LabelsEntry
+	(*WorkloadIdentity)(nil),       // 4: kruise.networking.extensions.v1.WorkloadIdentity
+	nil,                            // 5: kruise.networking.extensions.v1.WorkloadMetadata.LabelsEntry
 }
 var file_api_extensions_v1_extensions_proto_depIdxs = []int32{
 	1, // 0: kruise.networking.extensions.v1.TrafficPolicyExtension.mode:type_name -> kruise.networking.extensions.v1.TrafficPolicyMode
-	4, // 1: kruise.networking.extensions.v1.WorkloadMetadata.labels:type_name -> kruise.networking.extensions.v1.WorkloadMetadata.LabelsEntry
+	5, // 1: kruise.networking.extensions.v1.WorkloadMetadata.labels:type_name -> kruise.networking.extensions.v1.WorkloadMetadata.LabelsEntry
 	0, // 2: kruise.networking.extensions.v1.WorkloadMetadata.mesh_internal_traffic_policy:type_name -> kruise.networking.extensions.v1.MeshInternalTrafficPolicy
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
@@ -307,7 +356,7 @@ func file_api_extensions_v1_extensions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_extensions_v1_extensions_proto_rawDesc), len(file_api_extensions_v1_extensions_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -465,14 +465,7 @@ func eventually(t testing.TB, condition func() bool, message string) {
 }
 
 func serviceAccountPrincipal(namespace, serviceAccount string) model.Principal {
-	return model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      namespace,
-			ServiceAccount: serviceAccount,
-		},
-	}
+	return mustTestPrincipal("cluster.local", "ns/"+(namespace)+"/sa/"+(serviceAccount))
 }
 
 // Cancellation releases both the subscriber and any type-index entries.

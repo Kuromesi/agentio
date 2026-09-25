@@ -36,6 +36,7 @@ func newTestAuthority(t *testing.T, leafLifetime, leafRenewBefore time.Duration)
 		t.Fatal(err)
 	}
 	authority := &Authority{
+		options:         AuthorityOptions{TrustDomain: "cluster.local"},
 		ca:              signingCA,
 		rootPEM:         append([]byte(nil), secret.Data[caCertKey]...),
 		leafLifetime:    leafLifetime,
@@ -161,7 +162,7 @@ func TestExpiredServerCertificateIsReplaced(t *testing.T) {
 // The default renewal window is derived from the lifetime when it is not
 // configured, so a caller that only sets a lifetime still gets renewal.
 func TestLeafRenewBeforeDefaultsFromLifetime(t *testing.T) {
-	options := AuthorityOptions{LeafLifetime: 90 * time.Minute}
+	options := AuthorityOptions{TrustDomain: "cluster.local", LeafLifetime: 90 * time.Minute}
 	applyAuthorityDefaults(&options)
 	if options.LeafRenewBefore != 30*time.Minute {
 		t.Fatalf("LeafRenewBefore = %s, want a third of the lifetime", options.LeafRenewBefore)
@@ -169,7 +170,7 @@ func TestLeafRenewBeforeDefaultsFromLifetime(t *testing.T) {
 
 	// A nonsensical window (at or beyond the lifetime) also falls back, otherwise
 	// every certificate would be born already due for renewal.
-	options = AuthorityOptions{LeafLifetime: time.Hour, LeafRenewBefore: 2 * time.Hour}
+	options = AuthorityOptions{TrustDomain: "cluster.local", LeafLifetime: time.Hour, LeafRenewBefore: 2 * time.Hour}
 	applyAuthorityDefaults(&options)
 	if options.LeafRenewBefore != 20*time.Minute {
 		t.Fatalf("LeafRenewBefore = %s, want a third of the lifetime", options.LeafRenewBefore)

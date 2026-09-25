@@ -23,6 +23,11 @@ import (
 )
 
 var (
+	WorkloadSourceExtensionOID = env.Register(
+		"AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID",
+		"",
+		"Private enterprise OID for the non-critical workload source certificate extension. Empty disables instance certificate requests; principal-only requests remain supported.",
+	).Get()
 	// SandboxMode enables runtime discovery and Sandbox resources alongside Workloads.
 	SandboxMode = env.Register(
 		"AGENTIO_SANDBOX_MODE",

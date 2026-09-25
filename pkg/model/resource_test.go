@@ -132,9 +132,9 @@ func TestNewResourceValidatesDiscoveryPrincipalShape(t *testing.T) {
 		wantErr   bool
 	}{
 		{name: "absent principal"},
-		{name: "empty service-account identity", principal: Principal{Kind: PrincipalServiceAccount}},
-		{name: "identity fields without kind", principal: Principal{TrustDomain: "cluster.local"}, wantErr: true},
-		{name: "unknown identity kind", principal: Principal{Kind: "unsupported"}, wantErr: true},
+		{name: "invalid SPIFFE URI", principal: Principal{uri: "not-a-spiffe-uri"}, wantErr: true},
+		{name: "empty path segment", principal: Principal{uri: "spiffe://cluster.local//id"}, wantErr: true},
+		{name: "query in URI", principal: Principal{uri: "spiffe://cluster.local/workload/id?"}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -66,8 +66,7 @@ type Registry struct {
 	// Consumers wait for it separately from the compiler's registry synchronization.
 	Secrets krt.Collection[*corev1.Secret]
 
-	podsByNode                    krt.Index[string, *corev1.Pod]
-	delegationPodsByNodePrincipal krt.Index[string, *corev1.Pod]
+	gatewayMembers krt.Collection[gatewayMembership]
 
 	Sandboxes                  krt.Collection[model.Sandbox]
 	Workloads                  krt.Collection[model.Workload]
@@ -173,13 +172,6 @@ func New(
 	r.Pods = pods
 	r.KubernetesServices = services
 	r.EndpointSlices = slices
-	r.podsByNode = krt.NewIndex(pods, "podsByNode", func(pod *corev1.Pod) []string {
-		if pod.Spec.NodeName == "" {
-			return nil
-		}
-		return []string{pod.Spec.NodeName}
-	})
-	r.delegationPodsByNodePrincipal = newDelegationTargetIndex(pods, options.TrustDomain)
 	// Ordinary Pods are Workloads only. Runtime integration adds real Sandboxes.
 	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, derivedOptions("sandboxes")...)
 	securityProfiles := []krt.Collection[model.SecurityProfile]{
@@ -200,7 +192,6 @@ func New(
 	r.Workloads = podsource.NewWorkloads(
 		pods,
 		options.ClusterID,
-		options.TrustDomain,
 		derivedOptions("pod-workloads")...)
 
 	r.Services, r.Endpoints = newServiceCollections(services, slices, options.ClusterDomain, derivedOptions)
@@ -243,10 +234,12 @@ func New(
 	)
 
 	r.TrafficPolicies = newTrafficPolicyModels(trafficPolicyObjects, globalTrafficObjects, derivedOptions)
+	r.gatewayMembers = r.gatewayMemberships(derivedOptions("gateway-members")...)
+	r.Workloads = r.certificateWorkloads(derivedOptions("certificate-workloads")...)
 	r.SecurityProfiles = krt.JoinCollection(securityProfiles, derivedOptions("all-security-profiles")...)
 
 	r.collections = []krt.Syncer{
-		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways,
+		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways, r.gatewayMembers,
 		r.TrafficPolicies, r.SecurityProfiles, r.GatewayPatches, r.AgentioConfig,
 		r.Telemetry, r.TelemetryProviderOverrides.AsCollection(),
 	}

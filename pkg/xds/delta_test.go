@@ -870,7 +870,7 @@ func TestAuthorizationSelectionMovesWithWorkloadReference(t *testing.T) {
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 	server := newTestServer(t, scope, []model.Resource{oldWorkload, authorizationA, authorizationB}, nil)
 	stream := newFakeStream(ctx, 4)
@@ -1276,7 +1276,7 @@ func TestWildcardIncrementalPushDoesNotRetainUnrelatedSentState(t *testing.T) {
 }
 
 func TestWildcardReferencedGatewayLifecycle(t *testing.T) {
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: "uid-a", SourceUID: "uid-a", Principal: serviceAccountPrincipal("demo", "default")}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}, Principal: serviceAccountPrincipal("demo", "default")}
 	plain := selectionWorkload(t, "uid-a", "demo", "node-a", "", "")
 	withReference := func(key string) model.Resource {
 		return selectionWithGatewayReference(t, plain, key)
@@ -1444,10 +1444,11 @@ func TestDedicatedZTunnelCannotSubscribeToGatewayTypes(t *testing.T) {
 	}
 }
 
-func TestServerRejectsGatewayScopeNotOwnedByAuthenticatedServiceAccount(t *testing.T) {
+func TestServerRejectsUnboundGatewayScope(t *testing.T) {
 	ctx := t.Context()
 	scope := gatewayScope()
 	scope.GatewayKey = "demo/other"
+	scope.Source.Key = ""
 	server := newTestServer(t, scope, []model.Resource{
 		gatewayResource(t, "demo/other", "main_internal", "theirs"),
 	}, nil)

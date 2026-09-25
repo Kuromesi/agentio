@@ -38,7 +38,7 @@ func TestLoadOrCreateAuthorityReusesAgentioCAByDefault(t *testing.T) {
 	secret := newWorkloadCASecret(t, namespace, "agentio-ca-secret", 24*time.Hour)
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
-	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
+	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
 		Namespace:     namespace,
 		ConfigMapName: "agentio-ca-certs",
 	})
@@ -67,7 +67,7 @@ func TestLoadOrCreateAuthorityBootstrapsMissingSecret(t *testing.T) {
 
 	client := kube.NewFakeClient()
 	go client.Run(ctx.Done())
-	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
+	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
 		Namespace:     namespace,
 		ConfigMapName: "agentio-ca-certs",
 	})
@@ -104,7 +104,7 @@ func TestLoadOrCreateAuthorityRejectsInvalidTrustBundle(t *testing.T) {
 			t.Cleanup(cancel)
 			go client.Run(ctx.Done())
 
-			_, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
+			_, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
 				Namespace:     namespace,
 				SecretName:    "workload",
 				ConfigMapName: "roots",
@@ -134,7 +134,7 @@ func TestReconcileCARenewsCertificateAndReusesPrivateKey(t *testing.T) {
 	client := kube.NewFakeClient(secret)
 	authority := &Authority{
 		client: client,
-		options: AuthorityOptions{
+		options: AuthorityOptions{TrustDomain: "cluster.local",
 			Namespace:    namespace,
 			SecretName:   "workload",
 			RootLifetime: 24 * time.Hour,
@@ -171,7 +171,7 @@ func TestCASecretDeletionDisablesSigningAndRetainsCommittedTrust(t *testing.T) {
 	secret := newWorkloadCASecret(t, namespace, "workload", 24*time.Hour)
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
-	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{
+	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
 		Namespace:     namespace,
 		SecretName:    "workload",
 		ConfigMapName: "roots",

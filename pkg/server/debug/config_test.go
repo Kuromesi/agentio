@@ -89,18 +89,18 @@ func TestConfigDebugSnapshotUsesSourceToBreakItemSortTies(t *testing.T) {
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
 		original := sources.GatewayPatches.List()[0]
 		later := original.Clone()
-		later.Source = "z-source"
+		later.Source.Key = "z-source"
 		earlier := original.Clone()
-		earlier.Source = "a-source"
+		earlier.Source.Key = "a-source"
 		sources.GatewayPatches = krt.NewStaticCollection[model.GatewayPatch](nil,
 			[]model.GatewayPatch{later, earlier}, krt.WithStop(stop))
 		return sources
 	}, true)
 	var later, earlier model.GatewayPatch
 	for _, patch := range fixture.sources.GatewayPatches.List() {
-		if patch.Source == "z-source" {
+		if patch.Source.Key == "z-source" {
 			later = patch
-		} else if patch.Source == "a-source" {
+		} else if patch.Source.Key == "a-source" {
 			earlier = patch
 		}
 	}

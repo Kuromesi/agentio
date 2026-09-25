@@ -265,14 +265,7 @@ func testWorkload(namespace, name, address string) model.Workload {
 		Addresses: []string{address},
 		Labels:    map[string]string{"app": name},
 		Ready:     true,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      namespace,
-				ServiceAccount: "default",
-			},
-		},
+		Principal: mustTestPrincipal("cluster.local", "ns/"+(namespace)+"/sa/"+("default")),
 	}
 }
 
@@ -301,7 +294,7 @@ func resourceReferencesGateway(resource model.Resource, gatewayKey string) bool 
 
 func workloadWithSourceUID(namespace, name, address, uid string) model.Workload {
 	result := testWorkload(namespace, name, address)
-	result.SourceUID = uid
+	result.Source = model.SourceRef{Registry: "kubernetes/cluster", Key: uid}
 	return result
 }
 
@@ -429,19 +422,12 @@ func testWDSWorkload(name, sourceUID, address string) model.Workload {
 	uid := "cluster//Pod/demo/" + name
 	return model.Workload{
 		UID:       uid,
-		SourceUID: sourceUID,
+		Source:    model.SourceRef{Registry: "kubernetes/cluster", Key: sourceUID},
 		Namespace: "demo",
 		Name:      name,
 		Addresses: []string{address},
 		Ready:     true,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "default",
-			},
-		},
+		Principal: mustTestPrincipal("cluster.local", "ns/"+("demo")+"/sa/"+("default")),
 	}
 }
 

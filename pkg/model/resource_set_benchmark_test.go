@@ -35,7 +35,7 @@ func benchmarkResourceSetSingleKeyUpdate(b *testing.B) {
 			XDSName: name,
 			Value:   &anypb.Any{TypeUrl: AddressType, Value: []byte("address")},
 			Hash:    name,
-			Facts: ResourceFacts{Workload: &WorkloadResourceFacts{
+			Facts: ResourceFacts{Workload: &WorkloadResourceFacts{Namespace: "demo",
 				WorkloadUID: name,
 				Principal:   testPrincipal(),
 			}},

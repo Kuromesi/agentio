@@ -72,10 +72,10 @@ func TestAgentioConfigMapNamesAreConfigurable(t *testing.T) {
 			},
 		},
 	}
-	r := newTestRegistryWithAgentioConfigMaps(t, ctx, objects, nil, &AgentioConfigMapOptions{
+	r := newTestRegistryWithOptions(t, ctx, objects, nil, Options{AgentioConfigMaps: &AgentioConfigMapOptions{
 		BaseName:    "custom-base",
 		PrimaryName: "custom-primary",
-	})
+	}})
 
 	config := r.AgentioConfig.GetKey("effective")
 	if config == nil || config.Value == nil {
@@ -105,10 +105,10 @@ func TestEmptyPrimaryAgentioConfigMapNameDisablesOverlay(t *testing.T) {
 			},
 		},
 	}
-	r := newTestRegistryWithAgentioConfigMaps(t, ctx, objects, nil, &AgentioConfigMapOptions{
+	r := newTestRegistryWithOptions(t, ctx, objects, nil, Options{AgentioConfigMaps: &AgentioConfigMapOptions{
 		BaseName:    "custom-base",
 		PrimaryName: "",
-	})
+	}})
 
 	config := r.AgentioConfig.GetKey("effective")
 	if config == nil || config.Value == nil {
@@ -352,14 +352,14 @@ type testRegistry struct {
 }
 
 func newTestRegistry(t *testing.T, ctx context.Context, kubeObjects, policyObjects []runtime.Object) *testRegistry {
-	return newTestRegistryWithAgentioConfigMaps(t, ctx, kubeObjects, policyObjects, nil)
+	return newTestRegistryWithOptions(t, ctx, kubeObjects, policyObjects, Options{})
 }
 
-func newTestRegistryWithAgentioConfigMaps(
+func newTestRegistryWithOptions(
 	t *testing.T,
 	ctx context.Context,
 	kubeObjects, policyObjects []runtime.Object,
-	agentioConfigMaps *AgentioConfigMapOptions,
+	options Options,
 ) *testRegistry {
 	t.Helper()
 	objects := append(append([]runtime.Object(nil), kubeObjects...), policyObjects...)
@@ -372,14 +372,12 @@ func newTestRegistryWithAgentioConfigMaps(
 			globalSecurityProfileResource,
 		),
 	}
-	r, err := New(client, Options{
-		ClusterID:         "test",
-		TrustDomain:       "cluster.local",
-		RootNamespace:     "agentio-system",
-		DebounceAfter:     time.Millisecond,
-		DebounceMax:       5 * time.Millisecond,
-		AgentioConfigMaps: agentioConfigMaps,
-	}, ctx.Done())
+	options.ClusterID = "test"
+	options.TrustDomain = "cluster.local"
+	options.RootNamespace = "agentio-system"
+	options.DebounceAfter = time.Millisecond
+	options.DebounceMax = 5 * time.Millisecond
+	r, err := New(client, options, ctx.Done())
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}

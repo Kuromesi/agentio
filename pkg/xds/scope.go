@@ -46,7 +46,7 @@ func KubernetesScopeFunc(resolver interface {
 }) ScopeFunc {
 	return func(node *corev3.Node, peer model.PeerIdentity) (model.ClientScope, error) {
 		metadata := node.GetMetadata()
-		if _, err := boundClaim("namespace", metadataString(metadata, "POD_NAMESPACE"), peer.Principal.ServiceAccount.Namespace); err != nil {
+		if _, err := boundClaim("namespace", metadataString(metadata, "POD_NAMESPACE"), peer.Kubernetes.Namespace); err != nil {
 			return model.ClientScope{}, err
 		}
 		if _, err := boundClaim("workload name", metadataString(metadata, "POD_NAME"), peer.Kubernetes.WorkloadName); err != nil {
