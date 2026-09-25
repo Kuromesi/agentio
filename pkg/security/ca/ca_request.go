@@ -28,7 +28,10 @@ import (
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
-const impersonatedIdentityMetadata = "ImpersonatedIdentity"
+const (
+	impersonatedIdentityMetadata = "ImpersonatedIdentity"
+	workloadSourceMetadata       = "WorkloadSource"
+)
 
 func parseCertificateRequest(request *securityapi.IstioCertificateRequest) (*x509.CertificateRequest, error) {
 	block, err := pki.DecodeSinglePEMBlock([]byte(request.GetCsr()), "CSR")
@@ -42,52 +45,78 @@ func parseCertificateRequest(request *securityapi.IstioCertificateRequest) (*x50
 	return csr, nil
 }
 
-// certificateIdentity selects an identity from the authenticated peer and
-// delegated-authorization metadata. The authenticated principal is authoritative
-// unless compatible impersonation metadata is present and authorized; CSR URI
-// SANs can only confirm that selection.
-func (a *Authority) certificateIdentity(ctx context.Context, caller model.PeerIdentity,
+// certificateTarget validates the requested target, then authorizes it before
+// signing. A CSR confirms the requested identity; it never supplies authorization evidence.
+func (a *Authority) certificateTarget(ctx context.Context, caller model.PeerIdentity,
 	request *securityapi.IstioCertificateRequest,
 	csr *x509.CertificateRequest,
-) (model.Principal, error) {
-	selected, err := model.ParsePrincipal(caller.Principal.String(), caller.Principal.TrustDomain)
-	if err != nil || selected != caller.Principal {
-		return model.Principal{}, fmt.Errorf("invalid authenticated identity %q", caller.Principal.String())
-	}
+) (attestation.CertificateTarget, error) {
 	impersonated, found, err := impersonatedIdentity(request)
 	if err != nil {
-		return model.Principal{}, err
+		return attestation.CertificateTarget{}, err
 	}
+	source, err := requestedWorkloadSource(request)
+	if err != nil {
+		return attestation.CertificateTarget{}, err
+	}
+	var selected model.Principal
 	if found {
-		selected, err = model.ParsePrincipal(impersonated, caller.Principal.TrustDomain)
-		if err != nil {
-			return model.Principal{}, err
-		}
-		authorizer := a.delegatedAuthorizer()
-		if attestation.DelegatedAuthorizerIsNil(authorizer) {
-			return model.Principal{}, fmt.Errorf("authorize delegated identity %s for %s: authorizer is not configured",
-				selected.String(), caller.Principal.String())
-		}
-		if err := authorizer.Authorize(ctx, caller, selected); err != nil {
-			return model.Principal{}, fmt.Errorf("authorize delegated identity %s for %s: %w",
-				selected.String(), caller.Principal.String(), err)
-		}
+		selected, err = model.ParsePrincipal(impersonated, a.options.TrustDomain)
+	} else {
+		selected, err = legacyRequestIdentity(caller, a.options.TrustDomain)
+	}
+	if err != nil {
+		return attestation.CertificateTarget{}, err
 	}
 
 	if len(csr.URIs) > 1 {
-		return model.Principal{}, fmt.Errorf("CSR must not contain multiple SPIFFE URIs")
+		return attestation.CertificateTarget{}, fmt.Errorf("CSR must not contain multiple SPIFFE URIs")
 	}
 	if len(csr.URIs) == 1 {
-		csrIdentity, err := model.ParsePrincipalURL(csr.URIs[0], caller.Principal.TrustDomain)
+		csrIdentity, err := model.ParsePrincipalURL(csr.URIs[0], a.options.TrustDomain)
 		if err != nil {
-			return model.Principal{}, err
+			return attestation.CertificateTarget{}, err
 		}
 		if csrIdentity != selected {
-			return model.Principal{}, fmt.Errorf("CSR identity %s conflicts with selected identity %s",
+			return attestation.CertificateTarget{}, fmt.Errorf("CSR identity %s conflicts with selected identity %s",
 				csr.URIs[0].String(), selected.String())
 		}
 	}
-	return selected, nil
+	target := attestation.CertificateTarget{Principal: selected, Source: source}
+	if err := a.authorizeCertificateTarget(ctx, caller, target); err != nil {
+		return attestation.CertificateTarget{}, err
+	}
+	return target, nil
+}
+
+// Every target requires an explicitly installed authorizer, including self issuance.
+func (a *Authority) authorizeCertificateTarget(ctx context.Context, caller model.PeerIdentity, target attestation.CertificateTarget) error {
+	authorizer := a.delegatedAuthorizer()
+	if attestation.DelegatedAuthorizerIsNil(authorizer) {
+		return fmt.Errorf("authorize certificate identity %s: authorizer is not configured", target.Principal.String())
+	}
+	if err := authorizer.Authorize(ctx, caller, target); err != nil {
+		return fmt.Errorf("authorize certificate identity %s: %w", target.Principal.String(), err)
+	}
+	return nil
+}
+
+// Only an explicit instance selector opts into an instance-bound certificate.
+// Missing metadata preserves principal-only issuance; malformed metadata fails.
+func requestedWorkloadSource(request *securityapi.IstioCertificateRequest) (model.SourceRef, error) {
+	value, found := request.GetMetadata().GetFields()[workloadSourceMetadata]
+	if !found {
+		return model.SourceRef{}, nil
+	}
+	fields := value.GetStructValue().GetFields()
+	source := model.SourceRef{
+		Registry: fields["registry"].GetStringValue(),
+		Key:      fields["key"].GetStringValue(),
+	}
+	if err := source.Validate(); err != nil {
+		return model.SourceRef{}, fmt.Errorf("%s requires nonempty registry and key strings", workloadSourceMetadata)
+	}
+	return source, nil
 }
 
 func impersonatedIdentity(request *securityapi.IstioCertificateRequest) (string, bool, error) {

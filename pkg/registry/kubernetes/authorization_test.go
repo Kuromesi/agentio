@@ -26,12 +26,57 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
 func delegationPod(namespace, name, serviceAccount, node string) *corev1.Pod {
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, UID: apitypes.UID(namespace + "/" + name)},
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, UID: apitypes.UID(namespace + "-" + name)},
 		Spec:       corev1.PodSpec{ServiceAccountName: serviceAccount, NodeName: node},
+		Status:     corev1.PodStatus{PodIP: "10.0.0.1"},
+	}
+}
+
+func TestCertificateSourceDistinguishesPodsSharingPrincipal(t *testing.T) {
+	a := delegationPod("demo", "a", "shared", "node-a")
+	b := delegationPod("demo", "b", "shared", "node-a")
+	remote := delegationPod("demo", "remote", "shared", "node-b")
+	node := delegationPod("agentio-system", "ztunnel", "ztunnel", "node-a")
+	for _, p := range []*corev1.Pod{a, b, remote} {
+		p.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
+	}
+	r := newTestRegistry(t, t.Context(), []runtime.Object{a, b, remote, node}, nil)
+	authorizer := r.DelegatedIdentityAuthorizer()
+	principal := mustTestPrincipal("cluster.local", "ns/demo/sa/shared")
+	for _, tc := range []struct {
+		name     string
+		caller   *corev1.Pod
+		registry string
+		key      string
+		allow    bool
+	}{
+		{"self", a, "kubernetes/test", string(a.UID), true},
+		{"other Pod with same SA", a, "kubernetes/test", string(b.UID), false},
+		{"other Pod self", b, "kubernetes/test", string(b.UID), true},
+		{"local delegation a", node, "kubernetes/test", string(a.UID), true},
+		{"local delegation b", node, "kubernetes/test", string(b.UID), true},
+		{"remote delegation", node, "kubernetes/test", string(remote.UID), false},
+		{"wrong registry", node, "kubernetes/other", string(a.UID), false},
+		{"unknown instance", node, "kubernetes/test", "unknown", false},
+		{"source belongs to different principal", node, "kubernetes/test", string(node.UID), false},
+		{"missing key", node, "kubernetes/test", "", false},
+		{"principal-only self", a, "", "", true},
+		{"principal-only delegation", node, "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := authorizer.Authorize(t.Context(), gatewayTestPeer(tc.caller), attestation.CertificateTarget{
+				Principal: principal,
+				Source:    model.SourceRef{Registry: tc.registry, Key: tc.key},
+			})
+			if (err == nil) != tc.allow {
+				t.Fatalf("Authorize() = %v, want allow=%v", err, tc.allow)
+			}
+		})
 	}
 }
 
@@ -45,7 +90,7 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 		{
 			name: "untrusted caller service account",
 			mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
-				caller.Principal.ServiceAccount.ServiceAccount = "attacker"
+				caller.Kubernetes.ServiceAccount = "attacker"
 			},
 		},
 		{
@@ -75,31 +120,25 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 		{
 			name: "target namespace mismatch",
 			mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
-				requested.ServiceAccount.Namespace = "other"
+				*requested = mustTestPrincipal("cluster.local", "ns/other/sa/app")
 			},
 		},
 		{
 			name: "target service account mismatch",
 			mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
-				requested.ServiceAccount.ServiceAccount = "other"
+				*requested = mustTestPrincipal("cluster.local", "ns/demo/sa/other")
 			},
 		},
 		{
 			name: "unsupported requested identity kind",
 			mutate: func(_ *model.PeerIdentity, requested *model.Principal, _, _ *corev1.Pod) {
-				*requested = model.Principal{
-					Kind:        "workload-v1",
-					TrustDomain: "cluster.local",
-				}
+				*requested = model.Principal{}
 			},
 		},
 		{
 			name: "unsupported caller identity kind",
 			mutate: func(caller *model.PeerIdentity, _ *model.Principal, _, _ *corev1.Pod) {
-				caller.Principal = model.Principal{
-					Kind:        "workload-v1",
-					TrustDomain: "cluster.local",
-				}
+				caller.Kubernetes = model.KubernetesPeer{}
 			},
 		},
 		{
@@ -128,35 +167,14 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 			ztunnel := delegationPod("agentio-system", "ztunnel-abc", "ztunnel", "node-a")
 			target := delegationPod("demo", "workload", "app", "node-a")
 			target.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
-			caller := model.PeerIdentity{
-				Principal: model.Principal{
-					Kind:        model.PrincipalServiceAccount,
-					TrustDomain: "cluster.local",
-					ServiceAccount: model.ServiceAccountRef{
-						Namespace:      "agentio-system",
-						ServiceAccount: "ztunnel",
-					},
-				},
-				AttestedBy: model.AttestationKubernetes,
-				Kubernetes: model.KubernetesPeer{
-					WorkloadName: ztunnel.Name,
-					WorkloadUID:  string(ztunnel.UID),
-				},
-			}
-			requested := model.Principal{
-				Kind:        model.PrincipalServiceAccount,
-				TrustDomain: "cluster.local",
-				ServiceAccount: model.ServiceAccountRef{
-					Namespace:      "demo",
-					ServiceAccount: "app",
-				},
-			}
+			caller := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: ztunnel.Name, WorkloadUID: string(ztunnel.UID), Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
+			requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 			if test.mutate != nil {
 				test.mutate(&caller, &requested, ztunnel, target)
 			}
 			r := newTestRegistry(t, ctx, []runtime.Object{ztunnel, target}, nil)
 
-			err := r.DelegatedIdentityAuthorizer().Authorize(ctx, caller, requested)
+			err := r.DelegatedIdentityAuthorizer().Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested})
 			if test.allow && err != nil {
 				t.Fatalf("Authorize denied valid delegation: %v", err)
 			}
@@ -175,34 +193,28 @@ func TestGatewayCertificateAuthorizationUsesEffectiveConfiguration(t *testing.T)
 			"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n",
 		},
 	}
-	r := newTestRegistry(t, ctx, []runtime.Object{config}, nil)
+	member := delegationPod("agentio-system", "gateway", "egress", "node-a")
+	member.Labels = map[string]string{"member": "egress"}
+	r := newTestRegistry(t, ctx, []runtime.Object{config, member, gatewayTestService("agentio-system", "egress")}, nil)
 	authorizer := r.GatewayCertificateAuthorizer()
 	scope := model.ClientScope{
-		Class:      model.ClientEgressGateway,
-		GatewayKey: "agentio-system/egress",
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "agentio-system",
-				ServiceAccount: "egress",
-			},
-		},
+		Class:       model.ClientEgressGateway,
+		GatewayKey:  "agentio-system/egress",
+		WorkloadUID: "test//Pod/agentio-system/gateway", Source: model.SourceRef{Registry: "kubernetes/test", Key: string(member.UID)},
+		Principal: mustTestPrincipal("cluster.local", "ns/agentio-system/sa/egress"),
 	}
 
 	if err := authorizer.Authorize(scope); err != nil {
 		t.Fatalf("Authorize denied configured gateway: %v", err)
 	}
-	scope.Principal.ServiceAccount.ServiceAccount = "other"
+	scope.GatewayKey = "agentio-system/other"
 	if err := authorizer.Authorize(scope); err == nil {
-		t.Fatal("Authorize allowed a principal that does not own the gateway")
+		t.Fatal("Authorize allowed an unregistered gateway")
 	}
-	scope.Principal = model.Principal{
-		Kind:        "workload-v1",
-		TrustDomain: "cluster.local",
-	}
+	scope.GatewayKey = "agentio-system/egress"
+	scope.Principal = model.Principal{}
 	if err := authorizer.Authorize(scope); err == nil {
-		t.Fatal("Authorize allowed an unsupported Principal kind")
+		t.Fatal("Authorize allowed an empty principal")
 	}
 }
 
@@ -217,16 +229,10 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 	}}, krt.WithStop(stop))
 	authorizer := NewGatewayCertificateAuthorizer(gateways)
 	scope := model.ClientScope{
-		Class:      model.ClientEgressGateway,
-		GatewayKey: "agentio-system/external-egress",
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "agentio-system",
-				ServiceAccount: "external-egress",
-			},
-		},
+		Class:       model.ClientEgressGateway,
+		GatewayKey:  "agentio-system/external-egress",
+		WorkloadUID: "external", Source: model.SourceRef{Registry: "kubernetes/test", Key: "pod"},
+		Principal: mustTestPrincipal("cluster.local", "ns/"+("agentio-system")+"/sa/"+("external-egress")),
 	}
 
 	if err := authorizer.Authorize(scope); err != nil {

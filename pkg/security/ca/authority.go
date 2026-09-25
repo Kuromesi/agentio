@@ -17,6 +17,8 @@ package ca
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 	"net"
 	"net/url"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
+	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/internal/casecret"
 	"github.com/openkruise/agentio/pkg/security/pki"
@@ -43,40 +46,44 @@ const (
 var workloadCAKeys = casecret.Keys{Certificate: caCertKey, PrivateKey: caKeyKey, Bundle: caBundleKey}
 
 type AuthorityOptions struct {
+	TrustDomain   string
 	Namespace     string
 	SecretName    string
 	ConfigMapName string
 	ServiceName   string
+	// WorkloadSourceExtensionOID enables opt-in instance certificates under an
+	// operator-assigned private OID. Empty leaves principal-only issuance enabled.
+	WorkloadSourceExtensionOID string
 	// LeafLifetime is the validity period of the certificates this authority
 	// issues: workload certificates served over the CA API, and the xDS server's
 	// own serving certificate.
 	LeafLifetime time.Duration
 	// LeafRenewBefore is how long before expiry the server's own certificate is
 	// re-issued. Defaults to a third of LeafLifetime.
-	LeafRenewBefore           time.Duration
-	TrustedNodeServiceAccount string
-	LeaseName                 string
-	RootLifetime              time.Duration
-	RenewBefore               time.Duration
-	RotationCheckInterval     time.Duration
-	KrtOptions                krt.OptionsBuilder
+	LeafRenewBefore       time.Duration
+	LeaseName             string
+	RootLifetime          time.Duration
+	RenewBefore           time.Duration
+	RotationCheckInterval time.Duration
+	KrtOptions            krt.OptionsBuilder
 }
 
 type Authority struct {
 	securityapi.UnimplementedIstioCertificateServiceServer
-	authenticator   attestation.Authenticator
-	ca              pki.SigningCA
-	rootPEM         []byte
-	leafLifetime    time.Duration
-	leafRenewBefore time.Duration
-	serverCert      tls.Certificate
-	client          kube.Client
-	ctx             context.Context
-	options         AuthorityOptions
-	serverNames     []string
-	caSingleton     krt.Singleton[caState]
-	trustBundles    krt.StaticSingleton[TrustBundle]
-	caInstallMu     sync.Mutex
+	authenticator     attestation.Authenticator
+	ca                pki.SigningCA
+	rootPEM           []byte
+	leafLifetime      time.Duration
+	leafRenewBefore   time.Duration
+	serverCert        tls.Certificate
+	client            kube.Client
+	ctx               context.Context
+	options           AuthorityOptions
+	serverNames       []string
+	caSingleton       krt.Singleton[caState]
+	trustBundles      krt.StaticSingleton[TrustBundle]
+	workloadSourceOID asn1.ObjectIdentifier
+	caInstallMu       sync.Mutex
 
 	authorizerMu                sync.RWMutex
 	delegatedIdentityAuthorizer attestation.DelegatedIdentityAuthorizer
@@ -101,9 +108,6 @@ func applyAuthorityDefaults(options *AuthorityOptions) {
 	if options.LeafRenewBefore <= 0 || options.LeafRenewBefore >= options.LeafLifetime {
 		options.LeafRenewBefore = options.LeafLifetime / 3
 	}
-	if options.TrustedNodeServiceAccount == "" {
-		options.TrustedNodeServiceAccount = "ztunnel"
-	}
 	if options.LeaseName == "" {
 		options.LeaseName = "agentiod-ca-leader"
 	}
@@ -122,6 +126,13 @@ func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticato
 	if client == nil || authenticator == nil {
 		return nil, fmt.Errorf("kubernetes client and authenticator are required")
 	}
+	if _, err := model.NewPrincipal(options.TrustDomain, "workload"); err != nil {
+		return nil, fmt.Errorf("CA trust domain: %w", err)
+	}
+	workloadSourceOID, err := parseWorkloadSourceOID(options.WorkloadSourceExtensionOID)
+	if err != nil {
+		return nil, err
+	}
 	applyAuthorityDefaults(&options)
 	if options.KrtOptions.Stop() == nil {
 		options.KrtOptions = krt.NewOptionsBuilder(ctx.Done(), "", nil)
@@ -135,12 +146,13 @@ func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticato
 		return nil, fmt.Errorf("parse CA secret %s/%s: %w", options.Namespace, options.SecretName, err)
 	}
 	authority := &Authority{
-		authenticator:   authenticator,
-		leafLifetime:    options.LeafLifetime,
-		leafRenewBefore: options.LeafRenewBefore,
-		client:          client,
-		ctx:             ctx,
-		options:         options,
+		authenticator:     authenticator,
+		leafLifetime:      options.LeafLifetime,
+		leafRenewBefore:   options.LeafRenewBefore,
+		client:            client,
+		ctx:               ctx,
+		options:           options,
+		workloadSourceOID: workloadSourceOID,
 	}
 	serverNames := []string{options.ServiceName, options.ServiceName + "." + options.Namespace,
 		options.ServiceName + "." + options.Namespace + ".svc", options.ServiceName + "." + options.Namespace + ".svc.cluster.local", "localhost"}
@@ -179,7 +191,7 @@ func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticato
 	return authority, nil
 }
 
-// UseDelegatedIdentityAuthorizer installs the policy used for delegated certificate requests.
+// UseDelegatedIdentityAuthorizer installs the policy used for every certificate target.
 func (a *Authority) UseDelegatedIdentityAuthorizer(authorizer attestation.DelegatedIdentityAuthorizer) {
 	a.authorizerMu.Lock()
 	a.delegatedIdentityAuthorizer = authorizer
@@ -226,16 +238,27 @@ func (a *Authority) CreateCertificate(ctx context.Context, request *securityapi.
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	identity, err := a.certificateIdentity(ctx, caller, request, csr)
+	target, err := a.certificateTarget(ctx, caller, request, csr)
 	if err != nil {
 		// Keep the response opaque: the detailed reason names nodes and identities,
 		// which would give an unauthorized caller a topology probe.
-		log.Warn("certificate identity selection failed", "principal", caller.Principal.String(), "error", err)
+		log.Warn("certificate identity selection failed", "attestation", caller.AttestedBy, "error", err)
 		return nil, status.Error(codes.Unauthenticated, "request authenticate failure")
 	}
-	spiffeURI, err := url.Parse(identity.String())
+	spiffeURI, err := url.Parse(target.Principal.String())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "encode workload identity")
+	}
+	var extensions []pkix.Extension
+	if target.Source != (model.SourceRef{}) {
+		if len(a.workloadSourceOID) == 0 {
+			return nil, status.Error(codes.FailedPrecondition, "workload source certificate extension is not configured")
+		}
+		extension, err := workloadSourceExtension(a.workloadSourceOID, target.Source)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "encode workload source")
+		}
+		extensions = append(extensions, extension)
 	}
 	lifetime := a.leafLifetime
 	if requested := time.Duration(request.GetValidityDuration()) * time.Second; requested > 0 && requested < lifetime {
@@ -248,10 +271,11 @@ func (a *Authority) CreateCertificate(ctx context.Context, request *securityapi.
 		return nil, status.Error(codes.Internal, "CA is not loaded")
 	}
 	issued, err := ca.Sign(ctx, csr.PublicKey, pki.LeafOptions{
-		URIs:     []*url.URL{spiffeURI},
-		Lifetime: lifetime,
-		Client:   true,
-		Server:   true,
+		URIs:            []*url.URL{spiffeURI},
+		ExtraExtensions: extensions,
+		Lifetime:        lifetime,
+		Client:          true,
+		Server:          true,
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

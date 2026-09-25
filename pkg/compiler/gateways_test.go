@@ -832,7 +832,8 @@ func TestInitialInvalidEgressAndTLSGatewayDoNotCreateSandboxReference(t *testing
 func TestGatewayWDSOwnershipLifecycle(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	gatewaySandbox := testWorkload("demo", "egress-pod", "10.0.0.10")
-	gatewaySandbox.Principal.ServiceAccount.ServiceAccount = "egress"
+	gatewaySandbox.Principal = mustTestPrincipal("cluster.local", "workload/egress")
+	gatewaySandbox.GatewayKey = "demo/egress"
 	unrelatedSandbox := testWorkload("other", "client", "10.0.1.10")
 	gatewayService := model.Service{
 		Namespace: "demo",
@@ -961,12 +962,11 @@ func TestGatewayWDSResourcesCarryOwnership(t *testing.T) {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	configuredWorkload := testWDSWorkload("egress-a-pod", "egress-a-uid", "10.0.0.10")
 	configuredWorkload.Namespace = "agentio-system"
-	configuredWorkload.Principal.ServiceAccount.Namespace = configuredWorkload.Namespace
-	configuredWorkload.Principal.ServiceAccount.ServiceAccount = "egress-a"
+	configuredWorkload.Principal = mustTestPrincipal("cluster.local", "workload/egress-a")
+	configuredWorkload.GatewayKey = "agentio-system/egress-a"
 	lookalikeWorkload := testWDSWorkload("lookalike", "lookalike-uid", "10.0.0.11")
 	lookalikeWorkload.Namespace = "agentio-system"
-	lookalikeWorkload.Principal.ServiceAccount.Namespace = lookalikeWorkload.Namespace
-	lookalikeWorkload.Principal.ServiceAccount.ServiceAccount = "lookalike"
+	lookalikeWorkload.Principal = mustTestPrincipal("cluster.local", "workload/lookalike")
 	configuredService := model.Service{
 		Namespace: "agentio-system",
 		Name:      "egress-a",

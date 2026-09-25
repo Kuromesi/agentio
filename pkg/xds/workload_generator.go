@@ -277,8 +277,8 @@ func workloadMatchesScope(scope model.ClientScope, resource model.Resource) bool
 	}
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
-		return scope.WorkloadUID != "" && scope.SourceUID != "" && workload.WorkloadUID == scope.WorkloadUID &&
-			workload.SourceUID == scope.SourceUID &&
+		return scope.WorkloadUID != "" && scope.Source.Validate() == nil && workload.WorkloadUID == scope.WorkloadUID &&
+			workload.Source == scope.Source &&
 			workload.Principal == scope.Principal
 	case model.ClientSharedZTunnel:
 		return workload.NodeName == scope.NodeName
@@ -298,10 +298,10 @@ func scopedWorkloads(scope model.ClientScope, snapshot model.ResourceSet, typeUR
 func workloadScopeQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
-		if scope.WorkloadUID != "" && scope.SourceUID != "" {
+		if scope.WorkloadUID != "" && scope.Source.Validate() == nil {
 			return model.WorkloadQuery{
 				WorkloadUID: scope.WorkloadUID,
-				SourceUID:   scope.SourceUID,
+				Source:      scope.Source,
 				Principal:   &scope.Principal,
 			}, true
 		}

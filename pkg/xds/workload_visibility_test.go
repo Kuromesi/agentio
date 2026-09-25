@@ -39,7 +39,7 @@ func TestWorkloadVisibilityFollowsScopedWorkloads(t *testing.T) {
 	})
 
 	dedicated := newWorkloadVisibility(
-		model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"},
+		model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}},
 		snapshot, model.AddressType,
 	)
 	if !dedicated.visible(owned) || dedicated.visible(sameNode) || dedicated.visible(remote) {
@@ -78,7 +78,7 @@ func TestWildcardWDSIncrementalDiffsPublicationTransitionClosure(t *testing.T) {
 		"agentio-system/egress-a")
 	before := selectionSnapshot(t, []model.Resource{plain, service, gateway})
 	after := selectionSnapshot(t, []model.Resource{attached, service, gateway})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
 
 	added, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
 		Scope:        scope,

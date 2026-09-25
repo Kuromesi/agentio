@@ -689,7 +689,7 @@ func TestCompilerPublishesWorkloadsWithoutAttestablePrincipalAndResolvesTrafficP
 
 	withoutServiceAccount := testWorkload("demo", "static-control-plane", "10.1.0.9")
 	withoutServiceAccount.Labels = map[string]string{"role": "control-plane"}
-	withoutServiceAccount.Principal.ServiceAccount.ServiceAccount = ""
+	withoutServiceAccount.Principal = model.Principal{}
 	withoutPrincipal := testWorkload("demo", "opaque-endpoint", "10.1.0.10")
 	withoutPrincipal.Labels = map[string]string{"role": "control-plane"}
 	withoutPrincipal.Principal = model.Principal{}
@@ -910,7 +910,7 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 		address.GetWorkload().GetExtensions(),
 	); !reflect.DeepEqual(
 		got,
-		[]string{"workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"},
+		[]string{"workload-identity", "workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"},
 	) {
 		t.Fatalf("Workload extensions: %v", got)
 	}

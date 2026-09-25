@@ -63,8 +63,9 @@ type ResourceFacts struct {
 }
 
 type WorkloadResourceFacts struct {
+	Namespace         string
 	WorkloadUID       string
-	SourceUID         string
+	Source            SourceRef
 	NodeName          string
 	Principal         Principal
 	ServiceKeys       []string
@@ -96,7 +97,7 @@ type WorkloadQuery struct {
 	AuthorizationRefsOnly  bool
 	TrafficPolicyRefsOnly  bool
 	WorkloadUID            string
-	SourceUID              string
+	Source                 SourceRef
 	NodeName               string
 	Principal              *Principal
 	Namespace              string
@@ -322,17 +323,10 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 }
 
 func validateWorkloadResourcePrincipal(principal Principal) error {
-	switch principal.Kind {
-	case "":
-		if principal != (Principal{}) {
-			return fmt.Errorf("identity fields require a kind")
-		}
-	case PrincipalServiceAccount:
+	if principal == (Principal{}) {
 		return nil
-	default:
-		return fmt.Errorf("unknown identity kind %q", principal.Kind)
 	}
-	return nil
+	return principal.Validate()
 }
 
 func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
@@ -389,9 +383,10 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 	if facts.Workload != nil {
 		write("family", "workload")
 		write("workload-uid", facts.Workload.WorkloadUID)
-		write("source-uid", facts.Workload.SourceUID)
+		write("source", facts.Workload.Source.String())
 		write("node", facts.Workload.NodeName)
 		write("principal", facts.Workload.Principal.String())
+		write("namespace", facts.Workload.Namespace)
 		for _, value := range facts.Workload.ServiceKeys {
 			write("service", value)
 		}
@@ -429,7 +424,7 @@ func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 	}
 	if facts.Workload != nil &&
 		(facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
-			facts.Workload.SourceUID != other.Workload.SourceUID ||
+			facts.Workload.Source != other.Workload.Source ||
 			facts.Workload.NodeName != other.Workload.NodeName ||
 			facts.Workload.Principal != other.Workload.Principal ||
 			!slices.Equal(facts.Workload.ServiceKeys, other.Workload.ServiceKeys) ||

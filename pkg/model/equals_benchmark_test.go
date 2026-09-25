@@ -27,7 +27,7 @@ func BenchmarkModelEquals(b *testing.B) {
 				UID:       "pod-uid",
 				Namespace: "default",
 				Name:      "pod",
-				SourceUID: "pod-uid",
+				Source:    SourceRef{Registry: "kubernetes/test", Key: "pod-uid"},
 				Addresses: []string{"10.0.0.1", "2001:db8::1"},
 				Labels:    map[string]string{"app": "worker", "version": "v1", "team": "platform"},
 				Ready:     true,

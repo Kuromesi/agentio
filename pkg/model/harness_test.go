@@ -46,7 +46,7 @@ func testWorkloadResource(
 	return Resource{
 		Key:   ResourceKey{TypeURL: AddressType, Name: name},
 		Value: &anypb.Any{TypeUrl: AddressType, Value: []byte(value)},
-		Facts: ResourceFacts{Workload: &WorkloadResourceFacts{
+		Facts: ResourceFacts{Workload: &WorkloadResourceFacts{Namespace: "demo",
 			WorkloadUID:       sandboxUID,
 			NodeName:          nodeName,
 			Principal:         testPrincipal(),
@@ -57,12 +57,5 @@ func testWorkloadResource(
 }
 
 func testPrincipal() Principal {
-	return Principal{
-		Kind:        PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "default",
-		},
-	}
+	return mustTestPrincipal("cluster.local", "ns/"+("demo")+"/sa/"+("default"))
 }

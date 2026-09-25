@@ -26,14 +26,10 @@ func validateDiscoveredWorkload(workload model.Workload) error {
 	if strings.TrimSpace(workload.UID) == "" {
 		return fmt.Errorf("workload UID is required")
 	}
-	switch workload.Principal.Kind {
-	case "":
-		if workload.Principal != (model.Principal{}) {
-			return fmt.Errorf("principal: identity fields require a kind")
+	if workload.Principal != (model.Principal{}) {
+		if err := workload.Principal.Validate(); err != nil {
+			return fmt.Errorf("principal: %w", err)
 		}
-	case model.PrincipalServiceAccount:
-	default:
-		return fmt.Errorf("principal: unknown identity kind %q", workload.Principal.Kind)
 	}
 	if err := workload.TunnelProtocol.Validate(); err != nil {
 		return err

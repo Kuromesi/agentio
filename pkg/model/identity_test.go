@@ -25,79 +25,70 @@ func TestZTunnelClientClassNames(t *testing.T) {
 	}
 }
 
-func TestPrincipalSPIFFEIdentity(t *testing.T) {
-	principal := Principal{
-		Kind:        PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "sandbox",
-		},
-	}
-	want := "spiffe://cluster.local/ns/demo/sa/sandbox"
-	if got := principal.String(); got != want {
-		t.Fatalf("principal = %q, want %q", got, want)
-	}
-}
-
-func TestPrincipalAgentioTrustDomainRoundTrips(t *testing.T) {
-	principal := Principal{
-		Kind:        PrincipalServiceAccount,
-		TrustDomain: "kube-federating-id@testproj.iam.gserviceaccount.com",
-		ServiceAccount: ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "app",
-		},
-	}
-	wantURI := "spiffe://kube-federating-id.testproj.iam.gserviceaccount.com/ns/demo/sa/app"
-	if got := principal.String(); got != wantURI {
-		t.Fatalf("principal URI = %q, want %q", got, wantURI)
-	}
-	parsed, err := ParsePrincipal(wantURI, principal.TrustDomain)
-	if err != nil {
-		t.Fatalf("ParsePrincipal(%q): %v", wantURI, err)
-	}
-	if parsed != principal {
-		t.Fatalf("parsed principal = %#v, want %#v", parsed, principal)
+func TestPrincipalSPIFFERoundTrip(t *testing.T) {
+	for _, raw := range []string{
+		"spiffe://cluster.local/workload/payments",
+		"spiffe://cluster.local/workload/internet",
+		"spiffe://cluster.local/workload/vm-inventory-v2/account/region/native-id",
+		"spiffe://cluster.local/future-profile/subject",
+		"spiffe://cluster.local/ns/demo/sa/app",
+		"spiffe://cluster.local",
+	} {
+		principal, err := ParsePrincipal(raw, "cluster.local")
+		if err != nil || principal.String() != raw || principal.TrustDomain() != "cluster.local" {
+			t.Fatalf("round trip %q: %v %v", raw, principal, err)
+		}
+		if err := principal.Validate(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
-func TestPrincipalStringDoesNotNormalizeZeroKind(t *testing.T) {
-	principal := Principal{
-		TrustDomain: "cluster.local",
-		ServiceAccount: ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "sandbox",
-		},
+func TestPrincipalConfiguredTrustDomainEncoding(t *testing.T) {
+	principal, err := NewPrincipal("mesh@example.com", "workload/native-v1/id")
+	if err != nil || principal.String() != "spiffe://mesh.example.com/workload/native-v1/id" {
+		t.Fatalf("principal: %v %v", principal, err)
 	}
-	if got := principal.String(); got != "" {
-		t.Fatalf("zero-kind Principal string = %q, want empty", got)
+	parsed, err := ParsePrincipal(principal.String(), "mesh@example.com")
+	if err != nil || parsed != principal {
+		t.Fatalf("round trip: %v %v", parsed, err)
+	}
+}
+
+func TestParsePrincipalRejectsInvalidIdentities(t *testing.T) {
+	for _, raw := range []string{
+		"", "https://cluster.local/workload/id", "spiffe://other/workload/id",
+		"spiffe://CLUSTER.local/workload/id", "spiffe://cluster.local:443/workload/id",
+		"spiffe://user@cluster.local/workload/id", "spiffe://cluster.local//id",
+		"spiffe://cluster.local/workload/id/", "spiffe://cluster.local/workload/../id",
+		"spiffe://cluster.local/workload/%69d", "spiffe://cluster.local/workload/id?",
+		"spiffe://cluster.local/workload/id#fragment",
+	} {
+		if _, err := ParsePrincipal(raw, "cluster.local"); err == nil {
+			t.Fatalf("accepted %q", raw)
+		}
+	}
+	if (Principal{}).Validate() == nil {
+		t.Fatal("zero principal validated")
 	}
 }
 
 func TestClientScopeValidateRequiresClassOwnership(t *testing.T) {
-	principal := Principal{
-		Kind:        PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "agent",
-		},
-	}
+	principal := mustTestPrincipal("cluster.local", "workload/app")
 	tests := []struct {
 		name  string
 		scope ClientScope
 		valid bool
 	}{
-		{"node", ClientScope{Class: ClientSharedZTunnel, Principal: principal, NodeName: "node-a"}, true},
+		{"node", ClientScope{Class: ClientSharedZTunnel, NodeName: "node-a"}, true},
 		{"node missing ownership", ClientScope{Class: ClientSharedZTunnel, Principal: principal}, false},
-		{"sandbox", ClientScope{Class: ClientDedicatedZTunnel, Principal: principal, WorkloadUID: "uid-a", SourceUID: "uid-a"}, true},
+		{"sandbox", ClientScope{Class: ClientDedicatedZTunnel, Principal: principal, WorkloadUID: "uid-a", Source: SourceRef{Registry: "test", Key: "uid-a"}}, true},
 		{"sandbox missing ownership", ClientScope{Class: ClientDedicatedZTunnel, Principal: principal}, false},
-		{"gateway", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "demo/agent"}, true},
+		{"gateway", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "demo/agent", WorkloadUID: "gw", Source: SourceRef{Registry: "test", Key: "pod"}}, true},
 		{"gateway missing ownership", ClientScope{Class: ClientEgressGateway, Principal: principal}, false},
-		{"gateway wrong namespace", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "other/agent"}, false},
-		{"gateway wrong service account", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "demo/other"}, false},
-		{"sandbox invalid principal", ClientScope{Class: ClientDedicatedZTunnel, WorkloadUID: "vm-a", SourceUID: "vm-a"}, false},
+		{"gateway without Pod binding", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "other/agent"}, false},
+		{"gateway without workload binding", ClientScope{Class: ClientEgressGateway, Principal: principal, GatewayKey: "demo/other"}, false},
+		{"sandbox invalid principal", ClientScope{Class: ClientDedicatedZTunnel, WorkloadUID: "vm-a", Source: SourceRef{Registry: "test", Key: "vm-a"}}, false},
 		{"unknown", ClientScope{Class: "spoofed", Principal: principal, NodeName: "node-a"}, false},
 	}
 
@@ -111,100 +102,5 @@ func TestClientScopeValidateRequiresClassOwnership(t *testing.T) {
 				t.Fatal("invalid scope accepted")
 			}
 		})
-	}
-}
-
-func TestPrincipalValidateRejectsIncompleteIdentity(t *testing.T) {
-	tests := []Principal{
-		{
-			ServiceAccount: ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "sandbox",
-			},
-		},
-		{
-			Kind: PrincipalServiceAccount,
-			ServiceAccount: ServiceAccountRef{
-				Namespace:      "demo",
-				ServiceAccount: "sandbox",
-			},
-		},
-		{
-			Kind:        PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: ServiceAccountRef{
-				ServiceAccount: "sandbox",
-			},
-		},
-		{
-			Kind:        PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: ServiceAccountRef{
-				Namespace: "demo",
-			},
-		},
-		{
-			Kind:        "spoofed",
-			TrustDomain: "cluster.local",
-		},
-	}
-	for _, principal := range tests {
-		if err := principal.Validate(); err == nil {
-			t.Fatalf("incomplete principal accepted: %#v", principal)
-		}
-	}
-}
-
-func TestParsePrincipalRoundTrip(t *testing.T) {
-	tests := []struct {
-		raw  string
-		want Principal
-	}{
-		{
-			raw: "spiffe://cluster.local/ns/demo/sa/app",
-			want: Principal{
-				Kind:        PrincipalServiceAccount,
-				TrustDomain: "cluster.local",
-				ServiceAccount: ServiceAccountRef{
-					Namespace:      "demo",
-					ServiceAccount: "app",
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		got, err := ParsePrincipal(tt.raw, "cluster.local")
-		if err != nil {
-			t.Fatalf("ParsePrincipal(%q): %v", tt.raw, err)
-		}
-		if got != tt.want {
-			t.Fatalf("ParsePrincipal(%q) = %#v, want %#v", tt.raw, got, tt.want)
-		}
-		if got.String() != tt.raw {
-			t.Fatalf("round trip = %q, want %q", got.String(), tt.raw)
-		}
-	}
-}
-
-func TestParsePrincipalRejectsInvalidIdentities(t *testing.T) {
-	tests := []string{
-		"",
-		"spiffe://other.domain/ns/demo/sa/app",
-		"https://cluster.local/ns/demo/sa/app",
-		"spiffe://cluster.local/ns/demo/sa/app/extra",
-		"spiffe://cluster.local/ns//sa/app",
-		"spiffe://cluster.local/ns/demo/sa/",
-		"spiffe://cluster.local/sandbox/v2/uid",
-		"spiffe://cluster.local/sandbox/v1/uid",
-		"spiffe://cluster.local/sandbox/v1/",
-		"spiffe://cluster.local/sandbox/v1/bad%2Fuid",
-		"spiffe://cluster.local/ns/demo/sa/app?query=1",
-		"spiffe://cluster.local/ns/demo/sa/app#fragment",
-		"spiffe://user@cluster.local/ns/demo/sa/app",
-	}
-	for _, raw := range tests {
-		if _, err := ParsePrincipal(raw, "cluster.local"); err == nil {
-			t.Fatalf("invalid identity accepted: %q", raw)
-		}
 	}
 }

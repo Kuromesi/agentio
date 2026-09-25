@@ -42,6 +42,12 @@ message WorkloadMetadata {
   MeshInternalTrafficPolicy mesh_internal_traffic_policy = 2;
 }
 
+// WorkloadIdentity carries the complete effective certificate identity.
+// Legacy proxies ignore it and use namespace/service_account wire fields.
+message WorkloadIdentity {
+  string spiffe_id = 1;
+}
+
 // Traffic direction mode (server = inbound, client = outbound)
 enum TrafficPolicyMode {
   SERVER = 0;  // Inbound traffic (PREROUTING hook)

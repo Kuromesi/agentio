@@ -212,25 +212,16 @@ func TestConfigDebugHandlerRejectsRemoteNonKubernetesOrWrongNamespaceIdentity(t 
 		},
 		{name: "wrong namespace", peer: configDebugAuthorizedPeer("application")},
 		{
-			name: "non-service-account principal",
+			name: "missing Kubernetes namespace",
 			peer: func() model.PeerIdentity {
 				peer := configDebugAuthorizedPeer("agentio-system")
-				peer.Principal.Kind = model.PrincipalKind("user")
+				peer.Kubernetes.Namespace = ""
 				return peer
 			}(),
 		},
 		{
 			name: "invalid service account principal",
-			peer: model.PeerIdentity{
-				AttestedBy: model.AttestationKubernetes,
-				Principal: model.Principal{
-					Kind:        model.PrincipalServiceAccount,
-					TrustDomain: "cluster.local",
-					ServiceAccount: model.ServiceAccountRef{
-						Namespace: "agentio-system",
-					},
-				},
-			},
+			peer: model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: ""}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -475,17 +466,7 @@ func (a *configDebugTestAuthenticator) Authenticate(ctx context.Context) (model.
 }
 
 func configDebugAuthorizedPeer(namespace string) model.PeerIdentity {
-	return model.PeerIdentity{
-		AttestedBy: model.AttestationKubernetes,
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      namespace,
-				ServiceAccount: "debug-reader",
-			},
-		},
-	}
+	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: namespace, ServiceAccount: "debug-reader"}}
 }
 
 func serveConfigDebugRequest(handler http.Handler, method, target, remoteAddr string) *httptest.ResponseRecorder {

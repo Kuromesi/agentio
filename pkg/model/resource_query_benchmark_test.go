@@ -28,7 +28,7 @@ func BenchmarkWorkloadQuery(b *testing.B) {
 		uid := fmt.Sprintf("uid-%05d", index)
 		resources[index] = Resource{Key: ResourceKey{TypeURL: AddressType, Name: uid},
 			Value: &anypb.Any{TypeUrl: AddressType, Value: []byte(uid)},
-			Facts: ResourceFacts{Workload: &WorkloadResourceFacts{WorkloadUID: uid, SourceUID: uid,
+			Facts: ResourceFacts{Workload: &WorkloadResourceFacts{Namespace: "demo", WorkloadUID: uid, Source: SourceRef{Registry: "kubernetes/test", Key: uid},
 				NodeName: fmt.Sprintf("node-%03d", index/100), Principal: principal,
 				AuthorizationRefs: []string{fmt.Sprintf("demo/policy-%05d", index)},
 			}},
@@ -38,7 +38,7 @@ func BenchmarkWorkloadQuery(b *testing.B) {
 	const longPolicy = "production/workload-traffic-policy-00001"
 	resources = append(resources, Resource{Key: ResourceKey{TypeURL: AddressType, Name: longUID},
 		Value: &anypb.Any{TypeUrl: AddressType, Value: []byte("long-names")},
-		Facts: ResourceFacts{Workload: &WorkloadResourceFacts{WorkloadUID: longUID, SourceUID: "source-long",
+		Facts: ResourceFacts{Workload: &WorkloadResourceFacts{Namespace: "demo", WorkloadUID: longUID, Source: SourceRef{Registry: "kubernetes/test", Key: "source-long"},
 			NodeName: "node-long", Principal: principal, AuthorizationRefs: []string{longPolicy}}}})
 	snapshot, err := NewResourceSet(resources)
 	if err != nil {
@@ -49,11 +49,11 @@ func BenchmarkWorkloadQuery(b *testing.B) {
 		query WorkloadQuery
 		want  bool
 	}{
-		{"dedicated-match", WorkloadQuery{WorkloadUID: "uid-00001", SourceUID: "uid-00001", Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
-		{"dedicated-unrelated", WorkloadQuery{WorkloadUID: "uid-00001", SourceUID: "uid-00001", Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00002"}, false},
+		{"dedicated-match", WorkloadQuery{WorkloadUID: "uid-00001", Source: SourceRef{Registry: "kubernetes/test", Key: "uid-00001"}, Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
+		{"dedicated-unrelated", WorkloadQuery{WorkloadUID: "uid-00001", Source: SourceRef{Registry: "kubernetes/test", Key: "uid-00001"}, Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00002"}, false},
 		{"shared-match", WorkloadQuery{NodeName: "node-000", AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, true},
 		{"shared-unrelated", WorkloadQuery{NodeName: "node-001", AuthorizationRefsOnly: true, AuthorizationReference: "demo/policy-00001"}, false},
-		{"dedicated-long-names", WorkloadQuery{WorkloadUID: longUID, SourceUID: "source-long", Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: longPolicy}, true},
+		{"dedicated-long-names", WorkloadQuery{WorkloadUID: longUID, Source: SourceRef{Registry: "kubernetes/test", Key: "source-long"}, Principal: &principal, AuthorizationRefsOnly: true, AuthorizationReference: longPolicy}, true},
 		{"shared-long-names", WorkloadQuery{NodeName: "node-long", AuthorizationRefsOnly: true, AuthorizationReference: longPolicy}, true},
 		{"principal", WorkloadQuery{Principal: &principal}, true},
 		{"global", WorkloadQuery{AuthorizationRefsOnly: true}, true},

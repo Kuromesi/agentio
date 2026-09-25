@@ -47,21 +47,11 @@ func (a staticAuthenticator) Authenticate(context.Context) (model.PeerIdentity, 
 }
 
 func peerIdentity(namespace, serviceAccount string) model.PeerIdentity {
-	return model.PeerIdentity{
-		Principal:  serviceAccountPrincipal(namespace, serviceAccount),
-		AttestedBy: model.AttestationKubernetes,
-	}
+	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: namespace, ServiceAccount: serviceAccount}}
 }
 
 func serviceAccountPrincipal(namespace, serviceAccount string) model.Principal {
-	return model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      namespace,
-			ServiceAccount: serviceAccount,
-		},
-	}
+	return mustTestPrincipal("cluster.local", "ns/"+(namespace)+"/sa/"+(serviceAccount))
 }
 
 func requestWithCSR(t *testing.T, identities ...string) *securityapi.IstioCertificateRequest {
@@ -132,20 +122,23 @@ func responseIdentity(t *testing.T, response *securityapi.IstioCertificateRespon
 	return certificate.URIs[0].String()
 }
 
-func TestCertificateIdentityDefaultsToAuthenticatedPeer(t *testing.T) {
+func TestCertificateIdentityUsesExplicitTargetWhenAuthorized(t *testing.T) {
 	caller := peerIdentity("demo", "app")
-	response, err := certificateAuthority(t, caller, nil).CreateCertificate(context.Background(), requestWithCSR(t))
+	target := mustTestPrincipal("cluster.local", "workload/app")
+	request := requestWithCSR(t, target.String())
+	setRequestMetadata(t, request, target.String())
+	response, err := certificateAuthority(t, caller, &fakeDelegatedIdentityAuthorizer{}).CreateCertificate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("CreateCertificate() error = %v", err)
 	}
-	if got := responseIdentity(t, response); got != caller.Principal.String() {
-		t.Fatalf("certificate identity = %q, want %q", got, caller.Principal.String())
+	if got := responseIdentity(t, response); got != target.String() {
+		t.Fatalf("certificate identity = %q, want %q", got, target.String())
 	}
 }
 
 func TestCertificateIdentityUsesAuthorizedImpersonation(t *testing.T) {
 	caller := sharedZTunnelCaller()
-	target := peerIdentity("demo", "target").Principal
+	target := mustTestPrincipal("cluster.local", "workload/target")
 	authorizer := &fakeDelegatedIdentityAuthorizer{}
 	request := requestWithCSR(t)
 	setRequestMetadata(t, request, target.String())
@@ -174,7 +167,7 @@ func TestCertificateIdentityRejectsDeniedDelegation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			authorizer := &fakeDelegatedIdentityAuthorizer{err: test.err}
 			request := requestWithCSR(t)
-			setRequestMetadata(t, request, "spiffe://cluster.local/ns/demo/sa/target")
+			setRequestMetadata(t, request, "spiffe://cluster.local/workload/target")
 
 			_, err := certificateAuthority(t, sharedZTunnelCaller(), authorizer).CreateCertificate(context.Background(), request)
 			if status.Code(err) != codes.Unauthenticated {
@@ -204,17 +197,22 @@ func TestCertificateIdentityRejectsCSRConflict(t *testing.T) {
 	}
 }
 
-func TestCertificateIdentityRejectsMalformedAuthenticatedPeer(t *testing.T) {
-	caller := peerIdentity("bad/namespace", "app")
-	_, err := certificateAuthority(t, caller, nil).CreateCertificate(context.Background(), requestWithCSR(t))
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("CreateCertificate() code = %s, want %s: %v", status.Code(err), codes.Unauthenticated, err)
+func TestLegacyCertificateIdentityRequiresKubernetesEvidence(t *testing.T) {
+	for _, caller := range []model.PeerIdentity{peerIdentity("", "app"), peerIdentity("demo", "")} {
+		authorizer := &fakeDelegatedIdentityAuthorizer{}
+		_, err := certificateAuthority(t, caller, authorizer).CreateCertificate(context.Background(), requestWithCSR(t))
+		if status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("CreateCertificate() code = %s, want %s: %v", status.Code(err), codes.Unauthenticated, err)
+		}
+		if authorizer.calls != 0 {
+			t.Fatalf("authorizer calls = %d, want 0 for missing Kubernetes evidence", authorizer.calls)
+		}
 	}
 }
 
 func TestCertificateIdentityRejectsMalformedRequest(t *testing.T) {
 	caller := peerIdentity("demo", "app")
-	callerIdentity := caller.Principal.String()
+	callerIdentity := serviceAccountPrincipal(caller.Kubernetes.Namespace, caller.Kubernetes.ServiceAccount).String()
 	tests := []struct {
 		name   string
 		build  func(*testing.T) *securityapi.IstioCertificateRequest
@@ -297,11 +295,49 @@ func TestCertificateRequestRequiresOneStrictPEMBlock(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := requestWithCSR(t)
+			setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
 			request.Csr = test.csr(request.Csr)
-			_, err := certificateAuthority(t, caller, nil).CreateCertificate(context.Background(), request)
+			_, err := certificateAuthority(t, caller, &fakeDelegatedIdentityAuthorizer{}).CreateCertificate(context.Background(), request)
 			if got := status.Code(err); got != test.wantCode {
 				t.Fatalf("CreateCertificate() code = %s, want %s: %v", got, test.wantCode, err)
 			}
 		})
+	}
+}
+
+func TestExplicitCertificateSANRequiresAuthorization(t *testing.T) {
+	caller := peerIdentity("demo", "shared")
+	target := mustTestPrincipal("cluster.local", "workload/shared")
+	for _, allow := range []bool{false, true} {
+		authorizer := &fakeDelegatedIdentityAuthorizer{}
+		if !allow {
+			authorizer.err = errors.New("not bound to caller")
+		}
+		request := requestWithCSR(t, target.String())
+		setRequestMetadata(t, request, target.String())
+		response, err := certificateAuthority(t, caller, authorizer).CreateCertificate(t.Context(), request)
+		if allow {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := responseIdentity(t, response); got != target.String() {
+				t.Fatal(got)
+			}
+		} else if err == nil {
+			t.Fatal("signed unauthorized explicit identity")
+		}
+	}
+	request := requestWithCSR(t, target.String())
+	if _, err := certificateAuthority(t, caller, nil).CreateCertificate(t.Context(), request); err == nil {
+		t.Fatal("CSR alone selected explicit identity")
+	}
+}
+
+func TestSelfCertificateRequiresConfiguredAuthorizer(t *testing.T) {
+	caller := peerIdentity("demo", "app")
+	request := requestWithCSR(t)
+	setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
+	if _, err := certificateAuthority(t, caller, nil).CreateCertificate(t.Context(), request); err == nil {
+		t.Fatal("self issuance bypassed a missing authorizer")
 	}
 }

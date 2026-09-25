@@ -31,29 +31,24 @@ type fakeDelegatedIdentityAuthorizer struct {
 	calls     int
 	caller    model.PeerIdentity
 	requested model.Principal
+	source    model.SourceRef
 	err       error
 	authorize func(context.Context, model.PeerIdentity, model.Principal) error
 }
 
-func (f *fakeDelegatedIdentityAuthorizer) Authorize(ctx context.Context, caller model.PeerIdentity, requested model.Principal) error {
+func (f *fakeDelegatedIdentityAuthorizer) Authorize(ctx context.Context, caller model.PeerIdentity, target attestation.CertificateTarget) error {
 	f.calls++
 	f.caller = caller
-	f.requested = requested
+	f.requested = target.Principal
+	f.source = target.Source
 	if f.authorize != nil {
-		return f.authorize(ctx, caller, requested)
+		return f.authorize(ctx, caller, target.Principal)
 	}
 	return f.err
 }
 
 func sharedZTunnelCaller() model.PeerIdentity {
-	return model.PeerIdentity{
-		Principal:  serviceAccountPrincipal("agentio-system", "ztunnel"),
-		AttestedBy: model.AttestationKubernetes,
-		Kubernetes: model.KubernetesPeer{
-			WorkloadName: "ztunnel-abc",
-			WorkloadUID:  "agentio-system/ztunnel-abc",
-		},
-	}
+	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "ztunnel-abc", WorkloadUID: "agentio-system/ztunnel-abc", Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
 }
 
 func certificateIdentityForTest(
@@ -68,26 +63,28 @@ func certificateIdentityForTest(
 	if err != nil {
 		t.Fatalf("parse test certificate request: %v", err)
 	}
-	return authority.certificateIdentity(ctx, caller, request, csr)
+	target, err := authority.certificateTarget(ctx, caller, request, csr)
+	return target.Principal, err
 }
 
-func TestDelegatedIdentityDefaultDoesNotUseAuthorizer(t *testing.T) {
-	authorizer := &fakeDelegatedIdentityAuthorizer{err: errors.New("must not be called")}
+func TestSelfIdentityUsesAuthorizer(t *testing.T) {
+	authorizer := &fakeDelegatedIdentityAuthorizer{}
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	authority.UseDelegatedIdentityAuthorizer(authorizer)
-	caller := model.PeerIdentity{
-		Principal: serviceAccountPrincipal("demo", "app"),
-	}
+	caller := model.PeerIdentity{Kubernetes: model.KubernetesPeer{Namespace: "demo", ServiceAccount: "app"}}
 
-	got, err := certificateIdentityForTest(t, authority, context.Background(), caller, requestWithCSR(t))
+	target := mustTestPrincipal("cluster.local", "workload/app")
+	request := requestWithCSR(t, target.String())
+	setRequestMetadata(t, request, target.String())
+	got, err := certificateIdentityForTest(t, authority, context.Background(), caller, request)
 	if err != nil {
 		t.Fatalf("own identity refused: %v", err)
 	}
-	if got != caller.Principal {
-		t.Fatalf("identity = %#v, want %#v", got, caller.Principal)
+	if got != target {
+		t.Fatalf("identity = %#v, want %#v", got, target)
 	}
-	if authorizer.calls != 0 {
-		t.Fatalf("authorizer calls for own identity = %d, want 0", authorizer.calls)
+	if authorizer.calls != 1 {
+		t.Fatalf("authorizer calls for own identity = %d, want 1", authorizer.calls)
 	}
 }
 
@@ -99,7 +96,7 @@ func TestDelegatedIdentityUsesAuthorizer(t *testing.T) {
 	authority.UseDelegatedIdentityAuthorizer(authorizer)
 	caller := sharedZTunnelCaller()
 	request := requestWithCSR(t)
-	setRequestMetadata(t, request, "spiffe://cluster.local/ns/demo/sa/app")
+	setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
 
 	_, err := certificateIdentityForTest(t, authority, context.Background(), caller, request)
 	if !errors.Is(err, denied) {
@@ -111,7 +108,7 @@ func TestDelegatedIdentityUsesAuthorizer(t *testing.T) {
 	if authorizer.caller != caller {
 		t.Fatalf("authorizer caller = %#v, want %#v", authorizer.caller, caller)
 	}
-	want := serviceAccountPrincipal("demo", "app")
+	want := mustTestPrincipal("cluster.local", "workload/app")
 	if authorizer.requested != want {
 		t.Fatalf("authorizer requested principal = %#v, want %#v", authorizer.requested, want)
 	}
@@ -120,24 +117,25 @@ func TestDelegatedIdentityUsesAuthorizer(t *testing.T) {
 func TestDelegatedIdentityRequiresConfiguredAuthorizer(t *testing.T) {
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	request := requestWithCSR(t)
-	setRequestMetadata(t, request, "spiffe://cluster.local/ns/demo/sa/app")
+	setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
 	if _, err := certificateIdentityForTest(t, authority, context.Background(), sharedZTunnelCaller(), request); err == nil {
 		t.Fatal("delegated identity was allowed without an authorizer")
 	}
 }
 
-func TestDelegatedSandboxIdentityIsNotARecognizedPrincipal(t *testing.T) {
-	kubernetes := &fakeDelegatedIdentityAuthorizer{}
+func TestUnregisteredProfileStillRequiresAuthorization(t *testing.T) {
+	denied := errors.New("identity is not registered")
+	kubernetes := &fakeDelegatedIdentityAuthorizer{err: denied}
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	authority.UseDelegatedIdentityAuthorizer(attestation.DelegatedIdentityAuthorizers{model.AttestationKubernetes: kubernetes})
 	request := requestWithCSR(t)
 	setRequestMetadata(t, request, "spiffe://cluster.local/sandbox/v1/vm-1")
 
-	if _, err := certificateIdentityForTest(t, authority, context.Background(), sharedZTunnelCaller(), request); err == nil {
-		t.Fatal("sandbox URI was accepted as a Principal")
+	if _, err := certificateIdentityForTest(t, authority, context.Background(), sharedZTunnelCaller(), request); !errors.Is(err, denied) {
+		t.Fatalf("unregistered URI bypassed authorization: %v", err)
 	}
-	if kubernetes.calls != 0 {
-		t.Fatalf("sandbox URI leaked to the Kubernetes authorizer %d times", kubernetes.calls)
+	if kubernetes.calls != 1 {
+		t.Fatalf("unregistered URI reached the Kubernetes authorizer %d times", kubernetes.calls)
 	}
 }
 
@@ -152,7 +150,7 @@ func TestDelegatedIdentityPassesCancellationToAuthorizer(t *testing.T) {
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	authority.UseDelegatedIdentityAuthorizer(authorizer)
 	request := requestWithCSR(t)
-	setRequestMetadata(t, request, "spiffe://cluster.local/ns/demo/sa/app")
+	setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
 
 	_, err := certificateIdentityForTest(t, authority, ctx, sharedZTunnelCaller(), request)
 	if !errors.Is(err, context.Canceled) {
@@ -167,10 +165,8 @@ func TestParseSPIFFERejectsMalformedIdentities(t *testing.T) {
 	for _, raw := range []string{
 		"https://cluster.local/ns/demo/sa/app",
 		"spiffe://other.local/ns/demo/sa/app",
-		"spiffe://cluster.local/ns/demo",
 		"spiffe://cluster.local/ns//sa/app",
 		"spiffe://cluster.local/ns/demo/sa/",
-		"spiffe://cluster.local/x/demo/sa/app",
 	} {
 		parsed, err := url.Parse(raw)
 		if err != nil {

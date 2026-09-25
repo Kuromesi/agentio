@@ -87,7 +87,7 @@ func TestPodWorkloadDoesNotInferGatewayRoleFromLabels(t *testing.T) {
 	pod := egressPod("agentio-system", "egress-a-abc", "egress-a", "10.0.0.1")
 	pod.Labels["networking.agents.kruise.io/sandbox-egress"] = "true"
 
-	got := workloadFromPod("cluster", "cluster.local", pod)
+	got := BaseWorkloadFromPod("cluster", pod)
 	if got.GatewayKey != "" {
 		t.Fatalf("GatewayKey = %q, want labels to carry no gateway authority", got.GatewayKey)
 	}
@@ -100,15 +100,12 @@ func TestPodProducesWorkloadWithoutSandbox(t *testing.T) {
 	pod.Labels = map[string]string{"app": "client"}
 	pod.Spec.Containers = []corev1.Container{dedicatedZTunnelContainer()}
 
-	workload := workloadFromPod("cluster", "cluster.local", pod)
+	workload := BaseWorkloadFromPod("cluster", pod)
 	if workload.UID != "cluster//Pod/demo/client" {
 		t.Fatalf("ordinary Pod workload identity = %q", workload.UID)
 	}
-	if workload.SourceUID != "pod-uid" || workload.TunnelProtocol != "HBONE" || !workload.NativeTunnel {
+	if workload.Source.Key != "pod-uid" || workload.TunnelProtocol != "HBONE" || !workload.NativeTunnel {
 		t.Fatalf("workload = %+v", workload)
-	}
-	if workload.Principal.String() != "spiffe://cluster.local/ns/demo/sa/client" {
-		t.Fatalf("principal = %s", workload.Principal.String())
 	}
 }
 
@@ -150,7 +147,7 @@ func TestPodWorkloadCanonicalIdentity(t *testing.T) {
 			pod.Name = "client"
 			pod.Labels = test.labels
 
-			workload := BaseWorkloadFromPod("cluster", "cluster.local", pod)
+			workload := BaseWorkloadFromPod("cluster", pod)
 			if workload.CanonicalName != test.wantName || workload.CanonicalRevision != test.wantRevision {
 				t.Fatalf("canonical identity = %q/%q, want %q/%q",
 					workload.CanonicalName, workload.CanonicalRevision, test.wantName, test.wantRevision)
@@ -222,7 +219,7 @@ func TestTerminatingReadyPodProducesUnhealthyWorkload(t *testing.T) {
 	deleting := metav1.NewTime(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC))
 	pod.DeletionTimestamp = &deleting
 
-	workload := workloadFromPod("cluster", "cluster.local", pod)
+	workload := BaseWorkloadFromPod("cluster", pod)
 	if workload.Ready {
 		t.Fatal("terminating Pod produced a ready Workload")
 	}
@@ -232,7 +229,7 @@ func TestPodHostNetworkIsPreserved(t *testing.T) {
 	pod := workloadTestPod(corev1.PodRunning, "10.0.0.1")
 	pod.Spec.HostNetwork = true
 
-	workload := workloadFromPod("cluster", "cluster.local", pod)
+	workload := BaseWorkloadFromPod("cluster", pod)
 	if !workload.HostNetwork {
 		t.Fatal("host-network Pod produced a standard-network Workload")
 	}

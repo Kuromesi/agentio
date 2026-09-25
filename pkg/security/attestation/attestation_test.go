@@ -30,27 +30,17 @@ type fakeAuthenticator struct {
 
 type fakeDelegatedIdentityAuthorizer struct {
 	calls     int
-	requested model.Principal
+	requested CertificateTarget
 }
 
-func (f *fakeDelegatedIdentityAuthorizer) Authorize(_ context.Context, _ model.PeerIdentity, requested model.Principal) error {
+func (f *fakeDelegatedIdentityAuthorizer) Authorize(_ context.Context, _ model.PeerIdentity, requested CertificateTarget) error {
 	f.calls++
 	f.requested = requested
 	return nil
 }
 
 func kubernetesAttestedCaller() model.PeerIdentity {
-	return model.PeerIdentity{
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "agentio-system",
-				ServiceAccount: "ztunnel",
-			},
-		},
-		AttestedBy: model.AttestationKubernetes,
-	}
+	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
 }
 
 const attestationFirecracker model.Attestation = "firecracker"
@@ -62,17 +52,7 @@ func (f *fakeAuthenticator) Authenticate(context.Context) (model.PeerIdentity, e
 
 func TestAuthenticatorChainSkipsUnsupportedCredentials(t *testing.T) {
 	kubernetes := &fakeAuthenticator{err: ErrUnsupportedCredentials}
-	vm := &fakeAuthenticator{peer: model.PeerIdentity{
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "machines",
-				ServiceAccount: "worker",
-			},
-		},
-		AttestedBy: attestationFirecracker,
-	}}
+	vm := &fakeAuthenticator{peer: model.PeerIdentity{AttestedBy: attestationFirecracker}}
 	chain := AuthenticatorChain{kubernetes, vm}
 
 	peer, err := chain.Authenticate(context.Background())
@@ -112,17 +92,7 @@ func TestAuthenticatorChainFailsClosedWhenNothingMatches(t *testing.T) {
 }
 
 func TestRegisteredAttestationAuthenticatorAllowsRegisteredIdentity(t *testing.T) {
-	want := model.PeerIdentity{
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "machines",
-				ServiceAccount: "worker",
-			},
-		},
-		AttestedBy: attestationFirecracker,
-	}
+	want := model.PeerIdentity{AttestedBy: attestationFirecracker}
 	authenticator, err := NewRegisteredAttestationAuthenticator(
 		&fakeAuthenticator{peer: want}, []model.Attestation{attestationFirecracker})
 	if err != nil {
@@ -189,13 +159,9 @@ func TestDelegatedIdentityAuthorizersDispatchByCallerAttestation(t *testing.T) {
 	kubernetes := &fakeDelegatedIdentityAuthorizer{}
 	authorizers := DelegatedIdentityAuthorizers{model.AttestationKubernetes: kubernetes}
 	caller := kubernetesAttestedCaller()
-	requested := model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "app",
-		},
+	requested := CertificateTarget{
+		Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app"),
+		Source:    model.SourceRef{Registry: "kubernetes/test", Key: "pod-a"},
 	}
 
 	if err := authorizers.Authorize(context.Background(), caller, requested); err != nil {
@@ -216,14 +182,7 @@ func TestDelegatedIdentityAuthorizersDispatchByCallerAttestation(t *testing.T) {
 
 func TestDelegatedIdentityAuthorizersFailClosedOnNilEntry(t *testing.T) {
 	authorizers := DelegatedIdentityAuthorizers{model.AttestationKubernetes: nil}
-	requested := model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "app",
-		},
-	}
+	requested := CertificateTarget{Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app")}
 	if err := authorizers.Authorize(context.Background(), kubernetesAttestedCaller(), requested); err == nil {
 		t.Fatal("nil authorizer entry authorized a delegation")
 	}
@@ -232,14 +191,7 @@ func TestDelegatedIdentityAuthorizersFailClosedOnNilEntry(t *testing.T) {
 func TestDelegatedIdentityAuthorizersFailClosedOnTypedNilEntry(t *testing.T) {
 	var authorizer *fakeDelegatedIdentityAuthorizer
 	authorizers := DelegatedIdentityAuthorizers{model.AttestationKubernetes: authorizer}
-	requested := model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "app",
-		},
-	}
+	requested := CertificateTarget{Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app")}
 	if err := authorizers.Authorize(context.Background(), kubernetesAttestedCaller(), requested); err == nil {
 		t.Fatal("typed nil authorizer entry authorized a delegation")
 	}

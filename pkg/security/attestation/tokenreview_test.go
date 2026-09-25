@@ -56,7 +56,7 @@ func newCountingReviewer(t *testing.T, authenticate func(token string) authentic
 		counter.mu.Unlock()
 		return true, &authenticationv1.TokenReview{Status: authenticate(review.Spec.Token)}, nil
 	})
-	reviewer, err := NewTokenReviewer(client, "cluster.local", []string{"agentio-ca"})
+	reviewer, err := NewTokenReviewer(client, []string{"agentio-ca"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,8 +167,8 @@ func TestAuthenticateCachesSuccessfulReviews(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if caller.Principal.ServiceAccount.Namespace != "demo" || caller.Principal.ServiceAccount.ServiceAccount != "app" {
-			t.Fatalf("principal = %+v", caller.Principal)
+		if caller.Kubernetes.Namespace != "demo" || caller.Kubernetes.ServiceAccount != "app" {
+			t.Fatalf("principal = %+v", caller.Kubernetes)
 		}
 		if caller.AttestedBy != model.AttestationKubernetes || caller.Kubernetes.WorkloadName != "client-pod" || caller.Kubernetes.WorkloadUID != "pod-uid" {
 			t.Fatalf("bound pod identity lost through the cache: %+v", caller)
@@ -197,8 +197,8 @@ func TestAuthenticateDoesNotShareEntriesBetweenTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Principal.ServiceAccount.ServiceAccount == second.Principal.ServiceAccount.ServiceAccount {
-		t.Fatalf("two tokens resolved to the same identity: %s", first.Principal)
+	if first.Kubernetes.ServiceAccount == second.Kubernetes.ServiceAccount {
+		t.Fatalf("two tokens resolved to the same identity: %+v", first.Kubernetes)
 	}
 	if got := counter.reviews(); got != 2 {
 		t.Fatalf("TokenReviews = %d, want 2", got)

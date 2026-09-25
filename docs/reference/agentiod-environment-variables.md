@@ -32,7 +32,7 @@ The `-print-env` output is the authoritative reference. Registered settings are 
 
 - control-plane identity and config: `AGENTIO_SERVICE_NAME`, `AGENTIO_TOKEN_AUDIENCE`, `AGENTIO_TRUSTED_NODE_ACCOUNTS`, and `AGENTIO_*CONFIGMAP_NAME`;
 - Kubernetes API client throttling: `AGENTIO_KUBERNETES_API_QPS` and `AGENTIO_KUBERNETES_API_BURST`;
-- workload CA and trust distribution: `AGENTIO_CA_*`, `AGENTIO_TRUST_BUNDLE_*`, and `AGENTIO_WORKLOAD_CERT_*`;
+- workload CA and trust distribution: `AGENTIO_CA_*`, `AGENTIO_TRUST_BUNDLE_*`, `AGENTIO_WORKLOAD_CERT_*`, and `AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID`;
 - xDS and KRT flow control: `AGENTIO_KRT_*`, `AGENTIO_PUSH_*`, `AGENTIO_CLIENT_QUEUE_SIZE`, and `AGENTIO_MAX_REQUESTS_PER_SECOND`;
 - injection and gateway deployment: `AGENTIO_ENABLE_SIDECAR_INJECTOR`, `AGENTIO_INJECTOR_*`, `AGENTIO_NATIVE_SIDECARS`, `AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR`, `AGENTIO_CLIENT_TRUST_PACKAGE_PATH`, `AGENTIO_ENABLE_GATEWAY_DEPLOYER`, and `AGENTIO_GATEWAY_LEASE_NAME`;
 - networking: `AGENTIO_GATEWAY_*`, `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`, and `AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY`;
@@ -49,6 +49,11 @@ Sandbox identities use `<type>:<instance-id>` and are compared as case-sensitive
 Sandbox-owned inline TrafficPolicy and SNI rules stay on Sandbox resources; no Workload compatibility projection is emitted. Shared Workload Authorizations, SNI rules and egress routing are emitted in both modes. Shared TrafficPolicy Authorizations retain source priority and global/namespace/selector scope; selectors use Workload labels.
 
 This resource split is a control-plane draft and requires corresponding data-plane evaluation changes, including inline ALLOW followed by a separate system-policy check.
+
+`AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID` configures the non-critical certificate
+extension used by explicit instance requests. Empty leaves principal-only
+issuance available and rejects instance requests. See [Workload and gateway
+identities](workload-identity.md) for the request and certificate formats.
 
 ## Environment variable reference
 
@@ -124,6 +129,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_TRUST_BUNDLE_LEASE_NAME</code> | String | <code>agentiod-trust-bundle-leader</code> | Lease electing the replica that distributes the trust bundle ConfigMap. |
 | <code>AGENTIO_WORKLOAD_CERT_LIFETIME</code> | Duration | <code>24h0m0s</code> | Validity of workload certificates and of the xDS server&#39;s own certificate. |
 | <code>AGENTIO_WORKLOAD_CERT_RENEW_BEFORE</code> | Duration | <code>8h0m0s</code> | How long before expiry the xDS server re-issues its own certificate. |
+| <code>AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID</code> | String | empty | Private enterprise OID for the non-critical workload source certificate extension. Empty disables instance certificate requests; principal-only requests remain supported. |
 
 <!-- END GENERATED ENVIRONMENT VARIABLES -->
 
