@@ -54,7 +54,8 @@ func Catalog() []Suite {
 				// dedicated sidecar; ambient token delivery is a separate contract.
 				"TestEPECredentialProviderConfigUpdates": once,
 				// Gateway-to-EPE transport does not depend on workload capture mode.
-				"TestEPEGatewayMTLS": once,
+				"TestEPEGatewayMTLS":                once,
+				"TestEPEHelmMTLSCertificateSources": once,
 			}},
 		{Name: "clienttrust", Coverage: once, SupportedProfiles: []string{"sidecar"}, Fixtures: []string{"clienttrust"}},
 		{Name: "agentgateway", Coverage: Coverage{Profiles: both}, GatewayDataplane: "agentgateway", Fixtures: []string{"extproc"}, OptIn: true},

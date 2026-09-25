@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -547,6 +548,12 @@ data:
 
 func epeForwardPort(t *testing.T, environment *e2e.Environment, namespace, pod string, port int) string {
 	t.Helper()
+	address, _ := startEPEPortForward(t, environment, namespace, pod, port)
+	return address
+}
+
+func startEPEPortForward(t *testing.T, environment *e2e.Environment, namespace, pod string, port int) (string, func()) {
+	t.Helper()
 	transport, upgrader, err := spdy.RoundTripperFor(environment.Cluster.RESTConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -575,7 +582,8 @@ func epeForwardPort(t *testing.T, environment *e2e.Environment, namespace, pod s
 	}
 	done := make(chan error, 1)
 	go func() { done <- forward.ForwardPorts() }()
-	t.Cleanup(func() { close(stop) })
+	stopForward := sync.OnceFunc(func() { close(stop) })
+	t.Cleanup(stopForward)
 	select {
 	case <-ready:
 	case err := <-done:
@@ -587,7 +595,7 @@ func epeForwardPort(t *testing.T, environment *e2e.Environment, namespace, pod s
 	if err != nil || len(ports) != 1 {
 		t.Fatalf("forwarded ports: %v, %v", ports, err)
 	}
-	return fmt.Sprintf("127.0.0.1:%d", ports[0].Local)
+	return fmt.Sprintf("127.0.0.1:%d", ports[0].Local), stopForward
 }
 
 const mtlsEPEYAML = `
