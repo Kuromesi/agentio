@@ -257,6 +257,13 @@ spec:
 		if err := waitEPETrustBundle(ctx, environment, namespace, rootsAB); err != nil {
 			t.Fatal(err)
 		}
+		// The gateway's SDS ROOTCA is cached with its workload certificate;
+		// publishing the ConfigMap does not refresh that cache. Reacquire an A
+		// identity with A+B roots before EPE starts serving a B certificate.
+		if err := restartEPEGateway(ctx, environment, namespace); err != nil {
+			t.Fatal(err)
+		}
+		traffic(t)
 		data["ca-cert.pem"] = rootsB
 		data["ca-key.pem"] = epePrivateKeyPEM(t, caB)
 		// Reorder the overlap bundle with the signer change to trigger CA-mode
