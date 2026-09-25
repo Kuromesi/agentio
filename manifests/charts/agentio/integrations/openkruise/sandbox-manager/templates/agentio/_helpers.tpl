@@ -133,6 +133,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default .Values.agentio.global.caCertConfigMap .Values.agentio.agentiod.ca.configMapName -}}
 {{- end -}}
 
+{{- define "agentio.agentiod.caAddress" -}}
+{{- printf "%s.%s.svc.%s:15012" (include "agentio.agentiod.fullname" .) (include "agentio.namespace" .) .Values.agentio.global.clusterDomain -}}
+{{- end -}}
+
 
 
 

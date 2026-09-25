@@ -141,6 +141,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default .Values.global.caCertConfigMap .Values.agentiod.ca.configMapName -}}
 {{- end -}}
 
+{{- define "agentiod.caAddress" -}}
+{{- printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain -}}
+{{- end -}}
+
 {{- define "agentio-cni.name" -}}{{ default "agentio-cni" .Values.cni.nameOverride | trunc 63 | trimSuffix "-" }}{{- end -}}
 {{- define "agentio-cni.fullname" -}}{{ default (include "agentio-cni.name" .) .Values.cni.fullnameOverride | trunc 63 | trimSuffix "-" }}{{- end -}}
 {{- define "agentio-cni.serviceAccountName" -}}{{ default (include "agentio-cni.fullname" .) .Values.cni.serviceAccount.name }}{{- end -}}

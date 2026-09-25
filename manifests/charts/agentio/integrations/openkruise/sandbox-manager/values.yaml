@@ -182,7 +182,11 @@ agentio:
     tls:
       # Enable workload mTLS between the gateway and EPE.
       enabled: false
-      # Managed EPE only. Omission or {} requests and renews certificates from Agentiod.
+      # Managed EPE only. Enabling TLS is sufficient to request and renew certificates
+      # from this chart's Agentiod; certificateSource can be omitted or left as {}.
+      # The CA address follows Agentiod's Service name, namespace and global.clusterDomain.
+      # The chart mounts roots from agentiod.ca.trustBundleConfigMapName and projects
+      # an EPE ServiceAccount token using agentiod.tokenAudience.
       # Select at most one of ca or file. Configure custom mounts below.
       certificateSource: {}
       # certificateSource:
@@ -190,7 +194,7 @@ agentio:
       #     address: ca.example:15012
       #     tokenFile: /custom/token
       #     caCertificateFile: /custom/root.pem
-      # Omitted CA fields use the chart's Agentiod address, projected token and roots.
+      # Set only the CA fields you need to override; omitted fields keep these defaults.
       # Explicit tokenFile/caCertificateFile paths disable their automatic mounts.
       # certificateSource:
       #   file:
