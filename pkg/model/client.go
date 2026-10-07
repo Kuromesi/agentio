@@ -38,6 +38,7 @@ type KubernetesPeer struct {
 	NodeName       string
 }
 
+// Validate checks the required Kubernetes authentication evidence.
 func (p KubernetesPeer) Validate() error {
 	if p.Namespace == "" || p.ServiceAccount == "" {
 		return fmt.Errorf("Kubernetes namespace and service account are required")

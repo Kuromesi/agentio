@@ -179,7 +179,8 @@ func TestWorkloadGeneratorProjectsDirectResourceFromCanonicalAddress(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(delta.Resources) != 1 || delta.Resources[0].Key.TypeURL != model.WorkloadType || delta.Resources[0].XDSName != "uid-a" {
+			if len(delta.Resources) != 1 || delta.Resources[0].Key.TypeURL != model.WorkloadType ||
+				delta.Resources[0].XDSName != "uid-a" {
 				t.Fatalf("projected resources = %+v", delta.Resources)
 			}
 			workload := &workloadv1.Workload{}
@@ -343,7 +344,12 @@ func TestWorkloadReferencedGatewaySelection(t *testing.T) {
 		gatewayAWorkload, gatewayAService, gatewayBWorkload, gatewayBService,
 		selectionWorkload(t, "unrelated", "unrelated", "node-z", "", ""),
 	})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
+	scope := model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   serviceAccountPrincipal("demo", "default"),
+		WorkloadUID: "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+	}
 
 	got := selectWorkloadResources(scope, snapshot, model.AddressType, nil)
 	want := []string{"agentio-system/egress-a.agentio-system.svc.cluster.local", "demo/svc-a", "gateway-a", "uid-a"}
@@ -376,7 +382,12 @@ func TestNodeReferencedGatewaySelection(t *testing.T) {
 	}
 	snapshot := selectionSnapshot(t, resources)
 	scope := model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"}
-	if names := selectedNames(selectWorkloadResources(scope, snapshot, model.AddressType, nil)); !slices.Equal(names, []string{"gateway-a", "gateway-b", "uid-a", "uid-b"}) {
+	if names := selectedNames(
+		selectWorkloadResources(scope, snapshot, model.AddressType, nil),
+	); !slices.Equal(
+		names,
+		[]string{"gateway-a", "gateway-b", "uid-a", "uid-b"},
+	) {
 		t.Fatalf("node selected resources = %v", names)
 	}
 }
@@ -387,14 +398,29 @@ func TestNamedWorkloadAlwaysIncludesReferencedGateways(t *testing.T) {
 	gateway := selectionOwnedByGateway(t,
 		selectionWorkload(t, "gateway-a", "agentio-system", "gateway-node", "", ""), "agentio-system/egress-a")
 	snapshot := selectionSnapshot(t, []model.Resource{own, gateway})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
-	if names := selectedNames(selectWorkloadResources(scope, snapshot, model.AddressType, []string{"uid-a"})); !slices.Equal(names, []string{"gateway-a", "uid-a"}) {
+	scope := model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   serviceAccountPrincipal("demo", "default"),
+		WorkloadUID: "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+	}
+	if names := selectedNames(
+		selectWorkloadResources(scope, snapshot, model.AddressType, []string{"uid-a"}),
+	); !slices.Equal(
+		names,
+		[]string{"gateway-a", "uid-a"},
+	) {
 		t.Fatalf("named selection = %v", names)
 	}
 }
 
 func TestNamedReferencedGatewayIncremental(t *testing.T) {
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", Source: model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"}}
+	scope := model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   serviceAccountPrincipal("demo", "default"),
+		WorkloadUID: "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+	}
 	plain := selectionWorkload(t, "uid-a", "demo", "node-a", "", "")
 	own := selectionWithGatewayReference(t, plain, "agentio-system/egress-a")
 	oldGateway := selectionOwnedByGateway(t,
@@ -492,17 +518,26 @@ func TestNodeNamedSubscriptionAddsLocalAndExplicitRemoteWorkloads(t *testing.T) 
 
 	got = selectWorkloadResources(scope, snapshot, model.AddressType, []string{"uid-c"})
 	if names := selectedNames(got); !slices.Equal(names, []string{"uid-a", "uid-b", "uid-c"}) {
-		t.Fatalf("selected remote Address resource = %v, want explicit remote workload plus node-local workloads", names)
+		t.Fatalf(
+			"selected remote Address resource = %v, want explicit remote workload plus node-local workloads",
+			names,
+		)
 	}
 
 	got = selectWorkloadResources(scope, snapshot, model.AddressType, []string{"/10.96.0.1"})
 	if names := selectedNames(got); !slices.Equal(names, []string{"demo/svc-a", "uid-a", "uid-b", "uid-c"}) {
-		t.Fatalf("selected VIP Address resources = %v, want subscribed service, every endpoint, and node-local workloads", names)
+		t.Fatalf(
+			"selected VIP Address resources = %v, want subscribed service, every endpoint, and node-local workloads",
+			names,
+		)
 	}
 
 	got = selectWorkloadResources(scope, snapshot, model.AddressType, []string{"/10.96.0.3"})
 	if names := selectedNames(got); !slices.Equal(names, []string{"demo/svc-c", "uid-a", "uid-b", "uid-d"}) {
-		t.Fatalf("selected remote-only Service resources = %v, want its remote endpoint and node-local workloads", names)
+		t.Fatalf(
+			"selected remote-only Service resources = %v, want its remote endpoint and node-local workloads",
+			names,
+		)
 	}
 }
 
@@ -833,7 +868,14 @@ func TestGatewayWorkloadIncrementalUsesResourceFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	unrelated := selectionWorkload(t, "uid-b", "demo", "node-b", "", "")
-	snapshot := selectionSnapshot(t, []model.Resource{newResource, unrelated, selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a")})
+	snapshot := selectionSnapshot(
+		t,
+		[]model.Resource{
+			newResource,
+			unrelated,
+			selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a"),
+		},
+	)
 	watch := &watchState{
 		wildcard: true,
 		started:  true,

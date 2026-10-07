@@ -45,12 +45,16 @@ func (r *Registry) DelegatedIdentityAuthorizer() *DelegatedIdentityAuthorizer {
 		workloads:   r.Workloads,
 		clusterID:   r.options.ClusterID,
 		trustDomain: r.options.TrustDomain,
-		workloadsByIdentity: krt.NewIndex(r.Workloads, "certificateWorkloadsByIdentity", func(w model.Workload) []string {
-			if w.Principal == (model.Principal{}) {
-				return nil
-			}
-			return []string{w.Principal.String()}
-		}),
+		workloadsByIdentity: krt.NewIndex(
+			r.Workloads,
+			"certificateWorkloadsByIdentity",
+			func(w model.Workload) []string {
+				if w.Principal == (model.Principal{}) {
+					return nil
+				}
+				return []string{w.Principal.String()}
+			},
+		),
 		pods:                  r.Pods,
 		rootNamespace:         r.options.RootNamespace,
 		ztunnelServiceAccount: r.options.ZTunnelServiceAccount,
@@ -66,7 +70,11 @@ func eligibleDelegationTarget(pod *corev1.Pod) bool {
 }
 
 // Authorize decides whether caller may request a certificate for requested.
-func (a *DelegatedIdentityAuthorizer) Authorize(ctx context.Context, caller model.PeerIdentity, requested attestation.CertificateTarget) error {
+func (a *DelegatedIdentityAuthorizer) Authorize(
+	ctx context.Context,
+	caller model.PeerIdentity,
+	requested attestation.CertificateTarget,
+) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("authorize delegated identity: %w", err)
 	}
@@ -95,14 +103,20 @@ func activeCallerPod(pods krt.Collection[*corev1.Pod], caller model.PeerIdentity
 		return nil, fmt.Errorf("a Pod-bound token is required")
 	}
 	pod := pods.GetKey(evidence.Namespace + "/" + evidence.WorkloadName)
-	if pod == nil || string((*pod).UID) != evidence.WorkloadUID || (*pod).Spec.ServiceAccountName != evidence.ServiceAccount ||
-		(*pod).DeletionTimestamp != nil || (*pod).Status.Phase == corev1.PodFailed || (*pod).Status.Phase == corev1.PodSucceeded {
+	if pod == nil || string((*pod).UID) != evidence.WorkloadUID ||
+		(*pod).Spec.ServiceAccountName != evidence.ServiceAccount ||
+		(*pod).DeletionTimestamp != nil ||
+		(*pod).Status.Phase == corev1.PodFailed ||
+		(*pod).Status.Phase == corev1.PodSucceeded {
 		return nil, fmt.Errorf("token is not bound to an active Pod")
 	}
 	return *pod, nil
 }
 
-func (a *DelegatedIdentityAuthorizer) authorizeWorkload(caller model.PeerIdentity, requested attestation.CertificateTarget) error {
+func (a *DelegatedIdentityAuthorizer) authorizeWorkload(
+	caller model.PeerIdentity,
+	requested attestation.CertificateTarget,
+) error {
 	if a.workloads == nil || !a.workloads.HasSynced() {
 		return fmt.Errorf("workload identity registry is not synced")
 	}
@@ -115,7 +129,10 @@ func (a *DelegatedIdentityAuthorizer) authorizeWorkload(caller model.PeerIdentit
 			continue
 		}
 		target := a.pods.GetKey(w.Namespace + "/" + w.Name)
-		if target == nil || podsource.SourceRef(a.clusterID, string((*target).UID)) != w.Source || (*target).DeletionTimestamp != nil || (*target).Status.Phase == corev1.PodFailed || (*target).Status.Phase == corev1.PodSucceeded {
+		if target == nil || podsource.SourceRef(a.clusterID, string((*target).UID)) != w.Source ||
+			(*target).DeletionTimestamp != nil ||
+			(*target).Status.Phase == corev1.PodFailed ||
+			(*target).Status.Phase == corev1.PodSucceeded {
 			continue
 		}
 		if w.Source == podsource.SourceRef(a.clusterID, string(pod.UID)) {

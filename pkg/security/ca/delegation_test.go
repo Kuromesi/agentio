@@ -36,7 +36,11 @@ type fakeDelegatedIdentityAuthorizer struct {
 	authorize func(context.Context, model.PeerIdentity, model.Principal) error
 }
 
-func (f *fakeDelegatedIdentityAuthorizer) Authorize(ctx context.Context, caller model.PeerIdentity, target attestation.CertificateTarget) error {
+func (f *fakeDelegatedIdentityAuthorizer) Authorize(
+	ctx context.Context,
+	caller model.PeerIdentity,
+	target attestation.CertificateTarget,
+) error {
 	f.calls++
 	f.caller = caller
 	f.requested = target.Principal
@@ -48,7 +52,15 @@ func (f *fakeDelegatedIdentityAuthorizer) Authorize(ctx context.Context, caller 
 }
 
 func sharedZTunnelCaller() model.PeerIdentity {
-	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "ztunnel-abc", WorkloadUID: "agentio-system/ztunnel-abc", Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
+	return model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{
+			WorkloadName:   "ztunnel-abc",
+			WorkloadUID:    "agentio-system/ztunnel-abc",
+			Namespace:      "agentio-system",
+			ServiceAccount: "ztunnel",
+		},
+	}
 }
 
 func certificateIdentityForTest(
@@ -118,7 +130,13 @@ func TestDelegatedIdentityRequiresConfiguredAuthorizer(t *testing.T) {
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	request := requestWithCSR(t)
 	setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
-	if _, err := certificateIdentityForTest(t, authority, context.Background(), sharedZTunnelCaller(), request); err == nil {
+	if _, err := certificateIdentityForTest(
+		t,
+		authority,
+		context.Background(),
+		sharedZTunnelCaller(),
+		request,
+	); err == nil {
 		t.Fatal("delegated identity was allowed without an authorizer")
 	}
 }
@@ -127,11 +145,22 @@ func TestUnregisteredProfileStillRequiresAuthorization(t *testing.T) {
 	denied := errors.New("identity is not registered")
 	kubernetes := &fakeDelegatedIdentityAuthorizer{err: denied}
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
-	authority.UseDelegatedIdentityAuthorizer(attestation.DelegatedIdentityAuthorizers{model.AttestationKubernetes: kubernetes})
+	authority.UseDelegatedIdentityAuthorizer(
+		attestation.DelegatedIdentityAuthorizers{model.AttestationKubernetes: kubernetes},
+	)
 	request := requestWithCSR(t)
 	setRequestMetadata(t, request, "spiffe://cluster.local/sandbox/v1/vm-1")
 
-	if _, err := certificateIdentityForTest(t, authority, context.Background(), sharedZTunnelCaller(), request); !errors.Is(err, denied) {
+	if _, err := certificateIdentityForTest(
+		t,
+		authority,
+		context.Background(),
+		sharedZTunnelCaller(),
+		request,
+	); !errors.Is(
+		err,
+		denied,
+	) {
 		t.Fatalf("unregistered URI bypassed authorization: %v", err)
 	}
 	if kubernetes.calls != 1 {

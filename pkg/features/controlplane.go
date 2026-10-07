@@ -23,6 +23,7 @@ import (
 )
 
 var (
+	// WorkloadSourceExtensionOID selects the private extension for opt-in instance issuance.
 	WorkloadSourceExtensionOID = env.Register(
 		"AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID",
 		"",

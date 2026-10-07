@@ -15,19 +15,24 @@
 package compiler
 
 import (
-	"github.com/openkruise/agentio/pkg/model"
 	"testing"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 func TestLegacyWDSProjectionChecksSourceMetadata(t *testing.T) {
 	principal := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 	for _, tc := range []struct {
-		namespace, account string
-		wantErr            bool
+		namespace string
+		account   string
+		wantErr   bool
 	}{
 		{"demo", "app", false}, {"demo", "", false}, {"other", "app", true}, {"demo", "other", true},
 	} {
-		input := wdsProjection{Workload: model.Workload{UID: "pod", Namespace: tc.namespace, Principal: principal}, ServiceAccount: tc.account}
+		input := wdsProjection{
+			Workload:       model.Workload{UID: "pod", Namespace: tc.namespace, Principal: principal},
+			ServiceAccount: tc.account,
+		}
 		domain, account, err := projectWorkloadIdentity(input)
 		if (err != nil) != tc.wantErr {
 			t.Fatalf("%+v: %v", tc, err)

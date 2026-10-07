@@ -63,7 +63,7 @@ func checkEqualityFields[T any](t *testing.T, zero T, equal func(T, T) bool) {
 }
 
 func setEqualityTestValue(value reflect.Value) {
-	if value.Type() == reflect.TypeOf(Principal{}) {
+	if value.Type() == reflect.TypeFor[Principal]() {
 		value.Set(reflect.ValueOf(testPrincipal()))
 		return
 	}

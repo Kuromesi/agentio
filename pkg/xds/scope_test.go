@@ -55,11 +55,16 @@ func TestScopeFuncsDispatchesByAuthenticatedAttestation(t *testing.T) {
 		NodeName:  "node-a",
 	}
 	calls := 0
-	scopeFuncs := ScopeFuncs{model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
-		calls++
-		return want, nil
-	}}
-	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
+	scopeFuncs := ScopeFuncs{
+		model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+			calls++
+			return want, nil
+		},
+	}
+	peer := model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"},
+	}
 
 	scope, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer)
 	if err != nil {
@@ -72,10 +77,12 @@ func TestScopeFuncsDispatchesByAuthenticatedAttestation(t *testing.T) {
 
 func TestScopeFuncsFailsClosedForUnregisteredAttestation(t *testing.T) {
 	calls := 0
-	scopeFuncs := ScopeFuncs{model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
-		calls++
-		return model.ClientScope{}, nil
-	}}
+	scopeFuncs := ScopeFuncs{
+		model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+			calls++
+			return model.ClientScope{}, nil
+		},
+	}
 	peer := model.PeerIdentity{AttestedBy: model.Attestation("firecracker")}
 
 	if _, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer); err == nil {
@@ -95,7 +102,16 @@ func TestScopeFuncsFailsClosedOnNilEntry(t *testing.T) {
 }
 
 func TestKubernetesScopeFuncVerifiesBoundIdentity(t *testing.T) {
-	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "bound-pod", WorkloadUID: "bound-uid", NodeName: "node-a", Namespace: "demo", ServiceAccount: "client"}}
+	peer := model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{
+			WorkloadName:   "bound-pod",
+			WorkloadUID:    "bound-uid",
+			NodeName:       "node-a",
+			Namespace:      "demo",
+			ServiceAccount: "client",
+		},
+	}
 	tests := []struct {
 		name         string
 		metadata     map[string]string
@@ -170,9 +186,17 @@ func TestKubernetesScopeFuncVerifiesBoundIdentity(t *testing.T) {
 // An unbound token has no authenticated node; the client's asserted node name
 // passes through as the shared ztunnel role assertion.
 func TestKubernetesScopeFuncPassesAssertedNodeForUnboundToken(t *testing.T) {
-	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
+	peer := model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"},
+	}
 	resolver := &fakeNodeResolver{scope: model.ClientScope{Class: model.ClientSharedZTunnel}}
-	if _, err := KubernetesScopeFunc(resolver)(nodeWithMetadata(map[string]string{"NODE_NAME": "node-b"}), peer); err != nil {
+	if _, err := KubernetesScopeFunc(
+		resolver,
+	)(
+		nodeWithMetadata(map[string]string{"NODE_NAME": "node-b"}),
+		peer,
+	); err != nil {
 		t.Fatalf("unbound node assertion rejected: %v", err)
 	}
 	if resolver.nodeName != "node-b" {
@@ -181,7 +205,10 @@ func TestKubernetesScopeFuncPassesAssertedNodeForUnboundToken(t *testing.T) {
 }
 
 func TestKubernetesScopeFuncMatchesProxyTypeToResolvedScope(t *testing.T) {
-	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: "demo", ServiceAccount: "egress"}}
+	peer := model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{Namespace: "demo", ServiceAccount: "egress"},
+	}
 	for _, test := range []struct {
 		name      string
 		nodeID    string

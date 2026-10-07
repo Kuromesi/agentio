@@ -229,8 +229,10 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 				case "authorization":
 					query.AuthorizationReference = value
 				case "principal":
-					other := principal
-					other, _ = NewPrincipal("cluster.local", "workload/test/"+value)
+					other, err := NewPrincipal("cluster.local", "workload/test/"+value)
+					if (err != nil) != invalid {
+						t.Fatalf("NewPrincipal() error = %v, invalid = %v", err, invalid)
+					}
 					query.Principal = &other
 				}
 				check(t, query, false)

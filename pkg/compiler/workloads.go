@@ -63,7 +63,8 @@ func newWorkloadResources(
 			}
 
 			endpointsByKey := make(map[string]model.Endpoint)
-			if workload.Source == podsource.SourceRef(inputs.ClusterID, workload.Source.Key) && workload.Source.Key != "" {
+			if workload.Source == podsource.SourceRef(inputs.ClusterID, workload.Source.Key) &&
+				workload.Source.Key != "" {
 				for _, endpoint := range krt.Fetch(ctx, inputs.Endpoints,
 					krt.FilterIndex(base.endpointsByTargetUID, workload.Source.Key)) {
 					endpointsByKey[endpoint.ResourceName()] = endpoint

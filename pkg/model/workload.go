@@ -87,6 +87,7 @@ type SourceRef struct {
 	Key      string
 }
 
+// Validate requires both the registry and its native instance key.
 func (s SourceRef) Validate() error {
 	if s.Registry == "" || s.Key == "" {
 		return fmt.Errorf("source registry and key are required")

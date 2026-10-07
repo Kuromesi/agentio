@@ -25,9 +25,11 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
@@ -141,14 +143,25 @@ func TestNewServerRejectsNonFiniteRequestRateLimit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, err := NewServer(
-				fakeAuthenticator{}, fakeResolver{}.scopeFuncs(), newFakeResourceStore(snapshot), func() bool { return true },
-				1, nil, 1, tc.limit,
+				fakeAuthenticator{},
+				fakeResolver{}.scopeFuncs(),
+				newFakeResourceStore(snapshot),
+				func() bool { return true },
+				1,
+				nil,
+				1,
+				tc.limit,
 			)
 			if server != nil {
 				server.Close()
 			}
 			if err == nil || server != nil {
-				t.Fatalf("NewServer(requestRateLimit=%v) = (%#v, %v), want nil server and validation error", tc.limit, server, err)
+				t.Fatalf(
+					"NewServer(requestRateLimit=%v) = (%#v, %v), want nil server and validation error",
+					tc.limit,
+					server,
+					err,
+				)
 			}
 		})
 	}
@@ -315,7 +328,8 @@ func TestDeltaRequestLogsSubscriptionCountsWithoutResourceNames(t *testing.T) {
 		!strings.Contains(watchStarted, "resources=2") {
 		t.Fatalf("watch-start log = %q, want DEBUG with resource count:\n%s", watchStarted, logs)
 	}
-	if strings.Contains(logs, "resource_names=") || strings.Contains(logs, firstName) || strings.Contains(logs, secondName) {
+	if strings.Contains(logs, "resource_names=") || strings.Contains(logs, firstName) ||
+		strings.Contains(logs, secondName) {
 		t.Fatalf("subscription resource names leaked into logs:\n%s", logs)
 	}
 }
@@ -513,5 +527,64 @@ func TestServerDispatchesGeneratorByTypeURL(t *testing.T) {
 	}
 	if got := responses[0].GetResources()[0].GetName(); got != "api.example.com" {
 		t.Fatalf("resource name = %q, want api.example.com", got)
+	}
+}
+
+func TestGatewayStreamRejectsRevokedScope(t *testing.T) {
+	for _, trigger := range []string{"request", "push", "membership update without client watch", "changed gateway", "changed instance"} {
+		t.Run(trigger, func(t *testing.T) {
+			scope := gatewayScope()
+			server := newTestServer(
+				t,
+				scope,
+				[]model.Resource{gatewayResource(t, "demo/egress", "cluster", "before")},
+				nil,
+			)
+			var revoked atomic.Bool
+			server.server.scopeFuncs = ScopeFuncs{
+				model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+					if revoked.Load() {
+						return model.ClientScope{}, fmt.Errorf("gateway membership revoked")
+					}
+					return scope, nil
+				},
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			stream := newFakeStream(ctx, 4)
+			stream.send(nodeRequest(model.ClusterType))
+			done := make(chan error, 1)
+			go func() { done <- server.server.serveDelta(stream) }()
+			stream.awaitResponses(t, model.ClusterType, 1)
+			revoked.Store(true)
+			switch trigger {
+			case "request", "changed gateway", "changed instance":
+				stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.ClusterType})
+				stream.closeRequests()
+			case "push":
+				snapshot, err := model.NewResourceSet(
+					[]model.Resource{gatewayResource(t, "demo/egress", "cluster", "after")},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.resources.publish(snapshot)
+			case "membership update without client watch":
+				snapshot, err := model.NewResourceSet([]model.Resource{
+					gatewayResource(t, "demo/egress", "cluster", "before"),
+					addressResource(t, "member", "changed"),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.resources.publish(snapshot)
+			}
+			if err := <-done; status.Code(err) != codes.PermissionDenied {
+				t.Fatalf("revoked stream returned %v, want PermissionDenied", err)
+			}
+			if len(stream.sent()) != 1 {
+				t.Fatal("revoked stream received another response")
+			}
+		})
 	}
 }

@@ -353,7 +353,12 @@ func newTestServerWithGenerators(
 	}
 	source := newFakeResourceStore(snapshot)
 	server, err := NewServer(
-		fakeAuthenticator{caller: model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod", Namespace: "demo", ServiceAccount: "app"}}},
+		fakeAuthenticator{
+			caller: model.PeerIdentity{
+				AttestedBy: model.AttestationKubernetes,
+				Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod", Namespace: "demo", ServiceAccount: "app"},
+			},
+		},
 		fakeResolver{scope: scope}.scopeFuncs(),
 		source,
 		func() bool { return true },
@@ -382,7 +387,12 @@ func newTestServerWithScheduler(
 		t.Fatal(err)
 	}
 	source := newFakeResourceStore(snapshot)
-	authenticator := fakeAuthenticator{caller: model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod", Namespace: "demo", ServiceAccount: "app"}}}
+	authenticator := fakeAuthenticator{
+		caller: model.PeerIdentity{
+			AttestedBy: model.AttestationKubernetes,
+			Kubernetes: model.KubernetesPeer{WorkloadName: "client-pod", Namespace: "demo", ServiceAccount: "app"},
+		},
+	}
 	resolver := fakeResolver{scope: scope}
 	ready := func() bool { return true }
 	generators := testGenerators(nil)
@@ -600,9 +610,10 @@ func gatewayResourceOfType(t testing.TB, typeURL, gatewayKey, xdsName, payload s
 func gatewayScope() model.ClientScope {
 	return model.ClientScope{
 		Class:       model.ClientEgressGateway,
-		WorkloadUID: "gw", Source: model.SourceRef{Registry: "kubernetes/test", Key: "pod"},
-		Principal:  serviceAccountPrincipal("demo", "egress"),
-		GatewayKey: "demo/egress",
+		WorkloadUID: "gw",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "pod"},
+		Principal:   serviceAccountPrincipal("demo", "egress"),
+		GatewayKey:  "demo/egress",
 	}
 }
 

@@ -110,7 +110,12 @@ type DelegatedIdentityAuthorizer interface {
 // Principal; an unregistered attestation fails closed.
 type DelegatedIdentityAuthorizers map[model.Attestation]DelegatedIdentityAuthorizer
 
-func (a DelegatedIdentityAuthorizers) Authorize(ctx context.Context, caller model.PeerIdentity, requested CertificateTarget) error {
+// Authorize dispatches the target to the authorizer for the caller's attestation.
+func (a DelegatedIdentityAuthorizers) Authorize(
+	ctx context.Context,
+	caller model.PeerIdentity,
+	requested CertificateTarget,
+) error {
 	authorizer, found := a[caller.AttestedBy]
 	if !found || DelegatedAuthorizerIsNil(authorizer) {
 		return fmt.Errorf("no authorizer owns %q caller attestation", caller.AttestedBy)

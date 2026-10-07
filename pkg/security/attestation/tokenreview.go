@@ -63,6 +63,7 @@ type TokenReviewer struct {
 
 var _ Authenticator = (*TokenReviewer)(nil)
 
+// NewTokenReviewer authenticates Kubernetes tokens for the configured audiences.
 func NewTokenReviewer(client kubernetes.Interface, audiences []string) (*TokenReviewer, error) {
 	if client == nil {
 		return nil, fmt.Errorf("kubernetes client is required")
@@ -181,11 +182,17 @@ func (a *TokenReviewer) Authenticate(ctx context.Context) (model.PeerIdentity, e
 		}
 	}
 	if !serviceAccountGroup {
-		return model.PeerIdentity{}, fmt.Errorf("TokenReview user %q is not in the Kubernetes service account group", review.Status.User.Username)
+		return model.PeerIdentity{}, fmt.Errorf(
+			"TokenReview user %q is not in the Kubernetes service account group",
+			review.Status.User.Username,
+		)
 	}
 	parts := strings.Split(review.Status.User.Username, ":")
 	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" || parts[2] == "" || parts[3] == "" {
-		return model.PeerIdentity{}, fmt.Errorf("TokenReview username %q is not a Kubernetes service account", review.Status.User.Username)
+		return model.PeerIdentity{}, fmt.Errorf(
+			"TokenReview username %q is not a Kubernetes service account",
+			review.Status.User.Username,
+		)
 	}
 	caller := model.PeerIdentity{
 		AttestedBy: model.AttestationKubernetes,

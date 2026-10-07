@@ -106,7 +106,10 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		if err != nil {
 			return nil, err
 		}
-		wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{Name: "workload-identity", Config: config})
+		wireWorkload.Extensions = append(
+			wireWorkload.Extensions,
+			&workloadv1.Extension{Name: "workload-identity", Config: config},
+		)
 	}
 	if input.MetadataConfiguration != nil {
 		metadata, err := newWorkloadMetadataExtension(filteredWorkloadLabels(
@@ -469,10 +472,16 @@ func projectWorkloadIdentity(input wdsProjection) (string, string, error) {
 	principal := input.Workload.Principal
 	if namespace, account, kubernetes := podsource.ServiceAccountFromPrincipal(principal); kubernetes {
 		if namespace != input.Workload.Namespace {
-			return "", "", fmt.Errorf("workload %s namespace does not match service account principal", input.Workload.UID)
+			return "", "", fmt.Errorf(
+				"workload %s namespace does not match service account principal",
+				input.Workload.UID,
+			)
 		}
 		if input.ServiceAccount != "" && input.ServiceAccount != account {
-			return "", "", fmt.Errorf("workload %s source service account conflicts with certificate principal", input.Workload.UID)
+			return "", "", fmt.Errorf(
+				"workload %s source service account conflicts with certificate principal",
+				input.Workload.UID,
+			)
 		}
 		return principal.TrustDomain(), account, nil
 	}

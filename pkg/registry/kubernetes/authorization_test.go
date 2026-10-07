@@ -167,14 +167,23 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 			ztunnel := delegationPod("agentio-system", "ztunnel-abc", "ztunnel", "node-a")
 			target := delegationPod("demo", "workload", "app", "node-a")
 			target.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
-			caller := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: ztunnel.Name, WorkloadUID: string(ztunnel.UID), Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
+			caller := model.PeerIdentity{
+				AttestedBy: model.AttestationKubernetes,
+				Kubernetes: model.KubernetesPeer{
+					WorkloadName:   ztunnel.Name,
+					WorkloadUID:    string(ztunnel.UID),
+					Namespace:      "agentio-system",
+					ServiceAccount: "ztunnel",
+				},
+			}
 			requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 			if test.mutate != nil {
 				test.mutate(&caller, &requested, ztunnel, target)
 			}
 			r := newTestRegistry(t, ctx, []runtime.Object{ztunnel, target}, nil)
 
-			err := r.DelegatedIdentityAuthorizer().Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested})
+			err := r.DelegatedIdentityAuthorizer().
+				Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested})
 			if test.allow && err != nil {
 				t.Fatalf("Authorize denied valid delegation: %v", err)
 			}
@@ -194,14 +203,15 @@ func TestGatewayCertificateAuthorizationUsesEffectiveConfiguration(t *testing.T)
 		},
 	}
 	member := delegationPod("agentio-system", "gateway", "egress", "node-a")
-	member.Labels = map[string]string{"member": "egress"}
+	member.Labels = map[string]string{"gateway.networking.k8s.io/gateway-name": "egress"}
 	r := newTestRegistry(t, ctx, []runtime.Object{config, member, gatewayTestService("agentio-system", "egress")}, nil)
 	authorizer := r.GatewayCertificateAuthorizer()
 	scope := model.ClientScope{
 		Class:       model.ClientEgressGateway,
 		GatewayKey:  "agentio-system/egress",
-		WorkloadUID: "test//Pod/agentio-system/gateway", Source: model.SourceRef{Registry: "kubernetes/test", Key: string(member.UID)},
-		Principal: mustTestPrincipal("cluster.local", "ns/agentio-system/sa/egress"),
+		WorkloadUID: "test//Pod/agentio-system/gateway",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: string(member.UID)},
+		Principal:   mustTestPrincipal("cluster.local", "ns/agentio-system/sa/egress"),
 	}
 
 	if err := authorizer.Authorize(scope); err != nil {
@@ -227,12 +237,22 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 		Config:    &configv1.EgressGateway{},
 		Source:    model.GatewaySourceGatewayAPI,
 	}}, krt.WithStop(stop))
-	authorizer := NewGatewayCertificateAuthorizer(gateways)
+	member := delegationPod("agentio-system", "gateway", "external-egress", "node-a")
+	member.Labels = map[string]string{"gateway.networking.k8s.io/gateway-name": "external-egress"}
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
+		Data: map[string]string{
+			"config": "egressGateways:\n- name: external-egress\n  namespace: agentio-system\n",
+		},
+	}
+	r := newTestRegistry(t, t.Context(), []runtime.Object{config, member}, nil)
+	authorizer := NewGatewayCertificateAuthorizer(gateways, r.PodScopeResolver(r.Workloads))
 	scope := model.ClientScope{
 		Class:       model.ClientEgressGateway,
 		GatewayKey:  "agentio-system/external-egress",
-		WorkloadUID: "external", Source: model.SourceRef{Registry: "kubernetes/test", Key: "pod"},
-		Principal: mustTestPrincipal("cluster.local", "ns/"+("agentio-system")+"/sa/"+("external-egress")),
+		WorkloadUID: "test//Pod/agentio-system/gateway",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: string(member.UID)},
+		Principal:   mustTestPrincipal("cluster.local", "ns/"+("agentio-system")+"/sa/"+("external-egress")),
 	}
 
 	if err := authorizer.Authorize(scope); err != nil {
@@ -240,7 +260,6 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 	}
 	conflict := *gateways.GetKey(scope.GatewayKey)
 	conflict.Config = nil
-	conflict.Source = model.GatewaySourceConflict
 	conflict.Source = model.GatewaySourceConflict
 	gateways.ConditionalUpdateObject(conflict)
 	if err := authorizer.Authorize(scope); err == nil {

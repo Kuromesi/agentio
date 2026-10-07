@@ -54,7 +54,11 @@ func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 		t.Fatalf("Apply publication = %#v, want changed two-resource snapshot", publication)
 	}
 
-	publication, err = store.Apply([]model.ResourceChange{{Key: model.ResourceKey{TypeURL: model.AddressType, Name: "invalid"}, New: &model.Resource{}}})
+	publication, err = store.Apply(
+		[]model.ResourceChange{
+			{Key: model.ResourceKey{TypeURL: model.AddressType, Name: "invalid"}, New: &model.Resource{}},
+		},
+	)
 	if err == nil {
 		t.Fatal("invalid resource was accepted")
 	}
@@ -213,10 +217,19 @@ func TestUpdateQueriesIndexOldAndNewNamesWithoutExposingIndexes(t *testing.T) {
 	if len(addressChanges) != 2 {
 		t.Fatalf("Address changes = %d, want 2", len(addressChanges))
 	}
-	if got := []string{addressChanges[0].Key.Name, addressChanges[1].Key.Name}; got[0] != "address-key" || got[1] != "second-address-key" {
+	if got := []string{
+		addressChanges[0].Key.Name,
+		addressChanges[1].Key.Name,
+	}; got[0] != "address-key" ||
+		got[1] != "second-address-key" {
 		t.Fatalf("Address change order = %v, want ResourceKey order", got)
 	}
-	if got := update.ChangesForNames(model.AddressType, []string{"old-name", "old-alias", "new-name", "new-alias"}); len(got) != 1 {
+	if got := update.ChangesForNames(
+		model.AddressType,
+		[]string{"old-name", "old-alias", "new-name", "new-alias"},
+	); len(
+		got,
+	) != 1 {
 		t.Fatalf("named changes = %d, want one deduplicated change", len(got))
 	}
 	if got := update.ChangesForNames(model.AddressType, []string{"old-alias", "new-name"}); got[0].Key != new.Key {
@@ -366,7 +379,11 @@ func TestSubscriberCoalescingMergesChangedKeys(t *testing.T) {
 		}
 		for _, name := range []string{"a", "b"} {
 			key := model.ResourceKey{TypeURL: model.AddressType, Name: name}
-			if got := update.ChangesForNames(model.AddressType, []string{name}); len(got) != 1 || got[0].Key != key || got[0].New == nil {
+			if got := update.ChangesForNames(
+				model.AddressType,
+				[]string{name},
+			); len(got) != 1 || got[0].Key != key ||
+				got[0].New == nil {
 				t.Fatalf("missing changed key %v in %#v", key, changes)
 			}
 		}
@@ -395,7 +412,11 @@ func TestTypedFullUpdateDoesNotHideIncrementalOtherType(t *testing.T) {
 		if update.FullFor(model.AddressType) || !update.FullFor(model.SecretType) {
 			t.Fatalf("full regeneration scope is wrong: %#v", update)
 		}
-		if changes := update.ChangesForNames(model.AddressType, []string{address.XDSName}); len(changes) != 1 || changes[0].Key != address.Key || changes[0].New == nil {
+		if changes := update.ChangesForNames(
+			model.AddressType,
+			[]string{address.XDSName},
+		); len(changes) != 1 || changes[0].Key != address.Key ||
+			changes[0].New == nil {
 			t.Fatalf("Address changed key was lost: %#v", changes)
 		}
 	case <-time.After(5 * time.Second):

@@ -71,7 +71,11 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 		GitRevision string `json:"git_revision"`
 	}
 	const upstreamRevision = "fe6732474a96a0363dfb9822859af4e9bab360fa" // v1.5.0
-	if err := json.Unmarshal(version, &build); err != nil || (build.Version != "1.5.0" && build.GitRevision != upstreamRevision) {
+	if err := json.Unmarshal(
+		version,
+		&build,
+	); err != nil ||
+		(build.Version != "1.5.0" && build.GitRevision != upstreamRevision) {
 		t.Fatalf("this contract pins agentgateway 1.5.0, got %s (%v)", version, err)
 	}
 
@@ -88,8 +92,12 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 			sawRotatedToken.Store(true)
 		}
 		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
-			Authenticated: ok, Audiences: []string{audience},
-			User: authenticationv1.UserInfo{Username: "system:serviceaccount:gateway-ns:gateway-account", Groups: []string{"system:serviceaccounts"}},
+			Authenticated: ok,
+			Audiences:     []string{audience},
+			User: authenticationv1.UserInfo{
+				Username: "system:serviceaccount:gateway-ns:gateway-account",
+				Groups:   []string{"system:serviceaccounts"},
+			},
 		}}, nil
 	})
 	reviewer, err := attestation.NewTokenReviewer(client, []string{audience})
@@ -114,14 +122,18 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(authority.TLSConfig())),
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-			resp, err := handler(ctx, req)
-			if err != nil {
-				rejected.Store(true)
-			}
-			return resp, err
-		}))
+	server := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(authority.TLSConfig())),
+		grpc.UnaryInterceptor(
+			func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+				resp, err := handler(ctx, req)
+				if err != nil {
+					rejected.Store(true)
+				}
+				return resp, err
+			},
+		),
+	)
 	securityapi.RegisterIstioCertificateServiceServer(server, authority)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
@@ -210,7 +222,11 @@ binds:
 		t.Fatal(err)
 	}
 	clientID := &url.URL{Scheme: "spiffe", Host: "mesh.example", Path: "/ns/client/sa/app"}
-	leaf, err := authority.ca.Sign(context.Background(), &key.PublicKey, pki.LeafOptions{URIs: []*url.URL{clientID}, Lifetime: time.Hour, Client: true})
+	leaf, err := authority.ca.Sign(
+		context.Background(),
+		&key.PublicKey,
+		pki.LeafOptions{URIs: []*url.URL{clientID}, Lifetime: time.Hour, Client: true},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +234,10 @@ binds:
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientCert, err := tls.X509KeyPair(leaf.CertificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	clientCert, err := tls.X509KeyPair(
+		leaf.CertificatePEM,
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +253,13 @@ binds:
 			for _, c := range state.PeerCertificates[1:] {
 				intermediates.AddCert(c)
 			}
-			if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+			if _, err := cert.Verify(
+				x509.VerifyOptions{
+					Roots:         roots,
+					Intermediates: intermediates,
+					KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+				},
+			); err != nil {
 				return err
 			}
 			if len(cert.URIs) != 1 || cert.URIs[0].String() != identity {
@@ -259,11 +284,18 @@ binds:
 		t.Fatal("HBONE accepted a client without a workload certificate")
 	}
 	otherID := &url.URL{Scheme: "spiffe", Host: "other.example", Path: "/ns/client/sa/app"}
-	otherLeaf, err := authority.ca.Sign(context.Background(), &key.PublicKey, pki.LeafOptions{URIs: []*url.URL{otherID}, Lifetime: time.Hour, Client: true})
+	otherLeaf, err := authority.ca.Sign(
+		context.Background(),
+		&key.PublicKey,
+		pki.LeafOptions{URIs: []*url.URL{otherID}, Lifetime: time.Hour, Client: true},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherCert, err := tls.X509KeyPair(otherLeaf.CertificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	otherCert, err := tls.X509KeyPair(
+		otherLeaf.CertificatePEM,
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +335,14 @@ binds:
 		return nil
 	})
 	denyToken.Store(false)
-	agentgatewayEventually(t, 40*time.Second, func() error { _, err := agentgatewayHBONERequest(t, address, tlsConfig); return err })
+	agentgatewayEventually(
+		t,
+		40*time.Second,
+		func() error {
+			_, err := agentgatewayHBONERequest(t, address, tlsConfig)
+			return err
+		},
+	)
 	t.Log("rejected renewal blocks new HBONE connections; automatic retry restores service")
 }
 
@@ -362,7 +401,9 @@ func agentgatewayHBONERequest(t *testing.T, address string, config *tls.Config) 
 	defer agentgatewayClose(t, writer)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req := (&http.Request{Method: http.MethodConnect, URL: &url.URL{Host: "127.0.0.1:18080"}, Host: "127.0.0.1:18080", Body: reader}).WithContext(ctx)
+	req := (&http.Request{Method: http.MethodConnect, URL: &url.URL{Host: "127.0.0.1:18080"}, Host: "127.0.0.1:18080", Body: reader}).WithContext(
+		ctx,
+	)
 	resp, err := client.RoundTrip(req)
 	if err != nil {
 		return "", err
@@ -371,7 +412,10 @@ func agentgatewayHBONERequest(t *testing.T, address string, config *tls.Config) 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("CONNECT status: %s", resp.Status)
 	}
-	if _, err := io.WriteString(writer, "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"); err != nil {
+	if _, err := io.WriteString(
+		writer,
+		"GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+	); err != nil {
 		return "", err
 	}
 	inner, err := http.ReadResponse(bufio.NewReader(resp.Body), nil)

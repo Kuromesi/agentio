@@ -45,11 +45,22 @@ func TestCertificateAttestationBindsSourceAndGatewayMembership(t *testing.T) {
   namespace: agentio-system
 `},
 	}
-	gateway.Labels = map[string]string{"gateway-member": "egress"}
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "egress"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"gateway-member": "egress"}}}
+	gateway.Labels = map[string]string{"gateway-member": "egress", "gateway.networking.k8s.io/gateway-name": "egress"}
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "egress"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"gateway-member": "egress"}},
+	}
 	r := newTestRegistry(t, t.Context(), []runtime.Object{a, b, node, gateway, lookalike, config, service}, nil)
 	caller := func(p *corev1.Pod) model.PeerIdentity {
-		return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: p.Name, WorkloadUID: string(p.UID), Namespace: p.Namespace, ServiceAccount: p.Spec.ServiceAccountName}}
+		return model.PeerIdentity{
+			AttestedBy: model.AttestationKubernetes,
+			Kubernetes: model.KubernetesPeer{
+				WorkloadName:   p.Name,
+				WorkloadUID:    string(p.UID),
+				Namespace:      p.Namespace,
+				ServiceAccount: p.Spec.ServiceAccountName,
+			},
+		}
 	}
 	auth := r.DelegatedIdentityAuthorizer()
 	target := func(p *corev1.Pod) attestation.CertificateTarget {
@@ -99,10 +110,16 @@ func TestCertificateAttestationBindsSourceAndGatewayMembership(t *testing.T) {
 	if err := r.GatewayCertificateAuthorizer().Authorize(scope); err != nil {
 		t.Fatal(err)
 	}
-	if scope, err := r.PodScopeResolver(r.Workloads).ResolveScope(caller(lookalike), ""); err != nil || scope.Class == model.ClientEgressGateway {
+	if scope, err := r.PodScopeResolver(r.Workloads).
+		ResolveScope(caller(lookalike), ""); err != nil ||
+		scope.Class == model.ClientEgressGateway {
 		t.Fatal("non-member acquired gateway scope")
 	}
-	unboundGateway := model.ClientScope{Class: model.ClientEgressGateway, Principal: gid.Principal, GatewayKey: "agentio-system/egress"}
+	unboundGateway := model.ClientScope{
+		Class:      model.ClientEgressGateway,
+		Principal:  gid.Principal,
+		GatewayKey: "agentio-system/egress",
+	}
 	if err := r.GatewayCertificateAuthorizer().Authorize(unboundGateway); err == nil {
 		t.Fatal("gateway scope without source binding acquired MITM authority")
 	}

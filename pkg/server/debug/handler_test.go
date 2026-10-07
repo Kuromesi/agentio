@@ -466,7 +466,10 @@ func (a *configDebugTestAuthenticator) Authenticate(ctx context.Context) (model.
 }
 
 func configDebugAuthorizedPeer(namespace string) model.PeerIdentity {
-	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: namespace, ServiceAccount: "debug-reader"}}
+	return model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{Namespace: namespace, ServiceAccount: "debug-reader"},
+	}
 }
 
 func serveConfigDebugRequest(handler http.Handler, method, target, remoteAddr string) *httptest.ResponseRecorder {

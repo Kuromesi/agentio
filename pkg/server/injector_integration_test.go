@@ -110,7 +110,10 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 		ObjectMeta: metav1.ObjectMeta{Name: configMapName, Namespace: namespace},
 		Data: map[string]string{
 			"config": "policy: enabled\ndefaultTemplates: [sidecar]\naliases:\n  sidecar: [ztunnel]\ntemplates:\n  ztunnel: |\n" +
-				indentTemplate(integrationInjectorTemplate, "    "),
+				indentTemplate(
+					integrationInjectorTemplate,
+					"    ",
+				),
 			"values": integrationValues + "\nclientTrust: {enabled: true}\nclientTrustBundle:\n  sources:\n  - agentioMITM: true\n",
 		},
 	}
@@ -120,12 +123,17 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 			{Name: "rev.namespace.sidecar-injector.istio.io"},
 		},
 	}
-	client := kube.NewFakeClient(injectorConfigMap, mutatingWebhook, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}})
+	client := kube.NewFakeClient(
+		injectorConfigMap,
+		mutatingWebhook,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+	)
 	coreClient := client.Kube()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	authority, err := ca.LoadOrCreateAuthority(ctx, client, nilAuthenticator{}, ca.AuthorityOptions{
+		TrustDomain:   "cluster.local",
 		Namespace:     namespace,
 		SecretName:    "test-ca",
 		ConfigMapName: "test-ca-certs",
@@ -216,11 +224,16 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 		}, func() string { return "enabled client trust distributor to publish its bundle" })
 	} else {
 		for _, action := range coreClient.(*kubefake.Clientset).Actions() {
-			if action.GetResource().Resource == "namespaces" && (action.GetVerb() == "list" || action.GetVerb() == "watch") {
+			if action.GetResource().Resource == "namespaces" &&
+				(action.GetVerb() == "list" || action.GetVerb() == "watch") {
 				t.Fatalf("disabled distributor started a namespace informer: %v", action)
 			}
 		}
-		if _, err := coreClient.CoordinationV1().Leases(namespace).Get(ctx, "agentiod-client-trust-leader", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		if _, err := coreClient.CoordinationV1().
+			Leases(namespace).
+			Get(ctx, "agentiod-client-trust-leader", metav1.GetOptions{}); !apierrors.IsNotFound(
+			err,
+		) {
 			t.Fatalf("disabled distributor participated in leader election: %v", err)
 		}
 	}
@@ -251,7 +264,9 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 
 	// The caBundle patcher kept the webhook configuration in sync with the
 	// workload root.
-	current, err := coreClient.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(ctx, webhookConfigName, metav1.GetOptions{})
+	current, err := coreClient.AdmissionregistrationV1().
+		MutatingWebhookConfigurations().
+		Get(ctx, webhookConfigName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +313,12 @@ func buildReview(t *testing.T, namespace, name string) *admissionv1.AdmissionRev
 	}
 }
 
-func postReview(t *testing.T, client *http.Client, url string, review *admissionv1.AdmissionReview) (*admissionv1.AdmissionResponse, error) {
+func postReview(
+	t *testing.T,
+	client *http.Client,
+	url string,
+	review *admissionv1.AdmissionReview,
+) (*admissionv1.AdmissionResponse, error) {
 	t.Helper()
 	body, err := json.Marshal(review)
 	if err != nil {

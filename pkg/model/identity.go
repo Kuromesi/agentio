@@ -34,6 +34,8 @@ const (
 type Principal struct{ uri string }
 
 func (p Principal) String() string { return p.uri }
+
+// TrustDomain returns the principal's SPIFFE trust domain.
 func (p Principal) TrustDomain() string {
 	authority, _, _ := strings.Cut(strings.TrimPrefix(p.uri, "spiffe://"), "/")
 	return authority
@@ -42,6 +44,8 @@ func (p Principal) Validate() error {
 	_, err := ParsePrincipal(p.uri, p.TrustDomain())
 	return err
 }
+
+// MarshalText encodes the principal as its canonical SPIFFE URI.
 func (p Principal) MarshalText() ([]byte, error) { return []byte(p.uri), nil }
 
 // NewPrincipal is for issuer adapters that define their own path profiles.
@@ -137,7 +141,8 @@ func (s ClientScope) Validate() error {
 			return fmt.Errorf("dedicated ztunnel scope requires Workload UID and source reference")
 		}
 	case ClientEgressGateway:
-		if strings.TrimSpace(s.GatewayKey) == "" || strings.TrimSpace(s.WorkloadUID) == "" || s.Source.Validate() != nil {
+		if strings.TrimSpace(s.GatewayKey) == "" || strings.TrimSpace(s.WorkloadUID) == "" ||
+			s.Source.Validate() != nil {
 			return fmt.Errorf("egress gateway scope requires gateway key and bound Workload/source references")
 		}
 		// A scope is a verified membership claim. The registry, not a principal

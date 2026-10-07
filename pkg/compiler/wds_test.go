@@ -457,7 +457,8 @@ func TestExplicitWDSIdentityPreservesDiscoveryMetadata(t *testing.T) {
 	}
 	wire := address.GetWorkload()
 	identity := new(extensionsv1.WorkloadIdentity)
-	if !compatibilityExtension(t, wire, "workload-identity", identity) || identity.SpiffeId != workload.Principal.String() {
+	if !compatibilityExtension(t, wire, "workload-identity", identity) ||
+		identity.SpiffeId != workload.Principal.String() {
 		t.Fatalf("identity: %v", identity)
 	}
 	if wire.ServiceAccount != "app" || wire.Namespace != workload.Namespace {

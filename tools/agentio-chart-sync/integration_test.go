@@ -49,11 +49,19 @@ func TestManagerMasterModesAndConfiguration(t *testing.T) {
 		for _, epe := range []string{"disabled", "managed", "external"} {
 			t.Run(gateway+"/"+epe, func(t *testing.T) {
 				values := map[string]any{"agentio": map[string]any{
-					"enabled":       true,
-					"global":        map[string]any{"namespace": "custom-agentio", "clusterDomain": "cluster.example"},
-					"agentiod":      map[string]any{"logging": map[string]any{"format": "json"}, "config": map[string]any{"values": map[string]any{"sandboxIgnoredLabels": []string{"custom-label"}}}},
+					"enabled": true,
+					"global":  map[string]any{"namespace": "custom-agentio", "clusterDomain": "cluster.example"},
+					"agentiod": map[string]any{
+						"logging": map[string]any{"format": "json"},
+						"config": map[string]any{
+							"values": map[string]any{"sandboxIgnoredLabels": []string{"custom-label"}},
+						},
+					},
 					"egressGateway": map[string]any{"mode": gateway, "gatewayAPI": map[string]any{"create": true}},
-					"epe":           map[string]any{"mode": epe, "external": map[string]any{"address": "epe.external", "port": 9443}},
+					"epe": map[string]any{
+						"mode":     epe,
+						"external": map[string]any{"address": "epe.external", "port": 9443},
+					},
 				}}
 				rendered := renderChart(t, target, values)
 				all := ""
@@ -72,7 +80,13 @@ func TestManagerMasterModesAndConfiguration(t *testing.T) {
 						if obj.Kind == "" {
 							continue
 						}
-						key := fmt.Sprintf("%s/%s/%s/%s", obj.APIVersion, obj.Kind, obj.Metadata.Namespace, obj.Metadata.Name)
+						key := fmt.Sprintf(
+							"%s/%s/%s/%s",
+							obj.APIVersion,
+							obj.Kind,
+							obj.Metadata.Namespace,
+							obj.Metadata.Name,
+						)
 						if objects[key] {
 							t.Fatalf("duplicate resource %s", key)
 						}
@@ -203,7 +217,11 @@ func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 	workloadPod.Labels = config.Labels
 	workload := podsource.BaseWorkloadFromPod("test-cluster", workloadPod)
 	if workload.TunnelProtocol != model.TunnelProtocolHBONE || !workload.NativeTunnel {
-		t.Fatalf("Kruise runtime is not recognized as native HBONE: protocol=%s native=%t", workload.TunnelProtocol, workload.NativeTunnel)
+		t.Fatalf(
+			"Kruise runtime is not recognized as native HBONE: protocol=%s native=%t",
+			workload.TunnelProtocol,
+			workload.NativeTunnel,
+		)
 	}
 	if config.Labels["agentio.kruise.io/dataplane-mode"] != "none" {
 		t.Error("Sandbox must opt out of duplicate admission/CNI injection")
@@ -226,11 +244,13 @@ func TestReleasePackageContainsPinnedIntegrationBundle(t *testing.T) {
 		t.Fatalf("prepare chart: %v\n%s", err, output)
 	}
 	packageDir := t.TempDir()
-	if output, err := exec.Command("helm", "package", source, "--destination", packageDir).CombinedOutput(); err != nil {
+	if output, err := exec.Command("helm", "package", source, "--destination", packageDir).
+		CombinedOutput(); err != nil {
 		t.Fatalf("package chart: %v\n%s", err, output)
 	}
 	unpacked := t.TempDir()
-	if output, err := exec.Command("tar", "-xzf", filepath.Join(packageDir, "agentio-1.2.3.tgz"), "-C", unpacked).CombinedOutput(); err != nil {
+	if output, err := exec.Command("tar", "-xzf", filepath.Join(packageDir, "agentio-1.2.3.tgz"), "-C", unpacked).
+		CombinedOutput(); err != nil {
 		t.Fatalf("unpack chart: %v\n%s", err, output)
 	}
 	bundle := filepath.Join(unpacked, "agentio", "integrations", "openkruise")
@@ -243,7 +263,17 @@ func TestReleasePackageContainsPinnedIntegrationBundle(t *testing.T) {
 	if err := Export(filepath.Join(bundle, "sandbox-manager"), manager); err != nil {
 		t.Fatal(err)
 	}
-	rendered := renderChart(t, manager, map[string]any{"agentio": map[string]any{"enabled": true, "egressGateway": map[string]any{"mode": "static"}, "epe": map[string]any{"mode": "managed"}}})
+	rendered := renderChart(
+		t,
+		manager,
+		map[string]any{
+			"agentio": map[string]any{
+				"enabled":       true,
+				"egressGateway": map[string]any{"mode": "static"},
+				"epe":           map[string]any{"mode": "managed"},
+			},
+		},
+	)
 	all := ""
 	for _, content := range rendered {
 		all += content

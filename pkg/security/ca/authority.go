@@ -122,7 +122,13 @@ func applyAuthorityDefaults(options *AuthorityOptions) {
 	}
 }
 
-func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticator attestation.Authenticator, options AuthorityOptions) (*Authority, error) {
+// LoadOrCreateAuthority loads or initializes the configured CA and trust domain.
+func LoadOrCreateAuthority(
+	ctx context.Context,
+	client kube.Client,
+	authenticator attestation.Authenticator,
+	options AuthorityOptions,
+) (*Authority, error) {
 	if client == nil || authenticator == nil {
 		return nil, fmt.Errorf("kubernetes client and authenticator are required")
 	}
@@ -154,8 +160,13 @@ func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticato
 		options:           options,
 		workloadSourceOID: workloadSourceOID,
 	}
-	serverNames := []string{options.ServiceName, options.ServiceName + "." + options.Namespace,
-		options.ServiceName + "." + options.Namespace + ".svc", options.ServiceName + "." + options.Namespace + ".svc.cluster.local", "localhost"}
+	serverNames := []string{
+		options.ServiceName,
+		options.ServiceName + "." + options.Namespace,
+		options.ServiceName + "." + options.Namespace + ".svc",
+		options.ServiceName + "." + options.Namespace + ".svc.cluster.local",
+		"localhost",
+	}
 	authority.serverNames = serverNames
 	authority.trustBundles = krt.NewStatic[TrustBundle](nil, true,
 		options.KrtOptions.WithName("Workload_Trust_Bundle")...)
@@ -171,7 +182,11 @@ func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticato
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("sync workload CA Secret %s/%s: %w", options.Namespace, options.SecretName, err)
 		}
-		return nil, fmt.Errorf("workload CA Secret collection %s/%s stopped before sync", options.Namespace, options.SecretName)
+		return nil, fmt.Errorf(
+			"workload CA Secret collection %s/%s stopped before sync",
+			options.Namespace,
+			options.SecretName,
+		)
 	}
 	authority.mu.RLock()
 	caAvailable := authority.ca.Available()
@@ -179,7 +194,11 @@ func LoadOrCreateAuthority(ctx context.Context, client kube.Client, authenticato
 	serverCertificateReady := authority.serverCert.Leaf != nil
 	authority.mu.RUnlock()
 	if !caAvailable || !serverCertificateReady {
-		return nil, fmt.Errorf("workload CA Secret %s/%s has no valid signing state", options.Namespace, options.SecretName)
+		return nil, fmt.Errorf(
+			"workload CA Secret %s/%s has no valid signing state",
+			options.Namespace,
+			options.SecretName,
+		)
 	}
 	if err := publishRoot(ctx, client.Kube(), options.Namespace, options.ConfigMapName, rootPEM); err != nil {
 		return nil, err
@@ -229,7 +248,11 @@ func (a *Authority) TrustBundles() krt.Singleton[TrustBundle] {
 	return a.trustBundles
 }
 
-func (a *Authority) CreateCertificate(ctx context.Context, request *securityapi.IstioCertificateRequest) (*securityapi.IstioCertificateResponse, error) {
+// CreateCertificate authorizes the requested workload target before signing its CSR key.
+func (a *Authority) CreateCertificate(
+	ctx context.Context,
+	request *securityapi.IstioCertificateRequest,
+) (*securityapi.IstioCertificateResponse, error) {
 	caller, err := a.authenticator.Authenticate(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
@@ -252,7 +275,10 @@ func (a *Authority) CreateCertificate(ctx context.Context, request *securityapi.
 	var extensions []pkix.Extension
 	if target.Source != (model.SourceRef{}) {
 		if len(a.workloadSourceOID) == 0 {
-			return nil, status.Error(codes.FailedPrecondition, "workload source certificate extension is not configured")
+			return nil, status.Error(
+				codes.FailedPrecondition,
+				"workload source certificate extension is not configured",
+			)
 		}
 		extension, err := workloadSourceExtension(a.workloadSourceOID, target.Source)
 		if err != nil {
@@ -280,7 +306,9 @@ func (a *Authority) CreateCertificate(ctx context.Context, request *securityapi.
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &securityapi.IstioCertificateResponse{CertChain: orderedCertificateChain(issued.CertificatePEM, nil, rootPEM)}, nil
+	return &securityapi.IstioCertificateResponse{
+		CertChain: orderedCertificateChain(issued.CertificatePEM, nil, rootPEM),
+	}, nil
 }
 
 // issueServerCertificate signs a serving certificate valid for lifetime from now.
@@ -298,7 +326,10 @@ func issueServerCertificate(ca pki.SigningCA, rootPEM []byte, names []string,
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("sign server certificate: %w", err)
 	}
-	certificate, err := tls.X509KeyPair(pki.AppendCertificateChain(issued.CertificatePEM, rootPEM), issued.PrivateKeyPEM)
+	certificate, err := tls.X509KeyPair(
+		pki.AppendCertificateChain(issued.CertificatePEM, rootPEM),
+		issued.PrivateKeyPEM,
+	)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("load server certificate: %w", err)
 	}

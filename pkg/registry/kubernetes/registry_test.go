@@ -189,8 +189,17 @@ func TestDelegatedAuthorizationUsesEffectivePrincipalIndex(t *testing.T) {
 		t.Fatalf("delegation candidates = %#v, want only %s", candidates, target.Name)
 	}
 
-	caller := model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{WorkloadName: ztunnel.Name, WorkloadUID: string(ztunnel.UID), Namespace: "agentio-system", ServiceAccount: "ztunnel"}}
-	if err := registry.DelegatedIdentityAuthorizer().Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested}); err != nil {
+	caller := model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{
+			WorkloadName:   ztunnel.Name,
+			WorkloadUID:    string(ztunnel.UID),
+			Namespace:      "agentio-system",
+			ServiceAccount: "ztunnel",
+		},
+	}
+	if err := registry.DelegatedIdentityAuthorizer().
+		Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested}); err != nil {
 		t.Fatalf("Authorize denied valid delegation: %v", err)
 	}
 }

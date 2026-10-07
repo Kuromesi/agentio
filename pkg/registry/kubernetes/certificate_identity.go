@@ -43,7 +43,11 @@ func (r *Registry) certificateWorkloads(options ...krt.CollectionOption) krt.Col
 		// Certificate naming is independent of gateway membership. Instances
 		// sharing this logical principal are distinguished by SourceRef.
 		if (*pod).Spec.ServiceAccountName != "" {
-			principal, err := podsource.ServiceAccountPrincipal(r.options.TrustDomain, (*pod).Namespace, (*pod).Spec.ServiceAccountName)
+			principal, err := podsource.ServiceAccountPrincipal(
+				r.options.TrustDomain,
+				(*pod).Namespace,
+				(*pod).Spec.ServiceAccountName,
+			)
 			if err != nil {
 				return nil
 			}

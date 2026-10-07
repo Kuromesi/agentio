@@ -95,7 +95,14 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			update := updates[i%2]
-			if err := testServer.server.sendIncremental(stream, testServer.scope, log, model.AddressType, watch, update); err != nil {
+			if err := testServer.server.sendIncremental(
+				stream,
+				testServer.scope,
+				log,
+				model.AddressType,
+				watch,
+				update,
+			); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -110,7 +117,14 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if err := testServer.server.sendDiff(stream, testServer.scope, log, model.AddressType, watch, false); err != nil {
+			if err := testServer.server.sendDiff(
+				stream,
+				testServer.scope,
+				log,
+				model.AddressType,
+				watch,
+				false,
+			); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -217,7 +231,14 @@ func BenchmarkDeltaPushIncrementalAllClients(b *testing.B) {
 		for iteration := 0; b.Loop(); iteration++ {
 			update := updates[(iteration+1)%2]
 			for _, watch := range watches {
-				if err := testServer.server.sendIncremental(stream, scope, log, model.AddressType, watch, update); err != nil {
+				if err := testServer.server.sendIncremental(
+					stream,
+					scope,
+					log,
+					model.AddressType,
+					watch,
+					update,
+				); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -265,25 +286,40 @@ func BenchmarkDeltaPushGatewayUpdate(b *testing.B) {
 	server := newTestServer(b, ztunnelScope(), resources, nil)
 	stream := &countingDeltaStream{ctx: context.Background()}
 	for _, clientCount := range []int{100, 1_000, 10_000} {
-		b.Run(fmt.Sprintf("workloads=10000/gateways=100/client=shared/affected=one-node/clients=%d", clientCount), func(b *testing.B) {
-			scopes, watches := distributedSharedClients(clientCount)
-			expected := clientsOnNode(scopes, "node-050")
-			b.ReportAllocs()
-			b.ReportMetric(float64(clientCount), "clients/op")
-			b.ResetTimer()
-			for iteration := 0; iteration < b.N; iteration++ {
-				stream.responses = 0
-				stream.resources = 0
-				for client, scope := range scopes {
-					if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watches[client], updates[iteration&1]); err != nil {
-						b.Fatal(err)
+		b.Run(
+			fmt.Sprintf("workloads=10000/gateways=100/client=shared/affected=one-node/clients=%d", clientCount),
+			func(b *testing.B) {
+				scopes, watches := distributedSharedClients(clientCount)
+				expected := clientsOnNode(scopes, "node-050")
+				b.ReportAllocs()
+				b.ReportMetric(float64(clientCount), "clients/op")
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					stream.responses = 0
+					stream.resources = 0
+					for client, scope := range scopes {
+						if err := server.server.sendIncremental(
+							stream,
+							scope,
+							log,
+							model.AddressType,
+							watches[client],
+							updates[iteration&1],
+						); err != nil {
+							b.Fatal(err)
+						}
+					}
+					if stream.responses != expected || stream.resources != expected {
+						b.Fatalf(
+							"responses=%d resources=%d, want %d affected clients",
+							stream.responses,
+							stream.resources,
+							expected,
+						)
 					}
 				}
-				if stream.responses != expected || stream.resources != expected {
-					b.Fatalf("responses=%d resources=%d, want %d affected clients", stream.responses, stream.resources, expected)
-				}
-			}
-		})
+			},
+		)
 		b.Run(fmt.Sprintf("workloads=10000/gateways=100/client=dedicated/clients=%d", clientCount), func(b *testing.B) {
 			scopes := distributedDedicatedClients(clientCount)
 			watches := wildcardWatches(clientCount)
@@ -300,12 +336,24 @@ func BenchmarkDeltaPushGatewayUpdate(b *testing.B) {
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
-					if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watches[client], updates[iteration&1]); err != nil {
+					if err := server.server.sendIncremental(
+						stream,
+						scope,
+						log,
+						model.AddressType,
+						watches[client],
+						updates[iteration&1],
+					); err != nil {
 						b.Fatal(err)
 					}
 				}
 				if stream.responses != expected || stream.resources != expected {
-					b.Fatalf("responses=%d resources=%d, want %d affected clients", stream.responses, stream.resources, expected)
+					b.Fatalf(
+						"responses=%d resources=%d, want %d affected clients",
+						stream.responses,
+						stream.resources,
+						expected,
+					)
 				}
 			}
 		})
@@ -317,48 +365,78 @@ func BenchmarkDeltaPushAuthorizationUpdate(b *testing.B) {
 	server := newTestServer(b, ztunnelScope(), resources, nil)
 	stream := &countingDeltaStream{ctx: context.Background()}
 	for _, clientCount := range []int{100, 1_000, 10_000} {
-		b.Run(fmt.Sprintf("workloads=10000/policies=10000/client=shared/affected=one-node/clients=%d", clientCount), func(b *testing.B) {
-			scopes, watches := distributedSharedClients(clientCount)
-			expected := clientsOnNode(scopes, "node-050")
-			b.ReportAllocs()
-			b.ReportMetric(float64(clientCount), "clients/op")
-			b.ResetTimer()
-			for iteration := 0; iteration < b.N; iteration++ {
-				stream.responses = 0
-				stream.resources = 0
-				for client, scope := range scopes {
-					if err := server.server.sendIncremental(stream, scope, log, model.WorkloadAuthorizationType, watches[client], updates[iteration&1]); err != nil {
-						b.Fatal(err)
+		b.Run(
+			fmt.Sprintf("workloads=10000/policies=10000/client=shared/affected=one-node/clients=%d", clientCount),
+			func(b *testing.B) {
+				scopes, watches := distributedSharedClients(clientCount)
+				expected := clientsOnNode(scopes, "node-050")
+				b.ReportAllocs()
+				b.ReportMetric(float64(clientCount), "clients/op")
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					stream.responses = 0
+					stream.resources = 0
+					for client, scope := range scopes {
+						if err := server.server.sendIncremental(
+							stream,
+							scope,
+							log,
+							model.WorkloadAuthorizationType,
+							watches[client],
+							updates[iteration&1],
+						); err != nil {
+							b.Fatal(err)
+						}
+					}
+					if stream.responses != expected || stream.resources != expected {
+						b.Fatalf(
+							"responses=%d resources=%d, want %d affected clients",
+							stream.responses,
+							stream.resources,
+							expected,
+						)
 					}
 				}
-				if stream.responses != expected || stream.resources != expected {
-					b.Fatalf("responses=%d resources=%d, want %d affected clients", stream.responses, stream.resources, expected)
+			},
+		)
+		b.Run(
+			fmt.Sprintf("workloads=10000/policies=10000/client=dedicated/affected=one/clients=%d", clientCount),
+			func(b *testing.B) {
+				scopes := distributedDedicatedClients(clientCount)
+				watches := wildcardWatches(clientCount)
+				expected := 0
+				if clientCount > 50 {
+					expected = 1
 				}
-			}
-		})
-		b.Run(fmt.Sprintf("workloads=10000/policies=10000/client=dedicated/affected=one/clients=%d", clientCount), func(b *testing.B) {
-			scopes := distributedDedicatedClients(clientCount)
-			watches := wildcardWatches(clientCount)
-			expected := 0
-			if clientCount > 50 {
-				expected = 1
-			}
-			b.ReportAllocs()
-			b.ReportMetric(float64(clientCount), "clients/op")
-			b.ResetTimer()
-			for iteration := 0; iteration < b.N; iteration++ {
-				stream.responses = 0
-				stream.resources = 0
-				for client, scope := range scopes {
-					if err := server.server.sendIncremental(stream, scope, log, model.WorkloadAuthorizationType, watches[client], updates[iteration&1]); err != nil {
-						b.Fatal(err)
+				b.ReportAllocs()
+				b.ReportMetric(float64(clientCount), "clients/op")
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					stream.responses = 0
+					stream.resources = 0
+					for client, scope := range scopes {
+						if err := server.server.sendIncremental(
+							stream,
+							scope,
+							log,
+							model.WorkloadAuthorizationType,
+							watches[client],
+							updates[iteration&1],
+						); err != nil {
+							b.Fatal(err)
+						}
+					}
+					if stream.responses != expected || stream.resources != expected {
+						b.Fatalf(
+							"responses=%d resources=%d, want %d affected clients",
+							stream.responses,
+							stream.resources,
+							expected,
+						)
 					}
 				}
-				if stream.responses != expected || stream.resources != expected {
-					b.Fatalf("responses=%d resources=%d, want %d affected clients", stream.responses, stream.resources, expected)
-				}
-			}
-		})
+			},
+		)
 	}
 }
 
@@ -373,8 +451,16 @@ func BenchmarkDeltaPushMixedClients(b *testing.B) {
 		b.Fatalf("build mixed-client transition: changed=%v err=%v", changed, err)
 	}
 	updates := [2]xdsstore.Update{
-		updateBetween(updated, initial, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}}),
-		updateBetween(initial, updated, []model.ResourceChange{{Key: variants[1].Key, Old: &variants[0], New: &variants[1]}}),
+		updateBetween(
+			updated,
+			initial,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
+		),
+		updateBetween(
+			initial,
+			updated,
+			[]model.ResourceChange{{Key: variants[1].Key, Old: &variants[0], New: &variants[1]}},
+		),
 	}
 	server := newTestServer(b, ztunnelScope(), resources, nil)
 	stream := &countingDeltaStream{ctx: context.Background()}
@@ -390,12 +476,24 @@ func BenchmarkDeltaPushMixedClients(b *testing.B) {
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
-					if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watches[client], updates[iteration&1]); err != nil {
+					if err := server.server.sendIncremental(
+						stream,
+						scope,
+						log,
+						model.AddressType,
+						watches[client],
+						updates[iteration&1],
+					); err != nil {
 						b.Fatal(err)
 					}
 				}
 				if stream.responses != expected || stream.resources != expected {
-					b.Fatalf("responses=%d resources=%d, want %d affected clients", stream.responses, stream.resources, expected)
+					b.Fatalf(
+						"responses=%d resources=%d, want %d affected clients",
+						stream.responses,
+						stream.resources,
+						expected,
+					)
 				}
 			}
 		})
@@ -433,7 +531,14 @@ func BenchmarkDeltaPushIncrementalBatch(b *testing.B) {
 					stream.responses = 0
 					stream.resources = 0
 					for client, scope := range scopes {
-						if err := server.server.sendIncremental(stream, scope, log, model.AddressType, watches[client], updates[iteration&1]); err != nil {
+						if err := server.server.sendIncremental(
+							stream,
+							scope,
+							log,
+							model.AddressType,
+							watches[client],
+							updates[iteration&1],
+						); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -531,7 +636,14 @@ func benchmarkIncrementalClientFanout(
 		}
 		update := <-updates
 		for client, scope := range scopes {
-			if err := testServer.server.sendIncremental(stream, scope, log, model.AddressType, watches[client], update); err != nil {
+			if err := testServer.server.sendIncremental(
+				stream,
+				scope,
+				log,
+				model.AddressType,
+				watches[client],
+				update,
+			); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -638,8 +750,16 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 		t.Fatalf("build relationship transition: changed=%v err=%v", changed, err)
 	}
 	return resources, [2]xdsstore.Update{
-		updateBetween(before, after, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}}),
-		updateBetween(after, before, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}}),
+		updateBetween(
+			before,
+			after,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}},
+		),
+		updateBetween(
+			after,
+			before,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
+		),
 	}
 }
 
@@ -708,8 +828,16 @@ func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Up
 		t.Fatalf("build Authorization transition: changed=%v err=%v", changed, err)
 	}
 	return resources, [2]xdsstore.Update{
-		updateBetween(before, after, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}}),
-		updateBetween(after, before, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}}),
+		updateBetween(
+			before,
+			after,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}},
+		),
+		updateBetween(
+			after,
+			before,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
+		),
 	}
 }
 

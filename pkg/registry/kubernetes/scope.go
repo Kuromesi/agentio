@@ -16,10 +16,12 @@ package kubernetes
 
 import (
 	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // PodScopeResolver resolves TokenReview evidence through the live registry.
@@ -65,11 +67,17 @@ func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string
 		}
 		if workload.GatewayKey != "" {
 			gateway := s.gateways.GetKey(workload.GatewayKey)
-			if gateway == nil || gateway.ValidateForUse() != nil {
+			if gateway == nil || gateway.ValidateForUse() != nil ||
+				pod.Labels[podsource.LabelGatewayName] != gateway.Name {
 				return model.ClientScope{}, fmt.Errorf("gateway is not registered")
 			}
-			return model.ClientScope{Class: model.ClientEgressGateway, Principal: workload.Principal,
-				WorkloadUID: workload.UID, Source: source, GatewayKey: workload.GatewayKey}, nil
+			return model.ClientScope{
+				Class:       model.ClientEgressGateway,
+				Principal:   workload.Principal,
+				WorkloadUID: workload.UID,
+				Source:      source,
+				GatewayKey:  workload.GatewayKey,
+			}, nil
 		}
 	}
 	if pod.Namespace == s.rootNamespace && pod.Spec.ServiceAccountName == s.ztunnelServiceAccount && nodeName != "" {
@@ -80,6 +88,10 @@ func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string
 	if workload == nil {
 		return model.ClientScope{}, fmt.Errorf("client Pod has no active Workload")
 	}
-	return model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: workload.Principal,
-		WorkloadUID: workload.UID, Source: source}, nil
+	return model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   workload.Principal,
+		WorkloadUID: workload.UID,
+		Source:      source,
+	}, nil
 }

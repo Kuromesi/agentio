@@ -46,13 +46,25 @@ func KubernetesScopeFunc(resolver interface {
 }) ScopeFunc {
 	return func(node *corev3.Node, peer model.PeerIdentity) (model.ClientScope, error) {
 		metadata := node.GetMetadata()
-		if _, err := boundClaim("namespace", metadataString(metadata, "POD_NAMESPACE"), peer.Kubernetes.Namespace); err != nil {
+		if _, err := boundClaim(
+			"namespace",
+			metadataString(metadata, "POD_NAMESPACE"),
+			peer.Kubernetes.Namespace,
+		); err != nil {
 			return model.ClientScope{}, err
 		}
-		if _, err := boundClaim("workload name", metadataString(metadata, "POD_NAME"), peer.Kubernetes.WorkloadName); err != nil {
+		if _, err := boundClaim(
+			"workload name",
+			metadataString(metadata, "POD_NAME"),
+			peer.Kubernetes.WorkloadName,
+		); err != nil {
 			return model.ClientScope{}, err
 		}
-		if _, err := boundClaim("workload UID", metadataString(metadata, "POD_UID"), peer.Kubernetes.WorkloadUID); err != nil {
+		if _, err := boundClaim(
+			"workload UID",
+			metadataString(metadata, "POD_UID"),
+			peer.Kubernetes.WorkloadUID,
+		); err != nil {
 			return model.ClientScope{}, err
 		}
 		nodeName := metadataString(metadata, "NODE_NAME")
@@ -78,7 +90,12 @@ func KubernetesScopeFunc(resolver interface {
 			return model.ClientScope{}, fmt.Errorf("unknown client class %q", scope.Class)
 		}
 		if proxyType != expectedType {
-			return model.ClientScope{}, fmt.Errorf("%s scope requires %s proxy type, got %q", scope.Class, expectedType, proxyType)
+			return model.ClientScope{}, fmt.Errorf(
+				"%s scope requires %s proxy type, got %q",
+				scope.Class,
+				expectedType,
+				proxyType,
+			)
 		}
 		return scope, nil
 	}

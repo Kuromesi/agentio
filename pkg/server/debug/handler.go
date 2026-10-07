@@ -80,7 +80,17 @@ func NewHandler(
 		}
 		response, err := configDebugSnapshotAt(time.Now(), sources, resourceCompiler, filter)
 		if err != nil {
-			log.Error("config debug request failed", "path", r.URL.Path, "remote", r.RemoteAddr, "class", "snapshot_failed", "error", err)
+			log.Error(
+				"config debug request failed",
+				"path",
+				r.URL.Path,
+				"remote",
+				r.RemoteAddr,
+				"class",
+				"snapshot_failed",
+				"error",
+				err,
+			)
 			http.Error(w, "failed to build configuration snapshot", http.StatusInternalServerError)
 			return
 		}
@@ -91,7 +101,17 @@ func NewHandler(
 			encoded, err = json.Marshal(response)
 		}
 		if err != nil {
-			log.Error("config debug request failed", "path", r.URL.Path, "remote", r.RemoteAddr, "class", "encoding_failed", "error", err)
+			log.Error(
+				"config debug request failed",
+				"path",
+				r.URL.Path,
+				"remote",
+				r.RemoteAddr,
+				"class",
+				"encoding_failed",
+				"error",
+				err,
+			)
 			http.Error(w, "failed to encode configuration snapshot", http.StatusInternalServerError)
 			return
 		}
@@ -112,12 +132,28 @@ func NewHandler(
 		if !isLoopbackRemoteAddr(r.RemoteAddr) {
 			identity, err := authenticateConfigDebugRequest(r, authenticator)
 			if err != nil {
-				log.Warn("config debug access denied", "path", r.URL.Path, "remote", r.RemoteAddr, "class", "authentication_failed")
+				log.Warn(
+					"config debug access denied",
+					"path",
+					r.URL.Path,
+					"remote",
+					r.RemoteAddr,
+					"class",
+					"authentication_failed",
+				)
 				http.Error(w, "authentication required", http.StatusUnauthorized)
 				return
 			}
 			if !authorizeConfigDebugIdentity(identity, rootNamespace) {
-				log.Warn("config debug access denied", "path", r.URL.Path, "remote", r.RemoteAddr, "class", "authorization_failed")
+				log.Warn(
+					"config debug access denied",
+					"path",
+					r.URL.Path,
+					"remote",
+					r.RemoteAddr,
+					"class",
+					"authorization_failed",
+				)
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}

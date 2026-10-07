@@ -90,7 +90,11 @@ func (a *Authority) certificateTarget(ctx context.Context, caller model.PeerIden
 }
 
 // Every target requires an explicitly installed authorizer, including self issuance.
-func (a *Authority) authorizeCertificateTarget(ctx context.Context, caller model.PeerIdentity, target attestation.CertificateTarget) error {
+func (a *Authority) authorizeCertificateTarget(
+	ctx context.Context,
+	caller model.PeerIdentity,
+	target attestation.CertificateTarget,
+) error {
 	authorizer := a.delegatedAuthorizer()
 	if attestation.DelegatedAuthorizerIsNil(authorizer) {
 		return fmt.Errorf("authorize certificate identity %s: authorizer is not configured", target.Principal.String())
@@ -130,7 +134,10 @@ func impersonatedIdentity(request *securityapi.IstioCertificateRequest) (string,
 	}
 	stringValue, ok := value.GetKind().(*structpb.Value_StringValue)
 	if !ok || strings.TrimSpace(stringValue.StringValue) == "" {
-		return "", false, fmt.Errorf("%s metadata must contain exactly one identity string", impersonatedIdentityMetadata)
+		return "", false, fmt.Errorf(
+			"%s metadata must contain exactly one identity string",
+			impersonatedIdentityMetadata,
+		)
 	}
 	return stringValue.StringValue, true, nil
 }

@@ -23,22 +23,32 @@ import (
 
 // GatewayCertificateAuthorizer is the Kubernetes gateway certificate policy
 // view: an authenticated egress gateway may obtain MITM certificates only for
-// the gateway key authorized when its connection was established, and only when
-// that gateway is registered in the conflict-free, source-merged Gateway collection.
+// its live Pod binding still owns the gateway scope established for its connection.
+// Gateway declarations come from the conflict-free, source-merged collection.
 type GatewayCertificateAuthorizer struct {
 	gateways krt.Collection[model.Gateway]
+	resolver *PodScopeResolver
 }
 
-func NewGatewayCertificateAuthorizer(gateways krt.Collection[model.Gateway]) *GatewayCertificateAuthorizer {
-	return &GatewayCertificateAuthorizer{gateways: gateways}
+// NewGatewayCertificateAuthorizer checks gateway scopes against the registered gateway collection.
+func NewGatewayCertificateAuthorizer(
+	gateways krt.Collection[model.Gateway],
+	resolver *PodScopeResolver,
+) *GatewayCertificateAuthorizer {
+	if resolver != nil {
+		boundResolver := *resolver
+		boundResolver.gateways = gateways
+		resolver = &boundResolver
+	}
+	return &GatewayCertificateAuthorizer{gateways: gateways, resolver: resolver}
 }
 
 func (r *Registry) GatewayCertificateAuthorizer() *GatewayCertificateAuthorizer {
-	return NewGatewayCertificateAuthorizer(r.Gateways)
+	return NewGatewayCertificateAuthorizer(r.Gateways, r.PodScopeResolver(r.Workloads))
 }
 
 func (a *GatewayCertificateAuthorizer) Authorize(scope model.ClientScope) error {
-	if a == nil || a.gateways == nil {
+	if a == nil || a.gateways == nil || a.resolver == nil {
 		return fmt.Errorf("authorize gateway certificate: registry is not configured")
 	}
 	if err := scope.Validate(); err != nil {
@@ -47,9 +57,32 @@ func (a *GatewayCertificateAuthorizer) Authorize(scope model.ClientScope) error 
 	if scope.Class != model.ClientEgressGateway {
 		return fmt.Errorf("authorize gateway certificate: an egress gateway scope is required")
 	}
+	workload := a.resolver.workloads.GetKey(scope.WorkloadUID)
+	if workload == nil || workload.Source != scope.Source || workload.Principal != scope.Principal {
+		return fmt.Errorf("authorize gateway certificate: workload binding has changed")
+	}
+	pod := a.resolver.pods.GetKey(workload.Namespace + "/" + workload.Name)
+	if pod == nil {
+		return fmt.Errorf("authorize gateway certificate: member Pod is absent")
+	}
+	current, err := a.resolver.ResolveScope(model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{
+			Namespace:      workload.Namespace,
+			ServiceAccount: (*pod).Spec.ServiceAccountName,
+			WorkloadName:   workload.Name,
+			WorkloadUID:    scope.Source.Key,
+		},
+	}, "")
+	if err != nil || current != scope {
+		return fmt.Errorf("authorize gateway certificate: gateway membership has changed")
+	}
 	gateway := a.gateways.GetKey(scope.GatewayKey)
 	if gateway != nil && gateway.ValidateForUse() == nil {
 		return nil
 	}
-	return fmt.Errorf("authorize gateway certificate: gateway %s is not registered, valid, or conflict-free", scope.GatewayKey)
+	return fmt.Errorf(
+		"authorize gateway certificate: gateway %s is not registered, valid, or conflict-free",
+		scope.GatewayKey,
+	)
 }

@@ -102,7 +102,9 @@ func TestNewResourceRejectsInvalidFacts(t *testing.T) {
 			name:  "generic resource with Workload facts",
 			key:   base.Key,
 			value: base.Value,
-			facts: ResourceFacts{Workload: &WorkloadResourceFacts{WorkloadUID: "sandbox-a", Principal: testPrincipal()}},
+			facts: ResourceFacts{
+				Workload: &WorkloadResourceFacts{WorkloadUID: "sandbox-a", Principal: testPrincipal()},
+			},
 		},
 		{
 			name:  "Address without family",

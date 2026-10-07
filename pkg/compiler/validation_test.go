@@ -28,7 +28,10 @@ func TestInvalidSandboxDoesNotRemoveWorkload(t *testing.T) {
 	failures := newFailureRecorder()
 	inputs := validCompilerInputs(stop)
 	inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{validationTestWorkload("worker", "")}, options...)
-	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{UID: "sandbox", Attester: &model.Attester{}}}, options...)
+	inputs.Sandboxes = krt.NewStaticCollection(
+		nil,
+		[]model.Sandbox{{UID: "sandbox", Attester: &model.Attester{}}},
+		options...)
 	validated := validatedDomainInputs(inputs, failures, func(name string) []krt.CollectionOption {
 		return []krt.CollectionOption{krt.WithStop(stop), krt.WithName(name)}
 	})

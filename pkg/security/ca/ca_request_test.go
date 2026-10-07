@@ -47,7 +47,10 @@ func (a staticAuthenticator) Authenticate(context.Context) (model.PeerIdentity, 
 }
 
 func peerIdentity(namespace, serviceAccount string) model.PeerIdentity {
-	return model.PeerIdentity{AttestedBy: model.AttestationKubernetes, Kubernetes: model.KubernetesPeer{Namespace: namespace, ServiceAccount: serviceAccount}}
+	return model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{Namespace: namespace, ServiceAccount: serviceAccount},
+	}
 }
 
 func serviceAccountPrincipal(namespace, serviceAccount string) model.Principal {
@@ -90,7 +93,11 @@ func setRequestMetadata(t *testing.T, request *securityapi.IstioCertificateReque
 	request.Metadata = metadata
 }
 
-func certificateAuthority(t *testing.T, caller model.PeerIdentity, authorizer attestation.DelegatedIdentityAuthorizer) *Authority {
+func certificateAuthority(
+	t *testing.T,
+	caller model.PeerIdentity,
+	authorizer attestation.DelegatedIdentityAuthorizer,
+) *Authority {
 	t.Helper()
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	authority.authenticator = staticAuthenticator{caller: caller}
@@ -127,7 +134,11 @@ func TestCertificateIdentityUsesExplicitTargetWhenAuthorized(t *testing.T) {
 	target := mustTestPrincipal("cluster.local", "workload/app")
 	request := requestWithCSR(t, target.String())
 	setRequestMetadata(t, request, target.String())
-	response, err := certificateAuthority(t, caller, &fakeDelegatedIdentityAuthorizer{}).CreateCertificate(context.Background(), request)
+	response, err := certificateAuthority(
+		t,
+		caller,
+		&fakeDelegatedIdentityAuthorizer{},
+	).CreateCertificate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("CreateCertificate() error = %v", err)
 	}
@@ -169,7 +180,11 @@ func TestCertificateIdentityRejectsDeniedDelegation(t *testing.T) {
 			request := requestWithCSR(t)
 			setRequestMetadata(t, request, "spiffe://cluster.local/workload/target")
 
-			_, err := certificateAuthority(t, sharedZTunnelCaller(), authorizer).CreateCertificate(context.Background(), request)
+			_, err := certificateAuthority(
+				t,
+				sharedZTunnelCaller(),
+				authorizer,
+			).CreateCertificate(context.Background(), request)
 			if status.Code(err) != codes.Unauthenticated {
 				t.Fatalf("CreateCertificate() code = %s, want %s: %v", status.Code(err), codes.Unauthenticated, err)
 			}
@@ -297,7 +312,11 @@ func TestCertificateRequestRequiresOneStrictPEMBlock(t *testing.T) {
 			request := requestWithCSR(t)
 			setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
 			request.Csr = test.csr(request.Csr)
-			_, err := certificateAuthority(t, caller, &fakeDelegatedIdentityAuthorizer{}).CreateCertificate(context.Background(), request)
+			_, err := certificateAuthority(
+				t,
+				caller,
+				&fakeDelegatedIdentityAuthorizer{},
+			).CreateCertificate(context.Background(), request)
 			if got := status.Code(err); got != test.wantCode {
 				t.Fatalf("CreateCertificate() code = %s, want %s: %v", got, test.wantCode, err)
 			}

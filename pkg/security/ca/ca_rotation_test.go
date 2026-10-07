@@ -38,10 +38,15 @@ func TestLoadOrCreateAuthorityReusesAgentioCAByDefault(t *testing.T) {
 	secret := newWorkloadCASecret(t, namespace, "agentio-ca-secret", 24*time.Hour)
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
-	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
-		Namespace:     namespace,
-		ConfigMapName: "agentio-ca-certs",
-	})
+	authority, err := LoadOrCreateAuthority(
+		ctx,
+		client,
+		staticAuthenticator{},
+		AuthorityOptions{TrustDomain: "cluster.local",
+			Namespace:     namespace,
+			ConfigMapName: "agentio-ca-certs",
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +60,12 @@ func TestLoadOrCreateAuthorityReusesAgentioCAByDefault(t *testing.T) {
 	if got := []byte(published.Data[caBundleKey]); !bytes.Equal(got, secret.Data[caBundleKey]) {
 		t.Fatal("published trust bundle does not match the reused Agentio CA")
 	}
-	if _, err := client.Kube().CoreV1().Secrets(namespace).Get(ctx, "agentiod-ca", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := client.Kube().
+		CoreV1().
+		Secrets(namespace).
+		Get(ctx, "agentiod-ca", metav1.GetOptions{}); !apierrors.IsNotFound(
+		err,
+	) {
 		t.Fatalf("unexpected Agentio CA Secret was created: %v", err)
 	}
 }
@@ -67,17 +77,25 @@ func TestLoadOrCreateAuthorityBootstrapsMissingSecret(t *testing.T) {
 
 	client := kube.NewFakeClient()
 	go client.Run(ctx.Done())
-	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
-		Namespace:     namespace,
-		ConfigMapName: "agentio-ca-certs",
-	})
+	authority, err := LoadOrCreateAuthority(
+		ctx,
+		client,
+		staticAuthenticator{},
+		AuthorityOptions{TrustDomain: "cluster.local",
+			Namespace:     namespace,
+			ConfigMapName: "agentio-ca-certs",
+		},
+	)
 	if err != nil {
 		t.Fatalf("LoadOrCreateAuthority() error = %v", err)
 	}
 	if len(authority.RootPEM()) == 0 {
 		t.Fatal("bootstrapped authority has no root")
 	}
-	if _, err := client.Kube().CoreV1().Secrets(namespace).Get(ctx, "agentio-ca-secret", metav1.GetOptions{}); err != nil {
+	if _, err := client.Kube().
+		CoreV1().
+		Secrets(namespace).
+		Get(ctx, "agentio-ca-secret", metav1.GetOptions{}); err != nil {
 		t.Fatalf("bootstrapped CA Secret error = %v", err)
 	}
 }
@@ -104,15 +122,25 @@ func TestLoadOrCreateAuthorityRejectsInvalidTrustBundle(t *testing.T) {
 			t.Cleanup(cancel)
 			go client.Run(ctx.Done())
 
-			_, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
-				Namespace:     namespace,
-				SecretName:    "workload",
-				ConfigMapName: "roots",
-			})
+			_, err := LoadOrCreateAuthority(
+				ctx,
+				client,
+				staticAuthenticator{},
+				AuthorityOptions{TrustDomain: "cluster.local",
+					Namespace:     namespace,
+					SecretName:    "workload",
+					ConfigMapName: "roots",
+				},
+			)
 			if err == nil || !strings.Contains(err.Error(), "trust bundle") {
 				t.Fatalf("LoadOrCreateAuthority() error = %v, want trust bundle rejection", err)
 			}
-			if _, getErr := client.Kube().CoreV1().ConfigMaps(namespace).Get(ctx, "roots", metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+			if _, getErr := client.Kube().
+				CoreV1().
+				ConfigMaps(namespace).
+				Get(ctx, "roots", metav1.GetOptions{}); !apierrors.IsNotFound(
+				getErr,
+			) {
 				t.Fatalf("root ConfigMap after rejected startup error = %v, want not found", getErr)
 			}
 		})
@@ -171,11 +199,16 @@ func TestCASecretDeletionDisablesSigningAndRetainsCommittedTrust(t *testing.T) {
 	secret := newWorkloadCASecret(t, namespace, "workload", 24*time.Hour)
 	client := kube.NewFakeClient(secret)
 	go client.Run(ctx.Done())
-	authority, err := LoadOrCreateAuthority(ctx, client, staticAuthenticator{}, AuthorityOptions{TrustDomain: "cluster.local",
-		Namespace:     namespace,
-		SecretName:    "workload",
-		ConfigMapName: "roots",
-	})
+	authority, err := LoadOrCreateAuthority(
+		ctx,
+		client,
+		staticAuthenticator{},
+		AuthorityOptions{TrustDomain: "cluster.local",
+			Namespace:     namespace,
+			SecretName:    "workload",
+			ConfigMapName: "roots",
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

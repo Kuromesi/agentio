@@ -15,7 +15,6 @@
 package ca
 
 import (
-	"context"
 	"fmt"
 	"testing"
 )
@@ -28,7 +27,11 @@ func TestLegacySelfRequestStillRequiresAuthorization(t *testing.T) {
 		if !allow {
 			authorizer.err = fmt.Errorf("Pod binding denied")
 		}
-		response, err := certificateAuthority(t, caller, authorizer).CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
+		response, err := certificateAuthority(
+			t,
+			caller,
+			authorizer,
+		).CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
 		if (err == nil) != allow || authorizer.calls != 1 || authorizer.requested != want {
 			t.Fatalf("allow=%v err=%v authorizer=%+v", allow, err, authorizer)
 		}
