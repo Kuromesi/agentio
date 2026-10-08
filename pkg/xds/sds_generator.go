@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
@@ -70,7 +71,10 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 			selected[resource.XDSName] = resource
 		}
 	}
-	result := GeneratedDelta{allowed: make([]string, 0, len(request.Subscription.names))}
+	result := GeneratedDelta{
+		allowed:   make([]string, 0, len(request.Subscription.names)),
+		expiresAt: make(map[string]time.Time),
+	}
 	evicted := sets.New[string]()
 	for _, name := range g.provider.Evicted() {
 		evicted.Insert(mitm.CanonicalDomain(name))
@@ -118,9 +122,10 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 				return GeneratedDelta{}, fmt.Errorf("build SDS secret %q: %w", requestedName, err)
 			}
 			selected[requestedName] = resource
+			result.expiresAt[requestedName] = certificate.NotAfter
 		}
 	}
-	delta := diffSelected(request.Subscription, selected)
+	delta := diffSubscribed(request.Subscription, selected, request.SubscribedNames)
 	for _, name := range delta.Removed {
 		removed.Insert(name)
 	}
@@ -131,6 +136,7 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 	sort.Strings(delta.Removed)
 	delta.denied = result.denied
 	delta.allowed = result.allowed
+	delta.expiresAt = result.expiresAt
 	return delta, nil
 }
 

@@ -222,3 +222,16 @@ Command arguments, output, credential paths, and configured secrets are redacted
 New Kind runs require Docker and Kind. The framework smoke test additionally expects the pinned echo image to be reachable; Agentio runs require the seven immutable images above. Existing-context runs do not require Docker or Kind, but the selected Kubernetes context and image registry must be reachable.
 
 The unit, vet, race, and dependency-boundary gates do not require a cluster. Do not treat a skipped live suite or a failed prerequisite check as a passing Kubernetes E2E run.
+
+## On-demand certificate rotation (opt-in)
+
+`TestSandboxOnDemandCertificateRotation` in `suites/gateway` is built only with `-tags=certrotation`. The default product planner therefore does not discover or schedule it, and ordinary E2E runs add no certificate expiry waits. With the usual immutable Agentio image inputs and a dedicated test cluster configured, run it separately:
+
+```bash
+AGENTIO_E2E=1 \
+  go test -tags=certrotation ./suites/gateway -run '^TestSandboxOnDemandCertificateRotation$' -v -count=1 -timeout=15m
+```
+
+The test requires `agentio.reuse=false` and one Agentiod replica. It temporarily sets a 75-second leaf lifetime with a 45-second renewal window, verifies two serial changes through fresh CA-verified HTTPS requests to the local TLS fixture, then scales Agentiod to zero. It checks cached-certificate availability before expiry, the target secret disappearing from Envoy's active SDS config dump after expiry, and HTTPS recovery with a new certificate after Agentiod returns. It also asserts that the gateway did not restart. Issuer settings and replica count are restored on failure as well as success.
+
+Once the fixtures are ready, certificate-clock waits take roughly 135 seconds; rollout, setup, recovery and cleanup add time. Each successful rotation logs the number of fresh connections and maximum probe latency. This is a correctness check, not a throughput benchmark, a CA private-key rotation test, or proof of zero interruption at production load. Normal-rotation probe failures fail the test immediately; only initial convergence and fault recovery use retries.

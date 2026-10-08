@@ -84,15 +84,15 @@ func TestQueryServersRetriesTruncatedResponseOverTCP(t *testing.T) {
 					t.Fatal("DNS server did not start")
 				}
 			}
-			addresses, ttl, err := queryServers(t.Context(), []string{tcp.Addr().String()}, time.Second, "example.com", mdns.TypeA)
+			result, err := queryServers(t.Context(), []string{tcp.Addr().String()}, time.Second, "example.com", mdns.TypeA)
 			if truncateTCP {
 				if err == nil {
 					t.Fatal("accepted truncated TCP response")
 				}
 				return
 			}
-			if err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.1" || ttl != 30*time.Second {
-				t.Fatalf("answer=%v ttl=%v err=%v", addresses, ttl, err)
+			if err != nil || len(result.Addresses) != 1 || result.Addresses[0].String() != "192.0.2.1" || result.TTL != 30*time.Second {
+				t.Fatalf("answer=%+v err=%v", result, err)
 			}
 		})
 	}

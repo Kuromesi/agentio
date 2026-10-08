@@ -36,9 +36,13 @@ func TestReferencesRetainSharedHostnameUntilLastOwnerIsDeleted(t *testing.T) {
 	policies := krt.NewStaticCollection[model.TrafficPolicy](nil, nil, options...)
 	configurations := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
 	references := NewReferences(policies, configurations, options...)
-	resolver, err := New(ctx, Options{RefreshInterval: time.Hour}, func(context.Context, string) (LookupResult, error) {
-		return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}}, nil
-	}, options...)
+	resolver, err := New(
+		ctx,
+		Options{RefreshInterval: time.Hour},
+		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
+			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}, TTL: time.Minute}, nil
+		},
+		options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +83,13 @@ func TestTrackUnregisterStopsEvents(t *testing.T) {
 	ctx := t.Context()
 	options := []krt.CollectionOption{krt.WithStop(ctx.Done())}
 	references := krt.NewStaticCollection[Reference](nil, nil, options...)
-	resolver, err := New(ctx, Options{RefreshInterval: time.Hour}, func(context.Context, string) (LookupResult, error) {
-		return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}}, nil
-	}, options...)
+	resolver, err := New(
+		ctx,
+		Options{RefreshInterval: time.Hour},
+		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
+			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}, TTL: time.Minute}, nil
+		},
+		options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +97,11 @@ func TestTrackUnregisterStopsEvents(t *testing.T) {
 
 	reference := Reference{Owner: "owner", Hostname: "api.example.com"}
 	references.UpdateObject(reference)
-	eventuallyDNS(t, func() bool { return resolver.Results().GetKey(reference.Hostname) != nil }, "reference event added DNS result")
+	eventuallyDNS(
+		t,
+		func() bool { return resolver.Results().GetKey(reference.Hostname) != nil },
+		"reference event added DNS result",
+	)
 
 	registration.UnregisterHandler()
 	references.DeleteObject(reference.ResourceName())

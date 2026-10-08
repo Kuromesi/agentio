@@ -20,6 +20,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
@@ -457,5 +458,65 @@ func TestSDSEvictionRefreshConvergesAfterHistoryIsForgotten(t *testing.T) {
 	generate()
 	if signer.calls.Load() != 4 || issuer.Changes().Get().Generation != generation {
 		t.Fatal("passive refresh after restoration restarted signing")
+	}
+}
+
+func TestSDSCertificateRemainingTTL(t *testing.T) {
+	for _, lifetime := range []time.Duration{time.Hour, 30 * time.Second} {
+		t.Run(lifetime.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const name = "API.example.com"
+				certificate := testSDSCertificate()
+				certificate.NotAfter = time.Now().Add(lifetime)
+				provider := &fakeCertificateProvider{certificate: certificate}
+				generator := newTestSDSGenerator(t, provider)
+				watch := &watchState{started: true, names: sets.New(name), sent: map[string]string{}}
+				request := GenerationRequest{
+					Scope:           gatewayScope(),
+					TypeURL:         model.SecretType,
+					Full:            true,
+					Subscription:    newSubscriptionView(watch),
+					SubscribedNames: []string{name},
+				}
+				delta, err := generator.Generate(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wire, removed, err := validateGeneratedDelta(model.SecretType, delta)
+				if err != nil || len(wire) != 1 || len(removed) != 0 {
+					t.Fatalf("initial response: resources=%v removed=%v error=%v", wire, removed, err)
+				}
+				if got := wire[0].GetTtl().AsDuration(); got != lifetime {
+					t.Fatalf("initial TTL = %v, want %v", got, lifetime)
+				}
+				version := wire[0].Version
+				watch.sent[name] = version
+				time.Sleep(lifetime / 2)
+				request.Subscription = newSubscriptionView(watch)
+				request.SubscribedNames = nil
+				passive, err := generator.Generate(t.Context(), request)
+				if err != nil || len(passive.Resources) != 0 || provider.signCalls != 1 {
+					t.Fatalf("passive refresh: delta=%v signs=%d error=%v", passive, provider.signCalls, err)
+				}
+				request.SubscribedNames = []string{name}
+				delta, err = generator.Generate(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wire, removed, err = validateGeneratedDelta(model.SecretType, delta)
+				if err != nil || len(wire) != 1 || len(removed) != 0 {
+					t.Fatalf("resubscribe: resources=%v removed=%v error=%v", wire, removed, err)
+				}
+				if wire[0].Version != version || wire[0].GetTtl().AsDuration() != lifetime/2 {
+					t.Fatalf("resubscribe changed version or extended lifetime: %v", wire[0])
+				}
+				// A generated result may wait in a queue before it is serialized.
+				time.Sleep(lifetime / 2)
+				wire, removed, err = validateGeneratedDelta(model.SecretType, delta)
+				if err != nil || len(wire) != 0 || !slices.Equal(removed, []string{name}) {
+					t.Fatalf("expired response: resources=%v removed=%v error=%v", wire, removed, err)
+				}
+			})
+		})
 	}
 }

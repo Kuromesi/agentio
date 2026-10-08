@@ -27,6 +27,8 @@ import (
 type LookupResult struct {
 	Addresses []netip.Addr
 	TTL       time.Duration
+	// NameError distinguishes NXDOMAIN from a successful empty RRset (NODATA).
+	NameError bool
 }
 
 func systemDNSServers() []string {
@@ -46,19 +48,8 @@ func systemDNSServers() []string {
 }
 
 func newProtocolLookup(servers []string, timeout time.Duration) Lookup {
-	return func(ctx context.Context, host string) (LookupResult, error) {
-		result := LookupResult{}
-		for _, queryType := range []uint16{mdns.TypeA, mdns.TypeAAAA} {
-			addresses, ttl, err := queryServers(ctx, servers, timeout, host, queryType)
-			if err != nil {
-				return LookupResult{}, err
-			}
-			result.Addresses = append(result.Addresses, addresses...)
-			if ttl > 0 && (result.TTL == 0 || ttl < result.TTL) {
-				result.TTL = ttl
-			}
-		}
-		return result, nil
+	return func(ctx context.Context, host string, queryType uint16) (LookupResult, error) {
+		return queryServers(ctx, servers, timeout, host, queryType)
 	}
 }
 
@@ -68,9 +59,9 @@ func queryServers(
 	timeout time.Duration,
 	host string,
 	queryType uint16,
-) ([]netip.Addr, time.Duration, error) {
+) (LookupResult, error) {
 	if len(servers) == 0 {
-		return nil, 0, fmt.Errorf("no DNS servers configured")
+		return LookupResult{}, fmt.Errorf("no DNS servers configured")
 	}
 	request := new(mdns.Msg)
 	request.SetQuestion(mdns.Fqdn(host), queryType)
@@ -90,7 +81,7 @@ func queryServers(
 			continue
 		}
 		if response.Rcode == mdns.RcodeNameError {
-			return nil, negativeTTL(response), nil
+			return LookupResult{TTL: negativeTTL(response), NameError: true}, nil
 		}
 		if response.Rcode != mdns.RcodeSuccess {
 			lastErr = fmt.Errorf("DNS server %s returned %s for %s", server, mdns.RcodeToString[response.Rcode], host)
@@ -117,18 +108,18 @@ func queryServers(
 			if !address.IsValid() {
 				continue
 			}
-			addresses = append(addresses, address.Unmap())
 			recordTTL := time.Duration(answer.Header().Ttl) * time.Second
-			if ttl == 0 || recordTTL < ttl {
+			if len(addresses) == 0 || recordTTL < ttl {
 				ttl = recordTTL
 			}
+			addresses = append(addresses, address.Unmap())
 		}
 		if len(addresses) == 0 {
 			ttl = negativeTTL(response)
 		}
-		return addresses, ttl, nil
+		return LookupResult{Addresses: addresses, TTL: ttl}, nil
 	}
-	return nil, 0, fmt.Errorf("resolve %s type %s: %w", host, mdns.TypeToString[queryType], lastErr)
+	return LookupResult{}, fmt.Errorf("resolve %s type %s: %w", host, mdns.TypeToString[queryType], lastErr)
 }
 
 func negativeTTL(response *mdns.Msg) time.Duration {

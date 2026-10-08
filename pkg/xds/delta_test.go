@@ -1740,3 +1740,91 @@ func TestUnsupportedTypeSubscriptionReturnsEmptyResponseWithoutClosingStream(t *
 		})
 	}
 }
+
+func TestRepeatedSecretSubscribeRestoresCachedVersion(t *testing.T) {
+	const name = "api.example.com"
+	server := newTestServer(t, gatewayScope(), nil, newFakeSecrets(name))
+	stream := newFakeStream(t.Context(), 3)
+	stream.send(nodeRequest(model.SecretType, name))
+	repeated := request(model.SecretType, name)
+	repeated.ResponseNonce = "1"
+	stream.send(repeated)
+	ack := request(model.SecretType)
+	ack.ResponseNonce = "2"
+	stream.send(ack)
+	if err := server.run(t, stream); err != nil {
+		t.Fatal(err)
+	}
+	responses := stream.responsesFor(model.SecretType)
+	if len(responses) != 2 {
+		t.Fatalf("responses = %d, want 2 (ACK must not trigger a push)", len(responses))
+	}
+	for _, response := range responses {
+		if !slices.Equal(resourceNames(response), []string{name}) {
+			t.Fatalf("explicit subscription did not restore secret: %v", response)
+		}
+	}
+	if responses[0].Resources[0].Version != responses[1].Resources[0].Version {
+		t.Fatal("cached certificate version changed")
+	}
+}
+
+func TestExpiredSecretSendCommitsOnlyWireResources(t *testing.T) {
+	for _, deadline := range []time.Time{{}, time.Now().Add(-time.Second)} {
+		for _, failSend := range []bool{false, true} {
+			t.Run(fmt.Sprintf("deadline=%v/fail=%t", deadline, failSend), func(t *testing.T) {
+				expired := gatewayResourceOfType(t, model.SecretType, "demo/gateway", "expired.example.com", "expired")
+				static := gatewayResourceOfType(t, model.SecretType, "demo/gateway", "static", "static")
+				generator := &recordingGenerator{delta: GeneratedDelta{
+					Resources: []model.Resource{expired, static},
+					expiresAt: map[string]time.Time{expired.XDSName: deadline},
+				}}
+				server := newTestServerWithGenerators(t, gatewayScope(), nil, map[string]ResourceGenerator{
+					model.SecretType: generator,
+				})
+				watch := &watchState{
+					started:   true,
+					names:     sets.New(expired.XDSName, static.XDSName),
+					sent:      map[string]string{expired.XDSName: expired.Hash},
+					nonceSent: "previous",
+				}
+				stream := newFakeStream(t.Context(), 1)
+				if failSend {
+					stream.setSendErr(errors.New("send failed"))
+				}
+				err := server.server.generateAndSend(stream, log, watch, GenerationRequest{
+					Scope:        server.scope,
+					TypeURL:      model.SecretType,
+					Full:         true,
+					Subscription: newSubscriptionView(watch),
+				}, false)
+				if failSend {
+					if err == nil || len(watch.sent) != 1 ||
+						watch.sent[expired.XDSName] != expired.Hash || watch.nonceSent != "previous" {
+						t.Fatalf(
+							"failed send changed state: sent=%v nonce=%s error=%v",
+							watch.sent,
+							watch.nonceSent,
+							err,
+						)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(watch.sent) != 1 || watch.sent[static.XDSName] != static.Hash {
+					t.Fatalf("sent state retained an expired resource: %v", watch.sent)
+				}
+				responses := stream.responsesFor(model.SecretType)
+				if len(responses) != 1 || !slices.Equal(resourceNames(responses[0]), []string{static.XDSName}) ||
+					!slices.Equal(responses[0].RemovedResources, []string{expired.XDSName}) {
+					t.Fatalf("expired response = %v", responses)
+				}
+				if responses[0].Resources[0].Ttl != nil {
+					t.Fatal("static secret acquired a TTL")
+				}
+			})
+		}
+	}
+}

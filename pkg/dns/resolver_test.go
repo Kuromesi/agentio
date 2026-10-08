@@ -19,12 +19,12 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	mdns "github.com/miekg/dns"
-	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/krt"
 )
@@ -32,11 +32,14 @@ import (
 func TestResolverRefreshesWithoutBlockingCompile(t *testing.T) {
 	ctx := t.Context()
 	var calls atomic.Int32
-	resolver, err := New(ctx, Options{RefreshInterval: 20 * time.Millisecond, LookupTimeout: time.Second, MaxConcurrent: 2},
-		func(context.Context, string) (LookupResult, error) {
+	resolver, err := New(
+		ctx,
+		Options{RefreshInterval: 20 * time.Millisecond, LookupTimeout: time.Second, MaxConcurrent: 2},
+		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
 			calls.Add(1)
-			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")}}, nil
-		})
+			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")}, TTL: time.Minute}, nil
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +67,6 @@ func TestResolverEvictsUnreferencedColdResultAtRefreshDeadline(t *testing.T) {
 	address := netip.MustParseAddr("203.0.113.10")
 	item := &entry{
 		hostname:  host,
-		addresses: []netip.Addr{address},
 		next:      time.Now().Add(-time.Second),
 		published: true,
 		index:     -1,
@@ -75,8 +77,10 @@ func TestResolverEvictsUnreferencedColdResultAtRefreshDeadline(t *testing.T) {
 			Hostname:  host,
 			Addresses: []netip.Addr{address},
 		}}),
-		jobs: make(chan *entry, 1),
+		jobs: make(chan lookupJob, 1),
 	}
+	item.families[0].queried = true
+	item.families[1].queried = true
 	resolver.scheduleLocked(item)
 
 	resolver.dispatchDue()
@@ -94,11 +98,11 @@ func TestResolverEvictsUnreferencedColdResultAtRefreshDeadline(t *testing.T) {
 
 func TestResolverDropsUnreferencedColdEntryAfterLookupFailure(t *testing.T) {
 	host := "unavailable.example.com"
-	item := &entry{hostname: host, resolving: true, index: -1}
+	item := &entry{hostname: host, index: -1}
 	resolver := &Resolver{
 		ctx:     t.Context(),
 		options: Options{RefreshInterval: time.Hour, LookupTimeout: time.Second},
-		lookup: func(context.Context, string) (LookupResult, error) {
+		lookup: func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
 			return LookupResult{}, fmt.Errorf("DNS unavailable")
 		},
 		entries: map[string]*entry{host: item},
@@ -106,7 +110,8 @@ func TestResolverDropsUnreferencedColdEntryAfterLookupFailure(t *testing.T) {
 		wake:    make(chan struct{}, 1),
 	}
 
-	resolver.refresh(item)
+	resolver.refresh(lookupJob{item, 0})
+	resolver.refresh(lookupJob{item, 1})
 
 	resolver.mu.RLock()
 	_, retained := resolver.entries[host]
@@ -127,8 +132,8 @@ func TestRefreshDelayHonorsTTLWithStableJitter(t *testing.T) {
 	}
 
 	short := refreshDelay("short.example.com", time.Second, time.Minute)
-	if short < 5*time.Second || short >= 6*time.Second {
-		t.Fatalf("short TTL refresh delay = %v, want [5s, 6s)", short)
+	if short < 800*time.Millisecond || short >= 960*time.Millisecond {
+		t.Fatalf("short TTL refresh delay = %v, want [800ms, 960ms)", short)
 	}
 
 	fallback := refreshDelay("fallback.example.com", 0, 40*time.Second)
@@ -137,7 +142,7 @@ func TestRefreshDelayHonorsTTLWithStableJitter(t *testing.T) {
 	}
 }
 
-func TestProtocolLookupCombinesAAndAAAAUsingMinimumTTL(t *testing.T) {
+func TestProtocolLookupKeepsFamilyTTLs(t *testing.T) {
 	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -169,23 +174,17 @@ func TestProtocolLookupCombinesAAndAAAAUsingMinimumTTL(t *testing.T) {
 	t.Cleanup(func() { _ = server.Shutdown() })
 
 	lookup := newProtocolLookup([]string{packet.LocalAddr().String()}, time.Second)
-	result, err := lookup(context.Background(), "api.example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.TTL != 20*time.Second {
-		t.Fatalf("TTL = %v, want 20s", result.TTL)
-	}
-	want := sets.New(
-		netip.MustParseAddr("192.0.2.10"),
-		netip.MustParseAddr("2001:db8::10"),
-	)
-	if len(result.Addresses) != len(want) {
-		t.Fatalf("addresses = %v, want one A and one AAAA", result.Addresses)
-	}
-	for _, address := range result.Addresses {
-		if !want.Contains(address) {
-			t.Fatalf("unexpected address %s in %v", address, result.Addresses)
+	for queryType, want := range map[uint16]struct {
+		address string
+		ttl     time.Duration
+	}{
+		mdns.TypeA:    {"192.0.2.10", 45 * time.Second},
+		mdns.TypeAAAA: {"2001:db8::10", 20 * time.Second},
+	} {
+		result, err := lookup(t.Context(), "api.example.com", queryType)
+		if err != nil || result.TTL != want.ttl || len(result.Addresses) != 1 ||
+			result.Addresses[0].String() != want.address {
+			t.Fatalf("type=%d result=%+v err=%v, want %+v", queryType, result, err, want)
 		}
 	}
 }
@@ -218,11 +217,11 @@ func TestProtocolLookupTreatsNXDOMAINAsAuthoritativeEmpty(t *testing.T) {
 	t.Cleanup(func() { _ = server.Shutdown() })
 
 	lookup := newProtocolLookup([]string{packet.LocalAddr().String()}, time.Second)
-	result, err := lookup(context.Background(), "gone.example.com")
+	result, err := lookup(t.Context(), "gone.example.com", mdns.TypeA)
 	if err != nil {
 		t.Fatalf("NXDOMAIN returned a transient error: %v", err)
 	}
-	if len(result.Addresses) != 0 {
+	if len(result.Addresses) != 0 || !result.NameError {
 		t.Fatalf("NXDOMAIN addresses = %v, want empty", result.Addresses)
 	}
 	if result.TTL != 12*time.Second {
@@ -234,7 +233,7 @@ func TestResolverSchedulesFromAnswerTTLAndPreservesOnFailure(t *testing.T) {
 	ctx := t.Context()
 	var phase atomic.Int32
 	resolver, err := New(ctx, Options{RefreshInterval: time.Hour, LookupTimeout: time.Second, MaxConcurrent: 1},
-		func(context.Context, string) (LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
 			if phase.Load() == 0 {
 				return LookupResult{
 					Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20")},
@@ -248,9 +247,12 @@ func TestResolverSchedulesFromAnswerTTLAndPreservesOnFailure(t *testing.T) {
 	}
 	resolver.HandleAdd("api.example.com")
 	eventuallyDNS(t, func() bool {
-		result := resolver.Results().GetKey("api.example.com")
-		return result != nil && len(result.Addresses) == 1
-	}, "initial DNS result published")
+		resolver.mu.RLock()
+		defer resolver.mu.RUnlock()
+		item := resolver.entries["api.example.com"]
+		return item.published && item.families[0].queried && item.families[1].queried &&
+			!item.families[0].resolving && !item.families[1].resolving
+	}, "initial DNS queries completed")
 
 	resolver.mu.RLock()
 	next := resolver.entries["api.example.com"].next
@@ -264,7 +266,8 @@ func TestResolverSchedulesFromAnswerTTLAndPreservesOnFailure(t *testing.T) {
 	resolver.mu.RLock()
 	item := resolver.entries["api.example.com"]
 	resolver.mu.RUnlock()
-	resolver.refresh(item)
+	resolver.refresh(lookupJob{item, 0})
+	resolver.refresh(lookupJob{item, 1})
 	result := resolver.Results().GetKey("api.example.com")
 	if result == nil || len(result.Addresses) != 1 || result.Addresses[0].String() != "203.0.113.20" {
 		t.Fatalf("temporary failure discarded last-known-good result: %+v", result)
@@ -319,7 +322,10 @@ func TestResolverWakesForAnswerTTLBeforeFallbackInterval(t *testing.T) {
 	ctx := t.Context()
 	var calls atomic.Int32
 	resolver, err := New(ctx, Options{RefreshInterval: time.Hour, LookupTimeout: time.Second, MaxConcurrent: 1},
-		func(context.Context, string) (LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
+			if queryType == mdns.TypeAAAA {
+				return LookupResult{TTL: time.Hour}, nil
+			}
 			call := calls.Add(1)
 			return LookupResult{
 				Addresses: []netip.Addr{netip.AddrFrom4([4]byte{192, 0, 2, byte(call)})},
@@ -350,9 +356,18 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 	for _, recreate := range []bool{false, true} {
 		t.Run(map[bool]string{false: "deleted", true: "recreated"}[recreate], func(t *testing.T) {
 			started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			old := &entry{hostname: "example.com", refs: 1, resolving: true, index: -1}
-			resolver := &Resolver{ctx: t.Context(), options: Options{LookupTimeout: time.Second}, entries: map[string]*entry{"example.com": old}, results: krt.NewStaticCollection[Result](nil, nil), wake: make(chan struct{}, 1)}
-			resolver.lookup = func(ctx context.Context, _ string) (LookupResult, error) {
+			old := &entry{hostname: "example.com", refs: 1, index: -1}
+			resolver := &Resolver{
+				ctx:     t.Context(),
+				options: Options{LookupTimeout: time.Second},
+				entries: map[string]*entry{"example.com": old},
+				results: krt.NewStaticCollection[Result](nil, nil),
+				wake:    make(chan struct{}, 1),
+			}
+			resolver.lookup = func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
+				if queryType == mdns.TypeAAAA {
+					return LookupResult{TTL: time.Hour}, nil
+				}
 				close(started)
 				select {
 				case <-release:
@@ -361,7 +376,10 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 				}
 				return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")}, TTL: time.Minute}, nil
 			}
-			go func() { resolver.refresh(old); close(done) }()
+			go func() {
+				resolver.refresh(lookupJob{old, 0})
+				close(done)
+			}()
 			select {
 			case <-started:
 			case <-time.After(time.Second):
@@ -385,4 +403,240 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolverPartialDNSResponses(t *testing.T) {
+	const success, noData, servfail, timeout, nameError = 0, 1, 2, 3, 4
+	for _, tc := range []struct {
+		name string
+		a    int
+		aaaa int
+		want []string
+	}{
+		{"both_success", success, success, []string{"192.0.2.7", "2001:db8::7"}},
+		{"aaaa_nodata", success, noData, []string{"192.0.2.7"}},
+		{"aaaa_servfail", success, servfail, []string{"192.0.2.7"}},
+		{"a_servfail", servfail, success, []string{"2001:db8::7"}},
+		{"aaaa_timeout", success, timeout, []string{"192.0.2.7"}},
+		{"a_timeout", timeout, success, []string{"2001:db8::7"}},
+		{"both_failed", servfail, servfail, nil},
+		{"both_nodata", noData, noData, nil},
+		{"nxdomain", nameError, nameError, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			packet, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &mdns.Server{
+				PacketConn: packet,
+				Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, request *mdns.Msg) {
+					query := request.Question[0]
+					mode := tc.a
+					if query.Qtype == mdns.TypeAAAA {
+						mode = tc.aaaa
+					}
+					if mode == timeout {
+						return
+					}
+					response := new(mdns.Msg)
+					response.SetReply(request)
+					switch mode {
+					case success:
+						if query.Qtype == mdns.TypeA {
+							response.Answer = []mdns.RR{
+								&mdns.A{
+									Hdr: mdns.RR_Header{
+										Name:   query.Name,
+										Rrtype: query.Qtype,
+										Class:  mdns.ClassINET,
+										Ttl:    30,
+									},
+									A: net.ParseIP("192.0.2.7"),
+								},
+							}
+						} else {
+							response.Answer = []mdns.RR{
+								&mdns.AAAA{
+									Hdr: mdns.RR_Header{
+										Name:   query.Name,
+										Rrtype: query.Qtype,
+										Class:  mdns.ClassINET,
+										Ttl:    20,
+									},
+									AAAA: net.ParseIP("2001:db8::7"),
+								},
+							}
+						}
+					case servfail:
+						response.Rcode = mdns.RcodeServerFailure
+					case nameError:
+						response.Rcode = mdns.RcodeNameError
+					}
+					if err := w.WriteMsg(response); err != nil {
+						t.Errorf("write DNS response: %v", err)
+					}
+				})}
+			ready, done := make(chan struct{}), make(chan error, 1)
+			server.NotifyStartedFunc = func() { close(ready) }
+			go func() { done <- server.ActivateAndServe() }()
+			t.Cleanup(func() {
+				if err := server.Shutdown(); err != nil {
+					t.Errorf("shutdown DNS server: %v", err)
+				}
+				if err := <-done; err != nil {
+					t.Errorf("serve DNS: %v", err)
+				}
+			})
+			select {
+			case <-ready:
+			case <-time.After(time.Second):
+				t.Fatal("DNS server did not start")
+			}
+			resolver, err := New(
+				t.Context(),
+				Options{DNSServers: []string{packet.LocalAddr().String()}, LookupTimeout: 200 * time.Millisecond},
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver.HandleAdd("example.com")
+			eventuallyDNS(t, func() bool {
+				resolver.mu.RLock()
+				defer resolver.mu.RUnlock()
+				item := resolver.entries["example.com"]
+				return item.published && item.families[0].queried && item.families[1].queried &&
+					!item.families[0].resolving &&
+					!item.families[1].resolving
+			}, "both family queries completed")
+			result := resolver.Results().GetKey("example.com")
+			var got []string
+			for _, address := range result.Addresses {
+				got = append(got, address.String())
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("addresses=%v, want %v", got, tc.want)
+			}
+			if (result.IPv4Error != "") != (tc.a == servfail || tc.a == timeout) ||
+				(result.IPv6Error != "") != (tc.aaaa == servfail || tc.aaaa == timeout) {
+				t.Fatalf("wrong failure status: %+v", result)
+			}
+			if result.IPv4NameError != (tc.a == nameError) || result.IPv6NameError != (tc.aaaa == nameError) {
+				t.Fatalf("NXDOMAIN and NODATA were conflated: %+v", result)
+			}
+		})
+	}
+}
+
+func TestResolverPublishesBeforeOtherFamilyCompletes(t *testing.T) {
+	for _, slowType := range queryTypes {
+		t.Run(mdns.TypeToString[slowType], func(t *testing.T) {
+			release := make(chan struct{})
+			var fastCalls atomic.Int32
+			resolver, err := New(
+				t.Context(),
+				Options{LookupTimeout: 5 * time.Second},
+				func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
+					if queryType == slowType {
+						select {
+						case <-release:
+						case <-ctx.Done():
+						}
+						return LookupResult{}, fmt.Errorf("temporary failure")
+					}
+					address := "192.0.2.7"
+					if queryType == mdns.TypeAAAA {
+						address = "2001:db8::7"
+					}
+					fastCalls.Add(1)
+					return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(address)}, TTL: time.Second}, nil
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver.HandleAdd("example.com")
+			eventuallyDNS(t, func() bool {
+				result := resolver.Results().GetKey("example.com")
+				return result != nil && len(result.Addresses) == 1
+			}, "fast family published while slow family is blocked")
+			deadline := time.Now().Add(2 * time.Second)
+			for fastCalls.Load() < 2 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if fastCalls.Load() < 2 {
+				t.Fatal("slow family blocked short-TTL refresh of the successful family")
+			}
+			close(release)
+			eventuallyDNS(t, func() bool {
+				result := resolver.Results().GetKey("example.com")
+				return len(result.Addresses) == 1 && (result.IPv4Error != "" || result.IPv6Error != "")
+			}, "failure recorded without losing fast family")
+		})
+	}
+}
+
+func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
+	host := "example.com"
+	item := &entry{hostname: host, refs: 1, index: -1}
+	resolver := &Resolver{
+		options: Options{RefreshInterval: time.Minute},
+		entries: map[string]*entry{host: item},
+		results: krt.NewStaticCollection[Result](nil, nil),
+		wake:    make(chan struct{}, 1),
+		jobs:    make(chan lookupJob, 1),
+	}
+	answer := func(ip string) LookupResult {
+		return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(ip)}, TTL: time.Hour}
+	}
+	check := func(want ...string) {
+		t.Helper()
+		var got []string
+		for _, address := range resolver.Results().GetKey(host).Addresses {
+			got = append(got, address.String())
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("addresses=%v, want %v", got, want)
+		}
+	}
+	resolver.applyAnswer(item, 0, answer("192.0.2.1"), nil, time.Now())
+	resolver.applyAnswer(item, 1, answer("2001:db8::1"), nil, time.Now())
+	v6Expiry := item.families[1].expires
+	resolver.applyAnswer(item, 0, answer("192.0.2.2"), nil, time.Now())
+	resolver.applyAnswer(item, 1, LookupResult{}, fmt.Errorf("SERVFAIL"), time.Now())
+	check("192.0.2.2", "2001:db8::1")
+	if !item.families[1].expires.Equal(v6Expiry) {
+		t.Fatal("partial refresh extended IPv6 lifetime")
+	}
+
+	// Expiry must be published even with the refresh worker queued or blocked.
+	item.families[1].resolving = true
+	item.families[1].expires = time.Now().Add(-time.Second)
+	resolver.scheduleLocked(item)
+	resolver.dispatchDue()
+	check("192.0.2.2")
+	resolver.applyAnswer(item, 1, LookupResult{}, fmt.Errorf("SERVFAIL"), time.Now())
+	check("192.0.2.2")
+	if !item.families[1].expires.IsZero() {
+		t.Fatal("failure renewed expired cache")
+	}
+
+	resolver.applyAnswer(item, 1, answer("2001:db8::2"), nil, time.Now())
+	check("192.0.2.2", "2001:db8::2")
+	if resolver.Results().GetKey(host).IPv6Error != "" {
+		t.Fatal("recovery retained error state")
+	}
+	resolver.applyAnswer(item, 1, LookupResult{TTL: time.Minute}, nil, time.Now())
+	check("192.0.2.2") // NODATA immediately replaces the old IPv6 RRset.
+	resolver.applyAnswer(item, 0, LookupResult{TTL: time.Minute, NameError: true}, nil, time.Now())
+	check()
+	if !resolver.Results().GetKey(host).IPv4NameError {
+		t.Fatal("NXDOMAIN status missing")
+	}
+
+	zeroTTL := answer("192.0.2.3")
+	zeroTTL.TTL = 0
+	resolver.applyAnswer(item, 0, zeroTTL, nil, time.Now())
+	check() // Zero-TTL data must not become a persistent allow rule.
 }

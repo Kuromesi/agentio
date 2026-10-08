@@ -196,3 +196,37 @@ func TestDiscoveryDoesNotRunLiveSetup(t *testing.T) {
 		t.Fatalf("inventory=%v error=%v", inventory, err)
 	}
 }
+
+func TestCertificateRotationRequiresBuildTag(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags string
+		want  int
+	}{
+		{name: "default"},
+		{name: "explicit opt-in", flags: "-tags=certrotation", want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GOFLAGS", tc.flags)
+			inventory, err := Discover(t.Context(), "..", command.Runner{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := Build(Catalog(), inventory, Selection{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, group := range plan.Include {
+				for _, invocation := range group.Invocations {
+					if slices.Contains(invocation.Tests, "TestSandboxOnDemandCertificateRotation") {
+						count++
+					}
+				}
+			}
+			if count != tc.want {
+				t.Fatalf("rotation scheduled %d times, want %d", count, tc.want)
+			}
+		})
+	}
+}

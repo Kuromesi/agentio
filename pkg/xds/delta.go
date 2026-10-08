@@ -23,6 +23,7 @@ import (
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"istio.io/istio/pkg/util/sets"
 
 	agentlog "github.com/openkruise/agentio/pkg/log"
@@ -298,8 +299,8 @@ func (s *Server) sendGeneratedDelta(
 		for _, name := range removed {
 			delete(watch.sent, name)
 		}
-		for _, resource := range delta.Resources {
-			watch.sent[resource.XDSName] = resource.Hash
+		for _, resource := range resources {
+			watch.sent[resource.Name] = resource.Version
 		}
 	}
 	watch.nonceSent = nonce
@@ -346,6 +347,7 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 	sort.Slice(resources, func(i, j int) bool { return resources[i].XDSName < resources[j].XDSName })
 	wire := make([]*discoveryv3.Resource, 0, len(resources))
 	names := sets.NewWithLength[string](len(resources))
+	var expired []string
 	for _, resource := range resources {
 		if resource.Key.TypeURL != typeURL || resource.Value == nil || resource.Value.GetTypeUrl() != typeURL {
 			return nil, nil, fmt.Errorf(
@@ -366,12 +368,21 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 			)
 		}
 		names.Insert(resource.XDSName)
-		wire = append(wire, &discoveryv3.Resource{
+		item := &discoveryv3.Resource{
 			Name:     resource.XDSName,
 			Aliases:  resource.Aliases,
 			Version:  resource.Hash,
 			Resource: resource.Value,
-		})
+		}
+		if deadline, ok := delta.expiresAt[resource.XDSName]; ok {
+			ttl := time.Until(deadline)
+			if ttl <= 0 {
+				expired = append(expired, resource.XDSName)
+				continue
+			}
+			item.Ttl = durationpb.New(ttl)
+		}
+		wire = append(wire, item)
 	}
 	removed := append([]string(nil), delta.Removed...)
 	sort.Strings(removed)
@@ -386,6 +397,8 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 			return nil, nil, fmt.Errorf("generator for %s both generated and removed resource %q", typeURL, name)
 		}
 	}
+	removed = append(removed, expired...)
+	sort.Strings(removed)
 	return wire, removed, nil
 }
 
