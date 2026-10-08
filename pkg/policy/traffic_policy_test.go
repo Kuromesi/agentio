@@ -15,15 +15,20 @@
 package policy
 
 import (
+	"context"
+	"fmt"
+	"net/netip"
 	"slices"
 	"testing"
 	"time"
 
+	mdns "github.com/miekg/dns"
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"google.golang.org/protobuf/proto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
+	resolverdns "github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -323,5 +328,59 @@ func TestTrafficPolicyAuthorizationPortEncoding(t *testing.T) {
 	got := compiledRuleAuthorization(t, compiled).Policy.Groups[0].Rules[1].Matches[0]
 	if !proto.Equal(got, want) {
 		t.Fatalf("legacy reject port encoding = %v, want %v", got, want)
+	}
+}
+
+func TestTrafficPolicyUsesSuccessfulDNSFamilyForAllowAndReject(t *testing.T) {
+	resolver, err := resolverdns.New(t.Context(), resolverdns.Options{},
+		func(_ context.Context, _ string, queryType uint16) (resolverdns.LookupResult, error) {
+			if queryType == mdns.TypeAAAA {
+				return resolverdns.LookupResult{}, fmt.Errorf("SERVFAIL")
+			}
+			return resolverdns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.7")}, TTL: time.Minute}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.HandleAdd("example.com")
+	deadline := time.Now().Add(time.Second)
+	for {
+		result := resolver.Results().GetKey("example.com")
+		if result != nil && len(result.Addresses) == 1 && result.IPv6Error != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("partial DNS result missing: %+v", result)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil)
+	inputs.Resolve = resolver.Resolve
+	for _, action := range []agentsv1alpha1.RuleAction{agentsv1alpha1.RuleActionAllow, agentsv1alpha1.RuleActionReject} {
+		t.Run(string(action), func(t *testing.T) {
+			compiled, err := CompileTrafficPolicyRules(krt.TestingDummyContext{}, model.TrafficPolicyRules{
+				Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
+					Action: action, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "example.com"}},
+				}}},
+			}, "demo", inputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rules := compiled.GetEgress().GetRules()
+			if len(rules) != 1 || len(rules[0].GetMatch().GetDestinationIps()) != 1 {
+				t.Fatalf("partial DNS unexpectedly removed or broadened rule: %v", compiled)
+			}
+			address := rules[0].Match.DestinationIps[0]
+			if !slices.Equal(address.Address, netip.MustParseAddr("192.0.2.7").AsSlice()) || address.Length != 32 {
+				t.Fatalf("unexpected destination: %v", address)
+			}
+			wantAction := securityv1.TrafficPolicy_ALLOW
+			if action == agentsv1alpha1.RuleActionReject {
+				wantAction = securityv1.TrafficPolicy_DENY
+			}
+			if rules[0].Action != wantAction {
+				t.Fatalf("action=%v, want %v", rules[0].Action, wantAction)
+			}
+		})
 	}
 }

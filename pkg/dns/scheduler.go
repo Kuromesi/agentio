@@ -56,7 +56,30 @@ func (h *entryHeap) Pop() any {
 	return item
 }
 
+// Schedule the earliest refresh or expiry across both families. Expiry stays
+// active while DNS work is queued or running, independently of worker capacity.
 func (r *Resolver) scheduleLocked(item *entry) {
+	var next time.Time
+	found := false
+	consider := func(deadline time.Time) {
+		if !found || deadline.Before(next) {
+			next = deadline
+			found = true
+		}
+	}
+	for _, family := range item.families {
+		if !family.resolving {
+			consider(family.next)
+		}
+		if !family.expires.IsZero() {
+			consider(family.expires)
+		}
+	}
+	if !found {
+		r.removeScheduledLocked(item)
+		return
+	}
+	item.next = next
 	if item.inHeap {
 		heap.Fix(&r.schedule, item.index)
 		return
@@ -110,23 +133,28 @@ func (r *Resolver) dispatchDue() time.Duration {
 		heap.Pop(&r.schedule)
 		// A cold Resolve has no tracked owner. Keep its answer available for
 		// one refresh period, then evict it instead of refreshing forever.
-		if item.refs == 0 && item.published {
+		if item.refs == 0 && item.published && item.families[0].queried && item.families[1].queried {
 			delete(r.entries, item.hostname)
 			r.results.DeleteObject(item.hostname)
 			continue
 		}
-		if item.resolving {
-			continue
+		if r.expireLocked(item, now) {
+			r.publishLocked(item)
 		}
-		item.resolving = true
-		select {
-		case r.jobs <- item:
-		default:
-			item.resolving = false
-			item.next = now.Add(saturatedRetryDelay)
-			r.scheduleLocked(item)
-			return saturatedRetryDelay
+		for family := range item.families {
+			cached := &item.families[family]
+			if cached.resolving || cached.next.After(now) {
+				continue
+			}
+			cached.resolving = true
+			select {
+			case r.jobs <- lookupJob{item: item, family: family}:
+			default:
+				cached.resolving = false
+				cached.next = now.Add(saturatedRetryDelay)
+			}
 		}
+		r.scheduleLocked(item)
 	}
 	return time.Hour
 }
@@ -136,8 +164,8 @@ func (r *Resolver) worker() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case item := <-r.jobs:
-			r.refresh(item)
+		case job := <-r.jobs:
+			r.refresh(job)
 		}
 	}
 }

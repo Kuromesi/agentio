@@ -24,19 +24,23 @@ import (
 	"sync"
 	"time"
 
+	mdns "github.com/miekg/dns"
 	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/krt"
+	"github.com/openkruise/agentio/pkg/log"
 )
 
 func refreshDelay(host string, ttl, fallback time.Duration) time.Duration {
 	if ttl <= 0 {
 		ttl = fallback
 	}
-	if ttl < 10*time.Second {
-		ttl = 10 * time.Second
-	}
 	base := ttl - 5*time.Second
+	if ttl < 10*time.Second {
+		// Refresh short-lived records before expiry too; a fixed five-second
+		// minimum would otherwise create a gap in valid policy addresses.
+		base = max(time.Nanosecond, ttl*4/5)
+	}
 	jitterLimit := min(base/5, 3*time.Second)
 	if jitterLimit <= 0 {
 		return base
@@ -56,29 +60,54 @@ type Options struct {
 	DNSServers      []string
 }
 
-type Lookup func(context.Context, string) (LookupResult, error)
+// Lookup queries one RR type. A and AAAA have independent refreshes and deadlines.
+type Lookup func(context.Context, string, uint16) (LookupResult, error)
+
+var dnsLog = log.New("dns")
+
+var queryTypes = [2]uint16{mdns.TypeA, mdns.TypeAAAA}
 
 // Result is the cached DNS answer published into the krt graph, keyed by hostname.
 type Result struct {
-	Hostname  string
-	Addresses []netip.Addr
+	Hostname      string
+	Addresses     []netip.Addr
+	IPv4Error     string
+	IPv6Error     string
+	IPv4NameError bool
+	IPv6NameError bool
 }
 
 func (r Result) ResourceName() string { return r.Hostname }
 
 func (r Result) Equals(other Result) bool {
-	return r.Hostname == other.Hostname && slices.Equal(r.Addresses, other.Addresses)
+	return r.Hostname == other.Hostname && slices.Equal(r.Addresses, other.Addresses) &&
+		r.IPv4Error == other.IPv4Error && r.IPv6Error == other.IPv6Error &&
+		r.IPv4NameError == other.IPv4NameError && r.IPv6NameError == other.IPv6NameError
+}
+
+type familyCache struct {
+	next      time.Time
+	resolving bool
+	queried   bool
+	addresses []netip.Addr
+	expires   time.Time
+	err       string
+	nameError bool
 }
 
 type entry struct {
 	hostname  string
-	addresses []netip.Addr
+	families  [2]familyCache
 	next      time.Time
-	resolving bool
 	published bool
 	refs      int
 	index     int
 	inHeap    bool
+}
+
+type lookupJob struct {
+	item   *entry
+	family int
 }
 
 type Resolver struct {
@@ -86,7 +115,7 @@ type Resolver struct {
 	options Options
 	lookup  Lookup
 	results krt.StaticCollection[Result]
-	jobs    chan *entry
+	jobs    chan lookupJob
 	wake    chan struct{}
 
 	mu       sync.RWMutex
@@ -120,7 +149,7 @@ func New(ctx context.Context, options Options, lookup Lookup, collectionOptions 
 		lookup:  lookup,
 		entries: make(map[string]*entry),
 		results: krt.NewStaticCollection[Result](nil, nil, collectionOptions...),
-		jobs:    make(chan *entry, options.MaxConcurrent),
+		jobs:    make(chan lookupJob, options.MaxConcurrent),
 		wake:    make(chan struct{}, 1),
 	}
 	for range options.MaxConcurrent {
@@ -150,9 +179,7 @@ func (r *Resolver) HandleAdd(host string) {
 		r.entries[host] = item
 	}
 	item.refs++
-	if !item.resolving {
-		r.scheduleLocked(item)
-	}
+	r.scheduleLocked(item)
 	r.mu.Unlock()
 	r.signalScheduler()
 }
@@ -208,51 +235,91 @@ func (r *Resolver) Resolve(ctx krt.HandlerContext, host string) []netip.Addr {
 	return append([]netip.Addr(nil), resolved.Addresses...)
 }
 
-func (r *Resolver) refresh(item *entry) {
-	host := item.hostname
+func (r *Resolver) refresh(job lookupJob) {
 	r.mu.RLock()
-	current := r.entries[host] == item
+	current := r.entries[job.item.hostname] == job.item
 	r.mu.RUnlock()
 	if !current {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.ctx, r.options.LookupTimeout)
-	result, err := r.lookup(ctx, host)
-	cancel()
-	now := time.Now()
-	addresses := normalizeAddresses(result.Addresses)
+	defer cancel()
+	result, err := r.lookup(ctx, job.item.hostname, queryTypes[job.family])
+	r.applyAnswer(job.item, job.family, result, err, time.Now())
+}
+
+func (r *Resolver) applyAnswer(item *entry, family int, result LookupResult, err error, received time.Time) {
 	r.mu.Lock()
-	if r.entries[host] != item {
-		r.mu.Unlock()
+	defer r.mu.Unlock()
+	if r.entries[item.hostname] != item {
 		return
 	}
-	item.resolving = false
+	cached := &item.families[family]
+	cached.resolving = false
+	cached.queried = true
+	delay := refreshDelay(item.hostname, time.Minute, r.options.RefreshInterval)
 	if err != nil {
-		if item.refs == 0 {
-			delete(r.entries, host)
-			if item.published {
-				r.results.DeleteObject(host)
-			}
-			r.mu.Unlock()
-			return
+		// A failed refresh never extends the previous answer's expiration.
+		cached.err = err.Error()
+		dnsLog.Warn("DNS address family refresh failed", "hostname", item.hostname,
+			"type", mdns.TypeToString[queryTypes[family]], "error", err)
+	} else {
+		cached.addresses = normalizeAddresses(result.Addresses)
+		cached.err = ""
+		cached.nameError = result.NameError
+		ttl := result.TTL
+		// Empty answers without an SOA use the configured negative-cache fallback.
+		// Positive zero-TTL answers must not become persistent policy permissions.
+		if ttl <= 0 && len(cached.addresses) == 0 {
+			ttl = r.options.RefreshInterval
 		}
-		item.next = now.Add(refreshDelay(host, time.Minute, r.options.RefreshInterval))
-		r.scheduleLocked(item)
-		r.mu.Unlock()
-		r.signalScheduler()
+		cached.expires = received.Add(ttl)
+		delay = refreshDelay(item.hostname, ttl, r.options.RefreshInterval)
+	}
+	cached.next = received.Add(delay)
+	if item.refs == 0 && item.families[0].err != "" && item.families[1].err != "" {
+		r.removeScheduledLocked(item)
+		delete(r.entries, item.hostname)
+		r.results.DeleteObject(item.hostname)
 		return
 	}
-	item.next = now.Add(refreshDelay(host, result.TTL, r.options.RefreshInterval))
-	updated := !item.published || !slices.Equal(item.addresses, addresses)
-	item.addresses = addresses
-	item.published = true
+	r.expireLocked(item, time.Now())
+	r.publishLocked(item)
 	r.scheduleLocked(item)
-	// Serialize publication with removal so a completed lookup cannot resurrect a deleted result.
-	if updated {
-		r.results.ConditionalUpdateObject(Result{Hostname: host, Addresses: append([]netip.Addr(nil), addresses...)})
-	}
-	r.mu.Unlock()
 	r.signalScheduler()
+}
+
+// Expiration is also driven by the scheduler while a lookup is queued or in flight.
+func (r *Resolver) expireLocked(item *entry, now time.Time) bool {
+	expired := false
+	for family := range item.families {
+		cached := &item.families[family]
+		if cached.expires.IsZero() || cached.expires.After(now) {
+			continue
+		}
+		cached.addresses = nil
+		cached.expires = time.Time{}
+		cached.nameError = false
+		if cached.err == "" {
+			cached.err = "DNS answer expired before a successful refresh"
+		}
+		dnsLog.Warn("DNS address family cache expired", "hostname", item.hostname,
+			"type", mdns.TypeToString[queryTypes[family]])
+		expired = true
+	}
+	return expired
+}
+
+func (r *Resolver) publishLocked(item *entry) {
+	addresses := append(slices.Clone(item.families[0].addresses), item.families[1].addresses...)
+	item.published = true
+	// Serialize publication with removal so a completed lookup cannot resurrect a deleted result.
+	r.results.ConditionalUpdateObject(Result{
+		Hostname:  item.hostname,
+		Addresses: normalizeAddresses(addresses),
+		IPv4Error: item.families[0].err, IPv6Error: item.families[1].err,
+		IPv4NameError: item.families[0].nameError, IPv6NameError: item.families[1].nameError,
+	})
 }
 
 func normalizeHostname(host string) string {
