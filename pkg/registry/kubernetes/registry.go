@@ -68,8 +68,6 @@ type Registry struct {
 	// Consumers wait for it separately from the compiler's registry synchronization.
 	Secrets krt.Collection[*corev1.Secret]
 
-	gatewayMembers krt.Collection[gatewayMembership]
-
 	Sandboxes                  krt.Collection[model.Sandbox]
 	Workloads                  krt.Collection[model.Workload]
 	Services                   krt.Collection[model.Service]
@@ -239,12 +237,11 @@ func New(
 	)
 
 	r.TrafficPolicies = newTrafficPolicyModels(trafficPolicyObjects, globalTrafficObjects, derivedOptions)
-	r.gatewayMembers = r.gatewayMemberships(derivedOptions("gateway-members")...)
 	r.Workloads = r.certificateWorkloads(derivedOptions("certificate-workloads")...)
 	r.SecurityProfiles = krt.JoinCollection(securityProfiles, derivedOptions("all-security-profiles")...)
 
 	r.collections = []krt.Syncer{
-		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways, r.gatewayMembers,
+		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways,
 		r.TrafficPolicies, r.SecurityProfiles, r.GatewayPatches, r.AgentioConfig,
 		r.Telemetry, r.TelemetryProviderOverrides.AsCollection(),
 	}

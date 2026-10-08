@@ -20,18 +20,16 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-func TestLegacyWDSProjectionChecksSourceMetadata(t *testing.T) {
+func TestWDSIdentityProjectionChecksNamespace(t *testing.T) {
 	principal := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 	for _, tc := range []struct {
 		namespace string
-		account   string
 		wantErr   bool
 	}{
-		{"demo", "app", false}, {"demo", "", false}, {"other", "app", true}, {"demo", "other", true},
+		{"demo", false}, {"other", true},
 	} {
 		input := wdsProjection{
-			Workload:       model.Workload{UID: "pod", Namespace: tc.namespace, Principal: principal},
-			ServiceAccount: tc.account,
+			Workload: model.Workload{UID: "pod", Namespace: tc.namespace, Principal: principal},
 		}
 		domain, account, err := projectWorkloadIdentity(input)
 		if (err != nil) != tc.wantErr {

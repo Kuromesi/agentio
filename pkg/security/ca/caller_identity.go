@@ -21,9 +21,9 @@ import (
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
-// Only the absence of explicit target metadata selects this old request path.
-// Malformed metadata and CSR mismatches are never retried through compatibility.
-func legacyRequestIdentity(caller model.PeerIdentity, trustDomain string) (model.Principal, error) {
+// callerPrincipal derives the Kubernetes service-account principal
+// when ImpersonatedIdentity is absent.
+func callerPrincipal(caller model.PeerIdentity, trustDomain string) (model.Principal, error) {
 	if caller.AttestedBy != model.AttestationKubernetes {
 		return model.Principal{}, fmt.Errorf("an explicit certificate identity is required")
 	}

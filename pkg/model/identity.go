@@ -28,9 +28,7 @@ const (
 	ClientEgressGateway    ClientClass = "egress-gateway"
 )
 
-// Principal is one canonical SPIFFE URI. Path semantics belong to the issuing
-// registry; neither authentication credentials nor compatibility state live here.
-// The zero value denotes a discovery-only endpoint.
+// Principal is a canonical SPIFFE URI. Its zero value represents no identity.
 type Principal struct{ uri string }
 
 func (p Principal) String() string { return p.uri }
@@ -48,7 +46,7 @@ func (p Principal) Validate() error {
 // MarshalText encodes the principal as its canonical SPIFFE URI.
 func (p Principal) MarshalText() ([]byte, error) { return []byte(p.uri), nil }
 
-// NewPrincipal is for issuer adapters that define their own path profiles.
+// NewPrincipal constructs a principal from a trust domain and path.
 func NewPrincipal(trustDomain, path string) (Principal, error) {
 	return ParsePrincipal("spiffe://"+canonicalTrustDomain(trustDomain)+"/"+path, trustDomain)
 }
@@ -76,8 +74,7 @@ func ParseSPIFFEID(raw string) (*url.URL, error) {
 	return identity, nil
 }
 
-// ParsePrincipal validates syntax and trust domain, without interpreting path
-// segments as permissions or requiring a particular runtime identity profile.
+// ParsePrincipal parses a SPIFFE URI and validates its syntax and trust domain.
 func ParsePrincipal(raw, trustDomain string) (Principal, error) {
 	const prefix = "spiffe://"
 	if !strings.HasPrefix(raw, prefix) || len(raw) > 2048 {
@@ -124,7 +121,9 @@ type ClientScope struct {
 	Class       ClientClass
 	Principal   Principal
 	NodeName    string
-	GatewayKey  string
+
+	// GatewayKey identifies the gateway whose membership the registry verified.
+	GatewayKey string
 }
 
 func (s ClientScope) Validate() error {
@@ -145,8 +144,6 @@ func (s ClientScope) Validate() error {
 			s.Source.Validate() != nil {
 			return fmt.Errorf("egress gateway scope requires gateway key and bound Workload/source references")
 		}
-		// A scope is a verified membership claim. The registry, not a principal
-		// naming convention, proves ownership of GatewayKey.
 	default:
 		return fmt.Errorf("unknown client class %q", s.Class)
 	}

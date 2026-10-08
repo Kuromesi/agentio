@@ -36,9 +36,8 @@ func (p TunnelProtocol) Validate() error {
 	}
 }
 
-// Workload is a network endpoint. Principal is its single effective certificate
-// identity. An absent Principal makes it discovery-only. Source metadata does not
-// confer ownership of that identity; attestation and authorization do.
+// Workload is a network endpoint with an optional certificate identity.
+// An absent Principal makes it discovery-only.
 type Workload struct {
 	UID               string
 	Principal         Principal
@@ -50,11 +49,13 @@ type Workload struct {
 	NodeName          string
 	Addresses         []string
 	Labels            map[string]string
-	GatewayKey        string
-	HostNetwork       bool
-	TunnelProtocol    TunnelProtocol
-	NativeTunnel      bool
-	Ready             bool
+	// GatewayKey is the namespace/name of the egress gateway this Workload belongs to.
+	// Empty means the Workload is not a gateway member.
+	GatewayKey     string
+	HostNetwork    bool
+	TunnelProtocol TunnelProtocol
+	NativeTunnel   bool
+	Ready          bool
 }
 
 func (w Workload) ResourceName() string { return w.UID }
@@ -80,8 +81,7 @@ func (w Workload) Equals(other Workload) bool {
 		maps.Equal(w.Labels, other.Labels)
 }
 
-// SourceRef identifies a live object in one trusted registry. Key retains that
-// registry's native identifier and lifecycle semantics; it need not be a UUID.
+// SourceRef identifies an object in a trusted registry by its native key.
 type SourceRef struct {
 	Registry string
 	Key      string
@@ -95,7 +95,7 @@ func (s SourceRef) Validate() error {
 	return nil
 }
 
-// String is a collision-free index key, not a certificate identity.
+// String returns a collision-free index key, or an empty string for the zero value.
 func (s SourceRef) String() string {
 	if s == (SourceRef{}) {
 		return ""

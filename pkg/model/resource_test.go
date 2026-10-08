@@ -102,9 +102,7 @@ func TestNewResourceRejectsInvalidFacts(t *testing.T) {
 			name:  "generic resource with Workload facts",
 			key:   base.Key,
 			value: base.Value,
-			facts: ResourceFacts{
-				Workload: &WorkloadResourceFacts{WorkloadUID: "sandbox-a", Principal: testPrincipal()},
-			},
+			facts: ResourceFacts{Workload: &WorkloadResourceFacts{WorkloadUID: "sandbox-a", Principal: testPrincipal()}},
 		},
 		{
 			name:  "Address without family",
@@ -189,5 +187,13 @@ func TestIsWorkloadAddress(t *testing.T) {
 	}
 	if service.IsWorkloadAddress() {
 		t.Fatal("service variant must not be a workload address")
+	}
+}
+
+func TestResourceFactsNamespaceAffectsEquality(t *testing.T) {
+	a := ResourceFacts{Workload: &WorkloadResourceFacts{Namespace: "a", Principal: testPrincipal()}}
+	b := ResourceFacts{Workload: &WorkloadResourceFacts{Namespace: "b", Principal: testPrincipal()}}
+	if a.Equal(b) {
+		t.Fatal("namespace policy scope change treated as a no-op")
 	}
 }

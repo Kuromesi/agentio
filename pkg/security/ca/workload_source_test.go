@@ -75,7 +75,7 @@ func TestCertificateSignsAuthorizedSourceOnly(t *testing.T) {
 			var source model.SourceRef
 			if tc.podUID != "" {
 				source = model.SourceRef{Registry: "kubernetes/test", Key: tc.podUID}
-				metadata[workloadSourceMetadata] = map[string]any{"registry": source.Registry, "key": source.Key}
+				metadata[targetWorkloadMetadata] = map[string]any{"registry": source.Registry, "key": source.Key}
 			}
 			request.Metadata, err = structpb.NewStruct(metadata)
 			if err != nil {
@@ -119,7 +119,7 @@ func TestCertificateSignsAuthorizedSourceOnly(t *testing.T) {
 	}
 }
 
-func TestCertificateSourceRequestFailsWithoutDowngrade(t *testing.T) {
+func TestCertificateTargetWorkloadFailsWithoutDowngrade(t *testing.T) {
 	valid := map[string]any{"registry": "kubernetes/test", "key": "pod-a"}
 	for _, tc := range []struct {
 		name        string
@@ -148,7 +148,7 @@ func TestCertificateSourceRequestFailsWithoutDowngrade(t *testing.T) {
 				authority.workloadSourceOID = testWorkloadSourceOID
 			}
 			request := requestWithCSR(t)
-			metadata, err := structpb.NewStruct(map[string]any{workloadSourceMetadata: tc.value})
+			metadata, err := structpb.NewStruct(map[string]any{targetWorkloadMetadata: tc.value})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,5 +180,102 @@ func TestWorkloadSourceOIDConfiguration(t *testing.T) {
 		if tc.valid && tc.value != "" && oid.String() != tc.value {
 			t.Errorf("OID changed: %s, want %s", oid, tc.value)
 		}
+	}
+}
+
+func TestCertificateSourceRequiresAuthorizer(t *testing.T) {
+	authority := certificateAuthority(t, peerIdentity("demo", "shared"), nil)
+	authority.workloadSourceOID = testWorkloadSourceOID
+	request := requestWithCSR(t)
+	metadata, err := structpb.NewStruct(map[string]any{
+		targetWorkloadMetadata: map[string]any{"registry": "kubernetes/test", "key": "pod-a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Metadata = metadata
+	if response, err := authority.CreateCertificate(t.Context(), request); response != nil ||
+		status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("instance request without authorizer: response=%v err=%v", response, err)
+	}
+}
+
+func TestSelfRequestSourceBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configured bool
+		bound      bool
+		denied     bool
+	}{
+		{"bound self", true, true, false},
+		{"extension disabled", false, true, false},
+		{"unbound self", true, false, false},
+		{"source authorization denied", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller := peerIdentity("demo", "app")
+			if tc.bound {
+				caller.Kubernetes.WorkloadName = "app-pod"
+				caller.Kubernetes.WorkloadUID = "pod-a"
+			}
+			authorizer := &fakeDelegatedIdentityAuthorizer{}
+			if tc.denied {
+				authorizer.err = errors.New("Pod binding no longer valid")
+			}
+			authority := certificateAuthority(t, caller, authorizer)
+			authority.options.ClusterID = "test"
+			if tc.configured {
+				authority.workloadSourceOID = testWorkloadSourceOID
+			}
+			principal := serviceAccountPrincipal("demo", "app")
+			response, err := authority.CreateCertificate(t.Context(), requestWithCSR(t, principal.String()))
+			wantSource := tc.configured && tc.bound
+			wantCalls := 0
+			if wantSource {
+				wantCalls = 1
+			}
+			if authorizer.calls != wantCalls {
+				t.Fatalf("authorization calls=%d, want %d", authorizer.calls, wantCalls)
+			}
+			if wantSource && authorizer.source != (model.SourceRef{Registry: "kubernetes/test", Key: "pod-a"}) {
+				t.Fatalf("authorized source=%+v", authorizer.source)
+			}
+			if tc.denied {
+				if response != nil || status.Code(err) != codes.Unauthenticated {
+					t.Fatalf("response=%v err=%v", response, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := responseIdentity(t, response); got != principal.String() {
+				t.Fatalf("identity=%s", got)
+			}
+			block, _ := pem.Decode([]byte(response.CertChain[0]))
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, extension := range cert.Extensions {
+				if !extension.Id.Equal(testWorkloadSourceOID) {
+					continue
+				}
+				found = true
+				var source struct {
+					Registry string `asn1:"utf8"`
+					Key      string `asn1:"utf8"`
+				}
+				rest, err := asn1.Unmarshal(extension.Value, &source)
+				if err != nil || len(rest) != 0 || extension.Critical || source.Registry != "kubernetes/test" ||
+					source.Key != "pod-a" {
+					t.Fatalf("source=%+v critical=%v err=%v", source, extension.Critical, err)
+				}
+			}
+			if found != wantSource {
+				t.Fatalf("extension present=%v, want %v", found, wantSource)
+			}
+		})
 	}
 }

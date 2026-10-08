@@ -32,7 +32,6 @@ func newWorkloadResources(
 	inputs Inputs,
 	base baseIndexes,
 	metadataConfiguration krt.Singleton[workloadMetadataConfiguration],
-	gateways krt.Collection[model.Gateway],
 	workloadPolicies krt.Collection[workloadPolicies],
 	failures *failureRecorder,
 	options collectionOptions,
@@ -53,13 +52,6 @@ func newWorkloadResources(
 				sniPolicy = selected.SNIPolicy
 				egressPolicies = selected.EgressPolicies
 				egressGatewayKeys = selected.GatewayReferences
-			}
-			ownedGatewayKey := workload.GatewayKey
-			if ownedGatewayKey != "" {
-				gateway := krt.FetchOne(ctx, gateways, krt.FilterKey(ownedGatewayKey))
-				if gateway == nil || gateway.ValidateForUse() != nil {
-					ownedGatewayKey = ""
-				}
 			}
 
 			endpointsByKey := make(map[string]model.Endpoint)
@@ -107,13 +99,7 @@ func newWorkloadResources(
 				services = append(services, *service)
 			}
 			currentMetadataConfiguration := krt.FetchOne(ctx, metadataConfiguration.AsCollection())
-			serviceAccount := ""
-			if pod := krt.FetchOne(ctx, inputs.Pods, krt.FilterKey(workload.Namespace+"/"+workload.Name)); pod != nil &&
-				workload.Source == podsource.SourceRef(inputs.ClusterID, string((*pod).UID)) {
-				serviceAccount = (*pod).Spec.ServiceAccountName
-			}
 			projection := wdsProjection{
-				ServiceAccount:     serviceAccount,
 				ClusterID:          inputs.ClusterID,
 				Workload:           workload,
 				SNIPolicy:          sniPolicy,
@@ -123,7 +109,6 @@ func newWorkloadResources(
 				Endpoints:          endpoints,
 				Services:           services,
 				EgressGatewayKeys:  egressGatewayKeys,
-				OwnedGatewayKey:    ownedGatewayKey,
 			}
 			projection.MetadataConfiguration = currentMetadataConfiguration
 			resource, err := buildWDSAddress(projection)

@@ -73,12 +73,7 @@ func (ca SigningCA) GenerateRSA(ctx context.Context, options LeafOptions) (Issue
 	return ca.sign(ctx, &key.PublicKey, keyPEM, options)
 }
 
-func (ca SigningCA) sign(
-	ctx context.Context,
-	publicKey any,
-	privateKeyPEM []byte,
-	options LeafOptions,
-) (IssuedCertificate, error) {
+func (ca SigningCA) sign(ctx context.Context, publicKey any, privateKeyPEM []byte, options LeafOptions) (IssuedCertificate, error) {
 	if ctx == nil {
 		return IssuedCertificate{}, fmt.Errorf("certificate signing context is required")
 	}

@@ -77,12 +77,10 @@ func TestScopeFuncsDispatchesByAuthenticatedAttestation(t *testing.T) {
 
 func TestScopeFuncsFailsClosedForUnregisteredAttestation(t *testing.T) {
 	calls := 0
-	scopeFuncs := ScopeFuncs{
-		model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
-			calls++
-			return model.ClientScope{}, nil
-		},
-	}
+	scopeFuncs := ScopeFuncs{model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+		calls++
+		return model.ClientScope{}, nil
+	}}
 	peer := model.PeerIdentity{AttestedBy: model.Attestation("firecracker")}
 
 	if _, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer); err == nil {

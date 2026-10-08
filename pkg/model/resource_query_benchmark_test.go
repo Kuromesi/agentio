@@ -26,8 +26,7 @@ func BenchmarkWorkloadQuery(b *testing.B) {
 	resources := make([]Resource, 10000)
 	for index := range resources {
 		uid := fmt.Sprintf("uid-%05d", index)
-		resources[index] = Resource{
-			Key:   ResourceKey{TypeURL: AddressType, Name: uid},
+		resources[index] = Resource{Key: ResourceKey{TypeURL: AddressType, Name: uid},
 			Value: &anypb.Any{TypeUrl: AddressType, Value: []byte(uid)},
 			Facts: ResourceFacts{
 				Workload: &WorkloadResourceFacts{
@@ -43,8 +42,7 @@ func BenchmarkWorkloadQuery(b *testing.B) {
 	}
 	const longUID = "Kubernetes//Pod/production/workload-00001"
 	const longPolicy = "production/workload-traffic-policy-00001"
-	resources = append(resources, Resource{
-		Key:   ResourceKey{TypeURL: AddressType, Name: longUID},
+	resources = append(resources, Resource{Key: ResourceKey{TypeURL: AddressType, Name: longUID},
 		Value: &anypb.Any{TypeUrl: AddressType, Value: []byte("long-names")},
 		Facts: ResourceFacts{
 			Workload: &WorkloadResourceFacts{

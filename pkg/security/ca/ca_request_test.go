@@ -93,11 +93,7 @@ func setRequestMetadata(t *testing.T, request *securityapi.IstioCertificateReque
 	request.Metadata = metadata
 }
 
-func certificateAuthority(
-	t *testing.T,
-	caller model.PeerIdentity,
-	authorizer attestation.DelegatedIdentityAuthorizer,
-) *Authority {
+func certificateAuthority(t *testing.T, caller model.PeerIdentity, authorizer attestation.DelegatedIdentityAuthorizer) *Authority {
 	t.Helper()
 	authority := newTestAuthority(t, 24*time.Hour, 8*time.Hour)
 	authority.authenticator = staticAuthenticator{caller: caller}
@@ -212,7 +208,7 @@ func TestCertificateIdentityRejectsCSRConflict(t *testing.T) {
 	}
 }
 
-func TestLegacyCertificateIdentityRequiresKubernetesEvidence(t *testing.T) {
+func TestCallerPrincipalRequiresKubernetesEvidence(t *testing.T) {
 	for _, caller := range []model.PeerIdentity{peerIdentity("", "app"), peerIdentity("demo", "")} {
 		authorizer := &fakeDelegatedIdentityAuthorizer{}
 		_, err := certificateAuthority(t, caller, authorizer).CreateCertificate(context.Background(), requestWithCSR(t))
@@ -352,11 +348,11 @@ func TestExplicitCertificateSANRequiresAuthorization(t *testing.T) {
 	}
 }
 
-func TestSelfCertificateRequiresConfiguredAuthorizer(t *testing.T) {
+func TestExplicitCertificateRequiresConfiguredAuthorizer(t *testing.T) {
 	caller := peerIdentity("demo", "app")
 	request := requestWithCSR(t)
 	setRequestMetadata(t, request, "spiffe://cluster.local/workload/app")
 	if _, err := certificateAuthority(t, caller, nil).CreateCertificate(t.Context(), request); err == nil {
-		t.Fatal("self issuance bypassed a missing authorizer")
+		t.Fatal("explicit issuance bypassed a missing authorizer")
 	}
 }

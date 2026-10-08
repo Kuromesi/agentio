@@ -92,10 +92,7 @@ func TestLoadOrCreateAuthorityBootstrapsMissingSecret(t *testing.T) {
 	if len(authority.RootPEM()) == 0 {
 		t.Fatal("bootstrapped authority has no root")
 	}
-	if _, err := client.Kube().
-		CoreV1().
-		Secrets(namespace).
-		Get(ctx, "agentio-ca-secret", metav1.GetOptions{}); err != nil {
+	if _, err := client.Kube().CoreV1().Secrets(namespace).Get(ctx, "agentio-ca-secret", metav1.GetOptions{}); err != nil {
 		t.Fatalf("bootstrapped CA Secret error = %v", err)
 	}
 }

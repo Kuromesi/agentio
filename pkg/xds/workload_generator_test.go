@@ -179,8 +179,7 @@ func TestWorkloadGeneratorProjectsDirectResourceFromCanonicalAddress(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(delta.Resources) != 1 || delta.Resources[0].Key.TypeURL != model.WorkloadType ||
-				delta.Resources[0].XDSName != "uid-a" {
+			if len(delta.Resources) != 1 || delta.Resources[0].Key.TypeURL != model.WorkloadType || delta.Resources[0].XDSName != "uid-a" {
 				t.Fatalf("projected resources = %+v", delta.Resources)
 			}
 			workload := &workloadv1.Workload{}
@@ -382,12 +381,7 @@ func TestNodeReferencedGatewaySelection(t *testing.T) {
 	}
 	snapshot := selectionSnapshot(t, resources)
 	scope := model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"}
-	if names := selectedNames(
-		selectWorkloadResources(scope, snapshot, model.AddressType, nil),
-	); !slices.Equal(
-		names,
-		[]string{"gateway-a", "gateway-b", "uid-a", "uid-b"},
-	) {
+	if names := selectedNames(selectWorkloadResources(scope, snapshot, model.AddressType, nil)); !slices.Equal(names, []string{"gateway-a", "gateway-b", "uid-a", "uid-b"}) {
 		t.Fatalf("node selected resources = %v", names)
 	}
 }
@@ -518,26 +512,17 @@ func TestNodeNamedSubscriptionAddsLocalAndExplicitRemoteWorkloads(t *testing.T) 
 
 	got = selectWorkloadResources(scope, snapshot, model.AddressType, []string{"uid-c"})
 	if names := selectedNames(got); !slices.Equal(names, []string{"uid-a", "uid-b", "uid-c"}) {
-		t.Fatalf(
-			"selected remote Address resource = %v, want explicit remote workload plus node-local workloads",
-			names,
-		)
+		t.Fatalf("selected remote Address resource = %v, want explicit remote workload plus node-local workloads", names)
 	}
 
 	got = selectWorkloadResources(scope, snapshot, model.AddressType, []string{"/10.96.0.1"})
 	if names := selectedNames(got); !slices.Equal(names, []string{"demo/svc-a", "uid-a", "uid-b", "uid-c"}) {
-		t.Fatalf(
-			"selected VIP Address resources = %v, want subscribed service, every endpoint, and node-local workloads",
-			names,
-		)
+		t.Fatalf("selected VIP Address resources = %v, want subscribed service, every endpoint, and node-local workloads", names)
 	}
 
 	got = selectWorkloadResources(scope, snapshot, model.AddressType, []string{"/10.96.0.3"})
 	if names := selectedNames(got); !slices.Equal(names, []string{"demo/svc-c", "uid-a", "uid-b", "uid-d"}) {
-		t.Fatalf(
-			"selected remote-only Service resources = %v, want its remote endpoint and node-local workloads",
-			names,
-		)
+		t.Fatalf("selected remote-only Service resources = %v, want its remote endpoint and node-local workloads", names)
 	}
 }
 
@@ -868,14 +853,7 @@ func TestGatewayWorkloadIncrementalUsesResourceFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	unrelated := selectionWorkload(t, "uid-b", "demo", "node-b", "", "")
-	snapshot := selectionSnapshot(
-		t,
-		[]model.Resource{
-			newResource,
-			unrelated,
-			selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a"),
-		},
-	)
+	snapshot := selectionSnapshot(t, []model.Resource{newResource, unrelated, selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a")})
 	watch := &watchState{
 		wildcard: true,
 		started:  true,

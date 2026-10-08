@@ -15,33 +15,29 @@
 package kubernetes
 
 import (
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
-// Certificate identities and gateway scopes share one projection of current
-// registry membership. CSR contents and xDS metadata cannot enroll a member.
+// certificateWorkloads assigns Pod principals and registered gateway memberships.
 func (r *Registry) certificateWorkloads(options ...krt.CollectionOption) krt.Collection[model.Workload] {
 	return krt.NewCollection(r.Workloads, func(ctx krt.HandlerContext, w model.Workload) *model.Workload {
 		pod := krt.FetchOne(ctx, r.Pods, krt.FilterKey(w.Namespace+"/"+w.Name))
 		if pod == nil || podsource.SourceRef(r.options.ClusterID, string((*pod).UID)) != w.Source {
 			return nil
 		}
-		member := krt.FetchOne(ctx, r.gatewayMembers, krt.FilterKey(w.Source.Key))
-		if member != nil {
-			if member.Conflict {
-				// Ambiguous membership prevents issuance, not network discovery.
-				return &w
+		name := (*pod).Labels[podsource.LabelGatewayName]
+		if (*pod).UID != "" && name != "" && (*pod).Status.Phase != corev1.PodSucceeded &&
+			(*pod).Status.Phase != corev1.PodFailed {
+			// Gateway declarations and Pod gateway-name labels must be access-controlled.
+			gateway := krt.FetchOne(ctx, r.Gateways, krt.FilterKey((*pod).Namespace+"/"+name))
+			if gateway != nil && gateway.ValidateForUse() == nil {
+				w.GatewayKey = gateway.ResourceName()
 			}
-			gateway := krt.FetchOne(ctx, r.Gateways, krt.FilterKey(member.GatewayKey))
-			if gateway == nil || gateway.ValidateForUse() != nil {
-				return &w
-			}
-			w.GatewayKey = member.GatewayKey
 		}
-		// Certificate naming is independent of gateway membership. Instances
-		// sharing this logical principal are distinguished by SourceRef.
 		if (*pod).Spec.ServiceAccountName != "" {
 			principal, err := podsource.ServiceAccountPrincipal(
 				r.options.TrustDomain,

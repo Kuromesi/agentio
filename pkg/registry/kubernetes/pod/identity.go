@@ -25,7 +25,7 @@ func ServiceAccountPrincipal(trustDomain, namespace, account string) (model.Prin
 	return model.NewPrincipal(trustDomain, "ns/"+namespace+"/sa/"+account)
 }
 
-// ServiceAccountFromPrincipal projects Kubernetes identities for older WDS clients.
+// ServiceAccountFromPrincipal extracts the namespace and service account from a principal.
 func ServiceAccountFromPrincipal(principal model.Principal) (namespace, account string, ok bool) {
 	parts := strings.Split(strings.TrimPrefix(principal.String(), "spiffe://"+principal.TrustDomain()+"/"), "/")
 	if len(parts) == 4 && parts[0] == "ns" && parts[2] == "sa" {

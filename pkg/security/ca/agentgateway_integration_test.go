@@ -52,10 +52,8 @@ import (
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
-// This opt-in interoperability test runs the real, unmodified agentgateway
-// binary against Agentiod's CA over TLS. TokenReview and target authorization
-// are faked here; registry tests cover live Pod ownership. No CA private key or
-// pre-issued gateway certificate reaches the proxy.
+// Tests agentgateway certificate issuance and rotation against Agentiod's CA over TLS.
+// TokenReview and target authorization are faked; the proxy obtains its own certificates.
 // Run with AGENTIO_AGENTGATEWAY_BINARY=/absolute/path/to/agentgateway-v1.5.0.
 func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 	binary := os.Getenv("AGENTIO_AGENTGATEWAY_BINARY")
@@ -401,9 +399,7 @@ func agentgatewayHBONERequest(t *testing.T, address string, config *tls.Config) 
 	defer agentgatewayClose(t, writer)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req := (&http.Request{Method: http.MethodConnect, URL: &url.URL{Host: "127.0.0.1:18080"}, Host: "127.0.0.1:18080", Body: reader}).WithContext(
-		ctx,
-	)
+	req := (&http.Request{Method: http.MethodConnect, URL: &url.URL{Host: "127.0.0.1:18080"}, Host: "127.0.0.1:18080", Body: reader}).WithContext(ctx)
 	resp, err := client.RoundTrip(req)
 	if err != nil {
 		return "", err
@@ -412,10 +408,7 @@ func agentgatewayHBONERequest(t *testing.T, address string, config *tls.Config) 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("CONNECT status: %s", resp.Status)
 	}
-	if _, err := io.WriteString(
-		writer,
-		"GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
-	); err != nil {
+	if _, err := io.WriteString(writer, "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"); err != nil {
 		return "", err
 	}
 	inner, err := http.ReadResponse(bufio.NewReader(resp.Body), nil)

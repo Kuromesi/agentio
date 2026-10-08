@@ -19,24 +19,22 @@ import (
 	"testing"
 )
 
-func TestLegacySelfRequestStillRequiresAuthorization(t *testing.T) {
+func TestSelfRequestWithoutSourceDoesNotRequireTargetAuthorization(t *testing.T) {
 	caller := peerIdentity("demo", "app")
+	caller.Kubernetes.WorkloadName, caller.Kubernetes.WorkloadUID = "", ""
 	want := serviceAccountPrincipal("demo", "app")
-	for _, allow := range []bool{false, true} {
-		authorizer := &fakeDelegatedIdentityAuthorizer{}
-		if !allow {
-			authorizer.err = fmt.Errorf("Pod binding denied")
+	for _, configured := range []bool{false, true} {
+		authorizer := &fakeDelegatedIdentityAuthorizer{err: fmt.Errorf("instance authorization must not run")}
+		authority := certificateAuthority(t, caller, authorizer)
+		if configured {
+			authority.workloadSourceOID = testWorkloadSourceOID
 		}
-		response, err := certificateAuthority(
-			t,
-			caller,
-			authorizer,
-		).CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
-		if (err == nil) != allow || authorizer.calls != 1 || authorizer.requested != want {
-			t.Fatalf("allow=%v err=%v authorizer=%+v", allow, err, authorizer)
+		response, err := authority.CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
+		if err != nil || authorizer.calls != 0 {
+			t.Fatalf("self request: %v, calls=%d", err, authorizer.calls)
 		}
-		if allow && responseIdentity(t, response) != want.String() {
-			t.Fatal("wrong legacy SAN")
+		if responseIdentity(t, response) != want.String() {
+			t.Fatal("wrong caller SAN")
 		}
 	}
 }

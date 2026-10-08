@@ -641,7 +641,7 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	}
 	compatibility := newWorkloadPolicies(inputs, policies, failures, options)
 	metadata := krt.NewStatic[workloadMetadataConfiguration](nil, true, options("metadata")...)
-	resolved := newWorkloadResources(inputs, newBaseIndexes(inputs), metadata, inputs.Gateways,
+	resolved := newWorkloadResources(inputs, newBaseIndexes(inputs), metadata,
 		compatibility, failures, options)
 	getPolicy := func() *extensionsv1.SniTrafficPolicy {
 		resources := resolved.List()

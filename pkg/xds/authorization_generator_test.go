@@ -95,17 +95,11 @@ func TestGatewayNamedAuthorizationSelectionDoesNotAllocateSnapshotScale(t *testi
 			XDSName: name,
 			Value:   authorizationValue,
 			Hash:    name,
-			Facts: model.ResourceFacts{
-				Authorization: &model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeWorkload},
-			},
+			Facts:   model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{Scope: model.AuthorizationScopeWorkload}},
 		})
 	}
 	target := selectionAuthorization(t, "demo/target", model.AuthorizationScopeWorkload, "")
-	authorizations = append(
-		authorizations,
-		target,
-		selectionWorkload(t, "target-workload", "demo", "node-a", "", target.XDSName),
-	)
+	authorizations = append(authorizations, target, selectionWorkload(t, "target-workload", "demo", "node-a", "", target.XDSName))
 	authorizationSnapshot := selectionSnapshot(t, authorizations)
 	runtime.GC()
 	runtime.ReadMemStats(&before)
@@ -168,14 +162,7 @@ func TestGatewayAuthorizationIncrementalAllowsNonGlobalPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	unrelated := selectionAuthorization(t, "other/selector-b", model.AuthorizationScopeWorkload, "")
-	snapshot := selectionSnapshot(
-		t,
-		[]model.Resource{
-			newResource,
-			unrelated,
-			selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a"),
-		},
-	)
+	snapshot := selectionSnapshot(t, []model.Resource{newResource, unrelated, selectionWorkload(t, "ordinary", "demo", "node-a", "", "demo/selector-a")})
 	watch := &watchState{
 		wildcard: true,
 		started:  true,

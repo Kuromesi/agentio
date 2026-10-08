@@ -16,8 +16,7 @@ package server
 
 import "github.com/openkruise/agentio/pkg/model"
 
-// mustTestPrincipal keeps immutable URI fixtures concise. Issuer profiles are
-// exercised separately through registry tests.
+// mustTestPrincipal constructs a principal and panics on invalid input.
 func mustTestPrincipal(trustDomain, path string) model.Principal {
 	principal, err := model.NewPrincipal(trustDomain, path)
 	if err != nil {

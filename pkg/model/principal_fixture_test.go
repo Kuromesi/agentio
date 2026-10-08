@@ -14,8 +14,7 @@
 
 package model
 
-// mustTestPrincipal keeps immutable URI fixtures concise. Issuer profiles are
-// exercised separately through registry tests.
+// mustTestPrincipal constructs a principal and panics on invalid input.
 func mustTestPrincipal(trustDomain, path string) Principal {
 	principal, err := NewPrincipal(trustDomain, path)
 	if err != nil {

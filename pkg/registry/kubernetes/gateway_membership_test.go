@@ -52,7 +52,7 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 		ObjectMeta: metav1.ObjectMeta{Namespace: "system", Name: "egress"},
 		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "egress"}},
 	}
-	// A Service waiting for finalization still declares its gateway members.
+	// Service termination does not affect gateway membership.
 	now := metav1.Now()
 	service.DeletionTimestamp = &now
 	config := &corev1.ConfigMap{
@@ -88,12 +88,13 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 	}
 	peer := gatewayTestPeer(replacement)
 	eventually(t, func() bool {
+		current, err := scopeResolver.ResolveScope(peer, "")
 		return auth.Authorize(ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil &&
 			auth.Authorize(ctx, oldPeer, attestation.CertificateTarget{Principal: gid}) != nil &&
-			r.gatewayMembers.GetKey("first-pod") == nil
+			err == nil && current.GatewayKey == "system/egress"
 	}, "replacement joins automatically and old token loses authorization")
-	if err := sds.Authorize(scope); err == nil {
-		t.Fatal("SDS accepted the replaced Pod's established scope")
+	if err := sds.Authorize(scope); err != nil {
+		t.Fatalf("existing scope unexpectedly rechecked Pod membership: %v", err)
 	}
 
 	// Service selectors control routing independently of gateway membership.
@@ -127,8 +128,8 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 			current, err := scopeResolver.ResolveScope(peer, "")
 			return err == nil && (current.Class == model.ClientEgressGateway) == wantGateway &&
 				(!wantGateway || current.GatewayKey == "system/"+name) &&
-				(sds.Authorize(established) == nil) == (name == "egress")
-		}, "label updates revoke the established scope and restoration reauthorizes its bound Pod")
+				sds.Authorize(established) == nil
+		}, "label updates affect new scopes without revalidating established scopes")
 	}
 	replacement.DeletionTimestamp = &now
 	if _, err := r.client.CoreV1().
@@ -148,7 +149,10 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 	}
 	eventually(
 		t,
-		func() bool { return r.gatewayMembers.GetKey(string(replacement.UID)) != nil },
+		func() bool {
+			w := r.Workloads.GetKey("test//Pod/system/gateway")
+			return w != nil && w.GatewayKey == "system/egress"
+		},
 		"Service deletion does not withdraw membership",
 	)
 }
@@ -263,12 +267,7 @@ func TestGatewayMembershipRejectsAmbiguousAndUnregisteredPods(t *testing.T) {
 				if w == nil {
 					t.Fatal("identity rejection removed the network discovery record")
 				}
-				if member := r.gatewayMembers.GetKey(
-					string(p.UID),
-				); member != nil && member.Conflict &&
-					w.Principal != (model.Principal{}) {
-					t.Fatal("ambiguous gateway acquired a fallback certificate identity")
-				}
+
 			}
 		})
 	}
@@ -330,7 +329,7 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 				auth.Authorize(ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil
 		}, "GatewayClass ownership changes membership")
 	}
-	// A colliding static declaration must not restore SA-based admission.
+	// Conflicting declarations remove gateway scope but preserve the principal.
 	collision := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
 		Data:       map[string]string{"config": "egressGateways:\n- namespace: demo\n  name: egress\n"},
@@ -343,9 +342,9 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 	}
 	eventually(t, func() bool {
 		w := r.Workloads.GetKey("test//Pod/demo/gateway")
-		return w != nil && w.Principal == (model.Principal{}) &&
-			auth.Authorize(ctx, peer, attestation.CertificateTarget{Principal: gid}) != nil
-	}, "conflicting sources reject issuance while retaining discovery")
+		return w != nil && w.Principal == gid && w.GatewayKey == "" &&
+			auth.Authorize(ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil
+	}, "conflicting declarations withdraw gateway scope without changing logical identity")
 	if err := client.Kube().
 		CoreV1().
 		ConfigMaps(collision.Namespace).
@@ -365,7 +364,10 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 	}
 	eventually(
 		t,
-		func() bool { return r.gatewayMembers.GetKey(string(pod.UID)) == nil },
+		func() bool {
+			w := r.Workloads.GetKey("test//Pod/demo/gateway")
+			return w != nil && w.GatewayKey == ""
+		},
 		"deleted Gateway leaves no membership",
 	)
 }

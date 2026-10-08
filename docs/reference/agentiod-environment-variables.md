@@ -51,9 +51,10 @@ Sandbox-owned inline TrafficPolicy and SNI rules stay on Sandbox resources; no W
 This resource split is a control-plane draft and requires corresponding data-plane evaluation changes, including inline ALLOW followed by a separate system-policy check.
 
 `AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID` configures the non-critical certificate
-extension used by explicit instance requests. Empty leaves principal-only
-issuance available and rejects instance requests. See [Workload and gateway
-identities](workload-identity.md) for the request and certificate formats.
+extension for workload sources. When configured, Pod-bound self requests
+automatically include their authorized source; delegated requests must specify
+`TargetWorkload` metadata with `registry` and `key` to include it. Empty preserves principal-only issuance and
+rejects explicit source requests.
 
 ## Environment variable reference
 
@@ -129,7 +130,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_TRUST_BUNDLE_LEASE_NAME</code> | String | <code>agentiod-trust-bundle-leader</code> | Lease electing the replica that distributes the trust bundle ConfigMap. |
 | <code>AGENTIO_WORKLOAD_CERT_LIFETIME</code> | Duration | <code>24h0m0s</code> | Validity of workload certificates and of the xDS server&#39;s own certificate. |
 | <code>AGENTIO_WORKLOAD_CERT_RENEW_BEFORE</code> | Duration | <code>8h0m0s</code> | How long before expiry the xDS server re-issues its own certificate. |
-| <code>AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID</code> | String | empty | Private enterprise OID for the non-critical workload source certificate extension. Empty disables instance certificate requests; principal-only requests remain supported. |
+| <code>AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID</code> | String | empty | Private enterprise OID for the non-critical workload source certificate extension. Enables automatic source binding for Pod-bound self requests. Empty disables extensions and rejects explicit source requests. |
 
 <!-- END GENERATED ENVIRONMENT VARIABLES -->
 

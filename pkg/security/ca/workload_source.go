@@ -45,8 +45,7 @@ func parseWorkloadSourceOID(value string) (asn1.ObjectIdentifier, error) {
 	return oid, nil
 }
 
-// workloadSourceExtension encodes only the source accepted by the authorizer.
-// URI SAN remains the principal; no CSR extensions or Sandbox bindings are copied.
+// workloadSourceExtension DER-encodes a source reference as a non-critical X.509 extension.
 func workloadSourceExtension(oid asn1.ObjectIdentifier, source model.SourceRef) (pkix.Extension, error) {
 	value, err := asn1.Marshal(struct {
 		Registry string `asn1:"utf8"`

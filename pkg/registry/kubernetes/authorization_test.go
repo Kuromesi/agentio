@@ -39,6 +39,7 @@ func delegationPod(namespace, name, serviceAccount, node string) *corev1.Pod {
 
 func TestCertificateSourceDistinguishesPodsSharingPrincipal(t *testing.T) {
 	a := delegationPod("demo", "a", "shared", "node-a")
+	a.Status.PodIP = "" // CA authorization must not depend on network discovery.
 	b := delegationPod("demo", "b", "shared", "node-a")
 	remote := delegationPod("demo", "remote", "shared", "node-b")
 	node := delegationPod("agentio-system", "ztunnel", "ztunnel", "node-a")
@@ -245,8 +246,8 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 			"config": "egressGateways:\n- name: external-egress\n  namespace: agentio-system\n",
 		},
 	}
-	r := newTestRegistry(t, t.Context(), []runtime.Object{config, member}, nil)
-	authorizer := NewGatewayCertificateAuthorizer(gateways, r.PodScopeResolver(r.Workloads))
+	_ = newTestRegistry(t, t.Context(), []runtime.Object{config, member}, nil)
+	authorizer := NewGatewayCertificateAuthorizer(gateways)
 	scope := model.ClientScope{
 		Class:       model.ClientEgressGateway,
 		GatewayKey:  "agentio-system/external-egress",

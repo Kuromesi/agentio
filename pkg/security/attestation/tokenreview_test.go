@@ -173,8 +173,7 @@ func TestAuthenticateCachesSuccessfulReviews(t *testing.T) {
 		if caller.Kubernetes.Namespace != "demo" || caller.Kubernetes.ServiceAccount != "app" {
 			t.Fatalf("principal = %+v", caller.Kubernetes)
 		}
-		if caller.AttestedBy != model.AttestationKubernetes || caller.Kubernetes.WorkloadName != "client-pod" ||
-			caller.Kubernetes.WorkloadUID != "pod-uid" {
+		if caller.AttestedBy != model.AttestationKubernetes || caller.Kubernetes.WorkloadName != "client-pod" || caller.Kubernetes.WorkloadUID != "pod-uid" {
 			t.Fatalf("bound pod identity lost through the cache: %+v", caller)
 		}
 	}

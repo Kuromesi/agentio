@@ -40,28 +40,22 @@ func validateDiscoveredWorkload(workload model.Workload) error {
 // validatedDomainInputs validates endpoints and explicit runtimes independently.
 func validatedDomainInputs(inputs Inputs, failures *failureRecorder, options collectionOptions) Inputs {
 	clearFailureOnSourceDelete(inputs.Workloads, failures, "Workload")
-	inputs.Workloads = krt.NewCollection(
-		inputs.Workloads,
-		func(_ krt.HandlerContext, workload model.Workload) *model.Workload {
-			if err := validateDiscoveredWorkload(workload); err != nil {
-				failures.record("Workload", workload.UID, err)
-				return nil
-			}
-			failures.clear("Workload", workload.UID)
-			return &workload
-		},
-		options("validated-workloads")...)
+	inputs.Workloads = krt.NewCollection(inputs.Workloads, func(_ krt.HandlerContext, workload model.Workload) *model.Workload {
+		if err := validateDiscoveredWorkload(workload); err != nil {
+			failures.record("Workload", workload.UID, err)
+			return nil
+		}
+		failures.clear("Workload", workload.UID)
+		return &workload
+	}, options("validated-workloads")...)
 	clearFailureOnSourceDelete(inputs.Sandboxes, failures, "Sandbox")
-	inputs.Sandboxes = krt.NewCollection(
-		inputs.Sandboxes,
-		func(_ krt.HandlerContext, sandbox model.Sandbox) *model.Sandbox {
-			if err := sandbox.Validate(); err != nil {
-				failures.record("Sandbox", sandbox.UID, err)
-				return nil
-			}
-			failures.clear("Sandbox", sandbox.UID)
-			return &sandbox
-		},
-		options("validated-sandboxes")...)
+	inputs.Sandboxes = krt.NewCollection(inputs.Sandboxes, func(_ krt.HandlerContext, sandbox model.Sandbox) *model.Sandbox {
+		if err := sandbox.Validate(); err != nil {
+			failures.record("Sandbox", sandbox.UID, err)
+			return nil
+		}
+		failures.clear("Sandbox", sandbox.UID)
+		return &sandbox
+	}, options("validated-sandboxes")...)
 	return inputs
 }

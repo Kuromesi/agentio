@@ -24,13 +24,29 @@ import (
 	securityapi "istio.io/api/security/v1alpha1"
 
 	"github.com/openkruise/agentio/pkg/model"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
+// CA request metadata examples (the CSR is sent in request.Csr):
+//
+// Sidecar self request: omit metadata and authenticate with the Pod-bound token.
+// With a source extension OID configured, the CA derives and authorizes the Pod source.
+//
+// Node ztunnel request for a specific workload instance:
+//
+//	{
+//	  "ImpersonatedIdentity": "spiffe://cluster.local/ns/demo/sa/backend",
+//	  "TargetWorkload": {"registry": "kubernetes/cluster-a", "key": "<target Pod UID>"}
+//	}
+//
+// Omitting TargetWorkload from a delegated request requests only the logical identity.
+// An explicit TargetWorkload requires authorization and a configured extension OID.
+// Any URI SAN in the CSR must match the selected identity.
 const (
 	impersonatedIdentityMetadata = "ImpersonatedIdentity"
-	workloadSourceMetadata       = "WorkloadSource"
+	targetWorkloadMetadata       = "TargetWorkload"
 )
 
 func parseCertificateRequest(request *securityapi.IstioCertificateRequest) (*x509.CertificateRequest, error) {
@@ -47,7 +63,9 @@ func parseCertificateRequest(request *securityapi.IstioCertificateRequest) (*x50
 
 // certificateTarget validates the requested target, then authorizes it before
 // signing. A CSR confirms the requested identity; it never supplies authorization evidence.
-func (a *Authority) certificateTarget(ctx context.Context, caller model.PeerIdentity,
+func (a *Authority) certificateTarget(
+	ctx context.Context,
+	caller model.PeerIdentity,
 	request *securityapi.IstioCertificateRequest,
 	csr *x509.CertificateRequest,
 ) (attestation.CertificateTarget, error) {
@@ -55,7 +73,7 @@ func (a *Authority) certificateTarget(ctx context.Context, caller model.PeerIden
 	if err != nil {
 		return attestation.CertificateTarget{}, err
 	}
-	source, err := requestedWorkloadSource(request)
+	source, err := requestedTargetWorkload(request)
 	if err != nil {
 		return attestation.CertificateTarget{}, err
 	}
@@ -63,7 +81,7 @@ func (a *Authority) certificateTarget(ctx context.Context, caller model.PeerIden
 	if found {
 		selected, err = model.ParsePrincipal(impersonated, a.options.TrustDomain)
 	} else {
-		selected, err = legacyRequestIdentity(caller, a.options.TrustDomain)
+		selected, err = callerPrincipal(caller, a.options.TrustDomain)
 	}
 	if err != nil {
 		return attestation.CertificateTarget{}, err
@@ -82,14 +100,22 @@ func (a *Authority) certificateTarget(ctx context.Context, caller model.PeerIden
 				csr.URIs[0].String(), selected.String())
 		}
 	}
+	// Self requests can use the authenticated Pod binding as their source.
+	if !found && source == (model.SourceRef{}) && len(a.workloadSourceOID) != 0 &&
+		caller.AttestedBy == model.AttestationKubernetes && caller.Kubernetes.WorkloadName != "" &&
+		caller.Kubernetes.WorkloadUID != "" {
+		source = podsource.SourceRef(a.options.ClusterID, caller.Kubernetes.WorkloadUID)
+	}
 	target := attestation.CertificateTarget{Principal: selected, Source: source}
-	if err := a.authorizeCertificateTarget(ctx, caller, target); err != nil {
-		return attestation.CertificateTarget{}, err
+	if found || source != (model.SourceRef{}) {
+		if err := a.authorizeCertificateTarget(ctx, caller, target); err != nil {
+			return attestation.CertificateTarget{}, err
+		}
 	}
 	return target, nil
 }
 
-// Every target requires an explicitly installed authorizer, including self issuance.
+// Explicit targets and instance selectors require an installed authorizer.
 func (a *Authority) authorizeCertificateTarget(
 	ctx context.Context,
 	caller model.PeerIdentity,
@@ -105,10 +131,9 @@ func (a *Authority) authorizeCertificateTarget(
 	return nil
 }
 
-// Only an explicit instance selector opts into an instance-bound certificate.
-// Missing metadata preserves principal-only issuance; malformed metadata fails.
-func requestedWorkloadSource(request *securityapi.IstioCertificateRequest) (model.SourceRef, error) {
-	value, found := request.GetMetadata().GetFields()[workloadSourceMetadata]
+// requestedTargetWorkload parses the optional target instance selector.
+func requestedTargetWorkload(request *securityapi.IstioCertificateRequest) (model.SourceRef, error) {
+	value, found := request.GetMetadata().GetFields()[targetWorkloadMetadata]
 	if !found {
 		return model.SourceRef{}, nil
 	}
@@ -118,7 +143,7 @@ func requestedWorkloadSource(request *securityapi.IstioCertificateRequest) (mode
 		Key:      fields["key"].GetStringValue(),
 	}
 	if err := source.Validate(); err != nil {
-		return model.SourceRef{}, fmt.Errorf("%s requires nonempty registry and key strings", workloadSourceMetadata)
+		return model.SourceRef{}, fmt.Errorf("%s requires nonempty registry and key strings", targetWorkloadMetadata)
 	}
 	return source, nil
 }
@@ -134,10 +159,7 @@ func impersonatedIdentity(request *securityapi.IstioCertificateRequest) (string,
 	}
 	stringValue, ok := value.GetKind().(*structpb.Value_StringValue)
 	if !ok || strings.TrimSpace(stringValue.StringValue) == "" {
-		return "", false, fmt.Errorf(
-			"%s metadata must contain exactly one identity string",
-			impersonatedIdentityMetadata,
-		)
+		return "", false, fmt.Errorf("%s metadata must contain exactly one identity string", impersonatedIdentityMetadata)
 	}
 	return stringValue.StringValue, true, nil
 }

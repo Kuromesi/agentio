@@ -28,7 +28,6 @@ import (
 type PodScopeResolver struct {
 	pods                  krt.Collection[*corev1.Pod]
 	workloads             krt.Collection[model.Workload]
-	gateways              krt.Collection[model.Gateway]
 	clusterID             string
 	rootNamespace         string
 	ztunnelServiceAccount string
@@ -39,11 +38,12 @@ func (r *Registry) PodScopeResolver(workloads krt.Collection[model.Workload]) *P
 	return &PodScopeResolver{
 		pods:                  r.Pods,
 		workloads:             workloads,
-		gateways:              r.Gateways,
 		clusterID:             r.options.ClusterID,
 		rootNamespace:         r.options.RootNamespace,
 		ztunnelServiceAccount: r.options.ZTunnelServiceAccount,
-		synced:                func() bool { return r.HasSynced() && workloads.HasSynced() },
+		synced: func() bool {
+			return r.HasSynced() && workloads.HasSynced()
+		},
 	}
 }
 
@@ -66,11 +66,6 @@ func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string
 			return model.ClientScope{}, fmt.Errorf("client Pod does not match its active Workload")
 		}
 		if workload.GatewayKey != "" {
-			gateway := s.gateways.GetKey(workload.GatewayKey)
-			if gateway == nil || gateway.ValidateForUse() != nil ||
-				pod.Labels[podsource.LabelGatewayName] != gateway.Name {
-				return model.ClientScope{}, fmt.Errorf("gateway is not registered")
-			}
 			return model.ClientScope{
 				Class:       model.ClientEgressGateway,
 				Principal:   workload.Principal,

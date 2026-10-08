@@ -33,9 +33,11 @@ jobs:
       - name: Determine base ref
         id: base
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" || true
-            echo "ref=$(git merge-base "origin/${{ github.base_ref }}" HEAD)" >> "$GITHUB_OUTPUT"
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            ref="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
           else
             before="${{ github.event.before }}"
             if ! git rev-parse -q --verify "${before}^{commit}" >/dev/null 2>&1; then

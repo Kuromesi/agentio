@@ -224,8 +224,7 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 		}, func() string { return "enabled client trust distributor to publish its bundle" })
 	} else {
 		for _, action := range coreClient.(*kubefake.Clientset).Actions() {
-			if action.GetResource().Resource == "namespaces" &&
-				(action.GetVerb() == "list" || action.GetVerb() == "watch") {
+			if action.GetResource().Resource == "namespaces" && (action.GetVerb() == "list" || action.GetVerb() == "watch") {
 				t.Fatalf("disabled distributor started a namespace informer: %v", action)
 			}
 		}
@@ -264,9 +263,7 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 
 	// The caBundle patcher kept the webhook configuration in sync with the
 	// workload root.
-	current, err := coreClient.AdmissionregistrationV1().
-		MutatingWebhookConfigurations().
-		Get(ctx, webhookConfigName, metav1.GetOptions{})
+	current, err := coreClient.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(ctx, webhookConfigName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,12 +310,7 @@ func buildReview(t *testing.T, namespace, name string) *admissionv1.AdmissionRev
 	}
 }
 
-func postReview(
-	t *testing.T,
-	client *http.Client,
-	url string,
-	review *admissionv1.AdmissionReview,
-) (*admissionv1.AdmissionResponse, error) {
+func postReview(t *testing.T, client *http.Client, url string, review *admissionv1.AdmissionReview) (*admissionv1.AdmissionResponse, error) {
 	t.Helper()
 	body, err := json.Marshal(review)
 	if err != nil {

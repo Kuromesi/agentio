@@ -84,7 +84,7 @@ func TestCertificateAttestationBindsSourceAndGatewayMembership(t *testing.T) {
 		{"same SA non-member cannot claim gateway instance", caller(lookalike), gid, false},
 		{"non-member retains own workload identity", caller(lookalike), target(lookalike), true},
 		{"node-local delegation", caller(node), bid, true},
-		{"gateway is not node-delegatable", caller(node), gid, false},
+		{"node-local eligible gateway delegation", caller(node), gid, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := auth.Authorize(t.Context(), tc.peer, tc.id)

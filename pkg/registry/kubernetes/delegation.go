@@ -26,39 +26,44 @@ import (
 	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
-// DelegatedIdentityAuthorizer authorizes every target certificate identity
-// against active Workloads, including self issuance. Kubernetes token evidence
-// proves Pod ownership; only a trusted node proxy can delegate node-local
-// workload identities. Gateway identities are never node-delegatable.
+// DelegatedIdentityAuthorizer is the Kubernetes implementation of the
+// delegated-identity seam: a trusted shared ztunnel may request a certificate
+// for a service-account identity only when a live ambient workload owning
+// that identity runs on its node.
 type DelegatedIdentityAuthorizer struct {
-	pods                  krt.Collection[*corev1.Pod]
-	clusterID             string
-	trustDomain           string
-	rootNamespace         string
-	ztunnelServiceAccount string
-	workloads             krt.Collection[model.Workload]
-	workloadsByIdentity   krt.Index[string, model.Workload]
+	pods                   krt.Collection[*corev1.Pod]
+	targetsByNodePrincipal krt.Index[string, *corev1.Pod]
+	rootNamespace          string
+	ztunnelServiceAccount  string
+	clusterID              string
+	trustDomain            string
 }
 
 func (r *Registry) DelegatedIdentityAuthorizer() *DelegatedIdentityAuthorizer {
 	return &DelegatedIdentityAuthorizer{
-		workloads:   r.Workloads,
-		clusterID:   r.options.ClusterID,
-		trustDomain: r.options.TrustDomain,
-		workloadsByIdentity: krt.NewIndex(
-			r.Workloads,
-			"certificateWorkloadsByIdentity",
-			func(w model.Workload) []string {
-				if w.Principal == (model.Principal{}) {
-					return nil
-				}
-				return []string{w.Principal.String()}
-			},
-		),
-		pods:                  r.Pods,
-		rootNamespace:         r.options.RootNamespace,
-		ztunnelServiceAccount: r.options.ZTunnelServiceAccount,
+		pods:                   r.Pods,
+		targetsByNodePrincipal: newDelegationTargetIndex(r.Pods, r.options.TrustDomain),
+		rootNamespace:          r.options.RootNamespace,
+		ztunnelServiceAccount:  r.options.ZTunnelServiceAccount,
+		clusterID:              r.options.ClusterID,
+		trustDomain:            r.options.TrustDomain,
 	}
+}
+
+// newDelegationTargetIndex indexes eligible ambient Pods by node and owned
+// principal so authorization is a single lookup instead of a Pod scan.
+func newDelegationTargetIndex(pods krt.Collection[*corev1.Pod], trustDomain string) krt.Index[string, *corev1.Pod] {
+	return krt.NewIndex(pods, "delegationPodsByNodePrincipal", func(pod *corev1.Pod) []string {
+		if !eligibleDelegationTarget(pod) {
+			return nil
+		}
+		principal, err := podsource.ServiceAccountPrincipal(trustDomain, pod.Namespace, pod.Spec.ServiceAccountName)
+		if err != nil {
+			return nil
+		}
+
+		return []string{pod.Spec.NodeName + "|" + principal.String()}
+	})
 }
 
 func eligibleDelegationTarget(pod *corev1.Pod) bool {
@@ -73,24 +78,70 @@ func eligibleDelegationTarget(pod *corev1.Pod) bool {
 func (a *DelegatedIdentityAuthorizer) Authorize(
 	ctx context.Context,
 	caller model.PeerIdentity,
-	requested attestation.CertificateTarget,
+	target attestation.CertificateTarget,
 ) error {
+	requested := target.Principal
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("authorize delegated identity: %w", err)
 	}
-	if _, err := model.ParsePrincipal(requested.Principal.String(), a.trustDomain); err != nil {
-		return fmt.Errorf("authorize certificate target: %w", err)
+	if caller.AttestedBy != model.AttestationKubernetes {
+		return fmt.Errorf("authorize delegated identity: unsupported caller attestation %q", caller.AttestedBy)
 	}
-	if requested.Source != (model.SourceRef{}) {
-		if err := requested.Source.Validate(); err != nil {
-			return fmt.Errorf("authorize certificate source: %w", err)
+	if err := caller.Kubernetes.Validate(); err != nil {
+		return err
+	}
+	if _, err := model.ParsePrincipal(requested.String(), a.trustDomain); err != nil {
+		return err
+	}
+	if _, _, ok := podsource.ServiceAccountFromPrincipal(requested); !ok {
+		return fmt.Errorf("Kubernetes registry only owns service account identities")
+	}
+	callerPrincipal, err := podsource.ServiceAccountPrincipal(
+		a.trustDomain,
+		caller.Kubernetes.Namespace,
+		caller.Kubernetes.ServiceAccount,
+	)
+	if err != nil {
+		return err
+	}
+	if target.Source != (model.SourceRef{}) {
+		if err := target.Source.Validate(); err != nil {
+			return err
+		}
+		if target.Source.Registry != "kubernetes/"+a.clusterID {
+			return fmt.Errorf("authorize certificate source: registry does not match this cluster")
 		}
 	}
-	return a.authorizeWorkload(caller, requested)
+	pod, err := activeCallerPod(a.pods, caller)
+	if err != nil {
+		return err
+	}
+	if requested == callerPrincipal && (target.Source == (model.SourceRef{}) || target.Source.Key == string(pod.UID)) {
+		return nil
+	}
+	if caller.Kubernetes.Namespace != a.rootNamespace || caller.Kubernetes.ServiceAccount != a.ztunnelServiceAccount {
+		return fmt.Errorf(
+			"authorize delegated identity: caller %s is not a trusted node service account",
+			callerPrincipal.String(),
+		)
+	}
+	if pod.Spec.NodeName == "" {
+		return fmt.Errorf("trusted node Pod has no assigned node")
+	}
+	node := pod.Spec.NodeName
+	for _, pod := range a.targetsByNodePrincipal.Lookup(node + "|" + requested.String()) {
+		if target.Source == (model.SourceRef{}) || target.Source.Key == string(pod.UID) {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"authorize delegated identity: no active ambient workload on node %s owns %s",
+		node,
+		requested.String(),
+	)
 }
 
-// activeCallerPod resolves only the Pod named and bound by TokenReview. Client
-// metadata, a shared SA, and a node assertion cannot substitute for this binding.
+// activeCallerPod returns an active Pod matching the TokenReview name, UID, and service account.
 func activeCallerPod(pods krt.Collection[*corev1.Pod], caller model.PeerIdentity) (*corev1.Pod, error) {
 	if caller.AttestedBy != model.AttestationKubernetes {
 		return nil, fmt.Errorf("unsupported caller attestation %q", caller.AttestedBy)
@@ -111,38 +162,4 @@ func activeCallerPod(pods krt.Collection[*corev1.Pod], caller model.PeerIdentity
 		return nil, fmt.Errorf("token is not bound to an active Pod")
 	}
 	return *pod, nil
-}
-
-func (a *DelegatedIdentityAuthorizer) authorizeWorkload(
-	caller model.PeerIdentity,
-	requested attestation.CertificateTarget,
-) error {
-	if a.workloads == nil || !a.workloads.HasSynced() {
-		return fmt.Errorf("workload identity registry is not synced")
-	}
-	pod, err := activeCallerPod(a.pods, caller)
-	if err != nil {
-		return err
-	}
-	for _, w := range a.workloadsByIdentity.Lookup(requested.Principal.String()) {
-		if requested.Source != (model.SourceRef{}) && w.Source != requested.Source {
-			continue
-		}
-		target := a.pods.GetKey(w.Namespace + "/" + w.Name)
-		if target == nil || podsource.SourceRef(a.clusterID, string((*target).UID)) != w.Source ||
-			(*target).DeletionTimestamp != nil ||
-			(*target).Status.Phase == corev1.PodFailed ||
-			(*target).Status.Phase == corev1.PodSucceeded {
-			continue
-		}
-		if w.Source == podsource.SourceRef(a.clusterID, string(pod.UID)) {
-			return nil
-		}
-		if w.GatewayKey == "" &&
-			pod.Namespace == a.rootNamespace && pod.Spec.ServiceAccountName == a.ztunnelServiceAccount &&
-			pod.Spec.NodeName != "" && pod.Spec.NodeName == (*target).Spec.NodeName && eligibleDelegationTarget(*target) {
-			return nil
-		}
-	}
-	return fmt.Errorf("caller does not own or delegate active identity %s", requested.Principal.String())
 }

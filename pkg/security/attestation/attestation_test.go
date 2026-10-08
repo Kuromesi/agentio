@@ -142,17 +142,11 @@ func TestRegisteredAttestationAuthenticatorPreservesDelegateError(t *testing.T) 
 }
 
 func TestRegisteredAttestationAuthenticatorRejectsInvalidConstruction(t *testing.T) {
-	if _, err := NewRegisteredAttestationAuthenticator(
-		nil,
-		[]model.Attestation{model.AttestationKubernetes},
-	); err == nil {
+	if _, err := NewRegisteredAttestationAuthenticator(nil, []model.Attestation{model.AttestationKubernetes}); err == nil {
 		t.Fatal("NewRegisteredAttestationAuthenticator() accepted a nil delegate")
 	}
 	var typedNil *fakeAuthenticator
-	if _, err := NewRegisteredAttestationAuthenticator(
-		typedNil,
-		[]model.Attestation{model.AttestationKubernetes},
-	); err == nil {
+	if _, err := NewRegisteredAttestationAuthenticator(typedNil, []model.Attestation{model.AttestationKubernetes}); err == nil {
 		t.Fatal("NewRegisteredAttestationAuthenticator() accepted a typed nil delegate")
 	}
 	if _, err := NewRegisteredAttestationAuthenticator(

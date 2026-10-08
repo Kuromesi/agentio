@@ -910,13 +910,7 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 		address.GetWorkload().GetExtensions(),
 	); !reflect.DeepEqual(
 		got,
-		[]string{
-			"workload-identity",
-			"workload-metadata",
-			"traffic-policy-reference",
-			"egress-policies",
-			"sni-traffic-policy",
-		},
+		[]string{"workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"},
 	) {
 		t.Fatalf("Workload extensions: %v", got)
 	}

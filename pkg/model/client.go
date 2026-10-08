@@ -21,15 +21,13 @@ type Attestation string
 
 const AttestationKubernetes Attestation = "kubernetes"
 
-// PeerIdentity contains only verified authentication evidence. The registry
-// resolves it to the Workloads whose certificate identities the caller may use.
+// PeerIdentity contains the caller's verified authentication information.
 type PeerIdentity struct {
 	AttestedBy Attestation
 	Kubernetes KubernetesPeer
 }
 
-// KubernetesPeer is produced by TokenReview, independently of certificate naming.
-// Pod bindings are required for workload issuance and xDS ownership resolution.
+// KubernetesPeer contains verified service account and optional Pod binding information.
 type KubernetesPeer struct {
 	Namespace      string
 	ServiceAccount string

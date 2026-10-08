@@ -124,11 +124,8 @@ func newServerWithScheduler(
 	pushScheduler *PushScheduler,
 	requestRateLimit float64,
 ) (*Server, error) {
-	if authenticator == nil || scopeFuncs == nil || nilutil.IsNilInterface(resources) || ready == nil ||
-		pushScheduler == nil {
-		return nil, fmt.Errorf(
-			"authenticator, scope functions, resource source, readiness callback, and push scheduler are required",
-		)
+	if authenticator == nil || scopeFuncs == nil || nilutil.IsNilInterface(resources) || ready == nil || pushScheduler == nil {
+		return nil, fmt.Errorf("authenticator, scope functions, resource source, readiness callback, and push scheduler are required")
 	}
 	if queueSize <= 0 {
 		return nil, fmt.Errorf("client queue size must be positive")
@@ -173,17 +170,11 @@ func (s *Server) generator(typeURL string) ResourceGenerator {
 	return s.defaultGen
 }
 
-// StreamAggregatedResources rejects the unsupported state-of-the-world protocol.
-func (s *Server) StreamAggregatedResources(
-	discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesServer,
-) error {
+func (s *Server) StreamAggregatedResources(discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesServer) error {
 	return status.Error(codes.Unimplemented, "state-of-the-world ADS is not supported")
 }
 
-// DeltaAggregatedResources authenticates and serves a Delta ADS connection.
-func (s *Server) DeltaAggregatedResources(
-	stream discoveryv3.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
-) error {
+func (s *Server) DeltaAggregatedResources(stream discoveryv3.AggregatedDiscoveryService_DeltaAggregatedResourcesServer) error {
 	return s.serveDelta(stream)
 }
 
@@ -249,24 +240,6 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 	}()
 
 	subscription := s.resources.Subscribe(stream.Context())
-	// Gateway membership is published with workload facts. Watch those changes
-	// even when the client only subscribes to CDS or SDS.
-	if scope.Class == model.ClientEgressGateway {
-		subscription.Watch(model.AddressType)
-	}
-	validateGatewayScope := func() error {
-		if scope.Class != model.ClientEgressGateway {
-			return nil
-		}
-		current, err := s.scopeFuncs.ResolveScope(first.request.GetNode(), caller)
-		if err != nil {
-			return status.Error(codes.PermissionDenied, err.Error())
-		}
-		if current != scope {
-			return status.Error(codes.PermissionDenied, "gateway scope has changed")
-		}
-		return nil
-	}
 	watches := make(map[string]*watchState)
 	connection := newPushConnection(stream.Context())
 	defer s.pushScheduler.cancel(connection)
@@ -282,9 +255,6 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 		}
 		if incoming.request == nil {
 			return true, status.Error(codes.InvalidArgument, "empty DeltaDiscoveryRequest")
-		}
-		if err := validateGatewayScope(); err != nil {
-			return true, err
 		}
 		return false, s.handleRequest(stream, scope, connLog, watches, subscription, incoming.request)
 	}
@@ -310,15 +280,8 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 				return err
 			}
 		case update := <-subscription.Updates():
-			if err := validateGatewayScope(); err != nil {
-				return err
-			}
 			s.pushScheduler.Enqueue(connection, update)
 		case push := <-connection.pushes:
-			if err := validateGatewayScope(); err != nil {
-				s.pushScheduler.Done(push)
-				return err
-			}
 			err := s.pushUpdate(stream, scope, connLog, watches, push.Update)
 			s.pushScheduler.Done(push)
 			if err != nil {

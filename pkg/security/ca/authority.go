@@ -46,13 +46,14 @@ const (
 var workloadCAKeys = casecret.Keys{Certificate: caCertKey, PrivateKey: caKeyKey, Bundle: caBundleKey}
 
 type AuthorityOptions struct {
+	ClusterID     string
 	TrustDomain   string
 	Namespace     string
 	SecretName    string
 	ConfigMapName string
 	ServiceName   string
-	// WorkloadSourceExtensionOID enables opt-in instance certificates under an
-	// operator-assigned private OID. Empty leaves principal-only issuance enabled.
+	// WorkloadSourceExtensionOID enables source extensions under a private enterprise OID.
+	// Empty disables extensions and rejects explicit source requests.
 	WorkloadSourceExtensionOID string
 	// LeafLifetime is the validity period of the certificates this authority
 	// issues: workload certificates served over the CA API, and the xDS server's
@@ -210,7 +211,7 @@ func LoadOrCreateAuthority(
 	return authority, nil
 }
 
-// UseDelegatedIdentityAuthorizer installs the policy used for every certificate target.
+// UseDelegatedIdentityAuthorizer installs the policy for explicit targets and instance requests.
 func (a *Authority) UseDelegatedIdentityAuthorizer(authorizer attestation.DelegatedIdentityAuthorizer) {
 	a.authorizerMu.Lock()
 	a.delegatedIdentityAuthorizer = authorizer
@@ -326,10 +327,7 @@ func issueServerCertificate(ca pki.SigningCA, rootPEM []byte, names []string,
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("sign server certificate: %w", err)
 	}
-	certificate, err := tls.X509KeyPair(
-		pki.AppendCertificateChain(issued.CertificatePEM, rootPEM),
-		issued.PrivateKeyPEM,
-	)
+	certificate, err := tls.X509KeyPair(pki.AppendCertificateChain(issued.CertificatePEM, rootPEM), issued.PrivateKeyPEM)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("load server certificate: %w", err)
 	}

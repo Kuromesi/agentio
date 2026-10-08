@@ -38,7 +38,6 @@ import (
 type wdsProjection struct {
 	ClusterID             string
 	Workload              model.Workload
-	ServiceAccount        string // Kubernetes discovery metadata, not the certificate principal.
 	Endpoints             []model.Endpoint
 	Services              []model.Service
 	SNIPolicy             *extensionsv1.SniTrafficPolicy
@@ -47,7 +46,6 @@ type wdsProjection struct {
 	TrafficPolicyNames    []string
 	MetadataConfiguration *workloadMetadataConfiguration
 	EgressGatewayKeys     []string
-	OwnedGatewayKey       string
 }
 
 // buildWDSAddress compiles one Workload into the canonical Address form
@@ -101,16 +99,6 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		wireWorkload.NetworkMode = workloadv1.NetworkMode_HOST_NETWORK
 	}
 	address := &workloadv1.Address{Type: &workloadv1.Address_Workload{Workload: wireWorkload}}
-	if identity := input.Workload.Principal; identity != (model.Principal{}) {
-		config, err := marshalDeterministicAny(&extensionsv1.WorkloadIdentity{SpiffeId: identity.String()})
-		if err != nil {
-			return nil, err
-		}
-		wireWorkload.Extensions = append(
-			wireWorkload.Extensions,
-			&workloadv1.Extension{Name: "workload-identity", Config: config},
-		)
-	}
 	if input.MetadataConfiguration != nil {
 		metadata, err := newWorkloadMetadataExtension(filteredWorkloadLabels(
 			input.Workload.Labels, input.MetadataConfiguration.IgnoredLabels))
@@ -170,9 +158,7 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 		ServiceKeys:       serviceKeys,
 		GatewayReferences: input.EgressGatewayKeys,
 	}}
-	if input.OwnedGatewayKey != "" {
-		facts.GatewayOwner = input.OwnedGatewayKey
-	}
+	facts.GatewayOwner = input.Workload.GatewayKey
 	addressResource, err := model.NewResource(
 		model.ResourceKey{
 			TypeURL: model.AddressType,
@@ -467,9 +453,13 @@ func addressAlias(network, address string) string {
 	return network + "/" + address
 }
 
-// Full SPIFFE identity and Kubernetes discovery metadata are independent.
+// projectWorkloadIdentity returns the WDS trust domain and service account from the principal.
+// A nonempty principal must use the namespace/service-account format and match the Workload namespace.
 func projectWorkloadIdentity(input wdsProjection) (string, string, error) {
 	principal := input.Workload.Principal
+	if principal == (model.Principal{}) {
+		return "", "", nil
+	}
 	if namespace, account, kubernetes := podsource.ServiceAccountFromPrincipal(principal); kubernetes {
 		if namespace != input.Workload.Namespace {
 			return "", "", fmt.Errorf(
@@ -477,15 +467,9 @@ func projectWorkloadIdentity(input wdsProjection) (string, string, error) {
 				input.Workload.UID,
 			)
 		}
-		if input.ServiceAccount != "" && input.ServiceAccount != account {
-			return "", "", fmt.Errorf(
-				"workload %s source service account conflicts with certificate principal",
-				input.Workload.UID,
-			)
-		}
 		return principal.TrustDomain(), account, nil
 	}
-	return principal.TrustDomain(), input.ServiceAccount, nil
+	return "", "", fmt.Errorf("WDS identity fields cannot represent workload principal %s", principal.String())
 }
 
 // marshalDeterministicAny encodes the payload before wrapping it: deterministic

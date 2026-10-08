@@ -444,24 +444,10 @@ func TestBuildWDSAddressEncodingIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestExplicitWDSIdentityPreservesDiscoveryMetadata(t *testing.T) {
+func TestWDSRejectsUnrepresentableIdentity(t *testing.T) {
 	workload := projectionTestWorkload()
 	workload.Principal = mustTestPrincipal(workload.Principal.TrustDomain(), "workload/app")
-	resource, err := buildWDSAddress(wdsProjection{Workload: workload, ServiceAccount: "app"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := &workloadv1.Address{}
-	if err := resource.Value.UnmarshalTo(address); err != nil {
-		t.Fatal(err)
-	}
-	wire := address.GetWorkload()
-	identity := new(extensionsv1.WorkloadIdentity)
-	if !compatibilityExtension(t, wire, "workload-identity", identity) ||
-		identity.SpiffeId != workload.Principal.String() {
-		t.Fatalf("identity: %v", identity)
-	}
-	if wire.ServiceAccount != "app" || wire.Namespace != workload.Namespace {
-		t.Fatal("Kubernetes discovery metadata changed")
+	if _, err := buildWDSAddress(wdsProjection{Workload: workload}); err == nil {
+		t.Fatal("WDS accepted an unrepresentable principal")
 	}
 }

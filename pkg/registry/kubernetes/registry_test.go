@@ -183,8 +183,8 @@ func TestDelegatedAuthorizationUsesEffectivePrincipalIndex(t *testing.T) {
 	registry := newTestRegistry(t, ctx, objects, nil)
 
 	requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
-	key := requested.String()
-	candidates := registry.DelegatedIdentityAuthorizer().workloadsByIdentity.Lookup(key)
+	key := target.Spec.NodeName + "|" + requested.String()
+	candidates := registry.DelegatedIdentityAuthorizer().targetsByNodePrincipal.Lookup(key)
 	if len(candidates) != 1 || candidates[0].Name != target.Name {
 		t.Fatalf("delegation candidates = %#v, want only %s", candidates, target.Name)
 	}

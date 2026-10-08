@@ -89,16 +89,15 @@ func (a registeredAttestationAuthenticator) Authenticate(ctx context.Context) (m
 	return peer, nil
 }
 
-// CertificateTarget selects a principal and, optionally, one source instance.
-// Source is a caller-supplied selector until the authorizer accepts the pair.
-// Its zero value requests a principal-only certificate for older clients.
+// CertificateTarget identifies the principal and optional source instance to authorize.
 type CertificateTarget struct {
 	Principal model.Principal
-	Source    model.SourceRef
+	// Source selects an instance; its zero value requests a principal-only certificate.
+	Source model.SourceRef
 }
 
-// DelegatedIdentityAuthorizer authorizes the final target, including self
-// issuance and requests from older clients. A nonzero Source must
+// DelegatedIdentityAuthorizer authorizes explicit targets and instance requests.
+// A nonzero Source must
 // belong to the requested Principal and be owned or delegatable by the caller.
 type DelegatedIdentityAuthorizer interface {
 	Authorize(context.Context, model.PeerIdentity, CertificateTarget) error
