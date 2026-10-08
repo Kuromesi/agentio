@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+# Copyright 2026 The Kruise Authors
+ARG ENVOY_IMAGE=docker.io/envoyproxy/envoy@sha256:57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4
+FROM golang:1.26.8 AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG AGENT_VERSION=dev
+ARG AGENT_REVISION=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/openkruise/agentio/pkg/gatewayagent.Version=${AGENT_VERSION} -X github.com/openkruise/agentio/pkg/gatewayagent.Revision=${AGENT_REVISION}" -o /out/gateway-agent ./cmd/gateway-agent
+FROM ${ENVOY_IMAGE}
+WORKDIR /
+COPY --from=builder /out/gateway-agent /usr/local/bin/gateway-agent
+COPY LICENSE NOTICE /usr/share/doc/agentio-gateway/
+USER 1337:1337
+ENTRYPOINT ["/usr/local/bin/gateway-agent"]
+CMD []

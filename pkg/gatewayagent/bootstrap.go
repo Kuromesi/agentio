@@ -1,0 +1,64 @@
+// Copyright 2026 The Kruise Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package gatewayagent
+
+import (
+	"bytes"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"text/template"
+
+	bootstrapv3 "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
+	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/bootstrap/internal_listener/v3"
+	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
+	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
+	"google.golang.org/protobuf/encoding/protojson"
+)
+
+//go:embed envoy_bootstrap.json.tmpl
+var bootstrapTemplate string
+
+func bootstrapConfig(c Config) (*bootstrapv3.Bootstrap, error) {
+	localhost, wildcard := localAddresses(c.IP)
+	metadata := maps.Clone(c.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	for key, value := range map[string]string{"POD_NAME": c.PodName,
+		"POD_NAMESPACE":    c.Namespace,
+		"POD_UID":          c.PodUID,
+		"NODE_NAME":        c.NodeName,
+		"CLUSTER_ID":       c.ClusterID,
+		"AGENTIO_VERSION":  BuildInfo().Version,
+		"AGENTIO_REVISION": BuildInfo().Revision} {
+		metadata[key] = value
+	}
+	parameters := map[string]any{"NodeID": "agentio-egress/" + c.Namespace + "/" + c.PodUID,
+		"LogAsJSON":          c.LogAsJSON,
+		"Metadata":           metadata,
+		"Localhost":          localhost,
+		"Wildcard":           wildcard,
+		"SDSSocket":          c.SDSSocket,
+		"XDSSocket":          c.XDSSocket,
+		"StatsFlushInterval": fmt.Sprintf("%.9fs", c.StatsFlushInterval.Seconds())}
+	t, err := template.New("gateway").Funcs(template.FuncMap{"json": func(v any) (string, error) {
+		b, err := json.Marshal(v)
+		return string(b), err
+	}}).Parse(bootstrapTemplate)
+	if err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	if err := t.Execute(&b, parameters); err != nil {
+		return nil, err
+	}
+	result := &bootstrapv3.Bootstrap{}
+	if err := protojson.Unmarshal(b.Bytes(), result); err != nil {
+		return nil, err
+	}
+	return result, result.ValidateAll()
+}
