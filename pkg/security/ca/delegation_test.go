@@ -31,7 +31,6 @@ type fakeDelegatedIdentityAuthorizer struct {
 	calls     int
 	caller    model.PeerIdentity
 	requested model.Principal
-	source    model.SourceRef
 	err       error
 	authorize func(context.Context, model.PeerIdentity, model.Principal) error
 }
@@ -39,14 +38,13 @@ type fakeDelegatedIdentityAuthorizer struct {
 func (f *fakeDelegatedIdentityAuthorizer) Authorize(
 	ctx context.Context,
 	caller model.PeerIdentity,
-	target attestation.CertificateTarget,
+	requested model.Principal,
 ) error {
 	f.calls++
 	f.caller = caller
-	f.requested = target.Principal
-	f.source = target.Source
+	f.requested = requested
 	if f.authorize != nil {
-		return f.authorize(ctx, caller, target.Principal)
+		return f.authorize(ctx, caller, requested)
 	}
 	return f.err
 }
@@ -75,8 +73,7 @@ func certificateIdentityForTest(
 	if err != nil {
 		t.Fatalf("parse test certificate request: %v", err)
 	}
-	target, err := authority.certificateTarget(ctx, caller, request, csr)
-	return target.Principal, err
+	return authority.certificatePrincipal(ctx, caller, request, csr)
 }
 
 func TestSelfIdentityUsesAuthorizer(t *testing.T) {
@@ -100,7 +97,7 @@ func TestSelfIdentityUsesAuthorizer(t *testing.T) {
 	}
 }
 
-// Delegation must go through the authorizer; no Pod source is available here.
+// Delegation must go through the authorizer.
 func TestDelegatedIdentityUsesAuthorizer(t *testing.T) {
 	denied := errors.New("delegation denied")
 	authorizer := &fakeDelegatedIdentityAuthorizer{err: denied}

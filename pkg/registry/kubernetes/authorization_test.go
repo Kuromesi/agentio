@@ -26,7 +26,6 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
-	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
 func delegationPod(namespace, name, serviceAccount, node string) *corev1.Pod {
@@ -37,47 +36,23 @@ func delegationPod(namespace, name, serviceAccount, node string) *corev1.Pod {
 	}
 }
 
-func TestCertificateSourceDistinguishesPodsSharingPrincipal(t *testing.T) {
-	a := delegationPod("demo", "a", "shared", "node-a")
-	a.Status.PodIP = "" // CA authorization must not depend on network discovery.
-	b := delegationPod("demo", "b", "shared", "node-a")
-	remote := delegationPod("demo", "remote", "shared", "node-b")
+func TestCertificateAuthorizationWithoutPodAddress(t *testing.T) {
+	pod := delegationPod("demo", "app", "shared", "node-a")
+	pod.Status.PodIP = ""
+	pod.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
 	node := delegationPod("agentio-system", "ztunnel", "ztunnel", "node-a")
-	for _, p := range []*corev1.Pod{a, b, remote} {
-		p.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
-	}
-	r := newTestRegistry(t, t.Context(), []runtime.Object{a, b, remote, node}, nil)
+	r := newTestRegistry(t, t.Context(), []runtime.Object{pod, node}, nil)
 	authorizer := r.DelegatedIdentityAuthorizer()
-	principal := mustTestPrincipal("cluster.local", "ns/demo/sa/shared")
-	for _, tc := range []struct {
-		name     string
-		caller   *corev1.Pod
-		registry string
-		key      string
-		allow    bool
-	}{
-		{"self", a, "kubernetes/test", string(a.UID), true},
-		{"other Pod with same SA", a, "kubernetes/test", string(b.UID), false},
-		{"other Pod self", b, "kubernetes/test", string(b.UID), true},
-		{"local delegation a", node, "kubernetes/test", string(a.UID), true},
-		{"local delegation b", node, "kubernetes/test", string(b.UID), true},
-		{"remote delegation", node, "kubernetes/test", string(remote.UID), false},
-		{"wrong registry", node, "kubernetes/other", string(a.UID), false},
-		{"unknown instance", node, "kubernetes/test", "unknown", false},
-		{"source belongs to different principal", node, "kubernetes/test", string(node.UID), false},
-		{"missing key", node, "kubernetes/test", "", false},
-		{"principal-only self", a, "", "", true},
-		{"principal-only delegation", node, "", "", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := authorizer.Authorize(t.Context(), gatewayTestPeer(tc.caller), attestation.CertificateTarget{
-				Principal: principal,
-				Source:    model.SourceRef{Registry: tc.registry, Key: tc.key},
-			})
-			if (err == nil) != tc.allow {
-				t.Fatalf("Authorize() = %v, want allow=%v", err, tc.allow)
+	if r.Workloads.GetKey("test//Pod/demo/app") != nil {
+		t.Fatal("Pod without an address has a network Workload")
+	}
+	for _, path := range []string{"ns/demo/sa/shared", "cluster/test/ns/demo/workload/app"} {
+		principal := mustTestPrincipal("cluster.local", path)
+		for _, caller := range []*corev1.Pod{pod, node} {
+			if err := authorizer.Authorize(t.Context(), gatewayTestPeer(caller), principal); err != nil {
+				t.Fatalf("caller %s requesting %s: %v", caller.Name, principal, err)
 			}
-		})
+		}
 	}
 }
 
@@ -184,7 +159,7 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 			r := newTestRegistry(t, ctx, []runtime.Object{ztunnel, target}, nil)
 
 			err := r.DelegatedIdentityAuthorizer().
-				Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested})
+				Authorize(ctx, caller, requested)
 			if test.allow && err != nil {
 				t.Fatalf("Authorize denied valid delegation: %v", err)
 			}

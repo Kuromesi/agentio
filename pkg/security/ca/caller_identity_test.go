@@ -19,22 +19,17 @@ import (
 	"testing"
 )
 
-func TestSelfRequestWithoutSourceDoesNotRequireTargetAuthorization(t *testing.T) {
+func TestServiceAccountSelfRequestDoesNotRequireDelegatedAuthorization(t *testing.T) {
 	caller := peerIdentity("demo", "app")
 	caller.Kubernetes.WorkloadName, caller.Kubernetes.WorkloadUID = "", ""
 	want := serviceAccountPrincipal("demo", "app")
-	for _, configured := range []bool{false, true} {
-		authorizer := &fakeDelegatedIdentityAuthorizer{err: fmt.Errorf("instance authorization must not run")}
-		authority := certificateAuthority(t, caller, authorizer)
-		if configured {
-			authority.workloadSourceOID = testWorkloadSourceOID
-		}
-		response, err := authority.CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
-		if err != nil || authorizer.calls != 0 {
-			t.Fatalf("self request: %v, calls=%d", err, authorizer.calls)
-		}
-		if responseIdentity(t, response) != want.String() {
-			t.Fatal("wrong caller SAN")
-		}
+	authorizer := &fakeDelegatedIdentityAuthorizer{err: fmt.Errorf("delegated authorization must not run")}
+	authority := certificateAuthority(t, caller, authorizer)
+	response, err := authority.CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
+	if err != nil || authorizer.calls != 0 {
+		t.Fatalf("self request: %v, calls=%d", err, authorizer.calls)
+	}
+	if responseIdentity(t, response) != want.String() {
+		t.Fatal("wrong caller SAN")
 	}
 }

@@ -98,6 +98,9 @@ func New(
 	if strings.TrimSpace(options.ClusterID) == "" || strings.TrimSpace(options.TrustDomain) == "" {
 		return nil, fmt.Errorf("cluster ID and trust domain are required")
 	}
+	if _, err := podsource.WorkloadPrincipal(options.TrustDomain, options.ClusterID, "default", "pod"); err != nil {
+		return nil, fmt.Errorf("workload identity configuration: %w", err)
+	}
 	if options.ZTunnelServiceAccount == "" {
 		options.ZTunnelServiceAccount = "ztunnel"
 	}

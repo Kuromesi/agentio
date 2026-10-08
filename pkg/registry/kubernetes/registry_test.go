@@ -41,6 +41,17 @@ var _ interface {
 var _ attestation.DelegatedIdentityAuthorizer = (*DelegatedIdentityAuthorizer)(nil)
 var _ mitm.GatewayCertificateAuthorizer = (*GatewayCertificateAuthorizer)(nil)
 
+func TestRegistryRejectsClusterIDWithPathSeparator(t *testing.T) {
+	client := &fakeKubeClient{
+		Client:  kube.NewFakeClient(),
+		watcher: newFakeGatewayCRDWatcher(),
+	}
+	_, err := New(client, Options{ClusterID: "prod/a", TrustDomain: "cluster.local"}, t.Context().Done())
+	if err == nil {
+		t.Fatal("accepted a cluster ID that cannot be parsed from a workload identity")
+	}
+}
+
 func TestRegistrySecretScope(t *testing.T) {
 	for _, tt := range []struct {
 		name           string
@@ -199,7 +210,7 @@ func TestDelegatedAuthorizationUsesEffectivePrincipalIndex(t *testing.T) {
 		},
 	}
 	if err := registry.DelegatedIdentityAuthorizer().
-		Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested}); err != nil {
+		Authorize(ctx, caller, requested); err != nil {
 		t.Fatalf("Authorize denied valid delegation: %v", err)
 	}
 }
