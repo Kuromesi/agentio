@@ -25,4 +25,4 @@ docker run --rm --platform linux/amd64 --user 1337:1337 \
   -e AGENTIO_TEST_NETWORK_FAULTS=1 \
   -e "AGENTIO_TEST_LEGACY_ENVOY_BINARY=$legacy_binary" \
   "$image" -test.v -test.timeout=90s \
-  -test.run='TestCommunityEnvoyWasmECDS|TestADSDetectsSilentBlackhole|TestLegacyEnvoyBootstrap'
+  -test.run='TestCommunityEnvoyWasmECDS|TestADSDetectsSilentBlackhole|TestLegacyEnvoyBootstrap|TestEnvoyConfiguredBootstrap'

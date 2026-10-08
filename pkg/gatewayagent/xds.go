@@ -61,9 +61,10 @@ func (p *xdsProxy) connect(ctx context.Context) (context.Context, *grpc.ClientCo
 		ctx,
 		p.config.Proxy.DiscoveryAddress,
 		p.config.XDSServerName,
-		p.config.RootCertFile,
+		envStringFallback(p.config.XDSRootCertFile, p.config.RootCertFile),
 		p.config.TokenFile,
 		p.config.ClusterID,
+		p.config.XDSHeaders,
 		grpc.WithKeepaliveParams(
 			keepalive.ClientParameters{Time: p.config.KeepaliveInterval, Timeout: p.config.KeepaliveTimeout},
 		),
@@ -73,6 +74,7 @@ func (p *xdsProxy) connect(ctx context.Context) (context.Context, *grpc.ClientCo
 func connectControlPlane(
 	ctx context.Context,
 	address, serverName, rootFile, tokenFile, clusterID string,
+	headers map[string]string,
 	options ...grpc.DialOption,
 ) (context.Context, *grpc.ClientConn, error) {
 	// Read both files for every new stream. Projected tokens and CA bundles may
@@ -108,6 +110,9 @@ func connectControlPlane(
 		"authorization", "Bearer "+strings.TrimSpace(string(token)),
 		"clusterid", clusterID,
 	))
+	for key, value := range headers {
+		ctx = metadata.AppendToOutgoingContext(ctx, key, value)
+	}
 	return ctx, conn, nil
 }
 
@@ -184,4 +189,11 @@ func copyMessages[T any](recv func() (T, error), send func(T) error) error {
 			return err
 		}
 	}
+}
+
+func envStringFallback(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

@@ -39,6 +39,8 @@ type ProxyConfig struct {
 
 // Config contains the gateway identity, credential paths and runtime settings.
 type Config struct {
+	AdvancedOptions
+	XDSRootCertFile             string
 	Legacy                      bool
 	DNSDomain                   string
 	Proxy                       ProxyConfig

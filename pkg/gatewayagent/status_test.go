@@ -15,6 +15,7 @@
 package gatewayagent
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -67,7 +68,15 @@ func TestMetricsAggregateAndSurviveEnvoyFailure(t *testing.T) {
 		request.Header.Set("Accept-Encoding", "gzip")
 		proxyMetrics(c)(response, request)
 		parser := expfmt.NewTextParser(model.UTF8Validation)
-		families, err := parser.TextToMetricFamilies(strings.NewReader(response.Body.String()))
+		if response.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatal("compression not negotiated")
+		}
+		reader, err := gzip.NewReader(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		families, err := parser.TextToMetricFamilies(reader)
+		closeResource(reader)
 		if err != nil {
 			t.Fatalf("invalid metrics: %v\n%s", err, response.Body.String())
 		}

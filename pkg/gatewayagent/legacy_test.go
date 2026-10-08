@@ -27,6 +27,8 @@ import (
 func TestLegacyBootstrap(t *testing.T) {
 	c := testConfig(t)
 	c.Legacy, c.DNSDomain = true, "demo.svc.cluster.local"
+	enabled := true
+	c.PolicyStore = &enabled
 	b, err := bootstrapConfig(c)
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +107,8 @@ func TestLegacyEnvoyBootstrap(t *testing.T) {
 	}
 	c := testConfig(t)
 	c.Legacy, c.DNSDomain = true, "demo.svc.cluster.local"
+	enabled := true
+	c.PolicyStore = &enabled
 	b, err := bootstrapConfig(c)
 	if err != nil {
 		t.Fatal(err)

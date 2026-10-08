@@ -93,7 +93,8 @@ func runEnvoy(
 			ComponentLogLevel:  c.ComponentLogLevel,
 			LogAsJSON:          c.LogAsJSON,
 			OutlierLogPath:     c.OutlierLogPath,
-			NodeIPs:            []string{c.IP},
+			NodeIPs:            c.nodeIPs(),
+			SkipDeprecatedLogs: boolOption(c.SkipDeprecatedLogs, true),
 			FileFlushInterval:  durationpb.New(c.Proxy.FileFlushInterval),
 			FileFlushMinSizeKB: c.Proxy.FileFlushMinSizeKB,
 		}),
@@ -101,7 +102,7 @@ func runEnvoy(
 	localhost, _ := localAddresses(c.IP)
 	agent := envoy.NewAgent(proxy, c.Proxy.TerminationDrainDuration,
 		c.MinimumDrainDuration, localhost, int(c.Proxy.AdminPort),
-		15021, 15090, c.ExitOnZeroActiveConnections)
+		portOption(c.EnvoyStatusPort, 15021), portOption(c.PrometheusPort, 15090), c.ExitOnZeroActiveConnections)
 	var draining atomic.Bool
 	stopStatus, statusDone, err := startStatus(ctx, c, agent, cancel, &draining, identity.ready)
 	if err != nil {

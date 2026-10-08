@@ -15,12 +15,15 @@
 package gatewayagent
 
 import (
+	"compress/gzip"
 	"context"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +43,7 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		Context:       ctx,
 	}
 	var probeMu sync.Mutex
+	policyProbe := &policyReadiness{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz/ready", func(w http.ResponseWriter, _ *http.Request) {
 		if c.metrics != nil {
@@ -55,6 +59,9 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		}
 		probeMu.Lock()
 		err := probe.Check()
+		if err == nil {
+			err = policyProbe.check(ctx, c)
+		}
 		probeMu.Unlock()
 		if err != nil {
 			http.Error(w, "gateway not ready", http.StatusServiceUnavailable)
@@ -93,12 +100,33 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("GET /stats/prometheus", proxyMetrics(c))
-	return serveStatus(mux)
+	mux.HandleFunc("GET /metrics", proxyMetrics(c))
+	if c.Profiling {
+		local := func(handler http.HandlerFunc) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				if !loopbackRequest(r) {
+					http.Error(w, "local requests only", http.StatusForbidden)
+					return
+				}
+				handler(w, r)
+			}
+		}
+		mux.HandleFunc("GET /debug/pprof/", local(pprof.Index))
+		mux.HandleFunc("GET /debug/pprof/cmdline", local(pprof.Cmdline))
+		mux.HandleFunc("GET /debug/pprof/profile", local(pprof.Profile))
+		mux.HandleFunc("GET /debug/pprof/symbol", local(pprof.Symbol))
+		mux.HandleFunc("GET /debug/pprof/trace", local(pprof.Trace))
+	}
+	return serveStatusOn(mux, portOption(c.StatusPort, 15020))
 }
 
 // Envoy owns 15021 and 15090; the agent is the readiness backend on 15020.
 func serveStatus(status http.Handler) (func(), <-chan error, error) {
-	listener, err := net.Listen("tcp", ":15020")
+	return serveStatusOn(status, 15020)
+}
+
+func serveStatusOn(status http.Handler, port int) (func(), <-chan error, error) {
+	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,6 +149,21 @@ func loopbackRequest(r *http.Request) bool {
 var adminClient = &http.Client{Timeout: 5 * time.Second}
 
 func proxyMetrics(c Config) http.HandlerFunc {
+	handler := proxyMetricsPlain(c)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Accept-Encoding")
+		if boolOption(c.StatsCompression, true) && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			w.Header().Set("Content-Encoding", "gzip")
+			zipper := gzip.NewWriter(w)
+			defer closeResource(zipper)
+			handler(&compressedMetricsWriter{ResponseWriter: w, writer: zipper}, r)
+			return
+		}
+		handler(w, r)
+	}
+}
+
+func proxyMetricsPlain(c Config) http.HandlerFunc {
 	localhost, _ := localAddresses(c.IP)
 	target := "http://" + net.JoinHostPort(localhost, strconv.Itoa(int(c.Proxy.AdminPort))) + "/stats/prometheus"
 	var agentHandler http.Handler
@@ -162,4 +205,32 @@ func proxyMetrics(c Config) http.HandlerFunc {
 			slog.Debug("metrics response interrupted", "error", err)
 		}
 	}
+}
+
+type compressedMetricsWriter struct {
+	http.ResponseWriter
+	writer *gzip.Writer
+}
+
+func (w *compressedMetricsWriter) Write(p []byte) (int, error) { return w.writer.Write(p) }
+func acceptsGzip(header string) bool {
+	for part := range strings.SplitSeq(header, ",") {
+		tokens := strings.Split(strings.TrimSpace(part), ";")
+		if tokens[0] != "gzip" {
+			continue
+		}
+		quality := 1.0
+		for _, parameter := range tokens[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+			if ok && key == "q" {
+				parsed, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					return false
+				}
+				quality = parsed
+			}
+		}
+		return quality > 0 && quality <= 1
+	}
+	return false
 }

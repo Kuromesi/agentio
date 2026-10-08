@@ -58,13 +58,13 @@ func (c Config) legacyMetadata(metadata map[string]any) error {
 		"ISTIO_VERSION":         legacyProxyVersion,
 		"NAMESPACE":             c.Namespace,
 		"NAME":                  c.PodName,
-		"INSTANCE_IPS":          c.IP,
+		"INSTANCE_IPS":          strings.Join(c.nodeIPs(), ","),
 		"SERVICE_ACCOUNT":       c.ServiceAccount,
-		"METADATA_DISCOVERY":    "true",
-		"ENABLE_POLICY_STORE":   "true",
+		"METADATA_DISCOVERY":    strconv.FormatBool(c.discoveryEnabled()),
+		"ENABLE_POLICY_STORE":   strconv.FormatBool(c.policyEnabled()),
 		"ENABLE_HBONE":          "true",
-		"ENVOY_STATUS_PORT":     15021,
-		"ENVOY_PROMETHEUS_PORT": 15090,
+		"ENVOY_STATUS_PORT":     portOption(c.EnvoyStatusPort, 15021),
+		"ENVOY_PROMETHEUS_PORT": portOption(c.PrometheusPort, 15090),
 	} {
 		if _, exists := metadata[key]; exists {
 			return fmt.Errorf("metadata key %q is reserved in legacy mode", key)

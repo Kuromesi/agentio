@@ -18,6 +18,9 @@ package gatewayagent
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -33,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/types/known/structpb"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
@@ -153,7 +158,14 @@ func (m *identityManager) run(ctx context.Context) {
 			m.notifyLocked()
 			m.mu.Unlock()
 			retry = 100 * time.Millisecond
-			renew.Reset(rotateTime(time.Now(), expires, 0.5, 0.01))
+			renew.Reset(
+				rotateTime(
+					time.Now(),
+					expires,
+					floatOption(m.config.RotationGraceRatio, .5),
+					floatOption(m.config.RotationJitter, .01),
+				),
+			)
 			slog.Info("gateway workload certificate renewed", "expires", expires)
 		}
 	}
@@ -205,7 +217,7 @@ func rotateTime(created, expires time.Time, graceRatio, jitterRatio float64) tim
 func requestWorkloadCertificate(ctx context.Context, c Config) (*tlsv3.Secret, time.Time, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, keyPEM, err := generateWorkloadKey(c)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -214,7 +226,15 @@ func requestWorkloadCertificate(ctx context.Context, c Config) (*tlsv3.Secret, t
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	ctx, conn, err := connectControlPlane(ctx, c.CAAddress, c.CAServerName, c.CARootCertFile, c.TokenFile, c.ClusterID)
+	ctx, conn, err := connectControlPlane(
+		ctx,
+		c.CAAddress,
+		c.CAServerName,
+		c.CARootCertFile,
+		c.TokenFile,
+		c.ClusterID,
+		c.CAHeaders,
+	)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -222,6 +242,9 @@ func requestWorkloadCertificate(ctx context.Context, c Config) (*tlsv3.Secret, t
 	response, err := ca.NewIstioCertificateServiceClient(conn).CreateCertificate(ctx, &ca.IstioCertificateRequest{
 		Csr:              string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})),
 		ValidityDuration: int64(c.SecretTTL.Seconds()),
+		Metadata: &structpb.Struct{
+			Fields: map[string]*structpb.Value{"CertSigner": structpb.NewStringValue(c.CertSigner)},
+		},
 	})
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("sign workload CSR: %w", err)
@@ -230,7 +253,6 @@ func requestWorkloadCertificate(ctx context.Context, c Config) (*tlsv3.Secret, t
 		return nil, time.Time{}, fmt.Errorf("CA returned an incomplete certificate chain")
 	}
 	chain := []byte(strings.Join(response.CertChain, "\n"))
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	pair, err := tls.X509KeyPair(chain, keyPEM)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("invalid CA certificate/key pair: %w", err)
@@ -314,4 +336,43 @@ func listenSocket(path string) (net.Listener, error) {
 		return nil, err
 	}
 	return listener, nil
+}
+
+func generateWorkloadKey(c Config) (crypto.Signer, []byte, error) {
+	var key crypto.Signer
+	var err error
+	if c.ECCCurve != "" {
+		curve := elliptic.P256()
+		if c.ECCCurve == "P384" {
+			curve = elliptic.P384()
+		}
+		key, err = ecdsa.GenerateKey(curve, rand.Reader)
+	} else {
+		size := c.RSAKeySize
+		if size == 0 {
+			size = 2048
+		}
+		key, err = rsa.GenerateKey(rand.Reader, size)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var der []byte
+	kind := "PRIVATE KEY"
+	if c.PKCS8 {
+		der, err = x509.MarshalPKCS8PrivateKey(key)
+	} else {
+		switch value := key.(type) {
+		case *rsa.PrivateKey:
+			kind = "RSA PRIVATE KEY"
+			der = x509.MarshalPKCS1PrivateKey(value)
+		case *ecdsa.PrivateKey:
+			kind = "EC PRIVATE KEY"
+			der, err = x509.MarshalECPrivateKey(value)
+		}
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}), nil
 }

@@ -49,13 +49,15 @@ import (
 
 type testCA struct {
 	ca.UnimplementedIstioCertificateServiceServer
-	key           *ecdsa.PrivateKey
-	cert          *x509.Certificate
-	root          []byte
-	tokens        chan string
-	wrongIdentity atomic.Bool
-	fail          atomic.Bool
-	beforeSign    func(context.Context) error
+	key            *ecdsa.PrivateKey
+	cert           *x509.Certificate
+	root           []byte
+	tokens         chan string
+	wrongIdentity  atomic.Bool
+	fail           atomic.Bool
+	beforeSign     func(context.Context) error
+	expectedSigner string
+	expectedHeader string
 }
 
 func newTestCA(t *testing.T) *testCA {
@@ -98,7 +100,13 @@ func (c *testCA) CreateCertificate(
 			return nil, err
 		}
 	}
+	if c.expectedSigner != "" && request.Metadata.GetFields()["CertSigner"].GetStringValue() != c.expectedSigner {
+		return nil, fmt.Errorf("wrong certificate signer")
+	}
 	md, _ := metadata.FromIncomingContext(ctx)
+	if c.expectedHeader != "" && (len(md.Get("x-ca-route")) != 1 || md.Get("x-ca-route")[0] != c.expectedHeader) {
+		return nil, fmt.Errorf("missing CA routing header")
+	}
 	if len(md.Get("authorization")) != 1 || len(md.Get("clusterid")) != 1 {
 		return nil, fmt.Errorf("missing CA authentication")
 	}
@@ -168,6 +176,12 @@ func TestLocalIdentityAndSDSRotation(t *testing.T) {
 	c := testConfig(t)
 	issuer := newTestCA(t)
 	c.CAAddress = issuer.serve(t)
+	c.CAHeaders = map[string]string{"x-ca-route": "issuer-a"}
+	issuer.expectedHeader = "issuer-a"
+	c.CertSigner = "workload"
+	issuer.expectedSigner = "workload"
+	c.ECCCurve = "P256"
+	c.PKCS8 = true
 	c.TokenFile = filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(c.TokenFile, []byte("first"), 0o600); err != nil {
 		t.Fatal(err)

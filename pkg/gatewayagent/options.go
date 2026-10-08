@@ -30,6 +30,7 @@ import (
 // paths are deliberately supplied separately by the operator/Downward API.
 // Duration values use Go duration strings, e.g. "30s".
 type RuntimeOptions struct {
+	AdvancedOptions
 	Concurrency                 *int           `json:"concurrency,omitempty"`
 	DrainDuration               string         `json:"drainDuration,omitempty"`
 	TerminationDrainDuration    string         `json:"terminationDrainDuration,omitempty"`
@@ -50,6 +51,24 @@ type RuntimeOptions struct {
 // then explicit CLI flags. CPU-derived concurrency is only a fallback.
 func LoadConfig(args []string, output io.Writer) (Config, error) {
 	c := FromEnvironment()
+	for _, arg := range args {
+		if arg == "--legacy" || arg == "-legacy" {
+			c.Legacy = true
+		}
+		if strings.HasPrefix(arg, "--legacy=") || strings.HasPrefix(arg, "-legacy=") {
+			_, value, _ := strings.Cut(arg, "=")
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				return c, err
+			}
+			c.Legacy = enabled
+		}
+	}
+	if c.Legacy {
+		c.legacyDefaults()
+		c.Proxy.DrainDuration = 45 * time.Second
+		c.Proxy.TerminationDrainDuration = 5 * time.Second
+	}
 	options, err := c.loadRuntimeOptions()
 	if err != nil {
 		return c, err
@@ -57,9 +76,7 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 	if err := c.applyFlags(args, output, options.Concurrency); err != nil {
 		return c, err
 	}
-	if c.Legacy {
-		c.legacyDefaults()
-	}
+	c.applyCredentialPaths()
 	if err := c.loadMetadata(); err != nil {
 		return c, err
 	}
@@ -68,7 +85,26 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 
 func (c *Config) loadRuntimeOptions() (RuntimeOptions, error) {
 	var options RuntimeOptions
-	if raw := os.Getenv("AGENTIO_GATEWAY_CONFIG"); raw != "" {
+	raw := os.Getenv("AGENTIO_GATEWAY_CONFIG")
+	if c.Legacy {
+		defaults, err := legacyAnnotationOptions()
+		if err != nil {
+			return options, err
+		}
+		if raw != "" {
+			var explicit map[string]any
+			if err := json.Unmarshal([]byte(raw), &explicit); err != nil {
+				return options, err
+			}
+			maps.Copy(defaults, explicit)
+		}
+		encoded, err := json.Marshal(defaults)
+		if err != nil {
+			return options, err
+		}
+		raw = string(encoded)
+	}
+	if raw != "" {
 		dec := json.NewDecoder(strings.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&options); err != nil {
@@ -78,6 +114,7 @@ func (c *Config) loadRuntimeOptions() (RuntimeOptions, error) {
 			return options, fmt.Errorf("AGENTIO_GATEWAY_CONFIG must contain one JSON object")
 		}
 	}
+	c.AdvancedOptions = options.AdvancedOptions
 	for _, setting := range []struct {
 		name   string
 		value  string
@@ -160,7 +197,7 @@ func (c *Config) loadMetadata() error {
 func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) error {
 	flags := flag.NewFlagSet("gateway-agent", flag.ContinueOnError)
 	flags.SetOutput(output)
-	flags.BoolVar(&c.Legacy, "legacy", false, "Use the pinned legacy gateway Envoy startup contract")
+	flags.BoolVar(&c.Legacy, "legacy", c.Legacy, "Use the pinned legacy gateway Envoy startup contract")
 	flags.StringVar(&c.AgentLogLevel, "agent-log-level", c.AgentLogLevel, "Agent log level: debug, info, warn, error")
 	flags.StringVar(&c.LogLevel, "envoy-log-level", c.LogLevel, "Envoy log level")
 	flags.StringVar(
@@ -203,6 +240,16 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 		"ADS gRPC keepalive interval (at least 30s, matching agentiod)",
 	)
 	flags.DurationVar(&c.KeepaliveTimeout, "keepalive-timeout", c.KeepaliveTimeout, "ADS gRPC keepalive timeout")
+	flags.StringVar(
+		&c.StatsEvictionInterval,
+		"stats-eviction-interval",
+		c.StatsEvictionInterval,
+		"Unused worker statistics eviction interval (multiple of stats flush)",
+	)
+	skipDeprecated := boolOption(c.SkipDeprecatedLogs, true)
+	flags.BoolVar(&skipDeprecated, "skip-deprecated-logs", skipDeprecated, "Suppress Envoy deprecation logs")
+	policy := boolOption(c.PolicyStore, false)
+	flags.BoolVar(&policy, "policy-store", policy, "Enable legacy SNI policy store and initial-sync readiness")
 	workers := 0
 	if concurrency != nil {
 		workers = *concurrency
@@ -214,15 +261,21 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
+	c.SkipDeprecatedLogs = &skipDeprecated
+	c.PolicyStore = &policy
 	explicitWorkers := concurrency != nil
 	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "concurrency" {
 			explicitWorkers = true
 		}
 	})
-	if !explicitWorkers && os.Getenv("AGENTIO_CPU_LIMIT") != "" {
+	cpuLimit := os.Getenv("AGENTIO_CPU_LIMIT")
+	if cpuLimit == "" && c.Legacy {
+		cpuLimit = os.Getenv("ISTIO_CPU_LIMIT")
+	}
+	if !explicitWorkers && cpuLimit != "" {
 		var err error
-		workers, err = strconv.Atoi(os.Getenv("AGENTIO_CPU_LIMIT"))
+		workers, err = strconv.Atoi(cpuLimit)
 		if err != nil || workers <= 0 {
 			return fmt.Errorf("AGENTIO_CPU_LIMIT must be a positive integer (limits.cpu with divisor 1)")
 		}
@@ -268,5 +321,5 @@ func (c Config) validateRuntime() error {
 	default:
 		return fmt.Errorf("invalid Envoy log level %q", c.LogLevel)
 	}
-	return nil
+	return c.validateAdvanced()
 }

@@ -86,8 +86,12 @@ func bootstrapConfig(c Config) (*bootstrapv3.Bootstrap, error) {
 	if err := t.Execute(&b, parameters); err != nil {
 		return nil, err
 	}
+	content, err := customizeBootstrap(b.Bytes(), c)
+	if err != nil {
+		return nil, err
+	}
 	result := &bootstrapv3.Bootstrap{}
-	if err := protojson.Unmarshal(b.Bytes(), result); err != nil {
+	if err := protojson.Unmarshal(content, result); err != nil {
 		return nil, err
 	}
 	return result, result.ValidateAll()

@@ -126,6 +126,19 @@ func effectiveConfig(c Config) map[string]any {
 	for k := range metadata {
 		metadata[k] = "<redacted>"
 	}
+	advanced := c.AdvancedOptions
+	for target, source := range map[*map[string]string]map[string]string{&advanced.XDSHeaders: c.XDSHeaders, &advanced.CAHeaders: c.CAHeaders} {
+		values := map[string]string{}
+		for key := range source {
+			values[key] = "<redacted>"
+		}
+		*target = values
+	}
+	// Native telemetry configuration may contain credentials or header values.
+	advanced.TelemetryClusters = nil
+	advanced.Tracing = nil
+	advanced.StatsSinks = nil
+	advanced.LoadStatsConfig = nil
 	workers := int(c.Proxy.Concurrency)
 	return map[string]any{
 		"version":    BuildInfo(),
@@ -134,6 +147,7 @@ func effectiveConfig(c Config) map[string]any {
 		"xdsAddress": c.Proxy.DiscoveryAddress,
 		"caAddress":  c.CAAddress,
 		"runtime": RuntimeOptions{
+			AdvancedOptions:             advanced,
 			Concurrency:                 &workers,
 			DrainDuration:               c.Proxy.DrainDuration.String(),
 			TerminationDrainDuration:    c.Proxy.TerminationDrainDuration.String(),

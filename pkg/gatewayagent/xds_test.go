@@ -37,9 +37,10 @@ const sandboxType = "type.googleapis.com/envoy.extensions.transport_sockets.tls.
 
 type discoveryFixture struct {
 	discovery.UnimplementedAggregatedDiscoveryServiceServer
-	tokens   chan string
-	requests chan *discovery.DeltaDiscoveryRequest
-	canceled chan struct{}
+	tokens         chan string
+	requests       chan *discovery.DeltaDiscoveryRequest
+	canceled       chan struct{}
+	expectedHeader string
 }
 
 func (s *discoveryFixture) DeltaAggregatedResources(
@@ -48,6 +49,12 @@ func (s *discoveryFixture) DeltaAggregatedResources(
 	md, _ := metadata.FromIncomingContext(stream.Context())
 	if len(md.Get("authorization")) != 1 {
 		return fmt.Errorf("missing authorization metadata")
+	}
+	if s.expectedHeader != "" && len(md.Get("x-route")) != 1 {
+		return fmt.Errorf("missing custom routing header")
+	}
+	if s.expectedHeader != "" && md.Get("x-route")[0] != s.expectedHeader {
+		return fmt.Errorf("wrong custom routing header")
 	}
 	s.tokens <- md.Get("authorization")[0]
 	request, err := stream.Recv()
@@ -113,6 +120,8 @@ func TestADSRelayAndRotatedToken(t *testing.T) {
 	t.Cleanup(upstream.Stop)
 	c := testConfig(t)
 	c.Proxy.DiscoveryAddress = server.Listener.Addr().String()
+	c.XDSHeaders = map[string]string{"x-route": "test-route"}
+	fixture.expectedHeader = "test-route"
 	c.RootCertFile = filepath.Join(t.TempDir(), "root.pem")
 	c.TokenFile = filepath.Join(t.TempDir(), "token")
 	root := pem.EncodeToMemory(&pem.Block{
@@ -122,6 +131,8 @@ func TestADSRelayAndRotatedToken(t *testing.T) {
 	if err := os.WriteFile(c.RootCertFile, root, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	c.XDSRootCertFile = c.RootCertFile
+	c.RootCertFile = "/unused-workload-root"
 	stop, _, err := startXDS(c)
 	if err != nil {
 		t.Fatal(err)
