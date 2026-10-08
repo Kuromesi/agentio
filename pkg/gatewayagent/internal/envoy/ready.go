@@ -34,6 +34,7 @@ type Probe struct {
 	NoEnvoy bool
 }
 
+// Prober checks whether Envoy can serve traffic.
 type Prober interface {
 	// Check executes the probe and returns an error if the probe fails.
 	Check() error
@@ -90,7 +91,7 @@ func (p *Probe) isEnvoyReady() error {
 	}
 	select {
 	case <-p.Context.Done():
-		return fmt.Errorf("server is terminated: %v", context.Cause(p.Context))
+		return fmt.Errorf("server is terminated: %w", context.Cause(p.Context))
 	default:
 		return p.checkEnvoyReadiness()
 	}
@@ -115,19 +116,21 @@ func (p *Probe) checkEnvoyReadiness() error {
 	return err
 }
 
+// ServerInfoState identifies an Envoy lifecycle state from Admin statistics.
 type ServerInfoState int32
 
 const (
-	// Server is live and serving traffic.
+	// Live indicates the server is live and serving traffic.
 	Live ServerInfoState = 0
-	// Server is draining listeners in response to external health checks failing.
+	// Draining indicates the server is draining listeners in response to external health checks failing.
 	Draining ServerInfoState = 1
-	// Server has not yet completed cluster manager initialization.
+	// PreInitializing indicates the server has not yet completed cluster manager initialization.
 	PreInitializing ServerInfoState = 2
-	// Server is running the cluster manager initialization callbacks (e.g., RDS).
+	// Initializing indicates the server is running the cluster manager initialization callbacks (e.g., RDS).
 	Initializing ServerInfoState = 3
 )
 
+// StateString returns the Envoy lifecycle state name.
 func StateString(state ServerInfoState) string {
 	switch state {
 	case Live:
@@ -146,7 +149,7 @@ func StateString(state ServerInfoState) string {
 func checkEnvoyStats(host string, port uint16) error {
 	state, ws, err := GetReadinessStats(host, port)
 	if err != nil {
-		return fmt.Errorf("failed to get readiness stats: %v", err)
+		return fmt.Errorf("failed to get readiness stats: %w", err)
 	}
 
 	if state != nil && ServerInfoState(*state) != Live {

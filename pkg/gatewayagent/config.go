@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 // Package gatewayagent owns the community Envoy gateway and its local credentials.
 package gatewayagent
@@ -13,6 +24,7 @@ import (
 	"time"
 )
 
+// ProxyConfig contains Envoy process and shutdown settings.
 type ProxyConfig struct {
 	DiscoveryAddress         string
 	ConfigPath               string
@@ -25,6 +37,7 @@ type ProxyConfig struct {
 	FileFlushMinSizeKB       uint32
 }
 
+// Config contains the gateway identity, credential paths and runtime settings.
 type Config struct {
 	Proxy                       ProxyConfig
 	PodName                     string
@@ -58,6 +71,7 @@ type Config struct {
 	ExitOnZeroActiveConnections bool
 }
 
+// FromEnvironment loads operator-supplied identity and paths with runtime defaults.
 func FromEnvironment() Config {
 	address := os.Getenv("AGENTIO_XDS_ADDRESS")
 	root := envString("AGENTIO_ROOT_CA", "/var/run/secrets/agentio/root-cert.pem")

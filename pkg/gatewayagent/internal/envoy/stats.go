@@ -129,8 +129,7 @@ func GetUpdateStatusStats(localHostAddr string, adminPort uint16) (*Stats, error
 }
 
 func parseStats(input *bytes.Buffer, stats []*stat) (err error) {
-	for input.Len() > 0 {
-		line, _ := input.ReadString('\n')
+	for line := range strings.SplitSeq(strings.TrimSuffix(input.String(), "\n"), "\n") {
 		for _, stat := range stats {
 			if e := stat.processLine(line); e != nil {
 				err = errors.Join(err, e)

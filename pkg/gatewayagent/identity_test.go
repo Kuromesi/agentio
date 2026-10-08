@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -69,10 +80,18 @@ func newTestCA(t *testing.T) *testCA {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &testCA{key: key, cert: cert, root: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), tokens: make(chan string, 16)}
+	return &testCA{
+		key:    key,
+		cert:   cert,
+		root:   pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		tokens: make(chan string, 16),
+	}
 }
 
-func (c *testCA) CreateCertificate(ctx context.Context, request *ca.IstioCertificateRequest) (*ca.IstioCertificateResponse, error) {
+func (c *testCA) CreateCertificate(
+	ctx context.Context,
+	request *ca.IstioCertificateRequest,
+) (*ca.IstioCertificateResponse, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	if len(md.Get("authorization")) != 1 || len(md.Get("clusterid")) != 1 {
 		return nil, fmt.Errorf("missing CA authentication")
@@ -108,7 +127,9 @@ func (c *testCA) CreateCertificate(ctx context.Context, request *ca.IstioCertifi
 	if err != nil {
 		return nil, err
 	}
-	return &ca.IstioCertificateResponse{CertChain: []string{string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(c.root)}}, nil
+	return &ca.IstioCertificateResponse{
+		CertChain: []string{string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(c.root)},
+	}, nil
 }
 
 func (c *testCA) serve(t *testing.T) string {
@@ -117,9 +138,22 @@ func (c *testCA) serve(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{c.cert.Raw}, PrivateKey: c.key}}, MinVersion: tls.VersionTLS12})))
+	server := grpc.NewServer(
+		grpc.Creds(
+			credentials.NewTLS(
+				&tls.Config{
+					Certificates: []tls.Certificate{{Certificate: [][]byte{c.cert.Raw}, PrivateKey: c.key}},
+					MinVersion:   tls.VersionTLS12,
+				},
+			),
+		),
+	)
 	ca.RegisterIstioCertificateServiceServer(server, c)
-	go server.Serve(listener)
+	go func() {
+		if err := server.Serve(listener); err != nil {
+			t.Errorf("CA server failed: %v", err)
+		}
+	}()
 	t.Cleanup(server.Stop)
 	return listener.Addr().String()
 }
@@ -174,14 +208,16 @@ func TestLocalIdentityAndSDSRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer closeResource(conn)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
 	stream, err := sds.NewSecretDiscoveryServiceClient(conn).StreamSecrets(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.Send(&discovery.DiscoveryRequest{TypeUrl: secretType, ResourceNames: []string{"default", "ROOTCA"}}); err != nil {
+	if err := stream.Send(
+		&discovery.DiscoveryRequest{TypeUrl: secretType, ResourceNames: []string{"default", "ROOTCA"}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	responses := make(chan *discovery.DiscoveryResponse, 8)
@@ -217,7 +253,15 @@ func TestLocalIdentityAndSDSRotation(t *testing.T) {
 		t.Fatal("SDS did not return both secrets")
 	}
 	for _, detail := range []*rpcstatus.Status{nil, {Code: int32(codes.InvalidArgument), Message: "test NACK"}} {
-		if err := stream.Send(&discovery.DiscoveryRequest{TypeUrl: secretType, ResourceNames: []string{"default", "ROOTCA"}, ResponseNonce: first.Nonce, VersionInfo: first.VersionInfo, ErrorDetail: detail}); err != nil {
+		if err := stream.Send(
+			&discovery.DiscoveryRequest{
+				TypeUrl:       secretType,
+				ResourceNames: []string{"default", "ROOTCA"},
+				ResponseNonce: first.Nonce,
+				VersionInfo:   first.VersionInfo,
+				ErrorDetail:   detail,
+			},
+		); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -250,18 +294,24 @@ func TestLocalIdentityAndSDSRotation(t *testing.T) {
 				cert = value
 			}
 		}
-		if root == nil || cert == nil || !bytes.Equal(root.GetValidationContext().GetTrustedCa().GetInlineBytes(), bundle) {
+		if root == nil || cert == nil ||
+			!bytes.Equal(root.GetValidationContext().GetTrustedCa().GetInlineBytes(), bundle) {
 			continue
 		}
 		original := &tlsv3.Secret{}
 		for _, resource := range first.Resources {
 			value := &tlsv3.Secret{}
-			_ = resource.UnmarshalTo(value)
+			if err := resource.UnmarshalTo(value); err != nil {
+				t.Fatal(err)
+			}
 			if value.Name == "default" {
 				original = value
 			}
 		}
-		if bytes.Equal(cert.GetTlsCertificate().GetCertificateChain().GetInlineBytes(), original.GetTlsCertificate().GetCertificateChain().GetInlineBytes()) {
+		if bytes.Equal(
+			cert.GetTlsCertificate().GetCertificateChain().GetInlineBytes(),
+			original.GetTlsCertificate().GetCertificateChain().GetInlineBytes(),
+		) {
 			continue
 		}
 		break
@@ -295,7 +345,9 @@ func TestLocalIdentityAndSDSRotation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := other.Send(&discovery.DiscoveryRequest{TypeUrl: secretType, ResourceNames: []string{name}}); err != nil {
+		if err := other.Send(
+			&discovery.DiscoveryRequest{TypeUrl: secretType, ResourceNames: []string{name}},
+		); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := other.Recv(); status.Code(err) != codes.PermissionDenied {

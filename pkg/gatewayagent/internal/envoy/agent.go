@@ -79,6 +79,7 @@ type Proxy interface {
 	UpdateConfig(config []byte) error
 }
 
+// Agent owns an Envoy child process and coordinates its shutdown.
 type Agent struct {
 	// proxy commands
 	proxy Proxy
@@ -137,10 +138,12 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 }
 
+// DisableDraining skips graceful draining when the agent is stopped.
 func (a *Agent) DisableDraining() {
 	a.skipDrain.Store(true)
 }
 
+// DrainNow starts draining listeners without stopping the agent.
 func (a *Agent) DrainNow() {
 	infof("Agent draining proxy")
 	err := a.proxy.Drain(true)
@@ -245,7 +248,7 @@ func (a *Agent) terminate() {
 		}
 	}
 	status := <-a.statusCh
-	if status.err == errAbort {
+	if errors.Is(status.err, errAbort) {
 		infof("Envoy aborted normally")
 	} else {
 		warnf("Envoy aborted abnormally")
@@ -262,14 +265,13 @@ func (a *Agent) activeProxyConnectionsWithTimeout(timeout time.Duration) (int, e
 	activeConnectionsURL := fmt.Sprintf("http://%s/stats?usedonly&filter=downstream_cx_active$", adminHost)
 	stats, err := getWithTimeout(activeConnectionsURL, timeout)
 	if err != nil {
-		return -1, fmt.Errorf("unable to get listener stats from Envoy : %v", err)
+		return -1, fmt.Errorf("unable to get listener stats from Envoy: %w", err)
 	}
 	if stats.Len() == 0 {
 		return -1, nil
 	}
 	activeConnections := 0
-	for stats.Len() > 0 {
-		line, _ := stats.ReadString('\n')
+	for line := range strings.SplitSeq(strings.TrimSuffix(stats.String(), "\n"), "\n") {
 		name, value, ok := strings.Cut(strings.TrimSpace(line), ": ")
 		parts := []string{name, value}
 		if !ok {

@@ -1,15 +1,25 @@
 // Copyright Istio Authors
 // Modifications Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package envoy
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,18 +79,26 @@ func TestReadinessRequiresInitialNativeXDSAndLiveWorkers(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("filter") == updateStatsRegex {
 			if initialized.Load() {
-				_, _ = w.Write([]byte("cluster_manager.cds.update_success: 1\nlistener_manager.lds.update_success: 1\n"))
+				if _, err := w.Write(
+					[]byte("cluster_manager.cds.update_success: 1\nlistener_manager.lds.update_success: 1\n"),
+				); err != nil {
+					t.Errorf("write admin fixture: %v", err)
+				}
 			}
 		} else if live.Load() {
-			_, _ = w.Write([]byte("server.state: 0\nlistener_manager.workers_started: 1\n"))
+			if _, err := w.Write([]byte("server.state: 0\nlistener_manager.workers_started: 1\n")); err != nil {
+				t.Errorf("write admin fixture: %v", err)
+			}
 		} else {
-			_, _ = w.Write([]byte("server.state: 3\nlistener_manager.workers_started: 0\n"))
+			if _, err := w.Write([]byte("server.state: 3\nlistener_manager.workers_started: 0\n")); err != nil {
+				t.Errorf("write admin fixture: %v", err)
+			}
 		}
 	}))
 	defer server.Close()
-	address, _ := url.Parse(server.URL)
-	port, _ := strconv.Atoi(address.Port())
-	p := &Probe{LocalHostAddr: address.Hostname(), AdminPort: uint16(port), Context: t.Context()}
+	address := server.Listener.Addr().(*net.TCPAddr)
+	port := address.Port
+	p := &Probe{LocalHostAddr: address.IP.String(), AdminPort: uint16(port), Context: t.Context()}
 	if p.Check() == nil {
 		t.Fatal("ready without xDS")
 	}
@@ -96,27 +114,35 @@ func TestReadinessRequiresInitialNativeXDSAndLiveWorkers(t *testing.T) {
 
 func TestDrainCountsForwardingAndExcludesProbes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("listener.agentio_status.downstream_cx_active: 10\nlistener.agentio_metrics.downstream_cx_active: 20\nlistener.admin.downstream_cx_active: 1\nlistener.0.0.0.0_15008.downstream_cx_active: 2\nlistener.internal_dispatch.downstream_cx_active: 3\nlistener.[::]_8080.downstream_cx_active: 4\nlistener.internal_dispatch.worker_0.downstream_cx_active: 3\nhttp.internal_dispatch.downstream_cx_active: 3\n"))
+		if _, err := w.Write(
+			[]byte(
+				"listener.agentio_status.downstream_cx_active: 10\nlistener.agentio_metrics.downstream_cx_active: 20\nlistener.admin.downstream_cx_active: 1\nlistener.0.0.0.0_15008.downstream_cx_active: 2\nlistener.internal_dispatch.downstream_cx_active: 3\nlistener.[::]_8080.downstream_cx_active: 4\nlistener.internal_dispatch.worker_0.downstream_cx_active: 3\nhttp.internal_dispatch.downstream_cx_active: 3\n",
+			),
+		); err != nil {
+			t.Errorf("write admin fixture: %v", err)
+		}
 	}))
 	defer server.Close()
-	address, _ := url.Parse(server.URL)
-	port, _ := strconv.Atoi(address.Port())
-	agent := NewAgent(nil, time.Second, 0, address.Hostname(), port, 15021, 15090, true)
+	address := server.Listener.Addr().(*net.TCPAddr)
+	port := address.Port
+	agent := NewAgent(nil, time.Second, 0, address.IP.String(), port, 15021, 15090, true)
 	if active, err := agent.activeProxyConnections(); err != nil || active != 9 {
 		t.Fatalf("connections=%d err=%v", active, err)
 	}
 }
 
 func TestSlowAdminCannotExtendTerminationDeadline(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }),
+	)
 	defer server.Close()
-	address, _ := url.Parse(server.URL)
-	port, _ := strconv.Atoi(address.Port())
+	address := server.Listener.Addr().(*net.TCPAddr)
+	port := address.Port
 	old := activeConnectionCheckDelay
 	activeConnectionCheckDelay = time.Millisecond
 	defer func() { activeConnectionCheckDelay = old }()
 	p := &lifecycleProxy{started: make(chan struct{})}
-	a := NewAgent(p, 30*time.Millisecond, 0, address.Hostname(), port, 15021, 15090, true)
+	a := NewAgent(p, 30*time.Millisecond, 0, address.IP.String(), port, 15021, 15090, true)
 	ctx, cancel := context.WithCancel(t.Context())
 	finished := make(chan struct{})
 	go func() {

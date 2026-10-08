@@ -1,6 +1,17 @@
 // Copyright Istio Authors
 // Modifications Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -186,7 +197,7 @@ func requestWorkloadCertificate(ctx context.Context, c Config) (*tlsv3.Secret, t
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	defer conn.Close()
+	defer closeResource(conn)
 	response, err := ca.NewIstioCertificateServiceClient(conn).CreateCertificate(ctx, &ca.IstioCertificateRequest{
 		Csr:              string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})),
 		ValidityDuration: int64(c.SecretTTL.Seconds()),
@@ -251,7 +262,12 @@ func inlineBytes(value []byte) *core.DataSource {
 }
 
 func rootSecret(root []byte) *tlsv3.Secret {
-	return &tlsv3.Secret{Name: "ROOTCA", Type: &tlsv3.Secret_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{TrustedCa: inlineBytes(root)}}}
+	return &tlsv3.Secret{
+		Name: "ROOTCA",
+		Type: &tlsv3.Secret_ValidationContext{
+			ValidationContext: &tlsv3.CertificateValidationContext{TrustedCa: inlineBytes(root)},
+		},
+	}
 }
 
 func listenSocket(path string) (net.Listener, error) {
@@ -273,7 +289,7 @@ func listenSocket(path string) (net.Listener, error) {
 		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
-		listener.Close()
+		closeResource(listener)
 		return nil, err
 	}
 	return listener, nil

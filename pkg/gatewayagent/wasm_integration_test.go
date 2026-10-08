@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -9,6 +20,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -40,7 +52,9 @@ type wasmDiscovery struct {
 	acks    chan *discovery.DeltaDiscoveryRequest
 }
 
-func (s *wasmDiscovery) DeltaAggregatedResources(stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer) error {
+func (s *wasmDiscovery) DeltaAggregatedResources(
+	stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
+) error {
 	request, err := stream.Recv()
 	if err != nil {
 		return err
@@ -71,7 +85,13 @@ func (s *wasmDiscovery) DeltaAggregatedResources(stream discovery.AggregatedDisc
 			return err
 		}
 		nonce := fmt.Sprint(revision)
-		if err := stream.Send(&discovery.DeltaDiscoveryResponse{TypeUrl: extensionType, Nonce: nonce, Resources: []*discovery.Resource{{Name: "agentio.test.wasm", Version: nonce, Resource: resource}}}); err != nil {
+		if err := stream.Send(
+			&discovery.DeltaDiscoveryResponse{
+				TypeUrl:   extensionType,
+				Nonce:     nonce,
+				Resources: []*discovery.Resource{{Name: "agentio.test.wasm", Version: nonce, Resource: resource}},
+			},
+		); err != nil {
 			return err
 		}
 		for {
@@ -110,7 +130,11 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 	c.Proxy.DiscoveryAddress = server.Listener.Addr().String()
 	c.RootCertFile = filepath.Join(t.TempDir(), "root.pem")
 	c.TokenFile = filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(c.RootCertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+	if err := os.WriteFile(
+		c.RootCertFile,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		0600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(c.TokenFile, []byte("fixture"), 0600); err != nil {
@@ -143,7 +167,17 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "-c", path, "--concurrency", "1", "--disable-hot-restart", "--log-level", "warning")
+	cmd := exec.CommandContext(
+		ctx,
+		binary,
+		"-c",
+		path,
+		"--concurrency",
+		"1",
+		"--disable-hot-restart",
+		"--log-level",
+		"warning",
+	)
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
 	if err := cmd.Start(); err != nil {
@@ -151,7 +185,10 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 	}
 	defer func() {
 		cancel()
-		_ = cmd.Wait()
+		var exitError *exec.ExitError
+		if err := cmd.Wait(); err != nil && !errors.As(err, &exitError) {
+			t.Errorf("wait for Envoy cleanup: %v", err)
+		}
 		if t.Failed() {
 			t.Log(logs.String())
 		}
@@ -172,9 +209,9 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 			response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
 			matched := false
 			if err == nil {
-				_, _ = io.Copy(io.Discard, response.Body)
-				response.Body.Close()
-				matched = response.StatusCode == 200 && response.Header.Get("x-agentio-wasm") == version
+				_, err = io.Copy(io.Discard, response.Body)
+				closeResource(response.Body)
+				matched = err == nil && response.StatusCode == 200 && response.Header.Get("x-agentio-wasm") == version
 			}
 			if matched {
 				t.Logf("Wasm ECDS behavior accepted: %s", version)
@@ -191,8 +228,11 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
-	content, _ := io.ReadAll(response.Body)
+	defer closeResource(response.Body)
+	content, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !json.Valid(content) || !strings.Contains(string(content), "envoy.wasm.runtime.v8") {
 		t.Fatal("Wasm runtime absent from config dump")
 	}
@@ -205,6 +245,6 @@ func freePort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	closeResource(listener)
 	return port
 }

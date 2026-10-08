@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -24,10 +35,13 @@ import (
 	agentiolog "github.com/openkruise/agentio/pkg/log"
 )
 
-// Populated by image builds; local builds also expose Go's VCS build information.
+// Version is populated by image builds; local builds default to dev.
 var Version = "dev"
+
+// Revision is the source commit supplied by image builds.
 var Revision string
 
+// VersionInfo identifies the agent build independently of Envoy.
 type VersionInfo struct {
 	Version   string `json:"version"`
 	Revision  string `json:"revision"`
@@ -35,6 +49,7 @@ type VersionInfo struct {
 	GoVersion string `json:"goVersion"`
 }
 
+// BuildInfo returns the stamped version and Go VCS build information.
 func BuildInfo() VersionInfo {
 	v := VersionInfo{Version: Version, Revision: Revision, GoVersion: runtime.Version()}
 	if info, ok := debug.ReadBuildInfo(); ok {
@@ -50,9 +65,12 @@ func BuildInfo() VersionInfo {
 	return v
 }
 
-func ConfigureLogging(c Config, output io.Writer) {
+// ConfigureLogging applies the agent log level and output format.
+func ConfigureLogging(c Config, output io.Writer) error {
 	var level slog.Level
-	_ = level.UnmarshalText([]byte(c.AgentLogLevel))
+	if err := level.UnmarshalText([]byte(c.AgentLogLevel)); err != nil {
+		return fmt.Errorf("invalid agent log level: %w", err)
+	}
 	// Package log also filters by scope, so configure both layers.
 	agentiolog.ConfigureOutputLevel(level)
 	options := &slog.HandlerOptions{Level: level}
@@ -61,6 +79,7 @@ func ConfigureLogging(c Config, output io.Writer) {
 		handler = slog.NewJSONHandler(output, options)
 	}
 	slog.SetDefault(slog.New(handler))
+	return nil
 }
 
 // Command executes diagnostic subcommands without requiring workload credentials.
@@ -88,7 +107,9 @@ func Command(ctx context.Context, args []string, output, errors io.Writer) error
 	if err != nil {
 		return err
 	}
-	ConfigureLogging(c, errors)
+	if err := ConfigureLogging(c, errors); err != nil {
+		return err
+	}
 	slog.Info("starting gateway agent", "version", BuildInfo(), "config", effectiveConfig(c))
 	return Run(ctx, c)
 }
@@ -154,13 +175,16 @@ func adminRequest(ctx context.Context, args []string, output, errors io.Writer) 
 		return err
 	}
 	// Disable proxies and redirects: this command operates only on local endpoints.
-	client := &http.Client{Transport: &http.Transport{}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{
+		Transport:     &http.Transport{},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	defer client.CloseIdleConnections()
 	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer closeResource(response.Body)
 	if _, err := io.Copy(output, response.Body); err != nil {
 		return err
 	}
@@ -186,13 +210,18 @@ func waitReady(ctx context.Context, args []string, errors io.Writer) error {
 	defer ticker.Stop()
 	var last error
 	for {
-		last = adminRequest(ctx, []string{"--port", "15020", "--timeout", "1s", "GET", "/healthz/ready"}, io.Discard, errors)
+		last = adminRequest(
+			ctx,
+			[]string{"--port", "15020", "--timeout", "1s", "GET", "/healthz/ready"},
+			io.Discard,
+			errors,
+		)
 		if last == nil {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for gateway readiness: %w (last request: %v)", ctx.Err(), last)
+			return fmt.Errorf("waiting for gateway readiness: %w (last request: %w)", ctx.Err(), last)
 		case <-ticker.C:
 		}
 	}

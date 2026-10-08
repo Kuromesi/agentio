@@ -1,6 +1,17 @@
 // Copyright Istio Authors
 // Modifications Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -42,20 +53,7 @@ func (s *localSDS) StreamSecrets(stream sds.SecretDiscoveryService_StreamSecrets
 	recvError := make(chan error, 1)
 	finished := make(chan struct{})
 	defer close(finished)
-	go func() {
-		for {
-			request, err := stream.Recv()
-			if err != nil {
-				recvError <- err
-				return
-			}
-			select {
-			case requests <- request:
-			case <-finished:
-				return
-			}
-		}
-	}()
+	go receiveSDSRequests(stream, requests, recvError, finished)
 	var names []string
 	var nonce string
 	sequence := uint64(0)
@@ -82,20 +80,11 @@ func (s *localSDS) StreamSecrets(stream sds.SecretDiscoveryService_StreamSecrets
 			if request.ResponseNonce != "" && request.ResponseNonce != nonce {
 				continue
 			}
-			requested := slices.Clone(request.ResourceNames)
-			slices.Sort(requested)
-			requested = slices.Compact(requested)
-			for _, name := range requested {
-				if name != "default" && name != "ROOTCA" {
-					return status.Error(codes.PermissionDenied, "unsupported local secret")
-				}
+			requested, err := localSecretNames(request.ResourceNames)
+			if err != nil {
+				return err
 			}
-			if request.ErrorDetail != nil {
-				if s.identity.config.metrics != nil {
-					s.identity.config.metrics.sdsNacks.Inc()
-				}
-				slog.Warn("Envoy rejected gateway SDS update", "nonce", request.ResponseNonce)
-			}
+			s.recordNack(request)
 			changed := !slices.Equal(requested, names)
 			names = requested
 			if len(names) != 0 && (request.ResponseNonce == "" || changed) {
@@ -134,4 +123,43 @@ func (m *identityManager) generate(names []string) (*discovery.DiscoveryResponse
 		response.Resources = append(response.Resources, resource)
 	}
 	return response, nil
+}
+
+func localSecretNames(names []string) ([]string, error) {
+	requested := slices.Clone(names)
+	slices.Sort(requested)
+	requested = slices.Compact(requested)
+	for _, name := range requested {
+		if name != "default" && name != "ROOTCA" {
+			return nil, status.Error(codes.PermissionDenied, "unsupported local secret")
+		}
+	}
+	return requested, nil
+}
+
+func (s *localSDS) recordNack(request *discovery.DiscoveryRequest) {
+	if request.ErrorDetail == nil {
+		return
+	}
+	if s.identity.config.metrics != nil {
+		s.identity.config.metrics.sdsNacks.Inc()
+	}
+	slog.Warn("Envoy rejected gateway SDS update", "nonce", request.ResponseNonce)
+}
+
+func receiveSDSRequests(stream sds.SecretDiscoveryService_StreamSecretsServer,
+	requests chan<- *discovery.DiscoveryRequest, recvError chan<- error, finished <-chan struct{},
+) {
+	for {
+		request, err := stream.Recv()
+		if err != nil {
+			recvError <- err
+			return
+		}
+		select {
+		case requests <- request:
+		case <-finished:
+			return
+		}
+	}
 }

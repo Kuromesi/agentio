@@ -1,11 +1,23 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net"
 	"net/http/httptest"
@@ -25,7 +37,9 @@ type idleDiscovery struct {
 	discovery.UnimplementedAggregatedDiscoveryServiceServer
 }
 
-func (*idleDiscovery) DeltaAggregatedResources(stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer) error {
+func (*idleDiscovery) DeltaAggregatedResources(
+	stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
+) error {
 	request, err := stream.Recv()
 	if err != nil {
 		return err
@@ -66,14 +80,12 @@ func TestADSDetectsSilentBlackhole(t *testing.T) {
 			}
 			up, err := net.Dial("tcp", server.Listener.Addr().String())
 			if err != nil {
-				down.Close()
+				closeResource(down)
 				continue
 			}
-			conns.Add(1)
-			go func() {
-				defer conns.Done()
-				defer down.Close()
-				defer up.Close()
+			conns.Go(func() {
+				defer closeResource(down)
+				defer closeResource(up)
 				done := make(chan struct{}, 2)
 				copyHalf := func(dst, src net.Conn) {
 					defer func() { done <- struct{}{} }()
@@ -93,14 +105,14 @@ func TestADSDetectsSilentBlackhole(t *testing.T) {
 				go copyHalf(up, down)
 				go copyHalf(down, up)
 				<-done
-				down.Close()
-				up.Close()
+				closeResource(down)
+				closeResource(up)
 				<-done
-			}()
+			})
 		}
 	}()
 	defer func() {
-		listener.Close()
+		closeResource(listener)
 		<-stopped
 		conns.Wait()
 	}()
@@ -110,7 +122,11 @@ func TestADSDetectsSilentBlackhole(t *testing.T) {
 	c.KeepaliveTimeout = time.Second
 	c.RootCertFile = filepath.Join(t.TempDir(), "root.pem")
 	c.TokenFile = filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(c.RootCertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+	if err := os.WriteFile(
+		c.RootCertFile,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		0600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(c.TokenFile, []byte("fixture"), 0600); err != nil {
@@ -125,7 +141,7 @@ func TestADSDetectsSilentBlackhole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer closeResource(conn)
 	client := discovery.NewAggregatedDiscoveryServiceClient(conn)
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
 	defer cancel()
@@ -146,7 +162,7 @@ func TestADSDetectsSilentBlackhole(t *testing.T) {
 	drop.Store(true)
 	started := time.Now()
 	_, err = stream.Recv()
-	if err == nil || err == io.EOF || ctx.Err() != nil {
+	if err == nil || errors.Is(err, io.EOF) || ctx.Err() != nil {
 		t.Fatalf("blackhole was not detected by keepalive: %v", err)
 	}
 	t.Logf("silent blackhole detected after %s: %v", time.Since(started), err)

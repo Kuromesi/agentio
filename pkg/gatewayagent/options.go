@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -39,15 +50,29 @@ type RuntimeOptions struct {
 // then explicit CLI flags. CPU-derived concurrency is only a fallback.
 func LoadConfig(args []string, output io.Writer) (Config, error) {
 	c := FromEnvironment()
+	options, err := c.loadRuntimeOptions()
+	if err != nil {
+		return c, err
+	}
+	if err := c.loadMetadata(); err != nil {
+		return c, err
+	}
+	if err := c.applyFlags(args, output, options.Concurrency); err != nil {
+		return c, err
+	}
+	return c, c.validateRuntime()
+}
+
+func (c *Config) loadRuntimeOptions() (RuntimeOptions, error) {
 	var options RuntimeOptions
 	if raw := os.Getenv("AGENTIO_GATEWAY_CONFIG"); raw != "" {
 		dec := json.NewDecoder(strings.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&options); err != nil {
-			return c, fmt.Errorf("AGENTIO_GATEWAY_CONFIG: %w", err)
+			return options, fmt.Errorf("AGENTIO_GATEWAY_CONFIG: %w", err)
 		}
 		if err := dec.Decode(new(any)); err != io.EOF {
-			return c, fmt.Errorf("AGENTIO_GATEWAY_CONFIG must contain one JSON object")
+			return options, fmt.Errorf("AGENTIO_GATEWAY_CONFIG must contain one JSON object")
 		}
 	}
 	for _, setting := range []struct {
@@ -66,7 +91,7 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 		if setting.value != "" {
 			v, err := time.ParseDuration(setting.value)
 			if err != nil {
-				return c, fmt.Errorf("%s: %w", setting.name, err)
+				return options, fmt.Errorf("%s: %w", setting.name, err)
 			}
 			*setting.target = v
 		}
@@ -84,12 +109,16 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 	if c.Metadata == nil {
 		c.Metadata = map[string]any{}
 	}
+	return options, nil
+}
+
+func (c *Config) loadMetadata() error {
 	stringKeys := map[string]bool{}
 	for _, env := range os.Environ() {
 		name, value, _ := strings.Cut(env, "=")
 		if key, ok := strings.CutPrefix(name, "AGENTIO_META_"); ok {
 			if key == "" {
-				return c, fmt.Errorf("empty metadata key")
+				return fmt.Errorf("empty metadata key")
 			}
 			c.Metadata[key], stringKeys[key] = value, true
 		}
@@ -98,47 +127,90 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 		name, value, _ := strings.Cut(env, "=")
 		if key, ok := strings.CutPrefix(name, "AGENTIO_METAJSON_"); ok {
 			if key == "" || stringKeys[key] {
-				return c, fmt.Errorf("empty or duplicate metadata key %q", key)
+				return fmt.Errorf("empty or duplicate metadata key %q", key)
 			}
 			var v any
 			if err := json.Unmarshal([]byte(value), &v); err != nil {
-				return c, fmt.Errorf("%s contains invalid JSON", name)
+				return fmt.Errorf("%s contains invalid JSON", name)
 			}
 			c.Metadata[key] = v
 		}
 	}
 	for key := range c.Metadata {
 		switch key {
-		case "POD_NAME", "POD_NAMESPACE", "POD_UID", "NODE_NAME", "CLUSTER_ID", "SERVICE_ACCOUNT", "INSTANCE_IP", "TRUST_DOMAIN", "AGENTIO_VERSION", "AGENTIO_REVISION":
-			return c, fmt.Errorf("metadata key %q is reserved", key)
+		case "POD_NAME",
+			"POD_NAMESPACE",
+			"POD_UID",
+			"NODE_NAME",
+			"CLUSTER_ID",
+			"SERVICE_ACCOUNT",
+			"INSTANCE_IP",
+			"TRUST_DOMAIN",
+			"AGENTIO_VERSION",
+			"AGENTIO_REVISION":
+			return fmt.Errorf("metadata key %q is reserved", key)
 		}
 	}
+	return nil
+}
+
+func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) error {
 	flags := flag.NewFlagSet("gateway-agent", flag.ContinueOnError)
 	flags.SetOutput(output)
 	flags.StringVar(&c.AgentLogLevel, "agent-log-level", c.AgentLogLevel, "Agent log level: debug, info, warn, error")
 	flags.StringVar(&c.LogLevel, "envoy-log-level", c.LogLevel, "Envoy log level")
-	flags.StringVar(&c.ComponentLogLevel, "envoy-component-log-level", c.ComponentLogLevel, "Envoy component log levels")
+	flags.StringVar(
+		&c.ComponentLogLevel,
+		"envoy-component-log-level",
+		c.ComponentLogLevel,
+		"Envoy component log levels",
+	)
 	flags.BoolVar(&c.LogAsJSON, "log-as-json", c.LogAsJSON, "JSON logs for both agent and Envoy")
-	flags.DurationVar(&c.Proxy.TerminationDrainDuration, "termination-drain-duration", c.Proxy.TerminationDrainDuration, "Maximum shutdown drain time")
+	flags.DurationVar(
+		&c.Proxy.TerminationDrainDuration,
+		"termination-drain-duration",
+		c.Proxy.TerminationDrainDuration,
+		"Maximum shutdown drain time",
+	)
 	flags.DurationVar(&c.Proxy.DrainDuration, "drain-duration", c.Proxy.DrainDuration, "Envoy listener drain time")
-	flags.DurationVar(&c.MinimumDrainDuration, "minimum-drain-duration", c.MinimumDrainDuration, "Minimum wait before counting active connections")
-	flags.BoolVar(&c.ExitOnZeroActiveConnections, "exit-on-zero-active-connections", c.ExitOnZeroActiveConnections, "Exit when connections drain, within maximum drain time")
-	flags.DurationVar(&c.StatsFlushInterval, "stats-flush-interval", c.StatsFlushInterval, "Envoy statistics flush interval")
+	flags.DurationVar(
+		&c.MinimumDrainDuration,
+		"minimum-drain-duration",
+		c.MinimumDrainDuration,
+		"Minimum wait before counting active connections",
+	)
+	flags.BoolVar(
+		&c.ExitOnZeroActiveConnections,
+		"exit-on-zero-active-connections",
+		c.ExitOnZeroActiveConnections,
+		"Exit when connections drain, within maximum drain time",
+	)
+	flags.DurationVar(
+		&c.StatsFlushInterval,
+		"stats-flush-interval",
+		c.StatsFlushInterval,
+		"Envoy statistics flush interval",
+	)
 	flags.DurationVar(&c.SecretTTL, "secret-ttl", c.SecretTTL, "Requested workload certificate lifetime")
-	flags.DurationVar(&c.KeepaliveInterval, "keepalive-interval", c.KeepaliveInterval, "ADS gRPC keepalive interval (at least 30s, matching agentiod)")
+	flags.DurationVar(
+		&c.KeepaliveInterval,
+		"keepalive-interval",
+		c.KeepaliveInterval,
+		"ADS gRPC keepalive interval (at least 30s, matching agentiod)",
+	)
 	flags.DurationVar(&c.KeepaliveTimeout, "keepalive-timeout", c.KeepaliveTimeout, "ADS gRPC keepalive timeout")
 	workers := 0
-	if options.Concurrency != nil {
-		workers = *options.Concurrency
+	if concurrency != nil {
+		workers = *concurrency
 	}
 	flags.IntVar(&workers, "concurrency", workers, "Envoy worker count; explicit zero uses Envoy default")
 	if err := flags.Parse(args); err != nil {
-		return c, err
+		return err
 	}
 	if flags.NArg() != 0 {
-		return c, fmt.Errorf("unexpected arguments: %v", flags.Args())
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
-	explicitWorkers := options.Concurrency != nil
+	explicitWorkers := concurrency != nil
 	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "concurrency" {
 			explicitWorkers = true
@@ -148,34 +220,39 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 		var err error
 		workers, err = strconv.Atoi(os.Getenv("AGENTIO_CPU_LIMIT"))
 		if err != nil || workers <= 0 {
-			return c, fmt.Errorf("AGENTIO_CPU_LIMIT must be a positive integer (limits.cpu with divisor 1)")
+			return fmt.Errorf("AGENTIO_CPU_LIMIT must be a positive integer (limits.cpu with divisor 1)")
 		}
 	}
 	if workers < 0 || workers > 65535 {
-		return c, fmt.Errorf("concurrency must be between 0 and 65535")
+		return fmt.Errorf("concurrency must be between 0 and 65535")
 	}
 	c.Proxy.Concurrency = int32(workers)
 	if grace := os.Getenv("AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS"); grace != "" {
 		seconds, err := strconv.Atoi(grace)
 		if err != nil || seconds < 1 {
-			return c, fmt.Errorf("invalid Pod termination grace period")
+			return fmt.Errorf("invalid Pod termination grace period")
 		}
 		// Leave time for child cleanup before Kubernetes SIGKILL.
 		maximum := max(0, time.Duration(seconds)*time.Second-5*time.Second)
 		c.Proxy.TerminationDrainDuration = min(c.Proxy.TerminationDrainDuration, maximum)
 	}
-	return c, c.validateRuntime()
+	return nil
 }
 
 func (c Config) validateRuntime() error {
-	if c.SecretTTL < time.Second || c.StatsFlushInterval <= 0 || c.Proxy.TerminationDrainDuration < 0 || c.Proxy.DrainDuration < 0 || c.MinimumDrainDuration < 0 || c.Proxy.Concurrency < 0 {
+	if c.SecretTTL < time.Second || c.StatsFlushInterval <= 0 || c.Proxy.TerminationDrainDuration < 0 ||
+		c.Proxy.DrainDuration < 0 ||
+		c.MinimumDrainDuration < 0 ||
+		c.Proxy.Concurrency < 0 {
 		return fmt.Errorf("invalid certificate lifetime, statistics interval, drain duration or concurrency")
 	}
 	if c.ExitOnZeroActiveConnections && c.MinimumDrainDuration > c.Proxy.TerminationDrainDuration {
 		return fmt.Errorf("minimum drain duration exceeds maximum termination drain duration")
 	}
 	if c.KeepaliveInterval < 30*time.Second || c.KeepaliveTimeout <= 0 {
-		return fmt.Errorf("keepalive interval must be at least 30s (agentiod enforcement policy) and timeout must be positive")
+		return fmt.Errorf(
+			"keepalive interval must be at least 30s (agentiod enforcement policy) and timeout must be positive",
+		)
 	}
 	switch c.AgentLogLevel {
 	case "debug", "info", "warn", "error":

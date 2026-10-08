@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -25,10 +36,21 @@ func TestMetricsAggregateAndSurviveEnvoyFailure(t *testing.T) {
 		if r.URL.Path != "/stats/prometheus" || r.Header.Get("Accept-Encoding") == "gzip" {
 			t.Error("unexpected admin request")
 		}
-		fmt.Fprintln(w, "# TYPE envoy_http_downstream_rq_total counter\nenvoy_http_downstream_rq_total 7")
+		if _, err := fmt.Fprintln(
+			w,
+			"# TYPE envoy_http_downstream_rq_total counter\nenvoy_http_downstream_rq_total 7",
+		); err != nil {
+			t.Errorf("write admin fixture: %v", err)
+		}
 	}))
-	host, port, _ := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
-	n, _ := strconv.Atoi(port)
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := testConfig(t)
 	c.IP = host
 	c.Proxy.AdminPort = int32(n)
@@ -87,16 +109,26 @@ func TestLocalAdminRequest(t *testing.T) {
 		if r.Method != "GET" || r.URL.RawQuery != "filter=server" {
 			t.Error("request not preserved")
 		}
-		fmt.Fprint(w, "server.state: 0")
+		if _, err := fmt.Fprint(w, "server.state: 0"); err != nil {
+			t.Errorf("write admin fixture: %v", err)
+		}
 	}))
 	defer admin.Close()
-	_, port, _ := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{"http://example.invalid/", "/redirect"} {
 		if err := adminRequest(t.Context(), []string{"--port", port, "GET", path}, io.Discard, io.Discard); err == nil {
 			t.Fatal("accepted remote request/redirect")
 		}
 	}
-	if err := adminRequest(t.Context(), []string{"--port", port, "GET", "/stats?filter=server"}, io.Discard, io.Discard); err != nil {
+	if err := adminRequest(
+		t.Context(),
+		[]string{"--port", port, "GET", "/stats?filter=server"},
+		io.Discard,
+		io.Discard,
+	); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -34,7 +34,7 @@ type envoy struct {
 	extraArgs []string
 }
 
-// Envoy binary flags
+// ProxyConfig contains Envoy binary flags.
 type ProxyConfig struct {
 	LogLevel           string
 	ComponentLogLevel  string
@@ -173,7 +173,7 @@ func (e *envoy) args(fname string, overrideFname string) []string {
 func readBootstrapToJSON(fname string) (string, error) {
 	b, err := os.ReadFile(fname)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file: %s, %v", fname, err)
+		return "", fmt.Errorf("failed to read file: %s, %w", fname, err)
 	}
 
 	// Replace host with HOST_IP env var if it is "$(HOST_IP)".
@@ -189,7 +189,7 @@ func readBootstrapToJSON(fname string) (string, error) {
 
 	converted, err := yaml.YAMLToJSON(b)
 	if err != nil {
-		return "", fmt.Errorf("failed to convert to JSON: %s, %v", fname, err)
+		return "", fmt.Errorf("failed to convert to JSON: %s, %w", fname, err)
 	}
 	return string(converted), nil
 }

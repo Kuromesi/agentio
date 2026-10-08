@@ -17,14 +17,16 @@ package gatewayagent
 import (
 	"bytes"
 	"context"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/openkruise/agentio/pkg/gatewayagent/internal/envoy"
 )
@@ -109,7 +111,7 @@ func serveStatus(status http.Handler) (func(), <-chan error, error) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	return func() { _ = server.Close() }, done, nil
+	return func() { closeResource(server) }, done, nil
 }
 
 func loopbackRequest(r *http.Request) bool {
@@ -152,14 +154,16 @@ func proxyMetrics(c Config) http.HandlerFunc {
 			}
 			return
 		}
-		defer response.Body.Close()
+		defer closeResource(response.Body)
 		if response.StatusCode != http.StatusOK {
 			return
 		}
 		// Never append an arbitrary upstream error body to a valid metrics stream.
 		content, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
 		if err == nil {
-			_, _ = io.Copy(w, bytes.NewReader(content))
+			if _, err := io.Copy(w, bytes.NewReader(content)); err != nil {
+				slog.Debug("metrics response interrupted", "error", err)
+			}
 		}
 	}
 }

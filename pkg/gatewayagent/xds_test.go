@@ -131,9 +131,9 @@ func TestADSRelayAndRotatedToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
+	t.Cleanup(func() { closeResource(conn) })
 	client := discovery.NewAggregatedDiscoveryServiceClient(conn)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		token := fmt.Sprintf("token-%d", i)
 		if err := os.WriteFile(c.TokenFile, []byte(token), 0o600); err != nil {
 			t.Fatal(err)

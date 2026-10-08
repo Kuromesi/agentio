@@ -52,15 +52,29 @@ func startXDS(c Config) (func(), <-chan error, error) {
 	go func() { done <- server.Serve(listener) }()
 	return func() {
 		server.Stop()
-		_ = listener.Close()
+		closeResource(listener)
 	}, done, nil
 }
 
 func (p *xdsProxy) connect(ctx context.Context) (context.Context, *grpc.ClientConn, error) {
-	return connectControlPlane(ctx, p.config.Proxy.DiscoveryAddress, p.config.XDSServerName, p.config.RootCertFile, p.config.TokenFile, p.config.ClusterID, grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: p.config.KeepaliveInterval, Timeout: p.config.KeepaliveTimeout}))
+	return connectControlPlane(
+		ctx,
+		p.config.Proxy.DiscoveryAddress,
+		p.config.XDSServerName,
+		p.config.RootCertFile,
+		p.config.TokenFile,
+		p.config.ClusterID,
+		grpc.WithKeepaliveParams(
+			keepalive.ClientParameters{Time: p.config.KeepaliveInterval, Timeout: p.config.KeepaliveTimeout},
+		),
+	)
 }
 
-func connectControlPlane(ctx context.Context, address, serverName, rootFile, tokenFile, clusterID string, options ...grpc.DialOption) (context.Context, *grpc.ClientConn, error) {
+func connectControlPlane(
+	ctx context.Context,
+	address, serverName, rootFile, tokenFile, clusterID string,
+	options ...grpc.DialOption,
+) (context.Context, *grpc.ClientConn, error) {
 	// Read both files for every new stream. Projected tokens and CA bundles may
 	// have rotated since the preceding ADS connection.
 	root, err := os.ReadFile(rootFile)
@@ -97,7 +111,9 @@ func connectControlPlane(ctx context.Context, address, serverName, rootFile, tok
 	return ctx, conn, nil
 }
 
-func (p *xdsProxy) DeltaAggregatedResources(down discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer) error {
+func (p *xdsProxy) DeltaAggregatedResources(
+	down discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
+) error {
 	received, finished := observeADS(down.Context(), p.config.metrics)
 	defer finished()
 	ctx, cancel := context.WithCancel(down.Context())
@@ -106,7 +122,7 @@ func (p *xdsProxy) DeltaAggregatedResources(down discovery.AggregatedDiscoverySe
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer closeResource(conn)
 	up, err := discovery.NewAggregatedDiscoveryServiceClient(conn).DeltaAggregatedResources(ctx)
 	if err != nil {
 		return err
@@ -117,7 +133,9 @@ func (p *xdsProxy) DeltaAggregatedResources(down discovery.AggregatedDiscoverySe
 	})
 }
 
-func (p *xdsProxy) StreamAggregatedResources(down discovery.AggregatedDiscoveryService_StreamAggregatedResourcesServer) error {
+func (p *xdsProxy) StreamAggregatedResources(
+	down discovery.AggregatedDiscoveryService_StreamAggregatedResourcesServer,
+) error {
 	received, finished := observeADS(down.Context(), p.config.metrics)
 	defer finished()
 	ctx, cancel := context.WithCancel(down.Context())
@@ -126,7 +144,7 @@ func (p *xdsProxy) StreamAggregatedResources(down discovery.AggregatedDiscoveryS
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer closeResource(conn)
 	up, err := discovery.NewAggregatedDiscoveryServiceClient(conn).StreamAggregatedResources(ctx)
 	if err != nil {
 		return err

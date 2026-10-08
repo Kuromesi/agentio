@@ -17,7 +17,11 @@ package gatewayagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -69,7 +73,13 @@ func Run(ctx context.Context, c Config) error {
 	return runEnvoy(ctx, c, bootstrapPath, xdsDone, identity)
 }
 
-func runEnvoy(ctx context.Context, c Config, bootstrapPath string, xdsDone <-chan error, identity *identityManager) error {
+func runEnvoy(
+	ctx context.Context,
+	c Config,
+	bootstrapPath string,
+	xdsDone <-chan error,
+	identity *identityManager,
+) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	proxy := &observedProxy{
@@ -106,7 +116,7 @@ func runEnvoy(ctx context.Context, c Config, bootstrapPath string, xdsDone <-cha
 	select {
 	case <-finished:
 		if ctx.Err() == nil {
-			return fmt.Errorf("Envoy exited unexpectedly: %v", proxy.exitErr)
+			return errors.Join(errors.New("Envoy exited unexpectedly"), proxy.exitErr)
 		}
 		return nil
 	case <-ctx.Done():
@@ -121,21 +131,21 @@ func runEnvoy(ctx context.Context, c Config, bootstrapPath string, xdsDone <-cha
 		c.metrics.ready.Set(0)
 		cancel()
 		<-finished
-		return fmt.Errorf("ADS server stopped: %v", err)
+		return errors.Join(errors.New("ADS server stopped"), err)
 	case err := <-identity.serverDone:
 		draining.Store(true)
 		c.metrics.draining.Set(1)
 		c.metrics.ready.Set(0)
 		cancel()
 		<-finished
-		return fmt.Errorf("SDS server stopped: %v", err)
+		return errors.Join(errors.New("SDS server stopped"), err)
 	case err := <-statusDone:
 		draining.Store(true)
 		c.metrics.draining.Set(1)
 		c.metrics.ready.Set(0)
 		cancel()
 		<-finished
-		return fmt.Errorf("status server stopped: %v", err)
+		return errors.Join(errors.New("status server stopped"), err)
 	}
 }
 
@@ -149,4 +159,10 @@ type observedProxy struct {
 func (p *observedProxy) Run(abort <-chan error) error {
 	p.exitErr = p.Proxy.Run(abort)
 	return p.exitErr
+}
+
+func closeResource(resource io.Closer) {
+	if err := resource.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		slog.Debug("resource cleanup failed", "error", err)
+	}
 }

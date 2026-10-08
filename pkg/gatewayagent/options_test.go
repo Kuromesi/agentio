@@ -1,5 +1,16 @@
 // Copyright 2026 The Kruise Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package gatewayagent
 
@@ -14,7 +25,10 @@ import (
 
 func TestRuntimeConfigPrecedence(t *testing.T) {
 	t.Setenv("AGENTIO_CPU_LIMIT", "3")
-	t.Setenv("AGENTIO_GATEWAY_CONFIG", `{"envoyLogLevel":"info","metadata":{"team":"base","enabled":true},"terminationDrainDuration":"40s","minimumDrainDuration":"2s","exitOnZeroActiveConnections":true}`)
+	t.Setenv(
+		"AGENTIO_GATEWAY_CONFIG",
+		`{"envoyLogLevel":"info","metadata":{"team":"base","enabled":true},"terminationDrainDuration":"40s","minimumDrainDuration":"2s","exitOnZeroActiveConnections":true}`,
+	)
 	t.Setenv("AGENTIO_META_team", "infra")
 	t.Setenv("AGENTIO_METAJSON_labels", `{"region":"east","weight":2}`)
 	t.Setenv("AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS", "30")
@@ -22,7 +36,8 @@ func TestRuntimeConfigPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Proxy.Concurrency != 3 || c.LogLevel != "debug" || c.Proxy.TerminationDrainDuration != 25*time.Second || !c.ExitOnZeroActiveConnections {
+	if c.Proxy.Concurrency != 3 || c.LogLevel != "debug" || c.Proxy.TerminationDrainDuration != 25*time.Second ||
+		!c.ExitOnZeroActiveConnections {
 		t.Fatalf("bad effective runtime: %+v", c)
 	}
 	c.Namespace, c.PodUID = "ns", "uid"
@@ -31,7 +46,9 @@ func TestRuntimeConfigPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := bootstrap.Node.Metadata.AsMap()
-	if meta["POD_UID"] != "uid" || meta["team"] != "infra" || meta["enabled"] != true || meta["labels"].(map[string]any)["weight"] != float64(2) || meta["AGENTIO_VERSION"] == "" {
+	if meta["POD_UID"] != "uid" || meta["team"] != "infra" || meta["enabled"] != true ||
+		meta["labels"].(map[string]any)["weight"] != float64(2) ||
+		meta["AGENTIO_VERSION"] == "" {
 		t.Fatalf("bad metadata: %v", meta)
 	}
 	// Explicit zero is different from omission, and overrides even a malformed CPU hint.
