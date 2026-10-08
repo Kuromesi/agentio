@@ -18,8 +18,8 @@ Additional intentional differences:
 
 - Projected workload trust roots come from the mounted ConfigMap or
   ClusterTrustBundle, not `istio.mesh.v1alpha1.ProxyConfig` discovery. A one-second
-  poll follows projected-volume symlink swaps. A signing attempt has a ten-second
-  deadline, so a blocked CA can delay that loop. Malformed/missing replacements
+  poll follows projected-volume symlink swaps independently of CA signing requests.
+  A signing attempt has a ten-second deadline. Malformed/missing replacements
   retain the last valid bundle. Root changes trigger renewal and an SDS push.
 - Only Pod-token authentication and the existing CA signing protocol are retained.
   No cloud credential plugins, arbitrary file SDS, output-certificate files,

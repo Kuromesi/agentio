@@ -132,3 +132,64 @@ func TestLocalAdminRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The first chunk must reach the scraper before Envoy finishes producing metrics.
+func TestMetricsStreamBeforeAdminCompletes(t *testing.T) {
+	finish := make(chan struct{})
+	chunk := strings.Repeat("envoy_test_metric 1\n", 4096)
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, chunk); err != nil {
+			t.Errorf("write metrics: %v", err)
+			return
+		}
+		w.(http.Flusher).Flush()
+		select {
+		case <-finish:
+		case <-r.Context().Done():
+		}
+	}))
+	defer admin.Close()
+	defer close(finish)
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := testConfig(t)
+	c.IP, c.Proxy.AdminPort, c.metrics = host, int32(n), nil
+	reader, writer := io.Pipe()
+	defer closeResource(reader)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer closeResource(writer)
+		proxyMetrics(c)(&streamingMetricsWriter{HeaderMap: http.Header{}, Writer: writer},
+			httptest.NewRequest("GET", "/stats/prometheus", nil))
+	}()
+	received := make(chan error, 1)
+	go func() {
+		_, err := io.ReadFull(reader, make([]byte, len(chunk)))
+		received <- err
+	}()
+	select {
+	case err := <-received:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("metrics were buffered until the admin response completed")
+	}
+	// Cleanup releases both the upstream handler and any blocked downstream write.
+	t.Cleanup(func() { <-done })
+}
+
+type streamingMetricsWriter struct {
+	HeaderMap http.Header
+	io.Writer
+}
+
+func (w *streamingMetricsWriter) Header() http.Header { return w.HeaderMap }
+func (w *streamingMetricsWriter) WriteHeader(int)     {}

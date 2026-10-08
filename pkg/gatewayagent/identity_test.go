@@ -55,6 +55,7 @@ type testCA struct {
 	tokens        chan string
 	wrongIdentity atomic.Bool
 	fail          atomic.Bool
+	beforeSign    func(context.Context) error
 }
 
 func newTestCA(t *testing.T) *testCA {
@@ -92,6 +93,11 @@ func (c *testCA) CreateCertificate(
 	ctx context.Context,
 	request *ca.IstioCertificateRequest,
 ) (*ca.IstioCertificateResponse, error) {
+	if c.beforeSign != nil {
+		if err := c.beforeSign(ctx); err != nil {
+			return nil, err
+		}
+	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	if len(md.Get("authorization")) != 1 || len(md.Get("clusterid")) != 1 {
 		return nil, fmt.Errorf("missing CA authentication")
@@ -352,6 +358,76 @@ func TestLocalIdentityAndSDSRotation(t *testing.T) {
 		}
 		if _, err := other.Recv(); status.Code(err) != codes.PermissionDenied {
 			t.Fatalf("unexpected local SDS access for %s: %v", name, err)
+		}
+	}
+}
+
+func TestRootUpdateWhileCASigningBlocked(t *testing.T) {
+	c := testConfig(t)
+	issuer := newTestCA(t)
+	blocked := make(chan struct{}, 1)
+	issuer.beforeSign = func(ctx context.Context) error {
+		select {
+		case blocked <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	c.CAAddress = issuer.serve(t)
+	c.RootCertFile = filepath.Join(t.TempDir(), "root.pem")
+	c.CARootCertFile = c.RootCertFile
+	c.TokenFile = filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(c.RootCertFile, issuer.root, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.TokenFile, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := startIdentity(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	select {
+	case <-blocked:
+	case <-ctx.Done():
+		t.Fatal("CA request did not start")
+	}
+	bundle := append(bytes.Clone(issuer.root), newTestCA(t).root...)
+	if err := os.WriteFile(c.RootCertFile, bundle, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := grpc.NewClient("unix://"+c.SDSSocket, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeResource(conn)
+	stream, err := sds.NewSecretDiscoveryServiceClient(conn).StreamSecrets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(
+		&discovery.DiscoveryRequest{TypeUrl: secretType, ResourceNames: []string{"ROOTCA"}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("root update blocked by CA signing: %v", err)
+		}
+		root := &tlsv3.Secret{}
+		if len(response.Resources) != 1 {
+			t.Fatal("expected ROOTCA resource")
+		}
+		if err := response.Resources[0].UnmarshalTo(root); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(root.GetValidationContext().GetTrustedCa().GetInlineBytes(), bundle) {
+			break
 		}
 	}
 }

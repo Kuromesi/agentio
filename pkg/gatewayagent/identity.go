@@ -110,10 +110,13 @@ func (m *identityManager) notifyLocked() {
 
 func (m *identityManager) run(ctx context.Context) {
 	defer close(m.done)
-	// Poll the projected bundle, including Kubernetes ..data symlink swaps.
-	// This bounded poll replaces the generic upstream file-certificate watcher.
-	rootPoll := time.NewTicker(time.Second)
-	defer rootPoll.Stop()
+	rootChanged := make(chan struct{}, 1)
+	rootDone := make(chan struct{})
+	go func() {
+		defer close(rootDone)
+		m.watchRoots(ctx, rootChanged)
+	}()
+	defer func() { <-rootDone }()
 	renew := time.NewTimer(0)
 	defer renew.Stop()
 	retry := 100 * time.Millisecond
@@ -121,22 +124,8 @@ func (m *identityManager) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-rootPoll.C:
-			root, err := readRoot(m.config.RootCertFile)
-			if err != nil {
-				if m.config.metrics != nil {
-					m.config.metrics.rootReloadFailures.Inc()
-				}
-				slog.Warn("gateway trust bundle reload failed", "error", err)
-				continue
-			}
-			m.mu.Lock()
-			if !bytes.Equal(root, m.root.GetValidationContext().GetTrustedCa().GetInlineBytes()) {
-				m.root = rootSecret(root)
-				m.notifyLocked()
-				renew.Reset(0)
-			}
-			m.mu.Unlock()
+		case <-rootChanged:
+			renew.Reset(0)
 		case <-renew.C:
 			started := time.Now()
 			secret, expires, err := requestWorkloadCertificate(ctx, m.config)
@@ -166,6 +155,38 @@ func (m *identityManager) run(ctx context.Context) {
 			retry = 100 * time.Millisecond
 			renew.Reset(rotateTime(time.Now(), expires, 0.5, 0.01))
 			slog.Info("gateway workload certificate renewed", "expires", expires)
+		}
+	}
+}
+
+// Keep trust-bundle updates independent of slow CA signing requests.
+func (m *identityManager) watchRoots(ctx context.Context, changed chan<- struct{}) {
+	// Poll projected files to follow Kubernetes ..data symlink swaps.
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-poll.C:
+			root, err := readRoot(m.config.RootCertFile)
+			if err != nil {
+				if m.config.metrics != nil {
+					m.config.metrics.rootReloadFailures.Inc()
+				}
+				slog.Warn("gateway trust bundle reload failed", "error", err)
+				continue
+			}
+			m.mu.Lock()
+			if !bytes.Equal(root, m.root.GetValidationContext().GetTrustedCa().GetInlineBytes()) {
+				m.root = rootSecret(root)
+				m.notifyLocked()
+				select {
+				case changed <- struct{}{}:
+				default:
+				}
+			}
+			m.mu.Unlock()
 		}
 	}
 }

@@ -15,7 +15,6 @@
 package gatewayagent
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -158,12 +157,9 @@ func proxyMetrics(c Config) http.HandlerFunc {
 		if response.StatusCode != http.StatusOK {
 			return
 		}
-		// Never append an arbitrary upstream error body to a valid metrics stream.
-		content, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
-		if err == nil {
-			if _, err := io.Copy(w, bytes.NewReader(content)); err != nil {
-				slog.Debug("metrics response interrupted", "error", err)
-			}
+		// Stream successful responses without buffering or truncating the metrics.
+		if _, err := io.Copy(w, response.Body); err != nil {
+			slog.Debug("metrics response interrupted", "error", err)
 		}
 	}
 }
