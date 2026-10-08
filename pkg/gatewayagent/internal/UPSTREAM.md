@@ -38,3 +38,30 @@ Regenerate the local CA message code with `protoc-gen-go v1.36.11`, staging
 `--go_opt=module=github.com/openkruise/agentio`. The vendored gRPC stubs retain the
 unchanged service definition. Protocol compatibility does not require importing
 the original Go module.
+
+Legacy gateway compatibility:
+
+- `gateway-agent --legacy` uses a separate bootstrap for the pinned custom Envoy
+  (`LEGACY_ENVOY_IMAGE` in `docker/Dockerfile.gateway`). Build with `--target legacy`;
+  its default command enables legacy mode. The default/community target is unchanged.
+- The compatibility contract retains `waypoint~IP~pod.namespace~DNS-domain`, proxy
+  version `1.29`, metadata discovery, policy store, and the release baseline runtime
+  and statistics settings. Active-connection statistics remain enabled for drain.
+  Agent build metadata stays independent of the proxy compatibility version.
+- Defaults use `/etc/istio/proxy`, `/var/run/secrets/istio/root-cert.pem` and
+  `/var/run/secrets/tokens/istio-token`. Existing `AGENTIO_*` path overrides still work.
+  `CA_ADDR` is also the discovery address when `AGENTIO_XDS_ADDRESS` is absent.
+  `AGENTIO_DNS_DOMAIN` defaults to `<namespace>.svc.cluster.local`;
+  `AGENTIO_SERVICE_CLUSTER` defaults to `<workload>.<namespace>`, using
+  `ISTIO_META_WORKLOAD_NAME` when set and otherwise the Pod name.
+- Mounted `/etc/istio/pod/labels` supplies policy selector metadata. Custom metadata
+  still uses `AGENTIO_META_*` and `AGENTIO_METAJSON_*`; this does not emulate the
+  pilot-agent CLI or its `PROXY_CONFIG` input. Deployments must change their args to
+  `--legacy`, supply `POD_UID`, and explicitly wire worker/drain options as needed.
+- Trust roots still come from projected files, not mesh ProxyConfig discovery.
+  Switching the executable does not restore cloud credentials, DNS capture, or
+  agent-side Wasm downloading. Existing deployment defaults are not switched.
+
+Legacy bootstrap runtime and statistics values are adapted from
+`tools/packaging/common/envoy_bootstrap.json` and `pkg/bootstrap/config.go` at the
+source baseline above.

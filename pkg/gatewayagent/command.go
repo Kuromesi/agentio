@@ -129,7 +129,8 @@ func effectiveConfig(c Config) map[string]any {
 	workers := int(c.Proxy.Concurrency)
 	return map[string]any{
 		"version":    BuildInfo(),
-		"nodeID":     "agentio-egress/" + c.Namespace + "/" + c.PodUID,
+		"nodeID":     c.nodeID(),
+		"legacy":     c.Legacy,
 		"xdsAddress": c.Proxy.DiscoveryAddress,
 		"caAddress":  c.CAAddress,
 		"runtime": RuntimeOptions{

@@ -54,10 +54,13 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if err := c.loadMetadata(); err != nil {
+	if err := c.applyFlags(args, output, options.Concurrency); err != nil {
 		return c, err
 	}
-	if err := c.applyFlags(args, output, options.Concurrency); err != nil {
+	if c.Legacy {
+		c.legacyDefaults()
+	}
+	if err := c.loadMetadata(); err != nil {
 		return c, err
 	}
 	return c, c.validateRuntime()
@@ -157,6 +160,7 @@ func (c *Config) loadMetadata() error {
 func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) error {
 	flags := flag.NewFlagSet("gateway-agent", flag.ContinueOnError)
 	flags.SetOutput(output)
+	flags.BoolVar(&c.Legacy, "legacy", false, "Use the pinned legacy gateway Envoy startup contract")
 	flags.StringVar(&c.AgentLogLevel, "agent-log-level", c.AgentLogLevel, "Agent log level: debug, info, warn, error")
 	flags.StringVar(&c.LogLevel, "envoy-log-level", c.LogLevel, "Envoy log level")
 	flags.StringVar(

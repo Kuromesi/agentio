@@ -20,7 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+
 	"text/template"
+
+	_ "github.com/cncf/xds/go/udpa/type/v1"
 
 	bootstrapv3 "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/bootstrap/internal_listener/v3"
@@ -32,6 +35,9 @@ import (
 
 //go:embed envoy_bootstrap.json.tmpl
 var bootstrapTemplate string
+
+//go:embed envoy_bootstrap_legacy.json.tmpl
+var legacyBootstrapTemplate string
 
 func bootstrapConfig(c Config) (*bootstrapv3.Bootstrap, error) {
 	localhost, wildcard := localAddresses(c.IP)
@@ -48,18 +54,31 @@ func bootstrapConfig(c Config) (*bootstrapv3.Bootstrap, error) {
 		"AGENTIO_REVISION": BuildInfo().Revision} {
 		metadata[key] = value
 	}
-	parameters := map[string]any{"NodeID": "agentio-egress/" + c.Namespace + "/" + c.PodUID,
-		"LogAsJSON":          c.LogAsJSON,
+	source := bootstrapTemplate
+	if c.Legacy {
+		if err := c.legacyMetadata(metadata); err != nil {
+			return nil, err
+		}
+		source = legacyBootstrapTemplate
+	}
+	parameters := map[string]any{
+		"NodeID":    c.nodeID(),
+		"LogAsJSON": c.LogAsJSON,
+		"ServiceCluster": envString(
+			"AGENTIO_SERVICE_CLUSTER",
+			envString("ISTIO_META_WORKLOAD_NAME", c.PodName)+"."+c.Namespace,
+		),
 		"Metadata":           metadata,
 		"Localhost":          localhost,
 		"Wildcard":           wildcard,
 		"SDSSocket":          c.SDSSocket,
 		"XDSSocket":          c.XDSSocket,
-		"StatsFlushInterval": fmt.Sprintf("%.9fs", c.StatsFlushInterval.Seconds())}
+		"StatsFlushInterval": fmt.Sprintf("%.9fs", c.StatsFlushInterval.Seconds()),
+	}
 	t, err := template.New("gateway").Funcs(template.FuncMap{"json": func(v any) (string, error) {
 		b, err := json.Marshal(v)
 		return string(b), err
-	}}).Parse(bootstrapTemplate)
+	}}).Parse(source)
 	if err != nil {
 		return nil, err
 	}

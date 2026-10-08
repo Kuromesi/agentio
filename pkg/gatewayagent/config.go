@@ -39,6 +39,8 @@ type ProxyConfig struct {
 
 // Config contains the gateway identity, credential paths and runtime settings.
 type Config struct {
+	Legacy                      bool
+	DNSDomain                   string
 	Proxy                       ProxyConfig
 	PodName                     string
 	Namespace                   string

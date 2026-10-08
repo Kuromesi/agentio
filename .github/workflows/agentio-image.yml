@@ -22,6 +22,9 @@ on:
       gateway_agent_image:
         description: Immutable opt-in community Envoy gateway image
         value: ${{ jobs.build-images.outputs.gateway_agent_image }}
+      gateway_agent_legacy_image:
+        description: Immutable opt-in legacy Envoy gateway image
+        value: ${{ jobs.build-images.outputs.gateway_agent_legacy_image }}
       agentiod_image:
         description: Immutable agentiod image reference
         value: ${{ jobs.build-images.outputs.agentiod_image }}
@@ -59,6 +62,7 @@ jobs:
     environment: development
     outputs:
       gateway_agent_image: ${{ steps.images.outputs.gateway_agent_image }}
+      gateway_agent_legacy_image: ${{ steps.images.outputs.gateway_agent_legacy_image }}
       agentiod_image: ${{ steps.images.outputs.agentiod_image }}
       epe_image: ${{ steps.images.outputs.epe_image }}
       ztunnel_image: ${{ steps.images.outputs.ztunnel_image }}
@@ -133,6 +137,10 @@ jobs:
           build_image gateway_agent_image agentio-gateway docker/Dockerfile.gateway . \
             --build-arg "AGENT_VERSION=$CANDIDATE_TAG" \
             --build-arg "AGENT_REVISION=$GITHUB_SHA"
+          build_image gateway_agent_legacy_image agentio-gateway-legacy docker/Dockerfile.gateway . \
+            --target legacy \
+            --build-arg "AGENT_VERSION=$CANDIDATE_TAG" \
+            --build-arg "AGENT_REVISION=$GITHUB_SHA"
           build_image agentiod_image agentiod Dockerfile .
           build_image epe_image agentio-epe extensions/epe/docker/Dockerfile .
           build_image ztunnel_image ztunnel docker/Dockerfile.ztunnel ztunnel-context \
@@ -142,4 +150,7 @@ jobs:
       - name: Smoke-test gateway agent candidate
         env:
           GATEWAY_AGENT_IMAGE: ${{ steps.images.outputs.gateway_agent_image }}
-        run: docker run --rm "$GATEWAY_AGENT_IMAGE" version
+          GATEWAY_AGENT_LEGACY_IMAGE: ${{ steps.images.outputs.gateway_agent_legacy_image }}
+        run: |
+          docker run --rm "$GATEWAY_AGENT_IMAGE" version
+          docker run --rm "$GATEWAY_AGENT_LEGACY_IMAGE" version
