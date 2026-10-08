@@ -32,7 +32,7 @@ func TestAuthorizationVisibilityUsesScopedIdentityAndExactReferences(t *testing.
 			Class:       model.ClientDedicatedZTunnel,
 			Principal:   serviceAccountPrincipal("demo", "default"),
 			WorkloadUID: "uid-a",
-			SourceUID:   "uid-a",
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 		},
 		selectionSnapshot(t, []model.Resource{workload, global, namespace, exact, unrelated}),
 	)
@@ -59,7 +59,7 @@ func TestAuthorizationIncrementalDiffsExactReferenceTransition(t *testing.T) {
 			Class:       model.ClientDedicatedZTunnel,
 			Principal:   serviceAccountPrincipal("demo", "default"),
 			WorkloadUID: "uid-a",
-			SourceUID:   "uid-a",
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 		},
 		TypeURL:      model.WorkloadAuthorizationType,
 		Subscription: SubscriptionView{wildcard: true},
@@ -89,7 +89,7 @@ func TestAuthorizationIncludesBaselinesWithoutWorkloadReferences(t *testing.T) {
 	before := selectionSnapshot(t, []model.Resource{host, global, namespace, unbound, unrelated})
 	after := selectionSnapshot(t, []model.Resource{global, namespace, unbound, unrelated})
 	for _, scope := range []model.ClientScope{
-		{Class: model.ClientDedicatedZTunnel, WorkloadUID: "host", SourceUID: "host", Principal: host.Facts.Workload.Principal},
+		{Class: model.ClientDedicatedZTunnel, WorkloadUID: "host", Source: model.SourceRef{Registry: "kubernetes/test", Key: "host"}, Principal: host.Facts.Workload.Principal},
 		{Class: model.ClientSharedZTunnel, NodeName: "node-a"},
 	} {
 		want := []string{"demo/baseline", "global"}
@@ -137,7 +137,7 @@ func TestSandboxHostExplicitAuthorizationVisibility(t *testing.T) {
 	scope := model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,
 		WorkloadUID: "host",
-		SourceUID:   "host",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "host"},
 		Principal:   facts.Principal,
 	}
 	before := selectionSnapshot(t, []model.Resource{host, compat, unrelated})

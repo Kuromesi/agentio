@@ -42,7 +42,7 @@ func TestAuthorizationSelectionIncludesGlobalNamespaceAndWorkloadSelector(t *tes
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 
 	got := selectAuthorizationResources(scope, snapshot, nil)
@@ -133,7 +133,7 @@ func TestUnrelatedWorkloadAddressChangeDoesNotReconcileAuthorization(t *testing.
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   serviceAccountPrincipal("demo", "default"),
 		WorkloadUID: "uid-a",
-		SourceUID:   "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 	}
 
 	delta, err := (AuthorizationGenerator{}).Generate(context.Background(), GenerationRequest{
@@ -196,14 +196,25 @@ func TestGatewayAuthorizationIncrementalAllowsNonGlobalPolicy(t *testing.T) {
 
 func TestAuthorizationPolicyOnlyDeltaKeepsRenameAndRemovalSemantics(t *testing.T) {
 	oldPolicy := selectionAuthorization(t, "demo/policy", model.AuthorizationScopeWorkload, "")
-	newPolicy, err := model.NewResource(oldPolicy.Key, "demo/renamed", oldPolicy.Value, []string{"demo/alias"}, oldPolicy.Facts)
+	newPolicy, err := model.NewResource(
+		oldPolicy.Key,
+		"demo/renamed",
+		oldPolicy.Value,
+		[]string{"demo/alias"},
+		oldPolicy.Facts,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	workload := selectionWorkload(t, "uid-a", "demo", "node-a", "", oldPolicy.Key.Name)
 	before := selectionSnapshot(t, []model.Resource{workload, oldPolicy})
 	after := selectionSnapshot(t, []model.Resource{workload, newPolicy})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: workload.Facts.Workload.Principal, WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   workload.Facts.Workload.Principal,
+		WorkloadUID: "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+	}
 	for _, test := range []struct {
 		name                     string
 		names, selected, removed []string
@@ -214,18 +225,48 @@ func TestAuthorizationPolicyOnlyDeltaKeepsRenameAndRemovalSemantics(t *testing.T
 		{"unrelated", []string{"demo/unrelated"}, nil, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			delta := generateAuthorizationIncremental(GenerationRequest{Scope: scope, TypeURL: model.WorkloadAuthorizationType,
-				Subscription: SubscriptionView{wildcard: test.names == nil, names: test.names}, Snapshot: after,
-				Update: updateBetween(before, after, before.Diff(after))})
-			if !slices.Equal(selectedNames(delta.Resources), test.selected) || !slices.Equal(delta.Removed, test.removed) {
-				t.Fatalf("delta resources=%v removed=%v, want resources=%v removed=%v", selectedNames(delta.Resources), delta.Removed, test.selected, test.removed)
+			delta := generateAuthorizationIncremental(
+				GenerationRequest{
+					Scope:        scope,
+					TypeURL:      model.WorkloadAuthorizationType,
+					Subscription: SubscriptionView{wildcard: test.names == nil, names: test.names},
+					Snapshot:     after,
+					Update:       updateBetween(before, after, before.Diff(after)),
+				},
+			)
+			if !slices.Equal(selectedNames(delta.Resources), test.selected) ||
+				!slices.Equal(delta.Removed, test.removed) {
+				t.Fatalf(
+					"delta resources=%v removed=%v, want resources=%v removed=%v",
+					selectedNames(delta.Resources),
+					delta.Removed,
+					test.selected,
+					test.removed,
+				)
 			}
 		})
 	}
 	empty := selectionSnapshot(t, []model.Resource{workload})
-	deleted := generateAuthorizationIncremental(GenerationRequest{Scope: scope, TypeURL: model.WorkloadAuthorizationType,
-		Subscription: SubscriptionView{wildcard: true}, Snapshot: empty, Update: updateBetween(after, empty, after.Diff(empty))})
+	deleted := generateAuthorizationIncremental(
+		GenerationRequest{
+			Scope:   scope,
+			TypeURL: model.WorkloadAuthorizationType,
+			Subscription: SubscriptionView{
+				wildcard: true,
+			},
+			Snapshot: empty,
+			Update:   updateBetween(after, empty, after.Diff(empty)),
+		},
+	)
 	if len(deleted.Resources) != 0 || !slices.Equal(deleted.Removed, []string{"demo/renamed"}) {
 		t.Fatalf("delete = %#v", deleted)
+	}
+}
+
+func TestOpaquePrincipalKeepsSourceNamespacePolicySelection(t *testing.T) {
+	workload := selectionWorkload(t, "opaque", "demo", "node-a", "", "")
+	workload.Facts.Workload.Principal = mustTestPrincipal("cluster.local", "workload/app")
+	if got := workloadNamespaces([]model.Resource{workload}); !got.Contains("demo") {
+		t.Fatalf("source namespace lost for opaque principal: %v", got)
 	}
 }

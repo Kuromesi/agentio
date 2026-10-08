@@ -53,10 +53,9 @@ type tokenReviewEntry struct {
 }
 
 type TokenReviewer struct {
-	client      kubernetes.Interface
-	trustDomain string
-	audiences   []string
-	ttl         time.Duration
+	client    kubernetes.Interface
+	audiences []string
+	ttl       time.Duration
 
 	mu    sync.Mutex
 	cache map[string]tokenReviewEntry
@@ -64,22 +63,19 @@ type TokenReviewer struct {
 
 var _ Authenticator = (*TokenReviewer)(nil)
 
-func NewTokenReviewer(client kubernetes.Interface, trustDomain string, audiences []string) (*TokenReviewer, error) {
+// NewTokenReviewer authenticates Kubernetes tokens for the configured audiences.
+func NewTokenReviewer(client kubernetes.Interface, audiences []string) (*TokenReviewer, error) {
 	if client == nil {
 		return nil, fmt.Errorf("kubernetes client is required")
-	}
-	if strings.TrimSpace(trustDomain) == "" {
-		return nil, fmt.Errorf("trust domain is required")
 	}
 	if len(audiences) == 0 {
 		audiences = []string{"agentio-ca"}
 	}
 	return &TokenReviewer{
-		client:      client,
-		trustDomain: trustDomain,
-		audiences:   append([]string(nil), audiences...),
-		ttl:         tokenReviewCacheTTL,
-		cache:       make(map[string]tokenReviewEntry),
+		client:    client,
+		audiences: append([]string(nil), audiences...),
+		ttl:       tokenReviewCacheTTL,
+		cache:     make(map[string]tokenReviewEntry),
 	}, nil
 }
 
@@ -186,25 +182,25 @@ func (a *TokenReviewer) Authenticate(ctx context.Context) (model.PeerIdentity, e
 		}
 	}
 	if !serviceAccountGroup {
-		return model.PeerIdentity{}, fmt.Errorf("TokenReview user %q is not in the Kubernetes service account group", review.Status.User.Username)
+		return model.PeerIdentity{}, fmt.Errorf(
+			"TokenReview user %q is not in the Kubernetes service account group",
+			review.Status.User.Username,
+		)
 	}
 	parts := strings.Split(review.Status.User.Username, ":")
 	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" || parts[2] == "" || parts[3] == "" {
-		return model.PeerIdentity{}, fmt.Errorf("TokenReview username %q is not a Kubernetes service account", review.Status.User.Username)
+		return model.PeerIdentity{}, fmt.Errorf(
+			"TokenReview username %q is not a Kubernetes service account",
+			review.Status.User.Username,
+		)
 	}
 	caller := model.PeerIdentity{
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: a.trustDomain,
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      parts[2],
-				ServiceAccount: parts[3],
-			},
-		},
 		AttestedBy: model.AttestationKubernetes,
 		Kubernetes: model.KubernetesPeer{
-			WorkloadName: firstExtra(review.Status.User.Extra, podNameExtra),
-			WorkloadUID:  firstExtra(review.Status.User.Extra, podUIDExtra),
+			Namespace:      parts[2],
+			ServiceAccount: parts[3],
+			WorkloadName:   firstExtra(review.Status.User.Extra, podNameExtra),
+			WorkloadUID:    firstExtra(review.Status.User.Extra, podUIDExtra),
 		},
 	}
 	a.remember(token, caller, now)

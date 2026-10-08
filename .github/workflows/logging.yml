@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "$PR_BASE_REF" || true
+            git fetch --no-tags origin "$PR_BASE_REF"
             ref="$(git merge-base "origin/$PR_BASE_REF" HEAD)"
           else
             ref="$PUSH_BEFORE"

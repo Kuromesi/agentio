@@ -43,7 +43,7 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 			Hash:    name,
 			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 				WorkloadUID: name,
-				SourceUID:   name,
+				Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 				NodeName:    "node-a",
 				Principal:   serviceAccountPrincipal("default", "default"),
 			}},
@@ -95,7 +95,14 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			update := updates[i%2]
-			if err := testServer.server.sendIncremental(stream, testServer.scope, log, model.AddressType, watch, update); err != nil {
+			if err := testServer.server.sendIncremental(
+				stream,
+				testServer.scope,
+				log,
+				model.AddressType,
+				watch,
+				update,
+			); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -110,7 +117,14 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if err := testServer.server.sendDiff(stream, testServer.scope, log, model.AddressType, watch, false); err != nil {
+			if err := testServer.server.sendDiff(
+				stream,
+				testServer.scope,
+				log,
+				model.AddressType,
+				watch,
+				false,
+			); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -167,7 +181,7 @@ func BenchmarkDeltaPushIncrementalAllClients(b *testing.B) {
 					Hash:    fmt.Sprintf("%s-%d", name, variant),
 					Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 						WorkloadUID: name,
-						SourceUID:   name,
+						Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 						NodeName:    "node-a",
 						Principal:   serviceAccountPrincipal("default", "default"),
 					}},
@@ -217,7 +231,14 @@ func BenchmarkDeltaPushIncrementalAllClients(b *testing.B) {
 		for iteration := 0; b.Loop(); iteration++ {
 			update := updates[(iteration+1)%2]
 			for _, watch := range watches {
-				if err := testServer.server.sendIncremental(stream, scope, log, model.AddressType, watch, update); err != nil {
+				if err := testServer.server.sendIncremental(
+					stream,
+					scope,
+					log,
+					model.AddressType,
+					watch,
+					update,
+				); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -241,7 +262,7 @@ func BenchmarkDeltaPushPublicationFanout(b *testing.B) {
 				scopes[client] = model.ClientScope{
 					Class:       model.ClientDedicatedZTunnel,
 					WorkloadUID: fmt.Sprintf("workload-%06d", index),
-					SourceUID:   fmt.Sprintf("workload-%06d", index),
+					Source:      model.SourceRef{Registry: "kubernetes/test", Key: fmt.Sprintf("workload-%06d", index)},
 					Principal:   serviceAccountPrincipal("demo", "default"),
 				}
 			}
@@ -547,7 +568,7 @@ func fanoutBenchmarkResources(t testing.TB) ([]model.Resource, [2]model.Resource
 		name := fmt.Sprintf("workload-%06d", index)
 		facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 			WorkloadUID: name,
-			SourceUID:   name,
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 			NodeName:    fmt.Sprintf("node-%03d", index%100),
 			Principal:   serviceAccountPrincipal("demo", "default"),
 		}}
@@ -593,7 +614,7 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 			Hash:    name,
 			Facts: model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 				WorkloadUID: name,
-				SourceUID:   name,
+				Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 				NodeName:    node,
 				Principal:   serviceAccountPrincipal("demo", "default"),
 				GatewayReferences: []string{
@@ -614,7 +635,7 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 			Facts: model.ResourceFacts{
 				Workload: &model.WorkloadResourceFacts{
 					WorkloadUID: name,
-					SourceUID:   name,
+					Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 					Principal:   serviceAccountPrincipal("agentio-system", "gateway"),
 				},
 				GatewayOwner: "gateway/" + node,
@@ -638,8 +659,16 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 		t.Fatalf("build relationship transition: changed=%v err=%v", changed, err)
 	}
 	return resources, [2]xdsstore.Update{
-		updateBetween(before, after, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}}),
-		updateBetween(after, before, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}}),
+		updateBetween(
+			before,
+			after,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}},
+		),
+		updateBetween(
+			after,
+			before,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
+		),
 	}
 }
 
@@ -656,7 +685,7 @@ func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Up
 		}
 		facts := model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 			WorkloadUID:       name,
-			SourceUID:         name,
+			Source:            model.SourceRef{Registry: "kubernetes/test", Key: name},
 			NodeName:          node,
 			Principal:         serviceAccountPrincipal("demo", "default"),
 			AuthorizationRefs: policies,
@@ -708,8 +737,16 @@ func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Up
 		t.Fatalf("build Authorization transition: changed=%v err=%v", changed, err)
 	}
 	return resources, [2]xdsstore.Update{
-		updateBetween(before, after, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}}),
-		updateBetween(after, before, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}}),
+		updateBetween(
+			before,
+			after,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[0], New: &variants[1]}},
+		),
+		updateBetween(
+			after,
+			before,
+			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
+		),
 	}
 }
 
@@ -754,7 +791,7 @@ func distributedDedicatedClients(clientCount int) []model.ClientScope {
 			Class:       model.ClientDedicatedZTunnel,
 			Principal:   serviceAccountPrincipal("demo", "default"),
 			WorkloadUID: fmt.Sprintf("workload-%06d", client),
-			SourceUID:   fmt.Sprintf("workload-%06d", client),
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: fmt.Sprintf("workload-%06d", client)},
 		}
 	}
 	return scopes
@@ -780,7 +817,7 @@ func mixedClientScopes(clientCount int) []model.ClientScope {
 			Class:       model.ClientDedicatedZTunnel,
 			Principal:   serviceAccountPrincipal("demo", "default"),
 			WorkloadUID: fmt.Sprintf("workload-%06d", index),
-			SourceUID:   fmt.Sprintf("workload-%06d", index),
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: fmt.Sprintf("workload-%06d", index)},
 		}
 	}
 	return scopes

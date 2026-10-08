@@ -28,11 +28,12 @@ import (
 	"testing"
 	"time"
 
+	"istio.io/istio/pkg/util/sets"
+
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/pki"
-	"istio.io/istio/pkg/util/sets"
 )
 
 type fakeGatewayAuthorizer struct {
@@ -43,14 +44,7 @@ type fakeGatewayAuthorizer struct {
 }
 
 func serviceAccountPrincipal(namespace, serviceAccount string) model.Principal {
-	return model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      namespace,
-			ServiceAccount: serviceAccount,
-		},
-	}
+	return mustTestPrincipal("cluster.local", "ns/"+(namespace)+"/sa/"+(serviceAccount))
 }
 
 func (f *fakeGatewayAuthorizer) Authorize(scope model.ClientScope) error {

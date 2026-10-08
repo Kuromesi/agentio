@@ -23,6 +23,12 @@ import (
 )
 
 var (
+	// WorkloadSourceExtensionOID selects the private certificate extension for workload sources.
+	WorkloadSourceExtensionOID = env.Register(
+		"AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID",
+		"",
+		"Private enterprise OID for the non-critical workload source certificate extension. Enables automatic source binding for Pod-bound self requests. Empty disables extensions and rejects explicit source requests.",
+	).Get()
 	// SandboxMode enables runtime discovery and Sandbox resources alongside Workloads.
 	SandboxMode = env.Register(
 		"AGENTIO_SANDBOX_MODE",

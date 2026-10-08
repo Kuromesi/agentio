@@ -160,7 +160,7 @@ func TestRegistrySyncDoesNotRequireSecrets(t *testing.T) {
 	}
 }
 
-func TestDelegatedAuthorizationUsesNodePrincipalIndex(t *testing.T) {
+func TestDelegatedAuthorizationUsesEffectivePrincipalIndex(t *testing.T) {
 	ctx := t.Context()
 
 	ztunnel := delegationPod("agentio-system", "ztunnel-abc", "ztunnel", "node-a")
@@ -182,42 +182,24 @@ func TestDelegatedAuthorizationUsesNodePrincipalIndex(t *testing.T) {
 	}
 	registry := newTestRegistry(t, ctx, objects, nil)
 
-	if got := len(registry.podsByNode.Lookup("node-a")); got != 258 {
-		t.Fatalf("node candidates = %d, want 258", got)
-	}
-	const key = "node-a|spiffe://cluster.local/ns/demo/sa/app"
-	candidates := registry.delegationPodsByNodePrincipal.Lookup(key)
+	requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
+	key := target.Spec.NodeName + "|" + requested.String()
+	candidates := registry.DelegatedIdentityAuthorizer().targetsByNodePrincipal.Lookup(key)
 	if len(candidates) != 1 || candidates[0].Name != target.Name {
 		t.Fatalf("delegation candidates = %#v, want only %s", candidates, target.Name)
 	}
 
-	// Authorization must not fall back to the broader node index, whose bucket
-	// also contains every unrelated Pod above.
-	registry.podsByNode = nil
 	caller := model.PeerIdentity{
-		Principal: model.Principal{
-			Kind:        model.PrincipalServiceAccount,
-			TrustDomain: "cluster.local",
-			ServiceAccount: model.ServiceAccountRef{
-				Namespace:      "agentio-system",
-				ServiceAccount: "ztunnel",
-			},
-		},
 		AttestedBy: model.AttestationKubernetes,
 		Kubernetes: model.KubernetesPeer{
-			WorkloadName: ztunnel.Name,
-			WorkloadUID:  string(ztunnel.UID),
+			WorkloadName:   ztunnel.Name,
+			WorkloadUID:    string(ztunnel.UID),
+			Namespace:      "agentio-system",
+			ServiceAccount: "ztunnel",
 		},
 	}
-	requested := model.Principal{
-		Kind:        model.PrincipalServiceAccount,
-		TrustDomain: "cluster.local",
-		ServiceAccount: model.ServiceAccountRef{
-			Namespace:      "demo",
-			ServiceAccount: "app",
-		},
-	}
-	if err := registry.DelegatedIdentityAuthorizer().Authorize(ctx, caller, requested); err != nil {
+	if err := registry.DelegatedIdentityAuthorizer().
+		Authorize(ctx, caller, attestation.CertificateTarget{Principal: requested}); err != nil {
 		t.Fatalf("Authorize denied valid delegation: %v", err)
 	}
 }

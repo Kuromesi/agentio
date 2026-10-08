@@ -73,7 +73,7 @@ func workerResource(t *testing.T, source string) model.Resource {
 	r := selectionWorkload(t, "worker", "workers", "node-a", "", "")
 	facts := *r.Facts.Workload
 	facts.WorkloadUID = "worker"
-	facts.SourceUID = source
+	facts.Source = model.SourceRef{Registry: "kubernetes/test", Key: source}
 	r, err := model.NewResource(r.Key, r.XDSName, r.Value, r.Aliases, model.ResourceFacts{Workload: &facts})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func workerScope(r model.Resource) model.ClientScope {
 		Class:       model.ClientDedicatedZTunnel,
 		Principal:   r.Facts.Workload.Principal,
 		WorkloadUID: "worker",
-		SourceUID:   r.Facts.Workload.SourceUID,
+		Source:      r.Facts.Workload.Source,
 	}
 }
 
@@ -345,7 +345,7 @@ func TestSandboxAttesterMigrationUpdatesVisibilityWithoutWorkloadChanges(t *test
 				Class:       model.ClientDedicatedZTunnel,
 				Principal:   worker.Facts.Workload.Principal,
 				WorkloadUID: worker.Facts.Workload.WorkloadUID,
-				SourceUID:   worker.Facts.Workload.SourceUID,
+				Source:      worker.Facts.Workload.Source,
 			}
 			delta, err := (SandboxGenerator{}).Generate(t.Context(), GenerationRequest{
 				Scope:        scope,

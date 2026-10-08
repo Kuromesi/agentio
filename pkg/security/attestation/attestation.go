@@ -89,8 +89,18 @@ func (a registeredAttestationAuthenticator) Authenticate(ctx context.Context) (m
 	return peer, nil
 }
 
+// CertificateTarget identifies the principal and optional source instance to authorize.
+type CertificateTarget struct {
+	Principal model.Principal
+	// Source selects an instance; its zero value requests a principal-only certificate.
+	Source model.SourceRef
+}
+
+// DelegatedIdentityAuthorizer authorizes explicit targets and instance requests.
+// A nonzero Source must
+// belong to the requested Principal and be owned or delegatable by the caller.
 type DelegatedIdentityAuthorizer interface {
-	Authorize(context.Context, model.PeerIdentity, model.Principal) error
+	Authorize(context.Context, model.PeerIdentity, CertificateTarget) error
 }
 
 // DelegatedIdentityAuthorizers dispatches delegated-identity authorization by
@@ -99,7 +109,12 @@ type DelegatedIdentityAuthorizer interface {
 // Principal; an unregistered attestation fails closed.
 type DelegatedIdentityAuthorizers map[model.Attestation]DelegatedIdentityAuthorizer
 
-func (a DelegatedIdentityAuthorizers) Authorize(ctx context.Context, caller model.PeerIdentity, requested model.Principal) error {
+// Authorize dispatches the target to the authorizer for the caller's attestation.
+func (a DelegatedIdentityAuthorizers) Authorize(
+	ctx context.Context,
+	caller model.PeerIdentity,
+	requested CertificateTarget,
+) error {
 	authorizer, found := a[caller.AttestedBy]
 	if !found || DelegatedAuthorizerIsNil(authorizer) {
 		return fmt.Errorf("no authorizer owns %q caller attestation", caller.AttestedBy)

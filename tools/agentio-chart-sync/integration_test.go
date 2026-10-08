@@ -201,7 +201,7 @@ func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 	}
 	workloadPod := &corev1.Pod{Spec: corev1.PodSpec{InitContainers: config.InitContainers}}
 	workloadPod.Labels = config.Labels
-	workload := podsource.BaseWorkloadFromPod("test-cluster", "cluster.local", workloadPod)
+	workload := podsource.BaseWorkloadFromPod("test-cluster", workloadPod)
 	if workload.TunnelProtocol != model.TunnelProtocolHBONE || !workload.NativeTunnel {
 		t.Fatalf("Kruise runtime is not recognized as native HBONE: protocol=%s native=%t", workload.TunnelProtocol, workload.NativeTunnel)
 	}

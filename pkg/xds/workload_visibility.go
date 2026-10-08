@@ -37,7 +37,7 @@ func (v workloadVisibility) hasScopedWorkload(query model.WorkloadQuery) bool {
 		return false
 	}
 	query.WorkloadUID = scopeQuery.WorkloadUID
-	query.SourceUID = scopeQuery.SourceUID
+	query.Source = scopeQuery.Source
 	query.Principal = scopeQuery.Principal
 	query.NodeName = scopeQuery.NodeName
 	return v.resources.HasWorkload(v.typeURL, query)

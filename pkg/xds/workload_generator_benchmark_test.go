@@ -44,25 +44,31 @@ func BenchmarkWorkloadGeneratorGatewayUpdate(b *testing.B) {
 			resources = append(resources, resource(fmt.Sprintf("unrelated-%05d", index), "unrelated",
 				model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 					WorkloadUID: name,
-					SourceUID:   name,
+					Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 					Principal:   serviceAccountPrincipal("other", "default"),
 				}}))
 		}
 		resources = append(resources, resource("uid-a", "workload",
 			model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
 				WorkloadUID:       "uid-a",
-				SourceUID:         "uid-a",
+				Source:            model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 				Principal:         serviceAccountPrincipal("demo", "default"),
 				GatewayReferences: []string{"agentio-system/egress-a"},
 			}}))
 		oldGateway := resource("gateway-a", "old",
 			model.ResourceFacts{
-				Workload:     &model.WorkloadResourceFacts{WorkloadUID: "gateway-a", Principal: serviceAccountPrincipal("agentio-system", "gateway")},
+				Workload: &model.WorkloadResourceFacts{
+					WorkloadUID: "gateway-a",
+					Principal:   serviceAccountPrincipal("agentio-system", "gateway"),
+				},
 				GatewayOwner: "agentio-system/egress-a",
 			})
 		newGateway := resource("gateway-a", "new",
 			model.ResourceFacts{
-				Workload:     &model.WorkloadResourceFacts{WorkloadUID: "gateway-a", Principal: serviceAccountPrincipal("agentio-system", "gateway")},
+				Workload: &model.WorkloadResourceFacts{
+					WorkloadUID: "gateway-a",
+					Principal:   serviceAccountPrincipal("agentio-system", "gateway"),
+				},
 				GatewayOwner: "agentio-system/egress-a",
 			})
 		oldResources := append(append([]model.Resource(nil), resources...), oldGateway)
@@ -76,7 +82,12 @@ func BenchmarkWorkloadGeneratorGatewayUpdate(b *testing.B) {
 			b.Fatal(err)
 		}
 		request := GenerationRequest{
-			Scope:        model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"},
+			Scope: model.ClientScope{
+				Class:       model.ClientDedicatedZTunnel,
+				Principal:   serviceAccountPrincipal("demo", "default"),
+				WorkloadUID: "uid-a",
+				Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+			},
 			TypeURL:      model.AddressType,
 			Subscription: SubscriptionView{wildcard: true},
 			Snapshot:     newSnapshot,
@@ -86,7 +97,11 @@ func BenchmarkWorkloadGeneratorGatewayUpdate(b *testing.B) {
 				New: &newGateway,
 			}}),
 		}
-		if got := generateWDSIncremental(request, false); len(got.Resources) != 1 || got.Resources[0].XDSName != "gateway-a" {
+		if got := generateWDSIncremental(
+			request,
+			false,
+		); len(got.Resources) != 1 ||
+			got.Resources[0].XDSName != "gateway-a" {
 			b.Fatalf("representative delta = %+v", got)
 		}
 
@@ -109,7 +124,7 @@ func BenchmarkWorkloadGeneratorIncremental(b *testing.B) {
 			scope: model.ClientScope{
 				Class:       model.ClientDedicatedZTunnel,
 				WorkloadUID: target.Facts.Workload.WorkloadUID,
-				SourceUID:   target.Facts.Workload.SourceUID,
+				Source:      target.Facts.Workload.Source,
 				Principal:   target.Facts.Workload.Principal,
 			},
 		},

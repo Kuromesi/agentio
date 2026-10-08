@@ -51,7 +51,6 @@ func buildGraph(inputs Inputs, failures *failureRecorder, builder krt.OptionsBui
 		inputs,
 		base,
 		workloadMetadataConfiguration,
-		gateways,
 		selectedWorkloadPolicies,
 		failures,
 		collectionOptions,

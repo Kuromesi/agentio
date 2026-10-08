@@ -22,6 +22,7 @@ import (
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 // newWorkloadResources owns the incremental joins for WDS networking state
@@ -31,7 +32,6 @@ func newWorkloadResources(
 	inputs Inputs,
 	base baseIndexes,
 	metadataConfiguration krt.Singleton[workloadMetadataConfiguration],
-	gateways krt.Collection[model.Gateway],
 	workloadPolicies krt.Collection[workloadPolicies],
 	failures *failureRecorder,
 	options collectionOptions,
@@ -53,18 +53,12 @@ func newWorkloadResources(
 				egressPolicies = selected.EgressPolicies
 				egressGatewayKeys = selected.GatewayReferences
 			}
-			ownedGatewayKey := gatewayKeyForWorkload(workload)
-			if ownedGatewayKey != "" {
-				gateway := krt.FetchOne(ctx, gateways, krt.FilterKey(ownedGatewayKey))
-				if gateway == nil || gateway.ValidateForUse() != nil {
-					ownedGatewayKey = ""
-				}
-			}
 
 			endpointsByKey := make(map[string]model.Endpoint)
-			if workload.SourceUID != "" {
+			if workload.Source == podsource.SourceRef(inputs.ClusterID, workload.Source.Key) &&
+				workload.Source.Key != "" {
 				for _, endpoint := range krt.Fetch(ctx, inputs.Endpoints,
-					krt.FilterIndex(base.endpointsByTargetUID, workload.SourceUID)) {
+					krt.FilterIndex(base.endpointsByTargetUID, workload.Source.Key)) {
 					endpointsByKey[endpoint.ResourceName()] = endpoint
 				}
 			}
@@ -115,7 +109,6 @@ func newWorkloadResources(
 				Endpoints:          endpoints,
 				Services:           services,
 				EgressGatewayKeys:  egressGatewayKeys,
-				OwnedGatewayKey:    ownedGatewayKey,
 			}
 			projection.MetadataConfiguration = currentMetadataConfiguration
 			resource, err := buildWDSAddress(projection)
@@ -126,19 +119,4 @@ func newWorkloadResources(
 			failures.clearIf("WDSWorkload", workload.UID, currentInput)
 			return resource
 		}, options("workload-resources")...)
-}
-
-func gatewayKeyForWorkload(workload model.Workload) string {
-	principal := workload.Principal
-	if principal.Kind != model.PrincipalServiceAccount ||
-		principal.ServiceAccount.Namespace == "" ||
-		principal.ServiceAccount.Namespace != workload.Namespace ||
-		principal.ServiceAccount.ServiceAccount == "" {
-		return ""
-	}
-	key := principal.ServiceAccount.Namespace + "/" + principal.ServiceAccount.ServiceAccount
-	if workload.GatewayKey != "" && workload.GatewayKey != key {
-		return ""
-	}
-	return key
 }

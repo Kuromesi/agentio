@@ -102,10 +102,10 @@ func workloadAuthorizationNames(resources []model.Resource) sets.Set[string] {
 func workloadNamespaces(resources []model.Resource) sets.Set[string] {
 	result := sets.New[string]()
 	for _, resource := range resources {
-		if resource.Facts.Workload == nil || resource.Facts.Workload.Principal.Kind != model.PrincipalServiceAccount {
+		if resource.Facts.Workload == nil {
 			continue
 		}
-		result.Insert(resource.Facts.Workload.Principal.ServiceAccount.Namespace)
+		result.Insert(resource.Facts.Workload.Namespace)
 	}
 	return result
 }

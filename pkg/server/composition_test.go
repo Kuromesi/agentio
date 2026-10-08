@@ -143,20 +143,17 @@ func TestSourceCollectionsRejectMissingTelemetrySources(t *testing.T) {
 func testSourceCollections(stop <-chan struct{}) SourceCollections {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	return SourceCollections{
-		Sandboxes: krt.NewStaticCollection[model.Sandbox](nil,
-			[]model.Sandbox{{UID: "sandbox-1", Attester: &model.Attester{WorkloadUID: "cluster//Pod/default/pod-1"}}}, options...),
+		Sandboxes: krt.NewStaticCollection[model.Sandbox](
+			nil,
+			[]model.Sandbox{
+				{UID: "sandbox-1", Attester: &model.Attester{WorkloadUID: "cluster//Pod/default/pod-1"}},
+			},
+			options...),
 		Workloads: krt.NewStaticCollection[model.Workload](nil,
 			[]model.Workload{{
 				UID:       "cluster//Pod/default/pod-1",
 				Namespace: "default",
-				Principal: model.Principal{
-					Kind:        model.PrincipalServiceAccount,
-					TrustDomain: "cluster.local",
-					ServiceAccount: model.ServiceAccountRef{
-						Namespace:      "default",
-						ServiceAccount: "default",
-					},
-				},
+				Principal: mustTestPrincipal("cluster.local", "ns/"+("default")+"/sa/"+("default")),
 			}}, options...),
 		Services: krt.NewStaticCollection[model.Service](nil,
 			[]model.Service{{Name: "default-service", Namespace: "default"}}, options...),

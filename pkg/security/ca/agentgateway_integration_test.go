@@ -47,13 +47,13 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
-// This opt-in interoperability test runs the real, unmodified agentgateway
-// binary against Agentiod's CA over TLS. Only the Kubernetes TokenReview API is
-// faked. No CA private key or pre-issued gateway certificate reaches the proxy.
+// Tests agentgateway certificate issuance and rotation against Agentiod's CA over TLS.
+// TokenReview and target authorization are faked; the proxy obtains its own certificates.
 // Run with AGENTIO_AGENTGATEWAY_BINARY=/absolute/path/to/agentgateway-v1.5.0.
 func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 	binary := os.Getenv("AGENTIO_AGENTGATEWAY_BINARY")
@@ -69,7 +69,11 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 		GitRevision string `json:"git_revision"`
 	}
 	const upstreamRevision = "fe6732474a96a0363dfb9822859af4e9bab360fa" // v1.5.0
-	if err := json.Unmarshal(version, &build); err != nil || (build.Version != "1.5.0" && build.GitRevision != upstreamRevision) {
+	if err := json.Unmarshal(
+		version,
+		&build,
+	); err != nil ||
+		(build.Version != "1.5.0" && build.GitRevision != upstreamRevision) {
 		t.Fatalf("this contract pins agentgateway 1.5.0, got %s (%v)", version, err)
 	}
 
@@ -86,16 +90,29 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 			sawRotatedToken.Store(true)
 		}
 		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
-			Authenticated: ok, Audiences: []string{audience},
-			User: authenticationv1.UserInfo{Username: "system:serviceaccount:gateway-ns:gateway-account", Groups: []string{"system:serviceaccounts"}},
+			Authenticated: ok,
+			Audiences:     []string{audience},
+			User: authenticationv1.UserInfo{
+				Username: "system:serviceaccount:gateway-ns:gateway-account",
+				Groups:   []string{"system:serviceaccounts"},
+			},
 		}}, nil
 	})
-	reviewer, err := attestation.NewTokenReviewer(client, "mesh.example", []string{audience})
+	reviewer, err := attestation.NewTokenReviewer(client, []string{audience})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authority := newTestAuthority(t, time.Hour, 20*time.Minute)
 	authority.authenticator = reviewer
+	authority.options.TrustDomain = "mesh.example"
+	authority.UseDelegatedIdentityAuthorizer(&fakeDelegatedIdentityAuthorizer{
+		authorize: func(_ context.Context, _ model.PeerIdentity, target model.Principal) error {
+			if target.String() != identity {
+				return fmt.Errorf("unexpected gateway identity %s", target)
+			}
+			return nil
+		},
+	})
 	// With Agentiod's one-minute clock skew, this reaches the native client's
 	// half-life renewal point before its first 30-second refresh tick.
 	authority.leafLifetime = 90 * time.Second
@@ -103,14 +120,18 @@ func TestAgentgatewayNativeCACertificateRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(authority.TLSConfig())),
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-			resp, err := handler(ctx, req)
-			if err != nil {
-				rejected.Store(true)
-			}
-			return resp, err
-		}))
+	server := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(authority.TLSConfig())),
+		grpc.UnaryInterceptor(
+			func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+				resp, err := handler(ctx, req)
+				if err != nil {
+					rejected.Store(true)
+				}
+				return resp, err
+			},
+		),
+	)
 	securityapi.RegisterIstioCertificateServiceServer(server, authority)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
@@ -199,7 +220,11 @@ binds:
 		t.Fatal(err)
 	}
 	clientID := &url.URL{Scheme: "spiffe", Host: "mesh.example", Path: "/ns/client/sa/app"}
-	leaf, err := authority.ca.Sign(context.Background(), &key.PublicKey, pki.LeafOptions{URIs: []*url.URL{clientID}, Lifetime: time.Hour, Client: true})
+	leaf, err := authority.ca.Sign(
+		context.Background(),
+		&key.PublicKey,
+		pki.LeafOptions{URIs: []*url.URL{clientID}, Lifetime: time.Hour, Client: true},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +232,10 @@ binds:
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientCert, err := tls.X509KeyPair(leaf.CertificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	clientCert, err := tls.X509KeyPair(
+		leaf.CertificatePEM,
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +251,13 @@ binds:
 			for _, c := range state.PeerCertificates[1:] {
 				intermediates.AddCert(c)
 			}
-			if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+			if _, err := cert.Verify(
+				x509.VerifyOptions{
+					Roots:         roots,
+					Intermediates: intermediates,
+					KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+				},
+			); err != nil {
 				return err
 			}
 			if len(cert.URIs) != 1 || cert.URIs[0].String() != identity {
@@ -248,11 +282,18 @@ binds:
 		t.Fatal("HBONE accepted a client without a workload certificate")
 	}
 	otherID := &url.URL{Scheme: "spiffe", Host: "other.example", Path: "/ns/client/sa/app"}
-	otherLeaf, err := authority.ca.Sign(context.Background(), &key.PublicKey, pki.LeafOptions{URIs: []*url.URL{otherID}, Lifetime: time.Hour, Client: true})
+	otherLeaf, err := authority.ca.Sign(
+		context.Background(),
+		&key.PublicKey,
+		pki.LeafOptions{URIs: []*url.URL{otherID}, Lifetime: time.Hour, Client: true},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherCert, err := tls.X509KeyPair(otherLeaf.CertificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	otherCert, err := tls.X509KeyPair(
+		otherLeaf.CertificatePEM,
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +333,14 @@ binds:
 		return nil
 	})
 	denyToken.Store(false)
-	agentgatewayEventually(t, 40*time.Second, func() error { _, err := agentgatewayHBONERequest(t, address, tlsConfig); return err })
+	agentgatewayEventually(
+		t,
+		40*time.Second,
+		func() error {
+			_, err := agentgatewayHBONERequest(t, address, tlsConfig)
+			return err
+		},
+	)
 	t.Log("rejected renewal blocks new HBONE connections; automatic retry restores service")
 }
 

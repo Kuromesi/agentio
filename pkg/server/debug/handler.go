@@ -185,9 +185,8 @@ func authenticateConfigDebugRequest(
 
 func authorizeConfigDebugIdentity(identity model.PeerIdentity, rootNamespace string) bool {
 	return identity.AttestedBy == model.AttestationKubernetes &&
-		identity.Principal.Kind == model.PrincipalServiceAccount &&
-		identity.Principal.Validate() == nil &&
-		identity.Principal.ServiceAccount.Namespace == rootNamespace
+		identity.Kubernetes.Validate() == nil &&
+		identity.Kubernetes.Namespace == rootNamespace
 }
 
 type configDebugHeadResponseWriter struct {

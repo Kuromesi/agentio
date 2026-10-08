@@ -110,7 +110,10 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 		ObjectMeta: metav1.ObjectMeta{Name: configMapName, Namespace: namespace},
 		Data: map[string]string{
 			"config": "policy: enabled\ndefaultTemplates: [sidecar]\naliases:\n  sidecar: [ztunnel]\ntemplates:\n  ztunnel: |\n" +
-				indentTemplate(integrationInjectorTemplate, "    "),
+				indentTemplate(
+					integrationInjectorTemplate,
+					"    ",
+				),
 			"values": integrationValues + "\nclientTrust: {enabled: true}\nclientTrustBundle:\n  sources:\n  - agentioMITM: true\n",
 		},
 	}
@@ -120,12 +123,17 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 			{Name: "rev.namespace.sidecar-injector.istio.io"},
 		},
 	}
-	client := kube.NewFakeClient(injectorConfigMap, mutatingWebhook, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}})
+	client := kube.NewFakeClient(
+		injectorConfigMap,
+		mutatingWebhook,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+	)
 	coreClient := client.Kube()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	authority, err := ca.LoadOrCreateAuthority(ctx, client, nilAuthenticator{}, ca.AuthorityOptions{
+		TrustDomain:   "cluster.local",
 		Namespace:     namespace,
 		SecretName:    "test-ca",
 		ConfigMapName: "test-ca-certs",
@@ -220,7 +228,11 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 				t.Fatalf("disabled distributor started a namespace informer: %v", action)
 			}
 		}
-		if _, err := coreClient.CoordinationV1().Leases(namespace).Get(ctx, "agentiod-client-trust-leader", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		if _, err := coreClient.CoordinationV1().
+			Leases(namespace).
+			Get(ctx, "agentiod-client-trust-leader", metav1.GetOptions{}); !apierrors.IsNotFound(
+			err,
+		) {
 			t.Fatalf("disabled distributor participated in leader election: %v", err)
 		}
 	}

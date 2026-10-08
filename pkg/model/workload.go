@@ -36,16 +36,12 @@ func (p TunnelProtocol) Validate() error {
 	}
 }
 
-// Workload is a network endpoint with optional attester identity metadata.
-// An absent Principal makes it discovery-only; authentication validates the
-// Principal independently.
+// Workload is a network endpoint with an optional certificate identity.
+// An absent Principal makes it discovery-only.
 type Workload struct {
-	UID       string
-	Principal Principal
-
-	// SourceUID identifies the current backing runtime object or activation.
-	// Kubernetes supplies the Pod UID; other runtimes supply their equivalent.
-	SourceUID         string
+	UID               string
+	Principal         Principal
+	Source            SourceRef
 	Namespace         string
 	Name              string
 	CanonicalName     string
@@ -53,11 +49,13 @@ type Workload struct {
 	NodeName          string
 	Addresses         []string
 	Labels            map[string]string
-	GatewayKey        string
-	HostNetwork       bool
-	TunnelProtocol    TunnelProtocol
-	NativeTunnel      bool
-	Ready             bool
+	// GatewayKey is the namespace/name of the egress gateway this Workload belongs to.
+	// Empty means the Workload is not a gateway member.
+	GatewayKey     string
+	HostNetwork    bool
+	TunnelProtocol TunnelProtocol
+	NativeTunnel   bool
+	Ready          bool
 }
 
 func (w Workload) ResourceName() string { return w.UID }
@@ -66,7 +64,7 @@ func (w Workload) ResourceName() string { return w.UID }
 func (w Workload) Equals(other Workload) bool {
 	return w.UID == other.UID &&
 		w.Principal == other.Principal &&
-		w.SourceUID == other.SourceUID &&
+		w.Source == other.Source &&
 		w.Namespace == other.Namespace &&
 		w.Name == other.Name &&
 		w.CanonicalName == other.CanonicalName &&
@@ -81,4 +79,26 @@ func (w Workload) Equals(other Workload) bool {
 		slices.Equal(w.Addresses, other.Addresses) &&
 		(w.Labels == nil) == (other.Labels == nil) &&
 		maps.Equal(w.Labels, other.Labels)
+}
+
+// SourceRef identifies an object in a trusted registry by its native key.
+type SourceRef struct {
+	Registry string
+	Key      string
+}
+
+// Validate requires both the registry and its native instance key.
+func (s SourceRef) Validate() error {
+	if s.Registry == "" || s.Key == "" {
+		return fmt.Errorf("source registry and key are required")
+	}
+	return nil
+}
+
+// String returns a collision-free index key, or an empty string for the zero value.
+func (s SourceRef) String() string {
+	if s == (SourceRef{}) {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s%s", len(s.Registry), s.Registry, s.Key)
 }

@@ -51,20 +51,27 @@ const (
 	AuthorizationScopeGlobal
 )
 
-// ResourceFacts is the immutable selection metadata carried beside one wire
-// resource. It records domain and graph facts only; pkg/xds decides which
-// authenticated client classes may consume them.
+// ResourceFacts holds immutable metadata used by pkg/xds to select resources for clients.
+// At most one of Workload, Sandbox, Service, and Authorization may be set,
+// matching the resource's type; other resource types leave all four nil.
+// GatewayOwner may be set independently for any gateway-owned resource.
 type ResourceFacts struct {
-	Workload      *WorkloadResourceFacts
-	Sandbox       *SandboxResourceFacts
-	Service       *ServiceResourceFacts
+	// Workload records endpoint identity, placement, and service and policy references for resource selection.
+	Workload *WorkloadResourceFacts
+	// Sandbox links a Sandbox to its attesting Workload for visibility checks.
+	Sandbox *SandboxResourceFacts
+	// Service identifies the Service used to match Workload dependencies.
+	Service *ServiceResourceFacts
+	// Authorization records the policy scope used to select visible Authorization resources.
 	Authorization *AuthorizationResourceFacts
-	GatewayOwner  string
+	// GatewayOwner is the owning gateway's namespace/name key; empty means no gateway owner.
+	GatewayOwner string
 }
 
 type WorkloadResourceFacts struct {
+	Namespace         string
 	WorkloadUID       string
-	SourceUID         string
+	Source            SourceRef
 	NodeName          string
 	Principal         Principal
 	ServiceKeys       []string
@@ -96,7 +103,7 @@ type WorkloadQuery struct {
 	AuthorizationRefsOnly  bool
 	TrafficPolicyRefsOnly  bool
 	WorkloadUID            string
-	SourceUID              string
+	Source                 SourceRef
 	NodeName               string
 	Principal              *Principal
 	Namespace              string
@@ -322,17 +329,10 @@ func validateResourceFacts(key ResourceKey, facts ResourceFacts) error {
 }
 
 func validateWorkloadResourcePrincipal(principal Principal) error {
-	switch principal.Kind {
-	case "":
-		if principal != (Principal{}) {
-			return fmt.Errorf("identity fields require a kind")
-		}
-	case PrincipalServiceAccount:
+	if principal == (Principal{}) {
 		return nil
-	default:
-		return fmt.Errorf("unknown identity kind %q", principal.Kind)
 	}
-	return nil
+	return principal.Validate()
 }
 
 func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
@@ -389,9 +389,10 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 	if facts.Workload != nil {
 		write("family", "workload")
 		write("workload-uid", facts.Workload.WorkloadUID)
-		write("source-uid", facts.Workload.SourceUID)
+		write("source", facts.Workload.Source.String())
 		write("node", facts.Workload.NodeName)
 		write("principal", facts.Workload.Principal.String())
+		write("namespace", facts.Workload.Namespace)
 		for _, value := range facts.Workload.ServiceKeys {
 			write("service", value)
 		}
@@ -428,8 +429,9 @@ func (facts ResourceFacts) Equal(other ResourceFacts) bool {
 		return false
 	}
 	if facts.Workload != nil &&
-		(facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
-			facts.Workload.SourceUID != other.Workload.SourceUID ||
+		(facts.Workload.Namespace != other.Workload.Namespace ||
+			facts.Workload.WorkloadUID != other.Workload.WorkloadUID ||
+			facts.Workload.Source != other.Workload.Source ||
 			facts.Workload.NodeName != other.Workload.NodeName ||
 			facts.Workload.Principal != other.Workload.Principal ||
 			!slices.Equal(facts.Workload.ServiceKeys, other.Workload.ServiceKeys) ||

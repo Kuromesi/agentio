@@ -39,8 +39,14 @@ func TestWorkloadVisibilityFollowsScopedWorkloads(t *testing.T) {
 	})
 
 	dedicated := newWorkloadVisibility(
-		model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"},
-		snapshot, model.AddressType,
+		model.ClientScope{
+			Class:       model.ClientDedicatedZTunnel,
+			Principal:   serviceAccountPrincipal("demo", "default"),
+			WorkloadUID: "uid-a",
+			Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+		},
+		snapshot,
+		model.AddressType,
 	)
 	if !dedicated.visible(owned) || dedicated.visible(sameNode) || dedicated.visible(remote) {
 		t.Fatal("dedicated Workload visibility did not follow the sandbox scope")
@@ -51,7 +57,12 @@ func TestWorkloadVisibilityFollowsScopedWorkloads(t *testing.T) {
 	if !dedicated.visible(gateway) {
 		t.Fatal("referenced Gateway workload is not visible")
 	}
-	if got := selectedNames(dedicated.ownedByGateway("agentio-system/egress-a")); !slices.Equal(got, []string{"gateway-a"}) {
+	if got := selectedNames(
+		dedicated.ownedByGateway("agentio-system/egress-a"),
+	); !slices.Equal(
+		got,
+		[]string{"gateway-a"},
+	) {
 		t.Fatalf("Gateway-owned resources = %v, want gateway-a", got)
 	}
 
@@ -78,7 +89,12 @@ func TestWildcardWDSIncrementalDiffsPublicationTransitionClosure(t *testing.T) {
 		"agentio-system/egress-a")
 	before := selectionSnapshot(t, []model.Resource{plain, service, gateway})
 	after := selectionSnapshot(t, []model.Resource{attached, service, gateway})
-	scope := model.ClientScope{Class: model.ClientDedicatedZTunnel, Principal: serviceAccountPrincipal("demo", "default"), WorkloadUID: "uid-a", SourceUID: "uid-a"}
+	scope := model.ClientScope{
+		Class:       model.ClientDedicatedZTunnel,
+		Principal:   serviceAccountPrincipal("demo", "default"),
+		WorkloadUID: "uid-a",
+		Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
+	}
 
 	added, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
 		Scope:        scope,
@@ -94,7 +110,14 @@ func TestWildcardWDSIncrementalDiffsPublicationTransitionClosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := selectedNames(added.Resources), []string{"demo/svc-a", "gateway-a", "uid-a"}; !slices.Equal(got, want) || len(added.Removed) != 0 {
+	if got, want := selectedNames(
+		added.Resources,
+	), []string{
+		"demo/svc-a",
+		"gateway-a",
+		"uid-a",
+	}; !slices.Equal(got, want) ||
+		len(added.Removed) != 0 {
 		t.Fatalf("reference addition resources=%v removed=%v, want resources=%v", got, added.Removed, want)
 	}
 
