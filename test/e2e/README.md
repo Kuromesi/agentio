@@ -225,14 +225,15 @@ The unit, vet, race, and dependency-boundary gates do not require a cluster. Do 
 
 ## On-demand certificate rotation (opt-in)
 
-`TestSandboxOnDemandCertificateRotation` in `suites/gateway` is skipped unless
-`AGENTIO_E2E_CERT_ROTATION=1`. The default product run therefore adds no certificate
-expiry waits. With the usual immutable Agentio image inputs and a dedicated test
-cluster configured, run it separately:
+`TestSandboxOnDemandCertificateRotation` in `suites/gateway` is built only with
+`-tags=certrotation`. The default product planner therefore does not discover or
+schedule it, and ordinary E2E runs add no certificate expiry waits. With the usual
+immutable Agentio image inputs and a dedicated test cluster configured, run it
+separately:
 
 ```bash
-AGENTIO_E2E=1 AGENTIO_E2E_CERT_ROTATION=1 \
-  go test ./suites/gateway -run '^TestSandboxOnDemandCertificateRotation$' -v -count=1 -timeout=15m
+AGENTIO_E2E=1 \
+  go test -tags=certrotation ./suites/gateway -run '^TestSandboxOnDemandCertificateRotation$' -v -count=1 -timeout=15m
 ```
 
 The test requires `agentio.reuse=false` and one Agentiod replica. It temporarily

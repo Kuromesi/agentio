@@ -1,3 +1,5 @@
+//go:build certrotation
+
 // Copyright 2026 The Kruise Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +22,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -38,9 +39,6 @@ import (
 // Explicitly opt in: this test waits for real certificate clocks and interrupts
 // the suite-owned control plane. It must not run in parallel with other tests.
 func TestSandboxOnDemandCertificateRotation(t *testing.T) {
-	if os.Getenv("AGENTIO_E2E_CERT_ROTATION") != "1" {
-		t.Skip("set AGENTIO_E2E_CERT_ROTATION=1 to run the slow certificate rotation test")
-	}
 	environment, scope := rig.BeginScenario(t)
 	namespace := resolvedAgentioConfig.Namespace
 	restoreReplicas := configureRotationIssuer(t, environment)

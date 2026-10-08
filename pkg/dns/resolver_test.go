@@ -32,11 +32,14 @@ import (
 func TestResolverRefreshesWithoutBlockingCompile(t *testing.T) {
 	ctx := t.Context()
 	var calls atomic.Int32
-	resolver, err := New(ctx, Options{RefreshInterval: 20 * time.Millisecond, LookupTimeout: time.Second, MaxConcurrent: 2},
+	resolver, err := New(
+		ctx,
+		Options{RefreshInterval: 20 * time.Millisecond, LookupTimeout: time.Second, MaxConcurrent: 2},
 		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
 			calls.Add(1)
 			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")}, TTL: time.Minute}, nil
-		})
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +182,8 @@ func TestProtocolLookupKeepsFamilyTTLs(t *testing.T) {
 		mdns.TypeAAAA: {"2001:db8::10", 20 * time.Second},
 	} {
 		result, err := lookup(t.Context(), "api.example.com", queryType)
-		if err != nil || result.TTL != want.ttl || len(result.Addresses) != 1 || result.Addresses[0].String() != want.address {
+		if err != nil || result.TTL != want.ttl || len(result.Addresses) != 1 ||
+			result.Addresses[0].String() != want.address {
 			t.Fatalf("type=%d result=%+v err=%v, want %+v", queryType, result, err, want)
 		}
 	}
@@ -243,9 +247,12 @@ func TestResolverSchedulesFromAnswerTTLAndPreservesOnFailure(t *testing.T) {
 	}
 	resolver.HandleAdd("api.example.com")
 	eventuallyDNS(t, func() bool {
-		result := resolver.Results().GetKey("api.example.com")
-		return result != nil && len(result.Addresses) == 1
-	}, "initial DNS result published")
+		resolver.mu.RLock()
+		defer resolver.mu.RUnlock()
+		item := resolver.entries["api.example.com"]
+		return item.published && item.families[0].queried && item.families[1].queried &&
+			!item.families[0].resolving && !item.families[1].resolving
+	}, "initial DNS queries completed")
 
 	resolver.mu.RLock()
 	next := resolver.entries["api.example.com"].next
@@ -350,7 +357,13 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 		t.Run(map[bool]string{false: "deleted", true: "recreated"}[recreate], func(t *testing.T) {
 			started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			old := &entry{hostname: "example.com", refs: 1, index: -1}
-			resolver := &Resolver{ctx: t.Context(), options: Options{LookupTimeout: time.Second}, entries: map[string]*entry{"example.com": old}, results: krt.NewStaticCollection[Result](nil, nil), wake: make(chan struct{}, 1)}
+			resolver := &Resolver{
+				ctx:     t.Context(),
+				options: Options{LookupTimeout: time.Second},
+				entries: map[string]*entry{"example.com": old},
+				results: krt.NewStaticCollection[Result](nil, nil),
+				wake:    make(chan struct{}, 1),
+			}
 			resolver.lookup = func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
 				if queryType == mdns.TypeAAAA {
 					return LookupResult{TTL: time.Hour}, nil
@@ -363,7 +376,10 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 				}
 				return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")}, TTL: time.Minute}, nil
 			}
-			go func() { resolver.refresh(lookupJob{old, 0}); close(done) }()
+			go func() {
+				resolver.refresh(lookupJob{old, 0})
+				close(done)
+			}()
 			select {
 			case <-started:
 			case <-time.After(time.Second):
@@ -392,9 +408,10 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 func TestResolverPartialDNSResponses(t *testing.T) {
 	const success, noData, servfail, timeout, nameError = 0, 1, 2, 3, 4
 	for _, tc := range []struct {
-		name    string
-		a, aaaa int
-		want    []string
+		name string
+		a    int
+		aaaa int
+		want []string
 	}{
 		{"both_success", success, success, []string{"192.0.2.7", "2001:db8::7"}},
 		{"aaaa_nodata", success, noData, []string{"192.0.2.7"}},
@@ -411,36 +428,76 @@ func TestResolverPartialDNSResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			server := &mdns.Server{PacketConn: packet, Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, request *mdns.Msg) {
-				query := request.Question[0]
-				mode := tc.a
-				if query.Qtype == mdns.TypeAAAA {
-					mode = tc.aaaa
-				}
-				if mode == timeout {
-					return
-				}
-				response := new(mdns.Msg)
-				response.SetReply(request)
-				switch mode {
-				case success:
-					if query.Qtype == mdns.TypeA {
-						response.Answer = []mdns.RR{&mdns.A{Hdr: mdns.RR_Header{Name: query.Name, Rrtype: query.Qtype, Class: mdns.ClassINET, Ttl: 30}, A: net.ParseIP("192.0.2.7")}}
-					} else {
-						response.Answer = []mdns.RR{&mdns.AAAA{Hdr: mdns.RR_Header{Name: query.Name, Rrtype: query.Qtype, Class: mdns.ClassINET, Ttl: 20}, AAAA: net.ParseIP("2001:db8::7")}}
+			server := &mdns.Server{
+				PacketConn: packet,
+				Handler: mdns.HandlerFunc(func(w mdns.ResponseWriter, request *mdns.Msg) {
+					query := request.Question[0]
+					mode := tc.a
+					if query.Qtype == mdns.TypeAAAA {
+						mode = tc.aaaa
 					}
-				case servfail:
-					response.Rcode = mdns.RcodeServerFailure
-				case nameError:
-					response.Rcode = mdns.RcodeNameError
+					if mode == timeout {
+						return
+					}
+					response := new(mdns.Msg)
+					response.SetReply(request)
+					switch mode {
+					case success:
+						if query.Qtype == mdns.TypeA {
+							response.Answer = []mdns.RR{
+								&mdns.A{
+									Hdr: mdns.RR_Header{
+										Name:   query.Name,
+										Rrtype: query.Qtype,
+										Class:  mdns.ClassINET,
+										Ttl:    30,
+									},
+									A: net.ParseIP("192.0.2.7"),
+								},
+							}
+						} else {
+							response.Answer = []mdns.RR{
+								&mdns.AAAA{
+									Hdr: mdns.RR_Header{
+										Name:   query.Name,
+										Rrtype: query.Qtype,
+										Class:  mdns.ClassINET,
+										Ttl:    20,
+									},
+									AAAA: net.ParseIP("2001:db8::7"),
+								},
+							}
+						}
+					case servfail:
+						response.Rcode = mdns.RcodeServerFailure
+					case nameError:
+						response.Rcode = mdns.RcodeNameError
+					}
+					if err := w.WriteMsg(response); err != nil {
+						t.Errorf("write DNS response: %v", err)
+					}
+				})}
+			ready, done := make(chan struct{}), make(chan error, 1)
+			server.NotifyStartedFunc = func() { close(ready) }
+			go func() { done <- server.ActivateAndServe() }()
+			t.Cleanup(func() {
+				if err := server.Shutdown(); err != nil {
+					t.Errorf("shutdown DNS server: %v", err)
 				}
-				if err := w.WriteMsg(response); err != nil {
-					t.Errorf("write DNS response: %v", err)
+				if err := <-done; err != nil {
+					t.Errorf("serve DNS: %v", err)
 				}
-			})}
-			go func() { _ = server.ActivateAndServe() }()
-			t.Cleanup(func() { _ = server.Shutdown() })
-			resolver, err := New(t.Context(), Options{DNSServers: []string{packet.LocalAddr().String()}, LookupTimeout: 200 * time.Millisecond}, nil)
+			})
+			select {
+			case <-ready:
+			case <-time.After(time.Second):
+				t.Fatal("DNS server did not start")
+			}
+			resolver, err := New(
+				t.Context(),
+				Options{DNSServers: []string{packet.LocalAddr().String()}, LookupTimeout: 200 * time.Millisecond},
+				nil,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -449,7 +506,9 @@ func TestResolverPartialDNSResponses(t *testing.T) {
 				resolver.mu.RLock()
 				defer resolver.mu.RUnlock()
 				item := resolver.entries["example.com"]
-				return item.published && item.families[0].queried && item.families[1].queried && !item.families[0].resolving && !item.families[1].resolving
+				return item.published && item.families[0].queried && item.families[1].queried &&
+					!item.families[0].resolving &&
+					!item.families[1].resolving
 			}, "both family queries completed")
 			result := resolver.Results().GetKey("example.com")
 			var got []string
@@ -475,21 +534,25 @@ func TestResolverPublishesBeforeOtherFamilyCompletes(t *testing.T) {
 		t.Run(mdns.TypeToString[slowType], func(t *testing.T) {
 			release := make(chan struct{})
 			var fastCalls atomic.Int32
-			resolver, err := New(t.Context(), Options{LookupTimeout: 5 * time.Second}, func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
-				if queryType == slowType {
-					select {
-					case <-release:
-					case <-ctx.Done():
+			resolver, err := New(
+				t.Context(),
+				Options{LookupTimeout: 5 * time.Second},
+				func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
+					if queryType == slowType {
+						select {
+						case <-release:
+						case <-ctx.Done():
+						}
+						return LookupResult{}, fmt.Errorf("temporary failure")
 					}
-					return LookupResult{}, fmt.Errorf("temporary failure")
-				}
-				address := "192.0.2.7"
-				if queryType == mdns.TypeAAAA {
-					address = "2001:db8::7"
-				}
-				fastCalls.Add(1)
-				return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(address)}, TTL: time.Second}, nil
-			})
+					address := "192.0.2.7"
+					if queryType == mdns.TypeAAAA {
+						address = "2001:db8::7"
+					}
+					fastCalls.Add(1)
+					return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(address)}, TTL: time.Second}, nil
+				},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -521,7 +584,8 @@ func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
 		options: Options{RefreshInterval: time.Minute},
 		entries: map[string]*entry{host: item},
 		results: krt.NewStaticCollection[Result](nil, nil),
-		wake:    make(chan struct{}, 1), jobs: make(chan lookupJob, 1),
+		wake:    make(chan struct{}, 1),
+		jobs:    make(chan lookupJob, 1),
 	}
 	answer := func(ip string) LookupResult {
 		return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(ip)}, TTL: time.Hour}

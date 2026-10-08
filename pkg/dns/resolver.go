@@ -315,10 +315,12 @@ func (r *Resolver) publishLocked(item *entry) {
 	item.published = true
 	// Serialize publication with removal so a completed lookup cannot resurrect a deleted result.
 	r.results.ConditionalUpdateObject(Result{
-		Hostname:  item.hostname,
-		Addresses: normalizeAddresses(addresses),
-		IPv4Error: item.families[0].err, IPv6Error: item.families[1].err,
-		IPv4NameError: item.families[0].nameError, IPv6NameError: item.families[1].nameError,
+		Hostname:      item.hostname,
+		Addresses:     normalizeAddresses(addresses),
+		IPv4Error:     item.families[0].err,
+		IPv6Error:     item.families[1].err,
+		IPv4NameError: item.families[0].nameError,
+		IPv6NameError: item.families[1].nameError,
 	})
 }
 

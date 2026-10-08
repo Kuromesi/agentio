@@ -337,7 +337,10 @@ func TestTrafficPolicyUsesSuccessfulDNSFamilyForAllowAndReject(t *testing.T) {
 			if queryType == mdns.TypeAAAA {
 				return resolverdns.LookupResult{}, fmt.Errorf("SERVFAIL")
 			}
-			return resolverdns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.7")}, TTL: time.Minute}, nil
+			return resolverdns.LookupResult{
+				Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.7")},
+				TTL:       time.Minute,
+			}, nil
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +363,8 @@ func TestTrafficPolicyUsesSuccessfulDNSFamilyForAllowAndReject(t *testing.T) {
 		t.Run(string(action), func(t *testing.T) {
 			compiled, err := CompileTrafficPolicyRules(krt.TestingDummyContext{}, model.TrafficPolicyRules{
 				Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
-					Action: action, To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "example.com"}},
+					Action: action,
+					To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "example.com"}},
 				}}},
 			}, "demo", inputs)
 			if err != nil {
