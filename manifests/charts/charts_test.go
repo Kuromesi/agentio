@@ -25,6 +25,9 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 )
 
@@ -315,6 +318,47 @@ func TestStaticEgressGateway(t *testing.T) {
 		"name: agentio-egress",
 		"namespace: agentio-system",
 	)
+}
+
+func TestStaticGatewayCPULimit(t *testing.T) {
+	for _, override := range []string{"", "3"} {
+		t.Run("override="+override, func(t *testing.T) {
+			args := []string{"--show-only", "templates/gateway/deployment.yaml",
+				"--set", "egressGateway.mode=static", "--set", "egressGateway.resources.limits.cpu=2"}
+			want := corev1.EnvVar{
+				Name: "ISTIO_CPU_LIMIT",
+				ValueFrom: &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{
+					Resource: "limits.cpu",
+					Divisor:  resource.MustParse("1"),
+				}},
+			}
+			if override != "" {
+				args = append(args, "--set-string", "egressGateway.env.ISTIO_CPU_LIMIT="+override)
+				want = corev1.EnvVar{Name: "ISTIO_CPU_LIMIT", Value: override}
+			}
+			var deployment appsv1.Deployment
+			if err := yaml.Unmarshal([]byte(renderAgentio(t, args...)), &deployment); err != nil {
+				t.Fatal(err)
+			}
+			var found []corev1.EnvVar
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				if container.Name != "agentio-proxy" {
+					continue
+				}
+				for _, env := range container.Env {
+					if env.Name == want.Name {
+						found = append(found, env)
+					}
+				}
+			}
+			if len(found) != 1 {
+				t.Fatalf("expected exactly one ISTIO_CPU_LIMIT, got %v", found)
+			}
+			if !reflect.DeepEqual(found[0], want) {
+				t.Fatalf("ISTIO_CPU_LIMIT = %+v, want %+v", found[0], want)
+			}
+		})
+	}
 }
 
 func TestGatewayAPIEgressGateway(t *testing.T) {

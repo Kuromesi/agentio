@@ -59,6 +59,13 @@ spec:
             - --proxyComponentLogLevel
             - misc:error
           env:
+            {{- if not (hasKey .Values.agentio.egressGateway.env "ISTIO_CPU_LIMIT") }}
+            - name: ISTIO_CPU_LIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+                  divisor: "1"
+            {{- end }}
             - name: PILOT_CERT_PROVIDER
               value: istiod
             - name: CA_ADDR
