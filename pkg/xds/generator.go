@@ -18,6 +18,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"time"
 
 	"istio.io/istio/pkg/util/sets"
 
@@ -65,6 +66,9 @@ type GeneratedDelta struct {
 	Resources []model.Resource
 	Removed   []string
 
+	// expiresAt is converted to a remaining TTL at send time. Expired resources
+	// become removals instead of being sent with stale certificate contents.
+	expiresAt      map[string]time.Time
 	denied         []generatedDenial
 	allowed        []string
 	elideSentState bool
