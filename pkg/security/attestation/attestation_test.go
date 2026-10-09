@@ -30,13 +30,13 @@ type fakeAuthenticator struct {
 
 type fakeDelegatedIdentityAuthorizer struct {
 	calls     int
-	requested CertificateTarget
+	requested model.Principal
 }
 
 func (f *fakeDelegatedIdentityAuthorizer) Authorize(
 	_ context.Context,
 	_ model.PeerIdentity,
-	requested CertificateTarget,
+	requested model.Principal,
 ) error {
 	f.calls++
 	f.requested = requested
@@ -166,10 +166,7 @@ func TestDelegatedIdentityAuthorizersDispatchByCallerAttestation(t *testing.T) {
 	kubernetes := &fakeDelegatedIdentityAuthorizer{}
 	authorizers := DelegatedIdentityAuthorizers{model.AttestationKubernetes: kubernetes}
 	caller := kubernetesAttestedCaller()
-	requested := CertificateTarget{
-		Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app"),
-		Source:    model.SourceRef{Registry: "kubernetes/test", Key: "pod-a"},
-	}
+	requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 
 	if err := authorizers.Authorize(context.Background(), caller, requested); err != nil {
 		t.Fatalf("service account delegation rejected: %v", err)
@@ -189,7 +186,7 @@ func TestDelegatedIdentityAuthorizersDispatchByCallerAttestation(t *testing.T) {
 
 func TestDelegatedIdentityAuthorizersFailClosedOnNilEntry(t *testing.T) {
 	authorizers := DelegatedIdentityAuthorizers{model.AttestationKubernetes: nil}
-	requested := CertificateTarget{Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app")}
+	requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 	if err := authorizers.Authorize(context.Background(), kubernetesAttestedCaller(), requested); err == nil {
 		t.Fatal("nil authorizer entry authorized a delegation")
 	}
@@ -198,7 +195,7 @@ func TestDelegatedIdentityAuthorizersFailClosedOnNilEntry(t *testing.T) {
 func TestDelegatedIdentityAuthorizersFailClosedOnTypedNilEntry(t *testing.T) {
 	var authorizer *fakeDelegatedIdentityAuthorizer
 	authorizers := DelegatedIdentityAuthorizers{model.AttestationKubernetes: authorizer}
-	requested := CertificateTarget{Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app")}
+	requested := mustTestPrincipal("cluster.local", "ns/demo/sa/app")
 	if err := authorizers.Authorize(context.Background(), kubernetesAttestedCaller(), requested); err == nil {
 		t.Fatal("typed nil authorizer entry authorized a delegation")
 	}

@@ -21,8 +21,7 @@ import (
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
-// callerPrincipal derives the Kubernetes service-account principal
-// when ImpersonatedIdentity is absent.
+// callerPrincipal derives the service-account identity from authenticated Kubernetes evidence.
 func callerPrincipal(caller model.PeerIdentity, trustDomain string) (model.Principal, error) {
 	if caller.AttestedBy != model.AttestationKubernetes {
 		return model.Principal{}, fmt.Errorf("an explicit certificate identity is required")

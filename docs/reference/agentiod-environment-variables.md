@@ -32,7 +32,7 @@ The `-print-env` output is the authoritative reference. Registered settings are 
 
 - control-plane identity and config: `AGENTIO_SERVICE_NAME`, `AGENTIO_TOKEN_AUDIENCE`, `AGENTIO_TRUSTED_NODE_ACCOUNTS`, and `AGENTIO_*CONFIGMAP_NAME`;
 - Kubernetes API client throttling: `AGENTIO_KUBERNETES_API_QPS` and `AGENTIO_KUBERNETES_API_BURST`;
-- workload CA and trust distribution: `AGENTIO_CA_*`, `AGENTIO_TRUST_BUNDLE_*`, `AGENTIO_WORKLOAD_CERT_*`, and `AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID`;
+- workload CA and trust distribution: `AGENTIO_CA_*`, `AGENTIO_TRUST_BUNDLE_*`, and `AGENTIO_WORKLOAD_CERT_*`;
 - xDS and KRT flow control: `AGENTIO_KRT_*`, `AGENTIO_PUSH_*`, `AGENTIO_CLIENT_QUEUE_SIZE`, and `AGENTIO_MAX_REQUESTS_PER_SECOND`;
 - injection and gateway deployment: `AGENTIO_ENABLE_SIDECAR_INJECTOR`, `AGENTIO_INJECTOR_*`, `AGENTIO_NATIVE_SIDECARS`, `AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR`, `AGENTIO_CLIENT_TRUST_PACKAGE_PATH`, `AGENTIO_ENABLE_GATEWAY_DEPLOYER`, and `AGENTIO_GATEWAY_LEASE_NAME`;
 - networking: `AGENTIO_GATEWAY_*`, `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`, and `AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY`;
@@ -50,11 +50,7 @@ Sandbox-owned inline TrafficPolicy and SNI rules stay on Sandbox resources; no W
 
 This resource split is a control-plane draft and requires corresponding data-plane evaluation changes, including inline ALLOW followed by a separate system-policy check.
 
-`AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID` configures the non-critical certificate
-extension for workload sources. When configured, Pod-bound self requests
-automatically include their authorized source; delegated requests must specify
-`TargetWorkload` metadata with `registry` and `key` to include it. Empty preserves principal-only issuance and
-rejects explicit source requests.
+Ordinary Workloads use `spiffe://<trust-domain>/cluster/<cluster-id>/ns/<namespace>/workload/<pod-name>`. Same-name Pod replacements retain this identity. Registered gateway replicas retain their Kubernetes service-account identity. WDS publishes the trust domain, cluster ID, namespace, Pod name, and service account. New data planes derive Workload identities from these fields; older data planes continue to derive service-account identities. The CA authorizes both Workload and service-account requests. Sidecars specify the expected identity in the CSR; node proxies may use `ImpersonatedIdentity` metadata. Upgrade the control plane before enabling new Workload identities in data planes. This supports old and new clients connecting to the same gateway; old clients cannot validate new Workload identities on direct Workload-to-Workload connections.
 
 ## Environment variable reference
 
@@ -130,7 +126,6 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_TRUST_BUNDLE_LEASE_NAME</code> | String | <code>agentiod-trust-bundle-leader</code> | Lease electing the replica that distributes the trust bundle ConfigMap. |
 | <code>AGENTIO_WORKLOAD_CERT_LIFETIME</code> | Duration | <code>24h0m0s</code> | Validity of workload certificates and of the xDS server&#39;s own certificate. |
 | <code>AGENTIO_WORKLOAD_CERT_RENEW_BEFORE</code> | Duration | <code>8h0m0s</code> | How long before expiry the xDS server re-issues its own certificate. |
-| <code>AGENTIO_WORKLOAD_SOURCE_EXTENSION_OID</code> | String | empty | Private enterprise OID for the non-critical workload source certificate extension. Enables automatic source binding for Pod-bound self requests. Empty disables extensions and rejects explicit source requests. |
 
 <!-- END GENERATED ENVIRONMENT VARIABLES -->
 

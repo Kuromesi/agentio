@@ -140,20 +140,18 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return err
 	}
 	authority, err := ca.LoadOrCreateAuthority(ctx, kubeClient, authenticator, ca.AuthorityOptions{
-		ClusterID:                  options.ClusterID,
-		TrustDomain:                options.TrustDomain,
-		WorkloadSourceExtensionOID: features.WorkloadSourceExtensionOID,
-		Namespace:                  options.RootNamespace,
-		SecretName:                 features.CASecretName,
-		ConfigMapName:              features.CAConfigMapName,
-		ServiceName:                features.ServiceName,
-		LeafLifetime:               features.WorkloadCertLifetime,
-		LeafRenewBefore:            features.WorkloadCertRenewBefore,
-		LeaseName:                  features.CALeaseName,
-		RootLifetime:               features.CARootLifetime,
-		RenewBefore:                features.CARenewBefore,
-		RotationCheckInterval:      features.CARotationCheckInterval,
-		KrtOptions:                 krtBuilder,
+		TrustDomain:           options.TrustDomain,
+		Namespace:             options.RootNamespace,
+		SecretName:            features.CASecretName,
+		ConfigMapName:         features.CAConfigMapName,
+		ServiceName:           features.ServiceName,
+		LeafLifetime:          features.WorkloadCertLifetime,
+		LeafRenewBefore:       features.WorkloadCertRenewBefore,
+		LeaseName:             features.CALeaseName,
+		RootLifetime:          features.CARootLifetime,
+		RenewBefore:           features.CARenewBefore,
+		RotationCheckInterval: features.CARotationCheckInterval,
+		KrtOptions:            krtBuilder,
 	})
 	if err != nil {
 		return err
