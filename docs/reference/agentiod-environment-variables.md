@@ -38,19 +38,9 @@ The `-print-env` output is the authoritative reference. Registered settings are 
 - networking: `AGENTIO_GATEWAY_*`, `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`, and `AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY`;
 - logging and debug access: `AGENTIO_LOG_*` and `AGENTIO_ENABLE_DEBUG_ON_HTTP`.
 
-Ordinary Pods remain Workloads and do not produce derived Sandbox xDS resources. Shared TrafficPolicy, EgressPolicy, and SecurityProfile-derived SNI rules select Workloads directly using their namespace and labels. Pod readiness does not gate policy attachment.
-
 `AGENTIO_SANDBOX_MODE=false` (the default) disables Sandbox runtime discovery and Sandbox xDS output. Shared Workload policies remain enabled. Setting it to `true` enables Sandbox support alongside ordinary Workloads.
 
-`AGENTIO_SANDBOX_RUNTIMES` selects runtime integrations as a comma-separated list (currently `kruise`), defaulting to empty. To discover Kruise Sandboxes, set both `AGENTIO_SANDBOX_MODE=true` and `AGENTIO_SANDBOX_RUNTIMES=kruise`. An empty list enables no runtime integrations. Whitespace is trimmed, duplicates are ignored, and unknown or empty list entries fail startup in either mode. Unclaimed warm-pool Pods retain their Workload policies even without a bound Sandbox.
-
-Sandbox identities use `<type>:<instance-id>` and are compared as case-sensitive opaque strings. Kruise identities use `kruise:{sandbox-id}`; non-pooled Sandbox CRs without a sandbox-id label retain the `kruise:{namespace}--{name}` fallback. Native Sandbox resources carry host binding, lifecycle and dedicated inline policies. Shared policies and exit routing remain on the Workload.
-
-Sandbox-owned inline TrafficPolicy and SNI rules stay on Sandbox resources; no Workload compatibility projection is emitted. Shared Workload Authorizations, SNI rules and egress routing are emitted in both modes. Shared TrafficPolicy Authorizations retain source priority and global/namespace/selector scope; selectors use Workload labels.
-
-This resource split is a control-plane draft and requires corresponding data-plane evaluation changes, including inline ALLOW followed by a separate system-policy check.
-
-Ordinary Workloads use `spiffe://<trust-domain>/cluster/<cluster-id>/ns/<namespace>/workload/<pod-name>`. Same-name Pod replacements retain this identity. Registered gateway replicas retain their Kubernetes service-account identity. WDS publishes the trust domain, cluster ID, namespace, Pod name, and service account. New data planes derive Workload identities from these fields; older data planes continue to derive service-account identities. The CA authorizes both Workload and service-account requests. Sidecars specify the expected identity in the CSR; node proxies may use `ImpersonatedIdentity` metadata. Upgrade the control plane before enabling new Workload identities in data planes. This supports old and new clients connecting to the same gateway; old clients cannot validate new Workload identities on direct Workload-to-Workload connections.
+`AGENTIO_SANDBOX_RUNTIMES` selects runtime integrations as a comma-separated list (currently `kruise`), defaulting to empty. To discover Kruise Sandboxes, set both `AGENTIO_SANDBOX_MODE=true` and `AGENTIO_SANDBOX_RUNTIMES=kruise`. An empty list enables no runtime integrations. Whitespace is trimmed, duplicates are ignored, and unknown or empty list entries fail startup in either mode.
 
 ## Environment variable reference
 
@@ -144,7 +134,7 @@ agentiod:
 
 These settings configure client-side throttling, not the Kubernetes API server's limits or a single aggregate budget shared by all clientsets and replicas. Higher settings allow more API traffic; choose values appropriate for the API server's capacity.
 
-`AGENTIO_MAX_REQUESTS_PER_SECOND` separately limits **new xDS streams** before authentication. Its unchanged default is `min(15 + 5 * GOMAXPROCS, 100)`, with a burst of 1 and up to 1 second of waiting before rejection. An explicit positive value overrides that default; zero selects the automatic default. This limit does not throttle ACKs on established streams or server-initiated configuration pushes, and increasing it does not fix slow-client push accumulation.
+`AGENTIO_MAX_REQUESTS_PER_SECOND` separately limits **new xDS streams** before authentication. Its default is `min(15 + 5 * GOMAXPROCS, 100)`, with a burst of 1 and up to 1 second of waiting before rejection. An explicit positive value overrides that default; zero selects the automatic default. This limit does not throttle ACKs on established streams or server-initiated configuration pushes, and increasing it does not fix slow-client push accumulation.
 
 ## Shared Secret informer
 
@@ -158,17 +148,11 @@ agentiod:
 
 ## Client CA distribution and injection
 
-`AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR` defaults to `false`. The Helm chart derives
-it from `agentiod.injector.clientTrust.enabled` in the sidecar profile; use that
-single chart value to enable or disable the feature. When disabled, agentiod does
-not construct the distributor or allow CA injection, even with a Pod opt-in.
-The chart also omits the public CA package init container. Secret CA sources
-reuse existing system-namespace RBAC; the chart grants no additional source permissions.
-Disabling retains existing bundle ConfigMaps but stops updating them.
+`AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR` defaults to `false`. The Helm chart derives it from `agentiod.injector.clientTrust.enabled` in the sidecar profile; use that single chart value to enable or disable the feature. When disabled, agentiod does not construct the distributor or allow CA injection, even with a Pod opt-in. The chart also omits the public CA package init container. Secret CA sources reuse existing system-namespace RBAC; the chart grants no additional source permissions. Disabling retains existing bundle ConfigMaps but stops updating them.
 
 ## Experimental UDP sessions
 
-`AGENTIO_GATEWAY_ENABLE_UDP_PROXY` defaults to `false`. When enabled, every egress gateway accepts IPv4 CONNECT-UDP sessions on its HBONE listener. ztunnel opens one extended CONNECT stream per UDP flow with the MASQUE path `/.well-known/masque/udp/{ip}/{port}/`; the gateway validates the numeric destination, terminates the capsule stream, and sends the datagrams from one shared ORIGINAL_DST UDP cluster. Hostnames and IPv6 targets are rejected.
+`AGENTIO_GATEWAY_ENABLE_UDP_PROXY` defaults to `false`. When enabled, every egress gateway accepts IPv4 CONNECT-UDP sessions on its HBONE listener. Hostnames and IPv6 targets are rejected.
 
 UDP sessions are forwarded directly. Neither the CONNECT-UDP request nor the datagrams pass through `extProc`; EPE policies continue to apply only to the inner HTTP of ordinary TCP HBONE.
 
@@ -238,36 +222,6 @@ $ curl --request PUT \
 `PUT /debug/logging` remains available and changes the `default` scope. The default scope covers standard-library, Kubernetes dependency, and other unscoped logs; it does not overwrite levels already assigned to registered components. At startup, `AGENTIO_LOG_LEVEL` initializes the default and every registered component to the same value.
 
 Loopback requests do not require credentials. Requests from any other address must pass the same TokenReview and root-namespace authorization as `/debug/configz`. A successful change returns HTTP 202 and affects existing loggers immediately. It is process-local and is not persisted: after an `agentiod` restart, `AGENTIO_LOG_LEVEL` supplies the level again.
-
-## Read startup and publication logs
-
-At INFO, `starting agentiod` reports effective rate limits, debounce periods,
-connection lifetime, Go runtime settings, and available build metadata. It uses
-an explicit list of diagnostic settings rather than dumping environment variables
-or kubeconfig contents. Missing build metadata is reported as `unknown`.
-`waiting for initial configuration sync` reports registry/compiler sync status
-at most every ten seconds while waiting. `agentiod ready` includes the total
-startup duration and initial resource counts.
-
-`xDS snapshot published` summarizes one changed snapshot after the publication
-call completes. `changes` and `changes_by_type` count coalesced compiled input
-changes; `resource_sample` contains at most three of their keys. For a full
-snapshot publication, those input changes need not describe every resource in
-the replacement snapshot. `resources` is the resulting snapshot size.
-`debounce_duration` starts when the controller observes the first trigger in
-that batch; `publication_duration` measures the snapshot assembly/publication
-call. Neither includes the preceding Kubernetes/KRT work, client ACK latency,
-or actual traffic enforcement. Unchanged snapshots are logged at DEBUG.
-
-This replaces the Store's `XDS: Incremental Pushing` line and retains
-`connected_endpoints`: the total number of Store subscribers at publication time,
-including those unaffected by this batch. It does not count completed sends or
-ACKs. The count is captured with the snapshot; the log is written outside the
-Store lock.
-Per-connection request, push, NACK, and disconnect records carry `connection_id`,
-`node_id`, and `client_class`; push records also carry the snapshot `version`.
-Normal context cancellation is INFO, while unexpected failures retain their
-warning/error levels. Ordinary incremental sends and ACKs remain at DEBUG.
 
 ## See also
 

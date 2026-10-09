@@ -89,9 +89,44 @@ func (a registeredAttestationAuthenticator) Authenticate(ctx context.Context) (m
 	return peer, nil
 }
 
-// DelegatedIdentityAuthorizer checks whether the caller may receive a principal.
+// WorkloadReference selects a workload by name in the caller's registry.
+type WorkloadReference struct {
+	Namespace string
+	Name      string
+}
+
+// CertificateTarget selects a principal and optional workload to authorize.
+type CertificateTarget struct {
+	Principal model.Principal
+	Workload  *WorkloadReference
+}
+
+// WorkloadIdentity contains the verified instance claims carried in a certificate.
+type WorkloadIdentity struct {
+	Registry string `json:"registry"`
+	UID      string `json:"uid"`
+	Role     string `json:"role,omitempty"`
+}
+
+// Certificate roles identify the workload's function.
+const (
+	RoleSandboxAttester = "sandbox-attester"
+	RoleEgressGateway   = "egress-gateway"
+	RoleExtProc         = "ext-proc"
+)
+
+// Validate checks that the instance reference is complete.
+func (w WorkloadIdentity) Validate() error {
+	if w.Registry == "" || w.UID == "" {
+		return fmt.Errorf("workload registry and uid are required")
+	}
+	return nil
+}
+
+// DelegatedIdentityAuthorizer returns the verified identity for a named workload.
+// Principal-only requests return an empty identity.
 type DelegatedIdentityAuthorizer interface {
-	Authorize(context.Context, model.PeerIdentity, model.Principal) error
+	Authorize(context.Context, model.PeerIdentity, CertificateTarget) (WorkloadIdentity, error)
 }
 
 // DelegatedIdentityAuthorizers dispatches delegated-identity authorization by
@@ -104,11 +139,11 @@ type DelegatedIdentityAuthorizers map[model.Attestation]DelegatedIdentityAuthori
 func (a DelegatedIdentityAuthorizers) Authorize(
 	ctx context.Context,
 	caller model.PeerIdentity,
-	requested model.Principal,
-) error {
+	requested CertificateTarget,
+) (WorkloadIdentity, error) {
 	authorizer, found := a[caller.AttestedBy]
 	if !found || DelegatedAuthorizerIsNil(authorizer) {
-		return fmt.Errorf("no authorizer owns %q caller attestation", caller.AttestedBy)
+		return WorkloadIdentity{}, fmt.Errorf("no authorizer owns %q caller attestation", caller.AttestedBy)
 	}
 	return authorizer.Authorize(ctx, caller, requested)
 }

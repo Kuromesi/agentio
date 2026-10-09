@@ -38,15 +38,7 @@ func (r *Registry) certificateWorkloads(options ...krt.CollectionOption) krt.Col
 				w.GatewayKey = gateway.ResourceName()
 			}
 		}
-		if w.GatewayKey == "" && (*pod).UID != "" {
-			principal, err := podsource.WorkloadPrincipal(
-				r.options.TrustDomain, r.options.ClusterID, (*pod).Namespace, (*pod).Name,
-			)
-			if err != nil {
-				return nil
-			}
-			w.Principal = principal
-		} else if w.GatewayKey != "" && (*pod).Spec.ServiceAccountName != "" {
+		if (*pod).Spec.ServiceAccountName != "" {
 			principal, err := podsource.ServiceAccountPrincipal(
 				r.options.TrustDomain,
 				(*pod).Namespace,

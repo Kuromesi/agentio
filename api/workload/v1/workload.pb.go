@@ -927,10 +927,10 @@ type Workload struct {
 	Uid string `protobuf:"bytes,20,opt,name=uid,proto3" json:"uid,omitempty"`
 	// Name represents the name for the workload.
 	// For Kubernetes, this is the pod name.
-	// Required for name-based workload certificate identities.
+	// This is just for debugging and may be elided as an optimization.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// Namespace represents the namespace for the workload.
-	// Required for name-based workload certificate identities.
+	// This is just for debugging and may be elided as an optimization.
 	Namespace string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	// Address represents the IPv4/IPv6 address for the workload.
 	// This should be globally unique.
@@ -952,12 +952,10 @@ type Workload struct {
 	Network string `protobuf:"bytes,4,opt,name=network,proto3" json:"network,omitempty"`
 	// Protocol that should be used to connect to this workload.
 	TunnelProtocol TunnelProtocol `protobuf:"varint,5,opt,name=tunnel_protocol,json=tunnelProtocol,proto3,enum=istio.workload.TunnelProtocol" json:"tunnel_protocol,omitempty"`
-	// Workload identity: spiffe://<trust_domain>/cluster/<cluster_id>/ns/<namespace>/workload/<name>.
-	// Gateway and service-account identity: spiffe://<trust_domain>/ns/<namespace>/sa/<service_account>.
+	// The SPIFFE identity of the workload. The identity is joined to form spiffe://<trust_domain>/ns/<namespace>/sa/<service_account>.
 	// TrustDomain of the workload. May be elided if this is the mesh wide default (typically cluster.local)
 	TrustDomain string `protobuf:"bytes,6,opt,name=trust_domain,json=trustDomain,proto3" json:"trust_domain,omitempty"`
-	// Kubernetes service account used for workload discovery.
-	// Also used for gateway and service-account certificate identities. May be elided if this is "default"
+	// ServiceAccount of the workload. May be elided if this is "default"
 	ServiceAccount string `protobuf:"bytes,7,opt,name=service_account,json=serviceAccount,proto3" json:"service_account,omitempty"`
 	// If present, the waypoint proxy for this workload.
 	// All incoming requests must go through the waypoint.
@@ -992,7 +990,7 @@ type Workload struct {
 	// Authorization policies are only valid for workloads with `addresses` rather than `hostname`.
 	AuthorizationPolicies []string       `protobuf:"bytes,16,rep,name=authorization_policies,json=authorizationPolicies,proto3" json:"authorization_policies,omitempty"`
 	Status                WorkloadStatus `protobuf:"varint,17,opt,name=status,proto3,enum=istio.workload.WorkloadStatus" json:"status,omitempty"`
-	// The cluster ID that the workload instance belongs to. Required for name-based workload certificate identities.
+	// The cluster ID that the workload instance belongs to
 	ClusterId string `protobuf:"bytes,18,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
 	// The Locality defines information about where a workload is geographically deployed
 	Locality    *Locality   `protobuf:"bytes,24,opt,name=locality,proto3" json:"locality,omitempty"`
