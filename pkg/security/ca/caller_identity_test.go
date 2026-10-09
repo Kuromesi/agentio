@@ -19,11 +19,11 @@ import (
 	"testing"
 )
 
-func TestServiceAccountSelfRequestDoesNotRequireDelegatedAuthorization(t *testing.T) {
+func TestSelfRequestWithoutSourceDoesNotRequireTargetAuthorization(t *testing.T) {
 	caller := peerIdentity("demo", "app")
 	caller.Kubernetes.WorkloadName, caller.Kubernetes.WorkloadUID = "", ""
 	want := serviceAccountPrincipal("demo", "app")
-	authorizer := &fakeDelegatedIdentityAuthorizer{err: fmt.Errorf("delegated authorization must not run")}
+	authorizer := &fakeDelegatedIdentityAuthorizer{err: fmt.Errorf("instance authorization must not run")}
 	authority := certificateAuthority(t, caller, authorizer)
 	response, err := authority.CreateCertificate(t.Context(), requestWithCSR(t, want.String()))
 	if err != nil || authorizer.calls != 0 {

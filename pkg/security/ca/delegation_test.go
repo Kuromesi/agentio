@@ -31,6 +31,10 @@ type fakeDelegatedIdentityAuthorizer struct {
 	calls     int
 	caller    model.PeerIdentity
 	requested model.Principal
+	source    model.SourceRef
+	workload  *attestation.WorkloadReference
+	resolved  model.SourceRef
+	role      string
 	err       error
 	authorize func(context.Context, model.PeerIdentity, model.Principal) error
 }
@@ -38,15 +42,28 @@ type fakeDelegatedIdentityAuthorizer struct {
 func (f *fakeDelegatedIdentityAuthorizer) Authorize(
 	ctx context.Context,
 	caller model.PeerIdentity,
-	requested model.Principal,
-) error {
+	target attestation.CertificateTarget,
+) (attestation.WorkloadIdentity, error) {
 	f.calls++
 	f.caller = caller
-	f.requested = requested
-	if f.authorize != nil {
-		return f.authorize(ctx, caller, requested)
+	f.requested = target.Principal
+	f.workload = target.Workload
+	f.source = f.resolved
+	if target.Workload != nil && f.source == (model.SourceRef{}) {
+		f.source = model.SourceRef{Registry: "kubernetes/test", Key: caller.Kubernetes.WorkloadUID}
 	}
-	return f.err
+	if f.authorize != nil {
+		return attestation.WorkloadIdentity{
+				Registry: f.source.Registry,
+				UID:      f.source.Key,
+				Role:     f.role,
+			}, f.authorize(
+				ctx,
+				caller,
+				target.Principal,
+			)
+	}
+	return attestation.WorkloadIdentity{Registry: f.source.Registry, UID: f.source.Key, Role: f.role}, f.err
 }
 
 func sharedZTunnelCaller() model.PeerIdentity {
@@ -73,7 +90,8 @@ func certificateIdentityForTest(
 	if err != nil {
 		t.Fatalf("parse test certificate request: %v", err)
 	}
-	return authority.certificatePrincipal(ctx, caller, request, csr)
+	target, err := authority.certificateTarget(ctx, caller, request, csr)
+	return target.Principal, err
 }
 
 func TestSelfIdentityUsesAuthorizer(t *testing.T) {
@@ -97,7 +115,7 @@ func TestSelfIdentityUsesAuthorizer(t *testing.T) {
 	}
 }
 
-// Delegation must go through the authorizer.
+// Delegation must go through the authorizer; no Pod source is available here.
 func TestDelegatedIdentityUsesAuthorizer(t *testing.T) {
 	denied := errors.New("delegation denied")
 	authorizer := &fakeDelegatedIdentityAuthorizer{err: denied}

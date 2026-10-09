@@ -17,6 +17,7 @@ package ca
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509/pkix"
 	"fmt"
 	"net"
 	"net/url"
@@ -199,7 +200,7 @@ func LoadOrCreateAuthority(
 	return authority, nil
 }
 
-// UseDelegatedIdentityAuthorizer installs certificate identity authorization.
+// UseDelegatedIdentityAuthorizer installs the policy for explicit targets and instance requests.
 func (a *Authority) UseDelegatedIdentityAuthorizer(authorizer attestation.DelegatedIdentityAuthorizer) {
 	a.authorizerMu.Lock()
 	a.delegatedIdentityAuthorizer = authorizer
@@ -250,16 +251,24 @@ func (a *Authority) CreateCertificate(
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	principal, err := a.certificatePrincipal(ctx, caller, request, csr)
+	target, err := a.certificateTarget(ctx, caller, request, csr)
 	if err != nil {
 		// Keep the response opaque: the detailed reason names nodes and identities,
 		// which would give an unauthorized caller a topology probe.
 		log.Warn("certificate identity selection failed", "attestation", caller.AttestedBy, "error", err)
 		return nil, status.Error(codes.Unauthenticated, "request authenticate failure")
 	}
-	spiffeURI, err := url.Parse(principal.String())
+	spiffeURI, err := url.Parse(target.Principal.String())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "encode workload identity")
+	}
+	var extensions []pkix.Extension
+	if target.Workload != (attestation.WorkloadIdentity{}) {
+		extension, err := workloadIdentityExtension(target.Workload)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "encode workload identity")
+		}
+		extensions = append(extensions, extension)
 	}
 	lifetime := a.leafLifetime
 	if requested := time.Duration(request.GetValidityDuration()) * time.Second; requested > 0 && requested < lifetime {
@@ -272,10 +281,11 @@ func (a *Authority) CreateCertificate(
 		return nil, status.Error(codes.Internal, "CA is not loaded")
 	}
 	issued, err := ca.Sign(ctx, csr.PublicKey, pki.LeafOptions{
-		URIs:     []*url.URL{spiffeURI},
-		Lifetime: lifetime,
-		Client:   true,
-		Server:   true,
+		URIs:            []*url.URL{spiffeURI},
+		ExtraExtensions: extensions,
+		Lifetime:        lifetime,
+		Client:          true,
+		Server:          true,
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

@@ -22,27 +22,33 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry/kubernetes/kruise"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
+	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
 // DelegatedIdentityAuthorizer authorizes self and same-node certificate requests.
 type DelegatedIdentityAuthorizer struct {
 	pods                   krt.Collection[*corev1.Pod]
+	workloads              krt.Collection[model.Workload]
 	targetsByNodePrincipal krt.Index[string, *corev1.Pod]
 	rootNamespace          string
 	ztunnelServiceAccount  string
 	clusterID              string
 	trustDomain            string
+	enableKruise           bool
 }
 
 func (r *Registry) DelegatedIdentityAuthorizer() *DelegatedIdentityAuthorizer {
 	return &DelegatedIdentityAuthorizer{
 		pods:                   r.Pods,
+		workloads:              r.Workloads,
 		targetsByNodePrincipal: newDelegationTargetIndex(r.Pods, r.options.TrustDomain),
 		rootNamespace:          r.options.RootNamespace,
 		ztunnelServiceAccount:  r.options.ZTunnelServiceAccount,
 		clusterID:              r.options.ClusterID,
 		trustDomain:            r.options.TrustDomain,
+		enableKruise:           r.options.EnableKruise,
 	}
 }
 
@@ -70,99 +76,73 @@ func eligibleDelegationTarget(pod *corev1.Pod) bool {
 	return podsource.AmbientRedirectionEnabled(pod) || podsource.HasInjectedZTunnel(pod)
 }
 
-// Authorize checks whether the caller may receive the requested certificate identity.
+// Authorize checks the requested principal and returns the selected Pod's identity.
 func (a *DelegatedIdentityAuthorizer) Authorize(
 	ctx context.Context,
 	caller model.PeerIdentity,
-	requested model.Principal,
-) error {
-	if _, _, serviceAccount := podsource.ServiceAccountFromPrincipal(requested); serviceAccount {
-		return a.authorizeServiceAccount(ctx, caller, requested)
-	}
+	target attestation.CertificateTarget,
+) (attestation.WorkloadIdentity, error) {
+	requested := target.Principal
 	if err := ctx.Err(); err != nil {
-		return err
+		return attestation.WorkloadIdentity{}, err
 	}
 	if _, err := model.ParsePrincipal(requested.String(), a.trustDomain); err != nil {
-		return err
+		return attestation.WorkloadIdentity{}, err
+	}
+	namespace, serviceAccount, ok := podsource.ServiceAccountFromPrincipal(requested)
+	if !ok {
+		return attestation.WorkloadIdentity{}, fmt.Errorf("Kubernetes registry only owns service account identities")
 	}
 	pod, err := activeCallerPod(a.pods, caller)
 	if err != nil {
-		return err
+		return attestation.WorkloadIdentity{}, err
 	}
-	targetPod, err := a.certificatePod(requested)
-	if err != nil {
-		return err
+	trustedNode := caller.Kubernetes.Namespace == a.rootNamespace &&
+		caller.Kubernetes.ServiceAccount == a.ztunnelServiceAccount && pod.Spec.NodeName != ""
+	if ref := target.Workload; ref != nil {
+		if ref.Namespace == "" || ref.Name == "" {
+			return attestation.WorkloadIdentity{}, fmt.Errorf("workload namespace and name are required")
+		}
+		selected := a.pods.GetKey(ref.Namespace + "/" + ref.Name)
+		if selected == nil || (*selected).UID == "" || (*selected).DeletionTimestamp != nil ||
+			(*selected).Status.Phase == corev1.PodSucceeded || (*selected).Status.Phase == corev1.PodFailed {
+			return attestation.WorkloadIdentity{}, fmt.Errorf("certificate target is not an active Pod")
+		}
+		targetPod := *selected
+		if targetPod.Namespace != namespace || targetPod.Spec.ServiceAccountName != serviceAccount {
+			return attestation.WorkloadIdentity{}, fmt.Errorf(
+				"certificate identity does not match target Pod service account",
+			)
+		}
+		if targetPod.UID != pod.UID &&
+			(!trustedNode || targetPod.Spec.NodeName != pod.Spec.NodeName || !eligibleDelegationTarget(targetPod)) {
+			return attestation.WorkloadIdentity{}, fmt.Errorf(
+				"caller may only delegate to managed Workloads on its node",
+			)
+		}
+		return a.workloadIdentity(targetPod), nil
 	}
-	if targetPod.UID == pod.UID {
-		return nil
+	if namespace == pod.Namespace && serviceAccount == pod.Spec.ServiceAccountName {
+		return attestation.WorkloadIdentity{}, nil
 	}
-	if caller.Kubernetes.Namespace != a.rootNamespace || caller.Kubernetes.ServiceAccount != a.ztunnelServiceAccount ||
-		pod.Spec.NodeName == "" || targetPod.Spec.NodeName != pod.Spec.NodeName ||
-		!eligibleDelegationTarget(targetPod) {
-		return fmt.Errorf("caller may only delegate to managed Workloads on its node")
+	if trustedNode && len(a.targetsByNodePrincipal.Lookup(pod.Spec.NodeName+"|"+requested.String())) != 0 {
+		return attestation.WorkloadIdentity{}, nil
 	}
-	return nil
+	return attestation.WorkloadIdentity{}, fmt.Errorf("caller cannot delegate the requested service account identity")
 }
 
-// certificatePod finds the active Pod named by a workload principal.
-func (a *DelegatedIdentityAuthorizer) certificatePod(principal model.Principal) (*corev1.Pod, error) {
-	cluster, namespace, name, ok := podsource.WorkloadFromPrincipal(principal)
-	if !ok || cluster != a.clusterID {
-		return nil, fmt.Errorf("requested identity is not a Workload in this cluster")
+func (a *DelegatedIdentityAuthorizer) workloadIdentity(pod *corev1.Pod) attestation.WorkloadIdentity {
+	identity := attestation.WorkloadIdentity{Registry: "kubernetes/" + a.clusterID, UID: string(pod.UID)}
+	key := podsource.WorkloadUID(a.clusterID, pod)
+	workload := a.workloads.GetKey(key)
+	if workload != nil && workload.Source == podsource.SourceRef(a.clusterID, string(pod.UID)) &&
+		workload.GatewayKey != "" {
+		identity.Role = attestation.RoleEgressGateway
+	} else if a.enableKruise &&
+		kruise.OwnsPod(pod) {
+		identity.Role = attestation.RoleSandboxAttester
 	}
-	pod := a.pods.GetKey(namespace + "/" + name)
-	if pod == nil || (*pod).DeletionTimestamp != nil ||
-		(*pod).Status.Phase == corev1.PodSucceeded || (*pod).Status.Phase == corev1.PodFailed {
-		return nil, fmt.Errorf("certificate target is not an active Pod")
-	}
-	return *pod, nil
-}
-
-// authorizeServiceAccount handles service-account certificate requests.
-func (a *DelegatedIdentityAuthorizer) authorizeServiceAccount(
-	ctx context.Context,
-	caller model.PeerIdentity,
-	requested model.Principal,
-) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("authorize delegated identity: %w", err)
-	}
-	if _, err := model.ParsePrincipal(requested.String(), a.trustDomain); err != nil {
-		return err
-	}
-	pod, err := activeCallerPod(a.pods, caller)
-	if err != nil {
-		return err
-	}
-	callerPrincipal, err := podsource.ServiceAccountPrincipal(
-		a.trustDomain,
-		caller.Kubernetes.Namespace,
-		caller.Kubernetes.ServiceAccount,
-	)
-	if err != nil {
-		return err
-	}
-	if requested == callerPrincipal {
-		return nil
-	}
-	if caller.Kubernetes.Namespace != a.rootNamespace || caller.Kubernetes.ServiceAccount != a.ztunnelServiceAccount {
-		return fmt.Errorf(
-			"authorize delegated identity: caller %s is not a trusted node service account",
-			callerPrincipal.String(),
-		)
-	}
-	if pod.Spec.NodeName == "" {
-		return fmt.Errorf("trusted node Pod has no assigned node")
-	}
-	node := pod.Spec.NodeName
-	if len(a.targetsByNodePrincipal.Lookup(node+"|"+requested.String())) != 0 {
-		return nil
-	}
-	return fmt.Errorf(
-		"authorize delegated identity: no active ambient workload on node %s owns %s",
-		node,
-		requested.String(),
-	)
+	return identity
 }
 
 // activeCallerPod returns an active Pod matching the TokenReview name, UID, and service account.

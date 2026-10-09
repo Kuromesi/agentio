@@ -26,6 +26,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
 func gatewayTestPeer(pod *corev1.Pod) model.PeerIdentity {
@@ -66,7 +67,7 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 	sds := r.GatewayCertificateAuthorizer()
 	gid := mustTestPrincipal("cluster.local", "ns/system/sa/independent-bootstrap")
 	oldPeer := gatewayTestPeer(pod)
-	if err := auth.Authorize(ctx, oldPeer, gid); err != nil {
+	if err := authorizeCertificate(auth, ctx, oldPeer, attestation.CertificateTarget{Principal: gid}); err != nil {
 		t.Fatal(err)
 	}
 	scope, err := scopeResolver.ResolveScope(oldPeer, "")
@@ -88,8 +89,8 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 	peer := gatewayTestPeer(replacement)
 	eventually(t, func() bool {
 		current, err := scopeResolver.ResolveScope(peer, "")
-		return auth.Authorize(ctx, peer, gid) == nil &&
-			auth.Authorize(ctx, oldPeer, gid) != nil &&
+		return authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil &&
+			authorizeCertificate(auth, ctx, oldPeer, attestation.CertificateTarget{Principal: gid}) != nil &&
 			err == nil && current.GatewayKey == "system/egress"
 	}, "replacement joins automatically and old token loses authorization")
 	if err := sds.Authorize(scope); err != nil {
@@ -107,7 +108,8 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 		}
 		eventually(t, func() bool {
 			scope, err := scopeResolver.ResolveScope(peer, "")
-			return auth.Authorize(ctx, peer, gid) == nil && err == nil &&
+			return authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil &&
+				err == nil &&
 				scope.Class == model.ClientEgressGateway
 		}, "selector changes do not affect gateway membership")
 	}
@@ -139,7 +141,7 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 	eventually(t, func() bool {
 		w := r.Workloads.GetKey("test//Pod/system/gateway")
 		return w != nil && w.Principal == gid && w.GatewayKey == "system/egress" && !w.Ready &&
-			auth.Authorize(ctx, peer, gid) != nil
+			authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) != nil
 	}, "terminating gateway retains its discovery identity without new issuance")
 	if err := r.client.CoreV1().
 		Services(service.Namespace).
@@ -248,8 +250,15 @@ func TestGatewayMembershipRejectsAmbiguousAndUnregisteredPods(t *testing.T) {
 			}
 			extra := tc.configure(p, s, c)
 			r := newTestRegistry(t, t.Context(), append([]runtime.Object{p, s, c}, extra...), nil)
-			principal := mustTestPrincipal("cluster.local", "ns/"+p.Namespace+"/sa/"+p.Spec.ServiceAccountName)
-			err := r.DelegatedIdentityAuthorizer().Authorize(t.Context(), gatewayTestPeer(p), principal)
+			err := authorizeCertificate(
+				r.DelegatedIdentityAuthorizer(),
+				t.Context(),
+				gatewayTestPeer(p),
+				attestation.CertificateTarget{
+					Principal: mustTestPrincipal("cluster.local", "ns/"+p.Namespace+"/sa/"+p.Spec.ServiceAccountName),
+					Workload:  &attestation.WorkloadReference{Namespace: p.Namespace, Name: p.Name},
+				},
+			)
 			if (err == nil) != tc.allowWorkloadCertificate {
 				t.Fatalf("workload certificate: %v, want allow=%v", err, tc.allowWorkloadCertificate)
 			}
@@ -306,7 +315,9 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 	peer := gatewayTestPeer(pod)
 	eventually(
 		t,
-		func() bool { return auth.Authorize(ctx, peer, gid) == nil },
+		func() bool {
+			return authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil
+		},
 		"Gateway without status addresses authorizes its member",
 	)
 	for _, controller := range []gatewayv1.GatewayController{"example.org/foreign", agentioGatewayController} {
@@ -322,10 +333,10 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 		eventually(t, func() bool {
 			scope, err := r.PodScopeResolver(r.Workloads).ResolveScope(peer, "")
 			return err == nil && (scope.Class == model.ClientEgressGateway) == want &&
-				auth.Authorize(ctx, peer, gid) == nil
+				authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil
 		}, "GatewayClass ownership changes membership")
 	}
-	// Conflicting declarations return the Pod to an ordinary Workload.
+	// Conflicting declarations remove gateway scope but preserve the principal.
 	collision := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
 		Data:       map[string]string{"config": "egressGateways:\n- namespace: demo\n  name: egress\n"},
@@ -338,10 +349,9 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 	}
 	eventually(t, func() bool {
 		w := r.Workloads.GetKey("test//Pod/demo/gateway")
-		return w != nil && w.Principal == mustTestPrincipal("cluster.local", "cluster/test/ns/demo/workload/gateway") &&
-			w.GatewayKey == "" &&
-			auth.Authorize(ctx, peer, gid) == nil
-	}, "conflicting declarations withdraw gateway scope while old SA requests remain supported")
+		return w != nil && w.Principal == gid && w.GatewayKey == "" &&
+			authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil
+	}, "conflicting declarations withdraw gateway scope without changing logical identity")
 	if err := client.Kube().
 		CoreV1().
 		ConfigMaps(collision.Namespace).
@@ -350,7 +360,9 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 	}
 	eventually(
 		t,
-		func() bool { return auth.Authorize(ctx, peer, gid) == nil },
+		func() bool {
+			return authorizeCertificate(auth, ctx, peer, attestation.CertificateTarget{Principal: gid}) == nil
+		},
 		"conflict removal restores membership",
 	)
 	if err := client.GatewayAPI().

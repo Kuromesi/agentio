@@ -15,7 +15,6 @@
 package pod
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/openkruise/agentio/pkg/model"
@@ -33,21 +32,4 @@ func ServiceAccountFromPrincipal(principal model.Principal) (namespace, account 
 		return parts[1], parts[3], true
 	}
 	return "", "", false
-}
-
-// WorkloadPrincipal identifies a named Pod within its cluster and namespace.
-func WorkloadPrincipal(trustDomain, clusterID, namespace, name string) (model.Principal, error) {
-	if strings.Contains(clusterID, "/") {
-		return model.Principal{}, fmt.Errorf("cluster ID must be a single SPIFFE path segment")
-	}
-	return model.NewPrincipal(trustDomain, "cluster/"+clusterID+"/ns/"+namespace+"/workload/"+name)
-}
-
-// WorkloadFromPrincipal extracts the cluster, namespace, and Pod name.
-func WorkloadFromPrincipal(principal model.Principal) (cluster, namespace, name string, ok bool) {
-	parts := strings.Split(strings.TrimPrefix(principal.String(), "spiffe://"+principal.TrustDomain()+"/"), "/")
-	if len(parts) == 6 && parts[0] == "cluster" && parts[2] == "ns" && parts[4] == "workload" {
-		return parts[1], parts[3], parts[5], true
-	}
-	return "", "", "", false
 }

@@ -24,24 +24,29 @@ import (
 	securityapi "istio.io/api/security/v1alpha1"
 
 	"github.com/openkruise/agentio/pkg/model"
-	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
 // CA request metadata examples (the CSR is sent in request.Csr):
 //
-// Sidecar self request: put the expected SPIFFE ID in the CSR and omit metadata.
-// Node ztunnel derives the SPIFFE ID from WDS trust_domain, cluster_id, namespace, and name:
+// Sidecar self request: omit metadata and authenticate with the Pod-bound token.
+// The CA derives and authorizes the Pod identity and includes it in the certificate extension.
 //
-//	{"ImpersonatedIdentity": "spiffe://cluster.local/cluster/cluster-a/ns/demo/workload/backend-0"}
+// Node ztunnel request for a specific workload instance:
 //
-// Older node proxies request the service-account identity:
+//	{
+//	  "ImpersonatedIdentity": "spiffe://cluster.local/ns/demo/sa/backend",
+//	  "TargetWorkload": {"namespace": "demo", "name": "backend-abc"}
+//	}
 //
-//	{"ImpersonatedIdentity": "spiffe://cluster.local/ns/demo/sa/backend"}
-//
-// Any explicit identity or CSR URI SAN must match the authorized principal.
-const impersonatedIdentityMetadata = "ImpersonatedIdentity"
+// Omitting TargetWorkload from a delegated request requests only the logical identity.
+// An explicit TargetWorkload requires authorization.
+// Any URI SAN in the CSR must match the selected identity.
+const (
+	impersonatedIdentityMetadata = "ImpersonatedIdentity"
+	targetWorkloadMetadata       = "TargetWorkload"
+)
 
 func parseCertificateRequest(request *securityapi.IstioCertificateRequest) (*x509.CertificateRequest, error) {
 	block, err := pki.DecodeSinglePEMBlock([]byte(request.GetCsr()), "CSR")
@@ -55,74 +60,99 @@ func parseCertificateRequest(request *securityapi.IstioCertificateRequest) (*x50
 	return csr, nil
 }
 
-// certificatePrincipal validates the requested target, then authorizes it before
+// certificateTarget validates the requested target, then authorizes it before
 // signing. A CSR confirms the requested identity; it never supplies authorization evidence.
-func (a *Authority) certificatePrincipal(
+func (a *Authority) certificateTarget(
 	ctx context.Context,
 	caller model.PeerIdentity,
 	request *securityapi.IstioCertificateRequest,
 	csr *x509.CertificateRequest,
-) (model.Principal, error) {
-	selected, found, err := requestedPrincipal(request, csr, a.options.TrustDomain)
-	if err != nil {
-		return model.Principal{}, err
-	}
-	if selected == (model.Principal{}) {
-		return callerPrincipal(caller, a.options.TrustDomain)
-	}
-	// Service-account self requests must match the authenticated caller.
-	_, _, serviceAccount := podsource.ServiceAccountFromPrincipal(selected)
-	if !found && serviceAccount {
-		own, err := callerPrincipal(caller, a.options.TrustDomain)
-		if err != nil {
-			return model.Principal{}, err
-		}
-		if selected != own {
-			return model.Principal{}, fmt.Errorf("CSR identity does not match caller service account")
-		}
-		return selected, nil
-	}
-	authorizer := a.delegatedAuthorizer()
-	if attestation.DelegatedAuthorizerIsNil(authorizer) {
-		return model.Principal{}, fmt.Errorf("certificate authorizer is not configured")
-	}
-	if err := authorizer.Authorize(ctx, caller, selected); err != nil {
-		return model.Principal{}, fmt.Errorf("authorize certificate identity: %w", err)
-	}
-	return selected, nil
-}
-
-// requestedPrincipal reconciles the CSR URI SAN with ImpersonatedIdentity.
-func requestedPrincipal(
-	request *securityapi.IstioCertificateRequest,
-	csr *x509.CertificateRequest,
-	trustDomain string,
-) (model.Principal, bool, error) {
+) (certificateIdentity, error) {
 	impersonated, found, err := impersonatedIdentity(request)
 	if err != nil {
-		return model.Principal{}, false, err
+		return certificateIdentity{}, err
+	}
+	workload, err := requestedTargetWorkload(request)
+	if err != nil {
+		return certificateIdentity{}, err
 	}
 	var selected model.Principal
 	if found {
-		selected, err = model.ParsePrincipal(impersonated, trustDomain)
-		if err != nil {
-			return model.Principal{}, false, err
-		}
+		selected, err = model.ParsePrincipal(impersonated, a.options.TrustDomain)
+	} else {
+		selected, err = callerPrincipal(caller, a.options.TrustDomain)
 	}
+	if err != nil {
+		return certificateIdentity{}, err
+	}
+
 	if len(csr.URIs) > 1 {
-		return model.Principal{}, false, fmt.Errorf("CSR must not contain multiple SPIFFE URIs")
+		return certificateIdentity{}, fmt.Errorf("CSR must not contain multiple SPIFFE URIs")
 	}
 	if len(csr.URIs) == 1 {
-		csrIdentity, err := model.ParsePrincipalURL(csr.URIs[0], trustDomain)
+		csrIdentity, err := model.ParsePrincipalURL(csr.URIs[0], a.options.TrustDomain)
 		if err != nil {
-			return model.Principal{}, false, err
+			return certificateIdentity{}, err
 		}
-		if found && selected != csrIdentity {
-			return model.Principal{}, false, fmt.Errorf("CSR identity conflicts with ImpersonatedIdentity")
+		if csrIdentity != selected {
+			return certificateIdentity{}, fmt.Errorf("CSR identity %s conflicts with selected identity %s",
+				csr.URIs[0].String(), selected.String())
 		}
-		selected = csrIdentity
 	}
-	return selected, found, nil
+	// Self requests select the Pod bound to the authenticated token.
+	if !found && workload == nil &&
+		caller.AttestedBy == model.AttestationKubernetes && caller.Kubernetes.WorkloadName != "" && caller.Kubernetes.WorkloadUID != "" {
+		workload = &attestation.WorkloadReference{
+			Namespace: caller.Kubernetes.Namespace,
+			Name:      caller.Kubernetes.WorkloadName,
+		}
+	}
+	identity := certificateIdentity{Principal: selected}
+	if found || workload != nil {
+		authorizer := a.delegatedAuthorizer()
+		if attestation.DelegatedAuthorizerIsNil(authorizer) {
+			return certificateIdentity{}, fmt.Errorf("certificate authorizer is not configured")
+		}
+		claims, err := authorizer.Authorize(
+			ctx,
+			caller,
+			attestation.CertificateTarget{Principal: selected, Workload: workload},
+		)
+		if err != nil {
+			return certificateIdentity{}, fmt.Errorf("authorize certificate identity: %w", err)
+		}
+		if workload != nil {
+			if err := claims.Validate(); err != nil {
+				return certificateIdentity{}, fmt.Errorf("authorizer returned no workload identity: %w", err)
+			}
+			identity.Workload = claims
+		}
+	}
+	return identity, nil
+}
+
+// certificateIdentity contains the authorized claims to sign.
+type certificateIdentity struct {
+	Principal model.Principal
+	Workload  attestation.WorkloadIdentity
+}
+
+// requestedTargetWorkload parses the optional Pod lookup key.
+func requestedTargetWorkload(request *securityapi.IstioCertificateRequest) (*attestation.WorkloadReference, error) {
+	value, found := request.GetMetadata().GetFields()[targetWorkloadMetadata]
+	if !found {
+		return nil, nil
+	}
+	fields := value.GetStructValue().GetFields()
+	ref := &attestation.WorkloadReference{
+		Namespace: fields["namespace"].GetStringValue(),
+		Name:      fields["name"].GetStringValue(),
+	}
+	if strings.TrimSpace(ref.Namespace) == "" || strings.TrimSpace(ref.Name) == "" ||
+		strings.ContainsAny(ref.Namespace+ref.Name, "/") {
+		return nil, fmt.Errorf("%s requires namespace and name strings", targetWorkloadMetadata)
+	}
+	return ref, nil
 }
 
 func impersonatedIdentity(request *securityapi.IstioCertificateRequest) (string, bool, error) {
@@ -136,7 +166,10 @@ func impersonatedIdentity(request *securityapi.IstioCertificateRequest) (string,
 	}
 	stringValue, ok := value.GetKind().(*structpb.Value_StringValue)
 	if !ok || strings.TrimSpace(stringValue.StringValue) == "" {
-		return "", false, fmt.Errorf("%s metadata must contain exactly one identity string", impersonatedIdentityMetadata)
+		return "", false, fmt.Errorf(
+			"%s metadata must contain exactly one identity string",
+			impersonatedIdentityMetadata,
+		)
 	}
 	return stringValue.StringValue, true, nil
 }

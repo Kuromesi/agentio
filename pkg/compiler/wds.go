@@ -38,7 +38,6 @@ import (
 type wdsProjection struct {
 	ClusterID             string
 	Workload              model.Workload
-	ServiceAccount        string // Pod service account for discovery and legacy WDS identities.
 	Endpoints             []model.Endpoint
 	Services              []model.Service
 	SNIPolicy             *extensionsv1.SniTrafficPolicy
@@ -454,12 +453,12 @@ func addressAlias(network, address string) string {
 	return network + "/" + address
 }
 
-// projectWorkloadIdentity fills the WDS trust domain and optional service account.
-// Service-account principals also populate the identity fields read by older data planes.
+// projectWorkloadIdentity returns the WDS trust domain and service account from the principal.
+// A nonempty principal must use the namespace/service-account format and match the Workload namespace.
 func projectWorkloadIdentity(input wdsProjection) (string, string, error) {
 	principal := input.Workload.Principal
 	if principal == (model.Principal{}) {
-		return "", input.ServiceAccount, nil
+		return "", "", nil
 	}
 	if namespace, account, kubernetes := podsource.ServiceAccountFromPrincipal(principal); kubernetes {
 		if namespace != input.Workload.Namespace {
@@ -470,11 +469,7 @@ func projectWorkloadIdentity(input wdsProjection) (string, string, error) {
 		}
 		return principal.TrustDomain(), account, nil
 	}
-	cluster, namespace, name, ok := podsource.WorkloadFromPrincipal(principal)
-	if !ok || cluster != input.ClusterID || namespace != input.Workload.Namespace || name != input.Workload.Name {
-		return "", "", fmt.Errorf("WDS identity fields cannot represent workload principal %s", principal.String())
-	}
-	return principal.TrustDomain(), input.ServiceAccount, nil
+	return "", "", fmt.Errorf("WDS identity fields cannot represent workload principal %s", principal.String())
 }
 
 // marshalDeterministicAny encodes the payload before wrapping it: deterministic

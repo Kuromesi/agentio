@@ -15,7 +15,10 @@
 package kubernetes
 
 import (
+	"context"
 	"testing"
+
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 
@@ -26,6 +29,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
 func delegationPod(namespace, name, serviceAccount, node string) *corev1.Pod {
@@ -36,24 +40,63 @@ func delegationPod(namespace, name, serviceAccount, node string) *corev1.Pod {
 	}
 }
 
-func TestCertificateAuthorizationWithoutPodAddress(t *testing.T) {
-	pod := delegationPod("demo", "app", "shared", "node-a")
-	pod.Status.PodIP = ""
-	pod.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
+func TestCertificateSourceDistinguishesPodsSharingPrincipal(t *testing.T) {
+	a := delegationPod("demo", "a", "shared", "node-a")
+	a.Status.PodIP = "" // CA authorization must not depend on network discovery.
+	b := delegationPod("demo", "b", "shared", "node-a")
+	remote := delegationPod("demo", "remote", "shared", "node-b")
 	node := delegationPod("agentio-system", "ztunnel", "ztunnel", "node-a")
-	r := newTestRegistry(t, t.Context(), []runtime.Object{pod, node}, nil)
+	for _, p := range []*corev1.Pod{a, b, remote} {
+		p.Annotations = map[string]string{"ambient.istio.io/redirection": "enabled"}
+	}
+	r := newTestRegistry(t, t.Context(), []runtime.Object{a, b, remote, node}, nil)
 	authorizer := r.DelegatedIdentityAuthorizer()
-	if r.Workloads.GetKey("test//Pod/demo/app") != nil {
-		t.Fatal("Pod without an address has a network Workload")
-	}
-	for _, path := range []string{"ns/demo/sa/shared", "cluster/test/ns/demo/workload/app"} {
-		principal := mustTestPrincipal("cluster.local", path)
-		for _, caller := range []*corev1.Pod{pod, node} {
-			if err := authorizer.Authorize(t.Context(), gatewayTestPeer(caller), principal); err != nil {
-				t.Fatalf("caller %s requesting %s: %v", caller.Name, principal, err)
+	principal := mustTestPrincipal("cluster.local", "ns/demo/sa/shared")
+	for _, tc := range []struct {
+		name   string
+		caller *corev1.Pod
+		target *corev1.Pod
+		allow  bool
+	}{
+		{"self", a, a, true},
+		{"other Pod with same SA", a, b, false},
+		{"other Pod self", b, b, true},
+		{"local delegation a", node, a, true},
+		{"local delegation b", node, b, true},
+		{"remote delegation", node, remote, false},
+		{"unknown instance", node, delegationPod("demo", "unknown", "shared", "node-a"), false},
+		{"different principal", node, node, false},
+		{"principal-only self", a, nil, true},
+		{"principal-only delegation", node, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := attestation.CertificateTarget{Principal: principal}
+			if tc.target != nil {
+				target.Workload = &attestation.WorkloadReference{Namespace: tc.target.Namespace, Name: tc.target.Name}
 			}
-		}
+			source, err := authorizer.Authorize(t.Context(), gatewayTestPeer(tc.caller), target)
+			if (err == nil) != tc.allow {
+				t.Fatalf("Authorize() = %v, want allow=%v", err, tc.allow)
+			}
+			if err == nil && tc.target != nil &&
+				source != (attestation.WorkloadIdentity{Registry: "kubernetes/test", UID: string(tc.target.UID)}) {
+				t.Fatalf("source = %+v, want Pod UID %s", source, tc.target.UID)
+			}
+			if err == nil && tc.target == nil && source != (attestation.WorkloadIdentity{}) {
+				t.Fatalf("principal-only source = %+v", source)
+			}
+		})
 	}
+}
+
+func authorizeCertificate(
+	a *DelegatedIdentityAuthorizer,
+	ctx context.Context,
+	caller model.PeerIdentity,
+	target attestation.CertificateTarget,
+) error {
+	_, err := a.Authorize(ctx, caller, target)
+	return err
 }
 
 func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
@@ -158,8 +201,12 @@ func TestDelegatedAuthorizationPreservesIdentityRules(t *testing.T) {
 			}
 			r := newTestRegistry(t, ctx, []runtime.Object{ztunnel, target}, nil)
 
-			err := r.DelegatedIdentityAuthorizer().
-				Authorize(ctx, caller, requested)
+			err := authorizeCertificate(
+				r.DelegatedIdentityAuthorizer(),
+				ctx,
+				caller,
+				attestation.CertificateTarget{Principal: requested},
+			)
 			if test.allow && err != nil {
 				t.Fatalf("Authorize denied valid delegation: %v", err)
 			}
@@ -240,5 +287,96 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 	gateways.ConditionalUpdateObject(conflict)
 	if err := authorizer.Authorize(scope); err == nil {
 		t.Fatal("Authorize allowed a conflicting gateway declaration")
+	}
+}
+
+func TestCertificateRolesUseRegistryMembership(t *testing.T) {
+	app := delegationPod("demo", "app", "shared", "node-a")
+	gateway := delegationPod("agentio-system", "gateway", "gateway", "node-a")
+	gateway.Labels = map[string]string{"gateway.networking.k8s.io/gateway-name": "egress"}
+	lookalike := delegationPod("demo", "lookalike", "shared", "node-a")
+	lookalike.Labels = map[string]string{
+		"role":                                   "sandbox-attester",
+		"app.kubernetes.io/name":                 "agentio-epe",
+		"gateway.networking.k8s.io/gateway-name": "missing",
+	}
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "agentio-system", Name: "agentio-config"},
+		Data:       map[string]string{"config": "egressGateways:\n- name: egress\n  namespace: agentio-system\n"},
+	}
+	r := newTestRegistryWithOptions(
+		t,
+		t.Context(),
+		[]runtime.Object{app, gateway, lookalike, config},
+		nil,
+		Options{EnableKruise: true},
+	)
+	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, []model.Sandbox{
+		{UID: "kruise:sandbox", Namespace: app.Namespace, Attester: &model.Attester{WorkloadUID: "test//Pod/demo/app"}},
+	})
+	auth := r.DelegatedIdentityAuthorizer()
+	resolve := func(p *corev1.Pod) attestation.WorkloadIdentity {
+		t.Helper()
+		result, err := auth.Authorize(t.Context(), gatewayTestPeer(p), attestation.CertificateTarget{
+			Principal: mustTestPrincipal("cluster.local", "ns/"+p.Namespace+"/sa/"+p.Spec.ServiceAccountName),
+			Workload:  &attestation.WorkloadReference{Namespace: p.Namespace, Name: p.Name},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if role := resolve(app).Role; role != "" {
+		t.Fatalf("Sandbox binding granted role = %q", role)
+	}
+	if role := resolve(lookalike).Role; role != "" {
+		t.Fatalf("labels granted role = %q", role)
+	}
+	eventually(
+		t,
+		func() bool { return resolve(gateway).Role == attestation.RoleEgressGateway },
+		"registered gateway role",
+	)
+}
+
+func TestKruiseAttesterRoleWithoutSandboxBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		podIP   string
+		want    string
+	}{
+		{"host without Sandbox", true, "10.0.0.1", attestation.RoleSandboxAttester},
+		{"host before network discovery", true, "", attestation.RoleSandboxAttester},
+		{"runtime disabled", false, "10.0.0.1", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := delegationPod("demo", "host", "shared", "node-a")
+			pod.Status.PodIP = tc.podIP
+			pod.Labels = map[string]string{agentsv1alpha1.LabelSandboxIsClaimed: agentsv1alpha1.False}
+			controller := true
+			pod.OwnerReferences = []metav1.OwnerReference{{
+				APIVersion: agentsv1alpha1.GroupVersion.String(),
+				Kind:       "Sandbox",
+				Name:       "not-yet-discovered",
+				UID:        "sandbox-uid",
+				Controller: &controller,
+			}}
+			r := newTestRegistryWithOptions(
+				t,
+				t.Context(),
+				[]runtime.Object{pod},
+				nil,
+				Options{EnableKruise: tc.enabled},
+			)
+			identity, err := r.DelegatedIdentityAuthorizer().
+				Authorize(t.Context(), gatewayTestPeer(pod), attestation.CertificateTarget{
+					Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/shared"),
+					Workload:  &attestation.WorkloadReference{Namespace: pod.Namespace, Name: pod.Name},
+				})
+			if err != nil || identity.Role != tc.want {
+				t.Fatalf("identity=%+v err=%v, want role %q", identity, err, tc.want)
+			}
+		})
 	}
 }

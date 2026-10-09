@@ -54,14 +54,9 @@ func newWorkloadResources(
 				egressGatewayKeys = selected.GatewayReferences
 			}
 
-			var serviceAccount string
 			endpointsByKey := make(map[string]model.Endpoint)
 			if workload.Source == podsource.SourceRef(inputs.ClusterID, workload.Source.Key) &&
 				workload.Source.Key != "" {
-				pod := krt.FetchOne(ctx, inputs.Pods, krt.FilterKey(workload.Namespace+"/"+workload.Name))
-				if pod != nil && string((*pod).UID) == workload.Source.Key {
-					serviceAccount = (*pod).Spec.ServiceAccountName
-				}
 				for _, endpoint := range krt.Fetch(ctx, inputs.Endpoints,
 					krt.FilterIndex(base.endpointsByTargetUID, workload.Source.Key)) {
 					endpointsByKey[endpoint.ResourceName()] = endpoint
@@ -107,7 +102,6 @@ func newWorkloadResources(
 			projection := wdsProjection{
 				ClusterID:          inputs.ClusterID,
 				Workload:           workload,
-				ServiceAccount:     serviceAccount,
 				SNIPolicy:          sniPolicy,
 				EgressPolicies:     egressPolicies,
 				AuthorizationNames: authorizationNames,
