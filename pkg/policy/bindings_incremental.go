@@ -42,7 +42,10 @@ func (s bindingSync) WaitUntilSynced(stop <-chan struct{}) bool {
 	}
 }
 
-type bindingChange struct{ kind, key string }
+type bindingChange struct {
+	kind string
+	key  string
+}
 
 // All processed inputs and membership updates belong to one worker.
 type incrementalBindings struct {
@@ -54,15 +57,22 @@ type incrementalBindings struct {
 	byPolicy     krt.Index[string, Bindings]
 }
 
-func newIncrementalBindings(workloads krt.Collection[model.Workload], attachments krt.Collection[PolicyAttachment], options krt.OptionsBuilder) krt.Collection[Bindings] {
+func newIncrementalBindings(
+	workloads krt.Collection[model.Workload],
+	attachments krt.Collection[PolicyAttachment],
+	options krt.OptionsBuilder,
+) krt.Collection[Bindings] {
 	targets := krt.NewCollection(workloads, func(_ krt.HandlerContext, w model.Workload) *policyTarget {
 		return &policyTarget{UID: w.UID, Namespace: w.Namespace, Labels: w.Labels}
 	}, options.WithName("workload-policy-targets")...)
 	ready := make(bindingSync)
 	output := krt.NewMutableCollection[Bindings](ready, nil, options.WithName("workload-policy-bindings")...)
 	state := incrementalBindings{
-		policies: map[string]PolicyAttachment{}, targets: map[string]policyTarget{},
-		policyScopes: map[string]map[string]struct{}{}, namespaces: map[string]map[string]struct{}{}, output: output,
+		policies:     map[string]PolicyAttachment{},
+		targets:      map[string]policyTarget{},
+		policyScopes: map[string]map[string]struct{}{},
+		namespaces:   map[string]map[string]struct{}{},
+		output:       output,
 		byPolicy: krt.NewIndex(output.AsCollection(), "bindingsByPolicy", func(b Bindings) []string {
 			var keys []string
 			for _, group := range b.Groups {
@@ -84,12 +94,17 @@ func newIncrementalBindings(workloads krt.Collection[model.Workload], attachment
 			queue.Add(bindingChange{"target", event.Latest().UID})
 		}
 	}, true)
-	go func() { <-options.Stop(); queue.ShutDown() }()
+	go func() {
+		<-options.Stop()
+		queue.ShutDown()
+	}()
 	go func() {
 		defer policyEvents.UnregisterHandler()
 		defer targetEvents.UnregisterHandler()
 		stop := options.Stop()
-		if !attachments.WaitUntilSynced(stop) || !targets.WaitUntilSynced(stop) || !policyEvents.WaitUntilSynced(stop) || !targetEvents.WaitUntilSynced(stop) {
+		if !attachments.WaitUntilSynced(stop) || !targets.WaitUntilSynced(stop) ||
+			!policyEvents.WaitUntilSynced(stop) ||
+			!targetEvents.WaitUntilSynced(stop) {
 			return
 		}
 		// Seed policies first; each initial Workload needs only one complete match.
@@ -203,25 +218,10 @@ func (s *incrementalBindings) updatePolicy(key string, current *PolicyAttachment
 				selected[binding.TargetUID] = true
 			}
 		} else {
-			check := func(uid string) {
-				w := s.targets[uid]
-				if current.selects(w.Namespace, w.Labels) {
-					selected[uid] = true
-				}
-			}
-			if current.Target.Global {
-				for uid := range s.targets {
-					check(uid)
-				}
-			} else {
-				for _, namespace := range current.Target.Namespaces {
-					for uid := range s.namespaces[namespace] {
-						check(uid)
-					}
-				}
-			}
+			s.selectPolicyTargets(*current, selected)
 		}
 	}
+	updates := make([]Bindings, 0, len(selected))
 	for uid, applies := range selected {
 		matched := map[string]PolicyAttachment{}
 		if binding := s.output.GetKey(uid); binding != nil {
@@ -237,6 +237,27 @@ func (s *incrementalBindings) updatePolicy(key string, current *PolicyAttachment
 		if applies {
 			matched[key] = *current
 		}
-		s.output.ConditionalUpdateObject(*bindingsFromMatches(uid, matched))
+		updates = append(updates, *bindingsFromMatches(uid, matched))
+	}
+	s.output.ConditionalUpdateObjects(updates...)
+}
+
+func (s *incrementalBindings) selectPolicyTargets(current PolicyAttachment, selected map[string]bool) {
+	check := func(uid string) {
+		w := s.targets[uid]
+		if current.selects(w.Namespace, w.Labels) {
+			selected[uid] = true
+		}
+	}
+	if current.Target.Global {
+		for uid := range s.targets {
+			check(uid)
+		}
+	} else {
+		for _, namespace := range current.Target.Namespaces {
+			for uid := range s.namespaces[namespace] {
+				check(uid)
+			}
+		}
 	}
 }

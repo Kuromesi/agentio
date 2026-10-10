@@ -336,7 +336,11 @@ func TestPolicyBindingsReuseUnchangedScope(t *testing.T) {
 			opts := []krt.CollectionOption{krt.WithStop(stop)}
 			workloads := make([]model.Workload, count)
 			for i := range workloads {
-				workloads[i] = model.Workload{UID: fmt.Sprintf("workload-%d", i), Namespace: "demo", Labels: map[string]string{"app": "selected"}}
+				workloads[i] = model.Workload{
+					UID:       fmt.Sprintf("workload-%d", i),
+					Namespace: "demo",
+					Labels:    map[string]string{"app": "selected"},
+				}
 			}
 			makeAttachment := func(name string, global bool, selector metav1.LabelSelector) PolicyAttachment {
 				t.Helper()
@@ -344,19 +348,29 @@ func TestPolicyBindingsReuseUnchangedScope(t *testing.T) {
 				if !global {
 					target.Namespaces = []string{"demo"}
 				}
-				a, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: name, Target: target})
+				a, err := NewPolicyAttachment(
+					PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: name, Target: target},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
 				return a
 			}
 			var scans atomic.Int64
-			witness := makeAttachment("witness", !global, metav1.LabelSelector{MatchLabels: map[string]string{"app": "unmatched"}})
+			witness := makeAttachment(
+				"witness",
+				!global,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "unmatched"}},
+			)
 			witness.selector = bindingRecomputeSelector{Selector: witness.selector, calls: &scans}
 			retained := makeAttachment("retained", !global, metav1.LabelSelector{})
 			attachments := krt.NewMutableCollection(nil, []PolicyAttachment{witness, retained}, opts...)
 			subjects := krt.NewMutableCollection(nil, workloads, opts...)
-			bindings := NewWorkloadPolicyBindingsCollection(subjects.AsCollection(), attachments.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+			bindings := NewWorkloadPolicyBindingsCollection(
+				subjects.AsCollection(),
+				attachments.AsCollection(),
+				krt.NewOptionsBuilder(stop, "test", nil),
+			)
 			if !bindings.WaitUntilSynced(stop) {
 				t.Fatal("bindings did not sync")
 			}
@@ -438,13 +452,18 @@ func TestPolicyBindingsLabelUpdateDoesNotMixScopes(t *testing.T) {
 	var attachments []PolicyAttachment
 	for _, global := range []bool{false, true} {
 		for _, app := range []string{"old", "new"} {
-			target := AttachmentTarget{Global: global, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": app}}}
+			target := AttachmentTarget{
+				Global:   global,
+				Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+			}
 			scope := "global"
 			if !global {
 				target.Namespaces = []string{"demo"}
 				scope = "local"
 			}
-			a, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: scope + "-" + app, Target: target})
+			a, err := NewPolicyAttachment(
+				PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: scope + "-" + app, Target: target},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -458,7 +477,11 @@ func TestPolicyBindingsLabelUpdateDoesNotMixScopes(t *testing.T) {
 			attachments = append(attachments, a)
 		}
 	}
-	bindings := NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), krt.NewStaticCollection(nil, attachments, opts...), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewWorkloadPolicyBindingsCollection(
+		workloads.AsCollection(),
+		krt.NewStaticCollection(nil, attachments, opts...),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("bindings did not sync")
 	}
@@ -483,11 +506,22 @@ func TestPolicyBindingsLabelUpdateDoesNotMixScopes(t *testing.T) {
 		t.Fatalf("published incomplete label transition: %+v", event)
 	case <-time.After(100 * time.Millisecond):
 	}
-	if got := bindings.GetKey(workload.UID).PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"global-old", "local-old"}) {
+	if got := bindings.GetKey(workload.UID).
+		PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(
+		got,
+		[]string{"global-old", "local-old"},
+	) {
 		t.Fatalf("binding while local computation blocked = %v", got)
 	}
 	unblock.Do(func() { close(release) })
-	if got := awaitBindingEvent(t, events).Latest().PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"global-new", "local-new"}) {
+	if got := awaitBindingEvent(
+		t,
+		events,
+	).Latest().
+		PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(
+		got,
+		[]string{"global-new", "local-new"},
+	) {
 		t.Fatalf("completed label transition = %v", got)
 	}
 }
@@ -500,7 +534,9 @@ func TestPolicyBindingsScopeMovesAndOrdering(t *testing.T) {
 	workloads := krt.NewMutableCollection(nil, []model.Workload{workload, {UID: "other", Namespace: "other"}}, opts...)
 	makeAttachment := func(name string, priority int32, target AttachmentTarget) PolicyAttachment {
 		t.Helper()
-		a, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: name, Priority: priority, Target: target})
+		a, err := NewPolicyAttachment(
+			PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: name, Priority: priority, Target: target},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -509,7 +545,11 @@ func TestPolicyBindingsScopeMovesAndOrdering(t *testing.T) {
 	local := makeAttachment("local", 10, AttachmentTarget{Namespaces: []string{"demo"}})
 	global := makeAttachment("global", 20, AttachmentTarget{Global: true})
 	attachments := krt.NewMutableCollection(nil, []PolicyAttachment{local, global}, opts...)
-	bindings := NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), attachments.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewWorkloadPolicyBindingsCollection(
+		workloads.AsCollection(),
+		attachments.AsCollection(),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("bindings did not sync")
 	}

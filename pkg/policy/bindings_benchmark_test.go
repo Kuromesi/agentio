@@ -119,13 +119,26 @@ func BenchmarkPolicyBindingsGlobalChurn(b *testing.B) {
 				uid := fmt.Sprintf("workload-%d", i)
 				workloads[i] = model.Workload{UID: uid, Namespace: "demo", Labels: map[string]string{"app": uid}}
 				var err error
-				policies[i], err = NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: uid, Target: AttachmentTarget{Namespaces: []string{"demo"}, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": uid}}}})
+				policies[i], err = NewPolicyAttachment(
+					PolicyAttachment{
+						Kind: PolicyKindTrafficPolicy,
+						Name: uid,
+						Target: AttachmentTarget{
+							Namespaces: []string{"demo"},
+							Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": uid}},
+						},
+					},
+				)
 				if err != nil {
 					b.Fatal(err)
 				}
 			}
 			attachments := krt.NewMutableCollection(nil, policies, opts...)
-			bindings := NewWorkloadPolicyBindingsCollection(krt.NewStaticCollection(nil, workloads, opts...), attachments.AsCollection(), krt.NewOptionsBuilder(stop, "benchmark", nil))
+			bindings := NewWorkloadPolicyBindingsCollection(
+				krt.NewStaticCollection(nil, workloads, opts...),
+				attachments.AsCollection(),
+				krt.NewOptionsBuilder(stop, "benchmark", nil),
+			)
 			if !bindings.WaitUntilSynced(stop) {
 				b.Fatal("bindings did not sync")
 			}
@@ -136,7 +149,9 @@ func BenchmarkPolicyBindingsGlobalChurn(b *testing.B) {
 				}
 			}, false)
 			b.Cleanup(registration.UnregisterHandler)
-			global, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "global", Target: AttachmentTarget{Global: true}})
+			global, err := NewPolicyAttachment(
+				PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "global", Target: AttachmentTarget{Global: true}},
+			)
 			if err != nil {
 				b.Fatal(err)
 			}

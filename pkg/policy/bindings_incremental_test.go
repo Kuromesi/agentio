@@ -28,7 +28,9 @@ func TestIncrementalPrioritySkipsSelection(t *testing.T) {
 	defer close(stop)
 	opts := []krt.CollectionOption{krt.WithStop(stop)}
 	var calls atomic.Int64
-	first, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "first", Target: AttachmentTarget{Global: true}})
+	first, err := NewPolicyAttachment(
+		PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "first", Target: AttachmentTarget{Global: true}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +39,11 @@ func TestIncrementalPrioritySkipsSelection(t *testing.T) {
 	second.Name = "second"
 	second.Priority = 1
 	policies := krt.NewMutableCollection(nil, []PolicyAttachment{first, second}, opts...)
-	bindings := NewWorkloadPolicyBindingsCollection(krt.NewStaticCollection(nil, []model.Workload{{UID: "client", Namespace: "demo"}}, opts...), policies.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewWorkloadPolicyBindingsCollection(
+		krt.NewStaticCollection(nil, []model.Workload{{UID: "client", Namespace: "demo"}}, opts...),
+		policies.AsCollection(),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("sync failed")
 	}
@@ -65,7 +71,11 @@ func TestIncrementalStopsBeforeInputSync(t *testing.T) {
 	ready := make(bindingSync)
 	policies := krt.NewMutableCollection[PolicyAttachment](ready, nil, krt.WithStop(stop))
 	workloads := krt.NewStaticCollection[model.Workload](nil, nil, krt.WithStop(stop))
-	bindings := NewWorkloadPolicyBindingsCollection(workloads, policies.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewWorkloadPolicyBindingsCollection(
+		workloads,
+		policies.AsCollection(),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if bindings.HasSynced() {
 		t.Fatal("ready before inputs synced")
 	}
@@ -79,5 +89,52 @@ func TestIncrementalStopsBeforeInputSync(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("sync wait did not stop")
+	}
+}
+
+func TestIncrementalPolicyPublishesOneBatch(t *testing.T) {
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := []krt.CollectionOption{krt.WithStop(stop)}
+	policies := krt.NewMutableCollection[PolicyAttachment](nil, nil, opts...)
+	workloads := krt.NewStaticCollection(
+		nil,
+		[]model.Workload{{UID: "a", Namespace: "demo"}, {UID: "b", Namespace: "demo"}},
+		opts...)
+	bindings := NewWorkloadPolicyBindingsCollection(
+		workloads,
+		policies.AsCollection(),
+		krt.NewOptionsBuilder(stop, "batch", nil),
+	)
+	if !bindings.WaitUntilSynced(stop) {
+		t.Fatal("sync failed")
+	}
+	batches := make(chan []krt.Event[Bindings], 8)
+	bindings.RegisterBatch(func(es []krt.Event[Bindings]) { batches <- es }, false)
+	p, err := NewPolicyAttachment(
+		PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "wide", Target: AttachmentTarget{Global: true}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, add := range []bool{true, false, true, false} {
+		if add {
+			policies.ConditionalUpdateObject(p)
+		} else {
+			policies.DeleteObject(p.ResourceName())
+		}
+		select {
+		case es := <-batches:
+			if len(es) != 2 {
+				t.Fatalf("got %d events, want one two-workload batch", len(es))
+			}
+			for _, e := range es {
+				if got := len(e.Latest().PolicyNames(PolicyKindTrafficPolicy)); (got == 1) != add {
+					t.Fatalf("wrong membership: %v", e)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("missing policy batch")
+		}
 	}
 }

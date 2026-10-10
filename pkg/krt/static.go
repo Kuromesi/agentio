@@ -197,43 +197,43 @@ func (s StaticCollection[T]) Reset(newState []T) {
 
 // UpdateObject adds or updates an object into the collection.
 func (s *staticList[T]) UpdateObject(obj T) {
-	s.updateObject(obj, false)
+	s.updateObjects(false, obj)
 }
 
-// ConditionalUpdateObject adds or updates an object into the collection.
+// ConditionalUpdateObject adds or updates an object, suppressing equal values.
 func (s *staticList[T]) ConditionalUpdateObject(obj T) {
-	s.updateObject(obj, true)
+	s.updateObjects(true, obj)
 }
 
-func (s *staticList[T]) updateObject(obj T, conditional bool) {
+// ConditionalUpdateObjects commits the objects and indexes together and publishes one batch.
+// Objects absent from the batch are unchanged; repeated keys are processed in order.
+func (s *staticList[T]) ConditionalUpdateObjects(objects ...T) {
+	s.updateObjects(true, objects...)
+}
+
+func (s *staticList[T]) updateObjects(conditional bool, objects ...T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	k := GetKey(obj)
-	old, f := s.vals[k]
-	s.vals[k] = obj
-	if f {
-		if conditional && Equal(old, obj) {
-			return
+	var updates []Event[T]
+	for _, obj := range objects {
+		k := GetKey(obj)
+		old, found := s.vals[k]
+		s.vals[k] = obj
+		if found && conditional && Equal(old, obj) {
+			continue
 		}
-
-		ev := Event[T]{
-			Old:   &old,
-			New:   &obj,
-			Event: controllers.EventUpdate,
-		}
-		for _, index := range s.indexes {
-			index.update(ev, k)
-		}
-		s.eventHandlers.Distribute([]Event[T]{ev}, false)
-	} else {
-		ev := Event[T]{
-			New:   &obj,
-			Event: controllers.EventAdd,
+		ev := Event[T]{New: &obj, Event: controllers.EventAdd}
+		if found {
+			ev.Old = &old
+			ev.Event = controllers.EventUpdate
 		}
 		for _, index := range s.indexes {
 			index.update(ev, k)
 		}
-		s.eventHandlers.Distribute([]Event[T]{ev}, false)
+		updates = append(updates, ev)
+	}
+	if len(updates) > 0 {
+		s.eventHandlers.Distribute(updates, false)
 	}
 }
 

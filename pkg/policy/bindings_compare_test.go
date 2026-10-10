@@ -16,27 +16,35 @@ package policy
 
 import (
 	"fmt"
-	"github.com/openkruise/agentio/pkg/krt"
-	"github.com/openkruise/agentio/pkg/model"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"math/rand"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/openkruise/agentio/pkg/krt"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 func TestBindingCompareScopeTransitionAtomic(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
 	opts := []krt.CollectionOption{krt.WithStop(stop)}
-	p, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "retained", Target: AttachmentTarget{Global: true}})
+	p, err := NewPolicyAttachment(
+		PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "retained", Target: AttachmentTarget{Global: true}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policies := krt.NewMutableCollection(nil, []PolicyAttachment{p}, opts...)
 	w := model.Workload{UID: "client", Namespace: "demo", Labels: map[string]string{"app": "new"}}
-	bindings := NewWorkloadPolicyBindingsCollection(krt.NewStaticCollection(nil, []model.Workload{w}, opts...), policies.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewWorkloadPolicyBindingsCollection(
+		krt.NewStaticCollection(nil, []model.Workload{w}, opts...),
+		policies.AsCollection(),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("sync failed")
 	}
@@ -50,7 +58,16 @@ func TestBindingCompareScopeTransitionAtomic(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	defer once.Do(func() { close(release) })
-	p, err = NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "retained", Target: AttachmentTarget{Namespaces: []string{"demo"}, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "new"}}}})
+	p, err = NewPolicyAttachment(
+		PolicyAttachment{
+			Kind: PolicyKindTrafficPolicy,
+			Name: "retained",
+			Target: AttachmentTarget{
+				Namespaces: []string{"demo"},
+				Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": "new"}},
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +83,11 @@ func TestBindingCompareScopeTransitionAtomic(t *testing.T) {
 		t.Fatalf("retained policy changed while scope match pending: %+v", e.Latest())
 	case <-time.After(200 * time.Millisecond):
 	}
-	if got := bindings.GetKey(w.UID).PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"retained"}) {
+	if got := bindings.GetKey(w.UID).
+		PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(
+		got,
+		[]string{"retained"},
+	) {
 		t.Fatalf("lost binding: %v", got)
 	}
 	once.Do(func() { close(release) })
@@ -83,7 +104,11 @@ func TestBindingCompareRandomized(t *testing.T) {
 	opts := []krt.CollectionOption{krt.WithStop(stop)}
 	workloads := krt.NewMutableCollection[model.Workload](nil, nil, opts...)
 	policies := krt.NewMutableCollection[PolicyAttachment](nil, nil, opts...)
-	bindings := NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), policies.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	bindings := NewWorkloadPolicyBindingsCollection(
+		workloads.AsCollection(),
+		policies.AsCollection(),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("sync failed")
 	}
@@ -99,7 +124,14 @@ func TestBindingCompareRandomized(t *testing.T) {
 				if rng.Intn(5) == 0 {
 					workloads.DeleteObject(key)
 				} else {
-					workloads.ConditionalUpdateObject(model.Workload{UID: key, Namespace: fmt.Sprintf("ns-%d", rng.Intn(3)), Labels: map[string]string{"app": fmt.Sprint(rng.Intn(4))}, Ready: rng.Intn(2) == 0})
+					workloads.ConditionalUpdateObject(
+						model.Workload{
+							UID:       key,
+							Namespace: fmt.Sprintf("ns-%d", rng.Intn(3)),
+							Labels:    map[string]string{"app": fmt.Sprint(rng.Intn(4))},
+							Ready:     rng.Intn(2) == 0,
+						},
+					)
 				}
 			}
 		}()
@@ -119,9 +151,13 @@ func TestBindingCompareRandomized(t *testing.T) {
 						target.Namespaces = []string{fmt.Sprintf("ns-%d", rng.Intn(3))}
 					}
 					if rng.Intn(3) != 0 {
-						target.Selector = metav1.LabelSelector{MatchLabels: map[string]string{"app": fmt.Sprint(rng.Intn(4))}}
+						target.Selector = metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": fmt.Sprint(rng.Intn(4))},
+						}
 					}
-					p, err := NewPolicyAttachment(PolicyAttachment{Kind: kind, Name: name, Priority: int32(rng.Intn(5)), Target: target})
+					p, err := NewPolicyAttachment(
+						PolicyAttachment{Kind: kind, Name: name, Priority: int32(rng.Intn(5)), Target: target},
+					)
 					if err != nil {
 						panic(err)
 					}
@@ -168,14 +204,23 @@ func TestBindingCompareInitialSync(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	defer once.Do(func() { close(release) })
-	p, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "initial", Target: AttachmentTarget{Global: true}})
+	p, err := NewPolicyAttachment(
+		PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "initial", Target: AttachmentTarget{Global: true}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.selector = bindingGateSelector{Selector: p.selector, once: new(sync.Once), entered: entered, release: release}
 	policies := krt.NewMutableCollection(nil, []PolicyAttachment{p}, opts...)
-	workloads := krt.NewStaticCollection(nil, []model.Workload{{UID: "client", Namespace: "demo", Labels: map[string]string{"app": "new"}}}, opts...)
-	bindings := NewWorkloadPolicyBindingsCollection(workloads, policies.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	workloads := krt.NewStaticCollection(
+		nil,
+		[]model.Workload{{UID: "client", Namespace: "demo", Labels: map[string]string{"app": "new"}}},
+		opts...)
+	bindings := NewWorkloadPolicyBindingsCollection(
+		workloads,
+		policies.AsCollection(),
+		krt.NewOptionsBuilder(stop, "test", nil),
+	)
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -191,7 +236,10 @@ func TestBindingCompareInitialSync(t *testing.T) {
 	if !bindings.WaitUntilSynced(timeout) {
 		t.Fatal("initial computation did not complete")
 	}
-	if got := bindings.GetKey("client"); got == nil || !reflect.DeepEqual(got.PolicyNames(PolicyKindTrafficPolicy), []string{"initial"}) {
+	if got := bindings.GetKey(
+		"client",
+	); got == nil ||
+		!reflect.DeepEqual(got.PolicyNames(PolicyKindTrafficPolicy), []string{"initial"}) {
 		t.Fatalf("incomplete initial result: %v", got)
 	}
 }

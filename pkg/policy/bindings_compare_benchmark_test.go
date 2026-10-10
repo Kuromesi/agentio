@@ -16,16 +16,18 @@ package policy
 
 import (
 	"fmt"
-	"github.com/openkruise/agentio/pkg/krt"
-	agentlog "github.com/openkruise/agentio/pkg/log"
-	"github.com/openkruise/agentio/pkg/model"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/openkruise/agentio/pkg/krt"
+	agentlog "github.com/openkruise/agentio/pkg/log"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 func BenchmarkBindingCompare(b *testing.B) {
@@ -52,12 +54,17 @@ func BenchmarkBindingCompare(b *testing.B) {
 			for i := range count {
 				uid := fmt.Sprintf("w-%d", i)
 				ws[i] = model.Workload{UID: uid, Namespace: "demo", Labels: map[string]string{"app": uid}}
-				target := AttachmentTarget{Global: scope == "global", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": uid}}}
+				target := AttachmentTarget{
+					Global:   scope == "global",
+					Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": uid}},
+				}
 				if !target.Global {
 					target.Namespaces = []string{"demo"}
 				}
 				var err error
-				ps[i], err = NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: uid, Target: target})
+				ps[i], err = NewPolicyAttachment(
+					PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: uid, Target: target},
+				)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -68,14 +75,25 @@ func BenchmarkBindingCompare(b *testing.B) {
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
 			start := time.Now()
-			bindings := NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), policies.AsCollection(), krt.NewOptionsBuilder(stop, "bench", nil))
+			bindings := NewWorkloadPolicyBindingsCollection(
+				workloads.AsCollection(),
+				policies.AsCollection(),
+				krt.NewOptionsBuilder(stop, "bench", nil),
+			)
 			if !bindings.WaitUntilSynced(stop) {
 				b.Fatal("sync failed")
 			}
 			cold := time.Since(start)
 			runtime.GC()
 			runtime.ReadMemStats(&after)
-			fmt.Printf("FIXTURE scope=%s workloads=%d policies=%d cold_ns=%d retained_heap_delta=%d\n", scope, count, count, cold.Nanoseconds(), int64(after.HeapAlloc)-int64(before.HeapAlloc))
+			fmt.Printf(
+				"FIXTURE scope=%s workloads=%d policies=%d cold_ns=%d retained_heap_delta=%d\n",
+				scope,
+				count,
+				count,
+				cold.Nanoseconds(),
+				int64(after.HeapAlloc)-int64(before.HeapAlloc),
+			)
 			events := make(chan krt.Event[Bindings], count*2)
 			reg := bindings.RegisterBatch(func(es []krt.Event[Bindings]) {
 				for _, e := range es {
@@ -103,7 +121,9 @@ func BenchmarkBindingCompare(b *testing.B) {
 					name = "global_wide"
 					target = AttachmentTarget{Global: true}
 				}
-				p, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "wide", Target: target})
+				p, err := NewPolicyAttachment(
+					PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "wide", Target: target},
+				)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -126,7 +146,11 @@ func BenchmarkBindingCompare(b *testing.B) {
 				for range b.N {
 					p.Target.Selector.MatchLabels = map[string]string{"app": "w-1"}
 					p.selector = nil
-					p, _ = NewPolicyAttachment(p)
+					var err error
+					p, err = NewPolicyAttachment(p)
+					if err != nil {
+						b.Fatal(err)
+					}
 					policies.ConditionalUpdateObject(p)
 					wait(2)
 					policies.ConditionalUpdateObject(ps[0])
@@ -147,7 +171,17 @@ func BenchmarkBindingCompare(b *testing.B) {
 				}
 				b.StopTimer()
 			})
-			p, _ := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "priority", Priority: 1, Target: AttachmentTarget{Global: true}})
+			p, err := NewPolicyAttachment(
+				PolicyAttachment{
+					Kind:     PolicyKindTrafficPolicy,
+					Name:     "priority",
+					Priority: 1,
+					Target:   AttachmentTarget{Global: true},
+				},
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
 			policies.ConditionalUpdateObject(p)
 			wait(count)
 			b.Run("priority", func(b *testing.B) {
