@@ -38,7 +38,8 @@ const (
 // Unit is the engine-facing view of one matched policy unit: identity,
 // evaluation scope, and the per-registration projected configs. A policy
 // resolver may carry richer attribution alongside it; the engine never sees
-// the policy model.
+// the policy model. Units and their configs remain read-only through body
+// continuation, as response continuations also retain them.
 type Unit struct {
 	ID    filter.UnitID
 	Scope *inputs.Scope
@@ -232,6 +233,7 @@ type RequestHeadersResult struct {
 	ResponseScope ResponseScope
 	// Body callbacks retain the instances that requested them during headers.
 	bodyFilters []requestBodyInvocation
+	units       []Unit
 	pending     []filter.Mutation
 }
 
@@ -353,6 +355,7 @@ func (e *Engine) EvalRequestHeaders(
 		Body:          reduced.body,
 		ResponseScope: walk.scope,
 		bodyFilters:   walk.bodyFilters,
+		units:         units,
 		pending:       walk.pending,
 	}
 	if err == nil && o.body != nil && res.NeedsBody() {
@@ -402,14 +405,17 @@ func newActionWalk(st *filter.Stream) actionWalk {
 }
 
 type requestBodyInvocation struct {
-	pair pair
-	f    filter.Filter
+	at evalCursor
+	f  filter.Filter
 }
 
 type requestWalk struct {
 	actionWalk
 	scope       ResponseScope
 	bodyFilters []requestBodyInvocation
+	view        *filter.Stream
+	viewed      int
+	route       *filter.RouteMutation
 }
 
 type responseWalk struct {
@@ -536,7 +542,7 @@ func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Uni
 		}
 		if act.Kind() == filter.KindNeedBody {
 			walk.pending = append(walk.pending, act.Mutations()...)
-			walk.bodyFilters = append(walk.bodyFilters, requestBodyInvocation{pair: p, f: f})
+			walk.bodyFilters = append(walk.bodyFilters, requestBodyInvocation{at: p.at, f: f})
 			walk.record(p, filter.ActionNeedBody)
 			continue
 		}
@@ -550,19 +556,28 @@ func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Uni
 	return walk, nil
 }
 
-// streamView exposes the accumulated target without aliasing returned mutations
-// or changing the original request tuple used for policy matching.
+// streamView exposes the accumulated target without changing the original
+// request tuple. Filters borrow read-only views; only a routing mutation needs
+// a new view. Scan each pending mutation once as the header walk advances.
 func (w *requestWalk) streamView() (*filter.Stream, error) {
-	route, err := foldRoute(w.pending)
+	route, err := foldRouteFrom(w.route, w.pending[w.viewed:])
 	if err != nil {
 		return nil, err
 	}
-	view := *w.st
-	view.Upstream = nil
-	if route != nil {
-		view.Upstream = route.Upstream
+	w.viewed = len(w.pending)
+	if w.view == nil || route != w.route {
+		w.view = w.st
+		if route != nil || w.st.Upstream != nil {
+			view := *w.st
+			view.Upstream = nil
+			if route != nil {
+				view.Upstream = route.Upstream
+			}
+			w.view = &view
+		}
+		w.route = route
 	}
-	return &view, nil
+	return w.view, nil
 }
 
 // apply folds the Action kinds shared by request and response phases. Only
@@ -631,7 +646,7 @@ func (e *Engine) EvalRequestBody(
 	}
 	var err error
 	for _, invocation := range prior.bodyFilters {
-		p := invocation.pair
+		p := e.pairAt(prior.units, invocation.at)
 		var halted bool
 		halted, err = e.invokeBody(ctx, st, &walk, p, filter.PhaseRequestBody,
 			e.metrics[p.at.regIdx].requestBody,

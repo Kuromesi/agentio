@@ -34,8 +34,8 @@ type Stream struct {
 	Request   httpreq.HTTPRequest
 	RequestID string
 	// Upstream is the destination selected by preceding request filters.
-	// The engine supplies an owned snapshot for each request callback, including
-	// after a buffered continuation. Routing filters must precede authorization.
+	// The engine supplies a read-only view, reusing it while routing is unchanged.
+	// Routing filters must precede authorization.
 	Upstream *UpstreamTarget
 	// Response is populated from OnResponseHeaders onward.
 	Response httpreq.HTTPResponse

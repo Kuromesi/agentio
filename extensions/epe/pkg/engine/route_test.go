@@ -186,3 +186,78 @@ func TestRequestBodyCannotChangeDestination(t *testing.T) {
 		t.Fatal("body signing must remain supported", err)
 	}
 }
+
+func TestRequestStreamViewReuse(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(routed), func(t *testing.T) {
+			walk := requestWalk{actionWalk: newActionWalk(&filter.Stream{})}
+			if routed {
+				walk.pending = []filter.Mutation{routeMutation("192.0.2.1:443", false)}
+			}
+			if _, err := walk.streamView(); err != nil {
+				t.Fatal(err)
+			}
+			allocations := testing.AllocsPerRun(100, func() {
+				view, err := walk.streamView()
+				if err != nil {
+					t.Fatal(err)
+				}
+				benchSink = view
+			})
+			if allocations != 0 {
+				t.Fatalf("unchanged request view allocated %v times", allocations)
+			}
+		})
+	}
+}
+
+func TestRequestStreamViewSnapshots(t *testing.T) {
+	st := &filter.Stream{}
+	st.Request.Host = "original.example"
+	walk := requestWalk{actionWalk: newActionWalk(st)}
+	first, err := walk.streamView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := routeMutation("192.0.2.1:443", false)
+	walk.pending = append(walk.pending, mutation)
+	routed, err := walk.streamView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	walk.pending = append(walk.pending, filter.SetHeader("x-test", "value"))
+	next, err := walk.streamView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Upstream != nil || st.Upstream != nil || next.Request.Host != st.Request.Host {
+		t.Fatal("later routing changed the original request view")
+	}
+	if next.Upstream.Address.String() != "192.0.2.1:443" || routed.Upstream.Address.String() != "192.0.2.1:443" {
+		t.Fatal("request view lost the selected target")
+	}
+	if routed.Upstream == mutation.Route.Upstream || routed.Upstream.Address == mutation.Route.Upstream.Address {
+		t.Fatal("request view aliases filter-owned target")
+	}
+	walk.pending = append(walk.pending, routeMutation("192.0.2.2:443", false))
+	if _, err := walk.streamView(); err == nil || !strings.Contains(err.Error(), "conflicting upstream") {
+		t.Fatalf("incremental route conflict was not rejected: %v", err)
+	}
+	if routed.Upstream.Address.String() != "192.0.2.1:443" {
+		t.Fatal("failed routing changed a prior request view")
+	}
+}
+
+func TestIncrementalRoutePreservesPrior(t *testing.T) {
+	prior, err := foldRoute([]filter.Mutation{routeMutation("192.0.2.1:443", false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := foldRouteFrom(prior, []filter.Mutation{{Route: &filter.RouteMutation{ClearCache: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prior.ClearCache || !next.ClearCache || next.Upstream.Address.String() != "192.0.2.1:443" {
+		t.Fatal("incremental route merge changed a published route or lost its target")
+	}
+}

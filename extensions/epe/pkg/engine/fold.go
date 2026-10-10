@@ -24,7 +24,13 @@ import (
 // Conflicting targets are a contract error, not a last-writer override.
 // Copy all nested values so callers cannot mutate filter-owned data.
 func foldRoute(muts []filter.Mutation) (*filter.RouteMutation, error) {
-	var result *filter.RouteMutation
+	return foldRouteFrom(nil, muts)
+}
+
+// foldRouteFrom extends an immutable route with newly appended mutations.
+// It reuses prior when none of the mutations affect routing.
+func foldRouteFrom(prior *filter.RouteMutation, muts []filter.Mutation) (*filter.RouteMutation, error) {
+	result := prior
 	for _, m := range muts {
 		if m.Route == nil {
 			continue
@@ -32,8 +38,11 @@ func foldRoute(muts []filter.Mutation) (*filter.RouteMutation, error) {
 		if err := m.Route.Validate(); err != nil {
 			return nil, err
 		}
-		if result == nil {
+		if result == prior {
 			result = &filter.RouteMutation{}
+			if prior != nil {
+				*result = *prior
+			}
 		}
 		result.ClearCache = result.ClearCache || m.Route.ClearCache
 		if m.Route.Upstream == nil {
