@@ -87,7 +87,7 @@ func resolvePeers(ctx krt.HandlerContext, peers []agentsv1alpha1.TrafficPolicyPe
 				}
 			}
 		case peer.Workload != nil:
-			pods := krt.Fetch(ctx, inputs.Pods,
+			pods := krt.FetchSorted(ctx, inputs.Pods,
 				krt.FilterLabel(peer.Workload.Selector),
 				krt.FilterIndex(inputs.PodsByNamespace, peer.Workload.Namespace),
 			)
@@ -123,7 +123,7 @@ func resolveServicePeer(ctx krt.HandlerContext, peerNamespace, peerName, policyN
 	}
 	services := []*corev1.Service(nil)
 	if peerName == "" || peerName == "*" {
-		services = krt.Fetch(ctx, inputs.Services,
+		services = krt.FetchSorted(ctx, inputs.Services,
 			krt.FilterIndex(inputs.ServicesByNamespace, namespace))
 	} else if service := krt.FetchOne(ctx, inputs.Services,
 		krt.FilterKey(namespace+"/"+peerName)); service != nil {
@@ -133,7 +133,7 @@ func resolveServicePeer(ctx krt.HandlerContext, peerNamespace, peerName, policyN
 		if service.Spec.ClusterIP != "" && service.Spec.ClusterIP != corev1.ClusterIPNone {
 			add(service.Spec.ClusterIP)
 		}
-		for _, slice := range krt.Fetch(ctx, inputs.EndpointSlices,
+		for _, slice := range krt.FetchSorted(ctx, inputs.EndpointSlices,
 			krt.FilterIndex(inputs.EndpointSlicesByService, service.Namespace+"/"+service.Name)) {
 			if slice.AddressType == discoveryv1.AddressTypeFQDN {
 				continue

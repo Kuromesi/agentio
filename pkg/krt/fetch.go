@@ -42,6 +42,11 @@ func Fetch[T any](ctx HandlerContext, cc Collection[T], opts ...FetchOption) []T
 	return fetch[T](ctx, cc, false, opts...)
 }
 
+// FetchSorted runs a query, subscribes to updates, and sorts the result by key.
+func FetchSorted[T any](ctx HandlerContext, cc Collection[T], opts ...FetchOption) []T {
+	return slices.SortBy(Fetch(ctx, cc, opts...), GetKey)
+}
+
 func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool, opts ...FetchOption) []T {
 	c := cc.(internalCollection[T])
 	d := &dependency{
