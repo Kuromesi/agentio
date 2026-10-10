@@ -202,6 +202,47 @@ func TestWildcardSubscriptionDeliversEveryAllowedResource(t *testing.T) {
 	}
 }
 
+func TestExplicitWildcardReconnectWithLargeCache(t *testing.T) {
+	ctx := t.Context()
+	unchanged := addressResource(t, "cluster//Pod/demo/unchanged", "unchanged")
+	updated := addressResource(t, "cluster//Pod/demo/updated", "updated")
+	added := addressResource(t, "cluster//Pod/demo/added", "added")
+	server := newTestServer(t, ztunnelScope(), []model.Resource{unchanged, updated, added}, nil)
+	initial := map[string]string{unchanged.XDSName: unchanged.Hash, updated.XDSName: "old-version"}
+	removed := make([]string, 0, 29_998)
+	for i := range 29_998 {
+		name := fmt.Sprintf("cluster//Pod/demo/removed-%05d", i)
+		initial[name] = "old-version"
+		removed = append(removed, name)
+	}
+	stream := newFakeStream(ctx, 4)
+	watch := &watchState{names: sets.New[string](), sent: map[string]string{}}
+	watches := map[string]*watchState{model.AddressType: watch}
+	subscription := server.resources.Subscribe(ctx)
+	if err := server.server.handleRequest(stream, server.scope, log, watches, subscription,
+		&discoveryv3.DeltaDiscoveryRequest{
+			TypeUrl:                 model.AddressType,
+			ResourceNamesSubscribe:  []string{"*"},
+			InitialResourceVersions: initial,
+		}); err != nil {
+		t.Fatal(err)
+	}
+	responses := stream.responsesFor(model.AddressType)
+	if len(responses) != 1 {
+		t.Fatalf("responses = %d, want 1", len(responses))
+	}
+	if got := resourceNames(responses[0]); !slices.Equal(got, []string{added.XDSName, updated.XDSName}) {
+		t.Fatalf("resources = %v, want added and updated resources only", got)
+	}
+	if got := responses[0].GetRemovedResources(); !slices.Equal(got, removed) {
+		t.Fatalf("removals do not match the %d stale cache entries", len(removed))
+	}
+	if !watch.wildcard || len(watch.names) != 0 || len(watch.sent) != 0 {
+		t.Fatalf("wildcard=%t names=%d sent=%d, want wildcard without retained names or versions",
+			watch.wildcard, len(watch.names), len(watch.sent))
+	}
+}
+
 func TestWildcardWDSDoesNotRetainSentHashes(t *testing.T) {
 	const resourceCount = 4_096
 	resources := make([]model.Resource, 0, resourceCount)
