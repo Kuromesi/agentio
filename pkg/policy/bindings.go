@@ -84,28 +84,7 @@ func NewWorkloadPolicyBindingsCollection(
 	attachments krt.Collection[PolicyAttachment],
 	options krt.OptionsBuilder,
 ) krt.Collection[Bindings] {
-	targets := krt.NewCollection(workloads, func(_ krt.HandlerContext, workload model.Workload) *policyTarget {
-		return &policyTarget{UID: workload.UID, Namespace: workload.Namespace, Labels: workload.Labels}
-	}, options.WithName("workload-policy-targets")...)
-	byTarget := krt.NewIndex(attachments, "workloadPolicyAttachmentsByTarget", attachmentIndexKeys)
-	namespaceMatches := newWorkloadPolicyMatches(targets, attachments, byTarget, false, options)
-	globalMatches := newWorkloadPolicyMatches(targets, attachments, byTarget, true, options)
-	return krt.NewCollection(targets, func(ctx krt.HandlerContext, workload policyTarget) *Bindings {
-		local := krt.FetchOne(ctx, namespaceMatches, krt.FilterKey(workload.UID))
-		global := krt.FetchOne(ctx, globalMatches, krt.FilterKey(workload.UID))
-		if !local.matchesWorkload(workload) || !global.matchesWorkload(workload) {
-			// Keep the previous binding until both scopes reflect the same labels.
-			ctx.DiscardResult()
-			return nil
-		}
-		matchedByName := make(map[string]PolicyAttachment, len(local.Attachments)+len(global.Attachments))
-		for _, group := range []*workloadPolicyMatches{local, global} {
-			for _, attachment := range group.Attachments {
-				matchedByName[attachment.ResourceName()] = attachment
-			}
-		}
-		return bindingsFromMatches(workload.UID, matchedByName)
-	}, options.WithName("workload-policy-bindings")...)
+	return newIncrementalBindings(workloads, attachments, options)
 }
 
 // Only namespace and labels affect selection; other Workload changes skip matching.
@@ -119,47 +98,6 @@ func (t policyTarget) ResourceName() string { return t.UID }
 
 func (t policyTarget) Equals(other policyTarget) bool {
 	return t.UID == other.UID && t.Namespace == other.Namespace && maps.Equal(t.Labels, other.Labels)
-}
-
-// Cache each scope independently so a global change cannot rescan namespace policies.
-type workloadPolicyMatches struct {
-	Target      policyTarget
-	Attachments []PolicyAttachment
-}
-
-func (m workloadPolicyMatches) ResourceName() string { return m.Target.UID }
-
-func (m *workloadPolicyMatches) matchesWorkload(workload policyTarget) bool {
-	return m != nil && m.Target.Equals(workload)
-}
-
-func (m workloadPolicyMatches) Equals(other workloadPolicyMatches) bool {
-	return m.Target.Equals(other.Target) && slices.EqualFunc(m.Attachments, other.Attachments, PolicyAttachment.Equals)
-}
-
-func newWorkloadPolicyMatches(
-	workloads krt.Collection[policyTarget],
-	attachments krt.Collection[PolicyAttachment],
-	byTarget krt.Index[string, PolicyAttachment],
-	global bool,
-	options krt.OptionsBuilder,
-) krt.Collection[workloadPolicyMatches] {
-	name := "workload-namespace-policy-matches"
-	if global {
-		name = "workload-global-policy-matches"
-	}
-	return krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload policyTarget) *workloadPolicyMatches {
-		key := namespacePolicyAttachmentKeyPrefix + workload.Namespace
-		if global {
-			key = globalPolicyAttachmentIndexKey
-		}
-		// KRT checks both old and new selectors when invalidating matching targets.
-		matched := krt.Fetch(ctx, attachments, krt.FilterIndex(byTarget, key), krt.FilterGeneric(func(value any) bool {
-			return value.(PolicyAttachment).selects(workload.Namespace, workload.Labels)
-		}))
-		sort.Slice(matched, func(i, j int) bool { return policyAttachmentLess(matched[i], matched[j]) })
-		return &workloadPolicyMatches{Target: workload, Attachments: matched}
-	}, options.WithName(name)...)
 }
 
 func bindingsFromMatches(uid string, matchedByName map[string]PolicyAttachment) *Bindings {

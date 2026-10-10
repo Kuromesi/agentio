@@ -125,19 +125,19 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 					Values:   []string{"subject-1"},
 				}}}),
 			)
-			check(2, 2, func(index int) bool { return index == 1 })
+			check(2, 0, func(index int) bool { return index == 1 })
 			// A primary label update must still detach the policy.
 			updated := subjects[1]
 			updated.Labels = map[string]string{"app": "disabled"}
 			workloades.ConditionalUpdateObject(updated)
 			check(1, 1, func(int) bool { return false })
 			attachments.ConditionalUpdateObject(makePolicy(selectApp("subject-2")))
-			check(1, 1, func(index int) bool { return index == 2 })
+			check(1, 0, func(index int) bool { return index == 2 })
 			attachments.DeleteObject(initial.ResourceName())
-			check(1, 1, func(int) bool { return false })
+			check(1, 0, func(int) bool { return false })
 			// Empty selectors retain namespace-wide/global semantics on recreation.
 			attachments.ConditionalUpdateObject(makePolicy(metav1.LabelSelector{}))
-			check(count, count, func(int) bool { return true })
+			check(count, 0, func(int) bool { return true })
 		})
 	}
 }
