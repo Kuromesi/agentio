@@ -17,6 +17,7 @@ package policy
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -323,4 +324,236 @@ func TestPolicyBindings(t *testing.T) {
 	if got := otherBinding.PolicyNames(PolicyKindEgressPolicy); len(got) != 0 {
 		t.Fatalf("other egress names = %v, want none", got)
 	}
+}
+
+// A policy change must not re-evaluate selectors in the other attachment scope.
+func TestPolicyBindingsReuseUnchangedScope(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed_global=%t", global), func(t *testing.T) {
+			const count = 32
+			stop := make(chan struct{})
+			t.Cleanup(func() { close(stop) })
+			opts := []krt.CollectionOption{krt.WithStop(stop)}
+			workloads := make([]model.Workload, count)
+			for i := range workloads {
+				workloads[i] = model.Workload{UID: fmt.Sprintf("workload-%d", i), Namespace: "demo", Labels: map[string]string{"app": "selected"}}
+			}
+			makeAttachment := func(name string, global bool, selector metav1.LabelSelector) PolicyAttachment {
+				t.Helper()
+				target := AttachmentTarget{Global: global, Selector: selector}
+				if !global {
+					target.Namespaces = []string{"demo"}
+				}
+				a, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: name, Target: target})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return a
+			}
+			var scans atomic.Int64
+			witness := makeAttachment("witness", !global, metav1.LabelSelector{MatchLabels: map[string]string{"app": "unmatched"}})
+			witness.selector = bindingRecomputeSelector{Selector: witness.selector, calls: &scans}
+			retained := makeAttachment("retained", !global, metav1.LabelSelector{})
+			attachments := krt.NewMutableCollection(nil, []PolicyAttachment{witness, retained}, opts...)
+			subjects := krt.NewMutableCollection(nil, workloads, opts...)
+			bindings := NewWorkloadPolicyBindingsCollection(subjects.AsCollection(), attachments.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+			if !bindings.WaitUntilSynced(stop) {
+				t.Fatal("bindings did not sync")
+			}
+			if got := scans.Swap(0); got != count {
+				t.Fatalf("initial witness evaluations = %d, want %d", got, count)
+			}
+			events := make(chan krt.Event[Bindings], count*2)
+			registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
+				for _, event := range batch {
+					events <- event
+				}
+			}, false)
+			t.Cleanup(registration.UnregisterHandler)
+			updated := workloads[0]
+			updated.Ready = true
+			updated.Addresses = []string{"10.0.0.2"}
+			subjects.ConditionalUpdateObject(updated)
+			select {
+			case event := <-events:
+				t.Fatalf("non-selector Workload change altered bindings: %+v", event)
+			case <-time.After(100 * time.Millisecond):
+			}
+			if got := scans.Swap(0); got != 0 {
+				t.Fatalf("non-selector Workload change re-evaluated %d selectors", got)
+			}
+			changed := makeAttachment("changed", global, metav1.LabelSelector{})
+			for _, present := range []bool{true, false, true} {
+				if present {
+					attachments.ConditionalUpdateObject(changed)
+				} else {
+					attachments.DeleteObject(changed.ResourceName())
+				}
+				want := []string{"retained"}
+				if present {
+					want = []string{"changed", "retained"}
+				}
+				for range count {
+					got := awaitBindingEvent(t, events).Latest().PolicyNames(PolicyKindTrafficPolicy)
+					if !reflect.DeepEqual(got, want) {
+						t.Fatalf("policies = %v, want %v", got, want)
+					}
+				}
+				if got := scans.Swap(0); got != 0 {
+					t.Fatalf("re-evaluated %d selectors in unchanged scope", got)
+				}
+			}
+		})
+	}
+}
+
+type bindingGateSelector struct {
+	labels.Selector
+	once    *sync.Once
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (s bindingGateSelector) Matches(values labels.Labels) bool {
+	if values.Get("app") == "new" {
+		s.once.Do(func() {
+			close(s.entered)
+			if s.release != nil {
+				<-s.release
+			}
+		})
+	}
+	return s.Selector.Matches(values)
+}
+
+func TestPolicyBindingsLabelUpdateDoesNotMixScopes(t *testing.T) {
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	opts := []krt.CollectionOption{krt.WithStop(stop)}
+	workload := model.Workload{UID: "client", Namespace: "demo", Labels: map[string]string{"app": "old"}}
+	workloads := krt.NewMutableCollection(nil, []model.Workload{workload}, opts...)
+	localEntered, globalEntered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var unblock sync.Once
+	t.Cleanup(func() { unblock.Do(func() { close(release) }) })
+	var attachments []PolicyAttachment
+	for _, global := range []bool{false, true} {
+		for _, app := range []string{"old", "new"} {
+			target := AttachmentTarget{Global: global, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": app}}}
+			scope := "global"
+			if !global {
+				target.Namespaces = []string{"demo"}
+				scope = "local"
+			}
+			a, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: scope + "-" + app, Target: target})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if app == "new" {
+				gate := bindingGateSelector{Selector: a.selector, once: new(sync.Once), entered: globalEntered}
+				if !global {
+					gate.entered, gate.release = localEntered, release
+				}
+				a.selector = gate
+			}
+			attachments = append(attachments, a)
+		}
+	}
+	bindings := NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), krt.NewStaticCollection(nil, attachments, opts...), krt.NewOptionsBuilder(stop, "test", nil))
+	if !bindings.WaitUntilSynced(stop) {
+		t.Fatal("bindings did not sync")
+	}
+	events := make(chan krt.Event[Bindings], 10)
+	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
+		for _, event := range batch {
+			events <- event
+		}
+	}, false)
+	t.Cleanup(registration.UnregisterHandler)
+	workload.Labels = map[string]string{"app": "new"}
+	workloads.ConditionalUpdateObject(workload)
+	for _, entered := range []chan struct{}{localEntered, globalEntered} {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("selector evaluation did not start")
+		}
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("published incomplete label transition: %+v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := bindings.GetKey(workload.UID).PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"global-old", "local-old"}) {
+		t.Fatalf("binding while local computation blocked = %v", got)
+	}
+	unblock.Do(func() { close(release) })
+	if got := awaitBindingEvent(t, events).Latest().PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(got, []string{"global-new", "local-new"}) {
+		t.Fatalf("completed label transition = %v", got)
+	}
+}
+
+func TestPolicyBindingsScopeMovesAndOrdering(t *testing.T) {
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	opts := []krt.CollectionOption{krt.WithStop(stop)}
+	workload := model.Workload{UID: "client", Namespace: "demo"}
+	workloads := krt.NewMutableCollection(nil, []model.Workload{workload, {UID: "other", Namespace: "other"}}, opts...)
+	makeAttachment := func(name string, priority int32, target AttachmentTarget) PolicyAttachment {
+		t.Helper()
+		a, err := NewPolicyAttachment(PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: name, Priority: priority, Target: target})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	local := makeAttachment("local", 10, AttachmentTarget{Namespaces: []string{"demo"}})
+	global := makeAttachment("global", 20, AttachmentTarget{Global: true})
+	attachments := krt.NewMutableCollection(nil, []PolicyAttachment{local, global}, opts...)
+	bindings := NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), attachments.AsCollection(), krt.NewOptionsBuilder(stop, "test", nil))
+	if !bindings.WaitUntilSynced(stop) {
+		t.Fatal("bindings did not sync")
+	}
+	check := func(uid string, want []string) {
+		t.Helper()
+		if got := bindings.GetKey(uid).PolicyNames(PolicyKindTrafficPolicy); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s policies = %v, want %v", uid, got, want)
+		}
+	}
+	check("client", []string{"local", "global"})
+	check("other", []string{"global"})
+	events := make(chan krt.Event[Bindings], 20)
+	registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
+		for _, event := range batch {
+			events <- event
+		}
+	}, false)
+	t.Cleanup(registration.UnregisterHandler)
+	global.Priority = 5
+	attachments.ConditionalUpdateObject(global)
+	awaitBindingEvent(t, events)
+	check("client", []string{"global", "local"})
+	// Moving an attachment out of global scope must withdraw its old membership.
+	global = makeAttachment("global", 5, AttachmentTarget{Namespaces: []string{"other"}})
+	attachments.ConditionalUpdateObject(global)
+	awaitBindingEvent(t, events)
+	check("client", []string{"local"})
+	check("other", []string{"global"})
+	workload.Namespace = "other"
+	workloads.ConditionalUpdateObject(workload)
+	awaitBindingEvent(t, events)
+	check("client", []string{"global"})
+	attachments.DeleteObject(global.ResourceName())
+	for range 2 {
+		awaitBindingEvent(t, events)
+	}
+	check("client", nil)
+	check("other", nil)
+	workloads.DeleteObject(workload.UID)
+	if event := awaitBindingEvent(t, events); event.New != nil {
+		t.Fatalf("expected Workload binding deletion: %+v", event)
+	}
+	workload.Namespace = "demo"
+	workloads.ConditionalUpdateObject(workload)
+	awaitBindingEvent(t, events)
+	check("client", []string{"local"})
 }
