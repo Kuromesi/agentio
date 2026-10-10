@@ -30,7 +30,7 @@ func benchmarkPolicySnapshot(b *testing.B, workloadCount, policyCount int, match
 	stop := make(chan struct{})
 	b.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+	workloads := krt.NewMutableCollection[model.Workload](nil, nil, options...)
 	for index := range workloadCount {
 		workload := testWDSWorkload(fmt.Sprintf("workload-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
 		workload.Labels = map[string]string{"app": "workload"}
@@ -41,7 +41,7 @@ func benchmarkPolicySnapshot(b *testing.B, workloadCount, policyCount int, match
 	if !matching {
 		selectorValue = "does-not-match"
 	}
-	securityProfiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
+	securityProfiles := krt.NewMutableCollection[model.SecurityProfile](nil, nil, options...)
 	for index := range policyCount {
 		securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
 			Name:      fmt.Sprintf("profile-%d", index),
@@ -57,8 +57,8 @@ func benchmarkPolicySnapshot(b *testing.B, workloadCount, policyCount int, match
 	}
 
 	inputs := validCompilerInputs(stop)
-	inputs.Workloads = workloads
-	inputs.SecurityProfiles = securityProfiles
+	inputs.Workloads = workloads.AsCollection()
+	inputs.SecurityProfiles = securityProfiles.AsCollection()
 	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 	if err != nil {
 		b.Fatal(err)
@@ -81,13 +81,13 @@ func BenchmarkCompilerWorkloadUpdate(b *testing.B) {
 		b.Cleanup(func() { close(stop) })
 		options := []krt.CollectionOption{krt.WithStop(stop)}
 
-		workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+		workloads := krt.NewMutableCollection[model.Workload](nil, nil, options...)
 		for index := range workloadCount {
 			workload := testWDSWorkload(fmt.Sprintf("workload-%d", index), "", fmt.Sprintf("10.%d.%d.%d", (index/65536)%256, (index/256)%256, index%256))
 			workload.Labels = map[string]string{"app": "workload"}
 			workloads.ConditionalUpdateObject(workload)
 		}
-		securityProfiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
+		securityProfiles := krt.NewMutableCollection[model.SecurityProfile](nil, nil, options...)
 		for index := range 100 {
 			securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
 				Name:      fmt.Sprintf("profile-%d", index),
@@ -102,8 +102,8 @@ func BenchmarkCompilerWorkloadUpdate(b *testing.B) {
 			})
 		}
 		inputs := validCompilerInputs(stop)
-		inputs.Workloads = workloads
-		inputs.SecurityProfiles = securityProfiles
+		inputs.Workloads = workloads.AsCollection()
+		inputs.SecurityProfiles = securityProfiles.AsCollection()
 		compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 		if err != nil {
 			b.Fatal(err)

@@ -21,15 +21,17 @@ import (
 
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/openkruise/agentio/pkg/kube/controllers"
 	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/kube/controllers"
 )
 
 type Index[K comparable, O any] interface {
 	Lookup(k K) []O
 	AsCollection(opts ...CollectionOption) IndexCollection[K, O]
+	Fetch(ctx HandlerContext, key K, opts ...FetchOption) []O
 	objectHasKey(obj O, k K) bool
 	extractKeys(o O) []K
 	id() collectionUID
@@ -63,7 +65,7 @@ func NewIndex[K comparable, O any](
 	name string,
 	extract func(o O) []K,
 ) Index[K, O] {
-	idx := c.(internalCollection[O]).index(name, func(o O) []string {
+	idx := c.internal().index(name, func(o O) []string {
 		return slices.Map(extract(o), func(e K) string {
 			return toString(e)
 		})
@@ -123,7 +125,13 @@ func (i index[K, O]) AsCollection(opts ...CollectionOption) IndexCollection[K, O
 		c.metadata = o.metadata
 	}
 	maybeRegisterCollectionForDebugging(c, o.debugger)
-	return c
+	if o.debugger != nil && o.stopProvided {
+		go func() {
+			<-o.stop
+			maybeUnregisterCollectionFromDebugger(c, o.debugger)
+		}()
+	}
+	return newCollection[IndexObject[K, O]](c)
 }
 
 // nolint: unused // (not true)
@@ -180,7 +188,7 @@ func (i indexCollection[K, O]) uid() collectionUID {
 func (i indexCollection[K, O]) dump() CollectionDump {
 	return CollectionDump{
 		Outputs:         i.dumpOutput(),
-		InputCollection: i.idx.c.(internalCollection[O]).name(),
+		InputCollection: i.idx.c.name(),
 		Synced:          i.HasSynced(),
 	}
 }
@@ -191,7 +199,10 @@ func (i indexCollection[K, O]) augment(a any) any {
 }
 
 // nolint: unused // (not true, its to implement an interface)
-func (i indexCollection[K, O]) index(name string, extract func(o IndexObject[K, O]) []string) indexer[IndexObject[K, O]] {
+func (i indexCollection[K, O]) index(
+	name string,
+	extract func(o IndexObject[K, O]) []string,
+) indexer[IndexObject[K, O]] {
 	panic("an index cannot be indexed")
 }
 
@@ -209,8 +220,24 @@ func (i indexCollection[K, O]) GetKey(k string) *IndexObject[K, O] {
 	}
 }
 
-func (i indexCollection[K, O]) List() []IndexObject[K, O] {
-	panic("an index collection cannot be listed")
+func (i indexCollection[K, O]) ListFiltered(filter func(IndexObject[K, O]) bool) []IndexObject[K, O] {
+	keys := sets.New[K]()
+	i.idx.c.ListFiltered(func(o O) bool {
+		keys.InsertAll(i.idx.extractKeys(o)...)
+		return false
+	})
+	var res []IndexObject[K, O]
+	for k := range keys {
+		if v := i.GetKey(toString(k)); v != nil && (filter == nil || filter(*v)) {
+			res = append(res, *v)
+		}
+	}
+	return res
+}
+
+// Fetch fetches index entries with dependency tracking.
+func (i index[K, O]) Fetch(ctx HandlerContext, key K, opts ...FetchOption) []O {
+	return Fetch(ctx, i.c, append([]FetchOption{FilterIndex(i, key)}, opts...)...)
 }
 
 // dumpOutput dumps the current state. This has no synchronization, so it's not perfect.
@@ -244,15 +271,10 @@ func (i indexCollection[K, O]) Metadata() Metadata {
 	return i.metadata
 }
 
-func (i indexCollection[K, O]) Register(f func(o Event[IndexObject[K, O]])) HandlerRegistration {
-	return i.RegisterBatch(func(events []Event[IndexObject[K, O]]) {
-		for _, o := range events {
-			f(o)
-		}
-	}, true)
-}
-
-func (i indexCollection[K, O]) RegisterBatch(f func(o []Event[IndexObject[K, O]]), runExistingState bool) HandlerRegistration {
+func (i indexCollection[K, O]) RegisterBatch(
+	f func(o []Event[IndexObject[K, O]]),
+	runExistingState bool,
+) HandlerRegistration {
 	return i.idx.c.RegisterBatch(func(o []Event[O]) {
 		allKeys := sets.New[K]()
 		for _, ev := range o {
@@ -284,4 +306,28 @@ func (i indexCollection[K, O]) RegisterBatch(f func(o []Event[IndexObject[K, O]]
 		}
 		f(downstream)
 	}, runExistingState)
+}
+
+// UnnamedIndex creates a simple index, keyed by key K, over a collection for O. This is similar to
+// Informer.AddIndex, but is easier to use and can be added after an informer has already started.
+//
+// This differs from NewIndex in that it does not require a name. A name can be passed to dedupe indexes by the same name;
+// however, when not intended to dedupe, this can lead to accidental deduping.
+func UnnamedIndex[K comparable, O any](
+	c Collection[O],
+	extract func(o O) []K,
+) Index[K, O] {
+	// Closures can share a code pointer while capturing different keys.
+	key := fmt.Sprintf("unnamed-%v", nextUID())
+
+	return NewIndex(c, key, extract)
+}
+
+// FetchIndexObjects fetches all objects from the index that match the given key.
+func FetchIndexObjects[K comparable, O any](ctx HandlerContext, index IndexCollection[K, O], name K) []O {
+	res := FetchOne(ctx, index, FilterKey(toString(name)))
+	if res == nil {
+		return nil
+	}
+	return res.Objects
 }

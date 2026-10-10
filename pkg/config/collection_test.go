@@ -41,7 +41,7 @@ func TestCollectionDefaultsOverlaysAndLastGood(t *testing.T) {
 		}
 	}
 	opts := krt.NewOptionsBuilder(ctx.Done(), "test", nil)
-	sources := krt.NewStaticCollection(
+	sources := krt.NewMutableCollection(
 		nil,
 		[]*corev1.ConfigMap{cm("base", "base"), cm("primary", "reject")},
 		opts.WithName("Sources")...)
@@ -49,7 +49,7 @@ func TestCollectionDefaultsOverlaysAndLastGood(t *testing.T) {
 		DefaultProviders: &configv1.DefaultExtensionProviders{CredentialProvider: "default"},
 	}
 	rejected := make(chan struct{}, 2)
-	col := config.NewCollection(sources, config.Options[*configv1.EPEConfig]{
+	col := config.NewCollection(sources.AsCollection(), config.Options[*configv1.EPEConfig]{
 		Namespace: "system",
 		Names:     []string{"base", "", "primary"},
 		Key:       "settings",

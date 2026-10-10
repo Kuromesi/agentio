@@ -40,9 +40,9 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 		UID:       "object-uid",
 		Labels:    map[string]string{agentsv1alpha1.LabelSandboxID: "delivery-uid"},
 	}}
-	objects := krt.NewStaticCollection[*agentsv1alpha1.Sandbox](nil, nil, options...)
+	objects := krt.NewMutableCollection[*agentsv1alpha1.Sandbox](nil, nil, options...)
 	pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, options...)
-	groups := newSandboxesByUID(objects).AsCollection(options...)
+	groups := newSandboxesByUID(objects.AsCollection()).AsCollection(options...)
 	sandboxes := newSandboxes(groups, pods, newPodsByUID(pods), "cluster", options...)
 	profiles := newSecurityProfiles(groups, options...)
 	for _, step := range []struct {
@@ -284,12 +284,12 @@ func TestKruiseSandboxProducesPodAttesterBinding(t *testing.T) {
 			},
 		},
 	}
-	sandboxObjects := krt.NewStaticCollection(
+	sandboxObjects := krt.NewMutableCollection(
 		nil,
 		[]*agentsv1alpha1.Sandbox{sandbox},
 		options...,
 	)
-	sandboxGroups := newSandboxesByUID(sandboxObjects).AsCollection(options...)
+	sandboxGroups := newSandboxesByUID(sandboxObjects.AsCollection()).AsCollection(options...)
 	pods := krt.NewStaticCollection(nil, []*corev1.Pod{pod}, options...)
 	podsByUID := newPodsByUID(pods)
 	sandboxes := newSandboxes(sandboxGroups, pods, podsByUID, "cluster", options...)

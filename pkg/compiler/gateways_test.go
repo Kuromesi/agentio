@@ -80,7 +80,7 @@ func TestFailureRecorderSerializesGatewayDeleteAndRecreate(t *testing.T) {
 func TestRecordGatewayFailureRequiresCurrentGateway(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
-	gateways := krt.NewStaticCollection[model.Gateway](nil, nil,
+	gateways := krt.NewMutableCollection[model.Gateway](nil, nil,
 		krt.NewOptionsBuilder(stop, "", nil).WithName("test-gateways")...)
 	failures := newFailureRecorder()
 	configured := model.Gateway{
@@ -91,7 +91,7 @@ func TestRecordGatewayFailureRequiresCurrentGateway(t *testing.T) {
 	}
 	gateways.ConditionalUpdateObject(configured)
 
-	recordGatewayFailureIfCurrent(gateways, failures, configured, errors.New("invalid current gateway"))
+	recordGatewayFailureIfCurrent(gateways.AsCollection(), failures, configured, errors.New("invalid current gateway"))
 	if _, found := failures.snapshot()["Gateway/demo/egress"]; !found {
 		t.Fatal("current invalid gateway did not record a failure")
 	}
@@ -104,13 +104,13 @@ func TestRecordGatewayFailureRequiresCurrentGateway(t *testing.T) {
 		},
 	}
 	gateways.ConditionalUpdateObject(replacement)
-	recordGatewayFailureIfCurrent(gateways, failures, configured, errors.New("stale replaced gateway"))
+	recordGatewayFailureIfCurrent(gateways.AsCollection(), failures, configured, errors.New("stale replaced gateway"))
 	if _, found := failures.snapshot()["Gateway/demo/egress"]; found {
 		t.Fatal("replaced gateway recorded a stale failure")
 	}
 
 	gateways.DeleteObject(replacement.ResourceName())
-	recordGatewayFailureIfCurrent(gateways, failures, replacement, errors.New("stale deleted gateway"))
+	recordGatewayFailureIfCurrent(gateways.AsCollection(), failures, replacement, errors.New("stale deleted gateway"))
 	if _, found := failures.snapshot()["Gateway/demo/egress"]; found {
 		t.Fatal("deleted gateway recorded a stale failure")
 	}
@@ -158,11 +158,11 @@ func TestGatewayAPIParameterUpdatePublishesIncrementalRoutesWithLegacyPolicyRefe
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	agentioConfig := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
-	gatewayAPI := krt.NewStaticCollection[model.Gateway](nil, nil, options...)
+	agentioConfig := krt.NewMutableCollection[model.AgentioConfiguration](nil, nil, options...)
+	gatewayAPI := krt.NewMutableCollection[model.Gateway](nil, nil, options...)
 	inputs := validCompilerInputs(stop)
-	inputs.AgentioConfig = agentioConfig
-	inputs.Gateways = gatewayAPI
+	inputs.AgentioConfig = agentioConfig.AsCollection()
+	inputs.Gateways = gatewayAPI.AsCollection()
 
 	agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{
 		ResourceVersion: "legacy-policy",

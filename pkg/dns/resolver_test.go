@@ -73,7 +73,7 @@ func TestResolverEvictsUnreferencedColdResultAtRefreshDeadline(t *testing.T) {
 	}
 	resolver := &Resolver{
 		entries: map[string]*entry{host: item},
-		results: krt.NewStaticCollection[Result](nil, []Result{{
+		results: krt.NewMutableCollection[Result](nil, []Result{{
 			Hostname:  host,
 			Addresses: []netip.Addr{address},
 		}}),
@@ -106,7 +106,7 @@ func TestResolverDropsUnreferencedColdEntryAfterLookupFailure(t *testing.T) {
 			return LookupResult{}, fmt.Errorf("DNS unavailable")
 		},
 		entries: map[string]*entry{host: item},
-		results: krt.NewStaticCollection[Result](nil, nil),
+		results: krt.NewMutableCollection[Result](nil, nil),
 		wake:    make(chan struct{}, 1),
 	}
 
@@ -361,7 +361,7 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 				ctx:     t.Context(),
 				options: Options{LookupTimeout: time.Second},
 				entries: map[string]*entry{"example.com": old},
-				results: krt.NewStaticCollection[Result](nil, nil),
+				results: krt.NewMutableCollection[Result](nil, nil),
 				wake:    make(chan struct{}, 1),
 			}
 			resolver.lookup = func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
@@ -583,7 +583,7 @@ func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
 	resolver := &Resolver{
 		options: Options{RefreshInterval: time.Minute},
 		entries: map[string]*entry{host: item},
-		results: krt.NewStaticCollection[Result](nil, nil),
+		results: krt.NewMutableCollection[Result](nil, nil),
 		wake:    make(chan struct{}, 1),
 		jobs:    make(chan lookupJob, 1),
 	}

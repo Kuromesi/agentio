@@ -19,6 +19,13 @@ import (
 	"fmt"
 	"strings"
 
+	"istio.io/istio/pkg/config"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/openkruise/agentio/pkg/kube/controllers"
+	"github.com/openkruise/agentio/pkg/kube/kclient"
+
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
@@ -67,5 +74,123 @@ func BatchedTrackerHandler[T any](tracker *assert.Tracker[string]) func([]krt.Ev
 		tracker.Record(slices.Join(",", slices.Map(o, func(o krt.Event[T]) string {
 			return fmt.Sprintf("%v/%v", o.Event, krt.GetKey(o.Latest()))
 		})...))
+	}
+}
+
+type SimpleSizedPod struct {
+	SimplePod
+	Size string
+}
+
+type SimplePod struct {
+	Named
+	Labeled
+	IP string
+}
+
+func SimplePodCollection(pods krt.Collection[*corev1.Pod], opts krt.OptionsBuilder) krt.Collection[SimplePod] {
+	return NamedSimplePodCollection(pods, opts, "SimplePods")
+}
+
+func NamedSimplePodCollection(
+	pods krt.Collection[*corev1.Pod],
+	opts krt.OptionsBuilder,
+	name string,
+) krt.Collection[SimplePod] {
+	return krt.NewCollection(pods, func(ctx krt.HandlerContext, i *corev1.Pod) *SimplePod {
+		if i.Status.PodIP == "" {
+			return nil
+		}
+		return &SimplePod{
+			Named:   NewNamed(i),
+			Labeled: NewLabeled(i.Labels),
+			IP:      i.Status.PodIP,
+		}
+	}, opts.WithName(name)...)
+}
+
+func NewNamed(n config.Namer) Named {
+	return Named{
+		Namespace: n.GetNamespace(),
+		Name:      n.GetName(),
+	}
+}
+
+func NewLabeled(n map[string]string) Labeled {
+	return Labeled{n}
+}
+
+type Labeled struct {
+	Labels map[string]string
+}
+
+func (l Labeled) GetLabels() map[string]string {
+	return l.Labels
+}
+
+type SimpleService struct {
+	Named
+	Selector map[string]string
+	IP       string
+}
+
+type NamespaceIPs struct {
+	Namespace string
+	IPs       []string
+}
+
+func (n NamespaceIPs) ResourceName() string {
+	return n.Namespace
+}
+
+type testWriter[T controllers.Object] struct {
+	c kclient.Writer[T]
+	t test.Failer
+}
+
+func (t testWriter[T]) Create(object T) T {
+	t.t.Helper()
+	res, err := t.c.Create(object)
+	if err != nil {
+		t.t.Fatalf("create %v/%v: %v", object.GetNamespace(), object.GetName(), err)
+	}
+	return res
+}
+
+func (t testWriter[T]) Update(object T) T {
+	t.t.Helper()
+	res, err := t.c.Update(object)
+	if err != nil {
+		t.t.Fatalf("update %v/%v: %v", object.GetNamespace(), object.GetName(), err)
+	}
+	return res
+}
+
+func (t testWriter[T]) UpdateStatus(object T) T {
+	t.t.Helper()
+	res, err := t.c.UpdateStatus(object)
+	if err != nil {
+		t.t.Fatalf("update status %v/%v: %v", object.GetNamespace(), object.GetName(), err)
+	}
+	return res
+}
+
+func (t testWriter[T]) CreateOrUpdateStatus(object T) T {
+	t.t.Helper()
+	_, err := t.c.Create(object)
+	if apierrors.IsAlreadyExists(err) {
+		_, err = t.c.Update(object)
+	}
+	if err != nil {
+		t.t.Fatalf("createOrUpdate %v/%v: %v", object.GetNamespace(), object.GetName(), err)
+	}
+	return t.UpdateStatus(object)
+}
+
+func (t testWriter[T]) Delete(name, namespace string) {
+	t.t.Helper()
+	err := t.c.Delete(name, namespace)
+	if err != nil {
+		t.t.Fatalf("delete %v/%v: %v", namespace, name, err)
 	}
 }

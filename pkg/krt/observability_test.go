@@ -28,9 +28,9 @@ import (
 // itself must track transform executions exactly.
 func TestCollectionCountsTransformExecutions(t *testing.T) {
 	opts := testOptions(t)
-	source := krt.NewStaticCollection[Named](nil, []Named{{"ns", "a"}}, opts.WithName("source")...)
+	source := krt.NewMutableCollection[Named](nil, []Named{{"ns", "a"}}, opts.WithName("source")...)
 	var calls atomic.Int64
-	derived := krt.NewCollection(source, func(_ krt.HandlerContext, in Named) *Named {
+	derived := krt.NewCollection(source.AsCollection(), func(_ krt.HandlerContext, in Named) *Named {
 		calls.Add(1)
 		return &Named{Namespace: in.Namespace, Name: "derived-" + in.Name}
 	}, opts.WithName("derived")...)

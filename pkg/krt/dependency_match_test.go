@@ -36,7 +36,11 @@ type dependencyCaptureContext struct {
 	dependencies []*dependency
 }
 
-func (c *dependencyCaptureContext) registerDependency(d *dependency, _ Syncer, _ func(erasedEventHandler) Syncer) {
+func (c *dependencyCaptureContext) registerDependency(
+	d *dependency,
+	_ Syncer,
+	_ func(erasedEventHandler) HandlerRegistration,
+) {
 	c.dependencies = append(c.dependencies, d)
 }
 

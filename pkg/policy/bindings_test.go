@@ -54,7 +54,7 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 				values := map[string]string{"app": uid}
 				subjects = append(subjects, model.Workload{UID: uid, Namespace: "demo", Labels: values})
 			}
-			workloades := krt.NewStaticCollection(nil, subjects, options...)
+			workloades := krt.NewMutableCollection(nil, subjects, options...)
 			makePolicy := func(selector metav1.LabelSelector) PolicyAttachment {
 				t.Helper()
 				target := AttachmentTarget{Selector: selector, Global: global}
@@ -77,10 +77,10 @@ func TestPolicyBindingsSelectorDependencyFanout(t *testing.T) {
 			witness.Name = "demo/witness"
 			witness.selector = bindingRecomputeSelector{Selector: witness.selector, calls: &recomputes}
 			initial := makePolicy(selectApp("subject-0"))
-			attachments := krt.NewStaticCollection(nil, []PolicyAttachment{initial, witness}, options...)
+			attachments := krt.NewMutableCollection(nil, []PolicyAttachment{initial, witness}, options...)
 			bindings := NewWorkloadPolicyBindingsCollection(
-				workloades,
-				attachments,
+				workloades.AsCollection(),
+				attachments.AsCollection(),
 				krt.NewOptionsBuilder(stop, "test", nil),
 			)
 			if !bindings.WaitUntilSynced(stop) {
@@ -153,10 +153,10 @@ func TestPolicyBindingsSelectorTargetFanout(t *testing.T) {
 			Labels:    map[string]string{"workload": fmt.Sprintf("workload-%d", index)},
 		}
 	}
-	attachments := krt.NewStaticCollection[PolicyAttachment](nil, nil, options...)
+	attachments := krt.NewMutableCollection[PolicyAttachment](nil, nil, options...)
 	bindings := NewWorkloadPolicyBindingsCollection(
 		krt.NewStaticCollection(nil, subjects, options...),
-		attachments,
+		attachments.AsCollection(),
 		krt.NewOptionsBuilder(stop, "test", nil),
 	)
 	if !bindings.WaitUntilSynced(stop) {

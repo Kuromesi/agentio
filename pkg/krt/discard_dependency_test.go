@@ -15,12 +15,14 @@
 package krt_test
 
 import (
-	"github.com/openkruise/agentio/pkg/krt"
+	"testing"
+
 	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"testing"
+
+	"github.com/openkruise/agentio/pkg/krt"
 )
 
 type Static struct{ Value string }
@@ -34,12 +36,12 @@ func TestCollectionDiscardResultTracksDependencies(t *testing.T) {
 		Namespace: "ns",
 		Labels:    map[string]string{"config": "first"},
 	}}
-	pods := krt.NewStaticCollection(nil, []*corev1.Pod{pod}, opts.WithName("Pods")...)
-	configs := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, opts.WithName("Configs")...)
+	pods := krt.NewMutableCollection(nil, []*corev1.Pod{pod}, opts.WithName("Pods")...)
+	configs := krt.NewMutableCollection[*corev1.ConfigMap](nil, nil, opts.WithName("Configs")...)
 	missing := assert.NewTracker[string](t)
-	col := krt.NewCollection(pods, func(ctx krt.HandlerContext, p *corev1.Pod) *Static {
+	col := krt.NewCollection(pods.AsCollection(), func(ctx krt.HandlerContext, p *corev1.Pod) *Static {
 		key := p.Namespace + "/" + p.Labels["config"]
-		config := krt.FetchOne(ctx, configs, krt.FilterKey(key))
+		config := krt.FetchOne(ctx, configs.AsCollection(), krt.FilterKey(key))
 		if config == nil {
 			ctx.DiscardResult()
 			missing.Record(key)
@@ -54,7 +56,10 @@ func TestCollectionDiscardResultTracksDependencies(t *testing.T) {
 	assert.Equal(t, col.GetKey("static"), nil)
 
 	// A missing dependency must wake the first computation without a parent update.
-	first := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "ns"}, Data: map[string]string{"value": "first"}}
+	first := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "ns"},
+		Data:       map[string]string{"value": "first"},
+	}
 	configs.UpdateObject(first)
 	events.WaitOrdered("add/static")
 	assert.Equal(t, col.GetKey("static"), &Static{Value: "first"})
@@ -66,7 +71,10 @@ func TestCollectionDiscardResultTracksDependencies(t *testing.T) {
 	pods.UpdateObject(pod)
 	missing.WaitOrdered("ns/second")
 	assert.Equal(t, col.GetKey("static"), &Static{Value: "first"})
-	second := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "ns"}, Data: map[string]string{"value": "second"}}
+	second := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "ns"},
+		Data:       map[string]string{"value": "second"},
+	}
 	configs.UpdateObject(second)
 	events.WaitOrdered("update/static")
 	assert.Equal(t, col.GetKey("static"), &Static{Value: "second"})

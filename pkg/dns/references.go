@@ -42,25 +42,33 @@ func NewReferences(
 	configurations krt.Collection[model.AgentioConfiguration],
 	options ...krt.CollectionOption,
 ) krt.Collection[Reference] {
-	traffic := krt.NewManyCollection(trafficPolicies, func(_ krt.HandlerContext, policy model.TrafficPolicy) []Reference {
-		return trafficPolicyReferences(policy)
-	}, namedOptions(options, "dns-traffic-policy-references")...)
-	config := krt.NewManyCollection(configurations, func(_ krt.HandlerContext, configuration model.AgentioConfiguration) []Reference {
-		return configurationReferences(configuration)
-	}, namedOptions(options, "dns-agentio-config-references")...)
+	traffic := krt.NewManyCollection(
+		trafficPolicies,
+		func(_ krt.HandlerContext, policy model.TrafficPolicy) []Reference {
+			return trafficPolicyReferences(policy)
+		},
+		namedOptions(options, "dns-traffic-policy-references")...)
+	config := krt.NewManyCollection(
+		configurations,
+		func(_ krt.HandlerContext, configuration model.AgentioConfiguration) []Reference {
+			return configurationReferences(configuration)
+		},
+		namedOptions(options, "dns-agentio-config-references")...)
 	return krt.JoinCollection([]krt.Collection[Reference]{traffic, config}, namedOptions(options, "dns-references")...)
 }
 
 // Track retains DNS entries for the lifetime of their source references.
 func (r *Resolver) Track(events krt.EventStream[Reference]) krt.HandlerRegistration {
-	return events.Register(func(event krt.Event[Reference]) {
-		if event.Old != nil {
-			r.HandleDelete(event.Old.Hostname)
+	return events.RegisterBatch(func(events []krt.Event[Reference]) {
+		for _, event := range events {
+			if event.Old != nil {
+				r.HandleDelete(event.Old.Hostname)
+			}
+			if event.New != nil {
+				r.HandleAdd(event.New.Hostname)
+			}
 		}
-		if event.New != nil {
-			r.HandleAdd(event.New.Hostname)
-		}
-	})
+	}, true)
 }
 
 func trafficPolicyReferences(policy model.TrafficPolicy) []Reference {

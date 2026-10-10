@@ -215,8 +215,8 @@ func TestEnvoyFilterCollectionUsesRootNamespaceAndRetainsLastKnownGood(t *testin
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	configMaps := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, options...)
-	filters := newGatewayPatchesCollection(configMaps, "agentio-system", options...)
+	configMaps := krt.NewMutableCollection[*corev1.ConfigMap](nil, nil, options...)
+	filters := newGatewayPatchesCollection(configMaps.AsCollection(), "agentio-system", options...)
 	waitForUpdates := patchUpdateBarrier(t, configMaps, filters)
 
 	valid := &corev1.ConfigMap{
@@ -288,7 +288,11 @@ spec:
 `
 	configMaps.ConditionalUpdateObject(broken)
 	waitForUpdates()
-	if items := patchesFromSource(filters, "agentio-system/config-sources"); len(items) != 1 || items[0].ResourceVersion != "1" {
+	if items := patchesFromSource(
+		filters,
+		"agentio-system/config-sources",
+	); len(items) != 1 ||
+		items[0].ResourceVersion != "1" {
 		t.Fatalf("partially malformed replacement changed last-known-good patches: %#v", items)
 	}
 	if items := patchesFromSource(filters, "other-system/ignored"); len(items) != 0 {
@@ -441,7 +445,9 @@ spec:
 	route := routePatch.Value
 	if route.GetName() != "sandbox-connect" || route.GetMatch().GetConnectMatcher() == nil ||
 		route.GetRoute().GetCluster() != "PassthroughCluster" || route.GetRoute().GetTimeout().AsDuration() != 0 ||
-		len(route.GetRoute().GetUpgradeConfigs()) != 1 || route.GetRoute().GetUpgradeConfigs()[0].GetUpgradeType() != "CONNECT" ||
+		len(
+			route.GetRoute().GetUpgradeConfigs(),
+		) != 1 || route.GetRoute().GetUpgradeConfigs()[0].GetUpgradeType() != "CONNECT" ||
 		route.GetRoute().GetUpgradeConfigs()[0].GetConnectConfig() == nil {
 		t.Fatalf("inserted route = %+v", route)
 	}
@@ -472,7 +478,8 @@ spec:
         alt_stat_name: patched
 `)
 	got, err := decodeEnvoyFilters(configMap)
-	if err != nil || len(got) != 1 || !slices.Equal(got[0].TargetGateways, []string{"sandbox-traffic-system/egress-gateway"}) {
+	if err != nil || len(got) != 1 ||
+		!slices.Equal(got[0].TargetGateways, []string{"sandbox-traffic-system/egress-gateway"}) {
 		t.Fatalf("decode = %+v, %v", got, err)
 	}
 }

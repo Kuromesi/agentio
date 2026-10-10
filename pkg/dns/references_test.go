@@ -33,9 +33,9 @@ var _ func(*Resolver, krt.EventStream[Reference]) krt.HandlerRegistration = (*Re
 func TestReferencesRetainSharedHostnameUntilLastOwnerIsDeleted(t *testing.T) {
 	ctx := t.Context()
 	options := []krt.CollectionOption{krt.WithStop(ctx.Done())}
-	policies := krt.NewStaticCollection[model.TrafficPolicy](nil, nil, options...)
-	configurations := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
-	references := NewReferences(policies, configurations, options...)
+	policies := krt.NewMutableCollection[model.TrafficPolicy](nil, nil, options...)
+	configurations := krt.NewMutableCollection[model.AgentioConfiguration](nil, nil, options...)
+	references := NewReferences(policies.AsCollection(), configurations.AsCollection(), options...)
 	resolver, err := New(
 		ctx,
 		Options{RefreshInterval: time.Hour},
@@ -82,7 +82,7 @@ func TestReferencesRetainSharedHostnameUntilLastOwnerIsDeleted(t *testing.T) {
 func TestTrackUnregisterStopsEvents(t *testing.T) {
 	ctx := t.Context()
 	options := []krt.CollectionOption{krt.WithStop(ctx.Done())}
-	references := krt.NewStaticCollection[Reference](nil, nil, options...)
+	references := krt.NewMutableCollection[Reference](nil, nil, options...)
 	resolver, err := New(
 		ctx,
 		Options{RefreshInterval: time.Hour},
@@ -93,7 +93,7 @@ func TestTrackUnregisterStopsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registration := resolver.Track(references)
+	registration := resolver.Track(references.AsCollection())
 
 	reference := Reference{Owner: "owner", Hostname: "api.example.com"}
 	references.UpdateObject(reference)

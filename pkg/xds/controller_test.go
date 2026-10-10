@@ -474,8 +474,8 @@ func TestControllerAppliesKRTIncrementalBatchWithoutFullCompile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resources := krt.NewStaticCollection[model.Resource](nil, nil, krt.WithStop(ctx.Done()))
-	source.events = resources
+	resources := krt.NewMutableCollection[model.Resource](nil, nil, krt.WithStop(ctx.Done()))
+	source.events = resources.AsCollection()
 	go func() { _ = controller.Run(ctx) }()
 	eventually(t, func() bool { return source.calls() > 0 }, "initial full compile")
 	before := source.calls()
@@ -496,8 +496,8 @@ func TestControllerRunUnregistersResourceEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resources := krt.NewStaticCollection[model.Resource](nil, nil, krt.WithStop(ctx.Done()))
-	source.events = resources
+	resources := krt.NewMutableCollection[model.Resource](nil, nil, krt.WithStop(ctx.Done()))
+	source.events = resources.AsCollection()
 	done := make(chan error, 1)
 	go func() { done <- controller.Run(ctx) }()
 	firstSnapshot := newSnapshot(t, "first")

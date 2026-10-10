@@ -88,8 +88,8 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
-	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+	sandboxes := krt.NewMutableCollection[model.Sandbox](nil, nil, options...)
+	workloads := krt.NewMutableCollection[model.Workload](nil, nil, options...)
 	for index := range count {
 		workload := testWDSWorkload(
 			fmt.Sprintf("sandbox-%d", index),
@@ -103,8 +103,8 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 		workloads.ConditionalUpdateObject(workload)
 	}
 
-	services := krt.NewStaticCollection[model.Service](nil, nil, options...)
-	endpoints := krt.NewStaticCollection[model.Endpoint](nil, nil, options...)
+	services := krt.NewMutableCollection[model.Service](nil, nil, options...)
+	endpoints := krt.NewMutableCollection[model.Endpoint](nil, nil, options...)
 	for index := range scaleServices {
 		name := fmt.Sprintf("service-%d", index)
 		hostname := name + ".demo.svc.cluster.local"
@@ -126,8 +126,8 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 		}
 	}
 
-	trafficPolicies := krt.NewStaticCollection[model.TrafficPolicy](nil, nil, options...)
-	securityProfiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
+	trafficPolicies := krt.NewMutableCollection[model.TrafficPolicy](nil, nil, options...)
+	securityProfiles := krt.NewMutableCollection[model.SecurityProfile](nil, nil, options...)
 	for index := range scalePolicies {
 		selector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "sandbox"}}
 		trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
@@ -173,13 +173,13 @@ func scaleCompiler(t testing.TB, count int) *Compiler {
 	}}, options...)
 
 	inputs := validCompilerInputs(stop)
-	inputs.Sandboxes = sandboxes
-	inputs.Workloads = workloads
-	inputs.Services = services
-	inputs.Endpoints = endpoints
+	inputs.Sandboxes = sandboxes.AsCollection()
+	inputs.Workloads = workloads.AsCollection()
+	inputs.Services = services.AsCollection()
+	inputs.Endpoints = endpoints.AsCollection()
 	inputs.Gateways = testGatewaySource(agentioConfig, options...)
-	inputs.TrafficPolicies = trafficPolicies
-	inputs.SecurityProfiles = securityProfiles
+	inputs.TrafficPolicies = trafficPolicies.AsCollection()
+	inputs.SecurityProfiles = securityProfiles.AsCollection()
 	inputs.AgentioConfig = agentioConfig
 	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 	if err != nil {

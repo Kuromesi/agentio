@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"maps"
 	"net/netip"
-	"reflect"
 	"slices"
 	"sort"
 	"sync"
@@ -143,33 +142,33 @@ func newIncrementalFixture(t testing.TB, configure ...func(*Inputs)) *incrementa
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 
 	fixture := &incrementalFixture{
-		sandboxes:          krt.NewStaticCollection[model.Sandbox](nil, nil, options...),
-		workloads:          krt.NewStaticCollection[model.Workload](nil, nil, options...),
-		services:           krt.NewStaticCollection[model.Service](nil, nil, options...),
-		endpoints:          krt.NewStaticCollection[model.Endpoint](nil, nil, options...),
-		trafficPolicies:    krt.NewStaticCollection[model.TrafficPolicy](nil, nil, options...),
-		securityProfiles:   krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...),
-		gatewayPatches:     krt.NewStaticCollection[model.GatewayPatch](nil, nil, options...),
-		telemetry:          krt.NewStaticCollection[model.Telemetry](nil, nil, options...),
+		sandboxes:          krt.NewMutableCollection[model.Sandbox](nil, nil, options...),
+		workloads:          krt.NewMutableCollection[model.Workload](nil, nil, options...),
+		services:           krt.NewMutableCollection[model.Service](nil, nil, options...),
+		endpoints:          krt.NewMutableCollection[model.Endpoint](nil, nil, options...),
+		trafficPolicies:    krt.NewMutableCollection[model.TrafficPolicy](nil, nil, options...),
+		securityProfiles:   krt.NewMutableCollection[model.SecurityProfile](nil, nil, options...),
+		gatewayPatches:     krt.NewMutableCollection[model.GatewayPatch](nil, nil, options...),
+		telemetry:          krt.NewMutableCollection[model.Telemetry](nil, nil, options...),
 		telemetryProviders: krt.NewStatic[model.TelemetryProviderOverrides](nil, true, options...),
-		agentioConfig:      krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...),
-		dnsResults:         krt.NewStaticCollection[resolverdns.Result](nil, nil, options...),
+		agentioConfig:      krt.NewMutableCollection[model.AgentioConfiguration](nil, nil, options...),
+		dnsResults:         krt.NewMutableCollection[resolverdns.Result](nil, nil, options...),
 		resolveCalls:       map[string]int{},
 	}
-	fixture.gateways = testGatewaySource(fixture.agentioConfig, options...)
+	fixture.gateways = testGatewaySource(fixture.agentioConfig.AsCollection(), options...)
 
 	inputs := validCompilerInputs(stop)
-	inputs.Sandboxes = fixture.sandboxes
-	inputs.Workloads = fixture.workloads
-	inputs.Services = fixture.services
-	inputs.Endpoints = fixture.endpoints
+	inputs.Sandboxes = fixture.sandboxes.AsCollection()
+	inputs.Workloads = fixture.workloads.AsCollection()
+	inputs.Services = fixture.services.AsCollection()
+	inputs.Endpoints = fixture.endpoints.AsCollection()
 	inputs.Gateways = fixture.gateways
-	inputs.TrafficPolicies = fixture.trafficPolicies
-	inputs.SecurityProfiles = fixture.securityProfiles
-	inputs.GatewayPatches = fixture.gatewayPatches
-	inputs.Telemetry = fixture.telemetry
+	inputs.TrafficPolicies = fixture.trafficPolicies.AsCollection()
+	inputs.SecurityProfiles = fixture.securityProfiles.AsCollection()
+	inputs.GatewayPatches = fixture.gatewayPatches.AsCollection()
+	inputs.Telemetry = fixture.telemetry.AsCollection()
 	inputs.TelemetryProviderOverrides = fixture.telemetryProviders
-	inputs.AgentioConfig = fixture.agentioConfig
+	inputs.AgentioConfig = fixture.agentioConfig.AsCollection()
 	inputs.Resolve = fixture.resolve
 	for _, apply := range configure {
 		apply(&inputs)
@@ -239,7 +238,7 @@ func (f *incrementalFixture) resolve(ctx krt.HandlerContext, host string) []neti
 	f.resolveMu.Lock()
 	f.resolveCalls[host]++
 	f.resolveMu.Unlock()
-	resolved := krt.FetchOne(ctx, f.dnsResults, krt.FilterKey(host))
+	resolved := krt.FetchOne(ctx, f.dnsResults.AsCollection(), krt.FilterKey(host))
 	if resolved == nil {
 		return nil
 	}
@@ -544,20 +543,6 @@ func testGatewaySource(
 		}, options...)
 }
 
-// internalCollectionName reads the unexported krt collection name via reflection (test-only).
-func internalCollectionName(t testing.TB, collection any) string {
-	t.Helper()
-	value := reflect.ValueOf(collection)
-	if value.Kind() != reflect.Pointer {
-		t.Fatalf("KRT collection type = %T, want pointer", collection)
-	}
-	name := value.Elem().FieldByName("collectionName")
-	if !name.IsValid() || name.Kind() != reflect.String {
-		t.Fatalf("KRT collection type = %T has no collectionName", collection)
-	}
-	return name.String()
-}
-
 // testSandboxForWorkload explicitly declares a Sandbox for a bound test fixture.
 func testSandboxForWorkload(workload model.Workload) model.Sandbox {
 	return model.Sandbox{
@@ -589,8 +574,8 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 	stop <-chan struct{}, options []krt.CollectionOption, debugger *krt.DebugHandler,
 ) *Compiler {
 	t.Helper()
-	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
-	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
+	workloads := krt.NewMutableCollection[model.Workload](nil, nil, options...)
+	sandboxes := krt.NewMutableCollection[model.Sandbox](nil, nil, options...)
 	for index := range count {
 		workload := testWDSWorkload(
 			fmt.Sprintf("workload-%d", index),
@@ -626,8 +611,8 @@ func dnsScaleCompiler(t testing.TB, count int, dnsResults krt.Collection[dnsBenc
 
 	inputs := validCompilerInputs(stop)
 	inputs.SandboxMode = false
-	inputs.Sandboxes = sandboxes
-	inputs.Workloads = workloads
+	inputs.Sandboxes = sandboxes.AsCollection()
+	inputs.Workloads = workloads.AsCollection()
 	inputs.Services = services
 	inputs.Endpoints = endpoints
 	inputs.Gateways = testGatewaySource(agentioConfig, options...)

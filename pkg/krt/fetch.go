@@ -16,7 +16,11 @@
 package krt
 
 import (
+	"k8s.io/apimachinery/pkg/types"
+
 	"istio.io/istio/pkg/slices"
+
+	"github.com/openkruise/agentio/pkg/kube/controllers"
 )
 
 func FetchOne[T any](ctx HandlerContext, c Collection[T], opts ...FetchOption) *T {
@@ -37,13 +41,61 @@ func FetchOrList[T any](ctx HandlerContext, cc Collection[T], opts ...FetchOptio
 	return fetch[T](ctx, cc, true, opts...)
 }
 
+// PartialFetch is a wrapper around Fetch + withUnsafeSuppressChange to safely fetch a subset of an object, without trigger
+// recomputation when the unused part of the object changes
+func PartialFetch[T any, S any](
+	ctx HandlerContext,
+	cc Collection[T],
+	xfm func(T) S,
+	equality func(S, S) bool,
+	opts ...FetchOption,
+) []S {
+	t := fetch[T](
+		ctx,
+		cc,
+		false,
+		append(append([]FetchOption(nil), opts...), withUnsafeSuppressChange(func(a T, b T) bool {
+			return equality(xfm(a), xfm(b))
+		}))...)
+	return slices.Map(t, xfm)
+}
+
+// PartialFetchComparable projects a dependency using comparable equality.
+func PartialFetchComparable[T any, S comparable](
+	ctx HandlerContext,
+	cc Collection[T],
+	xfm func(T) S,
+	opts ...FetchOption,
+) []S {
+	return PartialFetch(ctx, cc, xfm, func(s S, s2 S) bool {
+		return s == s2
+	}, opts...)
+}
+
+func extractNamespacedName[T controllers.ComparableObject](t T) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: t.GetNamespace(),
+		Name:      t.GetName(),
+	}
+}
+
+// ResourceExists tracks whether a Kubernetes resource key exists.
+func ResourceExists[T controllers.ComparableObject](ctx HandlerContext, cc Collection[T], key string) bool {
+	return len(PartialFetchComparable(ctx, cc, extractNamespacedName, FilterKey(key))) > 0
+}
+
 // Fetch runs a query against the provided collection and subscribes to updates.
 func Fetch[T any](ctx HandlerContext, cc Collection[T], opts ...FetchOption) []T {
 	return fetch[T](ctx, cc, false, opts...)
 }
 
+// FetchSorted runs a query, subscribes to updates, and sorts the result by key.
+func FetchSorted[T any](ctx HandlerContext, cc Collection[T], opts ...FetchOption) []T {
+	return slices.SortBy(Fetch(ctx, cc, opts...), GetKey)
+}
+
 func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool, opts ...FetchOption) []T {
-	c := cc.(internalCollection[T])
+	c := cc.internal()
 	d := &dependency{
 		id:             c.uid(),
 		collectionName: c.name(),
@@ -56,7 +108,7 @@ func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool
 	if ctx != nil {
 		h := ctx.(registerDependency)
 		// Important: register before we List(), so we cannot miss any events
-		h.registerDependency(d, c, func(f erasedEventHandler) Syncer {
+		h.registerDependency(d, c, func(f erasedEventHandler) HandlerRegistration {
 			ff := func(o []Event[T]) {
 				f(slices.Map(o, castEvent[T, any]))
 			}
@@ -70,9 +122,14 @@ func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool
 	}
 
 	// Now we can do the real fetching
-	// Compute our list of all possible objects that can match. Then we will filter them later.
-	// This pre-filtering upfront avoids extra work
+	// Compute the matching objects. General scans push filtering into the collection implementation so selective queries
+	// don't allocate a full-size intermediate list. Key and index filters use their more specific lookup paths below.
 	var list []T
+	var matches func(T) bool
+	if f := d.filter; f.selects != nil || f.selectsNonEmpty != nil || f.labels != nil || f.generic != nil {
+		matches = func(i T) bool { return f.Matches(c.augment(i), true) }
+	}
+	prefiltered := false
 	if !d.filter.keys.IsNil() {
 		// If they fetch a set of keys, directly Get these. Usually this is a single resource.
 		list = make([]T, 0, d.filter.keys.Len())
@@ -86,12 +143,13 @@ func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool
 		list = d.filter.index.list().([]T)
 	} else {
 		// Otherwise get everything
-		list = c.List()
+		list = c.ListFiltered(matches)
+		prefiltered = true
 	}
-	list = slices.FilterInPlace(list, func(i T) bool {
-		o := c.augment(i)
-		return d.filter.Matches(o, true)
-	})
+	// Key and index constraints have already been applied to the list.
+	if !prefiltered && matches != nil {
+		list = slices.FilterInPlace(list, matches)
+	}
 	if log.DebugEnabled() {
 		log.Debug("fetch",
 			"parent", parent,

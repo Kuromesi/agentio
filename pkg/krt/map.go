@@ -31,6 +31,7 @@ type mapCollection[T any, U any] struct {
 	collection     internalCollection[T]
 	mapFunc        func(T) U
 	metadata       Metadata
+	discardEqual   bool
 }
 
 // nolint: unused // (not true, used in func declared to implement an interface)
@@ -40,7 +41,7 @@ type mappedIndexer[T any, U any] struct {
 	mapFunc        func(T) U
 }
 
-var _ Collection[any] = &mapCollection[any, any]{}
+var _ collectionTrait[any] = &mapCollection[any, any]{}
 
 // nolint: unused // (not true, its to implement an interface)
 func (m *mappedIndexer[T, U]) Lookup(k string) []U {
@@ -65,22 +66,32 @@ func (m *mapCollection[T, U]) GetKey(k string) *U {
 	return nil
 }
 
-func (m *mapCollection[T, U]) List() []U {
-	vals := m.collection.List()
+func (m *mapCollection[T, U]) ListFiltered(filter func(U) bool) []U {
+	if filter != nil {
+		var res []U
+		m.collection.ListFiltered(func(obj T) bool {
+			mapped := m.mapFunc(obj)
+			if EnableAssertions {
+				assertKeyMatch(obj, mapped, m.collectionName)
+			}
+			if filter(mapped) {
+				res = append(res, mapped)
+			}
+			return false
+		})
+		return res
+	}
+
+	vals := m.collection.ListFiltered(nil)
 	res := make([]U, 0, len(vals))
 	for _, obj := range vals {
-		res = append(res, m.mapFunc(obj))
-	}
-	if EnableAssertions {
-		for _, obj := range vals {
-			assertKeyMatch(obj, m.mapFunc(obj), m.collectionName)
+		mapped := m.mapFunc(obj)
+		if EnableAssertions {
+			assertKeyMatch(obj, mapped, m.collectionName)
 		}
+		res = append(res, mapped)
 	}
 	return res
-}
-
-func (m *mapCollection[T, U]) Register(handler func(Event[U])) HandlerRegistration {
-	return registerHandlerAsBatched(m, handler)
 }
 
 func (m *mapCollection[T, U]) RegisterBatch(handler func([]Event[U]), runExistingState bool) HandlerRegistration {
@@ -96,9 +107,14 @@ func (m *mapCollection[T, U]) RegisterBatch(handler func([]Event[U]), runExistin
 			if o.New != nil {
 				e.New = ptr.Of(m.mapFunc(*o.New))
 			}
+			if m.discardEqual && e.Old != nil && e.New != nil && Equal(*e.Old, *e.New) {
+				continue
+			}
 			events = append(events, e)
 		}
-		handler(events)
+		if len(events) > 0 {
+			handler(events)
+		}
 	}, runExistingState)
 }
 
@@ -121,7 +137,7 @@ func (m *mapCollection[T, U]) uid() collectionUID { return m.id }
 // nolint: unused // (not true, its to implement an interface)
 func (m *mapCollection[T, U]) dump() CollectionDump {
 	return CollectionDump{
-		Outputs:         eraseMap(slices.GroupUnique(m.List(), getTypedKey)),
+		Outputs:         eraseMap(slices.GroupUnique(m.ListFiltered(nil), getTypedKey)),
 		Synced:          m.HasSynced(),
 		InputCollection: m.collection.name(),
 	}
@@ -149,6 +165,7 @@ func (m *mapCollection[T, U]) WaitUntilSynced(stop <-chan struct{}) bool {
 }
 
 // MapCollection creates a new collection to map Collection[T] -> Collection[U]
+// All events are forwarded by default. WithMapDiscardEqual suppresses unchanged mapped updates.
 // Warning: It is not OK to use a mapFunc which changes how the Collection is keyed.
 func MapCollection[T, U any](
 	collection Collection[T],
@@ -159,7 +176,7 @@ func MapCollection[T, U any](
 	if o.name == "" {
 		o.name = fmt.Sprintf("Map[%v]", ptr.TypeName[T]())
 	}
-	ic := collection.(internalCollection[T])
+	ic := collection.internal()
 	metadata := o.metadata
 	if metadata == nil {
 		metadata = ic.Metadata()
@@ -170,9 +187,16 @@ func MapCollection[T, U any](
 		collection:     ic,
 		mapFunc:        mapFunc,
 		metadata:       metadata,
+		discardEqual:   o.mapDiscardEqual,
 	}
 	maybeRegisterCollectionForDebugging[U](m, o.debugger)
-	return m
+	if o.debugger != nil && o.stopProvided {
+		go func() {
+			<-o.stop
+			maybeUnregisterCollectionFromDebugger(m, o.debugger)
+		}()
+	}
+	return newCollection[U](m)
 }
 
 // Used only to make assertions internally about Collection invariants
@@ -181,7 +205,8 @@ func assertKeyMatch[T, U any](original T, mapped U, name string) {
 	originalKey := GetKey(original)
 	mappedKey := GetKey(mapped)
 	if originalKey != mappedKey {
-		msg := fmt.Sprintf("MapCollection invariant violation in %s: T and U must have matching keys: (%T)%s != (%T)%s",
+		msg := fmt.Sprintf(
+			"MapCollection invariant violation in %s: T and U must have matching keys: (%T)%s != (%T)%s",
 			name,
 			original,
 			originalKey,

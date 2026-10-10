@@ -168,13 +168,13 @@ func TestGatewaySourceMergeFailsOverlapClosedAndRecovers(t *testing.T) {
 		Name:      "egress",
 		Source:    model.GatewaySourceAgentioConfig,
 	}}, options...)
-	gatewayAPI := krt.NewStaticCollection[model.Gateway](nil, []model.Gateway{{
+	gatewayAPI := krt.NewMutableCollection[model.Gateway](nil, []model.Gateway{{
 		Namespace: "demo",
 		Name:      "egress",
 		Source:    model.GatewaySourceGatewayAPI,
 	}}, options...)
 	merged := krt.JoinWithMergeCollection(
-		[]krt.Collection[model.Gateway]{agentioConfig, gatewayAPI},
+		[]krt.Collection[model.Gateway]{agentioConfig, gatewayAPI.AsCollection()},
 		model.MergeGatewaySources,
 		options...,
 	)

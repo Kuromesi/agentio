@@ -62,10 +62,10 @@ func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 		}
 		basePolicies[index] = attachment
 	}
-	attachments := krt.NewStaticCollection(nil, basePolicies, options...)
+	attachments := krt.NewMutableCollection(nil, basePolicies, options...)
 	bindings := NewWorkloadPolicyBindingsCollection(
 		krt.NewStaticCollection(nil, workloades, options...),
-		attachments,
+		attachments.AsCollection(),
 		krt.NewOptionsBuilder(stop, "benchmark", nil),
 	)
 	if !bindings.WaitUntilSynced(stop) {

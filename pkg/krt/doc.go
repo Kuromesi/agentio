@@ -16,4 +16,15 @@
 //
 // It is adapted from Istio's KRT implementation for the Agentio control plane
 // while preserving the required collection and event semantics.
+//
+// Collection exposes Fetch, FetchOne, FetchOrList, FetchSorted, ListFiltered and
+// ListSorted methods. ListSortedBy is a generic function for Go 1.26 compatibility.
+// NewStaticCollection returns a read-only collection; use NewMutableCollection
+// and its AsCollection method when the source must be updated directly.
+// PartialFetch projects dependencies so unrelated field updates do not recompute
+// consumers. ResourceExists tracks existence, and Index.Fetch tracks a bucket.
+// NewPointerCollection retains immutable output pointers without copying values.
+//
+// The implementation follows Istio KRT through aa3b3439c451, while retaining
+// Agentio's Kubernetes clients, logging, instrumentation and debouncing.
 package krt

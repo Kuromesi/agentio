@@ -424,8 +424,8 @@ func TestTelemetryCollectionUsesAllLabelledConfigMapsAndRetainsPerSourceLastKnow
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	configMaps := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, options...)
-	policies := newTelemetriesCollection(configMaps, "agentio-system", options...)
+	configMaps := krt.NewMutableCollection[*corev1.ConfigMap](nil, nil, options...)
+	policies := newTelemetriesCollection(configMaps.AsCollection(), "agentio-system", options...)
 
 	first := telemetryConfigMap("first-arbitrary-name", targetlessMetricsTelemetry("demo", "first"))
 	first.ResourceVersion = "1"

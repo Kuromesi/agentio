@@ -221,7 +221,7 @@ func NewFileCollection[F any, O any](
 			return readSnapshot[F, O](w, transform)
 		},
 	}
-	sc := krt.NewStaticCollection[O](nil, res.read(), opts...)
+	sc := krt.NewMutableCollection[O](nil, res.read(), opts...)
 	w.subscribe(func() {
 		now := res.read()
 		sc.Reset(now)

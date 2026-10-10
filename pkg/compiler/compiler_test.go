@@ -62,7 +62,7 @@ func TestNewPreservesKRTCollectionNames(t *testing.T) {
 			t.Fatalf("derived KRT collection %q not found in %v", want, names)
 		}
 	}
-	if got := internalCollectionName(t, compiler.graph.resources); got != "resources" {
+	if got := krt.GetKey(compiler.graph.resources); got != "resources" {
 		t.Fatalf("resources collection name = %q, want %q", got, "resources")
 	}
 }
