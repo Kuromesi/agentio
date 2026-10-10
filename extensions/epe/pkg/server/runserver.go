@@ -47,6 +47,8 @@ type Config struct {
 	Listener net.Listener
 	// PluginBudget bounds each evaluation phase (one ext_proc message); 0 disables.
 	PluginBudget time.Duration
+	// AuthorizeRequest runs independently after request rules complete.
+	AuthorizeRequest engine.RequestAuthorizer
 	// FailClosedOnMissingIdentity denies requests when the source pod
 	// identity never reached the filter (e.g. a misconfigured metadata
 	// exchange). The default (false) passes them through.
@@ -129,6 +131,7 @@ func New(cfg Config, logger logr.Logger) runnable.Runnable {
 				StreamLoggers:               cfg.StreamLoggers,
 				AuditLogger:                 cfg.AuditLogger,
 				PluginBudget:                cfg.PluginBudget,
+				AuthorizeRequest:            cfg.AuthorizeRequest,
 				FailClosedOnMissingIdentity: cfg.FailClosedOnMissingIdentity,
 			}),
 		)

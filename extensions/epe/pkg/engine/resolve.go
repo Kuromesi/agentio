@@ -45,5 +45,13 @@ type Resolution struct {
 // store plus binder, so the adapter stays free of the policy layer and a
 // second policy API needs no change here.
 //
-// Returning zero units means "no policy applies"; the adapter passes through.
+// Returning zero units skips rule processing; independent request authorization
+// still applies when configured.
 type Resolver func(ctx context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (Resolution, error)
+
+// RequestAuthorizer runs once after all request headers, including bypass
+// and empty resolutions, before any body callback. The stream contains
+// the effective request target. A reply
+// denies the request; otherwise the returned target is pinned for forwarding.
+// Errors become local failures, never an allow decision.
+type RequestAuthorizer func(context.Context, *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error)

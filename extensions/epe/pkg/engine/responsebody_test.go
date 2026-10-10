@@ -52,7 +52,11 @@ func (f *observingResponseBodyFilter) OnResponseHeaders(_ context.Context, st *f
 	return f.headerAct, nil
 }
 
-func (f *observingResponseBodyFilter) OnResponseBody(_ context.Context, _ *filter.Stream, body filter.Body) (filter.Action, error) {
+func (f *observingResponseBodyFilter) OnResponseBody(
+	_ context.Context,
+	_ *filter.Stream,
+	body filter.Body,
+) (filter.Action, error) {
 	f.c.bodyCalls++
 	if f.seenBodies != nil {
 		*f.seenBodies = append(*f.seenBodies, body)
@@ -409,10 +413,16 @@ func TestEvalRejectsPhaseIncompatibleMutations(t *testing.T) {
 				regs := buildRegs(t, []regSpec{{
 					name: "request",
 					make: func(filter.RuleConfig[string]) filter.Filter {
-						return &actionFilter{c: &counters{}, act: filter.Continue(filter.Mutation{StatusCode: testStatusCode(200)})}
+						return &actionFilter{
+							c:   &counters{},
+							act: filter.Continue(filter.Mutation{StatusCode: new(200)}),
+						}
 					},
 				}})
-				_, err := NewEngine(regs, 0).EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}))
+				_, err := NewEngine(
+					regs,
+					0,
+				).EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}))
 				return err
 			},
 		},
@@ -420,8 +430,15 @@ func TestEvalRejectsPhaseIncompatibleMutations(t *testing.T) {
 			name: "response headers invalid status",
 			want: "200..599",
 			run: func(t *testing.T) error {
-				regs := responseActionRegs(t, filter.Continue(filter.Mutation{StatusCode: testStatusCode(199)}), responseBodyPhases)
-				_, err := NewEngine(regs, 0).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
+				regs := responseActionRegs(
+					t,
+					filter.Continue(filter.Mutation{StatusCode: new(199)}),
+					responseBodyPhases,
+				)
+				_, err := NewEngine(
+					regs,
+					0,
+				).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
 				return err
 			},
 		},
@@ -429,8 +446,15 @@ func TestEvalRejectsPhaseIncompatibleMutations(t *testing.T) {
 			name: "response headers clear route cache",
 			want: "route cache",
 			run: func(t *testing.T) error {
-				regs := responseActionRegs(t, filter.Continue(filter.Mutation{ClearRouteCache: true}), responseBodyPhases)
-				_, err := NewEngine(regs, 0).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
+				regs := responseActionRegs(
+					t,
+					filter.Continue(filter.Mutation{Route: &filter.RouteMutation{ClearCache: true}}),
+					responseBodyPhases,
+				)
+				_, err := NewEngine(
+					regs,
+					0,
+				).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
 				return err
 			},
 		},
@@ -439,7 +463,10 @@ func TestEvalRejectsPhaseIncompatibleMutations(t *testing.T) {
 			want: "StatusCode",
 			run: func(t *testing.T) error {
 				regs := responseActionRegs(t, filter.Continue(filter.SetHeader(":status", "199")), responseBodyPhases)
-				_, err := NewEngine(regs, 0).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
+				_, err := NewEngine(
+					regs,
+					0,
+				).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
 				return err
 			},
 		},
@@ -448,7 +475,10 @@ func TestEvalRejectsPhaseIncompatibleMutations(t *testing.T) {
 			want: "response-body support",
 			run: func(t *testing.T) error {
 				regs := responseActionRegs(t, filter.NeedBody(), filter.PhaseResponseHeaders)
-				_, err := NewEngine(regs, 0).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
+				_, err := NewEngine(
+					regs,
+					0,
+				).EvalResponseHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"cfg"}}), ResponseScope{})
 				return err
 			},
 		},

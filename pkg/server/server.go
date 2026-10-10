@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/openkruise/agentio/pkg/compiler"
-	resolverdns "github.com/openkruise/agentio/pkg/dns"
+	resolverdns "github.com/openkruise/agentio/pkg/dns/controller"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/gatewaydeployer"
 	"github.com/openkruise/agentio/pkg/krt"

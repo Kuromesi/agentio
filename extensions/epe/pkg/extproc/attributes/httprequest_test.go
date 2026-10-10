@@ -15,7 +15,11 @@ package attributes
 
 import (
 	"context"
+	"net/netip"
+
 	"testing"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 )
 
 func TestParseHTTPRequest(t *testing.T) {
@@ -228,5 +232,36 @@ func TestInferPortFromScheme(t *testing.T) {
 		if got := inferPortFromScheme(in); got != want {
 			t.Errorf("inferPortFromScheme(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestRequestAfterMutationsKeepsOriginalMatchingInput(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		ops          []filter.HeaderOp
+		host         string
+		port         int32
+		keepOriginal bool
+	}{
+		{name: "token only", ops: filter.SetHeader("authorization", "token").HeaderOps, host: "example.com", port: 80, keepOriginal: true},
+		{name: "same authority", ops: filter.SetHeader(":authority", "example.com:80").HeaderOps, host: "example.com", port: 80, keepOriginal: true},
+		{name: "scheme changes inferred port", ops: filter.SetHeader(":scheme", "https").HeaderOps, host: "example.com", port: 443},
+		{name: "IPv6 authority", ops: filter.SetHeader("Host", "[2001:db8::1]:8443").HeaderOps, host: "2001:db8::1", port: 8443},
+		{name: "CONNECT needs explicit port", ops: filter.SetHeader(":method", "CONNECT").HeaderOps, host: "example.com", port: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := map[string]string{":authority": "example.com", ":scheme": "http", ":method": "GET"}
+			original := parseHTTPRequest(t.Context(), headers)
+			original.OriginalDestination = netip.MustParseAddrPort("192.0.2.1:80")
+			got := RequestAfterMutations(t.Context(), original, tc.ops)
+			if got.Host != tc.host || got.Port != tc.port || got.OriginalDestination.IsValid() != tc.keepOriginal {
+				t.Fatalf("effective request=%+v", got)
+			}
+			if original.Host != "example.com" || original.Port != 80 || headers[":authority"] != "example.com" ||
+				headers[":scheme"] != "http" ||
+				headers[":method"] != "GET" {
+				t.Fatalf("original request changed: %+v", original)
+			}
+		})
 	}
 }

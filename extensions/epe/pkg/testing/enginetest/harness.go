@@ -29,6 +29,8 @@ import (
 type Options struct {
 	// Resolve supplies the policy-neutral units for each request. Required.
 	Resolve engine.Resolver
+	// AuthorizeRequest is the independent final request authorization step.
+	AuthorizeRequest engine.RequestAuthorizer
 	// Registrations is the action order used to evaluate resolved units.
 	Registrations []filter.Registration
 	// StreamLoggers are extra statically registered stream loggers. The
@@ -65,10 +67,11 @@ func New(t testing.TB, opts Options) *Harness {
 		loggers = append(append([]filter.StreamLogger{}, loggers...), h.probe)
 	}
 	h.Server = extproc.NewServer(extproc.ServerDeps{
-		Resolve:       opts.Resolve,
-		Registrations: opts.Registrations,
-		StreamLoggers: loggers,
-		AuditLogger:   h.AccessLog,
+		Resolve:          opts.Resolve,
+		AuthorizeRequest: opts.AuthorizeRequest,
+		Registrations:    opts.Registrations,
+		StreamLoggers:    loggers,
+		AuditLogger:      h.AccessLog,
 	})
 	return h
 }

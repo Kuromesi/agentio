@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,7 +89,11 @@ func (f *observingBodyFilter) OnRequestHeaders(context.Context, *filter.Stream) 
 	return f.headerAct, nil
 }
 
-func (f *observingBodyFilter) OnRequestBody(_ context.Context, _ *filter.Stream, body filter.Body) (filter.Action, error) {
+func (f *observingBodyFilter) OnRequestBody(
+	_ context.Context,
+	_ *filter.Stream,
+	body filter.Body,
+) (filter.Action, error) {
 	f.c.bodyCalls++
 	if f.seen != nil {
 		*f.seen = append(*f.seen, body)
@@ -430,7 +435,7 @@ func TestEval_OrderedRulesTable(t *testing.T) {
 		}
 	})
 
-	t.Run("mcp rule then bypass rule -> body work completes before bypass", func(t *testing.T) {
+	t.Run("mcp rule then bypass rule -> bypass retains prior body obligation", func(t *testing.T) {
 		regs, _, _, mcpC, _ := newChain()
 		e := NewEngine(regs, 0)
 		res, err := e.EvalRequestHeaders(ctx, st, unitsFor([][]string{
@@ -440,12 +445,12 @@ func TestEval_OrderedRulesTable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Eval: %v", err)
 		}
-		requireDisposition(t, res.Disposition, DispositionPassthrough)
+		requireDisposition(t, res.Disposition, DispositionBypassed)
 		if mcpC.headerCalls != 1 {
 			t.Errorf("earlier body filter ran %d times, want 1", mcpC.headerCalls)
 		}
 		if !res.NeedsBody() {
-			t.Fatal("NeedsBody = false; the earlier rule must complete before bypass")
+			t.Fatal("NeedsBody = false; the earlier body check must still run")
 		}
 		bodyRes, err := e.EvalRequestBody(ctx, st, res, filter.Body{Complete: true})
 		if err != nil {
@@ -512,7 +517,11 @@ func TestEval_EachRuleConfigRunsOnce(t *testing.T) {
 		},
 	})
 	e := NewEngine(regs, 0)
-	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"a"}, {"b"}})); err != nil {
+	if _, err := e.EvalRequestHeaders(
+		context.Background(),
+		&filter.Stream{},
+		unitsFor([][]string{{"a"}, {"b"}}),
+	); err != nil {
 		t.Fatalf("Eval: %v", err)
 	}
 	if c.headerCalls != 2 {
@@ -533,7 +542,11 @@ func TestEval_FilterRunsOncePerConfiguredUnit(t *testing.T) {
 		},
 	})
 	e := NewEngine(regs, 0)
-	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"a"}, {""}, {"c"}})); err != nil {
+	if _, err := e.EvalRequestHeaders(
+		context.Background(),
+		&filter.Stream{},
+		unitsFor([][]string{{"a"}, {""}, {"c"}}),
+	); err != nil {
 		t.Fatalf("Eval: %v", err)
 	}
 	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
@@ -684,8 +697,9 @@ func TestEvalRequestBody_FoldsAllPendingMutationsAfterResume(t *testing.T) {
 	if !headersResult.NeedsBody() {
 		t.Fatal("request headers did not request a body")
 	}
-	if headersResult.Disposition != DispositionPassthrough || len(headersResult.HeaderOps) != 0 || headersResult.Body != nil {
-		t.Fatalf("suspended headers leaked a result: %+v", headersResult)
+	if headersResult.Disposition != DispositionMutated || len(headersResult.HeaderOps) != 4 ||
+		headersResult.Body != nil {
+		t.Fatalf("headers phase did not finish before body: %+v", headersResult)
 	}
 
 	original := filter.Body{Bytes: []byte("original"), Complete: true}
@@ -694,7 +708,7 @@ func TestEvalRequestBody_FoldsAllPendingMutationsAfterResume(t *testing.T) {
 		t.Fatalf("EvalRequestBody: %v", err)
 	}
 	requireDisposition(t, bodyResult.Disposition, DispositionMutated)
-	wantNames := []string{"x-before", "x-paused-header", "x-paused-body", "x-later-header", "x-later-body", "x-after"}
+	wantNames := []string{"x-before", "x-paused-header", "x-later-header", "x-after", "x-paused-body", "x-later-body"}
 	gotNames := make([]string, 0, len(bodyResult.HeaderOps))
 	for _, op := range bodyResult.HeaderOps {
 		gotNames = append(gotNames, op.Name)
@@ -833,7 +847,11 @@ func TestInvoke_OnErrorConsultsConfig(t *testing.T) {
 	regs := buildRegs(t, []regSpec{{name: "fr", onError: policy, make: mk}})
 	e := NewEngine(regs, 0)
 
-	if _, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"open"}})); err != nil {
+	if _, err := e.EvalRequestHeaders(
+		context.Background(),
+		&filter.Stream{},
+		unitsFor([][]string{{"open"}}),
+	); err != nil {
 		t.Fatalf("open policy: Eval err = %v, want fail-open", err)
 	}
 	closed, err := e.EvalRequestHeaders(context.Background(), &filter.Stream{}, unitsFor([][]string{{"closed"}}))
@@ -1423,7 +1441,7 @@ func TestEvalResponseHeaders_RejectsUnsupportedActions(t *testing.T) {
 		{name: "needbody", act: filter.NeedBody(), wantMsg: "response-body support"},
 		{
 			name:    "continue carrying clear-route-cache",
-			act:     filter.Continue(filter.Mutation{ClearRouteCache: true}),
+			act:     filter.Continue(filter.Mutation{Route: &filter.RouteMutation{ClearCache: true}}),
 			wantMsg: "route cache",
 		},
 	} {
@@ -1749,5 +1767,64 @@ func TestEval_PausedFilterNeedsBody(t *testing.T) {
 	}
 	if !res.NeedsBody() {
 		t.Fatal("NeedsBody = false, want true after a body pause")
+	}
+}
+
+type phaseOrderFilter struct {
+	filter.PassThrough
+	name   string
+	events *[]string
+}
+
+func (f *phaseOrderFilter) OnRequestHeaders(context.Context, *filter.Stream) (filter.Action, error) {
+	*f.events = append(*f.events, "headers:"+f.name)
+	return filter.NeedBody(), nil
+}
+
+func (f *phaseOrderFilter) OnRequestBody(context.Context, *filter.Stream, filter.Body) (filter.Action, error) {
+	*f.events = append(*f.events, "body:"+f.name)
+	return filter.Continue(), nil
+}
+
+func TestRequestPhasesRunInOrder(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bodyAvailable=%v", available), func(t *testing.T) {
+			var events []string
+			regs := buildRegs(t, []regSpec{{
+				name: "body",
+				make: func(c filter.RuleConfig[string]) filter.Filter {
+					return &phaseOrderFilter{name: c.Cfg, events: &events}
+				},
+			}})
+			e := NewEngine(regs, 0)
+			st := &filter.Stream{}
+			var opts []RequestOption
+			if available {
+				opts = append(opts, WithAvailableRequestBody(filter.Body{Complete: true}))
+			}
+			hr, err := e.EvalRequestHeaders(t.Context(), st, unitsFor([][]string{{"first"}, {"second"}}), opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !available {
+				if !slices.Equal(events, []string{"headers:first", "headers:second"}) {
+					t.Fatalf("headers stopped at NeedBody: %v", events)
+				}
+				if _, err := e.EvalRequestBody(t.Context(), st, hr, filter.Body{Complete: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if want := []string{
+				"headers:first",
+				"headers:second",
+				"body:first",
+				"body:second",
+			}; !slices.Equal(
+				events,
+				want,
+			) {
+				t.Fatalf("events=%v, want %v", events, want)
+			}
+		})
 	}
 }

@@ -6,6 +6,8 @@ EPE is Agentio's Envoy external processor for applying `SecurityProfile` and `Gl
 
 The `tokenTransformation` action can fetch short-lived credentials from an external credential provider; the HTTP contract a provider must implement is documented in [docs/reference/credential-provider.md](../../docs/reference/credential-provider.md).
 
+The optional [native TrafficPolicy authorization](pkg/policy/trafficpolicy/README.md) watches Workload and TrafficPolicy xDS resources and binds HTTP upstream connections to authorized destinations. Its reusable Delta ADS client lives in [`pkg/xdsclient`](../../pkg/xdsclient/README.md).
+
 ## Code layout
 
 ```text
@@ -15,8 +17,8 @@ extensions/epe/
 │                            # health, admin, metrics, and TLS setup.
 ├── pkg/
 │   ├── engine/              # Evaluates rules in policy order and actions within each
-│   │   │                    # rule in registration order. Owns body-phase cursor
-│   │   │                    # continuation, the per-invocation budget/metrics wrapper,
+│   │   │                    # rule in registration order within each phase. Owns body
+│   │   │                    # callbacks, the per-invocation budget/metrics wrapper,
 │   │   │                    # and net-effect mutation folding. Its dependency closure
 │   │   │                    # is guarded free of the policy API and ext_proc protos.
 │   │   └── filter/          # Filter contract: interface, actions, mutations,
@@ -33,8 +35,11 @@ extensions/epe/
 │   ├── policy/              # The only subtree allowed to import the CRD API.
 │   │   ├── securityprofile/ # Compiled profile model, rule binder, resolver,
 │   │   │                    # and the policy-side audit stream logger.
-│   │   └── profilestore/    # KRT-backed SecurityProfile and GlobalSecurityProfile
-│   │                        # watches and lock-free snapshots.
+│   │   ├── profilestore/    # KRT-backed SecurityProfile and GlobalSecurityProfile
+│   │   │                    # watches and lock-free snapshots.
+│   │   └── trafficpolicy/   # Resource-to-authorization conversion and resolver.
+│   ├── store/              # Ordered aggregation of resource sources: Get/List/Fetch.
+│   │   └── xds/            # Native xDS resources and on-demand retrieval.
 │   ├── wiring/              # Composition root assembling the production filter
 │   │                        # chain and loggers; hosts the arch guard tests.
 │   ├── eval/                # CEL/template evaluation.

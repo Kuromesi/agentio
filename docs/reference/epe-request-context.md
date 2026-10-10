@@ -8,7 +8,7 @@ The token-header evaluation contract below describes the internal EPE filter pay
 
 ## Request attributes
 
-EPE builds the request tuple during request headers. `:authority` takes precedence over `host`; its explicit port is used, otherwise `http` defaults to 80 and `https` to 443. Envoy's `destination.port`, when present and between 1 and 65535, overrides that inferred port.
+EPE builds the request tuple during request headers. `:authority` takes precedence over `host`; its explicit port is used, otherwise `http` defaults to 80 and `https` to 443. For ordinary requests, Envoy's restored `destination.address` and `destination.port` override that inferred port when valid. CONNECT retains its authority port because the downstream local address identifies the proxy listener, not the tunnel target.
 
 | Attribute | Type | Source and absence behavior |
 | --- | --- | --- |
@@ -21,6 +21,10 @@ EPE builds the request tuple during request headers. `:authority` takes preceden
 | `queryParams` | map<string, string> | First parsed value of each query parameter. It is empty when there is no query. Invalid query syntax can be partially parsed; semicolon-separated pairs and invalid escapes are not a byte-for-byte policy surface. |
 
 Policy matching sees the same host, port, path, method, scheme, headers, and parsed query fields. Path matching excludes the query string. Query matching uses the first percent-decoded value for a key.
+
+The internal routing filters use additional fields that are not exposed to CEL or templates. Request callbacks receive an owned `Stream.Upstream` snapshot of the target selected by preceding filters, including after a buffered body continuation. Place `route` before `egressauthz`: authorization checks the selected IP and port, retains an allowed target without DNS, and rejects a denied explicit target without switching destinations. Without an explicit target, authorization prefers an allowed `HTTPRequest.OriginalDestination` from Envoy's restored downstream destination attributes; an absent or denied original target falls back to resolving the request Host and selecting an allowed candidate. An allowed original target need not occur in the Host's DNS answer. Host/authority stays unchanged. `Config.Family` constrains host resolution, not an already selected or restored address.
+
+These filters currently provide EPE building blocks, not public SecurityProfile routing configuration. Gateway configuration must consume the emitted `agentio.route` target metadata to pin the actual connection address; mandatory authorization and that upstream integration remain separate work.
 
 ## Source peer and stream information
 

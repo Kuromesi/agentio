@@ -28,7 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
-	resolverdns "github.com/openkruise/agentio/pkg/dns"
+	"github.com/openkruise/agentio/pkg/dns"
+	resolverdns "github.com/openkruise/agentio/pkg/dns/controller"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -333,11 +334,11 @@ func TestTrafficPolicyAuthorizationPortEncoding(t *testing.T) {
 
 func TestTrafficPolicyUsesSuccessfulDNSFamilyForAllowAndReject(t *testing.T) {
 	resolver, err := resolverdns.New(t.Context(), resolverdns.Options{},
-		func(_ context.Context, _ string, queryType uint16) (resolverdns.LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 			if queryType == mdns.TypeAAAA {
-				return resolverdns.LookupResult{}, fmt.Errorf("SERVFAIL")
+				return dns.LookupResult{}, fmt.Errorf("SERVFAIL")
 			}
-			return resolverdns.LookupResult{
+			return dns.LookupResult{
 				Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.7")},
 				TTL:       time.Minute,
 			}, nil
@@ -386,5 +387,68 @@ func TestTrafficPolicyUsesSuccessfulDNSFamilyForAllowAndReject(t *testing.T) {
 				t.Fatalf("action=%v, want %v", rules[0].Action, wantAction)
 			}
 		})
+	}
+}
+
+func TestNativeTrafficPolicyOnlyResolvesDirectionalPeers(t *testing.T) {
+	for _, ingress := range []bool{false, true} {
+		direction := "egress"
+		if ingress {
+			direction = "ingress"
+		}
+		for _, opposite := range []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "192.0.2.0/24"}, {FQDN: "ignored.example"}} {
+			t.Run(direction+"/"+opposite.CIDR+opposite.FQDN, func(t *testing.T) {
+				inputs := testTrafficPolicyInputs("agentio-system", nil, nil, nil, nil)
+				lookups := 0
+				inputs.Resolve = func(krt.HandlerContext, string) []netip.Addr {
+					lookups++
+					return nil
+				}
+				var rules []agentsv1alpha1.TrafficPolicyRule
+				for _, action := range []agentsv1alpha1.RuleAction{agentsv1alpha1.RuleActionAllow, agentsv1alpha1.RuleActionReject} {
+					rule := agentsv1alpha1.TrafficPolicyRule{
+						Action: action,
+						From:   []agentsv1alpha1.TrafficPolicyPeer{opposite},
+						To:     []agentsv1alpha1.TrafficPolicyPeer{{CIDR: "203.0.113.0/24"}},
+						Ports:  []agentsv1alpha1.TrafficPolicyPort{{Protocol: "TCP", Port: proto.Int32(443)}},
+					}
+					if ingress {
+						rule.From, rule.To = rule.To, rule.From
+					}
+					rules = append(rules, rule)
+				}
+				result, err := compileNativeDirection(
+					krt.TestingDummyContext{},
+					&agentsv1alpha1.TrafficPolicyDirection{Rules: rules},
+					"tenant",
+					inputs,
+					ingress,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if lookups != 0 {
+					t.Fatalf("resolved ignored peers %d times", lookups)
+				}
+				if len(result.GetRules()) != 2 {
+					t.Fatalf("ignored peer removed a rule: %v", result)
+				}
+				for i, rule := range result.Rules {
+					selected, ignored := rule.Match.DestinationIps, rule.Match.SourceIps
+					if ingress {
+						selected, ignored = ignored, selected
+					}
+					if len(ignored) != 0 || len(selected) != 1 || selected[0].Length != 24 ||
+						!slices.Equal(selected[0].Address, []byte{203, 0, 113, 0}) {
+						t.Fatalf("wrong directional match: %v", rule.Match)
+					}
+					if rule.Action != []securityv1.TrafficPolicy_Action{securityv1.TrafficPolicy_ALLOW, securityv1.TrafficPolicy_DENY}[i] ||
+						len(rule.Match.Ports) != 1 ||
+						rule.Match.Ports[0].GetPort() != 443 {
+						t.Fatalf("action order or port changed: %v", rule)
+					}
+				}
+			})
+		}
 	}
 }

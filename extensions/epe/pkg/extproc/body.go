@@ -33,9 +33,15 @@ var defaultPassThroughBody = []*extProcPb.ProcessingResponse{
 }
 
 // HandleRequestBody handles the complete request body delivered by Envoy
-// after the headers phase set ModeOverride to BUFFERED. It resumes the
-// paused rule/action cursor.
-func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
+// after the headers phase set ModeOverride to BUFFERED. It runs the body
+// callbacks registered during headers, without reauthorizing the fixed target.
+func (s *Server) HandleRequestBody(
+	ctx context.Context,
+	body *extProcPb.HttpBody,
+	state *streamState,
+) ([]*extProcPb.ProcessingResponse, error) {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
 	if state == nil || state.lifecycle == lifecycleIdle ||
 		state.requestBodyContinuation == nil || !state.requestBodyContinuation.NeedsBody() {
 		return nil, status.Error(codes.FailedPrecondition,
@@ -61,9 +67,10 @@ func (s *Server) HandleRequestBody(ctx context.Context, body *extProcPb.HttpBody
 	if err != nil {
 		return nil, err
 	}
-	// Response-header demand is fixed before request evaluation; the resumed walk
+	// Response-header demand is fixed before request evaluation; body callbacks
 	// can only narrow dispatch through ResponseScope.
 	state.responseScope = reqBodyRes.ResponseScope
+
 	state.armFinalization(reqBodyRes.Disposition)
 	return translateRequestBodyResult(reqBodyRes), nil
 }

@@ -59,8 +59,8 @@ func assertStaticEndpointState(t *testing.T, typedConfig map[string]*anypb.Any, 
 	if got := values[0].GetFormatString().GetTextFormatSource().GetInlineString(); got != wantAddress {
 		t.Fatalf("static host state value = %q, want %q", got, wantAddress)
 	}
-	if !values[0].GetReadOnly() {
-		t.Fatal("static host state must be read-only")
+	if values[0].GetReadOnly() {
+		t.Fatal("static host state must allow EPE target overrides")
 	}
 	if got := values[1].GetObjectKey(); got != "envoy.upstream.dynamic_port" {
 		t.Fatalf("static port state key = %q", got)
@@ -69,8 +69,8 @@ func assertStaticEndpointState(t *testing.T, typedConfig map[string]*anypb.Any, 
 		"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%"; got != want {
 		t.Fatalf("static port state value = %q, want %q", got, want)
 	}
-	if !values[1].GetReadOnly() || !values[1].GetSkipIfEmpty() {
-		t.Fatal("static port state must be read-only and skip empty values")
+	if values[1].GetReadOnly() || !values[1].GetSkipIfEmpty() {
+		t.Fatal("static port state must allow EPE overrides and skip empty values")
 	}
 }
 

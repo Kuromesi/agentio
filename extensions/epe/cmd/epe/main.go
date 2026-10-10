@@ -46,15 +46,20 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/accesslog"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/sinks/webhook"
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs/certsource"
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout" // Register environment settings.
 	"github.com/openkruise/agentio/extensions/epe/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/policy/trafficpolicy"
 	"github.com/openkruise/agentio/extensions/epe/pkg/runnable"
 	runserver "github.com/openkruise/agentio/extensions/epe/pkg/server"
+	resourcestore "github.com/openkruise/agentio/extensions/epe/pkg/store"
+	xdsstore "github.com/openkruise/agentio/extensions/epe/pkg/store/xds"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 	"github.com/openkruise/agentio/pkg/config"
+	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/envdoc"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
@@ -228,6 +233,22 @@ func run() error {
 	providers := &extensionprovider.Registry{}
 	defer providers.Close()
 	chainDeps := wiring.Deps{Kube: client, Providers: providers}
+	var resourceStore *resourcestore.Aggregate
+	if *enableEgressAuthz {
+		xds, conn, err := newEgressXDS()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := conn.Close(); err != nil {
+				setupLog.Error(err, "close xDS connection")
+			}
+		}()
+		resourceStore = resourcestore.NewAggregate(xdsstore.New(xds))
+		trafficpolicy.RegisterQueries(resourceStore)
+		group.Add(runnable.Func(resourceStore.Run))
+		group.Add(runnable.Func(xds.Run))
+	}
 	if *epeConfigName == "" || *epeConfigNamespace == "" {
 		return fmt.Errorf("--epe-config and --epe-config-namespace must not be empty")
 	}
@@ -286,7 +307,11 @@ func run() error {
 	health.SetServingStatus("liveness", healthPb.HealthCheckResponse_SERVING)
 	updateReadiness := func() {
 		state := healthPb.HealthCheckResponse_SERVING
-		if servingTLS.Ready() != nil {
+		resourcesReady := true
+		if resourceStore != nil {
+			resourcesReady = resourceStore.Ready()
+		}
+		if servingTLS.Ready() != nil || !resourcesReady {
 			state = healthPb.HealthCheckResponse_NOT_SERVING
 		}
 		for _, service := range []string{"", "readiness", extProcPb.ExternalProcessor_ServiceDesc.ServiceName} {
@@ -342,14 +367,20 @@ func run() error {
 
 	// Assemble the ext-proc gRPC server around the shared filter chain built
 	// above.
+	resolve := securityprofile.NewResolver(store, registrations, auditRouter)
+	var authorize engine.RequestAuthorizer
+	if resourceStore != nil {
+		authorize = trafficpolicy.NewAuthorizer(resourceStore, dns.NewClient(nil, 0))
+	}
 	group.Add(runserver.New(runserver.Config{
 		GrpcPort:                    *grpcPort,
 		PluginBudget:                *pluginBudget,
-		FailClosedOnMissingIdentity: *failClosedOnMissingIdentity,
+		AuthorizeRequest:            authorize,
+		FailClosedOnMissingIdentity: *failClosedOnMissingIdentity || *enableEgressAuthz,
 		SecureServing:               servingTLS.Secure,
 		CertProvider:                servingTLS.Provider,
 		RequireClientCert:           servingTLS.RequireClientCert,
-		Resolve:                     securityprofile.NewResolver(store, registrations, auditRouter),
+		Resolve:                     resolve,
 		AuditLogger:                 auditLogger,
 		Registrations:               registrations,
 	}, ctrllog.Log.WithName("ext-proc")))

@@ -1017,13 +1017,55 @@
                           "response_header_mode": "SEND"
                         },
                         "request_attributes": [
-                          "request.id"
+                          "request.id",
+                          "filter_state['agentio.workload.name']",
+                          "filter_state['agentio.workload.namespace']",
+                          "source.address",
+                          "destination.address",
+                          "destination.port"
                         ],
                         "response_attributes": [
                           "response.code"
                         ],
                         "message_timeout": "0.350s",
-                        "allow_mode_override": true
+                        "allow_mode_override": true,
+                        "metadata_options": {
+                          "receiving_namespaces": {
+                            "untyped": [
+                              "agentio.route"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "agentio.egress_target",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+                        "on_request_headers": [
+                          {
+                            "object_key": "envoy.upstream.dynamic_host",
+                            "format_string": {
+                              "text_format_source": {
+                                "inline_string": "%DYNAMIC_METADATA(agentio.route:upstream:ip)%"
+                              },
+                              "omit_empty_values": true
+                            },
+                            "read_only": true,
+                            "skip_if_empty": true
+                          },
+                          {
+                            "object_key": "envoy.upstream.dynamic_port",
+                            "format_string": {
+                              "text_format_source": {
+                                "inline_string": "%DYNAMIC_METADATA(agentio.route:upstream:port)%"
+                              },
+                              "omit_empty_values": true
+                            },
+                            "read_only": true,
+                            "skip_if_empty": true
+                          }
+                        ]
                       }
                     },
                     {
@@ -1033,7 +1075,8 @@
                         "dns_cache_config": {
                           "name": "agentio_dns_cache",
                           "dns_lookup_family": "V4_ONLY"
-                        }
+                        },
+                        "allow_dynamic_host_from_filter_state": true
                       }
                     },
                     {
@@ -1283,13 +1326,55 @@
                           "response_header_mode": "SEND"
                         },
                         "request_attributes": [
-                          "request.id"
+                          "request.id",
+                          "filter_state['agentio.workload.name']",
+                          "filter_state['agentio.workload.namespace']",
+                          "source.address",
+                          "destination.address",
+                          "destination.port"
                         ],
                         "response_attributes": [
                           "response.code"
                         ],
                         "message_timeout": "0.350s",
-                        "allow_mode_override": true
+                        "allow_mode_override": true,
+                        "metadata_options": {
+                          "receiving_namespaces": {
+                            "untyped": [
+                              "agentio.route"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "agentio.egress_target",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+                        "on_request_headers": [
+                          {
+                            "object_key": "envoy.upstream.dynamic_host",
+                            "format_string": {
+                              "text_format_source": {
+                                "inline_string": "%DYNAMIC_METADATA(agentio.route:upstream:ip)%"
+                              },
+                              "omit_empty_values": true
+                            },
+                            "read_only": true,
+                            "skip_if_empty": true
+                          },
+                          {
+                            "object_key": "envoy.upstream.dynamic_port",
+                            "format_string": {
+                              "text_format_source": {
+                                "inline_string": "%DYNAMIC_METADATA(agentio.route:upstream:port)%"
+                              },
+                              "omit_empty_values": true
+                            },
+                            "read_only": true,
+                            "skip_if_empty": true
+                          }
+                        ]
                       }
                     },
                     {
@@ -1299,7 +1384,8 @@
                         "dns_cache_config": {
                           "name": "agentio_dns_cache",
                           "dns_lookup_family": "V4_ONLY"
-                        }
+                        },
+                        "allow_dynamic_host_from_filter_state": true
                       }
                     },
                     {

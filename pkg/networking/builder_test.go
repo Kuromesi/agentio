@@ -166,8 +166,8 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 			if cfg.GetDnsCacheConfig().GetName() != DNSCacheName {
 				t.Fatalf("HTTP filter DFP cache = %q", cfg.GetDnsCacheConfig().GetName())
 			}
-			if cfg.GetAllowDynamicHostFromFilterState() {
-				t.Fatal("HTTP filter DFP unexpectedly accepts dynamic host state without static service entries")
+			if !cfg.GetAllowDynamicHostFromFilterState() {
+				t.Fatal("HTTP filter DFP must accept explicit target state by default")
 			}
 		}
 	}

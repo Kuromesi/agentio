@@ -16,6 +16,7 @@ package attributes
 import (
 	"context"
 	"encoding/base64"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"testing"
@@ -490,8 +491,10 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 		{
 			name: "workload headers override conflicting peer metadata",
 			fields: map[string]any{
-				FilterStateWorkloadName: "source-pod", FilterStateWorkloadNamespace: "source-ns",
-				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateWorkloadName:            "source-pod",
+				FilterStateWorkloadNamespace:       "source-ns",
+				FilterStateDownstreamPeerName:      "peer-pod",
+				FilterStateDownstreamPeerNamespace: "peer-ns",
 			},
 			want: types.NamespacedName{Name: "source-pod", Namespace: "source-ns"},
 		},
@@ -508,24 +511,29 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 		{
 			name: "empty headers use legacy metadata",
 			fields: map[string]any{
-				FilterStateWorkloadName: "", FilterStateWorkloadNamespace: "",
-				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateWorkloadName:            "",
+				FilterStateWorkloadNamespace:       "",
+				FilterStateDownstreamPeerName:      "peer-pod",
+				FilterStateDownstreamPeerNamespace: "peer-ns",
 			},
 			want: types.NamespacedName{Name: "peer-pod", Namespace: "peer-ns"},
 		},
 		{
 			name: "namespace falls back independently",
 			fields: map[string]any{
-				FilterStateWorkloadName: "source-pod", FilterStateWorkloadNamespace: "",
-				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateWorkloadName:            "source-pod",
+				FilterStateWorkloadNamespace:       "",
+				FilterStateDownstreamPeerName:      "peer-pod",
+				FilterStateDownstreamPeerNamespace: "peer-ns",
 			},
 			want: types.NamespacedName{Name: "source-pod", Namespace: "peer-ns"},
 		},
 		{
 			name: "name falls back independently",
 			fields: map[string]any{
-				FilterStateWorkloadNamespace:  "source-ns",
-				FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateWorkloadNamespace:       "source-ns",
+				FilterStateDownstreamPeerName:      "peer-pod",
+				FilterStateDownstreamPeerNamespace: "peer-ns",
 			},
 			want: types.NamespacedName{Name: "peer-pod", Namespace: "source-ns"},
 		},
@@ -540,8 +548,11 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 			// These inner request headers must never override the captured
 			// CONNECT context, including when that context is missing.
 			headers := makeHTTPHeaders(map[string]string{
-				":method": "GET", ":authority": "api.example.com", ":path": "/",
-				"x-agentio-workload-name": "application-pod", "x-agentio-workload-namespace": "application-ns",
+				":method":                      "GET",
+				":authority":                   "api.example.com",
+				":path":                        "/",
+				"x-agentio-workload-name":      "application-pod",
+				"x-agentio-workload-namespace": "application-ns",
 			})
 			peer, req := Extract(context.Background(), headers, makeAttrs(t, tt.fields))
 			if peer.Pod != tt.want {
@@ -555,5 +566,65 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 				t.Fatalf("valid workload identity did not reach request extraction: %+v", req)
 			}
 		})
+	}
+}
+
+func TestExtractOriginalDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		address string
+		method  string
+		want    string
+		port    float64
+	}{
+		{"ipv4", "192.0.2.2:8443", "GET", "192.0.2.2:8443", 8443},
+		{"ipv6", "[2001:db8::2]:8443", "GET", "[2001:db8::2]:8443", 8443},
+		{"mapped ipv4", "[::ffff:192.0.2.2]:8443", "GET", "192.0.2.2:8443", 8443},
+		{"ip with separate port", "192.0.2.2", "GET", "192.0.2.2:8443", 8443},
+		{"full address without separate port", "192.0.2.2:8443", "GET", "192.0.2.2:8443", 0},
+		{"CONNECT ignores proxy listener", "192.0.2.2:1087", "CONNECT", "", 1087},
+		{"conflicting port", "192.0.2.2:8443", "GET", "", 443},
+		{"missing port", "192.0.2.2", "GET", "", 0},
+		{"malformed", "bad:8443", "GET", "", 8443},
+		{"scoped ip", "[fe80::1%eth0]:8443", "GET", "", 8443},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := makeAttrs(t, map[string]any{
+				FilterStateDownstreamPeerName:      "pod",
+				FilterStateDownstreamPeerNamespace: "default",
+				"destination.address":              tc.address,
+				AttrDestinationPort:                tc.port,
+			})
+			_, req := Extract(
+				t.Context(),
+				makeHTTPHeaders(map[string]string{":authority": "api.example:443", ":method": tc.method}),
+				attrs,
+			)
+			var want netip.AddrPort
+			if tc.want != "" {
+				want = netip.MustParseAddrPort(tc.want)
+			}
+			if req.OriginalDestination != want {
+				t.Fatalf("original destination = %s, want %s", req.OriginalDestination, want)
+			}
+		})
+	}
+	attrs := makeAttrs(
+		t,
+		map[string]any{FilterStateDownstreamPeerName: "pod", FilterStateDownstreamPeerNamespace: "default"},
+	)
+	_, req := Extract(
+		t.Context(),
+		makeHTTPHeaders(
+			map[string]string{
+				":authority":          "api.example:443",
+				":method":             "GET",
+				"destination.address": "192.0.2.2:443",
+			},
+		),
+		attrs,
+	)
+	if req.OriginalDestination.IsValid() {
+		t.Fatalf("HTTP header became original destination: %s", req.OriginalDestination)
 	}
 }

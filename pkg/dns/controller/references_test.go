@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dns
+package controller
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
+	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -39,8 +40,8 @@ func TestReferencesRetainSharedHostnameUntilLastOwnerIsDeleted(t *testing.T) {
 	resolver, err := New(
 		ctx,
 		Options{RefreshInterval: time.Hour},
-		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
-			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}, TTL: time.Minute}, nil
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
+			return dns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}, TTL: time.Minute}, nil
 		},
 		options...)
 	if err != nil {
@@ -86,8 +87,8 @@ func TestTrackUnregisterStopsEvents(t *testing.T) {
 	resolver, err := New(
 		ctx,
 		Options{RefreshInterval: time.Hour},
-		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
-			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}, TTL: time.Minute}, nil
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
+			return dns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.7")}, TTL: time.Minute}, nil
 		},
 		options...)
 	if err != nil {
@@ -121,4 +122,35 @@ func eventuallyDNS(t testing.TB, condition func() bool, message string) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("condition never held: %s", message)
+}
+
+func TestTrafficPolicyReferencesIgnoreOppositeDirection(t *testing.T) {
+	policy := model.TrafficPolicy{
+		Name:      "p",
+		Namespace: "ns",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Ingress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "source.example"}},
+					To:   []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "ignored-ingress.example"}},
+				},
+				{To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "opposite-only.example"}}},
+			}},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "ignored-egress.example"}},
+					To:   []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "destination.example"}},
+				},
+				{From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "opposite-only.example"}}},
+			}},
+		}}
+	references := trafficPolicyReferences(policy)
+	if len(references) != 2 {
+		t.Fatalf("unexpected DNS references: %v", references)
+	}
+	for _, reference := range references {
+		if reference.Hostname != "source.example" && reference.Hostname != "destination.example" {
+			t.Fatalf("opposite peer retained DNS: %v", reference)
+		}
+	}
 }

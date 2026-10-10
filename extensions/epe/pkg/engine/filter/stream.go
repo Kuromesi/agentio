@@ -33,6 +33,10 @@ type Stream struct {
 	Peer      Peer
 	Request   httpreq.HTTPRequest
 	RequestID string
+	// Upstream is the destination selected by preceding request filters.
+	// The engine supplies a read-only view, reusing it while routing is unchanged.
+	// Routing filters must precede authorization.
+	Upstream *UpstreamTarget
 	// Response is populated from OnResponseHeaders onward.
 	Response httpreq.HTTPResponse
 	// Info accumulates per-stream observations; the engine writes it, the
