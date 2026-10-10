@@ -85,8 +85,16 @@ func sortedNames(names sets.Set[string]) []string {
 
 func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryRequest) (bool, error) {
 	changed := !watch.started
-	insertName := func(name string) error {
+	unsubscribe := sets.New(request.GetResourceNamesUnsubscribe()...)
+	// Retire names before admitting replacements so the limit applies to the final subscription.
+	for name := range unsubscribe {
 		if watch.names.Contains(name) {
+			changed = true
+			watch.names.Delete(name)
+		}
+	}
+	insertName := func(name string) error {
+		if unsubscribe.Contains(name) || watch.names.Contains(name) {
 			return nil
 		}
 		if len(watch.names) >= maxSubscriptionNames {
@@ -97,7 +105,9 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 	}
 	if !watch.started {
 		watch.started = true
-		watch.wildcard = len(request.GetResourceNamesSubscribe()) == 0 && implicitWildcardTypeURL(request.GetTypeUrl())
+		// Cached wildcard versions are not explicit named subscriptions.
+		watch.wildcard = slices.Contains(request.GetResourceNamesSubscribe(), "*") ||
+			(len(request.GetResourceNamesSubscribe()) == 0 && implicitWildcardTypeURL(request.GetTypeUrl()))
 		maps.Copy(watch.sent, request.GetInitialResourceVersions())
 		if !watch.wildcard {
 			for name := range request.GetInitialResourceVersions() {
@@ -122,18 +132,9 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 			return changed, err
 		}
 	}
-	for _, name := range request.GetResourceNamesUnsubscribe() {
-		if name == "*" {
-			if watch.wildcard {
-				changed = true
-			}
-			watch.wildcard = false
-			continue
-		}
-		if watch.names.Contains(name) {
-			changed = true
-		}
-		watch.names.Delete(name)
+	if unsubscribe.Contains("*") && watch.wildcard {
+		changed = true
+		watch.wildcard = false
 	}
 	return changed, nil
 }

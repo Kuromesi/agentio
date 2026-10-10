@@ -115,6 +115,103 @@ func TestApplySubscriptionCanLeaveExplicitWildcard(t *testing.T) {
 	}
 }
 
+func TestApplySubscriptionReconnectLimit(t *testing.T) {
+	initial := make(map[string]string, 30_000)
+	names := []string{"*"}
+	for i := range 30_000 {
+		name := fmt.Sprintf("name-%d", i)
+		initial[name] = "v1"
+		names = append(names, name)
+	}
+	for _, tc := range []struct {
+		name         string
+		typeURL      string
+		subscribe    []string
+		unsubscribe  []string
+		wantWildcard bool
+		wantError    bool
+	}{
+		{name: "explicit wildcard", typeURL: model.AddressType, subscribe: []string{"*"}, wantWildcard: true},
+		{name: "implicit wildcard", typeURL: model.AddressType, wantWildcard: true},
+		{
+			name:         "wildcard with named subscription",
+			typeURL:      model.AddressType,
+			subscribe:    []string{"name-0", "*"},
+			wantWildcard: true,
+		},
+		{
+			name:        "leave wildcard on reconnect",
+			typeURL:     model.AddressType,
+			subscribe:   []string{"*", "name-0"},
+			unsubscribe: []string{"*"},
+		},
+		{name: "wildcard does not exempt explicit names", typeURL: model.AddressType, subscribe: names, wantError: true},
+		{name: "named reconnect", typeURL: model.RouteType, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			watch := &watchState{names: sets.New[string](), sent: map[string]string{}}
+			changed, err := applySubscription(watch, &discoveryv3.DeltaDiscoveryRequest{
+				TypeUrl:                  tc.typeURL,
+				ResourceNamesSubscribe:   tc.subscribe,
+				ResourceNamesUnsubscribe: tc.unsubscribe,
+				InitialResourceVersions:  initial,
+			})
+			if tc.wantError {
+				if !errors.Is(err, errTooManySubscribedNames) {
+					t.Fatalf("named reconnect error = %v, want resource limit", err)
+				}
+				return
+			}
+			if err != nil || !changed || watch.wildcard != tc.wantWildcard {
+				t.Fatalf("reconnect = changed:%t wildcard:%t err:%v", changed, watch.wildcard, err)
+			}
+			if !maps.Equal(watch.sent, initial) {
+				t.Fatal("reconnect lost initial resource versions")
+			}
+			wantNames := sets.New[string]()
+			for _, name := range tc.subscribe {
+				if name != "*" {
+					wantNames.Insert(name)
+				}
+			}
+			if !maps.Equal(watch.names, wantNames) {
+				t.Fatalf("retained %d named subscriptions, want %d", len(watch.names), len(wantNames))
+			}
+		})
+	}
+}
+
+func TestApplySubscriptionReplacesNamesAtLimit(t *testing.T) {
+	for _, reconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reconnect=%t", reconnect), func(t *testing.T) {
+			watch := &watchState{started: !reconnect, names: sets.New[string](), sent: map[string]string{}}
+			request := &discoveryv3.DeltaDiscoveryRequest{
+				TypeUrl:                  model.RouteType,
+				ResourceNamesSubscribe:   []string{"replacement", "name-0"},
+				ResourceNamesUnsubscribe: []string{"name-0"},
+			}
+			for i := range maxSubscriptionNames {
+				watch.names.Insert(fmt.Sprintf("name-%d", i))
+			}
+			if reconnect {
+				request.InitialResourceVersions = make(map[string]string, maxSubscriptionNames)
+				for name := range watch.names {
+					request.InitialResourceVersions[name] = "v1"
+				}
+				watch.names = sets.New[string]()
+			}
+			changed, err := applySubscription(watch, request)
+			if err != nil || !changed {
+				t.Fatalf("replacement = changed:%t err:%v", changed, err)
+			}
+			if len(watch.names) != maxSubscriptionNames || watch.names.Contains("name-0") ||
+				!watch.names.Contains("replacement") {
+				t.Fatal("replacement did not preserve the subscription limit and unsubscribe precedence")
+			}
+		})
+	}
+}
+
 // A client must not be able to grow per-connection state without bound by
 // enrolling ever more resource names across requests.
 func TestApplySubscriptionRejectsNamesBeyondLimit(t *testing.T) {
