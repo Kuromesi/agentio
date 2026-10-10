@@ -424,9 +424,21 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 								t.Fatal(err)
 							}
 							cfg.MetadataOptions = nil
-							cfg.RequestAttributes = slices.DeleteFunc(cfg.RequestAttributes, func(attribute string) bool {
-								return slices.Contains([]string{"filter_state['agentio.workload.name']", "filter_state['agentio.workload.namespace']", "source.address", "destination.address", "destination.port"}, attribute)
-							})
+							cfg.RequestAttributes = slices.DeleteFunc(
+								cfg.RequestAttributes,
+								func(attribute string) bool {
+									return slices.Contains(
+										[]string{
+											"filter_state['agentio.workload.name']",
+											"filter_state['agentio.workload.namespace']",
+											"source.address",
+											"destination.address",
+											"destination.port",
+										},
+										attribute,
+									)
+								},
+							)
 							f.ConfigType = &hcmv3.HttpFilter_TypedConfig{TypedConfig: mustGatewayAny(t, cfg)}
 						}
 					}

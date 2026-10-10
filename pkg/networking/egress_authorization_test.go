@@ -69,7 +69,8 @@ func TestEgressAuthorizationPinsDFPTarget(t *testing.T) {
 				if err := f.GetTypedConfig().UnmarshalTo(cfg); err != nil {
 					t.Fatal(err)
 				}
-				if !cfg.GetFailureModeAllow() || cfg.GetProcessingMode().GetRequestHeaderMode() != extproc.ProcessingMode_SKIP {
+				if !cfg.GetFailureModeAllow() ||
+					cfg.GetProcessingMode().GetRequestHeaderMode() != extproc.ProcessingMode_SKIP {
 					t.Fatal("provider failure and header modes must be preserved")
 				}
 				if !slices.Contains(cfg.GetMetadataOptions().GetReceivingNamespaces().GetUntyped(), "agentio.route") {
