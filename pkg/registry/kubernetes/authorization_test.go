@@ -254,7 +254,7 @@ func TestGatewayCertificateAuthorizationUsesEffectiveConfiguration(t *testing.T)
 func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
-	gateways := krt.NewStaticCollection[model.Gateway](nil, []model.Gateway{{
+	gateways := krt.NewMutableCollection[model.Gateway](nil, []model.Gateway{{
 		Namespace: "agentio-system",
 		Name:      "external-egress",
 		Config:    &configv1.EgressGateway{},
@@ -269,7 +269,7 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 		},
 	}
 	_ = newTestRegistry(t, t.Context(), []runtime.Object{config, member}, nil)
-	authorizer := NewGatewayCertificateAuthorizer(gateways)
+	authorizer := NewGatewayCertificateAuthorizer(gateways.AsCollection())
 	scope := model.ClientScope{
 		Class:       model.ClientEgressGateway,
 		GatewayKey:  "agentio-system/external-egress",

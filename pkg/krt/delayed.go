@@ -16,6 +16,8 @@ package krt
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,6 +64,7 @@ func NewPollingSyncer(name string, pollFunc func(ctx context.Context) bool, poll
 
 // delayedSingleton returns zero values until the syncer reports synced, then delegates to the singleton built by the callback; pending handlers are replayed.
 type delayedSingleton[T any] struct {
+	id       collectionUID
 	mu       sync.RWMutex
 	inner    Singleton[T]
 	syncer   Syncer
@@ -110,7 +113,7 @@ func (d *delayedSingleton[T]) registerPending(f func(o Event[T])) HandlerRegistr
 
 // AsCollection implements [Singleton].
 func (d *delayedSingleton[T]) AsCollection() Collection[T] {
-	return &delayedCollection[T]{d}
+	return newCollection[T](&delayedCollection[T]{d})
 }
 
 // Metadata implements [Singleton].
@@ -150,6 +153,7 @@ func (d *delayedSingleton[T]) run() {
 // NewDelayedSingleton defers building a singleton until the syncer reports synced; until then it reports empty.
 func NewDelayedSingleton[T any](syncer Syncer, callback func() Singleton[T], stop <-chan struct{}) Singleton[T] {
 	s := &delayedSingleton[T]{
+		id:       nextUID(),
 		callback: callback,
 		syncer:   syncer,
 		stop:     stop,
@@ -171,9 +175,9 @@ func (d *delayedCollection[T]) GetKey(k string) *T {
 	return nil
 }
 
-func (d *delayedCollection[T]) List() []T {
+func (d *delayedCollection[T]) ListFiltered(filter func(T) bool) []T {
 	if inner := d.getInner(); inner != nil {
-		return inner.AsCollection().List()
+		return inner.AsCollection().ListFiltered(filter)
 	}
 	return nil
 }
@@ -276,4 +280,34 @@ func (r *pendingRegistration[T]) UnregisterHandler() {
 }
 
 var _ Singleton[any] = &delayedSingleton[any]{}
-var _ Collection[any] = &delayedCollection[any]{}
+var _ internalCollection[any] = &delayedCollection[any]{}
+
+func (d *delayedCollection[T]) uid() collectionUID { return d.id }
+func (d *delayedCollection[T]) name() string       { return fmt.Sprintf("DelayedSingleton[%v]", d.id) }
+func (d *delayedCollection[T]) augment(o any) any {
+	if inner := d.getInner(); inner != nil {
+		return inner.AsCollection().augment(o)
+	}
+	return o
+}
+func (d *delayedCollection[T]) dump() CollectionDump {
+	if inner := d.getInner(); inner != nil {
+		return inner.AsCollection().dump()
+	}
+	return CollectionDump{}
+}
+func (d *delayedCollection[T]) index(_ string, extract func(T) []string) indexer[T] {
+	return delayedIndex[T]{d, extract}
+}
+
+// Indexes can be created before the inner singleton exists.
+type delayedIndex[T any] struct {
+	collection *delayedCollection[T]
+	extract    func(T) []string
+}
+
+func (i delayedIndex[T]) Lookup(key string) []T {
+	return i.collection.ListFiltered(func(o T) bool {
+		return slices.Contains(i.extract(o), key)
+	})
+}

@@ -92,10 +92,14 @@ func TestGatewayAPIConfigurationsResolveSameNamespaceParameters(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	gateways := krt.NewStaticCollection[*gatewayv1.Gateway](nil, nil, options...)
-	classes := krt.NewStaticCollection[*gatewayv1.GatewayClass](nil, nil, options...)
-	configMaps := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, options...)
-	configurations := newGatewayAPIConfigurations(gateways, classes, configMaps, options...)
+	gateways := krt.NewMutableCollection[*gatewayv1.Gateway](nil, nil, options...)
+	classes := krt.NewMutableCollection[*gatewayv1.GatewayClass](nil, nil, options...)
+	configMaps := krt.NewMutableCollection[*corev1.ConfigMap](nil, nil, options...)
+	configurations := newGatewayAPIConfigurations(
+		gateways.AsCollection(),
+		classes.AsCollection(),
+		configMaps.AsCollection(),
+		options...)
 
 	classes.ConditionalUpdateObject(&gatewayv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "agentio-egress"},
@@ -190,10 +194,14 @@ func TestGatewayAPIConfigurationsRetainLastKnownGoodParameters(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	gateways := krt.NewStaticCollection[*gatewayv1.Gateway](nil, nil, options...)
-	classes := krt.NewStaticCollection[*gatewayv1.GatewayClass](nil, nil, options...)
-	configMaps := krt.NewStaticCollection[*corev1.ConfigMap](nil, nil, options...)
-	configurations := newGatewayAPIConfigurations(gateways, classes, configMaps, options...)
+	gateways := krt.NewMutableCollection[*gatewayv1.Gateway](nil, nil, options...)
+	classes := krt.NewMutableCollection[*gatewayv1.GatewayClass](nil, nil, options...)
+	configMaps := krt.NewMutableCollection[*corev1.ConfigMap](nil, nil, options...)
+	configurations := newGatewayAPIConfigurations(
+		gateways.AsCollection(),
+		classes.AsCollection(),
+		configMaps.AsCollection(),
+		options...)
 	classes.ConditionalUpdateObject(&gatewayv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "agentio-egress"},
 		Spec: gatewayv1.GatewayClassSpec{

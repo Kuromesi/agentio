@@ -22,14 +22,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"istio.io/istio/pkg/ptr"
+	"istio.io/istio/pkg/slices"
+	"istio.io/istio/pkg/util/sets"
+
 	"github.com/openkruise/agentio/pkg/kube/controllers"
 	agentlog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/queue"
-	"istio.io/istio/pkg/maps"
-	"istio.io/istio/pkg/ptr"
-	"istio.io/istio/pkg/slices"
-	"istio.io/istio/pkg/util/sets"
 )
 
 type indexedDependencyType uint8
@@ -165,7 +165,7 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 								continue
 							}
 							dependencies := i.objectDependencies[iKey]
-							if changed := objectChanged(dependencies, sourceCollection, item, ekey, key); changed {
+							if changed := objectChanged(dependencies, sourceCollection, ev, item, ekey, key); changed {
 								changedInputKeys.Insert(iKey)
 							}
 						}
@@ -179,7 +179,7 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 					continue
 				}
 				for _, item := range ev.Items() {
-					if changed := objectChanged(dependencies, sourceCollection, item, extractorKey{}, ""); changed {
+					if changed := objectChanged(dependencies, sourceCollection, ev, item, extractorKey{}, ""); changed {
 						changedInputKeys.Insert(iKey)
 						break
 					}
@@ -194,10 +194,20 @@ func (i dependencyState[I]) changedInputKeys(sourceCollection collectionUID, eve
 	return changedInputKeys
 }
 
-func objectChanged(dependencies []*dependency, sourceCollection collectionUID, item any, indexed extractorKey, key string) bool {
+func objectChanged(
+	dependencies []*dependency,
+	sourceCollection collectionUID,
+	ev Event[any],
+	item any,
+	indexed extractorKey,
+	key string,
+) bool {
 	for _, dep := range dependencies {
 		id := dep.id
 		if id != sourceCollection {
+			continue
+		}
+		if dep.filter.SuppressChange(ev) {
 			continue
 		}
 		// Only this item and the dependency using the matched index/key were
@@ -247,6 +257,7 @@ type manyCollection[I, O any] struct {
 
 	// onPrimaryInputEventHandler is a specialized internal handler that runs synchronously when a primary input changes
 	onPrimaryInputEventHandler func(o []Event[I])
+	debugger                   *DebugHandler
 
 	syncer Syncer
 
@@ -404,7 +415,7 @@ func (h *manyCollection[I, O]) dump() CollectionDump {
 	return CollectionDump{
 		Outputs:         eraseMap(h.collectionState.outputs),
 		Inputs:          inputs,
-		InputCollection: h.parent.(internalCollection[I]).name(),
+		InputCollection: h.parent.name(),
 		Synced:          h.HasSynced(),
 	}
 }
@@ -626,8 +637,8 @@ func (h *manyCollection[I, O]) recordTransform(elapsed time.Duration) {
 }
 
 // NewCollection transforms a Collection[I] to a Collection[O] by applying the provided transformation function.
-// This applies for one-to-one relationships between I and O.
-// For zero-to-one, use NewSingleton. For one-to-many, use NewManyCollection.
+// This applies for zero-or-one relationships between I and O, storing O by value.
+// For pointer outputs, use NewPointerCollection. For one-to-many, use NewManyCollection.
 func NewCollection[I, O any](c Collection[I], hf TransformationSingle[I, O], opts ...CollectionOption) Collection[O] {
 	// For implementation simplicity, represent TransformationSingle as a TransformationMulti so we can share an implementation.
 	hm := func(ctx HandlerContext, i I) []O {
@@ -642,18 +653,45 @@ func NewCollection[I, O any](c Collection[I], hf TransformationSingle[I, O], opt
 		// NOTE: this will print Collection[nil, nil] if I or O are interfaces
 		o.name = fmt.Sprintf("Collection[%v,%v]", ptr.TypeName[I](), ptr.TypeName[O]())
 	}
-	return newManyCollection(c, hm, o, nil)
+	return newCollection(newManyCollection(c, hm, o, nil))
+}
+
+// NewPointerCollection applies a zero-or-one transformation and stores the exact
+// non-nil pointer returned by the transformation. A nil result omits the output.
+// As with other collections, an equal recomputation retains the previously published
+// value. Published objects must not be mutated.
+func NewPointerCollection[I, O any](
+	c Collection[I],
+	hf TransformationSingle[I, O],
+	opts ...CollectionOption,
+) Collection[*O] {
+	hm := func(ctx HandlerContext, i I) []*O {
+		res := hf(ctx, i)
+		if res == nil {
+			return nil
+		}
+		return []*O{res}
+	}
+	o := buildCollectionOptions(opts...)
+	if o.name == "" {
+		o.name = fmt.Sprintf("PointerCollection[%v,%v]", ptr.TypeName[I](), ptr.TypeName[O]())
+	}
+	return newCollection(newManyCollection(c, hm, o, nil))
 }
 
 // NewManyCollection transforms a Collection[I] to a Collection[O] by applying the provided transformation function.
 // This applies for one-to-many relationships between I and O.
 // For zero-to-one, use NewSingleton. For one-to-one, use NewCollection.
-func NewManyCollection[I, O any](c Collection[I], hf TransformationMulti[I, O], opts ...CollectionOption) Collection[O] {
+func NewManyCollection[I, O any](
+	c Collection[I],
+	hf TransformationMulti[I, O],
+	opts ...CollectionOption,
+) Collection[O] {
 	o := buildCollectionOptions(opts...)
 	if o.name == "" {
 		o.name = fmt.Sprintf("ManyCollection[%v,%v]", ptr.TypeName[I](), ptr.TypeName[O]())
 	}
-	return newManyCollection[I, O](c, hf, o, nil)
+	return newCollection(newManyCollection[I, O](c, hf, o, nil))
 }
 
 func newManyCollection[I, O any](
@@ -661,8 +699,8 @@ func newManyCollection[I, O any](
 	hf TransformationMulti[I, O],
 	opts collectionOptions,
 	onPrimaryInputEventHandler func([]Event[I]),
-) Collection[O] {
-	c := cc.(internalCollection[I])
+) *manyCollection[I, O] {
+	c := cc
 
 	h := &manyCollection[I, O]{
 		transformation:  hf,
@@ -689,6 +727,7 @@ func newManyCollection[I, O any](
 		synced:                     make(chan struct{}),
 		stop:                       opts.stop,
 		onPrimaryInputEventHandler: onPrimaryInputEventHandler,
+		debugger:                   opts.debugger,
 	}
 	if opts.debounceInterval > 0 {
 		h.eventHandlers.WithDebounce(opts.debounceInterval, opts.debounceMaxInterval, opts.stop)
@@ -702,7 +741,7 @@ func newManyCollection[I, O any](
 		name:   h.collectionName,
 		synced: h.synced,
 	}
-	maybeRegisterCollectionForDebugging(h, opts.debugger)
+	maybeRegisterCollectionForDebugging(h, h.debugger)
 
 	// Create our queue. When it syncs (that is, all items that were present when Run() was called), we mark ourselves as synced.
 	h.queue = queue.NewWithSync(func() {
@@ -719,6 +758,7 @@ func newManyCollection[I, O any](
 }
 
 func (h *manyCollection[I, O]) runQueue() {
+	defer maybeUnregisterCollectionFromDebugger(h, h.debugger)
 	c := h.parent
 	// Wait for primary dependency to be ready
 	if !c.WaitUntilSynced(h.stop) {
@@ -807,14 +847,18 @@ func (h *manyCollection[I, O]) GetKey(k string) (res *O) {
 	return nil
 }
 
-func (h *manyCollection[I, O]) List() (res []O) {
+func (h *manyCollection[I, O]) ListFiltered(filter func(O) bool) (res []O) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return maps.Values(h.collectionState.outputs)
-}
-
-func (h *manyCollection[I, O]) Register(f func(o Event[O])) HandlerRegistration {
-	return registerHandlerAsBatched(h, f)
+	if filter == nil {
+		res = make([]O, 0, len(h.collectionState.outputs))
+	}
+	for _, v := range h.collectionState.outputs {
+		if filter == nil || filter(v) {
+			res = append(res, v)
+		}
+	}
+	return res
 }
 
 func (h *manyCollection[I, O]) RegisterBatch(f func(o []Event[O]), runExistingState bool) HandlerRegistration {
@@ -860,7 +904,16 @@ func (h *manyCollection[I, O]) assertIndexConsistency() {
 		}
 		for o := range os {
 			if ci, f := oToI[o]; f {
-				panic(fmt.Sprintf("duplicate mapping %v in %s(%T): input %v and %v both map to it", o, h.collectionName, h, ci, i))
+				panic(
+					fmt.Sprintf(
+						"duplicate mapping %v in %s(%T): input %v and %v both map to it",
+						o,
+						h.collectionName,
+						h,
+						ci,
+						i,
+					),
+				)
 			}
 			oToI[o] = i
 			if _, f := h.collectionState.outputs[o]; !f {

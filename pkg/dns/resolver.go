@@ -123,7 +123,13 @@ type Resolver struct {
 	schedule entryHeap
 }
 
-func New(ctx context.Context, options Options, lookup Lookup, collectionOptions ...krt.CollectionOption) (*Resolver, error) {
+// New creates a DNS resolver and its result collection.
+func New(
+	ctx context.Context,
+	options Options,
+	lookup Lookup,
+	collectionOptions ...krt.CollectionOption,
+) (*Resolver, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
@@ -148,7 +154,7 @@ func New(ctx context.Context, options Options, lookup Lookup, collectionOptions 
 		options: options,
 		lookup:  lookup,
 		entries: make(map[string]*entry),
-		results: krt.NewStaticCollection[Result](nil, nil, collectionOptions...),
+		results: krt.NewMutableCollection[Result](nil, nil, collectionOptions...),
 		jobs:    make(chan lookupJob, options.MaxConcurrent),
 		wake:    make(chan struct{}, 1),
 	}
@@ -161,7 +167,7 @@ func New(ctx context.Context, options Options, lookup Lookup, collectionOptions 
 
 // Results exposes the hostname-keyed DNS cache for diagnostics and composition.
 func (r *Resolver) Results() krt.Collection[Result] {
-	return r.results
+	return r.results.AsCollection()
 }
 
 // HandleAdd retains a hostname while at least one policy/config object refers to
@@ -216,7 +222,7 @@ func (r *Resolver) Resolve(ctx krt.HandlerContext, host string) []netip.Addr {
 	if host == "" {
 		return nil
 	}
-	resolved := krt.FetchOne(ctx, r.results, krt.FilterKey(host))
+	resolved := krt.FetchOne(ctx, r.results.AsCollection(), krt.FilterKey(host))
 
 	r.mu.Lock()
 	item := r.entries[host]

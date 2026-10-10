@@ -12,7 +12,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package krt
 
 import (
@@ -20,13 +19,14 @@ import (
 
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/openkruise/agentio/pkg/kube"
-	"github.com/openkruise/agentio/pkg/kube/controllers"
-	"github.com/openkruise/agentio/pkg/queue"
 	"istio.io/istio/pkg/maps"
 	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/kube"
+	"github.com/openkruise/agentio/pkg/kube/controllers"
+	"github.com/openkruise/agentio/pkg/queue"
 )
 
 type nestedjoinmerge[T any] struct {
@@ -39,13 +39,13 @@ var _ internalCollection[any] = &nestedjoinmerge[any]{}
 
 // nolint: unused // (not true, its to implement an interface)
 func (j *nestedjoinmerge[T]) dump() CollectionDump {
-	innerCols := j.collections.List()
+	innerCols := j.collections.ListFiltered(nil)
 	dumpsByCollectionUID := make(map[string]InputDump, len(innerCols))
 	for _, c := range innerCols {
 		if c == nil {
 			continue
 		}
-		ic := c.(internalCollection[T])
+		ic := c.internal()
 		icDump := ic.dump()
 		dumpsByCollectionUID[GetKey(ic)] = InputDump{
 			Outputs:      maps.Keys(icDump.Outputs),
@@ -53,7 +53,7 @@ func (j *nestedjoinmerge[T]) dump() CollectionDump {
 		}
 	}
 	return CollectionDump{
-		Outputs: eraseMap(slices.GroupUnique(j.List(), getTypedKey)),
+		Outputs: eraseMap(slices.GroupUnique(j.ListFiltered(nil), getTypedKey)),
 		Synced:  j.HasSynced(),
 		Inputs:  dumpsByCollectionUID,
 	}
@@ -63,16 +63,21 @@ func (j *nestedjoinmerge[T]) dump() CollectionDump {
 func (j *nestedjoinmerge[T]) getCollections() []Collection[T] {
 	// This is used by the collection lister to get the collections for this join
 	// so it can be used in a nested join.
-	return j.collections.List()
+	return j.collections.ListFiltered(nil)
 }
 
-func NestedJoinWithMergeCollection[T any](collections Collection[Collection[T]], merge func(ts []T) *T, opts ...CollectionOption) Collection[T] {
+// NestedJoinWithMergeCollection merges a changing set of named collections.
+func NestedJoinWithMergeCollection[T any](
+	collections Collection[Collection[T]],
+	merge func(ts []T) *T,
+	opts ...CollectionOption,
+) Collection[T] {
 	o := buildCollectionOptions(opts...)
 	if o.name == "" {
 		o.name = fmt.Sprintf("NestedJoinWithMerge[%v]", ptr.TypeName[T]())
 	}
 
-	ics := collections.(internalCollection[Collection[T]])
+	ics := collections.internal()
 	synced := make(chan struct{})
 
 	j := &nestedjoinmerge[T]{
@@ -87,14 +92,15 @@ func NestedJoinWithMergeCollection[T any](collections Collection[Collection[T]],
 			merge:          merge,
 			synced:         synced,
 			stop:           o.stop,
+			debugger:       o.debugger,
 		},
 		collections: ics,
 		regs:        make(map[collectionUID]HandlerRegistration),
 	}
+
 	if o.debounceInterval > 0 {
 		j.mergejoin.eventHandlers.WithDebounce(o.debounceInterval, o.debounceMaxInterval, o.stop)
 	}
-
 	j.mergejoin.collections = j
 	j.syncer = channelSyncer{
 		name:   j.collectionName,
@@ -109,26 +115,23 @@ func NestedJoinWithMergeCollection[T any](collections Collection[Collection[T]],
 		j.log.Info("collection synced", "collection", j.name(), "uid", j.uid())
 	}, j.collectionName)
 
-	// Subscribe to when collections are added or removed.
-	// Don't run existing because we want to ensure the first set
-	// of collections passed to us are synced before we mark
-	// ourselves as synced. Do this before returning so collections
-	// aren't added between now and when runQueue is called.
-	subscriptionFunc := func(events []Event[T]) {
-		j.queue.Push(func() error {
-			j.onSubCollectionEventHandler(events)
-			return nil
-		})
-	}
+	// Async: subscribe to the container, then wait for it (and everything it holds) to be ready before we
+	// start processing. The queue will process the initial state and mark ourselves as synced (from the
+	// NewWithSync callback).
+	go j.runQueue()
+
+	return newCollection[T](j)
+}
+
+func (j *nestedjoinmerge[T]) runQueue() {
+	defer maybeUnregisterCollectionFromDebugger(j, j.debugger)
+
 	reg := j.collections.RegisterBatch(func(e []Event[Collection[T]]) {
 		for _, ev := range e {
-			obj := ev.Latest()
 			switch ev.Event {
 			case controllers.EventAdd:
-				// When a collection is added, subscribe to its events
-				reg := obj.RegisterBatch(subscriptionFunc, true)
 				j.mu.Lock()
-				j.regs[obj.(internalCollection[T]).uid()] = reg
+				j.updateSubscriptionLocked(nil, ev.Latest().internal(), true)
 				j.mu.Unlock()
 			case controllers.EventUpdate:
 				j.handleCollectionUpdate(ev)
@@ -136,72 +139,117 @@ func NestedJoinWithMergeCollection[T any](collections Collection[Collection[T]],
 				j.handleCollectionDelete(ev)
 			}
 		}
-	}, false)
-	initialCollections := j.collections.List()
-	// Finally, async wait for the primary to be synced. Once it has, we know it has enqueued the initial state.
-	// After this, we can run our queue.
-	// The queue will process the initial state and mark ourselves as synced (from the NewWithSync callback)
-	go j.runQueue(initialCollections, subscriptionFunc, reg)
+	}, true)
 
-	return j
-}
+	// We subscribed to the container collection (reg) and to each sub-collection (j.regs); all of
+	// these may outlive us. Once we are stopped, unregister them (and their goroutines) so we don't
+	// leak them.
+	defer j.unregisterAll(reg)
 
-func (j *nestedjoinmerge[T]) runQueue(initialCollections []Collection[T], subscriptionFunc func([]Event[T]), reg HandlerRegistration) {
-	// The container handler and every sub-collection handler belong to this
-	// join's lifetime. handleCollectionDelete removes entries from j.regs as
-	// it unregisters them, so walking the map on exit cannot unregister one
-	// twice.
-	defer func() {
-		reg.UnregisterHandler()
-		j.mu.Lock()
-		defer j.mu.Unlock()
-		for _, r := range j.regs {
-			r.UnregisterHandler()
-		}
-	}()
-	// Wait for the container of collections to be synced before we start processing events.
-	if !j.collections.WaitUntilSynced(j.stop) {
+	// Wait for the initial sub-collections to be registered.
+	if !reg.WaitUntilSynced(j.stop) {
 		return
 	}
-	j.mu.Lock()
 
-	// Now that we've subscribed, process the current set of collections.
-	for _, c := range initialCollections {
-		// Save these registrations so we can unsubscribe later if the collection is deleted.
-		// Ensure each sub-collection is synced before we're marked as synced.
-		j.regs[c.(internalCollection[T]).uid()] = c.RegisterBatch(subscriptionFunc, true)
-	}
-
-	regs := append([]HandlerRegistration{reg}, maps.Values(j.regs)...)
-	j.mu.Unlock()
-
-	syncers := slices.Map(regs, func(r HandlerRegistration) cache.InformerSynced {
+	j.mu.RLock()
+	syncers := slices.Map(maps.Values(j.regs), func(r HandlerRegistration) cache.InformerSynced {
 		return r.HasSynced
 	})
+	j.mu.RUnlock()
 
+	// wait for all initial sub-collections to be synced before we start processing events.
 	if !kube.WaitForCacheSync(j.collectionName, j.stop, syncers...) {
 		return
 	}
 	j.queue.Run(j.stop)
 }
 
+func (j *nestedjoinmerge[T]) stopped() bool {
+	select {
+	case <-j.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+// updateSubscriptionLocked drops an old subscription if present and adds a new one for the updated collection if present.
+//
+// runExistingState controls whether the new subscription replays the collection's current contents. Pass
+// false only when the caller reads that state itself, after this returns.
+//
+// must always be called with j.mu held.
+func (j *nestedjoinmerge[T]) updateSubscriptionLocked(old, updated internalCollection[T], runExistingState bool) {
+	// avoid registering new subscriptions if the collection is stopped.
+	if j.stopped() {
+		return
+	}
+	if old != nil && updated != nil && old.uid() == updated.uid() {
+		return
+	}
+	// create new handler before removing the old one, so we don't miss any events.
+	if updated != nil {
+		j.regs[updated.uid()] = updated.RegisterBatch(func(events []Event[T]) {
+			j.queue.Push(func() error {
+				j.onSubCollectionEventHandler(events)
+				return nil
+			})
+		}, runExistingState)
+	}
+	if old != nil {
+		if oldReg, found := j.regs[old.uid()]; found {
+			oldReg.UnregisterHandler()
+			delete(j.regs, old.uid())
+		} else {
+			j.log.Warn("no registration found for collection", "uid", old.uid())
+		}
+	}
+}
+
+// unregisterAll unregisters the container collection subscription along with all currently tracked
+// sub-collection subscriptions. It is only called once the collection has stopped, which is what stops
+// the container's handler from taking new sub-collection subscriptions afterwards (see
+// updateSubscriptionLocked).
+func (j *nestedjoinmerge[T]) unregisterAll(containerReg HandlerRegistration) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	// Unregister the container subscription first so no further sub-collection subscriptions are added.
+	containerReg.UnregisterHandler()
+	for uid, reg := range j.regs {
+		reg.UnregisterHandler()
+		// we need to delete the entry to play nice with handleCollectionDelete
+		delete(j.regs, uid)
+	}
+}
+
 func (j *nestedjoinmerge[T]) handleCollectionUpdate(e Event[Collection[T]]) {
-	innerCollection := e.Latest().(internalCollection[T])
-	log.Debug("nested join collection updated; recalculating merged values",
-		"collection", innerCollection.name(), "uid", innerCollection.uid())
+	innerCollection := e.Latest().internal()
+	log.Debug(
+		"nested collection updated; recalculating merged values",
+		"collection",
+		innerCollection.name(),
+		"uid",
+		innerCollection.uid(),
+	)
 	// Get all of the elements in the old collection
 	oldCollectionValue := *e.Old
 	newCollectionValue := *e.New
 	// Wait for the new collection to be synced before we process the update.
 	if !newCollectionValue.WaitUntilSynced(j.stop) {
-		log.Warn("nested join collection is not synced; skipping update event",
-			"uid", newCollectionValue.(internalCollection[T]).uid())
+		log.Warn("nested collection not synced; skipping update event", "uid", newCollectionValue.uid())
+		return
 	}
 	// Stop the world and update our outputs with new state for everything in the collection.
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
 	oldItems := oldCollectionValue.List()
+
+	// drop the old collection subscription and add the new one.
+	// we intentionally don't run the existing state for the new collection because we are going to recalculate everything anyway.
+	// TODO: even though we drop the old subscription after List is called
+	// we still might have missed Delete events for items that are not present in the oldItems list.
+	j.updateSubscriptionLocked(oldCollectionValue.internal(), newCollectionValue.internal(), false)
 	// Convert it to a map for easy lookup
 	oldItemsMap := make(map[Key[T]]T, len(oldItems))
 	for _, i := range oldItems {
@@ -235,7 +283,7 @@ func (j *nestedjoinmerge[T]) handleCollectionUpdate(e Event[Collection[T]]) {
 		} else {
 			if seen.Contains(string(key)) {
 				// This is a duplicate item in the new collection, skip it
-				log.Warn("duplicate item in updated nested join collection; skipping", "key", key)
+				log.Warn("duplicate item in updated collection; skipping", "key", key)
 				continue
 			}
 			// This is a new item in the new collection, but it might not be a new item in the overall collection.
@@ -253,7 +301,11 @@ func (j *nestedjoinmerge[T]) handleCollectionUpdate(e Event[Collection[T]]) {
 		existing, ok := j.outputs[key]
 		if !ok {
 			// This is a bug; the old items map should only contain items that are in the outputs.
-			msg := fmt.Sprintf("BUG: Expected to find key %v in outputs during a collection update in %s, but it was not found", key, j.collectionName)
+			msg := fmt.Sprintf(
+				"BUG: Expected to find key %v in outputs during a collection update in %s, but it was not found",
+				key,
+				j.collectionName,
+			)
 			if EnableAssertions {
 				msg += fmt.Sprintf(" in %s(%T)", j.collectionName, j)
 				panic(msg)
@@ -292,19 +344,14 @@ func (j *nestedjoinmerge[T]) handleCollectionDelete(e Event[Collection[T]]) {
 	// Get all of the elements in the old collection
 	oldCollectionValue := *e.Old
 
-	cc := e.Latest().(internalCollection[T])
-	// Unsubscribe from the collection
-	if reg, ok := j.regs[cc.uid()]; ok {
-		reg.UnregisterHandler()
-		delete(j.regs, cc.uid())
-	} else {
-		j.log.Warn("no nested join registration found during delete event", "collection_uid", cc.uid())
-	}
-
 	// Now we must send a final set of remove events for each object in the collection
 	var events []Event[T]
 
 	oldItems := oldCollectionValue.List()
+	// Unsubscribe from the collection
+	// TODO: even though we drop the old subscription after List is called
+	// we still might have missed Delete events for items that are not present in the oldItems list.
+	j.updateSubscriptionLocked(e.Latest().internal(), nil, false)
 
 	items := sets.NewWithLength[Key[T]](len(oldItems))
 	// First loop through the collection to get the deleted items by their keys
@@ -327,13 +374,13 @@ func (j *nestedjoinmerge[T]) handleCollectionDelete(e Event[Collection[T]]) {
 			// Use the merge of the old items as the old value
 			if !ok {
 				// This shouldn't happen; log it and fall back to the event's old Item
-				msg := "nested join item not found in outputs during collection delete; sending delete event with old value"
-				j.log.Warn(msg, "key", keyString)
+				msg := "NestedJoinWithMergeCollection: No item found in outputs for key %s during collection delete, sending delete event with event old value"
+				j.log.Warn(fmt.Sprintf(msg, keyString))
 				oldItem = *oldCollectionValue.GetKey(keyString)
 			}
 			delete(j.outputs, key)
 			if j.log.DebugEnabled() {
-				j.log.Debug("handled delete", "resource", key)
+				j.log.Debug("handled delete", "res", key)
 			}
 			e = Event[T]{Old: &oldItem, Event: controllers.EventDelete}
 		} else {

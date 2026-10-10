@@ -204,10 +204,10 @@ func TestDNSFlipUsesNarrowWorkloadConfigurationDependency(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	dnsResults := krt.NewStaticCollection[dnsBenchmarkResult](nil,
+	dnsResults := krt.NewMutableCollection[dnsBenchmarkResult](nil,
 		[]dnsBenchmarkResult{{host: "api.example.com", address: netip.MustParseAddr("10.1.0.1")}}, options...)
 	debugger := new(krt.DebugHandler)
-	compiler := dnsScaleCompiler(t, 1, dnsResults, stop, options, debugger)
+	compiler := dnsScaleCompiler(t, 1, dnsResults.AsCollection(), stop, options, debugger)
 	waitSynced(t, compiler)
 
 	debugDump, err := json.Marshal(debugger)

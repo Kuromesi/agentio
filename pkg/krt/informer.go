@@ -22,12 +22,13 @@ import (
 	klabels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 
+	"istio.io/istio/pkg/ptr"
+	"istio.io/istio/pkg/slices"
+
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
 	"github.com/openkruise/agentio/pkg/kube/kclient"
 	agentlog "github.com/openkruise/agentio/pkg/log"
-	"istio.io/istio/pkg/ptr"
-	"istio.io/istio/pkg/slices"
 )
 
 type informer[I controllers.ComparableObject] struct {
@@ -90,9 +91,12 @@ func (i *informer[I]) uid() collectionUID {
 	return i.id
 }
 
-func (i *informer[I]) List() []I {
+func (i *informer[I]) ListFiltered(filter func(I) bool) []I {
 	res := i.inf.List(metav1.NamespaceAll, klabels.Everything())
-	return res
+	if filter == nil {
+		return res
+	}
+	return slices.FilterInPlace(res, filter)
 }
 
 func (i *informer[I]) GetKey(k string) *I {
@@ -179,7 +183,9 @@ func (i *informer[I]) index(name string, extract func(o I) []string) indexer[I] 
 	}
 }
 
-func informerEventHandler[I controllers.ComparableObject](handler func(o Event[I], initialSync bool)) cache.ResourceEventHandler {
+func informerEventHandler[I controllers.ComparableObject](
+	handler func(o Event[I], initialSync bool),
+) cache.ResourceEventHandler {
 	return controllers.EventHandler[I]{
 		AddExtendedFunc: func(obj I, initialSync bool) {
 			handler(Event[I]{
@@ -240,7 +246,9 @@ func WrapClient[I controllers.ComparableObject](c kclient.Informer[I], opts ...C
 		}))
 	}
 
+	maybeRegisterCollectionForDebugging(h, o.debugger)
 	go func() {
+		defer maybeUnregisterCollectionFromDebugger(h, o.debugger)
 		defer c.ShutdownHandlers()
 		// First, wait for the informer to populate. We ignore handlers which have their own syncing
 		if !kube.WaitForCacheSync(o.name, o.stop, c.HasSyncedIgnoringHandlers) {
@@ -264,8 +272,7 @@ func WrapClient[I controllers.ComparableObject](c kclient.Informer[I], opts ...C
 
 		<-o.stop
 	}()
-	maybeRegisterCollectionForDebugging(h, o.debugger)
-	return h
+	return newCollection[I](h)
 }
 
 // NewInformer creates a collection from the shared informer owned by Client.

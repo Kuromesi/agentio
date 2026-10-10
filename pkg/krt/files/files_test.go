@@ -78,7 +78,7 @@ func newKubernetesFromFiles[T controllers.Object](
 			return &t
 		}
 		return nil
-	}, opts...)
+	}, opts...).AsCollection()
 }
 
 // The upstream scenario uses only ConfigMaps; decode those fixtures without

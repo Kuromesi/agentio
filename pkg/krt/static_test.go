@@ -21,14 +21,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openkruise/agentio/pkg/krt"
 	"istio.io/istio/pkg/test"
 	"istio.io/istio/pkg/test/util/assert"
+
+	"github.com/openkruise/agentio/pkg/krt"
 )
 
 func TestStaticCollection(t *testing.T) {
 	opts := testOptions(t)
-	c := krt.NewStaticCollection[Named](nil, []Named{{"ns", "a"}}, opts.WithName("c")...)
+	c := krt.NewMutableCollection[Named](nil, []Named{{"ns", "a"}}, opts.WithName("c")...)
 	assert.Equal(t, c.Synced().HasSynced(), true, "should start synced")
 	assert.Equal(t, c.List(), []Named{{"ns", "a"}})
 
@@ -53,7 +54,7 @@ func TestStaticCollection(t *testing.T) {
 func TestStaticCollection_DebounceBatchesUpdates(t *testing.T) {
 	stop := test.NewStop(t)
 
-	s := krt.NewStaticCollection[Named](nil, []Named{}, krt.WithStop(stop),
+	s := krt.NewMutableCollection[Named](nil, []Named{}, krt.WithStop(stop),
 		krt.WithDebounce(30*time.Millisecond, 0))
 
 	var mu sync.Mutex

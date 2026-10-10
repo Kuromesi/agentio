@@ -26,15 +26,21 @@ import (
 
 func TestFetchSorted(t *testing.T) {
 	opts := testOptions(t)
-	source := krt.NewStaticCollection(nil, []Named{
+	source := krt.NewMutableCollection(nil, []Named{
 		{Namespace: "ns", Name: "c"},
 		{Namespace: "ns", Name: "a"},
 		{Namespace: "ns", Name: "b"},
 		{Namespace: "other", Name: "a"},
 	}, opts.WithName("Source")...)
-	byNamespace := krt.NewIndex(source, "namespace", func(n Named) []string { return []string{n.Namespace} })
+	byNamespace := krt.NewIndex(
+		source.AsCollection(),
+		"namespace",
+		func(n Named) []string { return []string{n.Namespace} },
+	)
 	result := krt.NewSingleton(func(ctx krt.HandlerContext) *Static {
-		return &Static{Value: fmt.Sprint(krt.FetchSorted(ctx, source, krt.FilterIndex(byNamespace, "ns")))}
+		return &Static{
+			Value: fmt.Sprint(krt.FetchSorted(ctx, source.AsCollection(), krt.FilterIndex(byNamespace, "ns"))),
+		}
 	}, opts.WithName("Result")...)
 	events := assert.NewTracker[string](t)
 	result.Register(func(e krt.Event[Static]) { events.Record(e.Latest().Value) })

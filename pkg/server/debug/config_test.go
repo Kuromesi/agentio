@@ -104,10 +104,10 @@ func TestConfigDebugSnapshotUsesSourceToBreakItemSortTies(t *testing.T) {
 			earlier = patch
 		}
 	}
-	fixture.sources.GatewayPatches = orderedConfigDebugGatewayPatches{
-		Collection: fixture.sources.GatewayPatches,
-		values:     []model.GatewayPatch{later, earlier},
-	}
+	fixture.sources.GatewayPatches = krt.JoinCollection([]krt.Collection[model.GatewayPatch]{
+		krt.NewStaticCollection(nil, []model.GatewayPatch{later}, krt.WithStop(t.Context().Done())),
+		krt.NewStaticCollection(nil, []model.GatewayPatch{earlier}, krt.WithStop(t.Context().Done())),
+	}, krt.WithJoinUnchecked(), krt.WithStop(t.Context().Done()))
 
 	got, err := configDebugSnapshotAt(configDebugTestTime, fixture.sources, fixture.compiler, configDebugFilter{
 		Kind: "GatewayPatch",
@@ -229,7 +229,7 @@ func TestConfigDebugSnapshotReportsCompilerFailures(t *testing.T) {
 func TestConfigDebugSnapshotRemovesRecoveredCompilerFailures(t *testing.T) {
 	var policies krt.StaticCollection[model.TrafficPolicy]
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
-		policies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
+		policies = krt.NewMutableCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
 			Name:      "recovering",
 			Namespace: "demo",
 			Spec: agentsv1alpha1.TrafficPolicySpec{
@@ -240,7 +240,7 @@ func TestConfigDebugSnapshotRemovesRecoveredCompilerFailures(t *testing.T) {
 				}}},
 			},
 		}}, krt.WithStop(stop))
-		sources.TrafficPolicies = policies
+		sources.TrafficPolicies = policies.AsCollection()
 		return sources
 	}, true)
 	waitForConfigDebugCondition(t, func() bool {
@@ -357,12 +357,12 @@ func TestConfigDebugSnapshotDoesNotMutateSources(t *testing.T) {
 func TestConfigDebugSnapshotSupportsConcurrentSourceUpdates(t *testing.T) {
 	var policies krt.StaticCollection[model.TrafficPolicy]
 	fixture := newConfigDebugFixture(t, func(sources Sources, stop <-chan struct{}) Sources {
-		policies = krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
+		policies = krt.NewMutableCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{{
 			Name:      "changing",
 			Namespace: "demo",
 			Spec:      validConfigDebugTrafficPolicySpec(),
 		}}, krt.WithStop(stop))
-		sources.TrafficPolicies = policies
+		sources.TrafficPolicies = policies.AsCollection()
 		return sources
 	}, true)
 	done := make(chan struct{})
@@ -568,12 +568,3 @@ type neverConfigDebugSynced struct{}
 func (neverConfigDebugSynced) HasSynced() bool { return false }
 
 func (neverConfigDebugSynced) WaitUntilSynced(<-chan struct{}) bool { return false }
-
-type orderedConfigDebugGatewayPatches struct {
-	krt.Collection[model.GatewayPatch]
-	values []model.GatewayPatch
-}
-
-func (c orderedConfigDebugGatewayPatches) List() []model.GatewayPatch {
-	return append([]model.GatewayPatch(nil), c.values...)
-}

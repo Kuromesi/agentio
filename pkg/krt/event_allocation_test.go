@@ -37,7 +37,7 @@ func TestCollectionOutputMembershipChanges(t *testing.T) {
 		"value",
 		func(item allocationItem) []string { return []string{fmt.Sprint(item.Value)} },
 	)
-	h := collection.(*manyCollection[allocationItem, allocationItem])
+	h := collection.internal().(*manyCollection[allocationItem, allocationItem])
 	events := assert.NewTracker[string](t)
 	collection.Register(func(e Event[allocationItem]) { events.Record(fmt.Sprintf("%v/%s", e.Event, e.Latest().Name)) })
 	previous := map[string]allocationItem{}
@@ -96,7 +96,7 @@ func TestCollectionBatchKeepsDiscardContext(t *testing.T) {
 		return &item
 	}, WithStop(t.Context().Done()))
 	assert.EventuallyEqual(t, collection.HasSynced, true)
-	h := collection.(*manyCollection[allocationItem, allocationItem])
+	h := collection.internal().(*manyCollection[allocationItem, allocationItem])
 	initial := allocationItem{Name: "input", Value: 1}
 	h.handleChangedPrimaryInputEvents([]Event[allocationItem]{{New: &initial, Event: controllers.EventAdd}})
 	events := assert.NewTracker[string](t)

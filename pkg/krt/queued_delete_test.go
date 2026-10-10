@@ -43,8 +43,11 @@ func TestCollectionQueuedDelete(t *testing.T) {
 			stop := make(chan struct{})
 			defer close(stop)
 			opts := NewOptionsBuilder(stop, "queued-delete", nil)
-			parent := NewStaticCollection(nil, []queuedDeleteItem{{Name: "same-key", Value: "old"}}, opts.WithName("parent")...)
-			out := NewCollection(parent, func(_ HandlerContext, x queuedDeleteItem) *queuedDeleteItem {
+			parent := NewMutableCollection(
+				nil,
+				[]queuedDeleteItem{{Name: "same-key", Value: "old"}},
+				opts.WithName("parent")...)
+			out := NewCollection(parent.AsCollection(), func(_ HandlerContext, x queuedDeleteItem) *queuedDeleteItem {
 				if x.Value == "excluded" {
 					return nil
 				}
@@ -63,7 +66,7 @@ func TestCollectionQueuedDelete(t *testing.T) {
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			defer unblock()
-			out.(*manyCollection[queuedDeleteItem, queuedDeleteItem]).queue.Push(func() error {
+			out.internal().(*manyCollection[queuedDeleteItem, queuedDeleteItem]).queue.Push(func() error {
 				close(entered)
 				<-release
 				return nil
@@ -116,8 +119,15 @@ func TestIndexCollectionEmptyBucketIsAbsent(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
 	options := NewOptionsBuilder(stop, "empty-index", nil)
-	parent := NewStaticCollection(nil, []queuedDeleteItem{{Name: "item", Value: "bucket"}}, options.WithName("parent")...)
-	index := NewIndex(parent, "by-value", func(item queuedDeleteItem) []string { return []string{item.Value} }).AsCollection()
+	parent := NewMutableCollection(
+		nil,
+		[]queuedDeleteItem{{Name: "item", Value: "bucket"}},
+		options.WithName("parent")...)
+	index := NewIndex(
+		parent.AsCollection(),
+		"by-value",
+		func(item queuedDeleteItem) []string { return []string{item.Value} },
+	).AsCollection()
 	if got := index.GetKey("bucket"); got == nil || len(got.Objects) != 1 {
 		t.Fatalf("populated bucket = %v", got)
 	}

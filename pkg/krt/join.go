@@ -19,10 +19,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/openkruise/agentio/pkg/kube/controllers"
 	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/slices"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/kube/controllers"
 )
 
 type join[T any] struct {
@@ -55,7 +56,7 @@ func (j *join[T]) GetKey(k string) *T {
 	return nil
 }
 
-func (j *join[T]) List() []T {
+func (j *join[T]) ListFiltered(filter func(T) bool) []T {
 	var res []T
 	if j.uncheckedOverlap {
 		first := true
@@ -64,7 +65,7 @@ func (j *join[T]) List() []T {
 			seen = sets.New[string]()
 		}
 		for _, c := range j.collections {
-			objs := c.List()
+			objs := c.ListFiltered(filter)
 			// As an optimization, take the first (non-empty) result as-is without copying
 			if len(objs) > 0 && first {
 				res = objs
@@ -92,7 +93,7 @@ func (j *join[T]) List() []T {
 	var found sets.Set[string]
 	first := true
 	for _, c := range j.collections {
-		objs := c.List()
+		objs := c.ListFiltered(nil)
 		// As an optimization, take the first (non-empty) result as-is without copying
 		if len(objs) > 0 && first {
 			res = objs
@@ -112,11 +113,10 @@ func (j *join[T]) List() []T {
 			}
 		}
 	}
+	if filter != nil {
+		res = slices.FilterInPlace(res, filter)
+	}
 	return res
-}
-
-func (j *join[T]) Register(f func(o Event[T])) HandlerRegistration {
-	return registerHandlerAsBatched(j, f)
 }
 
 func (j *join[T]) RegisterBatch(f func(o []Event[T]), runExistingState bool) HandlerRegistration {
@@ -200,7 +200,13 @@ func (j *join[T]) handleSubCollectionEvents(events []Event[T], sourceCollectionI
 func (j *join[T]) getFromColIdx(idx int, key string) *T {
 	if idx < 0 || idx >= len(j.collections) {
 		if EnableAssertions {
-			panic("join: getFromColIdx: index out of range:" + fmt.Sprint(idx) + " len: " + fmt.Sprint(len(j.collections)))
+			panic(
+				"join: getFromColIdx: index out of range:" + fmt.Sprint(
+					idx,
+				) + " len: " + fmt.Sprint(
+					len(j.collections),
+				),
+			)
 		}
 		return nil
 	}
@@ -375,7 +381,7 @@ func JoinCollection[T any](cs []Collection[T], opts ...CollectionOption) Collect
 	}
 	synced := make(chan struct{})
 	c := slices.Map(cs, func(e Collection[T]) internalCollection[T] {
-		return e.(internalCollection[T])
+		return e.internal()
 	})
 	if o.stop == nil {
 		panic("no stop channel")
@@ -412,7 +418,7 @@ func JoinCollection[T any](cs []Collection[T], opts ...CollectionOption) Collect
 			close(synced)
 			log.Info("collection synced", "collection", o.name)
 		}()
-		return j
+		return newCollection[T](j)
 	}
 
 	// Checked mode: set up centralized event handling with conflict resolution
@@ -456,5 +462,5 @@ func JoinCollection[T any](cs []Collection[T], opts ...CollectionOption) Collect
 		}
 	}()
 
-	return j
+	return newCollection[T](j)
 }

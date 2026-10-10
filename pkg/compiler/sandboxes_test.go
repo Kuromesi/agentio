@@ -232,8 +232,8 @@ func TestCompilerUsesOnlyProvidedSandboxes(t *testing.T) {
 	workload := testWorkload("demo", "client", "10.1.0.2")
 	inputs := validCompilerInputs(stop)
 	inputs.Workloads = krt.NewStaticCollection(nil, []model.Workload{workload}, options...)
-	sandboxes := krt.NewStaticCollection[model.Sandbox](nil, nil, options...)
-	inputs.Sandboxes = sandboxes
+	sandboxes := krt.NewMutableCollection[model.Sandbox](nil, nil, options...)
+	inputs.Sandboxes = sandboxes.AsCollection()
 	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 	if err != nil {
 		t.Fatal(err)

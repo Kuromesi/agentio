@@ -842,12 +842,12 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	options := []krt.CollectionOption{krt.WithStop(stop)}
-	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+	workloads := krt.NewMutableCollection[model.Workload](nil, nil, options...)
 	services := krt.NewStaticCollection[model.Service](nil, nil, options...)
 	endpoints := krt.NewStaticCollection[model.Endpoint](nil, nil, options...)
 	trafficPolicies := krt.NewStaticCollection[model.TrafficPolicy](nil, nil, options...)
-	securityProfiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
-	agentioConfig := krt.NewStaticCollection[model.AgentioConfiguration](nil, nil, options...)
+	securityProfiles := krt.NewMutableCollection[model.SecurityProfile](nil, nil, options...)
+	agentioConfig := krt.NewMutableCollection[model.AgentioConfiguration](nil, nil, options...)
 	workload := testWorkload("demo", "client", "10.1.0.2")
 	workloads.ConditionalUpdateObject(workload)
 	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
@@ -880,13 +880,13 @@ func TestCompilerKeepsSandboxSNIOutOfWorkload(t *testing.T) {
 		UID:      workload.UID,
 		Attester: &model.Attester{WorkloadUID: workload.UID},
 	}}, options...)
-	inputs.Workloads = workloads
+	inputs.Workloads = workloads.AsCollection()
 	inputs.Services = services
 	inputs.Endpoints = endpoints
-	inputs.Gateways = testGatewaySource(agentioConfig, options...)
+	inputs.Gateways = testGatewaySource(agentioConfig.AsCollection(), options...)
 	inputs.TrafficPolicies = trafficPolicies
-	inputs.SecurityProfiles = securityProfiles
-	inputs.AgentioConfig = agentioConfig
+	inputs.SecurityProfiles = securityProfiles.AsCollection()
+	inputs.AgentioConfig = agentioConfig.AsCollection()
 	compiler, err := New(inputs, krt.NewOptionsBuilder(stop, "", nil))
 	if err != nil {
 		t.Fatalf("new compiler: %v", err)

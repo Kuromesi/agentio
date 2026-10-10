@@ -18,8 +18,9 @@ package krt
 import (
 	"fmt"
 
-	"github.com/openkruise/agentio/pkg/kube/controllers"
 	"istio.io/istio/pkg/ptr"
+
+	"github.com/openkruise/agentio/pkg/kube/controllers"
 )
 
 // NewStatusManyCollection builds a ManyCollection that outputs an additional *status* message about the original input.
@@ -33,7 +34,12 @@ func NewStatusManyCollection[I controllers.Object, IStatus, O any](
 ) (Collection[ObjectWithStatus[I, IStatus]], Collection[O]) {
 	o := buildCollectionOptions(opts...)
 	if o.name == "" {
-		o.name = fmt.Sprintf("NewStatusManyCollection[%v,%v,%v]", ptr.TypeName[I](), ptr.TypeName[IStatus](), ptr.TypeName[O]())
+		o.name = fmt.Sprintf(
+			"NewStatusManyCollection[%v,%v,%v]",
+			ptr.TypeName[I](),
+			ptr.TypeName[IStatus](),
+			ptr.TypeName[O](),
+		)
 	}
 	statusOpts := append(opts, WithName(o.name+"/status"))
 	statusCh := make(chan struct{})
@@ -41,7 +47,7 @@ func NewStatusManyCollection[I controllers.Object, IStatus, O any](
 		name:   o.name + " status",
 		synced: statusCh,
 	}
-	status := NewStaticCollection[ObjectWithStatus[I, IStatus]](statusSynced, nil, statusOpts...)
+	status := NewMutableCollection[ObjectWithStatus[I, IStatus]](statusSynced, nil, statusOpts...)
 	// When input is deleted, the transformation function wouldn't run.
 	// So we need to handle that explicitly
 	cleanupOnRemoval := func(i []Event[I]) {
@@ -73,7 +79,7 @@ func NewStatusManyCollection[I controllers.Object, IStatus, O any](
 		}
 	}()
 
-	return status, primary
+	return newCollection[ObjectWithStatus[I, IStatus]](status), newCollection[O](primary)
 }
 
 func NewStatusCollection[I controllers.Object, IStatus, O any](

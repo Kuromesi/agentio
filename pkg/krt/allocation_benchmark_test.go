@@ -79,7 +79,7 @@ func BenchmarkCollectionEventAllocation(b *testing.B) {
 				if !collection.WaitUntilSynced(b.Context().Done()) {
 					b.Fatal("collection did not sync")
 				}
-				h := collection.(*manyCollection[allocationItem, allocationItem])
+				h := collection.internal().(*manyCollection[allocationItem, allocationItem])
 				// No parent events are published; exercise the state transition synchronously.
 				item := allocationItem{Name: "input"}
 				events := []Event[allocationItem]{{New: &item, Event: controllers.EventUpdate}}

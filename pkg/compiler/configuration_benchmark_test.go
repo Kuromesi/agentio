@@ -42,9 +42,9 @@ func BenchmarkCompilerDNSUpdate(b *testing.B) {
 		b.Cleanup(func() { close(stop) })
 		options := []krt.CollectionOption{krt.WithStop(stop)}
 
-		dnsResults := krt.NewStaticCollection[dnsBenchmarkResult](nil,
+		dnsResults := krt.NewMutableCollection[dnsBenchmarkResult](nil,
 			[]dnsBenchmarkResult{{host: "api.example.com", address: netip.MustParseAddr("10.1.0.1")}}, options...)
-		compiler := dnsScaleCompiler(b, count, dnsResults, stop, options, nil)
+		compiler := dnsScaleCompiler(b, count, dnsResults.AsCollection(), stop, options, nil)
 		waitSynced(b, compiler)
 
 		var addressUpdates atomic.Uint64

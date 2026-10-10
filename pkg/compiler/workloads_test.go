@@ -621,13 +621,13 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	t.Cleanup(func() { close(stop) })
 	builder := krt.NewOptionsBuilder(stop, "inline-test", nil)
 	options := func(name string) []krt.CollectionOption { return builder.WithName(name) }
-	bindings := krt.NewStaticCollection[policy.Bindings](nil, nil, options("bindings")...)
-	payloads := krt.NewStaticCollection[policy.CompiledSNIPolicy](nil, nil, options("payloads")...)
+	bindings := krt.NewMutableCollection[policy.Bindings](nil, nil, options("bindings")...)
+	payloads := krt.NewMutableCollection[policy.CompiledSNIPolicy](nil, nil, options("payloads")...)
 	workload := testWDSWorkload("client", "", "10.1.0.2")
 
-	workloads := krt.NewStaticCollection(nil, []model.Workload{workload}, options("workloads")...)
+	workloads := krt.NewMutableCollection(nil, []model.Workload{workload}, options("workloads")...)
 	inputs := validCompilerInputs(stop)
-	inputs.Workloads = workloads
+	inputs.Workloads = workloads.AsCollection()
 	inputs.SandboxMode = false
 	inputs.Sandboxes = krt.NewStaticCollection(
 		nil,
@@ -635,8 +635,8 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		options("sandboxes")...)
 	failures := newFailureRecorder()
 	policies := policyCollections{
-		policyBindings:  bindings,
-		sniPolicies:     payloads,
+		policyBindings:  bindings.AsCollection(),
+		sniPolicies:     payloads.AsCollection(),
 		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
 	}
 	compatibility := newWorkloadPolicies(inputs, policies, failures, options)
@@ -759,7 +759,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	builder := krt.NewOptionsBuilder(stop, "", nil)
 
-	workloads := krt.NewStaticCollection[model.Workload](nil, nil, options...)
+	workloads := krt.NewMutableCollection[model.Workload](nil, nil, options...)
 	for index := range workloadCount {
 		workloads.ConditionalUpdateObject(model.Workload{
 			UID:       fmt.Sprintf("cluster//Pod/demo/workload-%d", index),
@@ -767,7 +767,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 			Labels:    map[string]string{"app": "workload"},
 		})
 	}
-	profiles := krt.NewStaticCollection[model.SecurityProfile](nil, nil, options...)
+	profiles := krt.NewMutableCollection[model.SecurityProfile](nil, nil, options...)
 	profile := model.SecurityProfile{
 		Name:      "security-profile",
 		Namespace: "demo",
@@ -781,7 +781,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 	}
 	profiles.ConditionalUpdateObject(profile)
 
-	compiled := krt.NewCollection(profiles,
+	compiled := krt.NewCollection(profiles.AsCollection(),
 		func(_ krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSNIPolicy {
 			result, err := policy.CompileSNIProfile(profile)
 			if err != nil {
@@ -790,7 +790,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 			return result
 		}, append(options, krt.WithName("test-sni-policies"))...)
 	projected := policy.NewPolicyAttachmentsCollection(compiled, builder, "sni-policy-attachments")
-	bindings := policy.NewWorkloadPolicyBindingsCollection(workloads, projected, builder)
+	bindings := policy.NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), projected, builder)
 
 	var bindingRecomputes atomic.Int64
 	observedBindings := krt.NewCollection(bindings,
@@ -801,7 +801,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 	var inlineUpdates atomic.Int64
 	inputs := validCompilerInputs(stop)
 	inputs.SandboxMode = false
-	inputs.Workloads = workloads
+	inputs.Workloads = workloads.AsCollection()
 	resources := newWorkloadPolicies(inputs, policyCollections{
 		policyBindings:  bindings,
 		sniPolicies:     compiled,

@@ -28,16 +28,16 @@ func handlerCount[T any](handlers *handlerSet[T]) int {
 }
 
 func TestCollectionDependencyHandlersLifecycle(t *testing.T) {
-	parent := NewStaticCollection(nil, []allocationItem{{Name: "input"}}, WithStop(t.Context().Done()))
-	dependency := NewStaticCollection(nil, []allocationItem{{Name: "dependency"}}, WithStop(t.Context().Done()))
-	other := NewStaticCollection(nil, []allocationItem{{Name: "other"}}, WithStop(t.Context().Done()))
+	parent := NewMutableCollection(nil, []allocationItem{{Name: "input"}}, WithStop(t.Context().Done()))
+	dependency := NewMutableCollection(nil, []allocationItem{{Name: "dependency"}}, WithStop(t.Context().Done()))
+	other := NewMutableCollection(nil, []allocationItem{{Name: "other"}}, WithStop(t.Context().Done()))
 	for generation := range 3 {
 		ctx, cancel := context.WithCancel(t.Context())
 		t.Cleanup(cancel)
-		result := NewCollection(parent, func(ctx HandlerContext, item allocationItem) *allocationItem {
-			item.Value = FetchOne(ctx, dependency, FilterKey("dependency")).Value
-			Fetch(ctx, dependency)
-			Fetch(ctx, other)
+		result := NewCollection(parent.AsCollection(), func(ctx HandlerContext, item allocationItem) *allocationItem {
+			item.Value = FetchOne(ctx, dependency.AsCollection(), FilterKey("dependency")).Value
+			Fetch(ctx, dependency.AsCollection())
+			Fetch(ctx, other.AsCollection())
 			return &item
 		}, WithStop(ctx.Done()))
 		assert.EventuallyEqual(t, result.HasSynced, true)
@@ -79,27 +79,33 @@ func (c waitingRegistrationCollection) RegisterBatch(
 func TestCollectionDependencyRegistrationCancelled(t *testing.T) {
 	for _, phase := range []string{"dependency sync", "registration sync"} {
 		t.Run(phase, func(t *testing.T) {
-			parent := NewStaticCollection(nil, []allocationItem{{Name: "input"}}, WithStop(t.Context().Done()))
+			parent := NewMutableCollection(nil, []allocationItem{{Name: "input"}}, WithStop(t.Context().Done()))
 			ready := make(chan struct{})
 			var syncer Syncer
 			if phase == "dependency sync" {
 				syncer = channelSyncer{synced: ready}
 			}
-			dependency := NewStaticCollection[allocationItem](syncer, nil, WithStop(t.Context().Done()))
+			dependency := NewMutableCollection[allocationItem](syncer, nil, WithStop(t.Context().Done()))
 			entered := make(chan struct{})
-			var source Collection[allocationItem] = dependency
+			var source Collection[allocationItem] = dependency.AsCollection()
 			if phase == "registration sync" {
-				source = waitingRegistrationCollection{internalCollection: dependency, entered: entered}
+				source = newCollection[allocationItem](
+					waitingRegistrationCollection{internalCollection: dependency.AsCollection(), entered: entered},
+				)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			t.Cleanup(cancel)
-			result := NewCollection(parent, func(ctx HandlerContext, item allocationItem) *allocationItem {
-				if phase == "dependency sync" {
-					close(entered)
-				}
-				Fetch(ctx, source)
-				return &item
-			}, WithStop(ctx.Done()))
+			result := NewCollection(
+				parent.AsCollection(),
+				func(ctx HandlerContext, item allocationItem) *allocationItem {
+					if phase == "dependency sync" {
+						close(entered)
+					}
+					Fetch(ctx, source)
+					return &item
+				},
+				WithStop(ctx.Done()),
+			)
 			assert.EventuallyEqual(t, func() bool {
 				select {
 				case <-entered:
@@ -111,7 +117,7 @@ func TestCollectionDependencyRegistrationCancelled(t *testing.T) {
 			cancel()
 			assert.EventuallyEqual(t, func() bool {
 				select {
-				case <-result.(*manyCollection[allocationItem, allocationItem]).queue.Closed():
+				case <-result.internal().(*manyCollection[allocationItem, allocationItem]).queue.Closed():
 					return true
 				default:
 					return false

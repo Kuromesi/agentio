@@ -59,7 +59,11 @@ func TestFetchAppliesResidualFilters(t *testing.T) {
 		}
 	}
 	augmented := augmentedFetchCollection{internalCollection: source}
-	got := Fetch(TestingDummyContext{}, augmented, FilterLabel(map[string]string{"app": "augmented"}))
+	got := Fetch(
+		TestingDummyContext{},
+		newCollection[dependencyMatchObject](augmented),
+		FilterLabel(map[string]string{"app": "augmented"}),
+	)
 	assert.Equal(t, len(got), 2)
 	assert.Equal(t, len(Fetch(TestingDummyContext{}, source, FilterKeys([]string{}...))), 0)
 }

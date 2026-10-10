@@ -32,9 +32,9 @@ import (
 
 func TestTrafficPolicyPeerOrdering(t *testing.T) {
 	opts := []krt.CollectionOption{krt.WithStop(t.Context().Done())}
-	pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, opts...)
-	services := krt.NewStaticCollection[*corev1.Service](nil, nil, opts...)
-	endpointSlices := krt.NewStaticCollection[*discoveryv1.EndpointSlice](nil, nil, opts...)
+	pods := krt.NewMutableCollection[*corev1.Pod](nil, nil, opts...)
+	services := krt.NewMutableCollection[*corev1.Service](nil, nil, opts...)
+	endpointSlices := krt.NewMutableCollection[*discoveryv1.EndpointSlice](nil, nil, opts...)
 	var want []*securityv1.TrafficPolicy_Address
 	addExpected := func(ip string) {
 		want = append(want, &securityv1.TrafficPolicy_Address{Address: netip.MustParseAddr(ip).AsSlice(), Length: 32})
@@ -81,7 +81,13 @@ func TestTrafficPolicyPeerOrdering(t *testing.T) {
 			}},
 		}},
 	}
-	inputs := testTrafficPolicyInputs("root", services, endpointSlices, pods, nil)
+	inputs := testTrafficPolicyInputs(
+		"root",
+		services.AsCollection(),
+		endpointSlices.AsCollection(),
+		pods.AsCollection(),
+		nil,
+	)
 	// Unchanged inputs must retain the same wire ordering on every recomputation.
 	for range 32 {
 		compiled, err := CompileTrafficPolicy(krt.TestingDummyContext{}, source, inputs)
