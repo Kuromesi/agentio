@@ -76,12 +76,7 @@ func (s *Server) handleRequest(
 
 	// Subscription changes are applied before nonce checks: a stale nonce must
 	// not drop a subscription carried in the same request.
-	changed, err := applySubscription(watch, request)
-	if err != nil {
-		// A Delta server can only refuse over-limit subscriptions by closing
-		// the stream.
-		return status.Errorf(codes.ResourceExhausted, "subscribe to %s: %v", typeURL, err)
-	}
+	changed := applySubscription(watch, request)
 
 	matched := watch.recordAcknowledgement(request)
 	if nonce := request.GetResponseNonce(); nonce != "" && !matched {

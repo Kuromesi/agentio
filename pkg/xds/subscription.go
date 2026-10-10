@@ -15,7 +15,6 @@
 package xds
 
 import (
-	"errors"
 	"maps"
 	"slices"
 	"sort"
@@ -27,11 +26,6 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
-
-// maxSubscriptionNames caps named subscriptions per watch to bound per-connection memory.
-const maxSubscriptionNames = 10000
-
-var errTooManySubscribedNames = errors.New("subscription exceeds the resource name limit")
 
 type watchState struct {
 	wildcard bool
@@ -83,26 +77,8 @@ func sortedNames(names sets.Set[string]) []string {
 	return result
 }
 
-func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryRequest) (bool, error) {
+func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryRequest) bool {
 	changed := !watch.started
-	unsubscribe := sets.New(request.GetResourceNamesUnsubscribe()...)
-	// Retire names before admitting replacements so the limit applies to the final subscription.
-	for name := range unsubscribe {
-		if watch.names.Contains(name) {
-			changed = true
-			watch.names.Delete(name)
-		}
-	}
-	insertName := func(name string) error {
-		if unsubscribe.Contains(name) || watch.names.Contains(name) {
-			return nil
-		}
-		if len(watch.names) >= maxSubscriptionNames {
-			return errTooManySubscribedNames
-		}
-		watch.names.Insert(name)
-		return nil
-	}
 	if !watch.started {
 		watch.started = true
 		// Cached wildcard versions are not explicit named subscriptions.
@@ -111,9 +87,7 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 		maps.Copy(watch.sent, request.GetInitialResourceVersions())
 		if !watch.wildcard {
 			for name := range request.GetInitialResourceVersions() {
-				if err := insertName(name); err != nil {
-					return changed, err
-				}
+				watch.names.Insert(name)
 			}
 		}
 	}
@@ -128,15 +102,22 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 		if !watch.names.Contains(name) {
 			changed = true
 		}
-		if err := insertName(name); err != nil {
-			return changed, err
+		watch.names.Insert(name)
+	}
+	for _, name := range request.GetResourceNamesUnsubscribe() {
+		if name == "*" {
+			if watch.wildcard {
+				changed = true
+			}
+			watch.wildcard = false
+			continue
 		}
+		if watch.names.Contains(name) {
+			changed = true
+		}
+		watch.names.Delete(name)
 	}
-	if unsubscribe.Contains("*") && watch.wildcard {
-		changed = true
-		watch.wildcard = false
-	}
-	return changed, nil
+	return changed
 }
 
 func implicitWildcardTypeURL(typeURL string) bool {
