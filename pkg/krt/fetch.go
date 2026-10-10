@@ -61,7 +61,7 @@ func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool
 	if ctx != nil {
 		h := ctx.(registerDependency)
 		// Important: register before we List(), so we cannot miss any events
-		h.registerDependency(d, c, func(f erasedEventHandler) Syncer {
+		h.registerDependency(d, c, func(f erasedEventHandler) HandlerRegistration {
 			ff := func(o []Event[T]) {
 				f(slices.Map(o, castEvent[T, any]))
 			}
@@ -93,10 +93,13 @@ func fetch[T any](ctx HandlerContext, cc Collection[T], allowMissingContext bool
 		// Otherwise get everything
 		list = c.List()
 	}
-	list = slices.FilterInPlace(list, func(i T) bool {
-		o := c.augment(i)
-		return d.filter.Matches(o, true)
-	})
+	// Key and index constraints have already been applied to the list.
+	if f := d.filter; f.selects != nil || f.selectsNonEmpty != nil || f.labels != nil || f.generic != nil {
+		list = slices.FilterInPlace(list, func(i T) bool {
+			o := c.augment(i)
+			return f.Matches(o, true)
+		})
+	}
 	if log.DebugEnabled() {
 		log.Debug("fetch",
 			"parent", parent,

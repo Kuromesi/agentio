@@ -109,6 +109,9 @@ func FilterKeys(k ...string) FetchOption {
 
 // FilterSelects only includes objects that select this label. If the selector is empty, it is a match.
 func FilterSelects(lbls map[string]string) FetchOption {
+	if lbls == nil {
+		lbls = make(map[string]string)
+	}
 	return func(h *dependency) {
 		h.filter.selects = lbls
 	}

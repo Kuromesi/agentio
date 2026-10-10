@@ -255,3 +255,19 @@ func TestHandlerSet_DebounceBatchesMultipleDistributeCalls(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessorListenerAllocatesOnDemand(t *testing.T) {
+	listener := newProcessListener(func([]Event[Named]) {}, alwaysSynced{}, t.Context().Done())
+	assert.Equal(t, listener.pendingNotifications.Cap(), 0)
+	go listener.pop()
+	// With no consumer, all but the first notification must enter the growing buffer.
+	for i := range 2048 {
+		listener.addCh <- i
+	}
+	for i := range 2048 {
+		assert.Equal(t, <-listener.nextCh, any(i))
+	}
+	close(listener.addCh)
+	_, open := <-listener.nextCh
+	assert.Equal(t, open, false)
+}
