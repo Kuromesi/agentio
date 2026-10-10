@@ -43,6 +43,7 @@ type RequestBuilder struct {
 	labels        map[string]string
 	sandboxToken  string
 	sourceAddress string
+	dstAddress    string
 	dstPort       int32
 
 	bodyChunks       [][]byte
@@ -112,6 +113,12 @@ func (b *RequestBuilder) SourceAddress(addr string) *RequestBuilder {
 // explicit proxy listener.
 func (b *RequestBuilder) DestinationPort(port int32) *RequestBuilder {
 	b.dstPort = port
+	return b
+}
+
+// DestinationAddress sets Envoy's restored downstream destination.address.
+func (b *RequestBuilder) DestinationAddress(address string) *RequestBuilder {
+	b.dstAddress = address
 	return b
 }
 
@@ -216,6 +223,7 @@ func (b *RequestBuilder) Attrs() map[string]*structpb.Struct {
 	}
 	setString(attributes.FilterStateSandboxToken, b.sandboxToken)
 	setString(attributes.AttrSourceAddress, b.sourceAddress)
+	setString(attributes.AttrDestinationAddress, b.dstAddress)
 	if b.dstPort > 0 {
 		fields[attributes.AttrDestinationPort] = structpb.NewNumberValue(float64(b.dstPort))
 	}

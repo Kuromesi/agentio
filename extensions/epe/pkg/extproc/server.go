@@ -35,9 +35,11 @@ import (
 // Server implements the Envoy external processing server.
 // https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ext_proc/v3/external_processor.proto
 type Server struct {
-	resolve engine.Resolver
-	eng     *engine.Engine
-	loggers []filter.StreamLogger
+	authorizeRequest engine.RequestAuthorizer
+	pluginBudget     time.Duration
+	resolve          engine.Resolver
+	eng              *engine.Engine
+	loggers          []filter.StreamLogger
 	// failClosedOnMissingIdentity denies requests when the source pod
 	// identity is absent from filter_state; the default passes them through.
 	failClosedOnMissingIdentity bool
@@ -47,6 +49,8 @@ type Server struct {
 type ServerDeps struct {
 	// Resolve maps request identity to applicable units. Required.
 	Resolve engine.Resolver
+	// AuthorizeRequest optionally authorizes the final request target outside the rule chain.
+	AuthorizeRequest engine.RequestAuthorizer
 	// Registrations is the action order applied inside every rule.
 	Registrations []filter.Registration
 	// AuditLogger receives one accesslog Entry per stream. May be nil in
@@ -73,6 +77,8 @@ func NewServer(deps ServerDeps) *Server {
 	loggers = append(loggers, deps.StreamLoggers...)
 	return &Server{
 		resolve:                     deps.Resolve,
+		authorizeRequest:            deps.AuthorizeRequest,
+		pluginBudget:                deps.PluginBudget,
 		eng:                         engine.NewEngine(deps.Registrations, deps.PluginBudget),
 		loggers:                     loggers,
 		failClosedOnMissingIdentity: deps.FailClosedOnMissingIdentity,
@@ -279,7 +285,7 @@ type streamState struct {
 	// nothing must leave both untouched rather than clear them.
 	streamLogger filter.StreamLogger
 
-	// Request phase — the headers walk's paused continuation, consumed exactly
+	// Request phase — the headers result with registered body callbacks, consumed exactly
 	// once by the body phase. Non-nil is what "a request body is owed" means;
 	// there is deliberately no separate flag that could drift from it.
 	requestBodyContinuation *engine.RequestHeadersResult
@@ -320,8 +326,8 @@ func (st *streamState) markRequestSeen() {
 // them over in neutral form.
 func (st *streamState) engineUnits() []engine.Unit { return st.units }
 
-// awaitingRequestBody reports whether the headers walk paused for the request
-// body and the body message has not been consumed yet.
+// awaitingRequestBody reports whether registered callbacks still await the
+// buffered request body.
 func (st *streamState) awaitingRequestBody() bool { return st.requestBodyContinuation != nil }
 
 func (st *streamState) awaitingResponseBody() bool { return st.responseBodyContinuation != nil }
@@ -331,7 +337,8 @@ func (st *streamState) awaitingInput() bool {
 }
 
 // armFinalization records when a terminal request result may be committed.
-// Block retires response obligations; bypass waits for a subscribed response phase.
+// Block retires outstanding obligations; bypass waits for registered body
+// callbacks and subscribed response phases.
 func (st *streamState) armFinalization(d engine.Disposition) {
 	switch d {
 	case engine.DispositionBlocked:
@@ -340,7 +347,7 @@ func (st *streamState) armFinalization(d engine.Disposition) {
 		st.awaitResponseHeaders = false
 		st.lifecycle = lifecycleFinalizePending
 	case engine.DispositionBypassed:
-		if !st.awaitResponseHeaders {
+		if !st.awaitResponseHeaders && !st.awaitingRequestBody() {
 			st.lifecycle = lifecycleFinalizePending
 		}
 	}

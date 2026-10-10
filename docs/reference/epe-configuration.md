@@ -74,6 +74,7 @@ sandboxExtProc:
       - filter_state['agentio.workload.namespace']
       - filter_state['downstream_peer'].name
       - filter_state['downstream_peer'].namespace
+      - destination.address
       - destination.port
       - source.address
   response:

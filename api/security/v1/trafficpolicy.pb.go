@@ -355,11 +355,12 @@ func (x *TrafficPolicy_Rule) GetMatch() *TrafficPolicy_Match {
 
 type TrafficPolicy_Match struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Dimensions are ANDed; values within each dimension are ORed.
-	// Empty address list = unconstrained.
-	// Resolve peers in the control plane. If an explicitly configured source
-	// or destination peer list resolves to no addresses, omit the entire Rule
-	// while retaining the configured direction, even if no rules remain.
+	// The direction's peer condition and ports are ANDed; peers are ORed.
+	// Ingress uses source_ips only; egress uses destination_ips only.
+	// The opposite direction's address field is ignored.
+	// Empty applicable address list = unconstrained.
+	// Resolve peers in the control plane. If the applicable peer list resolves
+	// to no addresses, omit the Rule while retaining the configured direction.
 	// Validate Address byte/prefix lengths and normalize host bits.
 	SourceIps      []*TrafficPolicy_Address `protobuf:"bytes,1,rep,name=source_ips,json=sourceIps,proto3" json:"source_ips,omitempty"`
 	DestinationIps []*TrafficPolicy_Address `protobuf:"bytes,2,rep,name=destination_ips,json=destinationIps,proto3" json:"destination_ips,omitempty"`

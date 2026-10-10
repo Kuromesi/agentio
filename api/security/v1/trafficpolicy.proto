@@ -67,11 +67,12 @@ message TrafficPolicy {
   }
 
   message Match {
-    // Dimensions are ANDed; values within each dimension are ORed.
-    // Empty address list = unconstrained.
-    // Resolve peers in the control plane. If an explicitly configured source
-    // or destination peer list resolves to no addresses, omit the entire Rule
-    // while retaining the configured direction, even if no rules remain.
+    // The direction's peer condition and ports are ANDed; peers are ORed.
+    // Ingress uses source_ips only; egress uses destination_ips only.
+    // The opposite direction's address field is ignored.
+    // Empty applicable address list = unconstrained.
+    // Resolve peers in the control plane. If the applicable peer list resolves
+    // to no addresses, omit the Rule while retaining the configured direction.
     // Validate Address byte/prefix lengths and normalize host bits.
     repeated Address source_ips = 1;
     repeated Address destination_ips = 2;

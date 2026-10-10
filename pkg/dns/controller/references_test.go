@@ -123,3 +123,34 @@ func eventuallyDNS(t testing.TB, condition func() bool, message string) {
 	}
 	t.Fatalf("condition never held: %s", message)
 }
+
+func TestTrafficPolicyReferencesIgnoreOppositeDirection(t *testing.T) {
+	policy := model.TrafficPolicy{
+		Name:      "p",
+		Namespace: "ns",
+		Spec: agentsv1alpha1.TrafficPolicySpec{
+			Ingress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "source.example"}},
+					To:   []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "ignored-ingress.example"}},
+				},
+				{To: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "opposite-only.example"}}},
+			}},
+			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{
+				{
+					From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "ignored-egress.example"}},
+					To:   []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "destination.example"}},
+				},
+				{From: []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "opposite-only.example"}}},
+			}},
+		}}
+	references := trafficPolicyReferences(policy)
+	if len(references) != 2 {
+		t.Fatalf("unexpected DNS references: %v", references)
+	}
+	for _, reference := range references {
+		if reference.Hostname != "source.example" && reference.Hostname != "destination.example" {
+			t.Fatalf("opposite peer retained DNS: %v", reference)
+		}
+	}
+}

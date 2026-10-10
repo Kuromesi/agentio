@@ -60,7 +60,14 @@ const (
 // HandleRequestHeaders resolves the caller identity, matches profiles into
 // ordered units, and runs the ordered engine. All observations land in
 // state.stream.Info; the stream loggers consume it once at stream end.
-func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[string]*structpb.Struct, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
+func (s *Server) HandleRequestHeaders(
+	ctx context.Context,
+	headers *extProcPb.HttpHeaders,
+	attrs map[string]*structpb.Struct,
+	state *streamState,
+) ([]*extProcPb.ProcessingResponse, error) {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
 	// Tag every log line in this request's ext-proc path with the request
 	// ID, and propagate it through ctx so downstream filters inherit it.
 	requestID := extractRequestID(headers)
@@ -132,7 +139,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 			"units", len(res.Units))
 	}
 
-	if len(res.Units) == 0 {
+	if len(res.Units) == 0 && s.authorizeRequest == nil {
 		if loggerD.Enabled() {
 			loggerD.Info("no policy applies to this pod",
 				"pod", peer.Pod.Name, "namespace", peer.Pod.Namespace, "labels", peer.Labels)
@@ -149,14 +156,7 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 		return nil, err
 	}
 
-	// End-of-stream headers mean no body will follow: the empty body is final,
-	// so hand it to the walk up front and body requests are satisfied inline
-	// instead of pausing.
-	var evalOpts []engine.RequestOption
-	if headers.GetEndOfStream() && !isConnect {
-		evalOpts = append(evalOpts, engine.WithAvailableRequestBody(filter.Body{Complete: true}))
-	}
-	reqHeadersRes, evalErr := s.eng.EvalRequestHeaders(ctx, st, state.engineUnits(), evalOpts...)
+	reqHeadersRes, evalErr := s.eng.EvalRequestHeaders(ctx, st, state.engineUnits())
 	if evalErr != nil {
 		return nil, evalErr
 	}
@@ -177,7 +177,37 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 	// HandleRequestBody records the asynchronous case.
 	state.responseScope = reqHeadersRes.ResponseScope
 
-	responses := translateRequestHeadersResult(reqHeadersRes, loggerD, peer)
+	return s.requestHeadersResponse(ctx, state, reqHeadersRes, subscriptions, headers.GetEndOfStream() && !isConnect)
+}
+
+// requestHeadersResponse authorizes the current target before requesting a body
+// or emitting completed rule mutations.
+func (s *Server) requestHeadersResponse(
+	ctx context.Context,
+	state *streamState,
+	reqHeadersRes *engine.RequestHeadersResult,
+	subscriptions filter.Phase,
+	bodyAvailable bool,
+) ([]*extProcPb.ProcessingResponse, error) {
+	loggerD := log.FromContext(ctx).V(logging.DEBUG)
+
+	if s.authorizeRequest != nil && reqHeadersRes.Disposition != engine.DispositionBlocked {
+		route, reply := s.authorize(ctx, state.stream, reqHeadersRes.HeaderOps, reqHeadersRes.Route)
+		if reply != nil {
+			reqHeadersRes.Disposition, reqHeadersRes.Reply = engine.DispositionBlocked, *reply
+		} else {
+			reqHeadersRes.Route = route
+		}
+	}
+	if bodyAvailable && reqHeadersRes.NeedsBody() {
+		bodyResult, err := s.eng.EvalRequestBody(ctx, state.stream, reqHeadersRes, filter.Body{Complete: true})
+		if err != nil {
+			return nil, err
+		}
+		reqHeadersRes = bodyResult.HeadersResult()
+	}
+	state.responseScope = reqHeadersRes.ResponseScope
+	responses := translateRequestHeadersResult(reqHeadersRes, loggerD, state.stream.Peer)
 
 	// ModeOverride must restate both body modes because Envoy copies them
 	// unconditionally. A blocked result must not carry an override.
@@ -216,7 +246,11 @@ func (s *Server) HandleRequestHeaders(ctx context.Context, headers *extProcPb.Ht
 
 // HandleResponseHeaders records the upstream status into the stream and
 // dispatches the response-headers phase.
-func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.HttpHeaders, state *streamState) ([]*extProcPb.ProcessingResponse, error) {
+func (s *Server) HandleResponseHeaders(
+	ctx context.Context,
+	headers *extProcPb.HttpHeaders,
+	state *streamState,
+) ([]*extProcPb.ProcessingResponse, error) {
 	if state == nil || state.lifecycle == lifecycleIdle {
 		return nil, status.Error(codes.FailedPrecondition,
 			"received response headers before request headers")
@@ -253,7 +287,12 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, headers *extProcPb.H
 		evalOpts = append(evalOpts, engine.WithAvailableResponseBody(filter.Body{Complete: true}))
 	}
 	// Dispatch only to subscribed pairs within the request walk's response scope.
-	respHeadersRes, evalErr := s.eng.EvalResponseHeaders(ctx, state.stream, state.engineUnits(), state.responseScope, evalOpts...)
+	respHeadersRes, evalErr := s.eng.EvalResponseHeaders(
+		ctx,
+		state.stream,
+		state.engineUnits(),
+		state.responseScope,
+		evalOpts...)
 	if evalErr != nil {
 		// Contract and protocol errors return no acknowledgement.
 		return nil, evalErr
@@ -328,7 +367,10 @@ var missingIdentityDeny = []*extProcPb.ProcessingResponse{
 }
 
 // HandleRequestTrailers returns an empty pass-through response.
-func (s *Server) HandleRequestTrailers(ctx context.Context, trailers *extProcPb.HttpTrailers) ([]*extProcPb.ProcessingResponse, error) {
+func (s *Server) HandleRequestTrailers(
+	ctx context.Context,
+	trailers *extProcPb.HttpTrailers,
+) ([]*extProcPb.ProcessingResponse, error) {
 	return []*extProcPb.ProcessingResponse{
 		{
 			Response: &extProcPb.ProcessingResponse_RequestTrailers{
@@ -339,7 +381,10 @@ func (s *Server) HandleRequestTrailers(ctx context.Context, trailers *extProcPb.
 }
 
 // HandleResponseTrailers returns an empty pass-through response.
-func (s *Server) HandleResponseTrailers(ctx context.Context, trailers *extProcPb.HttpTrailers) ([]*extProcPb.ProcessingResponse, error) {
+func (s *Server) HandleResponseTrailers(
+	ctx context.Context,
+	trailers *extProcPb.HttpTrailers,
+) ([]*extProcPb.ProcessingResponse, error) {
 	return []*extProcPb.ProcessingResponse{
 		{
 			Response: &extProcPb.ProcessingResponse_ResponseTrailers{

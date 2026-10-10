@@ -397,9 +397,12 @@ func (b *resourceBuilder) buildForwardHCM(
 	if staticEndpoints {
 		filters = append(filters, httpFilter(staticEndpointFilterStateFilter, b.pack(&setstatehttpv3.Config{})))
 	}
+	if config.extProc != nil {
+		filters = append(filters, b.egressTargetFilters()...)
+	}
 	filters = append(filters, httpFilter("envoy.filters.http.dynamic_forward_proxy", b.pack(&dfphttpv3.FilterConfig{
 		ImplementationSpecifier:         &dfphttpv3.FilterConfig_DnsCacheConfig{DnsCacheConfig: dnsCacheConfig()},
-		AllowDynamicHostFromFilterState: staticEndpoints,
+		AllowDynamicHostFromFilterState: true,
 	})))
 	if config.telemetry != nil {
 		for _, filter := range config.telemetry.HTTPFilters {
@@ -453,14 +456,14 @@ func (b *resourceBuilder) staticEndpointFilterStateConfig(address string) *anypb
 		{
 			Key:      &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: dynamicHostKey},
 			Value:    &setstatecommonv3.FilterStateValue_FormatString{FormatString: host},
-			ReadOnly: true,
+			ReadOnly: false,
 		},
 		{
 			Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: dynamicPortKey},
 			Value: &setstatecommonv3.FilterStateValue_FormatString{FormatString: formatString(
 				"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%",
 			)},
-			ReadOnly:    true,
+			ReadOnly:    false,
 			SkipIfEmpty: true,
 		},
 	}})
@@ -559,6 +562,19 @@ func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hc
 	if response := provider.GetResponse(); response != nil {
 		responseMode = headerMode(response.GetHeaderMode(), responseMode)
 	}
+	metadataOptions := &extprocv3.MetadataOptions{
+		ReceivingNamespaces: &extprocv3.MetadataOptions_MetadataNamespaces{Untyped: []string{"agentio.route"}},
+	}
+	attributes := append([]string(nil), provider.GetRequest().GetAttributes()...)
+	for _, attribute := range []string{"filter_state['agentio.workload.name']", "filter_state['agentio.workload.namespace']", "source.address", "destination.address", "destination.port"} {
+		found := false
+		for _, existing := range attributes {
+			found = found || existing == attribute
+		}
+		if !found {
+			attributes = append(attributes, attribute)
+		}
+	}
 	return httpFilter("envoy.filters.http.ext_proc", b.pack(&extprocv3.ExternalProcessor{
 		GrpcService: &corev3.GrpcService{
 			TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
@@ -568,7 +584,8 @@ func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hc
 		FailureModeAllow:   provider.GetFailureModeAllow(),
 		AllowModeOverride:  true,
 		ProcessingMode:     &extprocv3.ProcessingMode{RequestHeaderMode: requestMode, ResponseHeaderMode: responseMode},
-		RequestAttributes:  provider.GetRequest().GetAttributes(),
+		RequestAttributes:  attributes,
+		MetadataOptions:    metadataOptions,
 		ResponseAttributes: provider.GetResponse().GetAttributes(),
 		MessageTimeout:     timeout,
 	})), nil

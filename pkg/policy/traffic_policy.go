@@ -148,7 +148,11 @@ func compileNativeDirection(
 	for _, rule := range direction.Rules {
 		// Egress requires To peers and ingress requires From peers, even for port-only rules.
 		// A direction containing only skipped rules does not configure default deny.
-		if (ingress && len(rule.From) == 0) || (!ingress && len(rule.To) == 0) {
+		peers := rule.To
+		if ingress {
+			peers = rule.From
+		}
+		if len(peers) == 0 {
 			continue
 		}
 		action := securityv1.TrafficPolicy_ALLOW
@@ -168,18 +172,19 @@ func compileNativeDirection(
 		if result == nil {
 			result = &securityv1.TrafficPolicy_RuleSet{}
 		}
-		from := resolvePeers(ctx, rule.From, namespace, inputs)
-		to := resolvePeers(ctx, rule.To, namespace, inputs)
-		if (len(rule.From) > 0 && len(from) == 0) || (len(rule.To) > 0 && len(to) == 0) {
+		addresses := resolvePeers(ctx, peers, namespace, inputs)
+		if len(addresses) == 0 {
 			continue
+		}
+		match := &securityv1.TrafficPolicy_Match{Ports: ports}
+		if ingress {
+			match.SourceIps = nativeAddresses(addresses)
+		} else {
+			match.DestinationIps = nativeAddresses(addresses)
 		}
 		result.Rules = append(result.Rules, &securityv1.TrafficPolicy_Rule{
 			Action: action,
-			Match: &securityv1.TrafficPolicy_Match{
-				SourceIps:      nativeAddresses(from),
-				DestinationIps: nativeAddresses(to),
-				Ports:          ports,
-			},
+			Match:  match,
 		})
 	}
 	return result, nil

@@ -146,7 +146,8 @@ func TestTrafficPolicyAsAuthorizationResolvesPeersAndPreservesDirection(t *testi
 		t.Fatalf("authorization scope/groups = %+v", got.Policy)
 	}
 	matches := flattenMatches(got.Policy)
-	if !hasAddress(matches, "source", "10.1.0.5/32", false) ||
+	// Egress From is ignored in the native policy and its legacy projection.
+	if hasAddress(matches, "source", "10.1.0.5/32", false) ||
 		!hasAddress(matches, "destination", "10.0.0.0/24", false) ||
 		!hasAddress(matches, "destination", "10.96.0.10/32", false) ||
 		!hasAddress(matches, "destination", "10.2.0.2/32", false) ||

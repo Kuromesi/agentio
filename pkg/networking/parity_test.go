@@ -35,6 +35,8 @@ import (
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	dfpclusterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
 	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
+	dfphttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
@@ -185,8 +187,8 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		}
 	}
 	for listenerName, want := range map[string][]string{
-		MainInternal: {"envoy.filters.http.ext_proc", "envoy.filters.http.dynamic_forward_proxy", "envoy.filters.http.router"},
-		MainForward:  {"envoy.filters.http.rbac", "envoy.filters.http.ext_proc", "envoy.filters.http.dynamic_forward_proxy", "connect-proxy-tls-identity", "envoy.filters.http.router"},
+		MainInternal: {"envoy.filters.http.ext_proc", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "envoy.filters.http.router"},
+		MainForward:  {"envoy.filters.http.rbac", "envoy.filters.http.ext_proc", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "connect-proxy-tls-identity", "envoy.filters.http.router"},
 	} {
 		if got := httpFilterNames(findHCM(t, listeners[listenerName])); !equalStrings(got, want) {
 			t.Errorf("listener %s HTTP filter order = %v, want %v", listenerName, got, want)
@@ -401,8 +403,34 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					}
 					if hcm.ServerName == "istio-envoy" {
 						hcm.ServerName = "agentio-envoy"
-						filter.ConfigType = &listenerv3.Filter_TypedConfig{TypedConfig: mustGatewayAny(t, hcm)}
 					}
+					// Explicit target forwarding postdates the legacy snapshot and is
+					// covered by TestEgressAuthorizationPinsDFPTarget.
+					hcm.HttpFilters = slices.DeleteFunc(hcm.HttpFilters, func(f *hcmv3.HttpFilter) bool {
+						return f.Name == "agentio.egress_target"
+					})
+					for _, f := range hcm.HttpFilters {
+						switch f.Name {
+						case "envoy.filters.http.dynamic_forward_proxy":
+							cfg := &dfphttpv3.FilterConfig{}
+							if err := f.GetTypedConfig().UnmarshalTo(cfg); err != nil {
+								t.Fatal(err)
+							}
+							cfg.AllowDynamicHostFromFilterState = false
+							f.ConfigType = &hcmv3.HttpFilter_TypedConfig{TypedConfig: mustGatewayAny(t, cfg)}
+						case "envoy.filters.http.ext_proc":
+							cfg := &extprocv3.ExternalProcessor{}
+							if err := f.GetTypedConfig().UnmarshalTo(cfg); err != nil {
+								t.Fatal(err)
+							}
+							cfg.MetadataOptions = nil
+							cfg.RequestAttributes = slices.DeleteFunc(cfg.RequestAttributes, func(attribute string) bool {
+								return slices.Contains([]string{"filter_state['agentio.workload.name']", "filter_state['agentio.workload.namespace']", "source.address", "destination.address", "destination.port"}, attribute)
+							})
+							f.ConfigType = &hcmv3.HttpFilter_TypedConfig{TypedConfig: mustGatewayAny(t, cfg)}
+						}
+					}
+					filter.ConfigType = &listenerv3.Filter_TypedConfig{TypedConfig: mustGatewayAny(t, hcm)}
 				}
 			}
 			switch value.GetName() {

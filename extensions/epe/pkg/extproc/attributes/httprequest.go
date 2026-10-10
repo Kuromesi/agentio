@@ -15,12 +15,14 @@ package attributes
 
 import (
 	"context"
+	"maps"
 	"net/url"
 	"strconv"
 	"strings"
 
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 )
@@ -139,4 +141,43 @@ func inferPortFromScheme(scheme string) int32 {
 	default:
 		return 0
 	}
+}
+
+// RequestAfterMutations projects routing-header replacements for final target
+// authorization without changing the original request used for rule matching.
+func RequestAfterMutations(
+	ctx context.Context,
+	request httpreq.HTTPRequest,
+	ops []filter.HeaderOp,
+) httpreq.HTTPRequest {
+	var headers map[string]string
+	for _, op := range ops {
+		name := strings.ToLower(op.Name)
+		if name != ":authority" && name != "host" && name != ":scheme" && name != ":method" {
+			continue
+		}
+		// Routing headers cannot be removed. Appending is not a routing rewrite.
+		if op.Kind != filter.HeaderSet {
+			continue
+		}
+		if headers == nil {
+			headers = maps.Clone(request.Headers)
+			if headers == nil {
+				headers = make(map[string]string)
+			}
+		}
+		if name == "host" {
+			name = ":authority"
+		}
+		headers[name] = op.Value
+	}
+	if headers == nil {
+		return request
+	}
+	result := parseHTTPRequest(ctx, headers)
+	// A rewritten destination must not reuse the previous destination's IP.
+	if result.Host == request.Host && result.Port == request.Port {
+		result.OriginalDestination = request.OriginalDestination
+	}
+	return result
 }

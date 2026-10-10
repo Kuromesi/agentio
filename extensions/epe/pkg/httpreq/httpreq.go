@@ -18,7 +18,10 @@
 // lets the engine's dependency closure stay free of agents-api.
 package httpreq
 
-import "net/url"
+import (
+	"net/netip"
+	"net/url"
+)
 
 // HTTPRequest is the request tuple parsed from Envoy request headers: what
 // the caller asked for. Headers is the canonical lowercase-keyed header
@@ -27,7 +30,11 @@ import "net/url"
 type HTTPRequest struct {
 	Host string
 	Port int32
-	Path string
+	// OriginalDestination is the restored downstream IP:port supplied by Envoy.
+	// A zero value means it is unavailable. It is never taken from HTTP headers,
+	// and a CONNECT proxy's listener address is not a tunnel destination.
+	OriginalDestination netip.AddrPort
+	Path                string
 	// Query is the parsed query, convenient for matching. It is lossy:
 	// url.ParseQuery drops pairs it cannot parse (';' separators, invalid
 	// escapes) and normalizes percent-encoding, so anything that must agree

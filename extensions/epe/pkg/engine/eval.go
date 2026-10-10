@@ -151,7 +151,7 @@ func (e *Engine) pairAt(units []Unit, at evalCursor) pair {
 	return pair{at: at, reg: e.regs[at.regIdx], unit: units[at.unit], cfg: units[at.unit].Cfgs[at.regIdx]}
 }
 
-// continuation is everything a paused walk needs to resume on the buffered
+// continuation is everything a paused response walk needs to resume on the buffered
 // body: the units it was walking, the live filter instance and its cursor, and
 // the mutations accumulated before the pause.
 type continuation struct {
@@ -160,10 +160,8 @@ type continuation struct {
 	pending []filter.Mutation
 }
 
-// responseContinuation adds the scope the response walk was called with. The
-// request direction needs no such field: its scope is produced by the walk
-// itself, and a Bypass that bounds it halts the walk, so no continuation can
-// ever carry one.
+// responseContinuation adds the scope the response walk was called with.
+// Response processing retains its ordered pause/resume behavior.
 type responseContinuation struct {
 	continuation
 	// scope is the caller's suppression range, replayed into the resumed walk
@@ -216,14 +214,15 @@ func (e *Engine) ValidateSubscriptions(units []Unit) (filter.Phase, error) {
 type RequestHeadersResult struct {
 	Disposition Disposition
 	// Reply is valid when Disposition is Blocked. Bypassed preserves mutations
-	// produced by earlier actions and skips all later actions and rules.
+	// produced by earlier actions and skips later header callbacks, while
+	// retaining body callbacks already registered.
 	Reply filter.Reply
 	// HeaderOps is the net-effect folded mutation set, ready for a single
 	// proto translation.
 	HeaderOps []filter.HeaderOp
-	// ClearRouteCache is true when any accumulated mutation asked for it
-	// (e.g. a :path rewrite); the adapter must set clear_route_cache.
-	ClearRouteCache bool
+	// Route is the folded request routing change. The result owns its nested
+	// values; modifying it cannot change filter data or a continuation.
+	Route *filter.RouteMutation
 	// Body: nil = unchanged; non-nil (including empty) = replace, the same
 	// sentinel as filter.Mutation.Body. The last executed action to set one
 	// wins.
@@ -231,26 +230,26 @@ type RequestHeadersResult struct {
 	// ResponseScope bounds response-phase dispatch when this walk bypassed;
 	// the zero value is unbounded. The adapter carries it to EvalResponseHeaders.
 	ResponseScope ResponseScope
-	// needsBody is true when evaluation paused for the request body. The
-	// adapter maps it to the buffered ext_proc body delivery mode.
-	needsBody bool
-
-	continuation *continuation
+	// Body callbacks retain the instances that requested them during headers.
+	bodyFilters []requestBodyInvocation
+	pending     []filter.Mutation
 }
 
-// NeedsBody reports whether evaluation paused for the request body.
-func (r *RequestHeadersResult) NeedsBody() bool { return r.needsBody }
+// NeedsBody reports whether registered request-body callbacks remain to run.
+func (r *RequestHeadersResult) NeedsBody() bool {
+	return r.Disposition != DispositionBlocked && len(r.bodyFilters) > 0
+}
 
 // RequestBodyResult is the outcome of the body phase.
 type RequestBodyResult struct {
-	Disposition     Disposition
-	Reply           filter.Reply
-	HeaderOps       []filter.HeaderOp
-	ClearRouteCache bool
+	Disposition Disposition
+	Reply       filter.Reply
+	HeaderOps   []filter.HeaderOp
+	Route       *filter.RouteMutation
 	// Body: nil = unchanged; non-nil (including empty) = replace.
 	Body []byte
-	// ResponseScope bounds response-phase dispatch when the resumed walk
-	// bypassed; the zero value is unbounded.
+	// ResponseScope retains the headers bypass boundary, narrowed if a body
+	// callback bypasses earlier; the zero value is unbounded.
 	ResponseScope ResponseScope
 }
 
@@ -304,8 +303,8 @@ type responseOptions struct {
 	body *filter.Body
 }
 
-// WithAvailableRequestBody tells the walk the request body is already in hand,
-// so a NeedBody action is satisfied inline instead of suspending the walk. Pass
+// WithAvailableRequestBody runs registered body callbacks after all headers
+// callbacks, using the body already in hand. Pass
 // it when Envoy set end_of_stream on the headers message: no body will follow,
 // so the empty body is final rather than merely not-yet-arrived.
 func WithAvailableRequestBody(b filter.Body) RequestOption {
@@ -324,11 +323,14 @@ func WithAvailableResponseBody(b filter.Body) ResponseOption {
 	}
 }
 
-// EvalRequestHeaders walks (rule, action) pairs in order. The first body
-// request pauses the cursor; EvalRequestBody resumes at exactly that point.
-// With WithAvailableRequestBody, body requests are satisfied inline and the
-// walk never pauses.
-func (e *Engine) EvalRequestHeaders(ctx context.Context, st *filter.Stream, units []Unit, opts ...RequestOption) (*RequestHeadersResult, error) {
+// EvalRequestHeaders runs header callbacks in rule order. NeedBody registers
+// the live filter for the body phase without delaying later header callbacks.
+func (e *Engine) EvalRequestHeaders(
+	ctx context.Context,
+	st *filter.Stream,
+	units []Unit,
+	opts ...RequestOption,
+) (*RequestHeadersResult, error) {
 	if err := e.validateUnits(units); err != nil {
 		return &RequestHeadersResult{}, err
 	}
@@ -338,28 +340,48 @@ func (e *Engine) EvalRequestHeaders(ctx context.Context, st *filter.Stream, unit
 	}
 	ctx, cancel := e.withBudget(ctx)
 	defer cancel()
-	walk, err := e.walkRequest(ctx, st, units, evalCursor{}, o.body)
-	reduced := walk.result()
+	walk, err := e.walkRequest(ctx, st, units)
+	reduced, routeErr := walk.result()
+	if err == nil {
+		err = routeErr
+	}
 	res := &RequestHeadersResult{
-		Disposition:     reduced.disposition,
-		Reply:           reduced.reply,
-		HeaderOps:       reduced.headerOps,
-		ClearRouteCache: reduced.clearRouteCache,
-		Body:            reduced.body,
-		ResponseScope:   walk.scope,
-		needsBody:       walk.needsBody,
-		continuation:    walk.continuation,
+		Disposition:   reduced.disposition,
+		Reply:         reduced.reply,
+		HeaderOps:     reduced.headerOps,
+		Route:         reduced.route,
+		Body:          reduced.body,
+		ResponseScope: walk.scope,
+		bodyFilters:   walk.bodyFilters,
+		pending:       walk.pending,
+	}
+	if err == nil && o.body != nil && res.NeedsBody() {
+		br, bodyErr := e.EvalRequestBody(ctx, st, res, *o.body)
+		return br.HeadersResult(), bodyErr
 	}
 	return res, err
 }
 
+// HeadersResult renders a completed body phase in a headers response when the
+// complete body was already available (including an empty end-of-stream body).
+func (r *RequestBodyResult) HeadersResult() *RequestHeadersResult {
+	return &RequestHeadersResult{
+		Disposition:   r.Disposition,
+		Reply:         r.Reply,
+		HeaderOps:     r.HeaderOps,
+		Route:         r.Route,
+		Body:          r.Body,
+		ResponseScope: r.ResponseScope,
+	}
+}
+
 type actionResult struct {
-	disposition     Disposition
-	reply           filter.Reply
-	headerOps       []filter.HeaderOp
-	clearRouteCache bool
-	body            []byte
-	statusCode      *int
+	disposition Disposition
+	reply       filter.Reply
+	headerOps   []filter.HeaderOp
+	route       *filter.RouteMutation
+	body        []byte
+	statusCode  *int
 }
 
 // actionWalk reduces phase-independent Action semantics. Phase walkers select
@@ -379,11 +401,15 @@ func newActionWalk(st *filter.Stream) actionWalk {
 	return actionWalk{st: st, disposition: DispositionPassthrough}
 }
 
+type requestBodyInvocation struct {
+	pair pair
+	f    filter.Filter
+}
+
 type requestWalk struct {
 	actionWalk
-	scope        ResponseScope
-	needsBody    bool
-	continuation *continuation
+	scope       ResponseScope
+	bodyFilters []requestBodyInvocation
 }
 
 type responseWalk struct {
@@ -407,16 +433,19 @@ func (w *actionWalk) resolved() Disposition {
 	return w.disposition
 }
 
-func (w *actionWalk) result() actionResult {
-	headerOps, clearRouteCache, body, statusCode := foldPending(w.pending)
-	return actionResult{
-		disposition:     w.resolved(),
-		reply:           w.reply,
-		headerOps:       headerOps,
-		clearRouteCache: clearRouteCache,
-		body:            body,
-		statusCode:      statusCode,
+func (w *actionWalk) result() (actionResult, error) {
+	headerOps, route, body, statusCode, err := foldPending(w.pending)
+	if err != nil {
+		return actionResult{disposition: DispositionError}, err
 	}
+	return actionResult{
+		disposition: w.resolved(),
+		reply:       w.reply,
+		headerOps:   headerOps,
+		route:       route,
+		body:        body,
+		statusCode:  statusCode,
+	}, nil
 }
 
 // halted reports whether the walk stopped. These three dispositions are the
@@ -483,16 +512,18 @@ func (e *Engine) invokeBody(
 	return w.halted(), nil
 }
 
-// walkRequest is the request-direction walk: it dispatches the request-headers
-// phase and, when the body is already in hand, the request-body phase inline.
-func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Unit, start evalCursor, body *filter.Body) (requestWalk, error) {
+// walkRequest completes the request-header phase and records body callbacks.
+func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Unit) (requestWalk, error) {
 	walk := requestWalk{actionWalk: newActionWalk(st)}
-	for p := range e.pairs(units, start, filter.PhaseRequestHeaders) {
+	for p := range e.pairs(units, evalCursor{}, filter.PhaseRequestHeaders) {
+		view, err := walk.streamView()
+		if err != nil {
+			return walk, err
+		}
 		erased := filter.ErasedRuleConfig{ID: p.unit.ID, Cfg: p.cfg, Scope: p.unit.Scope}
 		f := p.reg.New(erased)
-		act, invokeErr := e.invoke(ctx, st, e.metrics[p.at.regIdx].requestHeaders, func(ctx context.Context) (filter.Action, error) {
-			return f.OnRequestHeaders(ctx, st)
-		})
+		act, invokeErr := e.invoke(ctx, st, e.metrics[p.at.regIdx].requestHeaders,
+			func(ctx context.Context) (filter.Action, error) { return f.OnRequestHeaders(ctx, view) })
 		if invokeErr != nil {
 			walk.filterFailed(p, filter.PhaseRequestHeaders, invokeErr)
 			if walk.halted() {
@@ -505,25 +536,8 @@ func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Uni
 		}
 		if act.Kind() == filter.KindNeedBody {
 			walk.pending = append(walk.pending, act.Mutations()...)
+			walk.bodyFilters = append(walk.bodyFilters, requestBodyInvocation{pair: p, f: f})
 			walk.record(p, filter.ActionNeedBody)
-			if body == nil {
-				walk.needsBody = true
-				walk.continuation = &continuation{
-					units:   append([]Unit(nil), units...),
-					paused:  pausedInvocation{f: f, at: p.at},
-					pending: append([]filter.Mutation(nil), walk.pending...),
-				}
-				walk.pending = nil
-				return walk, nil
-			}
-			halted, err := e.invokeBody(ctx, st, &walk, p, filter.PhaseRequestBody,
-				e.metrics[p.at.regIdx].requestBody,
-				func(ctx context.Context) (filter.Action, error) {
-					return f.OnRequestBody(ctx, st, *body)
-				})
-			if err != nil || halted {
-				return walk, err
-			}
 			continue
 		}
 		if err := walk.apply(p, act); err != nil {
@@ -534,6 +548,21 @@ func (e *Engine) walkRequest(ctx context.Context, st *filter.Stream, units []Uni
 		}
 	}
 	return walk, nil
+}
+
+// streamView exposes the accumulated target without aliasing returned mutations
+// or changing the original request tuple used for policy matching.
+func (w *requestWalk) streamView() (*filter.Stream, error) {
+	route, err := foldRoute(w.pending)
+	if err != nil {
+		return nil, err
+	}
+	view := *w.st
+	view.Upstream = nil
+	if route != nil {
+		view.Upstream = route.Upstream
+	}
+	return &view, nil
 }
 
 // apply folds the Action kinds shared by request and response phases. Only
@@ -579,40 +608,55 @@ func (w *requestWalk) apply(p pair, act filter.Action) error {
 	return nil
 }
 
-// EvalRequestBody resumes the single filter that paused on headers, then
-// continues the remaining rules in their original order.
-func (e *Engine) EvalRequestBody(ctx context.Context, st *filter.Stream, prior *RequestHeadersResult, body filter.Body) (*RequestBodyResult, error) {
+// EvalRequestBody runs only the body callbacks registered during headers, in
+// registration order. All callbacks see the original request and body. Header
+// mutations remain pending until this phase completes, then body mutations win.
+func (e *Engine) EvalRequestBody(
+	ctx context.Context,
+	st *filter.Stream,
+	prior *RequestHeadersResult,
+	body filter.Body,
+) (*RequestBodyResult, error) {
 	ctx, cancel := e.withBudget(ctx)
 	defer cancel()
 	res := &RequestBodyResult{Disposition: DispositionPassthrough}
-	if prior == nil || prior.continuation == nil {
+	if prior == nil || !prior.NeedsBody() {
 		return res, nil
 	}
-	cont := prior.continuation
-	paused := cont.paused
-	p := e.pairAt(cont.units, paused.at)
-	walk := requestWalk{actionWalk: newActionWalk(st)}
-	walk.pending = append([]filter.Mutation(nil), cont.pending...)
-	// walk.scope stays zero: only a Bypass bounds it, and a Bypass halts the
-	// walk, so the paused headers walk cannot have carried one in.
-	halted, err := e.invokeBody(ctx, st, &walk, p, filter.PhaseRequestBody,
-		e.metrics[p.at.regIdx].requestBody,
-		func(ctx context.Context) (filter.Action, error) {
-			return paused.f.OnRequestBody(ctx, st, body)
-		})
-	if err == nil && !halted {
-		remaining, walkErr := e.walkRequest(ctx, st, cont.units, paused.at.next(len(e.regs)), &body)
-		walk.adopt(remaining.actionWalk)
-		// Reaching here means the resumed invocation did not bypass, so
-		// walk.scope is still zero and the remaining walk owns the answer.
-		walk.scope = remaining.scope
-		err = walkErr
+	walk := requestWalk{actionWalk: newActionWalk(st), scope: prior.ResponseScope}
+	walk.pending = append([]filter.Mutation(nil), prior.pending...)
+	view := *st
+	if prior.Route != nil {
+		view.Upstream = prior.Route.Upstream
 	}
-	reduced := walk.result()
+	var err error
+	for _, invocation := range prior.bodyFilters {
+		p := invocation.pair
+		var halted bool
+		halted, err = e.invokeBody(ctx, st, &walk, p, filter.PhaseRequestBody,
+			e.metrics[p.at.regIdx].requestBody,
+			func(ctx context.Context) (filter.Action, error) {
+				return invocation.f.OnRequestBody(ctx, &view, body)
+			})
+		if err != nil || halted {
+			break
+		}
+	}
+	if !walk.halted() && prior.Disposition == DispositionBypassed {
+		walk.disposition = DispositionBypassed
+	}
+	reduced, routeErr := walk.result()
+	if err == nil {
+		err = routeErr
+	}
 	res.Disposition = reduced.disposition
 	res.Reply = reduced.reply
 	res.HeaderOps = reduced.headerOps
-	res.ClearRouteCache = reduced.clearRouteCache
+	res.Route = reduced.route
+	if res.Disposition != DispositionBlocked && prior.Route != nil {
+		// Preserve the target pinned after headers; body cannot select a new one.
+		res.Route = prior.Route
+	}
 	res.Body = reduced.body
 	res.ResponseScope = walk.scope
 	return res, err
@@ -625,7 +669,13 @@ const failClosedStatus = 500
 // EvalResponseHeaders invokes subscribed response-header filters within scope.
 // A NeedBody action either pauses the walk or is satisfied inline when an
 // available response body was supplied.
-func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, units []Unit, scope ResponseScope, opts ...ResponseOption) (*ResponseHeadersResult, error) {
+func (e *Engine) EvalResponseHeaders(
+	ctx context.Context,
+	st *filter.Stream,
+	units []Unit,
+	scope ResponseScope,
+	opts ...ResponseOption,
+) (*ResponseHeadersResult, error) {
 	res := &ResponseHeadersResult{Disposition: DispositionPassthrough}
 	subscriptions, err := e.ValidateSubscriptions(units)
 	if err != nil {
@@ -641,7 +691,10 @@ func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, uni
 	ctx, cancel := e.withBudget(ctx)
 	defer cancel()
 	walk, err := e.walkResponse(ctx, st, units, evalCursor{}, scope, o.body)
-	reduced := walk.result()
+	reduced, routeErr := walk.result()
+	if err == nil {
+		err = routeErr
+	}
 	res.Disposition = reduced.disposition
 	res.Reply = reduced.reply
 	res.HeaderOps = reduced.headerOps
@@ -654,7 +707,14 @@ func (e *Engine) EvalResponseHeaders(ctx context.Context, st *filter.Stream, uni
 
 // walkResponse dispatches subscribed response-header pairs and, when the body
 // is already available, their response-body callbacks inline.
-func (e *Engine) walkResponse(ctx context.Context, st *filter.Stream, units []Unit, start evalCursor, scope ResponseScope, body *filter.Body) (responseWalk, error) {
+func (e *Engine) walkResponse(
+	ctx context.Context,
+	st *filter.Stream,
+	units []Unit,
+	start evalCursor,
+	scope ResponseScope,
+	body *filter.Body,
+) (responseWalk, error) {
 	walk := responseWalk{actionWalk: newActionWalk(st)}
 	for p := range e.pairs(units, start, filter.PhaseResponseHeaders) {
 		if scope.excludes(p.at.unit, p.at.regIdx) ||
@@ -664,9 +724,14 @@ func (e *Engine) walkResponse(ctx context.Context, st *filter.Stream, units []Un
 		}
 		erased := filter.ErasedRuleConfig{ID: p.unit.ID, Cfg: p.cfg, Scope: p.unit.Scope}
 		f := p.reg.New(erased)
-		act, invokeErr := e.invoke(ctx, st, e.metrics[p.at.regIdx].responseHeaders, func(ctx context.Context) (filter.Action, error) {
-			return f.OnResponseHeaders(ctx, st)
-		})
+		act, invokeErr := e.invoke(
+			ctx,
+			st,
+			e.metrics[p.at.regIdx].responseHeaders,
+			func(ctx context.Context) (filter.Action, error) {
+				return f.OnResponseHeaders(ctx, st)
+			},
+		)
 		if invokeErr != nil {
 			walk.filterFailed(p, filter.PhaseResponseHeaders, invokeErr)
 			if walk.halted() {
@@ -715,7 +780,12 @@ func (e *Engine) walkResponse(ctx context.Context, st *filter.Stream, units []Un
 
 // EvalResponseBody resumes the response filter that paused on headers, then
 // continues the remaining response pairs in their original order.
-func (e *Engine) EvalResponseBody(ctx context.Context, st *filter.Stream, prior *ResponseHeadersResult, body filter.Body) (*ResponseBodyResult, error) {
+func (e *Engine) EvalResponseBody(
+	ctx context.Context,
+	st *filter.Stream,
+	prior *ResponseHeadersResult,
+	body filter.Body,
+) (*ResponseBodyResult, error) {
 	ctx, cancel := e.withBudget(ctx)
 	defer cancel()
 	res := &ResponseBodyResult{Disposition: DispositionPassthrough}
@@ -739,7 +809,10 @@ func (e *Engine) EvalResponseBody(ctx context.Context, st *filter.Stream, prior 
 		walk.adopt(remaining.actionWalk)
 		err = walkErr
 	}
-	reduced := walk.result()
+	reduced, routeErr := walk.result()
+	if err == nil {
+		err = routeErr
+	}
 	res.Disposition = reduced.disposition
 	res.Reply = reduced.reply
 	res.HeaderOps = reduced.headerOps
@@ -808,7 +881,23 @@ func validateAction(reg filter.Registration, phase filter.Phase, act filter.Acti
 		return fmt.Errorf("filter %q returned unknown action kind %d", reg.Name, act.Kind())
 	}
 	for _, m := range act.Mutations() {
+		if err := m.Route.Validate(); err != nil {
+			return fmt.Errorf("filter %q returned invalid route mutation: %w", reg.Name, err)
+		}
+		// Target selection belongs to request headers, before forwarding.
+		if m.Route != nil && m.Route.Upstream != nil && phase != filter.PhaseRequestHeaders {
+			return fmt.Errorf("filter %q returned an upstream target outside request headers", reg.Name)
+		}
+		if phase == filter.PhaseRequestBody && m.Route != nil && m.Route.ClearCache {
+			return fmt.Errorf("filter %q cannot clear the route cache after request headers", reg.Name)
+		}
 		for _, op := range m.HeaderOps {
+			if phase == filter.PhaseRequestBody {
+				switch strings.ToLower(op.Name) {
+				case "host", ":authority", ":scheme", ":method":
+					return fmt.Errorf("filter %q cannot modify %s after request headers", reg.Name, op.Name)
+				}
+			}
 			if strings.EqualFold(op.Name, ":status") {
 				return fmt.Errorf("filter %q returned :status as a header mutation; use Mutation.StatusCode", reg.Name)
 			}
@@ -819,8 +908,11 @@ func validateAction(reg filter.Registration, phase filter.Phase, act filter.Acti
 				return fmt.Errorf("filter %q returned a response status mutation from a request phase", reg.Name)
 			}
 		case filter.PhaseResponseHeaders, filter.PhaseResponseBody:
-			if m.ClearRouteCache {
-				return fmt.Errorf("filter %q asked to clear the route cache from a response phase; routing is already resolved", reg.Name)
+			if m.Route != nil && m.Route.ClearCache {
+				return fmt.Errorf(
+					"filter %q asked to clear the route cache from a response phase; routing is already resolved",
+					reg.Name,
+				)
 			}
 			if m.StatusCode != nil && (*m.StatusCode < 200 || *m.StatusCode > 599) {
 				return fmt.Errorf("filter %q returned response status %d outside 200..599", reg.Name, *m.StatusCode)
@@ -841,17 +933,14 @@ func (e *Engine) validateUnits(units []Unit) error {
 }
 
 // foldPending computes the net effect of one walk's accumulated mutations.
-func foldPending(pending []filter.Mutation) (ops []filter.HeaderOp, clearRouteCache bool, body []byte, statusCode *int) {
-	return fold(pending), anyClearRouteCache(pending), lastBodyMutation(pending), lastStatusMutation(pending)
-}
-
-func anyClearRouteCache(muts []filter.Mutation) bool {
-	for _, m := range muts {
-		if m.ClearRouteCache {
-			return true
-		}
+func foldPending(
+	pending []filter.Mutation,
+) (ops []filter.HeaderOp, route *filter.RouteMutation, body []byte, statusCode *int, err error) {
+	route, err = foldRoute(pending)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
-	return false
+	return fold(pending), route, lastBodyMutation(pending), lastStatusMutation(pending), nil
 }
 
 // lastBodyMutation returns the last non-nil body replacement in execution

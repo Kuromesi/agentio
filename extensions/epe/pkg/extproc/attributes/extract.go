@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/netip"
 	"strings"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -55,7 +56,8 @@ const (
 	FilterStateSandboxLabels = "filter_state['sandbox.labels']"
 	FilterStateSandboxToken  = "filter_state['sandbox.token']"
 
-	AttrDestinationPort = "destination.port"
+	AttrDestinationPort    = "destination.port"
+	AttrDestinationAddress = "destination.address"
 )
 
 // Extract resolves the Envoy ext-proc headers message and its attributes
@@ -70,7 +72,11 @@ const (
 // fail-closed switch is set). A malformed sandbox token leaves Peer.Token nil.
 // Log lines use the logger from ctx, so request-scoped key/values are carried
 // on them.
-func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[string]*structpb.Struct) (filter.Peer, httpreq.HTTPRequest) {
+func Extract(
+	ctx context.Context,
+	headers *extProcPb.HttpHeaders,
+	attrs map[string]*structpb.Struct,
+) (filter.Peer, httpreq.HTTPRequest) {
 	logger := log.FromContext(ctx)
 	loggerD := logger.V(logging.DEBUG)
 
@@ -119,11 +125,42 @@ func Extract(ctx context.Context, headers *extProcPb.HttpHeaders, attrs map[stri
 	// For ordinary requests, prefer the real TCP destination port observed by
 	// Envoy. A CONNECT authority is different: it is the RFC-defined tunnel
 	// target, while destination.port is only the explicit proxy's listener.
-	if dstPort := extractAttributeInt(attrs, AttrDestinationPort); !strings.EqualFold(req.Method, "CONNECT") && dstPort > 0 && dstPort <= 65535 {
+	if dstPort := extractAttributeInt(
+		attrs,
+		AttrDestinationPort,
+	); !strings.EqualFold(req.Method, "CONNECT") && dstPort > 0 &&
+		dstPort <= 65535 {
 		req.Port = int32(dstPort)
+	}
+	if !strings.EqualFold(req.Method, "CONNECT") {
+		req.OriginalDestination = extractOriginalDestination(attrs)
+		if req.OriginalDestination.IsValid() {
+			req.Port = int32(req.OriginalDestination.Port())
+		}
 	}
 
 	return peer, req
+}
+
+// destination.address is Envoy's restored downstream local IP:port, not a
+// client header. Also accept an IP with a separate destination.port attribute.
+// CONNECT is excluded by the caller because its local address is the proxy.
+func extractOriginalDestination(attrs map[string]*structpb.Struct) netip.AddrPort {
+	raw := extractFilterStateString(attrs, AttrDestinationAddress)
+	port := extractAttributeInt(attrs, AttrDestinationPort)
+	address, err := netip.ParseAddrPort(raw)
+	if err != nil {
+		ip, ipErr := netip.ParseAddr(raw)
+		if ipErr != nil || port <= 0 || port > 65535 {
+			return netip.AddrPort{}
+		}
+		address = netip.AddrPortFrom(ip, uint16(port))
+	}
+	if address.Port() == 0 || address.Addr().Zone() != "" ||
+		(port != 0 && (port < 0 || port > 65535 || port != int64(address.Port()))) {
+		return netip.AddrPort{}
+	}
+	return netip.AddrPortFrom(address.Addr().Unmap(), address.Port())
 }
 
 // parseSandboxToken parses the raw filter_state['sandbox.token'] string:
