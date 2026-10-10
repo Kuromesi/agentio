@@ -28,7 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
-	resolverdns "github.com/openkruise/agentio/pkg/dns"
+	"github.com/openkruise/agentio/pkg/dns"
+	resolverdns "github.com/openkruise/agentio/pkg/dns/controller"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -333,11 +334,11 @@ func TestTrafficPolicyAuthorizationPortEncoding(t *testing.T) {
 
 func TestTrafficPolicyUsesSuccessfulDNSFamilyForAllowAndReject(t *testing.T) {
 	resolver, err := resolverdns.New(t.Context(), resolverdns.Options{},
-		func(_ context.Context, _ string, queryType uint16) (resolverdns.LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 			if queryType == mdns.TypeAAAA {
-				return resolverdns.LookupResult{}, fmt.Errorf("SERVFAIL")
+				return dns.LookupResult{}, fmt.Errorf("SERVFAIL")
 			}
-			return resolverdns.LookupResult{
+			return dns.LookupResult{
 				Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.7")},
 				TTL:       time.Minute,
 			}, nil

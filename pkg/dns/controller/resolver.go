@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dns
+package controller
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 	mdns "github.com/miekg/dns"
 	"istio.io/istio/pkg/util/sets"
 
+	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/log"
 )
@@ -61,7 +62,7 @@ type Options struct {
 }
 
 // Lookup queries one RR type. A and AAAA have independent refreshes and deadlines.
-type Lookup func(context.Context, string, uint16) (LookupResult, error)
+type Lookup func(context.Context, string, uint16) (dns.LookupResult, error)
 
 var dnsLog = log.New("dns")
 
@@ -123,7 +124,7 @@ type Resolver struct {
 	schedule entryHeap
 }
 
-// New creates a DNS resolver and its result collection.
+// New creates the DNS refresh controller and its address collection.
 func New(
 	ctx context.Context,
 	options Options,
@@ -143,11 +144,7 @@ func New(
 		options.MaxConcurrent = 32
 	}
 	if lookup == nil {
-		servers := append([]string(nil), options.DNSServers...)
-		if len(servers) == 0 {
-			servers = systemDNSServers()
-		}
-		lookup = newProtocolLookup(servers, options.LookupTimeout)
+		lookup = newProtocolLookup(options.DNSServers, options.LookupTimeout)
 	}
 	resolver := &Resolver{
 		ctx:     ctx,
@@ -254,7 +251,7 @@ func (r *Resolver) refresh(job lookupJob) {
 	r.applyAnswer(job.item, job.family, result, err, time.Now())
 }
 
-func (r *Resolver) applyAnswer(item *entry, family int, result LookupResult, err error, received time.Time) {
+func (r *Resolver) applyAnswer(item *entry, family int, result dns.LookupResult, err error, received time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.entries[item.hostname] != item {
@@ -350,4 +347,15 @@ func normalizeAddresses(addresses []netip.Addr) []netip.Addr {
 	}
 	slices.SortFunc(result, func(a, b netip.Addr) int { return a.Compare(b) })
 	return result
+}
+
+func newProtocolLookup(servers []string, timeout time.Duration) Lookup {
+	transport := dns.NewTransport(servers, timeout)
+	return func(ctx context.Context, host string, queryType uint16) (dns.LookupResult, error) {
+		family := dns.IPv4Only
+		if queryType == mdns.TypeAAAA {
+			family = dns.IPv6Only
+		}
+		return transport.Lookup(ctx, host, family)
+	}
 }

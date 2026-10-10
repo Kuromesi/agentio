@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dns
+package controller
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 
 	mdns "github.com/miekg/dns"
 
+	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/krt"
 )
 
@@ -35,9 +36,9 @@ func TestResolverRefreshesWithoutBlockingCompile(t *testing.T) {
 	resolver, err := New(
 		ctx,
 		Options{RefreshInterval: 20 * time.Millisecond, LookupTimeout: time.Second, MaxConcurrent: 2},
-		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 			calls.Add(1)
-			return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")}, TTL: time.Minute}, nil
+			return dns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")}, TTL: time.Minute}, nil
 		},
 	)
 	if err != nil {
@@ -102,8 +103,8 @@ func TestResolverDropsUnreferencedColdEntryAfterLookupFailure(t *testing.T) {
 	resolver := &Resolver{
 		ctx:     t.Context(),
 		options: Options{RefreshInterval: time.Hour, LookupTimeout: time.Second},
-		lookup: func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
-			return LookupResult{}, fmt.Errorf("DNS unavailable")
+		lookup: func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
+			return dns.LookupResult{}, fmt.Errorf("DNS unavailable")
 		},
 		entries: map[string]*entry{host: item},
 		results: krt.NewMutableCollection[Result](nil, nil),
@@ -233,14 +234,14 @@ func TestResolverSchedulesFromAnswerTTLAndPreservesOnFailure(t *testing.T) {
 	ctx := t.Context()
 	var phase atomic.Int32
 	resolver, err := New(ctx, Options{RefreshInterval: time.Hour, LookupTimeout: time.Second, MaxConcurrent: 1},
-		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 			if phase.Load() == 0 {
-				return LookupResult{
+				return dns.LookupResult{
 					Addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20")},
 					TTL:       30 * time.Second,
 				}, nil
 			}
-			return LookupResult{}, fmt.Errorf("temporary DNS failure")
+			return dns.LookupResult{}, fmt.Errorf("temporary DNS failure")
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -322,12 +323,12 @@ func TestResolverWakesForAnswerTTLBeforeFallbackInterval(t *testing.T) {
 	ctx := t.Context()
 	var calls atomic.Int32
 	resolver, err := New(ctx, Options{RefreshInterval: time.Hour, LookupTimeout: time.Second, MaxConcurrent: 1},
-		func(_ context.Context, _ string, queryType uint16) (LookupResult, error) {
+		func(_ context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 			if queryType == mdns.TypeAAAA {
-				return LookupResult{TTL: time.Hour}, nil
+				return dns.LookupResult{TTL: time.Hour}, nil
 			}
 			call := calls.Add(1)
-			return LookupResult{
+			return dns.LookupResult{
 				Addresses: []netip.Addr{netip.AddrFrom4([4]byte{192, 0, 2, byte(call)})},
 				TTL:       10 * time.Second,
 			}, nil
@@ -364,17 +365,20 @@ func TestResolverDiscardsLookupForRemovedEntry(t *testing.T) {
 				results: krt.NewMutableCollection[Result](nil, nil),
 				wake:    make(chan struct{}, 1),
 			}
-			resolver.lookup = func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
+			resolver.lookup = func(ctx context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 				if queryType == mdns.TypeAAAA {
-					return LookupResult{TTL: time.Hour}, nil
+					return dns.LookupResult{TTL: time.Hour}, nil
 				}
 				close(started)
 				select {
 				case <-release:
 				case <-ctx.Done():
-					return LookupResult{}, ctx.Err()
+					return dns.LookupResult{}, ctx.Err()
 				}
-				return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")}, TTL: time.Minute}, nil
+				return dns.LookupResult{
+					Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")},
+					TTL:       time.Minute,
+				}, nil
 			}
 			go func() {
 				resolver.refresh(lookupJob{old, 0})
@@ -537,20 +541,23 @@ func TestResolverPublishesBeforeOtherFamilyCompletes(t *testing.T) {
 			resolver, err := New(
 				t.Context(),
 				Options{LookupTimeout: 5 * time.Second},
-				func(ctx context.Context, _ string, queryType uint16) (LookupResult, error) {
+				func(ctx context.Context, _ string, queryType uint16) (dns.LookupResult, error) {
 					if queryType == slowType {
 						select {
 						case <-release:
 						case <-ctx.Done():
 						}
-						return LookupResult{}, fmt.Errorf("temporary failure")
+						return dns.LookupResult{}, fmt.Errorf("temporary failure")
 					}
 					address := "192.0.2.7"
 					if queryType == mdns.TypeAAAA {
 						address = "2001:db8::7"
 					}
 					fastCalls.Add(1)
-					return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(address)}, TTL: time.Second}, nil
+					return dns.LookupResult{
+						Addresses: []netip.Addr{netip.MustParseAddr(address)},
+						TTL:       time.Second,
+					}, nil
 				},
 			)
 			if err != nil {
@@ -587,8 +594,8 @@ func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
 		wake:    make(chan struct{}, 1),
 		jobs:    make(chan lookupJob, 1),
 	}
-	answer := func(ip string) LookupResult {
-		return LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(ip)}, TTL: time.Hour}
+	answer := func(ip string) dns.LookupResult {
+		return dns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr(ip)}, TTL: time.Hour}
 	}
 	check := func(want ...string) {
 		t.Helper()
@@ -604,7 +611,7 @@ func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
 	resolver.applyAnswer(item, 1, answer("2001:db8::1"), nil, time.Now())
 	v6Expiry := item.families[1].expires
 	resolver.applyAnswer(item, 0, answer("192.0.2.2"), nil, time.Now())
-	resolver.applyAnswer(item, 1, LookupResult{}, fmt.Errorf("SERVFAIL"), time.Now())
+	resolver.applyAnswer(item, 1, dns.LookupResult{}, fmt.Errorf("SERVFAIL"), time.Now())
 	check("192.0.2.2", "2001:db8::1")
 	if !item.families[1].expires.Equal(v6Expiry) {
 		t.Fatal("partial refresh extended IPv6 lifetime")
@@ -616,7 +623,7 @@ func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
 	resolver.scheduleLocked(item)
 	resolver.dispatchDue()
 	check("192.0.2.2")
-	resolver.applyAnswer(item, 1, LookupResult{}, fmt.Errorf("SERVFAIL"), time.Now())
+	resolver.applyAnswer(item, 1, dns.LookupResult{}, fmt.Errorf("SERVFAIL"), time.Now())
 	check("192.0.2.2")
 	if !item.families[1].expires.IsZero() {
 		t.Fatal("failure renewed expired cache")
@@ -627,9 +634,9 @@ func TestResolverFamilyCacheRefreshExpiryAndRecovery(t *testing.T) {
 	if resolver.Results().GetKey(host).IPv6Error != "" {
 		t.Fatal("recovery retained error state")
 	}
-	resolver.applyAnswer(item, 1, LookupResult{TTL: time.Minute}, nil, time.Now())
+	resolver.applyAnswer(item, 1, dns.LookupResult{TTL: time.Minute}, nil, time.Now())
 	check("192.0.2.2") // NODATA immediately replaces the old IPv6 RRset.
-	resolver.applyAnswer(item, 0, LookupResult{TTL: time.Minute, NameError: true}, nil, time.Now())
+	resolver.applyAnswer(item, 0, dns.LookupResult{TTL: time.Minute, NameError: true}, nil, time.Now())
 	check()
 	if !resolver.Results().GetKey(host).IPv4NameError {
 		t.Fatal("NXDOMAIN status missing")
