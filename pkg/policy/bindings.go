@@ -70,17 +70,14 @@ func attachmentIndexKeys(attachment PolicyAttachment) []string {
 	default:
 		result := make([]string, 0, len(attachment.Target.Namespaces))
 		for _, namespace := range attachment.Target.Namespaces {
-			if attachment.Target.PodName != "" {
-				result = append(result, "pod/"+namespace+"/"+attachment.Target.PodName)
-			} else {
-				result = append(result, namespacePolicyAttachmentKeyPrefix+namespace)
-			}
+			result = append(result, namespacePolicyAttachmentKeyPrefix+namespace)
 		}
 		return result
 	}
 }
 
-// NewWorkloadPolicyBindingsCollection selects shared policies and same-name Sandbox SNI policies.
+// NewWorkloadPolicyBindingsCollection selects shared policies from the Workload's
+// namespace and labels. It does not depend on Sandbox discovery or lifecycle.
 func NewWorkloadPolicyBindingsCollection(
 	workloads krt.Collection[model.Workload],
 	attachments krt.Collection[PolicyAttachment],
@@ -88,22 +85,22 @@ func NewWorkloadPolicyBindingsCollection(
 ) krt.Collection[Bindings] {
 	byTarget := krt.NewIndex(attachments, "workloadPolicyAttachmentsByTarget", attachmentIndexKeys)
 	return krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *Bindings {
-		return resolvePolicyBindings(ctx, workload, attachments, byTarget)
+		return resolvePolicyBindings(ctx, workload.UID, workload.Namespace, workload.Labels, attachments, byTarget)
 	}, options.WithName("workload-policy-bindings")...)
 }
 
 func resolvePolicyBindings(
 	ctx krt.HandlerContext,
-	workload model.Workload,
+	uid, namespace string,
+	targetLabels map[string]string,
 	attachments krt.Collection[PolicyAttachment],
 	byTarget krt.Index[string, PolicyAttachment],
 ) *Bindings {
-	keys := []string{globalPolicyAttachmentIndexKey, namespacePolicyAttachmentKeyPrefix + workload.Namespace,
-		"pod/" + workload.Namespace + "/" + workload.Name}
+	keys := []string{globalPolicyAttachmentIndexKey, namespacePolicyAttachmentKeyPrefix + namespace}
 	// Include target matching in selector discovery's dependency filter instead
 	// of invalidating every binding in a namespace. KRT checks old and new targets.
 	selectsTarget := krt.FilterGeneric(func(value any) bool {
-		return value.(PolicyAttachment).Selects(workload)
+		return value.(PolicyAttachment).selects(namespace, targetLabels)
 	})
 	matchedByName := make(map[string]PolicyAttachment)
 	for _, key := range keys {
@@ -129,5 +126,5 @@ func resolvePolicyBindings(
 	for _, kind := range kinds {
 		groups = append(groups, BindingGroup{Kind: kind, Names: byKind[kind]})
 	}
-	return &Bindings{TargetUID: workload.UID, Groups: groups}
+	return &Bindings{TargetUID: uid, Groups: groups}
 }

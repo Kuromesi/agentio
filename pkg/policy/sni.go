@@ -43,19 +43,7 @@ func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error
 		if strings.TrimSpace(profile.SandboxUID) == "" {
 			return nil, fmt.Errorf("dedicated security profile requires a Sandbox UID")
 		}
-		compiled := &CompiledSNIPolicy{Name: profile.ResourceName(), Policy: payload}
-		if profile.Name != "" && profile.Namespace != "" {
-			attachment, err := NewPolicyAttachment(PolicyAttachment{
-				Kind:   PolicyKindSNIPolicy,
-				Name:   profile.ResourceName(),
-				Target: AttachmentTarget{Namespaces: []string{profile.Namespace}, PodName: profile.Name},
-			})
-			if err != nil {
-				return nil, err
-			}
-			compiled.Attachment = &attachment
-		}
-		return compiled, nil
+		return &CompiledSNIPolicy{Name: profile.ResourceName(), Policy: payload}, nil
 	}
 	priority := agentsv1alpha1.DefaultSecurityProfilePriority
 	if profile.Spec.Priority != nil {

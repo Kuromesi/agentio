@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 
@@ -29,7 +30,7 @@ import (
 )
 
 // workloadPolicies is computed once per Workload and shared by all ADS clients.
-// Shared policies and legacy inline SNI attachments use the same ordered bindings.
+// Legacy inline SNI is appended after shared policy selection.
 type workloadPolicies struct {
 	WorkloadUID        string
 	TrafficPolicyNames []string
@@ -55,9 +56,32 @@ func newWorkloadPolicies(
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[workloadPolicies] {
+	inlineByPod := krt.NewIndex(
+		inputs.SecurityProfiles,
+		"inlineSecurityProfilesByPod",
+		func(profile model.SecurityProfile) []string {
+			if !profile.Dedicated || profile.Namespace == "" || profile.Name == "" {
+				return nil
+			}
+			return []string{profile.Namespace + "/" + profile.Name}
+		},
+	)
 	clearFailureOnSourceDelete(inputs.Workloads, failures, "WorkloadPolicies")
 	return krt.NewCollection(inputs.Workloads, func(ctx krt.HandlerContext, workload model.Workload) *workloadPolicies {
 		result, err := compileWorkloadPolicies(ctx, workload, policies)
+		if inputs.SandboxMode && strings.HasPrefix(workload.Source.Registry, "kubernetes/") {
+			// shortcut: release compatibility assumes same-name Pods; shared hosts need Sandbox-aware consumers.
+			for _, profile := range krt.Fetch(ctx, inputs.SecurityProfiles,
+				krt.FilterIndex(inlineByPod, workload.Namespace+"/"+workload.Name)) {
+				if compiled := krt.FetchOne(
+					ctx,
+					policies.sniPolicies,
+					krt.FilterKey(profile.ResourceName()),
+				); compiled != nil {
+					result.appendSNI(compiled.Policy)
+				}
+			}
+		}
 		currentInput := func() bool {
 			current := inputs.Workloads.GetKey(workload.UID)
 			return current != nil && current.Equals(workload)

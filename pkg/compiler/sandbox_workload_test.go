@@ -304,6 +304,7 @@ func TestSandboxInlineSNIReleaseCompatibility(t *testing.T) {
 	}
 	shared.Spec.Priority = &maxPriority
 	f.securityProfiles.UpdateObject(shared)
+	sharedActive := true
 	// Deliberately bind the native Sandbox to a different host: legacy matching uses names.
 	sandbox := model.Sandbox{
 		UID:       "kruise:delivery-id",
@@ -329,7 +330,7 @@ func TestSandboxInlineSNIReleaseCompatibility(t *testing.T) {
 				payload := new(extensionsv1.SniTrafficPolicy)
 				compatibilityExtension(t, wire, "sni-traffic-policy", payload)
 				var want []string
-				if w.Namespace == target.Namespace {
+				if sharedActive && w.Namespace == target.Namespace {
 					want = append(want, "shared.example")
 				}
 				if w.UID == target.UID && host != "" {
@@ -381,6 +382,9 @@ func TestSandboxInlineSNIReleaseCompatibility(t *testing.T) {
 	check("")
 	inline.Spec = compatibilitySecurity("restored.example")
 	f.securityProfiles.UpdateObject(inline)
+	check("restored.example")
+	f.securityProfiles.DeleteObject(shared.ResourceName())
+	sharedActive = false
 	check("restored.example")
 	f.securityProfiles.DeleteObject(inline.ResourceName())
 	check("")
