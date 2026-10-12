@@ -29,10 +29,10 @@ func (r *Registry) certificateWorkloads(options ...krt.CollectionOption) krt.Col
 		if pod == nil || podsource.SourceRef(r.options.ClusterID, string((*pod).UID)) != w.Source {
 			return nil
 		}
-		name := (*pod).Labels[podsource.LabelGatewayName]
+		name := (*pod).Spec.ServiceAccountName
 		if (*pod).UID != "" && name != "" && (*pod).Status.Phase != corev1.PodSucceeded &&
 			(*pod).Status.Phase != corev1.PodFailed {
-			// Gateway declarations and Pod gateway-name labels must be access-controlled.
+			// Match release-0.1: gateway namespace/name must match the Pod's ServiceAccount.
 			gateway := krt.FetchOne(ctx, r.Gateways, krt.FilterKey((*pod).Namespace+"/"+name))
 			if gateway != nil && gateway.ValidateForUse() == nil {
 				w.GatewayKey = gateway.ResourceName()

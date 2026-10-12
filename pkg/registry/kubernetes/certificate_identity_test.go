@@ -29,7 +29,7 @@ func TestCertificateAttestationBindsSourceAndGatewayMembership(t *testing.T) {
 	a := delegationPod("demo", "a", "shared", "node-a")
 	b := delegationPod("demo", "b", "shared", "node-a")
 	node := delegationPod("agentio-system", "ztunnel", "ztunnel", "node-a")
-	gateway := delegationPod("agentio-system", "gateway", "unrelated-bootstrap-sa", "node-a")
+	gateway := delegationPod("agentio-system", "gateway", "egress", "node-a")
 	lookalike := delegationPod("agentio-system", "lookalike", "unrelated-bootstrap-sa", "node-a")
 	lookalike.Labels = map[string]string{"gateway.networking.k8s.io/gateway-name": "different-gateway"}
 	a.UID, b.UID, node.UID, gateway.UID, lookalike.UID = "pod-a", "pod-b", "node-pod", "gateway-pod", "lookalike-pod"
@@ -80,8 +80,8 @@ func TestCertificateAttestationBindsSourceAndGatewayMembership(t *testing.T) {
 		{"unregistered principal", caller(a), attestation.CertificateTarget{Principal: mustTestPrincipal("cluster.local", "ns/demo/sa/app"), Workload: aid.Workload}, false},
 		{"same SA different pod", caller(a), bid, false},
 		{"gateway role forgery", caller(a), gid, false},
-		{"bound gateway with independent SA", caller(gateway), gid, true},
-		{"same SA non-member cannot claim gateway instance", caller(lookalike), gid, false},
+		{"bound gateway with matching SA", caller(gateway), gid, true},
+		{"non-member cannot claim gateway instance", caller(lookalike), gid, false},
 		{"non-member retains own workload identity", caller(lookalike), target(lookalike), true},
 		{"node-local delegation", caller(node), bid, true},
 		{"node-local eligible gateway delegation", caller(node), gid, true},

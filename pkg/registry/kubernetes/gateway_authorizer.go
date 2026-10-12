@@ -19,6 +19,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 // GatewayCertificateAuthorizer is the Kubernetes gateway certificate policy
@@ -49,6 +50,10 @@ func (a *GatewayCertificateAuthorizer) Authorize(scope model.ClientScope) error 
 	}
 	if scope.Class != model.ClientEgressGateway {
 		return fmt.Errorf("authorize gateway certificate: an egress gateway scope is required")
+	}
+	namespace, serviceAccount, ok := podsource.ServiceAccountFromPrincipal(scope.Principal)
+	if !ok || scope.GatewayKey != namespace+"/"+serviceAccount {
+		return fmt.Errorf("authorize gateway certificate: ServiceAccount does not match gateway namespace/name")
 	}
 	gateway := a.gateways.GetKey(scope.GatewayKey)
 	if gateway != nil && gateway.ValidateForUse() == nil {

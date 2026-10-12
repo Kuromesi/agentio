@@ -290,9 +290,42 @@ func TestGatewayCertificateAuthorizationUsesProvidedConfigurationSource(t *testi
 	}
 }
 
+func TestGatewayCertificateAuthorizationRequiresMatchingServiceAccount(t *testing.T) {
+	gateways := krt.NewStaticCollection[model.Gateway](nil, []model.Gateway{{
+		Namespace: "system",
+		Name:      "egress",
+		Config:    &configv1.EgressGateway{},
+		Source:    model.GatewaySourceGatewayAPI,
+	}}, krt.WithStop(t.Context().Done()))
+	authorizer := NewGatewayCertificateAuthorizer(gateways)
+	for _, tc := range []struct {
+		name      string
+		principal string
+		allow     bool
+	}{
+		{"matching ServiceAccount", "ns/system/sa/egress", true},
+		{"unrelated ServiceAccount", "ns/system/sa/attacker", false},
+		{"same ServiceAccount in another namespace", "ns/tenant/sa/egress", false},
+		{"non-ServiceAccount principal", "workloads/egress", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := model.ClientScope{
+				Class:       model.ClientEgressGateway,
+				GatewayKey:  "system/egress",
+				WorkloadUID: "test//Pod/system/gateway",
+				Source:      model.SourceRef{Registry: "kubernetes/test", Key: "gateway-pod"},
+				Principal:   mustTestPrincipal("cluster.local", tc.principal),
+			}
+			if err := authorizer.Authorize(scope); (err == nil) != tc.allow {
+				t.Fatalf("Authorize() = %v, want allow=%v", err, tc.allow)
+			}
+		})
+	}
+}
+
 func TestCertificateRolesUseRegistryMembership(t *testing.T) {
 	app := delegationPod("demo", "app", "shared", "node-a")
-	gateway := delegationPod("agentio-system", "gateway", "gateway", "node-a")
+	gateway := delegationPod("agentio-system", "gateway", "egress", "node-a")
 	gateway.Labels = map[string]string{"gateway.networking.k8s.io/gateway-name": "egress"}
 	lookalike := delegationPod("demo", "lookalike", "shared", "node-a")
 	lookalike.Labels = map[string]string{

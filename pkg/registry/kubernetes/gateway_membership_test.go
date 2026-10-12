@@ -43,7 +43,7 @@ func gatewayTestPeer(pod *corev1.Pod) model.PeerIdentity {
 
 func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testing.T) {
 	ctx := t.Context()
-	pod := delegationPod("system", "gateway", "independent-bootstrap", "node-a")
+	pod := delegationPod("system", "gateway", "egress", "node-a")
 	pod.UID = "first-pod"
 	pod.Labels = map[string]string{"app": "egress", "gateway.networking.k8s.io/gateway-name": "egress"}
 	// The proxy needs a certificate before readiness.
@@ -65,7 +65,7 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 	auth := r.DelegatedIdentityAuthorizer()
 	scopeResolver := r.PodScopeResolver(r.Workloads)
 	sds := r.GatewayCertificateAuthorizer()
-	gid := mustTestPrincipal("cluster.local", "ns/system/sa/independent-bootstrap")
+	gid := mustTestPrincipal("cluster.local", "ns/system/sa/egress")
 	oldPeer := gatewayTestPeer(pod)
 	if err := authorizeCertificate(auth, ctx, oldPeer, attestation.CertificateTarget{Principal: gid}); err != nil {
 		t.Fatal(err)
@@ -124,13 +124,12 @@ func TestGatewayMembershipIgnoresServiceSelectionAndTracksPodLifecycle(t *testin
 			Update(ctx, replacement, metav1.UpdateOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		wantGateway := name == "egress" || name == "other"
 		eventually(t, func() bool {
 			current, err := scopeResolver.ResolveScope(peer, "")
-			return err == nil && (current.Class == model.ClientEgressGateway) == wantGateway &&
-				(!wantGateway || current.GatewayKey == "system/"+name) &&
+			return err == nil && current.Class == model.ClientEgressGateway &&
+				current.GatewayKey == "system/egress" &&
 				sds.Authorize(established) == nil
-		}, "label updates affect new scopes without revalidating established scopes")
+		}, "label updates cannot change the gateway selected by the ServiceAccount")
 	}
 	replacement.DeletionTimestamp = &now
 	if _, err := r.client.CoreV1().
@@ -168,6 +167,7 @@ func TestGatewayMembershipRejectsAmbiguousAndUnregisteredPods(t *testing.T) {
 		{
 			name:                     "same SA without gateway label",
 			allowWorkloadCertificate: true,
+			allowGatewayScope:        true,
 			configure: func(p *corev1.Pod, _ *corev1.Service, _ *corev1.ConfigMap) []runtime.Object {
 				p.Labels = nil
 				return nil
@@ -207,6 +207,7 @@ func TestGatewayMembershipRejectsAmbiguousAndUnregisteredPods(t *testing.T) {
 		{
 			name:                     "label references unregistered gateway",
 			allowWorkloadCertificate: true,
+			allowGatewayScope:        true,
 			configure: func(p *corev1.Pod, _ *corev1.Service, _ *corev1.ConfigMap) []runtime.Object {
 				p.Labels["gateway.networking.k8s.io/gateway-name"] = "other"
 				return nil
@@ -220,6 +221,13 @@ func TestGatewayMembershipRejectsAmbiguousAndUnregisteredPods(t *testing.T) {
 				other.Name = "other"
 				c.Data["config"] += "- namespace: system\n  name: other\n"
 				return []runtime.Object{other}
+			}},
+		{
+			name:                     "gateway label with unrelated SA",
+			allowWorkloadCertificate: true,
+			configure: func(p *corev1.Pod, _ *corev1.Service, _ *corev1.ConfigMap) []runtime.Object {
+				p.Spec.ServiceAccountName = "unrelated"
+				return nil
 			}},
 		{
 			name: "terminating Pod",
@@ -267,6 +275,9 @@ func TestGatewayMembershipRejectsAmbiguousAndUnregisteredPods(t *testing.T) {
 			if gotGateway != tc.allowGatewayScope {
 				t.Fatalf("gateway scope: %+v %v, want allow=%v", scope, scopeErr, tc.allowGatewayScope)
 			}
+			if scopeErr == nil && (r.GatewayCertificateAuthorizer().Authorize(scope) == nil) != tc.allowGatewayScope {
+				t.Fatalf("gateway certificate authorization does not match membership: %+v", scope)
+			}
 			if p.Status.Phase != corev1.PodSucceeded {
 				w := r.Workloads.GetKey("test//Pod/" + p.Namespace + "/" + p.Name)
 				if w == nil {
@@ -289,7 +300,7 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "params"},
 		Data:       map[string]string{"config": "{}"},
 	}
-	pod := delegationPod("demo", "gateway", "different-sa", "node-a")
+	pod := delegationPod("demo", "gateway", "egress", "node-a")
 	pod.UID = "gateway-pod"
 	pod.Labels = map[string]string{"gateway.networking.k8s.io/gateway-name": "egress"}
 	class := ownedGatewayClass()
@@ -310,7 +321,7 @@ func TestGatewayAPIMembershipTracksGatewayAndClass(t *testing.T) {
 	}
 	client.Run(ctx.Done())
 	eventually(t, r.HasSynced, "registry sync")
-	gid := mustTestPrincipal("cluster.local", "ns/demo/sa/different-sa")
+	gid := mustTestPrincipal("cluster.local", "ns/demo/sa/egress")
 	auth := r.DelegatedIdentityAuthorizer()
 	peer := gatewayTestPeer(pod)
 	eventually(
