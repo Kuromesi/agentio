@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"google.golang.org/protobuf/proto"
 
@@ -56,28 +55,21 @@ func newWorkloadPolicies(
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[workloadPolicies] {
-	inlineByPod := krt.NewIndex(
-		inputs.SecurityProfiles,
-		"inlineSecurityProfilesByPod",
-		func(profile model.SecurityProfile) []string {
-			if !profile.Dedicated || profile.Namespace == "" || profile.Name == "" {
-				return nil
-			}
-			return []string{profile.Namespace + "/" + profile.Name}
-		},
-	)
+	sandboxesByWorkload := krt.NewIndex(inputs.Sandboxes, "sandboxesByWorkload", func(sandbox model.Sandbox) []string {
+		if sandbox.Attester == nil {
+			return nil
+		}
+		return []string{sandbox.Attester.WorkloadUID}
+	})
 	clearFailureOnSourceDelete(inputs.Workloads, failures, "WorkloadPolicies")
 	return krt.NewCollection(inputs.Workloads, func(ctx krt.HandlerContext, workload model.Workload) *workloadPolicies {
 		result, err := compileWorkloadPolicies(ctx, workload, policies)
-		if inputs.SandboxMode && strings.HasPrefix(workload.Source.Registry, "kubernetes/") {
-			// shortcut: release compatibility assumes same-name Pods; shared hosts need Sandbox-aware consumers.
-			for _, profile := range krt.Fetch(ctx, inputs.SecurityProfiles,
-				krt.FilterIndex(inlineByPod, workload.Namespace+"/"+workload.Name)) {
-				if compiled := krt.FetchOne(
-					ctx,
-					policies.sniPolicies,
-					krt.FilterKey(profile.ResourceName()),
-				); compiled != nil {
+		if inputs.SandboxMode {
+			sandboxes := krt.Fetch(ctx, inputs.Sandboxes, krt.FilterIndex(sandboxesByWorkload, workload.UID))
+			// shortcut: only project a single Sandbox; shared hosts need Sandbox-aware consumers.
+			if len(sandboxes) == 1 {
+				if compiled := krt.FetchOne(ctx, policies.sniPolicies,
+					krt.FilterKey(model.SandboxSecurityProfileName(sandboxes[0].UID))); compiled != nil {
 					result.appendSNI(compiled.Policy)
 				}
 			}
