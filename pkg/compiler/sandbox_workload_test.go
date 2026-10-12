@@ -200,7 +200,9 @@ func TestMultipleSandboxesShareWorkloadWithoutProjection(t *testing.T) {
 			model.Sandbox{UID: uid, Namespace: "demo", Attester: &model.Attester{WorkloadUID: host.UID}},
 		)
 		f.securityProfiles.UpdateObject(model.SecurityProfile{
-			Dedicated: true, SandboxUID: uid, Spec: compatibilitySecurity(uid + ".example"),
+			Dedicated:  true,
+			SandboxUID: uid,
+			Spec:       compatibilitySecurity(uid + ".example"),
 		})
 	}
 	eventually(t, func() bool {
