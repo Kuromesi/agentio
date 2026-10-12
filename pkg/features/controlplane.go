@@ -27,7 +27,7 @@ var (
 	SandboxMode = env.Register(
 		"AGENTIO_SANDBOX_MODE",
 		false,
-		"Enable Sandbox discovery and xDS resources. Sandbox-owned inline policies stay on Sandboxes; shared policies always remain on Workloads.",
+		"Enable Sandbox discovery and xDS resources. Inline SNI also projects to the bound Workload when it hosts one Sandbox for legacy compatibility; shared policies remain on Workloads.",
 	).Get()
 	// SandboxRuntimes selects integrations used when SandboxMode is enabled.
 	SandboxRuntimes = env.Register(

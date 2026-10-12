@@ -165,6 +165,9 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				}
 				sni := new(extensionsv1.SniTrafficPolicy)
 				wantSNIRules := 1
+				if sandboxMode && withSandbox {
+					wantSNIRules++
+				}
 				if !compatibilityExtension(t, wire, "sni-traffic-policy", sni) || len(sni.Rules) != wantSNIRules {
 					t.Fatalf("Workload SNI rules = %v, want %d", sni, wantSNIRules)
 				}

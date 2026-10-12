@@ -113,10 +113,10 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 			w, _ := compatibilityWorkload(t, snap, uid)
 			sni := &extensionsv1.SniTrafficPolicy{}
 			compatibilityExtension(t, w, "sni-traffic-policy", sni)
-			return len(w.GetAuthorizationPolicies()) == 1 && len(sni.Rules) == 0 &&
+			return len(w.GetAuthorizationPolicies()) == 1 && len(sni.Rules) == sniCount &&
 				len(manifestAt(t, f.compiler, s.UID).GetExtensions()) == sniCount &&
 				len(snap.List(model.SniTrafficPolicyType)) == 0
-		}, "Sandbox owns inline SNI while Workload retains shared policy")
+		}, "Sandbox inline SNI projects to its host alongside shared policy")
 		return snap
 	}
 	initial := await(a.UID, 1)
@@ -144,7 +144,10 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 	}
 	security.Spec = compatibilitySecurity("*bad.example")
 	f.securityProfiles.UpdateObject(security)
-	await(a.UID, 0)
+	eventually(t, func() bool {
+		return f.compiler.Failures()["SecurityProfile/"+security.ResourceName()] != ""
+	}, "invalid SNI retains the last valid policy")
+	await(a.UID, 1)
 	if manifestAt(t, f.compiler, s.UID) == nil {
 		t.Fatal("SNI failure removed Sandbox")
 	}
@@ -168,8 +171,9 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 	f.sandboxes.UpdateObject(s)
 	eventually(t, func() bool {
 		w, _ := compatibilityWorkload(t, currentSnapshot(t, f.compiler), b.UID)
-		return len(w.GetAuthorizationPolicies()) == 1
-	}, "unbind preserves shared Workload references")
+		return len(w.GetAuthorizationPolicies()) == 1 &&
+			!compatibilityExtension(t, w, "sni-traffic-policy", new(extensionsv1.SniTrafficPolicy))
+	}, "unbind withdraws inline SNI and preserves shared Workload references")
 	s.Attester = &model.Attester{WorkloadUID: b.UID}
 	f.sandboxes.UpdateObject(s)
 	await(b.UID, 1)
@@ -182,7 +186,8 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 				return false
 			}
 		}
-		return len(w.GetAuthorizationPolicies()) == 1 && len(snap.List(model.SandboxType)) == 0
+		return len(w.GetAuthorizationPolicies()) == 1 && len(snap.List(model.SandboxType)) == 0 &&
+			!compatibilityExtension(t, w, "sni-traffic-policy", new(extensionsv1.SniTrafficPolicy))
 	}, "deleting a Sandbox preserves shared Workload policies")
 }
 
@@ -194,6 +199,11 @@ func TestMultipleSandboxesShareWorkloadWithoutProjection(t *testing.T) {
 		f.sandboxes.UpdateObject(
 			model.Sandbox{UID: uid, Namespace: "demo", Attester: &model.Attester{WorkloadUID: host.UID}},
 		)
+		f.securityProfiles.UpdateObject(model.SecurityProfile{
+			Dedicated:  true,
+			SandboxUID: uid,
+			Spec:       compatibilitySecurity(uid + ".example"),
+		})
 	}
 	eventually(t, func() bool {
 		snapshot := currentSnapshot(t, f.compiler)
@@ -201,15 +211,21 @@ func TestMultipleSandboxesShareWorkloadWithoutProjection(t *testing.T) {
 		if w == nil || len(snapshot.List(model.SandboxType)) != 2 || len(w.GetAuthorizationPolicies()) != 0 {
 			return false
 		}
-		return len(snapshot.List(model.WorkloadAuthorizationType)) == 0 && len(f.compiler.Failures()) == 0
+		return len(snapshot.List(model.WorkloadAuthorizationType)) == 0 && len(f.compiler.Failures()) == 0 &&
+			!compatibilityExtension(t, w, "sni-traffic-policy", new(extensionsv1.SniTrafficPolicy)) &&
+			len(manifestAt(t, f.compiler, "a").GetExtensions()) == 1 &&
+			len(manifestAt(t, f.compiler, "b").GetExtensions()) == 1
 	}, "multiple Sandboxes do not require Workload projection")
 	f.sandboxes.DeleteObject("b")
 	eventually(t, func() bool {
 		w, _ := compatibilityWorkload(t, currentSnapshot(t, f.compiler), host.UID)
 		refs := new(extensionsv1.PolicyReference)
+		sni := new(extensionsv1.SniTrafficPolicy)
 		return compatibilityExtension(t, w, "traffic-policy-reference", refs) &&
-			len(refs.ResourceNames) == 0 && len(f.compiler.Failures()) == 0
-	}, "Sandbox deletion preserves empty native Workload binding")
+			len(refs.ResourceNames) == 0 && len(f.compiler.Failures()) == 0 &&
+			compatibilityExtension(t, w, "sni-traffic-policy", sni) &&
+			len(sni.Rules) == 1 && slices.Equal(sni.Rules[0].GetMatch().GetSni(), []string{"a.example"})
+	}, "single remaining Sandbox projects SNI without changing native Workload bindings")
 }
 
 // Shared policy rules must not be copied into one Authorization per Workload.
@@ -276,4 +292,126 @@ func TestLegacyTrafficPolicySharedAcrossWorkloads(t *testing.T) {
 		}
 		return true
 	}, "deletion withdraws selector policy while retaining baselines")
+}
+
+func TestSandboxInlineSNIHostProjection(t *testing.T) {
+	f := newIncrementalFixture(t)
+	target := testWorkload("demo", "sandbox", "10.0.0.1")
+	target.Source = model.SourceRef{Registry: "kubernetes/cluster", Key: "pod-uid"}
+	other := testWorkload("demo", "other", "10.0.0.2")
+	other.Source = model.SourceRef{Registry: target.Source.Registry, Key: "other-uid"}
+	other.Labels = target.Labels
+	crossNamespace := testWorkload("elsewhere", target.Name, "10.0.0.3")
+	crossNamespace.Source = model.SourceRef{Registry: target.Source.Registry, Key: "cross-namespace-uid"}
+	nonPod := target
+	nonPod.UID, nonPod.Source = "external", model.SourceRef{Registry: "external", Key: "external"}
+	for _, w := range []model.Workload{target, other, crossNamespace, nonPod} {
+		f.workloads.UpdateObject(w)
+	}
+	// Inline rules must follow even the lowest-precedence shared profile.
+	maxPriority := int32(1<<31 - 1)
+	shared := model.SecurityProfile{
+		Name:      target.Name,
+		Namespace: target.Namespace,
+		Spec:      compatibilitySecurity("shared.example"),
+	}
+	shared.Spec.Priority = &maxPriority
+	f.securityProfiles.UpdateObject(shared)
+	sharedActive := true
+	// Policy names do not establish host bindings. Start with an unassigned Sandbox.
+	sandbox := model.Sandbox{
+		UID:       "kruise:delivery-id",
+		Namespace: target.Namespace,
+	}
+	f.sandboxes.UpdateObject(sandbox)
+	inline := model.SecurityProfile{
+		Dedicated:  true,
+		SandboxUID: sandbox.UID,
+		Name:       target.Name,
+		Namespace:  target.Namespace,
+	}
+	projectedUID := ""
+	check := func(host string) {
+		t.Helper()
+		eventually(t, func() bool {
+			snapshot := currentSnapshot(t, f.compiler)
+			for _, w := range []model.Workload{target, other, crossNamespace, nonPod} {
+				wire, _ := compatibilityWorkload(t, snapshot, w.UID)
+				if wire == nil {
+					return false
+				}
+				payload := new(extensionsv1.SniTrafficPolicy)
+				compatibilityExtension(t, wire, "sni-traffic-policy", payload)
+				var want []string
+				if sharedActive && w.Namespace == target.Namespace {
+					want = append(want, "shared.example")
+				}
+				if w.UID == projectedUID && host != "" {
+					want = append(want, host)
+				}
+				var got []string
+				for _, rule := range payload.Rules {
+					if rule.Action != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION {
+						t.Fatalf("unexpected SNI action: %v", rule.Action)
+					}
+					got = append(got, rule.GetMatch().GetSni()...)
+				}
+				if !slices.Equal(got, want) {
+					return false
+				}
+			}
+			manifest := manifestAt(t, f.compiler, sandbox.UID)
+			if manifest == nil {
+				return false
+			}
+			if host == "" {
+				return len(manifest.Extensions) == 0
+			}
+			if len(manifest.Extensions) != 1 {
+				return false
+			}
+			payload := new(extensionsv1.SniTrafficPolicy)
+			if err := manifest.Extensions[0].UnmarshalTo(payload); err != nil {
+				t.Fatal(err)
+			}
+			return len(payload.Rules) == 1 && slices.Equal(payload.Rules[0].GetMatch().GetSni(), []string{host})
+		}, "legacy Workload and native Sandbox SNI agree without leaking inline rules")
+	}
+	check("")
+	for _, host := range []string{"first.example", "updated.example"} {
+		inline.Spec = compatibilitySecurity(host)
+		f.securityProfiles.UpdateObject(inline)
+		check(host)
+	}
+	// Bind to a differently named Workload: follow the recorded relation, not the profile name.
+	sandbox.Attester = &model.Attester{WorkloadUID: other.UID}
+	f.sandboxes.UpdateObject(sandbox)
+	projectedUID = other.UID
+	check("updated.example")
+	// Even a second Sandbox without inline rules makes this a shared host.
+	second := model.Sandbox{UID: "second", Attester: &model.Attester{WorkloadUID: other.UID}}
+	f.sandboxes.UpdateObject(second)
+	projectedUID = ""
+	check("updated.example")
+	f.sandboxes.DeleteObject(second.UID)
+	projectedUID = other.UID
+	check("updated.example")
+	inline.Spec = compatibilitySecurity("*bad.example")
+	f.securityProfiles.UpdateObject(inline)
+	eventually(t, func() bool {
+		return f.compiler.Failures()["SecurityProfile/"+inline.ResourceName()] != ""
+	}, "invalid inline SNI was processed")
+	check("updated.example")
+	inline.Spec = compatibilitySecurity("http.example")
+	inline.Spec.Rules[0].Match[0].Schemes = []string{"http"}
+	f.securityProfiles.UpdateObject(inline)
+	check("")
+	inline.Spec = compatibilitySecurity("restored.example")
+	f.securityProfiles.UpdateObject(inline)
+	check("restored.example")
+	f.securityProfiles.DeleteObject(shared.ResourceName())
+	sharedActive = false
+	check("restored.example")
+	f.securityProfiles.DeleteObject(inline.ResourceName())
+	check("")
 }

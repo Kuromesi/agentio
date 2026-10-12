@@ -29,7 +29,7 @@ import (
 )
 
 // workloadPolicies is computed once per Workload and shared by all ADS clients.
-// System policy selection is independent of Sandbox discovery and lifecycle.
+// Legacy inline SNI is appended after shared policy selection.
 type workloadPolicies struct {
 	WorkloadUID        string
 	TrafficPolicyNames []string
@@ -55,9 +55,25 @@ func newWorkloadPolicies(
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[workloadPolicies] {
+	sandboxesByWorkload := krt.NewIndex(inputs.Sandboxes, "sandboxesByWorkload", func(sandbox model.Sandbox) []string {
+		if sandbox.Attester == nil {
+			return nil
+		}
+		return []string{sandbox.Attester.WorkloadUID}
+	})
 	clearFailureOnSourceDelete(inputs.Workloads, failures, "WorkloadPolicies")
 	return krt.NewCollection(inputs.Workloads, func(ctx krt.HandlerContext, workload model.Workload) *workloadPolicies {
 		result, err := compileWorkloadPolicies(ctx, workload, policies)
+		if inputs.SandboxMode {
+			sandboxes := krt.Fetch(ctx, inputs.Sandboxes, krt.FilterIndex(sandboxesByWorkload, workload.UID))
+			// shortcut: only project a single Sandbox; shared hosts need Sandbox-aware consumers.
+			if len(sandboxes) == 1 {
+				if compiled := krt.FetchOne(ctx, policies.sniPolicies,
+					krt.FilterKey(model.SandboxSecurityProfileName(sandboxes[0].UID))); compiled != nil {
+					result.appendSNI(compiled.Policy)
+				}
+			}
+		}
 		currentInput := func() bool {
 			current := inputs.Workloads.GetKey(workload.UID)
 			return current != nil && current.Equals(workload)
