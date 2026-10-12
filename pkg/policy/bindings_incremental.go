@@ -239,7 +239,9 @@ func (s *incrementalBindings) updatePolicy(key string, current *PolicyAttachment
 		}
 		updates = append(updates, *bindingsFromMatches(uid, matched))
 	}
-	s.output.ConditionalUpdateObjects(updates...)
+	for _, binding := range updates {
+		s.output.ConditionalUpdateObject(binding)
+	}
 }
 
 func (s *incrementalBindings) selectPolicyTargets(current PolicyAttachment, selected map[string]bool) {

@@ -92,7 +92,7 @@ func TestIncrementalStopsBeforeInputSync(t *testing.T) {
 	}
 }
 
-func TestIncrementalPolicyPublishesOneBatch(t *testing.T) {
+func TestIncrementalPolicyUpdatesAllTargets(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
 	opts := []krt.CollectionOption{krt.WithStop(stop)}
@@ -104,7 +104,7 @@ func TestIncrementalPolicyPublishesOneBatch(t *testing.T) {
 	bindings := NewWorkloadPolicyBindingsCollection(
 		workloads,
 		policies.AsCollection(),
-		krt.NewOptionsBuilder(stop, "batch", nil),
+		krt.NewOptionsBuilder(stop, "all-targets", nil),
 	)
 	if !bindings.WaitUntilSynced(stop) {
 		t.Fatal("sync failed")
@@ -123,18 +123,25 @@ func TestIncrementalPolicyPublishesOneBatch(t *testing.T) {
 		} else {
 			policies.DeleteObject(p.ResourceName())
 		}
-		select {
-		case es := <-batches:
-			if len(es) != 2 {
-				t.Fatalf("got %d events, want one two-workload batch", len(es))
-			}
-			for _, e := range es {
-				if got := len(e.Latest().PolicyNames(PolicyKindTrafficPolicy)); (got == 1) != add {
-					t.Fatalf("wrong membership: %v", e)
+		seen := make(map[string]bool)
+		timeout := time.After(time.Second)
+		for len(seen) < 2 {
+			select {
+			case es := <-batches:
+				for _, e := range es {
+					binding := e.Latest()
+					if binding.TargetUID != "a" && binding.TargetUID != "b" || seen[binding.TargetUID] {
+						t.Fatalf("unexpected or duplicate target: %v", binding)
+					}
+					names := binding.PolicyNames(PolicyKindTrafficPolicy)
+					if add && (len(names) != 1 || names[0] != p.Name) || !add && len(names) != 0 {
+						t.Fatalf("wrong membership: %v", e)
+					}
+					seen[binding.TargetUID] = true
 				}
+			case <-timeout:
+				t.Fatalf("missing policy updates; received targets: %v", seen)
 			}
-		case <-time.After(time.Second):
-			t.Fatal("missing policy batch")
 		}
 	}
 }
