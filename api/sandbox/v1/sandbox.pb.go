@@ -54,7 +54,7 @@ type Sandbox struct {
 	// Evaluated before the host Workload policies. DENY rejects the connection;
 	// ALLOW continues to Workload policy evaluation.
 	TrafficPolicy *v1.TrafficPolicy `protobuf:"bytes,3,opt,name=traffic_policy,json=trafficPolicy,proto3" json:"traffic_policy,omitempty"`
-	// Inline extension policy bodies, replaced atomically with this Sandbox.
+	// Extension policy bodies and bindings, replaced atomically with this Sandbox.
 	// Entries of the same type retain their evaluation order. Different types
 	// define their own execution stages; list order does not order those stages.
 	// Consumers must reject this Sandbox update if any extension is unsupported

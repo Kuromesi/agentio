@@ -114,7 +114,7 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 			sni := &extensionsv1.SniTrafficPolicy{}
 			compatibilityExtension(t, w, "sni-traffic-policy", sni)
 			return len(w.GetAuthorizationPolicies()) == 1 && len(sni.Rules) == sniCount &&
-				len(manifestAt(t, f.compiler, s.UID).GetExtensions()) == sniCount &&
+				len(manifestAt(t, f.compiler, s.UID).GetExtensions()) == sniCount+1 &&
 				len(snap.List(model.SniTrafficPolicyType)) == 0
 		}, "Sandbox inline SNI projects to its host alongside shared policy")
 		return snap
@@ -213,8 +213,8 @@ func TestMultipleSandboxesShareWorkloadWithoutProjection(t *testing.T) {
 		}
 		return len(snapshot.List(model.WorkloadAuthorizationType)) == 0 && len(f.compiler.Failures()) == 0 &&
 			!compatibilityExtension(t, w, "sni-traffic-policy", new(extensionsv1.SniTrafficPolicy)) &&
-			len(manifestAt(t, f.compiler, "a").GetExtensions()) == 1 &&
-			len(manifestAt(t, f.compiler, "b").GetExtensions()) == 1
+			len(manifestAt(t, f.compiler, "a").GetExtensions()) == 2 &&
+			len(manifestAt(t, f.compiler, "b").GetExtensions()) == 2
 	}, "multiple Sandboxes do not require Workload projection")
 	f.sandboxes.DeleteObject("b")
 	eventually(t, func() bool {
@@ -365,9 +365,9 @@ func TestSandboxInlineSNIHostProjection(t *testing.T) {
 				return false
 			}
 			if host == "" {
-				return len(manifest.Extensions) == 0
+				return len(manifest.Extensions) == 1
 			}
-			if len(manifest.Extensions) != 1 {
+			if len(manifest.Extensions) != 2 {
 				return false
 			}
 			payload := new(extensionsv1.SniTrafficPolicy)

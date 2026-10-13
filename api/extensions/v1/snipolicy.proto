@@ -18,14 +18,17 @@ package kruise.networking.extensions.v1;
 
 option go_package = "github.com/openkruise/agentio/api/extensions/v1;extensionsv1";
 
-// PolicyReference is attached to istio.workload.Workload through one generic
-// Extension per policy type. The parent Workload supplies the target identity.
+// PolicyReference carries ordered bindings for one policy type on a Workload
+// or Sandbox. The enclosing resource supplies the target identity.
 message PolicyReference {
-  // Full xDS TypeURL used to subscribe to and decode the named resources.
+  // TypeURL identifies the referenced resource type; it does not guarantee that
+  // the server supports xDS subscriptions for that type. Consumers resolve
+  // bodies through the source supported for that type.
   string type_url = 1;
 
   // Ordered according to the source policy API. The data plane evaluates the
   // referenced resources in this order and does not apply its own tie-breaks.
+  // An empty list means no policies apply; an unresolved reference does not.
   repeated string resource_names = 2;
 }
 

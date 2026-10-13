@@ -31,12 +31,13 @@ import (
 // workloadPolicies is computed once per Workload and shared by all ADS clients.
 // Legacy inline SNI is appended after shared policy selection.
 type workloadPolicies struct {
-	WorkloadUID        string
-	TrafficPolicyNames []string
-	AuthorizationNames []string
-	SNIPolicy          *extensionsv1.SniTrafficPolicy
-	EgressPolicies     *extensionsv1.EgressPolicies
-	GatewayReferences  []string
+	WorkloadUID          string
+	TrafficPolicyNames   []string
+	SecurityProfileNames []string
+	AuthorizationNames   []string
+	SNIPolicy            *extensionsv1.SniTrafficPolicy
+	EgressPolicies       *extensionsv1.EgressPolicies
+	GatewayReferences    []string
 }
 
 func (p workloadPolicies) ResourceName() string { return p.WorkloadUID }
@@ -44,6 +45,7 @@ func (p workloadPolicies) ResourceName() string { return p.WorkloadUID }
 func (p workloadPolicies) Equals(other workloadPolicies) bool {
 	return p.WorkloadUID == other.WorkloadUID &&
 		slices.Equal(p.TrafficPolicyNames, other.TrafficPolicyNames) &&
+		slices.Equal(p.SecurityProfileNames, other.SecurityProfileNames) &&
 		slices.Equal(p.AuthorizationNames, other.AuthorizationNames) &&
 		slices.Equal(p.GatewayReferences, other.GatewayReferences) &&
 		proto.Equal(p.SNIPolicy, other.SNIPolicy) && proto.Equal(p.EgressPolicies, other.EgressPolicies)
@@ -68,9 +70,9 @@ func newWorkloadPolicies(
 			sandboxes := krt.Fetch(ctx, inputs.Sandboxes, krt.FilterIndex(sandboxesByWorkload, workload.UID))
 			// shortcut: only project a single Sandbox; shared hosts need Sandbox-aware consumers.
 			if len(sandboxes) == 1 {
-				if compiled := krt.FetchOne(ctx, policies.sniPolicies,
+				if compiled := krt.FetchOne(ctx, policies.securityProfiles,
 					krt.FilterKey(model.SandboxSecurityProfileName(sandboxes[0].UID))); compiled != nil {
-					result.appendSNI(compiled.Policy)
+					result.appendSNI(compiled.SNIPolicy)
 				}
 			}
 		}
@@ -97,6 +99,7 @@ func compileWorkloadPolicies(
 	if bindings == nil {
 		return result, nil
 	}
+	result.SecurityProfileNames = append([]string(nil), bindings.PolicyNames(model.PolicyKindSecurityProfile)...)
 	var policyErr error
 	// Preserve the complete ordered binding, including global and namespace
 	// policies. A temporarily missing body must not silently remove its reference.
@@ -109,13 +112,13 @@ func compileWorkloadPolicies(
 		}
 		result.addAuthorizationReferences(compiled)
 	}
-	for _, name := range bindings.PolicyNames(model.PolicyKindSNIPolicy) {
-		compiled := krt.FetchOne(ctx, policies.sniPolicies, krt.FilterKey(name))
+	for _, name := range result.SecurityProfileNames {
+		compiled := krt.FetchOne(ctx, policies.securityProfiles, krt.FilterKey(name))
 		if compiled == nil {
-			policyErr = errors.Join(policyErr, fmt.Errorf("SNI policy %q is unavailable", name))
+			policyErr = errors.Join(policyErr, fmt.Errorf("SecurityProfile %q is unavailable", name))
 			continue
 		}
-		result.appendSNI(compiled.Policy)
+		result.appendSNI(compiled.SNIPolicy)
 	}
 	if names := bindings.PolicyNames(model.PolicyKindEgressPolicy); len(names) > 0 {
 		compiled := krt.Fetch(ctx, policies.egressPolicies, krt.FilterKeys(append([]string(nil), names...)...))

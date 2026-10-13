@@ -223,7 +223,7 @@ func TestPolicyBindings(t *testing.T) {
 	}
 	attachments := []PolicyAttachment{
 		{
-			Kind: PolicyKindSNIPolicy,
+			Kind: PolicyKindSecurityProfile,
 			Name: "explicit",
 			Target: AttachmentTarget{
 				Namespaces: []string{"unrelated"},
@@ -231,7 +231,7 @@ func TestPolicyBindings(t *testing.T) {
 			Priority: 20,
 		},
 		{
-			Kind: PolicyKindSNIPolicy,
+			Kind: PolicyKindSecurityProfile,
 			Name: "global",
 			Target: AttachmentTarget{
 				Global: true,
@@ -239,7 +239,7 @@ func TestPolicyBindings(t *testing.T) {
 			Priority: 20,
 		},
 		{
-			Kind: PolicyKindSNIPolicy,
+			Kind: PolicyKindSecurityProfile,
 			Name: "demo",
 			Target: AttachmentTarget{
 				Namespaces: []string{"demo"},
@@ -247,7 +247,7 @@ func TestPolicyBindings(t *testing.T) {
 			Priority: 20,
 		},
 		{
-			Kind: PolicyKindSNIPolicy,
+			Kind: PolicyKindSecurityProfile,
 			Name: "selector",
 			Target: AttachmentTarget{
 				Global: true,
@@ -289,23 +289,23 @@ func TestPolicyBindings(t *testing.T) {
 		t.Fatalf("demo egress names = %v, want %v", got, want)
 	}
 	if got, want := demoBinding.PolicyNames(
-		PolicyKindSNIPolicy,
+		PolicyKindSecurityProfile,
 	), []string{
-		"selector",
 		"demo",
 		"global",
+		"selector",
 	}; !reflect.DeepEqual(
 		got,
 		want,
 	) {
-		t.Fatalf("demo SNI names = %v, want %v", got, want)
+		t.Fatalf("demo SecurityProfile names = %v, want %v", got, want)
 	}
 	if got, want := []PolicyKind{
 		demoBinding.Groups[0].Kind,
 		demoBinding.Groups[1].Kind,
 	}, []PolicyKind{
 		PolicyKindEgressPolicy,
-		PolicyKindSNIPolicy,
+		PolicyKindSecurityProfile,
 	}; !reflect.DeepEqual(
 		got,
 		want,
@@ -317,8 +317,15 @@ func TestPolicyBindings(t *testing.T) {
 	if otherBinding == nil {
 		t.Fatal("other binding is missing")
 	}
-	if got, want := otherBinding.PolicyNames(PolicyKindSNIPolicy), []string{"global"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("other SNI names = %v, want %v", got, want)
+	if got, want := otherBinding.PolicyNames(
+		PolicyKindSecurityProfile,
+	), []string{
+		"global",
+	}; !reflect.DeepEqual(
+		got,
+		want,
+	) {
+		t.Fatalf("other SecurityProfile names = %v, want %v", got, want)
 	}
 	if got := otherBinding.PolicyNames(PolicyKindEgressPolicy); len(got) != 0 {
 		t.Fatalf("other egress names = %v, want none", got)

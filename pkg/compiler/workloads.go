@@ -46,8 +46,10 @@ func newWorkloadResources(
 			var egressGatewayKeys, trafficPolicyNames, authorizationNames []string
 			var egressPolicies *extensionsv1.EgressPolicies
 			var sniPolicy *extensionsv1.SniTrafficPolicy
+			var securityProfileNames []string
 			if selected := krt.FetchOne(ctx, workloadPolicies, krt.FilterKey(workload.UID)); selected != nil {
 				trafficPolicyNames = selected.TrafficPolicyNames
+				securityProfileNames = selected.SecurityProfileNames
 				authorizationNames = selected.AuthorizationNames
 				sniPolicy = selected.SNIPolicy
 				egressPolicies = selected.EgressPolicies
@@ -100,15 +102,16 @@ func newWorkloadResources(
 			}
 			currentMetadataConfiguration := krt.FetchOne(ctx, metadataConfiguration.AsCollection())
 			projection := wdsProjection{
-				ClusterID:          inputs.ClusterID,
-				Workload:           workload,
-				SNIPolicy:          sniPolicy,
-				EgressPolicies:     egressPolicies,
-				AuthorizationNames: authorizationNames,
-				TrafficPolicyNames: trafficPolicyNames,
-				Endpoints:          endpoints,
-				Services:           services,
-				EgressGatewayKeys:  egressGatewayKeys,
+				ClusterID:            inputs.ClusterID,
+				Workload:             workload,
+				SNIPolicy:            sniPolicy,
+				EgressPolicies:       egressPolicies,
+				AuthorizationNames:   authorizationNames,
+				TrafficPolicyNames:   trafficPolicyNames,
+				SecurityProfileNames: securityProfileNames,
+				Endpoints:            endpoints,
+				Services:             services,
+				EgressGatewayKeys:    egressGatewayKeys,
 			}
 			projection.MetadataConfiguration = currentMetadataConfiguration
 			resource, err := buildWDSAddress(projection)

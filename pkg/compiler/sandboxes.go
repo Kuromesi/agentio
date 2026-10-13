@@ -15,6 +15,7 @@
 package compiler
 
 import (
+	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
@@ -23,11 +24,12 @@ import (
 // Runtime metadata and policies are published independently. SNI compilation
 // retains the last valid policy on failed updates, matching legacy EPE behavior.
 func newSandboxResources(
-	sandboxes krt.Collection[model.Sandbox],
+	inputs Inputs,
 	policies policyCollections,
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[model.Resource] {
+	sandboxes := inputs.Sandboxes
 	for _, kind := range []string{"SandboxResource", "SandboxInlinePolicies"} {
 		clearFailureOnSourceDelete(sandboxes, failures, kind)
 	}
@@ -55,18 +57,27 @@ func newSandboxResources(
 			payload.TrafficPolicy = compiled.Policy
 		}
 		var inlineErr error
-		if compiled := krt.FetchOne(
-			ctx,
-			policies.sniPolicies,
-			krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID)),
-		); compiled != nil {
-			extension, err := marshalDeterministicAny(compiled.Policy)
+		profile := krt.FetchOne(ctx, policies.securityProfiles,
+			krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID)))
+		if profile != nil && len(profile.SNIPolicy.GetRules()) > 0 {
+			extension, err := marshalDeterministicAny(profile.SNIPolicy)
 			inlineErr = err
 			if err == nil {
 				payload.Extensions = append(payload.Extensions, extension)
 			}
 		}
 		record("SandboxInlinePolicies", inlineErr)
+
+		references := &extensionsv1.PolicyReference{TypeUrl: model.SecurityProfileType}
+		if profile != nil {
+			references.ResourceNames = []string{profile.ResourceName()}
+		}
+		extension, err := marshalDeterministicAny(references)
+		if err != nil {
+			record("SandboxResource", err)
+			return nil
+		}
+		payload.Extensions = append(payload.Extensions, extension)
 
 		facts := &model.SandboxResourceFacts{AttesterWorkloadUID: payload.GetAttester().GetWorkloadUid()}
 		value, err := marshalDeterministicAny(payload)

@@ -61,8 +61,8 @@ func BenchmarkWorkloadPolicyProjection(b *testing.B) {
 				b.Fatal(err)
 			}
 			policies := policyCollections{
-				trafficPolicies: krt.NewStaticCollection(nil, []policy.CompiledTrafficPolicy{compiled}, opts...),
-				sniPolicies:     krt.NewStaticCollection[policy.CompiledSNIPolicy](nil, nil, opts...),
+				trafficPolicies:  krt.NewStaticCollection(nil, []policy.CompiledTrafficPolicy{compiled}, opts...),
+				securityProfiles: krt.NewStaticCollection[policy.CompiledSecurityProfile](nil, nil, opts...),
 				policyBindings: krt.NewStaticCollection(nil, []policy.Bindings{
 					{
 						TargetUID: workload.UID,

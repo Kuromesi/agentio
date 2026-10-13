@@ -44,6 +44,7 @@ type wdsProjection struct {
 	EgressPolicies        *extensionsv1.EgressPolicies
 	AuthorizationNames    []string
 	TrafficPolicyNames    []string
+	SecurityProfileNames  []string
 	MetadataConfiguration *workloadMetadataConfiguration
 	EgressGatewayKeys     []string
 }
@@ -120,6 +121,18 @@ func buildWDSAddress(input wdsProjection) (*model.Resource, error) {
 	wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
 		Name:   "traffic-policy-reference",
 		Config: trafficPolicyRefs,
+	})
+
+	config, err := marshalDeterministicAny(&extensionsv1.PolicyReference{
+		TypeUrl:       model.SecurityProfileType,
+		ResourceNames: append([]string(nil), input.SecurityProfileNames...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal security profile references for workload %s: %w", input.Workload.UID, err)
+	}
+	wireWorkload.Extensions = append(wireWorkload.Extensions, &workloadv1.Extension{
+		Name:   "security-profile-reference",
+		Config: config,
 	})
 
 	if input.EgressPolicies != nil {
