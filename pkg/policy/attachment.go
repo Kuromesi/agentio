@@ -41,9 +41,9 @@ type PolicyKind = model.PolicyKind
 
 // Supported policy families for attachments.
 const (
-	PolicyKindTrafficPolicy = model.PolicyKindTrafficPolicy
-	PolicyKindEgressPolicy  = model.PolicyKindEgressPolicy
-	PolicyKindSNIPolicy     = model.PolicyKindSNIPolicy
+	PolicyKindTrafficPolicy   = model.PolicyKindTrafficPolicy
+	PolicyKindEgressPolicy    = model.PolicyKindEgressPolicy
+	PolicyKindSecurityProfile = model.PolicyKindSecurityProfile
 )
 
 // AttachmentTarget describes selector-derived policy attachment (global, namespaces, or label selector).
@@ -214,7 +214,8 @@ func policyAttachmentLess(left, right PolicyAttachment) bool {
 		}
 		return left.Name < right.Name
 	}
-	if left.specificity() != right.specificity() {
+	// SecurityProfile ordering matches EPE; selector specificity is not a tie-break.
+	if left.Kind != PolicyKindSecurityProfile && left.specificity() != right.specificity() {
 		return left.specificity() > right.specificity()
 	}
 	if !left.CreationTime.Equal(right.CreationTime) {

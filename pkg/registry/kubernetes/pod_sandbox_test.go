@@ -266,7 +266,7 @@ func TestPodPoliciesReachWorkloadsWithoutSandboxes(t *testing.T) {
 				for _, name := range []string{"injected", "ambient"} {
 					w := getWorkload(name)
 					if w == nil || !slices.Equal(w.AuthorizationPolicies, []string{"demo/selected-egress"}) ||
-						len(w.Extensions) != 4 {
+						len(w.Extensions) != 5 {
 						return false
 					}
 					if !slices.Equal(c.PolicyNames(w.Uid, model.PolicyKindTrafficPolicy), refs) {
@@ -282,7 +282,7 @@ func TestPodPoliciesReachWorkloadsWithoutSandboxes(t *testing.T) {
 			}
 			eventually(t, func() bool {
 				w := getWorkload("ambient")
-				return w != nil && len(w.AuthorizationPolicies) == 0 && len(w.Extensions) == 3 &&
+				return w != nil && len(w.AuthorizationPolicies) == 0 && len(w.Extensions) == 4 &&
 					slices.Equal(c.PolicyNames(w.Uid, model.PolicyKindTrafficPolicy), []string{refs[0], refs[2]})
 			}, "Pod label updates reselect Workload policies")
 		})

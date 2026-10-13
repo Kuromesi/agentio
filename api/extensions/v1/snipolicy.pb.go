@@ -87,14 +87,17 @@ func (SniAction) EnumDescriptor() ([]byte, []int) {
 	return file_api_extensions_v1_snipolicy_proto_rawDescGZIP(), []int{0}
 }
 
-// PolicyReference is attached to istio.workload.Workload through one generic
-// Extension per policy type. The parent Workload supplies the target identity.
+// PolicyReference carries ordered bindings for one policy type on a Workload
+// or Sandbox. The enclosing resource supplies the target identity.
 type PolicyReference struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Full xDS TypeURL used to subscribe to and decode the named resources.
+	// TypeURL identifies the referenced resource type; it does not guarantee that
+	// the server supports xDS subscriptions for that type. Consumers resolve
+	// bodies through the source supported for that type.
 	TypeUrl string `protobuf:"bytes,1,opt,name=type_url,json=typeUrl,proto3" json:"type_url,omitempty"`
 	// Ordered according to the source policy API. The data plane evaluates the
 	// referenced resources in this order and does not apply its own tie-breaks.
+	// An empty list means no policies apply; an unresolved reference does not.
 	ResourceNames []string `protobuf:"bytes,2,rep,name=resource_names,json=resourceNames,proto3" json:"resource_names,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

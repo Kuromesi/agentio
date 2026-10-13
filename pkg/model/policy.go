@@ -28,9 +28,9 @@ type PolicyKind string
 
 // Supported shared policy families.
 const (
-	PolicyKindTrafficPolicy PolicyKind = "traffic-policy"
-	PolicyKindEgressPolicy  PolicyKind = "egress-policy"
-	PolicyKindSNIPolicy     PolicyKind = "sni-policy"
+	PolicyKindTrafficPolicy   PolicyKind = "traffic-policy"
+	PolicyKindEgressPolicy    PolicyKind = "egress-policy"
+	PolicyKindSecurityProfile PolicyKind = "security-profile"
 )
 
 // PolicyRef identifies a shared policy by family and resource name.
@@ -45,7 +45,7 @@ func (r PolicyRef) ResourceName() string { return string(r.Kind) + "|" + r.Name 
 // Validate checks that the reference has a supported family and a nonempty name.
 func (r PolicyRef) Validate() error {
 	switch r.Kind {
-	case PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSNIPolicy:
+	case PolicyKindTrafficPolicy, PolicyKindEgressPolicy, PolicyKindSecurityProfile:
 	default:
 		return fmt.Errorf("unsupported policy kind %q", r.Kind)
 	}

@@ -56,7 +56,7 @@ func TestPolicyAttachmentTargets(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			attachment, err := NewPolicyAttachment(PolicyAttachment{
-				Kind:   PolicyKindSNIPolicy,
+				Kind:   PolicyKindSecurityProfile,
 				Name:   test.name,
 				Target: test.target,
 			})
@@ -95,7 +95,7 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 		{
 			name: "empty name",
 			attachment: PolicyAttachment{
-				Kind: PolicyKindSNIPolicy,
+				Kind: PolicyKindSecurityProfile,
 				Target: AttachmentTarget{
 					Global: true,
 				},
@@ -104,14 +104,14 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 		{
 			name: "no target",
 			attachment: PolicyAttachment{
-				Kind: PolicyKindSNIPolicy,
+				Kind: PolicyKindSecurityProfile,
 				Name: "policy",
 			},
 		},
 		{
 			name: "global and namespace",
 			attachment: PolicyAttachment{
-				Kind: PolicyKindSNIPolicy,
+				Kind: PolicyKindSecurityProfile,
 				Name: "policy",
 				Target: AttachmentTarget{
 					Global:     true,
@@ -122,7 +122,7 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 		{
 			name: "invalid selector",
 			attachment: PolicyAttachment{
-				Kind: PolicyKindSNIPolicy,
+				Kind: PolicyKindSecurityProfile,
 				Name: "policy",
 				Target: AttachmentTarget{
 					Global:   true,
@@ -133,7 +133,7 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 		{
 			name: "empty namespace",
 			attachment: PolicyAttachment{
-				Kind: PolicyKindSNIPolicy,
+				Kind: PolicyKindSecurityProfile,
 				Name: "policy",
 				Target: AttachmentTarget{
 					Namespaces: []string{""},
@@ -143,7 +143,7 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 		{
 			name: "duplicate namespace",
 			attachment: PolicyAttachment{
-				Kind: PolicyKindSNIPolicy,
+				Kind: PolicyKindSecurityProfile,
 				Name: "policy",
 				Target: AttachmentTarget{
 					Namespaces: []string{"demo", "demo"},
@@ -161,7 +161,7 @@ func TestPolicyAttachmentValidation(t *testing.T) {
 }
 
 func TestPolicyAttachmentEqualityTracksOnlyReferenceFields(t *testing.T) {
-	policy, err := CompileSNIProfile(model.SecurityProfile{
+	policy, err := CompileSecurityProfile(model.SecurityProfile{
 		Name:         "security-profile",
 		Namespace:    "demo",
 		CreationTime: time.Unix(100, 0),
@@ -175,7 +175,7 @@ func TestPolicyAttachmentEqualityTracksOnlyReferenceFields(t *testing.T) {
 		t.Fatal("expected a policy attachment")
 	}
 	rulesOnly := *policy
-	rulesOnly.Policy = &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{
+	rulesOnly.SNIPolicy = &extensionsv1.SniTrafficPolicy{Rules: []*extensionsv1.SniRule{{
 		Match: &extensionsv1.SniMatch{Sni: []string{"changed.example.com"}},
 	}}}
 	if other := rulesOnly.PolicyAttachment(); other == nil || !attachment.Equals(*other) {
@@ -212,7 +212,7 @@ func TestPolicyAttachmentEqualityTracksOnlyReferenceFields(t *testing.T) {
 }
 
 func TestPolicyAttachmentRejectsIncompletePolicy(t *testing.T) {
-	for _, policy := range []CompiledSNIPolicy{
+	for _, policy := range []CompiledPolicy[*extensionsv1.SniTrafficPolicy]{
 		{Policy: &extensionsv1.SniTrafficPolicy{}, Attachment: &PolicyAttachment{}},
 		{Name: "demo/policy", Attachment: &PolicyAttachment{}},
 	} {

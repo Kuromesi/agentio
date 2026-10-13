@@ -20,71 +20,10 @@ import (
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"istio.io/istio/pkg/util/sets"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
-	"github.com/openkruise/agentio/pkg/model"
 )
-
-// CompiledSNIPolicy is the SNI specialization of the shared compiled policy.
-type CompiledSNIPolicy = CompiledPolicy[*extensionsv1.SniTrafficPolicy]
-
-// CompileSNIProfile compiles one profile; profiles with no HTTPS-capable hosts return nil, nil.
-func CompileSNIProfile(profile model.SecurityProfile) (*CompiledSNIPolicy, error) {
-	payload, err := CompileSNIRules(profile.Spec.Rules)
-	if err != nil {
-		return nil, fmt.Errorf("security profile %s: %w", profile.ResourceName(), err)
-	}
-	if payload == nil {
-		return nil, nil
-	}
-	if profile.Dedicated {
-		if strings.TrimSpace(profile.SandboxUID) == "" {
-			return nil, fmt.Errorf("dedicated security profile requires a Sandbox UID")
-		}
-		return &CompiledSNIPolicy{Name: profile.ResourceName(), Policy: payload}, nil
-	}
-	priority := agentsv1alpha1.DefaultSecurityProfilePriority
-	if profile.Spec.Priority != nil {
-		priority = *profile.Spec.Priority
-	}
-	if priority < 0 {
-		return nil, fmt.Errorf("security profile %s priority %d is negative", profile.ResourceName(), priority)
-	}
-	selector, err := metav1.LabelSelectorAsSelector(&profile.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("security profile %s selector: %w", profile.ResourceName(), err)
-	}
-	resourceName := profile.Name
-	if !profile.Global {
-		resourceName = profile.Namespace + "/" + profile.Name
-	}
-	target := AttachmentTarget{Selector: profile.Spec.Selector}
-	if profile.Global {
-		target.Global = true
-	} else {
-		target.Namespaces = []string{profile.Namespace}
-	}
-	attachment, err := NewPolicyAttachment(PolicyAttachment{
-		Kind:            PolicyKindSNIPolicy,
-		Name:            resourceName,
-		Target:          target,
-		Priority:        priority,
-		CreationTime:    profile.CreationTime,
-		SourceName:      profile.Name,
-		SourceNamespace: profile.Namespace,
-		selector:        selector,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &CompiledSNIPolicy{
-		Name:       resourceName,
-		Attachment: &attachment,
-		Policy:     payload,
-	}, nil
-}
 
 // CompileSNIRules projects HTTPS-capable security matches into SNI termination rules.
 // Sandbox-owned rules and shared SecurityProfiles use the same projection.

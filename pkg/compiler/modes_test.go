@@ -143,6 +143,7 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				wantExtensions := []string{
 					"workload-metadata",
 					"traffic-policy-reference",
+					"security-profile-reference",
 					"egress-policies",
 					"sni-traffic-policy",
 				}
@@ -179,7 +180,7 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 				if sandboxMode && withSandbox {
 					manifest := manifestAt(t, compiler, "actor")
 					if manifest == nil ||
-						manifest.GetAttester().GetWorkloadUid() != worker.UID || len(manifest.Extensions) != 1 ||
+						manifest.GetAttester().GetWorkloadUid() != worker.UID || len(manifest.Extensions) != 2 ||
 						manifest.TrafficPolicy == nil {
 						t.Fatalf("Sandbox inline output = %v", manifest)
 					}
@@ -301,6 +302,7 @@ func TestSandboxLifecyclePreservesWorkloadPolicies(t *testing.T) {
 						[]string{
 							"workload-metadata",
 							"traffic-policy-reference",
+							"security-profile-reference",
 							"egress-policies",
 							"sni-traffic-policy",
 						},
@@ -321,7 +323,7 @@ func TestSandboxLifecyclePreservesWorkloadPolicies(t *testing.T) {
 	)
 	eventually(t, func() bool {
 		manifest := manifestAt(t, fixture.compiler, "actor")
-		return manifest != nil && manifest.TrafficPolicy == nil && len(manifest.Extensions) == 0
+		return manifest != nil && manifest.TrafficPolicy == nil && len(manifest.Extensions) == 1
 	}, "Sandbox only carries its own policies")
 	checkWorkloads()
 	fixture.sandboxes.DeleteObject("actor")
