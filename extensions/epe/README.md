@@ -8,6 +8,57 @@ The `tokenTransformation` action can fetch short-lived credentials from an exter
 
 The optional [native TrafficPolicy authorization](pkg/policy/trafficpolicy/README.md) watches Workload and TrafficPolicy xDS resources and binds HTTP upstream connections to authorized destinations. Its reusable Delta ADS client lives in [`pkg/xdsclient`](../../pkg/xdsclient/README.md).
 
+## OAuth protocol capability
+
+`pkg/filters/oauth2` provides a policy-neutral filter for device authorization,
+token exchange, and resource credential injection. It returns public device
+session data and `unused` token placeholders to the workload, and obtains the
+real bearer token from the credential service, optionally reusing a trusted-side
+Resource cache for the lifetime explicitly granted by that service.
+Application compatibility fields come from optional response extensions.
+
+The OAuth filter requires an HTTPS request target. It rejects plaintext HTTP,
+requests without a scheme, and CONNECT envelopes before credential lookup.
+HTTPS proxy integrations must apply it to the decrypted inner HTTP request.
+The trusted gateway/Envoy integration must verify the destination and validate
+upstream TLS; the filter's scheme check does not perform those verifications.
+
+Authorization is **per Sandbox**, scoped by the configured CredentialProvider
+and trusted platform identity. The CLI-facing `unused` values are compatibility
+placeholders; they do not identify or authenticate an individual CLI login.
+Clients sharing a Sandbox/provider binding use its current authorized credential.
+Clearing a CLI's local cache does not revoke the server-side authorization, and
+replacing that authorization changes the credential used by existing clients,
+subject to any service-granted cache lifetime described below.
+Independent CLI sessions, CLI logout/revocation, and concurrent account isolation
+within that binding are deferred pending coordinated client/Identity contracts.
+
+The credential client caches successful `Ready` Resource results only when
+Identity returns a positive `cacheExpiresInSeconds` and a known positive
+`accessTokenExpiresInSeconds`. The effective TTL is the smaller of the two,
+anchored before the RPC; cache hits do not restart it. Zero, absent, or negative
+cache TTL disables caching, with no fallback. The current Identity device-session
+contract returns `cacheExpiresInSeconds: 0`, so every matching business request
+still makes one Identity credential lookup. Identity manages upstream token
+refresh; a credential lookup does not necessarily refresh the upstream token.
+
+This bounded in-memory cache stays in the trusted EPE process and is isolated by
+provider configuration version, exact trusted caller token, CredentialProvider,
+resource, and requested scope. Authorization and Token operations always call
+Identity and invalidate the corresponding binding's Resource entries, including
+other scope/caller variants. Expired credentials are not reused on errors.
+With a positive TTL, changes made outside this client may remain unseen for that
+TTL; Identity must choose it to reflect acceptable authorization-change latency.
+Token remaining lifetime alone is not permission to cache.
+
+The filter accepts its own `Config` payload and has no dependency on the
+SecurityProfile API. Production registration and CRD-to-payload projection are
+follow-up integration work. The existing Identity device-service client supports
+device authorization, device-code polling, and refresh-token/resource reads;
+other grants receive `unsupported_grant_type` without calling a device RPC.
+The protocol layer can recognize other grants, but their execution requires a
+credential-service implementation that supports them.
+
 ## Code layout
 
 ```text
