@@ -24,9 +24,9 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
+func TestCompileSecurityProfileNormalizesHTTPSDomains(t *testing.T) {
 	priority := int32(10)
-	compiled, err := CompileSNIProfile(model.SecurityProfile{
+	compiled, err := CompileSecurityProfile(model.SecurityProfile{
 		Name:      "profile",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{
@@ -47,10 +47,10 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile SNI profiles: %v", err)
 	}
-	if compiled == nil || compiled.ResourceName() != "demo/profile" {
+	if compiled == nil || compiled.ResourceName() != "namespaced/demo/profile" {
 		t.Fatalf("compiled profiles = %+v", compiled)
 	}
-	got := compiled.Policy.GetRules()[0]
+	got := compiled.SNIPolicy.GetRules()[0]
 	want := []string{"api.example.com", "*.example.com"}
 	if got.GetAction() != extensionsv1.SniAction_SNI_ACTION_TLS_TERMINATION ||
 		len(got.GetMatch().GetSni()) != len(want) {
@@ -63,8 +63,8 @@ func TestCompileSNIProfileNormalizesHTTPSDomains(t *testing.T) {
 	}
 }
 
-func TestCompileSNIProfileRejectsPartialWildcard(t *testing.T) {
-	_, err := CompileSNIProfile(model.SecurityProfile{
+func TestCompileSecurityProfileRejectsPartialWildcard(t *testing.T) {
+	_, err := CompileSecurityProfile(model.SecurityProfile{
 		Name:      "bad",
 		Namespace: "demo",
 		Spec: agentsv1alpha1.SecurityProfileSpec{Rules: []agentsv1alpha1.SecurityRule{{

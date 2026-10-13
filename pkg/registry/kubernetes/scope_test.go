@@ -45,7 +45,6 @@ func TestResolveScopeAuthorizesEnrolledGatewayPods(t *testing.T) {
 	spoofed := egressPod("demo", "attacker", "egress", "10.0.0.3")
 	spoofed.UID = "spoofed-uid"
 	spoofed.Spec.ServiceAccountName = "attacker"
-	spoofed.Labels = nil
 	unconfigured := egressPod("demo", "missing", "missing", "10.0.0.4")
 	unconfigured.UID = "unconfigured-uid"
 	valid.Labels["member"] = "egress"
@@ -66,7 +65,7 @@ func TestResolveScopeAuthorizesEnrolledGatewayPods(t *testing.T) {
 		wantSandboxUID string
 	}{
 		{name: "explicit config with standard label", pod: valid, serviceAccount: "egress", wantClass: model.ClientEgressGateway, wantKey: "demo/egress"},
-		{name: "manual deployment without gateway label", pod: implicit, serviceAccount: "egress", wantClass: model.ClientDedicatedZTunnel, wantSandboxUID: "test//Pod/demo/egress-rollout-b"},
+		{name: "manual deployment without gateway label", pod: implicit, serviceAccount: "egress", wantClass: model.ClientEgressGateway, wantKey: "demo/egress"},
 		{name: "label cannot grant gateway scope", pod: spoofed, serviceAccount: "attacker", wantClass: model.ClientDedicatedZTunnel, wantSandboxUID: "test//Pod/demo/attacker"},
 		{name: "unregistered identity gets only sandbox scope", pod: unconfigured, serviceAccount: "missing", wantClass: model.ClientDedicatedZTunnel, wantSandboxUID: "test//Pod/demo/missing"},
 	} {

@@ -595,11 +595,11 @@ func TestMalformedSecurityProfileUpdatePreservesLastKnownGood(t *testing.T) {
 	fixture.securityProfiles.ConditionalUpdateObject(valid)
 	waitSynced(t, fixture.compiler)
 
-	key := "demo/terminate"
+	key := valid.ResourceName()
 	eventually(t, func() bool {
-		return fixture.compiler.graph.policies.sniPolicies.GetKey(key) != nil
+		return fixture.compiler.graph.policies.securityProfiles.GetKey(key) != nil
 	}, "initial SNI policy")
-	baseline := fixture.compiler.graph.policies.sniPolicies.GetKey(key)
+	baseline := fixture.compiler.graph.policies.securityProfiles.GetKey(key)
 
 	invalid := valid
 	invalid.Spec.Rules = append([]agentsv1alpha1.SecurityRule(nil), valid.Spec.Rules...)
@@ -612,7 +612,7 @@ func TestMalformedSecurityProfileUpdatePreservesLastKnownGood(t *testing.T) {
 	}, "invalid update failure")
 	settle()
 
-	retained := fixture.compiler.graph.policies.sniPolicies.GetKey(key)
+	retained := fixture.compiler.graph.policies.securityProfiles.GetKey(key)
 	if retained == nil || !retained.Equals(*baseline) {
 		t.Fatal("invalid update replaced the last-known-good SNI policy")
 	}
@@ -911,7 +911,13 @@ func TestCompilerProjectsSandboxSNIWithoutInlineAttachment(t *testing.T) {
 		address.GetWorkload().GetExtensions(),
 	); !reflect.DeepEqual(
 		got,
-		[]string{"workload-metadata", "traffic-policy-reference", "egress-policies", "sni-traffic-policy"},
+		[]string{
+			"workload-metadata",
+			"traffic-policy-reference",
+			"security-profile-reference",
+			"egress-policies",
+			"sni-traffic-policy",
+		},
 	) {
 		t.Fatalf("Workload extensions: %v", got)
 	}
@@ -921,7 +927,7 @@ func TestCompilerProjectsSandboxSNIWithoutInlineAttachment(t *testing.T) {
 		t.Fatal("compiler retained a direct Workload resource")
 	}
 	manifest := manifestAt(t, compiler, workload.UID)
-	if manifest == nil || len(manifest.Extensions) != 1 {
+	if manifest == nil || len(manifest.Extensions) != 2 {
 		t.Fatalf("Sandbox extensions = %v", manifest)
 	}
 	payload := &extensionsv1.SniTrafficPolicy{}
@@ -938,7 +944,10 @@ func TestCompilerProjectsSandboxSNIWithoutInlineAttachment(t *testing.T) {
 	}
 	binding := compiler.Bindings().GetKey(workload.UID)
 	if binding == nil ||
-		!reflect.DeepEqual(binding.PolicyNames(policypkg.PolicyKindSNIPolicy), []string{"demo/pod-policy"}) {
+		!reflect.DeepEqual(
+			binding.PolicyNames(policypkg.PolicyKindSecurityProfile),
+			[]string{"namespaced/demo/pod-policy"},
+		) {
 		t.Fatalf("Workload policy binding = %+v", binding)
 	}
 }

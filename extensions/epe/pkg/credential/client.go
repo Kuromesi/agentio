@@ -101,6 +101,7 @@ type Client struct {
 	providerURL string
 	cache       *tokencache.Cache
 	stsCache    *tokencache.STSCache
+	oauth2Cache *oauth2Cache
 }
 
 // CloseIdleConnections retires this client's idle pool without interrupting
@@ -119,7 +120,13 @@ func NewClient(
 	cache *tokencache.Cache,
 	sts *tokencache.STSCache,
 ) *Client {
-	return &Client{providerURL: endpoint, httpClient: client, cache: cache, stsCache: sts}
+	return &Client{
+		providerURL: endpoint,
+		httpClient:  client,
+		cache:       cache,
+		stsCache:    sts,
+		oauth2Cache: newOAuth2Cache(tokencache.DefaultMaxSize),
+	}
 }
 
 // NewHTTPClient constructs the HTTP client used to call the credential

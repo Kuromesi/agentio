@@ -622,7 +622,7 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	builder := krt.NewOptionsBuilder(stop, "inline-test", nil)
 	options := func(name string) []krt.CollectionOption { return builder.WithName(name) }
 	bindings := krt.NewMutableCollection[policy.Bindings](nil, nil, options("bindings")...)
-	payloads := krt.NewMutableCollection[policy.CompiledSNIPolicy](nil, nil, options("payloads")...)
+	payloads := krt.NewMutableCollection[policy.CompiledSecurityProfile](nil, nil, options("payloads")...)
 	workload := testWDSWorkload("client", "", "10.1.0.2")
 
 	workloads := krt.NewMutableCollection(nil, []model.Workload{workload}, options("workloads")...)
@@ -635,9 +635,9 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		options("sandboxes")...)
 	failures := newFailureRecorder()
 	policies := policyCollections{
-		policyBindings:  bindings.AsCollection(),
-		sniPolicies:     payloads.AsCollection(),
-		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
+		policyBindings:   bindings.AsCollection(),
+		securityProfiles: payloads.AsCollection(),
+		trafficPolicies:  krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
 	}
 	compatibility := newWorkloadPolicies(inputs, policies, failures, options)
 	metadata := krt.NewStatic[workloadMetadataConfiguration](nil, true, options("metadata")...)
@@ -675,13 +675,13 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 	binding := func(names ...string) policy.Bindings {
 		return policy.Bindings{
 			TargetUID: workload.UID,
-			Groups:    []policy.BindingGroup{{Kind: policy.PolicyKindSNIPolicy, Names: names}},
+			Groups:    []policy.BindingGroup{{Kind: policy.PolicyKindSecurityProfile, Names: names}},
 		}
 	}
-	payload := func(name, host string) policy.CompiledSNIPolicy {
-		return policy.CompiledSNIPolicy{
+	payload := func(name, host string) policy.CompiledSecurityProfile {
+		return policy.CompiledSecurityProfile{
 			Name: name,
-			Policy: &extensionsv1.SniTrafficPolicy{
+			SNIPolicy: &extensionsv1.SniTrafficPolicy{
 				Rules: []*extensionsv1.SniRule{{Match: &extensionsv1.SniMatch{Sni: []string{host}}}},
 			},
 		}
@@ -781,15 +781,17 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 	}
 	profiles.ConditionalUpdateObject(profile)
 
+	var profileCompiles atomic.Int64
 	compiled := krt.NewCollection(profiles.AsCollection(),
-		func(_ krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSNIPolicy {
-			result, err := policy.CompileSNIProfile(profile)
+		func(_ krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSecurityProfile {
+			profileCompiles.Add(1)
+			result, err := policy.CompileSecurityProfile(profile)
 			if err != nil {
 				t.Errorf("compile SNI profile: %v", err)
 			}
 			return result
 		}, append(options, krt.WithName("test-sni-policies"))...)
-	projected := policy.NewPolicyAttachmentsCollection(compiled, builder, "sni-policy-attachments")
+	projected := policy.NewPolicyAttachmentsCollection(compiled, builder, "security-profile-attachments")
 	bindings := policy.NewWorkloadPolicyBindingsCollection(workloads.AsCollection(), projected, builder)
 
 	var bindingRecomputes atomic.Int64
@@ -803,9 +805,9 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 	inputs.SandboxMode = false
 	inputs.Workloads = workloads.AsCollection()
 	resources := newWorkloadPolicies(inputs, policyCollections{
-		policyBindings:  bindings,
-		sniPolicies:     compiled,
-		trafficPolicies: krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options...),
+		policyBindings:   bindings,
+		securityProfiles: compiled,
+		trafficPolicies:  krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options...),
 	}, newFailureRecorder(), builder.WithName)
 	if !observedBindings.WaitUntilSynced(stop) || !resources.WaitUntilSynced(stop) {
 		t.Fatal("test policy graph did not sync")
@@ -815,6 +817,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 		inlineUpdates.Add(int64(len(events)))
 	}, false)
 	bindingRecomputes.Store(0)
+	profileCompiles.Store(0)
 
 	updated := profile
 	updated.Spec = agentsv1alpha1.SecurityProfileSpec{
@@ -826,6 +829,16 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 	}
 	profiles.ConditionalUpdateObject(updated)
 	eventually(t, func() bool { return inlineUpdates.Load() == workloadCount }, "inline SNI payloads updated")
+	settle()
+
+	if got := profileCompiles.Load(); got != 1 {
+		t.Fatalf("profile compiles = %d, want 1 for %d Workloads", got, workloadCount)
+	}
+	// Changes outside binding metadata and SNI produce no downstream work.
+	updated.Spec = *updated.Spec.DeepCopy()
+	updated.Spec.Rules[0].Name = "renamed-rule"
+	profiles.ConditionalUpdateObject(updated)
+	eventually(t, func() bool { return profileCompiles.Load() == 2 }, "body change compiled once")
 	settle()
 
 	if got := bindingRecomputes.Load(); got != 0 {

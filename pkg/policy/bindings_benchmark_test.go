@@ -104,3 +104,70 @@ func benchmarkPolicyBindingsSelectorPolicyChurn(b *testing.B) {
 	}
 	b.StopTimer()
 }
+
+// Global attachment churn with one namespace policy per Workload mirrors the
+// production-sized fanout without including cold compilation in the measurement.
+func BenchmarkPolicyBindingsGlobalChurn(b *testing.B) {
+	for _, count := range []int{1000, 2000} {
+		b.Run(fmt.Sprintf("workloads=policies=%d", count), func(b *testing.B) {
+			stop := make(chan struct{})
+			b.Cleanup(func() { close(stop) })
+			opts := []krt.CollectionOption{krt.WithStop(stop)}
+			workloads := make([]model.Workload, count)
+			policies := make([]PolicyAttachment, count)
+			for i := range count {
+				uid := fmt.Sprintf("workload-%d", i)
+				workloads[i] = model.Workload{UID: uid, Namespace: "demo", Labels: map[string]string{"app": uid}}
+				var err error
+				policies[i], err = NewPolicyAttachment(
+					PolicyAttachment{
+						Kind: PolicyKindTrafficPolicy,
+						Name: uid,
+						Target: AttachmentTarget{
+							Namespaces: []string{"demo"},
+							Selector:   metav1.LabelSelector{MatchLabels: map[string]string{"app": uid}},
+						},
+					},
+				)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			attachments := krt.NewMutableCollection(nil, policies, opts...)
+			bindings := NewWorkloadPolicyBindingsCollection(
+				krt.NewStaticCollection(nil, workloads, opts...),
+				attachments.AsCollection(),
+				krt.NewOptionsBuilder(stop, "benchmark", nil),
+			)
+			if !bindings.WaitUntilSynced(stop) {
+				b.Fatal("bindings did not sync")
+			}
+			events := make(chan krt.Event[Bindings], count)
+			registration := bindings.RegisterBatch(func(batch []krt.Event[Bindings]) {
+				for _, event := range batch {
+					events <- event
+				}
+			}, false)
+			b.Cleanup(registration.UnregisterHandler)
+			global, err := NewPolicyAttachment(
+				PolicyAttachment{Kind: PolicyKindTrafficPolicy, Name: "global", Target: AttachmentTarget{Global: true}},
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				if i%2 == 0 {
+					attachments.ConditionalUpdateObject(global)
+				} else {
+					attachments.DeleteObject(global.ResourceName())
+				}
+				for range count {
+					awaitBindingEvent(b, events)
+				}
+			}
+			b.StopTimer()
+		})
+	}
+}

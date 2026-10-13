@@ -15,6 +15,7 @@
 package policy
 
 import (
+	"maps"
 	"slices"
 	"sort"
 
@@ -83,31 +84,23 @@ func NewWorkloadPolicyBindingsCollection(
 	attachments krt.Collection[PolicyAttachment],
 	options krt.OptionsBuilder,
 ) krt.Collection[Bindings] {
-	byTarget := krt.NewIndex(attachments, "workloadPolicyAttachmentsByTarget", attachmentIndexKeys)
-	return krt.NewCollection(workloads, func(ctx krt.HandlerContext, workload model.Workload) *Bindings {
-		return resolvePolicyBindings(ctx, workload.UID, workload.Namespace, workload.Labels, attachments, byTarget)
-	}, options.WithName("workload-policy-bindings")...)
+	return newIncrementalBindings(workloads, attachments, options)
 }
 
-func resolvePolicyBindings(
-	ctx krt.HandlerContext,
-	uid, namespace string,
-	targetLabels map[string]string,
-	attachments krt.Collection[PolicyAttachment],
-	byTarget krt.Index[string, PolicyAttachment],
-) *Bindings {
-	keys := []string{globalPolicyAttachmentIndexKey, namespacePolicyAttachmentKeyPrefix + namespace}
-	// Include target matching in selector discovery's dependency filter instead
-	// of invalidating every binding in a namespace. KRT checks old and new targets.
-	selectsTarget := krt.FilterGeneric(func(value any) bool {
-		return value.(PolicyAttachment).selects(namespace, targetLabels)
-	})
-	matchedByName := make(map[string]PolicyAttachment)
-	for _, key := range keys {
-		for _, attachment := range krt.Fetch(ctx, attachments, krt.FilterIndex(byTarget, key), selectsTarget) {
-			matchedByName[attachment.ResourceName()] = attachment
-		}
-	}
+// Only namespace and labels affect selection; other Workload changes skip matching.
+type policyTarget struct {
+	UID       string
+	Namespace string
+	Labels    map[string]string
+}
+
+func (t policyTarget) ResourceName() string { return t.UID }
+
+func (t policyTarget) Equals(other policyTarget) bool {
+	return t.UID == other.UID && t.Namespace == other.Namespace && maps.Equal(t.Labels, other.Labels)
+}
+
+func bindingsFromMatches(uid string, matchedByName map[string]PolicyAttachment) *Bindings {
 	matched := make([]PolicyAttachment, 0, len(matchedByName))
 	for _, attachment := range matchedByName {
 		matched = append(matched, attachment)

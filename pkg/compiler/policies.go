@@ -29,9 +29,9 @@ import (
 )
 
 type policyCollections struct {
-	trafficPolicies krt.Collection[policy.CompiledTrafficPolicy]
-	sniPolicies     krt.Collection[policy.CompiledSNIPolicy]
-	egressPolicies  krt.Collection[policy.CompiledEgressPolicy]
+	trafficPolicies  krt.Collection[policy.CompiledTrafficPolicy]
+	securityProfiles krt.Collection[policy.CompiledSecurityProfile]
+	egressPolicies   krt.Collection[policy.CompiledEgressPolicy]
 
 	// Shared policy selections keyed by Workload UID, without rule bodies.
 	policyBindings krt.Collection[policy.Bindings]
@@ -104,21 +104,21 @@ func newPolicyCollections(
 			return compiled
 		}, options("traffic-policies")...)
 
-	sniPolicies := krt.NewCollection(inputs.SecurityProfiles,
-		func(ctx krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSNIPolicy {
+	securityProfiles := krt.NewCollection(inputs.SecurityProfiles,
+		func(ctx krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSecurityProfile {
 			if profile.Dedicated && !inputs.SandboxMode {
 				return nil
 			}
-			compiled, err := policy.CompileSNIProfile(profile)
+			compiled, err := policy.CompileSecurityProfile(profile)
 			if err != nil {
 				failures.record("SecurityProfile", profile.ResourceName(), err)
-				// Keep TLS termination aligned with EPE's last-known-good rules.
+				// Retain binding metadata and SNI together on invalid updates.
 				ctx.DiscardResult()
 				return nil
 			}
 			failures.clear("SecurityProfile", profile.ResourceName())
 			return compiled
-		}, options("sni-policies")...)
+		}, options("security-profiles")...)
 	egressPolicies := krt.NewManyCollection(configurations.AsCollection(),
 		func(ctx krt.HandlerContext, current configuration) []policy.CompiledEgressPolicy {
 			compiled, err := policy.CompiledEgressPolicies(inputs.RootNamespace, current.Egress)
@@ -132,17 +132,21 @@ func newPolicyCollections(
 		}, options("bindable-egress-policies")...)
 	// Project only metadata, so rule-body updates do not invalidate bindings.
 	trafficAttachments := policy.NewPolicyAttachmentsCollection(trafficPolicies, builder, "traffic-policy-attachments")
-	sniAttachments := policy.NewPolicyAttachmentsCollection(sniPolicies, builder, "sni-policy-attachments")
+	securityAttachments := policy.NewPolicyAttachmentsCollection(
+		securityProfiles,
+		builder,
+		"security-profile-attachments",
+	)
 	egressAttachments := policy.NewPolicyAttachmentsCollection(egressPolicies, builder, "egress-policy-attachments")
 	attachments := krt.JoinCollection([]krt.Collection[policy.PolicyAttachment]{
-		trafficAttachments, sniAttachments, egressAttachments,
+		trafficAttachments, securityAttachments, egressAttachments,
 	}, options("policy-attachments")...)
 	policyBindings := policy.NewWorkloadPolicyBindingsCollection(inputs.Workloads, attachments, builder)
 	return policyCollections{
-		trafficPolicies: trafficPolicies,
-		sniPolicies:     sniPolicies,
-		egressPolicies:  egressPolicies,
-		policyBindings:  policyBindings,
+		trafficPolicies:  trafficPolicies,
+		securityProfiles: securityProfiles,
+		egressPolicies:   egressPolicies,
+		policyBindings:   policyBindings,
 	}
 }
 

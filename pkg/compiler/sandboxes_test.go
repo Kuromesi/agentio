@@ -75,7 +75,7 @@ func TestSandboxInlineSecurityRulesLifecycle(t *testing.T) {
 		t.Helper()
 		eventually(t, func() bool {
 			manifest := manifestAt(t, fixture.compiler, uid)
-			if manifest == nil || len(manifest.Extensions) != len(hosts) {
+			if manifest == nil || len(manifest.Extensions) != len(hosts)+1 {
 				return false
 			}
 			for i, want := range hosts {
@@ -181,7 +181,7 @@ func TestMultiSandboxDeletionAndShrinkRetainNetworking(t *testing.T) {
 	waitSynced(t, fixture.compiler)
 	eventually(t, func() bool {
 		ma, mb := manifestAt(t, fixture.compiler, a.UID), manifestAt(t, fixture.compiler, b.UID)
-		return ma != nil && mb != nil && mb.GetAttester().GetWorkloadUid() == worker.UID && len(mb.Extensions) == 0
+		return ma != nil && mb != nil && mb.GetAttester().GetWorkloadUid() == worker.UID && len(mb.Extensions) == 1
 	}, "both Sandboxes retain their Workload binding")
 	a.Attester = nil
 	fixture.sandboxes.ConditionalUpdateObject(a)

@@ -23,7 +23,7 @@ import (
 )
 
 func TestCompiledPolicyEqualityAndOptionalAttachment(t *testing.T) {
-	base := CompiledSNIPolicy{
+	base := CompiledPolicy[*extensionsv1.SniTrafficPolicy]{
 		Name:   "demo/allow",
 		Policy: &extensionsv1.SniTrafficPolicy{},
 	}
@@ -33,7 +33,7 @@ func TestCompiledPolicyEqualityAndOptionalAttachment(t *testing.T) {
 		t.Fatal("equivalent unbound policies must compare equal and have no attachment")
 	}
 	bound := clone
-	bound.Attachment = &PolicyAttachment{Kind: PolicyKindSNIPolicy, Name: base.Name}
+	bound.Attachment = &PolicyAttachment{Kind: PolicyKindSecurityProfile, Name: base.Name}
 	if base.Equals(bound) || bound.Equals(base) {
 		t.Fatal("adding or removing an attachment must change the compiled policy")
 	}

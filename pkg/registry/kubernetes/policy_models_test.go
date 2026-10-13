@@ -80,7 +80,7 @@ func TestPolicyModelsUseSelector(t *testing.T) {
 					!reflect.DeepEqual(profile.Spec.Selector, test.selector) {
 					t.Fatal("policy model changed the selector")
 				}
-				compiled, err := policy.CompileSNIProfile(*profile)
+				compiled, err := policy.CompileSecurityProfile(*profile)
 				if err != nil {
 					t.Fatal(err)
 				}
