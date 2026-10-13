@@ -189,7 +189,7 @@ See [EPE configuration](epe-configuration.md) for the deployed EPE service, list
 
 ## Egress gateway settings
 
-Each entry in `egressGateways` matches a running gateway by verified workload identity: `name` must equal its ServiceAccount name and `namespace` must match exactly.
+Each entry in `egressGateways` matches a running gateway by verified workload identity: `name` must equal its ServiceAccount name and `namespace` must match exactly. The same rule applies to gateways registered through Gateway API. The `gateway.networking.k8s.io/gateway-name` Pod label does not grant gateway identity or on-demand certificate permission. A custom ServiceAccount must still have the same name as the Gateway; otherwise the Pod cannot obtain that gateway's xDS configuration or on-demand certificates. Pod-bound token and active-Pod checks still apply.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
