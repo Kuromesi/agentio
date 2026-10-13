@@ -44,9 +44,11 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/admin"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/accesslog"
+	"github.com/openkruise/agentio/extensions/epe/pkg/audit/contentlog"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/sinks/webhook"
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs/certsource"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout" // Register environment settings.
 	"github.com/openkruise/agentio/extensions/epe/pkg/metrics"
@@ -108,6 +110,8 @@ var (
 		"Enable the /debug endpoints on the admin server (profile inspection and runtime log level)")
 	auditLogBufferSize = flag.Int("audit-log-buffer-size", accesslog.DefaultBufferSize,
 		"Audit log buffered channel capacity; entries are dropped when full")
+	contentLogBufferSize = flag.Int("content-log-buffer-size", contentlog.DefaultBufferSize,
+		"Content log buffered channel capacity; records are dropped when full")
 	auditWebhookBufferSize = flag.Int("audit-webhook-buffer-size", webhook.DefaultBufferSize,
 		"Audit webhook dispatcher channel capacity; events dropped when full")
 	auditWebhookWorkers = flag.Int("audit-webhook-workers", webhook.DefaultWorkers,
@@ -354,6 +358,8 @@ func run() error {
 	// Wire the per-request audit logger.
 	auditLogger := accesslog.NewBufferedLogger(ctrllog.Log.WithName("audit"), *auditLogBufferSize)
 	group.Add(auditLogger)
+	contentLogger := contentlog.New(ctrllog.Log.WithName("contentguard"), *contentLogBufferSize)
+	group.Add(contentLogger)
 
 	// Wire the audit webhook dispatcher and sink through the Router.
 	webhookDispatcher := webhook.NewBuffered(
@@ -382,6 +388,7 @@ func run() error {
 		RequireClientCert:           servingTLS.RequireClientCert,
 		Resolve:                     resolve,
 		AuditLogger:                 auditLogger,
+		StreamLoggers:               []filter.StreamLogger{contentLogger},
 		Registrations:               registrations,
 	}, ctrllog.Log.WithName("ext-proc")))
 
