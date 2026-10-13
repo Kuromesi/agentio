@@ -141,7 +141,7 @@ func TestBindingCompareRandomized(t *testing.T) {
 			for range 8 {
 				i := rng.Intn(30)
 				name := fmt.Sprintf("p-%d", i)
-				kind := []PolicyKind{PolicyKindTrafficPolicy, PolicyKindSNIPolicy, PolicyKindEgressPolicy}[i%3]
+				kind := []PolicyKind{PolicyKindTrafficPolicy, PolicyKindSecurityProfile, PolicyKindEgressPolicy}[i%3]
 				key := (model.PolicyRef{Kind: kind, Name: name}).ResourceName()
 				if rng.Intn(5) == 0 {
 					policies.DeleteObject(key)
