@@ -81,7 +81,15 @@ data:
         - "{{ .Host }}"
 `)
 	waitForGatewayConfig(t, environment, time.Second, func(dump string) error {
-		for _, want := range []string{"agentio-porter", "ext-proc." + namespace, host} {
+		// Dynamic SNI rules live in TrafficPolicy resources, not the Envoy
+		// listener. Wait for the CONNECT decision plumbing here; the TLS request
+		// below verifies that the host policy has converged and is enforced.
+		for _, want := range []string{
+			"agentio-porter",
+			"ext-proc." + namespace,
+			"connect_tls_action",
+			"agentio.tls.action",
+		} {
 			if !strings.Contains(dump, want) {
 				return fmt.Errorf("gateway config does not contain %q", want)
 			}
