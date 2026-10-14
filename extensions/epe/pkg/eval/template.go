@@ -49,13 +49,23 @@ func buildHelperFuncs() template.FuncMap {
 			}
 			return string(b), nil
 		},
-		"fromJson":  sprigFuncs["fromJson"],
-		"kindIs":    sprigFuncs["kindIs"],
-		"trim":      sprigFuncs["trim"],
-		"hasPrefix": sprigFuncs["hasPrefix"],
-		"fail":      sprigFuncs["fail"],
-		"values":    sprigFuncs["values"],
-		"first":     sprigFuncs["first"],
+		"fromJson":     sprigFuncs["fromJson"],
+		"kindIs":       sprigFuncs["kindIs"],
+		"trim":         sprigFuncs["trim"],
+		"hasPrefix":    sprigFuncs["hasPrefix"],
+		"fail":         sprigFuncs["fail"],
+		"values":       sprigFuncs["values"],
+		"first":        sprigFuncs["first"],
+		"mustFromJson": sprigFuncs["mustFromJson"],
+		"replace":      sprigFuncs["replace"],
+		"contains":     sprigFuncs["contains"],
+		"hasSuffix":    sprigFuncs["hasSuffix"],
+		"lower":        sprigFuncs["lower"],
+		"upper":        sprigFuncs["upper"],
+		"trimPrefix":   sprigFuncs["trimPrefix"],
+		"trimSuffix":   sprigFuncs["trimSuffix"],
+		"splitList":    sprigFuncs["splitList"],
+		"join":         sprigFuncs["join"],
 	}
 }
 
@@ -74,13 +84,23 @@ func buildHelperFuncs() template.FuncMap {
 // documented idiom — from reading as an authoring error. A helper added to
 // helperFuncs with a concrete parameter type belongs here too.
 var probeFuncs = template.FuncMap{
-	"fail":      func(any) (string, error) { return "", nil },
-	"fromJson":  func(any) any { return map[string]any{} },
-	"first":     func(any) any { return "" },
-	"values":    func(any) []any { return []any{""} },
-	"default":   func(any, any) string { return "" },
-	"trim":      func(any) string { return "" },
-	"hasPrefix": func(any, any) bool { return false },
+	"fail":         func(any) (string, error) { return "", nil },
+	"fromJson":     func(any) any { return map[string]any{} },
+	"first":        func(any) any { return "" },
+	"values":       func(any) []any { return []any{""} },
+	"default":      func(any, any) string { return "" },
+	"trim":         func(any) string { return "" },
+	"hasPrefix":    func(any, any) bool { return false },
+	"mustFromJson": func(any) (any, error) { return map[string]any{}, nil },
+	"replace":      func(any, any, any) string { return "" },
+	"contains":     func(any, any) bool { return false },
+	"hasSuffix":    func(any, any) bool { return false },
+	"lower":        func(any) string { return "" },
+	"upper":        func(any) string { return "" },
+	"trimPrefix":   func(any, any) string { return "" },
+	"trimSuffix":   func(any, any) string { return "" },
+	"splitList":    func(any, any) []string { return []string{""} },
+	"join":         func(any, any) string { return "" },
 }
 
 // CompileTemplate parses raw into a template with the standard helper funcs

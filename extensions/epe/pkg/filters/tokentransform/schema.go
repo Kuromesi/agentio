@@ -328,6 +328,7 @@ func newTokenHeaderCELEnv(extra ...cel.EnvOption) (*cel.Env, error) {
 		ext.Strings(),
 		ext.Sets(),
 		ext.Lists(ext.ListsVersion(1)),
+		eval.JSONDecode(),
 	}
 	options = append(options, extra...)
 	return cel.NewEnv(options...)

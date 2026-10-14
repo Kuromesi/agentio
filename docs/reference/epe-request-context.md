@@ -81,6 +81,8 @@ EPE compiles audit conditions and provider parameter values in separate CEL envi
 
 The CEL environment includes the standard CEL binding, string, set, and list extensions. CEL receives ordinary maps, so direct indexing of a missing header, label, query parameter, or input key raises a `no such key` evaluation error; it does not produce an empty string. Guard membership before indexing, for example, `"content-type" in request.headers && request.headers["content-type"].startsWith("application/json")`. An audit CEL runtime error drops that audit event, while a provider-parameter CEL runtime error follows the matched token transformation's `failStrategy`.
 
+`json.decode(string)` is available in every CEL environment, including audit conditions, provider parameters, and token-header selectors and values. It parses one JSON value: objects become string-keyed maps, arrays become lists, numbers become doubles, and strings, booleans, and null retain their corresponding types. Invalid or empty JSON, including trailing data, raises an evaluation error; it does not fall back to the original string. Use strings for identifiers that must retain exact digits. A decoded null is valid CEL, but cannot be the final value of a provider parameter or a token-header value.
+
 ### Token-header evaluation
 
 `apiKey.targetHeaders` and `apiKey.value` use separate selector and value evaluations. A selector CEL expression sees the standard `request`, `pod`, `profile`, `rule`, and `inputs` variables described above; it never sees `token`. It must return a list of header names. All selectors observe the original request snapshot, before any selected header is mutated. Header names returned by a selector, like statically configured names, are canonicalized to lowercase before they are used. Token-header CEL does not expose the unbounded `lists.range` constructor, and each selector or value evaluation has a runtime cost limit of 10,000 CEL cost units; a size or cost violation follows the transformation's `failStrategy` like any other evaluation error.
@@ -91,13 +93,30 @@ Token-header value templates expose `.Token` (the resolved transformation creden
 
 ## Template values and functions
 
-Go templates use `missingkey=zero` and expose only this helper allowlist: `default fallback value`, `json value`, `fromJson value`, `kindIs kind value`, `trim value`, `hasPrefix prefix value`, `fail message`, `values map`, and `first list`. Unlike CEL map indexing, the `.Request.Header` and `.Request.QueryParam` accessors return `""` when the requested key is absent. Request credentials are intentionally unavailable.
+Go templates use `missingkey=zero`. In addition to Go's built-in template functions such as `index`, `len`, and `printf`, EPE exposes this helper allowlist:
+
+| Helpers | Behavior |
+| --- | --- |
+| `default fallback value` | Uses the fallback for an empty string; both arguments must be strings. |
+| `json value` | Serializes a value as JSON. |
+| `fromJson value`, `mustFromJson value` | Parses JSON. `fromJson` yields nothing on invalid input; `mustFromJson` aborts rendering with an error. |
+| `kindIs kind value` | Tests the Go kind, such as `"map"` or `"string"`. |
+| `trim value`, `lower value`, `upper value` | Trims surrounding whitespace or changes case. |
+| `contains substring value`, `hasPrefix prefix value`, `hasSuffix suffix value` | Tests string contents or boundaries. |
+| `trimPrefix prefix value`, `trimSuffix suffix value` | Removes one matching prefix or suffix, leaving unmatched strings unchanged. |
+| `replace old new value` | Replaces every literal occurrence of `old` with `new`. |
+| `splitList separator value`, `join separator list` | Splits a string or joins list elements. |
+| `fail message`, `values map`, `first list` | Aborts rendering, extracts map values, or selects the first list element. |
+
+String helpers take the input last for pipelines, for example `{{ .Token | trimPrefix "Bearer " | trim }}`. Unlike CEL map indexing, the `.Request.Header` and `.Request.QueryParam` accessors return `""` when the requested key is absent. The sandbox bearer token is intentionally unavailable.
 
 `values` follows Go map iteration order. Using `values | first` is deterministic for a single-key object, but templates that need deterministic selection from a multi-key map must address a named key directly.
 
 `fromJson` yields nothing when its input is not valid JSON, so guard with `kindIs` before treating the result as a map or list; `first` aborts the render when given something that is not a list. Indexing a key the JSON object does not carry yields an untyped nothing that `default`, `trim`, and `hasPrefix` all reject, so guard the key rather than relying on `default` as a fallback for it.
 
 Use `fail` to abort a render deliberately. What that costs depends on the action: a token transformation follows its `failStrategy`, so `Allow` and `Ignore` forward the request without the mutation, while a header mutation has no fail-open option and returns `500`, discarding any header changes earlier filters had staged for that request. `values` needs a `map<string, dyn>`; `.Pod.Labels` and a single named input are string maps, so `values` accepts `.Inputs` itself and `fromJson` output but not those.
+
+`mustFromJson` follows the same action-specific failure handling. Its JSON parsing and the string helpers run on real values at request time; compile-time template probes do not reject a valid template merely because request data is unavailable.
 
 | Template root | Values |
 | --- | --- |
