@@ -86,6 +86,9 @@
 {{- if and (eq $source "secret") (or (empty .Values.epe.credentialProvider.mtls.secret.namespace) (empty .Values.epe.credentialProvider.mtls.secret.name)) -}}
 {{- fail "epe.credentialProvider.mtls.secret.namespace and name are required when source=secret" -}}
 {{- end -}}
+{{- if and (eq $source "secret") (ne .Values.epe.credentialProvider.mtls.secret.namespace .Release.Namespace) -}}
+{{- fail "epe.credentialProvider.mtls.secret.namespace must match the EPE installation namespace" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

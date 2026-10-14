@@ -252,6 +252,12 @@ func run() error {
 	if *epeConfigName == "" || *epeConfigNamespace == "" {
 		return fmt.Errorf("--epe-config and --epe-config-namespace must not be empty")
 	}
+	validateConfig := func(cfg *configv1.EPEConfig) error {
+		return extensionprovider.ValidateInNamespace(cfg, *epeConfigNamespace)
+	}
+	if err := validateConfig(defaults); err != nil {
+		return fmt.Errorf("initialize extension providers: %w", err)
+	}
 	servingTLS, err := buildExtProcTLS(extProcTLSOptions{
 		Source:   *tlsSource,
 		CertPath: *tlsCertPath,
@@ -279,7 +285,7 @@ func run() error {
 		Names:     []string{*epeConfigName, *epeConfigPrimaryName},
 		Defaults:  defaults,
 		Apply:     extensionprovider.ApplyConfig,
-		Validate:  extensionprovider.Validate,
+		Validate:  validateConfig,
 	}, krt.WithName("EPEConfig"), krt.WithStop(ctx.Done())).AsCollection()
 	providerConfigs := extensionprovider.NewCollection(client, *epeConfigNamespace,
 		configs, configMaps, nil, ctx.Done())

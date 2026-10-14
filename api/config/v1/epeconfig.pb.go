@@ -639,6 +639,7 @@ type TargetReference struct {
 	// Required resource name.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// Defaults to the EPEConfig namespace, not the calling workload's namespace.
+	// Secret references must use this namespace; cross-namespace Secrets are rejected.
 	Namespace     string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

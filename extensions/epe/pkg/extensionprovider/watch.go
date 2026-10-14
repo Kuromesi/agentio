@@ -28,7 +28,6 @@ import (
 	"github.com/openkruise/agentio/pkg/config"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
-	"github.com/openkruise/agentio/pkg/kube/kclient"
 )
 
 // Configuration is the layered EPEConfig together with its resolved certificate material.
@@ -54,34 +53,29 @@ func NewCollection(
 	stop <-chan struct{},
 ) krt.Collection[Configuration] {
 	opts := krt.NewOptionsBuilder(stop, "epe-providers", debugger)
-	secretClient := kclient.NewFiltered[*corev1.Secret](client, kclient.Filter{})
-	secretClient.Start(stop)
-	secrets := krt.WrapClient(secretClient, opts.WithName("Secrets")...)
+	secrets := newSecretDependencies(client, namespace, stop, opts.WithName("Secrets")...)
 
 	files := newFileDependencies(stop, opts.WithName("CertificateFiles")...)
 	return krt.NewCollection(
 		configs,
 		func(ctx krt.HandlerContext, cfg config.Config[*configv1.EPEConfig]) *Configuration {
 			var paths []string
+			refs := map[string]struct{}{}
 			for _, provider := range cfg.Value.GetExtensionProviders() {
 				_, _, tlsCfg := settings(provider)
 				paths = append(paths, certificateFiles(tlsCfg)...)
+				for _, ref := range []*configv1.TargetReference{
+					tlsCfg.GetCaSecretRef(), tlsCfg.GetClientCertificateSecretRef(),
+				} {
+					if ref != nil {
+						refs[resourceKey(namespace, ref.Namespace, ref.Name)] = struct{}{}
+					}
+				}
 			}
 			files.watch(ctx, paths)
 			resolved := &Configuration{Config: cfg, Materials: map[string]TLSMaterial{}}
-			fetched := map[string]*corev1.Secret{}
-			lookup := func(key string) *corev1.Secret {
-				if secret, ok := fetched[key]; ok {
-					return secret
-				}
-				// Fetch also tracks missing dependencies, so creation restores the provider.
-				if secret := krt.FetchOne(ctx, secrets, krt.FilterKey(key)); secret != nil {
-					fetched[key] = *secret
-					return *secret
-				}
-				fetched[key] = nil
-				return nil
-			}
+			snapshot := secrets.watch(ctx, refs)
+			lookup := func(key string) *corev1.Secret { return snapshot[key] }
 			fetchedConfigMaps := map[string]*corev1.ConfigMap{}
 			lookupConfigMap := func(key string) *corev1.ConfigMap {
 				if cm, ok := fetchedConfigMaps[key]; ok {

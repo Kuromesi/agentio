@@ -53,6 +53,9 @@ func watch(
 	if len(defaults) != 0 {
 		cfg = defaults[0]
 	}
+	if err := ValidateInNamespace(cfg, namespace); err != nil {
+		t.Fatal(err)
+	}
 	cms := kclient.NewFiltered[*corev1.ConfigMap](client, kclient.Filter{})
 	cms.Start(stop)
 	configMaps := krt.WrapClient(cms, krt.WithStop(stop))
@@ -63,7 +66,9 @@ func watch(
 			Names:     names,
 			Defaults:  cfg,
 			Apply:     ApplyConfig,
-			Validate:  Validate,
+			Validate: func(cfg *configv1.EPEConfig) error {
+				return ValidateInNamespace(cfg, namespace)
+			},
 		},
 		krt.WithStop(stop),
 	)
@@ -84,6 +89,17 @@ func TestWatchInitialConfiguration(t *testing.T) {
 		{name: "invalid YAML", data: map[string]string{"config": "extensionProviders: ["}},
 		{name: "invalid provider", data: map[string]string{"config": "extensionProviders: [{name: a}]"}},
 		{name: "empty registry", data: map[string]string{"config": "extensionProviders: []"}},
+		{
+			name: "cross-namespace Secret",
+			data: map[string]string{"config": `extensionProviders:
+- name: a
+  credentialProvider:
+    url: https://provider.example
+    tls:
+      optional: true
+      caSecretRef: {namespace: business, name: material}
+`},
+		},
 		{
 			name: "missing Secret",
 			data: map[string]string{"config": `extensionProviders:
@@ -127,6 +143,9 @@ func TestWatchInitialConfiguration(t *testing.T) {
 				}
 			} else if token(t, registry, ctx, "") != "environment" {
 				t.Fatal("initial configuration must use the defaults")
+			}
+			if tt.name == "cross-namespace Secret" && liveProvider(registry, "a") != nil {
+				t.Fatal("invalid cross-namespace provider was installed")
 			}
 			if tt.name == "missing Secret" {
 				registry.mu.Lock()
@@ -275,12 +294,7 @@ func TestWatchSwitchesSecretDependencies(t *testing.T) {
 	if !reg.WaitUntilSynced(waitCtx.Done()) {
 		t.Fatal("initial sync did not complete")
 	}
-	registry.mu.Lock()
-	first := registry.current.providers["a"]
-	registry.mu.Unlock()
-	if first == nil || first.err != nil {
-		t.Fatalf("initial provider unavailable: %+v", first)
-	}
+	first := waitForAvailableProvider(t, registry, "a")
 
 	// A valid reference to a missing Secret installs an unavailable provider,
 	// then its creation must wake the dependency without another config change.
@@ -341,7 +355,7 @@ func defaultConfig(endpoint string) *configv1.EPEConfig {
 	}
 }
 
-// Files and cross-namespace Secrets both enter the effective config's material
+// Files and same-namespace Secrets both enter the effective config's material
 // snapshot, so rotation changes the provider instance and invalidates its cache.
 func TestWatchCertificateSources(t *testing.T) {
 	for _, source := range []string{"files", "secret"} {
@@ -376,16 +390,16 @@ func TestWatchCertificateSources(t *testing.T) {
 				rotate = func() { write(tlsConfig.GetCaCertificateFile(), []byte("revoked")) }
 			case "secret":
 				tlsConfig.CaSource = &configv1.ClientTLS_CaSecretRef{
-					CaSecretRef: &configv1.TargetReference{Name: "client", Namespace: "other"},
+					CaSecretRef: &configv1.TargetReference{Name: "client", Namespace: "system"},
 				}
 				tlsConfig.ClientCertificateSource = &configv1.ClientTLS_ClientCertificateSecretRef{
 					ClientCertificateSecretRef: &configv1.TargetReference{
 						Name:      "client",
-						Namespace: "other",
+						Namespace: "system",
 					},
 				}
 				sec := &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{Name: "client", Namespace: "other"},
+					ObjectMeta: metav1.ObjectMeta{Name: "client", Namespace: "system"},
 					Data:       map[string][]byte{"ca.crt": ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key},
 				}
 				client = kube.NewFakeClient(sec)
@@ -394,7 +408,7 @@ func TestWatchCertificateSources(t *testing.T) {
 					sec.Data["ca.crt"] = []byte("revoked")
 					if _, err := client.Kube().
 						CoreV1().
-						Secrets("other").
+						Secrets("system").
 						Update(t.Context(), sec, metav1.UpdateOptions{}); err != nil {
 						t.Fatal(err)
 					}
@@ -410,10 +424,7 @@ func TestWatchCertificateSources(t *testing.T) {
 			if !reg.WaitUntilSynced(ctx.Done()) {
 				t.Fatal("initial sync failed")
 			}
-			first := liveProvider(registry, "default")
-			if first == nil || first.err != nil {
-				t.Fatalf("initial TLS material unavailable: %+v", first)
-			}
+			first := waitForAvailableProvider(t, registry, "default")
 			rotate()
 			testsupport.Eventually(t, 15*time.Second, func() error {
 				next := liveProvider(registry, "default")
@@ -524,4 +535,18 @@ func TestWatchCertificateFilePaths(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// Initial configuration application does not wait for certificate Secrets.
+func waitForAvailableProvider(t *testing.T, registry *Registry, name string) *instance {
+	t.Helper()
+	var provider *instance
+	testsupport.Eventually(t, 5*time.Second, func() error {
+		provider = liveProvider(registry, name)
+		if provider == nil || provider.err != nil {
+			return fmt.Errorf("provider %q is not available: %+v", name, provider)
+		}
+		return nil
+	})
+	return provider
 }

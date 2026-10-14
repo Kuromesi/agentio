@@ -178,6 +178,7 @@ message TargetReference {
   // Required resource name.
   string name = 1;
   // Defaults to the EPEConfig namespace, not the calling workload's namespace.
+  // Secret references must use this namespace; cross-namespace Secrets are rejected.
   string namespace = 2;
 }
 

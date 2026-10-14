@@ -588,6 +588,7 @@ func TestWatchConfigMapAndSecretLifecycle(t *testing.T) {
 	if !reg.WaitUntilSynced(t.Context().Done()) {
 		t.Fatal("initial sync did not complete")
 	}
+	waitForAvailableProvider(t, r, "a")
 	if token(t, r, t.Context(), "a") != "watched" {
 		t.Fatal("wrong token")
 	}
