@@ -293,7 +293,8 @@ func TestRenderIgnoresProxyImageAnnotation(t *testing.T) {
 			continue
 		}
 		imageLines++
-		if trimmed != `image: "example.com/agentio/proxyv2:1.0.0-test"` && trimmed != `image: "agentio/agentio-porter:test"` {
+		if trimmed != `image: "example.com/agentio/proxyv2:1.0.0-test"` &&
+			trimmed != `image: "agentio/agentio-porter:test"` {
 			t.Fatalf("container image not derived from values: %s", trimmed)
 		}
 	}
