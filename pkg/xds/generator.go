@@ -42,9 +42,8 @@ type GenerationRequest struct {
 	// Snapshot is the publication view resources are generated from; its
 	// version becomes the response system version.
 	Snapshot model.ResourceSet
-	// Update carries the indexed key-level changes and the before/after
-	// publication transition consumed by the incremental path. It is unset when Full
-	// is true.
+	// Update identifies resources to reselect, including intermediate identities
+	// observed before publication notices were merged.
 	Update xdsstore.Update
 	// Full selects the snapshot diff path instead of indexed update generation.
 	// It is set for initial reads, new subscriptions, and full-rebuild updates.
@@ -137,49 +136,51 @@ func diffResourceSelection(
 	return GeneratedDelta{Resources: resources, Removed: removed}
 }
 
-// diffCandidateTransition diffs each candidate's visibility and content between
-// the two publications, mapping renames to removals of the old wire name.
-func diffCandidateTransition(
-	candidates sets.Set[model.ResourceKey],
-	lookupOld, lookupNew func(model.ResourceKey) (model.Resource, bool),
-	oldVisible, newVisible func(model.Resource) bool,
-) (map[string]model.Resource, sets.Set[string]) {
-	var selected map[string]model.Resource
-	var removed sets.Set[string]
-	for key := range candidates {
-		oldResource, hadOld := lookupOld(key)
-		newResource, hasNew := lookupNew(key)
-		var oldPointer, newPointer *model.Resource
-		if hadOld {
-			oldPointer = &oldResource
+// reconcileCandidates selects current contents for invalidated identities. Sent
+// state is used for removals and cheap duplicate suppression, never to decide
+// whether a publication change should survive merging.
+func reconcileCandidates(
+	request GenerationRequest,
+	visible func(model.Resource) bool,
+	previouslyVisible func(xdsstore.Candidate, xdsstore.Identity) bool,
+) GeneratedDelta {
+	selected := make(map[string]model.Resource)
+	removed := sets.New[string]()
+	for _, candidate := range request.Update.Candidates(request.TypeURL) {
+		if resource, found := request.Snapshot.Get(candidate.Key); found && visible(resource) {
+			selected[resource.XDSName] = resource
 		}
-		if hasNew {
-			newPointer = &newResource
+		for _, identity := range candidate.Identities {
+			if _, sent := request.Subscription.SentVersion(identity.Name); sent ||
+				previouslyVisible != nil && previouslyVisible(candidate, identity) {
+				removed.Insert(identity.Name)
+			}
+			if _, found := selected[identity.Name]; found {
+				continue
+			}
+			// Several internal keys may share a wire name. A queued deletion must not
+			// withdraw the current replacement, even when its notice is still pending.
+			for _, resource := range request.Snapshot.Lookup(candidate.Key.TypeURL, identity.Name) {
+				if resource.Key != candidate.Key && resource.XDSName == identity.Name && visible(resource) {
+					selected[identity.Name] = resource
+				}
+			}
 		}
-		addResourceTransition(&selected, &removed, oldPointer, newPointer,
-			hadOld && oldVisible(oldResource), hasNew && newVisible(newResource))
 	}
-	return selected, removed
+	delta := newSortedDelta(selected, removed)
+	// Direct Workloads still contain Address payloads here; their projected
+	// hashes are compared after projection instead.
+	if request.TypeURL != model.WorkloadType {
+		delta.Resources = unsentResources(request.Subscription, delta.Resources)
+	}
+	return delta
 }
 
-func addResourceTransition(
-	selected *map[string]model.Resource,
-	removed *sets.Set[string],
-	oldResource, newResource *model.Resource,
-	oldVisible, newVisible bool,
-) {
-	if newVisible && (!oldVisible || oldResource.Hash != newResource.Hash) {
-		if *selected == nil {
-			*selected = make(map[string]model.Resource)
-		}
-		(*selected)[newResource.XDSName] = *newResource
-	}
-	if oldVisible && (!newVisible || oldResource.XDSName != newResource.XDSName) {
-		if *removed == nil {
-			*removed = sets.New[string]()
-		}
-		(*removed).Insert(oldResource.XDSName)
-	}
+func unsentResources(subscription SubscriptionView, resources []model.Resource) []model.Resource {
+	return slices.DeleteFunc(resources, func(resource model.Resource) bool {
+		version, found := subscription.SentVersion(resource.XDSName)
+		return found && version == resource.Hash
+	})
 }
 
 // newSortedDelta builds the deterministic delta; a name that is re-selected
@@ -187,7 +188,6 @@ func addResourceTransition(
 func newSortedDelta(
 	selected map[string]model.Resource,
 	removedSet sets.Set[string],
-	elideSentState bool,
 ) GeneratedDelta {
 	resources := make([]model.Resource, 0, len(selected))
 	for name, resource := range selected {
@@ -200,5 +200,5 @@ func newSortedDelta(
 		removed = append(removed, name)
 	}
 	sort.Strings(removed)
-	return GeneratedDelta{Resources: resources, Removed: removed, elideSentState: elideSentState}
+	return GeneratedDelta{Resources: resources, Removed: removed}
 }

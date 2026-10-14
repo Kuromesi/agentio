@@ -908,3 +908,24 @@ func scaleWorkloadTransition(t testing.TB, resourceCount int) (
 	}})
 	return before, after, update, newTarget
 }
+
+// initializedSubscription models a completed initial response for generator tests
+// that subsequently exercise incremental withdrawal or version suppression.
+func initializedSubscription(t testing.TB, generator ResourceGenerator, scope model.ClientScope,
+	typeURL string, snapshot model.ResourceSet, subscription SubscriptionView,
+) SubscriptionView {
+	t.Helper()
+	delta, err := generator.Generate(context.Background(), GenerationRequest{
+		Scope: scope, TypeURL: typeURL, Snapshot: snapshot, Subscription: subscription, Full: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription.sent = make(map[string]string)
+	if !delta.elideSentState {
+		for _, resource := range delta.Resources {
+			subscription.sent[resource.XDSName] = resource.Hash
+		}
+	}
+	return subscription
+}

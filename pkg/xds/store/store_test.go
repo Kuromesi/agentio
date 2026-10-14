@@ -54,7 +54,11 @@ func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 		t.Fatalf("Apply publication = %#v, want changed two-resource snapshot", publication)
 	}
 
-	publication, err = store.Apply([]model.ResourceChange{{Key: model.ResourceKey{TypeURL: model.AddressType, Name: "invalid"}, New: &model.Resource{}}})
+	publication, err = store.Apply(
+		[]model.ResourceChange{
+			{Key: model.ResourceKey{TypeURL: model.AddressType, Name: "invalid"}, New: &model.Resource{}},
+		},
+	)
 	if err == nil {
 		t.Fatal("invalid resource was accepted")
 	}
@@ -67,185 +71,77 @@ func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 	}
 }
 
-func TestStoreUpdateCarriesPublicationTransition(t *testing.T) {
-	oldResource := updateTestResource(t, model.AddressType, "address-key", "address", "old")
-	newResource := updateTestResource(t, model.AddressType, "address-key", "address", "new")
-	before, err := model.NewResourceSet([]model.Resource{oldResource})
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := New(before)
-	ctx := t.Context()
-	subscription := store.Subscribe(ctx)
-	subscription.Watch(model.AddressType)
-	updates := subscription.Updates()
-
-	if _, err := store.Apply([]model.ResourceChange{{Key: newResource.Key, New: &newResource}}); err != nil {
-		t.Fatal(err)
-	}
-	update := <-updates
-
-	if got, found := update.Before().Get(oldResource.Key); !found || got.Hash != oldResource.Hash {
-		t.Fatalf("Before resource = (%#v, %v), want old resource", got, found)
-	}
-	if got, found := update.After().Get(newResource.Key); !found || got.Hash != newResource.Hash {
-		t.Fatalf("After resource = (%#v, %v), want new resource", got, found)
-	}
-}
-
-func TestMergeUpdatesCarriesPublicationTransition(t *testing.T) {
-	resource := func(payload string) model.Resource {
-		return updateTestResource(t, model.AddressType, "address-key", "address", payload)
-	}
-	oldResource := resource("old")
-	middleResource := resource("middle")
-	newResource := resource("new")
-	snapshot := func(value model.Resource) model.ResourceSet {
-		result, err := model.NewResourceSet([]model.Resource{value})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-	before := snapshot(oldResource)
-	middle := snapshot(middleResource)
-	after := snapshot(newResource)
-
-	merged := Merge(
-		updateBetween(before, middle, []model.ResourceChange{{
-			Key: oldResource.Key,
-			Old: &oldResource,
-			New: &middleResource,
-		}}),
-		updateBetween(middle, after, []model.ResourceChange{{
-			Key: oldResource.Key,
-			Old: &middleResource,
-			New: &newResource,
-		}}),
-	)
-
-	if got, _ := merged.Before().Get(oldResource.Key); got.Hash != oldResource.Hash {
-		t.Fatalf("merged Before hash = %q, want %q", got.Hash, oldResource.Hash)
-	}
-	if got, _ := merged.After().Get(newResource.Key); got.Hash != newResource.Hash {
-		t.Fatalf("merged After hash = %q, want %q", got.Hash, newResource.Hash)
-	}
-	changes := merged.ChangesForType(model.AddressType)
-	if len(changes) != 1 || changes[0].Old.Hash != oldResource.Hash || changes[0].New.Hash != newResource.Hash {
-		t.Fatalf("merged changes = %#v, want first-old/final-new", changes)
-	}
-}
-
-func TestMergeUpdatesDropsRevertedTransitionChanges(t *testing.T) {
-	oldResource := updateTestResource(t, model.AddressType, "address-key", "address", "old")
-	middleResource := updateTestResource(t, model.AddressType, "address-key", "address", "middle")
-	snapshot := func(value model.Resource) model.ResourceSet {
-		result, err := model.NewResourceSet([]model.Resource{value})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-	before := snapshot(oldResource)
-	middle := snapshot(middleResource)
-	after := snapshot(oldResource)
-
-	merged := Merge(
-		updateBetween(before, middle, []model.ResourceChange{{
-			Key: oldResource.Key,
-			Old: &oldResource,
-			New: &middleResource,
-		}}),
-		updateBetween(middle, after, []model.ResourceChange{{
-			Key: oldResource.Key,
-			Old: &middleResource,
-			New: &oldResource,
-		}}),
-	)
-
-	if merged.Affects(model.AddressType) || len(merged.ChangesForType(model.AddressType)) != 0 {
-		t.Fatalf("reverted transition still contains changes: %#v", merged.ChangesForType(model.AddressType))
-	}
-	if merged.Before().Version() != before.Version() || merged.After().Version() != after.Version() {
-		t.Fatalf("reverted transition bounds = (%q, %q), want (%q, %q)",
-			merged.Before().Version(), merged.After().Version(), before.Version(), after.Version())
-	}
-}
-
-// This catches query methods that expose a store-owned index, fail to index a
-// renamed resource by both of its wire identities, or return map-order output.
-func TestUpdateQueriesIndexOldAndNewNamesWithoutExposingIndexes(t *testing.T) {
-	old := updateTestResource(t, model.AddressType, "address-key", "old-name", "old", "old-alias")
-	new := updateTestResource(t, model.AddressType, "address-key", "new-name", "new", "new-alias")
-	second := updateTestResource(t, model.AddressType, "second-address-key", "second-name", "second")
-	cluster := updateTestResource(t, model.ClusterType, "cluster-key", "cluster-name", "cluster")
+func TestStoreUpdateRetainsWireIdentities(t *testing.T) {
+	old := updateTestResource(t, model.AddressType, "key", "old-name", "old", "old-alias")
+	next := updateTestResource(t, model.AddressType, "key", "new-name", "new", "new-alias")
 	snapshot, err := model.NewResourceSet([]model.Resource{old})
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := New(snapshot)
-	ctx := t.Context()
-	subscription := store.Subscribe(ctx)
-	subscription.Watch(model.AddressType)
-	subscription.Watch(model.ClusterType)
-	updates := subscription.Updates()
-
-	if publication, err := store.Apply([]model.ResourceChange{
-		{Key: cluster.Key, New: &cluster},
-		{Key: second.Key, New: &second},
-		{Key: new.Key, New: &new},
-	}); err != nil || !publication.Changed {
-		t.Fatalf("Apply() = (%#v, %v), want changed publication and nil", publication, err)
+	sub := store.Subscribe(t.Context())
+	sub.Watch(model.AddressType)
+	if _, err := store.Apply([]model.ResourceChange{{Key: next.Key, New: &next}}); err != nil {
+		t.Fatal(err)
 	}
-	update := <-updates
-
-	if got, want := update.Version(), store.Snapshot().Version(); got != want {
-		t.Fatalf("Version() = %q, want %q", got, want)
+	update := <-sub.Updates()
+	candidates := update.Candidates(model.AddressType)
+	if len(candidates) != 1 || candidates[0].Key != next.Key || len(candidates[0].Identities) != 2 {
+		t.Fatalf("candidates = %#v, want both wire identities", candidates)
 	}
-	if !update.Affects(model.AddressType) || !update.Affects(model.ClusterType) || update.Affects(model.SecretType) {
-		t.Fatalf("Affects() did not report the affected types correctly")
+	if candidates[0].Identities[0].Name != old.XDSName || candidates[0].Identities[1].Name != next.XDSName {
+		t.Fatalf("identities = %#v", candidates[0].Identities)
 	}
-	if update.FullFor(model.AddressType) {
-		t.Fatal("FullFor(Address) = true for a incremental update")
-	}
-
-	addressChanges := update.ChangesForType(model.AddressType)
-	if len(addressChanges) != 2 {
-		t.Fatalf("Address changes = %d, want 2", len(addressChanges))
-	}
-	if got := []string{addressChanges[0].Key.Name, addressChanges[1].Key.Name}; got[0] != "address-key" || got[1] != "second-address-key" {
-		t.Fatalf("Address change order = %v, want ResourceKey order", got)
-	}
-	if got := update.ChangesForNames(model.AddressType, []string{"old-name", "old-alias", "new-name", "new-alias"}); len(got) != 1 {
-		t.Fatalf("named changes = %d, want one deduplicated change", len(got))
-	}
-	if got := update.ChangesForNames(model.AddressType, []string{"old-alias", "new-name"}); got[0].Key != new.Key {
-		t.Fatalf("named change key = %v, want %v", got[0].Key, new.Key)
-	}
-
-	addressChanges[0] = model.ResourceChange{}
-	if got := update.ChangesForType(model.AddressType); got[0].Key != new.Key {
-		t.Fatalf("ChangesForType returned a mutable store index: %#v", got)
-	}
-	namedChanges := update.ChangesForNames(model.AddressType, []string{"old-alias"})
-	namedChanges[0] = model.ResourceChange{}
-	if got := update.ChangesForNames(model.AddressType, []string{"new-name"}); got[0].Key != new.Key {
-		t.Fatalf("ChangesForNames returned a mutable store index: %#v", got)
+	if update.Version() != store.Snapshot().Version() || !update.Affects(model.WorkloadType) ||
+		update.Affects(model.SecretType) {
+		t.Fatalf("unexpected update scope: %#v", update)
 	}
 }
 
-func TestUpdateNameIndexIncludesCanonicalResourceKey(t *testing.T) {
-	oldResource := updateTestResource(t, model.AddressType, "canonical-key", "wire-name", "old", "alias")
-	newResource := updateTestResource(t, model.AddressType, "canonical-key", "wire-name", "new", "alias")
-	update := updateFor("v2", []model.ResourceChange{{
-		Key: oldResource.Key,
-		Old: &oldResource,
-		New: &newResource,
-	}})
+func TestMergeRetainsIntermediateIdentitiesWithoutMutatingInputs(t *testing.T) {
+	a := updateTestResource(t, model.AddressType, "key", "a", "a")
+	b := updateTestResource(t, model.AddressType, "key", "b", "b")
+	before, err := model.NewResourceSet([]model.Resource{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	middle, err := model.NewResourceSet([]model.Resource{b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward := updateBetween(before, middle, before.Diff(middle))
+	reverse := updateBetween(middle, before, middle.Diff(before))
+	merged := Merge(forward, reverse)
+	got := merged.Candidates(model.AddressType)
+	if !merged.Affects(model.AddressType) || len(got) != 1 || len(got[0].Identities) != 2 {
+		t.Fatalf("rollback lost observed identities: %#v", got)
+	}
+	c := updateTestResource(t, model.AddressType, "key", "c", "c")
+	last, err := model.NewResourceSet([]model.Resource{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := Merge(merged, updateBetween(before, last, before.Diff(last)))
+	if len(final.Candidates(model.AddressType)[0].Identities) != 3 ||
+		len(merged.Candidates(model.AddressType)[0].Identities) != 2 ||
+		len(forward.Candidates(model.AddressType)[0].Identities) != 2 {
+		t.Fatal("merge lost an identity or mutated a shared input")
+	}
+}
 
-	changes := update.ChangesForNames(model.AddressType, []string{"canonical-key"})
-	if len(changes) != 1 || changes[0].Key != oldResource.Key {
-		t.Fatalf("canonical-key changes = %#v, want resource change", changes)
+func TestApplySuppressesUnpublishedRollback(t *testing.T) {
+	a := updateTestResource(t, model.AddressType, "key", "a", "a")
+	b := updateTestResource(t, model.AddressType, "key", "a", "b")
+	snapshot, err := model.NewResourceSet([]model.Resource{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := New(snapshot)
+	publication, err := store.Apply([]model.ResourceChange{
+		{Key: a.Key, Old: &a, New: &b}, {Key: a.Key, Old: &b, New: &a},
+	})
+	if err != nil || publication.Changed {
+		t.Fatalf("atomic rollback: %#v, %v", publication, err)
 	}
 }
 
@@ -334,8 +230,8 @@ func TestTypedSubscriberIsOnlyWokenForWatchedType(t *testing.T) {
 	}
 	select {
 	case update := <-subscription.Updates():
-		changes := update.ChangesForType(model.AddressType)
-		if len(changes) != 1 || changes[0].Key != address.Key || changes[0].New == nil {
+		changes := update.Candidates(model.AddressType)
+		if len(changes) != 1 || changes[0].Key != address.Key {
 			t.Fatalf("incremental update = %#v, want address add", update)
 		}
 	case <-time.After(5 * time.Second):
@@ -360,13 +256,13 @@ func TestSubscriberCoalescingMergesChangedKeys(t *testing.T) {
 	}
 	select {
 	case update := <-subscription.Updates():
-		changes := update.ChangesForType(model.AddressType)
+		changes := update.Candidates(model.AddressType)
 		if len(changes) != 2 {
 			t.Fatalf("merged changed keys = %d, want 2", len(changes))
 		}
-		for _, name := range []string{"a", "b"} {
+		for i, name := range []string{"a", "b"} {
 			key := model.ResourceKey{TypeURL: model.AddressType, Name: name}
-			if got := update.ChangesForNames(model.AddressType, []string{name}); len(got) != 1 || got[0].Key != key || got[0].New == nil {
+			if changes[i].Key != key {
 				t.Fatalf("missing changed key %v in %#v", key, changes)
 			}
 		}
@@ -395,7 +291,7 @@ func TestTypedFullUpdateDoesNotHideIncrementalOtherType(t *testing.T) {
 		if update.FullFor(model.AddressType) || !update.FullFor(model.SecretType) {
 			t.Fatalf("full regeneration scope is wrong: %#v", update)
 		}
-		if changes := update.ChangesForNames(model.AddressType, []string{address.XDSName}); len(changes) != 1 || changes[0].Key != address.Key || changes[0].New == nil {
+		if changes := update.Candidates(model.AddressType); len(changes) != 1 || changes[0].Key != address.Key {
 			t.Fatalf("Address changed key was lost: %#v", changes)
 		}
 	case <-time.After(5 * time.Second):

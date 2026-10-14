@@ -170,35 +170,19 @@ func demandSubscriptionView(snapshot model.ResourceSet, typeURL string, names []
 	return SubscriptionView{names: sortedNames(sets.New(names...))}, true
 }
 
+// newIncrementalSubscriptionView copies sent versions only for affected wire
+// identities. Subscription names still describe the complete selection, so
+// aliases and dependency expansion cannot accidentally withdraw another match.
 func newIncrementalSubscriptionView(watch *watchState, typeURL string, update xdsstore.Update) SubscriptionView {
-	view := SubscriptionView{
-		wildcard: watch.wildcard,
-		names:    sortedNames(watch.names),
-		sent:     make(map[string]string),
+	view := SubscriptionView{wildcard: watch.wildcard, names: sortedNames(watch.names), sent: make(map[string]string)}
+	for _, candidate := range update.Candidates(typeURL) {
+		for _, identity := range candidate.Identities {
+			if version, found := watch.sent[identity.Name]; found {
+				view.sent[identity.Name] = version
+			}
+		}
 	}
-	var changes []model.ResourceChange
-	if view.wildcard {
-		changes = update.ReadOnlyChangesForType(typeURL)
-	} else {
-		changes = update.ChangesForNames(typeURL, view.names)
-	}
-	copySentForChanges(&view, watch, changes)
 	return view
-}
-
-func copySentForChanges(view *SubscriptionView, watch *watchState, changes []model.ResourceChange) {
-	copySent := func(resource *model.Resource) {
-		if resource == nil {
-			return
-		}
-		if version, found := watch.sent[resource.XDSName]; found {
-			view.sent[resource.XDSName] = version
-		}
-	}
-	for _, change := range changes {
-		copySent(change.Old)
-		copySent(change.New)
-	}
 }
 
 // Wildcard reports whether every resource of this type is subscribed.

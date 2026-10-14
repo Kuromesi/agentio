@@ -95,6 +95,7 @@ func BenchmarkDeltaPushScan(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			update := updates[i%2]
+			testServer.resources.snapshot = snapshots[i%2]
 			if err := testServer.server.sendIncremental(
 				stream,
 				testServer.scope,
@@ -230,6 +231,7 @@ func BenchmarkDeltaPushIncrementalAllClients(b *testing.B) {
 
 		for iteration := 0; b.Loop(); iteration++ {
 			update := updates[(iteration+1)%2]
+			testServer.resources.snapshot = snapshots[(iteration+1)%2]
 			for _, watch := range watches {
 				if err := testServer.server.sendIncremental(
 					stream,
@@ -282,7 +284,7 @@ func BenchmarkDeltaPushPublicationFanout(b *testing.B) {
 }
 
 func BenchmarkDeltaPushGatewayUpdate(b *testing.B) {
-	resources, updates := relationshipFanoutScenario(b)
+	resources, updates, snapshots := relationshipFanoutScenario(b)
 	server := newTestServer(b, ztunnelScope(), resources, nil)
 	stream := &countingDeltaStream{ctx: context.Background()}
 	for _, clientCount := range []int{100, 1_000, 10_000} {
@@ -293,6 +295,7 @@ func BenchmarkDeltaPushGatewayUpdate(b *testing.B) {
 			b.ReportMetric(float64(clientCount), "clients/op")
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
+				server.resources.snapshot = snapshots[iteration&1]
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
@@ -318,6 +321,7 @@ func BenchmarkDeltaPushGatewayUpdate(b *testing.B) {
 			b.ReportMetric(float64(clientCount), "clients/op")
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
+				server.resources.snapshot = snapshots[iteration&1]
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
@@ -334,7 +338,7 @@ func BenchmarkDeltaPushGatewayUpdate(b *testing.B) {
 }
 
 func BenchmarkDeltaPushAuthorizationUpdate(b *testing.B) {
-	resources, updates := authorizationFanoutScenario(b)
+	resources, updates, snapshots := authorizationFanoutScenario(b)
 	server := newTestServer(b, ztunnelScope(), resources, nil)
 	stream := &countingDeltaStream{ctx: context.Background()}
 	for _, clientCount := range []int{100, 1_000, 10_000} {
@@ -345,6 +349,7 @@ func BenchmarkDeltaPushAuthorizationUpdate(b *testing.B) {
 			b.ReportMetric(float64(clientCount), "clients/op")
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
+				server.resources.snapshot = snapshots[iteration&1]
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
@@ -368,6 +373,7 @@ func BenchmarkDeltaPushAuthorizationUpdate(b *testing.B) {
 			b.ReportMetric(float64(clientCount), "clients/op")
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
+				server.resources.snapshot = snapshots[iteration&1]
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
@@ -393,6 +399,7 @@ func BenchmarkDeltaPushMixedClients(b *testing.B) {
 	if err != nil || !changed {
 		b.Fatalf("build mixed-client transition: changed=%v err=%v", changed, err)
 	}
+	snapshots := [2]model.ResourceSet{initial, updated}
 	updates := [2]xdsstore.Update{
 		updateBetween(updated, initial, []model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}}),
 		updateBetween(initial, updated, []model.ResourceChange{{Key: variants[1].Key, Old: &variants[0], New: &variants[1]}}),
@@ -408,6 +415,7 @@ func BenchmarkDeltaPushMixedClients(b *testing.B) {
 			b.ReportMetric(float64(clientCount), "clients/op")
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
+				server.resources.snapshot = snapshots[iteration&1]
 				stream.responses = 0
 				stream.resources = 0
 				for client, scope := range scopes {
@@ -445,12 +453,14 @@ func BenchmarkDeltaPushIncrementalBatch(b *testing.B) {
 				}
 				reverse := updateBetween(after, before, reverseChanges)
 				updates := [2]xdsstore.Update{forward, reverse}
+				snapshots := [2]model.ResourceSet{after, before}
 				expected := changedCount * clientCount / scenarioNodeCount
 				b.ReportAllocs()
 				b.ReportMetric(float64(clientCount), "clients/op")
 				b.ReportMetric(float64(changedCount), "changed-keys/op")
 				b.ResetTimer()
 				for iteration := 0; iteration < b.N; iteration++ {
+					server.resources.snapshot = snapshots[iteration&1]
 					stream.responses = 0
 					stream.resources = 0
 					for client, scope := range scopes {
@@ -600,7 +610,7 @@ func fanoutBenchmarkResources(t testing.TB) ([]model.Resource, [2]model.Resource
 	return resources, variants
 }
 
-func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Update) {
+func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Update, [2]model.ResourceSet) {
 	t.Helper()
 	resources := make([]model.Resource, 0, scenarioResourceCount+scenarioNodeCount)
 	value := &anypb.Any{TypeUrl: model.AddressType, Value: []byte("address")}
@@ -669,10 +679,10 @@ func relationshipFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Upd
 			before,
 			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
 		),
-	}
+	}, [2]model.ResourceSet{after, before}
 }
 
-func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Update) {
+func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Update, [2]model.ResourceSet) {
 	t.Helper()
 	const targetPolicy = "demo/policy-target"
 	resources := make([]model.Resource, 0, scenarioResourceCount*2)
@@ -747,7 +757,7 @@ func authorizationFanoutScenario(t testing.TB) ([]model.Resource, [2]xdsstore.Up
 			before,
 			[]model.ResourceChange{{Key: variants[0].Key, Old: &variants[1], New: &variants[0]}},
 		),
-	}
+	}, [2]model.ResourceSet{after, before}
 }
 
 func incrementalBatchScenario(t testing.TB, changedCount int) (

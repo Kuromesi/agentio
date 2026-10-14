@@ -62,7 +62,7 @@ func TestAuthorizationIncrementalDiffsExactReferenceTransition(t *testing.T) {
 			Source:      model.SourceRef{Registry: "kubernetes/test", Key: "uid-a"},
 		},
 		TypeURL:      model.WorkloadAuthorizationType,
-		Subscription: SubscriptionView{wildcard: true},
+		Subscription: SubscriptionView{wildcard: true, sent: map[string]string{oldPolicy.XDSName: oldPolicy.Hash}},
 		Snapshot:     after,
 		Update: updateBetween(before, after, []model.ResourceChange{{
 			Key: oldWorkload.Key,
@@ -98,11 +98,18 @@ func TestAuthorizationIncludesBaselinesWithoutWorkloadReferences(t *testing.T) {
 				t.Fatalf("scope %+v: got %v, want %v", scope, got, want)
 			}
 			delta := generateAuthorizationIncremental(GenerationRequest{
-				Scope:        scope,
-				TypeURL:      model.WorkloadAuthorizationType,
-				Subscription: SubscriptionView{wildcard: names == nil, names: names},
-				Snapshot:     after,
-				Update:       updateBetween(before, after, before.Diff(after)),
+				Scope:   scope,
+				TypeURL: model.WorkloadAuthorizationType,
+				Subscription: initializedSubscription(
+					t,
+					AuthorizationGenerator{},
+					scope,
+					model.WorkloadAuthorizationType,
+					before,
+					SubscriptionView{wildcard: names == nil, names: names},
+				),
+				Snapshot: after,
+				Update:   updateBetween(before, after, before.Diff(after)),
 			})
 			if len(delta.Resources) != 0 || !slices.Equal(delta.Removed, want) {
 				t.Fatalf("removed last workload: %+v", delta)

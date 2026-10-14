@@ -162,15 +162,24 @@ func (s *Server) pushUpdate(
 	watches map[string]*watchState,
 	update xdsstore.Update,
 ) error {
+	snapshot := s.resources.Snapshot()
 	for _, typeURL := range orderedWatchedTypes(watches, update) {
 		watch := watches[typeURL]
-		if update.FullFor(typeURL) {
-			if err := s.sendDiff(stream, scope, connLog, typeURL, watch, false); err != nil {
-				return err
-			}
-			continue
+		full := update.FullFor(typeURL)
+		var subscription SubscriptionView
+		if full {
+			subscription = newSubscriptionView(watch)
+		} else {
+			subscription = newIncrementalSubscriptionView(watch, typeURL, update)
 		}
-		if err := s.sendIncremental(stream, scope, connLog, typeURL, watch, update); err != nil {
+		if err := s.generateAndSend(stream, connLog, watch, GenerationRequest{
+			Scope:        scope,
+			TypeURL:      typeURL,
+			Subscription: subscription,
+			Snapshot:     snapshot,
+			Update:       update,
+			Full:         full,
+		}, false); err != nil {
 			return err
 		}
 	}
@@ -203,9 +212,8 @@ func (s *Server) sendDiffForNames(
 	}, force)
 }
 
-// sendIncremental builds a Delta response directly from the KRT changes carried by
-// the store update. Named and non-WDS watches leave sent state for every other
-// key untouched; wildcard Address watches elide that state entirely.
+// sendIncremental reselects candidates from the current snapshot. Named and
+// non-WDS watches leave sent state for every other key untouched; wildcard Address watches elide that state entirely.
 func (s *Server) sendIncremental(stream DeltaStream,
 	scope model.ClientScope, connLog *agentlog.Logger, typeURL string, watch *watchState, update xdsstore.Update,
 ) error {
@@ -214,7 +222,7 @@ func (s *Server) sendIncremental(stream DeltaStream,
 		Scope:        scope,
 		TypeURL:      typeURL,
 		Subscription: subscriptionView,
-		Snapshot:     update.After(),
+		Snapshot:     s.resources.Snapshot(),
 		Update:       update,
 	}
 	return s.generateAndSend(stream, connLog, watch, request, false)
@@ -263,10 +271,7 @@ func (s *Server) sendGeneratedDelta(
 	if len(resources) == 0 && len(removed) == 0 && !force {
 		return nil
 	}
-	version := request.Update.Version()
-	if request.Full {
-		version = request.Snapshot.Version()
-	}
+	version := request.Snapshot.Version()
 	nonce := fmt.Sprintf("%d", s.nonce.Add(1))
 	response := &discoveryv3.DeltaDiscoveryResponse{
 		SystemVersionInfo: version,

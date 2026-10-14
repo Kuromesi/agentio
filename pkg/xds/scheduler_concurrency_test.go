@@ -255,9 +255,8 @@ func awaitSchedulerOperation(t *testing.T, done <-chan struct{}) {
 
 func assertSchedulerUpdate(t *testing.T, got, want xdsstore.Update) {
 	t.Helper()
-	if got.Version() != want.Version() || got.Before().Version() != want.Before().Version() ||
-		got.After().Version() != want.After().Version() || got.FullFor(model.AddressType) != want.FullFor(model.AddressType) ||
-		!reflect.DeepEqual(got.ChangesForType(model.AddressType), want.ChangesForType(model.AddressType)) {
+	if got.Version() != want.Version() || got.FullFor(model.AddressType) != want.FullFor(model.AddressType) ||
+		!reflect.DeepEqual(got.Candidates(model.AddressType), want.Candidates(model.AddressType)) {
 		t.Fatalf("update = %#v, want %#v", got, want)
 	}
 }
