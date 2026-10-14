@@ -20,6 +20,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 
 	"istio.io/istio/pkg/test/util/assert"
 
@@ -40,9 +41,16 @@ func TestMapCollection(t *testing.T) {
 				mapOpts = append(mapOpts, krt.WithMapDiscardEqual())
 			}
 			opts := testOptions(t)
-			// Drive mapping events directly, without the fake client's LIST/WATCH startup gap.
-			pods := krt.NewMutableCollection[*corev1.Pod](nil, nil, opts.WithName("Pods1")...)
-			SimplePods := krt.MapCollection(pods.AsCollection(), func(p *corev1.Pod) SimplePod {
+			c1 := kube.NewFakeClient()
+			kpc1 := kclient.NewWritableFromInformer(
+				kclient.NewFiltered[*corev1.Pod](c1, kclient.Filter{}),
+				c1.Kube().CoreV1().Pods,
+			)
+			pc1 := testWriter[*corev1.Pod]{t: t, c: kpc1}
+			pods := krt.WrapClient[*corev1.Pod](kpc1, opts.WithName("Pods1")...)
+			c1.Run(opts.Stop())
+			assert.Equal(t, pods.WaitUntilSynced(opts.Stop()), true)
+			SimplePods := krt.MapCollection(pods, func(p *corev1.Pod) SimplePod {
 				return SimplePod{
 					Named: Named{
 						Name:      p.Name,
@@ -63,8 +71,18 @@ func TestMapCollection(t *testing.T) {
 					TrackerHandler[SimplePod](tt)(event)
 				}
 			}, true)
+			// The fake tracker cannot replay changes between LIST and WATCH.
+			// Cache sync only covers LIST, so wait for WATCH before mutating it.
+			assert.EventuallyEqual(t, func() bool {
+				for _, action := range c1.Kube().(*kubefake.Clientset).Actions() {
+					if action.Matches("watch", "pods") {
+						return true
+					}
+				}
+				return false
+			}, true)
 			// Add a pod and make sure we get the event for it in event handlers from the mapped collection
-			pod := &corev1.Pod{
+			pod := pc1.Create(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod1",
 					Namespace: "ns1",
@@ -73,15 +91,14 @@ func TestMapCollection(t *testing.T) {
 				Status: corev1.PodStatus{
 					PodIP: "1.2.3.4",
 				},
-			}
-			pods.UpdateObject(pod.DeepCopy())
+			})
 			tt.WaitOrdered("add/ns1/pod1")
 
 			pod.Annotations = map[string]string{"ignored": "change"}
-			pods.UpdateObject(pod.DeepCopy())
+			pod = pc1.Update(pod)
 			pod.Status.PodIP = "1.2.3.5"
-			pods.UpdateObject(pod.DeepCopy())
-			pods.DeleteObject(krt.GetKey(pod))
+			pc1.UpdateStatus(pod)
+			pc1.Delete(pod.Name, pod.Namespace)
 			if discardEqual {
 				tt.WaitOrdered("update/ns1/pod1", "delete/ns1/pod1")
 			} else {
