@@ -52,7 +52,7 @@ type Watch struct {
 	TypeURL  string
 	Wildcard bool
 	Validate func(value *anypb.Any) error
-	// Transform runs once per received resource, after wire validation. Only
+	// Transform runs once per interested resource, after wire validation. Only
 	// its result is cached. Nil keeps the complete Any. The result must be
 	// immutable after publication; callbacks must not call back into Client.
 	Transform func(value *anypb.Any) (any, error)
@@ -308,8 +308,15 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	if err := validateResponse(r, st.watch); err != nil {
 		return err
 	}
-	// Transform the full batch before any cache or subscription mutation.
-	values, err := transformResources(r.Resources, st.watch)
+	// Ignore late updates for released interests. Transform the interested
+	// batch before any cache or subscription mutation.
+	selected := make([]*discovery.Resource, 0, len(r.Resources))
+	for _, res := range r.Resources {
+		if st.interested(res.Name, res.Aliases) {
+			selected = append(selected, res)
+		}
+	}
+	values, err := transformResources(selected, st.watch)
 	if err != nil {
 		return err
 	}
@@ -335,7 +342,11 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	// Keep canonical resources; demanding an ambiguous alias fails closed.
 	resourceAliases := maps.Clone(st.resourceAliases)
 	for _, res := range r.Resources {
-		resourceAliases[res.Name] = append([]string(nil), res.Aliases...)
+		if st.interested(res.Name, res.Aliases) {
+			resourceAliases[res.Name] = append([]string(nil), res.Aliases...)
+		} else {
+			delete(resourceAliases, res.Name)
+		}
 	}
 	for _, name := range r.RemovedResources {
 		delete(resourceAliases, name)
@@ -362,6 +373,11 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	}
 	st.aliases = aliases
 	for _, res := range r.Resources {
+		if !st.interested(res.Name, res.Aliases) {
+			delete(st.resources, res.Name)
+			delete(st.resourceAliases, res.Name)
+			continue
+		}
 		st.resources[res.Name] = values[res.Name]
 		st.resourceAliases[res.Name] = append([]string(nil), res.Aliases...)
 		for _, alias := range res.Aliases {

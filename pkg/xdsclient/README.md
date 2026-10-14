@@ -11,7 +11,7 @@ requires Pod identity and constructs its node ID from it.
 
 ## Resource transforms
 
-`Watch.Transform` runs once per resource in a received update, after wire and
+`Watch.Transform` runs once per interested resource in a received update, after wire and
 optional `Validate` checks. It returns the value to retain in the cache. Only
 that result is retained: there is no second raw payload cache. With no transform,
 the client retains a complete `*anypb.Any`.
@@ -60,6 +60,31 @@ Releasing an explicit name never removes a wildcard subscription. This matters
 for EPE, which still watches complete resource types: deleted explicit fetches
 are released, but the wildcard continues to receive new resources. Porter uses
 named watches only and demands resources again when new connections need them.
+
+## Consumer-owned subscriptions
+
+`Acquire(typeURL, name)` returns a nonblocking, independently owned `Subscription`.
+Call `Subscription.Demand(ctx)` to wait for/read its current resource, and call
+`Release()` when that owner no longer needs it. Releasing one handle wakes its
+waiters with `ErrReleased` without canceling other owners. The last release drops
+the named interest, resource and aliases unless another name, alias, wildcard or
+plain `Client.Demand` still owns them. Local release does not invoke `OnDelete`.
+
+`Subscription.Done()` closes when the shared generation ends, including a
+server deletion with `ReleaseSubscription`. It does not indicate an individual
+handle's release when other owners remain. Old handles cannot release a newer
+generation or read its values. As with plain Demand, cancellation of one wait
+alone does not release its handle.
+
+Named watches ignore resources with no current canonical or alias interest,
+including late responses after eviction. Wire validation still applies to the
+whole response; only interested resources are transformed and cached. Wildcard
+watches continue retaining all resources.
+
+Retention policy belongs outside the protocol client. See
+[`pkg/demandcache`](../demandcache/README.md) for an optional TTL/LRU wrapper.
+Do not mix persistent `Client.Demand` or wildcard interest with managed access
+if eviction needs to free the underlying values.
 
 ## Connection and synchronization
 

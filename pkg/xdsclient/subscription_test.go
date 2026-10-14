@@ -143,6 +143,11 @@ func TestRedemandSupersedesPendingUnsubscribe(t *testing.T) {
 			removeNames(t, client, "a")
 			// Re-publication before waiters resume cannot turn the old deletion
 			// into success, nor make the next demand inherit the old tombstone.
+			next, err := client.Acquire(testType, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer next.Release()
 			publishString(t, client, "a", "recreated")
 			for _, waiter := range waiters {
 				if err := <-waiter; !errors.Is(err, ErrNotFound) {
@@ -233,6 +238,11 @@ func TestSubscriptionsAreUnlimited(t *testing.T) {
 		resources := make([]*discovery.Resource, count)
 		for i := range resources {
 			resources[i] = &discovery.Resource{Name: strconv.Itoa(i), Resource: wire}
+			handle, err := client.Acquire(testType, resources[i].Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer handle.Release()
 		}
 		if err := client.apply(&discovery.DeltaDiscoveryResponse{TypeUrl: testType, Resources: resources}); err != nil {
 			t.Fatal(err)
@@ -251,6 +261,11 @@ func TestSubscriptionsAreUnlimited(t *testing.T) {
 func TestReconnectRetainsSnapshotButDemandsFreshResources(t *testing.T) {
 	for _, wildcard := range []bool{false, true} {
 		withSubscriptionClient(t, Watch{TypeURL: testType, Wildcard: wildcard}, func(t *testing.T, client *Client) {
+			handle, err := client.Acquire(testType, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer handle.Release()
 			publishString(t, client, "a", "old", "old-alias")
 			if _, err := client.Demand(t.Context(), testType, "a"); err != nil {
 				t.Fatal(err)

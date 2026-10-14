@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
@@ -36,7 +37,147 @@ const (
 // Each subscription is a generation. Waiters keep their generation even after
 // the name has been released and reused, so they cannot miss its deletion.
 type subscription struct {
-	deleted bool
+	err        error
+	done       chan struct{}
+	owners     int
+	persistent bool
+}
+
+// ErrReleased means a locally owned subscription was released, not that the
+// control plane deleted the resource.
+var ErrReleased = errors.New("xDS subscription released")
+
+// Subscription owns one interest in a named resource. Updates remain visible
+// until Release or server-driven subscription deletion. Values stay immutable.
+type Subscription struct {
+	client     *Client
+	typ        string
+	name       string
+	generation *subscription
+	released   bool // guarded by client.mu
+}
+
+// Acquire creates an independently releasable interest. It does not wait for
+// discovery. Callers must Release even if Demand is canceled or fails.
+func (c *Client) Acquire(typ, name string) (*Subscription, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, sub, err := c.subscribeLocked(typ, name)
+	if err != nil {
+		return nil, err
+	}
+	sub.owners++
+	return &Subscription{client: c, typ: typ, name: name, generation: sub}, nil
+}
+
+// Done closes when this subscription generation ends (local final release or
+// OnDelete=ReleaseSubscription). It is not closed by ordinary resource updates.
+func (s *Subscription) Done() <-chan struct{} { return s.generation.done }
+
+// Demand waits for the current resource within this subscription generation.
+func (s *Subscription) Demand(ctx context.Context) (*Resource, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.client.mu.Lock()
+	return s.client.waitLocked(ctx, s.client.types[s.typ], s.name, s.generation, s)
+}
+
+// Release relinquishes only this owner's interest. Plain Client.Demand and
+// other handles remain subscribed. Old handles cannot release a newer generation.
+func (s *Subscription) Release() {
+	c := s.client
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s.released {
+		return
+	}
+	s.released = true
+	sub := s.generation
+	sub.owners--
+	st := c.types[s.typ]
+	if st.names[s.name] == sub && sub.owners == 0 && !sub.persistent {
+		sub.err = ErrReleased
+		close(sub.done)
+		delete(st.names, s.name)
+		delete(st.removed, s.name)
+		st.releaseResource(s.name)
+		c.wakeSubscriptions()
+	}
+	c.notifyLocked()
+}
+
+func (c *Client) subscribeLocked(typ, name string) (*typeState, *subscription, error) {
+	if name == "" || name == "*" {
+		return nil, nil, errors.New("demand requires an exact resource name")
+	}
+	st := c.types[typ]
+	if st == nil {
+		return nil, nil, fmt.Errorf("unregistered type %q", typ)
+	}
+	sub := st.names[name]
+	if sub == nil {
+		sub = &subscription{done: make(chan struct{})}
+		st.names[name] = sub
+		delete(st.removed, name)
+		c.wakeSubscriptions()
+	}
+	return st, sub, nil
+}
+
+func (st *typeState) interested(name string, aliases []string) bool {
+	if st.watch.Wildcard || st.names[name] != nil {
+		return true
+	}
+	for _, alias := range aliases {
+		if st.names[alias] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (st *typeState) releaseResource(name string) {
+	if st.watch.Wildcard {
+		return
+	}
+	canonical, alias := st.aliases[name]
+	if !alias {
+		canonical = name
+	}
+	if alias && canonical == "" {
+		// An ambiguous alias can retain multiple canonical resources.
+		for candidate, aliases := range st.resourceAliases {
+			if slices.Contains(aliases, name) && !st.interested(candidate, aliases) {
+				st.removeResource(candidate)
+			}
+		}
+	} else if !st.interested(canonical, st.resourceAliases[canonical]) {
+		st.removeResource(canonical)
+	}
+}
+
+func (st *typeState) removeResource(name string) {
+	aliases := st.resourceAliases[name]
+	delete(st.resources, name)
+	delete(st.resourceAliases, name)
+	for _, alias := range aliases {
+		ambiguous := st.aliases[alias] == ""
+		delete(st.aliases, alias)
+		if !ambiguous {
+			continue
+		}
+		// Re-evaluate only shared aliases; ordinary canonical eviction is O(aliases).
+		for candidate, values := range st.resourceAliases {
+			if slices.Contains(values, alias) {
+				if _, found := st.aliases[alias]; found {
+					st.aliases[alias] = ""
+					break
+				}
+				st.aliases[alias] = candidate
+			}
+		}
+	}
 }
 
 func (c *Client) wakeSubscriptions() {
@@ -56,7 +197,8 @@ func (c *Client) deletedSubscription(st *typeState, name string) {
 		st.removed[name] = true
 		return
 	}
-	sub.deleted = true
+	sub.err = ErrNotFound
+	close(sub.done)
 	delete(st.names, name)
 	delete(st.removed, name)
 	c.wakeSubscriptions()
@@ -71,26 +213,32 @@ func (c *Client) Demand(ctx context.Context, typ, name string) (*Resource, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if name == "" || name == "*" {
-		return nil, errors.New("demand requires an exact resource name")
-	}
 	c.mu.Lock()
-	st := c.types[typ]
-	if st == nil {
+	st, sub, err := c.subscribeLocked(typ, name)
+	if err != nil {
 		c.mu.Unlock()
-		return nil, fmt.Errorf("unregistered type %q", typ)
+		return nil, err
 	}
-	sub := st.names[name]
-	if sub == nil {
-		sub = &subscription{}
-		st.names[name] = sub
-		delete(st.removed, name)
-		c.wakeSubscriptions()
-	}
+	sub.persistent = true
+	return c.waitLocked(ctx, st, name, sub, nil)
+}
+
+// waitLocked consumes the lock and always returns with it released.
+func (c *Client) waitLocked(
+	ctx context.Context,
+	st *typeState,
+	name string,
+	sub *subscription,
+	owner *Subscription,
+) (*Resource, error) {
 	for {
-		if sub.deleted {
+		if sub.err != nil {
 			c.mu.Unlock()
-			return nil, ErrNotFound
+			return nil, sub.err
+		}
+		if owner != nil && owner.released {
+			c.mu.Unlock()
+			return nil, ErrReleased
 		}
 		if st.synced {
 			canonical := name
