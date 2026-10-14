@@ -29,6 +29,11 @@ data:
     clientTrustBundle:
 {{ .Values.agentiod.clientTrustBundle | toYaml | indent 6 }}
     global:
+      porter:
+        enabled: {{ .Values.egressGateway.porter.enabled }}
+        image: {{ include "gateway.porterImage" . | quote }}
+        resources:
+{{ .Values.egressGateway.porter.resources | toYaml | indent 10 }}
       agentgateway:
 {{ .Values.egressGateway.agentgateway | toYaml | indent 8 }}
       hub: {{ .Values.global.hub | quote }}

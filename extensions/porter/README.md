@@ -1,0 +1,64 @@
+# Agentio Porter
+
+`agentio-porter` is Agentio's gateway sidecar for the outer HBONE CONNECT stage. It uses the standard Envoy ext_proc protocol on `127.0.0.1:9002`. The configurable HTTP ext_proc provider (EPE or a user-supplied implementation) receives only the inner HTTP traffic and does not need to implement an Agentio CONNECT phase.
+
+Porter follows EPE's `--grpc-port` (9002), `--grpc-health-port` (9003), and `--xds-node-id` flag conventions. The processing listener binds to localhost; health probes use a separate plaintext gRPC listener. The shipped gateway targets port 9002. EPE runs in a separate Pod by default; a custom deployment placing both processors in one Pod must assign distinct ports and update the corresponding gateway endpoints.
+
+## Processing
+
+The gateway captures the source Pod name, namespace and optional Sandbox ID from ztunnel's CONNECT headers into filter state. `ConnectHeaders` parses the observed `x-agentio-sni` header separately. An absent header produces an empty SNI; duplicate, explicitly empty or malformed values fail the request.
+
+For an observed SNI, agentio-porter demands the source Workload through `pkg/xdsclient`. When a Sandbox ID is present, it also demands that Sandbox and checks that its current attester is the source Workload. It evaluates the Sandbox's inline SNI rules first, then the Workload's inline rules. These projections are already compiled and bound by agentiod, including global, namespace and selector policies. The sidecar does not watch Kubernetes, load credentials, or run EPE plugins.
+
+A match returns the compiled action. An unmatched SNI selects passthrough; missing source identity, missing resources, an invalid Sandbox binding or a matched deny rule rejects CONNECT with HTTP 403. Without an observed SNI, the handler returns no TLS metadata and leaves protocol selection to the gateway. Gateway TLS exclusions retain precedence over returned TLS selection metadata.
+
+The generic result is dynamic metadata under `agentio`, currently:
+
+```json
+{"agentio":{"tls":{"action":"terminate"}}}
+```
+
+The gateway copies the action into `agentio.tls.action` filter state before opening the inner connection. The gRPC exchange ends after one headers response; tunnel bodies, trailers and response headers are not processed. Neither credential injection nor HTTP authorization runs in this stage. CONNECT-UDP continues to bypass the processor.
+
+## Discovery and failure behavior
+
+Workload and Sandbox watches start without wildcard subscriptions. A cache miss waits for the named resource; subsequent updates and removals arrive over Delta ADS. Subscriptions stay active while resources exist. On deletion, Porter releases the named subscription; current waiters receive not-found, and the next CONNECT subscribes again. There is no subscription count limit, TTL refresh or idle eviction.
+
+Watch transforms decode and validate resources on the update path. The cache retains only Workload UID, Sandbox UID/attester binding and parsed SNI policies. CONNECT requests read these immutable views without copying or decoding complete Workload/Sandbox payloads. A failed transform rejects the entire response while keeping the previous accepted policies and the ADS stream. Before any successful response, a rejected update does not make the watch ready.
+
+The gateway Pod's projected token authenticates the ADS stream over TLS. The existing gateway authorization applies; no Kubernetes read RBAC is added. Projected tokens and CA roots are reread on new RPCs/handshakes. The cluster ID must match agentiod: source Pod resource names use `<cluster-id>//Pod/<namespace>/<name>`. `--cluster-domain` controls the DNS suffix in the ADS node ID (default `cluster.local`); chart deployments pass `global.clusterDomain`.
+
+The handler has a 4-second processing budget and the gateway allows 5 seconds for ext_proc. Discovery/processing errors fail closed, independently of the HTTP provider's `failureModeAllow`. Disconnected ADS state is not used for new SNI decisions. The gRPC health endpoint on port 9003 follows EPE conventions: service `readiness` requires both watches to be synchronized, while `liveness` reports process health. Policy updates affect new CONNECT decisions, not TLS mode changes on established tunnels.
+
+## Deployment
+
+The standalone chart supports both static Envoy gateways and Envoy gateways managed through Gateway API. Enable the component independently of EPE:
+
+```yaml
+agentiod:
+  enableSNITrafficPolicy: true
+
+egressGateway:
+  mode: gatewayAPI # or static
+  porter:
+    enabled: true
+
+epe:
+  mode: disabled # managed/external also work
+```
+
+The component defaults to disabled so existing gateways without the sidecar keep working. The chart sets `AGENTIO_ENABLE_PORTER` on agentiod, injects the sidecar, and mounts the gateway's existing token and CA volumes. `agentiod.enableSNITrafficPolicy` controls consumption of TLS decisions; it does not select the CONNECT endpoint. The agentgateway-native data plane is not wired to this Envoy ext_proc sidecar.
+
+For a manually managed Envoy gateway, deploy agentio-porter in its Pod, mount those same credentials, set `POD_NAME`, `POD_NAMESPACE`, `POD_UID` and `POD_IP`, and pass `--xds-address` and `--cluster-id`. Enable `AGENTIO_ENABLE_PORTER=true` on agentiod. The local ext_proc port is fixed at 9002 in gateway configuration; do not expose it through a Service.
+
+## Build and test
+
+From the repository root:
+
+```sh
+make build.porter
+go test ./extensions/porter/...
+docker build -f extensions/porter/docker/Dockerfile -t agentio-porter:dev .
+```
+
+Set `egressGateway.porter.image.repository` and `.tag` or `.digest` to use a custom image. The image and release workflows build `agentio-porter` and pin its digest in release charts.

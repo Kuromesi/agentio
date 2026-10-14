@@ -218,7 +218,7 @@ func TestReleasePackageContainsPinnedIntegrationBundle(t *testing.T) {
 	copyTestTree(t, repositoryAgentioChart(t), source)
 	digest := "sha256:" + strings.Repeat("b", 64)
 	images := []string{}
-	for _, component := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "proxyv2"} {
+	for _, component := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "proxyv2", "agentio-porter"} {
 		images = append(images, "registry.example/"+component+"@"+digest)
 	}
 	args := append([]string{source, "1.2.3"}, images...)

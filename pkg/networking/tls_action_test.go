@@ -15,7 +15,11 @@
 package networking
 
 import (
+	"slices"
 	"testing"
+	"time"
+
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 
 	xdsmatcherv3 "github.com/cncf/xds/go/xds/type/matcher/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
@@ -24,6 +28,7 @@ import (
 	matchinginputv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	"istio.io/istio/pkg/test"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -32,7 +37,7 @@ func connectAuthorityStates(t *testing.T, listener *listenerv3.Listener) map[str
 	t.Helper()
 	states := map[string]*setstatecommonv3.FilterStateValue{}
 	for _, filter := range findHCM(t, listener).GetHttpFilters() {
-		if filter.GetName() != "connect_authority" {
+		if filter.GetName() != "connect_authority" && filter.GetName() != "connect_tls_action" {
 			continue
 		}
 		config := &setstatehttpv3.Config{}
@@ -46,7 +51,7 @@ func connectAuthorityStates(t *testing.T, listener *listenerv3.Listener) map[str
 	return states
 }
 
-func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
+func TestTLSActionMetadataSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	listeners := messagesOf(
 		t,
 		buildCompleteGatewayGraph(t),
@@ -56,7 +61,7 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	state := connectAuthorityStates(t, listeners[ConnectTerminate])[tlsActionKey]
 	if state.GetFactoryKey() != "istio.hashable_string" || !state.GetReadOnly() || !state.GetSkipIfEmpty() ||
 		state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_ONCE ||
-		state.GetFormatString().GetTextFormatSource().GetInlineString() != tlsActionHeaderFormat {
+		state.GetFormatString().GetTextFormatSource().GetInlineString() != tlsActionMetadataFormat {
 		t.Fatalf("CONNECT state %s = %v", tlsActionKey, state)
 	}
 
@@ -64,14 +69,14 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	exclusions := root.GetMatcherTree().GetExactMatchMap().GetMap()["tls"].GetMatcher()
 	domains := &xdsmatcherv3.ServerNameMatcher{}
 	if err := exclusions.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(domains); err != nil {
-		t.Fatalf("gateway exclusions must precede the ztunnel action: %v", err)
+		t.Fatalf("gateway exclusions must precede the CONNECT action: %v", err)
 	}
 	if len(domains.GetDomainMatchers()) == 0 {
-		t.Fatal("expected gateway exclusions before the ztunnel action")
+		t.Fatal("expected gateway exclusions before the CONNECT action")
 	}
 	for _, match := range domains.GetDomainMatchers() {
 		if got := match.GetOnMatch().GetAction().GetName(); got != forwardTCPChain {
-			t.Fatalf("excluded SNI selects %q, want passthrough regardless of ztunnel action", got)
+			t.Fatalf("excluded SNI selects %q, want passthrough regardless of CONNECT action", got)
 		}
 	}
 	action := exclusions.GetOnNoMatch().GetMatcher()
@@ -80,7 +85,7 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if input.GetKey() != tlsActionKey {
-		t.Fatalf("TLS decision input = %q, want the ztunnel action", input.GetKey())
+		t.Fatalf("TLS decision input = %q, want the CONNECT action", input.GetKey())
 	}
 	actions := action.GetMatcherTree().GetExactMatchMap().GetMap()
 	for value, chain := range map[string]string{"terminate": tlsTerminateChain, "passthrough": forwardTCPChain, "deny": sniDenyChain} {
@@ -92,7 +97,7 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 		t.Errorf("unexpected actions: %v", actions)
 	}
 	if action.GetOnNoMatch().GetMatcher() == nil {
-		t.Fatal("connections without a ztunnel action must fall back to gateway policy")
+		t.Fatal("connections without a CONNECT action must fall back to gateway policy")
 	}
 }
 
@@ -104,27 +109,106 @@ func TestTLSActionWithoutGatewayExclusions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if input.GetKey() != tlsActionKey || matcher.GetOnNoMatch().GetMatcher() == nil {
-		t.Fatal("without exclusions, consult ztunnel action with gateway policy fallback")
+		t.Fatal("without exclusions, consult CONNECT action with gateway policy fallback")
 	}
 }
 
-func TestTLSActionIgnoredWithoutSNITrafficPolicy(t *testing.T) {
-	test.SetForTest(t, &features.EnableSNITrafficPolicy, false)
-	resources, err := Build(Inputs{
-		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-		TrustDomain:      "cluster.local",
-		Gateway:          testGateway(nil),
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestConnectExtProcEnablement(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, sni := range []bool{false, true} {
+			for _, provider := range []*configv1.ExtProcProvider{nil, {Service: "custom.demo.svc", Port: 9002, FailureModeAllow: true}} {
+				test.SetForTest(t, &features.EnablePorter, enabled)
+				test.SetForTest(t, &features.EnableSNITrafficPolicy, sni)
+				resources, err := Build(
+					Inputs{
+						DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+						TrustDomain:      "cluster.local",
+						Gateway:          testGateway(nil),
+						GlobalExtProc:    provider,
+					},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				listeners := messagesOf(
+					t,
+					resources,
+					model.ListenerType,
+					func() *listenerv3.Listener { return &listenerv3.Listener{} },
+				)
+				connect := findHCM(t, listeners[ConnectTerminate])
+				if got := hasHTTPFilter(connect, "envoy.filters.http.ext_proc"); got != enabled {
+					t.Fatalf("CONNECT present=%v, enabled=%v, HTTP provider=%v", got, enabled, provider)
+				}
+				if got := hasHTTPFilter(connect, "connect_tls_action"); got != (enabled && sni) {
+					t.Fatalf("TLS capture=%v", got)
+				}
+				if got := hasHTTPFilter(
+					findHCM(t, listeners[MainInternal]),
+					"envoy.filters.http.ext_proc",
+				); got != (provider != nil) {
+					t.Fatalf("HTTP provider affected by CONNECT setting: %v", got)
+				}
+			}
+		}
 	}
+}
+
+func TestConnectExtProcConfiguration(t *testing.T) {
 	listeners := messagesOf(
 		t,
-		resources,
+		buildCompleteGatewayGraph(t),
 		model.ListenerType,
 		func() *listenerv3.Listener { return &listenerv3.Listener{} },
 	)
-	if _, found := connectAuthorityStates(t, listeners[ConnectTerminate])[tlsActionKey]; found {
-		t.Fatalf("CONNECT captures %s with SNI policy disabled", tlsActionKey)
+	hcm := findHCM(t, listeners[ConnectTerminate])
+	names := httpFilterNames(hcm)
+	authority := slices.Index(names, "connect_authority")
+	ext := slices.Index(names, "envoy.filters.http.ext_proc")
+	action := slices.Index(names, "connect_tls_action")
+	if authority < 0 || ext <= authority || action != ext+1 || action >= len(names)-1 {
+		t.Fatalf("incorrect CONNECT filter order: %v", names)
+	}
+	cfg := &extprocv3.ExternalProcessor{}
+	if err := hcm.HttpFilters[ext].GetTypedConfig().UnmarshalTo(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.ValidateAll(); err != nil {
+		t.Fatal(err)
+	}
+	md := cfg.GetGrpcService().GetInitialMetadata()
+	if len(md) != 0 || cfg.GetGrpcService().GetEnvoyGrpc().GetClusterName() != PorterCluster {
+		t.Fatalf("CONNECT must use its own endpoint without a phase marker: %v", md)
+	}
+	mode := cfg.GetProcessingMode()
+	if mode.GetRequestHeaderMode() != extprocv3.ProcessingMode_SEND ||
+		mode.GetResponseHeaderMode() != extprocv3.ProcessingMode_SKIP ||
+		mode.GetRequestBodyMode() != extprocv3.ProcessingMode_NONE ||
+		mode.GetResponseBodyMode() != extprocv3.ProcessingMode_NONE ||
+		mode.GetRequestTrailerMode() != extprocv3.ProcessingMode_SKIP ||
+		mode.GetResponseTrailerMode() != extprocv3.ProcessingMode_SKIP || cfg.GetAllowModeOverride() {
+		t.Fatalf("tunnel must only process request headers: %v", cfg)
+	}
+	if cfg.GetMessageTimeout().AsDuration() != 5*time.Second {
+		t.Fatalf("tunnel timeout = %v", cfg.GetMessageTimeout())
+	}
+	if !slices.Equal(cfg.GetMetadataOptions().GetReceivingNamespaces().GetUntyped(), []string{"agentio"}) {
+		t.Fatal("CONNECT metadata not accepted")
+	}
+	for _, attr := range []string{"filter_state['agentio.workload.name']", "filter_state['agentio.workload.namespace']", "filter_state['sandbox.id']"} {
+		if !slices.Contains(cfg.GetRequestAttributes(), attr) {
+			t.Fatalf("missing identity attribute %s", attr)
+		}
+	}
+}
+
+func TestConnectExtProcFailsClosed(t *testing.T) {
+	b := &resourceBuilder{}
+	cfg := &extprocv3.ExternalProcessor{}
+	if err := b.connectExtProcFilter().GetTypedConfig().UnmarshalTo(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GetFailureModeAllow() {
+		t.Fatal("CONNECT must fail closed independently of HTTP provider settings")
 	}
 }

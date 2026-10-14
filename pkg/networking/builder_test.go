@@ -48,6 +48,7 @@ import (
 )
 
 func TestBuildProducesProductionGatewayGraph(t *testing.T) {
+	test.SetForTest(t, &features.EnablePorter, true)
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	resources, err := Build(Inputs{
 		Gateway: testGateway(&configv1.EgressGateway{
@@ -132,6 +133,8 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		"waypoint_downstream_peer_metadata",
 		"connect_authority",
 		"envoy.filters.http.local_ratelimit",
+		"envoy.filters.http.ext_proc",
+		"connect_tls_action",
 		"envoy.filters.http.router",
 	}; !equalStrings(got, want) {
 		t.Fatalf("CONNECT filter order = %v, want %v", got, want)

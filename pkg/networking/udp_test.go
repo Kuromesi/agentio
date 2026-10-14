@@ -36,6 +36,8 @@ func buildUDPGateway(t *testing.T, enabled bool) (
 ) {
 	t.Helper()
 	test.SetForTest(t, &features.EnableUDPProxy, enabled)
+	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
+	test.SetForTest(t, &features.EnablePorter, true)
 	resources, err := Build(Inputs{
 		Gateway:          testGateway(nil),
 		GlobalExtProc:    &configv1.ExtProcProvider{Service: "epe.demo.svc", Port: 9002},
@@ -85,8 +87,8 @@ func TestUDPProxyGraph(t *testing.T) {
 	}
 
 	hcm := findHCM(t, listeners[ConnectTerminate])
-	if hasHTTPFilter(hcm, "envoy.filters.http.ext_proc") {
-		t.Fatalf("TCP CONNECT chain must not run ext_proc: %v", httpFilterNames(hcm))
+	if !hasHTTPFilter(hcm, "envoy.filters.http.ext_proc") {
+		t.Fatalf("TCP CONNECT chain must run tunnel ext_proc: %v", httpFilterNames(hcm))
 	}
 	var upgrade *hcmv3.HttpConnectionManager_UpgradeConfig
 	for _, candidate := range hcm.GetUpgradeConfigs() {

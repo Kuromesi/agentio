@@ -93,6 +93,17 @@ agentio:
     env: {}
   egressGateway:
     mode: static
+    # First-party CONNECT processing; independent of epe.mode and sandboxExtProc.
+    porter:
+      enabled: false
+      image:
+        repository: ""
+        name: agentio-porter
+        tag: ""
+        digest: ""
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {memory: 256Mi}
     nameOverride: agentio-egress
     fullnameOverride: ""
     image:

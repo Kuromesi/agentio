@@ -587,3 +587,32 @@ func templateInputForTest(gw *gatewayv1.Gateway, kubeVersion int) TemplateInput 
 	}
 	return buildTemplateInput(*gw, ci, "test-cluster", kubeVersion, "")
 }
+
+func TestPorterSidecar(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		values := testValues(t, map[string]any{"global": map[string]any{"porter": map[string]any{
+			"enabled":   enabled,
+			"image":     "registry.example/agentio-porter:test",
+			"resources": map[string]any{"requests": map[string]any{"memory": "64Mi"}},
+		}}})
+		renderer := testRenderer(t, values)
+		input := templateInputForTest(egressGatewayFixture("egress", "demo"), parityKubeVersion)
+		input.ClusterID = "test-cluster"
+		docs, err := renderer.Render(egressGatewayTemplateName, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := strings.Join(docs, "\n---\n")
+		if strings.Contains(output, "name: agentio-porter") != enabled {
+			t.Fatalf("sidecar enabled=%v", enabled)
+		}
+		if !enabled {
+			continue
+		}
+		for _, want := range []string{"registry.example/agentio-porter:test", "--cluster-id=test-cluster", "--xds-address=", "fieldPath: metadata.uid", "grpc: {port: 9003, service: readiness}", "mountPath: /var/run/secrets/tokens"} {
+			if !strings.Contains(output, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+	}
+}

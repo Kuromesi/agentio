@@ -71,8 +71,9 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR</code> | Boolean | <code>false</code> | Enable client CA distribution and injection with the sidecar injector. |
 | <code>AGENTIO_ENABLE_DEBUG_ON_HTTP</code> | Boolean | <code>true</code> | Enable authenticated debug handlers on the monitoring HTTP listener. |
 | <code>AGENTIO_ENABLE_GATEWAY_DEPLOYER</code> | Boolean | <code>false</code> | If true, run the Agentio Gateway API deployment controller that provisions egress gateway Deployments. |
+| <code>AGENTIO_ENABLE_PORTER</code> | Boolean | <code>false</code> | Send gateway CONNECT headers to the local agentio-porter sidecar, independently of the HTTP ext&#95;proc provider. |
 | <code>AGENTIO_ENABLE_SIDECAR_INJECTOR</code> | Boolean | <code>false</code> | If true, serve the Agentio ztunnel injection webhook at the Istio-compatible /inject endpoint. |
-| <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, enforce SNI traffic policies in egress gateways, using HBONE TLS action headers when present. |
+| <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, enforce gateway SNI policies and apply TLS decisions returned by CONNECT processing. |
 | <code>AGENTIO_GATEWAY_CONNECT_TIMEOUT</code> | Duration | <code>10s</code> | Connect timeout for passthrough and dynamic-forward-proxy gateway clusters. |
 | <code>AGENTIO_GATEWAY_ENABLE_UDP_PROXY</code> | Boolean | <code>false</code> | If enabled, egress gateways terminate experimental IPv4 CONNECT-UDP sessions from ztunnel and forward datagrams directly to the MASQUE target without inspection. |
 | <code>AGENTIO_GATEWAY_LEASE_NAME</code> | String | <code>agentiod-gateway-deployer-leader</code> | Lease electing the single replica running the gateway deployment controller. |
@@ -226,3 +227,15 @@ Loopback requests do not require credentials. Requests from any other address mu
 ## See also
 
 - [Agentio configuration](agentio-configuration.md)
+
+## Agentio Porter
+
+`AGENTIO_ENABLE_PORTER` sends outer TCP CONNECT request headers to
+`agentio-porter` at `127.0.0.1:9002`. It is independent of `sandboxExtProc`, gateway
+HTTP provider overrides and EPE deployment. The sidecar must be present in each
+Envoy gateway Pod before enabling it. The chart wires both sides through
+`egressGateway.porter.enabled`.
+
+TLS decision consumption additionally requires `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`.
+See the [Agentio Porter](../../extensions/porter/README.md) for deployment,
+metadata, on-demand discovery and failure behavior.

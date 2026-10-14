@@ -147,6 +147,8 @@ spec:
               value: {{ .Values.agentiod.mitm.signMode | quote }}
             - name: AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY
               value: {{ .Values.agentiod.meshInternalTrafficPolicy | quote }}
+            - name: AGENTIO_ENABLE_PORTER
+              value: {{ .Values.egressGateway.porter.enabled | quote }}
             - name: AGENTIO_ENABLE_SNI_TRAFFIC_POLICY
               value: {{ .Values.agentiod.enableSNITrafficPolicy | quote }}
             - name: AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR

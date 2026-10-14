@@ -8,7 +8,7 @@
     "Agentio retains its explicit 10s timeout for main_internal and main_forward because the gateway connect timeout applies only to Passthrough and the two DFP clusters; unsetting the internal-hop timeout has no supported-path benefit and would change current failure behavior.",
     "Agentio retains BlackHoleCluster because the SNI deny chain references it; the legacy Agentio graph omitted that referenced cluster.",
     "Agentio matches release-0.1 sandbox route timeouts: explicit route timeouts also set max_grpc_timeout, and routes without a configured timeout explicitly disable the request timeout (timeout 0s plus zero-valued max_stream_duration) instead of falling back to Envoy default 15s.",
-    "Gateway SNI exclusions take precedence over ztunnel TLS actions carried in the HBONE CONNECT header; connections without a recognized action fall back to the gateway SNI policy matcher."
+    "Gateway SNI exclusions take precedence over CONNECT processor TLS decisions returned during HBONE CONNECT processing; connections without a recognized action fall back to the gateway SNI policy matcher."
   ],
   "resources": [
     {
@@ -53,6 +53,65 @@
               "http2_protocol_options": {}
             }
           }
+        }
+      }
+    },
+    {
+      "type_url": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+      "name": "agentio-porter",
+      "resource": {
+        "name": "agentio-porter",
+        "alt_stat_name": "agentio-porter;",
+        "type": "STATIC",
+        "connect_timeout": "10s",
+        "load_assignment": {
+          "cluster_name": "agentio-porter",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "127.0.0.1",
+                        "port_value": 9002
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "circuit_breakers": {
+          "thresholds": [
+            {
+              "max_connections": 4294967295,
+              "max_pending_requests": 4294967295,
+              "max_requests": 4294967295,
+              "max_retries": 4294967295
+            }
+          ]
+        },
+        "typed_extension_protocol_options": {
+          "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+            "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+            "common_http_protocol_options": {
+              "idle_timeout": "300s"
+            },
+            "explicit_http_config": {
+              "http2_protocol_options": {
+                "allow_connect": true
+              }
+            }
+          }
+        },
+        "outlier_detection": {
+          "interval": "10s",
+          "base_ejection_time": "30s",
+          "max_ejection_percent": 34,
+          "consecutive_gateway_failure": 20,
+          "enforcing_consecutive_gateway_failure": 100
         }
       }
     },
@@ -581,19 +640,6 @@
                               "omit_empty_values": true
                             },
                             "shared_with_upstream": "TRANSITIVE"
-                          },
-                          {
-                            "object_key": "agentio.tls.action",
-                            "factory_key": "istio.hashable_string",
-                            "format_string": {
-                              "text_format_source": {
-                                "inline_string": "%CEL('x-agentio-tls' in request.headers ? re.extract(request.headers['x-agentio-tls'], '^action=([^;]+)(;sni=[^;]+)?$', r'\\1') : '')%"
-                              },
-                              "omit_empty_values": true
-                            },
-                            "read_only": true,
-                            "shared_with_upstream": "ONCE",
-                            "skip_if_empty": true
                           }
                         ]
                       }
@@ -647,6 +693,57 @@
                                 }
                               }
                             ]
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "envoy.filters.http.ext_proc",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
+                        "grpc_service": {
+                          "envoy_grpc": {
+                            "cluster_name": "agentio-porter"
+                          }
+                        },
+                        "processing_mode": {
+                          "request_header_mode": "SEND",
+                          "response_header_mode": "SKIP",
+                          "request_trailer_mode": "SKIP",
+                          "response_trailer_mode": "SKIP"
+                        },
+                        "request_attributes": [
+                          "filter_state['agentio.workload.name']",
+                          "filter_state['agentio.workload.namespace']",
+                          "filter_state['sandbox.id']"
+                        ],
+                        "message_timeout": "5s",
+                        "metadata_options": {
+                          "receiving_namespaces": {
+                            "untyped": [
+                              "agentio"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "connect_tls_action",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+                        "on_request_headers": [
+                          {
+                            "object_key": "agentio.tls.action",
+                            "factory_key": "istio.hashable_string",
+                            "format_string": {
+                              "text_format_source": {
+                                "inline_string": "%DYNAMIC_METADATA(agentio:tls:action)%"
+                              },
+                              "omit_empty_values": true
+                            },
+                            "read_only": true,
+                            "shared_with_upstream": "ONCE",
+                            "skip_if_empty": true
                           }
                         ]
                       }
@@ -795,12 +892,12 @@
                               "condition": {
                                 "id": "15",
                                 "call_expr": {
-                                  "function": "_&&_",
+                                  "function": "_\u0026\u0026_",
                                   "args": [
                                     {
                                       "id": "8",
                                       "call_expr": {
-                                        "function": "_&&_",
+                                        "function": "_\u0026\u0026_",
                                         "args": [
                                           {
                                             "id": "3",
@@ -854,7 +951,7 @@
                                     {
                                       "id": "29",
                                       "call_expr": {
-                                        "function": "_&&_",
+                                        "function": "_\u0026\u0026_",
                                         "args": [
                                           {
                                             "id": "13",

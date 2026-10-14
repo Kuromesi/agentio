@@ -27,6 +27,13 @@ import (
 )
 
 var (
+	// EnablePorter routes gateway CONNECT headers to the local Agentio Porter sidecar.
+	EnablePorter = env.Register(
+		"AGENTIO_ENABLE_PORTER",
+		false,
+		"Send gateway CONNECT headers to the local agentio-porter sidecar, independently of the HTTP ext_proc provider.",
+	).Get()
+
 	GatewayConnectTimeout = env.Register(
 		"AGENTIO_GATEWAY_CONNECT_TIMEOUT",
 		10*time.Second,
@@ -41,7 +48,7 @@ var (
 	EnableSNITrafficPolicy = env.Register(
 		"AGENTIO_ENABLE_SNI_TRAFFIC_POLICY",
 		false,
-		"If enabled, enforce SNI traffic policies in egress gateways, using HBONE TLS action headers when present.",
+		"If enabled, enforce gateway SNI policies and apply TLS decisions returned by CONNECT processing.",
 	).Get()
 	EnableUDPProxy = env.Register(
 		"AGENTIO_GATEWAY_ENABLE_UDP_PROXY",

@@ -141,6 +141,47 @@ spec:
             - {name: agentio-envoy, mountPath: /etc/istio/proxy}
             - {name: agentio-token, mountPath: /var/run/secrets/tokens}
             - {name: gateway-podinfo, mountPath: /etc/istio/pod}
+        {{- if .Values.agentio.egressGateway.porter.enabled }}
+        - name: agentio-porter
+          image: {{ include "agentio.gateway.porterImage" . | quote }}
+          imagePullPolicy: {{ .Values.agentio.global.imagePullPolicy | quote }}
+          args:
+            - --xds-address={{ include "agentio.gateway.xdsAddress" . }}
+            - --cluster-id={{ .Values.agentio.global.clusterId }}
+            - --cluster-domain={{ .Values.agentio.global.clusterDomain }}
+            - --grpc-port=9002
+            - --grpc-health-port=9003
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          ports:
+            - name: health
+              containerPort: 9003
+          readinessProbe:
+            grpc: {port: 9003, service: readiness}
+            periodSeconds: 5
+          livenessProbe:
+            grpc: {port: 9003, service: liveness}
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1337
+            runAsGroup: 1337
+          resources:
+{{ toYaml .Values.agentio.egressGateway.porter.resources | indent 12 }}
+          volumeMounts:
+            - {name: agentiod-ca-cert, mountPath: /var/run/secrets/istio, readOnly: true}
+            - {name: agentio-token, mountPath: /var/run/secrets/tokens, readOnly: true}
+        {{- end }}
       volumes:
         - {name: workload-socket, emptyDir: {}}
         - {name: agentio-data, emptyDir: {}}

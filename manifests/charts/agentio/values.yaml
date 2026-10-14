@@ -254,6 +254,17 @@ ztunnel:
 
 egressGateway:
   mode: disabled
+  # First-party CONNECT processing; independent of epe.mode and sandboxExtProc.
+  porter:
+    enabled: false
+    image:
+      repository: ""
+      name: agentio-porter
+      tag: ""
+      digest: ""
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {memory: 256Mi}
   # Used only by gatewaydeployer for the agentio-agentgateway GatewayClass.
   # Native file configuration comes from the Gateway's parametersRef ConfigMap.
   agentgateway:

@@ -246,7 +246,7 @@ func TestOwnedImageWorkflowExportsImmutableReferences(t *testing.T) {
 	jobs := workflowJobs(t, workflow)
 	job := workflowJob(t, jobs, "build-images")
 	outputs := mapValue(t, job, "outputs")
-	for _, output := range []string{"agentiod_image", "epe_image", "ztunnel_image"} {
+	for _, output := range []string{"agentiod_image", "epe_image", "porter_image", "ztunnel_image"} {
 		if _, found := outputs[output]; !found {
 			t.Errorf("build-images is missing immutable output %q", output)
 		}

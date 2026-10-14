@@ -108,7 +108,12 @@ func connectUDPRoute() *routev3.Route {
 // datagrams are forwarded without inspection.
 func configureUDPHCM(hcm *hcmv3.HttpConnectionManager) {
 	router := hcm.HttpFilters[len(hcm.HttpFilters)-1]
-	filters := append([]*hcmv3.HttpFilter(nil), hcm.HttpFilters[:len(hcm.HttpFilters)-1]...)
+	filters := make([]*hcmv3.HttpFilter, 0, len(hcm.HttpFilters))
+	for _, filter := range hcm.HttpFilters[:len(hcm.HttpFilters)-1] {
+		if filter.Name != "envoy.filters.http.ext_proc" && filter.Name != "connect_tls_action" {
+			filters = append(filters, filter)
+		}
+	}
 	filters = append(filters, udpTargetFilter, udpTargetStateFilter, router)
 	hcm.UpgradeConfigs = append(hcm.UpgradeConfigs, &hcmv3.HttpConnectionManager_UpgradeConfig{
 		UpgradeType: connectUDPUpgradeType,

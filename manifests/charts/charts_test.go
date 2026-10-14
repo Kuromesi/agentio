@@ -483,6 +483,7 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	agentiodImage := "registry.example/openkruise/agentiod@" + digest
 	epeImage := "registry.example/openkruise/agentio-epe@" + digest
+	porterImage := "registry.example/openkruise/agentio-porter@" + digest
 	ztunnelImage := "registry.example/openkruise/ztunnel@" + digest
 	cniImage := "registry.example/openkruise/install-cni@" + digest
 	proxyInitImage := "registry.example/openkruise/proxy-init@" + digest
@@ -497,6 +498,7 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 		cniImage,
 		proxyInitImage,
 		gatewayImage,
+		porterImage,
 	)
 	if output, err := prepare.CombinedOutput(); err != nil {
 		t.Fatalf("prepare release chart: %v\n%s", err, output)
@@ -512,12 +514,22 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 		return manifest
 	}
 	manifest := append(
-		render("--set", "profile=ambient", "--set", "egressGateway.mode=static", "--set", "epe.mode=managed"),
+		render(
+			"--set",
+			"profile=ambient",
+			"--set",
+			"egressGateway.mode=static",
+			"--set",
+			"epe.mode=managed",
+			"--set",
+			"egressGateway.porter.enabled=true",
+		),
 		render("--set", "profile=sidecar")...,
 	)
 	for _, image := range []string{
 		`image: "` + agentiodImage + `"`,
 		`image: "` + epeImage + `"`,
+		`image: "` + porterImage + `"`,
 		`image: "` + ztunnelImage + `"`,
 		`image: "` + cniImage + `"`,
 		`image: "` + proxyInitImage + `"`,
@@ -808,4 +820,54 @@ func TestEPECustomCAPaths(t *testing.T) {
 			requireNotContains(t, manifest, tc.absent...)
 		})
 	}
+}
+
+func TestPorterIndependentOfEPE(t *testing.T) {
+	for _, mode := range []string{"disabled", "external"} {
+		args := []string{
+			"--set",
+			"egressGateway.mode=static",
+			"--set",
+			"egressGateway.porter.enabled=true",
+			"--set",
+			"epe.mode=" + mode,
+			"--set-string",
+			"egressGateway.porter.image.repository=registry.example/agentio-porter",
+			"--set-string",
+			"egressGateway.porter.image.tag=test",
+		}
+		if mode == "external" {
+			args = append(args, "--set", "epe.external.address=custom.demo.svc")
+		}
+		manifest := renderAgentio(t, args...)
+		requireContains(
+			t,
+			manifest,
+			"name: agentio-porter",
+			`image: "registry.example/agentio-porter:test"`,
+			"name: AGENTIO_ENABLE_PORTER",
+			"--cluster-id=Kubernetes",
+			"grpc:",
+			"service: readiness",
+			"fieldPath: metadata.uid",
+		)
+	}
+	manifest := renderAgentio(
+		t,
+		"--set",
+		"egressGateway.mode=gatewayAPI",
+		"--set",
+		"egressGateway.porter.enabled=true",
+		"--set-string",
+		"egressGateway.porter.image.repository=registry.example/agentio-porter",
+		"--set-string",
+		"egressGateway.porter.image.tag=test",
+	)
+	requireContains(
+		t,
+		manifest,
+		"porter:",
+		`image: "registry.example/agentio-porter:test"`,
+		"name: agentio-porter",
+	)
 }

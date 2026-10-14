@@ -349,6 +349,8 @@ func TestGatewayAccessLogFormatUpdateAndReset(t *testing.T) {
 }
 
 func TestGatewayExtProcDisableAndRestoreInheritance(t *testing.T) {
+	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
+	test.SetForTest(t, &features.EnablePorter, true)
 	fixture := newIncrementalFixture(t)
 	config := &configv1.AgentioConfig{
 		SandboxExtProc: &configv1.ExtProcProvider{Service: "epe.demo.svc.cluster.local", Port: 9002},
@@ -357,10 +359,11 @@ func TestGatewayExtProcDisableAndRestoreInheritance(t *testing.T) {
 	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{ResourceVersion: "inherit", Value: config})
 	clusterA := gatewayResourceName(model.ClusterType, "demo/egress-a", networking.ExtProcCluster)
 	clusterB := gatewayResourceName(model.ClusterType, "demo/egress-b", networking.ExtProcCluster)
+	connectA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.ConnectTerminate)
 	internalA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.MainInternal)
 	forwardA := gatewayResourceName(model.ListenerType, "demo/egress-a", networking.MainForward)
 	waitSynced(t, fixture.compiler)
-	awaitSteadyState(t, fixture.compiler, clusterA, clusterB, internalA, forwardA)
+	awaitSteadyState(t, fixture.compiler, clusterA, clusterB, connectA, internalA, forwardA)
 	beforeA := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a")
 	beforeB := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-b")
 
@@ -370,9 +373,10 @@ func TestGatewayExtProcDisableAndRestoreInheritance(t *testing.T) {
 	eventually(t, func() bool {
 		after := gatewayGraphHashes(currentSnapshot(t, fixture.compiler), "demo/egress-a")
 		return after[clusterA] == "" &&
+			after[connectA] != "" && after[connectA] == beforeA[connectA] &&
 			after[internalA] != "" && after[internalA] != beforeA[internalA] &&
 			after[forwardA] != "" && after[forwardA] != beforeA[forwardA]
-	}, "empty override removes the ext_proc cluster and updates both listeners")
+	}, "empty HTTP provider removes its cluster while leaving CONNECT unchanged")
 	if failures := fixture.compiler.Failures(); len(failures) != 0 {
 		t.Fatalf("empty ext_proc override rejected: %v", failures)
 	}

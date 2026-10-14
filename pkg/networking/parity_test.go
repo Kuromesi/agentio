@@ -127,6 +127,8 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 			delete(want, key)
 		}
 	}
+	// CONNECT processing is a new local sidecar absent from the legacy oracle.
+	delete(got, gatewayResourceKey(model.ClusterType, PorterCluster))
 	// Retained as a fail-closed default-route cluster.
 	delete(got, gatewayResourceKey(model.ClusterType, BlackHoleCluster))
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
@@ -278,7 +280,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		{"MainForward TCP fallback", forwardApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
 	}
 
-	// Gateway exclusions retain precedence over both ztunnel actions and
+	// Gateway exclusions retain precedence over both EPE actions and
 	// gateway policy. tls_action_test.go covers the action branch.
 	internalMatcher := listeners[MainInternal].GetFilterChainMatcher()
 	internalTree := internalMatcher.GetMatcherTree()
@@ -407,7 +409,9 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					// Explicit target forwarding postdates the legacy snapshot and is
 					// covered by TestEgressAuthorizationPinsDFPTarget.
 					hcm.HttpFilters = slices.DeleteFunc(hcm.HttpFilters, func(f *hcmv3.HttpFilter) bool {
-						return f.Name == "agentio.egress_target"
+						// CONNECT SNI decisions postdate the legacy oracle.
+						return f.Name == "agentio.egress_target" || f.Name == "connect_tls_action" ||
+							(value.Name == ConnectTerminate && f.Name == "envoy.filters.http.ext_proc")
 					})
 					for _, f := range hcm.HttpFilters {
 						switch f.Name {
@@ -473,7 +477,7 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					if err := filter.GetTypedConfig().UnmarshalTo(config); err != nil {
 						t.Fatalf("decode CONNECT filter state: %v", err)
 					}
-					// Workload and TLS action headers postdate the legacy snapshot.
+					// Workload identity and TLS decision state postdate the legacy snapshot.
 					// Dedicated tests pin their capture and propagation.
 					config.OnRequestHeaders = slices.DeleteFunc(config.OnRequestHeaders, func(state *setstatecommonv3.FilterStateValue) bool {
 						switch state.GetObjectKey() {
@@ -621,6 +625,7 @@ func TestGatewayResourcesValidate(t *testing.T) {
 }
 
 func buildCompleteGatewayGraph(t *testing.T) []model.Resource {
+	test.SetForTest(t, &features.EnablePorter, true)
 	t.Helper()
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	test.SetForTest(t, &features.GatewayConnectTimeout, 7*time.Second)

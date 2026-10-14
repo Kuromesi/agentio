@@ -30,7 +30,7 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 	copyTestTree(t, repositoryAgentioChart(t), source)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	images := []string{}
-	for _, name := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "proxyv2"} {
+	for _, name := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "proxyv2", "agentio-porter"} {
 		images = append(images, "docker.io/openkruise/"+name+"@"+digest)
 	}
 	if output, err := exec.Command("../prepare-release-chart.sh", append([]string{source, "1.2.3"}, images...)...).

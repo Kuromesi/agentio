@@ -82,8 +82,7 @@ const (
 	dynamicPortKey                  = "envoy.upstream.dynamic_port"
 	staticEndpointFilterStateFilter = "agentio.static_endpoint_filter_state"
 
-	tlsActionHeaderFormat = `%CEL('x-agentio-tls' in request.headers ? ` +
-		`re.extract(request.headers['x-agentio-tls'], '^action=([^;]+)(;sni=[^;]+)?$', r'\1') : '')%`
+	tlsActionMetadataFormat = "%DYNAMIC_METADATA(agentio:tls:action)%"
 )
 
 // Package-level filters and their encoded configurations are shared read-only.
@@ -135,8 +134,7 @@ var (
 
 	connectProxyTLSIdentityHTTPFilter = buildConnectProxyTLSIdentityHTTPFilter()
 
-	connectAuthorityWithoutAction = buildConnectAuthorityFilter(false)
-	connectAuthorityWithAction    = buildConnectAuthorityFilter(true)
+	connectAuthorityHTTPFilter = buildConnectAuthorityFilter()
 
 	relayDownstreamFilter = buildRelayDownstreamFilter()
 
@@ -324,13 +322,19 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 
 func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpConnectionManager, error) {
 	gateway := config.gateway
-	filters := []*hcmv3.HttpFilter{downstreamPeerMetadataFilter, connectAuthorityFilter()}
+	filters := []*hcmv3.HttpFilter{downstreamPeerMetadataFilter, connectAuthorityHTTPFilter}
 	if rateLimit := gateway.GetConnectRateLimit(); rateLimit != nil {
 		filter, err := b.localRateLimitFilter(rateLimit)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, filter)
+	}
+	if features.EnablePorter {
+		filters = append(filters, b.connectExtProcFilter())
+		if features.EnableSNITrafficPolicy {
+			filters = append(filters, connectTLSActionFilter())
+		}
 	}
 	filters = append(filters, httpFilter("envoy.filters.http.router", b.pack(&routerv3.Router{})))
 	hcm := &hcmv3.HttpConnectionManager{
@@ -591,7 +595,56 @@ func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hc
 	})), nil
 }
 
-func headerMode(mode configv1.HeaderSendMode, fallback extprocv3.ProcessingMode_HeaderSendMode) extprocv3.ProcessingMode_HeaderSendMode {
+// CONNECT setup has a separate budget and cannot subscribe to tunnel bytes.
+func (b *resourceBuilder) connectExtProcFilter() *hcmv3.HttpFilter {
+	return httpFilter("envoy.filters.http.ext_proc", b.pack(&extprocv3.ExternalProcessor{
+		GrpcService: &corev3.GrpcService{
+			TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
+				EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{ClusterName: PorterCluster},
+			},
+		},
+		FailureModeAllow: false,
+		MessageTimeout:   durationpb.New(5 * time.Second),
+		ProcessingMode: &extprocv3.ProcessingMode{
+			RequestHeaderMode:   extprocv3.ProcessingMode_SEND,
+			ResponseHeaderMode:  extprocv3.ProcessingMode_SKIP,
+			RequestBodyMode:     extprocv3.ProcessingMode_NONE,
+			ResponseBodyMode:    extprocv3.ProcessingMode_NONE,
+			RequestTrailerMode:  extprocv3.ProcessingMode_SKIP,
+			ResponseTrailerMode: extprocv3.ProcessingMode_SKIP,
+		},
+		RequestAttributes: []string{
+			"filter_state['agentio.workload.name']",
+			"filter_state['agentio.workload.namespace']",
+			"filter_state['sandbox.id']",
+		},
+		MetadataOptions: &extprocv3.MetadataOptions{
+			ReceivingNamespaces: &extprocv3.MetadataOptions_MetadataNamespaces{Untyped: []string{"agentio"}},
+		},
+	}))
+}
+
+func connectTLSActionFilter() *hcmv3.HttpFilter {
+	return httpFilter("connect_tls_action", mustPack(&setstatehttpv3.Config{
+		OnRequestHeaders: []*setstatecommonv3.FilterStateValue{
+			{
+				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: tlsActionKey},
+				FactoryKey: "istio.hashable_string",
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString(tlsActionMetadataFormat),
+				},
+				SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
+				ReadOnly:           true,
+				SkipIfEmpty:        true,
+			},
+		},
+	}))
+}
+
+func headerMode(
+	mode configv1.HeaderSendMode,
+	fallback extprocv3.ProcessingMode_HeaderSendMode,
+) extprocv3.ProcessingMode_HeaderSendMode {
 	switch mode {
 	case configv1.HeaderSendMode_SEND:
 		return extprocv3.ProcessingMode_SEND
@@ -661,15 +714,7 @@ func (b *resourceBuilder) buildTLSTerminateChain(pool *configv1.ConnectionPoolSe
 	}
 }
 
-// Select a prebuilt variant rather than capturing the feature setting at init.
-func connectAuthorityFilter() *hcmv3.HttpFilter {
-	if features.EnableSNITrafficPolicy {
-		return connectAuthorityWithAction
-	}
-	return connectAuthorityWithoutAction
-}
-
-func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
+func buildConnectAuthorityFilter() *hcmv3.HttpFilter {
 	value := func(key, format, factory string, sharing setstatecommonv3.FilterStateValue_SharedWithUpstream) *setstatecommonv3.FilterStateValue {
 		return &setstatecommonv3.FilterStateValue{
 			Key:                &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: key},
@@ -741,21 +786,6 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 			"istio.hashable_string",
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
 		),
-	}
-	if sniPolicy {
-		// Hashable so internal upstream pools never reuse another CONNECT
-		// stream's TLS decision; SkipIfEmpty so an absent header leaves no state.
-		// ztunnel sends x-agentio-tls: action=<action>;sni=<name>.
-		values = append(values, &setstatecommonv3.FilterStateValue{
-			Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: tlsActionKey},
-			FactoryKey: "istio.hashable_string",
-			Value: &setstatecommonv3.FilterStateValue_FormatString{
-				FormatString: formatString(tlsActionHeaderFormat),
-			},
-			SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
-			ReadOnly:           true,
-			SkipIfEmpty:        true,
-		})
 	}
 	return httpFilter("connect_authority", mustPack(&setstatehttpv3.Config{OnRequestHeaders: values}))
 }
@@ -879,7 +909,7 @@ func (b *resourceBuilder) applicationTCPFilters(config effectiveConfig, prefix [
 }
 
 // sniTrafficPolicyMatcher preserves gateway exclusions before consulting the
-// ztunnel action, falling back to gateway policy when no action is recognized.
+// CONNECT action, falling back to gateway policy when no action is recognized.
 func (b *resourceBuilder) sniTrafficPolicyMatcher(excludeHosts []string) *xdsmatcherv3.Matcher {
 	policy := b.tlsActionMatcher(toMatcher(b.sniPolicyMatcher()))
 	if len(excludeHosts) == 0 {
@@ -975,8 +1005,8 @@ func chainActionFields(name string) map[string]any {
 	}}
 }
 
-// tlsActionMatcher applies the ztunnel decision carried in the CONNECT
-// headers and defers to the gateway decision when there is none.
+// tlsActionMatcher applies the sidecar decision from CONNECT processing
+// and defers to the gateway decision when there is none.
 func (b *resourceBuilder) tlsActionMatcher(gatewayDecision *xdsmatcherv3.Matcher_OnMatch) *xdsmatcherv3.Matcher {
 	return exactMatcher(typedExtension("tls-action", b.pack(&matchinginputv3.FilterStateInput{Key: tlsActionKey})),
 		map[string]*xdsmatcherv3.Matcher_OnMatch{
