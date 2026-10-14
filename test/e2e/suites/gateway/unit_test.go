@@ -47,6 +47,7 @@ func TestSetupOrder(t *testing.T) {
 		ProxyInitImage:    digest,
 		GatewayImage:      digest,
 		EPEImage:          digest,
+		PorterImage:       digest,
 		ExtProcImage:      digest,
 		ForwardProxyImage: digest,
 	})

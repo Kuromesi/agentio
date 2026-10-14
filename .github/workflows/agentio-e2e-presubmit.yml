@@ -81,6 +81,7 @@ jobs:
           tag="$GITHUB_SHA"
           docker build --file Dockerfile --tag "agentio-e2e.local/agentiod:${tag}" .
           docker build --file extensions/epe/docker/Dockerfile --tag "agentio-e2e.local/agentio-epe:${tag}" .
+          docker build --file extensions/porter/docker/Dockerfile --tag "agentio-e2e.local/agentio-porter:${tag}" .
           docker build --file test/fixtures/extproc/Dockerfile --tag "agentio-e2e.local/ext-proc:${tag}" .
           docker build --file docker/Dockerfile.ztunnel \
             --build-arg TARGETARCH=amd64 \
@@ -89,6 +90,7 @@ jobs:
           docker save --output "${RUNNER_TEMP}/candidate-images.tar" \
             "agentio-e2e.local/agentiod:${tag}" \
             "agentio-e2e.local/agentio-epe:${tag}" \
+            "agentio-e2e.local/agentio-porter:${tag}" \
             "agentio-e2e.local/ext-proc:${tag}" \
             "agentio-e2e.local/ztunnel:${tag}"
       - name: Upload local candidate images

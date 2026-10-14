@@ -41,7 +41,7 @@ func TestReleasePromotesExactProductE2ECandidates(t *testing.T) {
 	}
 	inputs := mapValue(t, productE2E, "with")
 	for _, input := range []string{
-		"agentiod_image", "epe_image", "cni_image", "ztunnel_image",
+		"agentiod_image", "epe_image", "porter_image", "cni_image", "ztunnel_image",
 		"proxy_init_image", "gateway_image", "ext_proc_image", "chart_artifact",
 	} {
 		if _, found := inputs[input]; !found {
@@ -52,7 +52,12 @@ func TestReleasePromotesExactProductE2ECandidates(t *testing.T) {
 	if needs := jobNeeds(t, jobs, "tag-agentio"); !slices.Contains(needs, "product-e2e") {
 		t.Errorf("tag-agentio needs %v, want product-e2e gate", needs)
 	}
-	if needs := jobNeeds(t, jobs, "promote-version-images"); !slices.Contains(needs, "tag-agentio") || !slices.Contains(needs, "build-candidates") {
+	if needs := jobNeeds(
+		t,
+		jobs,
+		"promote-version-images",
+	); !slices.Contains(needs, "tag-agentio") ||
+		!slices.Contains(needs, "build-candidates") {
 		t.Errorf("promote-version-images needs %v, want tag-agentio and build-candidates", needs)
 	}
 }
@@ -81,7 +86,11 @@ func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 	}
 	planSteps := listValue(t, plan, "steps")
 	index := namedStepIndex(t, planSteps, "Generate product coverage plan")
-	if index < 0 || !strings.Contains(stringValue(t, planSteps[index].(map[string]any), "run"), "go -C test/e2e run ./cmd/product-e2e plan --format=json") {
+	if index < 0 ||
+		!strings.Contains(
+			stringValue(t, planSteps[index].(map[string]any), "run"),
+			"go -C test/e2e run ./cmd/product-e2e plan --format=json",
+		) {
 		t.Fatal("CI must use the same planner as local product runs")
 	}
 
@@ -93,7 +102,7 @@ func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 		t.Fatal("workflow must not maintain a second suite list")
 	}
 	for _, variable := range []string{
-		"AGENTIO_E2E_AGENTIOD_IMAGE", "AGENTIO_E2E_EPE_IMAGE", "AGENTIO_E2E_CNI_IMAGE",
+		"AGENTIO_E2E_AGENTIOD_IMAGE", "AGENTIO_E2E_EPE_IMAGE", "AGENTIO_E2E_PORTER_IMAGE", "AGENTIO_E2E_CNI_IMAGE",
 		"AGENTIO_E2E_ZTUNNEL_IMAGE", "AGENTIO_E2E_PROXY_INIT_IMAGE", "AGENTIO_E2E_GATEWAY_IMAGE",
 	} {
 		if _, found := environment[variable]; !found {
@@ -115,10 +124,20 @@ func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 	uploadIndex := namedStepIndex(t, steps, "Upload Agentio E2E artifacts")
 	deleteIndex := namedStepIndex(t, steps, "Delete isolated KinD cluster")
 	if exportIndex < 0 || uploadIndex < 0 || deleteIndex < 0 {
-		t.Fatalf("missing diagnostic/cleanup step: export %d, upload %d, delete %d", exportIndex, uploadIndex, deleteIndex)
+		t.Fatalf(
+			"missing diagnostic/cleanup step: export %d, upload %d, delete %d",
+			exportIndex,
+			uploadIndex,
+			deleteIndex,
+		)
 	}
 	if !(exportIndex < uploadIndex && uploadIndex < deleteIndex) {
-		t.Errorf("diagnostic/cleanup step order = export %d, upload %d, delete %d", exportIndex, uploadIndex, deleteIndex)
+		t.Errorf(
+			"diagnostic/cleanup step order = export %d, upload %d, delete %d",
+			exportIndex,
+			uploadIndex,
+			deleteIndex,
+		)
 	}
 }
 
@@ -143,7 +162,11 @@ func TestClientTrustFixtureIsAvailableForReleaseAndPresubmit(t *testing.T) {
 	}
 	for _, name := range []string{"Start local image registry", "Delete local image registry"} {
 		index := namedStepIndex(t, steps, name)
-		if index < 0 || !strings.Contains(stringValue(t, steps[index].(map[string]any), "if"), "contains(matrix.fixtures, 'clienttrust')") {
+		if index < 0 ||
+			!strings.Contains(
+				stringValue(t, steps[index].(map[string]any), "if"),
+				"contains(matrix.fixtures, 'clienttrust')",
+			) {
 			t.Fatalf("%s must support release sidecar jobs without candidate archives", name)
 		}
 	}
@@ -151,7 +174,11 @@ func TestClientTrustFixtureIsAvailableForReleaseAndPresubmit(t *testing.T) {
 
 func TestReleaseBuildsExtProcFixtureWhenNoOverrideIsSupplied(t *testing.T) {
 	release := loadWorkflow(t, "agentio-release.yml")
-	input := mapValue(t, mapValue(t, mapValue(t, workflowTriggers(t, release), "workflow_dispatch"), "inputs"), "ext_proc_image")
+	input := mapValue(
+		t,
+		mapValue(t, mapValue(t, workflowTriggers(t, release), "workflow_dispatch"), "inputs"),
+		"ext_proc_image",
+	)
 	if input["required"] != false || input["default"] != "" {
 		t.Fatal("release must work without a previously published ext-proc fixture")
 	}
@@ -178,7 +205,11 @@ func TestReleaseBuildsExtProcFixtureWhenNoOverrideIsSupplied(t *testing.T) {
 			t.Skipf("release validation script test requires %s", tool)
 		}
 	}
-	script := stringValue(t, workflowStep(t, release, "validate-release", "Validate release version and resolve dependency BOM"), "run")
+	script := stringValue(
+		t,
+		workflowStep(t, release, "validate-release", "Validate release version and resolve dependency BOM"),
+		"run",
+	)
 	deps, err := os.ReadFile(filepath.Join("..", "..", "agentio.deps"))
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +251,15 @@ func TestProductE2EPresubmitBuildsLocalCandidatesAndUsesDependencyBOM(t *testing
 	jobs := workflowJobs(t, workflow)
 	build := workflowJob(t, jobs, "build-candidates")
 	steps := listValue(t, build, "steps")
+	script := stringValue(
+		t,
+		workflowStep(t, workflow, "build-candidates", "Build repository-owned and test fixture candidates"),
+		"run",
+	)
+	if !strings.Contains(script, "extensions/porter/docker/Dockerfile") ||
+		strings.Count(script, `"agentio-e2e.local/agentio-porter:${tag}"`) != 2 {
+		t.Fatal("presubmit must build and archive Porter alongside agentiod")
+	}
 	if index := namedStepIndex(t, steps, "Upload local candidate images"); index < 0 {
 		t.Fatal("candidate images are not uploaded for isolated matrix jobs")
 	}
@@ -259,7 +299,11 @@ func TestExternalDependencyUpdatesUsePublishedImages(t *testing.T) {
 	if _, found := triggers["repository_dispatch"]; !found {
 		t.Error("dependency sync must accept component release dispatches")
 	}
-	options := listValue(t, mapValue(t, mapValue(t, triggers, "workflow_dispatch"), "inputs")["component"].(map[string]any), "options")
+	options := listValue(
+		t,
+		mapValue(t, mapValue(t, triggers, "workflow_dispatch"), "inputs")["component"].(map[string]any),
+		"options",
+	)
 	for _, option := range options {
 		if option == "ztunnel" {
 			t.Error("ztunnel source updates must not accept a published-image override")

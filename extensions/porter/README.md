@@ -62,3 +62,5 @@ docker build -f extensions/porter/docker/Dockerfile -t agentio-porter:dev .
 ```
 
 Set `egressGateway.porter.image.repository` and `.tag` or `.digest` to use a custom image. The image and release workflows build `agentio-porter` and pin its digest in release charts.
+
+Product E2E enables Porter in both sidecar and ambient profiles. Supply an immutable `AGENTIO_E2E_PORTER_IMAGE` alongside the other [E2E image inputs](../../test/e2e/README.md). The gateway suite covers no-SNI HTTP and TLS termination with a custom application ext_proc; the securitypolicy suite covers selection, wildcard matching, hot updates, deletion and recreation.

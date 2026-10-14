@@ -76,7 +76,7 @@ func TestZtunnelPresubmitTestsPinnedSourceWithoutRegistryCredentials(t *testing.
 	}
 	e2e := loadWorkflow(t, "agentio-e2e.yml")
 	publish := stringValue(t, workflowStep(t, e2e, "product-e2e", "Publish candidates to a local registry"), "run")
-	if !strings.Contains(publish, "for image in agentiod agentio-epe ztunnel ext-proc;") ||
+	if !strings.Contains(publish, "for image in agentiod agentio-epe agentio-porter ztunnel ext-proc;") ||
 		!strings.Contains(publish, "AGENTIO_E2E_ZTUNNEL_IMAGE=$digest_ref") {
 		t.Fatal("E2E must run the archived ztunnel by its local registry digest")
 	}

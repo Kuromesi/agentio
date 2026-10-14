@@ -248,6 +248,7 @@ jobs:
     with:
       agentiod_image: ${{ needs.build-candidates.outputs.agentiod_image }}
       epe_image: ${{ needs.build-candidates.outputs.epe_image }}
+      porter_image: ${{ needs.build-candidates.outputs.porter_image }}
       cni_image: ${{ needs.validate-release.outputs.cni_image }}
       ztunnel_image: ${{ needs.build-candidates.outputs.ztunnel_image }}
       proxy_init_image: ${{ needs.validate-release.outputs.proxy_init_image }}

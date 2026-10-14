@@ -77,6 +77,7 @@ func TestResolveConfigRequiresImmutableImages(t *testing.T) {
 		{name: "short proxy init digest", component: "proxy-init", image: "repo/proxy@sha256:abc"},
 		{name: "missing gateway", component: "gateway", image: ""},
 		{name: "tagged epe", component: "epe", image: "repo/epe:latest"},
+		{name: "tagged porter", component: "porter", image: "repo/porter:latest"},
 		{name: "short ext proc digest", component: "ext-proc", image: "repo/ext-proc@sha256:abc"},
 		{name: "tagged forward proxy", component: "forward-proxy", image: "repo/envoy:v1"},
 	}
@@ -94,7 +95,8 @@ func TestResolveConfigRequiresImmutableImages(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := ResolveConfig(inputs)
-			if err == nil || !strings.Contains(err.Error(), tt.component) || !strings.Contains(err.Error(), "repository@sha256") {
+			if err == nil || !strings.Contains(err.Error(), tt.component) ||
+				!strings.Contains(err.Error(), "repository@sha256") {
 				t.Fatalf("ResolveConfig() error = %v", err)
 			}
 		})
@@ -111,6 +113,7 @@ func TestResolveConfigUsesEnvironmentThenCLI(t *testing.T) {
 	t.Setenv("AGENTIO_E2E_PROXY_INIT_IMAGE", envImage)
 	t.Setenv("AGENTIO_E2E_GATEWAY_IMAGE", envImage)
 	t.Setenv("AGENTIO_E2E_EPE_IMAGE", envImage)
+	t.Setenv("AGENTIO_E2E_PORTER_IMAGE", envImage)
 	t.Setenv("AGENTIO_E2E_EXT_PROC_IMAGE", envImage)
 	t.Setenv("AGENTIO_E2E_FORWARD_PROXY_IMAGE", envImage)
 	t.Setenv("AGENTIO_E2E_ENABLE_FIREWALL_RULES", "true")
@@ -123,6 +126,7 @@ func TestResolveConfigUsesEnvironmentThenCLI(t *testing.T) {
 		"-agentio.cni-image=" + cliImage,
 		"-agentio.gateway-image=" + cliImage,
 		"-agentio.epe-image=" + cliImage,
+		"-agentio.porter-image=" + cliImage,
 		"-agentio.ext-proc-image=" + cliImage,
 		"-agentio.forward-proxy-image=" + cliImage,
 		"-agentio.enable-firewall-rules=false",
@@ -136,7 +140,7 @@ func TestResolveConfigUsesEnvironmentThenCLI(t *testing.T) {
 	}
 	if cfg.Profile != "ambient" || cfg.AgentiodImage != cliImage || cfg.CNIImage != cliImage ||
 		cfg.ZtunnelImage != envImage || cfg.ProxyInitImage != envImage ||
-		cfg.GatewayImage != cliImage || cfg.EPEImage != cliImage || cfg.ExtProcImage != cliImage || cfg.ForwardProxyImage != cliImage ||
+		cfg.GatewayImage != cliImage || cfg.EPEImage != cliImage || cfg.PorterImage != cliImage || cfg.ExtProcImage != cliImage || cfg.ForwardProxyImage != cliImage ||
 		cfg.EnableFirewallRules || cfg.FirewallBackend != "auto" {
 		t.Fatalf("config = %+v", cfg)
 	}
@@ -147,18 +151,55 @@ func TestResolveConfigAdditionalImagePrecedenceFromFileEnvironmentAndCLI(t *test
 	envImage := "registry.example/env@sha256:" + strings.Repeat("b", 64)
 	cliImage := "registry.example/cli@sha256:" + strings.Repeat("c", 64)
 	configPath := filepath.Join(t.TempDir(), "agentio.yaml")
-	if err := os.WriteFile(configPath, []byte("profile: sidecar\nnamespace: agentio-system\nagentiod-image: "+fileImage+"\ncni-image: "+fileImage+"\nztunnel-image: "+fileImage+"\nproxy-init-image: "+fileImage+"\ngateway-image: "+fileImage+"\nepe-image: "+fileImage+"\next-proc-image: "+fileImage+"\nforward-proxy-image: "+fileImage+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		configPath,
+		[]byte(
+			"profile: sidecar\nnamespace: agentio-system\nagentiod-image: "+fileImage+"\ncni-image: "+fileImage+"\nztunnel-image: "+fileImage+"\nproxy-init-image: "+fileImage+"\ngateway-image: "+fileImage+"\nporter-image: "+fileImage+"\nepe-image: "+fileImage+"\next-proc-image: "+fileImage+"\nforward-proxy-image: "+fileImage+"\n",
+		),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
 		name, environment, flagName string
 		value                       func(Config) string
 	}{
-		{name: "cni", environment: "AGENTIO_E2E_CNI_IMAGE", flagName: "cni", value: func(config Config) string { return config.CNIImage }},
-		{name: "gateway", environment: "AGENTIO_E2E_GATEWAY_IMAGE", flagName: "gateway", value: func(config Config) string { return config.GatewayImage }},
-		{name: "epe", environment: "AGENTIO_E2E_EPE_IMAGE", flagName: "epe", value: func(config Config) string { return config.EPEImage }},
-		{name: "ext proc", environment: "AGENTIO_E2E_EXT_PROC_IMAGE", flagName: "ext-proc", value: func(config Config) string { return config.ExtProcImage }},
-		{name: "forward proxy", environment: "AGENTIO_E2E_FORWARD_PROXY_IMAGE", flagName: "forward-proxy", value: func(config Config) string { return config.ForwardProxyImage }},
+		{
+			name:        "cni",
+			environment: "AGENTIO_E2E_CNI_IMAGE",
+			flagName:    "cni",
+			value:       func(config Config) string { return config.CNIImage },
+		},
+		{
+			name:        "gateway",
+			environment: "AGENTIO_E2E_GATEWAY_IMAGE",
+			flagName:    "gateway",
+			value:       func(config Config) string { return config.GatewayImage },
+		},
+		{
+			name:        "epe",
+			environment: "AGENTIO_E2E_EPE_IMAGE",
+			flagName:    "epe",
+			value:       func(config Config) string { return config.EPEImage },
+		},
+		{
+			name:        "porter",
+			environment: "AGENTIO_E2E_PORTER_IMAGE",
+			flagName:    "porter",
+			value:       func(config Config) string { return config.PorterImage },
+		},
+		{
+			name:        "ext proc",
+			environment: "AGENTIO_E2E_EXT_PROC_IMAGE",
+			flagName:    "ext-proc",
+			value:       func(config Config) string { return config.ExtProcImage },
+		},
+		{
+			name:        "forward proxy",
+			environment: "AGENTIO_E2E_FORWARD_PROXY_IMAGE",
+			flagName:    "forward-proxy",
+			value:       func(config Config) string { return config.ForwardProxyImage },
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,7 +239,10 @@ func TestResolveConfigRejectsInvalidFirewallInputs(t *testing.T) {
 		if err := fs.Parse(validImageArgs(valid)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ResolveConfig(inputs); err == nil || !strings.Contains(err.Error(), "AGENTIO_E2E_ENABLE_FIREWALL_RULES") {
+		if _, err := ResolveConfig(
+			inputs,
+		); err == nil ||
+			!strings.Contains(err.Error(), "AGENTIO_E2E_ENABLE_FIREWALL_RULES") {
 			t.Fatalf("ResolveConfig() error = %v", err)
 		}
 	})
@@ -236,6 +280,7 @@ func validImageArgs(image string) []string {
 		"-agentio.proxy-init-image=" + image,
 		"-agentio.gateway-image=" + image,
 		"-agentio.epe-image=" + image,
+		"-agentio.porter-image=" + image,
 		"-agentio.ext-proc-image=" + image,
 		"-agentio.forward-proxy-image=" + image,
 	}

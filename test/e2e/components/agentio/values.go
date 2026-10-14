@@ -46,6 +46,11 @@ func chartValues(config Config) ([]byte, error) {
 		return nil, fmt.Errorf("epe image: %w", err)
 	}
 
+	porterImage, err := pinnedImageValues(config.PorterImage)
+	if err != nil {
+		return nil, fmt.Errorf("porter image: %w", err)
+	}
+
 	values := map[string]any{
 		"profile": config.Profile,
 		"global": map[string]any{
@@ -92,6 +97,10 @@ func chartValues(config Config) ([]byte, error) {
 			"autoscaling":         map[string]any{"enabled": false},
 			"podDisruptionBudget": map[string]any{"enabled": false},
 			"sniTrafficPolicy":    map[string]any{"enabled": true},
+			"porter":              map[string]any{"enabled": true, "image": porterImage},
+			"podAnnotations": map[string]any{
+				"sidecar.istio.io/statsInclusionPrefixes": "cluster.agentio-porter",
+			},
 			"resources": map[string]any{
 				"requests": map[string]any{"cpu": "100m", "memory": "128Mi"},
 				"limits":   map[string]any{"cpu": "1", "memory": "512Mi"},

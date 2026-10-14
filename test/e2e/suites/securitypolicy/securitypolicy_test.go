@@ -35,7 +35,7 @@ const (
 
 // TestSniTrafficPolicyLifecycle exercises the complete Kubernetes-to-data-plane
 // path. A production regression in policy conversion, selector binding, xDS
-// delivery, the native policy store, the custom matcher decision, or listener
+// delivery, Porter demand subscriptions, CONNECT metadata, or listener
 // routing changes the certificate boundary observed by curl and fails this test.
 func TestSniTrafficPolicyLifecycle(t *testing.T) {
 	_, scope := rig.BeginScenario(t)
@@ -122,19 +122,28 @@ spec:
 		return
 	}
 
-	t.Run("deleting policies restores passthrough", func(t *testing.T) {
+	if !t.Run("deleting policies restores passthrough", func(t *testing.T) {
 		namespacedPolicy.DeleteOrFail(t)
 		globalPolicy.DeleteOrFail(t)
 		assertTLSPassthrough(t, selected, terminatedHost)
 		assertTLSPassthrough(t, global, terminatedHost)
+	}) {
+		return
+	}
+	t.Run("recreating the policy applies to new CONNECT streams", func(t *testing.T) {
+		namespacedPolicy.ApplyOrFail(t, kube.CreateOnly)
+		assertTLSTerminated(t, selected, terminatedHost)
+		assertTLSPassthrough(t, unselected, terminatedHost)
+		// Delete the replacement before the scope revisits its old UID record.
+		namespacedPolicy.DeleteOrFail(t)
 	})
 }
 
 // TestSniTrafficPolicyWildcardAndHotUpdate verifies the matching boundary and
-// cache invalidation contract of the native SNI policy matcher. A wildcard
+// cache update contract of Porter's SNI policy matcher. A wildcard
 // matches a subdomain but never the apex; updating the same policy must reverse
 // both decisions for newly established connections without retaining a stale
-// worker-local compiled policy.
+// cached policy.
 func TestSniTrafficPolicyWildcardAndHotUpdate(t *testing.T) {
 	_, scope := rig.BeginScenario(t)
 	applySNITrafficConfig(t, scope)

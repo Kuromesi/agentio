@@ -23,11 +23,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openkruise/agentio/test/e2e"
-	"github.com/openkruise/agentio/test/e2e/artifacts"
-	"github.com/openkruise/agentio/test/e2e/cluster"
-	"github.com/openkruise/agentio/test/e2e/command"
-	"github.com/openkruise/agentio/test/e2e/kube"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,6 +30,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ktesting "k8s.io/client-go/testing"
+
+	"github.com/openkruise/agentio/test/e2e"
+	"github.com/openkruise/agentio/test/e2e/artifacts"
+	"github.com/openkruise/agentio/test/e2e/cluster"
+	"github.com/openkruise/agentio/test/e2e/command"
+	"github.com/openkruise/agentio/test/e2e/kube"
 )
 
 func TestInstallUsesProductionChartAndOwnsPrerequisites(t *testing.T) {
@@ -57,7 +58,8 @@ func TestInstallUsesProductionChartAndOwnsPrerequisites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleanup == nil || instance.Namespace() != "agentio-system" || instance.ReleaseName() != "agentio" || instance.Fingerprint() == "" {
+	if cleanup == nil || instance.Namespace() != "agentio-system" || instance.ReleaseName() != "agentio" ||
+		instance.Fingerprint() == "" {
 		t.Fatalf("instance = %+v, cleanup nil = %v", instance, cleanup == nil)
 	}
 	if got, want := *applied, []string{
@@ -73,7 +75,7 @@ func TestInstallUsesProductionChartAndOwnsPrerequisites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, image := range []string{config.AgentiodImage, config.ZtunnelImage, config.ProxyInitImage, config.GatewayImage, config.EPEImage} {
+	for _, image := range []string{config.AgentiodImage, config.ZtunnelImage, config.ProxyInitImage, config.GatewayImage, config.EPEImage, config.PorterImage} {
 		parts := strings.SplitN(image, "@", 2)
 		if !strings.Contains(string(values), parts[0]) || !strings.Contains(string(values), parts[1]) {
 			t.Fatalf("values do not pin image %q:\n%s", image, values)
@@ -82,19 +84,39 @@ func TestInstallUsesProductionChartAndOwnsPrerequisites(t *testing.T) {
 	wantCommands := [][]string{
 		{"helm", "status", "agentio", "--namespace", "agentio-system", "--output", "json"},
 		{"helm", "template", "agentio", chartPath, "--namespace", "agentio-system", "--values", valuesPath},
-		{"helm", "upgrade", "--install", "agentio", chartPath, "--namespace", "agentio-system", "--wait", "--timeout", "5m0s", "--description", "agentio-e2e:" + instance.Fingerprint(), "--skip-crds", "--values", valuesPath},
+		{
+			"helm",
+			"upgrade",
+			"--install",
+			"agentio",
+			chartPath,
+			"--namespace",
+			"agentio-system",
+			"--wait",
+			"--timeout",
+			"5m0s",
+			"--description",
+			"agentio-e2e:" + instance.Fingerprint(),
+			"--skip-crds",
+			"--values",
+			valuesPath,
+		},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCommands) {
 		t.Fatalf("Helm commands = %#v, want %#v", runner.calls, wantCommands)
 	}
 	component := environment.State.Snapshot().Components["agentio"]
-	if component.Fingerprint != instance.Fingerprint() || component.Images["epe"] != config.EPEImage {
+	if component.Fingerprint != instance.Fingerprint() || component.Images["epe"] != config.EPEImage ||
+		component.Images["porter"] != config.PorterImage {
 		t.Fatalf("recorded component = %+v", component)
 	}
 	if err := cleanup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := runner.calls[len(runner.calls)-1]; !reflect.DeepEqual(got, []string{"helm", "uninstall", "agentio", "--namespace", "agentio-system", "--wait"}) {
+	if got := runner.calls[len(runner.calls)-1]; !reflect.DeepEqual(
+		got,
+		[]string{"helm", "uninstall", "agentio", "--namespace", "agentio-system", "--wait"},
+	) {
 		t.Fatalf("cleanup command = %v", got)
 	}
 }
@@ -142,7 +164,11 @@ func testChart(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(chartPath, "crds"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: agentio\nversion: 0.1.0\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(chartPath, "Chart.yaml"),
+		[]byte("apiVersion: v2\nname: agentio\nversion: 0.1.0\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	crd := "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.test\n"
@@ -197,7 +223,10 @@ func installEnvironment(t *testing.T, runner command.Interface) (*e2e.Environmen
 		{Group: "apiextensions.k8s.io", Version: "v1"},
 	})
 	mapper.Add(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Namespace"}, meta.RESTScopeRoot)
-	mapper.Add(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}, meta.RESTScopeRoot)
+	mapper.Add(
+		schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"},
+		meta.RESTScopeRoot,
+	)
 	clusterHandle := &cluster.Cluster{Dynamic: dynamicClient, Mapper: mapper}
 	store, err := artifacts.New(t.TempDir(), "run-1")
 	if err != nil {

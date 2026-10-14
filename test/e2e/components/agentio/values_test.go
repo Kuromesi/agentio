@@ -32,6 +32,7 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	config.ProxyInitImage = immutableImageRef("proxy-init", "d")
 	config.GatewayImage = immutableImageRef("gateway", "e")
 	config.EPEImage = immutableImageRef("epe", "f")
+	config.PorterImage = immutableImageRef("porter", "f")
 	config.EnableFirewallRules = true
 	config.FirewallBackend = "iptables"
 
@@ -74,6 +75,12 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 		t.Fatalf("gateway singleton values = %#v", gateway)
 	}
 
+	porter := gateway["porter"].(map[string]any)
+	if porter["enabled"] != true {
+		t.Fatal("CONNECT processing must be enabled in Envoy product tests")
+	}
+	assertPinnedImage(t, porter["image"], "registry.example/porter", "sha256:"+strings.Repeat("f", 64))
+
 	epe := values["epe"].(map[string]any)
 	if epe["mode"] != "managed" {
 		t.Fatalf("epe mode = %#v, want managed", epe["mode"])
@@ -107,9 +114,14 @@ func TestProductionChartRendersSuiteValues(t *testing.T) {
 	for _, expected := range []string{
 		`name: egress-gateway`,
 		`name: agentio-epe`,
+		`name: agentio-porter`,
+		`name: AGENTIO_ENABLE_PORTER`,
+		`sidecar.istio.io/statsInclusionPrefixes: cluster.agentio-porter`,
+		`--grpc-health-port=9003`,
 		`image: "` + config.AgentiodImage + `"`,
 		`image: "` + config.GatewayImage + `"`,
 		`image: "` + config.EPEImage + `"`,
+		`image: "` + config.PorterImage + `"`,
 		`image: "` + config.ZtunnelImage + `"`,
 		`image: "` + config.ProxyInitImage + `"`,
 	} {
@@ -186,6 +198,7 @@ func validConfig(t *testing.T) Config {
 		ProxyInitImage:    image,
 		GatewayImage:      image,
 		EPEImage:          image,
+		PorterImage:       image,
 		ExtProcImage:      image,
 		ForwardProxyImage: image,
 		FirewallBackend:   "auto",
