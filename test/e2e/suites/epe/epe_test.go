@@ -126,7 +126,8 @@ func TestEPESelectorProbeConfig(t *testing.T) {
 }
 
 // TestEPEServiceAccountCanWatchItsInputs pins EPE's RBAC to the resources its
-// real informers open. Fake clientsets do not enforce these permissions.
+// real informers open, including namespace-scoped Secret access. Fake clientsets
+// do not enforce these permissions.
 func TestEPEServiceAccountCanWatchItsInputs(t *testing.T) {
 	rig.RequireLive(t)
 	rig.RequireUncontaminated(t)
@@ -135,30 +136,34 @@ func TestEPEServiceAccountCanWatchItsInputs(t *testing.T) {
 
 	user := fmt.Sprintf("system:serviceaccount:%s:%s", resolvedAgentioConfig.Namespace, epeName)
 	cases := []struct {
-		group    string
-		resource string
-		why      string
+		group     string
+		resource  string
+		namespace string
+		allowed   bool
 	}{
-		{"agents.kruise.io", "securityprofiles", "namespaced profile informer"},
-		{"agents.kruise.io", "globalsecurityprofiles", "cluster-scoped profile informer"},
-		{"apiextensions.k8s.io", "customresourcedefinitions", "CrdWatcher backing the delayed informers"},
+		{"agents.kruise.io", "securityprofiles", "", true},
+		{"agents.kruise.io", "globalsecurityprofiles", "", true},
+		{"apiextensions.k8s.io", "customresourcedefinitions", "", true},
+		{"", "secrets", resolvedAgentioConfig.Namespace, true},
+		{"", "secrets", "", false},
+		{"", "secrets", trafficFixture.Namespace.Name(), false},
 	}
 
 	for _, current := range cases {
 		current := current
-		for _, verb := range []string{"list", "watch"} {
+		for _, verb := range []string{"get", "list", "watch"} {
 			verb := verb
-			t.Run(fmt.Sprintf("%s/%s", current.resource, verb), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s/%s", current.resource, current.namespace, verb), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				review := &authzv1.SubjectAccessReview{
 					Spec: authzv1.SubjectAccessReviewSpec{
 						User: user,
 						ResourceAttributes: &authzv1.ResourceAttributes{
-							Group:    current.group,
-							Resource: current.resource,
-							Verb:     verb,
-							// Namespace is intentionally empty: EPE watches at cluster scope.
+							Group:     current.group,
+							Resource:  current.resource,
+							Verb:      verb,
+							Namespace: current.namespace,
 						},
 					},
 				}
@@ -167,11 +172,11 @@ func TestEPEServiceAccountCanWatchItsInputs(t *testing.T) {
 				if err != nil {
 					t.Fatalf("create SubjectAccessReview for %s %s: %v", verb, current.resource, err)
 				}
-				if !got.Status.Allowed {
+				if got.Status.Allowed != current.allowed {
 					t.Fatalf(
-						"EPE ServiceAccount %s may not %s %s.%s at cluster scope (needed for the %s); "+
-							"reason=%q evaluationError=%q. Add the rule to the Agentio EPE ClusterRole.",
-						user, verb, current.resource, current.group, current.why,
+						"EPE ServiceAccount %s: %s %s.%s in namespace %q allowed=%t, want %t; "+
+							"reason=%q evaluationError=%q",
+						user, verb, current.resource, current.group, current.namespace, got.Status.Allowed, current.allowed,
 						got.Status.Reason, got.Status.EvaluationError,
 					)
 				}
@@ -273,6 +278,8 @@ func TestWorkloadSecretTokenInjection(t *testing.T) {
 	_, scope := beginEPEDataPathScenario(t, "EPE Secret token injection failed")
 	e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{
 		"Namespace":     trafficFixture.Namespace.Name(),
+		"EPENamespace":  resolvedAgentioConfig.Namespace,
+		"EPEAccount":    epeName,
 		"TokenTemplate": "Bearer {{ .Token }}",
 	}, `
 apiVersion: v1
@@ -282,6 +289,32 @@ metadata:
   namespace: {{ .Namespace }}
 stringData:
   apiKey: workload-e2e-test-token
+---
+# Workload Secret credentials require an explicit grant outside the EPE namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workload-api-key-reader
+  namespace: {{ .Namespace }}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["workload-api-key"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workload-api-key-reader
+  namespace: {{ .Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workload-api-key-reader
+subjects:
+- kind: ServiceAccount
+  name: {{ .EPEAccount }}
+  namespace: {{ .EPENamespace }}
 ---
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile
