@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"slices"
@@ -346,6 +347,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	}
 	defer discoveryServer.Close()
 	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(math.MaxInt32),
 		grpc.Creds(credentials.NewTLS(authority.TLSConfig())),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             30 * time.Second,

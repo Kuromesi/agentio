@@ -17,6 +17,7 @@ package trafficpolicy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 
@@ -45,18 +46,15 @@ func (s *benchSource) Snapshot() xdsclient.Snapshot {
 	result := xdsclient.Snapshot{
 		Changed:   s.snapshot.Changed,
 		Synced:    s.snapshot.Synced,
-		Resources: map[string]map[string]*anypb.Any{},
+		Resources: map[string]map[string]*xdsclient.Resource{},
 	}
 	for typ, resources := range s.snapshot.Resources {
-		result.Resources[typ] = map[string]*anypb.Any{}
-		for name, r := range resources {
-			result.Resources[typ][name] = proto.Clone(r).(*anypb.Any)
-		}
+		result.Resources[typ] = maps.Clone(resources)
 	}
 	return result
 }
 
-func (s *benchSource) Demand(context.Context, string, string) (*anypb.Any, error) {
+func (s *benchSource) Demand(context.Context, string, string) (*xdsclient.Resource, error) {
 	return nil, xdsclient.ErrNotFound
 }
 
@@ -78,36 +76,34 @@ func benchFixture(count int) (*benchSource, *store.Aggregate, *resolver, inputs.
 		changed: make(chan struct{}),
 		snapshot: xdsclient.Snapshot{
 			Synced:    map[string]bool{model.WorkloadType: true, model.TrafficPolicyType: true},
-			Resources: map[string]map[string]*anypb.Any{model.WorkloadType: {}, model.TrafficPolicyType: {}},
+			Resources: map[string]map[string]*xdsclient.Resource{model.WorkloadType: {}, model.TrafficPolicyType: {}},
 		},
 	}
 	source.snapshot.Changed = source.changed
 	ref := pack(&ext.PolicyReference{TypeUrl: model.TrafficPolicyType, ResourceNames: []string{"policy"}})
 	for i := range count {
 		name := fmt.Sprintf("pod-%d", i)
-		source.snapshot.Resources[model.WorkloadType][name] = pack(
-			&workload.Workload{
-				Uid:        name,
-				Name:       name,
-				Namespace:  "ns",
-				Addresses:  [][]byte{{192, 0, 2, 1}},
-				Extensions: []*workload.Extension{{Name: "traffic-policy-reference", Config: ref}},
-			},
-		)
+		source.snapshot.Resources[model.WorkloadType][name] = &xdsclient.Resource{Value: &workload.Workload{
+			Uid:        name,
+			Name:       name,
+			Namespace:  "ns",
+			Addresses:  [][]byte{{192, 0, 2, 1}},
+			Extensions: []*workload.Extension{{Name: "traffic-policy-reference", Config: ref}},
+		},
+		}
 	}
-	source.snapshot.Resources[model.TrafficPolicyType]["policy"] = pack(
-		&sec.TrafficPolicy{
-			Egress: &sec.TrafficPolicy_RuleSet{
-				Rules: []*sec.TrafficPolicy_Rule{
-					{
-						Match: &sec.TrafficPolicy_Match{
-							DestinationIps: []*sec.TrafficPolicy_Address{address("203.0.113.0/24")},
-						},
+	source.snapshot.Resources[model.TrafficPolicyType]["policy"] = &xdsclient.Resource{Value: &sec.TrafficPolicy{
+		Egress: &sec.TrafficPolicy_RuleSet{
+			Rules: []*sec.TrafficPolicy_Rule{
+				{
+					Match: &sec.TrafficPolicy_Match{
+						DestinationIps: []*sec.TrafficPolicy_Address{address("203.0.113.0/24")},
 					},
 				},
 			},
 		},
-	)
+	},
+	}
 	aggregate := store.NewAggregate(xdsstore.New(source))
 	RegisterQueries(aggregate)
 	r := &resolver{source: aggregate}
@@ -157,16 +153,9 @@ func BenchmarkResourceQueries(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					source.mu.Lock()
 					old := source.snapshot.Resources[model.WorkloadType]["pod-1"]
-					w := &workload.Workload{}
-					if err := old.UnmarshalTo(w); err != nil {
-						b.Fatal(err)
-					}
+					w := proto.Clone(old.Value.(*workload.Workload)).(*workload.Workload)
 					w.ClusterId = fmt.Sprint(i)
-					next, err := anypb.New(w)
-					if err != nil {
-						b.Fatal(err)
-					}
-					source.snapshot.Resources[model.WorkloadType]["pod-1"] = next
+					source.snapshot.Resources[model.WorkloadType]["pod-1"] = &xdsclient.Resource{Value: w}
 					close(source.changed)
 					source.changed = make(chan struct{})
 					source.snapshot.Changed = source.changed
@@ -185,16 +174,9 @@ func TestXDSUpdatePreservesUnrelatedCompiledEntry(t *testing.T) {
 	source, aggregate, _, _ := benchFixture(2)
 	before := aggregate.Snapshot()
 	previous := before.Query(store.TrafficPolicy).(*queryIndex)
-	value := &workload.Workload{}
-	if err := source.snapshot.Resources[model.WorkloadType]["pod-1"].UnmarshalTo(value); err != nil {
-		t.Fatal(err)
-	}
+	value := proto.Clone(source.snapshot.Resources[model.WorkloadType]["pod-1"].Value.(*workload.Workload)).(*workload.Workload)
 	value.ClusterId = "updated"
-	updated, err := anypb.New(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source.snapshot.Resources[model.WorkloadType]["pod-1"] = updated
+	source.snapshot.Resources[model.WorkloadType]["pod-1"] = &xdsclient.Resource{Value: value}
 	close(source.changed)
 	source.changed = make(chan struct{})
 	source.snapshot.Changed = source.changed

@@ -16,9 +16,7 @@ package xds
 
 import (
 	"context"
-	"errors"
 	"maps"
-	"strings"
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
@@ -46,19 +44,16 @@ func (f *fakeSource) Snapshot() xdsclient.Snapshot {
 	result := xdsclient.Snapshot{
 		Changed:   f.snapshot.Changed,
 		Synced:    map[string]bool{},
-		Resources: map[string]map[string]*anypb.Any{},
+		Resources: map[string]map[string]*xdsclient.Resource{},
 	}
 	for typ, resources := range f.snapshot.Resources {
-		result.Resources[typ] = map[string]*anypb.Any{}
-		for name, resource := range resources {
-			result.Resources[typ][name] = proto.Clone(resource).(*anypb.Any)
-		}
+		result.Resources[typ] = maps.Clone(resources)
 	}
 	maps.Copy(result.Synced, f.snapshot.Synced)
 	return result
 }
 
-func (f *fakeSource) Demand(_ context.Context, typ, name string) (*anypb.Any, error) {
+func (f *fakeSource) Demand(_ context.Context, typ, name string) (*xdsclient.Resource, error) {
 	f.demands++
 	if f.demand != nil {
 		f.demand(name)
@@ -76,6 +71,10 @@ func packed(m proto.Message) *anypb.Any {
 		panic(err)
 	}
 	return v
+}
+
+func published(m proto.Message) *xdsclient.Resource {
+	return &xdsclient.Resource{Value: m}
 }
 
 func testSource() *fakeSource {
@@ -96,12 +95,12 @@ func testSource() *fakeSource {
 	return &fakeSource{
 		snapshot: xdsclient.Snapshot{
 			Synced: map[string]bool{model.WorkloadType: true, model.TrafficPolicyType: true},
-			Resources: map[string]map[string]*anypb.Any{
+			Resources: map[string]map[string]*xdsclient.Resource{
 				model.WorkloadType: {
-					"uid": packed(w),
+					"uid": published(w),
 				},
 				model.TrafficPolicyType: {
-					"allow": packed(
+					"allow": published(
 						&sec.TrafficPolicy{
 							Egress: &sec.TrafficPolicy_RuleSet{
 								Rules: []*sec.TrafficPolicy_Rule{
@@ -153,7 +152,7 @@ func TestResourceQueriesAndFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.snapshot.Resources[model.TrafficPolicyType]["allow"] = packed(
+	f.snapshot.Resources[model.TrafficPolicyType]["allow"] = published(
 		&sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{}},
 	)
 	f.notify()
@@ -182,7 +181,7 @@ func TestResourceQueriesAndFetch(t *testing.T) {
 		t.Fatal("not-found fetch", resource, err)
 	}
 	f.demand = func(name string) {
-		f.snapshot.Resources[model.TrafficPolicyType][name] = packed(&sec.TrafficPolicy{})
+		f.snapshot.Resources[model.TrafficPolicyType][name] = published(&sec.TrafficPolicy{})
 		f.notify()
 	}
 	if resource, err := s.Fetch(t.Context(), key); err != nil || resource == nil {
@@ -207,7 +206,7 @@ func TestReadReusesUnchangedTypeSnapshots(t *testing.T) {
 	if f.reads != 1 || unchanged.Changed != before.Changed {
 		t.Fatal("unchanged publication copied again")
 	}
-	f.snapshot.Resources[model.TrafficPolicyType]["allow"] = packed(&sec.TrafficPolicy{})
+	f.snapshot.Resources[model.TrafficPolicyType]["allow"] = published(&sec.TrafficPolicy{})
 	f.notify()
 	after := s.Read()
 	if f.reads != 2 || after.Changed == before.Changed {
@@ -251,7 +250,7 @@ func TestReadReusesUnchangedTypeSnapshots(t *testing.T) {
 
 func TestReadReusesResourcesWithinChangedType(t *testing.T) {
 	f := testSource()
-	f.snapshot.Resources[model.WorkloadType]["other"] = packed(&workload.Workload{Uid: "other", Name: "other"})
+	f.snapshot.Resources[model.WorkloadType]["other"] = published(&workload.Workload{Uid: "other", Name: "other"})
 	f.notify()
 	s := New(f)
 	a := store.NewAggregate(s)
@@ -264,7 +263,7 @@ func TestReadReusesResourcesWithinChangedType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.snapshot.Resources[model.WorkloadType]["other"] = packed(&workload.Workload{Uid: "other", Name: "updated"})
+	f.snapshot.Resources[model.WorkloadType]["other"] = published(&workload.Workload{Uid: "other", Name: "updated"})
 	f.notify()
 	batch := s.Read()
 	current, err := batch.Snapshots[store.Workload].Get("uid")
@@ -293,27 +292,23 @@ func TestReadReusesResourcesWithinChangedType(t *testing.T) {
 	}
 }
 
-func TestReadRecoversCompleteTypeAfterDecodeFailure(t *testing.T) {
-	f := testSource()
-	f.snapshot.Resources[model.WorkloadType]["other"] = packed(&workload.Workload{Uid: "other"})
-	f.notify()
-	s := New(f)
-	before := s.Read()
-	f.snapshot.Resources[model.WorkloadType]["other"] = &anypb.Any{TypeUrl: model.WorkloadType, Value: []byte{0xff}}
-	f.notify()
-	broken := s.Read()
-	if _, err := broken.Snapshots[store.Workload].List(); err == nil ||
-		!strings.Contains(err.Error(), `decode Workload "other"`) || !errors.Is(err, proto.Error) {
-		t.Fatalf("decode error lost resource identity or cause: %v", err)
-	}
-	delete(f.snapshot.Resources[model.WorkloadType], "other")
-	f.notify()
-	recovered := s.Read()
-	resources, err := recovered.Snapshots[store.Workload].List()
-	if err != nil || len(resources) != 1 || resources[0].Key.Name != "uid" {
-		t.Fatal("unchanged resources missing after recovery", resources, err)
-	}
-	if resources, err := before.Snapshots[store.Workload].List(); err != nil || len(resources) != 2 {
-		t.Fatal("failure mutated old snapshot", resources, err)
+func TestWatchTransforms(t *testing.T) {
+	for _, watch := range Watches() {
+		t.Run(watch.TypeURL, func(t *testing.T) {
+			var message proto.Message = &workload.Workload{Uid: "uid", Name: "pod"}
+			if watch.TypeURL == model.TrafficPolicyType {
+				message = &sec.TrafficPolicy{}
+			}
+			value, err := watch.Transform(packed(message))
+			if err != nil || !proto.Equal(value.(proto.Message), message) {
+				t.Fatalf("transform: %v %v", value, err)
+			}
+			if _, err := watch.Transform(&anypb.Any{TypeUrl: watch.TypeURL, Value: []byte{0xff}}); err == nil {
+				t.Fatal("malformed resource accepted")
+			}
+			if !watch.Wildcard || watch.OnDelete("uid") != xdsclient.ReleaseSubscription {
+				t.Fatal("must preserve wildcard and release deleted explicit demands")
+			}
+		})
 	}
 }

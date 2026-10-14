@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,52 +52,69 @@ type Watch struct {
 	TypeURL  string
 	Wildcard bool
 	Validate func(value *anypb.Any) error
+	// Transform runs once per received resource, after wire validation. Only
+	// its result is cached. Nil keeps the complete Any. The result must be
+	// immutable after publication; callbacks must not call back into Client.
+	Transform func(value *anypb.Any) (any, error)
+	// OnDelete decides whether an explicit subscription survives a deletion.
+	// Nil retains it. Called for deleted subscribed names and vanished aliases,
+	// after validation, under the client lock; it must not call back into Client.
+	// Releasing an explicit name does not cancel a wildcard subscription.
+	OnDelete func(name string) DeleteAction
 }
 
-// Config defines the node identity and initial watches.
+// Config defines the node identity and initial watches. Node must be non-nil;
+// its ID may be empty. Watches may be empty. Server-specific identity
+// requirements belong to the consumer.
 type Config struct {
 	Node    *core.Node
 	Watches []Watch
-	// MaxNames bounds retained on-demand subscriptions per type. Default: 10000.
-	MaxNames int
 }
 
-// Snapshot is a caller-owned, consistent view across types. Synced is reset on
-// disconnect or NACK. Resource versions are not resumed: reconnect obtains a
-// fresh snapshot, avoiding authorization from stale state after an outage.
+// Resource contains a published value. Value is read-only, including any nested
+// maps, slices or protobuf messages. Without Transform, Value is an *anypb.Any.
+// Each update replaces the Resource rather than mutating a published value.
+type Resource struct {
+	Value any
+}
+
+// Snapshot owns its maps and shares immutable Resources across types.
+// Connected reports whether the ADS stream is open. Synced reports whether a
+// type has accepted a response on that stream, not whether every name is ready.
+// Disconnection retains Resources but resets Synced; NACK preserves both.
+// Consumers decide whether retained, unsynchronized values are usable.
 type Snapshot struct {
-	Resources map[string]map[string]*anypb.Any
+	Connected bool
+	Resources map[string]map[string]*Resource
 	Synced    map[string]bool
 	Changed   <-chan struct{}
 }
 type typeState struct {
 	watch           Watch
-	names           map[string]bool
+	names           map[string]*subscription
 	removed         map[string]bool
 	aliases         map[string]string
 	resourceAliases map[string][]string
-	resources       map[string]*anypb.Any
+	resources       map[string]*Resource
 	synced          bool
 }
 
 // Client maintains synchronized Delta ADS resources and named subscriptions.
 type Client struct {
-	ads     discovery.AggregatedDiscoveryServiceClient
-	cfg     Config
-	mu      sync.Mutex
-	types   map[string]*typeState
-	changed chan struct{}
-	wake    chan struct{}
-	running atomic.Bool
+	ads       discovery.AggregatedDiscoveryServiceClient
+	cfg       Config
+	mu        sync.Mutex
+	types     map[string]*typeState
+	changed   chan struct{}
+	wake      chan struct{}
+	running   atomic.Bool
+	connected bool
 }
 
 // New creates a client; call Run to start receiving resources.
 func New(conn grpc.ClientConnInterface, cfg Config) (*Client, error) {
-	if conn == nil || cfg.Node == nil || cfg.Node.Id == "" || len(cfg.Watches) == 0 {
-		return nil, errors.New("xDS connection, node ID and watches are required")
-	}
-	if cfg.MaxNames <= 0 {
-		cfg.MaxNames = 10000
+	if conn == nil || cfg.Node == nil {
+		return nil, errors.New("xDS connection and node are required")
 	}
 	cfg.Node = proto.Clone(cfg.Node).(*core.Node)
 	c := &Client{
@@ -114,11 +130,11 @@ func New(conn grpc.ClientConnInterface, cfg Config) (*Client, error) {
 		}
 		c.types[w.TypeURL] = &typeState{
 			watch:           w,
-			names:           map[string]bool{},
+			names:           map[string]*subscription{},
 			removed:         map[string]bool{},
 			aliases:         map[string]string{},
 			resourceAliases: map[string][]string{},
-			resources:       map[string]*anypb.Any{},
+			resources:       map[string]*Resource{},
 		}
 	}
 	return c, nil
@@ -130,6 +146,8 @@ func (c *Client) notifyLocked() {
 }
 
 // Observe returns readiness and the signal closed by the next cache update.
+// Readiness means each type has accepted a response on the current stream.
+// Individual names may still be missing; Demand waits for those independently.
 // Both are captured under the same lock, without copying resource payloads.
 func (c *Client) Observe(types ...string) (<-chan struct{}, bool) {
 	c.mu.Lock()
@@ -143,92 +161,29 @@ func (c *Client) Observe(types ...string) (<-chan struct{}, bool) {
 	return c.changed, true
 }
 
-// Snapshot returns a deep copy of the currently published resources.
+// Snapshot copies the publication maps; resource values are shared and read-only.
 func (c *Client) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := Snapshot{
-		Resources: map[string]map[string]*anypb.Any{},
+		Connected: c.connected,
+		Resources: map[string]map[string]*Resource{},
 		Synced:    map[string]bool{},
 		Changed:   c.changed,
 	}
 	for typ, st := range c.types {
 		s.Synced[typ] = st.synced
-		s.Resources[typ] = map[string]*anypb.Any{}
-		for name, r := range st.resources {
-			s.Resources[typ][name] = proto.Clone(r).(*anypb.Any)
-		}
+		s.Resources[typ] = maps.Clone(st.resources)
 	}
 	return s
-}
-
-// Demand subscribes once and waits for publication or removal. Successful
-// subscriptions remain watched so later policy changes are observed. All
-// concurrent waiters are notified; cancellation does not cancel other waiters.
-func (c *Client) Demand(ctx context.Context, typ, name string) (*anypb.Any, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if name == "" || name == "*" {
-		return nil, errors.New("demand requires an exact resource name")
-	}
-	c.mu.Lock()
-	st := c.types[typ]
-	if st == nil {
-		c.mu.Unlock()
-		return nil, fmt.Errorf("unregistered type %q", typ)
-	}
-	if !st.names[name] {
-		if len(st.names) >= c.cfg.MaxNames {
-			c.mu.Unlock()
-			return nil, errors.New("xDS demand subscription limit reached")
-		}
-		st.names[name] = true
-		select {
-		case c.wake <- struct{}{}:
-		default:
-		}
-	}
-	for {
-		if st.synced {
-			canonical := name
-			if target, alias := st.aliases[name]; alias {
-				if target == "" {
-					c.mu.Unlock()
-					return nil, fmt.Errorf("ambiguous resource alias %q", name)
-				}
-				canonical = target
-			}
-			if value := st.resources[canonical]; value != nil {
-				result := proto.Clone(value).(*anypb.Any)
-				c.mu.Unlock()
-				return result, nil
-			}
-			if st.removed[name] {
-				c.mu.Unlock()
-				return nil, ErrNotFound
-			}
-		}
-		changed := c.changed
-		c.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-changed:
-		}
-		c.mu.Lock()
-	}
 }
 
 func (c *Client) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.connected = false
 	for _, st := range c.types {
 		st.synced = false
-		st.resources = map[string]*anypb.Any{}
-		st.removed = map[string]bool{}
-		st.aliases = map[string]string{}
-		st.resourceAliases = map[string][]string{}
 	}
 	c.notifyLocked()
 }
@@ -281,17 +236,21 @@ type response struct {
 func (c *Client) runStream(parent context.Context) (bool, error) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	stream, err := c.ads.DeltaAggregatedResources(ctx, grpc.MaxCallRecvMsgSize(16<<20))
+	stream, err := c.ads.DeltaAggregatedResources(ctx, grpc.MaxCallRecvMsgSize(math.MaxInt32))
 	if err != nil {
 		return false, err
 	}
-	sent := map[string]map[string]bool{}
+	sent := map[string]map[string]*subscription{}
 	initial := c.initialRequests(sent)
 	for _, req := range initial {
 		if err := stream.Send(req); err != nil {
 			return false, err
 		}
 	}
+	c.mu.Lock()
+	c.connected = true
+	c.notifyLocked()
+	c.mu.Unlock()
 	replies := make(chan response)
 	go func() {
 		for {
@@ -333,7 +292,7 @@ func (c *Client) runStream(parent context.Context) (bool, error) {
 				return received, err
 			}
 			if ack.ErrorDetail != nil {
-				return received, fmt.Errorf("xDS response rejected: %s", ack.ErrorDetail.Message)
+				log.Warn("xDS response rejected", "type", r.TypeUrl, "error", ack.ErrorDetail.Message)
 			}
 		}
 	}
@@ -346,13 +305,31 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	if st == nil {
 		return fmt.Errorf("unregistered response type %q", r.TypeUrl)
 	}
-	fail := func(err error) error {
-		st.synced = false
-		c.notifyLocked()
+	if err := validateResponse(r, st.watch); err != nil {
 		return err
 	}
-	if err := validateResponse(r, st.watch); err != nil {
-		return fail(err)
+	// Transform the full batch before any cache or subscription mutation.
+	values, err := transformResources(r.Resources, st.watch)
+	if err != nil {
+		return err
+	}
+	var removedAliases []string
+	if !st.synced {
+		// This stream does not resume resource versions. Replace retained data
+		// on its first accepted response, then accumulate only fresh deltas.
+		// Remember aliases of explicitly removed canonical resources before
+		// discarding the old index. A fresh resource may reassign those aliases.
+		for _, name := range r.RemovedResources {
+			for _, alias := range st.resourceAliases[name] {
+				if st.aliases[alias] == name {
+					removedAliases = append(removedAliases, alias)
+				}
+			}
+		}
+		st.resources = map[string]*Resource{}
+		st.removed = map[string]bool{}
+		st.aliases = map[string]string{}
+		st.resourceAliases = map[string][]string{}
 	}
 	// Workloads sharing a host-network IP can legitimately share an alias.
 	// Keep canonical resources; demanding an ambiguous alias fails closed.
@@ -373,14 +350,19 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 			}
 		}
 	}
+	for _, alias := range removedAliases {
+		if _, exists := aliases[alias]; !exists {
+			c.deletedSubscription(st, alias)
+		}
+	}
 	for alias := range st.aliases {
-		if _, exists := aliases[alias]; !exists && st.names[alias] {
-			st.removed[alias] = true
+		if _, exists := aliases[alias]; !exists {
+			c.deletedSubscription(st, alias)
 		}
 	}
 	st.aliases = aliases
 	for _, res := range r.Resources {
-		st.resources[res.Name] = proto.Clone(res.Resource).(*anypb.Any)
+		st.resources[res.Name] = values[res.Name]
 		st.resourceAliases[res.Name] = append([]string(nil), res.Aliases...)
 		for _, alias := range res.Aliases {
 			delete(st.removed, alias)
@@ -390,60 +372,11 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	for _, name := range r.RemovedResources {
 		delete(st.resources, name)
 		delete(st.resourceAliases, name)
-		if st.names[name] {
-			st.removed[name] = true
-		}
+		c.deletedSubscription(st, name)
 	}
 	st.synced = true
 	c.notifyLocked()
 	return nil
-}
-
-func (c *Client) initialRequests(sent map[string]map[string]bool) []*discovery.DeltaDiscoveryRequest {
-	c.mu.Lock()
-	initial := make([]*discovery.DeltaDiscoveryRequest, 0, len(c.types))
-	for typ, st := range c.types {
-		req := &discovery.DeltaDiscoveryRequest{Node: c.cfg.Node, TypeUrl: typ}
-		sent[typ] = map[string]bool{}
-		for name := range st.names {
-			req.ResourceNamesSubscribe = append(req.ResourceNamesSubscribe, name)
-			sent[typ][name] = true
-		}
-		sort.Strings(req.ResourceNamesSubscribe)
-		if st.watch.Wildcard {
-			req.ResourceNamesSubscribe = append(req.ResourceNamesSubscribe, "*")
-		} else if len(req.ResourceNamesSubscribe) == 0 {
-			// The same subscribe/unsubscribe handshake used by ztunnel prevents an
-			// empty initial request from becoming an implicit wildcard subscription.
-			req.ResourceNamesSubscribe = []string{"*"}
-			req.ResourceNamesUnsubscribe = []string{"*"}
-		}
-		initial = append(initial, req)
-	}
-	c.mu.Unlock()
-	sort.Slice(initial, func(i, j int) bool { return initial[i].TypeUrl < initial[j].TypeUrl })
-	return initial
-}
-
-func (c *Client) pendingRequests(sent map[string]map[string]bool) []*discovery.DeltaDiscoveryRequest {
-	c.mu.Lock()
-	requests := []*discovery.DeltaDiscoveryRequest{}
-	for typ, st := range c.types {
-		req := &discovery.DeltaDiscoveryRequest{TypeUrl: typ}
-		for name := range st.names {
-			if !sent[typ][name] {
-				req.ResourceNamesSubscribe = append(req.ResourceNamesSubscribe, name)
-				sent[typ][name] = true
-			}
-		}
-		if len(req.ResourceNamesSubscribe) > 0 {
-			sort.Strings(req.ResourceNamesSubscribe)
-			requests = append(requests, req)
-		}
-	}
-	c.mu.Unlock()
-
-	return requests
 }
 
 func validateResponse(r *discovery.DeltaDiscoveryResponse, watch Watch) error {
