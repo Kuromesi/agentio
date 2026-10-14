@@ -20,6 +20,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 
 	"istio.io/istio/pkg/test/util/assert"
 
@@ -69,6 +70,16 @@ func TestMapCollection(t *testing.T) {
 				for _, event := range events {
 					TrackerHandler[SimplePod](tt)(event)
 				}
+			}, true)
+			// The fake tracker cannot replay changes between LIST and WATCH.
+			// Cache sync only covers LIST, so wait for WATCH before mutating it.
+			assert.EventuallyEqual(t, func() bool {
+				for _, action := range c1.Kube().(*kubefake.Clientset).Actions() {
+					if action.Matches("watch", "pods") {
+						return true
+					}
+				}
+				return false
 			}, true)
 			// Add a pod and make sure we get the event for it in event handlers from the mapped collection
 			pod := pc1.Create(&corev1.Pod{
