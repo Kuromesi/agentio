@@ -275,12 +275,7 @@ func TestWatchSwitchesSecretDependencies(t *testing.T) {
 	if !reg.WaitUntilSynced(waitCtx.Done()) {
 		t.Fatal("initial sync did not complete")
 	}
-	registry.mu.Lock()
-	first := registry.current.providers["a"]
-	registry.mu.Unlock()
-	if first == nil || first.err != nil {
-		t.Fatalf("initial provider unavailable: %+v", first)
-	}
+	first := waitForAvailableProvider(t, registry, "a")
 
 	// A valid reference to a missing Secret installs an unavailable provider,
 	// then its creation must wake the dependency without another config change.
@@ -410,10 +405,7 @@ func TestWatchCertificateSources(t *testing.T) {
 			if !reg.WaitUntilSynced(ctx.Done()) {
 				t.Fatal("initial sync failed")
 			}
-			first := liveProvider(registry, "default")
-			if first == nil || first.err != nil {
-				t.Fatalf("initial TLS material unavailable: %+v", first)
-			}
+			first := waitForAvailableProvider(t, registry, "default")
 			rotate()
 			testsupport.Eventually(t, 15*time.Second, func() error {
 				next := liveProvider(registry, "default")
@@ -524,4 +516,18 @@ func TestWatchCertificateFilePaths(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// Initial configuration application does not wait for certificate Secrets.
+func waitForAvailableProvider(t *testing.T, registry *Registry, name string) *instance {
+	t.Helper()
+	var provider *instance
+	testsupport.Eventually(t, 5*time.Second, func() error {
+		provider = liveProvider(registry, name)
+		if provider == nil || provider.err != nil {
+			return fmt.Errorf("provider %q is not available: %+v", name, provider)
+		}
+		return nil
+	})
+	return provider
 }
