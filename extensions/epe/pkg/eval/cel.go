@@ -48,6 +48,7 @@ func commonEnvOptions() []cel.EnvOption {
 		ext.Strings(),
 		ext.Sets(),
 		ext.Lists(),
+		JSONDecode(),
 	}
 }
 

@@ -99,6 +99,42 @@ Repeat the request with the same provider name, sandbox client ID, and rendered 
 
 ## Credential sources, signers, and failure behavior
 
+### Unwrap a JSON credential and replace placeholders
+
+If the provider returns an API-key string containing `{"apiKey":"real-key"}`, use `json.decode` to extract the named field while preserving each selected header's prefix and suffix:
+
+```yaml
+apiKey:
+  targetHeaders:
+    cel: |-
+      request.headers.filter(
+        name,
+        request.headers[name].contains("aaa_placeHolder")
+      )
+  value:
+    cel: |-
+      cel.bind(
+        decoded,
+        json.decode(token),
+        header.value.replace("aaa_placeHolder", decoded["apiKey"])
+      )
+```
+
+For example, `Authorization: Bearer aaa_placeHolder` becomes `Authorization: Bearer real-key`, while `X-API-Key: aaa_placeHolder` becomes `X-API-Key: real-key`. Headers without the placeholder are not selected. The JSON field must exist and contain a string; invalid JSON or a missing or non-string field follows `failStrategy`.
+
+The same selector can use a Go template instead of `value.cel`:
+
+```yaml
+value:
+  template: |-
+    {{- $decoded := mustFromJson .Token -}}
+    {{- .Header.Value | replace "aaa_placeHolder" $decoded.apiKey -}}
+```
+
+Choose exactly one value source. `mustFromJson` rejects invalid JSON; the existing `fromJson` helper retains its permissive behavior for templates that explicitly handle plain-text tokens.
+
+### Credential and signer behavior
+
 `credentialRef` is a union: set exactly one of `secret` or `credentialProvider`.
 
 - `secret` reads a Kubernetes Secret once per request. `ApiKey` expects data key `apiKey`; `AliyunSTS` expects `accessKeyId`, `accessKeySecret`, and `securityToken`. A missing Secret, missing data key, invalid header value, provider failure, or signer failure follows `failStrategy`.

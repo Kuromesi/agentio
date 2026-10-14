@@ -81,6 +81,52 @@ func TestCompileValueRejectsAuditOnlyVariables(t *testing.T) {
 	}
 }
 
+func TestJSONDecode(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		input     string
+		want      any
+		wantError bool
+	}{
+		{"object", `{"key":"secret","nested":{"active":true},"items":[1,null]}`, map[string]any{
+			"key":    "secret",
+			"nested": map[string]any{"active": true},
+			"items":  []any{float64(1), nil},
+		}, false},
+		{"list", `["a",false]`, []any{"a", false}, false},
+		{"string", `"secret"`, "secret", false},
+		{"number", "1.5", float64(1.5), false},
+		{"null", "null", nil, false},
+		{"invalid", "not-json", nil, true},
+		{"empty", "", nil, true},
+		{"trailing value", `{} {}`, nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			act := valueActivation("a", map[string]any{"json": tt.input})
+			got, err := EvalValue(mustCompileValue(t, `json.decode(inputs.json)`), act)
+			if tt.wantError {
+				if err == nil || !strings.Contains(err.Error(), "json.decode:") {
+					t.Fatalf("decode error = %v, want JSON error", err)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("decode = (%#v, %v), want %#v", got, err, tt.want)
+			}
+		})
+	}
+	if _, err := CompileValue(`json.decode(123)`); err == nil {
+		t.Fatal("json.decode must require a string")
+	}
+	prog, err := CompileBool(`json.decode(request.headers["x-tenant"]).enabled == true`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := EvalBool(prog, valueActivation(`{"enabled":true}`, nil)); err != nil || !got {
+		t.Fatalf("audit JSON condition = (%v, %v), want true", got, err)
+	}
+}
+
 func TestNewRequestEnvHeaderSelector(t *testing.T) {
 	env, err := NewRequestEnv()
 	if err != nil {

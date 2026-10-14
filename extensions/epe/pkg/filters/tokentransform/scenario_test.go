@@ -20,6 +20,7 @@
 package tokentransform_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,74 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 )
+
+func TestScenario_JSONCredentialPlaceholderReplacement(t *testing.T) {
+	for _, source := range []struct {
+		kind       string
+		expression string
+	}{
+		{"cel", `cel.bind(decoded, json.decode(token), header.value.replace("aaa_placeHolder", decoded["apiKey"]))`},
+		{"template", `{{- $decoded := mustFromJson .Token -}}{{ .Header.Value | replace "aaa_placeHolder" $decoded.apiKey }}`},
+	} {
+		for _, tc := range []struct {
+			name      string
+			token     string
+			failure   string
+			wantError bool
+		}{
+			{"valid", `{"apiKey":"provider-token"}`, "Block", false},
+			{"invalid blocks", "not-json", "Block", true},
+			{"invalid passes through", "not-json", "Allow", true},
+			{"missing key", `{"other":"unused"}`, "Block", true},
+			{"non-string key", `{"apiKey":123}`, "Block", true},
+		} {
+			t.Run(source.kind+"/"+tc.name, func(t *testing.T) {
+				provider := credentialtest.NewAPIKeyProvider(t, tc.token)
+				payload, err := json.Marshal(map[string]any{
+					"failStrategy":  tc.failure,
+					"credentialRef": map[string]any{"credentialProvider": map[string]any{"name": "provider"}},
+					"apiKey": map[string]any{
+						"targetHeaders": map[string]any{
+							"cel": `request.headers.filter(name, request.headers[name].contains("aaa_placeHolder"))`,
+						},
+						"value": map[string]any{source.kind: source.expression},
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				h := newInjectHarnessWithDeps(t, string(payload), tokentransform.Deps{
+					ProviderSource: tokentransform.NewProviderSource(provider.Client(), nil),
+				})
+				verdict := h.Run(t, injectRequest().
+					SandboxToken("request-1", "sandbox-access-token", "sandbox-client").
+					Header("authorization", "Bearer aaa_placeHolder").
+					Header("x-api-key", "aaa_placeHolder").
+					Header("x-other", "keep"))
+				if tc.wantError {
+					if tc.failure == "Allow" {
+						verdict.RequirePassthrough(t)
+					} else {
+						verdict.RequireBlocked(t, 403)
+					}
+					if len(verdict.RequestHeaderOps) != 0 {
+						t.Fatalf("failed transformation left mutations: %+v", verdict.RequestHeaderOps)
+					}
+					return
+				}
+				verdict.RequireOutcome(t, "mutated")
+				verdict.RequireHeader(t, "authorization", "Bearer provider-token")
+				verdict.RequireHeader(t, "x-api-key", "provider-token")
+				if got := verdict.RequestHeaderValues("x-other"); len(got) != 0 {
+					t.Fatalf("unselected header mutated: %v", got)
+				}
+				if got := provider.Calls.Load(); got != 1 {
+					t.Fatalf("provider calls = %d, want 1", got)
+				}
+			})
+		}
+	}
+}
 
 const injectPayload = `{
 	"credentialRef": {"secret": {"name": "api-cred", "namespace": "test-ns"}},

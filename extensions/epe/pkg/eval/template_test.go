@@ -39,6 +39,21 @@ func TestCompileTemplateAndRender(t *testing.T) {
 		{"kindIs helper", `{{ kindIs "map" (fromJson .V) }}`, struct{ V string }{`{"key":"value"}`}, "true", ""},
 		{"trim helper", `{{ trim .V }}`, struct{ V string }{"  value\n"}, "value", ""},
 		{"hasPrefix helper", `{{ hasPrefix "Bearer " .V }}`, struct{ V string }{"Bearer value"}, "true", ""},
+		{"mustFromJson helper", `{{ (mustFromJson .V).key }}`, struct{ V string }{`{"key":"secret"}`}, "secret", ""},
+		{
+			"replace helper",
+			`{{ .V | replace "placeholder" "secret" }}`,
+			struct{ V string }{"Bearer placeholder:placeholder"},
+			"Bearer secret:secret",
+			"",
+		},
+		{"contains helper", `{{ .V | contains "value" }}`, struct{ V string }{"Bearer value"}, "true", ""},
+		{"hasSuffix helper", `{{ .V | hasSuffix "-suffix" }}`, struct{ V string }{"value-suffix"}, "true", ""},
+		{"lower helper", `{{ .V | lower }}`, struct{ V string }{"AbC"}, "abc", ""},
+		{"upper helper", `{{ .V | upper }}`, struct{ V string }{"AbC"}, "ABC", ""},
+		{"trimPrefix helper", `{{ .V | trimPrefix "Bearer " }}`, struct{ V string }{"Bearer value"}, "value", ""},
+		{"trimSuffix helper", `{{ .V | trimSuffix "-suffix" }}`, struct{ V string }{"value-suffix"}, "value", ""},
+		{"splitList and join helpers", `{{ .V | splitList "," | join ":" }}`, struct{ V string }{"a,b,c"}, "a:b:c", ""},
 		{"values and first helpers", `{{ first (values (fromJson .V)) }}`, struct{ V string }{`{"only":"value"}`}, "value", ""},
 		{"token template with raw value", tokenValueTemplate, struct{ Token string }{"raw-token"}, "Bearer raw-token", ""},
 		{"token template with JSON value", tokenValueTemplate, struct{ Token string }{`{"arbitrary-key":"json-token"}`}, "Bearer json-token", ""},
@@ -137,5 +152,42 @@ func TestTemplateFailHelperReturnsRenderError(t *testing.T) {
 	_, err = RenderToString(tmpl, nil)
 	if err == nil || !strings.Contains(err.Error(), "stop rendering") {
 		t.Fatalf("RenderToString() error = %v, want stop rendering", err)
+	}
+}
+
+func TestNewTemplateHelpersProbeAndRuntime(t *testing.T) {
+	// The compile-time probe has no token. JSON field access therefore yields
+	// nil, which the string helpers must tolerate only during the probe.
+	for _, pipeline := range []string{
+		`replace "old" "new"`,
+		`contains "value"`,
+		`hasSuffix "suffix"`,
+		"lower", "upper",
+		`trimPrefix "prefix"`,
+		`trimSuffix "suffix"`,
+		`splitList "," | join ":"`,
+	} {
+		t.Run(pipeline, func(t *testing.T) {
+			tmpl, err := CompileTemplate("probe", `{{ (mustFromJson .Token).key | `+pipeline+` }}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ProbeRender(tmpl, struct{ Token string }{}); err != nil {
+				t.Fatalf("probe: %v", err)
+			}
+			if _, err := RenderToString(tmpl, struct{ Token string }{"not-json"}); err == nil {
+				t.Fatal("mustFromJson must fail at request time on invalid JSON")
+			}
+			if _, err := RenderToString(tmpl, struct{ Token string }{`{"key":"value"}`}); err != nil {
+				t.Fatalf("valid JSON: %v", err)
+			}
+		})
+	}
+	tmpl, err := CompileTemplate("missing", `{{ mustFromJson .NoSuchField | json }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProbeRender(tmpl, struct{ Token string }{}); err == nil {
+		t.Fatal("probe must still reject unknown fields")
 	}
 }
