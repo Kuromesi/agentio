@@ -79,6 +79,17 @@ func selectTrafficPolicyResources(
 	if !ok {
 		return selected
 	}
+	if !sub.Wildcard() {
+		for _, name := range sub.Names() {
+			for _, resource := range snapshot.Lookup(model.TrafficPolicyType, name) {
+				query.TrafficPolicyReference = resource.Key.Name
+				if sub.allows(resource) && snapshot.HasWorkload(model.AddressType, query) {
+					selected[resource.XDSName] = resource
+				}
+			}
+		}
+		return selected
+	}
 	names := sets.New[string]()
 	for _, workload := range snapshot.ListWorkloads(model.AddressType, query) {
 		names.InsertAll(workload.Facts.Workload.TrafficPolicyRefs...)

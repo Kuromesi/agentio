@@ -129,8 +129,8 @@ func implicitWildcardTypeURL(typeURL string) bool {
 	}
 }
 
-// SubscriptionView is an immutable copy of the subscription state visible to a
-// resource generator. Its accessors never expose the Delta stream's live maps.
+// SubscriptionView is the immutable subscription scope visible to a resource
+// generator. Its accessors never expose the Delta stream's live maps.
 type SubscriptionView struct {
 	wildcard bool
 	names    []string
@@ -142,6 +142,32 @@ func newSubscriptionView(watch *watchState) SubscriptionView {
 	sent := make(map[string]string, len(watch.sent))
 	maps.Copy(sent, watch.sent)
 	return SubscriptionView{wildcard: watch.wildcard, names: names, sent: sent}
+}
+
+// demandSubscriptionView reconciles only the explicitly requested canonical
+// resources. Empty sent state forces a reply even when the client has evicted a
+// previously delivered value; the stream retains all other subscriptions and
+// sent versions. Aliases and Service expansion require the complete selection.
+func demandSubscriptionView(snapshot model.ResourceSet, typeURL string, names []string) (SubscriptionView, bool) {
+	if len(names) == 0 {
+		return SubscriptionView{}, false
+	}
+	lookupType := typeURL
+	switch typeURL {
+	case model.WorkloadType:
+		lookupType = model.AddressType
+	case model.TrafficPolicyType, model.SandboxType:
+	default:
+		return SubscriptionView{}, false
+	}
+	for _, name := range names {
+		resources := snapshot.Lookup(lookupType, name)
+		if len(resources) != 1 || resources[0].XDSName != name ||
+			(typeURL == model.WorkloadType && !resources[0].IsWorkloadAddress()) {
+			return SubscriptionView{}, false
+		}
+	}
+	return SubscriptionView{names: sortedNames(sets.New(names...))}, true
 }
 
 func newIncrementalSubscriptionView(watch *watchState, typeURL string, update xdsstore.Update) SubscriptionView {

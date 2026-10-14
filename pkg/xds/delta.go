@@ -110,10 +110,25 @@ func (s *Server) handleRequest(
 
 	// A nonce with an unchanged subscription is a pure acknowledgement; there
 	// is nothing to send.
-	explicitSandboxSubscribe := typeURL == model.SandboxType && len(request.GetResourceNamesSubscribe()) > 0
+	explicitDemandSubscribe := (typeURL == model.SandboxType || typeURL == model.WorkloadType ||
+		typeURL == model.TrafficPolicyType) && len(request.GetResourceNamesSubscribe()) > 0
 	explicitSecretSubscribe := typeURL == model.SecretType && len(request.GetResourceNamesSubscribe()) > 0
-	if !changed && request.GetResponseNonce() != "" && !explicitSecretSubscribe && !explicitSandboxSubscribe {
+	if !changed && request.GetResponseNonce() != "" && !explicitSecretSubscribe && !explicitDemandSubscribe {
 		return nil
+	}
+	if !initial && !watch.wildcard && len(request.GetResourceNamesUnsubscribe()) == 0 &&
+		scope.Class == model.ClientEgressGateway {
+		snapshot := s.resources.Snapshot()
+		if view, ok := demandSubscriptionView(snapshot, typeURL, request.GetResourceNamesSubscribe()); ok {
+			return s.generateAndSend(stream, connLog, watch, GenerationRequest{
+				Scope:           scope,
+				TypeURL:         typeURL,
+				Subscription:    view,
+				Snapshot:        snapshot,
+				Full:            true,
+				SubscribedNames: view.Names(),
+			}, true)
+		}
 	}
 	return s.sendDiffForNames(stream, scope, connLog, typeURL, watch, true, request.GetResourceNamesSubscribe())
 }

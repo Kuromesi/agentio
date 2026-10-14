@@ -27,16 +27,17 @@ import (
 )
 
 // GenerationRequest is the immutable input to one resource generation pass.
-// Full selects a complete snapshot diff; otherwise Update carries the indexed
-// changes for the requested type.
+// Full selects snapshot-based generation within Subscription; otherwise Update
+// carries the indexed changes for the requested type.
 type GenerationRequest struct {
 	// Scope is the authenticated client visibility used to filter every
 	// candidate resource; generators must never widen beyond it.
 	Scope model.ClientScope
 	// TypeURL is the single xDS type produced by this generation pass.
 	TypeURL string
-	// Subscription is the immutable view of this connection's cumulative
-	// subscription state: wildcard flag, subscribed names, and sent versions.
+	// Subscription is the immutable reconciliation scope for this pass. Named
+	// demand requests may include only the requested resources; all other
+	// subscription and sent state remains unchanged on the connection.
 	Subscription SubscriptionView
 	// Snapshot is the publication view resources are generated from; its
 	// version becomes the response system version.
@@ -45,7 +46,7 @@ type GenerationRequest struct {
 	// publication transition consumed by the incremental path. It is unset when Full
 	// is true.
 	Update xdsstore.Update
-	// Full selects the complete snapshot diff path instead of incremental generation.
+	// Full selects the snapshot diff path instead of indexed update generation.
 	// It is set for initial reads, new subscriptions, and full-rebuild updates.
 	Full bool
 	// SubscribedNames is the immutable set of names explicitly subscribed by
