@@ -81,7 +81,9 @@ func TestDemandSubscriptionPreservesOtherResources(t *testing.T) {
 			response := send(nodeRequest(typeURL, "a"))
 			for _, name := range []string{"b", "b"} {
 				response = send(&discoveryv3.DeltaDiscoveryRequest{
-					TypeUrl: typeURL, ResourceNamesSubscribe: []string{name}, ResponseNonce: response.Nonce,
+					TypeUrl:                typeURL,
+					ResourceNamesSubscribe: []string{name},
+					ResponseNonce:          response.Nonce,
 				})
 				if !slices.Equal(resourceNames(response), []string{name}) || len(response.RemovedResources) != 0 {
 					t.Fatalf("demand must only resend %s: %v", name, response)
@@ -118,7 +120,9 @@ func TestDemandSubscriptionPreservesOtherResources(t *testing.T) {
 				}
 			}
 			response = send(&discoveryv3.DeltaDiscoveryRequest{
-				TypeUrl: typeURL, ResourceNamesUnsubscribe: []string{"b"}, ResponseNonce: response.Nonce,
+				TypeUrl:                  typeURL,
+				ResourceNamesUnsubscribe: []string{"b"},
+				ResponseNonce:            response.Nonce,
 			})
 			if !slices.Equal(response.RemovedResources, []string{"b"}) || len(watches[typeURL].sent) != 0 {
 				t.Fatalf("unsubscribe retained sent state: %v", response)

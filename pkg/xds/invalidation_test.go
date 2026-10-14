@@ -231,8 +231,11 @@ func TestWildcardRemovalSurvivesResourceThenReferenceDeletion(t *testing.T) {
 	)
 	for _, node := range []string{"node-a", "unrelated-node"} {
 		delta, err := (WorkloadGenerator{}).Generate(t.Context(), GenerationRequest{
-			Scope: model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: node}, TypeURL: model.AddressType,
-			Snapshot: after, Update: update, Subscription: SubscriptionView{wildcard: true},
+			Scope:        model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: node},
+			TypeURL:      model.AddressType,
+			Snapshot:     after,
+			Update:       update,
+			Subscription: SubscriptionView{wildcard: true},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -334,7 +337,9 @@ func TestQueuedDeletionKeepsCurrentWireReplacement(t *testing.T) {
 	empty := selectionSnapshot(t, nil)
 	current := selectionSnapshot(t, []model.Resource{replacement})
 	delta, err := (SnapshotGenerator{}).Generate(t.Context(), GenerationRequest{
-		Scope: gatewayScope(), TypeURL: model.ClusterType, Snapshot: current,
+		Scope:        gatewayScope(),
+		TypeURL:      model.ClusterType,
+		Snapshot:     current,
 		Update:       updateBetween(before, empty, before.Diff(empty)),
 		Subscription: SubscriptionView{wildcard: true, sent: map[string]string{replacement.XDSName: replacement.Hash}},
 	})

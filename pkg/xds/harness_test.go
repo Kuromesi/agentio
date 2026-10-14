@@ -916,7 +916,11 @@ func initializedSubscription(t testing.TB, generator ResourceGenerator, scope mo
 ) SubscriptionView {
 	t.Helper()
 	delta, err := generator.Generate(context.Background(), GenerationRequest{
-		Scope: scope, TypeURL: typeURL, Snapshot: snapshot, Subscription: subscription, Full: true,
+		Scope:        scope,
+		TypeURL:      typeURL,
+		Snapshot:     snapshot,
+		Subscription: subscription,
+		Full:         true,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -111,7 +111,8 @@ func BenchmarkAuthorizationDependencyExpansion(b *testing.B) {
 						model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name}, "",
 						&anypb.Any{TypeUrl: model.WorkloadAuthorizationType, Value: []byte("policy")}, nil,
 						model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
-							Scope: model.AuthorizationScopeNamespace, Namespace: "demo",
+							Scope:     model.AuthorizationScopeNamespace,
+							Namespace: "demo",
 						}})
 					if err != nil {
 						b.Fatal(err)
@@ -128,8 +129,10 @@ func BenchmarkAuthorizationDependencyExpansion(b *testing.B) {
 						model.ResourceKey{TypeURL: model.AddressType, Name: name}, "",
 						&anypb.Any{TypeUrl: model.AddressType, Value: []byte("workload")}, nil,
 						model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
-							WorkloadUID: name, Namespace: "demo", NodeName: "node",
-							Source: model.SourceRef{Registry: "kubernetes/test", Key: name},
+							WorkloadUID: name,
+							Namespace:   "demo",
+							NodeName:    "node",
+							Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
 						}})
 					if err != nil {
 						b.Fatal(err)

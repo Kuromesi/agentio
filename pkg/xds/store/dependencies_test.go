@@ -37,7 +37,8 @@ func TestAuthorizationDependenciesRetainBothSnapshots(t *testing.T) {
 	for _, namespace := range []string{"a", "b", "unrelated"} {
 		policies = append(policies, resource(model.WorkloadAuthorizationType, namespace, namespace,
 			model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
-				Scope: model.AuthorizationScopeNamespace, Namespace: namespace,
+				Scope:     model.AuthorizationScopeNamespace,
+				Namespace: namespace,
 			}}))
 	}
 	globalFacts := model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
@@ -60,9 +61,10 @@ func TestAuthorizationDependenciesRetainBothSnapshots(t *testing.T) {
 		Workload: &model.WorkloadResourceFacts{WorkloadUID: "workload", Namespace: "b"},
 	})
 	for _, tc := range []struct {
-		name      string
-		old, next *model.Resource
-		want      []string
+		name string
+		old  *model.Resource
+		next *model.Resource
+		want []string
 	}{
 		{name: "add", next: &next, want: []string{"b", "global-new", "global-old"}},
 		{name: "remove", old: &old, want: []string{"a", "global-new", "global-old"}},
