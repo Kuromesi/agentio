@@ -409,9 +409,6 @@
         "porter": {
           "type": "object",
           "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
             "cache": {
               "type": "object",
               "properties": {

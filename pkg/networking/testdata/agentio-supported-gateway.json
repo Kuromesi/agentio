@@ -706,6 +706,7 @@
                             "cluster_name": "agentio-porter"
                           }
                         },
+                        "failure_mode_allow": true,
                         "processing_mode": {
                           "request_header_mode": "SEND",
                           "response_header_mode": "SKIP",

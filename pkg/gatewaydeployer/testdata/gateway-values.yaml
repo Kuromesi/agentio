@@ -4,6 +4,12 @@ agentio:
     ENABLE_CLUSTER_TRUST_BUNDLE_API: false
 
 global:
+  clusterDomain: cluster.local
+  porter:
+    image: agentio/agentio-porter:test
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {cpu: "1", memory: 256Mi}
   hub: gcr.io/istio-testing
   tag: latest
   imagePullPolicy: ""

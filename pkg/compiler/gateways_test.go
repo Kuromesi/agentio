@@ -350,7 +350,6 @@ func TestGatewayAccessLogFormatUpdateAndReset(t *testing.T) {
 
 func TestGatewayExtProcDisableAndRestoreInheritance(t *testing.T) {
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
-	test.SetForTest(t, &features.EnablePorter, true)
 	fixture := newIncrementalFixture(t)
 	config := &configv1.AgentioConfig{
 		SandboxExtProc: &configv1.ExtProcProvider{Service: "epe.demo.svc.cluster.local", Port: 9002},

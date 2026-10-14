@@ -76,9 +76,6 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	}
 
 	porter := gateway["porter"].(map[string]any)
-	if porter["enabled"] != true {
-		t.Fatal("CONNECT processing must be enabled in Envoy product tests")
-	}
 	assertPinnedImage(t, porter["image"], "registry.example/porter", "sha256:"+strings.Repeat("f", 64))
 
 	epe := values["epe"].(map[string]any)
@@ -115,7 +112,6 @@ func TestProductionChartRendersSuiteValues(t *testing.T) {
 		`name: egress-gateway`,
 		`name: agentio-epe`,
 		`name: agentio-porter`,
-		`name: AGENTIO_ENABLE_PORTER`,
 		`sidecar.istio.io/statsInclusionPrefixes: cluster.agentio-porter`,
 		`--grpc-health-port=9003`,
 		`image: "` + config.AgentiodImage + `"`,

@@ -113,42 +113,39 @@ func TestTLSActionWithoutGatewayExclusions(t *testing.T) {
 	}
 }
 
-func TestConnectExtProcEnablement(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		for _, sni := range []bool{false, true} {
-			for _, provider := range []*configv1.ExtProcProvider{nil, {Service: "custom.demo.svc", Port: 9002, FailureModeAllow: true}} {
-				test.SetForTest(t, &features.EnablePorter, enabled)
-				test.SetForTest(t, &features.EnableSNITrafficPolicy, sni)
-				resources, err := Build(
-					Inputs{
-						DiscoveryAddress: "agentiod.agentio-system.svc:15012",
-						TrustDomain:      "cluster.local",
-						Gateway:          testGateway(nil),
-						GlobalExtProc:    provider,
-					},
-				)
-				if err != nil {
-					t.Fatal(err)
-				}
-				listeners := messagesOf(
-					t,
-					resources,
-					model.ListenerType,
-					func() *listenerv3.Listener { return &listenerv3.Listener{} },
-				)
-				connect := findHCM(t, listeners[ConnectTerminate])
-				if got := hasHTTPFilter(connect, "envoy.filters.http.ext_proc"); got != enabled {
-					t.Fatalf("CONNECT present=%v, enabled=%v, HTTP provider=%v", got, enabled, provider)
-				}
-				if got := hasHTTPFilter(connect, "connect_tls_action"); got != (enabled && sni) {
-					t.Fatalf("TLS capture=%v", got)
-				}
-				if got := hasHTTPFilter(
-					findHCM(t, listeners[MainInternal]),
-					"envoy.filters.http.ext_proc",
-				); got != (provider != nil) {
-					t.Fatalf("HTTP provider affected by CONNECT setting: %v", got)
-				}
+func TestConnectExtProcAlwaysEnabled(t *testing.T) {
+	for _, sni := range []bool{false, true} {
+		for _, provider := range []*configv1.ExtProcProvider{nil, {Service: "custom.demo.svc", Port: 9002, FailureModeAllow: true}} {
+			test.SetForTest(t, &features.EnableSNITrafficPolicy, sni)
+			resources, err := Build(
+				Inputs{
+					DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+					TrustDomain:      "cluster.local",
+					Gateway:          testGateway(nil),
+					GlobalExtProc:    provider,
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			listeners := messagesOf(
+				t,
+				resources,
+				model.ListenerType,
+				func() *listenerv3.Listener { return &listenerv3.Listener{} },
+			)
+			connect := findHCM(t, listeners[ConnectTerminate])
+			if got := hasHTTPFilter(connect, "envoy.filters.http.ext_proc"); !got {
+				t.Fatalf("CONNECT processor missing with HTTP provider=%v", provider)
+			}
+			if got := hasHTTPFilter(connect, "connect_tls_action"); got != sni {
+				t.Fatalf("TLS capture=%v", got)
+			}
+			if got := hasHTTPFilter(
+				findHCM(t, listeners[MainInternal]),
+				"envoy.filters.http.ext_proc",
+			); got != (provider != nil) {
+				t.Fatalf("HTTP provider affected by CONNECT setting: %v", got)
 			}
 		}
 	}
@@ -202,13 +199,16 @@ func TestConnectExtProcConfiguration(t *testing.T) {
 	}
 }
 
-func TestConnectExtProcFailsClosed(t *testing.T) {
+func TestConnectExtProcAllowsFailuresButHonorsDenials(t *testing.T) {
 	b := &resourceBuilder{}
 	cfg := &extprocv3.ExternalProcessor{}
 	if err := b.connectExtProcFilter().GetTypedConfig().UnmarshalTo(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.GetFailureModeAllow() {
-		t.Fatal("CONNECT must fail closed independently of HTTP provider settings")
+	if !cfg.GetFailureModeAllow() {
+		t.Fatal("CONNECT must continue when Porter is unavailable")
+	}
+	if cfg.GetDisableImmediateResponse() {
+		t.Fatal("Porter must still be able to explicitly deny CONNECT")
 	}
 }

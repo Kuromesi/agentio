@@ -256,7 +256,6 @@ egressGateway:
   mode: disabled
   # First-party CONNECT processing; independent of epe.mode and sandboxExtProc.
   porter:
-    enabled: false
     # Shared across Workload and Sandbox demands; zero disables each policy.
     cache:
       idleTTL: 1m

@@ -37,7 +37,6 @@ func buildUDPGateway(t *testing.T, enabled bool) (
 	t.Helper()
 	test.SetForTest(t, &features.EnableUDPProxy, enabled)
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
-	test.SetForTest(t, &features.EnablePorter, true)
 	resources, err := Build(Inputs{
 		Gateway:          testGateway(nil),
 		GlobalExtProc:    &configv1.ExtProcProvider{Service: "epe.demo.svc", Port: 9002},

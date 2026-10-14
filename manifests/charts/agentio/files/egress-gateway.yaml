@@ -264,7 +264,6 @@ spec:
           name: agentio-token
         - mountPath: /etc/istio/pod
           name: agentio-podinfo
-      {{- if $porter.enabled }}
       - name: agentio-porter
         image: {{ $porter.image | quote }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy | quote }}
@@ -306,7 +305,6 @@ spec:
         volumeMounts:
           - {name: agentiod-ca-cert, mountPath: /var/run/secrets/istio, readOnly: true}
           - {name: agentio-token, mountPath: /var/run/secrets/tokens, readOnly: true}
-      {{- end }}
       volumes:
       - emptyDir: {}
         name: workload-socket

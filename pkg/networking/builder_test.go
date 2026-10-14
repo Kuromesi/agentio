@@ -48,7 +48,6 @@ import (
 )
 
 func TestBuildProducesProductionGatewayGraph(t *testing.T) {
-	test.SetForTest(t, &features.EnablePorter, true)
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	resources, err := Build(Inputs{
 		Gateway: testGateway(&configv1.EgressGateway{

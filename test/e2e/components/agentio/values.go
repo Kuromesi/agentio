@@ -97,7 +97,7 @@ func chartValues(config Config) ([]byte, error) {
 			"autoscaling":         map[string]any{"enabled": false},
 			"podDisruptionBudget": map[string]any{"enabled": false},
 			"sniTrafficPolicy":    map[string]any{"enabled": true},
-			"porter":              map[string]any{"enabled": true, "image": porterImage},
+			"porter":              map[string]any{"image": porterImage},
 			"podAnnotations": map[string]any{
 				"sidecar.istio.io/statsInclusionPrefixes": "cluster.agentio-porter",
 			},

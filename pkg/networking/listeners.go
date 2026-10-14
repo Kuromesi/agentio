@@ -330,11 +330,9 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 		}
 		filters = append(filters, filter)
 	}
-	if features.EnablePorter {
-		filters = append(filters, b.connectExtProcFilter())
-		if features.EnableSNITrafficPolicy {
-			filters = append(filters, connectTLSActionFilter())
-		}
+	filters = append(filters, b.connectExtProcFilter())
+	if features.EnableSNITrafficPolicy {
+		filters = append(filters, connectTLSActionFilter())
 	}
 	filters = append(filters, httpFilter("envoy.filters.http.router", b.pack(&routerv3.Router{})))
 	hcm := &hcmv3.HttpConnectionManager{
@@ -603,7 +601,9 @@ func (b *resourceBuilder) connectExtProcFilter() *hcmv3.HttpFilter {
 				EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{ClusterName: PorterCluster},
 			},
 		},
-		FailureModeAllow: false,
+		// Allow gateways without the sidecar during rolling upgrades. This also
+		// bypasses processing on Porter errors/timeouts; explicit denials still apply.
+		FailureModeAllow: true,
 		MessageTimeout:   durationpb.New(5 * time.Second),
 		ProcessingMode: &extprocv3.ProcessingMode{
 			RequestHeaderMode:   extprocv3.ProcessingMode_SEND,

@@ -57,14 +57,12 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		b.buildDFPCluster(TLSConnectOriginate, false, true, config.gateway.GetUpstreamTls()),
 		b.buildTLSProxyOriginateCluster(config.gateway.GetUpstreamTls()),
 	}
-	if features.EnablePorter {
-		cluster := b.buildExtProcCluster(&configv1.ExtProcProvider{Service: "127.0.0.1", Port: 9002})
-		cluster.Name = PorterCluster
-		cluster.AltStatName = delimitedStatsPrefix(PorterCluster)
-		cluster.LoadAssignment.ClusterName = PorterCluster
-		cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STATIC}
-		result = append(result, cluster)
-	}
+	cluster := b.buildExtProcCluster(&configv1.ExtProcProvider{Service: "127.0.0.1", Port: 9002})
+	cluster.Name = PorterCluster
+	cluster.AltStatName = delimitedStatsPrefix(PorterCluster)
+	cluster.LoadAssignment.ClusterName = PorterCluster
+	cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STATIC}
+	result = append(result, cluster)
 	if config.extProc != nil {
 		result = append(result, b.buildExtProcCluster(config.extProc))
 	}

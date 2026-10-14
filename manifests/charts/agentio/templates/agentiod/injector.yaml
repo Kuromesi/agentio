@@ -30,7 +30,6 @@ data:
 {{ .Values.agentiod.clientTrustBundle | toYaml | indent 6 }}
     global:
       porter:
-        enabled: {{ .Values.egressGateway.porter.enabled }}
         image: {{ include "gateway.porterImage" . | quote }}
         cache:
 {{ .Values.egressGateway.porter.cache | toYaml | indent 10 }}

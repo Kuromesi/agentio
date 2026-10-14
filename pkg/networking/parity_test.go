@@ -625,7 +625,6 @@ func TestGatewayResourcesValidate(t *testing.T) {
 }
 
 func buildCompleteGatewayGraph(t *testing.T) []model.Resource {
-	test.SetForTest(t, &features.EnablePorter, true)
 	t.Helper()
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	test.SetForTest(t, &features.GatewayConnectTimeout, 7*time.Second)

@@ -27,13 +27,6 @@ import (
 )
 
 var (
-	// EnablePorter routes gateway CONNECT headers to the local Agentio Porter sidecar.
-	EnablePorter = env.Register(
-		"AGENTIO_ENABLE_PORTER",
-		false,
-		"Send gateway CONNECT headers to the local agentio-porter sidecar, independently of the HTTP ext_proc provider.",
-	).Get()
-
 	GatewayConnectTimeout = env.Register(
 		"AGENTIO_GATEWAY_CONNECT_TIMEOUT",
 		10*time.Second,

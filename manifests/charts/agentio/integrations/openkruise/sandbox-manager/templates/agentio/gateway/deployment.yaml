@@ -141,7 +141,6 @@ spec:
             - {name: agentio-envoy, mountPath: /etc/istio/proxy}
             - {name: agentio-token, mountPath: /var/run/secrets/tokens}
             - {name: gateway-podinfo, mountPath: /etc/istio/pod}
-        {{- if .Values.agentio.egressGateway.porter.enabled }}
         - name: agentio-porter
           image: {{ include "agentio.gateway.porterImage" . | quote }}
           imagePullPolicy: {{ .Values.agentio.global.imagePullPolicy | quote }}
@@ -183,7 +182,6 @@ spec:
           volumeMounts:
             - {name: agentiod-ca-cert, mountPath: /var/run/secrets/istio, readOnly: true}
             - {name: agentio-token, mountPath: /var/run/secrets/tokens, readOnly: true}
-        {{- end }}
       volumes:
         - {name: workload-socket, emptyDir: {}}
         - {name: agentio-data, emptyDir: {}}

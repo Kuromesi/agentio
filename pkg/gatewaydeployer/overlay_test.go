@@ -93,7 +93,9 @@ func TestGatewayDeploymentOverlayMergesContainers(t *testing.T) {
 		}
 	}
 	containers := dep.Spec.Template.Spec.Containers
-	if len(containers) != 2 || containers[1].Name != "helper-sidecar" {
+	if len(containers) != 3 ||
+		!slices.ContainsFunc(containers, func(c corev1.Container) bool { return c.Name == "agentio-porter" }) ||
+		!slices.ContainsFunc(containers, func(c corev1.Container) bool { return c.Name == "helper-sidecar" }) {
 		t.Fatalf("containers: %+v", containers)
 	}
 	c := containers[0]

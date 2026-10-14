@@ -32,11 +32,11 @@ Watch transforms decode and validate resources on the update path. The cache ret
 
 The gateway Pod's projected token authenticates the ADS stream over TLS. The existing gateway authorization applies; no Kubernetes read RBAC is added. Projected tokens and CA roots are reread on new RPCs/handshakes. The cluster ID must match agentiod: source Pod resource names use `<cluster-id>//Pod/<namespace>/<name>`. `--cluster-domain` controls the DNS suffix in the ADS node ID (default `cluster.local`); chart deployments pass `global.clusterDomain`.
 
-The handler has a 4-second processing budget and the gateway allows 5 seconds for ext_proc. Discovery/processing errors fail closed, independently of the HTTP provider's `failureModeAllow`. Disconnected ADS state is not used for new SNI decisions. The gRPC health endpoint on port 9003 follows EPE conventions: service `readiness` requires both watches to be synchronized, while `liveness` reports process health. Policy updates affect new CONNECT decisions, not TLS mode changes on established tunnels.
+The handler has a 4-second processing budget and the gateway allows 5 seconds for ext_proc. The CONNECT filter uses `failure_mode_allow: true`, independently of the HTTP provider's `failureModeAllow`: an absent sidecar, gRPC errors or processing timeouts allow the request to continue without a Porter decision. The gateway then uses its own TLS policy. This supports old and new gateway Pods during rolling upgrades and also means Porter failures can bypass its Workload/Sandbox SNI checks. Explicit Porter denials, including missing source resources and invalid Sandbox bindings, still reject CONNECT. Disconnected ADS state is not used for new SNI decisions. The gRPC health endpoint on port 9003 follows EPE conventions: service `readiness` requires both watches to be synchronized, while `liveness` reports process health. Policy updates affect new CONNECT decisions, not TLS mode changes on established tunnels.
 
 ## Deployment
 
-The standalone chart supports both static Envoy gateways and Envoy gateways managed through Gateway API. Enable the component independently of EPE:
+The standalone chart supports both static Envoy gateways and Envoy gateways managed through Gateway API. Porter is deployed by default, independently of EPE:
 
 ```yaml
 agentiod:
@@ -45,7 +45,6 @@ agentiod:
 egressGateway:
   mode: gatewayAPI # or static
   porter:
-    enabled: true
     cache:
       idleTTL: 1m
       maxEntries: 10000
@@ -54,9 +53,9 @@ epe:
   mode: disabled # managed/external also work
 ```
 
-The component defaults to disabled so existing gateways without the sidecar keep working. The chart sets `AGENTIO_ENABLE_PORTER` on agentiod, injects the sidecar, and mounts the gateway's existing token and CA volumes. `agentiod.enableSNITrafficPolicy` controls consumption of TLS decisions; it does not select the CONNECT endpoint. The agentgateway-native data plane is not wired to this Envoy ext_proc sidecar.
+The chart always deploys the sidecar with Envoy gateways and mounts the gateway's existing token and CA volumes. Agentiod always includes the Porter call in every Envoy gateway's precompiled configuration; no control-plane enablement switch or per-instance metadata marker is required. Older Pods without the sidecar continue after the failed local call. This assumes their Envoy build supports the generated filter configuration; `failure_mode_allow` does not handle configuration rejection. `agentiod.enableSNITrafficPolicy` controls consumption of TLS decisions; it does not select the CONNECT endpoint. The agentgateway-native data plane is not wired to this Envoy ext_proc sidecar.
 
-For a manually managed Envoy gateway, deploy agentio-porter in its Pod, mount those same credentials, set `POD_NAME`, `POD_NAMESPACE`, `POD_UID` and `POD_IP`, and pass `--xds-address` and `--cluster-id`. Enable `AGENTIO_ENABLE_PORTER=true` on agentiod. The local ext_proc port is fixed at 9002 in gateway configuration; do not expose it through a Service.
+For a manually managed Envoy gateway, deploy agentio-porter in its Pod, mount those same credentials, set `POD_NAME`, `POD_NAMESPACE`, `POD_UID` and `POD_IP`, and pass `--xds-address` and `--cluster-id`. No additional agentiod setting is needed to enable the CONNECT call. The local ext_proc port is fixed at 9002 in gateway configuration; do not expose it through a Service.
 
 ## Build and test
 

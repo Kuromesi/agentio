@@ -71,7 +71,6 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR</code> | Boolean | <code>false</code> | Enable client CA distribution and injection with the sidecar injector. |
 | <code>AGENTIO_ENABLE_DEBUG_ON_HTTP</code> | Boolean | <code>true</code> | Enable authenticated debug handlers on the monitoring HTTP listener. |
 | <code>AGENTIO_ENABLE_GATEWAY_DEPLOYER</code> | Boolean | <code>false</code> | If true, run the Agentio Gateway API deployment controller that provisions egress gateway Deployments. |
-| <code>AGENTIO_ENABLE_PORTER</code> | Boolean | <code>false</code> | Send gateway CONNECT headers to the local agentio-porter sidecar, independently of the HTTP ext&#95;proc provider. |
 | <code>AGENTIO_ENABLE_SIDECAR_INJECTOR</code> | Boolean | <code>false</code> | If true, serve the Agentio ztunnel injection webhook at the Istio-compatible /inject endpoint. |
 | <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, enforce gateway SNI policies and apply TLS decisions returned by CONNECT processing. |
 | <code>AGENTIO_GATEWAY_CONNECT_TIMEOUT</code> | Duration | <code>10s</code> | Connect timeout for passthrough and dynamic-forward-proxy gateway clusters. |
@@ -230,11 +229,13 @@ Loopback requests do not require credentials. Requests from any other address mu
 
 ## Agentio Porter
 
-`AGENTIO_ENABLE_PORTER` sends outer TCP CONNECT request headers to
-`agentio-porter` at `127.0.0.1:9002`. It is independent of `sandboxExtProc`, gateway
-HTTP provider overrides and EPE deployment. The sidecar must be present in each
-Envoy gateway Pod before enabling it. The chart wires both sides through
-`egressGateway.porter.enabled`.
+Envoy gateways always send outer TCP CONNECT request headers to `agentio-porter`
+at `127.0.0.1:9002`, independently of `sandboxExtProc`, gateway HTTP provider
+settings and EPE deployment. No control-plane enablement switch or per-instance
+metadata marker is required. The chart always deploys the Porter sidecar with Envoy gateways. The CONNECT filter
+allows processing failures, so Pods without the sidecar continue during rolling
+upgrades. Porter errors and timeouts also allow requests to continue without its
+decision; explicit Porter denials still reject CONNECT.
 
 TLS decision consumption additionally requires `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`.
 See the [Agentio Porter](../../extensions/porter/README.md) for deployment,

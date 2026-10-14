@@ -293,7 +293,7 @@ func TestRenderIgnoresProxyImageAnnotation(t *testing.T) {
 			continue
 		}
 		imageLines++
-		if trimmed != `image: "example.com/agentio/proxyv2:1.0.0-test"` {
+		if trimmed != `image: "example.com/agentio/proxyv2:1.0.0-test"` && trimmed != `image: "agentio/agentio-porter:test"` {
 			t.Fatalf("container image not derived from values: %s", trimmed)
 		}
 	}
@@ -590,30 +590,21 @@ func templateInputForTest(gw *gatewayv1.Gateway, kubeVersion int) TemplateInput 
 }
 
 func TestPorterSidecar(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		values := testValues(t, map[string]any{"global": map[string]any{"porter": map[string]any{
-			"enabled":   enabled,
-			"image":     "registry.example/agentio-porter:test",
-			"resources": map[string]any{"requests": map[string]any{"memory": "64Mi"}},
-		}}})
-		renderer := testRenderer(t, values)
-		input := templateInputForTest(egressGatewayFixture("egress", "demo"), parityKubeVersion)
-		input.ClusterID = "test-cluster"
-		docs, err := renderer.Render(egressGatewayTemplateName, input)
-		if err != nil {
-			t.Fatal(err)
-		}
-		output := strings.Join(docs, "\n---\n")
-		if strings.Contains(output, "name: agentio-porter") != enabled {
-			t.Fatalf("sidecar enabled=%v", enabled)
-		}
-		if !enabled {
-			continue
-		}
-		for _, want := range []string{"--xds-cache-idle-ttl=1m", "--xds-cache-max-entries=10000", "registry.example/agentio-porter:test", "--cluster-id=test-cluster", "--xds-address=", "fieldPath: metadata.uid", "grpc: {port: 9003, service: readiness}", "mountPath: /var/run/secrets/tokens"} {
-			if !strings.Contains(output, want) {
-				t.Errorf("missing %q", want)
-			}
+	values := testValues(t, map[string]any{"global": map[string]any{"porter": map[string]any{
+		"image":     "registry.example/agentio-porter:test",
+		"resources": map[string]any{"requests": map[string]any{"memory": "64Mi"}},
+	}}})
+	renderer := testRenderer(t, values)
+	input := templateInputForTest(egressGatewayFixture("egress", "demo"), parityKubeVersion)
+	input.ClusterID = "test-cluster"
+	docs, err := renderer.Render(egressGatewayTemplateName, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := strings.Join(docs, "\n---\n")
+	for _, want := range []string{"name: agentio-porter", "--xds-cache-idle-ttl=1m", "--xds-cache-max-entries=10000", "registry.example/agentio-porter:test", "--cluster-id=test-cluster", "--xds-address=", "fieldPath: metadata.uid", "grpc: {port: 9003, service: readiness}", "mountPath: /var/run/secrets/tokens"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("missing %q", want)
 		}
 	}
 }
@@ -626,9 +617,8 @@ func TestPorterCacheSettings(t *testing.T) {
 	}{{"custom", "75s", 321}, {"disabled", "0s", 0}} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := testValues(t, map[string]any{"global": map[string]any{"porter": map[string]any{
-				"enabled": true,
-				"image":   "porter:test",
-				"cache":   map[string]any{"idleTTL": tc.ttl, "maxEntries": tc.max},
+				"image": "porter:test",
+				"cache": map[string]any{"idleTTL": tc.ttl, "maxEntries": tc.max},
 			}}})
 			docs, err := testRenderer(
 				t,
