@@ -336,18 +336,85 @@ func TestQueuedDeletionKeepsCurrentWireReplacement(t *testing.T) {
 	before := selectionSnapshot(t, []model.Resource{old})
 	empty := selectionSnapshot(t, nil)
 	current := selectionSnapshot(t, []model.Resource{replacement})
-	delta, err := (SnapshotGenerator{}).Generate(t.Context(), GenerationRequest{
-		Scope:        gatewayScope(),
-		TypeURL:      model.ClusterType,
-		Snapshot:     current,
-		Update:       updateBetween(before, empty, before.Diff(empty)),
-		Subscription: SubscriptionView{wildcard: true, sent: map[string]string{replacement.XDSName: replacement.Hash}},
-	})
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name          string
+		sent          map[string]string
+		wantResources int
+	}{
+		{name: "replacement already sent", sent: map[string]string{replacement.XDSName: replacement.Hash}},
+		{name: "old resource sent", sent: map[string]string{old.XDSName: old.Hash}, wantResources: 1},
+		{name: "never sent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			delta, err := (SnapshotGenerator{}).Generate(t.Context(), GenerationRequest{
+				Scope:        gatewayScope(),
+				TypeURL:      model.ClusterType,
+				Snapshot:     current,
+				Update:       updateBetween(before, empty, before.Diff(empty)),
+				Subscription: SubscriptionView{wildcard: true, sent: tc.sent},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(delta.Resources) != tc.wantResources || len(delta.Removed) != 0 {
+				t.Fatalf("old deletion changed current replacement: %+v", delta)
+			}
+			if len(delta.Resources) != 0 && delta.Resources[0].Key != replacement.Key {
+				t.Fatalf("selected stale replacement: %+v", delta)
+			}
+			// A client with no withdrawal obligation learns the replacement from
+			// its own publication, not from another key's queued deletion.
+			delta, err = (SnapshotGenerator{}).Generate(t.Context(), GenerationRequest{
+				Scope:        gatewayScope(),
+				TypeURL:      model.ClusterType,
+				Snapshot:     current,
+				Update:       updateBetween(empty, current, empty.Diff(current)),
+				Subscription: SubscriptionView{wildcard: true},
+			})
+			if err != nil || len(delta.Resources) != 1 || len(delta.Removed) != 0 {
+				t.Fatalf("replacement publication: delta=%+v err=%v", delta, err)
+			}
+		})
 	}
-	if len(delta.Resources) != 0 || len(delta.Removed) != 0 {
-		t.Fatalf("old deletion changed current replacement: %+v", delta)
+}
+
+// Wildcard Address watches have no sent table: historical scope grants must
+// still protect a currently visible replacement from a queued deletion.
+func TestWildcardQueuedDeletionKeepsCurrentWireReplacement(t *testing.T) {
+	old := selectionWorkload(t, "shared", "demo", "node-a", "", "")
+	before := selectionSnapshot(t, []model.Resource{old})
+	empty := selectionSnapshot(t, nil)
+	for _, node := range []string{"node-a", "node-b"} {
+		t.Run(node, func(t *testing.T) {
+			next := selectionWorkload(t, "shared", "demo", node, "", "")
+			replacement, err := model.NewResource(
+				model.ResourceKey{TypeURL: model.AddressType, Name: "replacement-key"},
+				old.XDSName, next.Value, nil, next.Facts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := selectionSnapshot(t, []model.Resource{replacement})
+			delta, err := (WorkloadGenerator{}).Generate(t.Context(), GenerationRequest{
+				Scope:        model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"},
+				TypeURL:      model.AddressType,
+				Snapshot:     current,
+				Update:       updateBetween(before, empty, before.Diff(empty)),
+				Subscription: SubscriptionView{wildcard: true},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if node == "node-a" {
+				if len(delta.Resources) != 1 || delta.Resources[0].Key != replacement.Key || len(delta.Removed) != 0 {
+					t.Fatalf("visible replacement lost: %+v", delta)
+				}
+			} else if len(delta.Resources) != 0 || !slices.Equal(delta.Removed, []string{old.XDSName}) {
+				t.Fatalf("invisible replacement prevented withdrawal: %+v", delta)
+			}
+			if !delta.elideSentState {
+				t.Fatal("wildcard Address started retaining sent state")
+			}
+		})
 	}
 }
 

@@ -151,15 +151,18 @@ func reconcileCandidates(
 			selected[resource.XDSName] = resource
 		}
 		for _, identity := range candidate.Identities {
-			if _, sent := request.Subscription.SentVersion(identity.Name); sent ||
-				previouslyVisible != nil && previouslyVisible(candidate, identity) {
-				removed.Insert(identity.Name)
-			}
 			if _, found := selected[identity.Name]; found {
 				continue
 			}
+			if _, sent := request.Subscription.SentVersion(identity.Name); !sent &&
+				(previouslyVisible == nil || !previouslyVisible(candidate, identity)) {
+				continue
+			}
+			removed.Insert(identity.Name)
 			// Several internal keys may share a wire name. A queued deletion must not
 			// withdraw the current replacement, even when its notice is still pending.
+			// Only identities needing withdrawal require this lookup; other resources
+			// are selected when their own invalidation or a full refresh is processed.
 			for _, resource := range request.Snapshot.Lookup(candidate.Key.TypeURL, identity.Name) {
 				if resource.Key != candidate.Key && resource.XDSName == identity.Name && visible(resource) {
 					selected[identity.Name] = resource
