@@ -176,8 +176,15 @@ func TestEPEServiceAccountCanWatchItsInputs(t *testing.T) {
 					t.Fatalf(
 						"EPE ServiceAccount %s: %s %s.%s in namespace %q allowed=%t, want %t; "+
 							"reason=%q evaluationError=%q",
-						user, verb, current.resource, current.group, current.namespace, got.Status.Allowed, current.allowed,
-						got.Status.Reason, got.Status.EvaluationError,
+						user,
+						verb,
+						current.resource,
+						current.group,
+						current.namespace,
+						got.Status.Allowed,
+						current.allowed,
+						got.Status.Reason,
+						got.Status.EvaluationError,
 					)
 				}
 			})
