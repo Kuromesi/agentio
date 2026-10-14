@@ -40,16 +40,9 @@ func TestMapCollection(t *testing.T) {
 				mapOpts = append(mapOpts, krt.WithMapDiscardEqual())
 			}
 			opts := testOptions(t)
-			c1 := kube.NewFakeClient()
-			kpc1 := kclient.NewWritableFromInformer(
-				kclient.NewFiltered[*corev1.Pod](c1, kclient.Filter{}),
-				c1.Kube().CoreV1().Pods,
-			)
-			pc1 := testWriter[*corev1.Pod]{t: t, c: kpc1}
-			pods := krt.WrapClient[*corev1.Pod](kpc1, opts.WithName("Pods1")...)
-			c1.Run(opts.Stop())
-			assert.Equal(t, pods.WaitUntilSynced(opts.Stop()), true)
-			SimplePods := krt.MapCollection(pods, func(p *corev1.Pod) SimplePod {
+			// Drive mapping events directly, without the fake client's LIST/WATCH startup gap.
+			pods := krt.NewMutableCollection[*corev1.Pod](nil, nil, opts.WithName("Pods1")...)
+			SimplePods := krt.MapCollection(pods.AsCollection(), func(p *corev1.Pod) SimplePod {
 				return SimplePod{
 					Named: Named{
 						Name:      p.Name,
@@ -71,7 +64,7 @@ func TestMapCollection(t *testing.T) {
 				}
 			}, true)
 			// Add a pod and make sure we get the event for it in event handlers from the mapped collection
-			pod := pc1.Create(&corev1.Pod{
+			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod1",
 					Namespace: "ns1",
@@ -80,14 +73,15 @@ func TestMapCollection(t *testing.T) {
 				Status: corev1.PodStatus{
 					PodIP: "1.2.3.4",
 				},
-			})
+			}
+			pods.UpdateObject(pod.DeepCopy())
 			tt.WaitOrdered("add/ns1/pod1")
 
 			pod.Annotations = map[string]string{"ignored": "change"}
-			pod = pc1.Update(pod)
+			pods.UpdateObject(pod.DeepCopy())
 			pod.Status.PodIP = "1.2.3.5"
-			pc1.UpdateStatus(pod)
-			pc1.Delete(pod.Name, pod.Namespace)
+			pods.UpdateObject(pod.DeepCopy())
+			pods.DeleteObject(krt.GetKey(pod))
 			if discardEqual {
 				tt.WaitOrdered("update/ns1/pod1", "delete/ns1/pod1")
 			} else {
