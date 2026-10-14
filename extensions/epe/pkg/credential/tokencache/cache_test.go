@@ -332,3 +332,30 @@ func TestNewCache_ClampsNonPositiveMaxSize(t *testing.T) {
 		}
 	}
 }
+
+func TestCredentialExpirationBoundary(t *testing.T) {
+	now := time.Unix(1000, 0)
+	token := NewCache(time.Second, 2)
+	token.SetClock(func() time.Time { return now })
+	token.Set("provider", "resource", "token")
+	sts := NewSTSCache(2)
+	sts.expirationMargin = 0
+	sts.SetClock(func() time.Time { return now })
+	sts.SetWithExpiration("provider", "resource", stsEntry("ak", "sk", "token"), now.Add(time.Second))
+	now = now.Add(time.Second)
+	if _, ok := token.Get("provider", "resource"); ok {
+		t.Fatal("token accepted at its expiry deadline")
+	}
+	if _, ok := sts.Get("provider", "resource"); ok {
+		t.Fatal("STS accepted at its expiry deadline")
+	}
+}
+
+func TestDisabledFallbackRemovesPreviousCredential(t *testing.T) {
+	c := NewCache(0, 2)
+	c.SetWithTTL("provider", "resource", "old", time.Minute)
+	c.Set("provider", "resource", "new-without-lifetime")
+	if _, ok := c.Get("provider", "resource"); ok {
+		t.Fatal("disabled caching retained previous credential")
+	}
+}
