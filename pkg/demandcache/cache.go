@@ -24,14 +24,20 @@ import (
 	"time"
 )
 
-// Lease is an independently owned subscription. Acquire and Release must be
-// nonblocking local operations and must not call back into Cache. Done closes
+// Lease is an independently owned subscription. Release must be a nonblocking
+// local operation and must not call back into Cache. Done closes
 // when the source ends the subscription. Demand must finish on context
 // cancellation or release of its lease.
 type Lease[V any] interface {
 	Demand(context.Context) (V, error)
 	Done() <-chan struct{}
 	Release()
+}
+
+// Source acquires independently owned subscriptions. Acquire must be a
+// nonblocking local operation and must not call back into Cache.
+type Source[V any] interface {
+	Acquire(typ, name string) (Lease[V], error)
 }
 
 // Config applies uniformly across resource types within one Cache.
@@ -64,7 +70,7 @@ type entry[V any] struct {
 // the source. Route all managed accesses through this Cache. The source must not
 // retain an independent wildcard or persistent interest if eviction is to free values.
 type Cache[V any] struct {
-	acquire func(typ, name string) (Lease[V], error)
+	source  Source[V]
 	config  Config
 	mu      sync.Mutex
 	entries map[key]*entry[V]
@@ -78,11 +84,11 @@ var ErrClosed = errors.New("demand cache closed")
 
 // New creates a retention wrapper. Run owns its expiration loop; Close releases
 // all retained leases. Neither method owns the underlying discovery connection.
-func New[V any](acquire func(typ, name string) (Lease[V], error), config Config) (*Cache[V], error) {
+func New[V any](source Source[V], config Config) (*Cache[V], error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Cache[V]{acquire: acquire, config: config, entries: map[key]*entry[V]{}, wake: make(chan struct{}, 1)}, nil
+	return &Cache[V]{source: source, config: config, entries: map[key]*entry[V]{}, wake: make(chan struct{}, 1)}, nil
 }
 
 // Demand keeps a lease pinned until the lookup finishes. Cache hits still read
@@ -110,7 +116,7 @@ func (c *Cache[V]) Demand(ctx context.Context, typ, name string) (V, error) {
 		}
 	}
 	if e == nil {
-		lease, err := c.acquire(typ, name)
+		lease, err := c.source.Acquire(typ, name)
 		if err != nil {
 			c.mu.Unlock()
 			return zero, err

@@ -101,16 +101,23 @@ func callConnect(t *testing.T, conn *grpc.ClientConn) *extproc.ProcessingRespons
 	}
 	return result
 }
+
+type handlerFunc func(context.Context, Request) (Result, error)
+
+func (f handlerFunc) Handle(ctx context.Context, request Request) (Result, error) {
+	return f(ctx, request)
+}
+
 func TestGenericConnectStage(t *testing.T) {
 	conn := testGRPC(t, func(server *grpc.Server, _ *grpc.ClientConn) {
 		extproc.RegisterExternalProcessorServer(server, &Server{Timeout: time.Second,
-			Handle: func(_ context.Context, request Request) (Result, error) {
+			Handler: handlerFunc(func(_ context.Context, request Request) (Result, error) {
 				if request.Authority != "203.0.113.10:443" || request.Source.Workload.Name != "client" ||
 					request.Headers.SNI != "api.example.com" {
 					t.Errorf("request: %+v", request)
 				}
 				return Result{Metadata: map[string]any{"classified": true}}, nil
-			}})
+			})})
 	})
 	result := callConnect(t, conn)
 	if !result.GetDynamicMetadata().GetFields()["agentio"].GetStructValue().GetFields()["classified"].GetBoolValue() {
@@ -224,7 +231,7 @@ func TestDemandPolicyUpdatesAndRemovalOverGRPC(t *testing.T) {
 		}
 		extproc.RegisterExternalProcessorServer(
 			server,
-			&Server{Timeout: time.Second, Handle: NewHandler(source, "Kubernetes")},
+			&Server{Timeout: time.Second, Handler: NewPolicyHandler(source, "Kubernetes")},
 		)
 	})
 	ctx, cancel := context.WithCancel(t.Context())
@@ -316,7 +323,7 @@ func TestConnectWrappedAttributesAndFailures(t *testing.T) {
 	}{
 		{
 			name: "wrapped identity",
-			handler: func(_ context.Context, request Request) (Result, error) {
+			handler: handlerFunc(func(_ context.Context, request Request) (Result, error) {
 				if request.Source.Workload.Name != "client" || request.Source.Workload.Namespace != "demo" {
 					t.Errorf("lost wrapped source: %+v", request.Source)
 				}
@@ -324,22 +331,22 @@ func TestConnectWrappedAttributesAndFailures(t *testing.T) {
 					t.Error("expected absent SNI")
 				}
 				return Result{Metadata: map[string]any{"classified": true}}, nil
-			},
+			}),
 		},
-		{name: "unavailable", handler: func(context.Context, Request) (Result, error) { return Result{}, errors.New("disconnected") }, code: codes.Unavailable},
+		{name: "unavailable", handler: handlerFunc(func(context.Context, Request) (Result, error) { return Result{}, errors.New("disconnected") }), code: codes.Unavailable},
 		{
 			name: "deadline",
-			handler: func(ctx context.Context, _ Request) (Result, error) {
+			handler: handlerFunc(func(ctx context.Context, _ Request) (Result, error) {
 				<-ctx.Done()
 				return Result{}, ctx.Err()
-			},
+			}),
 			code: codes.Unavailable,
 		},
 		{
 			name: "invalid metadata",
-			handler: func(context.Context, Request) (Result, error) {
+			handler: handlerFunc(func(context.Context, Request) (Result, error) {
 				return Result{Metadata: map[string]any{"unsupported": make(chan int)}}, nil
-			},
+			}),
 			code: codes.Internal,
 		},
 	} {
@@ -347,7 +354,7 @@ func TestConnectWrappedAttributesAndFailures(t *testing.T) {
 			conn := testGRPC(t, func(server *grpc.Server, _ *grpc.ClientConn) {
 				extproc.RegisterExternalProcessorServer(
 					server,
-					&Server{Handle: tc.handler, Timeout: 20 * time.Millisecond},
+					&Server{Handler: tc.handler, Timeout: 20 * time.Millisecond},
 				)
 			})
 			message := connectMessage("")

@@ -171,13 +171,21 @@ func TestReleaseAliasOwnership(t *testing.T) {
 	})
 }
 
+type cacheSource struct {
+	client *Client
+}
+
+func (s cacheSource) Acquire(typ, name string) (demandcache.Lease[*Resource], error) {
+	return s.client.Acquire(typ, name)
+}
+
 func TestDemandCacheReleasesAndRedemands(t *testing.T) {
 	withSubscriptionClient(
 		t,
 		Watch{TypeURL: testType, OnDelete: func(string) DeleteAction { return ReleaseSubscription }},
 		func(t *testing.T, c *Client) {
 			cache, err := demandcache.New(
-				func(typ, name string) (demandcache.Lease[*Resource], error) { return c.Acquire(typ, name) },
+				cacheSource{client: c},
 				demandcache.Config{IdleTTL: time.Minute, MaxEntries: 1},
 			)
 			if err != nil {

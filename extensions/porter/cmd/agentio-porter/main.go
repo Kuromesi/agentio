@@ -40,6 +40,16 @@ import (
 	"github.com/openkruise/agentio/pkg/xdsclient"
 )
 
+// xdsSource adapts concrete xDS subscriptions to the cache's lease interface.
+// It lives at the composition boundary so neither package depends on the other.
+type xdsSource struct {
+	client *xdsclient.Client
+}
+
+func (s xdsSource) Acquire(typ, name string) (demandcache.Lease[*xdsclient.Resource], error) {
+	return s.client.Acquire(typ, name)
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -121,9 +131,7 @@ func run(ctx context.Context, args []string) error {
 	var source processor.DemandSource = client
 	group, ctx := errgroup.WithContext(ctx)
 	if cacheConfig.IdleTTL > 0 || cacheConfig.MaxEntries > 0 {
-		cache, err := demandcache.New(func(typ, name string) (demandcache.Lease[*xdsclient.Resource], error) {
-			return client.Acquire(typ, name)
-		}, cacheConfig)
+		cache, err := demandcache.New(xdsSource{client: client}, cacheConfig)
 		if err != nil {
 			return err
 		}
@@ -132,7 +140,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	group.Go(func() error {
 		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *grpcPort), fmt.Sprintf(":%d", *grpcHealthPort),
-			client, processor.NewHandler(source, *clusterID), *timeout)
+			client, processor.NewPolicyHandler(source, *clusterID), *timeout)
 	})
 	return group.Wait()
 }
@@ -149,7 +157,7 @@ func serve(
 		return err
 	}
 	server := grpc.NewServer()
-	extproc.RegisterExternalProcessorServer(server, &processor.Server{Handle: handler, Timeout: timeout})
+	extproc.RegisterExternalProcessorServer(server, &processor.Server{Handler: handler, Timeout: timeout})
 	healthListener, err := net.Listen("tcp", healthAddress)
 	if err != nil {
 		return errors.Join(err, listener.Close())

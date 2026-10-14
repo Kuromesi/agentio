@@ -32,48 +32,57 @@ type DemandSource interface {
 	Demand(context.Context, string, string) (*xdsclient.Resource, error)
 }
 
-// NewHandler uses the control plane's precompiled inline SNI projection. The
-// pod UID follows Agentio's Kubernetes Workload naming convention. A Sandbox
+// PolicyHandler evaluates the control plane's precompiled inline SNI projection.
+// The Pod UID follows Agentio's Kubernetes Workload naming convention. A Sandbox
 // must still be hosted by that Workload before its owned policy is considered.
-func NewHandler(source DemandSource, clusterID string) Handler {
-	return func(ctx context.Context, request Request) (Result, error) {
-		if request.Headers.SNI == "" {
-			return Result{}, nil
-		}
-		deny := Result{DenyStatus: envoytype.StatusCode_Forbidden}
-		if request.Source.Workload.Name == "" || request.Source.Workload.Namespace == "" {
-			return deny, nil
-		}
-		uid := clusterID + "//Pod/" + request.Source.Workload.Namespace + "/" + request.Source.Workload.Name
-		value, err := source.Demand(ctx, model.WorkloadType, uid)
+type PolicyHandler struct {
+	source    DemandSource
+	clusterID string
+}
+
+// NewPolicyHandler creates a CONNECT policy handler with explicit dependencies.
+func NewPolicyHandler(source DemandSource, clusterID string) *PolicyHandler {
+	return &PolicyHandler{source: source, clusterID: clusterID}
+}
+
+// Handle evaluates the policies bound to the request's source identity.
+func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, error) {
+	if request.Headers.SNI == "" {
+		return Result{}, nil
+	}
+	deny := Result{DenyStatus: envoytype.StatusCode_Forbidden}
+	if request.Source.Workload.Name == "" || request.Source.Workload.Namespace == "" {
+		return deny, nil
+	}
+	uid := h.clusterID + "//Pod/" + request.Source.Workload.Namespace + "/" + request.Source.Workload.Name
+	value, err := h.source.Demand(ctx, model.WorkloadType, uid)
+	if errors.Is(err, xdsclient.ErrNotFound) {
+		return deny, nil
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	w := value.Value.(*workloadView)
+	if w.uid != uid {
+		return deny, nil
+	}
+	var policies []*extensions.SniTrafficPolicy
+	if request.Source.SandboxID != "" {
+		value, err := h.source.Demand(ctx, model.SandboxType, request.Source.SandboxID)
 		if errors.Is(err, xdsclient.ErrNotFound) {
 			return deny, nil
 		}
 		if err != nil {
 			return Result{}, err
 		}
-		w := value.Value.(*workloadView)
-		if w.uid != uid {
+		s := value.Value.(*sandboxView)
+		if s.uid != request.Source.SandboxID || s.workloadUID != uid {
 			return deny, nil
 		}
-		var policies []*extensions.SniTrafficPolicy
-		if request.Source.SandboxID != "" {
-			value, err := source.Demand(ctx, model.SandboxType, request.Source.SandboxID)
-			if errors.Is(err, xdsclient.ErrNotFound) {
-				return deny, nil
-			}
-			if err != nil {
-				return Result{}, err
-			}
-			s := value.Value.(*sandboxView)
-			if s.uid != request.Source.SandboxID || s.workloadUID != uid {
-				return deny, nil
-			}
-			policies = append(policies, s.policies...)
-		}
-		policies = append(policies, w.policies...)
-		return evaluateSNI(policies, request.Headers.SNI), nil
+		policies = append(policies, s.policies...)
 	}
+	policies = append(policies, w.policies...)
+	return evaluateSNI(policies, request.Headers.SNI), nil
 }
 
 func evaluateSNI(policies []*extensions.SniTrafficPolicy, sni string) Result {

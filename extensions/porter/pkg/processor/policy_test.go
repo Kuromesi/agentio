@@ -106,10 +106,10 @@ func TestPolicyDecisions(t *testing.T) {
 					model.WorkloadType + "/" + testUID: sourceWorkload(t, sniPolicy(t, tc.pattern, tc.mode)),
 				},
 			}
-			result, err := NewHandler(
+			result, err := NewPolicyHandler(
 				source,
 				"Kubernetes",
-			)(
+			).Handle(
 				t.Context(),
 				Request{
 					Source:  Source{Workload: WorkloadIdentity{Name: "client", Namespace: "demo"}},
@@ -158,10 +158,10 @@ func TestSandboxBindingAndMissingResources(t *testing.T) {
 					},
 				)
 			}
-			got, err := NewHandler(
+			got, err := NewPolicyHandler(
 				&memorySource{values: values},
 				"Kubernetes",
-			)(
+			).Handle(
 				t.Context(),
 				Request{
 					Source: Source{
@@ -179,16 +179,16 @@ func TestSandboxBindingAndMissingResources(t *testing.T) {
 }
 func TestNoSNIAndDemandFailure(t *testing.T) {
 	source := &memorySource{err: errors.New("ADS unavailable")}
-	handler := NewHandler(source, "Kubernetes")
-	got, err := handler(t.Context(), Request{})
+	handler := NewPolicyHandler(source, "Kubernetes")
+	got, err := handler.Handle(t.Context(), Request{})
 	if err != nil || got.Metadata != nil || got.DenyStatus != 0 || len(source.calls) != 0 {
 		t.Fatalf("no SNI: %+v, %v, %v", got, err, source.calls)
 	}
-	got, err = handler(t.Context(), Request{Headers: ConnectHeaders{SNI: "api.example.com"}})
+	got, err = handler.Handle(t.Context(), Request{Headers: ConnectHeaders{SNI: "api.example.com"}})
 	if err != nil || got.DenyStatus != envoytype.StatusCode_Forbidden {
 		t.Fatalf("missing identity: %+v %v", got, err)
 	}
-	_, err = handler(
+	_, err = handler.Handle(
 		t.Context(),
 		Request{
 			Source:  Source{Workload: WorkloadIdentity{Name: "client", Namespace: "demo"}},

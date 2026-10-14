@@ -49,7 +49,7 @@ type fakeSource struct {
 	pending      bool
 }
 
-func (s *fakeSource) acquire(typ, name string) (Lease[string], error) {
+func (s *fakeSource) Acquire(typ, name string) (Lease[string], error) {
 	l := &fakeLease{value: name, ready: make(chan struct{}), done: make(chan struct{})}
 	if !s.pending {
 		close(l.ready)
@@ -72,7 +72,7 @@ func lookup(t *testing.T, c *Cache[string], typ, name string) string {
 
 func TestGlobalLRUAndLiveValues(t *testing.T) {
 	source := &fakeSource{}
-	cache, err := New(source.acquire, Config{MaxEntries: 2})
+	cache, err := New(source, Config{MaxEntries: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestGlobalLRUAndLiveValues(t *testing.T) {
 func TestIdleTTL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		source := &fakeSource{}
-		cache, err := New(source.acquire, Config{IdleTTL: time.Minute})
+		cache, err := New(source, Config{IdleTTL: time.Minute})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func TestIdleTTL(t *testing.T) {
 func TestPendingDemandsArePinnedAndShared(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		source := &fakeSource{pending: true}
-		cache, err := New(source.acquire, Config{IdleTTL: time.Second, MaxEntries: 1})
+		cache, err := New(source, Config{IdleTTL: time.Second, MaxEntries: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +191,7 @@ func TestPendingDemandsArePinnedAndShared(t *testing.T) {
 func TestFailedDemandAndEndedGeneration(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		source := &fakeSource{pending: true}
-		cache, err := New(source.acquire, Config{MaxEntries: 2})
+		cache, err := New(source, Config{MaxEntries: 2})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,12 +232,12 @@ func TestFailedDemandAndEndedGeneration(t *testing.T) {
 
 func TestConfiguration(t *testing.T) {
 	for _, config := range []Config{{IdleTTL: -time.Second}, {MaxEntries: -1}} {
-		if _, err := New((&fakeSource{}).acquire, config); err == nil {
+		if _, err := New(&fakeSource{}, config); err == nil {
 			t.Fatal("negative setting accepted")
 		}
 	}
 	source := &fakeSource{}
-	cache, err := New(source.acquire, Config{})
+	cache, err := New(source, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

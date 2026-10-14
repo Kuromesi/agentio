@@ -64,13 +64,15 @@ type Result struct {
 }
 
 // Handler decides an outer CONNECT independently of HTTP processing.
-type Handler func(context.Context, Request) (Result, error)
+type Handler interface {
+	Handle(context.Context, Request) (Result, error)
+}
 
 // Server exchanges headers once. It does not subscribe to tunnel bytes or keep
 // an ext_proc stream alive for the lifetime of a tunnel.
 type Server struct {
 	extproc.UnimplementedExternalProcessorServer
-	Handle  Handler
+	Handler Handler
 	Timeout time.Duration
 }
 
@@ -126,7 +128,7 @@ func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) error {
 	}
 	ctx, cancel := context.WithTimeout(stream.Context(), s.Timeout)
 	defer cancel()
-	result, err := s.Handle(ctx, request)
+	result, err := s.Handler.Handle(ctx, request)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "CONNECT processing failed: %v", err)
 	}
