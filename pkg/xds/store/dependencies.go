@@ -28,32 +28,52 @@ import (
 func indexDependencies(
 	index map[model.ResourceKey]Candidate,
 	before, after model.ResourceSet,
-	change model.ResourceChange,
+	changes []model.ResourceChange,
 ) {
-	if change.Key.TypeURL != model.AddressType {
-		return
-	}
-	if change.Old != nil && change.New != nil && change.Old.Facts.Equal(change.New.Facts) &&
-		change.Old.XDSName == change.New.XDSName && slices.Equal(change.Old.Aliases, change.New.Aliases) {
-		return
-	}
-	indexWithdrawnScopes(index, before, change)
-
-	for _, resource := range []*model.Resource{change.Old, change.New} {
-		if resource == nil {
+	namespaces := sets.New[string]()
+	for _, change := range changes {
+		if change.Key.TypeURL != model.AddressType {
 			continue
 		}
-		for _, snapshot := range []model.ResourceSet{before, after} {
-			if service := resource.Facts.Service; service != nil {
-				for _, member := range snapshot.ListServiceMembers(model.AddressType, service.ServiceKey) {
-					addCandidate(index, member, nil)
-				}
-			}
-			workload := resource.Facts.Workload
-			if workload == nil {
+		if change.Old != nil && change.New != nil && change.Old.Facts.Equal(change.New.Facts) &&
+			change.Old.XDSName == change.New.XDSName && slices.Equal(change.Old.Aliases, change.New.Aliases) {
+			continue
+		}
+		indexWithdrawnScopes(index, before, change)
+
+		for _, resource := range []*model.Resource{change.Old, change.New} {
+			if resource == nil {
 				continue
 			}
-			indexWorkloadDependencies(index, snapshot, workload)
+			workload := resource.Facts.Workload
+			if workload != nil {
+				namespaces.Insert(workload.Namespace)
+			}
+			for _, snapshot := range []model.ResourceSet{before, after} {
+				if service := resource.Facts.Service; service != nil {
+					for _, member := range snapshot.ListServiceMembers(model.AddressType, service.ServiceKey) {
+						addCandidate(index, member, nil)
+					}
+				}
+				if workload != nil {
+					indexWorkloadDependencies(index, snapshot, workload)
+				}
+			}
+		}
+	}
+	if len(namespaces) == 0 {
+		return
+	}
+	// These policies have no per-workload scope metadata. Expand each set once
+	// per publication, retaining identities from both snapshots for withdrawals.
+	for _, snapshot := range []model.ResourceSet{before, after} {
+		for _, policy := range snapshot.ListGlobalAuthorizations() {
+			addCandidate(index, policy, nil)
+		}
+		for namespace := range namespaces {
+			for _, policy := range snapshot.ListNamespaceAuthorizations(namespace) {
+				addCandidate(index, policy, nil)
+			}
 		}
 	}
 }
@@ -120,7 +140,5 @@ func indexWorkloadDependencies(
 	for _, name := range workload.AuthorizationRefs {
 		add(snapshot.Lookup(model.WorkloadAuthorizationType, name), nil)
 	}
-	add(snapshot.ListGlobalAuthorizations(), nil)
-	add(snapshot.ListNamespaceAuthorizations(workload.Namespace), nil)
 	add(snapshot.ListSandboxesByAttester(workload.WorkloadUID), nil)
 }

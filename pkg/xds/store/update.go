@@ -101,8 +101,8 @@ func updateBetween(before, after model.ResourceSet, changes []model.ResourceChan
 				addCandidate(candidates, *resource, nil)
 			}
 		}
-		indexDependencies(candidates, before, after, change)
 	}
+	indexDependencies(candidates, before, after, changes)
 	return indexedUpdate(after.Version(), candidates)
 }
 
