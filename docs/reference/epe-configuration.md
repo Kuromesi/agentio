@@ -30,7 +30,7 @@ An `httpCallout` provider owns its URL, timeout, and TLS settings. The HTTPCallo
 | `epe.image.repository`, `.name`, `.tag` | empty, `agentio-epe`, empty | EPE container image. Empty repository and tag values inherit `global.hub` and `global.tag`. |
 | `epe.credentialProvider.url` | empty | Credential provider base URL, rendered as `IDENTITY_PROVIDER_URL`. Credential lookups fail while it is empty. |
 | `epe.credentialProvider.mtls.source` | `none` | The source of credential-provider mTLS material: `none` or `secret`. Always rendered as `CREDENTIAL_PROVIDER_MTLS_SOURCE`. Any other value fails rendering. |
-| `epe.credentialProvider.mtls.secret.namespace`, `.name` | empty | `source=secret` only. The Secret EPE watches directly. Both are required for that source; rendering fails if either is missing. |
+| `epe.credentialProvider.mtls.secret.namespace`, `.name` | empty | `source=secret` only. The Secret EPE watches directly. Both are required for that source; the namespace must match the EPE installation namespace. Rendering fails otherwise. |
 | `epe.credentialProvider.mtls.insecureSkipVerify` | `false` | Rendered only when `true`. Disables provider server-certificate verification — exposes the bearer token to an on-path attacker. |
 | `epe.env` | `{}` | Adds arbitrary string environment variables to the container after the chart-managed variables, so a key set here overrides the same chart-managed variable. |
 | `epe.replicaCount` | `1` | Deployment replica count when autoscaling is disabled. |
@@ -51,7 +51,9 @@ The chart supplies the EPEConfig name and namespace, the three listener ports an
 
 The Service is headless (`clusterIP: None`) and exposes TCP ports named `extproc` (`epe.service.grpcPort`), `health` (`epe.service.healthPort`), and `metrics` (`epe.service.metricsPort`). Its selector matches `app.kubernetes.io/name: <epe.nameOverride>`. The Deployment opts out of sidecar injection, adds Prometheus scrape annotations for port 9090, and configures gRPC liveness and readiness probes against the health port. Liveness starts after five seconds and runs every ten seconds; readiness starts after three seconds and runs every five seconds.
 
-The chart grants the ServiceAccount `get/list/watch` on `SecurityProfile` and `GlobalSecurityProfile`, but only `get` on their status subresources. It also grants `get/list/watch` on CRDs, ConfigMaps, and Secrets. EPE needs the CRD watch before its delayed profile informers can synchronize; without it the process cannot complete startup. Provider certificate Secret watches are scoped to the referenced namespace and name, so custom deployments can grant Secret `list`/`watch` through namespace Roles restricted with `resourceNames`. Secret synchronization does not gate startup; unavailable required certificate material makes the affected provider unavailable while EPE retries in the background.
+The chart grants the ServiceAccount `get/list/watch` on `SecurityProfile` and `GlobalSecurityProfile`, but only `get` on their status subresources. It also grants cluster-wide `get/list/watch` on CRDs and ConfigMaps. Secret `get/list/watch` is granted only through a Role and RoleBinding in the EPE installation namespace; the ClusterRole grants no Secret access. EPE needs the CRD watch before its delayed profile informers can synchronize; without it the process cannot complete startup. Provider certificate Secret references must resolve to `--epe-config-namespace` (the installation namespace in Helm); cross-namespace references are rejected. Watches are additionally filtered by Secret name, so custom deployments can restrict the Role with `resourceNames`. Secret synchronization does not gate startup; unavailable required certificate material makes the affected provider unavailable while EPE retries in the background.
+
+SecurityProfile token transformations that read a Secret directly use per-request `get`, not the provider certificate watches. To use that feature in a business namespace, grant the EPE ServiceAccount a separate RoleBinding there with `get` restricted to the required `resourceNames`. The chart no longer grants this access cluster-wide.
 
 With the default `epe.credentialProvider.mtls.source=none`, EPE presents no client certificate and verifies HTTPS credential providers against the system trust store. Set `source=secret` with `secret.namespace` and `secret.name` to watch TLS material directly through the Kubernetes API; the chart does not create or mount that Secret. EPEConfig also supports `caConfigMapRef` for a watched CA trust bundle, and `caCertificateFile` / `clientCertificateFiles` for provider TLS files; the deployment must supply these files inside the EPE container. See the [file configuration example](credential-provider.md#transport-security). Provider TLS settings do not enable TLS on the ext_proc listener.
 
@@ -95,7 +97,7 @@ The generated `5s` message timeout must remain above EPE's default `--plugin-bud
 | --- | --- | --- |
 | `--epe-config` | `agentio-epe-config` | Base ConfigMap for extension providers and default selection. An absent ConfigMap leaves defaults unchanged. |
 | `--epe-config-primary` | `agentio-epe-config-primary` | ConfigMap applied after base; empty disables the overlay. Missing or empty content leaves base unchanged. |
-| `--epe-config-namespace` | `agentio-system` | Namespace of EPEConfig; the default namespace for its Secret references. The chart sets this to the installation namespace. |
+| `--epe-config-namespace` | `agentio-system` | Namespace of EPEConfig; the only namespace allowed for its Secret references. The chart sets this to the installation namespace. |
 | `--grpc-port` | `9002` | ext_proc gRPC listener. The chart sets it from `epe.service.grpcPort`. |
 | `--grpc-health-port` | `9003` | gRPC health listener used by Kubernetes probes. |
 | `--metrics-port` | `9090` | HTTP listener serving only `/metrics`. |
@@ -256,7 +258,7 @@ Use `epe -print-env` to inspect all visible registrations, including shared and 
 
 <!-- END GENERATED ENVIRONMENT VARIABLES -->
 
-Set `CREDENTIAL_PROVIDER_MTLS_SOURCE` through `epe.credentialProvider.mtls.source`, which the chart always renders explicitly. An unrecognized source fails startup and is rejected by the chart. When the source is `secret`, both `epe.credentialProvider.mtls.secret.namespace` and `.name` are required by the chart and binary. They are ignored for other sources.
+Set `CREDENTIAL_PROVIDER_MTLS_SOURCE` through `epe.credentialProvider.mtls.source`, which the chart always renders explicitly. An unrecognized source fails startup and is rejected by the chart. When the source is `secret`, both `epe.credentialProvider.mtls.secret.namespace` and `.name` are required by the chart and binary. The namespace must match `--epe-config-namespace`; Helm requires the installation namespace. They are ignored for other sources.
 
 The credential client draws its mTLS material from the one source named by `CREDENTIAL_PROVIDER_MTLS_SOURCE`, never from a chain of them; whenever that source has no usable material the client presents no certificate and verifies the provider against the system trust store. See the [credential provider contract](credential-provider.md) for its request and caching behavior.
 

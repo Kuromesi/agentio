@@ -15,6 +15,8 @@
 package extensionprovider
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -123,5 +125,36 @@ defaultProviders: {credentialProvider: ""}`,
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestValidateSecretNamespace(t *testing.T) {
+	for _, providerType := range []string{"credentialProvider", "httpCallout"} {
+		for _, field := range []string{"caSecretRef", "clientCertificateSecretRef"} {
+			for _, namespace := range []string{"", "custom-system", "business"} {
+				t.Run(providerType+"/"+field+"/"+namespace, func(t *testing.T) {
+					cfg, err := decodeConfig(fmt.Sprintf(`extensionProviders:
+- name: provider
+  %s:
+    url: https://provider.example
+    tls:
+      optional: true
+      %s: {name: material, namespace: %q}
+`, providerType, field, namespace))
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = ValidateInNamespace(cfg, "custom-system")
+					if namespace == "business" {
+						if err == nil ||
+							!strings.Contains(err.Error(), `must be in EPEConfig namespace "custom-system"`) {
+							t.Fatalf("cross-namespace Secret must be rejected even when optional: %v", err)
+						}
+					} else if err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
 	}
 }

@@ -34,10 +34,11 @@ import (
 // These informers are independent of the process-wide shared informer lifecycle
 // so removed references can be stopped and later watched again.
 type secretDependencies struct {
-	client  kube.Client
-	ctx     context.Context
-	trigger *krt.RecomputeTrigger
-	watches map[string]secretWatch
+	client    kube.Client
+	namespace string
+	ctx       context.Context
+	trigger   *krt.RecomputeTrigger
+	watches   map[string]secretWatch
 }
 
 type secretWatch struct {
@@ -45,17 +46,23 @@ type secretWatch struct {
 	cancel context.CancelFunc
 }
 
-func newSecretDependencies(client kube.Client, stop <-chan struct{}, opts ...krt.CollectionOption) *secretDependencies {
+func newSecretDependencies(
+	client kube.Client,
+	namespace string,
+	stop <-chan struct{},
+	opts ...krt.CollectionOption,
+) *secretDependencies {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		<-stop
 		cancel()
 	}()
 	return &secretDependencies{
-		client:  client,
-		ctx:     ctx,
-		trigger: krt.NewRecomputeTrigger(true, opts...),
-		watches: map[string]secretWatch{},
+		client:    client,
+		namespace: namespace,
+		ctx:       ctx,
+		trigger:   krt.NewRecomputeTrigger(true, opts...),
+		watches:   map[string]secretWatch{},
 	}
 }
 
@@ -89,8 +96,8 @@ func (s *secretDependencies) watch(ctx krt.HandlerContext, refs map[string]struc
 }
 
 func (s *secretDependencies) start(key string) secretWatch {
-	namespace, name, _ := strings.Cut(key, "/")
-	client := s.client.Kube().CoreV1().Secrets(namespace)
+	_, name, _ := strings.Cut(key, "/")
+	client := s.client.Kube().CoreV1().Secrets(s.namespace)
 	selector := fields.OneTermEqualSelector("metadata.name", name).String()
 	lw := &cache.ListWatch{
 		ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {

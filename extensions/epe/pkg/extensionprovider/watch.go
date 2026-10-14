@@ -53,7 +53,7 @@ func NewCollection(
 	stop <-chan struct{},
 ) krt.Collection[Configuration] {
 	opts := krt.NewOptionsBuilder(stop, "epe-providers", debugger)
-	secrets := newSecretDependencies(client, stop, opts.WithName("Secrets")...)
+	secrets := newSecretDependencies(client, namespace, stop, opts.WithName("Secrets")...)
 
 	files := newFileDependencies(stop, opts.WithName("CertificateFiles")...)
 	return krt.NewCollection(

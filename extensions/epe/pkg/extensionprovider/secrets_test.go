@@ -150,7 +150,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
   httpCallout:
     url: https://c.example
     tls:
-      caSecretRef: {namespace: other, name: cross-namespace}
+      caSecretRef: {namespace: system, name: second}
 `},
 	}
 	initialConfig := cm.Data["config"]
@@ -158,11 +158,11 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 	fake := client.Kube().(*kubefake.Clientset)
 	// Model Roles restricted by both namespace and resourceNames. An
 	// unfiltered or cluster-wide request must not obtain any material.
-	expected := map[string]string{"system": "material", "other": "cross-namespace"}
+	expected := map[string]bool{"material": true, "second": true}
 	fake.PrependReactor("list", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
-		name := expected[action.GetNamespace()]
-		selector := action.(ktesting.ListAction).GetListRestrictions().Fields.String()
-		if name == "" || selector != "metadata.name="+name {
+		selector := action.(ktesting.ListAction).GetListRestrictions().Fields
+		name, exact := selector.RequiresExactMatch("metadata.name")
+		if action.GetNamespace() != "system" || !exact || !expected[name] {
 			t.Errorf("unscoped Secret list: namespace=%q selector=%q", action.GetNamespace(), selector)
 			return true, nil, apierrors.NewForbidden(
 				schema.GroupResource{Resource: "secrets"},
@@ -181,9 +181,9 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 	}
 	started := make(chan startedWatch, 8)
 	fake.PrependWatchReactor("secrets", func(action ktesting.Action) (bool, kwatch.Interface, error) {
-		name := expected[action.GetNamespace()]
-		selector := action.(ktesting.WatchAction).GetWatchRestrictions().Fields.String()
-		if name == "" || selector != "metadata.name="+name {
+		selector := action.(ktesting.WatchAction).GetWatchRestrictions().Fields
+		name, exact := selector.RequiresExactMatch("metadata.name")
+		if action.GetNamespace() != "system" || !exact || !expected[name] {
 			t.Errorf("unscoped Secret watch: namespace=%q selector=%q", action.GetNamespace(), selector)
 			return true, nil, apierrors.NewForbidden(
 				schema.GroupResource{Resource: "secrets"},
@@ -219,7 +219,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 		}
 	}
 	// Remove one of the two references to system/material and the sole
-	// cross-namespace reference. Only the cross-namespace watch should stop.
+	// reference to system/second. Only the system/second watch should stop.
 	cm.Data["config"] = `extensionProviders:
 - name: a
   httpCallout:
@@ -231,7 +231,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if !watches["other/cross-namespace"].IsStopped() {
+		if !watches["system/second"].IsStopped() {
 			return fmt.Errorf("unused Secret watch has not stopped")
 		}
 		return nil
@@ -247,7 +247,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 	waitForAvailableProvider(t, registry, "c")
 	select {
 	case w := <-started:
-		if w.key != "other/cross-namespace" {
+		if w.key != "system/second" {
 			t.Fatalf("unexpected restarted watch for %q", w.key)
 		}
 		watches[w.key] = w.watch
