@@ -1,6 +1,7 @@
 # Copyright 2026 The Kruise Authors
 {{- $egressGateway := .Values.global.egressGateway | default .Values.global.waypoint }}
 {{- $porter := .Values.global.porter | default (strdict) }}
+{{- $porterCache := $porter.cache | default (strdict) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -273,6 +274,8 @@ spec:
           - --cluster-domain={{ .Values.global.clusterDomain }}
           - --grpc-port=9002
           - --grpc-health-port=9003
+          - --xds-cache-idle-ttl={{ valueOrDefault $porterCache.idleTTL "1m" }}
+          - --xds-cache-max-entries={{ valueOrDefault $porterCache.maxEntries 10000 }}
         env:
           - name: POD_NAME
             valueFrom: {fieldRef: {fieldPath: metadata.name}}

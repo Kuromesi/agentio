@@ -847,6 +847,8 @@ func TestPorterIndependentOfEPE(t *testing.T) {
 			`image: "registry.example/agentio-porter:test"`,
 			"name: AGENTIO_ENABLE_PORTER",
 			"--cluster-id=Kubernetes",
+			"--xds-cache-idle-ttl=1m",
+			"--xds-cache-max-entries=10000",
 			"grpc:",
 			"service: readiness",
 			"fieldPath: metadata.uid",
@@ -870,4 +872,32 @@ func TestPorterIndependentOfEPE(t *testing.T) {
 		`image: "registry.example/agentio-porter:test"`,
 		"name: agentio-porter",
 	)
+}
+
+func TestPorterCacheSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ttl  string
+		max  string
+	}{{"custom", "75s", "321"}, {"disabled", "0s", "0"}} {
+		for _, mode := range []string{"static", "gatewayAPI"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				manifest := renderAgentio(
+					t,
+					"--set",
+					"egressGateway.mode="+mode,
+					"--set",
+					"egressGateway.porter.enabled=true",
+					"--set-string",
+					"egressGateway.porter.cache.idleTTL="+tc.ttl,
+					"--set",
+					"egressGateway.porter.cache.maxEntries="+tc.max,
+				)
+				requireContains(t, manifest, "idleTTL: "+tc.ttl, "maxEntries: "+tc.max)
+				if mode == "static" {
+					requireContains(t, manifest, "--xds-cache-idle-ttl="+tc.ttl, "--xds-cache-max-entries="+tc.max)
+				}
+			})
+		}
+	}
 }

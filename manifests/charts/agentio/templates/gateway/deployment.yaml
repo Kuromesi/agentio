@@ -149,6 +149,8 @@ spec:
             - --cluster-domain={{ .Values.global.clusterDomain }}
             - --grpc-port=9002
             - --grpc-health-port=9003
+            - --xds-cache-idle-ttl={{ .Values.egressGateway.porter.cache.idleTTL }}
+            - --xds-cache-max-entries={{ .Values.egressGateway.porter.cache.maxEntries }}
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}

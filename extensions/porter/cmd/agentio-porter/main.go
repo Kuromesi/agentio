@@ -35,6 +35,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/openkruise/agentio/extensions/porter/pkg/processor"
+	"github.com/openkruise/agentio/pkg/demandcache"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/xdsclient"
 )
@@ -59,7 +60,23 @@ func run(ctx context.Context, args []string) error {
 	clusterID := flags.String("cluster-id", "Kubernetes", "Cluster ID used by Agentiod Workload resources")
 	clusterDomain := flags.String("cluster-domain", "cluster.local", "Cluster DNS domain used in the ADS node ID")
 	timeout := flags.Duration("request-timeout", 4*time.Second, "CONNECT processing budget, including demand waits")
+	cacheConfig := demandcache.Config{}
+	flags.DurationVar(
+		&cacheConfig.IdleTTL,
+		"xds-cache-idle-ttl",
+		time.Minute,
+		"Release idle demand subscriptions after this duration; zero disables expiration",
+	)
+	flags.IntVar(
+		&cacheConfig.MaxEntries,
+		"xds-cache-max-entries",
+		10000,
+		"Total retained demand entries across resource types; zero disables LRU eviction",
+	)
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if err := cacheConfig.Validate(); err != nil {
 		return err
 	}
 	if *timeout <= 0 || *clusterID == "" || *clusterDomain == "" {
@@ -101,8 +118,23 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *grpcPort), fmt.Sprintf(":%d", *grpcHealthPort),
-		client, processor.NewHandler(client, *clusterID), *timeout)
+	var source processor.DemandSource = client
+	group, ctx := errgroup.WithContext(ctx)
+	if cacheConfig.IdleTTL > 0 || cacheConfig.MaxEntries > 0 {
+		cache, err := demandcache.New(func(typ, name string) (demandcache.Lease[*xdsclient.Resource], error) {
+			return client.Acquire(typ, name)
+		}, cacheConfig)
+		if err != nil {
+			return err
+		}
+		source = cache
+		group.Go(func() error { return cache.Run(ctx) })
+	}
+	group.Go(func() error {
+		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *grpcPort), fmt.Sprintf(":%d", *grpcHealthPort),
+			client, processor.NewHandler(source, *clusterID), *timeout)
+	})
+	return group.Wait()
 }
 
 func serve(

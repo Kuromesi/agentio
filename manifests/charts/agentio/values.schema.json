@@ -412,6 +412,18 @@
             "enabled": {
               "type": "boolean"
             },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "idleTTL": {
+                  "type": "string"
+                },
+                "maxEntries": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
             "image": {
               "type": "object",
               "properties": {

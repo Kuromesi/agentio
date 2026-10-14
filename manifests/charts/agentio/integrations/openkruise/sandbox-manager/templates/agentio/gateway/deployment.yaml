@@ -151,6 +151,8 @@ spec:
             - --cluster-domain={{ .Values.agentio.global.clusterDomain }}
             - --grpc-port=9002
             - --grpc-health-port=9003
+            - --xds-cache-idle-ttl={{ .Values.agentio.egressGateway.porter.cache.idleTTL }}
+            - --xds-cache-max-entries={{ .Values.agentio.egressGateway.porter.cache.maxEntries }}
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}

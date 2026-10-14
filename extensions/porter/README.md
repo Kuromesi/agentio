@@ -22,7 +22,11 @@ The gateway copies the action into `agentio.tls.action` filter state before open
 
 ## Discovery and failure behavior
 
-Workload and Sandbox watches start without wildcard subscriptions. A cache miss waits for the named resource; subsequent updates and removals arrive over Delta ADS. Subscriptions stay active while resources exist. On deletion, Porter releases the named subscription; current waiters receive not-found, and the next CONNECT subscribes again. There is no subscription count limit, TTL refresh or idle eviction.
+Workload and Sandbox watches start without wildcard subscriptions. A cache miss waits for the named resource; subsequent updates and removals arrive over Delta ADS. Subscriptions stay active while retained. On deletion, Porter releases the named subscription; current waiters receive not-found, and the next CONNECT subscribes again. Porter uses `pkg/demandcache` to release idle or least recently used subscriptions; xdsclient itself imposes no count limit.
+
+Porter defaults to `--xds-cache-idle-ttl=1m` and `--xds-cache-max-entries=10000`. Workload and Sandbox share these settings and one LRU, keyed by resource type and name. Idle time starts when the last lookup completes; consumer accesses refresh it, but control-plane updates do not. Expiration runs even without new traffic. Eviction releases the subscription and cached view; the next CONNECT waits for a fresh subscription. In-flight lookups are pinned, so the entry count can temporarily exceed the target. Values already returned to a request remain valid and immutable. The limit bounds retained entries, not bytes or process RSS.
+
+Set either value to `0` (`0s` for the duration) to disable that policy; setting both to zero bypasses the wrapper and retains resources until deletion. The wrapper tracks only subscription handles and access metadata, with no second copy of policy values. EPE's wildcard watches are unaffected.
 
 Watch transforms decode and validate resources on the update path. The cache retains only Workload UID, Sandbox UID/attester binding and parsed SNI policies. CONNECT requests read these immutable views without copying or decoding complete Workload/Sandbox payloads. A failed transform rejects the entire response while keeping the previous accepted policies and the ADS stream. Before any successful response, a rejected update does not make the watch ready.
 
@@ -42,6 +46,9 @@ egressGateway:
   mode: gatewayAPI # or static
   porter:
     enabled: true
+    cache:
+      idleTTL: 1m
+      maxEntries: 10000
 
 epe:
   mode: disabled # managed/external also work
