@@ -92,7 +92,10 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 	hcm := listener["filter_chains"].([]any)[0].(map[string]any)["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)
 	arrived := make(chan struct{})
 	slow := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(arrived); <-r.Context().Done() }),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(arrived)
+			<-r.Context().Done()
+		}),
 	)
 	defer slow.Close()
 	_, slowPort, err := net.SplitHostPort(strings.TrimPrefix(slow.URL, "http://"))
