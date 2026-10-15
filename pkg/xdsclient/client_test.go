@@ -169,7 +169,7 @@ func TestDemandUpdateRemovalAndDisconnect(t *testing.T) {
 	}
 }
 
-func TestNACKReconnectReplaysDemandAndWakesAllWaiters(t *testing.T) {
+func TestNACKKeepsStreamAndWakesAllWaiters(t *testing.T) {
 	lis := bufconn.Listen(1 << 20)
 	ads := &fakeADS{
 		streams: make(chan discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer, 4),
@@ -242,16 +242,6 @@ func TestNACKReconnectReplaysDemandAndWakesAllWaiters(t *testing.T) {
 	if _, ready := c.Observe(testType); ready {
 		t.Fatal("rejected response became ready")
 	}
-	select {
-	case stream = <-ads.streams:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	initial, err := stream.Recv()
-	if err != nil || len(initial.ResourceNamesSubscribe) != 1 || initial.ResourceNamesSubscribe[0] != "a" ||
-		len(initial.InitialResourceVersions) != 0 {
-		t.Fatalf("reconnect lost demand %v %v", initial, err)
-	}
 	good, err := anypb.New(wrapperspb.String("ok"))
 	if err != nil {
 		t.Fatal(err)
@@ -279,8 +269,27 @@ func TestNACKReconnectReplaysDemandAndWakesAllWaiters(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := c.Snapshot()
-	snapshot.Resources[testType]["a"].Value = nil
-	if len(c.Snapshot().Resources[testType]["a"].Value) == 0 {
+	if !snapshot.Connected {
+		t.Fatal("active ADS stream reported disconnected")
+	}
+	if err := stream.Send(&discovery.DeltaDiscoveryResponse{
+		TypeUrl:   testType,
+		Nonce:     "bad-update",
+		Resources: []*discovery.Resource{{Name: "a", Resource: wrong}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nack, err = stream.Recv()
+	if err != nil || nack.ErrorDetail == nil || nack.ResponseNonce != "bad-update" {
+		t.Fatalf("update NACK %v %v", nack, err)
+	}
+	after := c.Snapshot()
+	if !after.Connected || !after.Synced[testType] ||
+		after.Resources[testType]["a"] != snapshot.Resources[testType]["a"] {
+		t.Fatal("NACK invalidated the accepted publication")
+	}
+	delete(snapshot.Resources[testType], "a")
+	if len(c.Snapshot().Resources[testType]["a"].Value.(*anypb.Any).Value) == 0 {
 		t.Fatal("caller mutated shared cache")
 	}
 	canceled, stop := context.WithCancel(ctx)
