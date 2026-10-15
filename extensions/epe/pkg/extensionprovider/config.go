@@ -88,26 +88,6 @@ func Validate(cfg *configv1.EPEConfig) error {
 	return nil
 }
 
-// ValidateInNamespace validates configuration for an EPE instance. Provider
-// certificate Secrets must stay in its configuration namespace.
-func ValidateInNamespace(cfg *configv1.EPEConfig, namespace string) error {
-	if err := Validate(cfg); err != nil {
-		return err
-	}
-	for _, provider := range cfg.GetExtensionProviders() {
-		_, _, tlsCfg := settings(provider)
-		for _, ref := range []*configv1.TargetReference{
-			tlsCfg.GetCaSecretRef(), tlsCfg.GetClientCertificateSecretRef(),
-		} {
-			if ref != nil && ref.Namespace != "" && ref.Namespace != namespace {
-				return fmt.Errorf("provider %q Secret %q must be in EPEConfig namespace %q, got %q",
-					provider.Name, ref.Name, namespace, ref.Namespace)
-			}
-		}
-	}
-	return nil
-}
-
 func duration(raw string, fallback time.Duration) (time.Duration, error) {
 	if raw == "" {
 		return fallback, nil

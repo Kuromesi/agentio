@@ -16,7 +16,9 @@ package extensionprovider
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,7 +55,7 @@ func watch(
 	if len(defaults) != 0 {
 		cfg = defaults[0]
 	}
-	if err := ValidateInNamespace(cfg, namespace); err != nil {
+	if err := Validate(cfg); err != nil {
 		t.Fatal(err)
 	}
 	cms := kclient.NewFiltered[*corev1.ConfigMap](client, kclient.Filter{})
@@ -66,9 +68,7 @@ func watch(
 			Names:     names,
 			Defaults:  cfg,
 			Apply:     ApplyConfig,
-			Validate: func(cfg *configv1.EPEConfig) error {
-				return ValidateInNamespace(cfg, namespace)
-			},
+			Validate:  Validate,
 		},
 		krt.WithStop(stop),
 	)
@@ -144,8 +144,8 @@ func TestWatchInitialConfiguration(t *testing.T) {
 			} else if token(t, registry, ctx, "") != "environment" {
 				t.Fatal("initial configuration must use the defaults")
 			}
-			if tt.name == "cross-namespace Secret" && liveProvider(registry, "a") != nil {
-				t.Fatal("invalid cross-namespace provider was installed")
+			if tt.name == "cross-namespace Secret" {
+				waitForAvailableProvider(t, registry, "a")
 			}
 			if tt.name == "missing Secret" {
 				registry.mu.Lock()
@@ -355,16 +355,16 @@ func defaultConfig(endpoint string) *configv1.EPEConfig {
 	}
 }
 
-// Files and same-namespace Secrets both enter the effective config's material
+// Files and Secrets from either namespace enter the effective config's material
 // snapshot, so rotation changes the provider instance and invalidates its cache.
 func TestWatchCertificateSources(t *testing.T) {
-	for _, source := range []string{"files", "secret"} {
+	for _, source := range []string{"files", "secret", "cross-namespace legacy secret"} {
 		t.Run(source, func(t *testing.T) {
 			cert, key := certstest.SelfSigned(t, 7001)
 			ca := certstest.New(t).CAPEM()
 			tlsConfig := &configv1.ClientTLS{}
 			client := kube.NewFakeClient()
-			var rotate func()
+			var rotate, renew func()
 			switch source {
 			case "files":
 				dir := t.TempDir()
@@ -388,27 +388,41 @@ func TestWatchCertificateSources(t *testing.T) {
 				write(files.CertificateFile, cert)
 				write(files.PrivateKeyFile, key)
 				rotate = func() { write(tlsConfig.GetCaCertificateFile(), []byte("revoked")) }
-			case "secret":
+			case "secret", "cross-namespace legacy secret":
+				namespace, certKey, keyKey := "system", corev1.TLSCertKey, corev1.TLSPrivateKeyKey
+				if source == "cross-namespace legacy secret" {
+					namespace, certKey, keyKey = "ack-agent-identity", "client.crt", "client.key"
+				}
 				tlsConfig.CaSource = &configv1.ClientTLS_CaSecretRef{
-					CaSecretRef: &configv1.TargetReference{Name: "client", Namespace: "system"},
+					CaSecretRef: &configv1.TargetReference{Name: "client", Namespace: namespace},
 				}
 				tlsConfig.ClientCertificateSource = &configv1.ClientTLS_ClientCertificateSecretRef{
 					ClientCertificateSecretRef: &configv1.TargetReference{
 						Name:      "client",
-						Namespace: "system",
+						Namespace: namespace,
 					},
 				}
 				sec := &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{Name: "client", Namespace: "system"},
-					Data:       map[string][]byte{"ca.crt": ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key},
+					ObjectMeta: metav1.ObjectMeta{Name: "client", Namespace: namespace},
+					Data:       map[string][]byte{"ca.crt": ca, certKey: cert, keyKey: key},
 				}
 				client = kube.NewFakeClient(sec)
+				renew = func() {
+					sec = sec.DeepCopy()
+					sec.Data[certKey], sec.Data[keyKey] = certstest.SelfSigned(t, 7002)
+					if _, err := client.Kube().
+						CoreV1().
+						Secrets(namespace).
+						Update(t.Context(), sec, metav1.UpdateOptions{}); err != nil {
+						t.Fatal(err)
+					}
+				}
 				rotate = func() {
 					sec = sec.DeepCopy()
 					sec.Data["ca.crt"] = []byte("revoked")
 					if _, err := client.Kube().
 						CoreV1().
-						Secrets("system").
+						Secrets(namespace).
 						Update(t.Context(), sec, metav1.UpdateOptions{}); err != nil {
 						t.Fatal(err)
 					}
@@ -425,6 +439,24 @@ func TestWatchCertificateSources(t *testing.T) {
 				t.Fatal("initial sync failed")
 			}
 			first := waitForAvailableProvider(t, registry, "default")
+			if renew != nil {
+				renew()
+				testsupport.Eventually(t, 5*time.Second, func() error {
+					next := liveProvider(registry, "default")
+					if next == nil || next == first || next.err != nil {
+						return fmt.Errorf("renewed certificate has not replaced the provider")
+					}
+					tlsConfig := next.client.Transport.(*http.Transport).TLSClientConfig
+					cert, err := tlsConfig.GetClientCertificate(&tls.CertificateRequestInfo{})
+					if err != nil {
+						return err
+					}
+					if cert.Leaf.SerialNumber.Int64() != 7002 {
+						return fmt.Errorf("renewed certificate not loaded: %v", cert.Leaf.SerialNumber)
+					}
+					return nil
+				})
+			}
 			rotate()
 			testsupport.Eventually(t, 15*time.Second, func() error {
 				next := liveProvider(registry, "default")

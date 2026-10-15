@@ -617,9 +617,10 @@ type isClientTLS_ClientCertificateSource interface {
 }
 
 type ClientTLS_ClientCertificateSecretRef struct {
-	// Client identity from the Secret's fixed tls.crt and tls.key data keys,
-	// including for environment-derived defaults. Missing or empty entries
-	// are unavailable material, handled according to optional.
+	// Client identity from tls.crt and tls.key, including environment defaults.
+	// If neither key exists, reads legacy client.crt and client.key instead.
+	// A present but incomplete, empty, or invalid standard pair never falls back.
+	// Unavailable material is handled according to optional.
 	ClientCertificateSecretRef *TargetReference `protobuf:"bytes,6,opt,name=client_certificate_secret_ref,json=clientCertificateSecretRef,proto3,oneof"`
 }
 
@@ -639,7 +640,7 @@ type TargetReference struct {
 	// Required resource name.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// Defaults to the EPEConfig namespace, not the calling workload's namespace.
-	// Secret references must use this namespace; cross-namespace Secrets are rejected.
+	// An explicit Secret namespace requires list/watch access there for the EPE ServiceAccount.
 	Namespace     string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -691,7 +692,7 @@ func (x *TargetReference) GetNamespace() string {
 
 // ProviderClientCertificateFiles reads a PEM client certificate/key pair from
 // the EPE container filesystem. Both paths are required. File names are arbitrary;
-// the fixed tls.crt/tls.key data keys apply only to Secret references.
+// the tls.crt/tls.key and legacy client.crt/client.key conventions apply only to Secrets.
 type ProviderClientCertificateFiles struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Non-empty path to the PEM client certificate.

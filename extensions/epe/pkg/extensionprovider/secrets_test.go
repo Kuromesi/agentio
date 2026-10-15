@@ -68,7 +68,7 @@ func TestWatchForbiddenSecretDoesNotBlockStartup(t *testing.T) {
 		t.Run(fmt.Sprintf("optional=%t", optional), func(t *testing.T) {
 			cert, key := certstest.SelfSigned(t, 7101)
 			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "material", Namespace: "system"},
+				ObjectMeta: metav1.ObjectMeta{Name: "material", Namespace: "ack-agent-identity"},
 				Data: map[string][]byte{
 					"ca.crt":  certstest.New(t).CAPEM(),
 					"tls.crt": cert,
@@ -91,10 +91,13 @@ func TestWatchForbiddenSecretDoesNotBlockStartup(t *testing.T) {
 			defaults.ExtensionProviders[0].GetCredentialProvider().Tls = &configv1.ClientTLS{
 				Optional: optional,
 				CaSource: &configv1.ClientTLS_CaSecretRef{
-					CaSecretRef: &configv1.TargetReference{Name: "material"},
+					CaSecretRef: &configv1.TargetReference{Name: "material", Namespace: "ack-agent-identity"},
 				},
 				ClientCertificateSource: &configv1.ClientTLS_ClientCertificateSecretRef{
-					ClientCertificateSecretRef: &configv1.TargetReference{Name: "material"},
+					ClientCertificateSecretRef: &configv1.TargetReference{
+						Name:      "material",
+						Namespace: "ack-agent-identity",
+					},
 				},
 			}
 			registry := &Registry{}
@@ -150,7 +153,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
   httpCallout:
     url: https://c.example
     tls:
-      caSecretRef: {namespace: system, name: second}
+      caSecretRef: {namespace: ack-agent-identity, name: material}
 `},
 	}
 	initialConfig := cm.Data["config"]
@@ -158,11 +161,11 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 	fake := client.Kube().(*kubefake.Clientset)
 	// Model Roles restricted by both namespace and resourceNames. An
 	// unfiltered or cluster-wide request must not obtain any material.
-	expected := map[string]bool{"material": true, "second": true}
+	expected := map[string]bool{"system/material": true, "ack-agent-identity/material": true}
 	fake.PrependReactor("list", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
 		selector := action.(ktesting.ListAction).GetListRestrictions().Fields
 		name, exact := selector.RequiresExactMatch("metadata.name")
-		if action.GetNamespace() != "system" || !exact || !expected[name] {
+		if !exact || !expected[action.GetNamespace()+"/"+name] {
 			t.Errorf("unscoped Secret list: namespace=%q selector=%q", action.GetNamespace(), selector)
 			return true, nil, apierrors.NewForbidden(
 				schema.GroupResource{Resource: "secrets"},
@@ -183,7 +186,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 	fake.PrependWatchReactor("secrets", func(action ktesting.Action) (bool, kwatch.Interface, error) {
 		selector := action.(ktesting.WatchAction).GetWatchRestrictions().Fields
 		name, exact := selector.RequiresExactMatch("metadata.name")
-		if action.GetNamespace() != "system" || !exact || !expected[name] {
+		if !exact || !expected[action.GetNamespace()+"/"+name] {
 			t.Errorf("unscoped Secret watch: namespace=%q selector=%q", action.GetNamespace(), selector)
 			return true, nil, apierrors.NewForbidden(
 				schema.GroupResource{Resource: "secrets"},
@@ -219,7 +222,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 		}
 	}
 	// Remove one of the two references to system/material and the sole
-	// reference to system/second. Only the system/second watch should stop.
+	// reference to ack-agent-identity/material. Only that namespace's watch should stop.
 	cm.Data["config"] = `extensionProviders:
 - name: a
   httpCallout:
@@ -231,7 +234,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if !watches["system/second"].IsStopped() {
+		if !watches["ack-agent-identity/material"].IsStopped() {
 			return fmt.Errorf("unused Secret watch has not stopped")
 		}
 		return nil
@@ -247,7 +250,7 @@ func TestWatchSecretsUsesScopedPermissionsAndStopsUnusedWatches(t *testing.T) {
 	waitForAvailableProvider(t, registry, "c")
 	select {
 	case w := <-started:
-		if w.key != "system/second" {
+		if w.key != "ack-agent-identity/material" {
 			t.Fatalf("unexpected restarted watch for %q", w.key)
 		}
 		watches[w.key] = w.watch

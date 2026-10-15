@@ -85,9 +85,6 @@
 {{- if and (eq $source "secret") (or (empty .Values.agentio.epe.credentialProvider.mtls.secret.namespace) (empty .Values.agentio.epe.credentialProvider.mtls.secret.name)) -}}
 {{- fail "epe.credentialProvider.mtls.secret.namespace and name are required when source=secret" -}}
 {{- end -}}
-{{- if and (eq $source "secret") (ne .Values.agentio.epe.credentialProvider.mtls.secret.namespace (include "agentio.namespace" .)) -}}
-{{- fail "epe.credentialProvider.mtls.secret.namespace must match the EPE installation namespace" -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 

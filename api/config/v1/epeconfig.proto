@@ -158,9 +158,10 @@ message ClientTLS {
   // Selects at most one client identity source. Omission provides no client
   // certificate and does not require optional: true for server-only TLS.
   oneof client_certificate_source {
-    // Client identity from the Secret's fixed tls.crt and tls.key data keys,
-    // including for environment-derived defaults. Missing or empty entries
-    // are unavailable material, handled according to optional.
+    // Client identity from tls.crt and tls.key, including environment defaults.
+    // If neither key exists, reads legacy client.crt and client.key instead.
+    // A present but incomplete, empty, or invalid standard pair never falls back.
+    // Unavailable material is handled according to optional.
     TargetReference client_certificate_secret_ref = 6;
     // Client certificate and private key files, configured together.
     ProviderClientCertificateFiles client_certificate_files = 7;
@@ -178,13 +179,13 @@ message TargetReference {
   // Required resource name.
   string name = 1;
   // Defaults to the EPEConfig namespace, not the calling workload's namespace.
-  // Secret references must use this namespace; cross-namespace Secrets are rejected.
+  // An explicit Secret namespace requires list/watch access there for the EPE ServiceAccount.
   string namespace = 2;
 }
 
 // ProviderClientCertificateFiles reads a PEM client certificate/key pair from
 // the EPE container filesystem. Both paths are required. File names are arbitrary;
-// the fixed tls.crt/tls.key data keys apply only to Secret references.
+// the tls.crt/tls.key and legacy client.crt/client.key conventions apply only to Secrets.
 message ProviderClientCertificateFiles {
   // Non-empty path to the PEM client certificate.
   string certificate_file = 1;

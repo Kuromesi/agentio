@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -88,15 +89,30 @@ func TestEPESecretRBACIsNamespaced(t *testing.T) {
 	}
 }
 
-func TestEPESecretSourceRequiresInstallationNamespace(t *testing.T) {
+func TestEPESecretSourceAllowsExplicitNamespace(t *testing.T) {
 	const source = "epe.mode=managed,epe.credentialProvider.mtls.source=secret,epe.credentialProvider.mtls.secret.name=material"
-	requireRenderError(t, "secret.namespace must match the EPE installation namespace",
-		"--set", source+",epe.credentialProvider.mtls.secret.namespace=business")
-	renderAgentio(
-		t,
-		"--namespace",
-		"custom-system",
-		"--set",
-		source+",epe.credentialProvider.mtls.secret.namespace=custom-system",
-	)
+	for _, namespace := range []string{"sandbox-traffic-system", "ack-agent-identity"} {
+		t.Run(namespace, func(t *testing.T) {
+			manifest := renderAgentio(t, "--namespace", "sandbox-traffic-system",
+				"--set", source+",epe.credentialProvider.mtls.secret.namespace="+namespace,
+				"--show-only", "templates/epe/deployment.yaml")
+			var deployment appsv1.Deployment
+			if err := yaml.Unmarshal([]byte(manifest), &deployment); err != nil {
+				t.Fatal(err)
+			}
+			container := deployment.Spec.Template.Spec.Containers[0]
+			if !slices.Contains(container.Args, "-epe-config-namespace=sandbox-traffic-system") {
+				t.Fatalf("configuration namespace lost: %v", container.Args)
+			}
+			for _, env := range container.Env {
+				if env.Name == "CREDENTIAL_PROVIDER_SECRET_NAMESPACE" {
+					if env.Value != namespace {
+						t.Fatalf("Secret namespace = %q, want %q", env.Value, namespace)
+					}
+					return
+				}
+			}
+			t.Fatal("missing Secret namespace environment variable")
+		})
+	}
 }
