@@ -98,10 +98,15 @@ func resolveTLSMaterial(
 		sec, err := readSecret(ref.Namespace, ref.Name)
 		m.CertificateError = err
 		if sec != nil {
-			m.Certificate = sec.Data[corev1.TLSCertKey]
-			m.PrivateKey = sec.Data[corev1.TLSPrivateKeyKey]
+			cert, hasTLSCert := sec.Data[corev1.TLSCertKey]
+			key, hasTLSKey := sec.Data[corev1.TLSPrivateKeyKey]
+			// Preserve legacy Secrets without mixing the two key conventions.
+			if !hasTLSCert && !hasTLSKey {
+				cert, key = sec.Data["client.crt"], sec.Data["client.key"]
+			}
+			m.Certificate, m.PrivateKey = cert, key
 			if len(m.Certificate) == 0 || len(m.PrivateKey) == 0 {
-				m.CertificateError = fmt.Sprintf("Secret %q requires non-empty tls.crt and tls.key",
+				m.CertificateError = fmt.Sprintf("Secret %q requires non-empty tls.crt and tls.key (or client.crt and client.key when both tls keys are absent)",
 					resourceKey(namespace, ref.Namespace, ref.Name))
 			}
 		}

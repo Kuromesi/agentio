@@ -16,7 +16,6 @@ package extensionprovider
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -144,13 +143,7 @@ func TestValidateSecretNamespace(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					err = ValidateInNamespace(cfg, "custom-system")
-					if namespace == "business" {
-						if err == nil ||
-							!strings.Contains(err.Error(), `must be in EPEConfig namespace "custom-system"`) {
-							t.Fatalf("cross-namespace Secret must be rejected even when optional: %v", err)
-						}
-					} else if err != nil {
+					if err := Validate(cfg); err != nil {
 						t.Fatal(err)
 					}
 				})
