@@ -1287,7 +1287,9 @@
           }
         ],
         "traffic_direction": "INBOUND",
-        "internal_listener": {}
+        "internal_listener": {},
+        "listener_filters_timeout": "1s",
+        "continue_on_listener_filters_timeout": true
       }
     },
     {
@@ -1791,9 +1793,10 @@
             }
           }
         ],
-        "listener_filters_timeout": "0s",
+        "listener_filters_timeout": "1s",
         "traffic_direction": "INBOUND",
-        "internal_listener": {}
+        "internal_listener": {},
+        "continue_on_listener_filters_timeout": true
       }
     },
     {
