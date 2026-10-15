@@ -120,7 +120,7 @@ func WatchFiles(stop <-chan struct{}, paths ...string) <-chan struct{} {
 		}
 		seen[path] = true
 		if err := watcher.Add(path); err != nil {
-			logger.V(1).Info("not watching certificate path; relying on the periodic reload instead",
+			logger.Info("not watching certificate path; relying on the periodic reload instead",
 				"path", path, "error", err)
 			continue
 		}
@@ -131,11 +131,11 @@ func WatchFiles(stop <-chan struct{}, paths ...string) <-chan struct{} {
 	go func() {
 		<-stop
 		if err := watcher.Close(); err != nil {
-			logger.V(1).Info("closing the certificate watcher failed", "error", err)
+			logger.Info("closing the certificate watcher failed", "error", err)
 		}
 	}()
 	if watched == 0 {
-		logger.V(1).Info("no certificate path could be watched; reloads rely on the periodic backstop")
+		logger.Info("no certificate path could be watched; reloads rely on the periodic backstop")
 	}
 	return triggers
 }

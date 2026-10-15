@@ -82,7 +82,7 @@ var (
 		"agentio-system",
 		"Namespace of EPEConfig and its referenced Secrets",
 	)
-	logVerbosity = flag.Int("v", 2, "number for the log level verbosity")
+	logVerbosity = flag.Int("v", 0, "number for the log level verbosity")
 
 	grpcPort = flag.Int(
 		"grpc-port",

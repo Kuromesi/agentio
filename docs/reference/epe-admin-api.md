@@ -50,12 +50,12 @@ The PUT body may include `"name":"default"`, so a scope object returned by GET c
 
 | `output_level` value | Effect in EPE |
 | --- | --- |
-| `"debug"` | Enables EPE debug records at `V(4)`, including token-transformation and ext_proc diagnostics. |
-| `"info"` | Restores EPE's default verbosity, equivalent to `-v=2`. |
+| `"debug"` | Enables EPE debug records at `V(1)`, including token-transformation and ext_proc diagnostics. |
+| `"info"` | Restores EPE's default verbosity, equivalent to `-v=0`. |
 | `"warn"`, `"error"` | Sets the corresponding Zap minimum level. |
 | `"none"` | Suppresses all log output. Panic/fatal control flow is unchanged. |
 
-EPE additionally accepts numeric strings from `"0"` through `"127"` for exact logr verbosity, and Zap's `"dpanic"`, `"panic"`, and `"fatal"` thresholds. For example, `"3"` enables verbose records and `"5"` enables trace records. GET reports EPE verbosity 2 as `"info"` and verbosity 4 as `"debug"`; other verbosity thresholds remain numeric, including `"0"` and `"1"`, so reading and writing a scope preserves its exact threshold.
+EPE additionally accepts numeric strings from `"0"` through `"127"` for exact logr verbosity, and Zap's `"dpanic"`, `"panic"`, and `"fatal"` thresholds. For example, `"2"` enables trace records. GET reports verbosity 0 as `"info"` and verbosity 1 as `"debug"`; higher verbosity thresholds remain numeric, so reading and writing a scope preserves its exact threshold. Named levels match the startup `--zap-log-level` flag.
 
 Send exactly one JSON object with a non-empty `output_level` string and an optional `name`. Invalid values, unknown fields, a mismatched `name`, trailing JSON, and bodies larger than 4 KiB return `400` without changing the level. Unknown scopes return `400`; nested scope paths return `404`. Unsupported HTTP methods return `405` with `Allow: GET, HEAD, PUT`.
 

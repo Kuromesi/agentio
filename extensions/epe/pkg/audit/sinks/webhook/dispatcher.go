@@ -172,7 +172,7 @@ func (d *Buffered) dispatchOne(parentCtx context.Context, evt Delivery) {
 	req, err := http.NewRequestWithContext(ctx, evt.Method, evt.URL, bytes.NewReader(evt.Body))
 	if err != nil {
 		DispatchedTotal.WithLabelValues("transport_error").Inc()
-		d.logger.V(1).Info("audit request build failed; dropping",
+		d.logger.Info("audit request build failed; dropping",
 			"error", err, "url", evt.URL)
 		return
 	}
@@ -192,7 +192,7 @@ func (d *Buffered) dispatchOne(parentCtx context.Context, evt Delivery) {
 		} else {
 			DispatchedTotal.WithLabelValues("transport_error").Inc()
 		}
-		d.logger.V(1).Info("audit http call failed",
+		d.logger.Info("audit http call failed",
 			"error", err, "url", evt.URL, "profile", evt.ProfileNN.String(), "rule", evt.RuleName, "entry", evt.EntryName)
 		return
 	}

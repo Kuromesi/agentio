@@ -62,9 +62,9 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 	opts := ctrlzap.Options{Development: false, DestWriter: &out}
 	flag.CommandLine = flag.NewFlagSet(t.Name(), flag.ContinueOnError)
 	opts.BindFlags(flag.CommandLine)
-	// Starting at info installs controller-runtime's production sampler. Runtime
-	// changes must still admit EPE's custom V(4)/V(5) levels through that core.
-	if err := flag.CommandLine.Parse([]string{"--zap-log-level=info"}); err != nil {
+	// Start with the binary defaults, including its actual -v default. Runtime
+	// changes must still admit debug and trace through the production sampler.
+	if err := flag.CommandLine.Parse(nil); err != nil {
 		t.Fatal(err)
 	}
 	level := initLogging(&opts)
@@ -85,6 +85,29 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		}
 		return parsed
 	}
+
+	t.Run("defaults preserve info and suppress debug across stacks", func(t *testing.T) {
+		out.Reset()
+		if level.Level() != zapcore.InfoLevel {
+			t.Fatalf("default level = %v, want info", level.Level())
+		}
+		ctrllog.Log.V(logging.DEFAULT).Info("EPE default")
+		ctrllog.Log.V(logging.DEBUG).Info("hidden EPE debug")
+		ctrllog.Log.V(logging.TRACE).Info("hidden EPE trace")
+		slog.Info("slog default")
+		slog.Debug("hidden slog debug")
+		klog.InfoS("klog default")
+		klog.V(1).InfoS("hidden klog debug")
+		got := records(t)
+		if len(got) != 3 {
+			t.Fatalf("default records = %v, want only three info records", got)
+		}
+		for i, message := range []string{"EPE default", "slog default", "klog default"} {
+			if got[i]["msg"] != message || got[i]["level"] != "info" {
+				t.Errorf("default record = %v, want %q at info", got[i], message)
+			}
+		}
+	})
 
 	t.Run("shared package logs reach the zap encoder", func(t *testing.T) {
 		out.Reset()
@@ -137,7 +160,7 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		// pkg/log filters by its own scope level before any handler sees the
 		// record, and nothing here raises it, so debug stays off however
 		// verbose -v is. That is deliberate: pkg/krt emits debug lines per
-		// event on the recompute path, and -v defaults to 2, which zap admits.
+		// event on the recompute path.
 		if logger.Enabled(t.Context(), slog.LevelDebug) {
 			t.Error("debug records must stay gated in the EPE process")
 		}
@@ -188,12 +211,12 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		existing.V(logging.DEBUG).Info("debug enabled")
 		existing.V(logging.TRACE).Info("trace still hidden")
 		got := records(t)
-		if len(got) != 1 || got[0]["msg"] != "debug enabled" || got[0]["requestID"] != "already-created" {
+		if len(got) != 1 || got[0]["msg"] != "debug enabled" || got[0]["requestID"] != "already-created" || got[0]["level"] != "debug" {
 			t.Fatalf("debug update records = %v", got)
 		}
 
 		out.Reset()
-		update("5")
+		update("2")
 		existing.V(logging.TRACE).Info("trace enabled")
 		if got := records(t); len(got) != 1 || got[0]["msg"] != "trace enabled" {
 			t.Fatalf("trace update records = %v", got)
@@ -217,14 +240,21 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		out.Reset()
 		update("info")
 		existing.V(logging.DEFAULT).Info("restored EPE default")
-		existing.V(logging.VERBOSE).Info("verbose hidden after info reset")
 		existing.V(logging.DEBUG).Info("debug hidden after info reset")
 		existing.Info("restored logr")
 		existingSlog.Info("restored slog")
+		existingSlog.Debug("hidden slog debug after info reset")
 		klog.InfoS("restored klog")
+		klog.V(1).InfoS("hidden klog debug after info reset")
 		shared.Info("restored shared package")
-		if got := records(t); len(got) != 5 {
+		got = records(t)
+		if len(got) != 5 {
 			t.Fatalf("restored logger records = %v", got)
+		}
+		for _, record := range got {
+			if record["level"] != "info" {
+				t.Errorf("restored record = %v, want info", record)
+			}
 		}
 
 		out.Reset()
@@ -240,8 +270,9 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		out.Reset()
 		update("1")
 		existingSlog.Debug("slog debug enabled")
-		existing.V(logging.DEBUG).Info("EPE V4 still hidden")
-		if got := records(t); len(got) != 1 || got[0]["msg"] != "slog debug enabled" {
+		existing.V(logging.DEBUG).Info("EPE debug enabled")
+		existing.V(logging.TRACE).Info("EPE trace still hidden")
+		if got := records(t); len(got) != 2 || got[0]["msg"] != "slog debug enabled" || got[1]["msg"] != "EPE debug enabled" {
 			t.Fatalf("verbosity 1 records = %v", got)
 		}
 	})
@@ -253,12 +284,13 @@ func TestNewLogLevelHonorsStartupFlags(t *testing.T) {
 		args []string
 		want zapcore.Level
 	}{
-		{name: "default", want: -2},
-		{name: "verbosity", args: []string{"-v=4"}, want: -4},
+		{name: "default", want: zapcore.InfoLevel},
+		{name: "debug verbosity", args: []string{"-v=1"}, want: zapcore.DebugLevel},
+		{name: "trace verbosity", args: []string{"-v=2"}, want: -2},
 		{name: "info overrides verbosity", args: []string{"-v=5", "--zap-log-level=info"}, want: zapcore.InfoLevel},
 		{name: "numeric zap level", args: []string{"--zap-log-level=3", "-v=5"}, want: -3},
 		{name: "named zap level", args: []string{"--zap-log-level=debug"}, want: zapcore.DebugLevel},
-		{name: "development preserves verbosity", args: []string{"--zap-devel"}, want: -2},
+		{name: "development preserves verbosity", args: []string{"--zap-devel"}, want: zapcore.InfoLevel},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			previousFlags, previousVerbosity := flag.CommandLine, *logVerbosity
@@ -267,7 +299,7 @@ func TestNewLogLevelHonorsStartupFlags(t *testing.T) {
 				*logVerbosity = previousVerbosity
 			})
 			flag.CommandLine = flag.NewFlagSet(t.Name(), flag.ContinueOnError)
-			flag.IntVar(logVerbosity, "v", 2, "log verbosity")
+			flag.IntVar(logVerbosity, "v", 0, "log verbosity")
 			opts := ctrlzap.Options{}
 			opts.BindFlags(flag.CommandLine)
 			if err := flag.CommandLine.Parse(tc.args); err != nil {

@@ -136,8 +136,7 @@ func outputLevelName(level zapcore.Level) string {
 		return "none"
 	}
 	if level <= zapcore.InfoLevel {
-		// Preserve exact verbosity, including Zap flag values 0 and 1:
-		// output_level's named info/debug mean EPE verbosity 2 and 4.
+		// Preserve exact verbosity for levels more detailed than debug.
 		return strconv.Itoa(-int(level))
 	}
 	return level.String()

@@ -212,7 +212,7 @@ func (p *dynamicProvider) complain(err error) {
 	logger := ctrllog.Log.WithName("certs")
 	if p.currentCert() == nil {
 		// Never had an identity: the expected state when nothing is mounted.
-		logger.V(1).Info("no mTLS material loaded yet", "source", p.src.Name(), "reason", msg)
+		logger.Info("no mTLS material loaded yet", "source", p.src.Name(), "reason", msg)
 		return
 	}
 	logger.Error(err, "reloading mTLS material failed; keeping the previous certificate",

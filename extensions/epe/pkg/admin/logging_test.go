@@ -27,7 +27,7 @@ import (
 )
 
 func TestLoggingLevelUpdates(t *testing.T) {
-	level := zap.NewAtomicLevelAt(zapcore.Level(-2))
+	level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
 	initial := loggingRequest(h, http.MethodGet, "/debug/logging", "")
 	assertScopeResponse(t, initial, "info", true)
@@ -37,13 +37,13 @@ func TestLoggingLevelUpdates(t *testing.T) {
 		output string
 		level  zapcore.Level
 	}{
-		{input: "4", output: "debug", level: -4},
-		{input: "2", output: "info", level: -2},
+		{input: "4", output: "4", level: -4},
+		{input: "2", output: "2", level: -2},
 		{input: "3", output: "3", level: -3},
 		{input: "5", output: "5", level: -5},
 		{input: "127", output: "127", level: -127},
-		{input: "0", output: "0", level: zapcore.InfoLevel},
-		{input: "1", output: "1", level: zapcore.DebugLevel},
+		{input: "0", output: "info", level: zapcore.InfoLevel},
+		{input: "1", output: "debug", level: zapcore.DebugLevel},
 		{input: "dpanic", output: "dpanic", level: zapcore.DPanicLevel},
 		{input: "panic", output: "panic", level: zapcore.PanicLevel},
 		{input: "fatal", output: "fatal", level: zapcore.FatalLevel},
@@ -68,7 +68,7 @@ func TestLoggingLevelUpdates(t *testing.T) {
 }
 
 func TestAgentiodLoggingAPI(t *testing.T) {
-	level := zap.NewAtomicLevelAt(-2)
+	level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	h := NewHandler(Options{EnableDebug: true, LogLevel: &level})
 	for _, path := range []string{"/debug/logging", "/debug/logging/", "/debug/logging/default"} {
 		for _, tc := range []struct {
@@ -76,12 +76,12 @@ func TestAgentiodLoggingAPI(t *testing.T) {
 			want  string
 			level zapcore.Level
 		}{
-			{input: "debug", want: "debug", level: -4},
-			{input: "info", want: "info", level: -2},
+			{input: "debug", want: "debug", level: zapcore.DebugLevel},
+			{input: "info", want: "info", level: zapcore.InfoLevel},
 			{input: "warn", want: "warn", level: zapcore.WarnLevel},
 			{input: "error", want: "error", level: zapcore.ErrorLevel},
 			{input: "none", want: "none", level: disabledLoggingLevel},
-			{input: " DEBUG ", want: "debug", level: -4},
+			{input: " DEBUG ", want: "debug", level: zapcore.DebugLevel},
 		} {
 			for _, name := range []string{"", "default"} {
 				body := `{"name":"` + name + `","output_level":"` + tc.input + `"}`
