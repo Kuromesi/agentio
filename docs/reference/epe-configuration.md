@@ -108,7 +108,7 @@ The generated `5s` message timeout must remain above EPE's default `--plugin-bud
 | `--observe-responses` | `false` | Requests response headers through ext_proc so audit can record upstream status. |
 | `--plugin-budget` | `4.5s` | Per-evaluation-phase limit; `0` disables it. Keep it below Envoy's ext_proc message timeout. |
 | `--kubeconfig` | empty | Kubeconfig path; empty selects in-cluster configuration. |
-| `--v` | `2` | Log verbosity unless `--zap-log-level` is supplied. |
+| `--v` | `0` | Log verbosity: 0 (info), 1 (debug), 2 (trace), unless `--zap-log-level` is supplied. |
 | `--audit-log-buffer-size` | `4096` | Access-log queue capacity; full queues drop entries. |
 | `--audit-webhook-buffer-size` | `8192` | Audit-webhook queue capacity; full queues drop events. |
 | `--audit-webhook-workers` | `96` | Audit-webhook worker count. |

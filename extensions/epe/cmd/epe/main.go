@@ -82,7 +82,7 @@ var (
 		"agentio-system",
 		"Namespace of EPEConfig and its referenced Secrets",
 	)
-	logVerbosity = flag.Int("v", 2, "number for the log level verbosity")
+	logVerbosity = flag.Int("v", 0, "number for the log level verbosity")
 
 	grpcPort = flag.Int(
 		"grpc-port",
@@ -448,7 +448,37 @@ func initLogging(opts *zap.Options) uberzap.AtomicLevel {
 		opts.StacktraceLevel = uberzap.NewAtomicLevelAt(zapcore.DPanicLevel)
 	}
 
-	raw := zap.NewRaw(zap.UseFlagOptions(opts), zap.RawZapOpts(uberzap.AddCaller()))
+	// controller-runtime's NewRaw adds sampling in production mode. Access
+	// logs share this core and must not lose records behind the audit queue's
+	// drop accounting, so build the core without a sampler.
+	if opts.DestWriter == nil {
+		opts.DestWriter = os.Stderr
+	}
+	if opts.Encoder == nil {
+		if opts.TimeEncoder == nil {
+			opts.TimeEncoder = zapcore.RFC3339TimeEncoder
+		}
+		encoderOptions := append([]zap.EncoderConfigOption{func(cfg *zapcore.EncoderConfig) {
+			cfg.EncodeTime = opts.TimeEncoder
+		}}, opts.EncoderConfigOptions...)
+		if opts.NewEncoder != nil {
+			opts.Encoder = opts.NewEncoder(encoderOptions...)
+		} else if opts.Development {
+			zap.ConsoleEncoder(encoderOptions...)(opts)
+		} else {
+			zap.JSONEncoder(encoderOptions...)(opts)
+		}
+	}
+	sink := zapcore.Lock(zapcore.AddSync(opts.DestWriter))
+	rawOptions := append([]uberzap.Option{
+		uberzap.AddCaller(), uberzap.AddStacktrace(opts.StacktraceLevel), uberzap.ErrorOutput(sink),
+	}, opts.ZapOpts...)
+	if opts.Development {
+		rawOptions = append(rawOptions, uberzap.Development())
+	}
+	raw := uberzap.New(zapcore.NewCore(
+		&zap.KubeAwareEncoder{Encoder: opts.Encoder, Verbose: opts.Development}, sink, level,
+	), rawOptions...)
 	ctrllog.SetLogger(zapr.NewLogger(raw))
 
 	// Shared agentio packages linked into this binary — pkg/krt, pkg/kube,

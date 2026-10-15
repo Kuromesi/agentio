@@ -13,10 +13,10 @@
 // limitations under the License.
 package logging
 
-// Log level constants for use with logr.V().
+// Log level constants for use with logr.V(). V(0) maps to Zap Info and V(1)
+// to Zap Debug, matching both --zap-log-level and the runtime logging API.
 const (
-	DEFAULT = 2
-	VERBOSE = 3
-	DEBUG   = 4
-	TRACE   = 5
+	DEFAULT = 0
+	DEBUG   = 1
+	TRACE   = 2
 )

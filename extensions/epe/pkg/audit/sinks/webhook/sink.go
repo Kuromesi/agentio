@@ -57,7 +57,7 @@ func (s *Sink) Enqueue(e audit.Event) {
 			reason = "invalid_scheme"
 		}
 		DroppedTotal.WithLabelValues(reason).Inc()
-		s.logger.V(1).Info("audit url render failed; dropping",
+		s.logger.Info("audit url render failed; dropping",
 			"error", err, "profile", e.ProfileNN.String(), "rule", e.RuleName, "entry", e.ActionName)
 		return
 	}
@@ -65,7 +65,7 @@ func (s *Sink) Enqueue(e audit.Event) {
 	headers, err := RenderHeaders(e.Audit, scope)
 	if err != nil {
 		DroppedTotal.WithLabelValues("render_header").Inc()
-		s.logger.V(1).Info("audit header render failed; dropping",
+		s.logger.Info("audit header render failed; dropping",
 			"error", err, "profile", e.ProfileNN.String(), "rule", e.RuleName, "entry", e.ActionName)
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Sink) Enqueue(e audit.Event) {
 			reason = "body_too_large"
 		}
 		DroppedTotal.WithLabelValues(reason).Inc()
-		s.logger.V(1).Info("audit body render failed; dropping",
+		s.logger.Info("audit body render failed; dropping",
 			"error", err, "profile", e.ProfileNN.String(), "rule", e.RuleName, "entry", e.ActionName)
 		return
 	}

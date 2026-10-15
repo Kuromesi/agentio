@@ -130,9 +130,9 @@ func (s *Server) HandleRequestHeaders(
 		return nil, err
 	}
 
-	// Single VERBOSE summary line per request — pod identity, request
+	// Single DEBUG summary line per request — pod identity, request
 	// identity, and resolved unit count.
-	if loggerV := logger.V(logging.VERBOSE); loggerV.Enabled() {
+	if loggerV := logger.V(logging.DEBUG); loggerV.Enabled() {
 		loggerV.Info("handling request",
 			"pod", peer.Pod.Name, "namespace", peer.Pod.Namespace,
 			"method", req.Method, "host", req.Host, "port", req.Port, "path", req.Path,
