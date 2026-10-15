@@ -18,108 +18,80 @@ import (
 	"sync"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/openkruise/agentio/pkg/cache"
 )
 
-// cacheKey is the composite key for a cached credential.
 type cacheKey struct {
 	credentialProviderName string
 	resourceID             string
 }
 
-// entry is the internal representation stored in the LRU.
-type entry[V any] struct {
-	value     V
-	expiresAt time.Time
-}
-
-// ttlCache is the mechanism shared by Cache and STSCache: an LRU of values
-// with absolute expirations. The two public caches differ only in how the
-// expiration is derived.
-//
-// A plain Mutex (not RWMutex) is intentional: every access — including Get —
-// mutates the LRU recency order, and holding one lock across the
-// get/expired-check/remove sequence keeps a concurrent Set from having its
-// fresh entry deleted by a stale expired-check from another goroutine.
+// ttlCache adapts provider keys and lifetime calculations to the shared cache.
+// mu serializes the test clock with cache operations; no background sweep runs here.
 type ttlCache[V any] struct {
-	mu  sync.Mutex
-	lru *lru.Cache[cacheKey, entry[V]]
-	now func() time.Time
+	mu    sync.Mutex
+	store *cache.Cache[cacheKey, V]
+	now   func() time.Time
 }
 
-// newTTLCache creates the backing LRU. maxSize must be positive; callers
-// clamp before calling.
 func newTTLCache[V any](maxSize int) *ttlCache[V] {
-	l, err := lru.New[cacheKey, entry[V]](maxSize)
+	c := &ttlCache[V]{now: time.Now}
+	store, err := cache.NewBuilder[cacheKey, V]().
+		WithLRU(maxSize).
+		WithClock(func() time.Time { return c.now() }).
+		Build()
 	if err != nil {
-		// maxSize <= 0 is the only error case, already guarded by callers.
-		panic(fmt.Sprintf("failed to create LRU cache: %v", err))
+		panic(fmt.Sprintf("create credential cache: %v", err))
 	}
-	return &ttlCache[V]{lru: l, now: time.Now}
+	c.store = store
+	return c
 }
 
-// SetClock replaces the cache's time source. For tests.
+// SetClock replaces the time source for tests.
 func (c *ttlCache[V]) SetClock(now func() time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = now
 }
 
-// Get returns the value for a live entry and promotes it in the LRU. Expired
-// entries are removed immediately.
-func (c *ttlCache[V]) Get(credentialProviderName, resourceID string) (V, bool) {
+// Get returns a live credential and updates its LRU position.
+func (c *ttlCache[V]) Get(provider, resource string) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	var zero V
-	key := cacheKey{credentialProviderName: credentialProviderName, resourceID: resourceID}
-	e, ok := c.lru.Get(key)
-	if !ok {
-		return zero, false
-	}
-	if c.now().After(e.expiresAt) {
-		c.lru.Remove(key)
-		return zero, false
-	}
-	return e.value, true
+	return c.store.Get(cacheKey{credentialProviderName: provider, resourceID: resource})
 }
 
-// SetWithTTL stores a value expiring ttl from now on the cache's clock. A
-// non-positive ttl stores an entry that is already expired, which is how a
-// non-positive fallback TTL disables caching.
-func (c *ttlCache[V]) SetWithTTL(credentialProviderName, resourceID string, value V, ttl time.Duration) {
+// SetWithTTL replaces a credential, or removes it when caching is disabled.
+func (c *ttlCache[V]) SetWithTTL(provider, resource string, value V, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	key := cacheKey{credentialProviderName: credentialProviderName, resourceID: resourceID}
-	c.lru.Add(key, entry[V]{value: value, expiresAt: c.now().Add(ttl)})
+	key := cacheKey{credentialProviderName: provider, resourceID: resource}
+	if ttl <= 0 {
+		c.store.Remove(key)
+		return
+	}
+	c.store.SetWithExpiration(key, value, c.now().Add(ttl))
 }
 
-// SetIfFresh stores a value with an absolute expiration only while that
-// expiration is still in the future, and reports whether it was stored.
-func (c *ttlCache[V]) SetIfFresh(credentialProviderName, resourceID string, value V, expiresAt time.Time) bool {
+// SetIfFresh retains a credential only until its provider-derived deadline.
+func (c *ttlCache[V]) SetIfFresh(provider, resource string, value V, expiresAt time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if c.now().After(expiresAt) {
+	// A missing credential deadline is not an immortal credential.
+	if expiresAt.IsZero() {
 		return false
 	}
-	key := cacheKey{credentialProviderName: credentialProviderName, resourceID: resourceID}
-	c.lru.Add(key, entry[V]{value: value, expiresAt: expiresAt})
-	return true
+	return c.store.SetWithExpiration(cacheKey{credentialProviderName: provider, resourceID: resource}, value, expiresAt)
 }
 
-// Delete removes an entry from the cache.
-func (c *ttlCache[V]) Delete(credentialProviderName, resourceID string) {
+// Delete removes a credential.
+func (c *ttlCache[V]) Delete(provider, resource string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	c.lru.Remove(cacheKey{credentialProviderName: credentialProviderName, resourceID: resourceID})
+	c.store.Remove(cacheKey{credentialProviderName: provider, resourceID: resource})
 }
 
-// Len returns the current number of entries, including ones not yet reaped.
+// Len returns retained entries, including ones not yet cleaned.
 func (c *ttlCache[V]) Len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lru.Len()
+	return c.store.Len()
 }

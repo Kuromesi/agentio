@@ -17,7 +17,7 @@
 // expirations (ttlCache) — and differ only in how the expiration is derived:
 // Cache applies a fallback TTL per entry, STSCache the provider's expiration
 // timestamp minus a safety margin. The LRU backing uses
-// github.com/hashicorp/golang-lru/v2.
+// the shared pkg/cache builder.
 package tokencache
 
 import "time"
