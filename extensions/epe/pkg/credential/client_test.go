@@ -60,7 +60,9 @@ func TestCredentialFailuresDoNotExposeResponseBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.body)
+				if _, err := fmt.Fprint(w, tc.body); err != nil {
+					t.Errorf("write credential response: %v", err)
+				}
 			}))
 			defer server.Close()
 			var out bytes.Buffer

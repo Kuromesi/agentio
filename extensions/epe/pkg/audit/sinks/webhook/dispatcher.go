@@ -23,9 +23,10 @@ import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/types"
 
+	"istio.io/istio/pkg/env"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpclient"
-	"istio.io/istio/pkg/env"
 )
 
 // DefaultBufferSize is the dispatcher channel capacity.
@@ -192,8 +193,19 @@ func (d *Buffered) dispatchOne(parentCtx context.Context, evt Delivery) {
 		} else {
 			DispatchedTotal.WithLabelValues("transport_error").Inc()
 		}
-		d.logger.Info("audit http call failed",
-			"error", err, "url", evt.URL, "profile", evt.ProfileNN.String(), "rule", evt.RuleName, "entry", evt.EntryName)
+		d.logger.Info(
+			"audit http call failed",
+			"error",
+			err,
+			"url",
+			evt.URL,
+			"profile",
+			evt.ProfileNN.String(),
+			"rule",
+			evt.RuleName,
+			"entry",
+			evt.EntryName,
+		)
 		return
 	}
 	httpclient.DrainForReuse(resp)
