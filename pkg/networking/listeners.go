@@ -279,9 +279,10 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFilters:    inspectorsHTTPFirst,
 		FilterChains:       internalChains,
 		FilterChainMatcher: internalChainMatcher,
-		// Disable the protocol detection timeout so connections waiting for
-		// application data are not closed by Envoy's default 15s timeout.
-		ListenerFiltersTimeout: durationpb.New(0),
+		// Server-first protocols cannot supply bytes until the TCP chain connects
+		// upstream. Bound inspection and let unclassified connections fall through.
+		ListenerFiltersTimeout:           durationpb.New(time.Second),
+		ContinueOnListenerFiltersTimeout: true,
 	}
 	mainForward := &listenerv3.Listener{
 		Name: MainForward,
@@ -308,6 +309,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 			},
 		},
 		FilterChainMatcher: b.protocolMatcher(b.toChain(forwardTCPChain)),
+		// Decrypted application traffic can also be server-first.
+		ListenerFiltersTimeout:           durationpb.New(time.Second),
+		ContinueOnListenerFiltersTimeout: true,
 	}
 	for _, listener := range []*listenerv3.Listener{connect, mainInternal, mainForward} {
 		if config.telemetry != nil {

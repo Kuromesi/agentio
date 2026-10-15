@@ -247,19 +247,6 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	}
 	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
 
-	for _, name := range []string{MainInternal, MainForward} {
-		listener := listeners[name]
-		if name == MainInternal {
-			if timeout := listener.GetListenerFiltersTimeout(); timeout == nil || timeout.AsDuration() != 0 {
-				t.Errorf("main_internal must explicitly disable the protocol detection timeout, got %v", timeout)
-			}
-		} else if listener.GetListenerFiltersTimeout() != nil {
-			t.Errorf("listener %s must retain Envoy's default listener-filter timeout", name)
-		}
-		if listener.GetContinueOnListenerFiltersTimeout() {
-			t.Errorf("listener %s must not continue on listener-filter timeout", name)
-		}
-	}
 	for name, want := range map[string][]string{
 		MainInternal: {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector", "envoy.filters.listener.tls_inspector"},
 		MainForward:  {"envoy.filters.listener.original_dst", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.http_inspector"},
@@ -308,5 +295,54 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 		if len(hcm.GetUpgradeConfigs()) != 1 || hcm.GetUpgradeConfigs()[0].GetUpgradeType() != "websocket" {
 			t.Errorf("listener %s HCM websocket upgrades = %+v", name, hcm.GetUpgradeConfigs())
 		}
+	}
+}
+
+// A silent client must reach TCP forwarding after inspection expires, including
+// when TLS termination or SNI policy changes the listener's matcher tree.
+func TestGatewayServerFirstFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		sniPolicy      bool
+		tlsTermination *configv1.TlsTerminationConfig
+	}{
+		{name: "passthrough"},
+		{name: "static TLS", tlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"*.example.com"}}},
+		{name: "SNI policy", sniPolicy: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			test.SetForTest(t, &features.EnableSNITrafficPolicy, tc.sniPolicy)
+			resources, err := Build(Inputs{
+				DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+				TrustDomain:      "cluster.local",
+				Gateway:          testGateway(&configv1.EgressGateway{TlsTermination: tc.tlsTermination}),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			for _, name := range []string{MainInternal, MainForward} {
+				listener := listeners[name]
+				if timeout := listener.GetListenerFiltersTimeout(); timeout == nil || timeout.AsDuration() != time.Second {
+					t.Errorf("%s inspection timeout = %v, want 1s", name, timeout)
+				}
+				if !listener.GetContinueOnListenerFiltersTimeout() {
+					t.Errorf("%s must continue after inspection times out", name)
+				}
+				// No SNI, transport protocol, or application protocol was detected:
+				// follow the unmatched branch at each layer to the selected chain.
+				fallback := listener.GetFilterChainMatcher().GetOnNoMatch()
+				for fallback.GetMatcher() != nil {
+					fallback = fallback.GetMatcher().GetOnNoMatch()
+				}
+				if got := fallback.GetAction().GetName(); got != forwardTCPChain {
+					t.Fatalf("%s silent-client chain = %q, want %q", name, got, forwardTCPChain)
+				}
+				chain := findFilterChain(t, listener, forwardTCPChain)
+				if got := chain.GetFilters()[len(chain.GetFilters())-1].GetName(); got != "envoy.filters.network.tcp_proxy" {
+					t.Errorf("%s fallback ends with %q, want TCP proxy", name, got)
+				}
+			}
+		})
 	}
 }

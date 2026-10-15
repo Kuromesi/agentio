@@ -4,6 +4,22 @@ This task routes outbound traffic for `www.example.com` from an enrolled workloa
 
 You can create the gateway as a static chart workload or with the Kubernetes Gateway API. Both methods support sidecar, ambient, and OpenKruise Agents onboarding paths. Choose one method, then configure the common routing policy.
 
+## Protocol detection and server-first connections
+
+The gateway waits up to one second for protocol detection, both inside the
+CONNECT tunnel and after TLS termination. If inspection times out, the gateway
+continues with the protocol information available. Connections with no detected
+protocol use TCP forwarding, allowing server-first protocols such as SMTP and
+MySQL to receive the server greeting without sending application data first.
+This adds about one second before the upstream connection is opened at each
+inspection stage that times out.
+
+A client that delays its first HTTP request or TLS ClientHello beyond this
+window can also enter TCP forwarding. The connection stays on that chain;
+HTTP inspection and policies that depend on detecting TLS/SNI do not apply to
+traffic classified as opaque TCP. Policies for successfully detected protocols
+retain their normal behavior.
+
 ## Before you begin
 
 Complete one onboarding path from [Getting started](../getting-started.md). The selected guide exports these variables:
