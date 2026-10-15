@@ -245,7 +245,7 @@ func run() error {
 			}
 		}()
 		resourceStore = resourcestore.NewAggregate(xdsstore.New(xds))
-		trafficpolicy.RegisterQueries(resourceStore)
+		trafficpolicy.RegisterQueries(resourceStore, *xdsClusterID)
 		group.Add(runnable.Func(resourceStore.Run))
 		group.Add(runnable.Func(xds.Run))
 	}
