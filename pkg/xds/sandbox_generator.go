@@ -40,51 +40,10 @@ func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest)
 		selected := selectSandboxResources(request.Scope, request.Snapshot, request.TypeURL, request.Subscription)
 		return diffSubscribed(request.Subscription, selected, request.SubscribedNames), nil
 	}
-	// Recompute visibility when attester Workloads change. Inline policy changes
-	// update the Sandbox; shared Workload policies are independent.
-	scopeChanged := scopedWorkloadChanged(request.Scope, request.Update)
-	if request.Scope.Class == model.ClientEgressGateway {
-		scopeChanged = false
-	}
-	if !scopeChanged {
-		changes := request.Update.ReadOnlyChangesForType(request.TypeURL)
-		if !request.Subscription.Wildcard() {
-			changes = request.Update.ChangesForNames(request.TypeURL, request.Subscription.Names())
-		}
-		candidates := sets.New[model.ResourceKey]()
-		for _, change := range changes {
-			candidates.Insert(change.Key)
-		}
-		visible := func(snapshot model.ResourceSet) func(model.Resource) bool {
-			return func(r model.Resource) bool {
-				return request.Subscription.allows(r) && sandboxVisible(request.Scope, snapshot, r.Key.Name)
-			}
-		}
-
-		selected, removed := diffCandidateTransition(
-			candidates,
-			request.Update.Before().Get,
-			request.Update.After().Get,
-			visible(request.Update.Before()),
-			visible(request.Update.After()),
-		)
-		return newSortedDelta(selected, removed, false), nil
-	}
-	before := selectSandboxResources(request.Scope, request.Update.Before(), request.TypeURL, request.Subscription)
-	after := selectSandboxResources(request.Scope, request.Update.After(), request.TypeURL, request.Subscription)
-	selected := make(map[string]model.Resource)
-	removed := sets.New[string]()
-	for name, r := range after {
-		if old, ok := before[name]; !ok || old.Hash != r.Hash {
-			selected[name] = r
-		}
-	}
-	for name := range before {
-		if _, ok := after[name]; !ok {
-			removed.Insert(name)
-		}
-	}
-	return newSortedDelta(selected, removed, false), nil
+	return generateIncremental(request, func(resource model.Resource) bool {
+		return request.Subscription.allows(resource) &&
+			sandboxResourceVisible(request.Scope, request.Snapshot, resource)
+	}, nil), nil
 }
 
 func scopedSandboxNames(scope model.ClientScope, snapshot model.ResourceSet) sets.Set[string] {

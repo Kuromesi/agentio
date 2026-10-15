@@ -227,11 +227,18 @@ func TestAuthorizationPolicyOnlyDeltaKeepsRenameAndRemovalSemantics(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			delta := generateAuthorizationIncremental(
 				GenerationRequest{
-					Scope:        scope,
-					TypeURL:      model.WorkloadAuthorizationType,
-					Subscription: SubscriptionView{wildcard: test.names == nil, names: test.names},
-					Snapshot:     after,
-					Update:       updateBetween(before, after, before.Diff(after)),
+					Scope:   scope,
+					TypeURL: model.WorkloadAuthorizationType,
+					Subscription: initializedSubscription(
+						t,
+						AuthorizationGenerator{},
+						scope,
+						model.WorkloadAuthorizationType,
+						before,
+						SubscriptionView{wildcard: test.names == nil, names: test.names},
+					),
+					Snapshot: after,
+					Update:   updateBetween(before, after, before.Diff(after)),
 				},
 			)
 			if !slices.Equal(selectedNames(delta.Resources), test.selected) ||
@@ -251,9 +258,14 @@ func TestAuthorizationPolicyOnlyDeltaKeepsRenameAndRemovalSemantics(t *testing.T
 		GenerationRequest{
 			Scope:   scope,
 			TypeURL: model.WorkloadAuthorizationType,
-			Subscription: SubscriptionView{
-				wildcard: true,
-			},
+			Subscription: initializedSubscription(
+				t,
+				AuthorizationGenerator{},
+				scope,
+				model.WorkloadAuthorizationType,
+				after,
+				SubscriptionView{wildcard: true},
+			),
 			Snapshot: empty,
 			Update:   updateBetween(after, empty, after.Diff(empty)),
 		},

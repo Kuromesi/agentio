@@ -118,9 +118,8 @@ func (s *Store) Apply(changes []model.ResourceChange) (Publication, error) {
 func (s *Store) Notify() {
 	s.mu.Lock()
 	s.notifyLocked(Update{
-		version:    s.current.Version(),
-		transition: &publicationTransition{before: s.current, after: s.current},
-		full:       true,
+		version: s.current.Version(),
+		full:    true,
 	})
 	s.mu.Unlock()
 }
@@ -129,10 +128,9 @@ func (s *Store) Notify() {
 func (s *Store) NotifyType(typeURL string) {
 	s.mu.Lock()
 	s.notifyLocked(Update{
-		version:    s.current.Version(),
-		transition: &publicationTransition{before: s.current, after: s.current},
-		full:       true,
-		fullTypes:  sets.New(typeURL),
+		version:   s.current.Version(),
+		full:      true,
+		fullTypes: sets.New(typeURL),
 	})
 	s.mu.Unlock()
 }

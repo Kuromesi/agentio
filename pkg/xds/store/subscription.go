@@ -95,11 +95,6 @@ func (s *Store) affectedSubscribersLocked(update Update) map[uint64]*subscriber 
 	for typeURL := range update.affectedTypes {
 		affectedTypes.Insert(typeURL)
 	}
-	if update.affectedTypes == nil {
-		for key := range update.changes {
-			affectedTypes.Insert(key.TypeURL)
-		}
-	}
 	for typeURL := range affectedTypes {
 		maps.Copy(result, s.subscribersByType[typeURL])
 	}

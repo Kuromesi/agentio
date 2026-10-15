@@ -17,9 +17,6 @@ package xds
 import (
 	"context"
 	"fmt"
-	"sort"
-
-	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -52,41 +49,7 @@ func generateSnapshotDiff(request GenerationRequest) GeneratedDelta {
 }
 
 func generateSnapshotIncremental(request GenerationRequest) GeneratedDelta {
-	var changes []model.ResourceChange
-	if request.Subscription.Wildcard() {
-		changes = request.Update.ReadOnlyChangesForType(request.TypeURL)
-	} else {
-		changes = request.Update.ChangesForNames(request.TypeURL, request.Subscription.Names())
-	}
-
-	selected := make(map[string]model.Resource, len(changes))
-	removedSet := sets.New[string]()
-	for _, change := range changes {
-		oldSelected := change.Old != nil && scopeAllows(request.Scope, *change.Old) && request.Subscription.allows(*change.Old)
-		newSelected := change.New != nil && scopeAllows(request.Scope, *change.New) && request.Subscription.allows(*change.New)
-		if newSelected {
-			selected[change.New.XDSName] = *change.New
-		}
-		if oldSelected && (!newSelected || change.Old.XDSName != change.New.XDSName) {
-			if _, sent := request.Subscription.SentVersion(change.Old.XDSName); sent {
-				removedSet.Insert(change.Old.XDSName)
-			}
-		}
-	}
-
-	resources := make([]model.Resource, 0, len(selected))
-	for name, resource := range selected {
-		removedSet.Delete(name)
-		if version, found := request.Subscription.SentVersion(name); found && version == resource.Hash {
-			continue
-		}
-		resources = append(resources, resource)
-	}
-	sort.Slice(resources, func(i, j int) bool { return resources[i].XDSName < resources[j].XDSName })
-	removed := make([]string, 0, len(removedSet))
-	for name := range removedSet {
-		removed = append(removed, name)
-	}
-	sort.Strings(removed)
-	return GeneratedDelta{Resources: resources, Removed: removed}
+	return generateIncremental(request, func(resource model.Resource) bool {
+		return scopeAllows(request.Scope, resource) && request.Subscription.allows(resource)
+	}, nil)
 }

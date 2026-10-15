@@ -238,11 +238,18 @@ func TestSharedTrafficPolicyLastWorkloadReferenceRemoval(t *testing.T) {
 			removed bool
 		}{{both, one, false}, {one, none, true}} {
 			delta, err := (TrafficPolicyGenerator{}).Generate(t.Context(), GenerationRequest{
-				Scope:        scope,
-				TypeURL:      model.TrafficPolicyType,
-				Subscription: SubscriptionView{wildcard: true},
-				Snapshot:     tc.after,
-				Update:       updateBetween(tc.before, tc.after, tc.before.Diff(tc.after)),
+				Scope:   scope,
+				TypeURL: model.TrafficPolicyType,
+				Subscription: initializedSubscription(
+					t,
+					TrafficPolicyGenerator{},
+					scope,
+					model.TrafficPolicyType,
+					tc.before,
+					SubscriptionView{wildcard: true},
+				),
+				Snapshot: tc.after,
+				Update:   updateBetween(tc.before, tc.after, tc.before.Diff(tc.after)),
 			})
 			if err != nil {
 				t.Fatal(err)

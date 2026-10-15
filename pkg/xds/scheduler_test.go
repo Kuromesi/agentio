@@ -46,10 +46,9 @@ func TestPushSchedulerMergesPendingUpdatesAndKeepsFIFOOrder(t *testing.T) {
 	if first == nil || first.Connection != connectionA {
 		t.Fatalf("first scheduled connection = %v, want connection A", first)
 	}
-	changes := first.Update.ChangesForType(model.AddressType)
-	if first.Update.Version() != updateA2.Version() || len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil ||
-		changes[0].Old.Hash != resourceA0.Hash || changes[0].New.Hash != resourceA2.Hash {
-		t.Fatalf("first update = %#v, want latest version and first-old/final-new A0 -> A2", first.Update)
+	changes := first.Update.Candidates(model.AddressType)
+	if first.Update.Version() != updateA2.Version() || len(changes) != 1 || changes[0].Key != resourceA0.Key {
+		t.Fatalf("merged update lost candidate: %#v", first.Update)
 	}
 	second := scheduler.Next(context.Background())
 	if second == nil || second.Connection != connectionB {
@@ -90,10 +89,9 @@ func TestPushSchedulerRequeuesMergedUpdateAfterProcessing(t *testing.T) {
 	if third == nil || third.Connection != connectionA {
 		t.Fatalf("third scheduled connection = %v, want requeued connection A", third)
 	}
-	changes := third.Update.ChangesForType(model.AddressType)
-	if third.Update.Version() != updateA3.Version() || len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil ||
-		changes[0].Old.Hash != resourceA1.Hash || changes[0].New.Hash != resourceA3.Hash {
-		t.Fatalf("requeued update = %#v, want merged-during-processing A1 -> A3", third.Update)
+	changes := third.Update.Candidates(model.AddressType)
+	if third.Update.Version() != updateA3.Version() || len(changes) != 1 || changes[0].Key != resourceA1.Key {
+		t.Fatalf("merged update lost candidate: %#v", third.Update)
 	}
 	scheduler.Done(third)
 }
@@ -337,29 +335,28 @@ func TestSlowClientBurstConvergesFromFirstUnsentToFinalPublication(t *testing.T)
 	scheduler := NewPushScheduler(1)
 	t.Cleanup(scheduler.Close)
 	connection := newPushConnection(ctx)
-	apply := func(old, next model.Resource) xdsstore.Update {
+	apply := func(next model.Resource) xdsstore.Update {
 		t.Helper()
 		if _, err := store.Apply([]model.ResourceChange{{Key: next.Key, New: &next}}); err != nil {
 			t.Fatal(err)
 		}
 		update := <-subscription.Updates()
-		changes := update.ChangesForType(model.AddressType)
-		if len(changes) != 1 || changes[0].Old == nil || changes[0].Old.Hash != old.Hash ||
-			changes[0].New == nil || changes[0].New.Hash != next.Hash {
-			t.Fatalf("publication change = %#v, want %q -> %q", changes, old.Hash, next.Hash)
+		changes := update.Candidates(model.AddressType)
+		if len(changes) != 1 || changes[0].Key != next.Key || update.Version() != store.Snapshot().Version() {
+			t.Fatalf("publication candidates = %#v", changes)
 		}
 		return update
 	}
 
-	firstUpdate := apply(versions[0], versions[1])
+	firstUpdate := apply(versions[1])
 	scheduler.Enqueue(connection, firstUpdate)
 	first := scheduler.Next(context.Background())
 	if first == nil {
 		t.Fatal("first push was not scheduled")
 	}
 
-	scheduler.Enqueue(connection, apply(versions[1], versions[2]))
-	scheduler.Enqueue(connection, apply(versions[2], versions[3]))
+	scheduler.Enqueue(connection, apply(versions[2]))
+	scheduler.Enqueue(connection, apply(versions[3]))
 	scheduler.Done(first)
 	final := scheduler.Next(context.Background())
 	if final == nil {
@@ -367,19 +364,11 @@ func TestSlowClientBurstConvergesFromFirstUnsentToFinalPublication(t *testing.T)
 	}
 	defer scheduler.Done(final)
 
-	before, found := final.Update.Before().Get(versions[1].Key)
-	if !found || before.Hash != versions[1].Hash {
-		t.Fatalf("coalesced Before = %#v, want first unsent version", before)
-	}
-	after, found := final.Update.After().Get(versions[3].Key)
-	if !found || after.Hash != versions[3].Hash {
-		t.Fatalf("coalesced After = %#v, want final version", after)
-	}
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
 		Scope:        model.ClientScope{Class: model.ClientSharedZTunnel, NodeName: "node-a"},
 		TypeURL:      model.AddressType,
 		Subscription: SubscriptionView{wildcard: true},
-		Snapshot:     final.Update.After(),
+		Snapshot:     store.Snapshot(),
 		Update:       final.Update,
 	})
 	if err != nil {

@@ -129,8 +129,8 @@ func implicitWildcardTypeURL(typeURL string) bool {
 	}
 }
 
-// SubscriptionView is an immutable copy of the subscription state visible to a
-// resource generator. Its accessors never expose the Delta stream's live maps.
+// SubscriptionView is the immutable subscription scope visible to a resource
+// generator. Its accessors never expose the Delta stream's live maps.
 type SubscriptionView struct {
 	wildcard bool
 	names    []string
@@ -144,35 +144,45 @@ func newSubscriptionView(watch *watchState) SubscriptionView {
 	return SubscriptionView{wildcard: watch.wildcard, names: names, sent: sent}
 }
 
-func newIncrementalSubscriptionView(watch *watchState, typeURL string, update xdsstore.Update) SubscriptionView {
-	view := SubscriptionView{
-		wildcard: watch.wildcard,
-		names:    sortedNames(watch.names),
-		sent:     make(map[string]string),
+// demandSubscriptionView reconciles only the explicitly requested canonical
+// resources. Empty sent state forces a reply even when the client has evicted a
+// previously delivered value; the stream retains all other subscriptions and
+// sent versions. Aliases and Service expansion require the complete selection.
+func demandSubscriptionView(snapshot model.ResourceSet, typeURL string, names []string) (SubscriptionView, bool) {
+	if len(names) == 0 {
+		return SubscriptionView{}, false
 	}
-	var changes []model.ResourceChange
-	if view.wildcard {
-		changes = update.ReadOnlyChangesForType(typeURL)
-	} else {
-		changes = update.ChangesForNames(typeURL, view.names)
+	lookupType := typeURL
+	switch typeURL {
+	case model.WorkloadType:
+		lookupType = model.AddressType
+	case model.TrafficPolicyType, model.SandboxType:
+	default:
+		return SubscriptionView{}, false
 	}
-	copySentForChanges(&view, watch, changes)
-	return view
+	for _, name := range names {
+		resources := snapshot.Lookup(lookupType, name)
+		if len(resources) != 1 || resources[0].XDSName != name ||
+			(typeURL == model.WorkloadType && !resources[0].IsWorkloadAddress()) {
+			return SubscriptionView{}, false
+		}
+	}
+	return SubscriptionView{names: sortedNames(sets.New(names...))}, true
 }
 
-func copySentForChanges(view *SubscriptionView, watch *watchState, changes []model.ResourceChange) {
-	copySent := func(resource *model.Resource) {
-		if resource == nil {
-			return
-		}
-		if version, found := watch.sent[resource.XDSName]; found {
-			view.sent[resource.XDSName] = version
+// newIncrementalSubscriptionView copies sent versions only for affected wire
+// identities. Subscription names still describe the complete selection, so
+// aliases and dependency expansion cannot accidentally withdraw another match.
+func newIncrementalSubscriptionView(watch *watchState, typeURL string, update xdsstore.Update) SubscriptionView {
+	view := SubscriptionView{wildcard: watch.wildcard, names: sortedNames(watch.names), sent: make(map[string]string)}
+	for _, candidate := range update.Candidates(typeURL) {
+		for _, identity := range candidate.Identities {
+			if version, found := watch.sent[identity.Name]; found {
+				view.sent[identity.Name] = version
+			}
 		}
 	}
-	for _, change := range changes {
-		copySent(change.Old)
-		copySent(change.New)
-	}
+	return view
 }
 
 // Wildcard reports whether every resource of this type is subscribed.
