@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,5 +261,119 @@ func TestLoopbackAdministration(t *testing.T) {
 		if got := loopbackRequest(request); got != (host != "10.0.0.1") {
 			t.Fatalf("loopback(%s)=%v", host, got)
 		}
+	}
+}
+
+// Send more than the HTTP/2 flow-control windows before reading requests.
+// The downstream must still receive responses while its request writer is blocked.
+type burstDiscovery struct {
+	discovery.UnimplementedAggregatedDiscoveryServiceServer
+}
+
+func (*burstDiscovery) DeltaAggregatedResources(
+	stream discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
+) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	for i := range 128 {
+		if err := stream.Send(
+			&discovery.DeltaDiscoveryResponse{
+				TypeUrl: sandboxType,
+				Nonce:   fmt.Sprint(i),
+				Resources: []*discovery.Resource{
+					{Name: "large", Resource: &anypb.Any{TypeUrl: sandboxType, Value: make([]byte, 64*1024)}},
+				},
+			},
+		); err != nil {
+			return err
+		}
+	}
+	for range 128 {
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+	}
+	if err := stream.Send(&discovery.DeltaDiscoveryResponse{TypeUrl: sandboxType, Nonce: "complete"}); err != nil {
+		return err
+	}
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+func TestADSBidirectionalBackpressure(t *testing.T) {
+	upstream := grpc.NewServer()
+	discovery.RegisterAggregatedDiscoveryServiceServer(upstream, &burstDiscovery{})
+	server := httptest.NewUnstartedServer(upstream)
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	t.Cleanup(upstream.Stop)
+	c := testConfig(t)
+	c.Proxy.DiscoveryAddress = server.Listener.Addr().String()
+	c.RootCertFile = filepath.Join(t.TempDir(), "root.pem")
+	c.TokenFile = filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(
+		c.RootCertFile,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.TokenFile, []byte("test-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stop, _, err := startXDS(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	conn, err := grpc.NewClient("unix://"+c.XDSSocket, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeResource(conn) })
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	stream, err := discovery.NewAggregatedDiscoveryServiceClient(conn).DeltaAggregatedResources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&discovery.DeltaDiscoveryRequest{TypeUrl: sandboxType}); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() {
+		for range 128 {
+			if err := stream.Send(
+				&discovery.DeltaDiscoveryRequest{
+					TypeUrl:                sandboxType,
+					ResourceNamesSubscribe: []string{strings.Repeat("x", 64*1024)},
+				},
+			); err != nil {
+				sent <- err
+				return
+			}
+		}
+		sent <- nil
+	}()
+	for i := range 128 {
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.Nonce != fmt.Sprint(i) {
+			t.Fatal("response ordering changed")
+		}
+	}
+	response, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Nonce != "complete" {
+		t.Fatal("upstream did not consume queued requests")
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
 	}
 }

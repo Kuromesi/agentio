@@ -49,18 +49,6 @@ func customizeBootstrap(data []byte, c Config) ([]byte, error) {
 	if len(c.Locality) > 0 {
 		b["node"].(map[string]any)["locality"] = c.Locality
 	}
-	if c.Legacy {
-		extensions := []any{}
-		for _, entry := range b["bootstrap_extensions"].([]any) {
-			name := entry.(map[string]any)["name"]
-			if name == "metadata_discovery" && !c.discoveryEnabled() ||
-				name == "kruise.bootstrap.policy_store" && !c.policyEnabled() {
-				continue
-			}
-			extensions = append(extensions, entry)
-		}
-		b["bootstrap_extensions"] = extensions
-	}
 	if err := configureStats(b, c); err != nil {
 		return nil, err
 	}
@@ -145,7 +133,7 @@ func configureTelemetry(b map[string]any, c Config) error {
 		b["tracing"] = c.Tracing
 	}
 	if len(c.LoadStatsConfig) > 0 || c.OutlierEventLog != "" {
-		manager := map[string]any{}
+		manager := map[string]any{"enable_deferred_cluster_creation": true}
 		if c.OutlierEventLog != "" {
 			manager["outlier_detection"] = map[string]any{"event_log_path": c.OutlierEventLog}
 		}
@@ -279,17 +267,8 @@ func configureStatsMatcher(stats map[string]any, c Config) error {
 	patterns := []any{}
 	// Retain lifecycle signals regardless of the user's selection.
 	prefixes := append(
-		[]string{"cluster_manager", "listener_manager", "server", "cluster.xds-grpc", "wasm"},
+		[]string{"cluster_manager", "listener_manager", "server", "cluster.xds-grpc", "wasm", "agentio_gateway."},
 		c.StatsMatcher.InclusionPrefixes...)
-	if c.Legacy {
-		prefixes = append(prefixes, "reporter=", "component", "istio")
-	}
-	if c.discoveryEnabled() {
-		prefixes = append(prefixes, "workload_discovery")
-	}
-	if c.policyEnabled() {
-		prefixes = append(prefixes, "policy_store")
-	}
 	groups := map[string][]string{
 		"prefix": prefixes,
 		"suffix": append(

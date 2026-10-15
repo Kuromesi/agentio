@@ -52,6 +52,7 @@ type testCA struct {
 	key            *ecdsa.PrivateKey
 	cert           *x509.Certificate
 	root           []byte
+	lifetime       time.Duration
 	tokens         chan string
 	wrongIdentity  atomic.Bool
 	fail           atomic.Bool
@@ -84,10 +85,11 @@ func newTestCA(t *testing.T) *testCA {
 		t.Fatal(err)
 	}
 	return &testCA{
-		key:    key,
-		cert:   cert,
-		root:   pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		tokens: make(chan string, 16),
+		key:      key,
+		cert:     cert,
+		root:     pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		tokens:   make(chan string, 16),
+		lifetime: time.Minute,
 	}
 }
 
@@ -133,7 +135,7 @@ func (c *testCA) CreateCertificate(
 	}
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()),
 		NotBefore:   time.Now().Add(-time.Minute),
-		NotAfter:    time.Now().Add(time.Minute),
+		NotAfter:    time.Now().Add(c.lifetime),
 		URIs:        csr.URIs,
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}

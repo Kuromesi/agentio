@@ -1,0 +1,185 @@
+{
+  "node": {
+    "id": "metrics-bench",
+    "cluster": "metrics-bench"
+  },
+  "admin": {
+    "address": {
+      "socket_address": {
+        "address": "127.0.0.1",
+        "port_value": 19900
+      }
+    }
+  },
+  "stats_flush_interval": "0.100s",
+  "static_resources": {
+    "clusters": [],
+    "listeners": [
+      {
+        "name": "business",
+        "address": {
+          "socket_address": {
+            "address": "127.0.0.1",
+            "port_value": 19800
+          }
+        },
+        "filter_chains": [
+          {
+            "filters": [
+              {
+                "name": "envoy.filters.network.http_connection_manager",
+                "typed_config": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                  "stat_prefix": "business",
+                  "route_config": {
+                    "name": "routes",
+                    "virtual_hosts": [
+                      {
+                        "name": "backend",
+                        "domains": [
+                          "*"
+                        ],
+                        "routes": [
+                          {
+                            "match": {
+                              "path": "/200"
+                            },
+                            "direct_response": {
+                              "status": 200
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/201"
+                            },
+                            "direct_response": {
+                              "status": 201
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/204"
+                            },
+                            "direct_response": {
+                              "status": 204
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/302"
+                            },
+                            "direct_response": {
+                              "status": 302
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/403"
+                            },
+                            "direct_response": {
+                              "status": 403
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/404"
+                            },
+                            "direct_response": {
+                              "status": 404
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/418"
+                            },
+                            "direct_response": {
+                              "status": 418
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/429"
+                            },
+                            "direct_response": {
+                              "status": 429
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/500"
+                            },
+                            "direct_response": {
+                              "status": 500
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/503"
+                            },
+                            "direct_response": {
+                              "status": 503
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/504"
+                            },
+                            "direct_response": {
+                              "status": 504
+                            }
+                          },
+                          {
+                            "match": {
+                              "prefix": "/"
+                            },
+                            "direct_response": {
+                              "status": 404
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "http_filters": [
+                    {
+                      "name": "envoy.filters.http.router",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                      }
+                    }
+                  ],
+                  "access_log": [
+                    {
+                      "name": "envoy.access_loggers.dynamic_modules",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog",
+                        "dynamic_module_config": {
+                          "name": "agentio_gateway_metrics",
+                          "module": {
+                            "local": {
+                              "filename": "/usr/local/lib/libagentio_gateway_metrics.so"
+                            }
+                          },
+                          "metrics_namespace": "agentio_gateway"
+                        },
+                        "logger_name": "metrics"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats_config": {
+    "stats_tags": [
+      {
+        "tag_name": "response_code",
+        "regex": "^agentio_gateway[.](?:istio_requests_total)([.]response_code[.]([0-9]+))$"
+      }
+    ]
+  }
+}

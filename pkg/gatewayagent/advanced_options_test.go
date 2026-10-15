@@ -15,120 +15,23 @@
 package gatewayagent
 
 import (
-	"context"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"io"
-	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-func TestLegacyOptionPrecedence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "annotations")
-	err := os.WriteFile(
-		path,
-		[]byte("sidecar.istio.io/statsFlushInterval=\"2s\"\nsidecar.istio.io/statsEvictionInterval=\"10s\"\n"),
-		0600,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AGENTIO_POD_ANNOTATIONS", path)
-	t.Setenv("ENABLE_POLICY_STORE", "true")
-	t.Setenv("AGENTIO_GATEWAY_CONFIG", `{"statsEvictionInterval":"20s","policyStore":false}`)
-	c, err := LoadConfig([]string{"--legacy", "--stats-eviction-interval=30s"}, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.StatsFlushInterval != 2*time.Second || c.StatsEvictionInterval != "30s" || c.policyEnabled() {
-		t.Fatal("annotation/JSON/flag precedence lost")
-	}
-	if c.Proxy.DrainDuration != 45*time.Second || c.Proxy.TerminationDrainDuration != 5*time.Second {
-		t.Fatal("legacy drain defaults changed")
-	}
-	b, err := bootstrapConfig(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(b.BootstrapExtensions) != 2 || b.Node.Metadata.Fields["ENABLE_POLICY_STORE"].GetStringValue() != "false" {
-		t.Fatal("disabled policy store still loaded")
-	}
-	t.Setenv("AGENTIO_GATEWAY_CONFIG", `{"drainDuration":"12s","terminationDrainDuration":"8s"}`)
-	c, err = LoadConfig([]string{"--legacy", "--termination-drain-duration=9s"}, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Proxy.DrainDuration != 12*time.Second || c.Proxy.TerminationDrainDuration != 9*time.Second {
-		t.Fatal("explicit drain options lost")
-	}
-}
-
-func TestPolicyReadinessWaitsForInitialSync(t *testing.T) {
-	synced := false
-	calls := 0
-	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		value := 0
-		if synced {
-			value = 1
-		}
-		if _, err := fmt.Fprintf(w, "policy_store.initial_sync_ready: %d\n", value); err != nil {
-			t.Error(err)
-		}
-	}))
-	defer admin.Close()
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := testConfig(t)
-	c.IP = host
-	c.Proxy.AdminPort = int32(n)
-	c.Legacy = true
-	enabled := true
-	c.PolicyStore = &enabled
-	probe := &policyReadiness{}
-	if err := probe.check(t.Context(), c); err == nil {
-		t.Fatal("accepted unsynced policy store")
-	}
-	synced = true
-	if err := probe.check(t.Context(), c); err != nil {
-		t.Fatal(err)
-	}
-	synced = false
-	before := calls
-	if err := probe.check(t.Context(), c); err != nil || before != calls {
-		t.Fatal("initial sync was not latched")
-	}
-	enabled = false
-	probe = &policyReadiness{}
-	if err := probe.check(t.Context(), c); err != nil || before != calls {
-		t.Fatal("disabled store was probed")
-	}
-}
-
-func configuredBootstrap(t *testing.T, legacy bool) Config {
+func configuredBootstrap(t *testing.T) Config {
 	t.Helper()
 	c := testConfig(t)
-	c.Legacy = legacy
-	c.DNSDomain = "demo.svc.cluster.local"
 	raw := `{
  "statsEvictionInterval":"30s",
  "statsMatcher":{"inclusionPrefixes":["http.{pod_ip}_","cluster.telemetry"],"inclusionSuffixes":["upstream_rq_total"],"inclusionRegexps":["http.*"]},
@@ -146,55 +49,51 @@ func configuredBootstrap(t *testing.T, legacy bool) Config {
 	if err := json.Unmarshal([]byte(raw), &c.AdvancedOptions); err != nil {
 		t.Fatal(err)
 	}
-	if legacy {
-		enabled := true
-		c.PolicyStore = &enabled
-	}
 	c.applyCredentialPaths()
 	return c
 }
 
 func TestConfiguredBootstrap(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		c := configuredBootstrap(t, legacy)
-		b, err := bootstrapConfig(c)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if b.GetStatsEvictionInterval().AsDuration() != 30*time.Second || b.Node.Locality.Zone != "a" ||
-			len(b.StatsSinks) != 1 ||
-			len(b.StaticResources.Clusters) != 4 {
-			t.Fatal("missing configured native resource")
-		}
-		if len(b.StaticResources.Listeners[0].AdditionalAddresses) != 1 ||
-			len(b.StaticResources.Listeners[0].ListenerFilters) != 1 ||
-			!b.StaticResources.Listeners[0].BypassOverloadManager {
-			t.Fatal("listener options not applied")
-		}
-		if b.StaticResources.Listeners[1].Address.GetSocketAddress().Address != "127.0.0.1" ||
-			b.Admin.Address.GetSocketAddress().PortSpecifier == nil {
-			t.Fatal("listener address/port ignored")
-		}
-		content, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, required := range []string{"downstream_cx_active", "histogram_bucket_settings", "global_downstream_max_connections", "outlier_detection", "load_stats_config", "team", "http.10.0.0.1_"} {
-			if !strings.Contains(string(content), required) {
-				t.Fatalf("missing %s", required)
-			}
+	c := configuredBootstrap(t)
+	b, err := bootstrapConfig(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b.GetClusterManager().GetEnableDeferredClusterCreation() {
+		t.Fatal("telemetry configuration disabled deferred cluster creation")
+	}
+	if b.GetStatsEvictionInterval().AsDuration() != 30*time.Second || b.Node.Locality.Zone != "a" ||
+		len(b.StatsSinks) != 1 ||
+		len(b.StaticResources.Clusters) != 4 {
+		t.Fatal("missing configured native resource")
+	}
+	if len(b.StaticResources.Listeners[0].AdditionalAddresses) != 1 ||
+		len(b.StaticResources.Listeners[0].ListenerFilters) != 1 ||
+		!b.StaticResources.Listeners[0].BypassOverloadManager {
+		t.Fatal("listener options not applied")
+	}
+	if b.StaticResources.Listeners[1].Address.GetSocketAddress().Address != "127.0.0.1" ||
+		b.Admin.Address.GetSocketAddress().PortSpecifier == nil {
+		t.Fatal("listener address/port ignored")
+	}
+	content, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"downstream_cx_active", "histogram_bucket_settings", "global_downstream_max_connections", "outlier_detection", "load_stats_config", "team", "http.10.0.0.1_"} {
+		if !strings.Contains(string(content), required) {
+			t.Fatalf("missing %s", required)
 		}
 	}
 }
 
-// Both pinned binaries must accept configured resources, not just defaults.
+// The pinned binary must accept configured resources, not just defaults.
 func TestEnvoyConfiguredBootstrap(t *testing.T) {
 	binary := os.Getenv("AGENTIO_TEST_ENVOY_BINARY")
 	if binary == "" {
 		t.Skip("set AGENTIO_TEST_ENVOY_BINARY")
 	}
-	legacy := os.Getenv("AGENTIO_TEST_LEGACY_ENVOY_BINARY") != ""
-	c := configuredBootstrap(t, legacy)
+	c := configuredBootstrap(t)
 	b, err := bootstrapConfig(c)
 	if err != nil {
 		t.Fatal(err)
@@ -248,62 +147,6 @@ func TestWorkloadKeyOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		}
-	}
-}
-
-func TestLegacyReadinessEndpoint(t *testing.T) {
-	var synced atomic.Bool
-	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		value := 0
-		if synced.Load() {
-			value = 1
-		}
-		if _, err := fmt.Fprintf(
-			w,
-			"cluster_manager.cds.update_success: 1\nlistener_manager.lds.update_success: 1\nserver.state: 0\nlistener_manager.workers_started: 1\npolicy_store.initial_sync_ready: %d\n",
-			value,
-		); err != nil {
-			t.Error(err)
-		}
-	}))
-	defer admin.Close()
-	_, port, err := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := testConfig(t)
-	c.IP = "127.0.0.1"
-	c.Proxy.AdminPort = int32(n)
-	c.StatusPort = freePort(t)
-	c.Legacy = true
-	enabled := true
-	c.PolicyStore = &enabled
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	var draining atomic.Bool
-	stop, _, err := startStatus(ctx, c, nil, cancel, &draining, func() error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stop()
-	client := &http.Client{Timeout: time.Second}
-	for _, test := range []struct {
-		sync bool
-		want int
-	}{{false, 503}, {true, 200}, {false, 200}} {
-		synced.Store(test.sync)
-		response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz/ready", c.StatusPort))
-		if err != nil {
-			t.Fatal(err)
-		}
-		closeResource(response.Body)
-		if response.StatusCode != test.want {
-			t.Fatalf("ready=%d want %d", response.StatusCode, test.want)
 		}
 	}
 }

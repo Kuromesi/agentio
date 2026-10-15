@@ -79,9 +79,6 @@ jobs:
         run: make racetest
 
   gateway-runtime:
-    strategy:
-      matrix:
-        runtime: [community, legacy]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -93,4 +90,4 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Test gateway runtime
-        run: ./bin/test_gateway_runtime.sh "" "${{ matrix.runtime }}"
+        run: ./bin/test_gateway_runtime.sh

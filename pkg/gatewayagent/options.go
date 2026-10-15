@@ -51,24 +51,6 @@ type RuntimeOptions struct {
 // then explicit CLI flags. CPU-derived concurrency is only a fallback.
 func LoadConfig(args []string, output io.Writer) (Config, error) {
 	c := FromEnvironment()
-	for _, arg := range args {
-		if arg == "--legacy" || arg == "-legacy" {
-			c.Legacy = true
-		}
-		if strings.HasPrefix(arg, "--legacy=") || strings.HasPrefix(arg, "-legacy=") {
-			_, value, _ := strings.Cut(arg, "=")
-			enabled, err := strconv.ParseBool(value)
-			if err != nil {
-				return c, err
-			}
-			c.Legacy = enabled
-		}
-	}
-	if c.Legacy {
-		c.legacyDefaults()
-		c.Proxy.DrainDuration = 45 * time.Second
-		c.Proxy.TerminationDrainDuration = 5 * time.Second
-	}
 	options, err := c.loadRuntimeOptions()
 	if err != nil {
 		return c, err
@@ -86,24 +68,6 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 func (c *Config) loadRuntimeOptions() (RuntimeOptions, error) {
 	var options RuntimeOptions
 	raw := os.Getenv("AGENTIO_GATEWAY_CONFIG")
-	if c.Legacy {
-		defaults, err := legacyAnnotationOptions()
-		if err != nil {
-			return options, err
-		}
-		if raw != "" {
-			var explicit map[string]any
-			if err := json.Unmarshal([]byte(raw), &explicit); err != nil {
-				return options, err
-			}
-			maps.Copy(defaults, explicit)
-		}
-		encoded, err := json.Marshal(defaults)
-		if err != nil {
-			return options, err
-		}
-		raw = string(encoded)
-	}
 	if raw != "" {
 		dec := json.NewDecoder(strings.NewReader(raw))
 		dec.DisallowUnknownFields()
@@ -197,7 +161,6 @@ func (c *Config) loadMetadata() error {
 func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) error {
 	flags := flag.NewFlagSet("gateway-agent", flag.ContinueOnError)
 	flags.SetOutput(output)
-	flags.BoolVar(&c.Legacy, "legacy", c.Legacy, "Use the pinned legacy gateway Envoy startup contract")
 	flags.StringVar(&c.AgentLogLevel, "agent-log-level", c.AgentLogLevel, "Agent log level: debug, info, warn, error")
 	flags.StringVar(&c.LogLevel, "envoy-log-level", c.LogLevel, "Envoy log level")
 	flags.StringVar(
@@ -248,8 +211,6 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 	)
 	skipDeprecated := boolOption(c.SkipDeprecatedLogs, true)
 	flags.BoolVar(&skipDeprecated, "skip-deprecated-logs", skipDeprecated, "Suppress Envoy deprecation logs")
-	policy := boolOption(c.PolicyStore, false)
-	flags.BoolVar(&policy, "policy-store", policy, "Enable legacy SNI policy store and initial-sync readiness")
 	workers := 0
 	if concurrency != nil {
 		workers = *concurrency
@@ -262,7 +223,6 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
 	c.SkipDeprecatedLogs = &skipDeprecated
-	c.PolicyStore = &policy
 	explicitWorkers := concurrency != nil
 	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "concurrency" {
@@ -270,9 +230,6 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 		}
 	})
 	cpuLimit := os.Getenv("AGENTIO_CPU_LIMIT")
-	if cpuLimit == "" && c.Legacy {
-		cpuLimit = os.Getenv("ISTIO_CPU_LIMIT")
-	}
 	if !explicitWorkers && cpuLimit != "" {
 		var err error
 		workers, err = strconv.Atoi(cpuLimit)

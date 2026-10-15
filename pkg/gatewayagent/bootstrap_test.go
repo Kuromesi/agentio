@@ -48,6 +48,9 @@ func TestCommunityBootstrap(t *testing.T) {
 		if b.GetApplicationLogConfig().GetLogFormat().GetJsonFormat() == nil {
 			t.Fatal("missing JSON application logs")
 		}
+		if !b.GetDeferredStatOptions().GetEnableDeferredCreationStats() {
+			t.Fatal("deferred stats creation disabled")
+		}
 		if b.Node.Id != "agentio-egress/demo/pod-uid" {
 			t.Fatal(b.Node.Id)
 		}

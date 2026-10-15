@@ -143,7 +143,6 @@ func effectiveConfig(c Config) map[string]any {
 	return map[string]any{
 		"version":    BuildInfo(),
 		"nodeID":     c.nodeID(),
-		"legacy":     c.Legacy,
 		"xdsAddress": c.Proxy.DiscoveryAddress,
 		"caAddress":  c.CAAddress,
 		"runtime": RuntimeOptions{
@@ -212,12 +211,13 @@ func adminRequest(ctx context.Context, args []string, output, errors io.Writer) 
 func waitReady(ctx context.Context, args []string, errors io.Writer) error {
 	flags := flag.NewFlagSet("wait", flag.ContinueOnError)
 	flags.SetOutput(errors)
+	port := flags.Int("port", 15020, "Local agent status port")
 	timeout := flags.Duration("timeout", 60*time.Second, "Readiness deadline")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || *timeout <= 0 {
-		return fmt.Errorf("usage: gateway-agent wait [--timeout 60s]")
+	if flags.NArg() != 0 || *timeout <= 0 || *port < 1 || *port > 65535 {
+		return fmt.Errorf("usage: gateway-agent wait [--port 15020] [--timeout 60s]")
 	}
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
@@ -227,7 +227,7 @@ func waitReady(ctx context.Context, args []string, errors io.Writer) error {
 	for {
 		last = adminRequest(
 			ctx,
-			[]string{"--port", "15020", "--timeout", "1s", "GET", "/healthz/ready"},
+			[]string{"--port", strconv.Itoa(*port), "--timeout", "1s", "GET", "/healthz/ready"},
 			io.Discard,
 			errors,
 		)

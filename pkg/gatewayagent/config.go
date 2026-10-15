@@ -41,8 +41,6 @@ type ProxyConfig struct {
 type Config struct {
 	AdvancedOptions
 	XDSRootCertFile             string
-	Legacy                      bool
-	DNSDomain                   string
 	Proxy                       ProxyConfig
 	PodName                     string
 	Namespace                   string
@@ -142,4 +140,8 @@ func localAddresses(ip string) (string, string) {
 		return "::1", "::"
 	}
 	return "127.0.0.1", "0.0.0.0"
+}
+
+func (c Config) nodeID() string {
+	return "agentio-egress/" + c.Namespace + "/" + c.PodUID
 }

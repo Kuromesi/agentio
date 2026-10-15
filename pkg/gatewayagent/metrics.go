@@ -27,6 +27,8 @@ import (
 // labels. These are agent health metrics, separate from Envoy traffic statistics.
 type agentMetrics struct {
 	registry            *prometheus.Registry
+	envoyScrapeSuccess  prometheus.Gauge
+	envoyScrapeFailures prometheus.Counter
 	certificateExpiry   atomic.Int64
 	certificateRequests prometheus.Counter
 	certificateFailures prometheus.Counter
@@ -54,6 +56,8 @@ func newAgentMetrics() *agentMetrics {
 		m.registry.MustRegister(g)
 		return g
 	}
+	m.envoyScrapeSuccess = gauge("envoy_scrape_success", "Whether the latest Envoy metrics scrape succeeded.")
+	m.envoyScrapeFailures = counter("envoy_scrape_failures_total", "Failed Envoy metrics scrapes.")
 	m.certificateRequests = counter("certificate_requests_total", "Workload certificate signing attempts.")
 	m.certificateFailures = counter("certificate_failures_total", "Failed workload certificate signing attempts.")
 	m.certificateSuccess = gauge(

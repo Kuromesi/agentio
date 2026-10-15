@@ -18,13 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"os"
 	"strings"
 	"time"
 )
 
-// AdvancedOptions uses native Envoy JSON for telemetry resources. These options
-// are shared by both runtimes; policy discovery is available only in legacy mode.
+// AdvancedOptions uses native Envoy JSON for telemetry resources.
 type AdvancedOptions struct {
 	StatsEvictionInterval    string               `json:"statsEvictionInterval,omitempty"`
 	StatsMatcher             *StatsMatcher        `json:"statsMatcher,omitempty"`
@@ -33,8 +31,6 @@ type AdvancedOptions struct {
 	RuntimeValues            map[string]any       `json:"runtimeValues,omitempty"`
 	MaxDownstreamConnections *uint64              `json:"maxDownstreamConnections,omitempty"`
 	SkipDeprecatedLogs       *bool                `json:"skipDeprecatedLogs,omitempty"`
-	PolicyStore              *bool                `json:"policyStore,omitempty"`
-	MetadataDiscovery        *bool                `json:"metadataDiscovery,omitempty"`
 	StatsCompression         *bool                `json:"statsCompression,omitempty"`
 	MetricsLocalhostOnly     bool                 `json:"metricsLocalhostOnly,omitempty"`
 	StatusProxyProtocol      bool                 `json:"statusProxyProtocol,omitempty"`
@@ -86,8 +82,6 @@ func portOption(v, fallback int) int {
 	}
 	return fallback
 }
-func (c Config) policyEnabled() bool    { return c.Legacy && boolOption(c.PolicyStore, false) }
-func (c Config) discoveryEnabled() bool { return c.Legacy && boolOption(c.MetadataDiscovery, true) }
 func (c Config) nodeIPs() []string {
 	if len(c.InstanceIPs) > 0 {
 		return c.InstanceIPs
@@ -101,12 +95,6 @@ func (c Config) validateAdvanced() error {
 		if err != nil || eviction <= 0 || c.StatsFlushInterval <= 0 || eviction%c.StatsFlushInterval != 0 {
 			return fmt.Errorf("statsEvictionInterval must be a positive multiple of statsFlushInterval")
 		}
-	}
-	if c.policyEnabled() && !c.discoveryEnabled() {
-		return fmt.Errorf("policyStore requires metadataDiscovery")
-	}
-	if !c.Legacy && (boolOption(c.PolicyStore, false) || boolOption(c.MetadataDiscovery, false)) {
-		return fmt.Errorf("policyStore and metadataDiscovery require --legacy")
 	}
 	for _, check := range []func() error{c.validateNetworkOptions, c.validateKeyOptions, c.validateHeaders} {
 		if err := check(); err != nil {
@@ -182,67 +170,10 @@ func (c *Config) applyCredentialPaths() {
 	c.RootCertFile = envString("AGENTIO_ROOT_CA", c.RootCertFile)
 	c.CARootCertFile = envString("AGENTIO_CA_ROOT_CA", c.RootCertFile)
 	c.XDSRootCertFile = envString("AGENTIO_XDS_ROOT_CA", c.RootCertFile)
-	if c.Legacy {
-		c.CARootCertFile = envString("AGENTIO_CA_ROOT_CA", envString("CA_ROOT_CA", c.CARootCertFile))
-		c.XDSRootCertFile = envString("AGENTIO_XDS_ROOT_CA", envString("XDS_ROOT_CA", c.XDSRootCertFile))
-	}
 	if c.WorkloadSocket != "" {
 		c.SDSSocket = c.WorkloadSocket
 	}
 	if c.AdminPort != 0 {
 		c.Proxy.AdminPort = int32(c.AdminPort)
 	}
-}
-
-// Legacy mode keeps the old deployment's stats annotations as defaults. Explicit
-// AGENTIO_GATEWAY_CONFIG fields and flags take precedence.
-func legacyAnnotationOptions() (map[string]any, error) {
-	path := envString("AGENTIO_POD_ANNOTATIONS", "/etc/istio/pod/annotations")
-	annotations, err := readLegacyPodLabels(path)
-	if err != nil {
-		return nil, err
-	}
-	options := map[string]any{}
-	for annotation, key := range map[string]string{"statsFlushInterval": "statsFlushInterval", "statsEvictionInterval": "statsEvictionInterval"} {
-		if value := annotations["sidecar.istio.io/"+annotation]; value != "" {
-			options[key] = value
-		}
-	}
-	matcher := StatsMatcher{}
-	for annotation, target := range map[string]*[]string{"statsInclusionPrefixes": &matcher.InclusionPrefixes, "statsInclusionSuffixes": &matcher.InclusionSuffixes, "statsInclusionRegexps": &matcher.InclusionRegexps} {
-		if value := annotations["sidecar.istio.io/"+annotation]; value != "" {
-			*target = strings.Split(value, ",")
-		}
-	}
-	if matcher.InclusionPrefixes != nil || matcher.InclusionSuffixes != nil || matcher.InclusionRegexps != nil {
-		options["statsMatcher"] = matcher
-	}
-	if value := annotations["sidecar.istio.io/extraStatTags"]; value != "" {
-		options["extraStatTags"] = strings.Split(value, ",")
-	}
-	if value := annotations["sidecar.istio.io/statsHistogramBuckets"]; value != "" {
-		options["histogramBuckets"] = json.RawMessage(value)
-	}
-	for env, key := range map[string]string{"ENABLE_POLICY_STORE": "policyStore", "PEER_METADATA_DISCOVERY": "metadataDiscovery", "ENVOY_SKIP_DEPRECATED_LOGS": "skipDeprecatedLogs"} {
-		if value := os.Getenv(env); value != "" {
-			options[key] = json.RawMessage(value)
-		}
-	}
-	for _, prefix := range []string{"XDS_HEADER_", "CA_HEADER_"} {
-		headers := map[string]string{}
-		for _, env := range os.Environ() {
-			name, value, _ := strings.Cut(env, "=")
-			if key, ok := strings.CutPrefix(name, prefix); ok {
-				headers[strings.ToLower(key)] = value
-			}
-		}
-		if len(headers) > 0 {
-			key := "xdsHeaders"
-			if prefix == "CA_HEADER_" {
-				key = "caHeaders"
-			}
-			options[key] = headers
-		}
-	}
-	return options, nil
 }

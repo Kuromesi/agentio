@@ -18,7 +18,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -113,5 +117,36 @@ func TestDiagnosticsRedactMetadataAndNeedNoIdentity(t *testing.T) {
 	var v VersionInfo
 	if err := json.Unmarshal(output.Bytes(), &v); err != nil || v.Version == "" {
 		t.Fatalf("invalid version: %s", output.String())
+	}
+}
+
+func TestWaitCustomStatusPort(t *testing.T) {
+	t.Setenv("INSTANCE_IP", "127.0.0.1")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz/ready" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Command(
+		t.Context(),
+		[]string{"wait", "--port", port, "--timeout", "3s"},
+		io.Discard,
+		io.Discard,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() < 2 {
+		t.Fatal("did not wait for readiness")
 	}
 }

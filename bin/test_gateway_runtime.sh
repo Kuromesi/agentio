@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-# Test ADS recovery and Wasm/ECDS using community Envoy or an explicit gateway image.
+# Test agent lifecycle, dynamic metrics, ADS recovery and Wasm/ECDS using community Envoy or an explicit gateway image.
 set -euo pipefail
 # Reuse the Dockerfile's pin so unit CI and the packaged runtime stay aligned.
 image=${1:-}
-mode=${2:-community}
-case "$mode" in
-  community) image_arg=ENVOY_IMAGE; legacy_binary= ;;
-  legacy) image_arg=LEGACY_ENVOY_IMAGE; legacy_binary=/usr/local/bin/envoy ;;
-  *) echo "Unknown gateway runtime: $mode" >&2; exit 1 ;;
-esac
+build_metrics=false
 if [[ -z "$image" ]]; then
-  image=$(sed -n "s/^ARG ${image_arg}=//p" docker/Dockerfile.gateway)
+  build_metrics=true
+  image=$(sed -n "s/^ARG ENVOY_IMAGE=//p" docker/Dockerfile.gateway)
 fi
 : "${image:?missing Envoy image pin in docker/Dockerfile.gateway}"
 artifacts=$(mktemp -d)
 trap 'rm -rf "$artifacts"' EXIT
 chmod 755 "$artifacts"
+module_mount=()
+agent_mount=()
+if "$build_metrics"; then
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$artifacts/gateway-agent" ./cmd/gateway-agent
+  chmod 755 "$artifacts/gateway-agent"
+  agent_mount=(--mount "type=bind,src=$artifacts/gateway-agent,dst=/usr/local/bin/gateway-agent,readonly")
+  docker build --platform linux/amd64 -f docker/Dockerfile.gateway --target metrics-artifact \
+    --output "type=local,dest=$artifacts" .
+  chmod 755 "$artifacts" "$artifacts/libagentio_gateway_metrics.so"
+  module_mount=(--mount "type=bind,src=$artifacts/libagentio_gateway_metrics.so,dst=/usr/local/lib/libagentio_gateway_metrics.so,readonly")
+fi
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o "$artifacts/gatewayagent.test" ./pkg/gatewayagent
 chmod 755 "$artifacts/gatewayagent.test"
 docker run --rm --platform linux/amd64 --user 1337:1337 \
   --entrypoint /tests/gatewayagent.test \
   --mount "type=bind,src=$artifacts/gatewayagent.test,dst=/tests/gatewayagent.test,readonly" \
+  "${module_mount[@]}" "${agent_mount[@]}" \
+  -e AGENTIO_TEST_AGENT_BINARY=/usr/local/bin/gateway-agent \
   -e AGENTIO_TEST_ENVOY_BINARY=/usr/local/bin/envoy \
   -e AGENTIO_TEST_NETWORK_FAULTS=1 \
-  -e "AGENTIO_TEST_LEGACY_ENVOY_BINARY=$legacy_binary" \
   "$image" -test.v -test.timeout=90s \
-  -test.run='TestCommunityEnvoyWasmECDS|TestADSDetectsSilentBlackhole|TestLegacyEnvoyBootstrap|TestEnvoyConfiguredBootstrap'
+  -test.run='TestGatewayAgentLifecycle|TestCommunityEnvoyWasmECDS|TestADSDetectsSilentBlackhole|TestEnvoyConfiguredBootstrap|TestCommunityEnvoyDynamicMetrics'

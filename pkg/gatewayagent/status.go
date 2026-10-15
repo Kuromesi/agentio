@@ -17,7 +17,7 @@ package gatewayagent
 import (
 	"compress/gzip"
 	"context"
-	"io"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,7 +43,6 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		Context:       ctx,
 	}
 	var probeMu sync.Mutex
-	policyProbe := &policyReadiness{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz/ready", func(w http.ResponseWriter, _ *http.Request) {
 		if c.metrics != nil {
@@ -59,9 +58,6 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		}
 		probeMu.Lock()
 		err := probe.Check()
-		if err == nil {
-			err = policyProbe.check(ctx, c)
-		}
 		probeMu.Unlock()
 		if err != nil {
 			http.Error(w, "gateway not ready", http.StatusServiceUnavailable)
@@ -151,6 +147,10 @@ var adminClient = &http.Client{Timeout: 5 * time.Second}
 func proxyMetrics(c Config) http.HandlerFunc {
 	handler := proxyMetricsPlain(c)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if c.MetricsLocalhostOnly && !loopbackRequest(r) {
+			http.Error(w, "metrics are restricted to localhost", http.StatusForbidden)
+			return
+		}
 		w.Header().Add("Vary", "Accept-Encoding")
 		if boolOption(c.StatsCompression, true) && acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			w.Header().Set("Content-Encoding", "gzip")
@@ -187,10 +187,23 @@ func proxyMetricsPlain(c Config) http.HandlerFunc {
 			agentRequest.Header = r.Header.Clone()
 			agentRequest.Header.Set("Accept", "text/plain; version=0.0.4")
 			agentRequest.Header.Del("Accept-Encoding")
-			agentHandler.ServeHTTP(w, agentRequest)
+			defer agentHandler.ServeHTTP(w, agentRequest)
 		}
+		var scrapeErr error
+		defer func() {
+			if scrapeErr != nil {
+				slog.Warn("Envoy metrics scrape failed", "error", scrapeErr)
+				if c.metrics != nil {
+					c.metrics.envoyScrapeSuccess.Set(0)
+					c.metrics.envoyScrapeFailures.Inc()
+				}
+			} else if c.metrics != nil {
+				c.metrics.envoyScrapeSuccess.Set(1)
+			}
+		}()
 		response, err := adminClient.Do(request)
 		if err != nil {
+			scrapeErr = err
 			if agentHandler == nil {
 				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 			}
@@ -198,11 +211,15 @@ func proxyMetricsPlain(c Config) http.HandlerFunc {
 		}
 		defer closeResource(response.Body)
 		if response.StatusCode != http.StatusOK {
+			scrapeErr = fmt.Errorf("Envoy admin returned HTTP %d", response.StatusCode)
+			if agentHandler == nil {
+				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+			}
 			return
 		}
 		// Stream successful responses without buffering or truncating the metrics.
-		if _, err := io.Copy(w, response.Body); err != nil {
-			slog.Debug("metrics response interrupted", "error", err)
+		if err := copyGatewayMetrics(w, response.Body); err != nil {
+			scrapeErr = err
 		}
 	}
 }
