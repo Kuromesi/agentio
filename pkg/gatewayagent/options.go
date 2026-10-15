@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"istio.io/istio/pkg/ptr"
 	"maps"
 	"os"
 	"strconv"
@@ -67,7 +68,7 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 
 func (c *Config) loadRuntimeOptions() (RuntimeOptions, error) {
 	var options RuntimeOptions
-	raw := os.Getenv("AGENTIO_GATEWAY_CONFIG")
+	raw := gatewayConfigEnv.Get()
 	if raw != "" {
 		dec := json.NewDecoder(strings.NewReader(raw))
 		dec.DisallowUnknownFields()
@@ -209,7 +210,7 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 		c.StatsEvictionInterval,
 		"Unused worker statistics eviction interval (multiple of stats flush)",
 	)
-	skipDeprecated := boolOption(c.SkipDeprecatedLogs, true)
+	skipDeprecated := ptr.OrDefault(c.SkipDeprecatedLogs, true)
 	flags.BoolVar(&skipDeprecated, "skip-deprecated-logs", skipDeprecated, "Suppress Envoy deprecation logs")
 	workers := 0
 	if concurrency != nil {
@@ -229,7 +230,7 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 			explicitWorkers = true
 		}
 	})
-	cpuLimit := os.Getenv("AGENTIO_CPU_LIMIT")
+	cpuLimit := cpuLimitEnv.Get()
 	if !explicitWorkers && cpuLimit != "" {
 		var err error
 		workers, err = strconv.Atoi(cpuLimit)
@@ -241,7 +242,7 @@ func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) e
 		return fmt.Errorf("concurrency must be between 0 and 65535")
 	}
 	c.Proxy.Concurrency = int32(workers)
-	if grace := os.Getenv("AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS"); grace != "" {
+	if grace := terminationGraceEnv.Get(); grace != "" {
 		seconds, err := strconv.Atoi(grace)
 		if err != nil || seconds < 1 {
 			return fmt.Errorf("invalid Pod termination grace period")

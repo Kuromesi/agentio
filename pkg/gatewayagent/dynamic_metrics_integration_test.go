@@ -223,6 +223,9 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 			}
 			counts := map[string]float64{}
 			for _, metric := range families["istio_requests_total"].GetMetric() {
+				if metric.GetCounter().GetValue() == 0 {
+					t.Fatalf("unused response code exported at %s: %v", url, metric)
+				}
 				for _, label := range metric.GetLabel() {
 					if label.GetName() == "response_code" {
 						counts[label.GetValue()] = metric.GetCounter().GetValue()

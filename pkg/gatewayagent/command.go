@@ -17,6 +17,7 @@ package gatewayagent
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,7 +26,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -83,7 +83,17 @@ func ConfigureLogging(c Config, output io.Writer) error {
 }
 
 // Command executes diagnostic subcommands without requiring workload credentials.
-func Command(ctx context.Context, args []string, output, errors io.Writer) error {
+func Command(ctx context.Context, args []string, output, errors io.Writer) (result error) {
+	configured := false
+	defer func() {
+		if result != nil && !stderrors.Is(result, flag.ErrHelp) {
+			if configured {
+				agentLog.Error("gateway agent failed", "error", result)
+			} else {
+				fmt.Fprintln(errors, result)
+			}
+		}
+	}()
 	if len(args) > 0 {
 		switch args[0] {
 		case "version":
@@ -110,7 +120,8 @@ func Command(ctx context.Context, args []string, output, errors io.Writer) error
 	if err := ConfigureLogging(c, errors); err != nil {
 		return err
 	}
-	slog.Info("starting gateway agent", "version", BuildInfo(), "config", effectiveConfig(c))
+	configured = true
+	agentLog.Info("starting gateway agent", "version", BuildInfo(), "config", effectiveConfig(c))
 	return Run(ctx, c)
 }
 
@@ -180,7 +191,7 @@ func adminRequest(ctx context.Context, args []string, output, errors io.Writer) 
 	if err != nil || path.IsAbs() || path.Host != "" || !strings.HasPrefix(path.Path, "/") {
 		return fmt.Errorf("request requires a local absolute path")
 	}
-	localhost, _ := localAddresses(os.Getenv("INSTANCE_IP"))
+	localhost, _ := localAddresses(instanceIPEnv.Get())
 	path.Scheme, path.Host = "http", net.JoinHostPort(localhost, strconv.Itoa(*port))
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()

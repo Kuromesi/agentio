@@ -4,7 +4,6 @@ api/security/v1/authorization.proto
 api/workload/v1/workload.proto
 pkg/gatewayagent/agent.go
 pkg/gatewayagent/identity.go
-pkg/gatewayagent/internal/caproto/ca.proto
 pkg/gatewayagent/internal/envoy/admin.go
 pkg/gatewayagent/internal/envoy/agent.go
 pkg/gatewayagent/internal/envoy/agent_test.go

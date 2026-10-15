@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -36,7 +35,6 @@ func main() {
 		os.Stderr,
 	); err != nil &&
 		!errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

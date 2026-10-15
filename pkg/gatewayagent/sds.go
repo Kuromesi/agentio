@@ -17,7 +17,6 @@ package gatewayagent
 
 import (
 	"fmt"
-	"log/slog"
 	"slices"
 	"strconv"
 	"time"
@@ -144,7 +143,8 @@ func (s *localSDS) recordNack(request *discovery.DiscoveryRequest) {
 	if s.identity.config.metrics != nil {
 		s.identity.config.metrics.sdsNacks.Inc()
 	}
-	slog.Warn("Envoy rejected gateway SDS update", "nonce", request.ResponseNonce)
+	sdsLog.Warn("Envoy rejected gateway SDS update", "nonce", request.ResponseNonce,
+		"resources", request.ResourceNames, "code", request.ErrorDetail.Code)
 }
 
 func receiveSDSRequests(stream sds.SecretDiscoveryService_StreamSecretsServer,

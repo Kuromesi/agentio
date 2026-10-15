@@ -15,6 +15,7 @@
 package gatewayagent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -62,16 +63,7 @@ func customizeBootstrap(data []byte, c Config) ([]byte, error) {
 
 func configureRuntime(b map[string]any, c Config) {
 	if len(c.RuntimeValues) > 0 {
-		runtime, ok := b["layered_runtime"].(map[string]any)
-		if !ok {
-			runtime = map[string]any{
-				"layers": []any{
-					map[string]any{"name": "agentio", "static_layer": map[string]any{}},
-					map[string]any{"name": "admin", "admin_layer": map[string]any{}},
-				},
-			}
-			b["layered_runtime"] = runtime
-		}
+		runtime := b["layered_runtime"].(map[string]any)
 		values := runtime["layers"].([]any)[0].(map[string]any)["static_layer"].(map[string]any)
 		for key, value := range c.RuntimeValues {
 			if value == nil || value == "" {
@@ -110,7 +102,7 @@ func configureTelemetry(b map[string]any, c Config) error {
 		cluster := entry.(map[string]any)
 		names[cluster["name"].(string)] = true
 		if cluster["name"] == "agent" {
-			setClusterPort(cluster, portOption(c.StatusPort, 15020))
+			setClusterPort(cluster, cmp.Or(c.StatusPort, 15020))
 		}
 	}
 	for _, raw := range c.TelemetryClusters {
@@ -151,10 +143,10 @@ func configureListeners(b map[string]any, c Config) {
 	admin["port_value"] = c.Proxy.AdminPort
 	for _, entry := range resources["listeners"].([]any) {
 		listener := entry.(map[string]any)
-		port := portOption(c.EnvoyStatusPort, 15021)
+		port := cmp.Or(c.EnvoyStatusPort, 15021)
 		metrics := listener["name"] == "agentio_metrics"
 		if metrics {
-			port = portOption(c.PrometheusPort, 15090)
+			port = cmp.Or(c.PrometheusPort, 15090)
 		}
 		socket := listener["address"].(map[string]any)["socket_address"].(map[string]any)
 		socket["port_value"] = port
@@ -194,7 +186,8 @@ func configureListeners(b map[string]any, c Config) {
 				map[string]any{
 					"name": "envoy.filters.listener.proxy_protocol",
 					"typed_config": map[string]any{
-						"@type": "type.googleapis.com/envoy.extensions.filters.listener.proxy_protocol.v3.ProxyProtocol",
+						"@type":                                 "type.googleapis.com/envoy.extensions.filters.listener.proxy_protocol.v3.ProxyProtocol",
+						"allow_requests_without_proxy_protocol": true,
 					},
 				},
 			}
@@ -219,10 +212,8 @@ func configureStats(b map[string]any, c Config) error {
 		stats = map[string]any{}
 		b["stats_config"] = stats
 	}
-	if c.StatsMatcher != nil {
-		if err := configureStatsMatcher(stats, c); err != nil {
-			return err
-		}
+	if err := configureStatsMatcher(stats, c); err != nil {
+		return err
 	}
 	tags := asList(stats["stats_tags"])
 	seen := map[string]bool{}
@@ -264,17 +255,21 @@ func configureStats(b map[string]any, c Config) error {
 }
 
 func configureStatsMatcher(stats map[string]any, c Config) error {
+	matcher := StatsMatcher{}
+	if c.StatsMatcher != nil {
+		matcher = *c.StatsMatcher
+	}
 	patterns := []any{}
 	// Retain lifecycle signals regardless of the user's selection.
 	prefixes := append(
 		[]string{"cluster_manager", "listener_manager", "server", "cluster.xds-grpc", "wasm", "agentio_gateway."},
-		c.StatsMatcher.InclusionPrefixes...)
+		matcher.InclusionPrefixes...)
 	groups := map[string][]string{
 		"prefix": prefixes,
 		"suffix": append(
 			[]string{"downstream_cx_active", "rbac.allowed", "rbac.denied", "shadow_allowed", "shadow_denied"},
-			c.StatsMatcher.InclusionSuffixes...),
-		"regex": append([]string{`vhost\..*\.route\..*`}, c.StatsMatcher.InclusionRegexps...),
+			matcher.InclusionSuffixes...),
+		"regex": append([]string{`vhost\..*\.route\..*`}, matcher.InclusionRegexps...),
 	}
 	for _, kind := range []string{"prefix", "suffix", "regex"} {
 		values := groups[kind]

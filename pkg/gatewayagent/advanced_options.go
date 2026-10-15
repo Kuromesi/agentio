@@ -15,8 +15,10 @@
 package gatewayagent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"istio.io/istio/pkg/ptr"
 	"net/netip"
 	"strings"
 	"time"
@@ -64,24 +66,6 @@ type StatsMatcher struct {
 	InclusionRegexps  []string `json:"inclusionRegexps,omitempty"`
 }
 
-func boolOption(v *bool, fallback bool) bool {
-	if v != nil {
-		return *v
-	}
-	return fallback
-}
-func floatOption(v *float64, fallback float64) float64 {
-	if v != nil {
-		return *v
-	}
-	return fallback
-}
-func portOption(v, fallback int) int {
-	if v != 0 {
-		return v
-	}
-	return fallback
-}
 func (c Config) nodeIPs() []string {
 	if len(c.InstanceIPs) > 0 {
 		return c.InstanceIPs
@@ -106,7 +90,7 @@ func (c Config) validateAdvanced() error {
 
 func (c Config) validateNetworkOptions() error {
 	ports := map[int]bool{}
-	for _, port := range []int{int(c.Proxy.AdminPort), portOption(c.StatusPort, 15020), portOption(c.EnvoyStatusPort, 15021), portOption(c.PrometheusPort, 15090)} {
+	for _, port := range []int{int(c.Proxy.AdminPort), cmp.Or(c.StatusPort, 15020), cmp.Or(c.EnvoyStatusPort, 15021), cmp.Or(c.PrometheusPort, 15090)} {
 		if port < 1 || port > 65535 || ports[port] {
 			return fmt.Errorf("gateway ports must be distinct and in 1..65535")
 		}
@@ -136,7 +120,7 @@ func (c Config) validateKeyOptions() error {
 	if c.ECCCurve != "" && c.ECCCurve != "P256" && c.ECCCurve != "P384" {
 		return fmt.Errorf("eccCurve must be P256 or P384")
 	}
-	grace, jitter := floatOption(c.RotationGraceRatio, .5), floatOption(c.RotationJitter, .01)
+	grace, jitter := ptr.OrDefault(c.RotationGraceRatio, .5), ptr.OrDefault(c.RotationJitter, .01)
 	if grace <= 0 || grace >= 1 || jitter < 0 || jitter >= grace || grace+jitter >= 1 {
 		return fmt.Errorf("rotation ratio and jitter must keep renewal strictly within certificate lifetime")
 	}
@@ -167,9 +151,11 @@ func (c Config) validateHeaders() error {
 }
 
 func (c *Config) applyCredentialPaths() {
-	c.RootCertFile = envString("AGENTIO_ROOT_CA", c.RootCertFile)
-	c.CARootCertFile = envString("AGENTIO_CA_ROOT_CA", c.RootCertFile)
-	c.XDSRootCertFile = envString("AGENTIO_XDS_ROOT_CA", c.RootCertFile)
+	if root, set := rootCAEnv.Lookup(); set {
+		c.RootCertFile = cmp.Or(root, c.RootCertFile)
+	}
+	c.CARootCertFile = cmp.Or(caRootCAEnv.Get(), c.RootCertFile)
+	c.XDSRootCertFile = cmp.Or(xdsRootCAEnv.Get(), c.RootCertFile)
 	if c.WorkloadSocket != "" {
 		c.SDSSocket = c.WorkloadSocket
 	}

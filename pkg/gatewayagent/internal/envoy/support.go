@@ -19,25 +19,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
+
+	agentiolog "github.com/openkruise/agentio/pkg/log"
 	"net"
 	"net/http"
 	"net/netip"
 	"time"
 )
 
-func infof(format string, args ...any)  { slog.Info(fmt.Sprintf(format, args...)) }
-func warnf(format string, args ...any)  { slog.Warn(fmt.Sprintf(format, args...)) }
-func errorf(format string, args ...any) { slog.Error(fmt.Sprintf(format, args...)) }
-func debugf(format string, args ...any) { slog.Debug(fmt.Sprintf(format, args...)) }
+var processLog = agentiolog.New("gateway-envoy")
 
-func stringSet(values ...string) map[string]bool {
-	result := make(map[string]bool, len(values))
-	for _, value := range values {
-		result[value] = true
-	}
-	return result
-}
+func infof(format string, args ...any)  { processLog.Info(fmt.Sprintf(format, args...)) }
+func warnf(format string, args ...any)  { processLog.Warn(fmt.Sprintf(format, args...)) }
+func errorf(format string, args ...any) { processLog.Error(fmt.Sprintf(format, args...)) }
+func debugf(format string, args ...any) { processLog.Debug(fmt.Sprintf(format, args...)) }
 
 func allIPv6(values []string) bool {
 	if len(values) == 0 {
@@ -68,6 +63,6 @@ func getWithTimeout(address string, timeout time.Duration) (*bytes.Buffer, error
 
 func closeResource(resource io.Closer) {
 	if err := resource.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		slog.Debug("resource cleanup failed", "error", err)
+		processLog.Debug("resource cleanup failed", "error", err)
 	}
 }

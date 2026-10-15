@@ -14,12 +14,13 @@
 // limitations under the License.
 
 // Adapted from release-0.1 at 169bad3c36783711989757cd907465b8fe9cfc3a.
-// Agentio maintains this copy; see ../UPSTREAM.md.
+// Agentio maintains this copy.
 package envoy
 
 import (
 	"bytes"
 	"fmt"
+	"istio.io/istio/pkg/env"
 	"os"
 	"os/exec"
 	"strings"
@@ -58,6 +59,11 @@ type ProxyConfig struct {
 	AgentIsRoot bool
 }
 
+var (
+	enableCoreDumpEnv = env.Register("AGENTIO_ENVOY_ENABLE_CORE_DUMP", "false", "Enable Envoy core dumps when set to true.")
+	hostIPEnv         = env.Register("HOST_IP", "", "Host IP for telemetry address substitution.")
+)
+
 // NewProxy creates an instance of the proxy control commands
 func NewProxy(cfg ProxyConfig) Proxy {
 	// inject tracing flag for higher levels
@@ -78,7 +84,7 @@ func NewProxy(cfg ProxyConfig) Proxy {
 	}
 
 	// Explicitly enable core dumps. This may be desirable more often (by default), but for now we only set it in VM tests.
-	if os.Getenv("AGENTIO_ENVOY_ENABLE_CORE_DUMP") == "true" {
+	if enableCoreDumpEnv.Get() == "true" {
 		args = append(args, "--enable-core-dump")
 	}
 	return &envoy{
@@ -178,7 +184,7 @@ func readBootstrapToJSON(fname string) (string, error) {
 
 	// Replace host with HOST_IP env var if it is "$(HOST_IP)".
 	// This is to support some tracer setting (Datadog, Zipkin), where "$(HOST_IP)" is used for address.
-	HostIPEnv := os.Getenv("HOST_IP")
+	HostIPEnv := hostIPEnv.Get()
 
 	if strings.Contains(HostIPEnv, ":") { // For IPv6, address needs to be of form `[ff06::c3]:8126`
 		HostIPEnv = "[" + HostIPEnv + "]"
@@ -222,7 +228,7 @@ func (e *envoy) Run(abort <-chan error) error {
 
 	select {
 	case err := <-abort:
-		warnf("Aborting proxy")
+		infof("Stopping Envoy process")
 		if errKill := cmd.Process.Kill(); errKill != nil {
 			warnf("killing proxy caused an error %v", errKill)
 		}

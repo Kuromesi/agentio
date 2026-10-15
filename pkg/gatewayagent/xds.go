@@ -15,18 +15,24 @@
 package gatewayagent
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	agentiolog "github.com/openkruise/agentio/pkg/log"
 )
@@ -50,6 +56,7 @@ func startXDS(c Config) (func(), <-chan error, error) {
 	discovery.RegisterAggregatedDiscoveryServiceServer(server, &xdsProxy{config: c})
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
+	xdsLog.Info("gateway ADS server listening", "socket", c.XDSSocket, "address", c.Proxy.DiscoveryAddress)
 	return func() {
 		server.Stop()
 		closeResource(listener)
@@ -61,7 +68,7 @@ func (p *xdsProxy) connect(ctx context.Context) (context.Context, *grpc.ClientCo
 		ctx,
 		p.config.Proxy.DiscoveryAddress,
 		p.config.XDSServerName,
-		envStringFallback(p.config.XDSRootCertFile, p.config.RootCertFile),
+		cmp.Or(p.config.XDSRootCertFile, p.config.RootCertFile),
 		p.config.TokenFile,
 		p.config.ClusterID,
 		p.config.XDSHeaders,
@@ -118,9 +125,10 @@ func connectControlPlane(
 
 func (p *xdsProxy) DeltaAggregatedResources(
 	down discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
-) error {
-	received, finished := observeADS(down.Context(), p.config.metrics)
-	defer finished()
+) (result error) {
+	received, finished := p.observeSession(down.Context())
+	stage := "connect"
+	defer func() { finished(result, stage) }()
 	ctx, cancel := context.WithCancel(down.Context())
 	defer cancel()
 	ctx, conn, err := p.connect(ctx)
@@ -128,10 +136,12 @@ func (p *xdsProxy) DeltaAggregatedResources(
 		return err
 	}
 	defer closeResource(conn)
+	stage = "open_stream"
 	up, err := discovery.NewAggregatedDiscoveryServiceClient(conn).DeltaAggregatedResources(ctx)
 	if err != nil {
 		return err
 	}
+	stage = "relay"
 	return relay(ctx, down.Recv, up.Send, up.Recv, func(response *discovery.DeltaDiscoveryResponse) error {
 		received()
 		return down.Send(response)
@@ -140,9 +150,10 @@ func (p *xdsProxy) DeltaAggregatedResources(
 
 func (p *xdsProxy) StreamAggregatedResources(
 	down discovery.AggregatedDiscoveryService_StreamAggregatedResourcesServer,
-) error {
-	received, finished := observeADS(down.Context(), p.config.metrics)
-	defer finished()
+) (result error) {
+	received, finished := p.observeSession(down.Context())
+	stage := "connect"
+	defer func() { finished(result, stage) }()
 	ctx, cancel := context.WithCancel(down.Context())
 	defer cancel()
 	ctx, conn, err := p.connect(ctx)
@@ -150,14 +161,35 @@ func (p *xdsProxy) StreamAggregatedResources(
 		return err
 	}
 	defer closeResource(conn)
+	stage = "open_stream"
 	up, err := discovery.NewAggregatedDiscoveryServiceClient(conn).StreamAggregatedResources(ctx)
 	if err != nil {
 		return err
 	}
+	stage = "relay"
 	return relay(ctx, down.Recv, up.Send, up.Recv, func(response *discovery.DiscoveryResponse) error {
 		received()
 		return down.Send(response)
 	})
+}
+
+// Observe actual responses rather than gRPC client creation, which is asynchronous.
+func (p *xdsProxy) observeSession(ctx context.Context) (func(), func(error, string)) {
+	received, finished := observeADS(ctx, p.config.metrics)
+	logger := xdsLog.With("address", p.config.Proxy.DiscoveryAddress)
+	var first sync.Once
+	return func() {
+			received()
+			first.Do(func() { logger.Info("gateway ADS received first control-plane response") })
+		}, func(err error, stage string) {
+			finished()
+			fields := []any{"stage", stage, "code", status.Code(err).String(), "error", err}
+			if ctx.Err() != nil || err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
+				logger.Debug("gateway ADS stream closed", fields...)
+			} else {
+				logger.Warn("gateway ADS stream failed", fields...)
+			}
+		}
 }
 
 // Returning terminates the downstream handler and cancels the upstream RPC,
@@ -172,7 +204,6 @@ func relay[Request, Response any](ctx context.Context,
 	go func() { done <- copyMessages(recvUp, sendDown) }()
 	select {
 	case err := <-done:
-		xdsLog.Debug("gateway ADS stream closed", "error", err)
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
@@ -189,11 +220,4 @@ func copyMessages[T any](recv func() (T, error), send func(T) error) error {
 			return err
 		}
 	}
-}
-
-func envStringFallback(value, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
 }

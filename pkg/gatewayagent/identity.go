@@ -27,7 +27,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"log/slog"
+	"istio.io/istio/pkg/ptr"
 	mathrand "math/rand/v2"
 	"net"
 	"net/url"
@@ -44,12 +44,12 @@ import (
 	sds "github.com/envoyproxy/go-control-plane/envoy/service/secret/v3"
 	"google.golang.org/grpc"
 
-	ca "github.com/openkruise/agentio/pkg/gatewayagent/internal/caproto"
+	ca "istio.io/api/security/v1alpha1"
 )
 
 // The CSR, cache, renewal and SDS responsibilities are extracted from
 // release-0.1 security/pkg/nodeagent. Only default and ROOTCA are supported.
-// This is maintained locally; see internal/UPSTREAM.md for the extraction boundary.
+// Agentio maintains this implementation.
 type identityManager struct {
 	config      Config
 	mu          sync.RWMutex
@@ -84,6 +84,7 @@ func startIdentity(c Config) (*identityManager, error) {
 		serverDone: make(chan error, 1)}
 	sds.RegisterSecretDiscoveryServiceServer(m.server, &localSDS{identity: m})
 	go func() { m.serverDone <- m.server.Serve(listener) }()
+	sdsLog.Info("gateway SDS server listening", "socket", c.SDSSocket)
 	go m.run(ctx)
 	return m, nil
 }
@@ -148,7 +149,7 @@ func (m *identityManager) run(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				slog.Warn("gateway certificate renewal failed", "error", err)
+				certLog.Warn("gateway certificate renewal failed", "error", err, "retry_after", retry, "duration", time.Since(started))
 				renew.Reset(retry)
 				retry = min(30*time.Second, retry*2)
 				continue
@@ -162,11 +163,11 @@ func (m *identityManager) run(ctx context.Context) {
 				rotateTime(
 					time.Now(),
 					expires,
-					floatOption(m.config.RotationGraceRatio, .5),
-					floatOption(m.config.RotationJitter, .01),
+					ptr.OrDefault(m.config.RotationGraceRatio, .5),
+					ptr.OrDefault(m.config.RotationJitter, .01),
 				),
 			)
-			slog.Info("gateway workload certificate renewed", "expires", expires)
+			certLog.Info("gateway workload certificate renewed", "expires", expires, "duration", time.Since(started))
 		}
 	}
 }
@@ -176,6 +177,7 @@ func (m *identityManager) watchRoots(ctx context.Context, changed chan<- struct{
 	// Poll projected files to follow Kubernetes ..data symlink swaps.
 	poll := time.NewTicker(time.Second)
 	defer poll.Stop()
+	lastError := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -186,11 +188,19 @@ func (m *identityManager) watchRoots(ctx context.Context, changed chan<- struct{
 				if m.config.metrics != nil {
 					m.config.metrics.rootReloadFailures.Inc()
 				}
-				slog.Warn("gateway trust bundle reload failed", "error", err)
+				if message := err.Error(); message != lastError {
+					certLog.Warn("gateway trust bundle reload failed", "error", err)
+					lastError = message
+				}
 				continue
+			}
+			if lastError != "" {
+				certLog.Info("gateway trust bundle reload recovered")
+				lastError = ""
 			}
 			m.mu.Lock()
 			if !bytes.Equal(root, m.root.GetValidationContext().GetTrustedCa().GetInlineBytes()) {
+				certLog.Info("gateway trust bundle updated")
 				m.root = rootSecret(root)
 				m.notifyLocked()
 				select {

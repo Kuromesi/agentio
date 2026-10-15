@@ -1,7 +1,7 @@
 // Copyright 2026 The Kruise Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// ABI subset from Envoy v1.39.3 source/extensions/dynamic_modules/abi/abi.h.
+// ABI subset from Envoy v1.39.4 source/extensions/dynamic_modules/abi/abi.h.
 // Keep the runtime test on the pinned Envoy image when upgrading either side.
 use std::ffi::{c_char, c_void};
 

@@ -44,7 +44,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	ca "github.com/openkruise/agentio/pkg/gatewayagent/internal/caproto"
+	ca "istio.io/api/security/v1alpha1"
 )
 
 type testCA struct {

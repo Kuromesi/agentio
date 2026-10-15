@@ -47,6 +47,11 @@ func copyGatewayMetrics(dst io.Writer, src io.Reader) error {
 					"istio_request_duration_milliseconds_bucket", "istio_request_duration_milliseconds_sum",
 					"istio_request_duration_milliseconds_count":
 					line = line[:offset] + metric
+					// The module pre-registers response codes; publish counters only after traffic.
+					if offset == 0 && metric[:end] == "istio_requests_total" &&
+						strings.TrimSpace(metric[strings.LastIndexByte(metric, '}')+1:]) == "0" {
+						line = ""
+					}
 				}
 			}
 		}

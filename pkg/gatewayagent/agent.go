@@ -16,10 +16,12 @@
 package gatewayagent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"istio.io/istio/pkg/ptr"
 	"log/slog"
 	"net"
 	"os"
@@ -34,7 +36,7 @@ import (
 
 // Run owns the gateway process and its local services. The lifecycle assembly is
 // adapted from release-0.1 pilot-agent; process execution and drain are maintained
-// locally in internal/envoy, without Istio Go dependencies.
+// locally in internal/envoy. Shared utilities and API types use existing dependencies.
 func Run(ctx context.Context, c Config) error {
 	if err := c.validate(); err != nil {
 		return err
@@ -94,7 +96,7 @@ func runEnvoy(
 			LogAsJSON:          c.LogAsJSON,
 			OutlierLogPath:     c.OutlierLogPath,
 			NodeIPs:            c.nodeIPs(),
-			SkipDeprecatedLogs: boolOption(c.SkipDeprecatedLogs, true),
+			SkipDeprecatedLogs: ptr.OrDefault(c.SkipDeprecatedLogs, true),
 			FileFlushInterval:  durationpb.New(c.Proxy.FileFlushInterval),
 			FileFlushMinSizeKB: c.Proxy.FileFlushMinSizeKB,
 		}),
@@ -102,7 +104,7 @@ func runEnvoy(
 	localhost, _ := localAddresses(c.IP)
 	agent := envoy.NewAgent(proxy, c.Proxy.TerminationDrainDuration,
 		c.MinimumDrainDuration, localhost, int(c.Proxy.AdminPort),
-		portOption(c.EnvoyStatusPort, 15021), portOption(c.PrometheusPort, 15090), c.ExitOnZeroActiveConnections)
+		cmp.Or(c.EnvoyStatusPort, 15021), cmp.Or(c.PrometheusPort, 15090), c.ExitOnZeroActiveConnections)
 	var draining atomic.Bool
 	stopStatus, statusDone, err := startStatus(ctx, c, agent, cancel, &draining, identity.ready)
 	if err != nil {

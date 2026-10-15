@@ -150,3 +150,48 @@ func TestWaitCustomStatusPort(t *testing.T) {
 		t.Fatal("did not wait for readiness")
 	}
 }
+
+func TestDrainDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("AGENTIO_GATEWAY_CONFIG", "")
+	t.Setenv("AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS", "")
+	c, err := LoadConfig(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Proxy.DrainDuration != 45*time.Second || c.Proxy.TerminationDrainDuration != 25*time.Second {
+		t.Fatalf("unexpected drain defaults: %+v", c.Proxy)
+	}
+	t.Setenv("AGENTIO_GATEWAY_CONFIG", "{\"drainDuration\":\"30s\"}")
+	c, err = LoadConfig(nil, io.Discard)
+	if err != nil || c.Proxy.DrainDuration != 30*time.Second {
+		t.Fatalf("JSON override: %v, %v", c.Proxy.DrainDuration, err)
+	}
+	c, err = LoadConfig([]string{"--drain-duration=10s"}, io.Discard)
+	if err != nil || c.Proxy.DrainDuration != 10*time.Second {
+		t.Fatalf("CLI override: %v, %v", c.Proxy.DrainDuration, err)
+	}
+}
+
+func TestEnvironmentReadsAndEmptyFallbacks(t *testing.T) {
+	for _, name := range []string{"AGENTIO_GATEWAY_CONFIG", "AGENTIO_ROOT_CA", "AGENTIO_CA_ROOT_CA", "AGENTIO_XDS_ROOT_CA", "CA_ADDR", "AGENTIO_CONFIG_DIR", "ENVOY_BINARY", "CLUSTER_ID", "TRUST_DOMAIN", "AGENTIO_TOKEN_FILE"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("AGENTIO_XDS_ADDRESS", "first:15012")
+	c, err := LoadConfig(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RootCertFile != "/var/run/secrets/agentio/root-cert.pem" || c.CARootCertFile != c.RootCertFile || c.XDSRootCertFile != c.RootCertFile || c.CAAddress != "first:15012" || c.Proxy.ConfigPath != "/etc/agentio/proxy" || c.Proxy.BinaryPath != "/usr/local/bin/envoy" || c.ClusterID != "Kubernetes" || c.TrustDomain != "cluster.local" || c.TokenFile != "/var/run/secrets/tokens/agentio-token" {
+		t.Fatalf("empty environment lost defaults: %+v", c)
+	}
+	t.Setenv("AGENTIO_XDS_ADDRESS", "second:15012")
+	t.Setenv("AGENTIO_ROOT_CA", "/custom/root.pem")
+	t.Setenv("AGENTIO_CA_ROOT_CA", "/custom/ca.pem")
+	c, err = LoadConfig(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.CAAddress != "second:15012" || c.RootCertFile != "/custom/root.pem" || c.CARootCertFile != "/custom/ca.pem" || c.XDSRootCertFile != "/custom/root.pem" {
+		t.Fatalf("environment cached or fallback changed: %+v", c)
+	}
+}

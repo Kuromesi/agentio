@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	internallistener "github.com/envoyproxy/go-control-plane/envoy/extensions/bootstrap/internal_listener/v3"
 	httpupstreamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -44,6 +45,13 @@ func TestCommunityBootstrap(t *testing.T) {
 		b, err := bootstrapConfig(c)
 		if err != nil {
 			t.Fatal(err)
+		}
+		internal := &internallistener.InternalListener{}
+		if err := b.GetBootstrapExtensions()[0].GetTypedConfig().UnmarshalTo(internal); err != nil {
+			t.Fatal(err)
+		}
+		if internal.GetBufferSizeKb().GetValue() != 64 {
+			t.Fatal("internal listener buffer must retain the 64 KiB backpressure threshold")
 		}
 		if b.GetApplicationLogConfig().GetLogFormat().GetJsonFormat() == nil {
 			t.Fatal("missing JSON application logs")
@@ -86,5 +94,25 @@ func TestCommunityBootstrap(t *testing.T) {
 		if len(b.BootstrapExtensions) != 1 || b.BootstrapExtensions[0].Name != "envoy.bootstrap.internal_listener" {
 			t.Fatal("unexpected bootstrap extensions")
 		}
+	}
+}
+
+func TestServiceClusterOverride(t *testing.T) {
+	for _, value := range []string{"", "custom-gateway"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("AGENTIO_SERVICE_CLUSTER", value)
+			c := testConfig(t)
+			b, err := bootstrapConfig(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := value
+			if want == "" {
+				want = "agentio-egress"
+			}
+			if b.Node.Cluster != want || b.Node.Id != c.nodeID() {
+				t.Fatalf("unexpected node identity: %v", b.Node)
+			}
+		})
 	}
 }

@@ -14,7 +14,7 @@
 //  limitations under the License.
 
 // Adapted from release-0.1 at 169bad3c36783711989757cd907465b8fe9cfc3a.
-// Agentio maintains this copy; see ../UPSTREAM.md.
+// Agentio maintains this copy.
 package envoy
 
 import (

@@ -48,6 +48,37 @@ func TestGatewayMetricReadFailure(t *testing.T) {
 	}
 }
 
+func TestGatewayMetricsOmitUnusedResponseCodes(t *testing.T) {
+	const prefix = "envoy_agentio_gateway_"
+	input := "# TYPE " + prefix + "istio_requests_total counter\n" +
+		"# HELP " + prefix + "istio_requests_total Requests\n" +
+		prefix + "istio_requests_total{response_code=\"445\"} 0\n" +
+		prefix + "istio_requests_total{response_code=\"452\"} 16\n" +
+		prefix + "istio_requests_total{response_code=\"0\"} 1\n" +
+		prefix + "istio_request_duration_milliseconds_bucket{le=\"1\"} 0\n" +
+		prefix + "istio_request_duration_milliseconds_sum 0\n" +
+		prefix + "istio_request_duration_milliseconds_count 0\n" +
+		"envoy_other{response_code=\"445\"} 0\n" +
+		prefix + "istio_requests_total_extra 0\n" +
+		prefix + "istio_requests_total{response_code=\"446\"} 0"
+	want := "# TYPE istio_requests_total counter\n" +
+		"# HELP istio_requests_total Requests\n" +
+		"istio_requests_total{response_code=\"452\"} 16\n" +
+		"istio_requests_total{response_code=\"0\"} 1\n" +
+		"istio_request_duration_milliseconds_bucket{le=\"1\"} 0\n" +
+		"istio_request_duration_milliseconds_sum 0\n" +
+		"istio_request_duration_milliseconds_count 0\n" +
+		"envoy_other{response_code=\"445\"} 0\n" +
+		prefix + "istio_requests_total_extra 0\n"
+	var output strings.Builder
+	if err := copyGatewayMetrics(&output, strings.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != want {
+		t.Fatalf("unexpected exported metrics:\n%s", output.String())
+	}
+}
+
 type failingMetricsReader struct{ err error }
 
 func (r failingMetricsReader) Read([]byte) (int, error) { return 0, r.err }

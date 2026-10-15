@@ -14,19 +14,19 @@
 // limitations under the License.
 
 // Adapted from release-0.1 at 169bad3c36783711989757cd907465b8fe9cfc3a.
-// Agentio maintains this copy; see ../UPSTREAM.md.
+// Agentio maintains this copy.
 package envoy
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"istio.io/istio/pkg/util/sets"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
-	"log/slog"
 	"sync/atomic"
 )
 
@@ -40,7 +40,7 @@ var activeConnectionCheckDelay = 1 * time.Second
 func NewAgent(proxy Proxy, terminationDrainDuration, minDrainDuration time.Duration, localhost string,
 	adminPort, statusPort, prometheusPort int, exitOnZeroActiveConnections bool,
 ) *Agent {
-	internalListeners := stringSet(
+	internalListeners := sets.New(
 		fmt.Sprintf("listener.0.0.0.0_%d.downstream_cx_active", statusPort),
 		fmt.Sprintf("listener.0.0.0.0_%d.downstream_cx_active", prometheusPort),
 		"listener.agentio_status.downstream_cx_active",
@@ -96,7 +96,7 @@ type Agent struct {
 	adminPort int
 	localhost string
 
-	internalListeners map[string]bool
+	internalListeners sets.Set[string]
 
 	exitOnZeroActiveConnections bool
 
@@ -118,7 +118,7 @@ type exitStatus struct {
 //     Once the app containers shutdown, we get a SIGTERM. We have no use to run anymore, so shutdown immediately.
 //     If somehow we do not shutdown from the SIGTERM fast enough, we may get a SIGKILL later.
 func (a *Agent) Run(ctx context.Context) {
-	slog.Info("Starting proxy agent")
+	processLog.Info("Starting proxy agent")
 	go a.runWait(a.abortCh)
 
 	select {
@@ -134,7 +134,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 	case <-ctx.Done():
 		a.terminate()
-		slog.Info("Agent has successfully terminated")
+		processLog.Info("Agent has successfully terminated")
 	}
 }
 
@@ -208,7 +208,7 @@ func (a *Agent) terminate() {
 				return
 			default:
 				if err != nil {
-					slog.Error(err.Error())
+					processLog.Error(err.Error())
 					retryCount++
 					// Max retry 5 times
 					if retryCount > 4 {
@@ -220,13 +220,13 @@ func (a *Agent) terminate() {
 					continue graceful_loop
 				}
 				if ac == -1 {
-					slog.Info("downstream_cx_active are not available. This either means there are no downstream connection established yet" +
+					processLog.Info("downstream_cx_active are not available. This either means there are no downstream connection established yet" +
 						" or the stats are not enabled. Skipping active connections check...")
 					a.abortCh <- errAbort
 					break graceful_loop
 				}
 				if ac == 0 {
-					slog.Info("There are no more active connections. terminating proxy...")
+					processLog.Info("There are no more active connections. terminating proxy...")
 					a.abortCh <- errAbort
 					break graceful_loop
 				}
@@ -251,9 +251,8 @@ func (a *Agent) terminate() {
 	if errors.Is(status.err, errAbort) {
 		infof("Envoy aborted normally")
 	} else {
-		warnf("Envoy aborted abnormally")
+		warnf("Envoy aborted abnormally: %v", status.err)
 	}
-	warnf("Aborted proxy instance")
 }
 
 func (a *Agent) activeProxyConnections() (int, error) {
@@ -285,7 +284,7 @@ func (a *Agent) activeProxyConnectionsWithTimeout(timeout time.Duration) (int, e
 			continue
 		}
 		// Exclude admin, readiness and metrics listeners; retain all business and internal forwarding listeners.
-		if a.internalListeners[parts[0]] {
+		if a.internalListeners.Contains(parts[0]) {
 			continue
 		}
 		val, err := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 64)

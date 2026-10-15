@@ -15,10 +15,11 @@
 package gatewayagent
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"fmt"
-	"log/slog"
+	"istio.io/istio/pkg/ptr"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -43,23 +44,42 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		Context:       ctx,
 	}
 	var probeMu sync.Mutex
+	var lastReason string
+	var checked bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz/ready", func(w http.ResponseWriter, _ *http.Request) {
+		probeMu.Lock()
+		defer probeMu.Unlock()
+		reason := ""
+		defer func() {
+			if !checked || reason != lastReason {
+				switch reason {
+				case "":
+					statusLog.Info("gateway is ready")
+				case "gateway draining":
+					statusLog.Info("gateway is draining")
+				default:
+					statusLog.Warn("gateway is not ready", "reason", reason)
+				}
+			}
+			checked, lastReason = true, reason
+		}()
 		if c.metrics != nil {
 			c.metrics.ready.Set(0)
 		}
 		if draining.Load() || ctx.Err() != nil {
+			reason = "gateway draining"
 			http.Error(w, "gateway draining", http.StatusServiceUnavailable)
 			return
 		}
 		if err := identityReady(); err != nil {
+			reason = err.Error()
 			http.Error(w, "gateway certificate not ready", http.StatusServiceUnavailable)
 			return
 		}
-		probeMu.Lock()
 		err := probe.Check()
-		probeMu.Unlock()
 		if err != nil {
+			reason = err.Error()
 			http.Error(w, "gateway not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -113,7 +133,11 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		mux.HandleFunc("GET /debug/pprof/symbol", local(pprof.Symbol))
 		mux.HandleFunc("GET /debug/pprof/trace", local(pprof.Trace))
 	}
-	return serveStatusOn(mux, portOption(c.StatusPort, 15020))
+	stop, done, err := serveStatusOn(mux, cmp.Or(c.StatusPort, 15020))
+	if err == nil {
+		statusLog.Info("gateway status server listening", "port", cmp.Or(c.StatusPort, 15020))
+	}
+	return stop, done, err
 }
 
 // Envoy owns 15021 and 15090; the agent is the readiness backend on 15020.
@@ -152,7 +176,7 @@ func proxyMetrics(c Config) http.HandlerFunc {
 			return
 		}
 		w.Header().Add("Vary", "Accept-Encoding")
-		if boolOption(c.StatsCompression, true) && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		if ptr.OrDefault(c.StatsCompression, true) && acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			w.Header().Set("Content-Encoding", "gzip")
 			zipper := gzip.NewWriter(w)
 			defer closeResource(zipper)
@@ -192,7 +216,7 @@ func proxyMetricsPlain(c Config) http.HandlerFunc {
 		var scrapeErr error
 		defer func() {
 			if scrapeErr != nil {
-				slog.Warn("Envoy metrics scrape failed", "error", scrapeErr)
+				statusLog.Warn("Envoy metrics scrape failed", "error", scrapeErr)
 				if c.metrics != nil {
 					c.metrics.envoyScrapeSuccess.Set(0)
 					c.metrics.envoyScrapeFailures.Inc()

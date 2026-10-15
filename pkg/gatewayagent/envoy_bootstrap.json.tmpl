@@ -4,13 +4,18 @@
     "time": "%Y-%m-%dT%T.%fZ", "level": "%l", "scope": "envoy %n", "msg": "%j", "caller": "%g:%#", "thread": "%t"
   }}},
   {{- end }}
-  "node": {"id": {{json .NodeID}}, "cluster": "agentio-egress", "metadata": {{json .Metadata}}},
+  "node": {"id": {{json .NodeID}}, "cluster": {{json .ServiceCluster}}, "metadata": {{json .Metadata}}},
   "admin": {"address": {"socket_address": {"address": {{json .Localhost}}, "port_value": 15000}}},
   "deferred_stat_options": {"enable_deferred_creation_stats": true},
+  "cluster_manager": {"enable_deferred_cluster_creation": true},
+  "layered_runtime": {"layers": [
+    {"name": "agentio", "static_layer": {"re2.max_program_size.error_level": 32768}},
+    {"name": "admin", "admin_layer": {}}
+  ]},
   "stats_config": {"stats_tags": [{"tag_name": "response_code", "regex": "^agentio_gateway[.](?:istio_requests_total)([.]response_code[.]([0-9]+))$"}]},
   "stats_flush_interval": {{json .StatsFlushInterval}},
   "bootstrap_extensions": [{"name": "envoy.bootstrap.internal_listener", "typed_config": {
-    "@type": "type.googleapis.com/envoy.extensions.bootstrap.internal_listener.v3.InternalListener"
+    "@type": "type.googleapis.com/envoy.extensions.bootstrap.internal_listener.v3.InternalListener", "buffer_size_kb": 64
   }}],
   "dynamic_resources": {
     "lds_config": {"ads": {}, "resource_api_version": "V3"},

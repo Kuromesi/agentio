@@ -16,10 +16,10 @@
 package gatewayagent
 
 import (
+	"cmp"
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"time"
 )
@@ -75,31 +75,31 @@ type Config struct {
 
 // FromEnvironment loads operator-supplied identity and paths with runtime defaults.
 func FromEnvironment() Config {
-	address := os.Getenv("AGENTIO_XDS_ADDRESS")
-	root := envString("AGENTIO_ROOT_CA", "/var/run/secrets/agentio/root-cert.pem")
-	dir := envString("AGENTIO_CONFIG_DIR", "/etc/agentio/proxy")
+	address := xdsAddressEnv.Get()
+	root := cmp.Or(rootCAEnv.Get(), rootCAEnv.DefaultValue)
+	dir := cmp.Or(configDirEnv.Get(), configDirEnv.DefaultValue)
 	return Config{
 		Proxy: ProxyConfig{DiscoveryAddress: address,
 			ConfigPath:               dir,
-			BinaryPath:               envString("ENVOY_BINARY", "/usr/local/bin/envoy"),
+			BinaryPath:               cmp.Or(envoyBinaryEnv.Get(), envoyBinaryEnv.DefaultValue),
 			AdminPort:                15000,
-			DrainDuration:            20 * time.Second,
+			DrainDuration:            45 * time.Second,
 			TerminationDrainDuration: 25 * time.Second,
 			FileFlushInterval:        time.Second},
-		PodName:              os.Getenv("POD_NAME"),
-		Namespace:            os.Getenv("POD_NAMESPACE"),
-		PodUID:               os.Getenv("POD_UID"),
-		NodeName:             os.Getenv("NODE_NAME"),
-		ServiceAccount:       os.Getenv("SERVICE_ACCOUNT"),
-		IP:                   os.Getenv("INSTANCE_IP"),
-		ClusterID:            envString("CLUSTER_ID", "Kubernetes"),
-		TrustDomain:          envString("TRUST_DOMAIN", "cluster.local"),
-		TokenFile:            envString("AGENTIO_TOKEN_FILE", "/var/run/secrets/tokens/agentio-token"),
+		PodName:              podNameEnv.Get(),
+		Namespace:            namespaceEnv.Get(),
+		PodUID:               podUIDEnv.Get(),
+		NodeName:             nodeNameEnv.Get(),
+		ServiceAccount:       serviceAccountEnv.Get(),
+		IP:                   instanceIPEnv.Get(),
+		ClusterID:            cmp.Or(clusterIDEnv.Get(), clusterIDEnv.DefaultValue),
+		TrustDomain:          cmp.Or(trustDomainEnv.Get(), trustDomainEnv.DefaultValue),
+		TokenFile:            cmp.Or(tokenFileEnv.Get(), tokenFileEnv.DefaultValue),
 		RootCertFile:         root,
 		CARootCertFile:       root,
-		CAAddress:            envString("CA_ADDR", address),
-		XDSServerName:        os.Getenv("AGENTIO_XDS_SERVER_NAME"),
-		CAServerName:         os.Getenv("AGENTIO_CA_SERVER_NAME"),
+		CAAddress:            cmp.Or(caAddressEnv.Get(), address),
+		XDSServerName:        xdsServerNameEnv.Get(),
+		CAServerName:         caServerNameEnv.Get(),
 		XDSSocket:            filepath.Join(dir, "XDS"),
 		SDSSocket:            "/var/run/secrets/workload-spiffe-uds/socket",
 		AgentLogLevel:        "info",
@@ -126,13 +126,6 @@ func (c Config) validate() error {
 		}
 	}
 	return c.validateRuntime()
-}
-
-func envString(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
 }
 
 func localAddresses(ip string) (string, string) {

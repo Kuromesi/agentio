@@ -16,6 +16,7 @@ package gatewayagent
 
 import (
 	"bytes"
+	"cmp"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -52,12 +53,9 @@ func bootstrapConfig(c Config) (*bootstrapv3.Bootstrap, error) {
 		metadata[key] = value
 	}
 	parameters := map[string]any{
-		"NodeID":    c.nodeID(),
-		"LogAsJSON": c.LogAsJSON,
-		"ServiceCluster": envString(
-			"AGENTIO_SERVICE_CLUSTER",
-			c.PodName+"."+c.Namespace,
-		),
+		"NodeID":             c.nodeID(),
+		"LogAsJSON":          c.LogAsJSON,
+		"ServiceCluster":     cmp.Or(serviceClusterEnv.Get(), serviceClusterEnv.DefaultValue),
 		"Metadata":           metadata,
 		"Localhost":          localhost,
 		"Wildcard":           wildcard,
