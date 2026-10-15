@@ -146,21 +146,17 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 		switch v := req.Request.(type) {
 		case *extProcPb.ProcessingRequest_RequestHeaders:
 			responses, err = s.HandleRequestHeaders(ctx, req.GetRequestHeaders(), req.Attributes, state)
+			// Keep the header phase's ID for transport errors, later phases,
+			// and stream finalization as well as request-body filters.
+			logger = logger.WithValues(logKeyRequestID, state.stream.RequestID)
+			loggerD = logger.V(logging.DEBUG)
+			ctx = log.IntoContext(ctx, logger)
 		case *extProcPb.ProcessingRequest_RequestBody:
-			// Reuse the request ID captured during the headers phase so
-			// body-phase logs (and downstream filters) share the same tag.
-			bodyLogger := logger.WithValues(logKeyRequestID, state.stream.RequestID)
-			bodyCtx := log.IntoContext(ctx, bodyLogger)
-			if bodyLoggerD := bodyLogger.V(logging.DEBUG); bodyLoggerD.Enabled() {
-				bodyLoggerD.Info(
-					"incoming body chunk",
-					"body",
-					string(v.RequestBody.Body),
-					"EoS",
-					v.RequestBody.EndOfStream,
-				)
+			if loggerD.Enabled() {
+				loggerD.Info("incoming body chunk",
+					"bodyLen", len(v.RequestBody.Body), "EoS", v.RequestBody.EndOfStream)
 			}
-			responses, err = s.processRequestBody(bodyCtx, req.GetRequestBody(), state, bodyLogger)
+			responses, err = s.processRequestBody(ctx, req.GetRequestBody(), state, logger)
 		case *extProcPb.ProcessingRequest_RequestTrailers:
 			responses, err = s.HandleRequestTrailers(ctx, req.GetRequestTrailers())
 		case *extProcPb.ProcessingRequest_ResponseHeaders:

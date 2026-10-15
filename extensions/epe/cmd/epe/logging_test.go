@@ -16,8 +16,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,6 +33,7 @@ import (
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/admin"
+	"github.com/openkruise/agentio/extensions/epe/pkg/audit/accesslog"
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 	agentlog "github.com/openkruise/agentio/pkg/log"
 )
@@ -63,7 +66,7 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(t.Name(), flag.ContinueOnError)
 	opts.BindFlags(flag.CommandLine)
 	// Start with the binary defaults, including its actual -v default. Runtime
-	// changes must still admit debug and trace through the production sampler.
+	// changes must still admit debug and trace through the same core.
 	if err := flag.CommandLine.Parse(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +108,28 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		for i, message := range []string{"EPE default", "slog default", "klog default"} {
 			if got[i]["msg"] != message || got[i]["level"] != "info" {
 				t.Errorf("default record = %v, want %q at info", got[i], message)
+			}
+		}
+	})
+
+	t.Run("access records are not sampled", func(t *testing.T) {
+		out.Reset()
+		auditLogger := accesslog.NewBufferedLogger(ctrllog.Log.WithName("audit"), 4096)
+		for i := range 200 {
+			auditLogger.Submit(accesslog.Entry{RequestID: fmt.Sprintf("request-%d", i), Outcome: "passthrough"})
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel() // Drain the queued records synchronously.
+		if err := auditLogger.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		got := records(t)
+		if len(got) != 200 {
+			t.Fatalf("emitted %d access records, want 200", len(got))
+		}
+		for i, record := range got {
+			if record["requestID"] != fmt.Sprintf("request-%d", i) {
+				t.Errorf("unexpected access record: %v", record)
 			}
 		}
 	})
@@ -211,7 +236,8 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		existing.V(logging.DEBUG).Info("debug enabled")
 		existing.V(logging.TRACE).Info("trace still hidden")
 		got := records(t)
-		if len(got) != 1 || got[0]["msg"] != "debug enabled" || got[0]["requestID"] != "already-created" || got[0]["level"] != "debug" {
+		if len(got) != 1 || got[0]["msg"] != "debug enabled" || got[0]["requestID"] != "already-created" ||
+			got[0]["level"] != "debug" {
 			t.Fatalf("debug update records = %v", got)
 		}
 
@@ -272,7 +298,10 @@ func TestInitLoggingBridgesBothStacksOntoZap(t *testing.T) {
 		existingSlog.Debug("slog debug enabled")
 		existing.V(logging.DEBUG).Info("EPE debug enabled")
 		existing.V(logging.TRACE).Info("EPE trace still hidden")
-		if got := records(t); len(got) != 2 || got[0]["msg"] != "slog debug enabled" || got[1]["msg"] != "EPE debug enabled" {
+		if got := records(
+			t,
+		); len(got) != 2 || got[0]["msg"] != "slog debug enabled" ||
+			got[1]["msg"] != "EPE debug enabled" {
 			t.Fatalf("verbosity 1 records = %v", got)
 		}
 	})
@@ -307,6 +336,61 @@ func TestNewLogLevelHonorsStartupFlags(t *testing.T) {
 			}
 			if got := newLogLevel(&opts).Level(); got != tc.want {
 				t.Fatalf("startup level = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInitLoggingPreservesEncoderFlags(t *testing.T) {
+	previousSlog, previousFlags := slog.Default(), flag.CommandLine
+	t.Cleanup(func() {
+		klog.ClearLogger()
+		slog.SetDefault(previousSlog)
+		flag.CommandLine = previousFlags
+	})
+	for _, tc := range []struct {
+		name string
+		args []string
+		json bool
+	}{
+		{name: "production", json: true},
+		{name: "explicit JSON", args: []string{"--zap-encoder=json", "--zap-time-encoding=epoch", "--zap-log-level=info"}, json: true},
+		{name: "console", args: []string{"--zap-encoder=console"}},
+		{name: "development", args: []string{"--zap-devel"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			opts := ctrlzap.Options{DestWriter: &out}
+			flag.CommandLine = flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+			opts.BindFlags(flag.CommandLine)
+			if err := flag.CommandLine.Parse(tc.args); err != nil {
+				t.Fatal(err)
+			}
+			initLogging(&opts)
+			slog.Info("encoder check")
+			slog.Debug("hidden debug")
+			if strings.Contains(out.String(), "hidden debug") {
+				t.Fatal("encoder flags changed default verbosity")
+			}
+			if !tc.json {
+				if !strings.Contains(out.String(), "INFO") || !strings.Contains(out.String(), "encoder check") {
+					t.Fatalf("console output = %q", out.String())
+				}
+				return
+			}
+			var record map[string]any
+			if err := json.Unmarshal(out.Bytes(), &record); err != nil {
+				t.Fatal(err)
+			}
+			if record["msg"] != "encoder check" || record["level"] != "info" {
+				t.Fatalf("JSON record = %v", record)
+			}
+			if tc.name == "explicit JSON" {
+				if _, ok := record["ts"].(float64); !ok {
+					t.Fatalf("epoch timestamp = %v", record["ts"])
+				}
+			} else if _, ok := record["ts"].(string); !ok {
+				t.Fatalf("default timestamp = %v", record["ts"])
 			}
 		})
 	}

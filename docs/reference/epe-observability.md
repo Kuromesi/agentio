@@ -76,13 +76,15 @@ Use plugin duration and outcome series together. A growing `error` outcome or du
 
 ## Logs and audit output
 
-EPE uses controller-runtime Zap logging in JSON production mode. By default `-v=0` emits Info and higher levels; `--zap-log-level` takes precedence over `-v` when provided. The code uses verbosity levels 0 (info), 1 (debug, including per-request summaries), and 2 (trace). `--zap-log-level=debug` and `-v=1` enable the same diagnostics. `--zap-stacktrace-level` can override the production default, which emits stack traces only at `DPanic` and above.
+EPE uses logr backed by Zap in JSON production mode. By default `-v=0` emits Info and higher levels; `--zap-log-level` takes precedence over `-v` when provided. The code uses verbosity levels 0 (info), 1 (debug, including per-request summaries), and 2 (trace). `--zap-log-level=debug` and `-v=1` enable the same diagnostics. `--zap-stacktrace-level` can override the production default, which emits stack traces only at `DPanic` and above.
 
 The verbosity scale previously used 2 (default), 3 (verbose), 4 (debug), and 5 (trace). When upgrading, replace explicit `-v=2` with `-v=0`, `-v=3` or `-v=4` with `-v=1`, and `-v=5` with `-v=2`. The same changes apply to numeric `--zap-log-level` and runtime logging values.
 
 With debug endpoints enabled, [GET/PUT `/debug/logging/default`](epe-admin-api.md#runtime-log-level) on the admin listener inspects or changes the running process's log level. Use the same request format as agentiod: PUT `{"output_level":"debug"}` for EPE debug diagnostics at `V(1)`, then PUT `{"output_level":"info"}` to restore default verbosity. EPE exposes only the process-wide `default` scope. Updates affect existing loggers immediately and reset to the startup flags after a restart.
 
-Every successfully handled request-header stream submits an INFO access-log record with message `egress request handled`. Its fields are `requestID`, `pod`, `method`, `host`, `path`, `units`, `outcome`, `actions`, `skipped`, and an optional `error`. This is an output surface, not a durable audit store: its bounded in-memory queue may drop entries under load.
+Every successfully handled request-header stream submits an INFO access-log record with message `egress request handled`. Its fields are `requestID`, `pod`, `method`, `host`, `path`, `units`, `outcome`, `actions`, `skipped`, and an optional `error`. The logger does not sample these records. This is an output surface, not a durable audit store: its bounded in-memory queue may drop entries under load. Raising the log threshold above Info suppresses access-log output.
+
+Request-body diagnostics include only the chunk length and end-of-stream flag. Credential-provider failures report status or decoding errors without the raw response body. Once request headers supply `x-request-id`, subsequent phase and transport-error logs carry the same `requestID`.
 
 Webhook rendering or transport failures produce audit-webhook log records at Info level where applicable. An HTTP response of 400 or higher increments the `http_error` metric but does not by itself create a delivery retry. Do not log or export raw bearer tokens, credentials, or request bodies. Audit templates can expose request headers, query parameters, labels, and profile inputs, so treat webhook payloads and debug output as potentially sensitive.
 

@@ -292,14 +292,13 @@ func (c *Client) getCredential(
 	if resp.StatusCode != http.StatusOK {
 		logger.V(logging.DEFAULT).Info("credential request failed",
 			"status", resp.StatusCode,
-			"credentialType", credentialType,
-			"body", string(body))
-		return nil, fmt.Errorf("credential request failed with status %d: %s", resp.StatusCode, string(body))
+			"credentialType", credentialType)
+		return nil, fmt.Errorf("credential request failed with status %d", resp.StatusCode)
 	}
 
 	var credResp credentialResponse
 	if err := json.Unmarshal(body, &credResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal credential response (body=%s): %w", string(body), err)
+		return nil, fmt.Errorf("failed to unmarshal credential response: %w", err)
 	}
 
 	return &credResp, nil

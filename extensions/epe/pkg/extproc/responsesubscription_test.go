@@ -559,16 +559,21 @@ func TestProcess_ResponseContractFaultRemainsGRPCError(t *testing.T) {
 // sent, so a handler error and its accompanying reply can both be observed.
 type collectingStream struct {
 	extProcPb.ExternalProcessor_ProcessServer
-	ctx  context.Context
-	msgs []*extProcPb.ProcessingRequest
-	next int
-	sent []*extProcPb.ProcessingResponse
+	ctx     context.Context
+	msgs    []*extProcPb.ProcessingRequest
+	next    int
+	sent    []*extProcPb.ProcessingResponse
+	sendErr error
+	recvErr error
 }
 
 func (s *collectingStream) Context() context.Context { return s.ctx }
 
 func (s *collectingStream) Recv() (*extProcPb.ProcessingRequest, error) {
 	if s.next >= len(s.msgs) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
 		return nil, io.EOF
 	}
 	msg := s.msgs[s.next]
@@ -577,6 +582,9 @@ func (s *collectingStream) Recv() (*extProcPb.ProcessingRequest, error) {
 }
 
 func (s *collectingStream) Send(resp *extProcPb.ProcessingResponse) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
 	s.sent = append(s.sent, resp)
 	return nil
 }
