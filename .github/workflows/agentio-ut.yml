@@ -69,7 +69,12 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BASE: ${{ github.event.before }}
         run: |
-          base="${PR_BASE:-${PUSH_BASE:-}}"
+          if [[ -n "$PR_BASE" ]]; then
+            # The merge ref may include a newer base than the event payload.
+            base="$(git rev-parse HEAD^1)"
+          else
+            base="${PUSH_BASE:-}"
+          fi
           if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
             base="$(git rev-parse HEAD^)"
           fi
@@ -77,3 +82,17 @@ jobs:
           make lint.golangci GOLANGCI_LINT_ARGS="--new-from-rev=$base"
       - name: Run tests with the race detector
         run: make racetest
+
+  gateway-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test gateway runtime
+        run: ./bin/test_gateway_runtime.sh

@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+# Copyright 2026 The Kruise Authors
+ARG ENVOY_IMAGE=docker.io/envoyproxy/envoy:v1.39.4@sha256:74bd4eb5629708d3fadca1a5e6b85d208f338d7bb54e06b69565905c5294cc01
+FROM rust:1.93.0-bookworm AS metrics-builder
+WORKDIR /src
+COPY extensions/envoy/gateway-metrics/ ./
+RUN cargo build --release --locked --offline
+
+FROM scratch AS metrics-artifact
+COPY --from=metrics-builder /src/target/release/libagentio_gateway_metrics.so /libagentio_gateway_metrics.so
+
+FROM golang:1.26.8 AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG AGENT_VERSION=dev
+ARG AGENT_REVISION=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/openkruise/agentio/pkg/gatewayagent.Version=${AGENT_VERSION} -X github.com/openkruise/agentio/pkg/gatewayagent.Revision=${AGENT_REVISION}" -o /out/gateway-agent ./cmd/gateway-agent
+FROM ${ENVOY_IMAGE} AS community
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /
+COPY --from=builder /out/gateway-agent /usr/local/bin/gateway-agent
+COPY --from=metrics-builder /src/target/release/libagentio_gateway_metrics.so /usr/local/lib/libagentio_gateway_metrics.so
+COPY LICENSE NOTICE /usr/share/doc/agentio-gateway/
+USER 1337:1337
+ENTRYPOINT ["/usr/local/bin/gateway-agent"]
+CMD []
