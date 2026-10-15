@@ -410,7 +410,10 @@ func TestWatchCertificateSources(t *testing.T) {
 				renew = func() {
 					sec = sec.DeepCopy()
 					sec.Data[certKey], sec.Data[keyKey] = certstest.SelfSigned(t, 7002)
-					if _, err := client.Kube().CoreV1().Secrets(namespace).Update(t.Context(), sec, metav1.UpdateOptions{}); err != nil {
+					if _, err := client.Kube().
+						CoreV1().
+						Secrets(namespace).
+						Update(t.Context(), sec, metav1.UpdateOptions{}); err != nil {
 						t.Fatal(err)
 					}
 				}

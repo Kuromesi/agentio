@@ -94,7 +94,10 @@ func TestWatchForbiddenSecretDoesNotBlockStartup(t *testing.T) {
 					CaSecretRef: &configv1.TargetReference{Name: "material", Namespace: "ack-agent-identity"},
 				},
 				ClientCertificateSource: &configv1.ClientTLS_ClientCertificateSecretRef{
-					ClientCertificateSecretRef: &configv1.TargetReference{Name: "material", Namespace: "ack-agent-identity"},
+					ClientCertificateSecretRef: &configv1.TargetReference{
+						Name:      "material",
+						Namespace: "ack-agent-identity",
+					},
 				},
 			}
 			registry := &Registry{}

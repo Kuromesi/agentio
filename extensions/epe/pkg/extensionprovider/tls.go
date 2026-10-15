@@ -106,8 +106,10 @@ func resolveTLSMaterial(
 			}
 			m.Certificate, m.PrivateKey = cert, key
 			if len(m.Certificate) == 0 || len(m.PrivateKey) == 0 {
-				m.CertificateError = fmt.Sprintf("Secret %q requires non-empty tls.crt and tls.key (or client.crt and client.key when both tls keys are absent)",
-					resourceKey(namespace, ref.Namespace, ref.Name))
+				m.CertificateError = fmt.Sprintf(
+					"Secret %q requires non-empty tls.crt and tls.key (or client.crt and client.key when both tls keys are absent)",
+					resourceKey(namespace, ref.Namespace, ref.Name),
+				)
 			}
 		}
 	} else if files := cfg.GetClientCertificateFiles(); files != nil {
