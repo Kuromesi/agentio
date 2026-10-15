@@ -20,11 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
-	"github.com/prometheus/client_golang/prometheus/testutil"
-	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"io"
 	"log/slog"
 	"net"
@@ -38,6 +33,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type logBuffer struct {
@@ -50,7 +51,11 @@ func (b *logBuffer) Write(p []byte) (int, error) {
 	defer b.mu.Unlock()
 	return b.data.Write(p)
 }
-func (b *logBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.data.String() }
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.String()
+}
 func captureGatewayLogs(t *testing.T) *logBuffer {
 	t.Helper()
 	previous := slog.Default()
@@ -77,20 +82,30 @@ func TestADSSessionLogs(t *testing.T) {
 		_, done := p.observeSession(t.Context())
 		done(err, "relay")
 	}
-	if strings.Count(logs.String(), "received first control-plane response") != 1 || strings.Count(logs.String(), "stream failed") != 1 {
+	if strings.Count(logs.String(), "received first control-plane response") != 1 ||
+		strings.Count(logs.String(), "stream failed") != 1 {
 		t.Fatal(logs.String())
 	}
-	if !strings.Contains(logs.String(), p.config.Proxy.DiscoveryAddress) || !strings.Contains(logs.String(), "Unavailable") {
+	if !strings.Contains(logs.String(), p.config.Proxy.DiscoveryAddress) ||
+		!strings.Contains(logs.String(), "Unavailable") {
 		t.Fatal(logs.String())
 	}
 }
 func TestReadinessTransitionLogs(t *testing.T) {
 	logs := captureGatewayLogs(t)
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "cluster_manager.cds.update_success: 1\nlistener_manager.lds.update_success: 1\nserver.state: 0\nlistener_manager.workers_started: 1")
+		if _, err := fmt.Fprintln(
+			w,
+			"cluster_manager.cds.update_success: 1\nlistener_manager.lds.update_success: 1\nserver.state: 0\nlistener_manager.workers_started: 1",
+		); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer admin.Close()
-	_, port, _ := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(admin.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	n, err := strconv.Atoi(port)
 	if err != nil {
 		t.Fatal(err)
@@ -118,8 +133,11 @@ func TestReadinessTransitionLogs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		io.Copy(io.Discard, response.Body)
-		response.Body.Close()
+		_, readErr := io.Copy(io.Discard, response.Body)
+		closeErr := response.Body.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			t.Fatal(err)
+		}
 		want := http.StatusOK
 		if state != "" {
 			want = http.StatusServiceUnavailable
@@ -128,10 +146,12 @@ func TestReadinessTransitionLogs(t *testing.T) {
 			t.Fatalf("status %d, want %d", response.StatusCode, want)
 		}
 	}
-	if strings.Count(logs.String(), "gateway is not ready") != 3 || strings.Count(logs.String(), "gateway is ready") != 2 {
+	if strings.Count(logs.String(), "gateway is not ready") != 3 ||
+		strings.Count(logs.String(), "gateway is ready") != 2 {
 		t.Fatal(logs.String())
 	}
-	if !strings.Contains(logs.String(), "certificate pending") || !strings.Contains(logs.String(), "certificate expired") {
+	if !strings.Contains(logs.String(), "certificate pending") ||
+		!strings.Contains(logs.String(), "certificate expired") {
 		t.Fatal(logs.String())
 	}
 }
@@ -148,8 +168,14 @@ func TestTrustBundleLogRecovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	changed := make(chan struct{}, 1)
-	go func() { defer close(done); m.watchRoots(ctx, changed) }()
-	defer func() { cancel(); <-done }()
+	go func() {
+		defer close(done)
+		m.watchRoots(ctx, changed)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for testutil.ToFloat64(c.metrics.rootReloadFailures) < 2 {
 		if time.Now().After(deadline) {
@@ -168,19 +194,32 @@ func TestTrustBundleLogRecovery(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if strings.Count(logs.String(), "trust bundle reload failed") != 1 || strings.Count(logs.String(), "trust bundle reload recovered") != 1 || strings.Count(logs.String(), "trust bundle updated") != 1 {
+	if strings.Count(logs.String(), "trust bundle reload failed") != 1 ||
+		strings.Count(logs.String(), "trust bundle reload recovered") != 1 ||
+		strings.Count(logs.String(), "trust bundle updated") != 1 {
 		t.Fatal(logs.String())
 	}
 }
 func TestSDSNackLogFields(t *testing.T) {
 	logs := captureGatewayLogs(t)
 	s := &localSDS{identity: &identityManager{}}
-	s.recordNack(&discovery.DiscoveryRequest{ResourceNames: []string{"default"}, ResponseNonce: "nonce-1", ErrorDetail: &rpcstatus.Status{Code: int32(codes.InvalidArgument), Message: "sensitive certificate contents"}})
+	s.recordNack(
+		&discovery.DiscoveryRequest{
+			ResourceNames: []string{"default"},
+			ResponseNonce: "nonce-1",
+			ErrorDetail: &rpcstatus.Status{
+				Code:    int32(codes.InvalidArgument),
+				Message: "sensitive certificate contents",
+			},
+		},
+	)
 	var record map[string]any
 	if err := json.Unmarshal([]byte(logs.String()), &record); err != nil {
 		t.Fatal(err)
 	}
-	if record["nonce"] != "nonce-1" || record["code"] != float64(codes.InvalidArgument) || !strings.Contains(logs.String(), "default") || strings.Contains(logs.String(), "sensitive certificate") {
+	if record["nonce"] != "nonce-1" || record["code"] != float64(codes.InvalidArgument) ||
+		!strings.Contains(logs.String(), "default") ||
+		strings.Contains(logs.String(), "sensitive certificate") {
 		t.Fatal(logs.String())
 	}
 }
@@ -191,14 +230,14 @@ func TestRuntimeFailureLogsJSON(t *testing.T) {
 	if err := Command(t.Context(), nil, io.Discard, logs); err == nil {
 		t.Fatal("expected invalid runtime identity")
 	}
-	records := strings.Split(strings.TrimSpace(logs.String()), "\n")
-	for _, line := range records {
+	for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
 		var record map[string]any
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatalf("non-JSON log: %s", line)
 		}
 	}
-	if strings.Count(logs.String(), "gateway agent failed") != 1 || !strings.Contains(logs.String(), "\"level\":\"ERROR\"") {
+	if strings.Count(logs.String(), "gateway agent failed") != 1 ||
+		!strings.Contains(logs.String(), "\"level\":\"ERROR\"") {
 		t.Fatal(logs.String())
 	}
 }

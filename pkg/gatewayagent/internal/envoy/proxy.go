@@ -20,11 +20,12 @@ package envoy
 import (
 	"bytes"
 	"fmt"
-	"istio.io/istio/pkg/env"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"istio.io/istio/pkg/env"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 	"sigs.k8s.io/yaml"
@@ -60,8 +61,12 @@ type ProxyConfig struct {
 }
 
 var (
-	enableCoreDumpEnv = env.Register("AGENTIO_ENVOY_ENABLE_CORE_DUMP", "false", "Enable Envoy core dumps when set to true.")
-	hostIPEnv         = env.Register("HOST_IP", "", "Host IP for telemetry address substitution.")
+	enableCoreDumpEnv = env.Register(
+		"AGENTIO_ENVOY_ENABLE_CORE_DUMP",
+		"false",
+		"Enable Envoy core dumps when set to true.",
+	)
+	hostIPEnv = env.Register("HOST_IP", "", "Host IP for telemetry address substitution.")
 )
 
 // NewProxy creates an instance of the proxy control commands

@@ -19,7 +19,6 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
-	"istio.io/istio/pkg/ptr"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -28,6 +27,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"istio.io/istio/pkg/ptr"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -133,11 +134,7 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		mux.HandleFunc("GET /debug/pprof/symbol", local(pprof.Symbol))
 		mux.HandleFunc("GET /debug/pprof/trace", local(pprof.Trace))
 	}
-	stop, done, err := serveStatusOn(mux, cmp.Or(c.StatusPort, 15020))
-	if err == nil {
-		statusLog.Info("gateway status server listening", "port", cmp.Or(c.StatusPort, 15020))
-	}
-	return stop, done, err
+	return serveStatusOn(mux, cmp.Or(c.StatusPort, 15020))
 }
 
 // Envoy owns 15021 and 15090; the agent is the readiness backend on 15020.
@@ -150,6 +147,7 @@ func serveStatusOn(status http.Handler, port int) (func(), <-chan error, error) 
 	if err != nil {
 		return nil, nil, err
 	}
+	statusLog.Info("gateway status server listening", "port", listener.Addr().(*net.TCPAddr).Port)
 	server := &http.Server{
 		Handler:           status,
 		ReadHeaderTimeout: 5 * time.Second,

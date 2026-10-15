@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"io"
 
-	agentiolog "github.com/openkruise/agentio/pkg/log"
 	"net"
 	"net/http"
 	"net/netip"
 	"time"
+
+	agentiolog "github.com/openkruise/agentio/pkg/log"
 )
 
 var processLog = agentiolog.New("gateway-envoy")

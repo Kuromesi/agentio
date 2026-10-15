@@ -27,7 +27,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"istio.io/istio/pkg/ptr"
 	mathrand "math/rand/v2"
 	"net"
 	"net/url"
@@ -36,6 +35,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"istio.io/istio/pkg/ptr"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -149,7 +150,15 @@ func (m *identityManager) run(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				certLog.Warn("gateway certificate renewal failed", "error", err, "retry_after", retry, "duration", time.Since(started))
+				certLog.Warn(
+					"gateway certificate renewal failed",
+					"error",
+					err,
+					"retry_after",
+					retry,
+					"duration",
+					time.Since(started),
+				)
 				renew.Reset(retry)
 				retry = min(30*time.Second, retry*2)
 				continue

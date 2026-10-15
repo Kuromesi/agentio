@@ -21,12 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"istio.io/istio/pkg/ptr"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"istio.io/istio/pkg/ptr"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"

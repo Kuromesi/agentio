@@ -21,11 +21,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"istio.io/istio/pkg/util/sets"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"istio.io/istio/pkg/util/sets"
 
 	"sync/atomic"
 )

@@ -181,7 +181,14 @@ func TestEnvironmentReadsAndEmptyFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.RootCertFile != "/var/run/secrets/agentio/root-cert.pem" || c.CARootCertFile != c.RootCertFile || c.XDSRootCertFile != c.RootCertFile || c.CAAddress != "first:15012" || c.Proxy.ConfigPath != "/etc/agentio/proxy" || c.Proxy.BinaryPath != "/usr/local/bin/envoy" || c.ClusterID != "Kubernetes" || c.TrustDomain != "cluster.local" || c.TokenFile != "/var/run/secrets/tokens/agentio-token" {
+	if c.RootCertFile != "/var/run/secrets/agentio/root-cert.pem" || c.CARootCertFile != c.RootCertFile ||
+		c.XDSRootCertFile != c.RootCertFile ||
+		c.CAAddress != "first:15012" ||
+		c.Proxy.ConfigPath != "/etc/agentio/proxy" ||
+		c.Proxy.BinaryPath != "/usr/local/bin/envoy" ||
+		c.ClusterID != "Kubernetes" ||
+		c.TrustDomain != "cluster.local" ||
+		c.TokenFile != "/var/run/secrets/tokens/agentio-token" {
 		t.Fatalf("empty environment lost defaults: %+v", c)
 	}
 	t.Setenv("AGENTIO_XDS_ADDRESS", "second:15012")
@@ -191,7 +198,8 @@ func TestEnvironmentReadsAndEmptyFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.CAAddress != "second:15012" || c.RootCertFile != "/custom/root.pem" || c.CARootCertFile != "/custom/ca.pem" || c.XDSRootCertFile != "/custom/root.pem" {
+	if c.CAAddress != "second:15012" || c.RootCertFile != "/custom/root.pem" || c.CARootCertFile != "/custom/ca.pem" ||
+		c.XDSRootCertFile != "/custom/root.pem" {
 		t.Fatalf("environment cached or fallback changed: %+v", c)
 	}
 }

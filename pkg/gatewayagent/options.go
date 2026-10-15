@@ -19,12 +19,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"istio.io/istio/pkg/ptr"
 	"maps"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"istio.io/istio/pkg/ptr"
 )
 
 // RuntimeOptions is the deployment-facing configuration. Identity and credential

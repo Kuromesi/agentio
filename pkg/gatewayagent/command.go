@@ -90,7 +90,9 @@ func Command(ctx context.Context, args []string, output, errors io.Writer) (resu
 			if configured {
 				agentLog.Error("gateway agent failed", "error", result)
 			} else {
-				fmt.Fprintln(errors, result)
+				if _, err := fmt.Fprintln(errors, result); err != nil {
+					result = stderrors.Join(result, err)
+				}
 			}
 		}
 	}()

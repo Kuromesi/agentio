@@ -18,10 +18,11 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"istio.io/istio/pkg/ptr"
 	"net/netip"
 	"strings"
 	"time"
+
+	"istio.io/istio/pkg/ptr"
 )
 
 // AdvancedOptions uses native Envoy JSON for telemetry resources.

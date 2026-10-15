@@ -184,7 +184,8 @@ func (p *xdsProxy) observeSession(ctx context.Context) (func(), func(error, stri
 		}, func(err error, stage string) {
 			finished()
 			fields := []any{"stage", stage, "code", status.Code(err).String(), "error", err}
-			if ctx.Err() != nil || err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
+			if ctx.Err() != nil || err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) ||
+				status.Code(err) == codes.Canceled {
 				logger.Debug("gateway ADS stream closed", fields...)
 			} else {
 				logger.Warn("gateway ADS stream failed", fields...)
