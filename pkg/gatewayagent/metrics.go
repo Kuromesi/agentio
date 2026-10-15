@@ -16,19 +16,23 @@ package gatewayagent
 
 import (
 	"context"
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/common/expfmt"
 )
 
 // One registry per agent instance; no global collector registration or identity
 // labels. These are agent health metrics, separate from Envoy traffic statistics.
 type agentMetrics struct {
 	registry            *prometheus.Registry
-	envoyScrapeSuccess  prometheus.Gauge
+	scrapeTotals        prometheus.Counter
 	envoyScrapeFailures prometheus.Counter
+	agentScrapeFailures prometheus.Counter
 	certificateExpiry   atomic.Int64
 	certificateRequests prometheus.Counter
 	certificateFailures prometheus.Counter
@@ -46,6 +50,8 @@ type agentMetrics struct {
 
 func newAgentMetrics() *agentMetrics {
 	m := &agentMetrics{registry: prometheus.NewRegistry()}
+	wrapped := prometheus.WrapRegistererWithPrefix("agentio_gateway_agent_", m.registry)
+	wrapped.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	counter := func(name, help string) prometheus.Counter {
 		c := prometheus.NewCounter(prometheus.CounterOpts{Namespace: "agentio_gateway_agent", Name: name, Help: help})
 		m.registry.MustRegister(c)
@@ -56,8 +62,15 @@ func newAgentMetrics() *agentMetrics {
 		m.registry.MustRegister(g)
 		return g
 	}
-	m.envoyScrapeSuccess = gauge("envoy_scrape_success", "Whether the latest Envoy metrics scrape succeeded.")
-	m.envoyScrapeFailures = counter("envoy_scrape_failures_total", "Failed Envoy metrics scrapes.")
+	m.scrapeTotals = counter("scrapes_total", "Total metrics scrapes handled by the agent.")
+	scrapeFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agentio_gateway_agent",
+		Name:      "scrape_failures_total",
+		Help:      "Total failed metrics scrapes by source.",
+	}, []string{"type"})
+	m.registry.MustRegister(scrapeFailures)
+	m.envoyScrapeFailures = scrapeFailures.WithLabelValues("envoy")
+	m.agentScrapeFailures = scrapeFailures.WithLabelValues("agent")
 	m.certificateRequests = counter("certificate_requests_total", "Workload certificate signing attempts.")
 	m.certificateFailures = counter("certificate_failures_total", "Failed workload certificate signing attempts.")
 	m.certificateSuccess = gauge(
@@ -101,6 +114,22 @@ func newAgentMetrics() *agentMetrics {
 	m.ready = gauge("ready", "Whether the latest gateway readiness check succeeded.")
 	m.draining = gauge("draining", "Whether gateway shutdown or explicit draining has started.")
 	return m
+}
+
+// Use the same text encoder as pilot-agent so a collection or write failure is
+// reported without inserting an HTTP error body into the merged metrics stream.
+func (m *agentMetrics) writeMetrics(w io.Writer) error {
+	families, err := m.registry.Gather()
+	if err != nil {
+		return err
+	}
+	encoder := expfmt.NewEncoder(w, expfmt.NewFormat(expfmt.TypeTextPlain))
+	for _, family := range families {
+		if err := encoder.Encode(family); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // The relay's send goroutine may finish after its handler returns. Serialize

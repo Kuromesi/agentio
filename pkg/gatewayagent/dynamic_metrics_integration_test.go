@@ -56,6 +56,7 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 	}
 	c := testConfig(t)
 	c.IP = "127.0.0.1"
+	c.metrics = newAgentMetrics()
 	c.Proxy.AdminPort = int32(freePort(t))
 	metricsPort, statusPort, businessPort := freePort(t), freePort(t), freePort(t)
 	c.PrometheusPort, c.EnvoyStatusPort = metricsPort, statusPort
@@ -207,8 +208,19 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 		t.Fatal("upstream never received abort request")
 	}
 	closeResource(connection)
-	// Both externally supported scrape paths must expose the same metric contract.
-	for _, url := range []string{agent.URL + "/stats/prometheus", fmt.Sprintf("http://127.0.0.1:%d/stats/prometheus", metricsPort)} {
+	// Agent endpoints translate and merge; the Envoy port remains usable without the Agent.
+	for _, endpoint := range []struct {
+		url    string
+		prefix string
+	}{
+		{url: agent.URL + "/stats/prometheus"},
+		{url: agent.URL + "/metrics"},
+		{url: fmt.Sprintf("http://127.0.0.1:%d/stats/prometheus", metricsPort), prefix: "envoy_agentio_gateway_"},
+	} {
+		url := endpoint.url
+		if endpoint.prefix != "" {
+			agent.Close()
+		}
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			response, err := client.Get(url)
@@ -222,8 +234,8 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 				t.Fatal(err)
 			}
 			counts := map[string]float64{}
-			for _, metric := range families["istio_requests_total"].GetMetric() {
-				if metric.GetCounter().GetValue() == 0 {
+			for _, metric := range families[endpoint.prefix+"istio_requests_total"].GetMetric() {
+				if endpoint.prefix == "" && metric.GetCounter().GetValue() == 0 {
 					t.Fatalf("unused response code exported at %s: %v", url, metric)
 				}
 				for _, label := range metric.GetLabel() {
@@ -232,7 +244,7 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 					}
 				}
 			}
-			duration := families["istio_request_duration_milliseconds"]
+			duration := families[endpoint.prefix+"istio_request_duration_milliseconds"]
 			if duration == nil || len(duration.Metric) != 1 {
 				t.Fatal("missing aggregate duration histogram")
 			}
@@ -280,9 +292,23 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 					t.Fatalf("bucket %d = %v", i, bucket)
 				}
 			}
-			for name := range families {
-				if strings.HasPrefix(name, "envoy_agentio_gateway_istio_") {
-					t.Fatalf("untranslated metric %s", name)
+			if endpoint.prefix == "" {
+				if families["agentio_gateway_agent_scrapes_total"] == nil {
+					t.Fatal("missing Agent metrics on Agent endpoint")
+				}
+				for name := range families {
+					if strings.HasPrefix(name, "envoy_agentio_gateway_istio_") {
+						t.Fatalf("untranslated metric %s", name)
+					}
+				}
+			} else {
+				if _, ok := counts["299"]; !ok || counts["299"] != 0 {
+					t.Fatal("raw endpoint must preserve unused response-code counters")
+				}
+				for name := range families {
+					if strings.HasPrefix(name, "agentio_gateway_agent_") || strings.HasPrefix(name, "istio_") {
+						t.Fatalf("Agent-processed metric on raw endpoint: %s", name)
+					}
 				}
 			}
 			break

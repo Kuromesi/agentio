@@ -101,8 +101,11 @@ func configureTelemetry(b map[string]any, c Config) error {
 	for _, entry := range clusters {
 		cluster := entry.(map[string]any)
 		names[cluster["name"].(string)] = true
-		if cluster["name"] == "agent" {
+		switch cluster["name"] {
+		case "agent":
 			setClusterPort(cluster, cmp.Or(c.StatusPort, 15020))
+		case "prometheus_stats":
+			setClusterPort(cluster, int(c.Proxy.AdminPort))
 		}
 	}
 	for _, raw := range c.TelemetryClusters {

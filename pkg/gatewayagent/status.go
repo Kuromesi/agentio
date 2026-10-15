@@ -30,8 +30,6 @@ import (
 
 	"istio.io/istio/pkg/ptr"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	"github.com/openkruise/agentio/pkg/gatewayagent/internal/envoy"
 )
 
@@ -151,7 +149,6 @@ func serveStatusOn(status http.Handler, port int) (func(), <-chan error, error) 
 	server := &http.Server{
 		Handler:           status,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
 	done := make(chan error, 1)
@@ -164,7 +161,7 @@ func loopbackRequest(r *http.Request) bool {
 	return err == nil && net.ParseIP(host).IsLoopback()
 }
 
-var adminClient = &http.Client{Timeout: 5 * time.Second}
+var adminClient = &http.Client{}
 
 func proxyMetrics(c Config) http.HandlerFunc {
 	handler := proxyMetricsPlain(c)
@@ -188,45 +185,56 @@ func proxyMetrics(c Config) http.HandlerFunc {
 func proxyMetricsPlain(c Config) http.HandlerFunc {
 	localhost, _ := localAddresses(c.IP)
 	target := "http://" + net.JoinHostPort(localhost, strconv.Itoa(int(c.Proxy.AdminPort))) + "/stats/prometheus"
-	var agentHandler http.Handler
-	if c.metrics != nil {
-		agentHandler = promhttp.HandlerFor(c.metrics.registry, promhttp.HandlerOpts{})
-	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
+		if c.metrics != nil {
+			c.metrics.scrapeTotals.Inc()
+		}
+		ctx := r.Context()
+		if value := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds"); value != "" {
+			seconds, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				statusLog.Warn("invalid Prometheus scrape timeout", "value", value, "error", err)
+			} else {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(seconds*float64(time.Second)))
+				defer cancel()
+			}
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
 			http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		request.URL.RawQuery = r.URL.RawQuery
+		for _, name := range []string{"User-Agent", "X-Prometheus-Scrape-Timeout-Seconds"} {
+			request.Header.Set(name, r.Header.Get(name))
+		}
 		// Use Prometheus text for both registries, with one uncompressed response.
 		request.Header.Set("Accept", "text/plain; version=0.0.4")
 		request.Header.Set("Accept-Encoding", "identity")
 		// Emit agent health even if Envoy admin is temporarily unavailable.
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		if agentHandler != nil {
-			agentRequest := r.Clone(r.Context())
-			agentRequest.Header = r.Header.Clone()
-			agentRequest.Header.Set("Accept", "text/plain; version=0.0.4")
-			agentRequest.Header.Del("Accept-Encoding")
-			defer agentHandler.ServeHTTP(w, agentRequest)
+		if c.metrics != nil {
+			defer func() {
+				if err := c.metrics.writeMetrics(w); err != nil {
+					c.metrics.agentScrapeFailures.Inc()
+					statusLog.Warn("Agent metrics export failed", "error", err)
+				}
+			}()
 		}
 		var scrapeErr error
 		defer func() {
 			if scrapeErr != nil {
 				statusLog.Warn("Envoy metrics scrape failed", "error", scrapeErr)
 				if c.metrics != nil {
-					c.metrics.envoyScrapeSuccess.Set(0)
 					c.metrics.envoyScrapeFailures.Inc()
 				}
-			} else if c.metrics != nil {
-				c.metrics.envoyScrapeSuccess.Set(1)
 			}
 		}()
 		response, err := adminClient.Do(request)
 		if err != nil {
 			scrapeErr = err
-			if agentHandler == nil {
+			if c.metrics == nil {
 				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 			}
 			return
@@ -234,7 +242,7 @@ func proxyMetricsPlain(c Config) http.HandlerFunc {
 		defer closeResource(response.Body)
 		if response.StatusCode != http.StatusOK {
 			scrapeErr = fmt.Errorf("Envoy admin returned HTTP %d", response.StatusCode)
-			if agentHandler == nil {
+			if c.metrics == nil {
 				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 			}
 			return

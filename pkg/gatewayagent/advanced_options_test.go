@@ -113,7 +113,7 @@ func TestConfiguredBootstrap(t *testing.T) {
 	}
 	if b.GetStatsEvictionInterval().AsDuration() != 30*time.Second || b.Node.Locality.Zone != "a" ||
 		len(b.StatsSinks) != 1 ||
-		len(b.StaticResources.Clusters) != 4 {
+		len(b.StaticResources.Clusters) != 5 {
 		t.Fatal("missing configured native resource")
 	}
 	if len(b.StaticResources.Listeners[0].AdditionalAddresses) != 1 ||
