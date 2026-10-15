@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/openkruise/agentio/pkg/cache"
 )
 
 type oauth2CacheKey struct {
@@ -43,17 +43,22 @@ type oauth2CacheEntry struct {
 // is part of the key: a hit must not bypass Identity for a different caller.
 // Unlike the API-key cache, OAuth has no fallback TTL when the service gives zero.
 type oauth2Cache struct {
-	mu  sync.Mutex
-	lru *lru.Cache[oauth2CacheKey, oauth2CacheEntry]
-	now func() time.Time
+	mu    sync.Mutex
+	store *cache.Cache[oauth2CacheKey, oauth2CacheEntry]
+	now   func() time.Time
 }
 
 func newOAuth2Cache(maxSize int) *oauth2Cache {
-	l, err := lru.New[oauth2CacheKey, oauth2CacheEntry](maxSize)
+	c := &oauth2Cache{now: time.Now}
+	store, err := cache.NewBuilder[oauth2CacheKey, oauth2CacheEntry]().
+		WithLRU(maxSize).
+		WithClock(func() time.Time { return c.now() }).
+		Build()
 	if err != nil {
 		panic(fmt.Sprintf("create OAuth2 cache: %v", err)) // Positive internal capacity is required.
 	}
-	return &oauth2Cache{lru: l, now: time.Now}
+	c.store = store
+	return c
 }
 
 func oauth2Key(identityToken string, request OAuth2Request) oauth2CacheKey {
@@ -72,15 +77,15 @@ func (c *oauth2Cache) get(identityToken string, request OAuth2Request) (*OAuth2R
 	defer c.mu.Unlock()
 
 	key := oauth2Key(identityToken, request)
-	entry, ok := c.lru.Get(key)
+	entry, ok := c.store.Get(key)
 	if !ok {
 		return nil, false
 	}
 	now := c.now()
 	result := entry.response
 	result.AccessTokenExpiresInSeconds = int64(entry.tokenExpiresAt.Sub(now) / time.Second)
-	if !now.Before(entry.cacheExpiresAt) || result.AccessTokenExpiresInSeconds <= 0 {
-		c.lru.Remove(key)
+	if result.AccessTokenExpiresInSeconds <= 0 {
+		c.store.Remove(key)
 		return nil, false
 	}
 	result.CacheExpiresInSeconds = int64(entry.cacheExpiresAt.Sub(now) / time.Second)
@@ -106,9 +111,7 @@ func (c *oauth2Cache) set(identityToken string, request OAuth2Request, result OA
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.now().Before(entry.cacheExpiresAt) {
-		c.lru.Add(oauth2Key(identityToken, request), entry)
-	}
+	c.store.SetWithExpiration(oauth2Key(identityToken, request), entry, entry.cacheExpiresAt)
 }
 
 // invalidate clears all scope and caller variants after a session/Token RPC.
@@ -116,9 +119,9 @@ func (c *oauth2Cache) set(identityToken string, request OAuth2Request, result OA
 func (c *oauth2Cache) invalidate(request OAuth2Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, key := range c.lru.Keys() {
+	for _, key := range c.store.Keys() {
 		if key.credentialProviderName == request.CredentialProviderName && key.resourceID == request.ResourceID {
-			c.lru.Remove(key)
+			c.store.Remove(key)
 		}
 	}
 }

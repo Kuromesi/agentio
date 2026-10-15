@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/openkruise/agentio/pkg/cache"
 )
 
 type cacheKey struct {
@@ -32,7 +32,7 @@ type cacheKey struct {
 // Lookups never hold this lock.
 type resolutionCache struct {
 	mu       sync.Mutex
-	dns      *lru.Cache[cacheKey, Result]
+	dns      *cache.Cache[cacheKey, Result]
 	records  map[string][]netip.Addr
 	revision uint64
 	now      func() time.Time
@@ -41,11 +41,14 @@ type resolutionCache struct {
 func newResolutionCache(capacity int) *resolutionCache {
 	c := &resolutionCache{records: make(map[string][]netip.Addr), now: time.Now}
 	if capacity > 0 {
-		cache, err := lru.New[cacheKey, Result](capacity)
+		store, err := cache.NewBuilder[cacheKey, Result]().
+			WithLRU(capacity).
+			WithClock(func() time.Time { return c.now() }).
+			Build()
 		if err != nil {
 			panic(err) // Positive capacity is required and checked above.
 		}
-		c.dns = cache
+		c.dns = store
 	}
 	return c
 }
@@ -59,11 +62,8 @@ func (c *resolutionCache) get(key cacheKey) (Result, bool, uint64, time.Time) {
 	}
 	if c.dns != nil {
 		if result, ok := c.dns.Get(key); ok {
-			if now.Before(result.ExpiresAt) {
-				result.Addresses = slices.Clone(result.Addresses)
-				return result, true, c.revision, now
-			}
-			c.dns.Remove(key)
+			result.Addresses = slices.Clone(result.Addresses)
+			return result, true, c.revision, now
 		}
 	}
 	return Result{}, false, c.revision, now
@@ -75,10 +75,10 @@ func (c *resolutionCache) store(key cacheKey, result Result, revision uint64) Re
 	if addresses, ok := c.records[key.host]; ok {
 		return customResult(addresses, key.family)
 	}
-	if c.dns != nil && c.revision == revision && len(result.Addresses) > 0 && c.now().Before(result.ExpiresAt) {
+	if c.dns != nil && c.revision == revision && len(result.Addresses) > 0 {
 		cached := result
 		cached.Addresses = slices.Clone(result.Addresses)
-		c.dns.Add(key, cached)
+		c.dns.SetWithExpiration(key, cached, result.ExpiresAt)
 	}
 	return result
 }

@@ -16,7 +16,6 @@ package xds
 
 import (
 	"github.com/openkruise/agentio/pkg/model"
-	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // workloadVisibility evaluates Workload and Address visibility for one client
@@ -67,19 +66,40 @@ func (v workloadVisibility) ownedByGateway(gatewayKey string) []model.Resource {
 	return v.resources.ListResourcesOwnedByGateway(v.typeURL, gatewayKey)
 }
 
-// scopedWorkloadChanged reports whether any Address change touches a workload
-// in this scope. When none does, the scope's derived visibility is unchanged
-// and incremental generation only needs to diff the changed policies themselves.
-func scopedWorkloadChanged(scope model.ClientScope, update xdsstore.Update) bool {
-	_, found := workloadScopeQuery(scope)
-	if !found && scope.Class != model.ClientEgressGateway {
+// workloadSelected checks one candidate against the complete current
+// subscription, including implicit local workloads and Service/Gateway expansion.
+func workloadSelected(request GenerationRequest, resource model.Resource) bool {
+	visibility := newWorkloadVisibility(request.Scope, request.Snapshot, model.AddressType)
+	if request.Subscription.Wildcard() {
+		return visibility.visible(resource)
+	}
+	scope := request.Scope
+	if scope.Class == model.ClientDedicatedZTunnel && len(request.Subscription.names) == 0 {
 		return false
 	}
-	for _, change := range update.ReadOnlyChangesForType(model.AddressType) {
-		for _, resource := range []*model.Resource{change.Old, change.New} {
-			if resource != nil && resource.Facts.Workload != nil &&
-				(scope.Class == model.ClientEgressGateway || workloadMatchesScope(scope, *resource)) {
-				return true
+	if scope.Class != model.ClientEgressGateway {
+		if resource.Facts.GatewayOwner != "" && visibility.hasScopedWorkload(model.WorkloadQuery{
+			GatewayReference: resource.Facts.GatewayOwner,
+		}) {
+			return true
+		}
+		if scope.Class == model.ClientSharedZTunnel && workloadMatchesScope(scope, resource) {
+			return true
+		}
+		if scope.Class == model.ClientDedicatedZTunnel && !visibility.visible(resource) {
+			return false
+		}
+	}
+	if request.Subscription.allows(resource) || containsSorted(request.Subscription.names, resource.Key.Name) {
+		return true
+	}
+	if workload := resource.Facts.Workload; workload != nil {
+		for _, key := range workload.ServiceKeys {
+			for _, service := range serviceResourcesForKey(request.Snapshot, key) {
+				if request.Subscription.allows(service) ||
+					containsSorted(request.Subscription.names, service.Key.Name) {
+					return true
+				}
 			}
 		}
 	}

@@ -289,11 +289,18 @@ func TestWildcardDirectWorkloadIgnoresAddressServiceRemoval(t *testing.T) {
 	update := updateBetween(oldSnapshot, newSnapshot, oldSnapshot.Diff(newSnapshot))
 
 	delta, err := (WorkloadGenerator{}).Generate(context.Background(), GenerationRequest{
-		Scope:        gatewayScope(),
-		TypeURL:      model.WorkloadType,
-		Subscription: SubscriptionView{wildcard: true},
-		Snapshot:     newSnapshot,
-		Update:       update,
+		Scope:   gatewayScope(),
+		TypeURL: model.WorkloadType,
+		Subscription: initializedSubscription(
+			t,
+			WorkloadGenerator{},
+			gatewayScope(),
+			model.WorkloadType,
+			oldSnapshot,
+			SubscriptionView{wildcard: true},
+		),
+		Snapshot: newSnapshot,
+		Update:   update,
 	})
 	if err != nil {
 		t.Fatal(err)

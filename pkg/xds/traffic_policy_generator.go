@@ -38,35 +38,14 @@ func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRe
 		selected := selectTrafficPolicyResources(request.Scope, request.Snapshot, request.Subscription)
 		return diffSubscribed(request.Subscription, selected, request.SubscribedNames), nil
 	}
-	candidates := sets.New[model.ResourceKey]()
-	for _, change := range request.Update.ReadOnlyChangesForType(request.TypeURL) {
-		candidates.Insert(change.Key)
-	}
-	// Both sides matter: a reference removal or a Workload moving out of the
-	// client's scope can withdraw a policy without changing its body.
-	for _, change := range request.Update.ReadOnlyChangesForType(model.AddressType) {
-		for _, resource := range []*model.Resource{change.Old, change.New} {
-			if resource == nil || resource.Facts.Workload == nil {
-				continue
-			}
-			for _, name := range resource.Facts.Workload.TrafficPolicyRefs {
-				candidates.Insert(model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: name})
-			}
+	query, ok := trafficPolicyWorkloadQuery(request.Scope)
+	return generateIncremental(request, func(resource model.Resource) bool {
+		if !ok || !request.Subscription.allows(resource) {
+			return false
 		}
-	}
-	visible := func(snapshot model.ResourceSet) func(model.Resource) bool {
-		query, ok := trafficPolicyWorkloadQuery(request.Scope)
-		return func(resource model.Resource) bool {
-			if !ok || !request.Subscription.allows(resource) {
-				return false
-			}
-			query.TrafficPolicyReference = resource.Key.Name
-			return snapshot.HasWorkload(model.AddressType, query)
-		}
-	}
-	resources, removed := diffCandidateTransition(candidates, request.Update.Before().Get, request.Update.After().Get,
-		visible(request.Update.Before()), visible(request.Update.After()))
-	return newSortedDelta(resources, removed, false), nil
+		query.TrafficPolicyReference = resource.Key.Name
+		return request.Snapshot.HasWorkload(model.AddressType, query)
+	}, nil), nil
 }
 
 func selectTrafficPolicyResources(
@@ -77,6 +56,17 @@ func selectTrafficPolicyResources(
 	selected := make(map[string]model.Resource)
 	query, ok := trafficPolicyWorkloadQuery(scope)
 	if !ok {
+		return selected
+	}
+	if !sub.Wildcard() {
+		for _, name := range sub.Names() {
+			for _, resource := range snapshot.Lookup(model.TrafficPolicyType, name) {
+				query.TrafficPolicyReference = resource.Key.Name
+				if sub.allows(resource) && snapshot.HasWorkload(model.AddressType, query) {
+					selected[resource.XDSName] = resource
+				}
+			}
+		}
 		return selected
 	}
 	names := sets.New[string]()

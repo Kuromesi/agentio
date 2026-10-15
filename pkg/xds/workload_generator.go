@@ -24,6 +24,7 @@ import (
 
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // WorkloadGenerator serves networking state and independently matched Workload policies.
@@ -47,6 +48,7 @@ func (g WorkloadGenerator) Generate(ctx context.Context, request GenerationReque
 			(request.Scope.Class == model.ClientDedicatedZTunnel || request.Scope.Class == model.ClientSharedZTunnel) {
 			return GeneratedDelta{
 				Resources:      collapseSortedXDSNames(resources),
+				Removed:        generateWDSIncremental(request, false).Removed,
 				elideSentState: true,
 			}, nil
 		}
@@ -56,30 +58,19 @@ func (g WorkloadGenerator) Generate(ctx context.Context, request GenerationReque
 		}
 		delta := diffSelected(request.Subscription, selected)
 		delta.elideSentState = request.Subscription.Wildcard()
+		if delta.elideSentState {
+			delta.Removed = sets.SortedList(
+				sets.New(delta.Removed...).Merge(sets.New(generateWDSIncremental(request, false).Removed...)),
+			)
+		}
 		return delta, nil
 	}
 	return generateWDSIncremental(request, false), nil
 }
 
-// collapseSortedXDSNames preserves the full selection's deterministic
-// last-key-wins behavior without rebuilding and sorting a second map.
-func collapseSortedXDSNames(resources []model.Resource) []model.Resource {
-	write := 0
-	for read := range resources {
-		if write > 0 && resources[write-1].XDSName == resources[read].XDSName {
-			resources[write-1] = resources[read]
-			continue
-		}
-		resources[write] = resources[read]
-		write++
-	}
-	clear(resources[write:])
-	return resources[:write]
-}
-
 func (g WorkloadGenerator) generateDirectWorkloads(request GenerationRequest) (GeneratedDelta, error) {
 	sourceRequest := request
-	sourceRequest.TypeURL = model.AddressType
+	sourceRequest.TypeURL = model.WorkloadType
 	// Direct Workloads keep per-connection sent state even for wildcard
 	// watches: only egress gateways consume them, and sent versions are what
 	// let a full regeneration send a diff instead of retransmitting the entire set.
@@ -88,7 +79,7 @@ func (g WorkloadGenerator) generateDirectWorkloads(request GenerationRequest) (G
 		if err != nil {
 			return GeneratedDelta{}, err
 		}
-		delta.Resources = projected
+		delta.Resources = unsentResources(request.Subscription, projected)
 		delta.elideSentState = false
 		return delta, nil
 	}
@@ -363,34 +354,39 @@ func gatewayResourcesForKeys(
 	return orderedUnique(result)
 }
 
-// generateWDSIncremental diffs the update's before/after publications for this
-// scope, without per-connection sent state.
+// generateWDSIncremental reselects affected addresses from the current snapshot.
+// Wildcard Address removals use historical visibility metadata rather than a
+// per-connection sent table; payloads always come from the current snapshot.
 func generateWDSIncremental(request GenerationRequest, workloadsOnly bool) GeneratedDelta {
-	if !request.Subscription.Wildcard() {
-		names := selectionNames(request.Subscription)
-		return diffWDSSelections(
-			selectWorkloadResources(request.Scope, request.Update.Before(), request.TypeURL, names),
-			selectWorkloadResources(request.Scope, request.Update.After(), request.TypeURL, names),
-			workloadsOnly)
+	visible := func(resource model.Resource) bool {
+		return (!workloadsOnly || resource.IsWorkloadAddress()) && workloadSelected(request, resource)
 	}
-	before := newWorkloadVisibility(request.Scope, request.Update.Before(), request.TypeURL)
-	after := newWorkloadVisibility(request.Scope, request.Update.After(), request.TypeURL)
-	changes := request.Update.ReadOnlyChangesForType(request.TypeURL)
-	if stableWDSFacts(changes) {
-		return diffWDSChanges(before, after, changes, workloadsOnly)
-	}
-	candidates := affectedWDSCandidates(before, after, changes)
-	return diffWDSCandidates(before, after, candidates, workloadsOnly)
-}
-
-func stableWDSFacts(changes []model.ResourceChange) bool {
-	for _, change := range changes {
-		if change.Old == nil || change.New == nil ||
-			!change.Old.Facts.Equal(change.New.Facts) {
+	var previouslyVisible func(*xdsstore.Identity) bool
+	elide := request.Subscription.Wildcard() && !workloadsOnly
+	if elide {
+		visibility := newWorkloadVisibility(request.Scope, request.Snapshot, model.AddressType)
+		previouslyVisible = func(identity *xdsstore.Identity) bool {
+			resource := model.Resource{XDSName: identity.Name, Facts: identity.Facts}
+			if visibility.visible(resource) {
+				return true
+			}
+			for workload := range identity.Workloads {
+				facts := &model.WorkloadResourceFacts{
+					WorkloadUID: workload.UID,
+					Source:      workload.Source,
+					Principal:   workload.Principal,
+					NodeName:    workload.NodeName,
+				}
+				if workloadMatchesScope(request.Scope, model.Resource{Facts: model.ResourceFacts{Workload: facts}}) {
+					return true
+				}
+			}
 			return false
 		}
 	}
-	return true
+	delta := generateIncremental(request, visible, previouslyVisible)
+	delta.elideSentState = elide
+	return delta
 }
 
 func serviceResourcesForKey(snapshot model.ResourceSet, serviceKey string) []model.Resource {
@@ -401,114 +397,4 @@ func serviceResourcesForKey(snapshot model.ResourceSet, serviceKey string) []mod
 		}
 	}
 	return result
-}
-
-func affectedWDSCandidates(
-	before, after workloadVisibility,
-	changes []model.ResourceChange,
-) sets.Set[model.ResourceKey] {
-	candidates := sets.NewWithLength[model.ResourceKey](len(changes))
-	add := func(resource *model.Resource) {
-		if resource != nil && resource.Key.TypeURL == before.typeURL {
-			candidates.Insert(resource.Key)
-		}
-	}
-	addResources := func(resources []model.Resource) {
-		for index := range resources {
-			add(&resources[index])
-		}
-	}
-	for _, change := range changes {
-		add(change.Old)
-		add(change.New)
-		if change.Old != nil && change.New != nil &&
-			change.Old.Facts.Equal(change.New.Facts) {
-			// A payload-only change cannot flip Service or Gateway visibility.
-			continue
-		}
-		for _, workload := range []*model.Resource{change.Old, change.New} {
-			if workload == nil || !workload.IsWorkloadAddress() ||
-				!workloadMatchesScope(before.scope, *workload) {
-				continue
-			}
-			if before.typeURL == model.AddressType {
-				for _, serviceKey := range workload.Facts.Workload.ServiceKeys {
-					addResources(serviceResourcesForKey(before.resources, serviceKey))
-					addResources(serviceResourcesForKey(after.resources, serviceKey))
-				}
-			}
-			gateways := sets.New(workload.Facts.Workload.GatewayReferences...)
-			for gatewayKey := range gateways {
-				addResources(before.ownedByGateway(gatewayKey))
-				addResources(after.ownedByGateway(gatewayKey))
-			}
-		}
-	}
-	return candidates
-}
-
-func diffWDSCandidates(
-	before, after workloadVisibility,
-	candidates sets.Set[model.ResourceKey],
-	workloadsOnly bool,
-) GeneratedDelta {
-	visible := func(visibility workloadVisibility) func(model.Resource) bool {
-		return func(resource model.Resource) bool {
-			if workloadsOnly && !resource.IsWorkloadAddress() {
-				return false
-			}
-			return visibility.visible(resource)
-		}
-	}
-	selected, removed := diffCandidateTransition(candidates,
-		before.resources.Get, after.resources.Get, visible(before), visible(after))
-	return newSortedDelta(selected, removed, true)
-}
-
-func diffWDSChanges(
-	before, after workloadVisibility,
-	changes []model.ResourceChange,
-	workloadsOnly bool,
-) GeneratedDelta {
-	visible := func(visibility workloadVisibility, resource *model.Resource) bool {
-		return resource != nil && (!workloadsOnly || resource.IsWorkloadAddress()) && visibility.visible(*resource)
-	}
-	var selected map[string]model.Resource
-	var removed sets.Set[string]
-	for _, change := range changes {
-		addResourceTransition(&selected, &removed, change.Old, change.New,
-			visible(before, change.Old), visible(after, change.New))
-	}
-	return newSortedDelta(selected, removed, true)
-}
-
-func diffWDSSelections(before, after []model.Resource, workloadsOnly bool) GeneratedDelta {
-	byKey := func(resources []model.Resource) map[model.ResourceKey]model.Resource {
-		result := make(map[model.ResourceKey]model.Resource, len(resources))
-		for _, resource := range resources {
-			if !workloadsOnly || resource.IsWorkloadAddress() {
-				result[resource.Key] = resource
-			}
-		}
-		return result
-	}
-	oldByKey := byKey(before)
-	newByKey := byKey(after)
-	candidates := sets.NewWithLength[model.ResourceKey](len(oldByKey) + len(newByKey))
-	for key := range oldByKey {
-		candidates.Insert(key)
-	}
-	for key := range newByKey {
-		candidates.Insert(key)
-	}
-	lookup := func(resources map[model.ResourceKey]model.Resource) func(model.ResourceKey) (model.Resource, bool) {
-		return func(key model.ResourceKey) (model.Resource, bool) {
-			resource, found := resources[key]
-			return resource, found
-		}
-	}
-	always := func(model.Resource) bool { return true }
-	selected, removed := diffCandidateTransition(candidates,
-		lookup(oldByKey), lookup(newByKey), always, always)
-	return newSortedDelta(selected, removed, false)
 }

@@ -15,37 +15,36 @@
 package xds
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"sort"
 	"time"
-
-	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/model"
 	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 // GenerationRequest is the immutable input to one resource generation pass.
-// Full selects a complete snapshot diff; otherwise Update carries the indexed
-// changes for the requested type.
+// Full selects snapshot-based generation within Subscription; otherwise Update
+// carries the indexed changes for the requested type.
 type GenerationRequest struct {
 	// Scope is the authenticated client visibility used to filter every
 	// candidate resource; generators must never widen beyond it.
 	Scope model.ClientScope
 	// TypeURL is the single xDS type produced by this generation pass.
 	TypeURL string
-	// Subscription is the immutable view of this connection's cumulative
-	// subscription state: wildcard flag, subscribed names, and sent versions.
+	// Subscription is the immutable reconciliation scope for this pass. Named
+	// demand requests may include only the requested resources; all other
+	// subscription and sent state remains unchanged on the connection.
 	Subscription SubscriptionView
 	// Snapshot is the publication view resources are generated from; its
 	// version becomes the response system version.
 	Snapshot model.ResourceSet
-	// Update carries the indexed key-level changes and the before/after
-	// publication transition consumed by the incremental path. It is unset when Full
-	// is true.
+	// Update identifies resources to reselect, including intermediate identities
+	// observed before publication notices were merged.
 	Update xdsstore.Update
-	// Full selects the complete snapshot diff path instead of incremental generation.
+	// Full selects the snapshot diff path instead of indexed update generation.
 	// It is set for initial reads, new subscriptions, and full-rebuild updates.
 	Full bool
 	// SubscribedNames is the immutable set of names explicitly subscribed by
@@ -136,68 +135,103 @@ func diffResourceSelection(
 	return GeneratedDelta{Resources: resources, Removed: removed}
 }
 
-// diffCandidateTransition diffs each candidate's visibility and content between
-// the two publications, mapping renames to removals of the old wire name.
-func diffCandidateTransition(
-	candidates sets.Set[model.ResourceKey],
-	lookupOld, lookupNew func(model.ResourceKey) (model.Resource, bool),
-	oldVisible, newVisible func(model.Resource) bool,
-) (map[string]model.Resource, sets.Set[string]) {
-	var selected map[string]model.Resource
-	var removed sets.Set[string]
-	for key := range candidates {
-		oldResource, hadOld := lookupOld(key)
-		newResource, hasNew := lookupNew(key)
-		var oldPointer, newPointer *model.Resource
-		if hadOld {
-			oldPointer = &oldResource
-		}
-		if hasNew {
-			newPointer = &newResource
-		}
-		addResourceTransition(&selected, &removed, oldPointer, newPointer,
-			hadOld && oldVisible(oldResource), hasNew && newVisible(newResource))
-	}
-	return selected, removed
-}
-
-func addResourceTransition(
-	selected *map[string]model.Resource,
-	removed *sets.Set[string],
-	oldResource, newResource *model.Resource,
-	oldVisible, newVisible bool,
-) {
-	if newVisible && (!oldVisible || oldResource.Hash != newResource.Hash) {
-		if *selected == nil {
-			*selected = make(map[string]model.Resource)
-		}
-		(*selected)[newResource.XDSName] = *newResource
-	}
-	if oldVisible && (!newVisible || oldResource.XDSName != newResource.XDSName) {
-		if *removed == nil {
-			*removed = sets.New[string]()
-		}
-		(*removed).Insert(oldResource.XDSName)
-	}
-}
-
-// newSortedDelta builds the deterministic delta; a name that is re-selected
-// drops out of the removal set.
-func newSortedDelta(
-	selected map[string]model.Resource,
-	removedSet sets.Set[string],
-	elideSentState bool,
+// generateIncremental reads invalidated keys from the current snapshot. Only
+// visible resources and identities requiring withdrawal allocate output space;
+// no client-specific lookup results are retained beyond this generation pass.
+func generateIncremental(
+	request GenerationRequest,
+	visible func(model.Resource) bool,
+	previouslyVisible func(*xdsstore.Identity) bool,
 ) GeneratedDelta {
-	resources := make([]model.Resource, 0, len(selected))
-	for name, resource := range selected {
-		removedSet.Delete(name)
-		resources = append(resources, resource)
+	var delta GeneratedDelta
+	for _, candidate := range request.Update.Candidates(request.TypeURL) {
+		resource, found := request.Snapshot.Get(candidate.Key)
+		selected := found && visible(resource)
+		if selected {
+			delta.Resources = append(delta.Resources, resource)
+		}
+		for i := range candidate.Identities {
+			identity := &candidate.Identities[i]
+			if selected && identity.Name == resource.XDSName {
+				continue
+			}
+			if _, sent := request.Subscription.SentVersion(identity.Name); sent ||
+				previouslyVisible != nil && previouslyVisible(identity) {
+				delta.Removed = append(delta.Removed, identity.Name)
+			}
+		}
 	}
-	sort.Slice(resources, func(i, j int) bool { return resources[i].XDSName < resources[j].XDSName })
-	removed := make([]string, 0, len(removedSet))
-	for name := range removedSet {
-		removed = append(removed, name)
+	sortResources := func() {
+		slices.SortFunc(delta.Resources, func(left, right model.Resource) int {
+			if order := cmp.Compare(left.XDSName, right.XDSName); order != 0 {
+				return order
+			}
+			return cmp.Compare(left.Key.Name, right.Key.Name)
+		})
 	}
-	sort.Strings(removed)
-	return GeneratedDelta{Resources: resources, Removed: removed, elideSentState: elideSentState}
+	sortResources()
+	delta.Resources = collapseSortedXDSNames(delta.Resources)
+	slices.Sort(delta.Removed)
+	delta.Removed = slices.Compact(delta.Removed)
+	selectedCount := len(delta.Resources)
+	lookupType := request.TypeURL
+	if lookupType == model.WorkloadType {
+		lookupType = model.AddressType
+	}
+	write := 0
+	for _, name := range delta.Removed {
+		if _, found := slices.BinarySearchFunc(delta.Resources[:selectedCount], name,
+			func(resource model.Resource, name string) int { return cmp.Compare(resource.XDSName, name) }); found {
+			continue
+		}
+		// A queued deletion must not withdraw a same-name replacement whose
+		// publication notice is still pending. Resolve only actual withdrawals.
+		matches := request.Snapshot.Lookup(lookupType, name)
+		var replacement *model.Resource
+		for i := len(matches) - 1; i >= 0; i-- {
+			if matches[i].XDSName == name && visible(matches[i]) {
+				replacement = &matches[i]
+				break
+			}
+		}
+		if replacement != nil {
+			delta.Resources = append(delta.Resources, *replacement)
+			continue
+		}
+		delta.Removed[write] = name
+		write++
+	}
+	clear(delta.Removed[write:])
+	delta.Removed = delta.Removed[:write]
+	if len(delta.Resources) != selectedCount {
+		sortResources()
+	}
+	// Direct Workload versions are compared after Address projection.
+	if request.TypeURL != model.WorkloadType {
+		delta.Resources = unsentResources(request.Subscription, delta.Resources)
+	}
+	return delta
+}
+
+// collapseSortedXDSNames preserves the full selection's deterministic
+// last-key-wins behavior without rebuilding and sorting a second map.
+func collapseSortedXDSNames(resources []model.Resource) []model.Resource {
+	write := 0
+	for read := range resources {
+		if write > 0 && resources[write-1].XDSName == resources[read].XDSName {
+			resources[write-1] = resources[read]
+			continue
+		}
+		resources[write] = resources[read]
+		write++
+	}
+	clear(resources[write:])
+	return resources[:write]
+}
+
+func unsentResources(subscription SubscriptionView, resources []model.Resource) []model.Resource {
+	return slices.DeleteFunc(resources, func(resource model.Resource) bool {
+		version, found := subscription.SentVersion(resource.XDSName)
+		return found && version == resource.Hash
+	})
 }

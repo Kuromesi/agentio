@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"sync"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	sec "github.com/openkruise/agentio/api/security/v1"
@@ -30,18 +29,24 @@ import (
 	"github.com/openkruise/agentio/pkg/xdsclient"
 )
 
-// Watches registers native protocols only. Authorization is never consumed.
+// Watches starts named-only native discovery. Resources are subscribed on Fetch.
 func Watches() []xdsclient.Watch {
 	return []xdsclient.Watch{
 		{
 			TypeURL:  model.WorkloadType,
-			Wildcard: true,
-			Validate: func(v *anypb.Any) error { return v.UnmarshalTo(&workload.Workload{}) },
+			OnDelete: func(string) xdsclient.DeleteAction { return xdsclient.ReleaseSubscription },
+			Transform: func(v *anypb.Any) (any, error) {
+				w := &workload.Workload{}
+				return w, v.UnmarshalTo(w)
+			},
 		},
 		{
 			TypeURL:  model.TrafficPolicyType,
-			Wildcard: true,
-			Validate: func(v *anypb.Any) error { return v.UnmarshalTo(&sec.TrafficPolicy{}) },
+			OnDelete: func(string) xdsclient.DeleteAction { return xdsclient.ReleaseSubscription },
+			Transform: func(v *anypb.Any) (any, error) {
+				p := &sec.TrafficPolicy{}
+				return p, v.UnmarshalTo(p)
+			},
 		},
 	}
 }
@@ -49,17 +54,17 @@ func Watches() []xdsclient.Watch {
 // Source is the Delta ADS client surface needed by this backend.
 type Source interface {
 	Snapshot() xdsclient.Snapshot
-	Demand(context.Context, string, string) (*anypb.Any, error)
+	Demand(context.Context, string, string) (*xdsclient.Resource, error)
 	Observe(...string) (<-chan struct{}, bool)
 }
 
 // Store exposes native xDS resources through EPE's resource interface.
 type Store struct {
-	source  Source
-	mu      sync.Mutex
-	cached  xdsclient.Snapshot
-	batch   store.Batch
-	decoded xdsclient.Snapshot
+	source    Source
+	mu        sync.Mutex
+	cached    xdsclient.Snapshot
+	batch     store.Batch
+	published xdsclient.Snapshot
 }
 
 var _ store.Store = (*Store)(nil)
@@ -76,8 +81,8 @@ func (s *Store) Status() store.Status {
 	return store.Status{Ready: ready, Changed: changed}
 }
 
-// Keep one owned raw snapshot per publication so per-resource queries do not
-// repeatedly clone the entire client cache. Decoding returns fresh values.
+// Keep one publication per update. Its immutable values were decoded once by
+// the watch Transform and are shared with EPE's snapshots.
 func (s *Store) snapshot() xdsclient.Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,7 +97,7 @@ func (s *Store) snapshotLocked() xdsclient.Snapshot {
 	return s.cached
 }
 
-// Read decodes one consistent xDS publication on the aggregate update path.
+// Read adapts one consistent xDS publication on the aggregate update path.
 func (s *Store) Read() store.Batch {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,14 +109,14 @@ func (s *Store) Read() store.Batch {
 	for _, typ := range s.Types() {
 		wire := wireType(typ)
 		batch.Ready = batch.Ready && snapshot.Synced[wire]
-		batch.Snapshots[typ] = decodeType(snapshot, s.decoded, typ, s.batch.Snapshots[typ])
+		batch.Snapshots[typ] = projectType(snapshot, s.published, typ, s.batch.Snapshots[typ])
 	}
 
-	s.decoded, s.batch = snapshot, batch
+	s.published, s.batch = snapshot, batch
 	return batch
 }
 
-func decodeType(snapshot, prior xdsclient.Snapshot, typ store.Type, previous store.TypeSnapshot) store.TypeSnapshot {
+func projectType(snapshot, prior xdsclient.Snapshot, typ store.Type, previous store.TypeSnapshot) store.TypeSnapshot {
 	wire := wireType(typ)
 	if !snapshot.Synced[wire] {
 		if previous != nil && !prior.Synced[wire] {
@@ -120,26 +125,19 @@ func decodeType(snapshot, prior xdsclient.Snapshot, typ store.Type, previous sto
 		return store.NewDefaultSnapshot(nil, fmt.Errorf("%s xDS is not synchronized", typ))
 	}
 	old, _ := previous.(*store.DefaultSnapshot)
-	raw := prior.Resources[wire]
+	priorValues := prior.Resources[wire]
 	if old == nil || !prior.Synced[wire] {
-		old, raw = store.NewDefaultSnapshot(nil, nil), nil
-	} else if _, err := old.List(); err != nil {
-		// A failed decode did not publish a complete type. Rebuild it on recovery.
-		old, raw = store.NewDefaultSnapshot(nil, nil), nil
+		old, priorValues = store.NewDefaultSnapshot(nil, nil), nil
 	}
 	var upserts []store.Resource
 	for name, value := range snapshot.Resources[wire] {
-		if proto.Equal(raw[name], value) {
+		if priorValues[name] == value {
 			continue
 		}
-		resource, err := decode(store.Key{Type: typ, Name: name}, value)
-		if err != nil {
-			return store.NewDefaultSnapshot(nil, err)
-		}
-		upserts = append(upserts, *resource)
+		upserts = append(upserts, *toResource(store.Key{Type: typ, Name: name}, value))
 	}
 	var removed []string
-	for name := range raw {
+	for name := range priorValues {
 		if _, found := snapshot.Resources[wire][name]; !found {
 			removed = append(removed, name)
 		}
@@ -157,7 +155,7 @@ func (s *Store) get(key store.Key) (*store.Resource, error) {
 	if !snapshot.Synced[typeURL] {
 		return nil, fmt.Errorf("%s xDS is not synchronized", key.Type)
 	}
-	return decode(key, snapshot.Resources[typeURL][key.Name])
+	return toResource(key, snapshot.Resources[typeURL][key.Name]), nil
 }
 
 // Fetch explicitly subscribes to a missing resource. Context bounds the wait.
@@ -177,7 +175,7 @@ func (s *Store) Fetch(ctx context.Context, key store.Key) (*store.Resource, erro
 	if err != nil {
 		return nil, err
 	}
-	return decode(key, value)
+	return toResource(key, value), nil
 }
 
 func wireType(typ store.Type) string {
@@ -191,19 +189,9 @@ func wireType(typ store.Type) string {
 	}
 }
 
-func decode(key store.Key, value *anypb.Any) (*store.Resource, error) {
+func toResource(key store.Key, value *xdsclient.Resource) *store.Resource {
 	if value == nil {
-		return nil, nil
+		return nil
 	}
-	var message proto.Message
-	switch key.Type {
-	case store.Workload:
-		message = &workload.Workload{}
-	case store.TrafficPolicy:
-		message = &sec.TrafficPolicy{}
-	}
-	if err := value.UnmarshalTo(message); err != nil {
-		return nil, fmt.Errorf("decode %s %q: %w", key.Type, key.Name, err)
-	}
-	return &store.Resource{Key: key, Value: message}, nil
+	return &store.Resource{Key: key, Value: value.Value}
 }

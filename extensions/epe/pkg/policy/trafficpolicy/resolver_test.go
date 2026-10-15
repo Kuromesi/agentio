@@ -75,7 +75,7 @@ func (s *fakeStore) Read() store.Batch {
 
 func testAggregate(stores ...store.Store) *store.Aggregate {
 	a := store.NewAggregate(stores...)
-	RegisterQueries(a)
+	RegisterQueries(a, "Kubernetes")
 	return a
 }
 

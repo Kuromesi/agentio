@@ -97,3 +97,59 @@ func storeBenchmarkResources(t testing.TB) ([]model.Resource, [2]model.Resource)
 	}
 	return resources, variants
 }
+
+// Batch publication must not expand the same namespace policies for every workload.
+func BenchmarkAuthorizationDependencyExpansion(b *testing.B) {
+	for _, workloadCount := range []int{100, 1000} {
+		for _, policyCount := range []int{100, 1000} {
+			b.Run(fmt.Sprintf("workloads=%d/policies=%d", workloadCount, policyCount), func(b *testing.B) {
+				resources := make([]model.Resource, 0, workloadCount+policyCount)
+				changes := make([]model.ResourceChange, 0, workloadCount)
+				for i := range policyCount {
+					name := fmt.Sprintf("demo/p%d", i)
+					resource, err := model.NewResource(
+						model.ResourceKey{TypeURL: model.WorkloadAuthorizationType, Name: name}, "",
+						&anypb.Any{TypeUrl: model.WorkloadAuthorizationType, Value: []byte("policy")}, nil,
+						model.ResourceFacts{Authorization: &model.AuthorizationResourceFacts{
+							Scope:     model.AuthorizationScopeNamespace,
+							Namespace: "demo",
+						}})
+					if err != nil {
+						b.Fatal(err)
+					}
+					resources = append(resources, resource)
+				}
+				before, err := model.NewResourceSet(resources)
+				if err != nil {
+					b.Fatal(err)
+				}
+				for i := range workloadCount {
+					name := fmt.Sprintf("w%d", i)
+					resource, err := model.NewResource(
+						model.ResourceKey{TypeURL: model.AddressType, Name: name}, "",
+						&anypb.Any{TypeUrl: model.AddressType, Value: []byte("workload")}, nil,
+						model.ResourceFacts{Workload: &model.WorkloadResourceFacts{
+							WorkloadUID: name,
+							Namespace:   "demo",
+							NodeName:    "node",
+							Source:      model.SourceRef{Registry: "kubernetes/test", Key: name},
+						}})
+					if err != nil {
+						b.Fatal(err)
+					}
+					resources = append(resources, resource)
+					changes = append(changes, model.ResourceChange{Key: resource.Key, New: &resource})
+				}
+				after, err := model.NewResourceSet(resources)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					updateBetween(before, after, changes)
+				}
+			})
+		}
+	}
+}

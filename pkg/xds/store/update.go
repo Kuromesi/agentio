@@ -24,152 +24,233 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// Update describes one committed publication change delivered to subscribers.
+// Identity retains selection metadata for an observed wire name, never its
+// payload. Workloads records scopes whose dependencies made this name visible;
+// wildcard Address watches use this evidence to withdraw resources without a
+// per-connection table of everything previously sent.
+type Identity struct {
+	Name      string
+	Facts     model.ResourceFacts
+	Workloads sets.Set[WorkloadIdentity]
+}
+
+// WorkloadIdentity is the part of Workload facts that defines an authenticated
+// client scope. It deliberately excludes policy and networking references.
+type WorkloadIdentity struct {
+	UID       string
+	Source    model.SourceRef
+	Principal model.Principal
+	NodeName  string
+}
+
+func workloadIdentity(workload *model.WorkloadResourceFacts) WorkloadIdentity {
+	return WorkloadIdentity{
+		UID:       workload.WorkloadUID,
+		Source:    workload.Source,
+		Principal: workload.Principal,
+		NodeName:  workload.NodeName,
+	}
+}
+
+// Candidate identifies a resource to reselect from the current snapshot.
+// Identities includes intermediate names and visibility, even across rollbacks.
+type Candidate struct {
+	Key        model.ResourceKey
+	Identities []Identity
+}
+
+// Update is an immutable invalidation notice, not a delta to replay. Publications
+// may be observed by Demand before their notices are consumed. Merging notices
+// therefore unions candidates and never cancels changes by comparing endpoints.
 type Update struct {
-	version string
-	// transition is shared by every affected connection so fanout copies only a
-	// pointer rather than two ResourceSet values. Its publications are immutable.
-	transition *publicationTransition
-	// changes contains the net key-level delta since this subscriber last
-	// consumed an update. Old/New resources are immutable and safe to share.
-	changes map[model.ResourceKey]model.ResourceChange
-	// changesByType is the shared generator index for changes. It prevents every
-	// affected connection from filtering the complete incremental batch again.
-	changesByType map[string][]model.ResourceChange
-	// changesByName indexes changes by old and new wire names and aliases.
-	changesByName map[string]map[string][]model.ResourceChange
-	// affectedTypes includes changed resource types and types affected through
-	// dependencies, so connections watching either can be notified.
+	version       string
+	candidates    map[string][]Candidate
 	affectedTypes sets.Set[string]
-	// full asks generators to rebuild state. An empty fullTypes means every
-	// watched type; otherwise only the listed dynamic types need a full read.
-	full      bool
-	fullTypes sets.Set[string]
+	full          bool
+	fullTypes     sets.Set[string]
 }
 
-type publicationTransition struct {
-	before model.ResourceSet
-	after  model.ResourceSet
-}
-
-// Version returns the version of the snapshot that produced this update.
+// Version identifies the most recent publication included in this notice.
 func (u Update) Version() string { return u.version }
 
-// Before returns the publication view immediately before this update.
-func (u Update) Before() model.ResourceSet {
-	if u.transition == nil {
-		return model.ResourceSet{}
-	}
-	return u.transition.before
-}
-
-// After returns the publication view committed by this update.
-func (u Update) After() model.ResourceSet {
-	if u.transition == nil {
-		return model.ResourceSet{}
-	}
-	return u.transition.after
-}
-
-// Affects reports whether a watched type needs work for this update.
+// Affects reports whether a watched type has candidates or needs a full refresh.
 func (u Update) Affects(typeURL string) bool {
-	if u.FullFor(typeURL) {
-		return true
-	}
-	return u.affectedTypes.Contains(typeURL)
+	return u.FullFor(typeURL) || u.affectedTypes.Contains(typeURL)
 }
 
-// FullFor reports whether typeURL must be regenerated from its complete source.
+// FullFor reports whether a dynamic notification requires a full selection.
 func (u Update) FullFor(typeURL string) bool {
-	if !u.full {
-		return false
-	}
-	if len(u.fullTypes) == 0 {
-		return true
-	}
-	return u.fullTypes.Contains(typeURL)
+	return u.full && (len(u.fullTypes) == 0 || u.fullTypes.Contains(typeURL))
 }
 
-// ChangesForType returns the changes for typeURL in ResourceKey order.
-// The returned slice does not share mutable storage with the update indexes.
-func (u Update) ChangesForType(typeURL string) []model.ResourceChange {
-	return append([]model.ResourceChange(nil), u.ReadOnlyChangesForType(typeURL)...)
-}
-
-// ReadOnlyChangesForType borrows the immutable, pre-sorted publication index
-// without copying. Callers must not modify the slice or its resources. Use
-// ChangesForType when a mutable slice is needed.
-func (u Update) ReadOnlyChangesForType(typeURL string) []model.ResourceChange {
-	return u.changesByType[typeURL]
-}
-
-// ChangesForNames returns the changes for typeURL which match at least
-// one requested name. Both the old and new wire names and aliases are indexed.
-// A resource that matches multiple names is returned once.
-func (u Update) ChangesForNames(typeURL string, names []string) []model.ResourceChange {
-	byName := u.changesByName[typeURL]
-	if len(byName) == 0 || len(names) == 0 {
-		return nil
+// Candidates borrows the immutable, key-ordered invalidation index. Neither the
+// slice nor its nested metadata may be modified. Direct Workloads are projected
+// from Address candidates, so their source keys retain the Address type URL.
+func (u Update) Candidates(typeURL string) []Candidate {
+	if typeURL == model.WorkloadType {
+		typeURL = model.AddressType
 	}
-	byKey := make(map[model.ResourceKey]model.ResourceChange)
-	for _, name := range names {
-		for _, change := range byName[name] {
-			byKey[change.Key] = change
-		}
-	}
-	changes := make([]model.ResourceChange, 0, len(byKey))
-	for _, change := range byKey {
-		changes = append(changes, change)
-	}
-	return orderedChanges(changes)
-}
-
-func orderedChanges(changes []model.ResourceChange) []model.ResourceChange {
-	if len(changes) == 0 {
-		return nil
-	}
-	result := append([]model.ResourceChange(nil), changes...)
-	sortChanges(result)
-	return result
-}
-
-func sortChanges(changes []model.ResourceChange) {
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].Key.TypeURL != changes[j].Key.TypeURL {
-			return changes[i].Key.TypeURL < changes[j].Key.TypeURL
-		}
-		return changes[i].Key.Name < changes[j].Key.Name
-	})
-}
-
-func updateFor(version string, changes []model.ResourceChange) Update {
-	indexed := make(map[model.ResourceKey]model.ResourceChange, len(changes))
-	types := sets.New[string]()
-	byType := make(map[string][]model.ResourceChange)
-	byName := make(map[string]map[string][]model.ResourceChange)
-	for _, change := range changes {
-		indexed[change.Key] = change
-		types.Insert(change.Key.TypeURL)
-		byType[change.Key.TypeURL] = append(byType[change.Key.TypeURL], change)
-		indexChangeByName(byName, change)
-		indexDerivedSelectionChanges(types, change)
-	}
-	for typeURL := range byType {
-		sortChanges(byType[typeURL])
-	}
-	return Update{
-		version:       version,
-		changes:       indexed,
-		changesByType: byType,
-		changesByName: byName,
-		affectedTypes: types,
-	}
+	return u.candidates[typeURL]
 }
 
 func updateBetween(before, after model.ResourceSet, changes []model.ResourceChange) Update {
-	update := updateFor(after.Version(), changes)
-	update.transition = &publicationTransition{before: before, after: after}
-	return update
+	candidates := make(map[model.ResourceKey]Candidate, len(changes))
+	for _, change := range changes {
+		for _, resource := range []*model.Resource{change.Old, change.New} {
+			if resource != nil {
+				addCandidate(candidates, *resource, nil)
+			}
+		}
+	}
+	indexDependencies(candidates, before, after, changes)
+	return indexedUpdate(after.Version(), candidates)
+}
+
+func indexedUpdate(version string, candidates map[model.ResourceKey]Candidate) Update {
+	u := Update{
+		version:       version,
+		candidates:    make(map[string][]Candidate),
+		affectedTypes: sets.New[string](),
+	}
+	for key, candidate := range candidates {
+		u.candidates[key.TypeURL] = append(u.candidates[key.TypeURL], candidate)
+		u.affectedTypes.Insert(key.TypeURL)
+		if key.TypeURL == model.AddressType {
+			u.affectedTypes.Insert(model.WorkloadType)
+		}
+	}
+	for typeURL := range u.candidates {
+		sort.Slice(u.candidates[typeURL], func(i, j int) bool {
+			return u.candidates[typeURL][i].Key.Name < u.candidates[typeURL][j].Key.Name
+		})
+	}
+	return u
+}
+
+func addCandidate(
+	index map[model.ResourceKey]Candidate,
+	resource model.Resource,
+	workload *model.WorkloadResourceFacts,
+) {
+	candidate := index[resource.Key]
+	candidate.Key = resource.Key
+	identity := Identity{Name: resource.XDSName, Facts: resource.Facts}
+	if workload != nil {
+		identity.Workloads = sets.New(workloadIdentity(workload))
+	}
+	candidate.Identities = mergeIdentity(candidate.Identities, identity)
+	index[resource.Key] = candidate
+}
+
+func mergeIdentity(identities []Identity, identity Identity) []Identity {
+	for i, existing := range identities {
+		if existing.Name != identity.Name || !existing.Facts.Equal(identity.Facts) {
+			continue
+		}
+		if len(identity.Workloads) != 0 {
+			if identities[i].Workloads == nil {
+				identities[i].Workloads = sets.New[WorkloadIdentity]()
+			}
+			identities[i].Workloads.Merge(identity.Workloads)
+		}
+		return identities
+	}
+	return append(identities, identity)
+}
+
+// Merge unions already-published invalidations. Only Store.Apply may fold
+// unobservable, pre-publication transitions into a net change.
+func Merge(older, newer Update) Update {
+	merged := Update{
+		version:       newer.version,
+		candidates:    maps.Clone(older.candidates),
+		affectedTypes: sets.New[string](),
+	}
+	if merged.candidates == nil {
+		merged.candidates = make(map[string][]Candidate, len(newer.candidates))
+	}
+	for typeURL, incoming := range newer.candidates {
+		merged.candidates[typeURL] = mergeCandidates(older.candidates[typeURL], incoming)
+	}
+	merged.affectedTypes.Merge(older.affectedTypes)
+	merged.affectedTypes.Merge(newer.affectedTypes)
+	merged.full = older.full || newer.full
+	if merged.full && !(older.full && len(older.fullTypes) == 0 || newer.full && len(newer.fullTypes) == 0) {
+		merged.fullTypes = sets.New[string]()
+		merged.fullTypes.Merge(older.fullTypes)
+		merged.fullTypes.Merge(newer.fullTypes)
+	}
+	return merged
+}
+
+// Both inputs are immutable, key-ordered sets. Disjoint types and identity
+// metadata remain shared; overlapping batches only need a linear merge.
+func mergeCandidates(older, newer []Candidate) []Candidate {
+	if len(older) == 0 {
+		return newer
+	}
+	if len(newer) == 0 {
+		return older
+	}
+	// Count repeated keys before allocating so pending notices retain only
+	// enough capacity for their union, including heavily overlapping updates.
+	count := len(older) + len(newer)
+	for i, j := 0, 0; i < len(older) && j < len(newer); {
+		switch {
+		case older[i].Key.Name < newer[j].Key.Name:
+			i++
+		case older[i].Key.Name > newer[j].Key.Name:
+			j++
+		default:
+			count--
+			i++
+			j++
+		}
+	}
+	merged := make([]Candidate, 0, count)
+	for len(older) != 0 && len(newer) != 0 {
+		switch {
+		case older[0].Key.Name < newer[0].Key.Name:
+			merged = append(merged, older[0])
+			older = older[1:]
+		case older[0].Key.Name > newer[0].Key.Name:
+			merged = append(merged, newer[0])
+			newer = newer[1:]
+		default:
+			candidate := older[0]
+			copied := false
+			for _, incoming := range newer[0].Identities {
+				match := -1
+				for i, existing := range candidate.Identities {
+					if existing.Name == incoming.Name && existing.Facts.Equal(incoming.Facts) {
+						match = i
+						break
+					}
+				}
+				if match >= 0 && candidate.Identities[match].Workloads.SupersetOf(incoming.Workloads) {
+					continue
+				}
+				// Copy only when the union introduces new visibility evidence.
+				if !copied {
+					candidate.Identities = slices.Clone(candidate.Identities)
+					copied = true
+				}
+				if match < 0 {
+					candidate.Identities = append(candidate.Identities, incoming)
+				} else if len(candidate.Identities[match].Workloads) == 0 {
+					candidate.Identities[match].Workloads = incoming.Workloads
+				} else {
+					workloads := maps.Clone(candidate.Identities[match].Workloads)
+					workloads.Merge(incoming.Workloads)
+					candidate.Identities[match].Workloads = workloads
+				}
+			}
+			merged = append(merged, candidate)
+			older, newer = older[1:], newer[1:]
+		}
+	}
+	merged = append(merged, older...)
+	return append(merged, newer...)
 }
 
 func coalesceChanges(changes []model.ResourceChange) []model.ResourceChange {
@@ -182,102 +263,11 @@ func coalesceChanges(changes []model.ResourceChange) []model.ResourceChange {
 	}
 	result := make([]model.ResourceChange, 0, len(indexed))
 	for _, change := range indexed {
-		if sameResource(change.Old, change.New) {
-			continue
+		if !sameResource(change.Old, change.New) {
+			result = append(result, change)
 		}
-		result = append(result, change)
 	}
 	return result
-}
-
-// Merge combines consecutive updates, retaining the first before snapshot and
-// the latest after snapshot. Inputs and their resource indexes remain immutable.
-func Merge(older, newer Update) Update {
-	merged := Update{version: newer.version, full: older.full || newer.full}
-	if older.transition != nil && newer.transition != nil {
-		merged.transition = &publicationTransition{
-			before: older.transition.before,
-			after:  newer.transition.after,
-		}
-	}
-	if merged.full {
-		if older.full && len(older.fullTypes) == 0 || newer.full && len(newer.fullTypes) == 0 {
-			merged.fullTypes = nil
-		} else {
-			merged.fullTypes = sets.NewWithLength[string](len(older.fullTypes) + len(newer.fullTypes))
-			for typeURL := range older.fullTypes {
-				merged.fullTypes.Insert(typeURL)
-			}
-			for typeURL := range newer.fullTypes {
-				merged.fullTypes.Insert(typeURL)
-			}
-		}
-	}
-	merged.changes = make(map[model.ResourceKey]model.ResourceChange, len(older.changes)+len(newer.changes))
-	merged.affectedTypes = sets.NewWithLength[string](len(older.affectedTypes) + len(newer.affectedTypes))
-	for typeURL := range older.affectedTypes {
-		merged.affectedTypes.Insert(typeURL)
-	}
-	for typeURL := range newer.affectedTypes {
-		merged.affectedTypes.Insert(typeURL)
-	}
-	maps.Copy(merged.changes, older.changes)
-	for key, change := range newer.changes {
-		if existing, found := merged.changes[key]; found {
-			change.Old = existing.Old
-		}
-		if sameResource(change.Old, change.New) {
-			delete(merged.changes, key)
-		} else {
-			merged.changes[key] = change
-		}
-	}
-	// A type can disappear from the net delta when add/delete or update/revert
-	// events merge while a connection is busy.
-	clear(merged.affectedTypes)
-	merged.changesByType = make(map[string][]model.ResourceChange)
-	merged.changesByName = make(map[string]map[string][]model.ResourceChange)
-	for key := range merged.changes {
-		merged.affectedTypes.Insert(key.TypeURL)
-		merged.changesByType[key.TypeURL] = append(merged.changesByType[key.TypeURL], merged.changes[key])
-		indexChangeByName(merged.changesByName, merged.changes[key])
-		indexDerivedSelectionChanges(merged.affectedTypes, merged.changes[key])
-	}
-	for typeURL := range merged.changesByType {
-		sortChanges(merged.changesByType[typeURL])
-	}
-	return merged
-}
-
-func indexChangeByName(index map[string]map[string][]model.ResourceChange, change model.ResourceChange) {
-	byName := index[change.Key.TypeURL]
-	if byName == nil {
-		byName = make(map[string][]model.ResourceChange)
-		index[change.Key.TypeURL] = byName
-	}
-	names := make([]string, 0, 4)
-	addName := func(name string) {
-		if name == "" {
-			return
-		}
-		if slices.Contains(names, name) {
-			return
-		}
-		names = append(names, name)
-	}
-	for _, resource := range []*model.Resource{change.Old, change.New} {
-		if resource == nil {
-			continue
-		}
-		addName(resource.Key.Name)
-		addName(resource.XDSName)
-		for _, alias := range resource.Aliases {
-			addName(alias)
-		}
-	}
-	for _, name := range names {
-		byName[name] = append(byName[name], change)
-	}
 }
 
 func sameResource(left, right *model.Resource) bool {

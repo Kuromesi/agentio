@@ -1642,7 +1642,7 @@ func TestUnreadyServerRefusesTheStream(t *testing.T) {
 	}
 }
 
-func TestIncrementalGenerationUsesQueuedPublicationTransition(t *testing.T) {
+func TestIncrementalGenerationUsesCurrentSnapshot(t *testing.T) {
 	oldResource := addressResource(t, "cluster//Pod/demo/a", "old")
 	middleResource := addressResource(t, "cluster//Pod/demo/a", "middle")
 	newResource := addressResource(t, "cluster//Pod/demo/a", "new")
@@ -1657,9 +1657,14 @@ func TestIncrementalGenerationUsesQueuedPublicationTransition(t *testing.T) {
 	after := snapshot(middleResource)
 	live := snapshot(newResource)
 	generator := &requestRecordingGenerator{}
-	server := newTestServerWithGenerators(t, ztunnelScope(), []model.Resource{newResource}, map[string]ResourceGenerator{
-		model.AddressType: generator,
-	})
+	server := newTestServerWithGenerators(
+		t,
+		ztunnelScope(),
+		[]model.Resource{newResource},
+		map[string]ResourceGenerator{
+			model.AddressType: generator,
+		},
+	)
 	watch := &watchState{wildcard: true, started: true, names: sets.New[string](), sent: map[string]string{}}
 	update := updateBetween(before, after, []model.ResourceChange{{
 		Key: oldResource.Key,
@@ -1675,11 +1680,11 @@ func TestIncrementalGenerationUsesQueuedPublicationTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := generator.request.Update.Before().Version(); got != before.Version() {
-		t.Fatalf("generator Before version = %q, want %q", got, before.Version())
+	if got := generator.request.Snapshot.Version(); got != live.Version() {
+		t.Fatalf("generator snapshot = %q, want current %q", got, live.Version())
 	}
-	if got := generator.request.Snapshot.Version(); got != after.Version() {
-		t.Fatalf("generator After version = %q, want queued %q rather than live %q", got, after.Version(), live.Version())
+	if got := generator.request.Update.Candidates(model.AddressType); len(got) != 1 || got[0].Key != oldResource.Key {
+		t.Fatalf("generator lost queued candidates: %#v", got)
 	}
 }
 

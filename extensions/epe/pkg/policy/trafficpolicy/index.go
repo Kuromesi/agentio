@@ -17,10 +17,14 @@ package trafficpolicy
 import (
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	sec "github.com/openkruise/agentio/api/security/v1"
 	workload "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
+	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
 type subjectKey struct {
@@ -41,19 +45,23 @@ type indexedWorkload struct {
 	err               error
 }
 type queryIndex struct {
+	clusterID string
 	workloads map[subjectKey]*indexedWorkload
 	err       error
 }
 
 // RegisterQueries adds Workload identity and ordered TrafficPolicy queries.
 // Matching, dependency resolution and compilation stay outside the generic store.
-func RegisterQueries(aggregate *store.Aggregate) {
+func RegisterQueries(aggregate *store.Aggregate, clusterID string) {
 	types := []store.Type{store.Workload, store.TrafficPolicy}
-	aggregate.RegisterQueries(types, types, buildQueryIndex)
+	builder := queryBuilder{clusterID: clusterID}
+	aggregate.RegisterQueries(types, types, builder.build)
 }
 
-func buildQueryIndex(view *store.Snapshot, previous store.Query) store.Query {
-	index := &queryIndex{workloads: map[subjectKey]*indexedWorkload{}}
+type queryBuilder struct{ clusterID string }
+
+func (b queryBuilder) build(view *store.Snapshot, previous store.Query) store.Query {
+	index := &queryIndex{clusterID: b.clusterID, workloads: map[subjectKey]*indexedWorkload{}}
 	resources, err := view.List(store.Workload)
 	if err != nil {
 		index.err = err
@@ -133,7 +141,12 @@ func (i *queryIndex) forSubject(subject store.Subject) (*indexedWorkload, error)
 	}
 	entry := i.workloads[subjectKey{subject.Namespace, subject.Name}]
 	if entry == nil {
-		return nil, fmt.Errorf("source Workload %s/%s not found", subject.Namespace, subject.Name)
+		// EPE currently receives a Kubernetes Pod identity. Use the registry
+		// mapping rather than assuming that every Workload UID is Pod-shaped.
+		uid := podsource.WorkloadUID(i.clusterID, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: subject.Namespace, Name: subject.Name},
+		})
+		return nil, &store.MissingResource{Key: store.Key{Type: store.Workload, Name: uid}}
 	}
 	return entry, entry.err
 }

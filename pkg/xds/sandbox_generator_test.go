@@ -179,6 +179,12 @@ func TestSandboxDynamicWorkerScopeAndPodReplacement(t *testing.T) {
 		if i == 2 && !reflect.DeepEqual(delta.Removed, []string{"a", "b"}) {
 			t.Fatalf("old Pod retained visibility: %+v", delta)
 		}
+		for _, resource := range delta.Resources {
+			sub.sent[resource.XDSName] = resource.Hash
+		}
+		for _, name := range delta.Removed {
+			delete(sub.sent, name)
+		}
 	}
 }
 
@@ -348,11 +354,18 @@ func TestSandboxAttesterMigrationUpdatesVisibilityWithoutWorkloadChanges(t *test
 				Source:      worker.Facts.Workload.Source,
 			}
 			delta, err := (SandboxGenerator{}).Generate(t.Context(), GenerationRequest{
-				Scope:        scope,
-				TypeURL:      model.SandboxType,
-				Subscription: SubscriptionView{names: []string{"actor"}, wildcard: wildcard},
-				Snapshot:     after,
-				Update:       update,
+				Scope:   scope,
+				TypeURL: model.SandboxType,
+				Subscription: initializedSubscription(
+					t,
+					SandboxGenerator{},
+					scope,
+					model.SandboxType,
+					before,
+					SubscriptionView{names: []string{"actor"}, wildcard: wildcard},
+				),
+				Snapshot: after,
+				Update:   update,
 			})
 			if err != nil {
 				t.Fatal(err)
