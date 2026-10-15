@@ -320,10 +320,16 @@ func TestGatewayServerFirstFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			listeners := messagesOf(
+				t,
+				resources,
+				model.ListenerType,
+				func() *listenerv3.Listener { return &listenerv3.Listener{} },
+			)
 			for _, name := range []string{MainInternal, MainForward} {
 				listener := listeners[name]
-				if timeout := listener.GetListenerFiltersTimeout(); timeout == nil || timeout.AsDuration() != time.Second {
+				if timeout := listener.GetListenerFiltersTimeout(); timeout == nil ||
+					timeout.AsDuration() != time.Second {
 					t.Errorf("%s inspection timeout = %v, want 1s", name, timeout)
 				}
 				if !listener.GetContinueOnListenerFiltersTimeout() {
