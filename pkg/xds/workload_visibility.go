@@ -15,34 +15,49 @@
 package xds
 
 import (
+	"istio.io/istio/pkg/util/sets"
+
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// workloadVisibility evaluates Workload and Address visibility for one client
-// against an immutable resource snapshot. It is local to one generation pass.
-type workloadVisibility struct {
-	resources model.ResourceSet
-	scope     model.ClientScope
-	typeURL   string
+// addressSelection evaluates both full and incremental Address selection against
+// one immutable snapshot. Workload scope is also used for related Services and Gateways.
+type addressSelection struct {
+	resources    model.ResourceSet
+	scope        model.ClientScope
+	typeURL      string
+	subscription SubscriptionView
+	// Full named selection resolves subscribed Services once; incremental selection
+	// only looks up Service references of changed candidates.
+	serviceKeys sets.Set[string]
 }
 
-func newWorkloadVisibility(scope model.ClientScope, resources model.ResourceSet, typeURL string) workloadVisibility {
-	return workloadVisibility{resources: resources, scope: scope, typeURL: typeURL}
+func newAddressSelection(
+	scope model.ClientScope,
+	resources model.ResourceSet,
+	typeURL string,
+	subscription SubscriptionView,
+) addressSelection {
+	return addressSelection{
+		resources:    resources,
+		scope:        scope,
+		typeURL:      typeURL,
+		subscription: subscription,
+	}
 }
 
-func (v workloadVisibility) hasScopedWorkload(query model.WorkloadQuery) bool {
-	scopeQuery, found := workloadScopeQuery(v.scope)
+func (v *addressSelection) hasScopedWorkload(references model.WorkloadQuery) bool {
+	scope := v.scope
+	query, found := workloadScopeQuery(&scope)
 	if !found {
 		return false
 	}
-	query.WorkloadUID = scopeQuery.WorkloadUID
-	query.Source = scopeQuery.Source
-	query.Principal = scopeQuery.Principal
-	query.NodeName = scopeQuery.NodeName
+	query.ServiceKey = references.ServiceKey
+	query.GatewayReference = references.GatewayReference
 	return v.resources.HasWorkload(v.typeURL, query)
 }
 
-func (v workloadVisibility) visible(resource model.Resource) bool {
+func (v *addressSelection) visible(resource model.Resource) bool {
 	if v.scope.Class == model.ClientEgressGateway || v.scope.Class == model.ClientAgentioEgress {
 		return true
 	}
@@ -52,7 +67,7 @@ func (v workloadVisibility) visible(resource model.Resource) bool {
 		return true
 	}
 	if resource.IsWorkloadAddress() {
-		return workloadMatchesScope(v.scope, resource)
+		return v.matchesWorkload(resource)
 	}
 	if v.typeURL != model.AddressType {
 		return false
@@ -62,46 +77,105 @@ func (v workloadVisibility) visible(resource model.Resource) bool {
 	})
 }
 
-func (v workloadVisibility) ownedByGateway(gatewayKey string) []model.Resource {
-	return v.resources.ListResourcesOwnedByGateway(v.typeURL, gatewayKey)
+func (v *addressSelection) matchesWorkload(resource model.Resource) bool {
+	query, found := workloadScopeQuery(&v.scope)
+	return found && query.Matches(resource.Facts.Workload)
 }
 
-// workloadSelected checks one candidate against the complete current
-// subscription, including implicit local workloads and Service/Gateway expansion.
-func workloadSelected(request GenerationRequest, resource model.Resource) bool {
-	visibility := newWorkloadVisibility(request.Scope, request.Snapshot, model.AddressType)
-	if request.Subscription.Wildcard() {
-		return visibility.visible(resource)
+// selected applies implicit scope, explicit names and Service expansion equally
+// to named full-generation candidates and changed incremental candidates.
+func (v *addressSelection) selected(resource model.Resource) bool {
+	if v.subscription.Wildcard() {
+		return v.visible(resource)
 	}
-	scope := request.Scope
-	if scope.Class == model.ClientDedicatedZTunnel && len(request.Subscription.names) == 0 {
+	scope := v.scope
+	if scope.Class != model.ClientSharedZTunnel && len(v.subscription.names) == 0 {
 		return false
 	}
 	if scope.Class != model.ClientEgressGateway && scope.Class != model.ClientAgentioEgress {
-		if resource.Facts.GatewayOwner != "" && visibility.hasScopedWorkload(model.WorkloadQuery{
+		if resource.Facts.GatewayOwner != "" && v.hasScopedWorkload(model.WorkloadQuery{
 			GatewayReference: resource.Facts.GatewayOwner,
 		}) {
 			return true
 		}
-		if scope.Class == model.ClientSharedZTunnel && workloadMatchesScope(scope, resource) {
+		if scope.Class == model.ClientSharedZTunnel && v.matchesWorkload(resource) {
 			return true
 		}
-		if scope.Class == model.ClientDedicatedZTunnel && !visibility.visible(resource) {
+		if scope.Class == model.ClientDedicatedZTunnel && !v.visible(resource) {
 			return false
 		}
 	}
-	if request.Subscription.allows(resource) || containsSorted(request.Subscription.names, resource.Key.Name) {
+	if v.subscription.allows(resource) || containsSorted(v.subscription.names, resource.Key.Name) {
 		return true
 	}
 	if workload := resource.Facts.Workload; workload != nil {
 		for _, key := range workload.ServiceKeys {
-			for _, service := range serviceResourcesForKey(request.Snapshot, key) {
-				if request.Subscription.allows(service) ||
-					containsSorted(request.Subscription.names, service.Key.Name) {
-					return true
-				}
+			if v.subscribesService(key) {
+				return true
 			}
 		}
 	}
 	return false
+}
+
+func (v *addressSelection) subscribesService(key string) bool {
+	if v.serviceKeys != nil {
+		return v.serviceKeys.Contains(key)
+	}
+	for _, service := range serviceResourcesForKey(v.resources, key) {
+		if v.subscription.allows(service) || containsSorted(v.subscription.names, service.Key.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// list enumerates candidates through indexes before applying the same predicate
+// as incremental generation. Named lookups never scan the entire snapshot.
+func (v *addressSelection) list() []model.Resource {
+	if v.subscription.Wildcard() &&
+		(v.scope.Class == model.ClientEgressGateway || v.scope.Class == model.ClientAgentioEgress) {
+		return v.resources.List(v.typeURL)
+	}
+	if !v.subscription.Wildcard() && len(v.subscription.names) == 0 && v.scope.Class != model.ClientSharedZTunnel {
+		return nil
+	}
+	var candidates []model.Resource
+	scope := v.scope
+	if query, found := workloadScopeQuery(&scope); found {
+		workloads := v.resources.ListWorkloads(v.typeURL, query)
+		gateways := gatewayReferenceKeys(workloads)
+		candidates = workloads
+		candidates = append(candidates, gatewayResourcesForKeys(v.resources, v.typeURL, gateways)...)
+		if v.subscription.Wildcard() && v.typeURL == model.AddressType {
+			candidates = append(candidates, selectedServices(v.resources, workloadServiceKeys(workloads))...)
+		}
+	}
+	// Wildcard candidates are exact indexed scope matches and their dependencies;
+	// rechecking every Workload would repeat ListWorkloads' query predicates.
+	if v.subscription.Wildcard() {
+		return orderedUnique(candidates)
+	}
+	for _, name := range v.subscription.names {
+		for _, resource := range v.resources.Lookup(v.typeURL, name) {
+			if v.typeURL == model.AddressType || resource.IsWorkloadAddress() {
+				candidates = append(candidates, resource)
+			}
+		}
+	}
+	v.serviceKeys = serviceKeysForNames(v.resources, v.subscription.names)
+	for serviceKey := range v.serviceKeys {
+		for _, resource := range v.resources.ListServiceMembers(v.typeURL, serviceKey) {
+			if resource.IsWorkloadAddress() {
+				candidates = append(candidates, resource)
+			}
+		}
+	}
+	selected := candidates[:0]
+	for _, resource := range candidates {
+		if v.selected(resource) {
+			selected = append(selected, resource)
+		}
+	}
+	return orderedUnique(selected)
 }

@@ -90,5 +90,5 @@ func trafficPolicyWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, b
 	if scope.Class == model.ClientEgressGateway {
 		return model.WorkloadQuery{TrafficPolicyRefsOnly: true}, true
 	}
-	return workloadScopeQuery(scope)
+	return workloadScopeQuery(&scope)
 }

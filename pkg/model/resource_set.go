@@ -123,7 +123,7 @@ func (s ResourceSet) ListWorkloads(typeURL string, query WorkloadQuery) []Resour
 	result := make([]Resource, 0, len(candidates))
 	for _, name := range candidates {
 		resource, found := index.shards[resourceShard(name)][name]
-		if found && workloadMatchesQuery(resource.Facts.Workload, query) {
+		if found && query.Matches(resource.Facts.Workload) {
 			result = append(result, resource)
 		}
 	}
@@ -138,7 +138,7 @@ func (s ResourceSet) HasWorkload(typeURL string, query WorkloadQuery) bool {
 	}
 	for _, name := range workloadQueryCandidates(&index.facts, query) {
 		resource, found := index.shards[resourceShard(name)][name]
-		if found && workloadMatchesQuery(resource.Facts.Workload, query) {
+		if found && query.Matches(resource.Facts.Workload) {
 			return true
 		}
 	}

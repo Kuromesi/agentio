@@ -196,6 +196,9 @@ func TestWorkloadQuerySingletonPreservesAllPredicates(t *testing.T) {
 		AuthorizationRefsOnly:  true}
 	check := func(t *testing.T, query WorkloadQuery, want bool) {
 		t.Helper()
+		if got := query.Matches(raw.Facts.Workload); got != want {
+			t.Fatalf("Matches = %v, want %v", got, want)
+		}
 		if got := snapshot.HasWorkload(AddressType, query); got != want {
 			t.Fatalf("HasWorkload = %v, want %v", got, want)
 		}
