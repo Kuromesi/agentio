@@ -16,6 +16,7 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -71,7 +72,32 @@ type Server struct {
 }
 
 // Process handles the CONNECT header exchange and publishes its decision.
-func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) error {
+func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) (err error) {
+	var request Request
+	var result Result
+	var handlerErr error
+	if log.DebugEnabled() {
+		started := time.Now()
+		defer func() {
+			log.Debug(
+				"CONNECT processing completed",
+				"authority",
+				request.Authority,
+				"connect_udp",
+				request.ConnectUDP,
+				"workload",
+				request.Source.Workload.Namespace+"/"+request.Source.Workload.Name,
+				"grpc_code",
+				status.Code(err).String(),
+				"deadline_exceeded",
+				errors.Is(handlerErr, context.DeadlineExceeded),
+				"deny_status",
+				int32(result.DenyStatus),
+				"duration",
+				time.Since(started),
+			)
+		}()
+	}
 	message, err := stream.Recv()
 	if err != nil {
 		return err
@@ -109,7 +135,7 @@ func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) error {
 		}
 		return value.GetStringValue()
 	}
-	request := Request{
+	request = Request{
 		Source: Source{
 			Workload: WorkloadIdentity{
 				Name:      attr(model.AttributeWorkloadName),
@@ -124,9 +150,9 @@ func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) error {
 	}
 	ctx, cancel := context.WithTimeout(stream.Context(), s.Timeout)
 	defer cancel()
-	result, err := s.Handler.Handle(ctx, request)
-	if err != nil {
-		return status.Errorf(codes.Unavailable, "CONNECT processing failed: %v", err)
+	result, handlerErr = s.Handler.Handle(ctx, request)
+	if handlerErr != nil {
+		return status.Errorf(codes.Unavailable, "CONNECT processing failed: %v", handlerErr)
 	}
 	response := &extproc.ProcessingResponse{Response: &extproc.ProcessingResponse_RequestHeaders{
 		RequestHeaders: &extproc.HeadersResponse{Response: &extproc.CommonResponse{}},

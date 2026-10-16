@@ -25,9 +25,12 @@ import (
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 
 	extensions "github.com/openkruise/agentio/api/extensions/v1"
+	agentiolog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/xdsclient"
 )
+
+var log = agentiolog.New("porter.processor")
 
 // DemandSource is satisfied by the shared Delta ADS client. Named subscriptions
 // stay live until deletion, so decisions observe updates without polling.
@@ -59,6 +62,7 @@ func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, er
 	if fallback {
 		ip, err := netip.ParseAddr(request.Source.PeerIP)
 		if err != nil || request.Source.Principal == "" {
+			log.Debug("CONNECT denied", "reason", "missing_peer_identity", "peer_ip", request.Source.PeerIP)
 			return deny, nil
 		}
 		// Agentiod currently publishes Kubernetes IP aliases in the default network.
@@ -66,6 +70,7 @@ func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, er
 	}
 	value, err := h.source.Demand(ctx, model.WorkloadType, lookup)
 	if errors.Is(err, xdsclient.ErrNotFound) {
+		log.Debug("CONNECT denied", "reason", "workload_not_found", "lookup", lookup)
 		return deny, nil
 	}
 	if err != nil {
@@ -77,18 +82,21 @@ func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, er
 			w.identity.Name == "" || w.identity.Namespace == "" ||
 			(identity.Name != "" && identity.Name != w.identity.Name) ||
 			(identity.Namespace != "" && identity.Namespace != w.identity.Namespace) {
+			log.Debug("CONNECT denied", "reason", "peer_identity_mismatch", "lookup", lookup)
 			return deny, nil
 		}
 		identity = w.identity
 	}
 	uid := h.clusterID + "//Pod/" + identity.Namespace + "/" + identity.Name
 	if w.uid != uid {
+		log.Debug("CONNECT denied", "reason", "workload_identity_mismatch", "lookup", lookup)
 		return deny, nil
 	}
 	var policies []*extensions.SniTrafficPolicy
 	if request.Source.SandboxID != "" {
 		value, err := h.source.Demand(ctx, model.SandboxType, request.Source.SandboxID)
 		if errors.Is(err, xdsclient.ErrNotFound) {
+			log.Debug("CONNECT denied", "reason", "sandbox_not_found", "workload", uid)
 			return deny, nil
 		}
 		if err != nil {
@@ -96,6 +104,7 @@ func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, er
 		}
 		s := value.Value.(*sandboxView)
 		if s.uid != request.Source.SandboxID || s.workloadUID != uid {
+			log.Debug("CONNECT denied", "reason", "sandbox_binding_mismatch", "workload", uid)
 			return deny, nil
 		}
 		policies = append(policies, s.policies...)
@@ -104,6 +113,8 @@ func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, er
 		"name":      identity.Name,
 		"namespace": identity.Namespace,
 	}}
+	log.Debug("CONNECT identity resolved", "workload_name", identity.Name, "workload_namespace", identity.Namespace,
+		"peer_ip_fallback", fallback, "sandbox", request.Source.SandboxID != "", "connect_udp", request.ConnectUDP)
 	if request.ConnectUDP {
 		return Result{Metadata: metadata}, nil
 	}
@@ -112,6 +123,7 @@ func (h *PolicyHandler) Handle(ctx context.Context, request Request) (Result, er
 	for _, policy := range policies {
 		combined.Rules = append(combined.Rules, policy.GetRules()...)
 	}
+	log.Debug("CONNECT SNI policy prepared", "workload", uid, "rules", len(combined.Rules))
 	data, err := protojson.Marshal(combined)
 	if err != nil {
 		return Result{}, err

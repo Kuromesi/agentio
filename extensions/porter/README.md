@@ -12,6 +12,8 @@ The projected gateway Pod token authenticates ADS. Agentiod verifies Pod identit
 
 Both static and Gateway API chart deployments include Porter with the gateway's token and CA volumes. Configure `egressGateway.porter.image`, `.resources` and `.cache` (`idleTTL: 1m`, `maxEntries: 10000`). A manual deployment sets `POD_NAME`, `POD_NAMESPACE`, `POD_UID`, `POD_IP`, `--xds-address` and `--cluster-id`. The health listener on port 9003 serves gRPC `readiness` after both discovery watches synchronize, and `liveness` for process health. Do not expose the processing port through a Service.
 
+Porter uses the same structured logging configuration as Agentiod: `AGENTIO_LOG_LEVEL` defaults to `info` (`debug`, `info`, `warn`, `error`, `none`), and `AGENTIO_LOG_FORMAT` defaults to `text` (`text` or `json`). Set these on the Porter container. Info logs report startup settings, listener addresses, readiness transitions and shutdown; xDS disconnections and rejected responses remain warnings. Debug logs add CONNECT processing duration, gRPC result, identity resolution (including peer-IP fallback), rejection reasons and SNI rule counts. They do not dump headers, tokens, Sandbox IDs or policy contents. Porter prepares SNI policy metadata; the Rust module makes the final TLS decision, so use gateway access logs for that outcome.
+
 During migration, authenticated `waypoint~` clients retain their original forwarding and TLS configuration, peer discovery and policy runtime. Only `agentio-egress~` clients receive Porter and dynamic modules. The control plane stores both graphs separately; the gateway agent has no legacy bootstrap mode. Upgrade the control plane first, then roll the gateways.
 
 Build and test from the repository root:

@@ -15,14 +15,10 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"log/slog"
-	"strings"
 
 	"k8s.io/klog/v2"
 
-	agentiolog "github.com/openkruise/agentio/pkg/log"
 	"istio.io/istio/pkg/env"
 )
 
@@ -38,28 +34,6 @@ var (
 		"agentiod log encoding: text or json.",
 	).Get()
 )
-
-func newLogger(output io.Writer, levelName, formatName string) (*slog.Logger, error) {
-	format := strings.ToLower(strings.TrimSpace(formatName))
-	if format != "text" && format != "json" {
-		return nil, fmt.Errorf("invalid AGENTIO_LOG_FORMAT %q: must be text or json", formatName)
-	}
-	level, err := agentiolog.ParseOutputLevelName(levelName)
-	if err != nil {
-		return nil, fmt.Errorf("invalid AGENTIO_LOG_LEVEL: %w", err)
-	}
-	agentiolog.ConfigureOutputLevel(level)
-
-	options := &slog.HandlerOptions{Level: slog.LevelDebug}
-	var handler slog.Handler
-	switch format {
-	case "text":
-		handler = slog.NewTextHandler(output, options)
-	case "json":
-		handler = slog.NewJSONHandler(output, options)
-	}
-	return slog.New(agentiolog.NewDynamicHandler(handler)), nil
-}
 
 func installLogger(logger *slog.Logger) {
 	slog.SetDefault(logger)

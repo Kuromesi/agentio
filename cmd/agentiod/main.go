@@ -23,6 +23,7 @@ import (
 	"syscall"
 
 	"github.com/openkruise/agentio/pkg/envdoc"
+	agentiolog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/server"
 )
 
@@ -53,7 +54,7 @@ func run(ctx context.Context, args []string) error {
 			},
 		})
 	}
-	logger, err := newLogger(os.Stderr, logLevel, logFormat)
+	logger, err := agentiolog.NewLogger(os.Stderr, logLevel, logFormat)
 	if err != nil {
 		return err
 	}

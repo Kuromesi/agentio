@@ -34,10 +34,23 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"istio.io/istio/pkg/env"
+
 	"github.com/openkruise/agentio/extensions/porter/pkg/processor"
 	"github.com/openkruise/agentio/pkg/demandcache"
+	agentiolog "github.com/openkruise/agentio/pkg/log"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/xdsclient"
+)
+
+var (
+	log      = agentiolog.New("porter")
+	logLevel = env.Register(
+		"AGENTIO_LOG_LEVEL",
+		"info",
+		"Minimum Porter log level: debug, info, warn, error, or none.",
+	)
+	logFormat = env.Register("AGENTIO_LOG_FORMAT", "text", "Porter log encoding: text or json.")
 )
 
 // xdsSource adapts concrete xDS subscriptions to the cache's lease interface.
@@ -51,15 +64,22 @@ func (s xdsSource) Acquire(typ, name string) (demandcache.Lease[*xdsclient.Resou
 }
 
 func main() {
+	// Keep initialization failures out of the dependency's standard-log wrapper.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:]); err != nil {
-		slog.Error("connect processor failed", "error", err)
+		log.Error("Porter failed", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, args []string) error {
+	logger, err := agentiolog.NewLogger(os.Stderr, logLevel.Get(), logFormat.Get())
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(logger)
 	flags := flag.NewFlagSet("agentio-porter", flag.ContinueOnError)
 	grpcPort := flags.Int("grpc-port", 9002, "The gRPC port used for communicating with Envoy proxy on localhost")
 	grpcHealthPort := flags.Int("grpc-health-port", 9003, "The port used for gRPC liveness and readiness probes")
@@ -114,7 +134,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
-			slog.Error("close ADS connection", "error", err)
+			log.Error("close ADS connection", "error", err)
 		}
 	}()
 	id := *xdsNodeID
@@ -134,6 +154,8 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	log.Info("starting Porter", "node_id", id, "xds_address", *xdsAddress, "cluster_id", *clusterID,
+		"request_timeout", *timeout, "cache_idle_ttl", cacheConfig.IdleTTL, "cache_max_entries", cacheConfig.MaxEntries)
 	var source processor.DemandSource = client
 	group, ctx := errgroup.WithContext(ctx)
 	if cacheConfig.IdleTTL > 0 || cacheConfig.MaxEntries > 0 {
@@ -171,11 +193,16 @@ func serve(
 	healthServer := grpc.NewServer()
 	health := grpchealth.NewServer()
 	health.SetServingStatus("liveness", healthpb.HealthCheckResponse_SERVING)
+	lastState := healthpb.HealthCheckResponse_UNKNOWN
 	updateReadiness := func() <-chan struct{} {
 		changed, ready := client.Observe(model.WorkloadType, model.SandboxType)
 		state := healthpb.HealthCheckResponse_NOT_SERVING
 		if ready {
 			state = healthpb.HealthCheckResponse_SERVING
+		}
+		if state != lastState {
+			log.Info("Porter readiness changed", "ready", ready)
+			lastState = state
 		}
 		for _, service := range []string{"", "readiness", extproc.ExternalProcessor_ServiceDesc.ServiceName} {
 			health.SetServingStatus(service, state)
@@ -184,6 +211,7 @@ func serve(
 	}
 	changed := updateReadiness()
 	healthpb.RegisterHealthServer(healthServer, health)
+	log.Info("Porter listeners started", "address", listener.Addr(), "health_address", healthListener.Addr())
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return client.Run(ctx) })
 	group.Go(func() error { return server.Serve(listener) })
@@ -192,6 +220,7 @@ func serve(
 		for {
 			select {
 			case <-ctx.Done():
+				log.Info("stopping Porter")
 				health.Shutdown()
 				server.Stop()
 				healthServer.Stop()
