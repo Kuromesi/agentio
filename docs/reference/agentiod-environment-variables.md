@@ -71,7 +71,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_ENABLE_CLIENT_TRUST_DISTRIBUTOR</code> | Boolean | <code>false</code> | Enable client CA distribution and injection with the sidecar injector. |
 | <code>AGENTIO_ENABLE_DEBUG_ON_HTTP</code> | Boolean | <code>true</code> | Enable authenticated debug handlers on the monitoring HTTP listener. |
 | <code>AGENTIO_ENABLE_GATEWAY_DEPLOYER</code> | Boolean | <code>false</code> | If true, run the Agentio Gateway API deployment controller that provisions egress gateway Deployments. |
-| <code>AGENTIO_ENABLE_SIDECAR_INJECTOR</code> | Boolean | <code>false</code> | If true, serve the Agentio ztunnel injection webhook at the Istio-compatible /inject endpoint. |
+| <code>AGENTIO_ENABLE_SIDECAR_INJECTOR</code> | Boolean | <code>false</code> | If true, serve the Agentio ztunnel injection webhook at the /inject endpoint. |
 | <code>AGENTIO_ENABLE_SNI_TRAFFIC_POLICY</code> | Boolean | <code>false</code> | If enabled, enforce SNI traffic policies in egress gateways, using HBONE TLS action headers when present. |
 | <code>AGENTIO_GATEWAY_CONNECT_TIMEOUT</code> | Duration | <code>10s</code> | Connect timeout for passthrough and dynamic-forward-proxy gateway clusters. |
 | <code>AGENTIO_GATEWAY_ENABLE_UDP_PROXY</code> | Boolean | <code>false</code> | If enabled, egress gateways terminate experimental IPv4 CONNECT-UDP sessions from ztunnel and forward datagrams directly to the MASQUE target without inspection. |
@@ -79,7 +79,7 @@ $ agentiod -print-env -print-env-format=markdown
 | <code>AGENTIO_GATEWAY_ROOT_CA_PATH</code> | String | empty | OS root CA bundle path used by gateway TLS origination. When empty the first existing well-known OS CA bundle is auto-detected. |
 | <code>AGENTIO_IGNORE_RESOURCES</code> | String | empty | Comma-separated CRD names excluded from the CRD watcher; a &#34;&#42;.&#34; prefix excludes a whole group by suffix (e.g. &#34;&#42;.istio.io&#34;). |
 | <code>AGENTIO_INCLUDE_RESOURCES</code> | String | empty | Comma-separated CRD names always admitted to the CRD watcher, overriding AGENTIO&#95;IGNORE&#95;RESOURCES; same &#34;&#42;.&#34; group-suffix syntax. |
-| <code>AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME</code> | String | empty | Istio-compatible MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root. |
+| <code>AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME</code> | String | empty | Agentio MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root. |
 | <code>AGENTIO_INJECTOR_CONFIGMAP_NAME</code> | String | <code>agentio-sidecar-injector</code> | ConfigMap carrying the ztunnel and egress-gateway templates and their shared values. |
 | <code>AGENTIO_KEEPALIVE_MAX_SERVER_CONNECTION_AGE</code> | String | <code>30m</code> | Maximum lifetime of a server-side gRPC connection before a graceful close. Zero disables periodic connection expiry. |
 | <code>AGENTIO_KRT_DEBOUNCE</code> | Duration | <code>200ms</code> | Quiet period before an informer-backed collection distributes events. |

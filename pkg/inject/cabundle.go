@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // CABundlePatcher keeps the injection MutatingWebhookConfiguration's
-// clientConfig.caBundle in sync with the control plane's workload root, the
-// role istiod's webhook cert patcher plays. The composition root triggers
+// clientConfig.caBundle in sync with the control plane's workload root.
+// The composition root triggers
 // Sync on CA rotation by subscribing to Authority.TrustBundles.
 
 package inject

@@ -10,8 +10,7 @@
 
 Agentio is a traffic security control system for agents, sandboxes, and other untrusted or compromise-prone workloads.
 
-Agentio keeps Istio data-plane and wire compatibility while focusing its
-control plane on agent traffic governance. It provides:
+Agentio combines ztunnel traffic interception with Envoy egress gateways and a control plane focused on agent traffic governance. It provides:
 
 - **Zero Trust Security** — no implicit trust for any agent or workload; every request is authenticated, authorized, and policy-checked.
 - **Traffic Control** — fine-grained governance over Inbound/Outbound traffic, enabling precise access control and policy enforcement.

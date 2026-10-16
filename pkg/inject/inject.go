@@ -183,7 +183,7 @@ func imageURL(hub, imageName, tag, imageType string) string {
 	return hub + "/" + imageName + ":" + updateImageTypeIfPresent(tag, imageType)
 }
 
-// KnownImageTypes are image types that istio pubishes.
+// KnownImageTypes lists the recognized image tag variants.
 var KnownImageTypes = []string{ImageTypeDistroless, ImageTypeDebug}
 
 func updateImageTypeIfPresent(tag string, imageType string) string {

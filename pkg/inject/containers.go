@@ -96,7 +96,7 @@ func reorderPod(pod *corev1.Pod, req InjectionParameters) error {
 	pod.Spec.Containers = modifyContainers(pod.Spec.Containers, proxyName, proxyLocation)
 	if hasContainer(pod.Spec.InitContainers, proxyName) {
 		// This is using native sidecar support in Kubernetes.
-		// We want istio to be first in this case, so init containers are part of the mesh
+		// Start the proxy first so subsequent init containers use its traffic interception.
 		// This is {agentio-init/agentio-validation} => proxy => rest.
 		pod.Spec.InitContainers = modifyContainers(pod.Spec.InitContainers, EnableCoreDumpName, MoveFirst)
 		pod.Spec.InitContainers = modifyContainers(pod.Spec.InitContainers, proxyName, MoveFirst)
