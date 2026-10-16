@@ -1114,8 +1114,11 @@ func TestDeltaAcknowledgementsPreserveSubscriptionChanges(t *testing.T) {
 				}
 				handle(req)
 				responses := stream.responsesFor(model.AddressType)
-				if len(responses) != 2 || !slices.Equal(resourceNames(responses[1]), []string{"uid-b"}) || !slices.Equal(responses[1].GetRemovedResources(), []string{"uid-a"}) {
+				if len(responses) != 2 || !slices.Equal(resourceNames(responses[1]), []string{"uid-b"}) || len(responses[1].GetRemovedResources()) != 0 {
 					t.Fatalf("subscription delta = %v", responses)
+				}
+				if _, retained := watch.sent["uid-a"]; retained {
+					t.Fatal("unsubscribed resource retained sent state")
 				}
 				if !watch.names.Contains("uid-b") || watch.names.Contains("uid-a") {
 					t.Fatal("subscription changes were dropped")

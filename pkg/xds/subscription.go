@@ -116,6 +116,8 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 			changed = true
 		}
 		watch.names.Delete(name)
+		// Unsubscribing is not a deletion; a late removal could fail a new demand.
+		delete(watch.sent, name)
 	}
 	return changed
 }
