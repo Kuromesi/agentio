@@ -134,7 +134,7 @@ func selectWorkloadResources(
 	typeURL string,
 	names []string,
 ) []model.Resource {
-	if scope.Class == model.ClientEgressGateway {
+	if scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress {
 		if names == nil {
 			return snapshot.List(typeURL)
 		}

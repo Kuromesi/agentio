@@ -48,7 +48,7 @@ func (a *GatewayCertificateAuthorizer) Authorize(scope model.ClientScope) error 
 	if err := scope.Validate(); err != nil {
 		return err
 	}
-	if scope.Class != model.ClientEgressGateway {
+	if scope.Class != model.ClientEgressGateway && scope.Class != model.ClientAgentioEgress {
 		return fmt.Errorf("authorize gateway certificate: an egress gateway scope is required")
 	}
 	namespace, serviceAccount, ok := podsource.ServiceAccountFromPrincipal(scope.Principal)

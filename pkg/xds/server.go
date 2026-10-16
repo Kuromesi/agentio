@@ -76,6 +76,7 @@ var clientClasses = [...]model.ClientClass{
 	model.ClientSharedZTunnel,
 	model.ClientDedicatedZTunnel,
 	model.ClientEgressGateway,
+	model.ClientAgentioEgress,
 }
 
 // NewServer builds the Delta ADS server. Both limits are process-wide and are
@@ -124,8 +125,11 @@ func newServerWithScheduler(
 	pushScheduler *PushScheduler,
 	requestRateLimit float64,
 ) (*Server, error) {
-	if authenticator == nil || scopeFuncs == nil || nilutil.IsNilInterface(resources) || ready == nil || pushScheduler == nil {
-		return nil, fmt.Errorf("authenticator, scope functions, resource source, readiness callback, and push scheduler are required")
+	if authenticator == nil || scopeFuncs == nil || nilutil.IsNilInterface(resources) || ready == nil ||
+		pushScheduler == nil {
+		return nil, fmt.Errorf(
+			"authenticator, scope functions, resource source, readiness callback, and push scheduler are required",
+		)
 	}
 	if queueSize <= 0 {
 		return nil, fmt.Errorf("client queue size must be positive")
@@ -170,11 +174,17 @@ func (s *Server) generator(typeURL string) ResourceGenerator {
 	return s.defaultGen
 }
 
-func (s *Server) StreamAggregatedResources(discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesServer) error {
+// StreamAggregatedResources rejects state-of-the-world ADS requests.
+func (s *Server) StreamAggregatedResources(
+	discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesServer,
+) error {
 	return status.Error(codes.Unimplemented, "state-of-the-world ADS is not supported")
 }
 
-func (s *Server) DeltaAggregatedResources(stream discoveryv3.AggregatedDiscoveryService_DeltaAggregatedResourcesServer) error {
+// DeltaAggregatedResources serves a Delta ADS stream.
+func (s *Server) DeltaAggregatedResources(
+	stream discoveryv3.AggregatedDiscoveryService_DeltaAggregatedResourcesServer,
+) error {
 	return s.serveDelta(stream)
 }
 

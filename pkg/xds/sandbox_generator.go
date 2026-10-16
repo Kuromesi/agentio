@@ -62,7 +62,7 @@ func sandboxVisible(scope model.ClientScope, snapshot model.ResourceSet, uid str
 }
 
 func sandboxResourceVisible(scope model.ClientScope, snapshot model.ResourceSet, sandbox model.Resource) bool {
-	if scope.Class == model.ClientEgressGateway {
+	if scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress {
 		return true
 	}
 	facts := sandbox.Facts.Sandbox
@@ -89,7 +89,7 @@ func selectSandboxResources(
 			result[r.XDSName] = r
 		}
 	}
-	if scope.Class == model.ClientEgressGateway {
+	if scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress {
 		if sub.Wildcard() {
 			for _, r := range snapshot.List(typeURL) {
 				add(r)

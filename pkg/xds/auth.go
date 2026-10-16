@@ -37,6 +37,22 @@ func metadataString(metadata *structpb.Struct, key string) string {
 }
 
 func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
+	if class == model.ClientAgentioEgress {
+		switch typeURL {
+		case model.WorkloadType,
+			model.SandboxType,
+			model.ClusterType,
+			model.EndpointType,
+			model.ListenerType,
+			model.RouteType,
+			model.SecretType,
+			model.ExtensionConfigurationType:
+			return true, true
+		default:
+			known, _ := typeAccess(model.ClientEgressGateway, typeURL)
+			return known, false
+		}
+	}
 	switch typeURL {
 	case model.AddressType, model.WorkloadAuthorizationType, model.TrafficPolicyType, model.SandboxType:
 		return true, true
@@ -57,6 +73,13 @@ func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 // scopeAllows checks ownership of generic gateway resources. Workload,
 // Authorization, Sandbox, and TrafficPolicy visibility is handled by their generators.
 func scopeAllows(scope model.ClientScope, resource model.Resource) bool {
-	return resource.Facts.GatewayOwner != "" &&
-		scope.Class == model.ClientEgressGateway && resource.Facts.GatewayOwner == scope.GatewayKey
+	if resource.Facts.GatewayOwner == "" || resource.Facts.GatewayOwner != scope.GatewayKey {
+		return false
+	}
+	if scope.Class != model.ClientEgressGateway && scope.Class != model.ClientAgentioEgress {
+		return false
+	}
+	// Domain certificates have the same wire contract and ownership on both gateways.
+	return resource.Key.TypeURL == model.SecretType ||
+		resource.Facts.AgentioEgress == (scope.Class == model.ClientAgentioEgress)
 }

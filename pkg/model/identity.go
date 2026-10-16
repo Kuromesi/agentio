@@ -20,12 +20,21 @@ import (
 	"strings"
 )
 
+// Proxy type prefixes in xDS node IDs, independent of authenticated client classes.
+const (
+	ProxyTypeZTunnel       = "ztunnel"
+	ProxyTypeWaypoint      = "waypoint"
+	ProxyTypeAgentioEgress = "agentio-egress"
+	ProxyTypeAgentioPorter = "agentio-porter"
+)
+
 type ClientClass string
 
 const (
 	ClientSharedZTunnel    ClientClass = "shared-ztunnel"
 	ClientDedicatedZTunnel ClientClass = "dedicated-ztunnel"
 	ClientEgressGateway    ClientClass = "egress-gateway"
+	ClientAgentioEgress    ClientClass = "agentio-egress"
 )
 
 // Principal is a canonical SPIFFE URI. Its zero value represents no identity.
@@ -139,7 +148,7 @@ func (s ClientScope) Validate() error {
 		if strings.TrimSpace(s.WorkloadUID) == "" || s.Source.Validate() != nil {
 			return fmt.Errorf("dedicated ztunnel scope requires Workload UID and source reference")
 		}
-	case ClientEgressGateway:
+	case ClientEgressGateway, ClientAgentioEgress:
 		if strings.TrimSpace(s.GatewayKey) == "" || strings.TrimSpace(s.WorkloadUID) == "" ||
 			s.Source.Validate() != nil {
 			return fmt.Errorf("egress gateway scope requires gateway key and bound Workload/source references")

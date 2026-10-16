@@ -43,7 +43,7 @@ func (v workloadVisibility) hasScopedWorkload(query model.WorkloadQuery) bool {
 }
 
 func (v workloadVisibility) visible(resource model.Resource) bool {
-	if v.scope.Class == model.ClientEgressGateway {
+	if v.scope.Class == model.ClientEgressGateway || v.scope.Class == model.ClientAgentioEgress {
 		return true
 	}
 	if resource.Facts.GatewayOwner != "" && v.hasScopedWorkload(model.WorkloadQuery{
@@ -77,7 +77,7 @@ func workloadSelected(request GenerationRequest, resource model.Resource) bool {
 	if scope.Class == model.ClientDedicatedZTunnel && len(request.Subscription.names) == 0 {
 		return false
 	}
-	if scope.Class != model.ClientEgressGateway {
+	if scope.Class != model.ClientEgressGateway && scope.Class != model.ClientAgentioEgress {
 		if resource.Facts.GatewayOwner != "" && visibility.hasScopedWorkload(model.WorkloadQuery{
 			GatewayReference: resource.Facts.GatewayOwner,
 		}) {
