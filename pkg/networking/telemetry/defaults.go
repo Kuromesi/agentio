@@ -65,8 +65,8 @@ var defaultAccessLogLabels = map[string]string{
 	"upstream_address":         "%UPSTREAM_REMOTE_ADDRESS%",
 	"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%",
 	"user_agent":               "%REQ(USER-AGENT)%",
-	"workload_name":            "%CEL('agentio.workload.name' in filter_state && size(filter_state['agentio.workload.name']) > 0 ? filter_state['agentio.workload.name'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].name : ''))%",
-	"workload_namespace":       "%CEL('agentio.workload.namespace' in filter_state && size(filter_state['agentio.workload.namespace']) > 0 ? filter_state['agentio.workload.namespace'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].namespace : ''))%",
+	"workload_name":            "%CEL('agentio.workload.name' in filter_state && size(filter_state['agentio.workload.name']) > 0 ? filter_state['agentio.workload.name'] : '')%",
+	"workload_namespace":       "%CEL('agentio.workload.namespace' in filter_state && size(filter_state['agentio.workload.namespace']) > 0 ? filter_state['agentio.workload.namespace'] : '')%",
 }
 
 // defaultTelemetryProviders returns a fresh provider graph with the gateway's
@@ -79,7 +79,9 @@ func defaultTelemetryProviders(format *configv1.AccessLogFormat) model.Telemetry
 	fileLog := &fileaccesslogv3.FileAccessLog{
 		Path: "/dev/stdout",
 		AccessLogFormat: &fileaccesslogv3.FileAccessLog_LogFormat{LogFormat: &corev3.SubstitutionFormatString{
-			Format:            &corev3.SubstitutionFormatString_JsonFormat{JsonFormat: &structpb.Struct{Fields: fields}},
+			Format: &corev3.SubstitutionFormatString_JsonFormat{
+				JsonFormat: &structpb.Struct{Fields: fields},
+			},
 			JsonFormatOptions: &corev3.JsonFormatOptions{SortProperties: false},
 			OmitEmptyValues:   true,
 		}},

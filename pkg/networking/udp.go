@@ -103,12 +103,17 @@ func connectUDPRoute() *routev3.Route {
 	}
 }
 
-// configureUDPHCM adds a connect-udp upgrade whose filter chain only validates
-// and records the UDP target before the router opens the upstream socket. The
+// configureUDPHCM preserves CONNECT identity processing and validates the UDP
+// target before opening the upstream socket. UDP skips TCP SNI policy transfer;
 // datagrams are forwarded without inspection.
 func configureUDPHCM(hcm *hcmv3.HttpConnectionManager) {
 	router := hcm.HttpFilters[len(hcm.HttpFilters)-1]
-	filters := append([]*hcmv3.HttpFilter(nil), hcm.HttpFilters[:len(hcm.HttpFilters)-1]...)
+	filters := make([]*hcmv3.HttpFilter, 0, len(hcm.HttpFilters))
+	for _, filter := range hcm.HttpFilters[:len(hcm.HttpFilters)-1] {
+		if filter.Name != "connect_sni_policy" {
+			filters = append(filters, filter)
+		}
+	}
 	filters = append(filters, udpTargetFilter, udpTargetStateFilter, router)
 	hcm.UpgradeConfigs = append(hcm.UpgradeConfigs, &hcmv3.HttpConnectionManager_UpgradeConfig{
 		UpgradeType: connectUDPUpgradeType,

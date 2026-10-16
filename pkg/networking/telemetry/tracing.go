@@ -84,9 +84,13 @@ func convertTracingTag(name string, tag model.TelemetryTracingTag) (*tracingv3.C
 	case model.TelemetryTracingTagLiteral:
 		result.Type = &tracingv3.CustomTag_Literal_{Literal: &tracingv3.CustomTag_Literal{Value: tag.Value}}
 	case model.TelemetryTracingTagEnvironment:
-		result.Type = &tracingv3.CustomTag_Environment_{Environment: &tracingv3.CustomTag_Environment{Name: tag.Name, DefaultValue: tag.DefaultValue}}
+		result.Type = &tracingv3.CustomTag_Environment_{
+			Environment: &tracingv3.CustomTag_Environment{Name: tag.Name, DefaultValue: tag.DefaultValue},
+		}
 	case model.TelemetryTracingTagHeader:
-		result.Type = &tracingv3.CustomTag_RequestHeader{RequestHeader: &tracingv3.CustomTag_Header{Name: tag.Name, DefaultValue: tag.DefaultValue}}
+		result.Type = &tracingv3.CustomTag_RequestHeader{
+			RequestHeader: &tracingv3.CustomTag_Header{Name: tag.Name, DefaultValue: tag.DefaultValue},
+		}
 	case model.TelemetryTracingTagFormatter:
 		result.Type = &tracingv3.CustomTag_Value{Value: tag.Value}
 	default:
@@ -108,19 +112,13 @@ func gatewayIstioTags(gateway model.Gateway, clusterID string) []*tracingv3.Cust
 	}
 	result := make([]*tracingv3.CustomTag, 0, len(literals)+18)
 	for name, value := range literals {
-		result = append(result, &tracingv3.CustomTag{Tag: name, Type: &tracingv3.CustomTag_Literal_{Literal: &tracingv3.CustomTag_Literal{Value: value}}})
-	}
-	for _, peer := range []struct{ prefix, state string }{{"destination", "upstream_peer_obj"}, {"source", "downstream_peer_obj"}} {
-		for _, field := range []struct{ tag, field string }{
-			{"workload", "workload"}, {"namespace", "namespace"}, {"cluster_id", "cluster"},
-			{"canonical_service", "service"}, {"canonical_revision", "revision"}, {"app", "app"},
-			{"app_version", "version"}, {"workload_type", "type"}, {"instance_name", "name"},
-		} {
-			result = append(result, &tracingv3.CustomTag{
-				Tag:  "istio." + peer.prefix + "_" + field.tag,
-				Type: &tracingv3.CustomTag_Value{Value: fmt.Sprintf("%%FILTER_STATE(%s:FIELD:%s)%%", peer.state, field.field)},
-			})
-		}
+		result = append(
+			result,
+			&tracingv3.CustomTag{
+				Tag:  name,
+				Type: &tracingv3.CustomTag_Literal_{Literal: &tracingv3.CustomTag_Literal{Value: value}},
+			},
+		)
 	}
 	return result
 }

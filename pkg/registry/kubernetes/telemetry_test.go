@@ -23,7 +23,6 @@ import (
 
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	stats "istio.io/api/envoy/extensions/stats"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -115,13 +114,15 @@ spec:
 	if metric.ReportingInterval == nil || metric.ReportingInterval.String() != "15s" || len(metric.Overrides) != 1 {
 		t.Fatalf("metrics = %+v", metric)
 	}
-	if match := metric.Overrides[0].Match; match.Kind != model.TelemetryMetricCustom || match.Name != "request.queue" || match.Mode != model.TelemetryModeServer {
+	if match := metric.Overrides[0].Match; match.Kind != model.TelemetryMetricCustom || match.Name != "request.queue" ||
+		match.Mode != model.TelemetryModeServer {
 		t.Fatalf("metric match = %+v", match)
 	}
 	if got := metric.Overrides[0].TagOverrides["removed"]; got.Operation != model.TelemetryTagRemove {
 		t.Fatalf("removed tag = %+v", got)
 	}
-	if got := metric.Overrides[0].TagOverrides["added"]; got.Operation != model.TelemetryTagUpsert || got.Value != "request.host" {
+	if got := metric.Overrides[0].TagOverrides["added"]; got.Operation != model.TelemetryTagUpsert ||
+		got.Value != "request.host" {
 		t.Fatalf("added tag = %+v", got)
 	}
 	trace := policy.Tracing[0]
@@ -140,7 +141,8 @@ spec:
 		}
 	}
 	logging := policy.AccessLogging[0]
-	if logging.Mode != model.TelemetryModeClientAndServer || logging.Filter == nil || *logging.Filter != "response.code >= 500" {
+	if logging.Mode != model.TelemetryModeClientAndServer || logging.Filter == nil ||
+		*logging.Filter != "response.code >= 500" {
 		t.Fatalf("access logging = %+v", logging)
 	}
 }
@@ -159,11 +161,29 @@ func TestDecodeTelemetryChartMetricsOverridesRemovesAllDimensions(t *testing.T) 
 		t.Fatalf("chart metric match = %+v", override.Match)
 	}
 	want := []string{
-		"connection_security_policy", "destination_app", "destination_canonical_revision", "destination_canonical_service",
-		"destination_cluster", "destination_namespace", "destination_port", "destination_principal", "destination_service",
-		"destination_service_name", "destination_service_namespace", "destination_version", "destination_workload",
-		"destination_workload_namespace", "reporter", "request_operation", "source_app", "source_canonical_revision",
-		"source_canonical_service", "source_cluster", "source_principal", "source_version", "source_workload",
+		"connection_security_policy",
+		"destination_app",
+		"destination_canonical_revision",
+		"destination_canonical_service",
+		"destination_cluster",
+		"destination_namespace",
+		"destination_port",
+		"destination_principal",
+		"destination_service",
+		"destination_service_name",
+		"destination_service_namespace",
+		"destination_version",
+		"destination_workload",
+		"destination_workload_namespace",
+		"reporter",
+		"request_operation",
+		"source_app",
+		"source_canonical_revision",
+		"source_canonical_service",
+		"source_cluster",
+		"source_principal",
+		"source_version",
+		"source_workload",
 		"source_workload_namespace",
 	}
 	gotNames := make([]string, 0, len(override.TagOverrides))
@@ -228,40 +248,19 @@ func TestAgentioChartTelemetryCompatibility(t *testing.T) {
 			}
 		}
 	}
-	if connectionManager == nil || !hasTCPStats {
+	if connectionManager == nil || hasTCPStats {
 		t.Fatalf("chart application Telemetry = HCM %v TCP stats %v", connectionManager != nil, hasTCPStats)
 	}
-	configuration := new(stats.PluginConfig)
-	foundStats := false
 	for _, filter := range connectionManager.HttpFilters {
-		if filter.Name != "istio.stats" {
-			continue
-		}
-		foundStats = true
-		if err := filter.GetTypedConfig().UnmarshalTo(configuration); err != nil {
-			t.Fatal(err)
+		if filter.Name == "istio.stats" {
+			t.Fatal("Istio stats filter remains")
 		}
 	}
-	if !foundStats {
-		t.Fatal("chart HTTP stats filter not found")
+	if len(connectionManager.AccessLog) != 2 ||
+		connectionManager.AccessLog[0].Name != "envoy.access_loggers.dynamic_modules" {
+		t.Fatalf("chart native metrics/access logs = %v", connectionManager.AccessLog)
 	}
-	if configuration.Reporter != stats.Reporter_SERVER_GATEWAY || !configuration.DisableHostHeaderFallback {
-		t.Fatalf("chart stats reporter/fallback = %v/%v", configuration.Reporter, configuration.DisableHostHeaderFallback)
-	}
-	if len(configuration.Metrics) != 10 {
-		t.Fatalf("chart metrics = %d, want every standard metric", len(configuration.Metrics))
-	}
-	for _, metric := range configuration.Metrics {
-		if len(metric.TagsToRemove) != 24 || len(metric.Dimensions) != 0 {
-			t.Fatalf("metric %q removals/dimensions = %d/%v", metric.Name, len(metric.TagsToRemove), metric.Dimensions)
-		}
-		if !slices.IsSorted(metric.TagsToRemove) {
-			t.Fatalf("metric %q removals are not sorted: %v", metric.Name, metric.TagsToRemove)
-		}
-	}
-	if len(connectionManager.AccessLog) != 1 {
-		t.Fatalf("chart default HTTP access logs = %d", len(connectionManager.AccessLog))
-	}
+
 }
 
 func TestDecodeTelemetryPreservesOptionalFieldAbsence(t *testing.T) {

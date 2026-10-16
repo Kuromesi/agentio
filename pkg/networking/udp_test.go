@@ -71,6 +71,7 @@ func TestUDPProxyDisabledByDefault(t *testing.T) {
 }
 
 func TestUDPProxyGraph(t *testing.T) {
+	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	clusters, listeners, routes := buildUDPGateway(t, true)
 
 	udp := clusters[UDPPassthroughCluster]
@@ -85,8 +86,8 @@ func TestUDPProxyGraph(t *testing.T) {
 	}
 
 	hcm := findHCM(t, listeners[ConnectTerminate])
-	if hasHTTPFilter(hcm, "envoy.filters.http.ext_proc") {
-		t.Fatalf("TCP CONNECT chain must not run ext_proc: %v", httpFilterNames(hcm))
+	if !hasHTTPFilter(hcm, "envoy.filters.http.ext_proc") {
+		t.Fatalf("TCP CONNECT chain must resolve identity with Porter: %v", httpFilterNames(hcm))
 	}
 	var upgrade *hcmv3.HttpConnectionManager_UpgradeConfig
 	for _, candidate := range hcm.GetUpgradeConfigs() {
@@ -101,10 +102,11 @@ func TestUDPProxyGraph(t *testing.T) {
 	for _, filter := range upgrade.GetFilters() {
 		names = append(names, filter.GetName())
 	}
-	// UDP sessions are forwarded directly: no ext_proc on the session request.
+	// Resolve identity once at tunnel establishment; do not transfer TCP SNI policy.
 	want := []string{
-		"waypoint_downstream_peer_metadata",
 		"connect_authority",
+		"envoy.filters.http.ext_proc",
+		"connect_workload",
 		"agentio.udp_target",
 		"agentio.udp_target_state",
 		"envoy.filters.http.router",
@@ -113,7 +115,7 @@ func TestUDPProxyGraph(t *testing.T) {
 		t.Fatalf("connect-udp filters = %v, want %v", names, want)
 	}
 	state := &setstatehttpv3.Config{}
-	if err := upgrade.GetFilters()[3].GetTypedConfig().UnmarshalTo(state); err != nil {
+	if err := upgrade.GetFilters()[4].GetTypedConfig().UnmarshalTo(state); err != nil {
 		t.Fatalf("decode udp target state: %v", err)
 	}
 	values := state.GetOnRequestHeaders()
@@ -144,4 +146,36 @@ func TestUDPProxyGraph(t *testing.T) {
 	if connect[1].GetRoute().GetCluster() != MainInternal {
 		t.Fatalf("TCP CONNECT route cluster = %q", connect[1].GetRoute().GetCluster())
 	}
+}
+
+func TestLegacyUDPIdentityChainPreserved(t *testing.T) {
+	test.SetForTest(t, &features.EnableUDPProxy, true)
+	listeners := messagesOf(
+		t,
+		buildGatewayGraph(t, true),
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
+	for _, upgrade := range findHCM(t, listeners[ConnectTerminate]).GetUpgradeConfigs() {
+		if upgrade.GetUpgradeType() != connectUDPUpgradeType {
+			continue
+		}
+		var names []string
+		for _, filter := range upgrade.GetFilters() {
+			names = append(names, filter.GetName())
+		}
+		want := []string{
+			"waypoint_downstream_peer_metadata",
+			"connect_authority",
+			"envoy.filters.http.local_ratelimit",
+			"agentio.udp_target",
+			"agentio.udp_target_state",
+			"envoy.filters.http.router",
+		}
+		if !equalStrings(names, want) {
+			t.Fatalf("legacy UDP filters=%v, want %v", names, want)
+		}
+		return
+	}
+	t.Fatal("missing legacy CONNECT-UDP upgrade")
 }

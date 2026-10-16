@@ -32,7 +32,8 @@ import (
 // resourceBuilder belongs to one build. Nested helpers record the first encoding
 // failure; the entry points discard the entire result if any extension failed.
 type resourceBuilder struct {
-	err error
+	legacyGateway bool
+	err           error
 }
 
 func (b *resourceBuilder) pack(message proto.Message) *anypb.Any {
@@ -56,8 +57,7 @@ func mustPack(message proto.Message) *anypb.Any {
 	return value
 }
 
-func buildClusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
-	b := &resourceBuilder{}
+func (b *resourceBuilder) clusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
 	result, err := b.buildClusters(config)
 	if b.err != nil {
 		return nil, b.err
@@ -65,8 +65,7 @@ func buildClusters(config effectiveConfig) ([]*clusterv3.Cluster, error) {
 	return result, err
 }
 
-func buildListeners(config effectiveConfig, trustDomain string) ([]*listenerv3.Listener, error) {
-	b := &resourceBuilder{}
+func (b *resourceBuilder) listeners(config effectiveConfig, trustDomain string) ([]*listenerv3.Listener, error) {
 	result, err := b.buildListeners(config, trustDomain)
 	if b.err != nil {
 		return nil, b.err
@@ -74,8 +73,7 @@ func buildListeners(config effectiveConfig, trustDomain string) ([]*listenerv3.L
 	return result, err
 }
 
-func buildRoutes(config *configv1.EgressGateway) ([]*routev3.RouteConfiguration, error) {
-	b := &resourceBuilder{}
+func (b *resourceBuilder) routes(config *configv1.EgressGateway) ([]*routev3.RouteConfiguration, error) {
 	result, err := b.buildRoutes(config)
 	if b.err != nil {
 		return nil, b.err

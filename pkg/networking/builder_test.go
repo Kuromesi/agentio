@@ -105,7 +105,12 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		}
 	}
 
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	for _, name := range []string{ConnectTerminate, MainInternal, MainForward} {
 		listener := listeners[name]
 		if listener == nil {
@@ -129,9 +134,11 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		t.Fatalf("connect RDS name = %q", connectHCM.GetRds().GetRouteConfigName())
 	}
 	if got, want := httpFilterNames(connectHCM), []string{
-		"waypoint_downstream_peer_metadata",
 		"connect_authority",
 		"envoy.filters.http.local_ratelimit",
+		"envoy.filters.http.ext_proc",
+		"connect_workload",
+		"connect_sni_policy",
 		"envoy.filters.http.router",
 	}; !equalStrings(got, want) {
 		t.Fatalf("CONNECT filter order = %v, want %v", got, want)
@@ -154,7 +161,8 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 			if err := filter.GetTypedConfig().UnmarshalTo(cfg); err != nil {
 				t.Fatal(err)
 			}
-			if cfg.GetGrpcService().GetEnvoyGrpc().GetClusterName() != ExtProcCluster || cfg.GetMessageTimeout().AsDuration() != 350*time.Millisecond {
+			if cfg.GetGrpcService().GetEnvoyGrpc().GetClusterName() != ExtProcCluster ||
+				cfg.GetMessageTimeout().AsDuration() != 350*time.Millisecond {
 				t.Fatalf("ext_proc config = %+v", cfg)
 			}
 		}
@@ -172,7 +180,12 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		}
 	}
 
-	routes := messagesOf(t, resources, model.RouteType, func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} })
+	routes := messagesOf(
+		t,
+		resources,
+		model.RouteType,
+		func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+	)
 	for _, name := range []string{ConnectTerminate, HTTPDynamicForwardProxy, TLSConnectOriginate} {
 		if routes[name] == nil {
 			t.Errorf("route %q not found", name)
@@ -255,14 +268,30 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 		t.Fatalf("Build(): %v", err)
 	}
 
-	routes := messagesOf(t, resources, model.RouteType, func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} })
+	routes := messagesOf(
+		t,
+		resources,
+		model.RouteType,
+		func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+	)
 	for _, routeName := range []string{HTTPDynamicForwardProxy, TLSConnectOriginate} {
 		routeConfig := routes[routeName]
 		if got, want := len(routeConfig.GetVirtualHosts()), 4; got != want {
-			t.Fatalf("%s virtual hosts = %d, want two static services, remaining override, and fallback (%d)", routeName, got, want)
+			t.Fatalf(
+				"%s virtual hosts = %d, want two static services, remaining override, and fallback (%d)",
+				routeName,
+				got,
+				want,
+			)
 		}
 		apiHost := routeConfig.GetVirtualHosts()[0]
-		if got, want := apiHost.GetDomains(), []string{"api.example.com", "api.example.com:*"}; !slices.Equal(got, want) {
+		if got, want := apiHost.GetDomains(), []string{
+			"api.example.com",
+			"api.example.com:*",
+		}; !slices.Equal(
+			got,
+			want,
+		) {
 			t.Fatalf("%s static domains = %v, want %v", routeName, got, want)
 		}
 		apiRoute := apiHost.GetRoutes()[1]
@@ -276,7 +305,13 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 		for index, wantAddress := range []string{"10.10.20.30", "10.10.20.31"} {
 			entry := weighted[index]
 			if entry.GetName() != routeName || entry.GetWeight().GetValue() != 1 {
-				t.Fatalf("%s weighted endpoint %d = name %q weight %d", routeName, index, entry.GetName(), entry.GetWeight().GetValue())
+				t.Fatalf(
+					"%s weighted endpoint %d = name %q weight %d",
+					routeName,
+					index,
+					entry.GetName(),
+					entry.GetWeight().GetValue(),
+				)
 			}
 			assertStaticEndpointState(t, entry.GetTypedPerFilterConfig(), wantAddress)
 		}
@@ -300,14 +335,23 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 		}
 	}
 
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	for _, listenerName := range []string{MainInternal, MainForward} {
 		hcm := findHCM(t, listeners[listenerName])
 		filterNames := httpFilterNames(hcm)
 		stateIndex := slices.Index(filterNames, "agentio.static_endpoint_filter_state")
 		dfpIndex := slices.Index(filterNames, "envoy.filters.http.dynamic_forward_proxy")
 		if stateIndex < 0 || dfpIndex != stateIndex+1 {
-			t.Fatalf("%s HTTP filters = %v, want static endpoint state immediately before DFP", listenerName, filterNames)
+			t.Fatalf(
+				"%s HTTP filters = %v, want static endpoint state immediately before DFP",
+				listenerName,
+				filterNames,
+			)
 		}
 		stateConfig := &setstatehttpv3.Config{}
 		if err := hcm.GetHttpFilters()[stateIndex].GetTypedConfig().UnmarshalTo(stateConfig); err != nil {
@@ -338,13 +382,18 @@ func TestBuildGatewayFormatWithoutTelemetryInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	logs := findHCM(t, listeners[MainForward]).GetAccessLog()
-	if len(logs) != 1 {
-		t.Fatalf("HTTP logs = %d, want 1", len(logs))
+	if len(logs) != 2 {
+		t.Fatalf("HTTP logs = %d, want 2", len(logs))
 	}
 	fileLog := &fileaccesslogv3.FileAccessLog{}
-	if err := logs[0].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+	if err := logs[1].GetTypedConfig().UnmarshalTo(fileLog); err != nil {
 		t.Fatal(err)
 	}
 	if got := fileLog.GetLogFormat().GetTextFormatSource().GetInlineString(); got != format+"\n" {
@@ -363,7 +412,12 @@ func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 
 	for name, want := range map[string]string{MainInternal: "", MainForward: "https"} {
 		if got := findHCM(t, listeners[name]).GetSchemeHeaderTransformation().GetSchemeToOverwrite(); got != want {
@@ -388,18 +442,13 @@ func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T)
 	for _, listenerName := range []string{MainInternal, MainForward} {
 		hcm := findHCM(t, listeners[listenerName])
 		filters := httpFilterNames(hcm)
-		statsIndex := slices.Index(filters, "istio.stats")
 		routerIndex := slices.Index(filters, "envoy.filters.http.router")
-		wantRouterOffset := 1
-		if listenerName == MainForward {
-			identityIndex := slices.Index(filters, connectProxyTLSIdentityFilter)
-			if identityIndex != statsIndex+1 {
-				t.Fatalf("%s CONNECT TLS identity filter order = %v", listenerName, filters)
-			}
-			wantRouterOffset = 2
+		if slices.Contains(filters, "istio.stats") || routerIndex != len(filters)-1 || len(hcm.GetAccessLog()) != 2 ||
+			hcm.GetAccessLog()[0].Name != "envoy.access_loggers.dynamic_modules" {
+			t.Fatalf("%s HTTP telemetry = %v", listenerName, hcm)
 		}
-		if statsIndex < 0 || statsIndex != routerIndex-wantRouterOffset || len(hcm.GetAccessLog()) != 1 {
-			t.Fatalf("%s application HTTP Telemetry = filters %v logs %d", listenerName, filters, len(hcm.GetAccessLog()))
+		if listenerName == MainForward && slices.Index(filters, connectProxyTLSIdentityFilter) != routerIndex-1 {
+			t.Fatal("TLS identity must precede router")
 		}
 	}
 
@@ -408,7 +457,7 @@ func TestBuildInstallsTelemetryOnForwardAndConnectTerminationPaths(t *testing.T)
 		filters := networkFilterNames(chain)
 		statsIndex := slices.Index(filters, "istio.stats")
 		proxyIndex := slices.Index(filters, "envoy.filters.network.tcp_proxy")
-		if statsIndex < 0 || statsIndex != proxyIndex-1 {
+		if statsIndex >= 0 || proxyIndex != len(filters)-1 {
 			t.Fatalf("%s application TCP filters = %v", listenerName, filters)
 		}
 		proxy := new(tcpproxyv3.TcpProxy)
@@ -458,7 +507,12 @@ func TestBuildInstallsNoRouteListenerAccessLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	for _, name := range []string{ConnectTerminate, MainInternal, MainForward} {
 		logs := listeners[name].GetAccessLog()
 		if len(logs) != 1 {
@@ -494,10 +548,16 @@ func TestBuildAppliesEnvoyFilterAfterTelemetry(t *testing.T) {
 			Match: &model.ListenerMatch{
 				Name: MainForward,
 				FilterChain: &model.FilterChainMatch{
-					Filter: &model.FilterMatch{Name: "envoy.filters.network.http_connection_manager", SubFilter: &model.SubFilterMatch{Name: "istio.stats"}},
+					Filter: &model.FilterMatch{
+						Name:      "envoy.filters.network.http_connection_manager",
+						SubFilter: &model.SubFilterMatch{Name: "envoy.filters.http.router"},
+					},
 				},
 			},
-			Value: &hcmv3.HttpFilter{Name: "example.before-stats", ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: emptyAny}},
+			Value: &hcmv3.HttpFilter{
+				Name:       "example.before-router",
+				ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: emptyAny},
+			},
 		},
 	}})
 	if err != nil {
@@ -513,15 +573,27 @@ func TestBuildAppliesEnvoyFilterAfterTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	filters := httpFilterNames(findHCM(t, listeners[MainForward]))
-	if before, stats := slices.Index(filters, "example.before-stats"), slices.Index(filters, "istio.stats"); before < 0 || before+1 != stats {
+	if before, stats := slices.Index(
+		filters,
+		"example.before-router",
+	), slices.Index(
+		filters,
+		"envoy.filters.http.router",
+	); before < 0 ||
+		before+1 != stats {
 		t.Fatalf("patched Telemetry filter order = %v", filters)
 	}
 }
 
 func TestBuildClustersRejectsTelemetryNameCollision(t *testing.T) {
-	_, err := buildClusters(effectiveConfig{
+	_, err := (&resourceBuilder{}).clusters(effectiveConfig{
 		gateway:   &configv1.EgressGateway{},
 		telemetry: &telemetry.Output{Clusters: []*clusterv3.Cluster{{Name: MainForward}}},
 	})
@@ -590,11 +662,26 @@ func TestBuildAppliesGatewayEnvoyFilterTransactionally(t *testing.T) {
 	if got := clusters[MainForward].GetAltStatName(); got != "envoy-filter-patched" {
 		t.Fatalf("patched cluster alt stat name = %q", got)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
-	if filters := httpFilterNames(findHCM(t, listeners[MainForward])); !slices.Contains(filters, "envoy.filters.http.gateway-patch") {
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
+	if filters := httpFilterNames(
+		findHCM(t, listeners[MainForward]),
+	); !slices.Contains(
+		filters,
+		"envoy.filters.http.gateway-patch",
+	) {
 		t.Fatalf("patched HTTP filters = %v", filters)
 	}
-	extensions := messagesOf(t, resources, model.ExtensionConfigurationType, func() *corev3.TypedExtensionConfig { return &corev3.TypedExtensionConfig{} })
+	extensions := messagesOf(
+		t,
+		resources,
+		model.ExtensionConfigurationType,
+		func() *corev3.TypedExtensionConfig { return &corev3.TypedExtensionConfig{} },
+	)
 	if extensions["gateway-extension"] == nil {
 		t.Fatalf("extension resources = %+v", extensions)
 	}
@@ -667,11 +754,17 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 	if err := clusters[TLSConnectOriginate].GetClusterType().GetTypedConfig().UnmarshalTo(gotCluster); err != nil {
 		t.Fatal(err)
 	}
-	if got := gotCluster.GetDnsCacheConfig(); got.GetName() != "agentio_dns_cache" || got.GetDnsLookupFamily() != clusterv3.Cluster_V4_ONLY {
+	if got := gotCluster.GetDnsCacheConfig(); got.GetName() != "agentio_dns_cache" ||
+		got.GetDnsLookupFamily() != clusterv3.Cluster_V4_ONLY {
 		t.Fatalf("cluster DNS cache = %+v", got)
 	}
 
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	manager := findHCM(t, listeners[MainForward])
 	var dynamicForwardProxy *hcmv3.HttpFilter
 	for _, filter := range manager.GetHttpFilters() {
@@ -687,7 +780,8 @@ func TestBuildSupportsDeployedIPv4DynamicForwardProxyPatches(t *testing.T) {
 	if err := dynamicForwardProxy.GetTypedConfig().UnmarshalTo(gotHTTP); err != nil {
 		t.Fatal(err)
 	}
-	if got := gotHTTP.GetDnsCacheConfig(); got.GetName() != "agentio_dns_cache" || got.GetDnsLookupFamily() != clusterv3.Cluster_V4_ONLY {
+	if got := gotHTTP.GetDnsCacheConfig(); got.GetName() != "agentio_dns_cache" ||
+		got.GetDnsLookupFamily() != clusterv3.Cluster_V4_ONLY {
 		t.Fatalf("HTTP DNS cache = %+v", got)
 	}
 }
@@ -733,9 +827,15 @@ func TestBuildSupportsDeployedSandboxConnectPatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := messagesOf(t, resources, model.RouteType, func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} })
+	routes := messagesOf(
+		t,
+		resources,
+		model.RouteType,
+		func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+	)
 	got := routes[HTTPDynamicForwardProxy].GetVirtualHosts()[0].GetRoutes()
-	if len(got) != 3 || got[0].GetName() != "sandbox-connect" || got[1].GetName() != "sandbox-connect" || got[2].GetName() != "default" {
+	if len(got) != 3 || got[0].GetName() != "sandbox-connect" || got[1].GetName() != "sandbox-connect" ||
+		got[2].GetName() != "default" {
 		t.Fatalf("HTTP DFP routes = %+v", got)
 	}
 	if got[1].GetMatch().GetConnectMatcher() == nil || got[1].GetRoute().GetCluster() != PassthroughCluster ||
@@ -783,12 +883,26 @@ func TestGatewayExtProcOverride(t *testing.T) {
 				socket := cluster.GetLoadAssignment().GetEndpoints()[0].GetLbEndpoints()[0].
 					GetEndpoint().GetAddress().GetSocketAddress()
 				if socket.GetAddress() != tt.want.GetService() || socket.GetPortValue() != tt.want.GetPort() {
-					t.Errorf("ext_proc endpoint = %s:%d, want %s:%d", socket.GetAddress(), socket.GetPortValue(), tt.want.GetService(), tt.want.GetPort())
+					t.Errorf(
+						"ext_proc endpoint = %s:%d, want %s:%d",
+						socket.GetAddress(),
+						socket.GetPortValue(),
+						tt.want.GetService(),
+						tt.want.GetPort(),
+					)
 				}
 			}
-			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			listeners := messagesOf(
+				t,
+				resources,
+				model.ListenerType,
+				func() *listenerv3.Listener { return &listenerv3.Listener{} },
+			)
 			for _, name := range []string{MainInternal, MainForward} {
-				if got := hasHTTPFilter(findHCM(t, listeners[name]), "envoy.filters.http.ext_proc"); got != (tt.want != nil) {
+				if got := hasHTTPFilter(
+					findHCM(t, listeners[name]),
+					"envoy.filters.http.ext_proc",
+				); got != (tt.want != nil) {
 					t.Errorf("listener %s ext_proc filter present = %v, want %v", name, got, tt.want != nil)
 				}
 			}
@@ -854,7 +968,12 @@ func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+			listeners := messagesOf(
+				t,
+				resources,
+				model.ListenerType,
+				func() *listenerv3.Listener { return &listenerv3.Listener{} },
+			)
 			chain := findFilterChain(t, listeners[MainInternal], sniDenyChain)
 			deny := &tcpproxyv3.TcpProxy{}
 			filters := chain.GetFilters()
@@ -900,7 +1019,10 @@ func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
 				}
 			} else {
 				filter := &celv3.ExpressionFilter{}
-				if err := deny.AccessLog[0].GetFilter().GetExtensionFilter().GetTypedConfig().UnmarshalTo(filter); err != nil {
+				if err := deny.AccessLog[0].GetFilter().
+					GetExtensionFilter().
+					GetTypedConfig().
+					UnmarshalTo(filter); err != nil {
 					t.Fatal(err)
 				}
 				if filter.GetExpression() != expression {
@@ -913,7 +1035,12 @@ func TestSNIDenyAccessLogsHonorTelemetry(t *testing.T) {
 
 func TestWorkloadHeaderFilterState(t *testing.T) {
 	resources := buildCompleteGatewayGraph(t)
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	hcm := findHCM(t, listeners[ConnectTerminate])
 	var states []*setstatecommonv3.FilterStateValue
 	for _, filter := range hcm.GetHttpFilters() {
@@ -930,7 +1057,10 @@ func TestWorkloadHeaderFilterState(t *testing.T) {
 		"agentio.workload.name":      "X-AGENTIO-WORKLOAD-NAME",
 		"agentio.workload.namespace": "X-AGENTIO-WORKLOAD-NAMESPACE",
 	} {
-		index := slices.IndexFunc(states, func(state *setstatecommonv3.FilterStateValue) bool { return state.GetObjectKey() == key })
+		index := slices.IndexFunc(
+			states,
+			func(state *setstatecommonv3.FilterStateValue) bool { return state.GetObjectKey() == key },
+		)
 		if index < 0 {
 			t.Fatalf("CONNECT did not capture %s", key)
 		}
@@ -944,7 +1074,7 @@ func TestWorkloadHeaderFilterState(t *testing.T) {
 		if state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_TRANSITIVE {
 			t.Errorf("%s must survive every internal HTTP/TLS hop", key)
 		}
-		if state.GetFactoryKey() != "istio.hashable_string" {
+		if state.GetFactoryKey() != "envoy.hashable_string" {
 			t.Errorf("%s must distinguish upstream pools", key)
 		}
 	}

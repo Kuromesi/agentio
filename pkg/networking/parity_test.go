@@ -27,7 +27,6 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 
-	udpatypev1 "github.com/cncf/xds/go/udpa/type/v1"
 	xdsmatcherv3 "github.com/cncf/xds/go/xds/type/matcher/v3"
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -50,7 +49,6 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
 	meshv1alpha1 "istio.io/api/mesh/v1alpha1"
 	networkingv1alpha3 "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pkg/test"
@@ -78,7 +76,7 @@ type gatewayGoldenResource struct {
 
 func TestSupportedGatewayGraphParity(t *testing.T) {
 	got := normalizeGatewayResources(buildCompleteGatewayGraph(t))
-	expected := readNormalizedGatewayGolden(t, "testdata/agentio-supported-gateway.json")
+	expected := readNormalizedGatewayGolden(t, "testdata/agentio-egress-gateway.json")
 	if diff := semanticGatewayDiff(expected, got); len(diff) != 0 {
 		t.Fatalf("Agentio gateway golden is stale:\n%s", strings.Join(diff, "\n"))
 	}
@@ -129,6 +127,7 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 	}
 	// Retained as a fail-closed default-route cluster.
 	delete(got, gatewayResourceKey(model.ClusterType, BlackHoleCluster))
+	delete(got, gatewayResourceKey(model.ClusterType, PorterCluster))
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
 		t.Fatalf("supported gateway cluster differences:\n%s", strings.Join(diff, "\n"))
 	}
@@ -136,7 +135,10 @@ func TestSupportedGatewayClusterParity(t *testing.T) {
 
 func TestSupportedGatewayListenerRouteParity(t *testing.T) {
 	got := supportedListenerRouteParityView(t, normalizeGatewayResources(buildCompleteGatewayGraph(t)))
-	want := supportedListenerRouteParityView(t, readNormalizedGatewayGolden(t, "testdata/legacy-agentio-supported-gateway.json"))
+	want := supportedListenerRouteParityView(
+		t,
+		readNormalizedGatewayGolden(t, "testdata/agentio-egress-gateway.json"),
+	)
 	// The legacy listeners did not allow silent, server-first clients to reach
 	// TCP forwarding. Both inspection stages now bound that wait to one second.
 	for _, name := range []string{MainInternal, MainForward} {
@@ -151,7 +153,12 @@ func TestSupportedGatewayListenerRouteParity(t *testing.T) {
 
 func TestTLSOuterSNISeparatesInternalConnectionPools(t *testing.T) {
 	resources := buildCompleteGatewayGraph(t)
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	chain := findFilterChain(t, listeners[MainInternal], tlsTerminateChain)
 	config := &setstatenetworkv3.Config{}
 	if err := chain.GetFilters()[0].GetTypedConfig().UnmarshalTo(config); err != nil {
@@ -164,8 +171,8 @@ func TestTLSOuterSNISeparatesInternalConnectionPools(t *testing.T) {
 	state := values[0]
 	// Envoy only includes Hashable shared state in the upstream pool key.
 	// A plain string allows another SNI to inherit this connection's identity.
-	if got := state.GetFactoryKey(); got != "istio.hashable_string" {
-		t.Errorf("outer SNI factory = %q, want istio.hashable_string for pool isolation", got)
+	if got := state.GetFactoryKey(); got != "envoy.hashable_string" {
+		t.Errorf("outer SNI factory = %q, want envoy.hashable_string for pool isolation", got)
 	}
 	if got := state.GetSharedWithUpstream().String(); got != "ONCE" {
 		t.Errorf("outer SNI sharing = %q, want ONCE for the internal listener hop", got)
@@ -178,8 +185,18 @@ func TestTLSOuterSNISeparatesInternalConnectionPools(t *testing.T) {
 func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	resources := buildCompleteGatewayGraph(t)
 	clusters := messagesOf(t, resources, model.ClusterType, func() *clusterv3.Cluster { return &clusterv3.Cluster{} })
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
-	routes := messagesOf(t, resources, model.RouteType, func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
+	routes := messagesOf(
+		t,
+		resources,
+		model.RouteType,
+		func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+	)
 
 	for listenerName, routeName := range map[string]string{
 		ConnectTerminate: ConnectTerminate,
@@ -207,7 +224,10 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	if err := connect.GetFilterChains()[0].GetTransportSocket().GetTypedConfig().UnmarshalTo(connectTLS); err != nil {
 		t.Fatalf("decode CONNECT TLS context: %v", err)
 	}
-	sans := connectTLS.GetCommonTlsContext().GetCombinedValidationContext().GetDefaultValidationContext().GetMatchTypedSubjectAltNames()
+	sans := connectTLS.GetCommonTlsContext().
+		GetCombinedValidationContext().
+		GetDefaultValidationContext().
+		GetMatchTypedSubjectAltNames()
 	if len(sans) != 1 || sans[0].GetSanType() != tlsv3.SubjectAltNameMatcher_URI ||
 		sans[0].GetMatcher().GetPrefix() != "spiffe://cluster.local/" {
 		t.Errorf("CONNECT strict SPIFFE SAN matchers = %+v", sans)
@@ -272,13 +292,28 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	if got := forwardTree.GetInput().GetTypedConfig().GetTypeUrl(); got != transportProtocolInputType {
 		t.Errorf("MainForward outer matcher input = %q, want %q", got, transportProtocolInputType)
 	}
-	if got := forwardApp.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != applicationProtocolInputType {
+	if got := forwardApp.GetMatcherTree().
+		GetInput().
+		GetTypedConfig().
+		GetTypeUrl(); got != applicationProtocolInputType {
 		t.Errorf("MainForward application fallback input = %q, want %q", got, applicationProtocolInputType)
 	}
-	decisions := []struct{ name, got, want string }{
+	decisions := []struct {
+		name string
+		got  string
+		want string
+	}{
 		{"MainForward TLS", forwardTree.GetExactMatchMap().GetMap()["tls"].GetAction().GetName(), forwardTCPChain},
-		{"MainForward HTTP/1.1", forwardApp.GetMatcherTree().GetExactMatchMap().GetMap()["'http/1.1'"].GetAction().GetName(), forwardHTTPChain},
-		{"MainForward h2c", forwardApp.GetMatcherTree().GetExactMatchMap().GetMap()["'h2c'"].GetAction().GetName(), forwardHTTPChain},
+		{
+			"MainForward HTTP/1.1",
+			forwardApp.GetMatcherTree().GetExactMatchMap().GetMap()["'http/1.1'"].GetAction().GetName(),
+			forwardHTTPChain,
+		},
+		{
+			"MainForward h2c",
+			forwardApp.GetMatcherTree().GetExactMatchMap().GetMap()["'h2c'"].GetAction().GetName(),
+			forwardHTTPChain,
+		},
 		{"MainForward TCP fallback", forwardApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
 	}
 
@@ -297,45 +332,73 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	if err := excludeMatcher.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(excludes); err != nil {
 		t.Fatalf("decode MainInternal SNI exclusions: %v", err)
 	}
-	if len(excludes.GetDomainMatchers()) != 1 || !equalStrings(excludes.GetDomainMatchers()[0].GetDomains(), []string{"legacy.example.com"}) {
+	if len(excludes.GetDomainMatchers()) != 1 ||
+		!equalStrings(excludes.GetDomainMatchers()[0].GetDomains(), []string{"legacy.example.com"}) {
 		t.Fatalf("MainInternal SNI exclusions = %+v", excludes.GetDomainMatchers())
 	}
-	decisions = append(decisions, struct{ name, got, want string }{
-		"MainInternal excluded SNI", excludes.GetDomainMatchers()[0].GetOnMatch().GetAction().GetName(), forwardTCPChain,
+	decisions = append(decisions, struct {
+		name string
+		got  string
+		want string
+	}{
+		"MainInternal excluded SNI",
+		excludes.GetDomainMatchers()[0].GetOnMatch().GetAction().GetName(),
+		forwardTCPChain,
 	})
-	policyMatcher := excludeMatcher.GetOnNoMatch().GetMatcher().GetOnNoMatch().GetMatcher()
-	if got := policyMatcher.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != serverNameInputType {
-		t.Errorf("MainInternal SNI policy matcher input = %q, want %q", got, serverNameInputType)
+	policyMatcher := excludeMatcher.GetOnNoMatch().GetMatcher()
+	if policyMatcher.GetOnNoMatch().GetAction().GetName() != sniDenyChain {
+		t.Fatal("missing native module output must deny")
 	}
-	policyConfig := &udpatypev1.TypedStruct{}
-	if err := policyMatcher.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(policyConfig); err != nil {
-		t.Fatalf("decode MainInternal SNI policy: %v", err)
-	}
-	failureMode := policyConfig.GetValue().GetFields()["failure_mode_allow"].GetStructValue().GetFields()
-	defaultValue, hasDefault := failureMode["default_value"]
-	defaultBool, isBool := defaultValue.GetKind().(*structpb.Value_BoolValue)
-	if failureMode["runtime_key"].GetStringValue() != "kruise.sni_traffic_policy.failure_mode_allow" ||
-		!hasDefault || !isBool || defaultBool.BoolValue {
-		t.Errorf("MainInternal SNI failure mode = %+v, want runtime key with false default", failureMode)
-	}
-	for field, chain := range map[string]string{
-		"on_tls_termination": tlsTerminateChain,
-		"on_passthrough":     forwardTCPChain,
-		"on_deny":            sniDenyChain,
-	} {
-		action := policyConfig.GetValue().GetFields()[field].GetStructValue().GetFields()["action"].GetStructValue()
-		decisions = append(decisions, struct{ name, got, want string }{
-			"MainInternal " + field, action.GetFields()["name"].GetStringValue(), chain,
-		})
+	for action, chain := range map[string]string{"terminate": tlsTerminateChain, "passthrough": forwardTCPChain, "deny": sniDenyChain} {
+		decisions = append(
+			decisions,
+			struct {
+				name string
+				got  string
+				want string
+			}{
+				"MainInternal " + action,
+				policyMatcher.GetMatcherTree().GetExactMatchMap().GetMap()[action].GetAction().GetName(),
+				chain,
+			},
+		)
 	}
 	internalApp := internalMatcher.GetOnNoMatch().GetMatcher()
-	if got := internalApp.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != applicationProtocolInputType {
+	if got := internalApp.GetMatcherTree().
+		GetInput().
+		GetTypedConfig().
+		GetTypeUrl(); got != applicationProtocolInputType {
 		t.Errorf("MainInternal application fallback input = %q, want %q", got, applicationProtocolInputType)
 	}
-	decisions = append(decisions,
-		struct{ name, got, want string }{"MainInternal HTTP/1.1", internalApp.GetMatcherTree().GetExactMatchMap().GetMap()["'http/1.1'"].GetAction().GetName(), forwardHTTPChain},
-		struct{ name, got, want string }{"MainInternal h2c", internalApp.GetMatcherTree().GetExactMatchMap().GetMap()["'h2c'"].GetAction().GetName(), forwardHTTPChain},
-		struct{ name, got, want string }{"MainInternal TCP fallback", internalApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
+	decisions = append(
+		decisions,
+		struct {
+			name string
+			got  string
+			want string
+		}{
+			"MainInternal HTTP/1.1",
+			internalApp.GetMatcherTree().GetExactMatchMap().GetMap()["'http/1.1'"].GetAction().GetName(),
+			forwardHTTPChain,
+		},
+		struct {
+			name string
+			got  string
+			want string
+		}{
+			"MainInternal h2c",
+			internalApp.GetMatcherTree().GetExactMatchMap().GetMap()["'h2c'"].GetAction().GetName(),
+			forwardHTTPChain,
+		},
+		struct {
+			name string
+			got  string
+			want string
+		}{
+			"MainInternal TCP fallback",
+			internalApp.GetOnNoMatch().GetAction().GetName(),
+			forwardTCPChain,
+		},
 	)
 	for _, decision := range decisions {
 		if decision.got != decision.want {
@@ -348,14 +411,29 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 			for _, route := range virtualHost.GetRoutes() {
 				action := route.GetRoute()
 				if action.GetTimeout() == nil {
-					t.Errorf("route %s/%s leaves timeout unset, falling back to Envoy's default 15s", routeName, virtualHost.GetName())
+					t.Errorf(
+						"route %s/%s leaves timeout unset, falling back to Envoy's default 15s",
+						routeName,
+						virtualHost.GetName(),
+					)
 				}
 				if grpc := action.GetMaxGrpcTimeout(); grpc != nil && !proto.Equal(grpc, action.GetTimeout()) {
-					t.Errorf("route %s/%s max_grpc_timeout = %v, want %v", routeName, virtualHost.GetName(), grpc, action.GetTimeout())
+					t.Errorf(
+						"route %s/%s max_grpc_timeout = %v, want %v",
+						routeName,
+						virtualHost.GetName(),
+						grpc,
+						action.GetTimeout(),
+					)
 				}
 				if stream := action.GetMaxStreamDuration(); stream != nil &&
 					(stream.GetMaxStreamDuration().AsDuration() != 0 || stream.GetGrpcTimeoutHeaderMax().AsDuration() != 0) {
-					t.Errorf("route %s/%s max_stream_duration = %v, want zero-valued no-timeout", routeName, virtualHost.GetName(), stream)
+					t.Errorf(
+						"route %s/%s max_stream_duration = %v, want zero-valued no-timeout",
+						routeName,
+						virtualHost.GetName(),
+						stream,
+					)
 				}
 			}
 		}
@@ -460,7 +538,9 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					t.Fatalf("decode CONNECT TLS context: %v", err)
 				}
 				tlsContext.GetCommonTlsContext().GetCombinedValidationContext().GetDefaultValidationContext().MatchTypedSubjectAltNames = nil
-				chain.GetTransportSocket().ConfigType = &corev3.TransportSocket_TypedConfig{TypedConfig: mustGatewayAny(t, tlsContext)}
+				chain.GetTransportSocket().ConfigType = &corev3.TransportSocket_TypedConfig{
+					TypedConfig: mustGatewayAny(t, tlsContext),
+				}
 
 				hcmFilter := chain.GetFilters()[0]
 				hcm := &hcmv3.HttpConnectionManager{}
@@ -479,13 +559,16 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					}
 					// Workload and TLS action headers postdate the legacy snapshot.
 					// Dedicated tests pin their capture and propagation.
-					config.OnRequestHeaders = slices.DeleteFunc(config.OnRequestHeaders, func(state *setstatecommonv3.FilterStateValue) bool {
-						switch state.GetObjectKey() {
-						case "agentio.workload.name", "agentio.workload.namespace", tlsActionKey:
-							return true
-						}
-						return false
-					})
+					config.OnRequestHeaders = slices.DeleteFunc(
+						config.OnRequestHeaders,
+						func(state *setstatecommonv3.FilterStateValue) bool {
+							switch state.GetObjectKey() {
+							case "agentio.workload.name", "agentio.workload.namespace":
+								return true
+							}
+							return false
+						},
+					)
 					for _, state := range config.GetOnRequestHeaders() {
 						state.GetFormatString().OmitEmptyValues = false
 					}
@@ -602,7 +685,7 @@ func diffHasLine(diff, prefix, value string) bool {
 
 func TestGatewayResourcesValidate(t *testing.T) {
 	for _, path := range []string{
-		"testdata/agentio-supported-gateway.json",
+		"testdata/agentio-egress-gateway.json",
 		"testdata/legacy-agentio-supported-gateway.json",
 	} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -626,10 +709,20 @@ func TestGatewayResourcesValidate(t *testing.T) {
 
 func buildCompleteGatewayGraph(t *testing.T) []model.Resource {
 	t.Helper()
+	return buildGatewayGraph(t, false)
+}
+
+func buildGatewayGraph(t *testing.T, legacy bool) []model.Resource {
+	t.Helper()
+	peerPrincipal := model.FilterStatePeerPrincipal
+	if legacy {
+		peerPrincipal = legacyPeerPrincipal
+	}
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	test.SetForTest(t, &features.GatewayConnectTimeout, 7*time.Second)
 	test.SetForTest(t, &features.GatewayRootCAPath, "/etc/ssl/cert.pem")
 	resources, err := Build(Inputs{
+		LegacyGateway: legacy,
 		Gateway: model.Gateway{
 			Namespace: "agentio-system",
 			Name:      "egress",
@@ -670,7 +763,7 @@ func buildCompleteGatewayGraph(t *testing.T) []model.Resource {
 					Descriptors: []*configv1.RateLimitDescriptor{{
 						Entries: []*configv1.RateLimitEntry{{
 							Key: "peer",
-							Cel: `string(filter_state["io.istio.peer_principal"])`,
+							Cel: `string(filter_state["` + peerPrincipal + `"])`,
 						}},
 						TokenBucket: &configv1.TokenBucket{
 							MaxTokens:     2,
@@ -744,8 +837,13 @@ func readNormalizedGatewayGolden(t *testing.T, path string) map[string]proto.Mes
 	if err := json.Unmarshal(data, &golden); err != nil {
 		t.Fatalf("decode gateway golden %s: %v", path, err)
 	}
-	if filepath.Base(path) == "legacy-agentio-supported-gateway.json" && golden.SourceCommit != legacyAgentioGatewayOracleCommit {
-		t.Fatalf("legacy Agentio gateway golden source commit = %q, want %q", golden.SourceCommit, legacyAgentioGatewayOracleCommit)
+	if filepath.Base(path) == "legacy-agentio-supported-gateway.json" &&
+		golden.SourceCommit != legacyAgentioGatewayOracleCommit {
+		t.Fatalf(
+			"legacy Agentio gateway golden source commit = %q, want %q",
+			golden.SourceCommit,
+			legacyAgentioGatewayOracleCommit,
+		)
 	}
 	result := make(map[string]proto.Message, len(golden.Resources))
 	for _, resource := range golden.Resources {
@@ -816,4 +914,14 @@ func gatewayResourceKey(typeURL, name string) string {
 func displayGatewayResourceKey(key string) string {
 	typeURL, name, _ := strings.Cut(key, "\x00")
 	return typeURL + "/" + name
+}
+
+// Keep the pre-migration fixture frozen: legacy clients must receive the same
+// forwarding/TLS graph even after the agentio-egress graph changes.
+func TestLegacyGatewayGraphParity(t *testing.T) {
+	got := normalizeGatewayResources(buildGatewayGraph(t, true))
+	want := readNormalizedGatewayGolden(t, "testdata/agentio-supported-gateway.json")
+	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
+		t.Fatalf("legacy gateway compatibility regressed:\n%s", strings.Join(diff, "\n"))
+	}
 }

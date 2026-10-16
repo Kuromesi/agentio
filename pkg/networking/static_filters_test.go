@@ -21,7 +21,6 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	dfpnetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/sni_dynamic_forward_proxy/v3"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"istio.io/istio/pkg/test"
@@ -29,16 +28,6 @@ import (
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
 )
-
-func TestConnectAuthorityCacheTracksFeatureSetting(t *testing.T) {
-	for _, enabled := range []bool{false, true, false} {
-		test.SetForTest(t, &features.EnableSNITrafficPolicy, enabled)
-		want := buildConnectAuthorityFilter(enabled)
-		if !proto.Equal(connectAuthorityFilter(), want) {
-			t.Fatalf("cached filter differs for SNI policy enabled=%v", enabled)
-		}
-	}
-}
 
 // Exercise the mutation boundary with shared listener and network filters,
 // while other builds marshal the same globals. Run with -race as well.

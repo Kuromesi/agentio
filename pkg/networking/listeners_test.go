@@ -56,8 +56,13 @@ func TestGatewayForwardProxyConnectSemantics(t *testing.T) {
 	if proxyTLS == nil {
 		t.Fatal("TLS proxy origination cluster not found")
 	}
-	if proxyTLS.GetType() != clusterv3.Cluster_ORIGINAL_DST || proxyTLS.GetLbPolicy() != clusterv3.Cluster_CLUSTER_PROVIDED {
-		t.Fatalf("TLS proxy cluster type/lb = %v/%v, want ORIGINAL_DST/CLUSTER_PROVIDED", proxyTLS.GetType(), proxyTLS.GetLbPolicy())
+	if proxyTLS.GetType() != clusterv3.Cluster_ORIGINAL_DST ||
+		proxyTLS.GetLbPolicy() != clusterv3.Cluster_CLUSTER_PROVIDED {
+		t.Fatalf(
+			"TLS proxy cluster type/lb = %v/%v, want ORIGINAL_DST/CLUSTER_PROVIDED",
+			proxyTLS.GetType(),
+			proxyTLS.GetLbPolicy(),
+		)
 	}
 	protocol := &httpupstreamv3.HttpProtocolOptions{}
 	if err := proxyTLS.GetTypedExtensionProtocolOptions()[httpProtocolOptionsType].UnmarshalTo(protocol); err != nil {
@@ -71,11 +76,20 @@ func TestGatewayForwardProxyConnectSemantics(t *testing.T) {
 	if err := proxyTLS.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
 		t.Fatalf("decode TLS proxy transport socket: %v", err)
 	}
-	if tlsContext.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename() != features.ResolveGatewayRootCAPath() {
+	if tlsContext.GetCommonTlsContext().
+		GetValidationContext().
+		GetTrustedCa().
+		GetFilename() !=
+		features.ResolveGatewayRootCAPath() {
 		t.Fatalf("TLS proxy trusted CA = %+v", tlsContext.GetCommonTlsContext().GetValidationContext().GetTrustedCa())
 	}
 
-	routes := messagesOf(t, resources, model.RouteType, func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} })
+	routes := messagesOf(
+		t,
+		resources,
+		model.RouteType,
+		func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+	)
 	for routeName, clusterName := range map[string]string{
 		HTTPDynamicForwardProxy: PassthroughCluster,
 		TLSConnectOriginate:     "tls_proxy_originate",
@@ -95,7 +109,12 @@ func TestGatewayForwardProxyConnectSemantics(t *testing.T) {
 		}
 	}
 
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	clearHCM := findHCM(t, listeners[MainInternal])
 	tlsHCM := findHCM(t, listeners[MainForward])
 	if !clearHCM.GetHttp2ProtocolOptions().GetAllowConnect() || !tlsHCM.GetHttp2ProtocolOptions().GetAllowConnect() {
@@ -195,7 +214,12 @@ func TestBuildWithoutSNITrafficPolicyUsesProtocolMatcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	internal := listeners[MainInternal]
 	gotChains := make([]string, 0, len(internal.GetFilterChains()))
 	for _, chain := range internal.GetFilterChains() {
@@ -223,9 +247,18 @@ func TestBuildStaticSNIMatcherOmitsEmptyHostGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 	domains := &xdsmatcherv3.ServerNameMatcher{}
-	if err := listeners[MainInternal].GetFilterChainMatcher().GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(domains); err != nil {
+	if err := listeners[MainInternal].GetFilterChainMatcher().
+		GetMatcherTree().
+		GetCustomMatch().
+		GetTypedConfig().
+		UnmarshalTo(domains); err != nil {
 		t.Fatalf("unmarshal static SNI matcher: %v", err)
 	}
 	for _, domain := range domains.GetDomainMatchers() {
@@ -245,10 +278,15 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	listeners := messagesOf(
+		t,
+		resources,
+		model.ListenerType,
+		func() *listenerv3.Listener { return &listenerv3.Listener{} },
+	)
 
 	for name, want := range map[string][]string{
-		MainInternal: {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector", "envoy.filters.listener.tls_inspector"},
+		MainInternal: {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.dynamic_modules"},
 		MainForward:  {"envoy.filters.listener.original_dst", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.http_inspector"},
 	} {
 		listener := listeners[name]
@@ -261,7 +299,11 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 					t.Fatalf("unmarshal %s TLS inspector: %v", name, err)
 				}
 				if config.GetInitialReadBufferSize().GetValue() != 16*1024 {
-					t.Errorf("listener %s TLS inspector initial read buffer = %d, want 16384", name, config.GetInitialReadBufferSize().GetValue())
+					t.Errorf(
+						"listener %s TLS inspector initial read buffer = %d, want 16384",
+						name,
+						config.GetInitialReadBufferSize().GetValue(),
+					)
 				}
 			}
 		}
@@ -283,14 +325,20 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	if got := keepalive.GetTimeout().AsDuration(); got != 20*time.Second {
 		t.Errorf("CONNECT keepalive timeout = %s, want 20s", got)
 	}
-	if connectHCM.GetForwardClientCertDetails() != hcmv3.HttpConnectionManager_SANITIZE || connectHCM.GetSetCurrentClientCertDetails() != nil {
+	if connectHCM.GetForwardClientCertDetails() != hcmv3.HttpConnectionManager_SANITIZE ||
+		connectHCM.GetSetCurrentClientCertDetails() != nil {
 		t.Error("CONNECT must not propagate caller-controlled XFCC state")
 	}
 
 	for _, name := range []string{MainInternal, MainForward} {
 		hcm := findHCM(t, listeners[name])
 		if hcm.GetServerName() != "agentio-envoy" || !hcm.Proxy_100Continue {
-			t.Errorf("listener %s HCM server_name/proxy_100_continue = %q/%v", name, hcm.GetServerName(), hcm.Proxy_100Continue)
+			t.Errorf(
+				"listener %s HCM server_name/proxy_100_continue = %q/%v",
+				name,
+				hcm.GetServerName(),
+				hcm.Proxy_100Continue,
+			)
 		}
 		if len(hcm.GetUpgradeConfigs()) != 1 || hcm.GetUpgradeConfigs()[0].GetUpgradeType() != "websocket" {
 			t.Errorf("listener %s HCM websocket upgrades = %+v", name, hcm.GetUpgradeConfigs())

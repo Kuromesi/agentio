@@ -360,6 +360,6 @@ message RateLimitEntry {
   // expression has access to filter_state, e.g.:
   //   filter_state["downstream_peer"].name
   //   filter_state["downstream_peer"].namespace
-  //   filter_state["io.istio.peer_principal"]
+  //   filter_state["agentio.peer.principal"]
   string cel = 3;
 }

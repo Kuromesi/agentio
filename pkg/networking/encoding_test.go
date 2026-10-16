@@ -44,26 +44,26 @@ func TestListenerEncodingFailureDiscardsResources(t *testing.T) {
 	config := effectiveConfig{gateway: &configv1.EgressGateway{
 		TlsTermination: &configv1.TlsTerminationConfig{ExcludeHosts: []string{string([]byte{0xff})}},
 	}}
-	listeners, err := buildListeners(config, "cluster.local")
+	listeners, err := (&resourceBuilder{}).listeners(config, "cluster.local")
 	if listeners != nil || err == nil || !strings.Contains(err.Error(), "marshal gateway extension") {
 		t.Fatalf("encoding failure must discard listeners: listeners=%v error=%v", listeners, err)
 	}
 	config.gateway.TlsTermination.ExcludeHosts = []string{"example.com"}
-	if _, err := buildListeners(config, "cluster.local"); err != nil {
+	if _, err := (&resourceBuilder{}).listeners(config, "cluster.local"); err != nil {
 		t.Fatalf("failed build contaminated the next build: %v", err)
 	}
 }
 
 func TestClusterEncodingFailureDiscardsResources(t *testing.T) {
 	test.SetForTest(t, &features.GatewayRootCAPath, "/certs/"+string([]byte{0xff}))
-	clusters, err := buildClusters(effectiveConfig{})
+	clusters, err := (&resourceBuilder{}).clusters(effectiveConfig{})
 	if clusters != nil || err == nil || !strings.Contains(err.Error(), "marshal gateway extension") {
 		t.Fatalf("encoding failure must discard clusters: clusters=%v error=%v", clusters, err)
 	}
 }
 
 func TestRouteEncodingFailureDiscardsResources(t *testing.T) {
-	routes, err := buildRoutes(&configv1.EgressGateway{ServiceEntries: []*configv1.EgressServiceEntry{{
+	routes, err := (&resourceBuilder{}).routes(&configv1.EgressGateway{ServiceEntries: []*configv1.EgressServiceEntry{{
 		Hosts:     []string{"example.com"},
 		Endpoints: []*configv1.EgressServiceEntryEndpoint{{Address: string([]byte{0xff})}},
 	}}})
