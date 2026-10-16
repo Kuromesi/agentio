@@ -62,14 +62,14 @@ func sandboxVisible(scope model.ClientScope, snapshot model.ResourceSet, uid str
 }
 
 func sandboxResourceVisible(scope model.ClientScope, snapshot model.ResourceSet, sandbox model.Resource) bool {
-	if scope.Class == model.ClientEgressGateway {
+	if scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress {
 		return true
 	}
 	facts := sandbox.Facts.Sandbox
 	if facts == nil || facts.AttesterWorkloadUID == "" {
 		return false
 	}
-	query, ok := workloadScopeQuery(scope)
+	query, ok := workloadScopeQuery(&scope)
 	if !ok || (query.WorkloadUID != "" && query.WorkloadUID != facts.AttesterWorkloadUID) {
 		return false
 	}
@@ -89,7 +89,7 @@ func selectSandboxResources(
 			result[r.XDSName] = r
 		}
 	}
-	if scope.Class == model.ClientEgressGateway {
+	if scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress {
 		if sub.Wildcard() {
 			for _, r := range snapshot.List(typeURL) {
 				add(r)

@@ -1,6 +1,6 @@
 name: agentio-image
 
-# Agentio builds agentiod, EPE, the opt-in gateway agent, and pinned ztunnel source. Callers receive
+# Agentio builds agentiod, EPE, the gateway agent and Porter, and pinned ztunnel source. Callers receive
 # immutable references so the exact candidates tested by E2E can be promoted.
 on:
   push:
@@ -20,11 +20,14 @@ on:
         type: string
     outputs:
       gateway_agent_image:
-        description: Immutable opt-in community Envoy gateway image
+        description: Immutable community Envoy gateway image
         value: ${{ jobs.build-images.outputs.gateway_agent_image }}
       agentiod_image:
         description: Immutable agentiod image reference
         value: ${{ jobs.build-images.outputs.agentiod_image }}
+      porter_image:
+        description: Immutable Porter image reference
+        value: ${{ jobs.build-images.outputs.porter_image }}
       epe_image:
         description: Immutable EPE image reference
         value: ${{ jobs.build-images.outputs.epe_image }}
@@ -61,6 +64,7 @@ jobs:
       gateway_agent_image: ${{ steps.images.outputs.gateway_agent_image }}
       agentiod_image: ${{ steps.images.outputs.agentiod_image }}
       epe_image: ${{ steps.images.outputs.epe_image }}
+      porter_image: ${{ steps.images.outputs.porter_image }}
       ztunnel_image: ${{ steps.images.outputs.ztunnel_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,6 +139,7 @@ jobs:
             --build-arg "AGENT_REVISION=$GITHUB_SHA"
           build_image agentiod_image agentiod Dockerfile .
           build_image epe_image agentio-epe extensions/epe/docker/Dockerfile .
+          build_image porter_image agentio-porter extensions/porter/docker/Dockerfile .
           build_image ztunnel_image ztunnel docker/Dockerfile.ztunnel ztunnel-context \
             --build-arg "ZTUNNEL_VERSION=$ZTUNNEL_SOURCE_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${ZTUNNEL_SOURCE_REPOSITORY}" \

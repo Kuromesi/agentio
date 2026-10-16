@@ -190,7 +190,8 @@ func workloadHasAuthorizationRefs(workload *WorkloadResourceFacts) bool {
 	return len(workload.AuthorizationRefs) > 0
 }
 
-func workloadMatchesQuery(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
+// Matches reports whether the workload satisfies every query constraint.
+func (query WorkloadQuery) Matches(workload *WorkloadResourceFacts) bool {
 	if workload == nil ||
 		(query.AuthorizationRefsOnly && !workloadHasAuthorizationRefs(workload)) ||
 		(query.TrafficPolicyRefsOnly && len(workload.TrafficPolicyRefs) == 0) ||

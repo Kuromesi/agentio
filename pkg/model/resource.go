@@ -68,6 +68,8 @@ type ResourceFacts struct {
 	Authorization *AuthorizationResourceFacts
 	// GatewayOwner is the owning gateway's namespace/name key; empty means no gateway owner.
 	GatewayOwner string
+	// AgentioEgress distinguishes agentio egress resources from the upgrade-compatible legacy graph.
+	AgentioEgress bool
 }
 
 type WorkloadResourceFacts struct {
@@ -338,7 +340,7 @@ func validateWorkloadResourcePrincipal(principal Principal) error {
 }
 
 func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
-	result := ResourceFacts{GatewayOwner: facts.GatewayOwner}
+	result := ResourceFacts{GatewayOwner: facts.GatewayOwner, AgentioEgress: facts.AgentioEgress}
 	if facts.Sandbox != nil {
 		sandbox := *facts.Sandbox
 		result.Sandbox = &sandbox
@@ -419,11 +421,14 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 	}
 	if facts.GatewayOwner != "" {
 		write("gateway-owner", facts.GatewayOwner)
+		if facts.AgentioEgress {
+			write("gateway-config", "agentio-egress")
+		}
 	}
 }
 
 func (facts ResourceFacts) Equal(other ResourceFacts) bool {
-	if facts.GatewayOwner != other.GatewayOwner ||
+	if facts.GatewayOwner != other.GatewayOwner || facts.AgentioEgress != other.AgentioEgress ||
 		(facts.Workload == nil) != (other.Workload == nil) ||
 		(facts.Sandbox == nil) != (other.Sandbox == nil) ||
 		(facts.Service == nil) != (other.Service == nil) ||

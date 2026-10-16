@@ -83,9 +83,15 @@ func KubernetesScopeFunc(resolver interface {
 		var expectedType string
 		switch scope.Class {
 		case model.ClientSharedZTunnel, model.ClientDedicatedZTunnel:
-			expectedType = "ztunnel"
+			expectedType = model.ProxyTypeZTunnel
 		case model.ClientEgressGateway:
-			expectedType = "waypoint"
+			expectedType = model.ProxyTypeWaypoint
+			// Envoy and Porter share the authenticated gateway scope. Each
+			// client subscribes to the resource types it consumes.
+			if proxyType == model.ProxyTypeAgentioEgress || proxyType == model.ProxyTypeAgentioPorter {
+				scope.Class = model.ClientAgentioEgress
+				expectedType = proxyType
+			}
 		default:
 			return model.ClientScope{}, fmt.Errorf("unknown client class %q", scope.Class)
 		}

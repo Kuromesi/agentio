@@ -254,6 +254,20 @@ ztunnel:
 
 egressGateway:
   mode: disabled
+  # First-party CONNECT processing; independent of epe.mode and sandboxExtProc.
+  porter:
+    # Shared across Workload and Sandbox demands; zero disables each policy.
+    cache:
+      idleTTL: 1m
+      maxEntries: 10000
+    image:
+      repository: ""
+      name: agentio-porter
+      tag: ""
+      digest: ""
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {memory: 256Mi}
   # Used only by gatewaydeployer for the agentio-agentgateway GatewayClass.
   # Native file configuration comes from the Gateway's parametersRef ConfigMap.
   agentgateway:
@@ -275,7 +289,7 @@ egressGateway:
   fullnameOverride: ""
   image:
     repository: ""
-    name: proxyv2
+    name: agentio-gateway
     tag: ""
     digest: ""
   tokenAudience: agentio-ca
@@ -305,10 +319,9 @@ egressGateway:
     enabled: true
     minAvailable: 1
   terminationGracePeriodSeconds: 30
+  agentConfig: {}
   statsFlushInterval: ""
   statsEvictionInterval: ""
-  sniTrafficPolicy:
-    enabled: false
   env: {}
   podAnnotations: {}
   podLabels: {}

@@ -58,7 +58,7 @@ var (
 		"ADS connection trust bundle; empty uses AGENTIO_ROOT_CA.",
 	)
 	serviceClusterEnv = env.Register("AGENTIO_SERVICE_CLUSTER", "agentio-egress", "Envoy node cluster name.")
-	gatewayConfigEnv  = env.Register("AGENTIO_GATEWAY_CONFIG", "", "Gateway runtime options as JSON.")
+	gatewayConfigEnv  = env.Register("AGENTIO_GATEWAY_CONFIG", "", "Gateway runtime options as YAML or JSON.")
 	cpuLimitEnv       = env.Register(
 		"AGENTIO_CPU_LIMIT",
 		"",

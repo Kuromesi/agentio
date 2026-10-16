@@ -46,10 +46,10 @@ func connectAuthorityStates(t *testing.T, listener *listenerv3.Listener) map[str
 	return states
 }
 
-func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
+func TestLegacyTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	listeners := messagesOf(
 		t,
-		buildCompleteGatewayGraph(t),
+		buildGatewayGraph(t, true),
 		model.ListenerType,
 		func() *listenerv3.Listener { return &listenerv3.Listener{} },
 	)
@@ -96,8 +96,8 @@ func TestTLSActionHeaderSelectsChainBeforeGatewayPolicy(t *testing.T) {
 	}
 }
 
-func TestTLSActionWithoutGatewayExclusions(t *testing.T) {
-	b := &resourceBuilder{}
+func TestLegacyTLSActionWithoutGatewayExclusions(t *testing.T) {
+	b := &resourceBuilder{legacyGateway: true}
 	matcher := b.sniTrafficPolicyMatcher(nil)
 	input := &matchinginputv3.FilterStateInput{}
 	if err := matcher.GetMatcherTree().GetInput().GetTypedConfig().UnmarshalTo(input); err != nil {
@@ -108,9 +108,10 @@ func TestTLSActionWithoutGatewayExclusions(t *testing.T) {
 	}
 }
 
-func TestTLSActionIgnoredWithoutSNITrafficPolicy(t *testing.T) {
+func TestLegacyTLSActionIgnoredWithoutSNITrafficPolicy(t *testing.T) {
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, false)
 	resources, err := Build(Inputs{
+		LegacyGateway:    true,
 		DiscoveryAddress: "agentiod.agentio-system.svc:15012",
 		TrustDomain:      "cluster.local",
 		Gateway:          testGateway(nil),

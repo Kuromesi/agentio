@@ -193,3 +193,7 @@ app.kubernetes.io/component: extproc
 app.kubernetes.io/name: {{ include "agentio.epe.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{- define "agentio.gateway.porterImage" -}}
+{{- if .Values.agentio.egressGateway.porter.image.digest }}{{ printf "%s@%s" (required "porter image repository is required when digest is set" .Values.agentio.egressGateway.porter.image.repository) .Values.agentio.egressGateway.porter.image.digest }}{{ else if .Values.agentio.egressGateway.porter.image.repository }}{{ printf "%s:%s" .Values.agentio.egressGateway.porter.image.repository (.Values.agentio.egressGateway.porter.image.tag | default .Values.agentio.global.tag) }}{{ else }}{{ printf "%s/%s:%s" .Values.agentio.global.hub .Values.agentio.egressGateway.porter.image.name (.Values.agentio.egressGateway.porter.image.tag | default .Values.agentio.global.tag) }}{{ end }}
+{{- end -}}

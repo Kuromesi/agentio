@@ -160,9 +160,9 @@ func UnmarshalConfig(yml []byte) (Config, error) {
 		injectConfig.DefaultTemplates = []string{SidecarTemplateName}
 	}
 	if len(injectConfig.RawTemplates) == 0 {
-		log.Warn("injection templates are empty." +
-			" This may be caused by using an injection template from an older version of Istio." +
-			" Please ensure the template is correct; mismatch template versions can lead to unexpected results, including pods not being injected.")
+		log.Warn(
+			"injection templates are empty; check the Agentio injector ConfigMap and template versions. Pods may not be injected.",
+		)
 	}
 
 	var err error

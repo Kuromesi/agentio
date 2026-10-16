@@ -25,8 +25,9 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/openkruise/agentio/test/e2e/components/forwardproxy"
 	"gopkg.in/yaml.v3"
+
+	"github.com/openkruise/agentio/test/e2e/components/forwardproxy"
 )
 
 const (
@@ -47,6 +48,7 @@ type Config struct {
 	ProxyInitImage      string `yaml:"proxy-init-image" json:"proxyInitImage"`
 	GatewayImage        string `yaml:"gateway-image" json:"gatewayImage"`
 	EPEImage            string `yaml:"epe-image" json:"epeImage"`
+	PorterImage         string `yaml:"porter-image" json:"porterImage"`
 	ExtProcImage        string `yaml:"ext-proc-image" json:"extProcImage"`
 	ForwardProxyImage   string `yaml:"forward-proxy-image" json:"forwardProxyImage"`
 	Reuse               bool   `yaml:"reuse" json:"reuse"`
@@ -69,6 +71,7 @@ type FlagInputs struct {
 	gatewayImage      *string
 	gatewayDataplane  *string
 	epeImage          *string
+	porterImage       *string
 	extProcImage      *string
 	forwardProxyImage *string
 	reuse             *bool
@@ -90,10 +93,19 @@ func RegisterFlags(fs *flag.FlagSet) *FlagInputs {
 	inputs.gatewayDataplane = fs.String("agentio.gateway-dataplane", "", "gateway data plane: envoy or agentgateway")
 	inputs.gatewayImage = fs.String("agentio.gateway-image", "", "immutable gateway image")
 	inputs.epeImage = fs.String("agentio.epe-image", "", "immutable epe image")
+	inputs.porterImage = fs.String("agentio.porter-image", "", "immutable porter image")
 	inputs.extProcImage = fs.String("agentio.ext-proc-image", "", "immutable ext-proc image")
-	inputs.forwardProxyImage = fs.String("agentio.forward-proxy-image", "", "optional immutable forward-proxy fixture image override")
+	inputs.forwardProxyImage = fs.String(
+		"agentio.forward-proxy-image",
+		"",
+		"optional immutable forward-proxy fixture image override",
+	)
 	inputs.reuse = fs.Bool("agentio.reuse", false, "reuse an exact matching Agentio installation")
-	inputs.enableFirewall = fs.Bool("agentio.enable-firewall-rules", false, "enable ztunnel firewall rules for UDP and ICMP policy tests")
+	inputs.enableFirewall = fs.Bool(
+		"agentio.enable-firewall-rules",
+		false,
+		"enable ztunnel firewall rules for UDP and ICMP policy tests",
+	)
 	inputs.firewallBackend = fs.String("agentio.firewall-backend", "auto", "ztunnel firewall backend: auto or iptables")
 	return inputs
 }
@@ -102,7 +114,12 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 	if inputs == nil || inputs.fs == nil {
 		return Config{}, errors.New("Agentio flag inputs are required")
 	}
-	config := Config{Profile: ProfileSidecar, ReleaseName: "agentio", Namespace: "agentio-system", FirewallBackend: "auto"}
+	config := Config{
+		Profile:         ProfileSidecar,
+		ReleaseName:     "agentio",
+		Namespace:       "agentio-system",
+		FirewallBackend: "auto",
+	}
 	explicit := make(map[string]bool)
 	inputs.fs.Visit(func(value *flag.Flag) { explicit[value.Name] = true })
 	configPath := os.Getenv("AGENTIO_E2E_CONFIG")
@@ -135,6 +152,7 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 	applyStringEnv("AGENTIO_E2E_GATEWAY_IMAGE", &config.GatewayImage)
 	applyStringEnv("AGENTIO_E2E_GATEWAY_DATAPLANE", &config.GatewayDataplane)
 	applyStringEnv("AGENTIO_E2E_EPE_IMAGE", &config.EPEImage)
+	applyStringEnv("AGENTIO_E2E_PORTER_IMAGE", &config.PorterImage)
 	applyStringEnv("AGENTIO_E2E_EXT_PROC_IMAGE", &config.ExtProcImage)
 	applyStringEnv("AGENTIO_E2E_FORWARD_PROXY_IMAGE", &config.ForwardProxyImage)
 	applyStringEnv("AGENTIO_E2E_FIREWALL_BACKEND", &config.FirewallBackend)
@@ -184,6 +202,9 @@ func ResolveConfig(inputs *FlagInputs) (Config, error) {
 	}
 	if explicit["agentio.epe-image"] {
 		config.EPEImage = *inputs.epeImage
+	}
+	if explicit["agentio.porter-image"] {
+		config.PorterImage = *inputs.porterImage
 	}
 	if explicit["agentio.ext-proc-image"] {
 		config.ExtProcImage = *inputs.extProcImage
@@ -238,6 +259,7 @@ func (c Config) Validate() error {
 		{name: "proxy-init", value: c.ProxyInitImage},
 		{name: "gateway", value: c.GatewayImage},
 		{name: "epe", value: c.EPEImage},
+		{name: "porter", value: c.PorterImage},
 		{name: "ext-proc", value: c.ExtProcImage},
 		{name: "forward-proxy", value: c.ForwardProxyImage},
 	} {
@@ -267,7 +289,9 @@ func findProductionChart() (string, error) {
 		}
 		directory = parent
 	}
-	return "", errors.New("locate production Agentio chart: manifests/charts/agentio/Chart.yaml not found in this source tree")
+	return "", errors.New(
+		"locate production Agentio chart: manifests/charts/agentio/Chart.yaml not found in this source tree",
+	)
 }
 
 func applyStringEnv(name string, target *string) {

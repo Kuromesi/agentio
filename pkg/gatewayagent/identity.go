@@ -46,6 +46,8 @@ import (
 	"google.golang.org/grpc"
 
 	ca "istio.io/api/security/v1alpha1"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // The CSR, cache, renewal and SDS responsibilities are extracted from
@@ -301,7 +303,7 @@ func requestWorkloadCertificate(ctx context.Context, c Config) (*tlsv3.Secret, t
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
 		return nil, time.Time{}, fmt.Errorf("verify returned workload chain: %w", err)
 	}
-	return &tlsv3.Secret{Name: "default",
+	return &tlsv3.Secret{Name: model.GatewayIdentitySecret,
 		Type: &tlsv3.Secret_TlsCertificate{TlsCertificate: &tlsv3.TlsCertificate{
 			CertificateChain: inlineBytes(chain),
 			PrivateKey:       inlineBytes(keyPEM),
@@ -325,7 +327,7 @@ func inlineBytes(value []byte) *core.DataSource {
 
 func rootSecret(root []byte) *tlsv3.Secret {
 	return &tlsv3.Secret{
-		Name: "ROOTCA",
+		Name: model.GatewayRootSecret,
 		Type: &tlsv3.Secret_ValidationContext{
 			ValidationContext: &tlsv3.CertificateValidationContext{TrustedCa: inlineBytes(root)},
 		},

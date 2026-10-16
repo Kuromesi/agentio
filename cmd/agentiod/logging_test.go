@@ -32,7 +32,7 @@ func TestNewLoggerObservesRuntimeLevelUpdates(t *testing.T) {
 	t.Cleanup(func() { agentiolog.SetOutputLevel(previous) })
 
 	var output bytes.Buffer
-	logger, err := newLogger(&output, "info", "text")
+	logger, err := agentiolog.NewLogger(&output, "info", "text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +48,9 @@ func TestNewLoggerObservesRuntimeLevelUpdates(t *testing.T) {
 
 func TestNewLoggerAppliesLevelAndJSONFormat(t *testing.T) {
 	var output bytes.Buffer
-	logger, err := newLogger(&output, "info", "json")
+	logger, err := agentiolog.NewLogger(&output, "info", "json")
 	if err != nil {
-		t.Fatalf("newLogger() returned error: %v", err)
+		t.Fatalf("agentiolog.NewLogger() returned error: %v", err)
 	}
 
 	logger.Debug("hidden")
@@ -70,9 +70,9 @@ func TestNewLoggerAppliesLevelAndJSONFormat(t *testing.T) {
 
 func TestNewLoggerAppliesTextFormat(t *testing.T) {
 	var output bytes.Buffer
-	logger, err := newLogger(&output, "debug", "text")
+	logger, err := agentiolog.NewLogger(&output, "debug", "text")
 	if err != nil {
-		t.Fatalf("newLogger() returned error: %v", err)
+		t.Fatalf("agentiolog.NewLogger() returned error: %v", err)
 	}
 
 	logger.Debug("watch started", "resource", "pods")
@@ -94,8 +94,8 @@ func TestNewLoggerRejectsInvalidConfiguration(t *testing.T) {
 		{name: "format", level: "info", format: "console"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := newLogger(&bytes.Buffer{}, test.level, test.format); err == nil {
-				t.Fatalf("newLogger(%q, %q) accepted invalid configuration", test.level, test.format)
+			if _, err := agentiolog.NewLogger(&bytes.Buffer{}, test.level, test.format); err == nil {
+				t.Fatalf("agentiolog.NewLogger(%q, %q) accepted invalid configuration", test.level, test.format)
 			}
 		})
 	}
@@ -103,9 +103,9 @@ func TestNewLoggerRejectsInvalidConfiguration(t *testing.T) {
 
 func TestInstallLoggerRoutesStandardLogAndKlog(t *testing.T) {
 	var output bytes.Buffer
-	logger, err := newLogger(&output, "info", "json")
+	logger, err := agentiolog.NewLogger(&output, "info", "json")
 	if err != nil {
-		t.Fatalf("newLogger() returned error: %v", err)
+		t.Fatalf("agentiolog.NewLogger() returned error: %v", err)
 	}
 	previous := slog.Default()
 	installLogger(logger)
@@ -129,5 +129,27 @@ func TestInstallLoggerRoutesStandardLogAndKlog(t *testing.T) {
 		if entry["msg"] != wantMessage {
 			t.Fatalf("routed log %d message = %v, want %q", index, entry["msg"], wantMessage)
 		}
+	}
+}
+
+func TestSharedLoggerPreservesComponentWarningLevel(t *testing.T) {
+	previous, level := slog.Default(), agentiolog.OutputLevel()
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		agentiolog.ConfigureOutputLevel(level)
+	})
+	var output bytes.Buffer
+	logger, err := agentiolog.NewLogger(&output, "info", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slog.SetDefault(logger)
+	agentiolog.New("xdsclient").Warn("xDS stream disconnected", "retry", "100ms")
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry["level"] != "WARN" || entry["msg"] != "xDS stream disconnected" || entry["component"] != "xdsclient" {
+		t.Fatalf("warning was rewrapped: %s", &output)
 	}
 }

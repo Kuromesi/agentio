@@ -38,6 +38,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // TypedExtensionProtocolOptions is keyed by the fully qualified message name,
@@ -56,6 +57,14 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		b.buildDFPCluster(HTTPDynamicForwardProxy, true, false, nil),
 		b.buildDFPCluster(TLSConnectOriginate, false, true, config.gateway.GetUpstreamTls()),
 		b.buildTLSProxyOriginateCluster(config.gateway.GetUpstreamTls()),
+	}
+	if !b.legacyGateway {
+		cluster := b.buildExtProcCluster(&configv1.ExtProcProvider{Service: "127.0.0.1", Port: 9002})
+		cluster.Name = PorterCluster
+		cluster.AltStatName = delimitedStatsPrefix(PorterCluster)
+		cluster.LoadAssignment.ClusterName = PorterCluster
+		cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STATIC}
+		result = append(result, cluster)
 	}
 	if config.extProc != nil {
 		result = append(result, b.buildExtProcCluster(config.extProc))
@@ -82,7 +91,10 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 func (b *resourceBuilder) buildInternalCluster(name string) *clusterv3.Cluster {
 	raw := b.pack(&rawbufferv3.RawBuffer{})
 	internal := b.pack(&internalupstreamv3.InternalUpstreamTransport{
-		TransportSocket: &corev3.TransportSocket{Name: "raw_buffer", ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: raw}},
+		TransportSocket: &corev3.TransportSocket{
+			Name:       "raw_buffer",
+			ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: raw},
+		},
 	})
 	return &clusterv3.Cluster{
 		Name:                 name,
@@ -93,11 +105,15 @@ func (b *resourceBuilder) buildInternalCluster(name string) *clusterv3.Cluster {
 		CircuitBreakers:      defaultCircuitBreakers(),
 		LoadAssignment: &endpointv3.ClusterLoadAssignment{
 			ClusterName: name,
-			Endpoints: []*endpointv3.LocalityLbEndpoints{{
-				LbEndpoints: []*endpointv3.LbEndpoint{{HostIdentifier: &endpointv3.LbEndpoint_Endpoint{Endpoint: &endpointv3.Endpoint{
-					Address: internalAddress(name),
-				}}}},
-			}},
+			Endpoints: []*endpointv3.LocalityLbEndpoints{
+				{
+					LbEndpoints: []*endpointv3.LbEndpoint{
+						{HostIdentifier: &endpointv3.LbEndpoint_Endpoint{Endpoint: &endpointv3.Endpoint{
+							Address: internalAddress(name),
+						}}},
+					},
+				},
+			},
 		},
 		TransportSocket: &corev3.TransportSocket{
 			Name:       "internal_upstream",
@@ -130,10 +146,12 @@ func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.Upstr
 	cluster.AltStatName = delimitedStatsPrefix(TLSProxyOriginate)
 	options := b.pack(&httpupstreamv3.HttpProtocolOptions{
 		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
-		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_AutoConfig{AutoConfig: &httpupstreamv3.HttpProtocolOptions_AutoHttpConfig{
-			HttpProtocolOptions:  &corev3.Http1ProtocolOptions{},
-			Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
-		}},
+		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_AutoConfig{
+			AutoConfig: &httpupstreamv3.HttpProtocolOptions_AutoHttpConfig{
+				HttpProtocolOptions:  &corev3.Http1ProtocolOptions{},
+				Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
+			},
+		},
 	})
 	cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: options}
 	// Multiple SNI hostnames share this context. Disable session reuse until
@@ -144,9 +162,13 @@ func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.Upstr
 		MaxSessionKeys: wrapperspb.UInt32(0),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
 			TlsParams: upstreamTLSParameters(settings),
-			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
-				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
-			}},
+			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
+				ValidationContext: &tlsv3.CertificateValidationContext{
+					TrustedCa: &corev3.DataSource{
+						Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()},
+					},
+				},
+			},
 			AlpnProtocols: []string{"h2", "http/1.1"},
 		},
 	})
@@ -167,7 +189,11 @@ func buildBlackHoleCluster() *clusterv3.Cluster {
 	}
 }
 
-func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateTLS bool, settings *configv1.UpstreamTlsSettings) *clusterv3.Cluster {
+func (b *resourceBuilder) buildDFPCluster(
+	name string,
+	allowInsecure, originateTLS bool,
+	settings *configv1.UpstreamTlsSettings,
+) *clusterv3.Cluster {
 	typed := b.pack(&dfpclusterv3.ClusterConfig{
 		ClusterImplementationSpecifier: &dfpclusterv3.ClusterConfig_DnsCacheConfig{DnsCacheConfig: dnsCacheConfig()},
 		AllowInsecureClusterOptions:    allowInsecure,
@@ -184,7 +210,9 @@ func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateT
 		}},
 	}
 	if !originateTLS {
-		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: b.downstreamHTTPOptions()}
+		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+			httpProtocolOptionsType: b.downstreamHTTPOptions(),
+		}
 		return cluster
 	}
 	opts := b.pack(&httpupstreamv3.HttpProtocolOptions{
@@ -193,10 +221,12 @@ func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateT
 			AutoSni:           true,
 			AutoSanValidation: true,
 		},
-		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_AutoConfig{AutoConfig: &httpupstreamv3.HttpProtocolOptions_AutoHttpConfig{
-			HttpProtocolOptions:  &corev3.Http1ProtocolOptions{},
-			Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
-		}},
+		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_AutoConfig{
+			AutoConfig: &httpupstreamv3.HttpProtocolOptions_AutoHttpConfig{
+				HttpProtocolOptions:  &corev3.Http1ProtocolOptions{},
+				Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
+			},
+		},
 	})
 	cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: opts}
 	// Multiple SNI hostnames share this context. Disable session reuse until
@@ -207,9 +237,13 @@ func (b *resourceBuilder) buildDFPCluster(name string, allowInsecure, originateT
 		MaxSessionKeys: wrapperspb.UInt32(0),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
 			TlsParams: upstreamTLSParameters(settings),
-			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{ValidationContext: &tlsv3.CertificateValidationContext{
-				TrustedCa: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()}},
-			}},
+			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
+				ValidationContext: &tlsv3.CertificateValidationContext{
+					TrustedCa: &corev3.DataSource{
+						Specifier: &corev3.DataSource_Filename{Filename: features.ResolveGatewayRootCAPath()},
+					},
+				},
+			},
 			AlpnProtocols: []string{"h2", "http/1.1"},
 		},
 	})
@@ -232,12 +266,18 @@ func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider
 	}
 	protocol := &httpupstreamv3.HttpProtocolOptions{
 		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
-		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig_{ExplicitHttpConfig: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig{
-			ProtocolConfig: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{Http2ProtocolOptions: http2},
-		}},
+		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig_{
+			ExplicitHttpConfig: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig{
+				ProtocolConfig: &httpupstreamv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+					Http2ProtocolOptions: http2,
+				},
+			},
+		},
 	}
 	if httpSettings.GetMaxRequestsPerConnection() > 0 {
-		protocol.CommonHttpProtocolOptions.MaxRequestsPerConnection = wrapperspb.UInt32(httpSettings.GetMaxRequestsPerConnection())
+		protocol.CommonHttpProtocolOptions.MaxRequestsPerConnection = wrapperspb.UInt32(
+			httpSettings.GetMaxRequestsPerConnection(),
+		)
 	}
 	protocolAny := b.pack(protocol)
 	cluster := &clusterv3.Cluster{
@@ -256,11 +296,15 @@ func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider
 		},
 		LoadAssignment: &endpointv3.ClusterLoadAssignment{
 			ClusterName: ExtProcCluster,
-			Endpoints: []*endpointv3.LocalityLbEndpoints{{
-				LbEndpoints: []*endpointv3.LbEndpoint{{HostIdentifier: &endpointv3.LbEndpoint_Endpoint{Endpoint: &endpointv3.Endpoint{
-					Address: socketAddress(provider.GetService(), port),
-				}}}},
-			}},
+			Endpoints: []*endpointv3.LocalityLbEndpoints{
+				{
+					LbEndpoints: []*endpointv3.LbEndpoint{
+						{HostIdentifier: &endpointv3.LbEndpoint_Endpoint{Endpoint: &endpointv3.Endpoint{
+							Address: socketAddress(provider.GetService(), port),
+						}}},
+					},
+				},
+			},
 		},
 		TypedExtensionProtocolOptions: map[string]*anypb.Any{httpProtocolOptionsType: protocolAny},
 	}
@@ -284,13 +328,13 @@ func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider
 					TlsMaximumProtocolVersion: tlsv3.TlsParameters_TLSv1_3,
 				},
 				AlpnProtocols:                  []string{"h2"},
-				TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{secret("default")},
+				TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{secret(model.GatewayIdentitySecret)},
 				ValidationContextType: &tlsv3.CommonTlsContext_CombinedValidationContext{
 					CombinedValidationContext: &tlsv3.CommonTlsContext_CombinedCertificateValidationContext{
 						DefaultValidationContext: &tlsv3.CertificateValidationContext{
 							MatchTypedSubjectAltNames: peers,
 						},
-						ValidationContextSdsSecretConfig: secret("ROOTCA"),
+						ValidationContextSdsSecretConfig: secret(model.GatewayRootSecret),
 					},
 				},
 			},
@@ -335,9 +379,11 @@ func delimitedStatsPrefix(name string) string {
 }
 
 func internalAddress(name string) *corev3.Address {
-	return &corev3.Address{Address: &corev3.Address_EnvoyInternalAddress{EnvoyInternalAddress: &corev3.EnvoyInternalAddress{
-		AddressNameSpecifier: &corev3.EnvoyInternalAddress_ServerListenerName{ServerListenerName: name},
-	}}}
+	return &corev3.Address{
+		Address: &corev3.Address_EnvoyInternalAddress{EnvoyInternalAddress: &corev3.EnvoyInternalAddress{
+			AddressNameSpecifier: &corev3.EnvoyInternalAddress_ServerListenerName{ServerListenerName: name},
+		}},
+	}
 }
 
 func socketAddress(address string, port uint32) *corev3.Address {

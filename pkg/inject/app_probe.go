@@ -88,7 +88,7 @@ func FindContainer(name string, containers []corev1.Container) *corev1.Container
 	return nil
 }
 
-// convertAppProber returns an overwritten `Probe` for pilot agent to take over.
+// convertAppProber returns an overwritten `Probe` for the sidecar probe handler to serve.
 func convertAppProber(probe *corev1.Probe, newURL string, statusPort int) *corev1.Probe {
 	if probe == nil {
 		return nil
@@ -106,17 +106,17 @@ func convertAppProber(probe *corev1.Probe, newURL string, statusPort int) *corev
 
 // rewriteHTTPGetAction rewrites a HTTPGet action with given URL and port.
 // Also rewrites the scheme to HTTP if the scheme is HTTPS
-// as pilot agent uses https to request application endpoint.
+// as the sidecar probe handler uses HTTPS to request the application endpoint.
 func rewriteHTTPGetAction(action *corev1.HTTPGetAction, url string, port int) {
 	action.Port = intstr.FromInt32(int32(port))
 	action.Path = url
-	// Kubelet -> HTTP -> Pilot Agent -> HTTPS -> Application
+	// Kubelet -> HTTP -> Sidecar probe handler -> HTTPS -> Application
 	if action.Scheme == corev1.URISchemeHTTPS {
 		action.Scheme = corev1.URISchemeHTTP
 	}
 }
 
-// convertAppLifecycleHandler returns an overwritten `LifecycleHandler` for pilot agent to take over.
+// convertAppLifecycleHandler returns an overwritten `LifecycleHandler` for the sidecar probe handler to serve.
 func convertAppLifecycleHandler(lifecycleHandler *corev1.LifecycleHandler, newURL string, statusPort int) *corev1.LifecycleHandler {
 	if lifecycleHandler == nil {
 		return nil
@@ -130,14 +130,14 @@ func convertAppLifecycleHandler(lifecycleHandler *corev1.LifecycleHandler, newUR
 	return nil
 }
 
-// convertAppLifecycleHandlerHTTPGet returns an overwritten `LifecycleHandler` with HTTPGet for pilot agent to take over.
+// convertAppLifecycleHandlerHTTPGet returns an overwritten `LifecycleHandler` with HTTPGet for the sidecar probe handler to serve.
 func convertAppLifecycleHandlerHTTPGet(lifecycleHandler *corev1.LifecycleHandler, newURL string, statusPort int) *corev1.LifecycleHandler {
 	lh := lifecycleHandler.DeepCopy()
 	rewriteHTTPGetAction(lh.HTTPGet, newURL, statusPort)
 	return lh
 }
 
-// convertAppLifecycleHandlerTCPSocket returns an overwritten `LifecycleHandler` with TCPSocket for pilot agent to take over.
+// convertAppLifecycleHandlerTCPSocket returns an overwritten `LifecycleHandler` with TCPSocket for the sidecar probe handler to serve.
 func convertAppLifecycleHandlerTCPSocket(lifecycleHandler *corev1.LifecycleHandler, newURL string, statusPort int) *corev1.LifecycleHandler {
 	lh := lifecycleHandler.DeepCopy()
 	// the sidecar intercepts all tcp connections, so we change it to a HTTP probe and the sidecar will check tcp
@@ -147,14 +147,14 @@ func convertAppLifecycleHandlerTCPSocket(lifecycleHandler *corev1.LifecycleHandl
 	return lh
 }
 
-// convertAppProberHTTPGet returns an overwritten `Probe` (HttpGet) for pilot agent to take over.
+// convertAppProberHTTPGet returns an overwritten `Probe` (HttpGet) for the sidecar probe handler to serve.
 func convertAppProberHTTPGet(probe *corev1.Probe, newURL string, statusPort int) *corev1.Probe {
 	p := probe.DeepCopy()
 	rewriteHTTPGetAction(p.HTTPGet, newURL, statusPort)
 	return p
 }
 
-// convertAppProberTCPSocket returns an overwritten `Probe` (TcpSocket) for pilot agent to take over.
+// convertAppProberTCPSocket returns an overwritten `Probe` (TcpSocket) for the sidecar probe handler to serve.
 func convertAppProberTCPSocket(probe *corev1.Probe, newURL string, statusPort int) *corev1.Probe {
 	p := probe.DeepCopy()
 	// the sidecar intercepts all tcp connections, so we change it to a HTTP probe and the sidecar will check tcp
@@ -164,15 +164,15 @@ func convertAppProberTCPSocket(probe *corev1.Probe, newURL string, statusPort in
 	return p
 }
 
-// convertAppProberGRPC returns an overwritten `Probe` (gRPC) for pilot agent to take over.
+// convertAppProberGRPC returns an overwritten `Probe` (gRPC) for the sidecar probe handler to serve.
 func convertAppProberGRPC(probe *corev1.Probe, newURL string, statusPort int) *corev1.Probe {
 	p := probe.DeepCopy()
 	// the sidecar intercepts all gRPC connections, so we change it to a HTTP probe and the sidecar will check gRPC
 	p.HTTPGet = &corev1.HTTPGetAction{}
 	rewriteHTTPGetAction(p.HTTPGet, newURL, statusPort)
 	// For gRPC prober, we change to HTTP,
-	// and pilot agent uses gRPC to request application prober endpoint.
-	// Kubelet -> HTTP -> Pilot Agent -> gRPC -> Application
+	// and the sidecar probe handler uses gRPC to request the application endpoint.
+	// Kubelet -> HTTP -> Sidecar probe handler -> gRPC -> Application
 	p.GRPC = nil
 	return p
 }
@@ -317,7 +317,7 @@ func convertProbe(c *corev1.Container, statusPort int) {
 	}
 }
 
-// kubeProbeToInternalProber converts a Kubernetes Probe to an Istio internal Prober
+// kubeProbeToInternalProber converts a Kubernetes Probe to the sidecar probe configuration
 func kubeProbeToInternalProber(probe *corev1.Probe) *Prober {
 	if probe == nil {
 		return nil
@@ -347,7 +347,7 @@ func kubeProbeToInternalProber(probe *corev1.Probe) *Prober {
 	return nil
 }
 
-// kubeLifecycleHandlerToInternalProber converts a Kubernetes LifecycleHandler to an Istio internal Prober
+// kubeLifecycleHandlerToInternalProber converts a Kubernetes LifecycleHandler to the sidecar probe configuration
 func kubeLifecycleHandlerToInternalProber(lifecycelHandler *corev1.LifecycleHandler) *Prober {
 	if lifecycelHandler == nil {
 		return nil

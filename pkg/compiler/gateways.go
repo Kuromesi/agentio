@@ -104,7 +104,12 @@ func newGatewayResources(
 		func(ctx krt.HandlerContext, item model.Gateway) []model.Resource {
 			gatewayPatches := krt.Fetch(ctx, inputs.GatewayPatches,
 				krt.FilterIndex(base.gatewayPatchesByGateway, item.ResourceName()))
-			if err := validateGatewayPatches(ctx, inputs.GatewayPatches, base.gatewayPatchesByName, gatewayPatches); err != nil {
+			if err := validateGatewayPatches(
+				ctx,
+				inputs.GatewayPatches,
+				base.gatewayPatchesByName,
+				gatewayPatches,
+			); err != nil {
 				recordGatewayFailureIfCurrent(gateways, failures, item, err)
 				ctx.DiscardResult()
 				return nil
@@ -171,7 +176,7 @@ func gatewayResourcesFor(
 	telemetry []model.Telemetry,
 	providerOverrides *model.TelemetryProviderOverrides,
 ) ([]model.Resource, error) {
-	built, err := networking.Build(networking.Inputs{
+	inputs := networking.Inputs{
 		Gateway:                    item,
 		GlobalExtProc:              globalExtProc,
 		DiscoveryAddress:           discoveryAddress,
@@ -181,13 +186,25 @@ func gatewayResourcesFor(
 		TelemetryClusterID:         clusterID,
 		Telemetry:                  telemetry,
 		TelemetryProviderOverrides: providerOverrides,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("compile gateway %s: %w", item.ResourceName(), err)
+	}
+	var built []model.Resource
+	for _, legacy := range []bool{true, false} {
+		inputs.LegacyGateway = legacy
+		variant, err := networking.Build(inputs)
+		if err != nil {
+			return nil, fmt.Errorf("compile gateway %s (legacy=%t): %w", item.ResourceName(), legacy, err)
+		}
+		built = append(built, variant...)
 	}
 	result := make([]model.Resource, 0, len(built))
 	for _, resource := range built {
-		normalized, err := model.NewResource(resource.Key, resource.XDSName, resource.Value, resource.Aliases, resource.Facts)
+		normalized, err := model.NewResource(
+			resource.Key,
+			resource.XDSName,
+			resource.Value,
+			resource.Aliases,
+			resource.Facts,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("compile gateway %s: %w", item.ResourceName(), err)
 		}

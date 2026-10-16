@@ -46,11 +46,14 @@ const (
 	TLSConnectOriginate     = "tls_connect_originate"
 	TLSProxyOriginate       = "tls_proxy_originate"
 	ExtProcCluster          = "sandbox-ext-proc"
+	PorterCluster           = "agentio-porter"
 	UDPPassthroughCluster   = "agentio_udp_passthrough"
 	DNSCacheName            = "agentio_dns_cache"
 )
 
 type Inputs struct {
+	// LegacyGateway preserves the Istio-derived proxy wire contract during rolling upgrades.
+	LegacyGateway              bool
 	Gateway                    model.Gateway
 	GlobalExtProc              *configv1.ExtProcProvider
 	GatewayPatches             []model.GatewayPatch
@@ -92,9 +95,11 @@ func Build(inputs Inputs) ([]model.Resource, error) {
 	if err != nil {
 		return nil, err
 	}
-	if inputs.TelemetryRootNamespace != "" || inputs.Telemetry != nil || inputs.TelemetryProviderOverrides != nil || inputs.Gateway.Config.GetAccessLogFormat() != nil {
+	if inputs.TelemetryRootNamespace != "" || inputs.Telemetry != nil || inputs.TelemetryProviderOverrides != nil ||
+		inputs.Gateway.Config.GetAccessLogFormat() != nil {
 		effective.telemetry, err = telemetry.Build(telemetry.Inputs{
 			Gateway:           inputs.Gateway,
+			LegacyGateway:     inputs.LegacyGateway,
 			RootNamespace:     inputs.TelemetryRootNamespace,
 			ClusterID:         inputs.TelemetryClusterID,
 			Telemetry:         inputs.Telemetry,
@@ -104,15 +109,16 @@ func Build(inputs Inputs) ([]model.Resource, error) {
 			return nil, fmt.Errorf("build Gateway Telemetry: %w", err)
 		}
 	}
-	clusters, err := buildClusters(effective)
+	b := &resourceBuilder{legacyGateway: inputs.LegacyGateway}
+	clusters, err := b.clusters(effective)
 	if err != nil {
 		return nil, err
 	}
-	routes, err := buildRoutes(effective.gateway)
+	routes, err := b.routes(effective.gateway)
 	if err != nil {
 		return nil, err
 	}
-	listeners, err := buildListeners(effective, inputs.TrustDomain)
+	listeners, err := b.listeners(effective, inputs.TrustDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +146,7 @@ func Build(inputs Inputs) ([]model.Resource, error) {
 		}
 	}
 
-	resources := make([]model.Resource, 0, len(clusters)+len(routes)+len(listeners)+len(extensionConfigurations)+1)
+	resources := make([]model.Resource, 0, len(clusters)+len(routes)+len(listeners)+len(extensionConfigurations))
 	for _, message := range clusters {
 		resource, err := scopedResource(inputs.Gateway, model.ClusterType, message.GetName(), message)
 		if err != nil {
@@ -169,12 +175,25 @@ func Build(inputs Inputs) ([]model.Resource, error) {
 		}
 		resources = append(resources, resource)
 	}
-	proxyConfig := &meshv1alpha1.ProxyConfig{DiscoveryAddress: inputs.DiscoveryAddress}
-	resource, err := scopedResource(inputs.Gateway, model.ProxyConfigType, "agentio-proxy", proxyConfig)
-	if err != nil {
-		return nil, err
+	if inputs.LegacyGateway {
+		resource, err := scopedResource(
+			inputs.Gateway,
+			model.ProxyConfigType,
+			"agentio-proxy",
+			&meshv1alpha1.ProxyConfig{DiscoveryAddress: inputs.DiscoveryAddress},
+		)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, resource)
+	} else {
+		// Same Envoy names, separate cache keys and selection facts. A mixed
+		// rollout must never replace the other proxy's resource graph.
+		for i := range resources {
+			resources[i].Key.Name = inputs.Gateway.ResourceName() + "|agentio-egress|" + resources[i].XDSName
+			resources[i].Facts.AgentioEgress = true
+		}
 	}
-	resources = append(resources, resource)
 	return resources, nil
 }
 

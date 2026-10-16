@@ -1,10 +1,14 @@
-.PHONY: build build.agentiod build.epe clean fmt format gen gen.crddocs gen.envdocs check.envdocs lint lint.golangci lint.logging racetest test test.epe test.integration.agentio.kube test.integration.agentio.product tidy
+.PHONY: build build.agentiod build.epe build.porter clean fmt format gen gen.crddocs gen.envdocs check.envdocs lint lint.golangci lint.logging racetest test test.epe test.integration.agentio.kube test.integration.agentio.product tidy
 
-build: build.agentiod build.epe
+build: build.agentiod build.epe build.porter build.gateway-agent
 
 build.agentiod:
 	mkdir -p out
 	go build -trimpath -o out/agentiod ./cmd/agentiod
+
+build.porter:
+	mkdir -p out
+	go build -trimpath -o out/agentio-porter ./extensions/porter/cmd/agentio-porter
 
 build.epe:
 	mkdir -p out

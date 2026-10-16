@@ -50,13 +50,14 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		probeMu.Lock()
 		defer probeMu.Unlock()
 		reason := ""
+		isDraining := draining.Load() || ctx.Err() != nil
 		defer func() {
 			if !checked || reason != lastReason {
-				switch reason {
-				case "":
-					statusLog.Info("gateway is ready")
-				case "gateway draining":
+				switch {
+				case isDraining:
 					statusLog.Info("gateway is draining")
+				case reason == "":
+					statusLog.Info("gateway is ready")
 				default:
 					statusLog.Warn("gateway is not ready", "reason", reason)
 				}
@@ -66,9 +67,9 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 		if c.metrics != nil {
 			c.metrics.ready.Set(0)
 		}
-		if draining.Load() || ctx.Err() != nil {
+		if isDraining {
 			reason = "gateway draining"
-			http.Error(w, "gateway draining", http.StatusServiceUnavailable)
+			http.Error(w, reason, http.StatusServiceUnavailable)
 			return
 		}
 		if err := identityReady(); err != nil {

@@ -682,7 +682,7 @@ func TestNewControllerRejectsInvalidDebounce(t *testing.T) {
 		name           string
 		quiet, maximum time.Duration
 	}{
-		{"zero quiet period", 0, time.Second},
+		{"negative maximum", 0, -time.Second},
 		{"negative quiet period", -time.Second, time.Second},
 		{"maximum below quiet period", time.Second, time.Millisecond},
 	} {
@@ -700,5 +700,34 @@ func TestNewControllerRejectsTypedNilResourcePublisher(t *testing.T) {
 	var store *xdsstore.Store
 	if _, err := NewController(&stubSource{}, store, time.Millisecond, time.Second); err == nil {
 		t.Fatal("typed-nil resource publisher accepted")
+	}
+}
+
+func TestControllerPublishesWithoutDebounce(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	source := &stubSource{current: newSnapshot(t, "initial")}
+	store := xdsstore.New(newSnapshot(t))
+	controller, err := NewController(source, store, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := newFakeResourceEvents()
+	source.events = events
+	done := make(chan error, 1)
+	go func() { done <- controller.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
+	eventually(t, func() bool { return store.Snapshot().Len() == 1 }, "initial snapshot without timers")
+	resource := newSnapshot(t, "added").List(model.AddressType)[0]
+	controller.Enqueue([]model.ResourceChange{{Key: resource.Key, New: &resource}})
+	eventually(t, func() bool { return store.Snapshot().Len() == 2 }, "incremental publication without timers")
+	controller.Enqueue([]model.ResourceChange{{Key: resource.Key, Old: &resource}})
+	eventually(t, func() bool { return store.Snapshot().Len() == 1 }, "resource removal without timers")
+	if source.calls() != 1 {
+		t.Fatal("incremental updates triggered a full snapshot")
 	}
 }

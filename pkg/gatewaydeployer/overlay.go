@@ -188,6 +188,32 @@ func applyOverlay(object string, overlaysList []map[string]string) (string, erro
 		return "", fmt.Errorf("illegal metadata change")
 	}
 
+	if kind.Kind == "Deployment" {
+		var deployment appsv1.Deployment
+		if err := yaml.Unmarshal([]byte(object), &deployment); err != nil {
+			return "", err
+		}
+		if slices.ContainsFunc(
+			deployment.Spec.Template.Spec.Containers,
+			func(c corev1.Container) bool { return c.Name == "agentio-proxy" },
+		) {
+			// Derive the agent budget after all per-Gateway Pod overrides.
+			grace := int64(corev1.DefaultTerminationGracePeriodSeconds)
+			if deployment.Spec.Template.Spec.TerminationGracePeriodSeconds != nil {
+				grace = *deployment.Spec.Template.Spec.TerminationGracePeriodSeconds
+			}
+			patch := fmt.Sprintf(
+				`{"spec":{"template":{"spec":{"containers":[{"name":"agentio-proxy","env":[{"name":"AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS","value":"%d","valueFrom":null}]}]}}}}`,
+				grace,
+			)
+			updated, err := strategicMergePatchYAML([]byte(object), []byte(patch), &appsv1.Deployment{})
+			if err != nil {
+				return "", fmt.Errorf("set gateway termination grace period: %w", err)
+			}
+			object = string(updated)
+		}
+	}
+
 	return object, nil
 }
 

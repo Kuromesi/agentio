@@ -16,66 +16,85 @@
 package telemetry
 
 import (
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
-	stats "istio.io/api/envoy/extensions/stats"
+	"fmt"
+
+	udpatypev1 "github.com/cncf/xds/go/udpa/type/v1"
+	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/openkruise/agentio/pkg/util/protoutil"
 )
 
-const statsFilterName = "istio.stats"
+const metricsLoggerName = "envoy.access_loggers.dynamic_modules"
 
-var metricToPrometheusMetric = map[string]string{
-	"REQUEST_COUNT":          "requests_total",
-	"REQUEST_DURATION":       "request_duration_milliseconds",
-	"REQUEST_SIZE":           "request_bytes",
-	"RESPONSE_SIZE":          "response_bytes",
-	"TCP_OPENED_CONNECTIONS": "tcp_connections_opened_total",
-	"TCP_CLOSED_CONNECTIONS": "tcp_connections_closed_total",
-	"TCP_SENT_BYTES":         "tcp_sent_bytes_total",
-	"TCP_RECEIVED_BYTES":     "tcp_received_bytes_total",
-	"GRPC_REQUEST_MESSAGES":  "request_messages_total",
-	"GRPC_RESPONSE_MESSAGES": "response_messages_total",
-}
-
-func buildStatsFilters(configuration metricsConfig) (*hcmv3.HttpFilter, *listenerv3.Filter, error) {
+// The gateway module exposes request count by response_code and aggregate duration.
+// Other request/TCP statistics remain available through Envoy's native metrics.
+func buildMetricsLogger(configuration metricsConfig) (*accesslogv3.AccessLog, error) {
 	if configuration.ServerMetrics.Disabled {
-		return nil, nil, nil
+		return nil, nil
 	}
-	plugin := &stats.PluginConfig{
-		Reporter:                  stats.Reporter_SERVER_GATEWAY,
-		DisableHostHeaderFallback: true,
-	}
-	if configuration.ReportingInterval != nil {
-		plugin.TcpReportingDuration = durationpb.New(*configuration.ReportingInterval)
-	}
+	requests, duration := true, true
 	for _, override := range configuration.ServerMetrics.Overrides {
-		name := metricToPrometheusMetric[override.Name]
-		if name == "" {
-			name = override.Name
+		switch override.Name {
+		case "REQUEST_COUNT":
+			requests = !override.Disabled
+		case "REQUEST_DURATION":
+			duration = !override.Disabled
+		default:
+			// Removing absent dimensions/metrics is harmless during migration.
+			if override.Disabled {
+				continue
+			}
+			for _, tag := range override.Tags {
+				if !tag.Remove {
+					return nil, fmt.Errorf("metric %s does not support dimension %s", override.Name, tag.Name)
+				}
+			}
+			continue
 		}
-		metric := &stats.MetricConfig{Name: name, Drop: override.Disabled, Dimensions: map[string]string{}}
+		if override.Disabled {
+			continue
+		}
 		for _, tag := range override.Tags {
-			if tag.Remove {
-				metric.TagsToRemove = append(metric.TagsToRemove, tag.Name)
-			} else {
-				metric.Dimensions[tag.Name] = tag.Value
+			if !tag.Remove || (override.Name == "REQUEST_COUNT" && tag.Name == "response_code") {
+				return nil, fmt.Errorf("metric %s does not support overriding dimension %s", override.Name, tag.Name)
 			}
 		}
-		plugin.Metrics = append(plugin.Metrics, metric)
 	}
-	typed, err := protoutil.MarshalAny(plugin)
+	if !requests && !duration {
+		return nil, nil
+	}
+	selection := ""
+	if !requests {
+		selection = "duration"
+	} else if !duration {
+		selection = "requests"
+	}
+	// The pinned Go API predates the native access logger; TypedStruct lets Envoy
+	// decode its current schema without coupling control-plane upgrades to the SDK.
+	fields, err := structpb.NewStruct(map[string]any{
+		"dynamic_module_config": map[string]any{
+			"name": "agentio_gateway_metrics",
+			"module": map[string]any{
+				"local": map[string]any{"filename": "/usr/local/lib/libagentio_gateway_metrics.so"},
+			},
+			"metrics_namespace": "agentio_gateway",
+		},
+		"logger_name":   "metrics",
+		"logger_config": map[string]any{"@type": "type.googleapis.com/google.protobuf.StringValue", "value": selection},
+	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return &hcmv3.HttpFilter{
-			Name:       statsFilterName,
-			ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: typed},
-		}, &listenerv3.Filter{
-			Name:       statsFilterName,
-			ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: proto.Clone(typed).(*anypb.Any)},
-		}, nil
+	typed, err := protoutil.MarshalAny(&udpatypev1.TypedStruct{
+		TypeUrl: "type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog",
+		Value:   fields,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &accesslogv3.AccessLog{
+		Name:       metricsLoggerName,
+		ConfigType: &accesslogv3.AccessLog_TypedConfig{TypedConfig: typed},
+	}, nil
 }

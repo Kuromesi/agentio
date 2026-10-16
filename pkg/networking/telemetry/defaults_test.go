@@ -51,22 +51,41 @@ func TestDefaultProviders(t *testing.T) {
 			t.Fatalf("decode %s file access log: %v", protocol, err)
 		}
 		if fileLog.GetPath() != "/dev/stdout" || !fileLog.GetLogFormat().GetOmitEmptyValues() {
-			t.Fatalf("%s file access log path/omit = %q/%v", protocol, fileLog.GetPath(), fileLog.GetLogFormat().GetOmitEmptyValues())
+			t.Fatalf(
+				"%s file access log path/omit = %q/%v",
+				protocol,
+				fileLog.GetPath(),
+				fileLog.GetLogFormat().GetOmitEmptyValues(),
+			)
 		}
 		fields := fileLog.GetLogFormat().GetJsonFormat().GetFields()
 		want := map[string]string{
-			"scheme": "%REQ(:SCHEME)%", "original_destination": "%DOWNSTREAM_LOCAL_ADDRESS%",
-			"upstream_host": "%UPSTREAM_HOST%", "denial_reason": "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%",
-			"response_code_details": "%RESPONSE_CODE_DETAILS%", "connection_termination_details": "%CONNECTION_TERMINATION_DETAILS%",
-			"log_type":      "%ACCESS_LOG_TYPE%",
-			"authority_for": "%REQ(:AUTHORITY)%", "bytes_received": "%BYTES_RECEIVED%", "bytes_sent": "%BYTES_SENT%",
-			"downstream_address": "%DOWNSTREAM_REMOTE_ADDRESS%", "duration": "%DURATION%", "method": "%REQ(:METHOD)%",
-			"path": "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%", "protocol": "%PROTOCOL%", "request_id": "%REQ(X-REQUEST-ID)%",
-			"requested_server_name": "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%", "response_code": "%RESPONSE_CODE%", "response_flags": "%RESPONSE_FLAGS%",
-			"start_time": "%START_TIME%", "trace_id": "%TRACE_ID%", "upstream_address": "%UPSTREAM_REMOTE_ADDRESS%",
-			"transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%", "user_agent": "%REQ(USER-AGENT)%",
-			"workload_name":      "%CEL('agentio.workload.name' in filter_state && size(filter_state['agentio.workload.name']) > 0 ? filter_state['agentio.workload.name'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].name : ''))%",
-			"workload_namespace": "%CEL('agentio.workload.namespace' in filter_state && size(filter_state['agentio.workload.namespace']) > 0 ? filter_state['agentio.workload.namespace'] : ('downstream_peer' in filter_state ? filter_state['downstream_peer'].namespace : ''))%",
+			"scheme":                         "%REQ(:SCHEME)%",
+			"original_destination":           "%DOWNSTREAM_LOCAL_ADDRESS%",
+			"upstream_host":                  "%UPSTREAM_HOST%",
+			"denial_reason":                  "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%",
+			"response_code_details":          "%RESPONSE_CODE_DETAILS%",
+			"connection_termination_details": "%CONNECTION_TERMINATION_DETAILS%",
+			"log_type":                       "%ACCESS_LOG_TYPE%",
+			"authority_for":                  "%REQ(:AUTHORITY)%",
+			"bytes_received":                 "%BYTES_RECEIVED%",
+			"bytes_sent":                     "%BYTES_SENT%",
+			"downstream_address":             "%DOWNSTREAM_REMOTE_ADDRESS%",
+			"duration":                       "%DURATION%",
+			"method":                         "%REQ(:METHOD)%",
+			"path":                           "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
+			"protocol":                       "%PROTOCOL%",
+			"request_id":                     "%REQ(X-REQUEST-ID)%",
+			"requested_server_name":          "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%",
+			"response_code":                  "%RESPONSE_CODE%",
+			"response_flags":                 "%RESPONSE_FLAGS%",
+			"start_time":                     "%START_TIME%",
+			"trace_id":                       "%TRACE_ID%",
+			"upstream_address":               "%UPSTREAM_REMOTE_ADDRESS%",
+			"transport_failure_reason":       "%UPSTREAM_TRANSPORT_FAILURE_REASON%",
+			"user_agent":                     "%REQ(USER-AGENT)%",
+			"workload_name":                  "%CEL('agentio.workload.name' in filter_state && size(filter_state['agentio.workload.name']) > 0 ? filter_state['agentio.workload.name'] : '')%",
+			"workload_namespace":             "%CEL('agentio.workload.namespace' in filter_state && size(filter_state['agentio.workload.namespace']) > 0 ? filter_state['agentio.workload.namespace'] : '')%",
 		}
 		if len(fields) != len(want) {
 			t.Fatalf("%s JSON label count = %d, want %d: %v", protocol, len(fields), len(want), fields)
@@ -81,7 +100,11 @@ func TestDefaultProviders(t *testing.T) {
 
 func TestDefaultAccessLogPreservesOriginalSNI(t *testing.T) {
 	fileLog := &fileaccesslogv3.FileAccessLog{}
-	if err := defaultTelemetryProviders(nil).Provider("envoy").HTTPAccessLog.GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+	if err := defaultTelemetryProviders(
+		nil,
+	).Provider("envoy").
+		HTTPAccessLog.GetTypedConfig().
+		UnmarshalTo(fileLog); err != nil {
 		t.Fatal(err)
 	}
 	format := fileLog.GetLogFormat().GetJsonFormat().GetFields()["requested_server_name"].GetStringValue()
@@ -163,7 +186,11 @@ func TestDefaultAccessLogWorkloadIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileLog := &fileaccesslogv3.FileAccessLog{}
-	if err := defaultTelemetryProviders(nil).Provider("envoy").HTTPAccessLog.GetTypedConfig().UnmarshalTo(fileLog); err != nil {
+	if err := defaultTelemetryProviders(
+		nil,
+	).Provider("envoy").
+		HTTPAccessLog.GetTypedConfig().
+		UnmarshalTo(fileLog); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"name", "namespace"} {
@@ -184,9 +211,9 @@ func TestDefaultAccessLogWorkloadIdentity(t *testing.T) {
 			}{
 				{"header overrides peer", map[string]any{"agentio.workload." + field: []byte("source"), "downstream_peer": map[string]string{field: "peer"}}, "source"},
 				{"header without peer", map[string]any{"agentio.workload." + field: []byte("source")}, "source"},
-				{"missing header", map[string]any{"downstream_peer": map[string]string{field: "peer"}}, "peer"},
-				{"empty header", map[string]any{"agentio.workload." + field: []byte{}, "downstream_peer": map[string]string{field: "peer"}}, "peer"},
-				{"empty string header", map[string]any{"agentio.workload." + field: "", "downstream_peer": map[string]string{field: "peer"}}, "peer"},
+				{"missing header", map[string]any{"downstream_peer": map[string]string{field: "peer"}}, ""},
+				{"empty header", map[string]any{"agentio.workload." + field: []byte{}, "downstream_peer": map[string]string{field: "peer"}}, ""},
+				{"empty string header", map[string]any{"agentio.workload." + field: "", "downstream_peer": map[string]string{field: "peer"}}, ""},
 				{"no identity", map[string]any{}, ""},
 				{"empty header without peer", map[string]any{"agentio.workload." + field: []byte{}}, ""},
 			} {

@@ -32,6 +32,7 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	config.ProxyInitImage = immutableImageRef("proxy-init", "d")
 	config.GatewayImage = immutableImageRef("gateway", "e")
 	config.EPEImage = immutableImageRef("epe", "f")
+	config.PorterImage = immutableImageRef("porter", "f")
 	config.EnableFirewallRules = true
 	config.FirewallBackend = "iptables"
 
@@ -54,7 +55,8 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	}
 	injector := agentiod["injector"].(map[string]any)
 	ztunnel := injector["ztunnel"].(map[string]any)
-	if ztunnel["image"] != config.ZtunnelImage || ztunnel["enableFirewallRules"] != true || ztunnel["firewallBackend"] != "iptables" {
+	if ztunnel["image"] != config.ZtunnelImage || ztunnel["enableFirewallRules"] != true ||
+		ztunnel["firewallBackend"] != "iptables" {
 		t.Fatalf("ztunnel injection values = %#v", ztunnel)
 	}
 	if got := injector["proxyInit"].(map[string]any)["image"]; got != config.ProxyInitImage {
@@ -70,9 +72,13 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 		t.Fatalf("gateway mode/name = %#v", gateway)
 	}
 	assertPinnedImage(t, gateway["image"], "registry.example/gateway", "sha256:"+strings.Repeat("e", 64))
-	if gateway["autoscaling"].(map[string]any)["enabled"] != false || gateway["podDisruptionBudget"].(map[string]any)["enabled"] != false {
+	if gateway["autoscaling"].(map[string]any)["enabled"] != false ||
+		gateway["podDisruptionBudget"].(map[string]any)["enabled"] != false {
 		t.Fatalf("gateway singleton values = %#v", gateway)
 	}
+
+	porter := gateway["porter"].(map[string]any)
+	assertPinnedImage(t, porter["image"], "registry.example/porter", "sha256:"+strings.Repeat("f", 64))
 
 	epe := values["epe"].(map[string]any)
 	if epe["mode"] != "managed" {
@@ -107,9 +113,14 @@ func TestProductionChartRendersSuiteValues(t *testing.T) {
 	for _, expected := range []string{
 		`name: egress-gateway`,
 		`name: agentio-epe`,
+		`name: agentio-porter`,
+		`name: AGENTIO_GATEWAY_CONFIG`,
+		`cluster.agentio-porter`,
+		`--grpc-health-port=9003`,
 		`image: "` + config.AgentiodImage + `"`,
 		`image: "` + config.GatewayImage + `"`,
 		`image: "` + config.EPEImage + `"`,
+		`image: "` + config.PorterImage + `"`,
 		`image: "` + config.ZtunnelImage + `"`,
 		`image: "` + config.ProxyInitImage + `"`,
 	} {
@@ -186,6 +197,7 @@ func validConfig(t *testing.T) Config {
 		ProxyInitImage:    image,
 		GatewayImage:      image,
 		EPEImage:          image,
+		PorterImage:       image,
 		ExtProcImage:      image,
 		ForwardProxyImage: image,
 		FirewallBackend:   "auto",

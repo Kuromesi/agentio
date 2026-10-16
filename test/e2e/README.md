@@ -43,7 +43,7 @@ Policy checks read workload-scoped JSON from both sidecar and ambient proxies. N
 
 All supplied suite images must be immutable digest references. The forward proxy fixture uses a framework-owned Envoy digest by default; set `AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. Release and manual E2E workflows build the repository's ext-proc fixture into each job's local registry when no `ext_proc_image` override or candidate archive is supplied. CI generates four isolated environment groups from the same planner used locally. The two `auto` groups run the suites that require their profile; the two `iptables` groups run only trafficpolicy. This schedules 11 suite executions instead of 18. clienttrust runs only in `sidecar-auto`. Suite setup verifies the requested `FIREWALL_BACKEND` on the injected sidecar or ambient ztunnel Pod before any product assertion runs.
 
-Pull requests and master pushes use `agentio-e2e-presubmit.yml`. It builds agentiod, EPE, ztunnel from the source SHA in `agentio.deps`, and the ext-proc test fixture once, transfers them to each matrix job as a same-run artifact, and publishes them only to that job's KinD-local registry. Presubmit caches the ztunnel binary by source repository, commit, architecture, runner OS, and build workflow; cache hits skip compilation but still verify the architecture and smoke-test the runtime image. Published release candidates always compile from source. CNI, proxy-init, and gateway remain the immutable public images recorded in `agentio.deps`, so presubmit needs no registry credentials. Release calls the same product workflow with an immutable candidate BOM and promotes only the digests that passed it.
+Pull requests and master pushes use `agentio-e2e-presubmit.yml`. It builds agentiod, EPE, gateway-agent with community Envoy and its dynamic modules, Porter, ztunnel from the source SHA in `agentio.deps`, and the ext-proc test fixture once, transfers them to each matrix job as a same-run artifact, and publishes them only to that job's KinD-local registry. Presubmit caches the ztunnel binary by source repository, commit, architecture, runner OS, and build workflow; cache hits skip compilation but still verify the architecture and smoke-test the runtime image. Published release candidates always compile from source. CNI and proxy-init remain the immutable public images recorded in `agentio.deps`, so presubmit needs no registry credentials. Release calls the same product workflow with an immutable candidate BOM and promotes only the digests that passed it.
 
 A complete local run of all product suites is:
 
@@ -53,7 +53,8 @@ export AGENTIO_E2E_AGENTIOD_IMAGE='registry.example/agentiod@sha256:<64-hex-dige
 export AGENTIO_E2E_CNI_IMAGE='registry.example/install-cni@sha256:<64-hex-digest>'
 export AGENTIO_E2E_ZTUNNEL_IMAGE='registry.example/ztunnel@sha256:<64-hex-digest>'
 export AGENTIO_E2E_PROXY_INIT_IMAGE='registry.example/proxy-init@sha256:<64-hex-digest>'
-export AGENTIO_E2E_GATEWAY_IMAGE='registry.example/gateway@sha256:<64-hex-digest>'
+export AGENTIO_E2E_GATEWAY_IMAGE='registry.example/agentio-gateway@sha256:<64-hex-digest>'
+export AGENTIO_E2E_PORTER_IMAGE='registry.example/agentio-porter@sha256:<64-hex-digest>'
 export AGENTIO_E2E_EPE_IMAGE='registry.example/epe@sha256:<64-hex-digest>'
 export AGENTIO_E2E_EXT_PROC_IMAGE='registry.example/ext-proc@sha256:<64-hex-digest>'
 export AGENTIO_E2E_CLIENT_TRUST_IMAGE='registry.example/clienttrust@sha256:<64-hex-digest>'

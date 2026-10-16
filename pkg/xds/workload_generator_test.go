@@ -935,3 +935,25 @@ func TestIncrementalPublicationTransitionAtTenThousandResources(t *testing.T) {
 		})
 	}
 }
+
+// Expanding one Service must resolve the subscription once, rather than allocate
+// a Service lookup for every endpoint in the full selection.
+func TestNamedServiceSelectionAllocationBudget(t *testing.T) {
+	const endpoints = 1_000
+	resources := make([]model.Resource, 0, endpoints+1)
+	resources = append(resources, selectionService(t, "demo/svc-a", "/10.96.0.1"))
+	for i := range endpoints {
+		resources = append(resources, selectionWorkload(t, fmt.Sprintf("uid-%04d", i), "demo", "node-a", "svc-a", ""))
+	}
+	snapshot := selectionSnapshot(t, resources)
+	var selected []model.Resource
+	allocations := testing.AllocsPerRun(3, func() {
+		selected = selectWorkloadResources(gatewayScope(), snapshot, model.AddressType, []string{"/10.96.0.1"})
+	})
+	if len(selected) != endpoints+1 {
+		t.Fatalf("selected resources = %d, want %d", len(selected), endpoints+1)
+	}
+	if allocations > 200 {
+		t.Fatalf("allocations per named Service selection = %.0f, want at most 200", allocations)
+	}
+}

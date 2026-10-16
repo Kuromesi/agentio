@@ -53,7 +53,11 @@ func TestNewConstructsClientsAndProvider(t *testing.T) {
 		t.Fatalf("New() error = %v, want nil (client construction must not dial the API server)", err)
 	}
 	if deployer.kubeVersion != defaultKubeVersion {
-		t.Fatalf("kubeVersion = %d, want default %d when discovery is unreachable", deployer.kubeVersion, defaultKubeVersion)
+		t.Fatalf(
+			"kubeVersion = %d, want default %d when discovery is unreachable",
+			deployer.kubeVersion,
+			defaultKubeVersion,
+		)
 	}
 	if deployer.provider == nil {
 		t.Fatal("expected a non-nil template provider")
@@ -69,7 +73,9 @@ func TestDeployerHasNoEmbeddedEgressGatewayConfiguration(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "agentio-egress",
-			Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+			Listeners: []gatewayv1.Listener{
+				{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")},
+			},
 		},
 	}
 	input := buildTemplateInput(gw, builtinClasses["agentio-egress"], "test", parityKubeVersion, "")
@@ -113,7 +119,8 @@ templates:
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			docs, renderErr := deployer.provider.Renderer().Render("egress-gateway", TemplateInput{DeploymentName: "egress"})
+			docs, renderErr := deployer.provider.Renderer().
+				Render("egress-gateway", TemplateInput{DeploymentName: "egress"})
 			if renderErr == nil && len(docs) == 1 && strings.Contains(docs[0], "config-source: "+want) {
 				return
 			}
@@ -123,13 +130,19 @@ templates:
 	}
 	waitForSource("injector.example")
 
-	configMap, err := client.Kube().CoreV1().ConfigMaps("agentio-system").Get(ctx, "agentio-sidecar-injector", metav1.GetOptions{})
+	configMap, err := client.Kube().
+		CoreV1().
+		ConfigMaps("agentio-system").
+		Get(ctx, "agentio-sidecar-injector", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	configMap.Data["values"] = "global:\n  hub: updated.example\n"
 	configMap.ResourceVersion = "updated"
-	if _, err := client.Kube().CoreV1().ConfigMaps("agentio-system").Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+	if _, err := client.Kube().
+		CoreV1().
+		ConfigMaps("agentio-system").
+		Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	waitForSource("updated.example")
@@ -144,14 +157,19 @@ func TestNewRendersAgentioDiscoveryAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := deployer.provider.updateFromInjectorConfig(testInjectorConfigWithEgressTemplate(t), string(values)); err != nil {
+	if err := deployer.provider.updateFromInjectorConfig(
+		testInjectorConfigWithEgressTemplate(t),
+		string(values),
+	); err != nil {
 		t.Fatal(err)
 	}
 	gw := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "agentio-egress",
-			Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+			Listeners: []gatewayv1.Listener{
+				{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")},
+			},
 		},
 	}
 	input := buildTemplateInput(*gw, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, "")
@@ -160,7 +178,7 @@ func TestNewRendersAgentioDiscoveryAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(docs, "\n---\n")
-	want := `"discoveryAddress":"agentiod.agentio-system.svc:15012"`
+	want := "name: AGENTIO_XDS_ADDRESS\n          value: \"agentiod.agentio-system.svc:15012\""
 	if !strings.Contains(got, want) {
 		t.Fatalf("rendered proxy config does not target the Agentio control plane; want %s in:\n%s", want, got)
 	}
@@ -293,8 +311,13 @@ func TestRunControllersDoesNotLeakInformersAcrossLeaseCycles(t *testing.T) {
 	// Slack absorbs goroutine-count noise; a real per-cycle leak would exceed it.
 	const slack = 15
 	if afterSecond > baseline+slack {
-		t.Fatalf("goroutine count grew across two runControllers cycles: baseline=%d afterFirst=%d afterSecond=%d (slack=%d)",
-			baseline, afterFirst, afterSecond, slack)
+		t.Fatalf(
+			"goroutine count grew across two runControllers cycles: baseline=%d afterFirst=%d afterSecond=%d (slack=%d)",
+			baseline,
+			afterFirst,
+			afterSecond,
+			slack,
+		)
 	}
 }
 

@@ -20,7 +20,6 @@ import (
 
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	"google.golang.org/protobuf/proto"
 	"istio.io/istio/pkg/util/sets"
@@ -29,6 +28,7 @@ import (
 )
 
 type Inputs struct {
+	LegacyGateway     bool
 	Gateway           model.Gateway
 	RootNamespace     string
 	ClusterID         string
@@ -37,8 +37,7 @@ type Inputs struct {
 }
 
 type Output struct {
-	HTTPFilters    []*hcmv3.HttpFilter
-	TCPFilters     []*listenerv3.Filter
+	HTTPMetrics    *accesslogv3.AccessLog
 	HTTPAccessLogs []*accesslogv3.AccessLog
 	// ConnectHTTPAccessLogs mirror release-0.1 HBONE termination access logs:
 	// attached to the CONNECT termination HCM, filtered to status >= 400.
@@ -67,26 +66,32 @@ func Build(inputs Inputs) (*Output, error) {
 	result := &Output{}
 	usedProviders := map[string]model.TelemetryProvider{}
 
-	metrics := mergeMetrics(selected, providers.DefaultMetrics)
-	for _, name := range sortedKeys(metrics) {
-		provider, err := requireProvider(providers, name)
-		if err != nil {
-			return nil, err
+	// Legacy proxies have no native metrics module. Keep forwarding and logs
+	// available throughout the upgrade without sending unsupported extensions.
+	if !inputs.LegacyGateway {
+		metrics := mergeMetrics(selected, providers.DefaultMetrics)
+		for _, name := range sortedKeys(metrics) {
+			provider, err := requireProvider(providers, name)
+			if err != nil {
+				return nil, err
+			}
+			if !provider.Prometheus {
+				return nil, fmt.Errorf("Telemetry provider %q does not support metrics", name)
+			}
+			logger, err := buildMetricsLogger(metrics[name])
+			if err != nil {
+				return nil, fmt.Errorf("build metrics provider %q: %w", name, err)
+			}
+			if logger != nil {
+				if result.HTTPMetrics != nil {
+					return nil, fmt.Errorf("multiple Prometheus providers would duplicate gateway metrics")
+				}
+				result.HTTPMetrics = logger
+				usedProviders[name] = provider.Clone()
+			}
 		}
-		if !provider.Prometheus {
-			return nil, fmt.Errorf("Telemetry provider %q does not support metrics", name)
-		}
-		httpFilter, tcpFilter, err := buildStatsFilters(metrics[name])
-		if err != nil {
-			return nil, fmt.Errorf("build metrics provider %q: %w", name, err)
-		}
-		if httpFilter != nil {
-			result.HTTPFilters = append(result.HTTPFilters, httpFilter)
-			result.TCPFilters = append(result.TCPFilters, tcpFilter)
-			usedProviders[name] = provider.Clone()
-		}
-	}
 
+	}
 	logs := mergeLogs(selected, providers.DefaultAccessLogging)
 	for _, name := range sortedKeys(logs) {
 		provider, err := requireProvider(providers, name)
@@ -132,7 +137,12 @@ func Build(inputs Inputs) (*Output, error) {
 		if provider.Tracing == nil {
 			return nil, fmt.Errorf("Telemetry provider %q does not support tracing", tracing.Provider)
 		}
-		result.Tracing, result.RequestIDExtension, err = buildTracing(tracing, provider.Tracing, inputs.Gateway, inputs.ClusterID)
+		result.Tracing, result.RequestIDExtension, err = buildTracing(
+			tracing,
+			provider.Tracing,
+			inputs.Gateway,
+			inputs.ClusterID,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("build tracing provider %q: %w", tracing.Provider, err)
 		}
@@ -175,18 +185,22 @@ func sortedKeys[V any](values map[string]V) []string {
 }
 
 func validateTelemetryOutput(output *Output) error {
-	for _, filter := range output.HTTPFilters {
-		if err := filter.ValidateAll(); err != nil {
-			return fmt.Errorf("HTTP Telemetry filter %q: %w", filter.Name, err)
-		}
+	accessLogs := make(
+		[]*accesslogv3.AccessLog,
+		0,
+		len(
+			output.HTTPAccessLogs,
+		)+len(
+			output.ConnectHTTPAccessLogs,
+		)+len(
+			output.ListenerAccessLogs,
+		)+len(
+			output.TCPAccessLogs,
+		),
+	)
+	if output.HTTPMetrics != nil {
+		accessLogs = append(accessLogs, output.HTTPMetrics)
 	}
-	for _, filter := range output.TCPFilters {
-		if err := filter.ValidateAll(); err != nil {
-			return fmt.Errorf("TCP Telemetry filter %q: %w", filter.Name, err)
-		}
-	}
-	accessLogs := make([]*accesslogv3.AccessLog, 0,
-		len(output.HTTPAccessLogs)+len(output.ConnectHTTPAccessLogs)+len(output.ListenerAccessLogs)+len(output.TCPAccessLogs))
 	accessLogs = append(accessLogs, output.HTTPAccessLogs...)
 	accessLogs = append(accessLogs, output.ConnectHTTPAccessLogs...)
 	accessLogs = append(accessLogs, output.ListenerAccessLogs...)

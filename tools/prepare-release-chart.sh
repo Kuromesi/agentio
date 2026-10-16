@@ -24,8 +24,9 @@ ztunnel_image="${5:-}"
 cni_image="${6:-}"
 proxy_init_image="${7:-}"
 gateway_image="${8:-}"
+porter_image="${9:-}"
 if [[ -z "${chart_dir}" || ! -f "${chart_dir}/Chart.yaml" || ! -f "${chart_dir}/values.yaml" ]]; then
-  echo "usage: $0 <chart-directory> <semantic-version> <agentiod-image> <epe-image> <ztunnel-image> <cni-image> <proxy-init-image> <gateway-image>" >&2
+  echo "usage: $0 <chart-directory> <semantic-version> <agentiod-image> <epe-image> <ztunnel-image> <cni-image> <proxy-init-image> <gateway-image> <porter-image>" >&2
   exit 2
 fi
 semver_core='(0|[1-9][0-9]*)'
@@ -36,8 +37,8 @@ if [[ ! "${version}" =~ ${semver_pattern} ]]; then
   exit 2
 fi
 image_pattern='^[a-z0-9][a-z0-9.-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._-]*)+@sha256:[0-9a-f]{64}$'
-images=("${agentiod_image}" "${epe_image}" "${ztunnel_image}" "${cni_image}" "${proxy_init_image}" "${gateway_image}")
-image_names=(agentiod epe ztunnel cni proxy-init gateway)
+images=("${agentiod_image}" "${epe_image}" "${ztunnel_image}" "${cni_image}" "${proxy_init_image}" "${gateway_image}" "${porter_image}")
+image_names=(agentiod epe ztunnel cni proxy-init gateway porter)
 for index in "${!images[@]}"; do
   if [[ ! "${images[$index]}" =~ ${image_pattern} ]]; then
     echo "invalid immutable ${image_names[$index]} image: ${images[$index]}" >&2
@@ -55,6 +56,8 @@ cni_repository="${cni_image%@*}"
 cni_digest="${cni_image##*@}"
 gateway_repository="${gateway_image%@*}"
 gateway_digest="${gateway_image##*@}"
+porter_repository="${porter_image%@*}"
+porter_digest="${porter_image##*@}"
 
 sed -i.bak \
   -e "s/^version: .*/version: \"${version}\"/" \
@@ -76,6 +79,9 @@ sed -i.bak \
 		-e "/^egressGateway:/,/^epe:/ s|^    repository:.*$|    repository: \"${gateway_repository}\"|" \
 		-e "/^egressGateway:/,/^epe:/ s/^    tag: .*$/    tag: \"\"/" \
 		-e "/^egressGateway:/,/^epe:/ s|^    digest:.*$|    digest: \"${gateway_digest}\"|" \
+		-e "/^  porter:/,/^  agentgateway:/ s|^      repository:.*$|      repository: \"${porter_repository}\"|" \
+		-e "/^  porter:/,/^  agentgateway:/ s/^      tag: .*$/      tag: \"\"/" \
+		-e "/^  porter:/,/^  agentgateway:/ s|^      digest:.*$|      digest: \"${porter_digest}\"|" \
 		-e "/^epe:/,$ s|^    repository:.*$|    repository: \"${epe_repository}\"|" \
 		-e "/^epe:/,$ s/^    tag: .*$/    tag: \"\"/" \
 		-e "/^epe:/,$ s|^    digest:.*$|    digest: \"${epe_digest}\"|" \

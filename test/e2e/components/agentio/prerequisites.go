@@ -23,9 +23,10 @@ import (
 	"path/filepath"
 	"sort"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"github.com/openkruise/agentio/test/e2e"
 	"github.com/openkruise/agentio/test/e2e/kube"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // The Sandbox API is owned by the agent runtime rather than the Agentio chart,
@@ -41,7 +42,13 @@ func applyPrerequisites(ctx context.Context, environment *e2e.Environment, confi
 	}
 	for _, object := range objects {
 		if _, err := environment.Kube.Apply(ctx, object, kube.CreateOnly); err != nil {
-			return fmt.Errorf("install Agentio prerequisite %s %s/%s: %w", object.GetKind(), object.GetNamespace(), object.GetName(), err)
+			return fmt.Errorf(
+				"install Agentio prerequisite %s %s/%s: %w",
+				object.GetKind(),
+				object.GetNamespace(),
+				object.GetName(),
+				err,
+			)
 		}
 	}
 	return nil

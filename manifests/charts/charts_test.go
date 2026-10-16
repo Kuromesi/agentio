@@ -312,7 +312,8 @@ func TestStaticEgressGateway(t *testing.T) {
 	requireContains(t, manifest,
 		"networking.agents.kruise.io/sandbox-egress: \"true\"",
 		"gateway.networking.k8s.io/gateway-name: agentio-egress",
-		"name: PILOT_CERT_PROVIDER",
+		"name: AGENTIO_XDS_ADDRESS",
+		"name: agentio-porter",
 		"agentiod.agentio-system.svc.cluster.local:15012",
 		"egressGateways:",
 		"name: agentio-egress",
@@ -326,15 +327,15 @@ func TestStaticGatewayCPULimit(t *testing.T) {
 			args := []string{"--show-only", "templates/gateway/deployment.yaml",
 				"--set", "egressGateway.mode=static", "--set", "egressGateway.resources.limits.cpu=2"}
 			want := corev1.EnvVar{
-				Name: "ISTIO_CPU_LIMIT",
+				Name: "AGENTIO_CPU_LIMIT",
 				ValueFrom: &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{
 					Resource: "limits.cpu",
 					Divisor:  resource.MustParse("1"),
 				}},
 			}
 			if override != "" {
-				args = append(args, "--set-string", "egressGateway.env.ISTIO_CPU_LIMIT="+override)
-				want = corev1.EnvVar{Name: "ISTIO_CPU_LIMIT", Value: override}
+				args = append(args, "--set-string", "egressGateway.env.AGENTIO_CPU_LIMIT="+override)
+				want = corev1.EnvVar{Name: "AGENTIO_CPU_LIMIT", Value: override}
 			}
 			var deployment appsv1.Deployment
 			if err := yaml.Unmarshal([]byte(renderAgentio(t, args...)), &deployment); err != nil {
@@ -352,10 +353,10 @@ func TestStaticGatewayCPULimit(t *testing.T) {
 				}
 			}
 			if len(found) != 1 {
-				t.Fatalf("expected exactly one ISTIO_CPU_LIMIT, got %v", found)
+				t.Fatalf("expected exactly one AGENTIO_CPU_LIMIT, got %v", found)
 			}
 			if !reflect.DeepEqual(found[0], want) {
-				t.Fatalf("ISTIO_CPU_LIMIT = %+v, want %+v", found[0], want)
+				t.Fatalf("AGENTIO_CPU_LIMIT = %+v, want %+v", found[0], want)
 			}
 		})
 	}
@@ -363,6 +364,7 @@ func TestStaticGatewayCPULimit(t *testing.T) {
 
 func TestGatewayAPIEgressGateway(t *testing.T) {
 	manifest := renderAgentio(t,
+		"--set", "egressGateway.terminationGracePeriodSeconds=45",
 		"--set", "egressGateway.mode=gatewayAPI",
 		"--set", "egressGateway.gatewayAPI.create=true",
 		"--set-string", "egressGateway.image.repository=registry.example/agentio/proxyv2",
@@ -376,6 +378,7 @@ func TestGatewayAPIEgressGateway(t *testing.T) {
 	}
 	requireContains(t, manifest,
 		"gatewayClassName: agentio-egress",
+		"terminationGracePeriodSeconds: 45",
 		"protocol: HBONE",
 		"name: AGENTIO_ENABLE_GATEWAY_DEPLOYER",
 		"value: \"true\"",
@@ -486,7 +489,8 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 	ztunnelImage := "registry.example/openkruise/ztunnel@" + digest
 	cniImage := "registry.example/openkruise/install-cni@" + digest
 	proxyInitImage := "registry.example/openkruise/proxy-init@" + digest
-	gatewayImage := "registry.example/openkruise/proxyv2@" + digest
+	gatewayImage := "registry.example/openkruise/agentio-gateway@" + digest
+	porterImage := "registry.example/openkruise/agentio-porter@" + digest
 	prepare := exec.Command(
 		"../../tools/prepare-release-chart.sh",
 		chartDir,
@@ -497,6 +501,7 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 		cniImage,
 		proxyInitImage,
 		gatewayImage,
+		porterImage,
 	)
 	if output, err := prepare.CombinedOutput(); err != nil {
 		t.Fatalf("prepare release chart: %v\n%s", err, output)
@@ -522,6 +527,7 @@ func TestPrepareReleaseChartPinsAllReleaseImages(t *testing.T) {
 		`image: "` + cniImage + `"`,
 		`image: "` + proxyInitImage + `"`,
 		`image: "` + gatewayImage + `"`,
+		`image: "` + porterImage + `"`,
 	} {
 		if !bytes.Contains(manifest, []byte(image)) {
 			t.Errorf("prepared release manifest does not contain %q", image)
@@ -552,6 +558,7 @@ func TestPrepareReleaseChartRejectsInvalidSemanticVersion(t *testing.T) {
 		"../../tools/prepare-release-chart.sh",
 		chartDir,
 		"01.2.3",
+		digestImage,
 		digestImage,
 		digestImage,
 		digestImage,

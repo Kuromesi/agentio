@@ -33,7 +33,7 @@ var (
 	EnableSidecarInjector = env.Register(
 		"AGENTIO_ENABLE_SIDECAR_INJECTOR",
 		false,
-		"If true, serve the Agentio ztunnel injection webhook at the Istio-compatible /inject endpoint.",
+		"If true, serve the Agentio ztunnel injection webhook at the /inject endpoint.",
 	).Get()
 	InjectorConfigMapName = env.Register(
 		"AGENTIO_INJECTOR_CONFIGMAP_NAME",
@@ -43,7 +43,7 @@ var (
 	InjectionWebhookConfigName = env.Register(
 		"AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME",
 		"",
-		"Istio-compatible MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root.",
+		"Agentio MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root.",
 	).Get()
 	NativeSidecarMode = env.Register(
 		"AGENTIO_NATIVE_SIDECARS",

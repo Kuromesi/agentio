@@ -178,3 +178,16 @@ func setValidFeatures(t *testing.T) {
 	test.SetForTest(t, &EnableGatewayDeployer, false)
 	test.SetForTest(t, &GatewayLeaseName, "agentiod-gateway-deployer-leader")
 }
+
+func TestValidateAllowsDisabledPushDebounce(t *testing.T) {
+	setValidFeatures(t)
+	test.SetForTest(t, &PushDebounceAfter, time.Duration(0))
+	test.SetForTest(t, &PushDebounceMax, time.Duration(0))
+	if err := Validate(); err != nil {
+		t.Fatal(err)
+	}
+	test.SetForTest(t, &PushDebounceAfter, -time.Millisecond)
+	if err := Validate(); err == nil {
+		t.Fatal("negative push debounce accepted")
+	}
+}

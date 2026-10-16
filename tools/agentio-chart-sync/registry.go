@@ -68,7 +68,7 @@ func adaptImageRegistry(target string, controller bool, tag string) error {
 		return fmt.Errorf("chart values must be a mapping")
 	}
 	agentio := yamlMappingValue(document.Content[0], "agentio")
-	components := []string{"agentiod", "egressGateway", "epe"}
+	components := []string{"agentiod", "egressGateway", "egressGateway.porter", "epe"}
 	begin, end := valuesBegin, valuesEnd
 	helperDir := filepath.Join(target, "templates", "agentio")
 	global := yamlMappingValue(agentio, "global")
@@ -88,7 +88,11 @@ func adaptImageRegistry(target string, controller bool, tag string) error {
 			keys = append(keys, "initImage")
 		}
 		for _, key := range keys {
-			image := yamlMappingValue(yamlMappingValue(agentio, component), key)
+			componentValues := agentio
+			for segment := range strings.SplitSeq(component, ".") {
+				componentValues = yamlMappingValue(componentValues, segment)
+			}
+			image := yamlMappingValue(componentValues, key)
 			if image == nil {
 				continue
 			}
@@ -201,6 +205,9 @@ func adaptManagerImage(templates, component string) error {
 		name = "gateway"
 	}
 	helper := "agentio." + name + ".image"
+	if component == "egressGateway.porter" {
+		helper = "agentio.gateway.porterImage"
+	}
 	path := filepath.Join(templates, "_helpers.tpl")
 	content, err := os.ReadFile(path)
 	if err != nil {

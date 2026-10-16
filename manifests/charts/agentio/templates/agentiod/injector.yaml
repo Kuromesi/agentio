@@ -29,12 +29,17 @@ data:
     clientTrustBundle:
 {{ .Values.agentiod.clientTrustBundle | toYaml | indent 6 }}
     global:
+      porter:
+        image: {{ include "gateway.porterImage" . | quote }}
+        cache:
+{{ .Values.egressGateway.porter.cache | toYaml | indent 10 }}
+        resources:
+{{ .Values.egressGateway.porter.resources | toYaml | indent 10 }}
       agentgateway:
 {{ .Values.egressGateway.agentgateway | toYaml | indent 8 }}
       hub: {{ .Values.global.hub | quote }}
       tag: {{ .Values.global.tag | quote }}
       imagePullPolicy: {{ .Values.global.imagePullPolicy | quote }}
-      istioNamespace: {{ .Release.Namespace | quote }}
       trustDomain: {{ .Values.global.trustDomain | quote }}
       caAddress: {{ printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain | quote }}
       xdsAddress: {{ printf "%s.%s.svc.%s:15012" (include "agentiod.fullname" .) .Release.Namespace .Values.global.clusterDomain | quote }}
@@ -46,7 +51,6 @@ data:
       logAsJson: false
       meshID: ""
       network: ""
-      pilotCertProvider: istiod
       platform: ""
       proxy:
         image: {{ include "gateway.image" . | quote }}
@@ -81,6 +85,8 @@ data:
       multiCluster:
         clusterName: {{ .Values.global.clusterId | quote }}
       egressGateway:
+        terminationGracePeriodSeconds: {{ .Values.egressGateway.terminationGracePeriodSeconds }}
+        agentConfig: {{ .Values.egressGateway.agentConfig | toJson }}
         resources:
           requests: {cpu: 100m, memory: 128Mi}
           limits: {cpu: "2", memory: 1Gi}

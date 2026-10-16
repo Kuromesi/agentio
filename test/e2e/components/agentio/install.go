@@ -126,6 +126,7 @@ func recordComponent(environment *e2e.Environment, config Config, fingerprint st
 	environment.State.RecordComponent("agentio", fingerprint, map[string]string{
 		"agentiod": config.AgentiodImage, "cni": config.CNIImage, "ztunnel": config.ZtunnelImage,
 		"proxy-init": config.ProxyInitImage, "gateway": config.GatewayImage,
-		"epe": config.EPEImage,
+		"epe":    config.EPEImage,
+		"porter": config.PorterImage,
 	})
 }

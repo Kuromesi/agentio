@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       candidate_image_artifact:
-        description: Optional same-run artifact containing local agentiod, EPE, ztunnel, and ext-proc images
+        description: Optional same-run artifact containing local agentiod, EPE, Porter, gateway, ztunnel, and ext-proc images
         required: false
         default: ""
         type: string
@@ -18,6 +18,11 @@ on:
         type: string
       epe_image:
         description: Immutable EPE image (repository@sha256:digest)
+        required: false
+        default: ""
+        type: string
+      porter_image:
+        description: Immutable Porter image (repository@sha256:digest)
         required: false
         default: ""
         type: string
@@ -35,7 +40,7 @@ on:
         required: true
         type: string
       gateway_image:
-        description: Immutable gateway/proxyv2 image (repository@sha256:digest)
+        description: Immutable agentio-gateway image (repository@sha256:digest)
         required: true
         type: string
       ext_proc_image:
@@ -63,6 +68,10 @@ on:
         description: Immutable EPE image (repository@sha256:digest)
         required: true
         type: string
+      porter_image:
+        description: Immutable Porter image (repository@sha256:digest)
+        required: true
+        type: string
       cni_image:
         description: Immutable CNI image (repository@sha256:digest)
         required: true
@@ -76,7 +85,7 @@ on:
         required: true
         type: string
       gateway_image:
-        description: Immutable gateway/proxyv2 image (repository@sha256:digest)
+        description: Immutable agentio-gateway image (repository@sha256:digest)
         required: true
         type: string
       ext_proc_image:
@@ -190,6 +199,7 @@ jobs:
       AGENTIO_E2E_GROUP: ${{ matrix.id }}
       AGENTIO_E2E_AGENTIOD_IMAGE: ${{ inputs.agentiod_image }}
       AGENTIO_E2E_EPE_IMAGE: ${{ inputs.epe_image }}
+      AGENTIO_E2E_PORTER_IMAGE: ${{ inputs.porter_image }}
       AGENTIO_E2E_CNI_IMAGE: ${{ inputs.cni_image }}
       AGENTIO_E2E_ZTUNNEL_IMAGE: ${{ inputs.ztunnel_image }}
       AGENTIO_E2E_PROXY_INIT_IMAGE: ${{ inputs.proxy_init_image }}
@@ -290,7 +300,7 @@ jobs:
           fi
           docker load --input "$archive"
 
-          for image in agentiod agentio-epe ztunnel ext-proc; do
+          for image in agentiod agentio-epe agentio-porter agentio-gateway ztunnel ext-proc; do
             source="agentio-e2e.local/${image}:${GITHUB_SHA}"
             target="localhost:5001/${image}:${GITHUB_SHA}"
             docker image inspect "$source" >/dev/null
@@ -305,6 +315,8 @@ jobs:
             case "$image" in
               agentiod) echo "AGENTIO_E2E_AGENTIOD_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
               agentio-epe) echo "AGENTIO_E2E_EPE_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
+              agentio-gateway) echo "AGENTIO_E2E_GATEWAY_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
+              agentio-porter) echo "AGENTIO_E2E_PORTER_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
               ztunnel) echo "AGENTIO_E2E_ZTUNNEL_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
               ext-proc) echo "AGENTIO_E2E_EXT_PROC_IMAGE=$digest_ref" >> "$GITHUB_ENV" ;;
             esac

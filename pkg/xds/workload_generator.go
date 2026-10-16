@@ -134,116 +134,11 @@ func selectWorkloadResources(
 	typeURL string,
 	names []string,
 ) []model.Resource {
-	if scope.Class == model.ClientEgressGateway {
-		if names == nil {
-			return snapshot.List(typeURL)
-		}
-		selected := make([]model.Resource, 0, len(names))
-		for _, name := range names {
-			for _, resource := range snapshot.Lookup(typeURL, name) {
-				if typeURL == model.AddressType || resource.IsWorkloadAddress() {
-					selected = append(selected, resource)
-				}
-			}
-		}
-		for serviceKey := range serviceKeysForNames(snapshot, names) {
-			for _, resource := range snapshot.ListServiceMembers(typeURL, serviceKey) {
-				if resource.IsWorkloadAddress() {
-					selected = append(selected, resource)
-				}
-			}
-		}
-		return orderedUnique(selected)
-	}
-
-	workloads := scopedWorkloads(scope, snapshot, typeURL)
-	referencedGateways := gatewayReferenceKeys(workloads)
-	withGateways := func(selected []model.Resource) []model.Resource {
-		selected = append(selected, gatewayResourcesForKeys(snapshot, typeURL, referencedGateways)...)
-		return orderedUnique(selected)
-	}
-	allowedWorkloads := resourceKeySet(workloads)
-	serviceKeys := workloadServiceKeys(workloads)
-	if names == nil {
-		// The workload slice is private to this selection, so related resources can reuse its backing array.
-		selected := workloads
-		if typeURL == model.AddressType {
-			selected = append(selected, selectedServices(snapshot, serviceKeys)...)
-		}
-		return withGateways(selected)
-	}
-	if len(names) == 0 {
-		if scope.Class == model.ClientSharedZTunnel {
-			return withGateways(workloads)
-		}
-		return nil
-	}
-
-	selected := make([]model.Resource, 0, len(names))
-	if scope.Class == model.ClientSharedZTunnel {
-		// Node-local workloads stay implicit; explicit workload and Service/VIP
-		// lookups are not node-filtered.
-		selected = append(selected, workloads...)
-		selectedServiceKeys := serviceKeysForNames(snapshot, names)
-		for _, name := range names {
-			for _, candidate := range snapshot.Lookup(typeURL, name) {
-				if candidate.IsWorkloadAddress() {
-					selected = append(selected, candidate)
-					continue
-				}
-				if typeURL != model.AddressType {
-					continue
-				}
-				if candidate.Facts.Service != nil {
-					selected = append(selected, candidate)
-					selectedServiceKeys.Insert(candidate.Facts.Service.ServiceKey)
-				}
-			}
-		}
-		for serviceKey := range selectedServiceKeys {
-			for _, endpoint := range snapshot.ListServiceMembers(typeURL, serviceKey) {
-				if endpoint.IsWorkloadAddress() {
-					selected = append(selected, endpoint)
-				}
-			}
-		}
-		return withGateways(selected)
-	}
-	selectedServiceKeys := sets.New[string]()
-	for _, name := range names {
-		for _, candidate := range snapshot.Lookup(typeURL, name) {
-			switch {
-			case candidate.IsWorkloadAddress():
-				if scope.Class != model.ClientSharedZTunnel {
-					if allowedWorkloads.Contains(candidate.Key) {
-						selected = append(selected, candidate)
-					}
-				}
-			case typeURL == model.AddressType && candidate.Facts.Service != nil:
-				serviceKey := candidate.Facts.Service.ServiceKey
-				if serviceKeys.Contains(serviceKey) {
-					selected = append(selected, candidate)
-					selectedServiceKeys.Insert(serviceKey)
-				}
-			}
-		}
-	}
-	for serviceKey := range serviceKeysForNames(snapshot, names) {
-		if serviceKeys.Contains(serviceKey) {
-			selectedServiceKeys.Insert(serviceKey)
-		}
-	}
-	for serviceKey := range selectedServiceKeys {
-		for _, endpoint := range snapshot.ListServiceMembers(typeURL, serviceKey) {
-			if !endpoint.IsWorkloadAddress() {
-				continue
-			}
-			if allowedWorkloads.Contains(endpoint.Key) {
-				selected = append(selected, endpoint)
-			}
-		}
-	}
-	return withGateways(selected)
+	selection := newAddressSelection(scope, snapshot, typeURL, SubscriptionView{
+		wildcard: names == nil,
+		names:    names,
+	})
+	return selection.list()
 }
 
 func serviceKeysForNames(snapshot model.ResourceSet, names []string) sets.Set[string] {
@@ -262,31 +157,19 @@ func serviceKeysForNames(snapshot model.ResourceSet, names []string) sets.Set[st
 }
 
 func workloadMatchesScope(scope model.ClientScope, resource model.Resource) bool {
-	workload := resource.Facts.Workload
-	if workload == nil {
-		return false
-	}
-	switch scope.Class {
-	case model.ClientDedicatedZTunnel:
-		return scope.WorkloadUID != "" && scope.Source.Validate() == nil && workload.WorkloadUID == scope.WorkloadUID &&
-			workload.Source == scope.Source &&
-			workload.Principal == scope.Principal
-	case model.ClientSharedZTunnel:
-		return workload.NodeName == scope.NodeName
-	default:
-		return false
-	}
+	query, found := workloadScopeQuery(&scope)
+	return found && query.Matches(resource.Facts.Workload)
 }
 
 func scopedWorkloads(scope model.ClientScope, snapshot model.ResourceSet, typeURL string) []model.Resource {
-	query, found := workloadScopeQuery(scope)
+	query, found := workloadScopeQuery(&scope)
 	if !found {
 		return nil
 	}
 	return snapshot.ListWorkloads(typeURL, query)
 }
 
-func workloadScopeQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
+func workloadScopeQuery(scope *model.ClientScope) (model.WorkloadQuery, bool) {
 	switch scope.Class {
 	case model.ClientDedicatedZTunnel:
 		if scope.WorkloadUID != "" && scope.Source.Validate() == nil {
@@ -358,16 +241,16 @@ func gatewayResourcesForKeys(
 // Wildcard Address removals use historical visibility metadata rather than a
 // per-connection sent table; payloads always come from the current snapshot.
 func generateWDSIncremental(request GenerationRequest, workloadsOnly bool) GeneratedDelta {
+	selection := newAddressSelection(request.Scope, request.Snapshot, model.AddressType, request.Subscription)
 	visible := func(resource model.Resource) bool {
-		return (!workloadsOnly || resource.IsWorkloadAddress()) && workloadSelected(request, resource)
+		return (!workloadsOnly || resource.IsWorkloadAddress()) && selection.selected(resource)
 	}
 	var previouslyVisible func(*xdsstore.Identity) bool
 	elide := request.Subscription.Wildcard() && !workloadsOnly
 	if elide {
-		visibility := newWorkloadVisibility(request.Scope, request.Snapshot, model.AddressType)
 		previouslyVisible = func(identity *xdsstore.Identity) bool {
 			resource := model.Resource{XDSName: identity.Name, Facts: identity.Facts}
-			if visibility.visible(resource) {
+			if selection.visible(resource) {
 				return true
 			}
 			for workload := range identity.Workloads {

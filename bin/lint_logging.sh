@@ -62,17 +62,17 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
   fi
   checked=$((checked + 1))
 
-  # 1. The two stacks are split by process. agentiod logs through pkg/log, EPE
-  #    through controller-runtime's logr. Neither imports the other's stack.
+  # 1. Stacks are split by process. agentiod and Porter use pkg/log; EPE
+  #    uses controller-runtime's logr. Neither imports the other's stack.
   case "${f}" in
-    extensions/*)
+    extensions/epe/*)
       case "${f}" in
         # This test asserts the bridge that routes pkg/log records into EPE's
         # zap core, so it must import both sides.
         extensions/epe/cmd/epe/logging_test.go) ;;
         *)
           scan "${f}" '"github\.com/openkruise/agentio/pkg/log"' \
-            "extensions/ logs through logr; pkg/log belongs to the agentiod process"
+            "EPE logs through logr; pkg/log belongs to the agentiod and Porter processes"
           ;;
       esac
       ;;

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"time"
 
-	udpatypev1 "github.com/cncf/xds/go/udpa/type/v1"
 	xdscorev3 "github.com/cncf/xds/go/xds/core/v3"
 	xdsmatcherv3 "github.com/cncf/xds/go/xds/type/matcher/v3"
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
@@ -55,11 +54,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
+	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/networking/telemetry"
 )
 
@@ -68,8 +67,6 @@ const (
 	forwardTCPChain                 = "forward-tcp"
 	tlsTerminateChain               = "tls-terminate"
 	sniDenyChain                    = "sni-traffic-policy-deny"
-	sniPolicyMatcherName            = "kruise.matching.custom_matchers.sni_traffic_policy"
-	sniPolicyMatcherType            = "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniTrafficPolicyMatcher"
 	tlsActionKey                    = "agentio.tls.action"
 	noSNISentinel                   = "_no_sni_"
 	forwardHCMStatPrefix            = "inbound_0.0.0.0_0;"
@@ -82,8 +79,7 @@ const (
 	dynamicPortKey                  = "envoy.upstream.dynamic_port"
 	staticEndpointFilterStateFilter = "agentio.static_endpoint_filter_state"
 
-	tlsActionHeaderFormat = `%CEL('x-agentio-tls' in request.headers ? ` +
-		`re.extract(request.headers['x-agentio-tls'], '^action=([^;]+)(;sni=[^;]+)?$', r'\1') : '')%`
+	sniPolicyMetadataFormat = "%DYNAMIC_METADATA(" + model.GatewayMetadataNamespace + ":sni:policy)%"
 )
 
 // Package-level filters and their encoded configurations are shared read-only.
@@ -94,19 +90,7 @@ var (
 		"application-protocol",
 		mustPack(&matchinginputv3.ApplicationProtocolInput{}),
 	)
-	serverNameInput     = typedExtension("sni", mustPack(&matchinginputv3.ServerNameInput{}))
-	downstreamRelayKeys = []struct {
-		key     string
-		factory string
-	}{
-		{key: "envoy.filters.listener.original_dst.local_ip"},
-		{key: "envoy.filters.listener.original_dst.remote_ip"},
-		{key: "io.istio.peer_principal", factory: "istio.hashable_string"},
-		{key: "io.istio.local_principal", factory: "istio.hashable_string"},
-		{key: connectAuthorityKey, factory: "istio.hashable_string"},
-	}
-
-	downstreamPeerMetadataFilter = buildDownstreamPeerMetadataFilter()
+	serverNameInput = typedExtension("sni", mustPack(&matchinginputv3.ServerNameInput{}))
 
 	sniHostMismatchExprText = fmt.Sprintf(`
   request.method != 'CONNECT' &&
@@ -135,10 +119,18 @@ var (
 
 	connectProxyTLSIdentityHTTPFilter = buildConnectProxyTLSIdentityHTTPFilter()
 
-	connectAuthorityWithoutAction = buildConnectAuthorityFilter(false)
-	connectAuthorityWithAction    = buildConnectAuthorityFilter(true)
+	connectAuthorityHTTPFilter = buildConnectAuthorityFilter(
+		"envoy.hashable_string",
+		model.FilterStatePeerPrincipal,
+		model.FilterStateLocalPrincipal,
+		false,
+	)
 
-	relayDownstreamFilter = buildRelayDownstreamFilter()
+	relayDownstreamFilter = buildRelayDownstreamFilter(
+		"envoy.hashable_string",
+		model.FilterStatePeerPrincipal,
+		model.FilterStateLocalPrincipal,
+	)
 
 	sniDenialReasonFilter = networkFilter(
 		"envoy.filters.network.set_filter_state",
@@ -158,20 +150,7 @@ var (
 
 	// Shared state must be Hashable so internal connections cannot be reused
 	// across different outer SNIs and spuriously fail the SNI/Host guard.
-	captureSNIFilter = networkFilter(
-		"envoy.filters.network.set_filter_state",
-		mustPack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
-			{
-				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: outerSNIKey},
-				FactoryKey: "istio.hashable_string",
-				Value: &setstatecommonv3.FilterStateValue_FormatString{
-					FormatString: formatString("%REQUESTED_SERVER_NAME%"),
-				},
-				SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
-				SkipIfEmpty:        true,
-			},
-		}}),
-	)
+	captureSNIFilter = buildCaptureSNIFilter("envoy.hashable_string")
 
 	sniDFPFilter = networkFilter("envoy.filters.network.sni_dynamic_forward_proxy", mustPack(&dfpnetworkv3.FilterConfig{
 		DnsCacheConfig: dnsCacheConfig(),
@@ -284,6 +263,12 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
 		ContinueOnListenerFiltersTimeout: true,
 	}
+	if features.EnableSNITrafficPolicy && !b.legacyGateway {
+		mainInternal.ListenerFilters = append(
+			append([]*listenerv3.ListenerFilter{}, inspectorsHTTPFirst...),
+			sniPolicyListenerFilter(),
+		)
+	}
 	mainForward := &listenerv3.Listener{
 		Name: MainForward,
 		ListenerSpecifier: &listenerv3.Listener_InternalListener{
@@ -328,7 +313,21 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 
 func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpConnectionManager, error) {
 	gateway := config.gateway
-	filters := []*hcmv3.HttpFilter{downstreamPeerMetadataFilter, connectAuthorityFilter()}
+	filters := []*hcmv3.HttpFilter{connectAuthorityHTTPFilter}
+	if b.legacyGateway {
+		authority := legacyConnectAuthority
+		if features.EnableSNITrafficPolicy {
+			authority = legacyConnectAuthorityWithAction
+		}
+		filters = []*hcmv3.HttpFilter{legacyPeerMetadataFilter, authority}
+	}
+	if !b.legacyGateway {
+		filters = append(filters, b.connectExtProcFilter(), connectWorkloadFilter())
+		if features.EnableSNITrafficPolicy {
+			filters = append(filters, connectPolicyFilter())
+		}
+	}
+	// Identity-based descriptors must observe the Workload resolved by Porter.
 	if rateLimit := gateway.GetConnectRateLimit(); rateLimit != nil {
 		filter, err := b.localRateLimitFilter(rateLimit)
 		if err != nil {
@@ -364,21 +363,6 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 	return hcm, nil
 }
 
-func buildDownstreamPeerMetadataFilter() *hcmv3.HttpFilter {
-	fields, err := structpb.NewStruct(map[string]any{
-		"downstream_discovery": []any{map[string]any{"workload_discovery": map[string]any{}}},
-		"shared_with_upstream": true,
-	})
-	if err != nil {
-		panic(err)
-	}
-	// wire-visible filter name, part of the Agentio data-plane contract pinned by testdata, never rename.
-	return httpFilter("waypoint_downstream_peer_metadata", mustPack(&udpatypev1.TypedStruct{
-		TypeUrl: "type.googleapis.com/io.istio.http.peer_metadata.Config",
-		Value:   fields,
-	}))
-}
-
 func (b *resourceBuilder) buildForwardHCM(
 	routeName string,
 	config effectiveConfig,
@@ -408,11 +392,6 @@ func (b *resourceBuilder) buildForwardHCM(
 		ImplementationSpecifier:         &dfphttpv3.FilterConfig_DnsCacheConfig{DnsCacheConfig: dnsCacheConfig()},
 		AllowDynamicHostFromFilterState: true,
 	})))
-	if config.telemetry != nil {
-		for _, filter := range config.telemetry.HTTPFilters {
-			filters = append(filters, proto.Clone(filter).(*hcmv3.HttpFilter))
-		}
-	}
 	if terminatedTLS {
 		filters = append(filters, connectProxyTLSIdentityHTTPFilter)
 	}
@@ -435,6 +414,9 @@ func (b *resourceBuilder) buildForwardHCM(
 		},
 	}
 	if config.telemetry != nil {
+		if config.telemetry.HTTPMetrics != nil {
+			hcm.AccessLog = append(hcm.AccessLog, proto.Clone(config.telemetry.HTTPMetrics).(*accesslogv3.AccessLog))
+		}
 		for _, accessLog := range config.telemetry.HTTPAccessLogs {
 			hcm.AccessLog = append(hcm.AccessLog, proto.Clone(accessLog).(*accesslogv3.AccessLog))
 		}
@@ -570,7 +552,7 @@ func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hc
 		ReceivingNamespaces: &extprocv3.MetadataOptions_MetadataNamespaces{Untyped: []string{"agentio.route"}},
 	}
 	attributes := append([]string(nil), provider.GetRequest().GetAttributes()...)
-	for _, attribute := range []string{"filter_state['agentio.workload.name']", "filter_state['agentio.workload.namespace']", "source.address", "destination.address", "destination.port"} {
+	for _, attribute := range []string{model.AttributeWorkloadName, model.AttributeWorkloadNamespace, "source.address", "destination.address", "destination.port"} {
 		found := false
 		for _, existing := range attributes {
 			found = found || existing == attribute
@@ -595,7 +577,87 @@ func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hc
 	})), nil
 }
 
-func headerMode(mode configv1.HeaderSendMode, fallback extprocv3.ProcessingMode_HeaderSendMode) extprocv3.ProcessingMode_HeaderSendMode {
+// CONNECT setup has a separate budget and cannot subscribe to tunnel bytes.
+func (b *resourceBuilder) connectExtProcFilter() *hcmv3.HttpFilter {
+	return httpFilter("envoy.filters.http.ext_proc", b.pack(&extprocv3.ExternalProcessor{
+		GrpcService: &corev3.GrpcService{
+			TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
+				EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{ClusterName: PorterCluster},
+			},
+		},
+		// CONNECT identity and policy resolution must succeed before forwarding.
+		FailureModeAllow: false,
+		MessageTimeout:   durationpb.New(5 * time.Second),
+		ProcessingMode: &extprocv3.ProcessingMode{
+			RequestHeaderMode:   extprocv3.ProcessingMode_SEND,
+			ResponseHeaderMode:  extprocv3.ProcessingMode_SKIP,
+			RequestBodyMode:     extprocv3.ProcessingMode_NONE,
+			ResponseBodyMode:    extprocv3.ProcessingMode_NONE,
+			RequestTrailerMode:  extprocv3.ProcessingMode_SKIP,
+			ResponseTrailerMode: extprocv3.ProcessingMode_SKIP,
+		},
+		RequestAttributes: []string{
+			model.AttributeWorkloadName,
+			model.AttributeWorkloadNamespace,
+			model.AttributeSandboxID,
+			model.AttributePeerIP,
+			model.AttributePeerPrincipal,
+		},
+		MetadataOptions: &extprocv3.MetadataOptions{
+			ReceivingNamespaces: &extprocv3.MetadataOptions_MetadataNamespaces{
+				Untyped: []string{model.GatewayMetadataNamespace},
+			},
+		},
+	}))
+}
+
+// Publish Porter's resolved identity before creating any internal connection.
+// This also fills missing headers from older ztunnels, independently of SNI policy.
+func connectWorkloadFilter() *hcmv3.HttpFilter {
+	config := &setstatehttpv3.Config{}
+	for _, field := range []struct {
+		name string
+		key  string
+	}{
+		{"name", model.FilterStateWorkloadName},
+		{"namespace", model.FilterStateWorkloadNamespace},
+	} {
+		config.OnRequestHeaders = append(config.OnRequestHeaders, &setstatecommonv3.FilterStateValue{
+			Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: field.key},
+			FactoryKey: "envoy.hashable_string",
+			Value: &setstatecommonv3.FilterStateValue_FormatString{
+				FormatString: formatString(
+					"%DYNAMIC_METADATA(" + model.GatewayMetadataNamespace + ":workload:" + field.name + ")%",
+				),
+			},
+			SharedWithUpstream: setstatecommonv3.FilterStateValue_TRANSITIVE,
+			SkipIfEmpty:        true,
+		})
+	}
+	return httpFilter("connect_workload", mustPack(config))
+}
+
+func connectPolicyFilter() *hcmv3.HttpFilter {
+	return httpFilter("connect_sni_policy", mustPack(&setstatehttpv3.Config{
+		OnRequestHeaders: []*setstatecommonv3.FilterStateValue{
+			{
+				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: model.FilterStateSNIPolicy},
+				FactoryKey: "envoy.hashable_string",
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString(sniPolicyMetadataFormat),
+				},
+				SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
+				ReadOnly:           true,
+				SkipIfEmpty:        true,
+			},
+		},
+	}))
+}
+
+func headerMode(
+	mode configv1.HeaderSendMode,
+	fallback extprocv3.ProcessingMode_HeaderSendMode,
+) extprocv3.ProcessingMode_HeaderSendMode {
 	switch mode {
 	case configv1.HeaderSendMode_SEND:
 		return extprocv3.ProcessingMode_SEND
@@ -613,14 +675,24 @@ func (b *resourceBuilder) workloadDownstreamTLS(trustDomain string) *corev3.Tran
 	config := b.pack(&tlsv3.DownstreamTlsContext{
 		RequireClientCertificate: wrapperspb.Bool(true),
 		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{secret("default")},
-			ValidationContextType: &tlsv3.CommonTlsContext_CombinedValidationContext{CombinedValidationContext: &tlsv3.CommonTlsContext_CombinedCertificateValidationContext{
-				DefaultValidationContext: &tlsv3.CertificateValidationContext{MatchTypedSubjectAltNames: []*tlsv3.SubjectAltNameMatcher{{
-					SanType: tlsv3.SubjectAltNameMatcher_URI,
-					Matcher: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "spiffe://" + trustDomain + "/"}},
-				}}},
-				ValidationContextSdsSecretConfig: secret("ROOTCA"),
-			}},
+			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{secret(model.GatewayIdentitySecret)},
+			ValidationContextType: &tlsv3.CommonTlsContext_CombinedValidationContext{
+				CombinedValidationContext: &tlsv3.CommonTlsContext_CombinedCertificateValidationContext{
+					DefaultValidationContext: &tlsv3.CertificateValidationContext{
+						MatchTypedSubjectAltNames: []*tlsv3.SubjectAltNameMatcher{
+							{
+								SanType: tlsv3.SubjectAltNameMatcher_URI,
+								Matcher: &matcherv3.StringMatcher{
+									MatchPattern: &matcherv3.StringMatcher_Prefix{
+										Prefix: "spiffe://" + trustDomain + "/",
+									},
+								},
+							},
+						},
+					},
+					ValidationContextSdsSecretConfig: secret(model.GatewayRootSecret),
+				},
+			},
 			AlpnProtocols: []string{"h2"},
 			TlsParams: &tlsv3.TlsParameters{
 				TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_3,
@@ -628,7 +700,10 @@ func (b *resourceBuilder) workloadDownstreamTLS(trustDomain string) *corev3.Tran
 			},
 		},
 	})
-	return &corev3.TransportSocket{Name: "envoy.transport_sockets.tls", ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: config}}
+	return &corev3.TransportSocket{
+		Name:       "envoy.transport_sockets.tls",
+		ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: config},
+	}
 }
 
 func (b *resourceBuilder) buildTLSTerminateChain(pool *configv1.ConnectionPoolSettings) *listenerv3.FilterChain {
@@ -650,6 +725,10 @@ func (b *resourceBuilder) buildTLSTerminateChain(pool *configv1.ConnectionPoolSe
 		},
 		DisableStatefulSessionResumption: true,
 	})
+	capture, relay := captureSNIFilter, relayDownstreamFilter
+	if b.legacyGateway {
+		capture, relay = legacyCaptureSNI, legacyRelayDownstream
+	}
 	return &listenerv3.FilterChain{
 		Name:                          tlsTerminateChain,
 		TransportSocketConnectTimeout: durationpb.New(15 * time.Second),
@@ -658,22 +737,14 @@ func (b *resourceBuilder) buildTLSTerminateChain(pool *configv1.ConnectionPoolSe
 			ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tlsConfig},
 		},
 		Filters: []*listenerv3.Filter{
-			captureSNIFilter,
-			relayDownstreamFilter,
+			capture,
+			relay,
 			b.tcpProxy(MainForward, pool, nil),
 		},
 	}
 }
 
-// Select a prebuilt variant rather than capturing the feature setting at init.
-func connectAuthorityFilter() *hcmv3.HttpFilter {
-	if features.EnableSNITrafficPolicy {
-		return connectAuthorityWithAction
-	}
-	return connectAuthorityWithoutAction
-}
-
-func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
+func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, legacyAction bool) *hcmv3.HttpFilter {
 	value := func(key, format, factory string, sharing setstatecommonv3.FilterStateValue_SharedWithUpstream) *setstatecommonv3.FilterStateValue {
 		return &setstatecommonv3.FilterStateValue{
 			Key:                &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: key},
@@ -692,7 +763,7 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 		value(
 			connectAuthorityKey,
 			"%REQ(:AUTHORITY)%",
-			"istio.hashable_string",
+			factory,
 			setstatecommonv3.FilterStateValue_ONCE,
 		),
 		value(
@@ -702,15 +773,15 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 			setstatecommonv3.FilterStateValue_ONCE,
 		),
 		value(
-			"io.istio.peer_principal",
+			peerPrincipal,
 			"%DOWNSTREAM_PEER_URI_SAN%",
-			"istio.hashable_string",
+			factory,
 			setstatecommonv3.FilterStateValue_ONCE,
 		),
 		value(
-			"io.istio.local_principal",
+			localPrincipal,
 			"%DOWNSTREAM_LOCAL_URI_SAN%",
-			"istio.hashable_string",
+			factory,
 			setstatecommonv3.FilterStateValue_ONCE,
 		),
 		value(
@@ -726,7 +797,7 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
 		),
 		value(
-			"sandbox.id",
+			model.FilterStateSandboxID,
 			"%REQ(X-AGENTIO-SANDBOX-ID)%",
 			"envoy.string",
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
@@ -734,25 +805,30 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 		// Preserve the ztunnel-attested pod across internal HTTP/TLS hops.
 		// Hashable values keep different source pods out of the same upstream pool.
 		value(
-			"agentio.workload.name",
+			model.FilterStateWorkloadName,
 			"%REQ(X-AGENTIO-WORKLOAD-NAME)%",
-			"istio.hashable_string",
+			factory,
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
 		),
 		value(
-			"agentio.workload.namespace",
+			model.FilterStateWorkloadNamespace,
 			"%REQ(X-AGENTIO-WORKLOAD-NAMESPACE)%",
-			"istio.hashable_string",
+			factory,
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
 		),
 	}
-	if sniPolicy {
+	if factory == "envoy.hashable_string" {
+		// Use the physical HBONE peer, never an application-supplied forwarding header.
+		values = append(values, value(model.FilterStatePeerIP, "%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%",
+			"envoy.string", setstatecommonv3.FilterStateValue_NONE))
+	}
+	if legacyAction {
 		// Hashable so internal upstream pools never reuse another CONNECT
 		// stream's TLS decision; SkipIfEmpty so an absent header leaves no state.
 		// ztunnel sends x-agentio-tls: action=<action>;sni=<name>.
 		values = append(values, &setstatecommonv3.FilterStateValue{
 			Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: tlsActionKey},
-			FactoryKey: "istio.hashable_string",
+			FactoryKey: factory,
 			Value: &setstatecommonv3.FilterStateValue_FormatString{
 				FormatString: formatString(tlsActionHeaderFormat),
 			},
@@ -764,7 +840,17 @@ func buildConnectAuthorityFilter(sniPolicy bool) *hcmv3.HttpFilter {
 	return httpFilter("connect_authority", mustPack(&setstatehttpv3.Config{OnRequestHeaders: values}))
 }
 
-func buildRelayDownstreamFilter() *listenerv3.Filter {
+func buildRelayDownstreamFilter(factory, peerPrincipal, localPrincipal string) *listenerv3.Filter {
+	downstreamRelayKeys := []struct {
+		key     string
+		factory string
+	}{
+		{key: "envoy.filters.listener.original_dst.local_ip"},
+		{key: "envoy.filters.listener.original_dst.remote_ip"},
+		{key: peerPrincipal, factory: factory},
+		{key: localPrincipal, factory: factory},
+		{key: connectAuthorityKey, factory: factory},
+	}
 	values := make([]*setstatecommonv3.FilterStateValue, 0, len(downstreamRelayKeys))
 	for _, relay := range downstreamRelayKeys {
 		values = append(values, &setstatecommonv3.FilterStateValue{
@@ -846,7 +932,9 @@ func tokenBucket(value *configv1.TokenBucket) *typev3.TokenBucket {
 }
 
 func runtimePercent() *corev3.RuntimeFractionalPercent {
-	return &corev3.RuntimeFractionalPercent{DefaultValue: &typev3.FractionalPercent{Numerator: 100, Denominator: typev3.FractionalPercent_HUNDRED}}
+	return &corev3.RuntimeFractionalPercent{
+		DefaultValue: &typev3.FractionalPercent{Numerator: 100, Denominator: typev3.FractionalPercent_HUNDRED},
+	}
 }
 
 func (b *resourceBuilder) tcpProxy(
@@ -870,22 +958,28 @@ func (b *resourceBuilder) tcpProxy(
 	return networkFilter("envoy.filters.network.tcp_proxy", b.pack(config))
 }
 
-func (b *resourceBuilder) applicationTCPFilters(config effectiveConfig, prefix []*listenerv3.Filter, cluster string, pool *configv1.ConnectionPoolSettings) []*listenerv3.Filter {
+func (b *resourceBuilder) applicationTCPFilters(
+	config effectiveConfig,
+	prefix []*listenerv3.Filter,
+	cluster string,
+	pool *configv1.ConnectionPoolSettings,
+) []*listenerv3.Filter {
 	result := append([]*listenerv3.Filter{}, prefix...)
 	var accessLogs []*accesslogv3.AccessLog
 	if config.telemetry != nil {
-		for _, filter := range config.telemetry.TCPFilters {
-			result = append(result, proto.Clone(filter).(*listenerv3.Filter))
-		}
 		accessLogs = config.telemetry.TCPAccessLogs
 	}
 	return append(result, b.tcpProxy(cluster, pool, accessLogs))
 }
 
 // sniTrafficPolicyMatcher preserves gateway exclusions before consulting the
-// ztunnel action, falling back to gateway policy when no action is recognized.
+// listener module decision. Legacy proxies retain their policy-runtime fallback.
 func (b *resourceBuilder) sniTrafficPolicyMatcher(excludeHosts []string) *xdsmatcherv3.Matcher {
-	policy := b.tlsActionMatcher(toMatcher(b.sniPolicyMatcher()))
+	fallback := b.toChain(sniDenyChain)
+	if b.legacyGateway {
+		fallback = toMatcher(b.legacySNIPolicyMatcher())
+	}
+	policy := b.tlsActionMatcher(fallback)
 	if len(excludeHosts) == 0 {
 		return policy
 	}
@@ -949,38 +1043,6 @@ func (b *resourceBuilder) applicationMatcher() *xdsmatcherv3.Matcher {
 	}, b.toChain(forwardTCPChain))
 }
 
-func (b *resourceBuilder) sniPolicyMatcher() *xdsmatcherv3.Matcher {
-	fields := b.structure(map[string]any{
-		"on_tls_termination": chainActionFields(tlsTerminateChain),
-		"on_passthrough":     chainActionFields(forwardTCPChain),
-		"on_deny":            chainActionFields(sniDenyChain),
-		"failure_mode_allow": map[string]any{"runtime_key": "kruise.sni_traffic_policy.failure_mode_allow", "default_value": false},
-	})
-	config := b.pack(&udpatypev1.TypedStruct{TypeUrl: sniPolicyMatcherType, Value: fields})
-	return &xdsmatcherv3.Matcher{
-		MatcherType: &xdsmatcherv3.Matcher_MatcherTree_{MatcherTree: &xdsmatcherv3.Matcher_MatcherTree{
-			Input: serverNameInput,
-			TreeType: &xdsmatcherv3.Matcher_MatcherTree_CustomMatch{CustomMatch: &xdscorev3.TypedExtensionConfig{
-				Name:        sniPolicyMatcherName,
-				TypedConfig: config,
-			}},
-		}},
-		OnNoMatch: b.toChain(forwardTCPChain),
-	}
-}
-
-func chainActionFields(name string) map[string]any {
-	return map[string]any{"action": map[string]any{
-		"name": name,
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/google.protobuf.StringValue",
-			"value": name,
-		},
-	}}
-}
-
-// tlsActionMatcher applies the ztunnel decision carried in the CONNECT
-// headers and defers to the gateway decision when there is none.
 func (b *resourceBuilder) tlsActionMatcher(gatewayDecision *xdsmatcherv3.Matcher_OnMatch) *xdsmatcherv3.Matcher {
 	return exactMatcher(typedExtension("tls-action", b.pack(&matchinginputv3.FilterStateInput{Key: tlsActionKey})),
 		map[string]*xdsmatcherv3.Matcher_OnMatch{
@@ -990,11 +1052,17 @@ func (b *resourceBuilder) tlsActionMatcher(gatewayDecision *xdsmatcherv3.Matcher
 		}, gatewayDecision)
 }
 
-func exactMatcher(input *xdscorev3.TypedExtensionConfig, values map[string]*xdsmatcherv3.Matcher_OnMatch, fallback *xdsmatcherv3.Matcher_OnMatch) *xdsmatcherv3.Matcher {
+func exactMatcher(
+	input *xdscorev3.TypedExtensionConfig,
+	values map[string]*xdsmatcherv3.Matcher_OnMatch,
+	fallback *xdsmatcherv3.Matcher_OnMatch,
+) *xdsmatcherv3.Matcher {
 	return &xdsmatcherv3.Matcher{
 		MatcherType: &xdsmatcherv3.Matcher_MatcherTree_{MatcherTree: &xdsmatcherv3.Matcher_MatcherTree{
-			Input:    input,
-			TreeType: &xdsmatcherv3.Matcher_MatcherTree_ExactMatchMap{ExactMatchMap: &xdsmatcherv3.Matcher_MatcherTree_MatchMap{Map: values}},
+			Input: input,
+			TreeType: &xdsmatcherv3.Matcher_MatcherTree_ExactMatchMap{
+				ExactMatchMap: &xdsmatcherv3.Matcher_MatcherTree_MatchMap{Map: values},
+			},
 		}},
 		OnNoMatch: fallback,
 	}
@@ -1002,7 +1070,11 @@ func exactMatcher(input *xdscorev3.TypedExtensionConfig, values map[string]*xdsm
 
 func (b *resourceBuilder) toChain(name string) *xdsmatcherv3.Matcher_OnMatch {
 	config := b.pack(wrapperspb.String(name))
-	return &xdsmatcherv3.Matcher_OnMatch{OnMatch: &xdsmatcherv3.Matcher_OnMatch_Action{Action: &xdscorev3.TypedExtensionConfig{Name: name, TypedConfig: config}}}
+	return &xdsmatcherv3.Matcher_OnMatch{
+		OnMatch: &xdsmatcherv3.Matcher_OnMatch_Action{
+			Action: &xdscorev3.TypedExtensionConfig{Name: name, TypedConfig: config},
+		},
+	}
 }
 
 func toMatcher(value *xdsmatcherv3.Matcher) *xdsmatcherv3.Matcher_OnMatch {
@@ -1065,4 +1137,21 @@ func workloadSDSConfigSource() *corev3.ConfigSource {
 			}}},
 		}},
 	}
+}
+
+func buildCaptureSNIFilter(factory string) *listenerv3.Filter {
+	return networkFilter(
+		"envoy.filters.network.set_filter_state",
+		mustPack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
+			{
+				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: outerSNIKey},
+				FactoryKey: factory,
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%REQUESTED_SERVER_NAME%"),
+				},
+				SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
+				SkipIfEmpty:        true,
+			},
+		}}),
+	)
 }

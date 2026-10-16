@@ -30,9 +30,8 @@ const (
 	proxyMetadataValuesKey   = "proxyMetadata"
 )
 
-// ProxyConfig is the ztunnel template's small runtime view. It deliberately
-// excludes the Istio MeshConfig/ProxyConfig API: egress-gateway bootstrap keeps
-// its separate wire-compatible PROXY_CONFIG contract in pkg/gatewaydeployer.
+// ProxyConfig is the ztunnel template's small runtime view. Gateway-agent
+// bootstrap settings are configured separately through AGENTIO_GATEWAY_CONFIG.
 type ProxyConfig struct {
 	DiscoveryAddress string
 	InterceptionMode string

@@ -35,8 +35,8 @@ func BenchmarkStaticFilters(b *testing.B) {
 		name  string
 		build func() proto.Message
 	}{
-		{"ConnectAuthority", func() proto.Message { return connectAuthorityFilter() }},
-		{"PeerMetadata", func() proto.Message { return downstreamPeerMetadataFilter }},
+		{"ConnectAuthority", func() proto.Message { return connectAuthorityHTTPFilter }},
+		{"LegacyPeerMetadata", func() proto.Message { return legacyPeerMetadataFilter }},
 		{"SNIHostRBAC", func() proto.Message { return sniHostMatchRBACFilter }},
 		{"ConnectTLSIdentity", func() proto.Message { return connectProxyTLSIdentityHTTPFilter }},
 		{"RelayDownstream", func() proto.Message { return relayDownstreamFilter }},

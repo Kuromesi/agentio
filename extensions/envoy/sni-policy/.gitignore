@@ -1,0 +1,4 @@
+/target/
+/.envoy-sdk/
+/.envoy-sdk.tar.gz
+/tests/__pycache__/

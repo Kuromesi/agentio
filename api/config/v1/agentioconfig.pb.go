@@ -1527,7 +1527,7 @@ type RateLimitEntry struct {
 	//
 	//	filter_state["downstream_peer"].name
 	//	filter_state["downstream_peer"].namespace
-	//	filter_state["io.istio.peer_principal"]
+	//	filter_state["agentio.peer.principal"]
 	Cel           string `protobuf:"bytes,3,opt,name=cel,proto3" json:"cel,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

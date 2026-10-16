@@ -105,8 +105,8 @@ func New(
 		options.ClusterDomain = defaultClusterDomain
 	}
 
-	// Debounce applies at the informer sources; derived collections inherit the batching.
-	sourceOptions := func(name string) []krt.CollectionOption {
+	// Only policy sources debounce. Identity and networking events propagate immediately.
+	policyOptions := func(name string) []krt.CollectionOption {
 		return []krt.CollectionOption{
 			krt.WithName(name),
 			krt.WithStop(stop),
@@ -130,10 +130,10 @@ func New(
 
 	r := &Registry{options: options}
 
-	pods := krt.NewInformer[*corev1.Pod](kubeClient, sourceOptions("pods")...)
-	services := krt.NewInformer[*corev1.Service](kubeClient, sourceOptions("kubernetes-services")...)
-	slices := krt.NewInformer[*discoveryv1.EndpointSlice](kubeClient, sourceOptions("endpoint-slices")...)
-	configMaps := krt.NewInformer[*corev1.ConfigMap](kubeClient, sourceOptions("config-maps")...)
+	pods := krt.NewInformer[*corev1.Pod](kubeClient, derivedOptions("pods")...)
+	services := krt.NewInformer[*corev1.Service](kubeClient, derivedOptions("kubernetes-services")...)
+	slices := krt.NewInformer[*discoveryv1.EndpointSlice](kubeClient, derivedOptions("endpoint-slices")...)
+	configMaps := krt.NewInformer[*corev1.ConfigMap](kubeClient, derivedOptions("config-maps")...)
 	secretNamespace := ""
 	if options.ScopedSecrets {
 		secretNamespace = options.RootNamespace
@@ -147,27 +147,27 @@ func New(
 	trafficPolicyObjects := newTrafficPoliciesCollection(
 		kubeClient,
 		stop,
-		sourceOptions("traffic-policy-objects")...,
+		policyOptions("traffic-policy-objects")...,
 	)
 	globalTrafficObjects := newGlobalTrafficPoliciesCollection(
 		kubeClient,
 		stop,
-		sourceOptions("global-traffic-policy-objects")...,
+		policyOptions("global-traffic-policy-objects")...,
 	)
 	securityProfileObjects := newSecurityProfilesCollection(
 		kubeClient,
 		stop,
-		sourceOptions("security-profile-objects")...,
+		policyOptions("security-profile-objects")...,
 	)
 	globalSecurityObjects := newGlobalSecurityProfilesCollection(
 		kubeClient,
 		stop,
-		sourceOptions("global-security-profile-objects")...,
+		policyOptions("global-security-profile-objects")...,
 	)
 	gatewayInformer.Start(stop)
 	gatewayClassInformer.Start(stop)
-	gatewayObjects := krt.WrapClient(gatewayInformer, sourceOptions("gateway-api-gateways")...)
-	gatewayClassObjects := krt.WrapClient(gatewayClassInformer, sourceOptions("gateway-api-classes")...)
+	gatewayObjects := krt.WrapClient(gatewayInformer, derivedOptions("gateway-api-gateways")...)
+	gatewayClassObjects := krt.WrapClient(gatewayClassInformer, derivedOptions("gateway-api-classes")...)
 
 	r.Pods = pods
 	r.KubernetesServices = services

@@ -225,3 +225,7 @@ app.kubernetes.io/component: extproc
 app.kubernetes.io/name: {{ include "epe.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{- define "gateway.porterImage" -}}
+{{- if .Values.egressGateway.porter.image.digest }}{{ printf "%s@%s" (required "porter image repository is required when digest is set" .Values.egressGateway.porter.image.repository) .Values.egressGateway.porter.image.digest }}{{ else if .Values.egressGateway.porter.image.repository }}{{ printf "%s:%s" .Values.egressGateway.porter.image.repository (.Values.egressGateway.porter.image.tag | default .Values.global.tag) }}{{ else }}{{ printf "%s/%s:%s" .Values.global.hub .Values.egressGateway.porter.image.name (.Values.egressGateway.porter.image.tag | default .Values.global.tag) }}{{ end }}
+{{- end -}}

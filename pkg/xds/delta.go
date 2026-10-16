@@ -117,7 +117,7 @@ func (s *Server) handleRequest(
 		return nil
 	}
 	if !initial && !watch.wildcard && len(request.GetResourceNamesUnsubscribe()) == 0 &&
-		scope.Class == model.ClientEgressGateway {
+		(scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress) {
 		snapshot := s.resources.Snapshot()
 		if view, ok := demandSubscriptionView(snapshot, typeURL, request.GetResourceNamesSubscribe()); ok {
 			return s.generateAndSend(stream, connLog, watch, GenerationRequest{

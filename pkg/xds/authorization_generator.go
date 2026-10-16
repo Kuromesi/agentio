@@ -82,7 +82,7 @@ func authorizationWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, b
 	if scope.Class == model.ClientEgressGateway {
 		return model.WorkloadQuery{AuthorizationRefsOnly: true}, true
 	}
-	query, ok := workloadScopeQuery(scope)
+	query, ok := workloadScopeQuery(&scope)
 	return query, ok
 }
 
