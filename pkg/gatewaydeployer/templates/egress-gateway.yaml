@@ -264,6 +264,8 @@ spec:
         ports:
           - name: health
             containerPort: 9003
+          - name: porter-metrics
+            containerPort: 9004
         readinessProbe:
           grpc: {port: 9003, service: readiness}
           periodSeconds: 5

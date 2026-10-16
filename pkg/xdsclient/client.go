@@ -30,6 +30,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"github.com/prometheus/client_golang/prometheus"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -67,8 +68,11 @@ type Watch struct {
 // its ID may be empty. Watches may be empty. Server-specific identity
 // requirements belong to the consumer.
 type Config struct {
-	Node    *core.Node
-	Watches []Watch
+	// MetricsRegisterer enables built-in metrics when non-nil. Use a registerer
+	// with distinct constant labels when sharing a registry across clients.
+	MetricsRegisterer prometheus.Registerer
+	Node              *core.Node
+	Watches           []Watch
 }
 
 // Resource contains a published value. Value is read-only, including any nested
@@ -109,6 +113,7 @@ type Client struct {
 	wake      chan struct{}
 	running   atomic.Bool
 	connected bool
+	metrics   *clientMetrics
 }
 
 // New creates a client; call Run to start receiving resources.
@@ -135,6 +140,12 @@ func New(conn grpc.ClientConnInterface, cfg Config) (*Client, error) {
 			aliases:         map[string]string{},
 			resourceAliases: map[string][]string{},
 			resources:       map[string]*Resource{},
+		}
+	}
+	if cfg.MetricsRegisterer != nil {
+		c.metrics = newClientMetrics(c)
+		if err := cfg.MetricsRegisterer.Register(c.metrics); err != nil {
+			return nil, fmt.Errorf("register xDS client metrics: %w", err)
 		}
 	}
 	return c, nil

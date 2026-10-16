@@ -16,6 +16,7 @@ spec:
     - ports:
         - port: {{ .Values.agentio.egressGateway.service.ports.mesh }}
         - port: {{ .Values.agentio.egressGateway.service.ports.status }}
+        - port: 9004
         - port: 15020
         - port: 15090
 {{- end }}

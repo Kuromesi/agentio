@@ -23,3 +23,41 @@ make build.porter
 go test ./extensions/porter/...
 docker build -f extensions/porter/docker/Dockerfile -t agentio-porter:dev .
 ```
+
+## Metrics
+
+Porter exposes metrics on `:9004/metrics`, configurable with `--metrics-port`. Prometheus scrapes Porter directly; gateway-agent and its 15020 endpoint are unchanged.
+
+| Metric | Meaning |
+| --- | --- |
+| `agentio_porter_connect_duration_seconds{protocol="tcp\|udp"}` | Histogram from receipt of valid CONNECT headers through response send completion, including identity resolution, discovery waits and policy preparation |
+| `agentio_porter_demand_cache_entries` | Current retained subscription entries across Workload and Sandbox, including in-flight lookups; zero when retention is disabled |
+| `agentio_xds_client_connected` | ADS stream state: 1 when open, 0 when disconnected; does not imply synchronized or ready resources |
+| `agentio_xds_client_demand_wait_duration_seconds` | Histogram of calls that actually waited for discovery, labeled by `resource_type` and `result` |
+| `agentio_xds_client_demand_waiters` | Current waiting demand calls, labeled by `resource_type` |
+
+CONNECT duration excludes waiting for the first gRPC message, Envoy-side processing and tunnel lifetime. Both successful and failed processing attempts contribute samples. The cache gauge reads the existing cache size at scrape time; it counts retained subscriptions, not necessarily ready resources, and adds no per-request tracking.
+
+xdsclient owns the three discovery metrics and enables them when `Config.MetricsRegisterer` is non-nil; Porter supplies its registry. Other consumers can enable them the same way, without callbacks or a separate HTTP server inside xdsclient. Multiple clients sharing a registry must use distinct constant labels, for example `prometheus.WrapRegistererWith(prometheus.Labels{"client": "porter"}, registry)`.
+
+The `resource_type` label is the configured watch's full TypeURL; no resource name or client identity is added. Wait results are `success`, `not_found`, `timeout`, `canceled` or `error`. Immediate results do not contribute duration samples. Concurrent calls for the same resource count separately, and their timers continue across reconnections. The histogram's `_count` can provide completion and timeout rates without a separate counter.
+
+Deployments declare a container port named `porter-metrics`. For Prometheus Operator, apply [the optional Porter PodMonitor](../../manifests/charts/agentio/addons/porter-podmonitor.yaml) and ensure your Prometheus instance selects it. Narrow its namespace and Pod selectors as needed. A separate Porter deployment can use the same named port. Existing gateway Prometheus annotations alone do not collect this endpoint.
+
+Without Prometheus Operator, add a separate scrape job:
+
+```yaml
+- job_name: agentio-porter
+  kubernetes_sd_configs:
+    - role: pod
+  relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: porter-metrics
+    - source_labels: [__meta_kubernetes_namespace]
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+```
+
+The Agentio Grafana dashboard includes CONNECT mean/P95/P99 duration, retained cache entries, ADS connection state, demand wait P95/P99 duration and current demand waiters.

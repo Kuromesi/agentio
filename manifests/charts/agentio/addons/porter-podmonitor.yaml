@@ -1,0 +1,15 @@
+# Optional: requires Prometheus Operator and selection by your Prometheus instance.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: agentio-porter
+  namespace: agentio-system
+  labels:
+    app.kubernetes.io/name: agentio-porter
+spec:
+  namespaceSelector:
+    any: true
+  selector: {}
+  podMetricsEndpoints:
+    - port: porter-metrics
+      path: /metrics

@@ -110,6 +110,9 @@ func TestIdleTTL(t *testing.T) {
 		}()
 		lookup(t, cache, "workload", "a")
 		lease := source.leases[key{"workload", "a"}]
+		if cache.Len() != 1 {
+			t.Fatal("retained entry not counted")
+		}
 		time.Sleep(40 * time.Second)
 		lookup(t, cache, "workload", "a")
 		time.Sleep(40 * time.Second)
@@ -122,6 +125,9 @@ func TestIdleTTL(t *testing.T) {
 		synctest.Wait()
 		if !lease.released.Load() {
 			t.Fatal("idle entry retained without traffic, or update refreshed TTL")
+		}
+		if cache.Len() != 0 {
+			t.Fatal("expired entry still counted")
 		}
 		lookup(t, cache, "workload", "a")
 		if source.acquisitions != 2 {

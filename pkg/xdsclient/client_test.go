@@ -23,6 +23,8 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -81,13 +83,25 @@ func TestDemandUpdateRemovalAndDisconnect(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	c, err := New(conn, Config{Node: &core.Node{Id: "test"}, Watches: []Watch{{TypeURL: testType}}})
+	c, err := New(
+		conn,
+		Config{
+			Node:              &core.Node{Id: "test"},
+			Watches:           []Watch{{TypeURL: testType}},
+			MetricsRegisterer: prometheus.NewRegistry(),
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if testutil.ToFloat64(c.metrics.connected) != 0 {
+		t.Fatal("connected before Run")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	runDone := make(chan struct{})
 	go func() {
+		defer close(runDone)
 		if err := c.Run(ctx); err != nil {
 			t.Error(err)
 		}
@@ -143,6 +157,9 @@ func TestDemandUpdateRemovalAndDisconnect(t *testing.T) {
 	if err != nil || ack.ResponseNonce != "1" || ack.ErrorDetail != nil {
 		t.Fatalf("ack %v %v", ack, err)
 	}
+	if testutil.ToFloat64(c.metrics.connected) != 1 {
+		t.Fatal("open stream not reflected in metric")
+	}
 	if len(c.Snapshot().Resources[testType]) != 1 {
 		t.Fatal("demand returned before cache publication")
 	}
@@ -166,6 +183,11 @@ func TestDemandUpdateRemovalAndDisconnect(t *testing.T) {
 		default:
 			time.Sleep(time.Millisecond)
 		}
+	}
+	cancel()
+	<-runDone
+	if testutil.ToFloat64(c.metrics.connected) != 0 {
+		t.Fatal("connected after shutdown")
 	}
 }
 
