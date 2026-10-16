@@ -17,6 +17,7 @@ package xds
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -94,7 +95,39 @@ func (g WorkloadGenerator) generateDirectWorkloads(request GenerationRequest) (G
 		for _, resource := range projected {
 			selected[resource.XDSName] = resource
 		}
-		return diffSelected(request.Subscription, selected), nil
+		delta := diffSelected(request.Subscription, selected)
+		// Explicit demands must receive a fresh resource or an explicit removal,
+		// even after the client released a deleted/evicted subscription. Resolve
+		// aliases and Services through the same scope-aware selection as generation.
+		removed := sets.New(delta.Removed...)
+		sent := sets.NewWithLength[string](len(delta.Resources))
+		for _, resource := range delta.Resources {
+			sent.Insert(resource.XDSName)
+		}
+		for _, name := range request.SubscribedNames {
+			if name == "*" {
+				continue
+			}
+			found := false
+			for _, address := range selectWorkloadResources(request.Scope, request.Snapshot, model.AddressType, []string{name}) {
+				if resource, ok := selected[address.XDSName]; ok {
+					if !sent.Contains(resource.XDSName) {
+						delta.Resources = append(delta.Resources, resource)
+						sent.Insert(resource.XDSName)
+					}
+					found = true
+				}
+			}
+			if !found {
+				removed.Insert(name)
+			}
+		}
+		sort.Slice(
+			delta.Resources,
+			func(i, j int) bool { return delta.Resources[i].XDSName < delta.Resources[j].XDSName },
+		)
+		delta.Removed = sets.SortedList(removed)
+		return delta, nil
 	}
 	return projectDelta(generateWDSIncremental(sourceRequest, true))
 }
