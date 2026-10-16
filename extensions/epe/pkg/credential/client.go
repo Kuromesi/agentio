@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	log "sigs.k8s.io/controller-runtime/pkg/log"
@@ -76,12 +77,12 @@ type credentialResponse struct {
 	ApiKey    string    `json:"apiKey,omitempty"`
 	StsToken  *stsToken `json:"stsToken,omitempty"`
 
-	// CacheExpiresInSeconds is how long this apiKey may be cached, in seconds.
-	// Set only for credentialType=apiKey.
+	// CacheExpiresInSeconds is the provider's optional cache lifetime in seconds.
+	// For STS it additionally caps, but never replaces, the token expiration.
 	CacheExpiresInSeconds int64 `json:"cacheExpiresInSeconds,omitempty"`
 }
 
-// cacheTTL returns the lifetime the provider declared for this apiKey, or 0 when
+// cacheTTL returns the lifetime the provider declared for this credential, or 0 when
 // it declared none.
 func (r *credentialResponse) cacheTTL() time.Duration {
 	if r.CacheExpiresInSeconds <= 0 {
@@ -102,6 +103,14 @@ type Client struct {
 	cache       *tokencache.Cache
 	stsCache    *tokencache.STSCache
 	oauth2Cache *oauth2Cache
+
+	invalidationWindow time.Duration
+	invalidationMaxTTL time.Duration
+
+	// Lock order is refreshMu, then the individual cache's lock. Never held over IO.
+	refreshMu sync.Mutex
+	refresh   map[string]refreshState
+	now       func() time.Time
 }
 
 // CloseIdleConnections retires this client's idle pool without interrupting
@@ -112,6 +121,19 @@ func (c *Client) CloseIdleConnections() {
 	}
 }
 
+// Option customizes a Client.
+type Option func(*Client)
+
+// WithInvalidationCachePolicy sets the post-invalidation
+// window and TTL limit (defaults: 30s and 5s). Both must be positive; otherwise
+// invalidation still clears caches but subsequent entries use their normal TTL.
+func WithInvalidationCachePolicy(window, maxTTL time.Duration) Option {
+	return func(c *Client) {
+		c.invalidationWindow = window
+		c.invalidationMaxTTL = maxTTL
+	}
+}
+
 // NewClient constructs a provider instance without consulting process
 // environment. Its connection pool and caches belong to this configuration version.
 func NewClient(
@@ -119,14 +141,23 @@ func NewClient(
 	client *http.Client,
 	cache *tokencache.Cache,
 	sts *tokencache.STSCache,
+	opts ...Option,
 ) *Client {
-	return &Client{
-		providerURL: endpoint,
-		httpClient:  client,
-		cache:       cache,
-		stsCache:    sts,
-		oauth2Cache: newOAuth2Cache(tokencache.DefaultMaxSize),
+	c := &Client{
+		invalidationWindow: 30 * time.Second,
+		invalidationMaxTTL: 5 * time.Second,
+		refresh:            make(map[string]refreshState),
+		now:                time.Now,
+		providerURL:        endpoint,
+		httpClient:         client,
+		cache:              cache,
+		stsCache:           sts,
+		oauth2Cache:        newOAuth2Cache(tokencache.DefaultMaxSize),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // NewHTTPClient constructs the HTTP client used to call the credential
@@ -320,18 +351,24 @@ func (c *Client) GetTokenWithExtraMetadata(
 	extraMetadata map[string]any,
 ) (string, error) {
 	logger := log.FromContext(ctx)
-	cacheProviderName, err := providerCacheKey(credentialProviderName, extraMetadata)
+	key, err := credentialCacheKey(credentialProviderName, sandboxClientID, extraMetadata)
 	if err != nil {
 		return "", err
 	}
 
+	c.refreshMu.Lock()
 	if c.cache != nil {
-		if token, ok := c.cache.Get(cacheProviderName, sandboxClientID); ok {
+		if token, ok := c.cache.Get(key); ok {
+			c.refreshMu.Unlock()
 			logger.V(logging.DEBUG).Info("token retrieved from cache",
 				"credentialProvider", credentialProviderName)
 			return token, nil
 		}
 	}
+
+	generation := c.beginFill(credentialProviderName)
+	c.refreshMu.Unlock()
+	defer c.finishFill(credentialProviderName)
 
 	credResp, err := c.getCredential(
 		ctx,
@@ -349,9 +386,11 @@ func (c *Client) GetTokenWithExtraMetadata(
 		return "", fmt.Errorf("empty apiKey returned from credential provider")
 	}
 
-	if c.cache != nil {
-		c.cache.SetWithTTL(cacheProviderName, sandboxClientID, credResp.ApiKey, credResp.cacheTTL())
+	c.refreshMu.Lock()
+	if c.cache != nil && generation == c.generation(credentialProviderName) {
+		c.cache.SetWithTTL(key, credResp.ApiKey, credResp.cacheTTL(), c.maxTTL(credentialProviderName))
 	}
+	c.refreshMu.Unlock()
 
 	logger.V(logging.DEBUG).Info("token retrieved successfully",
 		"credentialProvider", credentialProviderName,
@@ -379,13 +418,15 @@ func (c *Client) GetSTSCredentialWithExtraMetadata(
 	extraMetadata map[string]any,
 ) (STSCredential, error) {
 	logger := log.FromContext(ctx)
-	cacheProviderName, err := providerCacheKey(credentialProviderName, extraMetadata)
+	key, err := credentialCacheKey(credentialProviderName, sandboxClientID, extraMetadata)
 	if err != nil {
 		return STSCredential{}, err
 	}
 
+	c.refreshMu.Lock()
 	if c.stsCache != nil {
-		if entry, ok := c.stsCache.Get(cacheProviderName, sandboxClientID); ok {
+		if entry, ok := c.stsCache.Get(key); ok {
+			c.refreshMu.Unlock()
 			logger.V(logging.DEBUG).Info("STS credential retrieved from cache",
 				"credentialProvider", credentialProviderName)
 			return STSCredential{
@@ -395,6 +436,10 @@ func (c *Client) GetSTSCredentialWithExtraMetadata(
 			}, nil
 		}
 	}
+
+	generation := c.beginFill(credentialProviderName)
+	c.refreshMu.Unlock()
+	defer c.finishFill(credentialProviderName)
 
 	credResp, err := c.getCredential(
 		ctx,
@@ -418,18 +463,25 @@ func (c *Client) GetSTSCredentialWithExtraMetadata(
 		SecurityToken:   tok.SecurityToken,
 	}
 
-	if c.stsCache != nil && tok.Expiration != "" {
+	c.refreshMu.Lock()
+	if c.stsCache != nil && generation == c.generation(credentialProviderName) && tok.Expiration != "" {
 		if exp, parseErr := time.Parse(time.RFC3339, tok.Expiration); parseErr == nil {
-			c.stsCache.SetWithExpiration(cacheProviderName, sandboxClientID, tokencache.STSCacheEntry{
+			maxTTL := c.maxTTL(credentialProviderName)
+			if providerTTL := credResp.cacheTTL(); providerTTL > 0 && (maxTTL == 0 || providerTTL < maxTTL) {
+				maxTTL = providerTTL
+			}
+			c.stsCache.SetWithExpiration(key, tokencache.STSCacheEntry{
 				AccessKeyID:     cred.AccessKeyID,
 				AccessKeySecret: cred.AccessKeySecret,
 				SecurityToken:   cred.SecurityToken,
-			}, exp)
+			}, exp, maxTTL)
 		} else {
 			logger.V(logging.DEFAULT).Info("skipping STS token cache: unparsable expiration",
 				"error", parseErr, "credentialProvider", credentialProviderName, "expiration", tok.Expiration)
 		}
 	}
+
+	c.refreshMu.Unlock()
 
 	logger.V(logging.DEBUG).Info("STS credential retrieved successfully",
 		"credentialProvider", credentialProviderName)
@@ -437,14 +489,16 @@ func (c *Client) GetSTSCredentialWithExtraMetadata(
 	return cred, nil
 }
 
-func providerCacheKey(providerName string, extraMetadata map[string]any) (string, error) {
+func credentialCacheKey(providerName, resourceID string, extraMetadata map[string]any) (tokencache.Key, error) {
+	key := tokencache.Key{ProviderName: providerName, ResourceID: resourceID}
 	if len(extraMetadata) == 0 {
-		return providerName, nil
+		return key, nil
 	}
 	canonical, err := json.Marshal(extraMetadata)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal credential extraMetadata for cache key: %w", err)
+		return key, fmt.Errorf("failed to marshal credential extraMetadata for cache key: %w", err)
 	}
 	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%s#%x", providerName, sum), nil
+	key.MetadataHash = fmt.Sprintf("%x", sum)
+	return key, nil
 }

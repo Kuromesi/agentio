@@ -37,6 +37,10 @@ import (
 // provider, including providers added later through EPEConfig. Cache instances
 // remain private to each provider configuration version.
 var (
+	invalidationWindow = env.Register("CREDENTIAL_CACHE_INVALIDATION_WINDOW", 30*time.Second,
+		"Duration after invalidation to limit credential cache TTL; non-positive disables the policy").Get()
+	invalidationMaxTTL = env.Register("CREDENTIAL_CACHE_INVALIDATION_MAX_TTL", 5*time.Second,
+		"Maximum credential cache TTL during the invalidation window; non-positive disables the policy").Get()
 	cacheTTL = env.Register("TOKEN_CACHE_TTL", 15*time.Minute,
 		"Fallback time-to-live for cached credential provider API keys, used when the provider's response omits "+
 			"cacheExpiresInSeconds; a non-positive value disables caching").Get()
@@ -50,11 +54,12 @@ var (
 )
 
 type instance struct {
-	fingerprint [32]byte
-	client      *http.Client
-	httpCallout *httpEndpoint
-	credential  tokentransform.CredentialSource
-	err         error
+	fingerprint      [32]byte
+	client           *http.Client
+	httpCallout      *httpEndpoint
+	credentialClient *credential.Client
+	credential       tokentransform.CredentialSource
+	err              error
 }
 type snapshot struct {
 	providers         map[string]*instance
@@ -171,7 +176,9 @@ func build(p *configv1.ExtensionProvider, fingerprint [32]byte, material TLSMate
 			client,
 			tokencache.NewCache(cacheTTL, cacheMaxSize),
 			tokencache.NewSTSCache(stsCacheMaxSize),
+			credential.WithInvalidationCachePolicy(invalidationWindow, invalidationMaxTTL),
 		)
+		i.credentialClient = credentials
 		i.credential = tokentransform.NewProviderSource(credentials, credentials)
 	}
 	return i
@@ -205,4 +212,28 @@ func (r *Registry) Fetch(ctx context.Context, ref tokentransform.Ref) (tokentran
 		return tokentransform.Credential{}, err
 	}
 	return p.credential.Fetch(ctx, ref)
+}
+
+// InvalidateCredentials invalidates a remote credentialProviderName across the
+// current provider connections. Retired configuration versions remain isolated.
+func (r *Registry) InvalidateCredentials(req credential.InvalidationRequest) (credential.InvalidationResult, error) {
+	if req.ProviderName == "" {
+		return credential.InvalidationResult{}, fmt.Errorf("providerName is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result credential.InvalidationResult
+	for _, p := range r.current.providers {
+		if p.credentialClient == nil {
+			continue
+		}
+		removed, err := p.credentialClient.InvalidateCredentials(req)
+		if err != nil {
+			return result, err
+		}
+		result.APIKeyEntries += removed.APIKeyEntries
+		result.STSEntries += removed.STSEntries
+		result.OAuth2Entries += removed.OAuth2Entries
+	}
+	return result, nil
 }

@@ -52,35 +52,41 @@ func (c *Cache) SetClock(now func() time.Time) {
 	c.store.SetClock(now)
 }
 
-// Get retrieves a token from the cache by credentialProviderName and resourceID.
+// Get retrieves a token by provider, resource and metadata hash.
 // Returns the token and true if found and not expired, or ("", false) otherwise.
 // On a successful get, the entry is moved to the front of the LRU list.
-func (c *Cache) Get(credentialProviderName, resourceID string) (string, bool) {
-	return c.store.Get(credentialProviderName, resourceID)
+func (c *Cache) Get(key Key) (string, bool) {
+	return c.store.Get(key)
 }
 
 // Set adds or updates a token in the cache, expiring after the cache's
 // configured TTL. If the cache is at capacity, the least recently used entry
 // is evicted.
-func (c *Cache) Set(credentialProviderName, resourceID, token string) {
-	c.SetWithTTL(credentialProviderName, resourceID, token, 0)
+func (c *Cache) Set(key Key, token string) {
+	c.SetWithTTL(key, token, 0, 0)
 }
 
 // SetWithTTL adds or updates a token that expires after ttl. A non-positive ttl
-// uses the cache's configured TTL. No safety margin is subtracted.
-func (c *Cache) SetWithTTL(credentialProviderName, resourceID, token string, ttl time.Duration) {
+// uses the cache's configured TTL. A positive maxTTL caps that resolved lifetime.
+// No safety margin is subtracted; a non-positive resolved TTL remains disabled.
+func (c *Cache) SetWithTTL(key Key, token string, ttl, maxTTL time.Duration) {
 	if ttl <= 0 {
 		ttl = c.ttl
 	}
-	c.store.SetWithTTL(credentialProviderName, resourceID, token, ttl)
+	c.store.SetWithTTL(key, token, ttl, maxTTL)
 }
 
 // Delete removes an entry from the cache.
-func (c *Cache) Delete(credentialProviderName, resourceID string) {
-	c.store.Delete(credentialProviderName, resourceID)
+func (c *Cache) Delete(key Key) {
+	c.store.Delete(key)
 }
 
 // Len returns the current number of entries in the cache.
 func (c *Cache) Len() int {
 	return c.store.Len()
+}
+
+// Invalidate removes entries matching providerName.
+func (c *Cache) Invalidate(providerName string) int {
+	return c.store.Invalidate(providerName)
 }

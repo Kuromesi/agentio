@@ -92,7 +92,13 @@ func (c *oauth2Cache) get(identityToken string, request OAuth2Request) (*OAuth2R
 	return &result, true
 }
 
-func (c *oauth2Cache) set(identityToken string, request OAuth2Request, result OAuth2Response, startedAt time.Time) {
+func (c *oauth2Cache) set(
+	identityToken string,
+	request OAuth2Request,
+	result OAuth2Response,
+	startedAt time.Time,
+	maxTTL time.Duration,
+) {
 	const maxLifetimeSeconds = math.MaxInt64 / int64(time.Second)
 	if result.HTTPStatus != http.StatusOK || result.Status != OAuth2StatusReady ||
 		result.AccessToken == "" || strings.IndexFunc(result.AccessToken, func(c rune) bool { return c < 0x21 || c == 0x7f }) >= 0 ||
@@ -104,6 +110,9 @@ func (c *oauth2Cache) set(identityToken string, request OAuth2Request, result OA
 	}
 	// Taking the minimum before duration conversion also bounds a very large cache TTL.
 	cacheTTL := time.Duration(min(result.CacheExpiresInSeconds, result.AccessTokenExpiresInSeconds)) * time.Second
+	if maxTTL > 0 && cacheTTL > maxTTL {
+		cacheTTL = maxTTL
+	}
 	entry := oauth2CacheEntry{
 		response:       result,
 		cacheExpiresAt: startedAt.Add(cacheTTL),
@@ -124,4 +133,17 @@ func (c *oauth2Cache) invalidate(request OAuth2Request) {
 			c.store.Remove(key)
 		}
 	}
+}
+
+func (c *oauth2Cache) invalidateProvider(providerName string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, key := range c.store.Keys() {
+		if key.credentialProviderName == providerName {
+			c.store.Remove(key)
+			n++
+		}
+	}
+	return n
 }
