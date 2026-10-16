@@ -93,11 +93,25 @@ agentio:
     env: {}
   egressGateway:
     mode: static
+    # First-party CONNECT processing; independent of epe.mode and sandboxExtProc.
+    porter:
+      # Shared across Workload and Sandbox demands; zero disables each policy.
+      cache:
+        idleTTL: 1m
+        maxEntries: 10000
+      image:
+        repository: ""
+        name: agentio-porter
+        tag: ""
+        digest: ""
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {memory: 256Mi}
     nameOverride: agentio-egress
     fullnameOverride: ""
     image:
       repository: ""
-      name: proxyv2
+      name: agentio-gateway
       tag: ""
       digest: ""
     tokenAudience: agentio-ca
@@ -127,10 +141,9 @@ agentio:
       enabled: true
       minAvailable: 1
     terminationGracePeriodSeconds: 30
+    agentConfig: {}
     statsFlushInterval: ""
     statsEvictionInterval: ""
-    sniTrafficPolicy:
-      enabled: false
     env: {}
     podAnnotations: {}
     podLabels: {}

@@ -30,7 +30,7 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 	copyTestTree(t, repositoryAgentioChart(t), source)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	images := []string{}
-	for _, name := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "proxyv2"} {
+	for _, name := range []string{"agentiod", "agentio-epe", "ztunnel", "install-cni", "proxy-init", "agentio-gateway", "agentio-porter"} {
 		images = append(images, "docker.io/openkruise/"+name+"@"+digest)
 	}
 	if output, err := exec.Command("../prepare-release-chart.sh", append([]string{source, "1.2.3"}, images...)...).
@@ -136,7 +136,7 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 					"global":        map[string]any{"registry": test.globalRegistry},
 					"agentiod":      map[string]any{"image": imageValues},
 					"epe":           map[string]any{"mode": "managed", "image": imageValues},
-					"egressGateway": map[string]any{"mode": "static", "image": imageValues},
+					"egressGateway": map[string]any{"mode": "static", "image": imageValues, "porter": map[string]any{"image": imageValues}},
 				},
 			}
 			controllerValues := map[string]any{
@@ -151,7 +151,7 @@ func TestApplyReleasedBundlePreservesChartImageRegistry(t *testing.T) {
 				values map[string]any
 				names  []string
 			}{
-				{manager, test.managerPrefix, managerValues, []string{"agentiod", "agentio-epe", "proxyv2"}},
+				{manager, test.managerPrefix, managerValues, []string{"agentiod", "agentio-epe", "agentio-gateway", "agentio-porter"}},
 				{controller, test.controllerPrefix, controllerValues, []string{"ztunnel", "proxy-init"}},
 			} {
 				all := ""

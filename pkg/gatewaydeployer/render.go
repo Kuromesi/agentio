@@ -69,7 +69,11 @@ func (r *renderer) update(name, content string, values map[string]any, proxyConf
 
 // Publish templates and values as one snapshot; a malformed template must not
 // leave one data plane using a different configuration generation.
-func (r *renderer) updateTemplates(contents map[string]string, values map[string]any, proxyConfig *meshv1alpha1.ProxyConfig) error {
+func (r *renderer) updateTemplates(
+	contents map[string]string,
+	values map[string]any,
+	proxyConfig *meshv1alpha1.ProxyConfig,
+) error {
 	templates := make(map[string]*template.Template, len(contents))
 	for name, content := range contents {
 		t, err := template.New(name).Funcs(templateFuncs()).Parse(content)
@@ -96,7 +100,11 @@ type derivedInput struct {
 	Values      map[string]any
 }
 
-func newRenderer(values func() map[string]any, proxyConfig *meshv1alpha1.ProxyConfig, trustDomain string) (*renderer, error) {
+func newRenderer(
+	values func() map[string]any,
+	proxyConfig *meshv1alpha1.ProxyConfig,
+	trustDomain string,
+) (*renderer, error) {
 	r := &renderer{}
 	r.state.Store(&renderState{
 		values:      values(),
@@ -126,7 +134,13 @@ func (r *renderer) Render(templateName string, input TemplateInput) ([]string, e
 	}
 	values := state.values
 	proxyConfig := proto.Clone(state.proxyConfig).(*meshv1alpha1.ProxyConfig)
-	in := derivedInput{TemplateInput: input, ProxyImage: proxyImage(values), ProxyConfig: proxyConfig, TrustDomain: state.trustDomain, Values: values}
+	in := derivedInput{
+		TemplateInput: input,
+		ProxyImage:    proxyImage(values),
+		ProxyConfig:   proxyConfig,
+		TrustDomain:   state.trustDomain,
+		Values:        values,
+	}
 	var b bytes.Buffer
 	if err := t.Execute(&b, in); err != nil {
 		return nil, err
@@ -332,7 +346,8 @@ func cleanProxyConfig(msg proto.Message) proto.Message {
 		pc.ControlPlaneAuthPolicy = 0
 	}
 	if x, ok := pc.GetClusterName().(*meshv1alpha1.ProxyConfig_ServiceCluster); ok {
-		if dx, ok := defaults.GetClusterName().(*meshv1alpha1.ProxyConfig_ServiceCluster); ok && x.ServiceCluster == dx.ServiceCluster {
+		if dx, ok := defaults.GetClusterName().(*meshv1alpha1.ProxyConfig_ServiceCluster); ok &&
+			x.ServiceCluster == dx.ServiceCluster {
 			pc.ClusterName = nil
 		}
 	}
@@ -465,7 +480,12 @@ func extractInfrastructureLabels(gw gatewayv1.Gateway) map[string]string {
 func extractInfrastructureAnnotations(gw gatewayv1.Gateway) map[string]string {
 	return extractInfrastructureMetadata(gw.Spec.Infrastructure, false, gw)
 }
-func extractInfrastructureMetadata(infra *gatewayv1.GatewayInfrastructure, labels bool, gw gatewayv1.Gateway) map[string]string {
+
+func extractInfrastructureMetadata(
+	infra *gatewayv1.GatewayInfrastructure,
+	labels bool,
+	gw gatewayv1.Gateway,
+) map[string]string {
 	out := map[string]string{}
 	// Unset fields inherit Gateway metadata even when parametersRef is set.
 	if infra != nil && labels && infra.Labels != nil {
@@ -510,7 +530,7 @@ func proxyImage(values map[string]any) string {
 	if v, ok := p["imageType"]; ok {
 		imageType = fmt.Sprint(v)
 	}
-	image := "proxyv2"
+	image := "agentio-gateway"
 	if p["image"] != nil && fmt.Sprint(p["image"]) != "" {
 		image = fmt.Sprint(p["image"])
 	}

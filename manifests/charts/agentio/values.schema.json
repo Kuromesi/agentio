@@ -405,6 +405,47 @@
               ]
             }
           }
+        },
+        "porter": {
+          "type": "object",
+          "properties": {
+            "cache": {
+              "type": "object",
+              "properties": {
+                "idleTTL": {
+                  "type": "string"
+                },
+                "maxEntries": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "tag": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string"
+                }
+              }
+            },
+            "resources": {
+              "type": "object"
+            }
+          }
+        },
+        "agentConfig": {
+          "type": "object",
+          "description": "gateway-agent runtime configuration (AGENTIO_GATEWAY_CONFIG)."
         }
       }
     },

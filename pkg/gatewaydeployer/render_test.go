@@ -175,7 +175,11 @@ func TestExtractServicePortsAddsStatusPortAndDedupes(t *testing.T) {
 	gw := gatewayv1.Gateway{Spec: gatewayv1.GatewaySpec{Listeners: []gatewayv1.Listener{
 		{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
 		{Name: "http-dup", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
-		{Name: gatewayv1.SectionName("very." + strings.Repeat("x", 70)), Port: 443, Protocol: gatewayv1.HTTPSProtocolType},
+		{
+			Name:     gatewayv1.SectionName("very." + strings.Repeat("x", 70)),
+			Port:     443,
+			Protocol: gatewayv1.HTTPSProtocolType,
+		},
 	}}}
 	ports := extractServicePorts(gw)
 	if ports[0].Name != "status-port" || ports[0].Port != 15021 {
@@ -292,7 +296,8 @@ func TestRenderIgnoresProxyImageAnnotation(t *testing.T) {
 			continue
 		}
 		imageLines++
-		if trimmed != `image: "example.com/agentio/proxyv2:1.0.0-test"` {
+		if trimmed != `image: "example.com/agentio/proxyv2:1.0.0-test"` &&
+			trimmed != `image: "agentio/agentio-porter:test"` {
 			t.Fatalf("container image not derived from values: %s", trimmed)
 		}
 	}
@@ -301,7 +306,7 @@ func TestRenderIgnoresProxyImageAnnotation(t *testing.T) {
 	}
 }
 
-func TestRenderEnablesPolicyStoreWhenSNIEnabled(t *testing.T) {
+func TestRenderIncludesPorterWhenSNIEnabled(t *testing.T) {
 	overlay := mergeMaps(parityValuesOverlay(), map[string]any{
 		"agentio": map[string]any{"env": map[string]any{
 			"AGENTIO_ENABLE_SNI_TRAFFIC_POLICY": true,
@@ -313,7 +318,9 @@ func TestRenderEnablesPolicyStoreWhenSNIEnabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "agentio-egress",
-			Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+			Listeners: []gatewayv1.Listener{
+				{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")},
+			},
 		},
 	}
 	input := buildTemplateInput(gw, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, "")
@@ -323,11 +330,11 @@ func TestRenderEnablesPolicyStoreWhenSNIEnabled(t *testing.T) {
 	}
 	got := strings.Join(docs, "\n---\n")
 	for _, want := range []string{
-		"name: PEER_METADATA_DISCOVERY\n          value: \"true\"",
-		"name: ENABLE_POLICY_STORE\n          value: \"true\"",
+		"name: agentio-porter",
+		"--grpc-port=9002",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("rendered gateway does not advertise the SNI policy runtime; want %q in:\n%s", want, got)
+			t.Fatalf("rendered gateway does not include Porter; want %q in:\n%s", want, got)
 		}
 	}
 }
@@ -339,15 +346,21 @@ func TestRenderUsesAgentioProxyContainerName(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "agentio-egress",
-			Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+			Listeners: []gatewayv1.Listener{
+				{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")},
+			},
 		},
 	}
-	docs, err := rend.Render(egressGatewayTemplateName, buildTemplateInput(*gw, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""))
+	docs, err := rend.Render(
+		egressGatewayTemplateName,
+		buildTemplateInput(*gw, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(docs, "\n---\n")
-	if !strings.Contains(got, "\n      - name: agentio-proxy\n") || strings.Contains(got, "\n      - name: istio-proxy\n") {
+	if !strings.Contains(got, "\n      - name: agentio-proxy\n") ||
+		strings.Contains(got, "\n      - name: istio-proxy\n") {
 		t.Fatalf("rendered gateway does not use agentio-proxy:\n%s", got)
 	}
 }
@@ -387,10 +400,15 @@ func TestRenderPrefersEgressGatewayValuesAndAcceptsLegacyWaypointValues(t *testi
 				ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
 				Spec: gatewayv1.GatewaySpec{
 					GatewayClassName: "agentio-egress",
-					Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+					Listeners: []gatewayv1.Listener{
+						{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")},
+					},
 				},
 			}
-			docs, err := rend.Render(egressGatewayTemplateName, buildTemplateInput(*gw, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""))
+			docs, err := rend.Render(
+				egressGatewayTemplateName,
+				buildTemplateInput(*gw, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -410,10 +428,15 @@ func TestRenderUsesConfiguredTokenAudience(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "egress", Namespace: "demo", UID: "uid-egress"},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "agentio-egress",
-			Listeners:        []gatewayv1.Listener{{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")}},
+			Listeners: []gatewayv1.Listener{
+				{Name: "mesh", Port: 15008, Protocol: gatewayv1.ProtocolType("HBONE")},
+			},
 		},
 	}
-	docs, err := renderer.Render(egressGatewayTemplateName, buildTemplateInput(gateway, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""))
+	docs, err := renderer.Render(
+		egressGatewayTemplateName,
+		buildTemplateInput(gateway, builtinClasses["agentio-egress"], "test-cluster", parityKubeVersion, ""),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +502,8 @@ func TestSanitizeListenerNameForPort(t *testing.T) {
 
 func TestTemplateFuncReviewFindings(t *testing.T) {
 	funcs := templateFuncs()
-	if contains := funcs["contains"].(func(string, string) bool); !contains("needle", "haystack needle") || contains("haystack needle", "needle") {
+	if contains := funcs["contains"].(func(string, string) bool); !contains("needle", "haystack needle") ||
+		contains("haystack needle", "needle") {
 		t.Fatal("contains does not use upstream needle, haystack order")
 	}
 	if got := upstreamIndent(2, "a\nb"); got != "a\n  b" {
@@ -507,7 +531,11 @@ func TestTemplateFuncReviewFindings(t *testing.T) {
 }
 
 func TestOmitNilRecursesThroughMapsAndSlices(t *testing.T) {
-	in := map[string]any{"drop": nil, "nested": map[string]any{"x": nil, "y": "z"}, "slice": []any{nil, map[string]any{"n": nil}, "keep"}}
+	in := map[string]any{
+		"drop":   nil,
+		"nested": map[string]any{"x": nil, "y": "z"},
+		"slice":  []any{nil, map[string]any{"n": nil}, "keep"},
+	}
 	got := omitNil(in)
 	want := map[string]any{"nested": map[string]any{"y": "z"}, "slice": []any{"keep"}}
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -530,7 +558,8 @@ func TestProtoToJSONCleansDefaultProxyConfig(t *testing.T) {
 	if pc.BinaryPath != "/usr/local/bin/envoy" {
 		t.Fatalf("BinaryPath = %q, want %q", pc.BinaryPath, "/usr/local/bin/envoy")
 	}
-	if sc, ok := pc.GetClusterName().(*meshv1alpha1.ProxyConfig_ServiceCluster); !ok || sc.ServiceCluster != "agentio-proxy" {
+	if sc, ok := pc.GetClusterName().(*meshv1alpha1.ProxyConfig_ServiceCluster); !ok ||
+		sc.ServiceCluster != "agentio-proxy" {
 		t.Fatalf("ServiceCluster = %v, want %q", pc.GetClusterName(), "agentio-proxy")
 	}
 	if pc.DrainDuration == nil || pc.DrainDuration.AsDuration() != 45*time.Second {
@@ -586,4 +615,26 @@ func templateInputForTest(gw *gatewayv1.Gateway, kubeVersion int) TemplateInput 
 		panic("templateInputForTest: unknown builtin class " + gw.Spec.GatewayClassName)
 	}
 	return buildTemplateInput(*gw, ci, "test-cluster", kubeVersion, "")
+}
+
+func TestGatewayLoggingAndTerminationDefaults(t *testing.T) {
+	r := testRenderer(t, testValues(t, map[string]any{
+		"global": map[string]any{
+			"logAsJson": true,
+			"egressGateway": map[string]any{
+				"terminationGracePeriodSeconds": 45,
+				"agentConfig":                   map[string]any{"logAsJSON": true},
+			},
+		},
+	}))
+	fixture := parityFixtures()[0]
+	docs, err := r.Render(fixture.TemplateName, templateInputForTest(fixture.Gateway, parityKubeVersion))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := strings.Join(docs, "\n")
+	if !strings.Contains(output, "terminationGracePeriodSeconds: 45") || strings.Contains(output, "--log-as-json") ||
+		!strings.Contains(output, `\"logAsJSON\":true`) {
+		t.Fatalf("gateway defaults must reach the Pod/config without a logging CLI override:\n%s", output)
+	}
 }

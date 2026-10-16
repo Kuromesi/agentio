@@ -27,12 +27,6 @@ spec:
         prometheus.io/path: /stats/prometheus
         prometheus.io/port: "15020"
         prometheus.io/scrape: "true"
-        {{- with .Values.agentio.egressGateway.statsFlushInterval }}
-        sidecar.istio.io/statsFlushInterval: {{ . | quote }}
-        {{- end }}
-        {{- with .Values.agentio.egressGateway.statsEvictionInterval }}
-        sidecar.istio.io/statsEvictionInterval: {{ . | quote }}
-        {{- end }}
         {{- with .Values.agentio.egressGateway.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -48,26 +42,21 @@ spec:
           image: {{ include "agentio.gateway.image" . | quote }}
           imagePullPolicy: {{ .Values.agentio.global.imagePullPolicy }}
           args:
-            - proxy
-            - waypoint
-            - --domain
-            - $(POD_NAMESPACE).svc.{{ .Values.agentio.global.trustDomain }}
-            - --serviceCluster
-            - {{ include "agentio.gateway.fullname" . }}.$(POD_NAMESPACE)
-            - --proxyLogLevel
-            - warning
-            - --proxyComponentLogLevel
-            - misc:error
+            - --domain=$(POD_NAMESPACE).svc.{{ .Values.agentio.global.clusterDomain }}
+            {{- with .Values.agentio.egressGateway.statsFlushInterval }}
+            - --stats-flush-interval={{ . }}
+            {{- end }}
+            {{- with .Values.agentio.egressGateway.statsEvictionInterval }}
+            - --stats-eviction-interval={{ . }}
+            {{- end }}
           env:
-            {{- if not (hasKey .Values.agentio.egressGateway.env "ISTIO_CPU_LIMIT") }}
-            - name: ISTIO_CPU_LIMIT
+            {{- if not (hasKey .Values.agentio.egressGateway.env "AGENTIO_CPU_LIMIT") }}
+            - name: AGENTIO_CPU_LIMIT
               valueFrom:
                 resourceFieldRef:
                   resource: limits.cpu
                   divisor: "1"
             {{- end }}
-            - name: PILOT_CERT_PROVIDER
-              value: istiod
             - name: CA_ADDR
               value: {{ include "agentio.gateway.xdsAddress" . | quote }}
             - name: POD_NAME
@@ -78,30 +67,24 @@ spec:
               valueFrom: {fieldRef: {fieldPath: status.podIP}}
             - name: SERVICE_ACCOUNT
               valueFrom: {fieldRef: {fieldPath: spec.serviceAccountName}}
-            - name: ISTIO_META_SERVICE_ACCOUNT
-              valueFrom: {fieldRef: {fieldPath: spec.serviceAccountName}}
-            - name: ISTIO_META_NODE_NAME
+            - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
-            - name: ISTIO_META_CLUSTER_ID
+            - name: CLUSTER_ID
               value: {{ .Values.agentio.global.clusterId | quote }}
-            - name: ISTIO_META_WORKLOAD_NAME
+            - name: AGENTIO_META_WORKLOAD_NAME
               value: {{ include "agentio.gateway.fullname" . }}
-            - name: ISTIO_META_MESH_ID
+            - name: AGENTIO_META_MESH_ID
               value: {{ .Values.agentio.global.trustDomain | quote }}
-            - name: ISTIO_META_DNS_CAPTURE
-              value: "true"
-            - name: ISTIO_META_ENABLE_HBONE
-              value: "true"
             - name: TRUST_DOMAIN
               value: {{ .Values.agentio.global.trustDomain | quote }}
-            - name: PROXY_CONFIG
-              value: {{ printf "{\"discoveryAddress\":%q,\"proxyMetadata\":{\"ISTIO_META_DNS_CAPTURE\":\"true\",\"ISTIO_META_ENABLE_HBONE\":\"true\"},\"image\":{\"imageType\":\"distroless\"}}" (include "agentio.gateway.xdsAddress" .) | quote }}
-            {{- if .Values.agentio.egressGateway.sniTrafficPolicy.enabled }}
-            - name: PEER_METADATA_DISCOVERY
-              value: "true"
-            - name: ENABLE_POLICY_STORE
-              value: "true"
-            {{- end }}
+            - name: AGENTIO_XDS_ADDRESS
+              value: {{ include "agentio.gateway.xdsAddress" . | quote }}
+            - name: AGENTIO_GATEWAY_CONFIG
+              value: {{ .Values.agentio.egressGateway.agentConfig | toJson | quote }}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            - name: AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS
+              value: {{ .Values.agentio.egressGateway.terminationGracePeriodSeconds | quote }}
             {{- if ne .Values.agentio.epe.mode "disabled" }}
             - name: AGENTIO_EPE_ADDRESS
               value: {{ include "agentio.gateway.epeAddress" . | quote }}
@@ -136,11 +119,52 @@ spec:
             runAsNonRoot: true
           volumeMounts:
             - {name: workload-socket, mountPath: /var/run/secrets/workload-spiffe-uds}
-            - {name: agentiod-ca-cert, mountPath: /var/run/secrets/istio}
-            - {name: agentio-data, mountPath: /var/lib/istio/data}
-            - {name: agentio-envoy, mountPath: /etc/istio/proxy}
+            - {name: agentiod-ca-cert, mountPath: /var/run/secrets/agentio}
+            - {name: agentio-data, mountPath: /var/lib/agentio/data}
+            - {name: agentio-envoy, mountPath: /etc/agentio/proxy}
             - {name: agentio-token, mountPath: /var/run/secrets/tokens}
-            - {name: gateway-podinfo, mountPath: /etc/istio/pod}
+            - {name: gateway-podinfo, mountPath: /etc/agentio/pod}
+        - name: agentio-porter
+          image: {{ include "agentio.gateway.porterImage" . | quote }}
+          imagePullPolicy: {{ .Values.agentio.global.imagePullPolicy | quote }}
+          args:
+            - --domain=$(POD_NAMESPACE).svc.{{ .Values.agentio.global.clusterDomain }}
+            - --xds-address={{ include "agentio.gateway.xdsAddress" . }}
+            - --cluster-id={{ .Values.agentio.global.clusterId }}
+            - --grpc-port=9002
+            - --grpc-health-port=9003
+            - --xds-cache-idle-ttl={{ .Values.agentio.egressGateway.porter.cache.idleTTL }}
+            - --xds-cache-max-entries={{ .Values.agentio.egressGateway.porter.cache.maxEntries }}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          ports:
+            - name: health
+              containerPort: 9003
+          readinessProbe:
+            grpc: {port: 9003, service: readiness}
+            periodSeconds: 5
+          livenessProbe:
+            grpc: {port: 9003, service: liveness}
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1337
+            runAsGroup: 1337
+          resources:
+{{ toYaml .Values.agentio.egressGateway.porter.resources | indent 12 }}
+          volumeMounts:
+            - {name: agentiod-ca-cert, mountPath: /var/run/secrets/agentio, readOnly: true}
+            - {name: agentio-token, mountPath: /var/run/secrets/tokens, readOnly: true}
       volumes:
         - {name: workload-socket, emptyDir: {}}
         - {name: agentio-data, emptyDir: {}}
@@ -156,7 +180,7 @@ spec:
               - serviceAccountToken:
                   audience: {{ .Values.agentio.egressGateway.tokenAudience }}
                   expirationSeconds: 43200
-                  path: istio-token
+                  path: agentio-token
         - name: agentiod-ca-cert
           configMap:
             name: {{ .Values.agentio.global.caCertConfigMap }}

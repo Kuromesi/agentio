@@ -1,5 +1,7 @@
 # Copyright 2026 The Kruise Authors
 {{- $egressGateway := .Values.global.egressGateway | default .Values.global.waypoint }}
+{{- $porter := .Values.global.porter | default (strdict) }}
+{{- $porterCache := $porter.cache | default (strdict) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -104,37 +106,27 @@ spec:
         image: "{{ .ProxyImage }}"
 {{ with .Values.global.imagePullPolicy }}        imagePullPolicy: "{{.}}"{{ end }}
         args:
-        - proxy
-        - waypoint
-        - --domain
-        - $(POD_NAMESPACE).svc.{{ .Values.global.proxy.clusterDomain }}
-        - --serviceCluster
-        - {{.ServiceAccount}}.$(POD_NAMESPACE)
-        - --proxyLogLevel
-        - {{ annotation .ObjectMeta `sidecar.agentio.kruise.io/log-level` .Values.global.proxy.logLevel | quote}}
-        - --proxyComponentLogLevel
-        - {{ annotation .ObjectMeta `sidecar.agentio.kruise.io/component-log-level` .Values.global.proxy.componentLogLevel | quote}}
-        - --log_output_level
-        - {{ annotation .ObjectMeta `sidecar.agentio.kruise.io/agent-log-level` .Values.global.logging.level | quote}}
+        - --domain=$(POD_NAMESPACE).svc.{{ .Values.global.proxy.clusterDomain }}
+        - --envoy-log-level
+        - {{ annotation .ObjectMeta `sidecar.agentio.kruise.io/log-level` .Values.global.proxy.logLevel | quote }}
+        - --envoy-component-log-level
+        - {{ annotation .ObjectMeta `sidecar.agentio.kruise.io/component-log-level` .Values.global.proxy.componentLogLevel | quote }}
+        - --agent-log-level
+        - {{ annotation .ObjectMeta `sidecar.agentio.kruise.io/agent-log-level` "info" | quote }}
         {{- if .Values.global.logAsJson }}
-        - --log_as_json
+        - --log-as-json
         {{- end }}
-        {{- if .Values.global.proxy.outlierLogPath }}
-        - --outlierLogPath={{ .Values.global.proxy.outlierLogPath }}
-        {{- end}}
         env:
-        - name: ISTIO_META_SERVICE_ACCOUNT
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.serviceAccountName
-        - name: ISTIO_META_NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: PILOT_CERT_PROVIDER
-          value: {{ .Values.global.pilotCertProvider }}
+        - name: NODE_NAME
+          valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+        - name: POD_UID
+          valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+        - name: AGENTIO_XDS_ADDRESS
+          value: {{ .Values.global.xdsAddress | default .ProxyConfig.DiscoveryAddress | default .Values.global.caAddress | quote }}
         - name: CA_ADDR
-          value: {{ .Values.global.caAddress }}
+          value: {{ .Values.global.caAddress | quote }}
+        - name: AGENTIO_GATEWAY_CONFIG
+          value: {{ .Values.global.egressGateway.agentConfig | default (strdict) | toJson | quote }}
         - name: POD_NAME
           valueFrom:
             fieldRef:
@@ -155,26 +147,11 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
-        - name: ISTIO_CPU_LIMIT
+        - name: AGENTIO_CPU_LIMIT
           valueFrom:
             resourceFieldRef:
               resource: limits.cpu
               divisor: "1"
-        - name: PROXY_CONFIG
-          value: |
-                 {{ protoToJSON .ProxyConfig }}
-        {{- if .ProxyConfig.ProxyMetadata }}
-        {{- range $key, $value := .ProxyConfig.ProxyMetadata }}
-        - name: {{ $key }}
-          value: "{{ $value }}"
-        {{- end }}
-        {{- end }}
-        {{- if and .Values.agentio .Values.agentio.env (index .Values.agentio.env `AGENTIO_ENABLE_SNI_TRAFFIC_POLICY`) }}
-        - name: PEER_METADATA_DISCOVERY
-          value: "true"
-        - name: ENABLE_POLICY_STORE
-          value: "true"
-        {{- end }}
         - name: GOMEMLIMIT
           valueFrom:
             resourceFieldRef:
@@ -185,24 +162,22 @@ spec:
             resourceFieldRef:
               resource: limits.cpu
               divisor: "1"
-        - name: ISTIO_META_CLUSTER_ID
+        - name: CLUSTER_ID
           value: "{{ valueOrDefault .Values.global.multiCluster.clusterName `Kubernetes` }}"
         {{- $network := valueOrDefault (index .InfrastructureLabels `agentio.kruise.io/network`) .Values.global.network }}
         {{- if $network }}
-        - name: ISTIO_META_NETWORK
+        - name: AGENTIO_META_NETWORK
           value: "{{ $network }}"
         {{- end }}
-        - name: ISTIO_META_INTERCEPTION_MODE
-          value: REDIRECT
-        - name: ISTIO_META_WORKLOAD_NAME
+        - name: AGENTIO_META_WORKLOAD_NAME
           value: {{.DeploymentName}}
-        - name: ISTIO_META_OWNER
+        - name: AGENTIO_META_OWNER
           value: kubernetes://apis/apps/v1/namespaces/{{.Namespace}}/deployments/{{.DeploymentName}}
         {{- if .Values.global.meshID }}
-        - name: ISTIO_META_MESH_ID
+        - name: AGENTIO_META_MESH_ID
           value: "{{ .Values.global.meshID }}"
         {{- else if (valueOrDefault .TrustDomain .Values.global.trustDomain) }}
-        - name: ISTIO_META_MESH_ID
+        - name: AGENTIO_META_MESH_ID
           value: "{{ (valueOrDefault .TrustDomain .Values.global.trustDomain) }}"
         {{- end }}
         {{- with (valueOrDefault .TrustDomain .Values.global.trustDomain) }}
@@ -252,16 +227,57 @@ spec:
         volumeMounts:
         - mountPath: /var/run/secrets/workload-spiffe-uds
           name: workload-socket
-        - mountPath: /var/run/secrets/istio
+        - mountPath: /var/run/secrets/agentio
           name: agentiod-ca-cert
-        - mountPath: /var/lib/istio/data
+        - mountPath: /var/lib/agentio/data
           name: agentio-data
-        - mountPath: /etc/istio/proxy
+        - mountPath: /etc/agentio/proxy
           name: agentio-envoy
         - mountPath: /var/run/secrets/tokens
           name: agentio-token
-        - mountPath: /etc/istio/pod
+        - mountPath: /etc/agentio/pod
           name: agentio-podinfo
+      - name: agentio-porter
+        image: {{ $porter.image | quote }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy | quote }}
+        args:
+          - --domain=$(POD_NAMESPACE).svc.{{ .Values.global.proxy.clusterDomain }}
+          - --xds-address={{ .Values.global.xdsAddress | default .ProxyConfig.DiscoveryAddress | default .Values.global.caAddress }}
+          - --cluster-id={{ .ClusterID }}
+          - --grpc-port=9002
+          - --grpc-health-port=9003
+          - --xds-cache-idle-ttl={{ valueOrDefault $porterCache.idleTTL "1m" }}
+          - --xds-cache-max-entries={{ valueOrDefault $porterCache.maxEntries 10000 }}
+        env:
+          - name: POD_NAME
+            valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          - name: POD_NAMESPACE
+            valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          - name: POD_UID
+            valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+          - name: POD_IP
+            valueFrom: {fieldRef: {fieldPath: status.podIP}}
+        ports:
+          - name: health
+            containerPort: 9003
+        readinessProbe:
+          grpc: {port: 9003, service: readiness}
+          periodSeconds: 5
+        livenessProbe:
+          grpc: {port: 9003, service: liveness}
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1337
+          runAsGroup: 1337
+        resources:
+{{- toYaml $porter.resources | trim | nindent 10 }}
+        volumeMounts:
+          - {name: agentiod-ca-cert, mountPath: /var/run/secrets/agentio, readOnly: true}
+          - {name: agentio-token, mountPath: /var/run/secrets/tokens, readOnly: true}
       volumes:
       - emptyDir: {}
         name: workload-socket
@@ -290,7 +306,7 @@ spec:
           - serviceAccountToken:
               audience: {{ .Values.global.sds.token.aud | default "agentio-ca" | quote }}
               expirationSeconds: 43200
-              path: istio-token
+              path: agentio-token
       - name: agentiod-ca-cert
       {{- if eq (.Values.agentio.env).ENABLE_CLUSTER_TRUST_BUNDLE_API true }}
         projected:

@@ -62,6 +62,7 @@ func TestGatewayDeploymentOverlayMergesContainers(t *testing.T) {
 	cm.Data["deployment"] = `spec:
   template:
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
       - name: agentio-proxy
         securityContext:
@@ -93,7 +94,9 @@ func TestGatewayDeploymentOverlayMergesContainers(t *testing.T) {
 		}
 	}
 	containers := dep.Spec.Template.Spec.Containers
-	if len(containers) != 2 || containers[1].Name != "helper-sidecar" {
+	if len(containers) != 3 ||
+		!slices.ContainsFunc(containers, func(c corev1.Container) bool { return c.Name == "agentio-porter" }) ||
+		!slices.ContainsFunc(containers, func(c corev1.Container) bool { return c.Name == "helper-sidecar" }) {
 		t.Fatalf("containers: %+v", containers)
 	}
 	c := containers[0]
@@ -104,6 +107,13 @@ func TestGatewayDeploymentOverlayMergesContainers(t *testing.T) {
 		c.SecurityContext.Capabilities.Add[0] != "NET_ADMIN" ||
 		c.SecurityContext.Capabilities.Drop[0] != "ALL" {
 		t.Fatalf("security context: %+v", c.SecurityContext)
+	}
+	if dep.Spec.Template.Spec.TerminationGracePeriodSeconds == nil ||
+		*dep.Spec.Template.Spec.TerminationGracePeriodSeconds != 60 ||
+		!slices.ContainsFunc(c.Env, func(e corev1.EnvVar) bool {
+			return e.Name == "AGENTIO_TERMINATION_GRACE_PERIOD_SECONDS" && e.Value == "60" && e.ValueFrom == nil
+		}) {
+		t.Fatalf("termination budget did not follow the Gateway overlay: %+v", dep.Spec.Template.Spec)
 	}
 	if c.Resources.Requests.Cpu().String() != "250m" {
 		t.Fatal("CPU override missing")
