@@ -9,6 +9,12 @@ RUN cargo build --release --locked --offline
 FROM scratch AS metrics-artifact
 COPY --from=metrics-builder /src/target/release/libagentio_gateway_metrics.so /libagentio_gateway_metrics.so
 
+FROM rust:1.93.0-bookworm AS sni-builder
+RUN apt-get update && apt-get install -y --no-install-recommends clang libclang-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY extensions/envoy/sni-policy/ ./
+RUN rustup component add rustfmt && bash build.sh
+
 FROM golang:1.26.8 AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -24,6 +30,7 @@ RUN apt-get update \
 WORKDIR /
 COPY --from=builder /out/gateway-agent /usr/local/bin/gateway-agent
 COPY --from=metrics-builder /src/target/release/libagentio_gateway_metrics.so /usr/local/lib/libagentio_gateway_metrics.so
+COPY --from=sni-builder /src/target/release/libenvoy_agentio_sni_policy.so /usr/local/lib/libenvoy_agentio_sni_policy.so
 COPY LICENSE NOTICE /usr/share/doc/agentio-gateway/
 USER 1337:1337
 ENTRYPOINT ["/usr/local/bin/gateway-agent"]

@@ -24,10 +24,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openkruise/agentio/test/e2e"
-	"github.com/openkruise/agentio/test/e2e/artifacts"
-	"github.com/openkruise/agentio/test/e2e/cluster"
-	"github.com/openkruise/agentio/test/e2e/kube"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -37,10 +33,19 @@ import (
 	"k8s.io/client-go/kubernetes"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+
+	"github.com/openkruise/agentio/test/e2e"
+	"github.com/openkruise/agentio/test/e2e/artifacts"
+	"github.com/openkruise/agentio/test/e2e/cluster"
+	"github.com/openkruise/agentio/test/e2e/kube"
 )
 
 func TestCollectorsWriteAgentioInventories(t *testing.T) {
-	trafficPolicyGVR := schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "trafficpolicies"}
+	trafficPolicyGVR := schema.GroupVersionResource{
+		Group:    "agents.kruise.io",
+		Version:  "v1alpha1",
+		Resource: "trafficpolicies",
+	}
 	policy := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "agents.kruise.io/v1alpha1", "kind": "TrafficPolicy",
 		"metadata": map[string]any{"name": "allow", "namespace": "sandbox"},

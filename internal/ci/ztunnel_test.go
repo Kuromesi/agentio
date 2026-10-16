@@ -70,13 +70,21 @@ func TestZtunnelPresubmitTestsPinnedSourceWithoutRegistryCredentials(t *testing.
 	if !slices.Contains(jobNeeds(t, jobs, "build-candidates"), "build-ztunnel") {
 		t.Fatal("presubmit must wait for the pinned source binary before packaging")
 	}
-	script := stringValue(t, workflowStep(t, presubmit, "build-candidates", "Build repository-owned and test fixture candidates"), "run")
-	if !strings.Contains(script, `"agentio-e2e.local/ztunnel:${tag}"`) || !strings.Contains(script, "docker/Dockerfile.ztunnel") {
+	script := stringValue(
+		t,
+		workflowStep(t, presubmit, "build-candidates", "Build repository-owned and test fixture candidates"),
+		"run",
+	)
+	if !strings.Contains(script, `"agentio-e2e.local/ztunnel:${tag}"`) ||
+		!strings.Contains(script, "docker/Dockerfile.ztunnel") {
 		t.Fatal("presubmit must package the built ztunnel in the candidate archive")
 	}
 	e2e := loadWorkflow(t, "agentio-e2e.yml")
 	publish := stringValue(t, workflowStep(t, e2e, "product-e2e", "Publish candidates to a local registry"), "run")
-	if !strings.Contains(publish, "for image in agentiod agentio-epe ztunnel ext-proc;") ||
+	if !strings.Contains(
+		publish,
+		"for image in agentiod agentio-epe agentio-porter agentio-gateway ztunnel ext-proc;",
+	) ||
 		!strings.Contains(publish, "AGENTIO_E2E_ZTUNNEL_IMAGE=$digest_ref") {
 		t.Fatal("E2E must run the archived ztunnel by its local registry digest")
 	}
@@ -91,7 +99,8 @@ func TestZtunnelSyncTargetsEachMaintainedBranch(t *testing.T) {
 	}
 	checkout := workflowStep(t, w, "sync", "Checkout target Agentio branch")
 	pr := workflowStep(t, w, "sync", "Create or update source dependency pull request")
-	if mapValue(t, checkout, "with")["ref"] != "${{ matrix.branch }}" || mapValue(t, pr, "with")["base"] != "${{ matrix.branch }}" {
+	if mapValue(t, checkout, "with")["ref"] != "${{ matrix.branch }}" ||
+		mapValue(t, pr, "with")["base"] != "${{ matrix.branch }}" {
 		t.Fatal("source sync checkout and PR base must use the selected branch, not the default branch")
 	}
 	if !strings.Contains(stringValue(t, mapValue(t, pr, "with"), "branch"), "${{ matrix.branch }}") ||

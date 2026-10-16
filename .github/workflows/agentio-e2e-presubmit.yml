@@ -1,7 +1,7 @@
 name: agentio-product-e2e-presubmit
 
 # Presubmit builds Agentio, pinned ztunnel source, and test fixtures locally.
-# CNI, proxy-init, and gateway images remain pinned by agentio.deps.
+# CNI and proxy-init images remain pinned by agentio.deps.
 on:
   pull_request:
     branches:
@@ -47,7 +47,6 @@ jobs:
     outputs:
       cni_image: ${{ steps.bom.outputs.cni_image }}
       proxy_init_image: ${{ steps.bom.outputs.proxy_init_image }}
-      gateway_image: ${{ steps.bom.outputs.gateway_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,7 +72,6 @@ jobs:
           }
           resolve_pin cni_image CNI_IMAGE
           resolve_pin proxy_init_image PROXY_INIT_IMAGE
-          resolve_pin gateway_image GATEWAY_IMAGE
       - name: Build repository-owned and test fixture candidates
         env:
           ZTUNNEL_SOURCE_SHA: ${{ needs.build-ztunnel.outputs.source_sha }}
@@ -81,6 +79,8 @@ jobs:
           tag="$GITHUB_SHA"
           docker build --file Dockerfile --tag "agentio-e2e.local/agentiod:${tag}" .
           docker build --file extensions/epe/docker/Dockerfile --tag "agentio-e2e.local/agentio-epe:${tag}" .
+          docker build --file extensions/porter/docker/Dockerfile --tag "agentio-e2e.local/agentio-porter:${tag}" .
+          docker build --file docker/Dockerfile.gateway --tag "agentio-e2e.local/agentio-gateway:${tag}" .
           docker build --file test/fixtures/extproc/Dockerfile --tag "agentio-e2e.local/ext-proc:${tag}" .
           docker build --file docker/Dockerfile.ztunnel \
             --build-arg TARGETARCH=amd64 \
@@ -89,6 +89,8 @@ jobs:
           docker save --output "${RUNNER_TEMP}/candidate-images.tar" \
             "agentio-e2e.local/agentiod:${tag}" \
             "agentio-e2e.local/agentio-epe:${tag}" \
+            "agentio-e2e.local/agentio-porter:${tag}" \
+            "agentio-e2e.local/agentio-gateway:${tag}" \
             "agentio-e2e.local/ext-proc:${tag}" \
             "agentio-e2e.local/ztunnel:${tag}"
       - name: Upload local candidate images
@@ -106,4 +108,4 @@ jobs:
       candidate_image_artifact: agentio-presubmit-candidate-images
       cni_image: ${{ needs.build-candidates.outputs.cni_image }}
       proxy_init_image: ${{ needs.build-candidates.outputs.proxy_init_image }}
-      gateway_image: ${{ needs.build-candidates.outputs.gateway_image }}
+      gateway_image: "" # Resolved from the same-run candidate artifact.

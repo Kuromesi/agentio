@@ -21,12 +21,13 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/openkruise/agentio/test/e2e"
-	"github.com/openkruise/agentio/test/e2e/artifacts"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/openkruise/agentio/test/e2e"
+	"github.com/openkruise/agentio/test/e2e/artifacts"
 )
 
 func Collectors(config Config) []e2e.Collector {
@@ -43,12 +44,20 @@ func Collectors(config Config) []e2e.Collector {
 	}
 	return []e2e.Collector{
 		podCollector{name: "agentiod", namespace: config.Namespace, selector: "app=agentiod"},
-		podCollector{name: "egress-gateway", namespace: config.Namespace, selector: "gateway.networking.k8s.io/gateway-name=egress-gateway"},
+		podCollector{
+			name:      "egress-gateway",
+			namespace: config.Namespace,
+			selector:  "gateway.networking.k8s.io/gateway-name=egress-gateway",
+		},
 		podCollector{name: "agentio-epe", namespace: config.Namespace, selector: "app.kubernetes.io/name=agentio-epe"},
 		ztunnel,
 		resourceCollector{
 			name: "xds-config",
-			gvr:  schema.GroupVersionResource{Group: "agents.kruise.io", Version: "v1alpha1", Resource: "trafficpolicies"},
+			gvr: schema.GroupVersionResource{
+				Group:    "agents.kruise.io",
+				Version:  "v1alpha1",
+				Resource: "trafficpolicies",
+			},
 		},
 	}
 }
@@ -78,7 +87,15 @@ func (p podCollector) Collect(ctx context.Context, environment *e2e.Environment,
 				errs = append(errs, logErr)
 				logs = logErr.Error()
 			}
-			file, err := writer.Writer("setup", "agentio", p.name, "pods", pod.Namespace, pod.Name, container.Name+".log")
+			file, err := writer.Writer(
+				"setup",
+				"agentio",
+				p.name,
+				"pods",
+				pod.Namespace,
+				pod.Name,
+				container.Name+".log",
+			)
 			if err != nil {
 				errs = append(errs, err)
 				continue
