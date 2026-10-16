@@ -148,7 +148,9 @@ func run(ctx context.Context, args []string) error {
 		}
 		id = fmt.Sprintf("%s~%s~%s.%s~%s", model.ProxyTypeAgentioPorter, os.Getenv("POD_IP"), name, namespace, *domain)
 	}
+	registry := prometheus.NewRegistry()
 	client, err := xdsclient.New(conn, xdsclient.Config{
+		MetricsRegisterer: registry,
 		Node: &core.Node{
 			Id:       id,
 			Metadata: metadata,
@@ -172,7 +174,6 @@ func run(ctx context.Context, args []string) error {
 		cacheSize = cache.Len
 		group.Go(func() error { return cache.Run(ctx) })
 	}
-	registry := prometheus.NewRegistry()
 	connectDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "agentio_porter_connect_duration_seconds",
 		Help:    "CONNECT processing from received headers through response send completion.",

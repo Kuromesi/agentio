@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"time"
 
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 )
@@ -230,7 +231,8 @@ func (c *Client) waitLocked(
 	name string,
 	sub *subscription,
 	owner *Subscription,
-) (*Resource, error) {
+) (_ *Resource, err error) {
+	var started time.Time
 	for {
 		if sub.err != nil {
 			c.mu.Unlock()
@@ -258,6 +260,16 @@ func (c *Client) waitLocked(
 				c.mu.Unlock()
 				return nil, ErrNotFound
 			}
+		}
+		if c.metrics != nil && started.IsZero() {
+			started = time.Now()
+			waiters := c.metrics.waiters.WithLabelValues(st.watch.TypeURL)
+			waiters.Inc()
+			defer func() {
+				waiters.Dec()
+				c.metrics.waitDuration.WithLabelValues(st.watch.TypeURL, demandResult(err)).
+					Observe(time.Since(started).Seconds())
+			}()
 		}
 		changed := c.changed
 		c.mu.Unlock()
