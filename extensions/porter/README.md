@@ -23,3 +23,42 @@ make build.porter
 go test ./extensions/porter/...
 docker build -f extensions/porter/docker/Dockerfile -t agentio-porter:dev .
 ```
+
+## Metrics
+
+Porter exposes its own Prometheus endpoint on `:9004/metrics`, configurable with `--metrics-port`. It does not rely on gateway-agent to scrape or merge metrics; gateway-agent's 15020 endpoint is unchanged. Both same-Pod and separate deployments can scrape Porter directly. This metrics endpoint does not change Porter's existing ADS authentication or deployment requirements.
+
+| Metric | Meaning | Labels |
+| --- | --- | --- |
+| `agentio_porter_connect_duration_seconds` | Histogram from receipt of CONNECT headers through completion of the ext_proc response send; excludes waiting for the first message and tunnel lifetime | `protocol`, `result` |
+| `agentio_porter_connect_requests_total` | Completed valid CONNECT processing attempts | `protocol`, `result` |
+| `agentio_porter_connect_inflight` | CONNECT requests currently being processed | `protocol` |
+| `agentio_porter_demand_duration_seconds` | Histogram of lookups that waited for discovery, including ADS reconnection time; immediate results are excluded | `resource_type`, `result` |
+| `agentio_porter_demand_requests_total` | Completed demand lookups, distinguishing immediate results from calls that waited | `resource_type`, `path`, `result` |
+| `agentio_porter_demand_waiters` | Number of demand calls waiting for a usable resource | `resource_type` |
+| `agentio_porter_demand_pending_resources` | Distinct resource names with waiting calls | `resource_type` |
+| `agentio_porter_demand_cache_entries` | Retained subscription leases across resource types, including in-flight lookups; zero when retention is disabled | None |
+
+The protocol is `tcp` or `udp`. CONNECT results are `allow`, `deny`, `timeout`, `canceled` or `error`; allow means Porter permitted the CONNECT, not that the subsequent tunnel or TLS handshake succeeded. Demand results are `success`, `not_found`, `timeout`, `canceled` or `error`, with path `immediate` or `waited`. Resource types are `workload` and `sandbox`. Workload names, IPs, authorities and Sandbox IDs are not metric labels. Go runtime and process metrics are exposed in the same registry.
+
+Demand has no FIFO queue: concurrent callers can share one subscription. Ten callers waiting for the same Workload produce ten waiters and one pending resource. The latency histogram measures caller-observed discovery wait, not control-plane processing or wire latency alone. CONNECT latency includes identity resolution, Workload/Sandbox lookup, policy preparation and response send; it does not include Envoy-side scheduling or network latency before Porter receives headers.
+
+Deployments declare a container port named `porter-metrics`. For Prometheus Operator, apply [the optional Porter PodMonitor](../../manifests/charts/agentio/addons/porter-podmonitor.yaml) and ensure the Prometheus instance selects its labels and namespace. The example discovers that named port across namespaces; narrow `namespaceSelector` and `selector` for your installation. An independently deployed Porter can use the same port name. This is separate from the gateway's existing single-port Prometheus annotations: those annotations alone will not scrape Porter.
+
+Without Prometheus Operator, add a separate Kubernetes pod-discovery scrape job:
+
+```yaml
+- job_name: agentio-porter
+  kubernetes_sd_configs:
+    - role: pod
+  relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: porter-metrics
+    - source_labels: [__meta_kubernetes_namespace]
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+```
+
+The Agentio Grafana dashboard includes a Porter row with CONNECT rate, latency, in-flight requests, discovery wait latency, pending work and demand result rates. Its Porter panels use the independent metrics and do not require gateway metrics to exist.

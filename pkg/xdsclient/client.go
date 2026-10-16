@@ -63,12 +63,19 @@ type Watch struct {
 	OnDelete func(name string) DeleteAction
 }
 
+// DemandObserver callbacks must be nonblocking and must not call back into Client.
+type DemandObserver interface {
+	WaitStarted(typ, name string) func()
+	DemandCompleted(typ string, waited bool, duration time.Duration, err error)
+}
+
 // Config defines the node identity and initial watches. Node must be non-nil;
 // its ID may be empty. Watches may be empty. Server-specific identity
 // requirements belong to the consumer.
 type Config struct {
-	Node    *core.Node
-	Watches []Watch
+	DemandObserver DemandObserver
+	Node           *core.Node
+	Watches        []Watch
 }
 
 // Resource contains a published value. Value is read-only, including any nested

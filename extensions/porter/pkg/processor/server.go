@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/openkruise/agentio/extensions/porter/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
@@ -69,6 +70,7 @@ type Server struct {
 	extproc.UnimplementedExternalProcessorServer
 	Handler Handler
 	Timeout time.Duration
+	Metrics *metrics.Metrics
 }
 
 // Process handles the CONNECT header exchange and publishes its decision.
@@ -102,6 +104,7 @@ func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) (err er
 	if err != nil {
 		return err
 	}
+	started := time.Now()
 	headers := message.GetRequestHeaders()
 	if headers == nil {
 		return status.Error(codes.InvalidArgument, "CONNECT requires request headers")
@@ -125,6 +128,20 @@ func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) (err er
 	connectUDP := method == "GET" && strings.EqualFold(upgrade, "connect-udp")
 	if (method != "CONNECT" && !connectUDP) || authority == "" {
 		return status.Error(codes.InvalidArgument, "expected CONNECT with an authority")
+	}
+	protocol := "tcp"
+	if connectUDP {
+		protocol = "udp"
+	}
+	if s.Metrics != nil {
+		s.Metrics.ConnectStarted(protocol)
+		defer func() {
+			completionErr := err
+			if handlerErr != nil {
+				completionErr = handlerErr
+			}
+			s.Metrics.ConnectCompleted(protocol, result.DenyStatus != 0, time.Since(started), completionErr)
+		}()
 	}
 	attrs := message.GetAttributes()[model.ExtProcAttributesKey]
 	attr := func(key string) string {

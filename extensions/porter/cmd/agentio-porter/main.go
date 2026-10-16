@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +29,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extproc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	grpchealth "google.golang.org/grpc/health"
@@ -36,6 +38,7 @@ import (
 
 	"istio.io/istio/pkg/env"
 
+	"github.com/openkruise/agentio/extensions/porter/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/porter/pkg/processor"
 	"github.com/openkruise/agentio/pkg/demandcache"
 	agentiolog "github.com/openkruise/agentio/pkg/log"
@@ -81,6 +84,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	slog.SetDefault(logger)
 	flags := flag.NewFlagSet("agentio-porter", flag.ContinueOnError)
+	metricsPort := flags.Int("metrics-port", 9004, "HTTP port exposing Prometheus metrics independently of the gateway")
 	grpcPort := flags.Int("grpc-port", 9002, "The gRPC port used for communicating with Envoy proxy on localhost")
 	grpcHealthPort := flags.Int("grpc-health-port", 9003, "The port used for gRPC liveness and readiness probes")
 	xdsAddress := flags.String("xds-address", "", "Agentiod TLS ADS endpoint")
@@ -144,12 +148,14 @@ func run(ctx context.Context, args []string) error {
 		}
 		id = fmt.Sprintf("%s~%s~%s.%s~%s", model.ProxyTypeAgentioPorter, os.Getenv("POD_IP"), name, namespace, *domain)
 	}
+	metricSet := metrics.New()
 	client, err := xdsclient.New(conn, xdsclient.Config{
 		Node: &core.Node{
 			Id:       id,
 			Metadata: metadata,
 		},
-		Watches: processor.Watches(),
+		Watches:        processor.Watches(),
+		DemandObserver: metricSet,
 	})
 	if err != nil {
 		return err
@@ -158,17 +164,21 @@ func run(ctx context.Context, args []string) error {
 		"request_timeout", *timeout, "cache_idle_ttl", cacheConfig.IdleTTL, "cache_max_entries", cacheConfig.MaxEntries)
 	var source processor.DemandSource = client
 	group, ctx := errgroup.WithContext(ctx)
+	cacheSize := func() int { return 0 }
 	if cacheConfig.IdleTTL > 0 || cacheConfig.MaxEntries > 0 {
 		cache, err := demandcache.New(xdsSource{client: client}, cacheConfig)
 		if err != nil {
 			return err
 		}
 		source = cache
+		cacheSize = cache.Len
 		group.Go(func() error { return cache.Run(ctx) })
 	}
+	metricSet.RegisterCacheEntries(cacheSize)
+	group.Go(func() error { return serveMetrics(ctx, fmt.Sprintf(":%d", *metricsPort), metricSet) })
 	group.Go(func() error {
 		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *grpcPort), fmt.Sprintf(":%d", *grpcHealthPort),
-			client, processor.NewPolicyHandler(source, *clusterID), *timeout)
+			client, processor.NewPolicyHandler(source, *clusterID), *timeout, metricSet)
 	})
 	return group.Wait()
 }
@@ -179,13 +189,17 @@ func serve(
 	client *xdsclient.Client,
 	handler processor.Handler,
 	timeout time.Duration,
+	metricSet *metrics.Metrics,
 ) error {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
 	server := grpc.NewServer()
-	extproc.RegisterExternalProcessorServer(server, &processor.Server{Handler: handler, Timeout: timeout})
+	extproc.RegisterExternalProcessorServer(
+		server,
+		&processor.Server{Handler: handler, Timeout: timeout, Metrics: metricSet},
+	)
 	healthListener, err := net.Listen("tcp", healthAddress)
 	if err != nil {
 		return errors.Join(err, listener.Close())
@@ -231,4 +245,26 @@ func serve(
 		}
 	})
 	return group.Wait()
+}
+
+func serveMetrics(ctx context.Context, address string, metricSet *metrics.Metrics) error {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", promhttp.HandlerFor(metricSet.Registry, promhttp.HandlerOpts{}))
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	stop := context.AfterFunc(ctx, func() {
+		if err := server.Close(); err != nil {
+			log.Error("close metrics server", "error", err)
+		}
+	})
+	defer stop()
+	log.Info("Porter metrics listening", "address", listener.Addr())
+	err = server.Serve(listener)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }

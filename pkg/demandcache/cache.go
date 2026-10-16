@@ -149,6 +149,13 @@ func (c *Cache[V]) Demand(ctx context.Context, typ, name string) (V, error) {
 	return value, err
 }
 
+// Len returns the number of retained leases, including in-flight lookups.
+func (c *Cache[V]) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
+
 // Run expires idle entries using one timer. Call it once per Cache. Capacity
 // eviction also runs synchronously in Demand and does not depend on the timer.
 func (c *Cache[V]) Run(ctx context.Context) error {

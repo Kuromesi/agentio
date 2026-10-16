@@ -14,6 +14,7 @@ spec:
     - ports:
         - port: {{ .Values.egressGateway.service.ports.mesh }}
         - port: {{ .Values.egressGateway.service.ports.status }}
+        - port: 9004
         - port: 15020
         - port: 15090
 {{- end }}
