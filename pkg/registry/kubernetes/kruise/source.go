@@ -63,13 +63,6 @@ func NewSource(
 	options Options,
 	stop <-chan struct{},
 ) Source {
-	sourceOptions := func(name string) []krt.CollectionOption {
-		return []krt.CollectionOption{
-			krt.WithName(name),
-			krt.WithStop(stop),
-			krt.WithDebounce(options.DebounceAfter, options.DebounceMax),
-		}
-	}
 	derivedOptions := func(name string) []krt.CollectionOption {
 		return []krt.CollectionOption{
 			krt.WithName(name),
@@ -80,7 +73,7 @@ func NewSource(
 	objects := newSandboxObjects(
 		client,
 		stop,
-		sourceOptions("kruise-sandbox-objects")...,
+		derivedOptions("kruise-sandbox-objects")...,
 	)
 	sandboxesByUID := newSandboxesByUID(objects)
 	sandboxGroups := sandboxesByUID.AsCollection(
@@ -88,7 +81,9 @@ func NewSource(
 	)
 	podsByUID := newPodsByUID(pods)
 	return Source{
-		SecurityProfiles: newSecurityProfiles(sandboxGroups, derivedOptions("kruise-security-profiles")...),
+		// Inline policy updates debounce independently of Sandbox identity and binding updates.
+		SecurityProfiles: newSecurityProfiles(sandboxGroups, append(derivedOptions("kruise-security-profiles"),
+			krt.WithDebounce(options.DebounceAfter, options.DebounceMax))...),
 		Sandboxes: newSandboxes(
 			sandboxGroups,
 			pods,

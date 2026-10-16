@@ -27,22 +27,22 @@ var (
 	KRTDebounceAfter = env.Register(
 		"AGENTIO_KRT_DEBOUNCE",
 		200*time.Millisecond,
-		"Quiet period before an informer-backed collection distributes events.",
+		"Quiet period before TrafficPolicy and SecurityProfile events are distributed, including Sandbox inline policies; other resources are not debounced.",
 	).Get()
 	KRTDebounceMax = env.Register(
 		"AGENTIO_KRT_DEBOUNCE_MAX",
-		10*time.Second,
-		"Upper bound on the collection quiet period, so a continuously changing cluster still makes progress.",
+		time.Second,
+		"Maximum wait for policy event distribution during continuous policy updates.",
 	).Get()
 	PushDebounceAfter = env.Register(
 		"AGENTIO_PUSH_DEBOUNCE",
-		100*time.Millisecond,
-		"Quiet period before compiled dirty resources are merged and published.",
+		time.Duration(0),
+		"Optional quiet period before all compiled resource changes are published; zero disables push debounce.",
 	).Get()
 	PushDebounceMax = env.Register(
 		"AGENTIO_PUSH_DEBOUNCE_MAX",
-		10*time.Second,
-		"Upper bound on the push quiet period.",
+		time.Second,
+		"Maximum wait when push debounce is enabled; must be at least AGENTIO_PUSH_DEBOUNCE.",
 	).Get()
 	ClientQueueSize = env.Register(
 		"AGENTIO_CLIENT_QUEUE_SIZE",
@@ -81,8 +81,8 @@ func validateXDS() error {
 	if KRTDebounceMax < KRTDebounceAfter {
 		return fmt.Errorf("KRT debounce maximum wait must be at least the quiet period")
 	}
-	if PushDebounceAfter <= 0 {
-		return fmt.Errorf("push debounce quiet period must be positive")
+	if PushDebounceAfter < 0 {
+		return fmt.Errorf("push debounce quiet period must not be negative")
 	}
 	if PushDebounceMax < PushDebounceAfter {
 		return fmt.Errorf("push debounce maximum wait must be at least the quiet period")

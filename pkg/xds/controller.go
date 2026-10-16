@@ -52,11 +52,16 @@ type Controller struct {
 	changes     map[model.ResourceKey]model.ResourceChange
 }
 
-func NewController(source CompiledResources, store ResourcePublisher, quiet, maximum time.Duration) (*Controller, error) {
+// NewController publishes compiled changes, optionally debouncing when quiet is positive.
+func NewController(
+	source CompiledResources,
+	store ResourcePublisher,
+	quiet, maximum time.Duration,
+) (*Controller, error) {
 	if source == nil || nilutil.IsNilInterface(store) {
 		return nil, fmt.Errorf("snapshot source and store are required")
 	}
-	if quiet <= 0 || maximum < quiet {
+	if quiet < 0 || maximum < quiet {
 		return nil, fmt.Errorf("invalid push debounce periods")
 	}
 	return &Controller{
@@ -76,7 +81,7 @@ func (c *Controller) Trigger() {
 	c.signal()
 }
 
-// Enqueue preserves the compiled KRT delta through the debounce boundary. A
+// Enqueue preserves the compiled KRT delta through the publication queue. A
 // later event for the same key replaces the desired value while retaining the
 // first Old resource, so add/update/delete bursts collapse to their net effect.
 func (c *Controller) Enqueue(changes []model.ResourceChange) {
@@ -191,6 +196,10 @@ func (c *Controller) Run(ctx context.Context) error {
 			return nil
 		case <-c.triggers:
 			markPending()
+			if c.quiet == 0 {
+				flush()
+				continue
+			}
 			stop(&quietTimer)
 			quietTimer = time.NewTimer(c.quiet)
 			quietChannel = quietTimer.C
