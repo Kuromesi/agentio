@@ -29,6 +29,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extproc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -38,7 +39,6 @@ import (
 
 	"istio.io/istio/pkg/env"
 
-	"github.com/openkruise/agentio/extensions/porter/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/porter/pkg/processor"
 	"github.com/openkruise/agentio/pkg/demandcache"
 	agentiolog "github.com/openkruise/agentio/pkg/log"
@@ -148,14 +148,12 @@ func run(ctx context.Context, args []string) error {
 		}
 		id = fmt.Sprintf("%s~%s~%s.%s~%s", model.ProxyTypeAgentioPorter, os.Getenv("POD_IP"), name, namespace, *domain)
 	}
-	metricSet := metrics.New()
 	client, err := xdsclient.New(conn, xdsclient.Config{
 		Node: &core.Node{
 			Id:       id,
 			Metadata: metadata,
 		},
-		Watches:        processor.Watches(),
-		DemandObserver: metricSet,
+		Watches: processor.Watches(),
 	})
 	if err != nil {
 		return err
@@ -174,11 +172,20 @@ func run(ctx context.Context, args []string) error {
 		cacheSize = cache.Len
 		group.Go(func() error { return cache.Run(ctx) })
 	}
-	metricSet.RegisterCacheEntries(cacheSize)
-	group.Go(func() error { return serveMetrics(ctx, fmt.Sprintf(":%d", *metricsPort), metricSet) })
+	registry := prometheus.NewRegistry()
+	connectDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "agentio_porter_connect_duration_seconds",
+		Help:    "CONNECT processing from received headers through response send completion.",
+		Buckets: []float64{.0005, .001, .002, .005, .01, .025, .05, .1, .25, .5, 1, 2, 4, 8},
+	}, []string{"protocol"})
+	registry.MustRegister(connectDuration, prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "agentio_porter_demand_cache_entries",
+		Help: "Retained demand-cache leases across resource types; zero when retention is disabled.",
+	}, func() float64 { return float64(cacheSize()) }))
+	group.Go(func() error { return serveMetrics(ctx, fmt.Sprintf(":%d", *metricsPort), registry) })
 	group.Go(func() error {
 		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *grpcPort), fmt.Sprintf(":%d", *grpcHealthPort),
-			client, processor.NewPolicyHandler(source, *clusterID), *timeout, metricSet)
+			client, processor.NewPolicyHandler(source, *clusterID), *timeout, connectDuration)
 	})
 	return group.Wait()
 }
@@ -189,7 +196,7 @@ func serve(
 	client *xdsclient.Client,
 	handler processor.Handler,
 	timeout time.Duration,
-	metricSet *metrics.Metrics,
+	connectDuration *prometheus.HistogramVec,
 ) error {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
@@ -198,7 +205,7 @@ func serve(
 	server := grpc.NewServer()
 	extproc.RegisterExternalProcessorServer(
 		server,
-		&processor.Server{Handler: handler, Timeout: timeout, Metrics: metricSet},
+		&processor.Server{Handler: handler, Timeout: timeout, ConnectDuration: connectDuration},
 	)
 	healthListener, err := net.Listen("tcp", healthAddress)
 	if err != nil {
@@ -247,13 +254,13 @@ func serve(
 	return group.Wait()
 }
 
-func serveMetrics(ctx context.Context, address string, metricSet *metrics.Metrics) error {
+func serveMetrics(ctx context.Context, address string, registry *prometheus.Registry) error {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
 	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", promhttp.HandlerFor(metricSet.Registry, promhttp.HandlerOpts{}))
+	mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	stop := context.AfterFunc(ctx, func() {
 		if err := server.Close(); err != nil {

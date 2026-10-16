@@ -22,11 +22,11 @@ import (
 
 	extproc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/openkruise/agentio/extensions/porter/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
@@ -68,9 +68,9 @@ type Handler interface {
 // an ext_proc stream alive for the lifetime of a tunnel.
 type Server struct {
 	extproc.UnimplementedExternalProcessorServer
-	Handler Handler
-	Timeout time.Duration
-	Metrics *metrics.Metrics
+	Handler         Handler
+	Timeout         time.Duration
+	ConnectDuration *prometheus.HistogramVec
 }
 
 // Process handles the CONNECT header exchange and publishes its decision.
@@ -129,19 +129,12 @@ func (s *Server) Process(stream extproc.ExternalProcessor_ProcessServer) (err er
 	if (method != "CONNECT" && !connectUDP) || authority == "" {
 		return status.Error(codes.InvalidArgument, "expected CONNECT with an authority")
 	}
-	protocol := "tcp"
-	if connectUDP {
-		protocol = "udp"
-	}
-	if s.Metrics != nil {
-		s.Metrics.ConnectStarted(protocol)
-		defer func() {
-			completionErr := err
-			if handlerErr != nil {
-				completionErr = handlerErr
-			}
-			s.Metrics.ConnectCompleted(protocol, result.DenyStatus != 0, time.Since(started), completionErr)
-		}()
+	if s.ConnectDuration != nil {
+		protocol := "tcp"
+		if connectUDP {
+			protocol = "udp"
+		}
+		defer func() { s.ConnectDuration.WithLabelValues(protocol).Observe(time.Since(started).Seconds()) }()
 	}
 	attrs := message.GetAttributes()[model.ExtProcAttributesKey]
 	attr := func(key string) string {
