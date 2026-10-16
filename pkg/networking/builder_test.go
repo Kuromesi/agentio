@@ -135,10 +135,10 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 	}
 	if got, want := httpFilterNames(connectHCM), []string{
 		"connect_authority",
-		"envoy.filters.http.local_ratelimit",
 		"envoy.filters.http.ext_proc",
 		"connect_workload",
 		"connect_sni_policy",
+		"envoy.filters.http.local_ratelimit",
 		"envoy.filters.http.router",
 	}; !equalStrings(got, want) {
 		t.Fatalf("CONNECT filter order = %v, want %v", got, want)

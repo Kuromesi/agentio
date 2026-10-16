@@ -414,7 +414,7 @@ data:
         - entries:
           - key: peer_name
             value: ""
-            cel: 'filter_state["downstream_peer"].name'
+            cel: 'filter_state["agentio.workload.name"]'
           tokenBucket:
             maxTokens: 1
             tokensPerFill: 1
@@ -422,8 +422,8 @@ data:
 `)
 
 		waitForGatewayConfig(t, environment, time.Second, func(dump string) error {
-			if !strings.Contains(dump, "connect_rate_limit") {
-				return fmt.Errorf("rate limit filter not yet in config_dump")
+			if !strings.Contains(dump, "envoy.rate_limit_descriptors.expr") || !strings.Contains(dump, "peer_name") {
+				return fmt.Errorf("per-client rate limit descriptor not yet in config_dump")
 			}
 			return nil
 		})

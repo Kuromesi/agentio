@@ -321,18 +321,19 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 		}
 		filters = []*hcmv3.HttpFilter{legacyPeerMetadataFilter, authority}
 	}
+	if !b.legacyGateway {
+		filters = append(filters, b.connectExtProcFilter(), connectWorkloadFilter())
+		if features.EnableSNITrafficPolicy {
+			filters = append(filters, connectPolicyFilter())
+		}
+	}
+	// Identity-based descriptors must observe the Workload resolved by Porter.
 	if rateLimit := gateway.GetConnectRateLimit(); rateLimit != nil {
 		filter, err := b.localRateLimitFilter(rateLimit)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, filter)
-	}
-	if !b.legacyGateway {
-		filters = append(filters, b.connectExtProcFilter(), connectWorkloadFilter())
-		if features.EnableSNITrafficPolicy {
-			filters = append(filters, connectPolicyFilter())
-		}
 	}
 	filters = append(filters, httpFilter("envoy.filters.http.router", b.pack(&routerv3.Router{})))
 	hcm := &hcmv3.HttpConnectionManager{

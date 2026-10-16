@@ -869,59 +869,6 @@
                       }
                     },
                     {
-                      "name": "envoy.filters.http.local_ratelimit",
-                      "typedConfig": {
-                        "@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                        "statPrefix": "connect_rate_limit",
-                        "tokenBucket": {
-                          "maxTokens": 20,
-                          "tokensPerFill": 5,
-                          "fillInterval": "1s"
-                        },
-                        "filterEnabled": {
-                          "defaultValue": {
-                            "numerator": 100
-                          }
-                        },
-                        "filterEnforced": {
-                          "defaultValue": {
-                            "numerator": 100
-                          }
-                        },
-                        "descriptors": [
-                          {
-                            "entries": [
-                              {
-                                "key": "peer"
-                              }
-                            ],
-                            "tokenBucket": {
-                              "maxTokens": 2,
-                              "tokensPerFill": 1,
-                              "fillInterval": "1s"
-                            }
-                          }
-                        ],
-                        "rateLimits": [
-                          {
-                            "actions": [
-                              {
-                                "extension": {
-                                  "name": "envoy.rate_limit_descriptors.expr",
-                                  "typedConfig": {
-                                    "@type": "type.googleapis.com/envoy.extensions.rate_limit_descriptors.expr.v3.Descriptor",
-                                    "descriptorKey": "peer",
-                                    "skipIfError": true,
-                                    "text": "string(filter_state[\"agentio.peer.principal\"])"
-                                  }
-                                }
-                              }
-                            ]
-                          }
-                        ]
-                      }
-                    },
-                    {
                       "name": "envoy.filters.http.ext_proc",
                       "typedConfig": {
                         "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
@@ -1002,6 +949,59 @@
                             "readOnly": true,
                             "sharedWithUpstream": "ONCE",
                             "skipIfEmpty": true
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "envoy.filters.http.local_ratelimit",
+                      "typedConfig": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                        "statPrefix": "connect_rate_limit",
+                        "tokenBucket": {
+                          "maxTokens": 20,
+                          "tokensPerFill": 5,
+                          "fillInterval": "1s"
+                        },
+                        "filterEnabled": {
+                          "defaultValue": {
+                            "numerator": 100
+                          }
+                        },
+                        "filterEnforced": {
+                          "defaultValue": {
+                            "numerator": 100
+                          }
+                        },
+                        "descriptors": [
+                          {
+                            "entries": [
+                              {
+                                "key": "peer"
+                              }
+                            ],
+                            "tokenBucket": {
+                              "maxTokens": 2,
+                              "tokensPerFill": 1,
+                              "fillInterval": "1s"
+                            }
+                          }
+                        ],
+                        "rateLimits": [
+                          {
+                            "actions": [
+                              {
+                                "extension": {
+                                  "name": "envoy.rate_limit_descriptors.expr",
+                                  "typedConfig": {
+                                    "@type": "type.googleapis.com/envoy.extensions.rate_limit_descriptors.expr.v3.Descriptor",
+                                    "descriptorKey": "peer",
+                                    "skipIfError": true,
+                                    "text": "string(filter_state[\"agentio.peer.principal\"])"
+                                  }
+                                }
+                              }
+                            ]
                           }
                         ]
                       }

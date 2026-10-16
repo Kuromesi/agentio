@@ -18,13 +18,16 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"istio.io/istio/pkg/test"
 
+	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -36,8 +39,18 @@ func TestConnectIdentityFallbackTransfer(t *testing.T) {
 				test.SetForTest(t, &features.EnableSNITrafficPolicy, sni)
 				resources, err := Build(
 					Inputs{
-						LegacyGateway:    legacy,
-						Gateway:          testGateway(nil),
+						LegacyGateway: legacy,
+						Gateway: testGateway(
+							&configv1.EgressGateway{
+								ConnectRateLimit: &configv1.LocalRateLimitSettings{
+									TokenBucket: &configv1.TokenBucket{
+										MaxTokens:     1,
+										TokensPerFill: 1,
+										FillInterval:  durationpb.New(time.Minute),
+									},
+								},
+							},
+						),
 						TrustDomain:      "cluster.local",
 						DiscoveryAddress: "agentiod.agentio-system.svc:15012",
 					},
@@ -55,6 +68,10 @@ func TestConnectIdentityFallbackTransfer(t *testing.T) {
 				hcm := findHCM(t, listener)
 				names := httpFilterNames(hcm)
 				index := slices.Index(names, "connect_workload")
+				rateLimitIndex := slices.Index(names, "envoy.filters.http.local_ratelimit")
+				if rateLimitIndex < 0 || rateLimitIndex >= slices.Index(names, "envoy.filters.http.router") {
+					t.Fatalf("rate limiting must run before routing: %v", names)
+				}
 				peer := connectAuthorityStates(t, listener)["agentio.downstream.ip"]
 				if legacy {
 					if index >= 0 || peer != nil {
@@ -71,8 +88,8 @@ func TestConnectIdentityFallbackTransfer(t *testing.T) {
 					t.Fatalf("unexpected source IP capture: %v", peer)
 				}
 				if index < 1 || names[index-1] != "envoy.filters.http.ext_proc" ||
-					index >= slices.Index(names, "envoy.filters.http.router") {
-					t.Fatalf("identity must be restored after Porter and before routing: %v", names)
+					index >= rateLimitIndex {
+					t.Fatalf("identity must be restored after Porter and before rate limiting: %v", names)
 				}
 				processor := &extprocv3.ExternalProcessor{}
 				if err := hcm.HttpFilters[index-1].GetTypedConfig().UnmarshalTo(processor); err != nil {
