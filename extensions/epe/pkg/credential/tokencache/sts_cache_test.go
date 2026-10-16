@@ -30,9 +30,14 @@ func stsEntry(ak, sk, token string) STSCacheEntry {
 func TestSTSCache_BasicSetGet(t *testing.T) {
 	c := NewSTSCache(100)
 	entry := stsEntry("ak1", "sk1", "token1")
-	c.SetWithExpiration("provider-a", "resource-1", entry, time.Now().Add(1*time.Hour))
+	c.SetWithExpiration(
+		Key{ProviderName: "provider-a", ResourceID: "resource-1"},
+		entry,
+		time.Now().Add(1*time.Hour),
+		0,
+	)
 
-	got, ok := c.Get("provider-a", "resource-1")
+	got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -44,7 +49,7 @@ func TestSTSCache_BasicSetGet(t *testing.T) {
 func TestSTSCache_Miss(t *testing.T) {
 	c := NewSTSCache(100)
 
-	got, ok := c.Get("provider-a", "resource-1")
+	got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if ok {
 		t.Fatalf("expected cache miss, got %+v", got)
 	}
@@ -57,16 +62,16 @@ func TestSTSCache_Expiration(t *testing.T) {
 	c.SetClock(func() time.Time { return now })
 
 	entry := stsEntry("ak1", "sk1", "token1")
-	c.SetWithExpiration("p", "r1", entry, now.Add(50*time.Millisecond))
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, entry, now.Add(50*time.Millisecond), 0)
 
-	got, ok := c.Get("p", "r1")
+	got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if !ok || got.AccessKeyID != "ak1" {
 		t.Fatalf("expected immediate hit, got %+v, %v", got, ok)
 	}
 
 	now = now.Add(100 * time.Millisecond)
 
-	got, ok = c.Get("p", "r1")
+	got, ok = c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if ok {
 		t.Fatalf("expected expired entry, got %+v", got)
 	}
@@ -104,9 +109,9 @@ func TestSTSCache_ExpirationMargin(t *testing.T) {
 			c.expirationMargin = tt.margin
 
 			entry := stsEntry("ak1", "sk1", "token1")
-			c.SetWithExpiration("p", "r1", entry, time.Now().Add(tt.expiresIn))
+			c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, entry, time.Now().Add(tt.expiresIn), 0)
 
-			got, ok := c.Get("p", "r1")
+			got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 			if ok != tt.wantCached {
 				t.Fatalf("cached = %v, want %v", ok, tt.wantCached)
 			}
@@ -124,11 +129,11 @@ func TestSTSCache_ExpirationMargin(t *testing.T) {
 func TestSTSCache_Delete(t *testing.T) {
 	c := NewSTSCache(100)
 	entry := stsEntry("ak1", "sk1", "token1")
-	c.SetWithExpiration("p", "r1", entry, time.Now().Add(1*time.Hour))
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, entry, time.Now().Add(1*time.Hour), 0)
 
-	c.Delete("p", "r1")
+	c.Delete(Key{ProviderName: "p", ResourceID: "r1"})
 
-	_, ok := c.Get("p", "r1")
+	_, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if ok {
 		t.Fatal("expected cache miss after delete")
 	}
@@ -136,7 +141,7 @@ func TestSTSCache_Delete(t *testing.T) {
 
 func TestSTSCache_DeleteNonExistent(t *testing.T) {
 	c := NewSTSCache(100)
-	c.Delete("nonexistent", "nonexistent") // should not panic
+	c.Delete(Key{ProviderName: "nonexistent", ResourceID: "nonexistent"}) // should not panic
 }
 
 func TestSTSCache_LRUEviction(t *testing.T) {
@@ -144,17 +149,17 @@ func TestSTSCache_LRUEviction(t *testing.T) {
 	c.expirationMargin = 0
 	exp := time.Now().Add(1 * time.Hour)
 
-	c.SetWithExpiration("p", "r1", stsEntry("ak1", "sk1", "t1"), exp)
-	c.SetWithExpiration("p", "r2", stsEntry("ak2", "sk2", "t2"), exp)
-	c.SetWithExpiration("p", "r3", stsEntry("ak3", "sk3", "t3"), exp)
-	c.SetWithExpiration("p", "r4", stsEntry("ak4", "sk4", "t4"), exp)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, stsEntry("ak1", "sk1", "t1"), exp, 0)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r2"}, stsEntry("ak2", "sk2", "t2"), exp, 0)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r3"}, stsEntry("ak3", "sk3", "t3"), exp, 0)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r4"}, stsEntry("ak4", "sk4", "t4"), exp, 0)
 
-	_, ok := c.Get("p", "r1")
+	_, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if ok {
 		t.Fatal("expected r1 to be evicted")
 	}
 
-	got, ok := c.Get("p", "r2")
+	got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r2"})
 	if !ok || got.AccessKeyID != "ak2" {
 		t.Errorf("expected r2=ak2, got %+v, %v", got, ok)
 	}
@@ -165,10 +170,10 @@ func TestSTSCache_UpdateExisting(t *testing.T) {
 	c.expirationMargin = 0
 	exp := time.Now().Add(1 * time.Hour)
 
-	c.SetWithExpiration("p", "r1", stsEntry("ak-old", "sk-old", "t-old"), exp)
-	c.SetWithExpiration("p", "r1", stsEntry("ak-new", "sk-new", "t-new"), exp)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, stsEntry("ak-old", "sk-old", "t-old"), exp, 0)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, stsEntry("ak-new", "sk-new", "t-new"), exp, 0)
 
-	got, ok := c.Get("p", "r1")
+	got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if !ok || got.AccessKeyID != "ak-new" {
 		t.Errorf("expected ak-new, got %+v, %v", got, ok)
 	}
@@ -186,8 +191,8 @@ func TestSTSCache_Len(t *testing.T) {
 		t.Errorf("expected 0, got %d", c.Len())
 	}
 
-	c.SetWithExpiration("p", "r1", stsEntry("ak1", "sk1", "t1"), exp)
-	c.SetWithExpiration("p", "r2", stsEntry("ak2", "sk2", "t2"), exp)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r1"}, stsEntry("ak1", "sk1", "t1"), exp, 0)
+	c.SetWithExpiration(Key{ProviderName: "p", ResourceID: "r2"}, stsEntry("ak2", "sk2", "t2"), exp, 0)
 
 	if c.Len() != 2 {
 		t.Errorf("expected 2, got %d", c.Len())
@@ -199,11 +204,11 @@ func TestSTSCache_DifferentProviders(t *testing.T) {
 	c.expirationMargin = 0
 	exp := time.Now().Add(1 * time.Hour)
 
-	c.SetWithExpiration("provider-a", "r1", stsEntry("ak-a", "sk-a", "t-a"), exp)
-	c.SetWithExpiration("provider-b", "r1", stsEntry("ak-b", "sk-b", "t-b"), exp)
+	c.SetWithExpiration(Key{ProviderName: "provider-a", ResourceID: "r1"}, stsEntry("ak-a", "sk-a", "t-a"), exp, 0)
+	c.SetWithExpiration(Key{ProviderName: "provider-b", ResourceID: "r1"}, stsEntry("ak-b", "sk-b", "t-b"), exp, 0)
 
-	gotA, okA := c.Get("provider-a", "r1")
-	gotB, okB := c.Get("provider-b", "r1")
+	gotA, okA := c.Get(Key{ProviderName: "provider-a", ResourceID: "r1"})
+	gotB, okB := c.Get(Key{ProviderName: "provider-b", ResourceID: "r1"})
 
 	if !okA || gotA.AccessKeyID != "ak-a" {
 		t.Errorf("provider-a: expected ak-a, got %+v, %v", gotA, okA)
@@ -224,16 +229,16 @@ func TestSTSCache_ConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			c.SetWithExpiration("provider", "resource", entry, exp)
+			c.SetWithExpiration(Key{ProviderName: "provider", ResourceID: "resource"}, entry, exp, 0)
 		}()
 		go func() {
 			defer wg.Done()
-			c.Get("provider", "resource")
+			c.Get(Key{ProviderName: "provider", ResourceID: "resource"})
 		}()
 	}
 	wg.Wait()
 
-	got, ok := c.Get("provider", "resource")
+	got, ok := c.Get(Key{ProviderName: "provider", ResourceID: "resource"})
 	if !ok || got.AccessKeyID != "ak" {
 		t.Errorf("expected ak after concurrent ops, got %+v, %v", got, ok)
 	}

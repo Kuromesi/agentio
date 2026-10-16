@@ -145,8 +145,8 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stop()
-	port := freePort(t)
-	admin := freePort(t)
+	ports, releasePorts := reservePorts(t, 2)
+	port, admin := ports[0], ports[1]
 	bootstrap := fmt.Sprintf(`{
  "node":{"id":"agentio-wasm-test","cluster":"test"},
  "admin":{"address":{"socket_address":{"address":"127.0.0.1","port_value":%d}}},
@@ -180,6 +180,7 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 	)
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	releasePorts()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -240,11 +241,52 @@ func TestCommunityEnvoyWasmECDS(t *testing.T) {
 
 func freePort(t *testing.T) int {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	ports, release := reservePorts(t, 1)
+	release()
+	return ports[0]
+}
+
+// Hold ports until process startup so later fixture listeners cannot reuse them.
+func reservePorts(t *testing.T, count int) ([]int, func()) {
+	t.Helper()
+	var listeners []net.Listener
+	release := func() {
+		for _, listener := range listeners {
+			closeResource(listener)
+		}
+		listeners = nil
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	closeResource(listener)
-	return port
+	t.Cleanup(release)
+	ports := make([]int, count)
+	for i := range ports {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		listeners = append(listeners, listener)
+		ports[i] = listener.Addr().(*net.TCPAddr).Port
+	}
+	return ports, release
+}
+
+func TestReservedPortsRemainUnavailableUntilRelease(t *testing.T) {
+	ports, release := reservePorts(t, 5)
+	fixture := httptest.NewServer(http.NotFoundHandler())
+	defer fixture.Close()
+	for _, port := range ports {
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			closeResource(listener)
+			t.Fatalf("port %d was not reserved", port)
+		}
+	}
+	release()
+	// Keep replacement listeners open to also verify every port is distinct.
+	for _, port := range ports {
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { closeResource(listener) })
+	}
 }

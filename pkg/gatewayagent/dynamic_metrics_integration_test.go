@@ -57,8 +57,9 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 	c := testConfig(t)
 	c.IP = "127.0.0.1"
 	c.metrics = newAgentMetrics()
-	c.Proxy.AdminPort = int32(freePort(t))
-	metricsPort, statusPort, businessPort := freePort(t), freePort(t), freePort(t)
+	ports, releasePorts := reservePorts(t, 4)
+	c.Proxy.AdminPort = int32(ports[0])
+	metricsPort, statusPort, businessPort := ports[1], ports[2], ports[3]
 	c.PrometheusPort, c.EnvoyStatusPort = metricsPort, statusPort
 	agent := httptest.NewServer(proxyMetrics(c))
 	defer agent.Close()
@@ -148,6 +149,7 @@ func TestCommunityEnvoyDynamicMetrics(t *testing.T) {
 		"warning",
 	)
 	command.Stdout, command.Stderr = &logs, &logs
+	releasePorts()
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}

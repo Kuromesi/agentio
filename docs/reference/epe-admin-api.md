@@ -20,6 +20,28 @@ $ curl --fail --silent http://127.0.0.1:15000/
 
 The binary defaults `--enable-debug=true`. Starting it with `--enable-debug=false` leaves the index available but does not register debug paths; requests to `/debug/profiles` and `/debug/logging` then return 404.
 
+## Credential cache invalidation
+
+`POST /cache/credentials/invalidate` synchronously invalidates credentials in the EPE process reached by the request. This operational endpoint is available even with `--enable-debug=false`. It shares the admin listener's trusted-operator boundary; it has no independent authentication and is not exposed by the Service.
+
+Invalidate one provider:
+
+```console
+$ curl --fail --silent --request POST \
+    --header 'Content-Type: application/json' \
+    --data '{"providerName":"my-provider"}' \
+    http://127.0.0.1:15000/cache/credentials/invalidate
+{"apiKeyEntries":12,"stsEntries":3,"oauth2Entries":2}
+```
+
+API-key, STS, and OAuth2 Resource entries for that exact remote `credentialProviderName` are invalidated across all current credential-provider connections, resources, and metadata/caller/scope variants. This name is not the local `EPEConfig.extensionProviders[].name`. `providerName` is required and must be non-empty.
+
+A successful `200 OK` response reports removed entries, including expired entries not yet reaped. Zero counts are successful and still prevent older in-flight fetches from refilling the affected caches. The response does **not** mean new credentials have been fetched. Subsequent entries use their normal lifetime unless both `CREDENTIAL_CACHE_INVALIDATION_WINDOW` and `CREDENTIAL_CACHE_INVALIDATION_MAX_TTL` are positive. When enabled, each invalidation restarts a window in which new entries are capped at the configured TTL. The window defaults to `30s` and the TTL cap to `5s`; a non-positive value for either setting disables this adjustment. See [the credential-provider contract](credential-provider.md#external-cache-invalidation) for cache semantics and adapter responsibilities.
+
+Requests must contain one JSON object of at most 4 KiB. Unknown fields, invalid types, trailing JSON, and missing or empty provider names return `400` without changing cache state. Other methods return `405` with `Allow: POST`. JSON responses carry `Cache-Control: no-store`.
+
+The interface is local to one process. Calling a load-balanced Service once does not invalidate every replica. Internal controllers or other trigger adapters must deliver to every instance and invalidate affected caches after missed events. No Kubernetes watches or provider-specific integrations are installed by EPE.
+
 ## Runtime log level
 
 EPE supports agentiod's logging API format on its admin listener. EPE exposes one process-wide scope, `default`; component scopes such as `krt` are not available here.

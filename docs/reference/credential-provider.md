@@ -130,24 +130,68 @@ Providers should require the client certificate and treat the bearer `accessToke
 
 ## Caching semantics
 
-Providers must tolerate credential reuse within a bounded window; EPE caches per `(providerName + hash(extraMetadata), resourceId)`:
+Providers must tolerate credential reuse within a bounded window; EPE caches per `(providerName, resourceId, hash(extraMetadata))`:
 
 Each registered credential provider has its own caches. `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE`, and `STS_CACHE_MAX_SIZE` are read at process startup and apply to all credential providers, including those added later through EPEConfig. Capacity limits are per provider, not a shared process-wide budget. Changing these environment variables requires restarting EPE; EPEConfig does not expose cache settings.
 
 | Credential | Lifetime | Size bound |
 | --- | --- | --- |
 | `apiKey` | `cacheExpiresInSeconds` when the response carries it, else `TOKEN_CACHE_TTL` (chart default `15m`) | `TOKEN_CACHE_MAX_SIZE` |
-| `stsToken` | until `stsToken.expiration` (uncacheable without it) | `STS_CACHE_MAX_SIZE` |
+| `stsToken` | until `stsToken.expiration` minus 5 minutes (uncacheable without it), additionally capped by a positive `cacheExpiresInSeconds` when supplied | `STS_CACHE_MAX_SIZE` |
 
-`cacheExpiresInSeconds` is an optional field on an `apiKey` response naming how many seconds that key may be cached. It takes precedence over `TOKEN_CACHE_TTL` and is applied verbatim — no safety margin is subtracted, unlike `stsToken.expiration`. Absent, `null`, zero, and negative all mean "no opinion" and `TOKEN_CACHE_TTL` applies.
+`cacheExpiresInSeconds` is an optional response field naming how many seconds the credential may be cached. For `apiKey`, it takes precedence over `TOKEN_CACHE_TTL` and is applied verbatim — no safety margin is subtracted, unlike `stsToken.expiration`. Absent, `null`, zero, and negative all mean "no opinion": API keys use `TOKEN_CACHE_TTL`, while STS keeps its expiration-based lifetime.
 
-It must be a JSON **integer** (`600`), not a string (`"600"`) and not fractional (`600.5`). EPE decodes it as part of the credential response, so a non-integer value fails that decode and the `apiKey` becomes unreachable — the request then follows `failStrategy` instead of merely losing the caching hint. Providers must not quote this field.
+It must be a JSON **integer** (`600`), not a string (`"600"`) and not fractional (`600.5`). EPE decodes it as part of the credential response, so a non-integer value fails that decode and the credential becomes unreachable — the request then follows `failStrategy` instead of merely losing the caching hint. Providers must not quote this field.
 
 Practical consequences:
 
-- Key rotation on the provider side becomes visible to EPE only after the cache entry expires. Returning `cacheExpiresInSeconds` is the direct way to control this per credential; `TOKEN_CACHE_TTL` is the deployment-wide fallback for providers that do not.
+- Without an external invalidation trigger, key rotation on the provider side becomes visible to EPE only after the cache entry expires. Returning `cacheExpiresInSeconds` is the direct way to control this per credential; `TOKEN_CACHE_TTL` is the deployment-wide fallback for providers that do not.
 - A non-positive `TOKEN_CACHE_TTL` is honoured rather than corrected: it disables the fallback lifetime, so responses without `cacheExpiresInSeconds` are not cached at all.
-- Returning `expiration` on STS responses is strongly recommended — it is the only way the provider controls STS reuse.
+- Returning `expiration` on STS responses is strongly recommended — STS responses without it are never cached. A positive `cacheExpiresInSeconds` can shorten STS reuse further, including while a provider replica catches up to its Secret cache.
+
+## External cache invalidation
+
+EPE exposes `credential.Client.InvalidateCredentials` and [`POST /cache/credentials/invalidate`](epe-admin-api.md#credential-cache-invalidation) for provider-wide invalidation. API-key, STS, and OAuth2 Resource entries are removed, across all resources, metadata, caller, and scope variants. The next request fetches credentials using that request's bearer token. An invalidation never performs background prefetch and does not require a Kubernetes CRD or a particular credential-provider implementation.
+
+### Optional short-TTL window
+
+Invalidation always clears the affected caches. By default, new cache entries are capped at 5 seconds for 30 seconds after invalidation. Both durations are configurable using Go duration syntax:
+
+```console
+CREDENTIAL_CACHE_INVALIDATION_WINDOW=30s
+CREDENTIAL_CACHE_INVALIDATION_MAX_TTL=5s
+```
+
+For Helm deployments, set the same variables through the existing `epe.env` map:
+
+```yaml
+epe:
+  env:
+    CREDENTIAL_CACHE_INVALIDATION_WINDOW: "30s"
+    CREDENTIAL_CACHE_INVALIDATION_MAX_TTL: "5s"
+```
+
+The window defaults to `30s` and the maximum TTL to `5s`. The policy is enabled only when **both are positive**; a non-positive value for either disables TTL adjustment, not invalidation. Each invalidation for that provider restarts the window. When a response is cached during the window, its lifetime is the smaller of the normal lifetime and the configured maximum TTL. At and after the window's end, new entries use their normal lifetime. Entries already cached keep their expiry. No refresh markers or additional provider response fields are required.
+
+This window limits how long a response from a lagging provider replica is cached while replicas converge. It does not guarantee freshness: a replica still serving old credentials after the window can have those credentials cached for the normal lifetime. Size the window for the deployment's propagation delay.
+
+These are upper bounds: shorter provider lifetimes and disabled caching remain unchanged. STS entries still require a usable expiration and retain the 5-minute safety margin. Responses from fetches started before an invalidation cannot refill the affected cache, even if they finish after a newer fetch. Already in-flight requests can still use their fetched credentials; this mechanism does not revoke credentials or retry requests. Fetch failures retain the rule's existing `failStrategy` behavior.
+
+### Integrating a trigger
+
+In-process integrations call the same `extensionprovider.Registry` used by the filters. `providerName` is the remote `credentialProviderName`, not an `EPEConfig.extensionProviders[].name`. The registry invalidates that remote name across all current credential-provider connections and aggregates removed counts; replaced configuration versions remain isolated from current caches.
+
+```go
+result, err := registry.InvalidateCredentials(credential.InvalidationRequest{
+    ProviderName: "my-provider",
+})
+```
+
+Direct users of `credential.Client` can call its `InvalidateCredentials` method to affect only that client. `credential.NewClient` accepts `credential.WithInvalidationCachePolicy(window, maxTTL)` to override the 30s/5s defaults, including setting both to zero to disable TTL adjustment. The EPE registry passes the environment settings explicitly when constructing each client.
+
+Adapters for watches, message queues, webhooks, or manual tools are supplied by the integrator. EPE does not register these external event sources. Adapters map source identities to the exact provider names sent to `GetResourceCredential` and deliver invalidations to every EPE replica. Replayed notifications invalidate again and restart the configured window. After a missed event or reconnect, an adapter can invalidate each affected provider.
+
+Caches and invalidation state are process-local and empty after restart. Provider invalidation state is reclaimed lazily after its short-TTL window ends and all in-flight credential fetches finish: later invalidations sweep expired idle states, and completed fetches check their own provider state. This API does not provide cross-replica delivery, persistence, or a fixed end-to-end freshness deadline.
 
 ## Environment variable reference
 
@@ -158,6 +202,8 @@ Practical consequences:
 | `CREDENTIAL_PROVIDER_SECRET_NAMESPACE` / `_NAME` | Secret holding mTLS material; both required by the `secret` source |
 | `TOKEN_CACHE_TTL`, `TOKEN_CACHE_MAX_SIZE` | API-key cache tuning; `TOKEN_CACHE_TTL` is the fallback lifetime for responses without `cacheExpiresInSeconds` |
 | `STS_CACHE_MAX_SIZE` | STS cache tuning |
+| `CREDENTIAL_CACHE_INVALIDATION_WINDOW` | Duration of the optional short-TTL window after invalidation; default `30s`; non-positive disables the policy |
+| `CREDENTIAL_CACHE_INVALIDATION_MAX_TTL` | Maximum credential cache lifetime within that window; default `5s`; both durations must be positive to enable the policy |
 
 ## Implementing a provider
 

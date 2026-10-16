@@ -21,22 +21,24 @@ import (
 	"github.com/openkruise/agentio/pkg/cache"
 )
 
-type cacheKey struct {
-	credentialProviderName string
-	resourceID             string
+// Key identifies a credential while keeping its provider available for invalidation.
+type Key struct {
+	ProviderName string
+	ResourceID   string
+	MetadataHash string
 }
 
 // ttlCache adapts provider keys and lifetime calculations to the shared cache.
 // mu serializes the test clock with cache operations; no background sweep runs here.
 type ttlCache[V any] struct {
 	mu    sync.Mutex
-	store *cache.Cache[cacheKey, V]
+	store *cache.Cache[Key, V]
 	now   func() time.Time
 }
 
 func newTTLCache[V any](maxSize int) *ttlCache[V] {
 	c := &ttlCache[V]{now: time.Now}
-	store, err := cache.NewBuilder[cacheKey, V]().
+	store, err := cache.NewBuilder[Key, V]().
 		WithLRU(maxSize).
 		WithClock(func() time.Time { return c.now() }).
 		Build()
@@ -55,17 +57,19 @@ func (c *ttlCache[V]) SetClock(now func() time.Time) {
 }
 
 // Get returns a live credential and updates its LRU position.
-func (c *ttlCache[V]) Get(provider, resource string) (V, bool) {
+func (c *ttlCache[V]) Get(key Key) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.store.Get(cacheKey{credentialProviderName: provider, resourceID: resource})
+	return c.store.Get(key)
 }
 
 // SetWithTTL replaces a credential, or removes it when caching is disabled.
-func (c *ttlCache[V]) SetWithTTL(provider, resource string, value V, ttl time.Duration) {
+func (c *ttlCache[V]) SetWithTTL(key Key, value V, ttl, maxTTL time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := cacheKey{credentialProviderName: provider, resourceID: resource}
+	if maxTTL > 0 && ttl > maxTTL {
+		ttl = maxTTL
+	}
 	if ttl <= 0 {
 		c.store.Remove(key)
 		return
@@ -74,24 +78,43 @@ func (c *ttlCache[V]) SetWithTTL(provider, resource string, value V, ttl time.Du
 }
 
 // SetIfFresh retains a credential only until its provider-derived deadline.
-func (c *ttlCache[V]) SetIfFresh(provider, resource string, value V, expiresAt time.Time) bool {
+func (c *ttlCache[V]) SetIfFresh(key Key, value V, expiresAt time.Time, maxTTL time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// A missing credential deadline is not an immortal credential.
 	if expiresAt.IsZero() {
 		return false
 	}
-	return c.store.SetWithExpiration(cacheKey{credentialProviderName: provider, resourceID: resource}, value, expiresAt)
+	if maxTTL > 0 {
+		if limit := c.now().Add(maxTTL); limit.Before(expiresAt) {
+			expiresAt = limit
+		}
+	}
+	return c.store.SetWithExpiration(key, value, expiresAt)
 }
 
 // Delete removes a credential.
-func (c *ttlCache[V]) Delete(provider, resource string) {
+func (c *ttlCache[V]) Delete(key Key) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.store.Remove(cacheKey{credentialProviderName: provider, resourceID: resource})
+	c.store.Remove(key)
 }
 
 // Len returns retained entries, including ones not yet cleaned.
 func (c *ttlCache[V]) Len() int {
 	return c.store.Len()
+}
+
+// Invalidate removes entries matching providerName.
+func (c *ttlCache[V]) Invalidate(providerName string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, key := range c.store.Keys() {
+		if key.ProviderName == providerName {
+			c.store.Remove(key)
+			n++
+		}
+	}
+	return n
 }

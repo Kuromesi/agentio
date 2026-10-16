@@ -33,6 +33,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs/certstest"
+	"github.com/openkruise/agentio/extensions/epe/pkg/credential"
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential/credentialtest"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
@@ -749,5 +750,67 @@ func TestRegistryOptionalMaterialDoesNotDisableVerification(t *testing.T) {
 				t.Fatal("TLS configuration unexpectedly allowed the call")
 			}
 		})
+	}
+}
+
+func TestRegistryInvalidatesRemoteProviderAcrossConnections(t *testing.T) {
+	p := credentialtest.NewAPIKeyProvider(t, "fresh")
+	r := &Registry{}
+	defer r.Close()
+	raw := credentialConfig(p.Server.URL, p.Server.URL)
+	apply(t, r, raw)
+	for _, connection := range []string{"a", "b"} {
+		token(t, r, t.Context(), connection)
+		if _, err := r.Fetch(t.Context(), tokentransform.Ref{
+			Kind:            tokentransform.CredentialKindToken,
+			Provider:        connection,
+			Name:            "other",
+			SandboxClientID: "sandbox",
+			AccessToken:     "access",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := r.InvalidateCredentials(credential.InvalidationRequest{}); err == nil {
+		t.Fatal("empty provider must fail")
+	}
+	removed, err := r.InvalidateCredentials(credential.InvalidationRequest{ProviderName: "remote"})
+	if err != nil || removed.APIKeyEntries != 2 {
+		t.Fatalf("removed=%+v err=%v", removed, err)
+	}
+	// Reapplying unchanged config must retain clients and their invalidation state.
+	old := r.current.providers["a"]
+	apply(t, r, raw)
+	if old != r.current.providers["a"] {
+		t.Fatal("unchanged provider was rebuilt")
+	}
+	for _, connection := range []string{"a", "b"} {
+		token(t, r, t.Context(), connection)
+	}
+	removed, err = r.InvalidateCredentials(credential.InvalidationRequest{ProviderName: "other"})
+	if err != nil || removed.APIKeyEntries != 2 {
+		t.Fatalf("unrelated provider lost: %+v %v", removed, err)
+	}
+	removed, err = r.InvalidateCredentials(credential.InvalidationRequest{ProviderName: "a"})
+	if err != nil || removed.APIKeyEntries != 0 {
+		t.Fatalf("local connection name matched remote: %+v %v", removed, err)
+	}
+}
+
+func TestRegistryInvalidationPolicyFromEnvironment(t *testing.T) {
+	testsupport.SetForTest(t, &invalidationWindow, time.Minute)
+	testsupport.SetForTest(t, &invalidationMaxTTL, time.Nanosecond)
+	p := credentialtest.NewAPIKeyProvider(t, "fresh")
+	r := &Registry{}
+	defer r.Close()
+	apply(t, r, credentialConfig(p.Server.URL, p.Server.URL))
+	if _, err := r.InvalidateCredentials(credential.InvalidationRequest{ProviderName: "remote"}); err != nil {
+		t.Fatal(err)
+	}
+	token(t, r, t.Context(), "a")
+	// The next HTTP-backed lookup must miss the 1ns cache entry.
+	token(t, r, t.Context(), "a")
+	if p.Calls.Load() != 2 {
+		t.Fatalf("provider calls=%d, want 2", p.Calls.Load())
 	}
 }

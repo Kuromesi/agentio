@@ -22,9 +22,9 @@ import (
 
 func TestCache_BasicSetGet(t *testing.T) {
 	c := NewCache(1*time.Minute, 100)
-	c.Set("provider-a", "resource-1", "token-abc")
+	c.Set(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc")
 
-	got, ok := c.Get("provider-a", "resource-1")
+	got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -36,7 +36,7 @@ func TestCache_BasicSetGet(t *testing.T) {
 func TestCache_Miss(t *testing.T) {
 	c := NewCache(1*time.Minute, 100)
 
-	got, ok := c.Get("provider-a", "resource-1")
+	got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if ok {
 		t.Fatalf("expected cache miss, got %s", got)
 	}
@@ -44,11 +44,11 @@ func TestCache_Miss(t *testing.T) {
 
 func TestCache_Delete(t *testing.T) {
 	c := NewCache(1*time.Minute, 100)
-	c.Set("provider-a", "resource-1", "token-abc")
+	c.Set(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc")
 
-	c.Delete("provider-a", "resource-1")
+	c.Delete(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 
-	got, ok := c.Get("provider-a", "resource-1")
+	got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if ok {
 		t.Fatalf("expected cache miss after delete, got %s", got)
 	}
@@ -56,17 +56,17 @@ func TestCache_Delete(t *testing.T) {
 
 func TestCache_DeleteNonExistent(t *testing.T) {
 	c := NewCache(1*time.Minute, 100)
-	c.Delete("nonexistent", "nonexistent") // should not panic
+	c.Delete(Key{ProviderName: "nonexistent", ResourceID: "nonexistent"}) // should not panic
 }
 
 func TestCache_Expiration(t *testing.T) {
 	c := NewCache(50*time.Millisecond, 100)
 	now := time.Unix(1000, 0)
 	c.SetClock(func() time.Time { return now })
-	c.Set("provider-a", "resource-1", "token-abc")
+	c.Set(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc")
 
 	// Should hit immediately.
-	got, ok := c.Get("provider-a", "resource-1")
+	got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if !ok || got != "token-abc" {
 		t.Fatalf("expected immediate hit, got %s, %v", got, ok)
 	}
@@ -74,7 +74,7 @@ func TestCache_Expiration(t *testing.T) {
 	// Advance past the TTL.
 	now = now.Add(100 * time.Millisecond)
 
-	got, ok = c.Get("provider-a", "resource-1")
+	got, ok = c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 	if ok {
 		t.Fatalf("expected expired entry, got %s", got)
 	}
@@ -98,12 +98,19 @@ func TestCache_SetWithTTL(t *testing.T) {
 			c := NewCache(time.Hour, 100)
 			now := time.Unix(1000, 0)
 			c.SetClock(func() time.Time { return now })
-			c.SetWithTTL("provider-a", "resource-1", "token-abc", tc.ttl)
+			c.SetWithTTL(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc", tc.ttl, 0)
 
 			now = now.Add(tc.advance)
-			got, ok := c.Get("provider-a", "resource-1")
+			got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"})
 			if ok != tc.wantHit {
-				t.Fatalf("after %v with ttl %v: hit=%v (token %q), want hit=%v", tc.advance, tc.ttl, ok, got, tc.wantHit)
+				t.Fatalf(
+					"after %v with ttl %v: hit=%v (token %q), want hit=%v",
+					tc.advance,
+					tc.ttl,
+					ok,
+					got,
+					tc.wantHit,
+				)
 			}
 		})
 	}
@@ -116,15 +123,15 @@ func TestCache_SetWithTTL_NonPositiveFallsBack(t *testing.T) {
 		c := NewCache(time.Hour, 100)
 		now := time.Unix(1000, 0)
 		c.SetClock(func() time.Time { return now })
-		c.SetWithTTL("provider-a", "resource-1", "token-abc", ttl)
+		c.SetWithTTL(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc", ttl, 0)
 
 		now = now.Add(59 * time.Minute)
-		if _, ok := c.Get("provider-a", "resource-1"); !ok {
+		if _, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"}); !ok {
 			t.Errorf("ttl %v: expected fallback to the cache TTL, got a miss before it elapsed", ttl)
 		}
 
 		now = now.Add(2 * time.Minute)
-		if _, ok := c.Get("provider-a", "resource-1"); ok {
+		if _, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"}); ok {
 			t.Errorf("ttl %v: expected expiry after the cache TTL elapsed", ttl)
 		}
 	}
@@ -133,30 +140,30 @@ func TestCache_SetWithTTL_NonPositiveFallsBack(t *testing.T) {
 func TestCache_LRUEviction(t *testing.T) {
 	c := NewCache(1*time.Minute, 3)
 
-	c.Set("p", "r1", "t1")
-	c.Set("p", "r2", "t2")
-	c.Set("p", "r3", "t3")
+	c.Set(Key{ProviderName: "p", ResourceID: "r1"}, "t1")
+	c.Set(Key{ProviderName: "p", ResourceID: "r2"}, "t2")
+	c.Set(Key{ProviderName: "p", ResourceID: "r3"}, "t3")
 
 	// Cache is full; adding r4 should evict r1 (LRU).
-	c.Set("p", "r4", "t4")
+	c.Set(Key{ProviderName: "p", ResourceID: "r4"}, "t4")
 
-	_, ok := c.Get("p", "r1")
+	_, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if ok {
 		t.Fatal("expected r1 to be evicted")
 	}
 
 	// r2, r3, r4 should still exist.
-	got, ok := c.Get("p", "r2")
+	got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r2"})
 	if !ok || got != "t2" {
 		t.Errorf("expected r2=t2, got %s, %v", got, ok)
 	}
 
-	got, ok = c.Get("p", "r3")
+	got, ok = c.Get(Key{ProviderName: "p", ResourceID: "r3"})
 	if !ok || got != "t3" {
 		t.Errorf("expected r3=t3, got %s, %v", got, ok)
 	}
 
-	got, ok = c.Get("p", "r4")
+	got, ok = c.Get(Key{ProviderName: "p", ResourceID: "r4"})
 	if !ok || got != "t4" {
 		t.Errorf("expected r4=t4, got %s, %v", got, ok)
 	}
@@ -165,22 +172,22 @@ func TestCache_LRUEviction(t *testing.T) {
 func TestCache_LRUOrder_Update(t *testing.T) {
 	c := NewCache(1*time.Minute, 3)
 
-	c.Set("p", "r1", "t1")
-	c.Set("p", "r2", "t2")
-	c.Set("p", "r3", "t3")
+	c.Set(Key{ProviderName: "p", ResourceID: "r1"}, "t1")
+	c.Set(Key{ProviderName: "p", ResourceID: "r2"}, "t2")
+	c.Set(Key{ProviderName: "p", ResourceID: "r3"}, "t3")
 
 	// Access r1 — moves it to front, so r2 becomes LRU.
-	c.Get("p", "r1")
+	c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 
 	// Add r4 — should evict r2.
-	c.Set("p", "r4", "t4")
+	c.Set(Key{ProviderName: "p", ResourceID: "r4"}, "t4")
 
-	_, ok := c.Get("p", "r2")
+	_, ok := c.Get(Key{ProviderName: "p", ResourceID: "r2"})
 	if ok {
 		t.Fatal("expected r2 to be evicted (was LRU after r1 accessed)")
 	}
 
-	got, ok := c.Get("p", "r1")
+	got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if !ok || got != "t1" {
 		t.Errorf("expected r1=t1, got %s, %v", got, ok)
 	}
@@ -189,10 +196,10 @@ func TestCache_LRUOrder_Update(t *testing.T) {
 func TestCache_UpdateExisting(t *testing.T) {
 	c := NewCache(1*time.Minute, 100)
 
-	c.Set("p", "r1", "token-old")
-	c.Set("p", "r1", "token-new")
+	c.Set(Key{ProviderName: "p", ResourceID: "r1"}, "token-old")
+	c.Set(Key{ProviderName: "p", ResourceID: "r1"}, "token-new")
 
-	got, ok := c.Get("p", "r1")
+	got, ok := c.Get(Key{ProviderName: "p", ResourceID: "r1"})
 	if !ok || got != "token-new" {
 		t.Errorf("expected token-new, got %s, %v", got, ok)
 	}
@@ -210,8 +217,8 @@ func TestCache_Len(t *testing.T) {
 		t.Errorf("expected 0, got %d", c.Len())
 	}
 
-	c.Set("p", "r1", "t1")
-	c.Set("p", "r2", "t2")
+	c.Set(Key{ProviderName: "p", ResourceID: "r1"}, "t1")
+	c.Set(Key{ProviderName: "p", ResourceID: "r2"}, "t2")
 
 	if c.Len() != 2 {
 		t.Errorf("expected 2, got %d", c.Len())
@@ -221,11 +228,11 @@ func TestCache_Len(t *testing.T) {
 func TestCache_DifferentProviders(t *testing.T) {
 	c := NewCache(1*time.Minute, 100)
 
-	c.Set("provider-a", "r1", "token-a")
-	c.Set("provider-b", "r1", "token-b")
+	c.Set(Key{ProviderName: "provider-a", ResourceID: "r1"}, "token-a")
+	c.Set(Key{ProviderName: "provider-b", ResourceID: "r1"}, "token-b")
 
-	gotA, okA := c.Get("provider-a", "r1")
-	gotB, okB := c.Get("provider-b", "r1")
+	gotA, okA := c.Get(Key{ProviderName: "provider-a", ResourceID: "r1"})
+	gotB, okB := c.Get(Key{ProviderName: "provider-b", ResourceID: "r1"})
 
 	if !okA || gotA != "token-a" {
 		t.Errorf("provider-a: expected token-a, got %s, %v", gotA, okA)
@@ -243,16 +250,16 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			c.Set("provider", "resource", "token")
+			c.Set(Key{ProviderName: "provider", ResourceID: "resource"}, "token")
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			c.Get("provider", "resource")
+			c.Get(Key{ProviderName: "provider", ResourceID: "resource"})
 		}(i)
 	}
 	wg.Wait()
 
-	got, ok := c.Get("provider", "resource")
+	got, ok := c.Get(Key{ProviderName: "provider", ResourceID: "resource"})
 	if !ok || got != "token" {
 		t.Errorf("expected token after concurrent ops, got %s, %v", got, ok)
 	}
@@ -289,17 +296,17 @@ func TestCache_NonPositiveTTLDisablesCaching(t *testing.T) {
 
 	now := time.Unix(1000, 0)
 	c.SetClock(func() time.Time { return now })
-	c.Set("provider-a", "resource-1", "token-abc")
+	c.Set(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc")
 
 	now = now.Add(time.Nanosecond)
-	if got, ok := c.Get("provider-a", "resource-1"); ok {
+	if got, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"}); ok {
 		t.Errorf("expected no caching with a zero TTL, got %q", got)
 	}
 
 	// A provider-supplied lifetime still overrides the disabled fallback.
-	c.SetWithTTL("provider-a", "resource-2", "token-xyz", 10*time.Minute)
+	c.SetWithTTL(Key{ProviderName: "provider-a", ResourceID: "resource-2"}, "token-xyz", 10*time.Minute, 0)
 	now = now.Add(5 * time.Minute)
-	if _, ok := c.Get("provider-a", "resource-2"); !ok {
+	if _, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-2"}); !ok {
 		t.Error("expected cacheExpiresInSeconds to apply even when the fallback TTL is disabled")
 	}
 }
@@ -313,7 +320,12 @@ func fillAndVerifyCapacity(t *testing.T, c *Cache, maxSize int) {
 		limit = 100 // test a reasonable subset
 	}
 	for i := 0; i < limit; i++ {
-		c.SetWithTTL("default-test", fmt.Sprintf("r-%d", i), fmt.Sprintf("t-%d", i), time.Minute)
+		c.SetWithTTL(
+			Key{ProviderName: "default-test", ResourceID: fmt.Sprintf("r-%d", i)},
+			fmt.Sprintf("t-%d", i),
+			time.Minute,
+			0,
+		)
 	}
 	expectedLen := limit
 	if c.Len() != expectedLen {
@@ -326,8 +338,8 @@ func fillAndVerifyCapacity(t *testing.T, c *Cache, maxSize int) {
 func TestNewCache_ClampsNonPositiveMaxSize(t *testing.T) {
 	for _, maxSize := range []int{0, -1} {
 		c := NewCache(time.Minute, maxSize) // must not panic
-		c.Set("provider-a", "resource-1", "token-abc")
-		if _, ok := c.Get("provider-a", "resource-1"); !ok {
+		c.Set(Key{ProviderName: "provider-a", ResourceID: "resource-1"}, "token-abc")
+		if _, ok := c.Get(Key{ProviderName: "provider-a", ResourceID: "resource-1"}); !ok {
 			t.Errorf("maxSize %d: expected a usable cache after the clamp", maxSize)
 		}
 	}
@@ -337,25 +349,30 @@ func TestCredentialExpirationBoundary(t *testing.T) {
 	now := time.Unix(1000, 0)
 	token := NewCache(time.Second, 2)
 	token.SetClock(func() time.Time { return now })
-	token.Set("provider", "resource", "token")
+	token.Set(Key{ProviderName: "provider", ResourceID: "resource"}, "token")
 	sts := NewSTSCache(2)
 	sts.expirationMargin = 0
 	sts.SetClock(func() time.Time { return now })
-	sts.SetWithExpiration("provider", "resource", stsEntry("ak", "sk", "token"), now.Add(time.Second))
+	sts.SetWithExpiration(
+		Key{ProviderName: "provider", ResourceID: "resource"},
+		stsEntry("ak", "sk", "token"),
+		now.Add(time.Second),
+		0,
+	)
 	now = now.Add(time.Second)
-	if _, ok := token.Get("provider", "resource"); ok {
+	if _, ok := token.Get(Key{ProviderName: "provider", ResourceID: "resource"}); ok {
 		t.Fatal("token accepted at its expiry deadline")
 	}
-	if _, ok := sts.Get("provider", "resource"); ok {
+	if _, ok := sts.Get(Key{ProviderName: "provider", ResourceID: "resource"}); ok {
 		t.Fatal("STS accepted at its expiry deadline")
 	}
 }
 
 func TestDisabledFallbackRemovesPreviousCredential(t *testing.T) {
 	c := NewCache(0, 2)
-	c.SetWithTTL("provider", "resource", "old", time.Minute)
-	c.Set("provider", "resource", "new-without-lifetime")
-	if _, ok := c.Get("provider", "resource"); ok {
+	c.SetWithTTL(Key{ProviderName: "provider", ResourceID: "resource"}, "old", time.Minute, 0)
+	c.Set(Key{ProviderName: "provider", ResourceID: "resource"}, "new-without-lifetime")
+	if _, ok := c.Get(Key{ProviderName: "provider", ResourceID: "resource"}); ok {
 		t.Fatal("disabled caching retained previous credential")
 	}
 }
