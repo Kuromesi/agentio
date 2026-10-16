@@ -54,8 +54,76 @@ jobs:
     if: github.ref == 'refs/heads/master'
     uses: ./.github/workflows/agentio-ztunnel.yml
 
+  build-owned:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 45
+    environment: development
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        image: [agentio-gateway, agentiod, agentio-epe, agentio-porter]
+        include:
+          - image: agentio-gateway
+            dockerfile: docker/Dockerfile.gateway
+          - image: agentiod
+            dockerfile: Dockerfile
+          - image: agentio-epe
+            dockerfile: extensions/epe/docker/Dockerfile
+          - image: agentio-porter
+            dockerfile: extensions/porter/docker/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.HUB_KRUISE }}
+      - name: Build and push native candidate
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          provenance: false
+          outputs: type=image,name=${{ env.HUB }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            AGENT_VERSION=${{ inputs.tag != '' && inputs.tag || github.sha }}
+            AGENT_REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=publish-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=publish-${{ matrix.image }}-${{ matrix.arch }},mode=max
+      - name: Smoke-test gateway agent candidate
+        if: matrix.image == 'agentio-gateway'
+        env:
+          IMAGE: ${{ env.HUB }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: docker run --rm "$IMAGE" version
+      - name: Record native digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve immutable digest for $IMAGE/$ARCH: $DIGEST" >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/digests"
+          echo "$DIGEST" > "${RUNNER_TEMP}/digests/${IMAGE}-${ARCH}"
+      - name: Upload native digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
   build-images:
-    needs: build-ztunnel
+    needs: [build-ztunnel, build-owned]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -80,6 +148,12 @@ jobs:
         with:
           name: ztunnel-arm64
           path: ztunnel-context/arm64
+      - name: Download native image digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
       - name: Resolve candidate tag
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -93,14 +167,13 @@ jobs:
             exit 1
           fi
           echo "CANDIDATE_TAG=$tag" >> "$GITHUB_ENV"
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.HUB_KRUISE }}
-      - name: Build and push owned candidates
+      - name: Publish multi-platform candidates
         id: images
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -131,15 +204,37 @@ jobs:
               echo "Unable to resolve immutable digest for ${image_name}: $digest" >&2
               exit 1
             fi
+            docker buildx imagetools inspect "${HUB}/${image_name}@${digest}" --raw |
+              jq -e '[.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]' >/dev/null
             echo "${output_name}=${HUB}/${image_name}@${digest}" >> "$GITHUB_OUTPUT"
           }
 
-          build_image gateway_agent_image agentio-gateway docker/Dockerfile.gateway . \
-            --build-arg "AGENT_VERSION=$CANDIDATE_TAG" \
-            --build-arg "AGENT_REVISION=$GITHUB_SHA"
-          build_image agentiod_image agentiod Dockerfile .
-          build_image epe_image agentio-epe extensions/epe/docker/Dockerfile .
-          build_image porter_image agentio-porter extensions/porter/docker/Dockerfile .
+          merge_image() {
+            local output_name="$1" image_name="$2" digest amd64 arm64
+            local destination="${HUB}/${image_name}:${CANDIDATE_TAG}"
+            local tags=(--tag "$destination")
+            if [[ -z "$INPUT_TAG" ]]; then
+              tags+=(--tag "${HUB}/${image_name}:master-dev")
+            fi
+            amd64=$(cat "${RUNNER_TEMP}/digests/${image_name}-amd64")
+            arm64=$(cat "${RUNNER_TEMP}/digests/${image_name}-arm64")
+            docker buildx imagetools create "${tags[@]}" \
+              "${HUB}/${image_name}@${amd64}" \
+              "${HUB}/${image_name}@${arm64}"
+            digest=$(docker buildx imagetools inspect "$destination" --format '{{json .Manifest}}' | jq -er '.digest')
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Unable to resolve immutable digest for ${image_name}: $digest" >&2
+              exit 1
+            fi
+            docker buildx imagetools inspect "${HUB}/${image_name}@${digest}" --raw |
+              jq -e '[.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]' >/dev/null
+            echo "${output_name}=${HUB}/${image_name}@${digest}" >> "$GITHUB_OUTPUT"
+          }
+
+          merge_image gateway_agent_image agentio-gateway
+          merge_image agentiod_image agentiod
+          merge_image epe_image agentio-epe
+          merge_image porter_image agentio-porter
           build_image ztunnel_image ztunnel docker/Dockerfile.ztunnel ztunnel-context \
             --build-arg "ZTUNNEL_VERSION=$ZTUNNEL_SOURCE_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${ZTUNNEL_SOURCE_REPOSITORY}" \
