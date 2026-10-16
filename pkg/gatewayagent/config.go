@@ -22,6 +22,8 @@ import (
 	"net/netip"
 	"path/filepath"
 	"time"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // ProxyConfig contains Envoy process and shutdown settings.
@@ -48,6 +50,7 @@ type Config struct {
 	NodeName                    string
 	ServiceAccount              string
 	IP                          string
+	DNSDomain                   string
 	ClusterID                   string
 	TrustDomain                 string
 	TokenFile                   string
@@ -106,6 +109,7 @@ func FromEnvironment() Config {
 		KeepaliveInterval:    30 * time.Second,
 		KeepaliveTimeout:     10 * time.Second,
 		LogLevel:             "warning",
+		ComponentLogLevel:    "misc:error",
 		SecretTTL:            24 * time.Hour,
 		MinimumDrainDuration: 5 * time.Second,
 		StatsFlushInterval:   5 * time.Second,
@@ -136,5 +140,6 @@ func localAddresses(ip string) (string, string) {
 }
 
 func (c Config) nodeID() string {
-	return "agentio-egress/" + c.Namespace + "/" + c.PodUID
+	return fmt.Sprintf("%s~%s~%s.%s~%s", model.ProxyTypeAgentioEgress, c.IP, c.PodName, c.Namespace,
+		cmp.Or(c.DNSDomain, c.Namespace+".svc.cluster.local"))
 }

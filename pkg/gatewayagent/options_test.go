@@ -70,7 +70,7 @@ func TestRuntimeConfigPrecedence(t *testing.T) {
 
 func TestRejectInvalidRuntimeConfig(t *testing.T) {
 	for _, raw := range []string{
-		`{"concurency":2}`, `{"concurrency":-1}`, `{"concurrency":65536}`, `{"secretTTL":"0s"}`,
+		`{"concurency":2}`, "concurency: 2", "concurrency: [", "concurrency: 1\nconcurrency: 2", `{"concurrency":-1}`, `{"concurrency":65536}`, `{"secretTTL":"0s"}`,
 		`{"keepaliveInterval":"1s"}`, `{"keepaliveInterval":"20s"}`, `{"keepaliveTimeout":"0s"}`, `{"minimumDrainDuration":"-1s"}`,
 		`{"exitOnZeroActiveConnections":true,"minimumDrainDuration":"26s"}`,
 		`{"agentLogLevel":"typo"}`, `{"envoyLogLevel":"typo"}`, `{} {}`,
@@ -201,5 +201,63 @@ func TestEnvironmentReadsAndEmptyFallbacks(t *testing.T) {
 	if c.CAAddress != "second:15012" || c.RootCertFile != "/custom/root.pem" || c.CARootCertFile != "/custom/ca.pem" ||
 		c.XDSRootCertFile != "/custom/root.pem" {
 		t.Fatalf("environment cached or fallback changed: %+v", c)
+	}
+}
+
+func TestNodeIDUsesProxyDNSDomain(t *testing.T) {
+	t.Setenv("POD_NAME", "egress-pod")
+	t.Setenv("POD_NAMESPACE", "demo")
+	t.Setenv("POD_UID", "pod-uid")
+	t.Setenv("INSTANCE_IP", "10.0.0.1")
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"default", nil, "agentio-egress~10.0.0.1~egress-pod.demo~demo.svc.cluster.local"},
+		{"custom domain", []string{"--domain=demo.svc.example.internal"}, "agentio-egress~10.0.0.1~egress-pod.demo~demo.svc.example.internal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := LoadConfig(tc.args, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bootstrap, err := bootstrapConfig(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bootstrap.Node.Id != tc.want {
+				t.Fatalf("node ID = %q, want %q", bootstrap.Node.Id, tc.want)
+			}
+			if bootstrap.Node.Metadata.GetFields()["POD_UID"].GetStringValue() != "pod-uid" {
+				t.Fatal("Pod UID must remain in metadata")
+			}
+		})
+	}
+}
+
+func TestRuntimeConfigFormatsAndLogDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		raw       string
+		level     string
+		component string
+	}{
+		{"unset", "", "warning", "misc:error"},
+		{"empty object", "{}", "warning", "misc:error"},
+		{"JSON", `{"envoyLogLevel":"info","envoyComponentLogLevel":"misc:debug"}`, "info", "misc:debug"},
+		{"YAML", "envoyLogLevel: info\nenvoyComponentLogLevel: misc:debug", "info", "misc:debug"},
+		{"clear component", `{"envoyComponentLogLevel":""}`, "warning", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTIO_GATEWAY_CONFIG", tc.raw)
+			c, err := LoadConfig(nil, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.LogLevel != tc.level || c.ComponentLogLevel != tc.component {
+				t.Fatalf("log levels = %q, %q; want %q, %q", c.LogLevel, c.ComponentLogLevel, tc.level, tc.component)
+			}
+		})
 	}
 }

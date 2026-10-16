@@ -59,7 +59,7 @@ func TestCommunityBootstrap(t *testing.T) {
 		if !b.GetDeferredStatOptions().GetEnableDeferredCreationStats() {
 			t.Fatal("deferred stats creation disabled")
 		}
-		if b.Node.Id != "agentio-egress/demo/pod-uid" {
+		if b.Node.Id != "agentio-egress~"+ip+"~gateway.demo~demo.svc.cluster.local" {
 			t.Fatal(b.Node.Id)
 		}
 		if b.Node.Metadata.Fields["POD_UID"].GetStringValue() != c.PodUID {

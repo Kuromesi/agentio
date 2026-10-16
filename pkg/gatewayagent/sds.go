@@ -26,6 +26,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 const secretType = "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret"
@@ -107,12 +109,12 @@ func (m *identityManager) generate(names []string) (*discovery.DiscoveryResponse
 	response := &discovery.DiscoveryResponse{TypeUrl: secretType, VersionInfo: strconv.FormatUint(m.version, 10)}
 	for _, name := range names {
 		secret := m.root
-		if name == "default" {
+		if name == model.GatewayIdentitySecret {
 			if m.certificate == nil || !time.Now().Before(m.expires) {
 				return nil, status.Error(codes.Unavailable, "workload certificate is unavailable or expired")
 			}
 			secret = m.certificate
-		} else if name != "ROOTCA" {
+		} else if name != model.GatewayRootSecret {
 			return nil, fmt.Errorf("unsupported secret %q", name)
 		}
 		resource, err := anypb.New(secret)
@@ -129,7 +131,7 @@ func localSecretNames(names []string) ([]string, error) {
 	slices.Sort(requested)
 	requested = slices.Compact(requested)
 	for _, name := range requested {
-		if name != "default" && name != "ROOTCA" {
+		if name != model.GatewayIdentitySecret && name != model.GatewayRootSecret {
 			return nil, status.Error(codes.PermissionDenied, "unsupported local secret")
 		}
 	}

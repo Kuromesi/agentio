@@ -16,6 +16,7 @@ package gatewayagent
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,7 +26,9 @@ import (
 	"strings"
 	"time"
 
+	yamlv3 "go.yaml.in/yaml/v3"
 	"istio.io/istio/pkg/ptr"
+	"sigs.k8s.io/yaml"
 )
 
 // RuntimeOptions is the deployment-facing configuration. Identity and credential
@@ -49,11 +52,18 @@ type RuntimeOptions struct {
 	Metadata                    map[string]any `json:"metadata,omitempty"`
 }
 
-// LoadConfig applies defaults, deployment JSON, metadata environment variables,
-// then explicit CLI flags. CPU-derived concurrency is only a fallback.
+const gatewayConfigAnnotation = "gateway.agentio.kruise.io/agent-config"
+
+// LoadConfig applies defaults, deployment YAML/JSON, Pod annotation, and explicit CLI
+// flags. Metadata environment variables override configured metadata; CPU-derived
+// concurrency is only a fallback.
 func LoadConfig(args []string, output io.Writer) (Config, error) {
+	return loadConfig(args, output, "/etc/agentio/pod/annotations")
+}
+
+func loadConfig(args []string, output io.Writer, annotationFile string) (Config, error) {
 	c := FromEnvironment()
-	options, err := c.loadRuntimeOptions()
+	options, err := c.loadRuntimeOptions(annotationFile)
 	if err != nil {
 		return c, err
 	}
@@ -67,18 +77,38 @@ func LoadConfig(args []string, output io.Writer) (Config, error) {
 	return c, c.validateRuntime()
 }
 
-func (c *Config) loadRuntimeOptions() (RuntimeOptions, error) {
-	var options RuntimeOptions
-	raw := gatewayConfigEnv.Get()
-	if raw != "" {
-		dec := json.NewDecoder(strings.NewReader(raw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&options); err != nil {
-			return options, fmt.Errorf("AGENTIO_GATEWAY_CONFIG: %w", err)
+// decodeRuntimeOptions overlays only supplied fields, including explicit false and zero.
+func decodeRuntimeOptions(raw, source string, options *RuntimeOptions) error {
+	// YAMLToJSONStrict alone accepts trailing documents; configuration must be singular.
+	documents := yamlv3.NewDecoder(strings.NewReader(raw))
+	var document yamlv3.Node
+	if err := documents.Decode(&document); err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+	if err := documents.Decode(&document); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s must contain one YAML or JSON object", source)
+	}
+	encoded, err := yaml.YAMLToJSONStrict([]byte(raw))
+	if err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+	dec := json.NewDecoder(strings.NewReader(string(encoded)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(options); err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+	return nil
+}
+
+func (c *Config) loadRuntimeOptions(annotationFile string) (RuntimeOptions, error) {
+	options := RuntimeOptions{EnvoyComponentLogLevel: c.ComponentLogLevel}
+	if raw := gatewayConfigEnv.Get(); raw != "" {
+		if err := decodeRuntimeOptions(raw, "AGENTIO_GATEWAY_CONFIG", &options); err != nil {
+			return options, err
 		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			return options, fmt.Errorf("AGENTIO_GATEWAY_CONFIG must contain one JSON object")
-		}
+	}
+	if err := applyPodAnnotations(annotationFile, &options); err != nil {
+		return options, err
 	}
 	c.AdvancedOptions = options.AdvancedOptions
 	for _, setting := range []struct {
@@ -163,6 +193,7 @@ func (c *Config) loadMetadata() error {
 func (c *Config) applyFlags(args []string, output io.Writer, concurrency *int) error {
 	flags := flag.NewFlagSet("gateway-agent", flag.ContinueOnError)
 	flags.SetOutput(output)
+	flags.StringVar(&c.DNSDomain, "domain", c.DNSDomain, "Proxy DNS domain; defaults to <namespace>.svc.cluster.local")
 	flags.StringVar(&c.AgentLogLevel, "agent-log-level", c.AgentLogLevel, "Agent log level: debug, info, warn, error")
 	flags.StringVar(&c.LogLevel, "envoy-log-level", c.LogLevel, "Envoy log level")
 	flags.StringVar(

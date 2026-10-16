@@ -309,7 +309,7 @@ func TestGatewayAgentLifecycle(t *testing.T) {
 	}
 	if err := ads.Send(
 		&discovery.DeltaDiscoveryRequest{
-			Node:    &core.Node{Id: "agentio-egress/demo/lifecycle"},
+			Node:    &core.Node{Id: "agentio-egress~127.0.0.1~lifecycle.demo~demo.svc.cluster.local"},
 			TypeUrl: "type.googleapis.com/envoy.config.cluster.v3.Cluster",
 		},
 	); err != nil {
