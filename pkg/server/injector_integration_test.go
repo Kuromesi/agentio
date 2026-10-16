@@ -254,7 +254,10 @@ func testSidecarInjectorEndToEnd(t *testing.T, enableClientTrust bool) {
 		t.Fatalf("injected Pod has legacy revision annotation %q", revision)
 	}
 	statusFields := map[string]any{}
-	if err := json.Unmarshal([]byte(injected.Annotations["sidecar.agentio.kruise.io/status"]), &statusFields); err != nil {
+	if err := json.Unmarshal(
+		[]byte(injected.Annotations["sidecar.agentio.kruise.io/status"]),
+		&statusFields,
+	); err != nil {
 		t.Fatalf("parse status annotation: %v", err)
 	}
 	if revision, found := statusFields["revision"]; found {

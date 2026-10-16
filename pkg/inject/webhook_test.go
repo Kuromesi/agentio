@@ -566,7 +566,10 @@ func TestCNIInjectionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := webhook.UpdateConfig(webhook.config, strings.Replace(string(values), `"enabled": false`, `"enabled": true`, 1)); err != nil {
+	if err := webhook.UpdateConfig(
+		webhook.config,
+		strings.Replace(string(values), `"enabled": false`, `"enabled": true`, 1),
+	); err != nil {
 		t.Fatal(err)
 	}
 	pod := injectTestPod(t, webhook, testPod())
