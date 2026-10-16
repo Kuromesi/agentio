@@ -134,6 +134,16 @@ func TestMapCollectionWithIndex(t *testing.T) {
 	spIndex := krt.NewIndex[string, SimplePod](simplePods, "by ip", func(p SimplePod) []string {
 		return []string{p.IP}
 	})
+	// The fake tracker cannot replay changes between LIST and WATCH.
+	// Cache sync only covers LIST, so wait for WATCH before mutating it.
+	assert.EventuallyEqual(t, func() bool {
+		for _, action := range c1.Kube().(*kubefake.Clientset).Actions() {
+			if action.Matches("watch", "pods") {
+				return true
+			}
+		}
+		return false
+	}, true)
 	pod1 := pc1.Create(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pod1",
