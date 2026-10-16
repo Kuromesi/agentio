@@ -257,9 +257,8 @@ spec:
 		if err := waitEPETrustBundle(ctx, environment, namespace, rootsAB); err != nil {
 			t.Fatal(err)
 		}
-		// The gateway's SDS ROOTCA is cached with its workload certificate;
-		// publishing the ConfigMap does not refresh that cache. Reacquire an A
-		// identity with A+B roots before EPE starts serving a B certificate.
+		// Recreate with A+B roots before EPE starts serving B. This also covers
+		// gateways that do not reload their cached SDS roots from the ConfigMap.
 		if err := restartEPEGateway(ctx, environment, namespace); err != nil {
 			t.Fatal(err)
 		}
@@ -304,6 +303,19 @@ spec:
 		applyMaterial(t, "ConfigMap", map[string]any{"data": map[string]any{"ca.crt": string(roots)}}, mode)
 	}
 	step("helm_file_source_mounts_Secret_and_ConfigMap", func(t *testing.T) {
+		// CA-mode rotation may already have renewed the gateway identity under B.
+		// Start the file-mode A-only trust phase with an explicitly A-signed gateway.
+		data := maps.Clone(originalCA.Data)
+		data["root-cert.pem"] = rootsAB
+		if err := setAuthority(ctx, data); err != nil {
+			t.Fatal(err)
+		}
+		if err := waitEPETrustBundle(ctx, environment, namespace, rootsAB); err != nil {
+			t.Fatal(err)
+		}
+		if err := restartEPEGateway(ctx, environment, namespace); err != nil {
+			t.Fatal(err)
+		}
 		cert := newEPECertificate(t, &caA, identity)
 		writeCertificate(t, cert, kube.CreateOnly)
 		writeRoots(t, rootsA, kube.CreateOnly)
@@ -358,8 +370,18 @@ spec:
 		cert := newEPECertificate(t, &caB, identity)
 		writeCertificate(t, cert, kube.ReconcileOwned)
 		observe(t, rootsB, clientB, cert.Leaf)
-		// The gateway's long-lived A certificate is valid during overlap. Restart
-		// only the gateway to obtain B from real Agentiod/SDS before withdrawing A.
+		// Switch the signer explicitly; file-mode setup restored A after CA-mode rotation.
+		data := maps.Clone(originalCA.Data)
+		data["ca-cert.pem"] = rootsB
+		data["ca-key.pem"] = epePrivateKeyPEM(t, caB)
+		data["root-cert.pem"] = bytes.Join([][]byte{rootsB, rootsA}, []byte("\n"))
+		if err := setAuthority(ctx, data); err != nil {
+			t.Fatal(err)
+		}
+		if err := waitEPETrustBundle(ctx, environment, namespace, data["root-cert.pem"]); err != nil {
+			t.Fatal(err)
+		}
+		// Obtain B from real Agentiod/SDS before withdrawing A from EPE's client trust.
 		if err := restartEPEGateway(ctx, environment, namespace); err != nil {
 			t.Fatal(err)
 		}
