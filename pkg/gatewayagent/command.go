@@ -123,7 +123,18 @@ func Command(ctx context.Context, args []string, output, errors io.Writer) (resu
 		return err
 	}
 	configured = true
-	agentLog.Info("starting gateway agent", "version", BuildInfo(), "config", effectiveConfig(c))
+	if c.LogAsJSON {
+		agentLog.Info("starting gateway agent", "version", BuildInfo(), "config", effectiveConfig(c))
+	} else {
+		agentLog.Info("starting gateway agent", "version", BuildInfo())
+		if agentLog.Enabled(ctx, slog.LevelInfo) {
+			agentLog.Info("Effective config:")
+			// TextHandler escapes newlines; write the indented config directly before Run starts workers.
+			if err := writeJSON(errors, effectiveConfig(c)); err != nil {
+				return fmt.Errorf("write effective config: %w", err)
+			}
+		}
+	}
 	return Run(ctx, c)
 }
 
