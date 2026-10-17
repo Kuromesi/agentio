@@ -62,7 +62,7 @@ struct ResourceKey {
 
 struct Generation {
     id: u64,
-    // Pair each outcome with its ADS epoch so reset can invalidate it in O(1).
+    // The epoch invalidates values still held by in-flight callers after disconnect.
     value: watch::Sender<(u64, Outcome)>,
 }
 
@@ -341,9 +341,9 @@ impl Client {
         }
     }
 
-    // A disconnect invalidates all cached outcomes in O(1), without walking
-    // retained subscriptions before reconnecting. Missing ends a generation and
-    // remains terminal even if its removed entry is no longer in the cache.
+    // The epoch invalidates outcomes held by callers across disconnects.
+    // Missing ends a generation and remains terminal even if its removed entry
+    // is no longer in the cache.
     fn current<'a>(&self, value: &'a (u64, Outcome)) -> &'a Outcome {
         if matches!(value.1, Outcome::Missing) || value.0 == self.epoch.load(Ordering::Acquire) {
             &value.1
@@ -382,13 +382,25 @@ impl Client {
     fn reset(&self) {
         let started = Instant::now();
         let mut state = self.state.lock().unwrap();
-        for type_state in &mut state.types {
-            type_state.synced = false;
-            type_state.ack = None;
+        let mut retired_types = std::mem::take(&mut state.types);
+        let retired_idle = std::mem::replace(&mut state.idle, LruCache::unbounded());
+        for (type_state, retired) in state.types.iter_mut().zip(&mut retired_types) {
+            // Preserve generations owned by waiting callers. Idle interests are
+            // rediscovered on demand instead of replaying the historical cache.
+            type_state
+                .entries
+                .extend(retired.entries.extract_if(|_, entry| entry.users > 0));
         }
         self.epoch.fetch_add(1, Ordering::Release);
+        self.publish_size(&state);
         self.metrics.connected.set(0);
         self.ready.send_replace(false);
+        drop(state);
+        // Resource views and idle generations can be large; release them without
+        // holding the mutex needed by newly arriving demands.
+        drop(retired_types);
+        drop(retired_idle);
+        self.expiry.notify_one();
         tracing::debug!(
             reset_us = started.elapsed().as_micros() as u64,
             "invalidated ADS cache"

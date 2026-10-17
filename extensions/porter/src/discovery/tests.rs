@@ -559,3 +559,85 @@ async fn matches_wire_contract_corpus() {
         }
     }
 }
+
+#[tokio::test]
+async fn reconnect_discards_idle_interests_and_rediscovers_aliases() {
+    // Disconnect has the same semantics with and without idle retention bounds.
+    for max in [0, 10] {
+        let client = client(max, Duration::ZERO);
+        let mut first = Box::pin(client.demand(ResourceKind::Workload, "alias", None));
+        assert!(futures_util::poll!(&mut first).is_pending());
+        client
+            .apply(
+                ResourceKind::Workload,
+                &response(vec![resource("old", &["alias"])], &[]),
+            )
+            .unwrap();
+        first.await.unwrap();
+        client.reset();
+        {
+            let state = client.state.lock().unwrap();
+            assert!(state.idle.is_empty());
+            assert!(state.types[0].entries.is_empty());
+            assert!(state.types[0].resources.is_empty());
+            assert!(state.types[0].aliases.is_empty());
+        }
+        assert_eq!(client.metrics.cache.get(), 0);
+        let mut sent = Default::default();
+        let initial = client.initial(&Node::default(), &mut sent);
+        assert_eq!(initial[0].resource_names_subscribe, ["*"]);
+        assert_eq!(initial[0].resource_names_unsubscribe, ["*"]);
+        let mut next = Box::pin(client.demand(ResourceKind::Workload, "alias", None));
+        assert!(futures_util::poll!(&mut next).is_pending());
+        assert_eq!(
+            client.outgoing(&mut sent)[0].resource_names_subscribe,
+            ["alias"]
+        );
+        client
+            .apply(
+                ResourceKind::Workload,
+                &response(vec![resource("new", &["alias"])], &[]),
+            )
+            .unwrap();
+        assert!(matches!(next.await.unwrap().as_ref(), View::Workload(w) if w.uid == "new"));
+    }
+}
+
+#[tokio::test]
+async fn reconnect_preserves_shared_waiters_and_cancellation() {
+    let client = client(10, Duration::from_secs(60));
+    let mut first = Box::pin(client.demand(ResourceKind::Workload, "pending", None));
+    let mut second = Box::pin(client.demand(ResourceKind::Workload, "pending", None));
+    let mut sandbox = Box::pin(client.demand(ResourceKind::Sandbox, "sandbox", None));
+    assert!(futures_util::poll!(&mut first).is_pending());
+    assert!(futures_util::poll!(&mut second).is_pending());
+    assert!(futures_util::poll!(&mut sandbox).is_pending());
+    let generation = client.state.lock().unwrap().types[0].entries["pending"]
+        .generation
+        .id;
+    client.reset();
+    // Repeated failed reconnect attempts must preserve the same waiters too.
+    client.reset();
+    let mut sent = Default::default();
+    let initial = client.initial(&Node::default(), &mut sent);
+    assert_eq!(initial[0].resource_names_subscribe, ["pending"]);
+    assert_eq!(initial[1].resource_names_subscribe, ["sandbox"]);
+    assert_eq!(sent[0]["pending"], generation);
+    drop(first);
+    assert_eq!(
+        client.state.lock().unwrap().types[0].entries["pending"].users,
+        1
+    );
+    client
+        .apply(
+            ResourceKind::Workload,
+            &response(vec![resource("pending", &[])], &[]),
+        )
+        .unwrap();
+    second.await.unwrap();
+    drop(sandbox);
+    assert_eq!(
+        client.outgoing(&mut sent)[0].resource_names_unsubscribe,
+        ["sandbox"]
+    );
+}

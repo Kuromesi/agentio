@@ -83,8 +83,8 @@ impl Client {
             ads::aggregated_discovery_service_client::AggregatedDiscoveryServiceClient::new(
                 channel,
             )
-            // Match Go xdsclient: a reconnect may return the complete retained
-            // inventory in one delta, well above tonic's default 4 MiB.
+            // Match Go xdsclient: a large batch of pending demands may arrive
+            // in one delta, well above tonic's default 4 MiB.
             .max_decoding_message_size(i32::MAX as usize)
             .delta_aggregated_resources(request)
             .await
