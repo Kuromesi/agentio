@@ -45,6 +45,9 @@ type Options struct {
 	// Client is a typed clientset used to fetch full CR content in
 	// full mode. May be nil when EnableDebug is false.
 	Client agentsclient.Interface
+	// Credentials invalidates the same client used by the filter chain. Nil omits
+	// the cache endpoint; its registration is independent of EnableDebug.
+	Credentials CredentialInvalidator
 	// LogLevel controls the running process's logger. Nil omits /debug/logging.
 	LogLevel *zap.AtomicLevel
 }
@@ -55,6 +58,7 @@ type handler struct {
 	client      agentsclient.Interface
 	enableDebug bool
 	logLevel    *zap.AtomicLevel
+	credentials CredentialInvalidator
 }
 
 // NewHandler builds the admin HTTP handler. The index ("/") is always served;
@@ -65,9 +69,13 @@ func NewHandler(opts Options) http.Handler {
 		client:      opts.Client,
 		enableDebug: opts.EnableDebug,
 		logLevel:    opts.LogLevel,
+		credentials: opts.Credentials,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.handleIndex)
+	if h.credentials != nil {
+		mux.HandleFunc(credentialInvalidationPath, h.handleCredentialInvalidation)
+	}
 	if opts.EnableDebug {
 		mux.HandleFunc("/debug/profiles", h.handleList)
 		if h.logLevel != nil {
@@ -87,6 +95,15 @@ func (h *handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintf(w, "epe admin\n\n")
+	if h.credentials != nil {
+		if _, err := fmt.Fprintf(
+			w,
+			"  POST %s  invalidate local credential caches\n",
+			credentialInvalidationPath,
+		); err != nil {
+			return
+		}
+	}
 	fmt.Fprintf(w, "debug endpoints: %s\n", enabledText(h.enableDebug))
 	if h.enableDebug {
 		if h.logLevel != nil {

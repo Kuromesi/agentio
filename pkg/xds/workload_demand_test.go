@@ -138,11 +138,11 @@ func TestWorkloadEvictionRetainsOtherAliasSubscriptions(t *testing.T) {
 		if len(delta.Resources) != 1 || delta.Resources[0].XDSName != "b" {
 			t.Fatalf("eviction regenerated unrelated Workload: %v", delta)
 		}
-		if keep && len(delta.Removed) != 0 {
-			t.Fatalf("removed resource with another subscription: %v", delta)
+		if len(delta.Removed) != 0 {
+			t.Fatalf("unsubscribe must not delete a resource: %v", delta)
 		}
-		if !keep && !slices.Equal(delta.Removed, []string{"a"}) {
-			t.Fatalf("last unsubscribe did not remove resource: %v", delta)
+		if _, retained := watch.sent["a"]; retained != keep {
+			t.Fatalf("retained sent state = %t, want %t", retained, keep)
 		}
 	}
 }

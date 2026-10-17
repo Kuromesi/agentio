@@ -336,7 +336,7 @@ func TestOAuth2CacheConcurrentHitsAndCapacity(t *testing.T) {
 		CredentialProviderName: "provider",
 		ResourceID:             "sandbox",
 	}
-	cache.set("caller", request, response, startedAt)
+	cache.set("caller", request, response, startedAt, 0)
 	var wg sync.WaitGroup
 	for range 32 {
 		wg.Go(func() {
@@ -345,7 +345,7 @@ func TestOAuth2CacheConcurrentHitsAndCapacity(t *testing.T) {
 				if !ok || result.AccessToken != "token" || result.AccessTokenExpiresInSeconds != 60 {
 					t.Error("concurrent cache hit lost credential or extended lifetime")
 				}
-				cache.set("caller", request, response, startedAt)
+				cache.set("caller", request, response, startedAt, 0)
 			}
 		})
 	}
@@ -353,7 +353,7 @@ func TestOAuth2CacheConcurrentHitsAndCapacity(t *testing.T) {
 	for _, id := range []string{"sandbox-2", "sandbox-3"} {
 		next := request
 		next.ResourceID = id
-		cache.set("caller", next, response, startedAt)
+		cache.set("caller", next, response, startedAt, 0)
 	}
 	if _, ok := cache.get("caller", request); ok {
 		t.Fatal("bounded cache retained the evicted oldest credential")

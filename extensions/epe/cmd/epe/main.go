@@ -188,6 +188,7 @@ func run() error {
 				"TOKEN_CACHE_",
 				"STS_CACHE_",
 				"CREDENTIAL_PROVIDER_",
+				"CREDENTIAL_CACHE_",
 				"AUDIT_WEBHOOK_",
 				"HTTP_CALLOUT_",
 			},
@@ -339,6 +340,7 @@ func run() error {
 	// wired when --enable-debug is set. The agents-api clientset serves full
 	// profile content in full mode.
 	adminHandler := admin.NewHandler(admin.Options{
+		Credentials: providers,
 		EnableDebug: *enableDebug,
 		Store:       store,
 		Client:      agentsCS,

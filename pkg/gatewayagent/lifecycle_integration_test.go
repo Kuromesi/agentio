@@ -112,7 +112,8 @@ func TestGatewayAgentLifecycle(t *testing.T) {
 	defer backend.CloseClientConnections()
 	defer backend.Close()
 	defer finish()
-	port, admin, status := freePort(t), freePort(t), freePort(t)
+	ports, releasePorts := reservePorts(t, 5)
+	port, admin, status := ports[0], ports[1], ports[2]
 	fixture := &lifecycleDiscovery{resources: map[string]*discovery.Resource{}}
 	for name, raw := range map[string]string{
 		"backend": fmt.Sprintf(`{"@type":"type.googleapis.com/envoy.config.cluster.v3.Cluster","name":"backend","type":"STATIC","connect_timeout":"1s","load_assignment":{"cluster_name":"backend","endpoints":[{"lb_endpoints":[{"endpoint":{"address":{"socket_address":{"address":"127.0.0.1","port_value":%s}}}}]}]}}`, strings.Split(backend.Listener.Addr().String(), ":")[1]),
@@ -144,8 +145,8 @@ func TestGatewayAgentLifecycle(t *testing.T) {
 		"concurrency":              1,
 		"adminPort":                admin,
 		"statusPort":               status,
-		"envoyStatusPort":          freePort(t),
-		"prometheusPort":           freePort(t),
+		"envoyStatusPort":          ports[3],
+		"prometheusPort":           ports[4],
 		"workloadSocket":           filepath.Join(dir, "SDS"),
 		"rotationJitter":           0,
 		"eccCurve":                 "P256",
@@ -176,6 +177,7 @@ func TestGatewayAgentLifecycle(t *testing.T) {
 	)
 	var logs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &logs, &logs
+	releasePorts()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

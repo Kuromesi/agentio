@@ -131,8 +131,17 @@ func TestDemandSubscriptionPreservesOtherResources(t *testing.T) {
 				ResourceNamesUnsubscribe: []string{demandName("b")},
 				ResponseNonce:            response.Nonce,
 			})
-			if !slices.Equal(response.RemovedResources, []string{"b"}) || len(watches[typeURL].sent) != 0 {
-				t.Fatalf("unsubscribe retained sent state: %v", response)
+			if len(response.RemovedResources) != 0 || len(watches[typeURL].sent) != 0 {
+				t.Fatalf("unsubscribe must forget sent state without deleting the resource: %v", response)
+			}
+			// The client can reacquire b before receiving the unsubscribe response.
+			// Even with an unchanged version, resubscription must return b.
+			response = send(&discoveryv3.DeltaDiscoveryRequest{
+				TypeUrl:                typeURL,
+				ResourceNamesSubscribe: []string{demandName("b")},
+			})
+			if !slices.Equal(resourceNames(response), []string{"b"}) || len(response.RemovedResources) != 0 {
+				t.Fatalf("resubscribe lost resource: %v", response)
 			}
 			// Initial versions must reconcile the whole restored subscription,
 			// including a cached resource deleted while the client was offline.

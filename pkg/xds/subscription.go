@@ -116,6 +116,8 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 			changed = true
 		}
 		watch.names.Delete(name)
+		// Unsubscribing is not a deletion; a late removal could fail a new demand.
+		delete(watch.sent, name)
 	}
 	return changed
 }
@@ -207,12 +209,16 @@ func demandReconciliationView(snapshot model.ResourceSet, typeURL string, scope 
 			return SubscriptionView{}, false
 		}
 		resource := resources[0]
+		if !selection.selected(resource) {
+			// An alias unsubscribe must forget the canonical sent state too.
+			// Sending a removal could cancel a later demand for the same resource.
+			delete(watch.sent, resource.XDSName)
+			continue
+		}
 		if version, found := watch.sent[resource.XDSName]; found {
 			view.sent[resource.XDSName] = version
 		}
-		if selection.selected(resource) {
-			names.Insert(resource.XDSName)
-		}
+		names.Insert(resource.XDSName)
 	}
 	view.names = sortedNames(names)
 	return view, true

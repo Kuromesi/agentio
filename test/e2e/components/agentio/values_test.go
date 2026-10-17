@@ -16,6 +16,7 @@ package agentio
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -137,7 +138,7 @@ func TestProductionChartRendersSuiteValues(t *testing.T) {
 	foundGateway := false
 	for {
 		var deployment appsv1.Deployment
-		if err := decoder.Decode(&deployment); err == io.EOF {
+		if err := decoder.Decode(&deployment); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			t.Fatal(err)

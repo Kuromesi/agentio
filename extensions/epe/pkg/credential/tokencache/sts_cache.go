@@ -54,8 +54,8 @@ func (c *STSCache) SetClock(now func() time.Time) {
 // Get retrieves an STS credential from the cache. Returns the entry and
 // true if found and not expired, or (nil, false) otherwise. Expired
 // entries are removed immediately.
-func (c *STSCache) Get(credentialProviderName, resourceID string) (*STSCacheEntry, bool) {
-	value, ok := c.store.Get(credentialProviderName, resourceID)
+func (c *STSCache) Get(key Key) (*STSCacheEntry, bool) {
+	value, ok := c.store.Get(key)
 	if !ok {
 		return nil, false
 	}
@@ -64,17 +64,23 @@ func (c *STSCache) Get(credentialProviderName, resourceID string) (*STSCacheEntr
 
 // SetWithExpiration adds or updates an STS credential in the cache. The
 // entry expires at (expiration - expirationMargin). If the resulting
-// expiry is already in the past, the entry is not cached.
-func (c *STSCache) SetWithExpiration(credentialProviderName, resourceID string, entry STSCacheEntry, expiration time.Time) {
-	c.store.SetIfFresh(credentialProviderName, resourceID, entry, expiration.Add(-c.expirationMargin))
+// expiry is already in the past, the entry is not cached. A positive maxTTL
+// additionally caps the remaining lifetime.
+func (c *STSCache) SetWithExpiration(key Key, entry STSCacheEntry, expiration time.Time, maxTTL time.Duration) {
+	c.store.SetIfFresh(key, entry, expiration.Add(-c.expirationMargin), maxTTL)
 }
 
 // Delete removes an entry from the cache.
-func (c *STSCache) Delete(credentialProviderName, resourceID string) {
-	c.store.Delete(credentialProviderName, resourceID)
+func (c *STSCache) Delete(key Key) {
+	c.store.Delete(key)
 }
 
 // Len returns the current number of entries in the cache.
 func (c *STSCache) Len() int {
 	return c.store.Len()
+}
+
+// Invalidate removes entries matching providerName.
+func (c *STSCache) Invalidate(providerName string) int {
+	return c.store.Invalidate(providerName)
 }

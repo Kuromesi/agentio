@@ -180,10 +180,16 @@ func (c *Client) CallOAuth2(
 				},
 			}}, nil
 	}
+	var generation uint64
 	if request.Operation == OAuth2OperationResource {
+		c.refreshMu.Lock()
 		if result, ok := c.oauth2Cache.get(accessToken, request); ok {
+			c.refreshMu.Unlock()
 			return result, nil
 		}
+		generation = c.beginFill(request.CredentialProviderName)
+		c.refreshMu.Unlock()
+		defer c.finishFill(request.CredentialProviderName)
 	} else {
 		defer c.oauth2Cache.invalidate(request)
 	}
@@ -191,7 +197,11 @@ func (c *Client) CallOAuth2(
 	startedAt := c.oauth2Cache.now()
 	result, err := c.requestOAuth2(ctx, accessToken, action, bodyFields)
 	if err == nil && request.Operation == OAuth2OperationResource {
-		c.oauth2Cache.set(accessToken, request, *result, startedAt)
+		c.refreshMu.Lock()
+		if generation == c.generation(request.CredentialProviderName) {
+			c.oauth2Cache.set(accessToken, request, *result, startedAt, c.maxTTL(request.CredentialProviderName))
+		}
+		c.refreshMu.Unlock()
 	}
 	return result, err
 }
