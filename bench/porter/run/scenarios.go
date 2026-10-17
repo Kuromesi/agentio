@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func (r *runner) setup(ctx context.Context) error {
 			[]string{"server", fmt.Sprintf("--resources=%d", r.cfg.Workloads)},
 			r.cfg.CPCPU,
 			r.cfg.CPMemory,
-			"",
+			r.cfg.ControlPlaneImage,
 			"/bench",
 			map[string]string{"AGENTIO_MAX_REQUESTS_PER_SECOND": strconv.FormatFloat(r.cfg.AdmissionRate, 'g', -1, 64)},
 		)
@@ -69,9 +70,13 @@ func (r *runner) setup(ctx context.Context) error {
 			return err
 		}
 	}
+	watcherArgs := []string{"watchers", fmt.Sprintf("--resources=%d", r.cfg.Workloads)}
+	if slices.Contains(r.cfg.Suites, "controlplane") {
+		watcherArgs = append(watcherArgs, "--observe-updates")
+	}
 	container := r.container(
 		"watchers",
-		[]string{"watchers", fmt.Sprintf("--resources=%d", r.cfg.Workloads)},
+		watcherArgs,
 		2,
 		"2Gi",
 		"",
@@ -418,10 +423,41 @@ func (r *runner) failoverSuite(ctx context.Context) error {
 	}
 	return r.mixed(ctx, "failover", 60, func(ctx context.Context) (any, error) {
 		start := time.Now()
-		if err := r.deletePod(ctx, "ads-0"); err != nil {
+		target, connections, err := r.deleteServingControlPlane(ctx)
+		if err != nil {
 			return nil, err
 		}
 		watchers, err := r.waitWatchers(ctx, r.cfg.Workloads, 0)
-		return map[string]any{"wds_recovery_seconds": time.Since(start).Seconds(), "watchers": watchers}, err
+		return map[string]any{
+			"target":               target,
+			"porter_connections":   connections,
+			"wds_recovery_seconds": time.Since(start).Seconds(),
+			"watchers":             watchers,
+		}, err
 	})
+}
+
+// Service routing is random. Deleting a fixed replica can leave every Porter
+// connected and turn the failover test into a WDS-only disruption.
+func (r *runner) deleteServingControlPlane(ctx context.Context) (string, float64, error) {
+	var target string
+	var connections float64
+	for i := range r.cfg.ControlPlanes {
+		name := fmt.Sprintf("ads-%d", i)
+		data, err := r.get(ctx, "http://"+name+":8080/metrics", "porter-0")
+		if err != nil {
+			return "", 0, err
+		}
+		count, err := metric(string(data), `agentio_xds_connections_by_class{class="agentio-egress"}`)
+		if err != nil {
+			return "", 0, err
+		}
+		if count > connections {
+			target, connections = name, count
+		}
+	}
+	if target == "" {
+		return "", 0, fmt.Errorf("failover requires a control plane serving Porter connections")
+	}
+	return target, connections, r.deletePod(ctx, target)
 }

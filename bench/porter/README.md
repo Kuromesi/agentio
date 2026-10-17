@@ -1,6 +1,6 @@
 # Porter scale tests
 
-Reusable Porter image comparison against the repository's real ADS server, resource generators and Go WDS client. Requires Linux Kubernetes nodes, the repository's Go toolchain and permission to create/delete a **new disposable namespace**. The runner requires an explicit kubeconfig, refuses an existing namespace and cleans up its namespace on success or failure. It records the original Pods and compares their UID, phase and restart counts after cleanup. If the runner is killed with SIGKILL or the host loses connectivity, delete the named test namespace manually.
+Reusable Porter image comparison against the repository's real ADS server, resource generators and Go WDS client. Requires Linux Kubernetes nodes, the repository's Go toolchain and permission to create/delete a **new disposable namespace**. The runner requires an explicit kubeconfig, refuses an existing namespace and cleans up its namespace on success or failure by default. Pass `--keep-namespace` to retain the final test environment for inspection; delete that namespace manually when finished. It records the original Pods and compares their UID, phase and restart counts after cleanup. If the runner is killed with SIGKILL or the host loses connectivity, delete the named test namespace manually.
 
 The minimum inventory is 50,000 workloads. The default is 100,000 workloads, 100,000 Sandbox resources, 200 simulated nodes with 500 WDS resources each, two control planes and four Porters. These resources live in the real in-memory xDS Store, not in 100,000 Kubernetes Pods. Each workload has 20 labels and eight SNI rules. Node WDS uses real TLS ADS, wildcard subscriptions and the production reconnect logic. Porter receives real ext_proc RPCs with certificate instance claims and performs real cold demand requests, cache hits, eviction and resynchronization.
 
@@ -69,7 +69,7 @@ Useful overrides (see `porter-bench run --help` for the full list):
 
 Each worker prepares only its assigned certificates/messages before a common scheduled start. Fixed-rate latency includes waiting behind earlier requests to avoid hiding an overload queue. Saturation phases are closed-loop with fixed concurrency. The report's P99/max are the **worst worker's** values, not merged fleet quantiles; QPS is total completed operations divided by the common wall-clock interval.
 
-`porter-bench analyze OUTPUT` produces `report.md`, `analysis.json`, `analysis.csv`, `admission-timings.json` and `apply-timings.json`. Raw worker results include completion counts per second, latency summaries, client CPU, Porter CPU/RSS and metrics before/after. Phase snapshots include both control planes' CPU/RSS, ADS messages/resources/bytes, admission rejections, WDS readiness/transforms and Porter metrics. Pod snapshots retain image IDs and resource limits. `config.json` records exact arguments; `cleanup.json` records namespace deletion and any changes to original Pods. A failed run retains its partial results and `failure.txt`; both the runner and analyzer return a nonzero exit status for a failed run.
+`porter-bench analyze OUTPUT` produces `report.md`, `analysis.json`, `analysis.csv`, `admission-timings.json` and `apply-timings.json`. Raw worker results include completion counts per second, latency summaries, client CPU, Porter CPU/RSS and metrics before/after. Phase snapshots include both control planes' CPU/RSS, ADS messages/resources/bytes, admission rejections, WDS readiness/transforms and Porter metrics. Pod snapshots retain image IDs and resource limits. `config.json` records exact arguments; `cleanup.json` records namespace deletion or retention and any changes to original Pods. A failed run retains its partial results and `failure.txt`; both the runner and analyzer return a nonzero exit status for a failed run.
 
 CPU per request is summed Porter process CPU delta divided by completed requests; its sampling window also includes the worker's final preparation/wait. CP mean CPU uses the wider phase snapshot interval, including preparation and snapshot collection. RSS is the sum of final process RSS, **not** live heap or a simultaneous peak; workers also report process VmHWM. For overlapping hot/cold phases the analyzer omits CPU, ADS wire and demand counter deltas rather than attributing the same counters twice. ADS byte counters use gRPC payload lengths, not NIC traffic including TLS/HTTP2 overhead. Raw snapshots remain available for whole-scenario analysis. These counters are not a replacement for a time-series cluster monitor.
 
@@ -86,3 +86,33 @@ For a separate Rust diagnostic run, enable:
 Rust logs cache invalidation time and ADS select/transform/publish/total durations. `publish_us` includes lock acquisition; `total_us` excludes destruction of remaining locals after return. Diagnostic logging can affect timings, so do not mix it into normal throughput comparisons. `apply-timings.json` is empty when debug logging is disabled or the tested binary predates these events.
 
 Run local scheduling, client-go exec/cleanup, certificate and analyzer tests with `go test -race ./bench/load ./bench/porter/...`. These tests use a fake Kubernetes client and a local SPDY server; they do not create cluster resources. The scale suites themselves are the integration verification; no sub-50,000 synthetic smoke workload is required.
+
+## Isolating control-plane regressions
+
+Use `--control-plane-image` to select the ADS server independently of `--bench-image` (the fixed WDS/load clients) and `--variant` (the fixed Porter). Without this option ADS continues to use `--bench-image`. Build baseline and candidate servers from the same tree/toolchain with only the intended server patch changed; changing the entire helper image for every container would also change the clients.
+
+```sh
+/tmp/porter-bench run \
+  --kubeconfig /tmp/porter-perf.kubeconfig \
+  --namespace porter-cp-baseline --output /tmp/porter-cp-baseline \
+  --bench-image porter-perf:fixed-clients \
+  --control-plane-image porter-perf:baseline-server \
+  --variant baseline=porter:fixed \
+  --workloads 100000 --trials 1 --suites controlplane
+```
+
+Run the candidate with a fresh namespace/output and its server image. Alternate run order for repeated comparisons. The `controlplane` suite measures ordinary WDS updates (500, 5,000 and full-inventory batches), deletion/restoration, WDS-only reconnect, full cold demand, full-cache reconnect, bounded-cache fill/rescan, mixed hot/cold demand, three full-inventory updates during mixed demand, mixed reconnect, and single-replica failover. The inventory is always at least 50,000; a smaller update batch is not a smaller inventory.
+
+WDS observers decode revisions and inspect client snapshots after change notifications. Each affected client's convergence time ends when its published snapshot contains the target revisions (or the intended deletions); reconnect additionally requires fresh resources. Timing starts when the observer is armed, before mutation/disconnect requests. It includes trigger delivery and resource construction/publication, not just network delivery. This instrumentation adds fixed client work to both A/B variants. Raw per-client timings are retained. The suite does not model Kubernetes watch/compilation or certificate issuance.
+
+ADS `/stats` includes cumulative allocation, allocation count, GC count/pause time, heap and cgroup v2 CPU counters. Analysis additionally writes `controlplane-analysis.json` and `wds-convergence.json`. Use the parent mixed-scenario interval for control-plane totals, not the overlapping hot/cold worker intervals. A removed control plane marks an incomplete interval; surviving-replica CPU is not fleet total. Snapshot intervals include preparation and collection overhead, and RSS is an end sample rather than a simultaneous peak.
+
+For local generator and subscription-churn microbenchmarks with 50,000/100,000-resource inventories:
+
+```sh
+go test ./pkg/xds -run '^$' \
+  -bench '^BenchmarkControlPlane(Scale|DemandChurn)$' \
+  -benchmem -benchtime=1s -count=3
+```
+
+These benchmarks isolate generator/handler cost with minimal valid resources. They complement the TLS ADS component suites; their time/op is not end-to-end request latency. Compare both revisions on the same machine, and keep profiling separate from timing runs.

@@ -40,8 +40,10 @@ type config struct {
 	Kubeconfig        string
 	Context           string
 	Namespace         string
+	KeepNamespace     bool
 	Output            string
 	BenchImage        string
+	ControlPlaneImage string
 	PullPolicy        string
 	Suites            []string
 	Variants          []variant
@@ -89,7 +91,19 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		"new disposable namespace",
 	)
 	f.StringVar(&c.Output, "output", "", "empty artifact directory")
+	f.BoolVar(
+		&c.KeepNamespace,
+		"keep-namespace",
+		false,
+		"retain test namespace after success or failure for inspection",
+	)
 	f.StringVar(&c.BenchImage, "bench-image", "", "Go helper image")
+	f.StringVar(
+		&c.ControlPlaneImage,
+		"control-plane-image",
+		"",
+		"independent ADS server image; defaults to bench-image",
+	)
 	f.StringVar(&c.PullPolicy, "image-pull-policy", "Never", "Never, IfNotPresent, Always")
 	f.StringVar(&suites, "suites", "reconnect", "comma-separated reconnect,mixed,lifecycle,failover")
 	f.Var(&variants, "variant", "NAME=IMAGE (repeatable)")
@@ -124,7 +138,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		return c, fmt.Errorf("at least one variant is required")
 	}
 	for suite := range strings.SplitSeq(suites, ",") {
-		if !slices.Contains([]string{"reconnect", "mixed", "lifecycle", "failover"}, suite) ||
+		if !slices.Contains([]string{"reconnect", "mixed", "lifecycle", "failover", "controlplane"}, suite) ||
 			slices.Contains(c.Suites, suite) {
 			return c, fmt.Errorf("unknown or duplicate suite %q", suite)
 		}

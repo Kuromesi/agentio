@@ -100,6 +100,10 @@ func metricDelta(before, after, name string) (float64, error) {
 }
 
 func analyze(root string) error {
+	return errors.Join(analyzePorter(root), analyzeControlPlane(root))
+}
+
+func analyzePorter(root string) error {
 	files, err := filepath.Glob(filepath.Join(root, "*.summary.json"))
 	if err != nil {
 		return err
@@ -235,7 +239,8 @@ func analyzePhase(root string, s summary, workers []worker) (map[string]any, err
 		return nil, fmt.Errorf("%s: %w", s.Name, err)
 	}
 	row["name"], row["variant"], row["phase"], row["concurrent"] = s.Name, s.Variant, s.Phase, s.Concurrent
-	passed := row["operations"].(int) == s.Planned && row["errors"].(int) == 0
+	passed := row["operations"].(int) == s.Planned && row["errors"].(int) == 0 && len(s.RunErrors) == 0
+	row["run_errors"] = s.RunErrors
 	row["passed"] = passed
 	if err := addControlPlaneStats(root, s, row); err != nil {
 		return nil, err

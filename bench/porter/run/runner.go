@@ -51,6 +51,7 @@ type runner struct {
 
 type workerResult struct {
 	load.Result
+	RunError       string  `json:"run_error,omitempty"`
 	LoadCPUSeconds float64 `json:"load_cpu_seconds"`
 }
 
@@ -97,6 +98,7 @@ type summary struct {
 	Planned    int            `json:"planned_operations"`
 	Operations int            `json:"operations"`
 	Errors     int            `json:"errors"`
+	RunErrors  []string       `json:"run_errors,omitempty"`
 	Rate       int            `json:"offered_rate"`
 	QPS        float64        `json:"global_qps"`
 	P99        float64        `json:"worst_p99_ms"`
@@ -142,12 +144,11 @@ func (r *runner) execute(ctx context.Context) (result error) {
 		cleanup, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 		defer cancel()
 		if r.namespaceUID != "" {
-			result = errors.Join(
-				result,
-				r.logs(cleanup, "final"),
-				r.deleteNamespace(cleanup),
-				r.checkOriginalPods(cleanup),
-			)
+			result = errors.Join(result, r.logs(cleanup, "final"))
+			if !r.cfg.KeepNamespace {
+				result = errors.Join(result, r.deleteNamespace(cleanup))
+			}
+			result = errors.Join(result, r.checkOriginalPods(cleanup))
 		}
 		result = errors.Join(result, r.save("completed-phases.json", r.phases))
 		if result != nil {
@@ -165,6 +166,8 @@ func (r *runner) execute(ctx context.Context) (result error) {
 				return err
 			}
 			switch suite {
+			case "controlplane":
+				err = r.controlPlaneSuite(ctx)
 			case "reconnect":
 				err = r.reconnectSuite(ctx)
 			case "mixed":
@@ -221,12 +224,20 @@ func (r *runner) checkOriginalPods(ctx context.Context) error {
 		}
 	}
 	for name := range afterStates {
+		if r.cfg.KeepNamespace && strings.HasPrefix(name, r.cfg.Namespace+"/") {
+			continue
+		}
 		if _, found := beforeStates[name]; !found {
 			additional = append(additional, name)
 		}
 	}
+	deletedNamespace, retainedNamespace := r.cfg.Namespace, ""
+	if r.cfg.KeepNamespace {
+		deletedNamespace, retainedNamespace = "", r.cfg.Namespace
+	}
 	if err = r.save("cleanup.json", map[string]any{
-		"deleted_namespace":    r.cfg.Namespace,
+		"deleted_namespace":    deletedNamespace,
+		"retained_namespace":   retainedNamespace,
 		"original_pods":        len(beforeStates),
 		"remaining_pods":       len(afterStates),
 		"original_pod_changes": changes,
@@ -397,6 +408,9 @@ func (r *runner) phase(ctx context.Context, p phase) error {
 		result.Results = append(result.Results, v)
 		result.Operations += v.Operations
 		result.Errors += v.Errors
+		if v.RunError != "" {
+			result.RunErrors = append(result.RunErrors, v.RunError)
+		}
 		result.P99 = max(result.P99, v.P99MS)
 		result.Max = max(result.Max, v.MaxMS)
 		start = min(start, v.StartedUnix)
@@ -417,13 +431,14 @@ func (r *runner) phase(ctx context.Context, p phase) error {
 			return err
 		}
 	}
-	if result.Operations != p.Count || result.Errors != 0 {
+	if result.Operations != p.Count || result.Errors != 0 || len(result.RunErrors) > 0 {
 		return fmt.Errorf(
-			"failed phase %s: completed %d/%d, errors %d",
+			"failed phase %s: completed %d/%d, errors %d, run errors %v",
 			name,
 			result.Operations,
 			p.Count,
 			result.Errors,
+			result.RunErrors,
 		)
 	}
 	result.Results = nil

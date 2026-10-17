@@ -407,10 +407,18 @@ func controlPlaneStats(cnt *counters) http.HandlerFunc {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
 		writeResponse(w, map[string]any{
-			"cpu_seconds": cpu(),
-			"heap_alloc":  m.HeapAlloc,
-			"process":     porterStats(os.Getpid()),
-			"wire":        cnt.snapshot(),
+			"cpu_seconds":     cpu(),
+			"heap_alloc":      m.HeapAlloc,
+			"total_alloc":     m.TotalAlloc,
+			"mallocs":         m.Mallocs,
+			"num_gc":          m.NumGC,
+			"gc_pause_ns":     m.PauseTotalNs,
+			"gc_cpu_fraction": m.GCCPUFraction,
+			"heap_inuse":      m.HeapInuse,
+			"heap_sys":        m.HeapSys,
+			"cgroup_cpu":      cgroupCPU(),
+			"process":         porterStats(os.Getpid()),
+			"wire":            cnt.snapshot(),
 		})
 	}
 }
@@ -692,6 +700,7 @@ func call(
 
 type phaseResult struct {
 	loadgen.Result
+	RunError       string  `json:"run_error,omitempty"`
 	LoadCPUSeconds float64 `json:"load_cpu_seconds"`
 }
 
@@ -728,8 +737,12 @@ func phase(
 	}, func(ctx context.Context, identity int) error {
 		return call(ctx, client, requests[identity-requestOffset], mode, identity, revision)
 	})
-	must(err)
-	return phaseResult{Result: result, LoadCPUSeconds: usedCPU}
+	// Preserve partial counts on cancellation/deadline; the runner rejects incomplete phases.
+	outcome := phaseResult{Result: result, LoadCPUSeconds: usedCPU}
+	if err != nil {
+		outcome.RunError = err.Error()
+	}
+	return outcome
 }
 
 func metrics() string {
@@ -786,9 +799,14 @@ func client(args []string) {
 func watchers(args []string) {
 	f := flag.NewFlagSet("watchers", flag.ExitOnError)
 	n := f.Int("resources", 50000, "")
+	observe := f.Bool("observe-updates", false, "record per-client applied revision convergence")
 	must(f.Parse(args))
 	if *n < 50000 {
 		log.Fatal("at least 50000")
+	}
+	recorder := newObservations((*n + 499) / 500)
+	if *observe {
+		http.HandleFunc("/observe", recorder.arm)
 	}
 	var changes atomic.Int64
 	clients := make([]*xdsclient.Client, 0, (*n+499)/500)
@@ -803,12 +821,18 @@ func watchers(args []string) {
 				Wildcard: true,
 				Transform: func(v *anypb.Any) (any, error) {
 					changes.Add(1)
+					if *observe {
+						return observedWorkload(v)
+					}
 					return v, nil
 				},
 			}},
 		})
 		must(e)
 		clients = append(clients, c)
+		if *observe {
+			go recorder.watch(ctx, i, c)
+		}
 		go func() {
 			must(c.Run(ctx))
 		}()
@@ -827,6 +851,7 @@ func watchers(args []string) {
 			"ready":       ready,
 			"resources":   total,
 			"transforms":  changes.Load(),
+			"observation": recorder.snapshot(),
 			"cpu_seconds": cpu(),
 		})
 	})

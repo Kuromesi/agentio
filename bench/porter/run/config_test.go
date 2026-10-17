@@ -38,7 +38,9 @@ func TestConfig(t *testing.T) {
 			"--variant-command",
 			"candidate=/porter",
 			"--suites",
-			"mixed,lifecycle",
+			"mixed,lifecycle,controlplane",
+			"--control-plane-image", "cp:baseline",
+			"--keep-namespace",
 		),
 		io.Discard,
 	)
@@ -47,7 +49,7 @@ func TestConfig(t *testing.T) {
 	}
 	if c.Workloads != 100000 || c.Variants[0].Command != "/porter" ||
 		c.Variants[0].Env["AGENTIO_LOG_LEVEL"] != "info,discovery=debug" ||
-		len(c.Suites) != 2 {
+		len(c.Suites) != 3 || c.ControlPlaneImage != "cp:baseline" || !c.KeepNamespace {
 		t.Fatalf("unexpected config: %+v", c)
 	}
 	for name, extra := range map[string][]string{
