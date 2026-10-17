@@ -1,0 +1,25 @@
+// Copyright Envoy Authors and 2026 The Kruise Authors.
+// SPDX-License-Identifier: Apache-2.0
+// CONNECT-only projection of envoy/service/ext_proc/v3/external_processor.proto.
+// Verified with Go-generated protobuf parity fixtures in tests/fixtures.json.
+syntax = "proto3";
+package envoy.service.ext_proc.v3;
+import "google/protobuf/struct.proto";
+message HeaderValue { string key = 1; string value = 2; bytes raw_value = 3; }
+message HeaderMap { repeated HeaderValue headers = 1; }
+message HttpHeaders { HeaderMap headers = 1; bool end_of_stream = 3; }
+message ProcessingRequest {
+  HttpHeaders request_headers = 2;
+  map<string,google.protobuf.Struct> attributes = 9;
+}
+message CommonResponse {}
+message HeadersResponse { CommonResponse response = 1; }
+message HttpStatus { int32 code = 1; }
+message ImmediateResponse { HttpStatus status = 1; bytes body = 3; string details = 5; }
+message ProcessingResponse {
+  oneof response { HeadersResponse request_headers = 1; ImmediateResponse immediate_response = 7; }
+  google.protobuf.Struct dynamic_metadata = 8;
+}
+service ExternalProcessor {
+  rpc Process(stream ProcessingRequest) returns (stream ProcessingResponse);
+}
