@@ -18,6 +18,16 @@ The projected gateway Pod token authenticates ADS. Agentiod verifies Pod identit
 
 Both static and Gateway API chart deployments include Porter with the gateway's token and CA volumes. Configure `egressGateway.porter.image`, `.resources` and `.cache` (`idleTTL: 1m`, `maxEntries: 10000`). A manual deployment sets `POD_NAME`, `POD_NAMESPACE`, `POD_UID`, `POD_IP`, `--xds-address` and `--cluster-id`. The health listener on port 9003 serves gRPC `readiness` after both discovery watches synchronize, and `liveness` for process health. Do not expose the processing port through a Service.
 
+The gateway requires Kubernetes native sidecar support (`SidecarContainers`). Porter runs in `initContainers` with `restartPolicy: Always`; the gateway stays in `containers`. On normal Pod deletion, kubelet stops Porter only after the gateway exits, keeping discovery available to CONNECT requests already in progress during gateway drain. Porter readiness still gates Pod readiness. The Pod termination budget is shared: gateway-agent caps drain at the total budget minus ten seconds, reserving five seconds for gateway cleanup and five for Porter shutdown. With the default 30-second budget, drain is capped at 20 seconds. Force deletion, node failure and independent Porter restarts are outside this ordering guarantee.
+
+Run the deletion regression against an existing Linux KinD cluster from the repository root:
+
+```sh
+bin/test_porter_shutdown.sh YOUR_KIND_CLUSTER YOUR_GATEWAY_IMAGE YOUR_PORTER_IMAGE
+```
+
+The supplied images must exist in local Docker and match the node architecture. The script requires Go, Helm, Docker and KinD. It borrows one node and creates only a temporary namespace, using the rendered production Deployment's container placement and termination budget. The test runs real gateway-agent, Envoy and Porter with test CA/ADS servers: it blocks a cold WDS response, deletes the Pod, checks Porter/ADS availability during drain, releases the response, completes the CONNECT tunnel and its HTTP response, then checks both container exit statuses and ordering. It also performs a fresh Porter demand during drain. The fixture replaces control-plane authentication and inventory; this is a shutdown regression, not a scale or full product test. Presubmit runs it in the existing `sidecar-auto` environment before the product suites.
+
 ## Code organization
 
 `config.rs` resolves CLI arguments and environment variables into a validated runtime configuration. `main.rs` initializes tracing and one Tokio runtime; `app.rs` assembles the services and supervises their named tasks, including signal handling and the five-second shutdown deadline. Business code receives configuration rather than reading environment variables.
