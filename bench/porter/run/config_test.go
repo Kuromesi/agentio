@@ -1,0 +1,57 @@
+// Copyright 2026 The Kruise Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package main
+
+import (
+	"io"
+	"testing"
+)
+
+func TestConfig(t *testing.T) {
+	base := []string{
+		"--kubeconfig",
+		"/tmp/test",
+		"--output",
+		"/tmp/results",
+		"--bench-image",
+		"bench:test",
+		"--variant",
+		"candidate=porter:test",
+	}
+	c, err := parseConfig(
+		append(
+			base,
+			"--variant-env",
+			"candidate:AGENTIO_LOG_LEVEL=info,discovery=debug",
+			"--variant-command",
+			"candidate=/porter",
+			"--suites",
+			"mixed,lifecycle",
+		),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Workloads != 100000 || c.Variants[0].Command != "/porter" ||
+		c.Variants[0].Env["AGENTIO_LOG_LEVEL"] != "info,discovery=debug" ||
+		len(c.Suites) != 2 {
+		t.Fatalf("unexpected config: %+v", c)
+	}
+	for name, extra := range map[string][]string{
+		"below minimum":      {"--workloads", "49999"},
+		"duplicate variant":  {"--variant", "candidate=other:test"},
+		"unknown env target": {"--variant-env", "other:KEY=value"},
+		"duplicate suite":    {"--suites", "mixed,mixed"},
+		"single CP failover": {"--suites", "failover", "--control-planes", "1"},
+		"unpartitioned rate": {"--hot-rate", "10001"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := append(append([]string{}, base...), extra...)
+			if _, err := parseConfig(args, io.Discard); err == nil {
+				t.Fatal("expected invalid configuration")
+			}
+		})
+	}
+}

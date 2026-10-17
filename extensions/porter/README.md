@@ -86,6 +86,8 @@ Metrics are served at `:9004/metrics` (`--metrics-port`). CONNECT duration measu
 
 Rust tracing provides lifecycle/discovery diagnostics. At debug level, discovery logs cache invalidation time and select/transform/publish/total durations for each accepted ADS response. Publication timing includes lock acquisition; timings exclude destruction of remaining locals after return. Use these logs in separate diagnostic runs because logging can affect performance.
 
+The scale harness compares supplied Porter images with the same control plane, WDS clients, resource inventory, certificates and resource limits. The harness drives actual TLS ADS and ext_proc, not the full Envoy/EPE forwarding path. See the [reusable scale test framework](../../bench/porter/README.md) for build/run commands, scenarios, metrics and limitations.
+
 Deployments declare a container port named `porter-metrics`. For Prometheus Operator, apply [the optional Porter PodMonitor](../../manifests/charts/agentio/addons/porter-podmonitor.yaml) and ensure your Prometheus instance selects it. Narrow its namespace and Pod selectors as needed. A separate Porter deployment can use the same named port. Existing gateway Prometheus annotations alone do not collect this endpoint.
 
 Without Prometheus Operator, add a separate scrape job:
