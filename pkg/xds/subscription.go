@@ -198,7 +198,7 @@ func demandReconciliationView(snapshot model.ResourceSet, typeURL string, scope 
 		scope,
 		snapshot,
 		model.AddressType,
-		SubscriptionView{names: sortedNames(watch.names)},
+		SubscriptionView{},
 	)
 	for _, name := range unsubscribed {
 		if name == "*" {
@@ -209,7 +209,8 @@ func demandReconciliationView(snapshot model.ResourceSet, typeURL string, scope 
 			return SubscriptionView{}, false
 		}
 		resource := resources[0]
-		if !selection.selected(resource) {
+		// Check live interests without sorting the entire subscription cache.
+		if !selection.selectedByNames(resource, watch.names.Contains) {
 			// An alias unsubscribe must forget the canonical sent state too.
 			// Sending a removal could cancel a later demand for the same resource.
 			delete(watch.sent, resource.XDSName)
