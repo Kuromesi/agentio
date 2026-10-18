@@ -24,18 +24,24 @@ import (
 // Shared policy and gateway postings must not be copied once per changed
 // workload. Keep single-key and payload-only controls alongside lifecycle churn.
 func BenchmarkResourceMembershipBatch(b *testing.B) {
-	benchmarkResourceMembershipBatch(b, true, 1000)
+	benchmarkResourceMembershipBatch(b, true, 1000, 1)
 }
 
 func BenchmarkResourceMembershipBatchWithoutGlobalReferences(b *testing.B) {
-	benchmarkResourceMembershipBatch(b, false, 1000)
+	benchmarkResourceMembershipBatch(b, false, 1000, 1)
 }
 
 func BenchmarkResourceMembershipBatchUniqueFacts(b *testing.B) {
-	benchmarkResourceMembershipBatch(b, false, 1)
+	benchmarkResourceMembershipBatch(b, false, 1, 1)
 }
 
-func benchmarkResourceMembershipBatch(b *testing.B, shared bool, namespaceSize int) {
+// Change one member per two-member namespace/node group. Each shared posting
+// receives only one change, exposing batching overhead without coalescing gains.
+func BenchmarkResourceMembershipBatchDispersedSmallGroups(b *testing.B) {
+	benchmarkResourceMembershipBatch(b, false, 2, 2)
+}
+
+func benchmarkResourceMembershipBatch(b *testing.B, shared bool, namespaceSize, stride int) {
 	for _, size := range []int{50000, 100000} {
 		b.Run(fmt.Sprintf("inventory=%d", size), func(b *testing.B) {
 			resources := make([]Resource, size)
@@ -71,7 +77,7 @@ func benchmarkResourceMembershipBatch(b *testing.B, shared bool, namespaceSize i
 					adds := make([]ResourceChange, count)
 					updates := make([]ResourceChange, count)
 					for i := range count {
-						old := resources[size-count+i]
+						old := resources[size-stride*count+stride*i]
 						next := old
 						next.Hash += "-updated"
 						next.Value = &anypb.Any{TypeUrl: AddressType, Value: []byte("new")}
