@@ -1,0 +1,9 @@
+# Override for the 100k run on the shared 60 GiB host. Each replica holds the full inventory.
+# Use together with values.yaml; record this different configuration in comparisons.
+agentiod:
+  replicaCount: 2
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {cpu: "8", memory: 8Gi}
+  env:
+    GOMEMLIMIT: 6GiB
