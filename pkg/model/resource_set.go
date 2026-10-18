@@ -229,7 +229,7 @@ func (s ResourceSet) Apply(changes []ResourceChange) (ResourceSet, bool, error) 
 		shard   uint16
 	}
 	clonedShards := sets.New[shardKey]()
-	clonedLookupShards := sets.New[lookupShardKey]()
+	lookupUpdates := lookupIndexUpdates{cloned: sets.New[lookupShardKey](), batch: len(changes) > 1}
 	effective := make([]ResourceChange, 0, len(changes))
 	length := s.length
 	for _, change := range changes {
@@ -281,7 +281,7 @@ func (s ResourceSet) Apply(changes []ResourceChange) (ResourceSet, bool, error) 
 		if found {
 			change.Old = &old
 		}
-		updateResourceLookupDiff(index, change.Old, change.New, change.Key.TypeURL, clonedLookupShards)
+		updateResourceLookupDiff(index, change.Old, change.New, change.Key.TypeURL, &lookupUpdates)
 		if change.New == nil {
 			delete(index.shards[shardID], change.Key.Name)
 			index.length--
@@ -298,6 +298,7 @@ func (s ResourceSet) Apply(changes []ResourceChange) (ResourceSet, bool, error) 
 	if len(effective) == 0 {
 		return s, false, nil
 	}
+	lookupUpdates.apply(resources)
 	for typeURL, index := range clonedTypes {
 		if index.length == 0 {
 			delete(resources, typeURL)

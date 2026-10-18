@@ -14,23 +14,22 @@
 
 package model
 
-import (
-	"encoding/json"
-	"testing"
-)
+import "testing"
 
 func BenchmarkModelEquals(b *testing.B) {
 	b.Run("Workload", func(b *testing.B) {
 		benchmarkEquals(
 			b,
-			Workload{
-				UID:       "pod-uid",
-				Namespace: "default",
-				Name:      "pod",
-				Source:    SourceRef{Registry: "kubernetes/test", Key: "pod-uid"},
-				Addresses: []string{"10.0.0.1", "2001:db8::1"},
-				Labels:    map[string]string{"app": "worker", "version": "v1", "team": "platform"},
-				Ready:     true,
+			func() Workload {
+				return Workload{
+					UID:       "pod-uid",
+					Namespace: "default",
+					Name:      "pod",
+					Source:    SourceRef{Registry: "kubernetes/test", Key: "pod-uid"},
+					Addresses: []string{"10.0.0.1", "2001:db8::1"},
+					Labels:    map[string]string{"app": "worker", "version": "v1", "team": "platform"},
+					Ready:     true,
+				}
 			},
 			Workload.Equals,
 		)
@@ -38,20 +37,24 @@ func BenchmarkModelEquals(b *testing.B) {
 	b.Run("Sandbox", func(b *testing.B) {
 		benchmarkEquals(
 			b,
-			Sandbox{UID: "sandbox-uid", Namespace: "default", Attester: &Attester{WorkloadUID: "pod-uid"}},
+			func() Sandbox {
+				return Sandbox{UID: "sandbox-uid", Namespace: "default", Attester: &Attester{WorkloadUID: "pod-uid"}}
+			},
 			Sandbox.Equals,
 		)
 	})
 	b.Run("Service", func(b *testing.B) {
 		benchmarkEquals(
 			b,
-			Service{
-				Namespace: "default",
-				Name:      "api",
-				Hostname:  "api.default.svc.cluster.local",
-				Addresses: []string{"10.0.0.2", "2001:db8::2"},
-				Ports:     []ServicePort{{Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP"}},
-				Canonical: true,
+			func() Service {
+				return Service{
+					Namespace: "default",
+					Name:      "api",
+					Hostname:  "api.default.svc.cluster.local",
+					Addresses: []string{"10.0.0.2", "2001:db8::2"},
+					Ports:     []ServicePort{{Name: "http", Port: 80, TargetPort: 8080, Protocol: "TCP"}},
+					Canonical: true,
+				}
 			},
 			Service.Equals,
 		)
@@ -60,15 +63,8 @@ func BenchmarkModelEquals(b *testing.B) {
 
 // Independent allocations model an informer update with unchanged contents,
 // avoiding DeepEqual's shortcut for maps and slices sharing the same storage.
-func benchmarkEquals[T any](b *testing.B, left T, equal func(T, T) bool) {
-	encoded, err := json.Marshal(left)
-	if err != nil {
-		b.Fatal(err)
-	}
-	var right T
-	if err := json.Unmarshal(encoded, &right); err != nil {
-		b.Fatal(err)
-	}
+func benchmarkEquals[T any](b *testing.B, fixture func() T, equal func(T, T) bool) {
+	left, right := fixture(), fixture()
 	if !equal(left, right) {
 		b.Fatal("fixture must compare equal")
 	}

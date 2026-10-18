@@ -305,7 +305,7 @@ func updateResourceLookupDiff(
 	index *resourceTypeIndex,
 	oldResource, newResource *Resource,
 	typeURL string,
-	cloned sets.Set[lookupShardKey],
+	updates *lookupIndexUpdates,
 ) {
 	oldEntries := resourceLookupEntries(oldResource)
 	newEntries := resourceLookupEntries(newResource)
@@ -319,24 +319,136 @@ func updateResourceLookupDiff(
 		if newEntries.Contains(entry) {
 			continue
 		}
-		updateLookupMembership(index, entry, name, false, typeURL, cloned)
+		updates.record(index, entry, name, false, typeURL)
 	}
 	for entry := range newEntries {
 		if oldEntries.Contains(entry) {
 			continue
 		}
-		updateLookupMembership(index, entry, name, true, typeURL, cloned)
+		updates.record(index, entry, name, true, typeURL)
 	}
 }
 
-func updateLookupMembership(
-	index *resourceTypeIndex,
-	entry resourceLookupEntry,
-	name string,
-	add bool,
-	typeURL string,
-	cloned sets.Set[lookupShardKey],
+type lookupMembershipKey struct {
+	typeURL string
+	entry   resourceLookupEntry
+}
+
+type lookupMembershipChange struct {
+	name string
+	add  bool
+}
+
+// Defer membership changes until the entire publication is known. Shared
+// policies can have very large postings; copying one per changed workload makes
+// a batch quadratic even though the outer index maps are sharded.
+type lookupIndexUpdates struct {
+	cloned  sets.Set[lookupShardKey]
+	batch   bool
+	pending map[lookupMembershipKey][]lookupMembershipChange
+}
+
+func (u *lookupIndexUpdates) record(index *resourceTypeIndex, entry resourceLookupEntry,
+	name string, add bool, typeURL string,
 ) {
+	lookup := writableLookupShard(index, entry, typeURL, u.cloned)
+	names := lookup[entry.key]
+	// Empty and singleton postings are cheap to update directly. Only shared
+	// lists need coalescing; unique resource names should not allocate a queue.
+	if u.batch && len(names) > 1 {
+		if u.pending == nil {
+			u.pending = make(map[lookupMembershipKey][]lookupMembershipChange)
+		}
+		key := lookupMembershipKey{typeURL: typeURL, entry: entry}
+		u.pending[key] = append(u.pending[key], lookupMembershipChange{name: name, add: add})
+		return
+	}
+	updateLookupMembership(lookup, entry.key, names, name, add)
+}
+
+func (u *lookupIndexUpdates) apply(resources map[string]*resourceTypeIndex) {
+	for key, changes := range u.pending {
+		index := resources[key.typeURL]
+		lookup := writableLookupShard(index, key.entry, key.typeURL, u.cloned)
+		names := lookup[key.entry.key]
+		if len(changes) == 1 {
+			updateLookupMembership(lookup, key.entry.key, names, changes[0].name, changes[0].add)
+			continue
+		}
+		// Apply may contain repeated changes to the same resource. Preserve the
+		// last membership decision for each name, without modifying old snapshots.
+		slices.SortStableFunc(changes, func(a, b lookupMembershipChange) int { return strings.Compare(a.name, b.name) })
+		count, length := 0, len(names)
+		for i := 0; i < len(changes); {
+			end := i + 1
+			for end < len(changes) && changes[end].name == changes[i].name {
+				end++
+			}
+			change := changes[end-1]
+			position := sort.SearchStrings(names, change.name)
+			contains := position < len(names) && names[position] == change.name
+			if change.add != contains {
+				changes[count] = change
+				count++
+				if change.add {
+					length++
+				} else {
+					length--
+				}
+			}
+			i = end
+		}
+		if count == 0 {
+			continue
+		}
+		if length == 0 {
+			delete(lookup, key.entry.key)
+			continue
+		}
+		updated := make([]string, 0, length)
+		position := 0
+		for _, change := range changes[:count] {
+			next := position + sort.SearchStrings(names[position:], change.name)
+			updated = append(updated, names[position:next]...)
+			position = next
+			if change.add {
+				updated = append(updated, change.name)
+			} else {
+				position++
+			}
+		}
+		updated = append(updated, names[position:]...)
+		lookup[key.entry.key] = updated
+	}
+}
+
+func updateLookupMembership(lookup map[string][]string, key string, names []string, name string, add bool) {
+	position := sort.SearchStrings(names, name)
+	contains := position < len(names) && names[position] == name
+	if add == contains {
+		return
+	}
+	if add {
+		updated := make([]string, len(names)+1)
+		copy(updated, names[:position])
+		updated[position] = name
+		copy(updated[position+1:], names[position:])
+		lookup[key] = updated
+		return
+	}
+	if len(names) == 1 {
+		delete(lookup, key)
+		return
+	}
+	updated := make([]string, 0, len(names)-1)
+	updated = append(updated, names[:position]...)
+	updated = append(updated, names[position+1:]...)
+	lookup[key] = updated
+}
+
+func writableLookupShard(index *resourceTypeIndex, entry resourceLookupEntry,
+	typeURL string, cloned sets.Set[lookupShardKey],
+) map[string][]string {
 	lookup := &index.lookup
 	if entry.kind == 1 {
 		lookup = &index.facts
@@ -351,28 +463,7 @@ func updateLookupMembership(
 		cloned.Insert(outerCloneKey)
 	}
 
-	names := lookup.shards[outerShardID][entry.key]
-	position := sort.SearchStrings(names, name)
-	contains := position < len(names) && names[position] == name
-	if add == contains {
-		return
-	}
-	if add {
-		updated := make([]string, len(names)+1)
-		copy(updated, names[:position])
-		updated[position] = name
-		copy(updated[position+1:], names[position:])
-		lookup.shards[outerShardID][entry.key] = updated
-		return
-	}
-	if len(names) == 1 {
-		delete(lookup.shards[outerShardID], entry.key)
-		return
-	}
-	updated := make([]string, 0, len(names)-1)
-	updated = append(updated, names[:position]...)
-	updated = append(updated, names[position+1:]...)
-	lookup.shards[outerShardID][entry.key] = updated
+	return lookup.shards[outerShardID]
 }
 
 func workloadReferencesMatch(workload *WorkloadResourceFacts, query WorkloadQuery) bool {
