@@ -159,12 +159,17 @@ func (r *runner) execute(ctx context.Context) (result error) {
 	if err = r.create(ctx); err != nil {
 		return err
 	}
+	return r.runSuites(ctx)
+}
+
+func (r *runner) runSuites(ctx context.Context) error {
 	for _, v := range r.cfg.Variants {
 		r.variant = v
 		for _, suite := range r.cfg.Suites {
-			if err = r.setup(ctx); err != nil {
+			if err := r.setup(ctx); err != nil {
 				return err
 			}
+			var err error
 			switch suite {
 			case "controlplane":
 				err = r.controlPlaneSuite(ctx)
@@ -391,6 +396,10 @@ func (r *runner) phase(ctx context.Context, p phase) error {
 	if err := group.Wait(); err != nil {
 		return err
 	}
+	return r.finishPhase(ctx, p, name, values)
+}
+
+func (r *runner) finishPhase(ctx context.Context, p phase, name string, values []worker) error {
 	// Snapshots retain parent cancellation after the worker group finishes.
 	afterCtx, afterCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer afterCancel()
