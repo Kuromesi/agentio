@@ -1,0 +1,53 @@
+# Production chart inputs for a shared kind cluster. Virtual Pods are not injected.
+profile: sidecar
+global:
+  caCertConfigMap: sandbox-scale-ca-certs
+  imagePullPolicy: IfNotPresent
+agentiod:
+  fullnameOverride: agentiod
+  replicaCount: 3
+  ca:
+    configMapName: sandbox-scale-ca-certs
+    trustBundleConfigMapName: sandbox-scale-ca-root-cert
+  image: {repository: agentio-sandbox-scale, tag: 47d11e37}
+  trustedNodeServiceAccount: sandbox-scale-system/ztunnel
+  enableSNITrafficPolicy: true
+  meshInternalTrafficPolicy: PASSTHROUGH
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {cpu: "4", memory: 6Gi}
+  logging: {level: warn, format: json}
+  env:
+    AGENTIO_SANDBOX_MODE: "true"
+    AGENTIO_SANDBOX_RUNTIMES: kruise
+    AGENTIO_KUBERNETES_API_QPS: "200"
+    AGENTIO_KUBERNETES_API_BURST: "400"
+    AGENTIO_ENABLE_SIDECAR_INJECTOR: "false"
+  config:
+    values:
+      egressPolicies: [{policy: PASSTHROUGH}]
+egressGateway:
+  mode: static
+  fullnameOverride: egress-gateway
+  replicaCount: 2
+  autoscaling: {enabled: false}
+  podDisruptionBudget: {enabled: false}
+  image: {repository: agentio-gateway, tag: 1017-native-porter}
+  resources:
+    requests: {cpu: "1", memory: 512Mi}
+    limits: {cpu: "4", memory: 2Gi}
+  porter:
+    image: {repository: agentio-porter, tag: 1017-lazy-reconnect}
+    resources:
+      requests: {cpu: 500m, memory: 256Mi}
+      limits: {cpu: "2", memory: 1Gi}
+epe:
+  mode: managed
+  fullnameOverride: agentio-epe
+  image: {repository: agentio-sandbox-scale-epe, tag: 47d11e37}
+  replicaCount: 2
+  autoscaling: {enabled: false}
+  podDisruptionBudget: {enabled: false}
+  resources:
+    requests: {cpu: 500m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
