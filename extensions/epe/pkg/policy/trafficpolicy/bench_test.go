@@ -111,7 +111,7 @@ func benchFixture(count int) (*benchSource, *store.Aggregate, *resolver, inputs.
 }
 
 func BenchmarkResourceQueries(b *testing.B) {
-	for _, count := range []int{100, 1000} {
+	for _, count := range []int{100, 1000, 10000, 50000} {
 		b.Run(fmt.Sprintf("N%d", count), func(b *testing.B) {
 			source, aggregate, r, pod := benchFixture(count)
 			ctx := context.Background()

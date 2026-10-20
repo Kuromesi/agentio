@@ -61,12 +61,13 @@ func RegisterQueries(aggregate *store.Aggregate, clusterID string) {
 type queryBuilder struct{ clusterID string }
 
 func (b queryBuilder) build(view *store.Snapshot, previous store.Query) store.Query {
-	index := &queryIndex{clusterID: b.clusterID, workloads: map[subjectKey]*indexedWorkload{}}
+	index := &queryIndex{clusterID: b.clusterID}
 	resources, err := view.List(store.Workload)
 	if err != nil {
 		index.err = err
 		return index
 	}
+	index.workloads = make(map[subjectKey]*indexedWorkload, len(resources))
 	old, _ := previous.(*queryIndex)
 	for _, resource := range resources {
 		w := resource.Value.(*workload.Workload)

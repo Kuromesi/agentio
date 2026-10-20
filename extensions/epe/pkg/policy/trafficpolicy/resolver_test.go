@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/netip"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -319,29 +320,36 @@ func TestWorkloadConfigDoesNotDependOnSourceIP(t *testing.T) {
 }
 
 func TestLookupFetchesAllMissingPolicies(t *testing.T) {
-	f := testStore()
-	names := make([]string, 9)
-	for i := range names {
-		names[i] = fmt.Sprintf("missing-%d", i)
-	}
-	f.bind(names...)
-	calls := 0
-	f.fetch = func(key store.Key) {
-		calls++
-		f.put(key.Type, key.Name, &sec.TrafficPolicy{})
-	}
-	result, err := lookup(t.Context(), testAggregate(f), inputs.Pod{Namespace: "ns", Name: "pod"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.TrafficPolicies) != len(names) || calls != len(names) {
-		t.Fatalf("policies=%d fetches=%d, want %d", len(result.TrafficPolicies), calls, len(names))
-	}
-	for i, policy := range result.TrafficPolicies {
-		if policy.Name != names[i] {
-			t.Fatalf("binding order changed: %v", result.TrafficPolicies)
+	synctest.Test(t, func(t *testing.T) {
+		f := testStore()
+		names := make([]string, 9)
+		for i := range names {
+			names[i] = fmt.Sprintf("missing-%d", i)
 		}
-	}
+		f.bind(names...)
+		calls := 0
+		f.fetch = func(key store.Key) {
+			calls++
+			f.put(key.Type, key.Name, &sec.TrafficPolicy{})
+		}
+		started := time.Now()
+		result, err := lookup(t.Context(), testAggregate(f), inputs.Pod{Namespace: "ns", Name: "pod"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.TrafficPolicies) != len(names) || calls != len(names) {
+			t.Fatalf("policies=%d fetches=%d, want %d", len(result.TrafficPolicies), calls, len(names))
+		}
+		for i, policy := range result.TrafficPolicies {
+			if policy.Name != names[i] {
+				t.Fatalf("binding order changed: %v", result.TrafficPolicies)
+			}
+		}
+
+		if elapsed := time.Since(started); elapsed != 0 {
+			t.Fatalf("ready dependencies incurred artificial waiting: %s", elapsed)
+		}
+	})
 }
 
 func TestLookupStopsFetchingWhenCanceled(t *testing.T) {

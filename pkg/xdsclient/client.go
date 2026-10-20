@@ -323,8 +323,8 @@ func (c *Client) runStream(parent context.Context) (bool, error) {
 }
 
 func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Watches are immutable. The receive loop serializes apply and reset;
+	// validation and decoding need not block concurrent demands or releases.
 	st := c.types[r.TypeUrl]
 	if st == nil {
 		return fmt.Errorf("unregistered response type %q", r.TypeUrl)
@@ -334,16 +334,23 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	}
 	// Ignore late updates for released interests. Transform the interested
 	// batch before any cache or subscription mutation.
-	selected := make([]*discovery.Resource, 0, len(r.Resources))
-	for _, res := range r.Resources {
-		if st.interested(res.Name, res.Aliases) {
-			selected = append(selected, res)
+	selected := r.Resources
+	if !st.watch.Wildcard {
+		selected = make([]*discovery.Resource, len(r.Resources))
+		c.mu.Lock()
+		for i, res := range r.Resources {
+			if st.interested(res.Name, res.Aliases) {
+				selected[i] = res
+			}
 		}
+		c.mu.Unlock()
 	}
 	values, err := transformResources(selected, st.watch)
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var removedAliases []string
 	if !st.synced {
 		// This stream does not resume resource versions. Replace retained data
@@ -369,20 +376,30 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	for _, alias := range removedAliases {
 		touched[alias] = struct{}{}
 	}
-	for _, res := range r.Resources {
+	for i, res := range r.Resources {
 		for _, alias := range st.resourceAliases[res.Name] {
 			touched[alias] = struct{}{}
 		}
 		st.removeResource(res.Name)
-		if !st.interested(res.Name, res.Aliases) {
+		// Interests can change while decoding. A newly acquired interest in
+		// an unselected resource will receive its own subscribe response.
+		if values[i] == nil {
 			continue
 		}
-		st.resources[res.Name] = values[res.Name]
+		sub := st.names[res.Name]
+		if sub == nil && !st.interested(res.Name, res.Aliases) {
+			continue
+		}
+		st.resources[res.Name] = values[i]
 		st.addResourceAliases(res.Name, res.Aliases)
 		for _, alias := range res.Aliases {
+			touched[alias] = struct{}{}
 			delete(st.removed, alias)
 		}
 		delete(st.removed, res.Name)
+		if sub != nil {
+			sub.notify()
+		}
 	}
 	for _, name := range r.RemovedResources {
 		for _, alias := range st.resourceAliases[name] {
@@ -393,6 +410,8 @@ func (c *Client) apply(r *discovery.DeltaDiscoveryResponse) error {
 	for alias := range touched {
 		if _, exists := st.aliases[alias]; !exists {
 			c.deletedSubscription(st, alias)
+		} else {
+			st.notify(alias)
 		}
 	}
 	for _, name := range r.RemovedResources {

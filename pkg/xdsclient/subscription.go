@@ -39,8 +39,23 @@ const (
 type subscription struct {
 	err        error
 	done       chan struct{}
+	changed    chan struct{} // Created only when a caller needs to wait.
 	owners     int
 	persistent bool
+}
+
+// notify wakes this generation's waiters. All access is under client.mu.
+func (s *subscription) notify() {
+	if s.changed != nil {
+		close(s.changed)
+		s.changed = nil
+	}
+}
+
+func (st *typeState) notify(name string) {
+	if sub := st.names[name]; sub != nil {
+		sub.notify()
+	}
 }
 
 // ErrReleased means a locally owned subscription was released, not that the
@@ -105,6 +120,7 @@ func (s *Subscription) Release() {
 		st.releaseResource(s.name)
 		c.wakeSubscriptions()
 	}
+	sub.notify()
 	c.notifyLocked()
 }
 
@@ -206,6 +222,7 @@ func (c *Client) deletedSubscription(st *typeState, name string) {
 	if sub == nil {
 		return
 	}
+	sub.notify()
 	if st.watch.OnDelete == nil || st.watch.OnDelete(name) == KeepSubscription {
 		st.removed[name] = true
 		return
@@ -220,7 +237,7 @@ func (c *Client) deletedSubscription(st *typeState, name string) {
 
 // Demand returns a read-only resource, waiting for publication or removal. Successful
 // subscriptions remain watched so later policy changes are observed. All
-// concurrent waiters are notified; cancellation does not cancel other waiters.
+// waiters for the resource are notified; cancellation does not cancel other waiters.
 // A released deletion ends existing waiters with ErrNotFound; a later call
 // creates a new subscription, even before the old unsubscribe has been sent.
 func (c *Client) Demand(ctx context.Context, typ, name string) (*Resource, error) {
@@ -284,7 +301,10 @@ func (c *Client) waitLocked(
 					Observe(time.Since(started).Seconds())
 			}()
 		}
-		changed := c.changed
+		if sub.changed == nil {
+			sub.changed = make(chan struct{})
+		}
+		changed := sub.changed
 		c.mu.Unlock()
 		select {
 		case <-ctx.Done():
