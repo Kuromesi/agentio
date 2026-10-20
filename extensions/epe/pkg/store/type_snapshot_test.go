@@ -230,3 +230,49 @@ func TestDefaultSnapshotChangesKeepOldView(t *testing.T) {
 		t.Fatal("addition leaked to old view", r, err)
 	}
 }
+
+func TestDefaultSnapshotChangesPreserveSortedList(t *testing.T) {
+	resource := func(name, value string) Resource { return Resource{Key: Key{Type: Workload, Name: name}, Value: value} }
+	original := NewDefaultSnapshot([]Resource{
+		resource("b", "old-b"),
+		resource("d", "old-d"),
+		resource("f", "old-f"),
+	}, nil)
+	next := original.WithChanges([]Resource{
+		resource("a", "superseded-a"),
+		resource("g", "new-g"),
+		resource("d", "new-d"),
+		resource("a", "new-a"),
+		resource("e", "new-e"),
+	}, []string{"b"})
+	values, err := next.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 5 || values[0].Value != "new-a" {
+		t.Fatal(values)
+	}
+	for i, name := range []string{"a", "d", "e", "f", "g"} {
+		got, err := next.Get(name)
+		if err != nil || got == nil || values[i] != *got {
+			t.Fatalf("List/Get disagree for %s: %v %v", name, values, err)
+		}
+	}
+	old, err := original.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(old) != 3 || old[0].Key.Name != "b" || old[1].Value != "old-d" {
+		t.Fatalf("old list mutated: %v", old)
+	}
+	replacement := original.WithChanges([]Resource{resource("d", "replacement")}, nil)
+	values, err = replacement.List()
+	if err != nil || len(values) != 3 || values[1].Value != "replacement" {
+		t.Fatal(values, err)
+	}
+	empty := original.WithChanges(nil, []string{"b", "d", "f"})
+	values, err = empty.List()
+	if err != nil || len(values) != 0 {
+		t.Fatal(values, err)
+	}
+}

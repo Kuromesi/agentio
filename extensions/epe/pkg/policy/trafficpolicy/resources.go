@@ -68,18 +68,29 @@ func lookup(ctx context.Context, source Resources, pod inputs.Pod) (policySnapsh
 		time.Second,
 		true,
 		func(ctx context.Context) (bool, error) {
-			resource, err := source.Fetch(ctx, missing.Key)
-			if err != nil {
-				return false, err
+			for {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
+				key := missing.Key
+				resource, err := source.Fetch(ctx, key)
+				if err != nil {
+					return false, err
+				}
+				if resource == nil {
+					return false, missing
+				}
+				result, err = lookupSnapshot(source.Snapshot(), pod)
+				if !errors.As(err, &missing) {
+					return err == nil, err
+				}
+				// Fetch publishes synchronously. Resolve the next dependency
+				// immediately, but retain polling if deletion or publication
+				// races leave the same resource missing.
+				if missing.Key == key {
+					return false, nil
+				}
 			}
-			if resource == nil {
-				return false, missing
-			}
-			result, err = lookupSnapshot(source.Snapshot(), pod)
-			if errors.As(err, &missing) {
-				return false, nil
-			}
-			return err == nil, err
 		},
 	)
 	return result, err

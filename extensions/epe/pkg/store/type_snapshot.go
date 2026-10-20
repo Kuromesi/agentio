@@ -60,10 +60,31 @@ func (s *DefaultSnapshot) WithChanges(upserts []Resource, removed []string) *Def
 	for _, name := range removed {
 		delete(next.resources, name)
 	}
+	// Only new names need sorting. Existing names retain their order even
+	// when their values change; merge additions into that ordered list.
+	added := make([]string, 0)
 	for _, resource := range upserts {
-		next.resources[resource.Key.Name] = &resource
+		name := resource.Key.Name
+		if next.resources[name] == nil && s.resources[name] == nil {
+			added = append(added, name)
+		}
+		next.resources[name] = &resource
 	}
-	next.buildList()
+	sort.Strings(added)
+	next.list = make([]Resource, 0, len(next.resources))
+	i := 0
+	for _, resource := range s.list {
+		for i < len(added) && added[i] < resource.Key.Name {
+			next.list = append(next.list, *next.resources[added[i]])
+			i++
+		}
+		if current := next.resources[resource.Key.Name]; current != nil {
+			next.list = append(next.list, *current)
+		}
+	}
+	for _, name := range added[i:] {
+		next.list = append(next.list, *next.resources[name])
+	}
 	return next
 }
 
