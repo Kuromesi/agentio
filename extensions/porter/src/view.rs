@@ -8,28 +8,35 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use prost::Message;
 use prost_types::{Any, Struct, Value, value::Kind};
 
+use crate::traffic::Policy;
 use crate::wire::{
-    agentio::sandbox::Sandbox,
+    agentio::{sandbox::Sandbox, security::TrafficPolicy},
     istio::workload::{NetworkMode, Workload},
-    kruise::networking::extensions::v1::{SniAction, SniRule, SniTrafficPolicy, WorkloadMetadata},
+    kruise::networking::extensions::v1::{
+        PolicyReference, SniAction, SniRule, SniTrafficPolicy, WorkloadMetadata,
+    },
 };
 
 pub const WORKLOAD: &str = "type.googleapis.com/istio.workload.Workload";
 pub const SANDBOX: &str = "type.googleapis.com/agentio.sandbox.Sandbox";
 
+pub const TRAFFIC_POLICY: &str = "type.googleapis.com/agentio.security.TrafficPolicy";
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ResourceKind {
     Workload,
     Sandbox,
+    TrafficPolicy,
 }
 
 impl ResourceKind {
-    pub const ALL: [Self; 2] = [Self::Workload, Self::Sandbox];
+    pub const ALL: [Self; 3] = [Self::Workload, Self::Sandbox, Self::TrafficPolicy];
 
     pub(crate) const fn index(self) -> usize {
         match self {
             Self::Workload => 0,
             Self::Sandbox => 1,
+            Self::TrafficPolicy => 2,
         }
     }
 
@@ -37,6 +44,7 @@ impl ResourceKind {
         match self {
             Self::Workload => WORKLOAD,
             Self::Sandbox => SANDBOX,
+            Self::TrafficPolicy => TRAFFIC_POLICY,
         }
     }
 
@@ -44,6 +52,7 @@ impl ResourceKind {
         match type_url {
             WORKLOAD => Some(Self::Workload),
             SANDBOX => Some(Self::Sandbox),
+            TRAFFIC_POLICY => Some(Self::TrafficPolicy),
             _ => None,
         }
     }
@@ -53,6 +62,7 @@ impl ResourceKind {
 pub enum View {
     Workload(WorkloadView),
     Sandbox(SandboxView),
+    TrafficPolicy(Policy),
 }
 
 #[derive(Debug)]
@@ -63,6 +73,7 @@ pub struct WorkloadView {
     pub principal: String,
     pub host_network: bool,
     pub encoded_labels: String,
+    pub traffic_policies: Option<Vec<String>>,
     pub rules: Vec<SniRule>,
 }
 
@@ -70,6 +81,7 @@ pub struct WorkloadView {
 pub struct SandboxView {
     pub uid: String,
     pub workload_uid: String,
+    pub traffic_policy: Option<Policy>,
     pub rules: Vec<SniRule>,
 }
 
@@ -147,6 +159,9 @@ pub fn decode(kind: ResourceKind, value: &Any) -> Result<View> {
         );
     }
     match kind {
+        ResourceKind::TrafficPolicy => Ok(View::TrafficPolicy(Policy::compile(
+            TrafficPolicy::decode(value.value.as_slice())?,
+        )?)),
         ResourceKind::Workload => {
             let workload = Workload::decode(value.value.as_slice())?;
             let values: Vec<_> = workload
@@ -181,6 +196,7 @@ pub fn decode(kind: ResourceKind, value: &Any) -> Result<View> {
                 host_network: workload.network_mode == NetworkMode::HostNetwork as i32,
                 encoded_labels: STANDARD.encode(labels.join(",")),
                 rules: rules(&values)?,
+                traffic_policies: traffic_references(&values)?,
             }))
         }
         ResourceKind::Sandbox => {
@@ -189,7 +205,70 @@ pub fn decode(kind: ResourceKind, value: &Any) -> Result<View> {
                 uid: sandbox.uid,
                 workload_uid: sandbox.attester.map(|a| a.workload_uid).unwrap_or_default(),
                 rules: rules(&sandbox.extensions)?,
+                traffic_policy: sandbox.traffic_policy.map(Policy::compile).transpose()?,
             }))
         }
+    }
+}
+
+fn traffic_references(values: &[Any]) -> Result<Option<Vec<String>>> {
+    let mut names = None;
+    for value in values
+        .iter()
+        .filter(|v| matches(v, "kruise.networking.extensions.v1.PolicyReference"))
+    {
+        let reference = PolicyReference::decode(value.value.as_slice())?;
+        if reference.type_url != TRAFFIC_POLICY {
+            continue;
+        }
+        if names.is_some() {
+            bail!("duplicate TrafficPolicy binding");
+        }
+        if reference
+            .resource_names
+            .iter()
+            .any(|name| name.is_empty() || name == "*")
+        {
+            bail!("invalid TrafficPolicy reference");
+        }
+        names = Some(reference.resource_names);
+    }
+    Ok(names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding(names: &[&str]) -> Any {
+        Any {
+            type_url: "type.googleapis.com/kruise.networking.extensions.v1.PolicyReference".into(),
+            value: PolicyReference {
+                type_url: TRAFFIC_POLICY.into(),
+                resource_names: names.iter().map(|name| (*name).into()).collect(),
+            }
+            .encode_to_vec(),
+        }
+    }
+
+    #[test]
+    fn bindings_preserve_presence_and_order_and_reject_ambiguity() {
+        assert_eq!(traffic_references(&[]).unwrap(), None);
+        assert_eq!(traffic_references(&[binding(&[])]).unwrap(), Some(vec![]));
+        assert_eq!(
+            traffic_references(&[binding(&["b", "a"])]).unwrap(),
+            Some(vec!["b".into(), "a".into()])
+        );
+        assert!(traffic_references(&[binding(&["a"]), binding(&["b"])]).is_err());
+        for name in ["", "*"] {
+            assert!(traffic_references(&[binding(&[name])]).is_err());
+        }
+        let mut other = binding(&["unused"]);
+        other.value = PolicyReference {
+            type_url: "another.policy.Type".into(),
+            resource_names: vec!["unused".into()],
+        }
+        .encode_to_vec();
+        assert_eq!(traffic_references(&[other]).unwrap(), None);
     }
 }

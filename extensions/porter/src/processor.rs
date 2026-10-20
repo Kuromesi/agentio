@@ -19,6 +19,7 @@ use crate::{
     discovery::{Client, DemandError},
     identity::certificate_instance,
     metrics::{ConnectResult, Metrics, Protocol},
+    traffic::{self, Target},
     view::{self, ResourceKind, View},
     wire::extproc::{
         self, external_processor_server::ExternalProcessor,
@@ -62,7 +63,7 @@ impl Processor {
         message: extproc::ProcessingRequest,
     ) -> Result<extproc::ProcessingResponse, Status> {
         let started = Instant::now();
-        let udp = {
+        let (udp, target) = {
             let headers = message
                 .request_headers
                 .ok_or_else(|| Status::invalid_argument("CONNECT requires request headers"))?;
@@ -87,7 +88,10 @@ impl Processor {
                     "expected CONNECT with an authority",
                 ));
             }
-            udp
+            let target = Target::parse(&authority, udp).map_err(|error| {
+                Status::invalid_argument(format!("invalid CONNECT target: {error}"))
+            })?;
+            (udp, target)
         };
         let mut measurement = ConnectMeasurement {
             metrics: self.client.metrics.clone(),
@@ -108,7 +112,7 @@ impl Processor {
                 peer_ip,
                 principal,
                 sandbox_id,
-                udp,
+                target,
                 request_deadline,
             ),
         )
@@ -147,9 +151,10 @@ impl Processor {
         peer_ip: &str,
         principal: &str,
         sandbox_id: &str,
-        udp: bool,
+        target: Target,
         request_deadline: tokio::time::Instant,
     ) -> Result<extproc::ProcessingResponse, DemandError> {
+        let udp = target.protocol == crate::wire::agentio::security::traffic_policy::Protocol::Udp;
         let instance = match certificate_instance(certificate) {
             Ok(instance) => instance,
             Err(error) => {
@@ -203,9 +208,38 @@ impl Processor {
                 debug!(reason = "sandbox_workload_mismatch", "CONNECT denied");
                 return Ok(denied());
             }
+            if !traffic::allows(sandbox.traffic_policy.iter(), target) {
+                debug!(reason = "sandbox_egress_denied", "CONNECT denied");
+                return Ok(denied());
+            }
             if !udp {
                 rules.extend(view::project_rules(&sandbox.rules));
             }
+        }
+        let Some(references) = &workload.traffic_policies else {
+            debug!(reason = "traffic_binding_missing", "CONNECT denied");
+            return Ok(denied());
+        };
+        // Resolve the complete stage before an early ALLOW can take effect.
+        let policies = self
+            .client
+            .demand_many(
+                ResourceKind::TrafficPolicy,
+                references,
+                Some(request_deadline),
+            )
+            .await?;
+        if !traffic::allows(
+            policies.iter().map(|value| {
+                let View::TrafficPolicy(policy) = value.as_ref() else {
+                    unreachable!("typed TrafficPolicy watch")
+                };
+                policy
+            }),
+            target,
+        ) {
+            debug!(reason = "workload_egress_denied", "CONNECT denied");
+            return Ok(denied());
         }
         let mut metadata = BTreeMap::new();
         metadata.insert(
@@ -358,12 +392,12 @@ mod tests {
                 None,
             ),
             (
-                "authority retains lossy UTF-8 behavior",
+                "malformed authority is rejected",
                 vec![
                     header(":method", "CONNECT", b""),
                     header(":authority", "", b"\xff"),
                 ],
-                Some("tcp"),
+                None,
             ),
         ];
         for (name, selected_headers, expected_protocol) in cases {
@@ -380,7 +414,7 @@ mod tests {
                 timeout: Duration::from_secs(1),
             };
             let mut headers = vec![
-                header(":authority", "example:443", b""),
+                header(":authority", "192.0.2.1:443", b""),
                 header("unrelated", "", b"\xff"),
             ];
             headers.extend(selected_headers);

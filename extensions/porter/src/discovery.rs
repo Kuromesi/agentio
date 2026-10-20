@@ -15,6 +15,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use futures_util::future::try_join_all;
 use lru::LruCache;
 use tokio::{
     sync::{Notify, watch},
@@ -33,6 +34,8 @@ pub use transport::TransportConfig;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod traffic_tests;
 
 #[derive(Clone, Debug)]
 enum Outcome {
@@ -139,7 +142,7 @@ impl TypeState {
 }
 
 struct State {
-    types: [TypeState; 2],
+    types: [TypeState; ResourceKind::ALL.len()],
     idle: LruCache<ResourceKey, Instant>,
     next_generation: u64,
 }
@@ -341,6 +344,65 @@ impl Client {
         }
     }
 
+    /// Resolve an ordered dependency set. Complete hot sets share one cache lock;
+    /// cold sets use the normal coalesced, concurrent demand path.
+    pub async fn demand_many(
+        self: &Arc<Self>,
+        kind: ResourceKind,
+        names: &[String],
+        request_deadline: Option<Instant>,
+    ) -> Result<Vec<Arc<View>>, DemandError> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(values) = self.cached_many(kind, names) {
+            self.metrics
+                .cache_lookups
+                .get_or_create(&DemandResult {
+                    resource_type: kind.type_url(),
+                    result: "hit",
+                })
+                .inc_by(names.len() as u64);
+            return Ok(values);
+        }
+        try_join_all(
+            names
+                .iter()
+                .map(|name| self.demand(kind, name, request_deadline)),
+        )
+        .await
+    }
+
+    fn cached_many(&self, kind: ResourceKind, names: &[String]) -> Option<Vec<Arc<View>>> {
+        let now = Instant::now();
+        let mut state = self.state.lock().unwrap();
+        self.prune(&mut state, now);
+        let mut values = Vec::with_capacity(names.len());
+        for name in names {
+            let entry = state.types[kind.index()].entries.get(name)?;
+            let value = entry.generation.value.borrow();
+            let Outcome::Ready(value) = self.current(&value) else {
+                return None;
+            };
+            values.push(value.clone());
+        }
+        if self.retained() {
+            for name in names {
+                if state.types[kind.index()].entries[name].users == 0 {
+                    state.idle.put(
+                        ResourceKey {
+                            kind,
+                            name: name.clone(),
+                        },
+                        now,
+                    );
+                }
+            }
+            self.expiry.notify_one();
+        }
+        Some(values)
+    }
+
     // The epoch invalidates outcomes held by callers across disconnects.
     // Missing ends a generation and remains terminal even if its removed entry
     // is no longer in the cache.
@@ -410,7 +472,7 @@ impl Client {
     fn initial(
         &self,
         node: &Node,
-        sent_generations: &mut [HashMap<String, u64>; 2],
+        sent_generations: &mut [HashMap<String, u64>; ResourceKind::ALL.len()],
     ) -> Vec<Request> {
         let mut state = self.state.lock().unwrap();
         ResourceKind::ALL
@@ -437,7 +499,10 @@ impl Client {
             .collect()
     }
 
-    fn outgoing(&self, sent_generations: &mut [HashMap<String, u64>; 2]) -> Vec<Request> {
+    fn outgoing(
+        &self,
+        sent_generations: &mut [HashMap<String, u64>; ResourceKind::ALL.len()],
+    ) -> Vec<Request> {
         let mut state = self.state.lock().unwrap();
         let mut requests = Vec::new();
         for kind in ResourceKind::ALL {

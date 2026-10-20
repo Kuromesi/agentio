@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod identity;
 pub mod metrics;
 pub mod processor;
+pub mod traffic;
 pub mod view;
 
 #[allow(clippy::large_enum_variant, clippy::module_inception)]

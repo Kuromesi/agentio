@@ -1,0 +1,481 @@
+// Copyright 2026 The Kruise Authors
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+use crate::{
+    processor::Processor,
+    wire::{
+        agentio::{
+            sandbox::{Sandbox, sandbox::Attester},
+            security::{TrafficPolicy, traffic_policy as proto},
+        },
+        extproc,
+        istio::workload::{Extension, Workload},
+        kruise::networking::extensions::v1::PolicyReference,
+    },
+};
+use prost::Message;
+use prost_types::Any;
+use std::collections::BTreeMap;
+
+const UID: &str = "Kubernetes//Pod/demo/source";
+
+fn any(type_url: &str, message: impl Message) -> Any {
+    Any {
+        type_url: type_url.into(),
+        value: message.encode_to_vec(),
+    }
+}
+
+fn workload(names: Option<&[&str]>) -> Any {
+    any(
+        view::WORKLOAD,
+        Workload {
+            uid: UID.into(),
+            name: "source".into(),
+            namespace: "demo".into(),
+            trust_domain: "cluster.local".into(),
+            service_account: "default".into(),
+            extensions: names
+                .map(|names| {
+                    vec![Extension {
+                        name: "traffic-policy-reference".into(),
+                        config: Some(any(
+                            "type.googleapis.com/kruise.networking.extensions.v1.PolicyReference",
+                            PolicyReference {
+                                type_url: view::TRAFFIC_POLICY.into(),
+                                resource_names: names.iter().map(|s| (*s).into()).collect(),
+                            },
+                        )),
+                    }]
+                })
+                .unwrap_or_default(),
+            ..Default::default()
+        },
+    )
+}
+
+fn policy(action: proto::Action) -> TrafficPolicy {
+    TrafficPolicy {
+        egress: Some(proto::RuleSet {
+            rules: vec![proto::Rule {
+                action: action as i32,
+                r#match: Some(proto::Match::default()),
+            }],
+        }),
+        ..Default::default()
+    }
+}
+
+fn seed(c: &Arc<Client>, kind: ResourceKind, name: &str, body: Any) {
+    let mut lease = c.acquire(kind, name).unwrap();
+    c.apply(
+        kind,
+        &Response {
+            type_url: kind.type_url().into(),
+            resources: vec![ads::Resource {
+                name: name.into(),
+                resource: Some(body),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    lease.success = true;
+}
+
+fn processor() -> Processor {
+    Processor {
+        client: Client::new(CacheConfig::default(), Metrics::new()),
+        cluster_id: "Kubernetes".into(),
+        timeout: Duration::from_millis(100),
+    }
+}
+
+fn request(sandbox: &str, udp: bool) -> extproc::ProcessingRequest {
+    let headers = [
+        (":method", if udp { "GET" } else { "CONNECT" }),
+        (":authority", "192.0.2.1:443"),
+        ("upgrade", if udp { "connect-udp" } else { "" }),
+    ]
+    .into_iter()
+    .map(|(key, value)| extproc::HeaderValue {
+        key: key.into(),
+        value: value.into(),
+        ..Default::default()
+    })
+    .collect();
+    extproc::ProcessingRequest {
+        request_headers: Some(extproc::HttpHeaders {
+            headers: Some(extproc::HeaderMap { headers }),
+            ..Default::default()
+        }),
+        attributes: std::collections::HashMap::from([(
+            "envoy.filters.http.ext_proc".into(),
+            prost_types::Struct {
+                fields: BTreeMap::from([
+                    (
+                        "filter_state['agentio.downstream.ip']".into(),
+                        view::string("10.0.0.1"),
+                    ),
+                    (
+                        "filter_state['agentio.peer.principal']".into(),
+                        view::string("spiffe://cluster.local/ns/demo/sa/default"),
+                    ),
+                    ("filter_state['sandbox.id']".into(), view::string(sandbox)),
+                ]),
+            },
+        )]),
+    }
+}
+
+fn allowed(response: extproc::ProcessingResponse) -> bool {
+    matches!(
+        response.response,
+        Some(extproc::processing_response::Response::RequestHeaders(_))
+    )
+}
+
+#[tokio::test]
+async fn ordered_policy_stages_and_binding_presence() {
+    for udp in [false, true] {
+        let p = processor();
+        let c = &p.client;
+        seed(c, ResourceKind::Workload, "/10.0.0.1", workload(None));
+        assert!(!allowed(p.handle(request("", udp)).await.unwrap()));
+        seed(c, ResourceKind::Workload, "/10.0.0.1", workload(Some(&[])));
+        assert!(allowed(p.handle(request("", udp)).await.unwrap()));
+
+        seed(
+            c,
+            ResourceKind::TrafficPolicy,
+            "allow",
+            any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+        );
+        seed(
+            c,
+            ResourceKind::TrafficPolicy,
+            "deny",
+            any(view::TRAFFIC_POLICY, policy(proto::Action::Deny)),
+        );
+        seed(
+            c,
+            ResourceKind::Workload,
+            "/10.0.0.1",
+            workload(Some(&["allow", "deny"])),
+        );
+        assert!(allowed(p.handle(request("", udp)).await.unwrap()));
+        seed(
+            c,
+            ResourceKind::Workload,
+            "/10.0.0.1",
+            workload(Some(&["deny", "allow"])),
+        );
+        assert!(!allowed(p.handle(request("", udp)).await.unwrap()));
+
+        // Sandbox ALLOW cannot override a Workload DENY.
+        seed(
+            c,
+            ResourceKind::Sandbox,
+            "sandbox",
+            any(
+                view::SANDBOX,
+                Sandbox {
+                    uid: "sandbox".into(),
+                    attester: Some(Attester {
+                        workload_uid: UID.into(),
+                    }),
+                    traffic_policy: Some(policy(proto::Action::Allow)),
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(!allowed(p.handle(request("sandbox", udp)).await.unwrap()));
+        seed(
+            c,
+            ResourceKind::Workload,
+            "/10.0.0.1",
+            workload(Some(&["allow"])),
+        );
+        assert!(allowed(p.handle(request("sandbox", udp)).await.unwrap()));
+        seed(
+            c,
+            ResourceKind::Sandbox,
+            "sandbox",
+            any(
+                view::SANDBOX,
+                Sandbox {
+                    uid: "sandbox".into(),
+                    attester: Some(Attester {
+                        workload_uid: UID.into(),
+                    }),
+                    traffic_policy: Some(policy(proto::Action::Deny)),
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(!allowed(p.handle(request("sandbox", udp)).await.unwrap()));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn missing_reference_blocks_earlier_allow_and_demands_are_parallel() {
+    let p = processor();
+    let c = &p.client;
+    seed(
+        c,
+        ResourceKind::Workload,
+        "/10.0.0.1",
+        workload(Some(&["allow", "missing", "also-missing"])),
+    );
+    seed(
+        c,
+        ResourceKind::TrafficPolicy,
+        "allow",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+    );
+    let mut pending = Box::pin(p.handle(request("", false)));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    {
+        let state = c.state.lock().unwrap();
+        let entries = &state.types[ResourceKind::TrafficPolicy.index()].entries;
+        assert!(entries.contains_key("missing") && entries.contains_key("also-missing"));
+    }
+    c.apply(
+        ResourceKind::TrafficPolicy,
+        &Response {
+            type_url: view::TRAFFIC_POLICY.into(),
+            removed_resources: vec!["missing".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(!allowed(pending.await.unwrap()));
+}
+
+#[tokio::test]
+async fn connect_authority_and_udp_protocol_reach_the_evaluator() {
+    let p = processor();
+    seed(
+        &p.client,
+        ResourceKind::Workload,
+        "/10.0.0.1",
+        workload(Some(&["p"])),
+    );
+    let mut body = policy(proto::Action::Allow);
+    let matched = body.egress.as_mut().unwrap().rules[0]
+        .r#match
+        .as_mut()
+        .unwrap();
+    matched.destination_ips = vec![proto::Address {
+        address: vec![192, 0, 2, 1],
+        length: 32,
+    }];
+    matched.ports = vec![proto::PortMatch {
+        protocol: proto::Protocol::Tcp as i32,
+        port: Some(443),
+        end_port: None,
+    }];
+    seed(
+        &p.client,
+        ResourceKind::TrafficPolicy,
+        "p",
+        any(view::TRAFFIC_POLICY, body),
+    );
+    assert!(allowed(p.handle(request("", false)).await.unwrap()));
+    assert!(!allowed(p.handle(request("", true)).await.unwrap()));
+    for destination in ["192.0.2.2:443", "192.0.2.1:444"] {
+        let mut r = request("", false);
+        r.request_headers
+            .as_mut()
+            .unwrap()
+            .headers
+            .as_mut()
+            .unwrap()
+            .headers[1]
+            .value = destination.into();
+        assert!(!allowed(p.handle(r).await.unwrap()));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn policy_not_found_timeout_update_and_reconnect() {
+    let p = processor();
+    let c = &p.client;
+    seed(
+        c,
+        ResourceKind::Workload,
+        "/10.0.0.1",
+        workload(Some(&["p"])),
+    );
+    let mut pending = Box::pin(p.handle(request("", false)));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    c.apply(
+        ResourceKind::TrafficPolicy,
+        &Response {
+            type_url: view::TRAFFIC_POLICY.into(),
+            removed_resources: vec!["p".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(!allowed(pending.await.unwrap()));
+
+    let mut pending = Box::pin(p.handle(request("", false)));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    tokio::time::advance(Duration::from_millis(100)).await;
+    assert_eq!(pending.await.unwrap_err().code(), tonic::Code::Unavailable);
+
+    seed(
+        c,
+        ResourceKind::TrafficPolicy,
+        "p",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+    );
+    assert!(allowed(p.handle(request("", false)).await.unwrap()));
+    seed(
+        c,
+        ResourceKind::TrafficPolicy,
+        "p",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Deny)),
+    );
+    assert!(!allowed(p.handle(request("", false)).await.unwrap()));
+
+    // Invalid replacements retain the previous valid denial.
+    let mut invalid = policy(proto::Action::Allow);
+    invalid.egress.as_mut().unwrap().rules[0].r#match = None;
+    assert!(
+        c.apply(
+            ResourceKind::TrafficPolicy,
+            &Response {
+                type_url: view::TRAFFIC_POLICY.into(),
+                resources: vec![ads::Resource {
+                    name: "p".into(),
+                    resource: Some(any(view::TRAFFIC_POLICY, invalid)),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    assert!(!allowed(p.handle(request("", false)).await.unwrap()));
+
+    c.reset();
+    let mut pending = Box::pin(p.handle(request("", false)));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    seed(
+        c,
+        ResourceKind::Workload,
+        "/10.0.0.1",
+        workload(Some(&["p"])),
+    );
+    assert!(futures_util::poll!(&mut pending).is_pending()); // old policy cannot authorize
+    seed(
+        c,
+        ResourceKind::TrafficPolicy,
+        "p",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+    );
+    assert!(allowed(pending.await.unwrap()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn policy_demands_share_workload_deadline() {
+    let p = processor();
+    let mut pending = Box::pin(p.handle(request("", false)));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    tokio::time::advance(Duration::from_millis(80)).await;
+    seed(
+        &p.client,
+        ResourceKind::Workload,
+        "/10.0.0.1",
+        workload(Some(&["p"])),
+    );
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    tokio::time::advance(Duration::from_millis(20)).await;
+    assert_eq!(pending.await.unwrap_err().code(), tonic::Code::Unavailable);
+}
+
+#[tokio::test(start_paused = true)]
+async fn hot_dependency_batch_preserves_order_metrics_ttl_and_invalidation() {
+    let c = Client::new(
+        CacheConfig {
+            max_entries: 10,
+            idle_ttl: Duration::from_secs(1),
+        },
+        Metrics::new(),
+    );
+    let names = vec!["deny".into(), "allow".into()];
+    seed(
+        &c,
+        ResourceKind::TrafficPolicy,
+        "deny",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Deny)),
+    );
+    seed(
+        &c,
+        ResourceKind::TrafficPolicy,
+        "allow",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+    );
+    tokio::time::advance(Duration::from_millis(800)).await;
+    let values = c
+        .demand_many(ResourceKind::TrafficPolicy, &names, None)
+        .await
+        .unwrap();
+    let target = crate::traffic::Target::parse("192.0.2.1:443", false).unwrap();
+    let View::TrafficPolicy(first) = values[0].as_ref() else {
+        panic!()
+    };
+    let View::TrafficPolicy(second) = values[1].as_ref() else {
+        panic!()
+    };
+    assert!(!crate::traffic::allows([first], target));
+    assert!(crate::traffic::allows([second], target));
+    assert_eq!(
+        c.metrics
+            .cache_lookups
+            .get_or_create(&DemandResult {
+                resource_type: view::TRAFFIC_POLICY,
+                result: "hit"
+            })
+            .get(),
+        2
+    );
+    tokio::time::advance(Duration::from_millis(800)).await;
+    // Batch use refreshed both retained interests.
+    assert!(c.cached_many(ResourceKind::TrafficPolicy, &names).is_some());
+    c.apply(
+        ResourceKind::TrafficPolicy,
+        &Response {
+            type_url: view::TRAFFIC_POLICY.into(),
+            removed_resources: vec!["allow".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(c.cached_many(ResourceKind::TrafficPolicy, &names).is_none());
+    assert!(
+        c.cached_many(ResourceKind::TrafficPolicy, &names[..1])
+            .is_some()
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(
+        c.cached_many(ResourceKind::TrafficPolicy, &names[..1])
+            .is_none()
+    );
+
+    seed(
+        &c,
+        ResourceKind::TrafficPolicy,
+        "deny",
+        any(view::TRAFFIC_POLICY, policy(proto::Action::Deny)),
+    );
+    c.reset();
+    assert!(
+        c.cached_many(ResourceKind::TrafficPolicy, &names[..1])
+            .is_none()
+    );
+}

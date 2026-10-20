@@ -87,7 +87,7 @@ func selectTrafficPolicyResources(
 // Egress gateways consume Workload policies cluster-wide. Other clients use
 // their authenticated node or Workload scope, not remote address visibility.
 func trafficPolicyWorkloadQuery(scope model.ClientScope) (model.WorkloadQuery, bool) {
-	if scope.Class == model.ClientEgressGateway {
+	if scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress {
 		return model.WorkloadQuery{TrafficPolicyRefsOnly: true}, true
 	}
 	return workloadScopeQuery(&scope)

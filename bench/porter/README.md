@@ -24,6 +24,15 @@ All variants must implement the same certificate-identity/metadata contract. Com
 
 The helper can also be built with `CGO_ENABLED=0 go build -o /tmp/porter-load ./bench/porter/load`. Its `server`, `watchers`, `client`, `get` and `idle` commands are used by the runner. Process CPU/RSS collection uses Linux `/proc` (CPU ticks assume Linux USER_HZ=100) and the load container shares its Porter's PID namespace. The Go module/toolchain and Rust lockfile determine dependency versions.
 
+For focused TrafficPolicy experiments, the helper's `server` command accepts
+`--traffic-policies=8 --traffic-rules=16 --policy-sharing=100`. Each consecutive
+group of 100 Workloads shares eight ordered policies; only the last rule of the
+last policy allows the client's TCP destination port 443. Use `--policy-sharing=1`
+for independent policies and the default `--traffic-policies=0` for an empty
+binding. These flags apply to the standalone helper, not the suite runner.
+Policies and their selection facts are installed in the real xDS Store, and the
+production TrafficPolicy generator serves them.
+
 ## Run
 
 Do not run other builds or benchmarks on the host during a timed comparison. Allow roughly 12 CPU cores for the control planes, 12 for Porters, 12 for generators and 2 for WDS clients at configured limits; actual use varies by phase. The runner does not resize or remove existing workloads or kind clusters. Use a host with sufficient headroom; Kubernetes resource requests are deliberately smaller than limits.

@@ -180,14 +180,26 @@ func demandSubscriptionView(snapshot model.ResourceSet, typeURL string, names []
 }
 
 // demandReconciliationView also limits cache-eviction reconciliation to the
-// affected Workloads. Remaining aliases and Service subscriptions can keep a
-// canonical resource selected after one of its names is unsubscribed.
+// affected Workloads and canonical TrafficPolicies. Remaining aliases and Service
+// subscriptions can keep a canonical resource selected after a name is unsubscribed.
 func demandReconciliationView(snapshot model.ResourceSet, typeURL string, scope model.ClientScope,
 	watch *watchState, subscribed, unsubscribed []string,
 ) (SubscriptionView, bool) {
 	view, ok := demandSubscriptionView(snapshot, typeURL, subscribed)
 	if len(unsubscribed) == 0 {
 		return view, ok
+	}
+	if typeURL == model.TrafficPolicyType && (len(subscribed) == 0 || ok) {
+		for _, name := range unsubscribed {
+			resources := snapshot.Lookup(typeURL, name)
+			if name == "*" || containsSorted(view.names, name) || len(resources) != 1 ||
+				resources[0].XDSName != name || len(resources[0].Aliases) != 0 {
+				return SubscriptionView{}, false
+			}
+		}
+		// applySubscription already forgot these canonical names and versions.
+		// Reconcile only new demands; cache eviction must not rescan retained policies.
+		return view, true
 	}
 	if typeURL != model.WorkloadType || (len(subscribed) > 0 && !ok) {
 		return SubscriptionView{}, false

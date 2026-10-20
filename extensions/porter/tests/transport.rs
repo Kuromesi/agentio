@@ -175,7 +175,7 @@ async fn tls_auth_initial_handshake_eviction_and_token_reload() {
     let client = tokio::spawn(c.clone().run(transport, stop.clone()));
     let expiry = tokio::spawn(c.clone().expire(stop.clone()));
     ready(&mut health, true).await;
-    for _ in 0..2 {
+    for _ in ResourceKind::ALL {
         let req = requests.recv().await.unwrap();
         assert_eq!(req.node.unwrap().id, "agentio-porter~test");
         assert_eq!(req.resource_names_subscribe, ["*"]);
