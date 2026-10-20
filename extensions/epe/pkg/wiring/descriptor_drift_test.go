@@ -46,6 +46,7 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 		"headermutation": "../filters/headermutation",
 		"mcpacl":         "../filters/mcpacl",
 		"tokentransform": "../filters/tokentransform",
+		"oauth2":         "../filters/oauth2",
 	}
 	regs, err := BuildFilters(
 		Deps{Providers: &extensionprovider.Registry{}, Kube: kube.NewFakeClient()},

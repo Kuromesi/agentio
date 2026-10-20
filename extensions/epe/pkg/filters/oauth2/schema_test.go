@@ -30,7 +30,6 @@ func TestPayloadRejectsUnsafeConfiguration(t *testing.T) {
 		`{"credentialProviderName":"provider"}`,
 		`{"credentialProviderName":"provider","operation":"Authorization"}`,
 		`{"credentialProviderName":"provider","operation":"Resource","allowedGrantTypes":["refresh_token"]}`,
-		`{"credentialProviderName":"provider","operation":"Token","allowAuthorizedSession":true}`,
 		`{"credentialProviderName":"provider","operation":"Resource","customResponse":{"success":{"code":0}}}`,
 		`{"credentialProviderName":"provider","operation":"Token","customResponse":{"error":[]}}`,
 		`{"credentialProviderName":"provider","operation":"Token","customResponse":{"error":null}}`,
@@ -68,7 +67,7 @@ func TestDefinitionUsesNeutralPayloadAndFailsClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg := value.(Config)
-		if cfg.Operation != operation || cfg.AllowAuthorizedSession != nil || len(cfg.AllowedGrantTypes) != 0 ||
+		if cfg.Operation != operation || len(cfg.AllowedGrantTypes) != 0 ||
 			reg.OnError(cfg) != filter.FailClosed || reg.Phases != filter.PhaseRequestHeaders|filter.PhaseRequestBody {
 			t.Fatalf("incorrect definition or defaults: config=%+v, registration=%+v", cfg, reg)
 		}

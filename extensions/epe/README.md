@@ -55,13 +55,7 @@ With a positive TTL, changes made outside this client may remain unseen for that
 TTL; Identity must choose it to reflect acceptable authorization-change latency.
 Token remaining lifetime alone is not permission to cache.
 
-The filter accepts its own `Config` payload and has no dependency on the
-SecurityProfile API. Production registration and CRD-to-payload projection are
-follow-up integration work. The existing Identity device-service client supports
-device authorization, device-code polling, and refresh-token/resource reads;
-other grants receive `unsupported_grant_type` without calling a device RPC.
-The protocol layer can recognize other grants, but their execution requires a
-credential-service implementation that supports them.
+The filter accepts its own `Config` payload and has no dependency on the SecurityProfile API. The adapter projects `tokenTransformation.type: OAuth2` into this payload; the production chain uses the default credential service connection. [Configure OAuth credential isolation](../../docs/tasks/broker-oauth-credentials.md) shows the public operation branches and a lark-cli policy. The existing Identity device-service client supports device authorization, device-code polling, and refresh-token/resource reads; other grants receive `unsupported_grant_type` without calling a device RPC. The protocol layer can recognize other grants, but their execution requires a credential-service implementation that supports them.
 
 ## Code layout
 
@@ -83,7 +77,7 @@ extensions/epe/
 │   │   └── attributes/      # Envoy attribute and filter-state extraction.
 │   ├── filters/             # Concrete filters implementing the contract:
 │   │   │                    # block, bypass, headermutation, mcpacl,
-│   │   │                    # tokentransform.
+│   │   │                    # tokentransform, oauth2.
 │   │   └── tokentransform/
 │   │       └── signers/     # Per-provider request re-signing; aliyun implements the
 │   │                        # published ACS V3/ROA/RPC and OSS V4 signing specs.

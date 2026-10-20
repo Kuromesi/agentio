@@ -6,6 +6,8 @@ The credential provider is an **extension point, not a fixed backend**. Any serv
 
 Configure a policy consumer with [Transform outbound credentials](../tasks/transform-outbound-credentials.md). For the `SecurityProfile` action fields, credential-reference forms, and provider parameter expressions, see the [SecurityProfile reference](security-profile.md).
 
+For OAuth2, [Configure OAuth credential isolation](../tasks/broker-oauth-credentials.md) describes the separate device-session integration. It reuses the default credential connection and trusted Sandbox identity, but calls the service's device-session APIs rather than `GetResourceCredential`.
+
 ## Request flow
 
 ```text

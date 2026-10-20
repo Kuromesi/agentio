@@ -182,50 +182,52 @@ func TestStandardGrantsOnUnrelatedEndpoints(t *testing.T) {
 	}
 }
 
-func TestDeviceAuthorizationAndExplicitFastClaim(t *testing.T) {
-	response := &credential.OAuth2Response{HTTPStatus: 200,
-		Status:                        "InProgress",
-		AuthorizationRequired:         new(true),
-		DeviceSessionID:               "session",
-		UserCode:                      "USER",
-		VerificationURI:               "https://login.example.test/verify",
-		AuthorizationExpiresInSeconds: 300,
-		PollIntervalSeconds:           5}
-	cfg := Config{
-		CredentialProviderName: "configured-provider",
-		Operation:              credential.OAuth2OperationDeviceAuthorization,
-		AllowAuthorizedSession: new(false),
+func TestDeviceAuthorizationAndExistingAuthorization(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		status                string
+		authorizationRequired *bool
+		verificationURI       string
+		httpStatus            int
+	}{
+		{"new authorization", "InProgress", new(true), "https://login.example.test/verify", 200},
+		{"existing authorization", "Authorized", new(false), "", 200},
+		{"authorization not confirmed", "Authorized", nil, "", 502},
+		{"authorization still required", "Authorized", new(true), "", 502},
+		{"pending without verification URI", "InProgress", new(true), "", 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &credential.OAuth2Response{HTTPStatus: 200,
+				Status:                        tc.status,
+				AuthorizationRequired:         tc.authorizationRequired,
+				DeviceSessionID:               "session",
+				UserCode:                      "USER",
+				VerificationURI:               tc.verificationURI,
+				AuthorizationExpiresInSeconds: 300,
+				PollIntervalSeconds:           5}
+			cfg := Config{
+				CredentialProviderName: "configured-provider",
+				Operation:              credential.OAuth2OperationDeviceAuthorization,
+			}
+			source := &fakeSource{result: response}
+			f := &Filter{cfg: cfg, source: source}
+			got := replyJSON(
+				t,
+				runBody(
+					t,
+					f,
+					requestStream("issuer.example.test", "/device", "application/x-www-form-urlencoded"),
+					"client_secret=private",
+				),
+				tc.httpStatus,
+			)
+			if tc.httpStatus == 200 && (got["device_code"] != "session" ||
+				got["verification_uri"] != tc.verificationURI ||
+				source.calls[0].request.Parameters["scope"] != "" || source.calls[0].request.IdempotencyKey == "") {
+				t.Fatalf("device reply=%v, calls=%+v", got, source.calls)
+			}
+		})
 	}
-	source := &fakeSource{result: response}
-	f := &Filter{cfg: cfg, source: source}
-	got := replyJSON(
-		t,
-		runBody(
-			t,
-			f,
-			requestStream("issuer.example.test", "/device", "application/x-www-form-urlencoded"),
-			"client_secret=private",
-		),
-		200,
-	)
-	if got["device_code"] != "session" || source.calls[0].request.Parameters["scope"] != "" ||
-		source.calls[0].request.IdempotencyKey == "" {
-		t.Fatalf("device reply=%v, calls=%+v", got, source.calls)
-	}
-	response.Status = "Authorized"
-	response.AuthorizationRequired = new(false)
-	response.VerificationURI = ""
-	replyJSON(
-		t,
-		runBody(t, f, requestStream("issuer.example.test", "/device", "application/x-www-form-urlencoded"), ""),
-		502,
-	)
-	f.cfg.AllowAuthorizedSession = nil
-	replyJSON(
-		t,
-		runBody(t, f, requestStream("issuer.example.test", "/device", "application/x-www-form-urlencoded"), ""),
-		200,
-	)
 }
 
 func TestJSONCompatibilityIsPolicyOnly(t *testing.T) {
@@ -450,7 +452,7 @@ func TestFinalOutcomesAndStandardOptionalTokenFields(t *testing.T) {
 	}
 }
 
-func TestOptionalGrantRestrictionAndDefaultAuthorizedSession(t *testing.T) {
+func TestOptionalGrantRestriction(t *testing.T) {
 	for _, grants := range [][]string{nil, {}, {"refresh_token"}, {"authorization_code"}} {
 		source := &fakeSource{result: successfulToken("Ready")}
 		cfg := tokenConfig("refresh_token")
@@ -490,33 +492,6 @@ func TestOptionalGrantRestrictionAndDefaultAuthorizedSession(t *testing.T) {
 		if len(source.calls) != 0 {
 			t.Fatal("invalid grant reached Identity")
 		}
-	}
-	for _, allow := range []*bool{nil, new(true), new(false)} {
-		cfg := Config{
-			CredentialProviderName: "provider",
-			Operation:              credential.OAuth2OperationDeviceAuthorization,
-			AllowAuthorizedSession: allow,
-		}
-		source := &fakeSource{
-			result: &credential.OAuth2Response{
-				HTTPStatus:                    200,
-				Status:                        "Authorized",
-				AuthorizationRequired:         new(false),
-				DeviceSessionID:               "session",
-				UserCode:                      "USER",
-				AuthorizationExpiresInSeconds: 300,
-			},
-		}
-		f := &Filter{cfg: cfg, source: source}
-		status := 200
-		if allow != nil && !*allow {
-			status = 502
-		}
-		replyJSON(
-			t,
-			runBody(t, f, requestStream("issuer.test", "/device", "application/x-www-form-urlencoded"), ""),
-			status,
-		)
 	}
 }
 

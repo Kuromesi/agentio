@@ -164,6 +164,58 @@ func TestRegistryRoutesAndIsolatesRevisions(t *testing.T) {
 	}
 }
 
+func TestRegistryOAuth2UsesDefaultConnectionAndIsolatesRevisions(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var fields map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
+			t.Error(err)
+		}
+		if fields["credentialProviderName"] != "b" || fields["resourceId"] != "sandbox" ||
+			r.Header.Get("Authorization") != "Bearer trusted" ||
+			r.Header.Get("X-Api-Action-Name") != "GetOAuth2DeviceAccessToken" {
+			t.Errorf("unexpected OAuth dispatch: headers=%v fields=%v", r.Header, fields)
+		}
+		if err := json.NewEncoder(w).Encode(credential.OAuth2Response{
+			Status:                      credential.OAuth2StatusReady,
+			TokenType:                   "Bearer",
+			AccessToken:                 r.URL.Path,
+			AccessTokenExpiresInSeconds: 120,
+			CacheExpiresInSeconds:       60,
+		}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	r := &Registry{}
+	defer r.Close()
+	apply(t, r, credentialConfig(server.URL+"/a", server.URL+"/b"))
+	request := credential.OAuth2Request{
+		Operation:              credential.OAuth2OperationResource,
+		CredentialProviderName: "b",
+		ResourceID:             "sandbox",
+	}
+	for range 2 {
+		got, err := r.CallOAuth2(t.Context(), "trusted", request)
+		if err != nil || got.AccessToken != "/a" {
+			t.Fatalf("default connection = %+v, err=%v", got, err)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("service-granted cache was not retained: calls=%d", calls.Load())
+	}
+	apply(t, r, credentialConfig(server.URL+"/updated", server.URL+"/b"))
+	got, err := r.CallOAuth2(t.Context(), "trusted", request)
+	if err != nil || got.AccessToken != "/updated" || calls.Load() != 2 {
+		t.Fatalf("provider update reused old credentials: result=%+v err=%v calls=%d", got, err, calls.Load())
+	}
+	r.Close()
+	if _, err := r.CallOAuth2(t.Context(), "trusted", request); err == nil {
+		t.Fatal("closed registry served an OAuth credential")
+	}
+}
+
 func TestRegistryCredentialFetchAcrossUpdates(t *testing.T) {
 	started, finish := make(chan struct{}), make(chan struct{})
 	var newCalls atomic.Int32

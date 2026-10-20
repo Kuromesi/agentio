@@ -53,21 +53,24 @@ EPE registers actions in this fixed order within each matched rule:
 
 `mcpToolPolicy` is a non-terminal allow/deny filter for MCP JSON-RPC `tools/call`. `defaultAction` defaults to `deny`; its ordered `rules` match method and optionally tool names. `unsupportedVersionAction` defaults to `deny`, and `denyResponse` defaults to HTTP 403. It buffers complete request bodies and only understands MCP versions currently documented in [Configure MCP access control](../tasks/configure-mcp-access-control.md).
 
-`tokenTransformation` is non-terminal. It has these fields:
+`tokenTransformation` injects credentials into resource requests. In OAuth2 mode, DeviceAuthorization and Token operations return a terminal local response; Resource remains non-terminal. It has these fields:
 
 | Field | Behavior |
 | --- | --- |
-| `type` | `ApiKey` (default) injects a rendered credential into the legacy `targetHeader` (EPE falls back to `Authorization` when it is omitted); `AliyunSTS` re-signs a detected ACS3/V3, V1-ROA, OSS V4, or V1-RPC request using an STS triplet. |
+| `type` | `ApiKey` (default) injects a rendered credential into the legacy `targetHeader` (EPE falls back to `Authorization` when it is omitted); `AliyunSTS` re-signs a detected ACS3/V3, V1-ROA, OSS V4, or V1-RPC request using an STS triplet; `OAuth2` brokers OAuth replies and injects real Bearer credentials into resource requests. |
 | `credentialRef` | Required typed union: exactly one `secret` or `credentialProvider`. Deprecated flat `kind`/`name`/`namespace` values are normalized for compatibility but must not be mixed with the typed form. |
 | `credentialRef.secret` | `name` is required; namespace falls back from reference to profile to source Pod. `ApiKey` reads `apiKey`; `AliyunSTS` reads `accessKeyId`, `accessKeySecret`, `securityToken`. |
 | `credentialRef.credentialProvider` | `name` is required. `parameters` supplies metadata values from exactly one of `value`, `template`, or `cel`. Its namespace field is currently ignored. |
 | `apiKey` | Required for `ApiKey`, ignored for `AliyunSTS`. Prefer `targetHeaders` plus `value`; all selected headers use the same value source. `targetHeaders.names` selects fixed names, while `targetHeaders.cel` returns dynamic names from the original request. When `targetHeaders` is present, EPE ignores legacy `when`, `targetHeader`, and `valueTemplate`. Without it, the legacy fields retain their existing single-header behavior. |
+| `oauth2` | Required only for `OAuth2`. Select exactly one `operation` branch: `deviceAuthorization`, `token`, or `resource`. Shared `customResponse` belongs beside `operation`; `success` is Token-only. OAuth2 requires a parameter-free CredentialProvider reference and cannot be combined with `apiKey`. |
 | `disabled` | Defaults to `false`; when true, leaves the configuration stored but does not mount the action. |
-| `failStrategy` | `Block` (default) denies with generic 403; `Allow` and `Ignore` pass the failed transformation through unmodified. |
+| `failStrategy` | `Block` is the default. ApiKey/STS failures return generic 403 for Block; Allow and Ignore pass the failed transformation through unmodified. OAuth2 requires Block and returns operation-specific OAuth errors. |
 
 An unavailable signer type or malformed credential reference — including an uncompilable provider parameter CEL expression or template — rejects the profile version at the collection boundary, retaining any last-known-good version, as described above. At request time, an unavailable credential, unresolved profile inputs, bad provider response, invalid header value, or signing error uses the token transformation's `failStrategy`. Provider details, TLS, and cache semantics are in [Credential provider](credential-provider.md).
 
 `AliyunSTS` detects ACS3/V3, V1-ROA, and OSS V4 from the trimmed `Authorization` header. Their required prefixes are `ACS3-HMAC-SHA256`, `acs` (also requiring a `:`), and `OSS4-HMAC-SHA256`, respectively, each followed by a space. When none matches, V1-RPC is detected from a parseable raw query containing non-empty `Signature` and `AccessKeyId` parameters and exactly `SignatureMethod=HMAC-SHA1`. A request that meets none of these requirements is unsupported; detection fails and the action follows its configured `failStrategy` (`Block` by default, or unmodified forwarding for `Allow`/`Ignore`).
+
+OAuth2 branch selection, credential-source restrictions, and response-field constraints are validated during EPE policy projection. The CRDs provide basic types and grant-set constraints without OAuth2 cross-field CEL. An invalid OAuth2 action rejects the profile version under the same collection rules described above. See [Configure OAuth credential isolation](../tasks/broker-oauth-credentials.md) for Content-Type decoding, scope and session boundaries, and a complete example.
 
 ## Audit configuration
 

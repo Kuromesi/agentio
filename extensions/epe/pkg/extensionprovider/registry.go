@@ -214,6 +214,20 @@ func (r *Registry) Fetch(ctx context.Context, ref tokentransform.Ref) (tokentran
 	return p.credential.Fetch(ctx, ref)
 }
 
+// CallOAuth2 uses the default credential connection. The request's provider
+// name selects the remote authorization binding, not a local connection.
+func (r *Registry) CallOAuth2(
+	ctx context.Context,
+	accessToken string,
+	request credential.OAuth2Request,
+) (*credential.OAuth2Response, error) {
+	p, err := r.find("", true)
+	if err != nil {
+		return nil, err
+	}
+	return p.credentialClient.CallOAuth2(ctx, accessToken, request)
+}
+
 // InvalidateCredentials invalidates a remote credentialProviderName across the
 // current provider connections. Retired configuration versions remain isolated.
 func (r *Registry) InvalidateCredentials(req credential.InvalidationRequest) (credential.InvalidationResult, error) {

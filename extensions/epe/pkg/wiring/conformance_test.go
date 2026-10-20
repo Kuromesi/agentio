@@ -42,6 +42,7 @@ var minimalPayloads = map[string]string{
 	"mcpacl":         `{"defaultAction":"deny"}`,
 	"headermutation": `{"request":{"set":[{"name":"X-A","value":"v"}]}}`,
 	"tokentransform": `{"credentialRef":{"secret":{"name":"cred"}},"apiKey":{"valueTemplate":"Bearer {{ .Token }}"}}`,
+	"oauth2":         `{"credentialProviderName":"provider","operation":"Resource"}`,
 }
 
 func TestFilterContractConformance(t *testing.T) {

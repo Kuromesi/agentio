@@ -31,6 +31,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/bypass"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/headermutation"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/mcpacl"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/oauth2"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform/signers/aliyun" // registers the AliyunSTS signer
 	"github.com/openkruise/agentio/pkg/kube"
@@ -60,9 +61,9 @@ func typedClientset(deps Deps) kubernetes.Interface {
 // malformed rule carrying both bypasses; body enforcement follows the cheap
 // header-only actions. Generic header mutations precede credential transforms
 // so a credential-derived value wins if two policy sources target the same
-// header. Which transformation TYPES a rule can use is the tokentransform
-// signer registry's decision; an unregistered type fails closed at projection
-// time.
+// header. OAuth endpoint handling has its own filter; the remaining credential
+// transformations use the tokentransform signer registry. Invalid configuration
+// fails closed at projection time.
 // HTTPCallout providers are available through the registry; the HTTPCallout filter is
 // not mounted until the SecurityProfile API and its payload conversion are added.
 func BuildFilters(deps Deps) ([]filter.Registration, error) {
@@ -80,6 +81,7 @@ func BuildFilters(deps Deps) ([]filter.Registration, error) {
 		mcpacl.Definition(),
 		headermutation.Definition(),
 		tokentransform.NewDefinition(ttDeps),
+		oauth2.Definition(deps.Providers),
 	}
 	return filter.Build(definitions...)
 }

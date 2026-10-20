@@ -34,6 +34,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/bypass"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/headermutation"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/mcpacl"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/oauth2"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 )
 
@@ -171,6 +172,17 @@ func payloadsFor(rule *Rule) (map[string]json.RawMessage, error) {
 	// Disabled is absorbed here: an open payload map expresses "off" by
 	// omitting the key, so a disabled action simply produces no payload.
 	if a := rule.Actions.TokenTransformation; a != nil && !a.Disabled {
+		if a.Type == v1alpha1.TokenTransformationTypeOAuth2 {
+			raw, err := oauth2Payload(a)
+			if err != nil {
+				return nil, fmt.Errorf("build OAuth2 payload: %w", err)
+			}
+			m[oauth2.FilterName] = raw
+			return m, nil
+		}
+		if a.OAuth2 != nil {
+			return nil, fmt.Errorf("oauth2 configuration requires the OAuth2 transformation type")
+		}
 		raw, err := tokenTransformPayload(a)
 		if err != nil {
 			return nil, fmt.Errorf("build tokenTransformation payload: %w", err)

@@ -48,7 +48,6 @@ type Config struct {
 	CredentialProviderName string          `json:"credentialProviderName"`
 	Operation              string          `json:"operation"`
 	AllowedGrantTypes      []string        `json:"allowedGrantTypes,omitempty"`
-	AllowAuthorizedSession *bool           `json:"allowAuthorizedSession,omitempty"`
 	CustomResponse         *CustomResponse `json:"customResponse,omitempty"`
 }
 

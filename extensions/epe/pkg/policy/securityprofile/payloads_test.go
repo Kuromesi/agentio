@@ -26,6 +26,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/bypass"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/mcpacl"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/oauth2"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 )
@@ -39,6 +40,7 @@ var registeredNames = map[string]bool{
 	mcpacl.FilterName:         true,
 	block.FilterName:          true,
 	tokentransform.FilterName: true,
+	oauth2.FilterName:         true,
 }
 
 func payloadsOrFail(t *testing.T, rule *Rule) map[string]json.RawMessage {

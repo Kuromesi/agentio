@@ -22,8 +22,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 )
 
-// Definition returns an OAuth filter with its own payload schema. Production
-// registration and SecurityProfile projection are separate integration steps.
+// Definition returns an OAuth filter with its own policy-neutral payload schema.
 func Definition(source Source) filter.Definition {
 	return filter.Define(filter.Descriptor[Config]{
 		Name:    FilterName,
@@ -51,9 +50,6 @@ func parse(raw json.RawMessage) (Config, error) {
 	case credential.OAuth2OperationToken:
 	default:
 		return Config{}, fmt.Errorf("unsupported OAuth operation %q", cfg.Operation)
-	}
-	if cfg.Operation != credential.OAuth2OperationDeviceAuthorization && cfg.AllowAuthorizedSession != nil {
-		return Config{}, fmt.Errorf("allowAuthorizedSession requires the DeviceAuthorization operation")
 	}
 	if err := validateResponse(cfg.CustomResponse); err != nil {
 		return Config{}, err

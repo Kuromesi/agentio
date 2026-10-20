@@ -107,8 +107,7 @@ func (f *Filter) deviceAuthorizationReply(
 ) (filter.Action, error) {
 	inProgress := r.Status == credential.OAuth2StatusInProgress && r.AuthorizationRequired != nil &&
 		*r.AuthorizationRequired && r.VerificationURI != ""
-	alreadyAuthorized := (f.cfg.AllowAuthorizedSession == nil || *f.cfg.AllowAuthorizedSession) &&
-		r.Status == credential.OAuth2StatusAuthorized &&
+	alreadyAuthorized := r.Status == credential.OAuth2StatusAuthorized &&
 		r.AuthorizationRequired != nil &&
 		!*r.AuthorizationRequired
 	if r.DeviceSessionID == "" || r.UserCode == "" || r.AuthorizationExpiresInSeconds <= 0 ||
