@@ -3,6 +3,7 @@
 
 pub mod discovery;
 pub mod identity;
+pub mod logging;
 pub mod metrics;
 pub mod processor;
 pub mod traffic;

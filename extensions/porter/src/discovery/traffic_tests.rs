@@ -90,6 +90,7 @@ fn processor() -> Processor {
         client: Client::new(CacheConfig::default(), Metrics::new()),
         cluster_id: "Kubernetes".into(),
         timeout: Duration::from_millis(100),
+        enable_traffic_policy: true,
     }
 }
 
@@ -138,13 +139,91 @@ fn allowed(response: extproc::ProcessingResponse) -> bool {
 }
 
 #[tokio::test]
+async fn disabled_policy_preserves_identity_and_skips_policy_demands() {
+    for udp in [false, true] {
+        let mut p = processor();
+        p.enable_traffic_policy = false;
+        for names in [None, Some(&["unavailable-policy"][..])] {
+            seed(
+                &p.client,
+                ResourceKind::Workload,
+                "/10.0.0.1",
+                workload(names),
+            );
+            seed(
+                &p.client,
+                ResourceKind::Sandbox,
+                "sandbox",
+                any(
+                    view::SANDBOX,
+                    Sandbox {
+                        uid: "sandbox".into(),
+                        attester: Some(Attester {
+                            workload_uid: UID.into(),
+                        }),
+                        traffic_policy: Some(policy(proto::Action::Deny)),
+                        ..Default::default()
+                    },
+                ),
+            );
+            let mut req = request("sandbox", udp);
+            let headers = &mut req
+                .request_headers
+                .as_mut()
+                .unwrap()
+                .headers
+                .as_mut()
+                .unwrap()
+                .headers;
+            headers
+                .iter_mut()
+                .find(|h| h.key == ":authority")
+                .unwrap()
+                .value = "example.com:443".into();
+            let response = p.handle(req).await.unwrap();
+            let metadata = response.dynamic_metadata.as_ref().unwrap();
+            let Some(prost_types::value::Kind::StructValue(agentio)) =
+                &metadata.fields["agentio"].kind
+            else {
+                panic!("expected Agentio metadata");
+            };
+            assert!(agentio.fields.contains_key("workload"));
+            assert!(allowed(response));
+            assert!(
+                p.client.state.lock().unwrap().types[ResourceKind::TrafficPolicy.index()]
+                    .entries
+                    .is_empty()
+            );
+        }
+        // Disabling policy enforcement must not disable Sandbox identity validation.
+        seed(
+            &p.client,
+            ResourceKind::Sandbox,
+            "sandbox",
+            any(
+                view::SANDBOX,
+                Sandbox {
+                    uid: "sandbox".into(),
+                    attester: Some(Attester {
+                        workload_uid: "another-workload".into(),
+                    }),
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(!allowed(p.handle(request("sandbox", udp)).await.unwrap()));
+    }
+}
+
+#[tokio::test]
 async fn policy_logs_identify_destination_binding_and_final_decision() {
     use tracing::instrument::WithSubscriber;
 
     let output = tempfile::tempfile().unwrap();
     let subscriber = tracing_subscriber::fmt()
-        .json()
-        .with_env_filter("agentio_porter::policy=debug")
+        .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
+        .event_format(crate::logging::JsonFormat)
+        .with_env_filter("info")
         .with_writer(output.try_clone().unwrap())
         .finish();
     async {
@@ -225,25 +304,28 @@ async fn policy_logs_identify_destination_binding_and_final_decision() {
         .collect();
     assert_eq!(events.len(), 5);
     for event in &events {
-        assert_eq!(event["level"], "DEBUG");
-        assert_eq!(event["target"], "agentio_porter::policy");
-        assert_eq!(event["fields"]["workload"], UID);
-        assert_eq!(event["fields"]["destination"], "192.0.2.1:443");
+        assert_eq!(event["level"], "info");
+        assert_eq!(event["event"], "traffic_policy_decision");
+        assert_eq!(event["message"], "CONNECT policy evaluated");
+        assert_eq!(event["scope"], "agentio_porter::policy");
+        assert_eq!(event["workload"], UID);
+        assert_eq!(event["destination"], "192.0.2.1:443");
     }
-    let fields = &events[0]["fields"];
+    let fields = &events[0];
     assert_eq!(fields["policy"], "demo/allow");
     assert_eq!(fields["rule_index"], 0);
     assert_eq!(fields["action"], "allow");
     assert_eq!(fields["reason"], "rule_match");
-    assert_eq!(events[1]["fields"]["protocol"], "udp");
-    assert_eq!(events[1]["fields"]["action"], "deny");
-    assert_eq!(events[2]["fields"]["reason"], "no_matching_rule");
-    assert!(events[2]["fields"]["policy"].is_null());
-    assert!(events[2]["fields"]["rule_index"].is_null());
-    assert_eq!(events[3]["fields"]["reason"], "no_egress_policy");
-    assert_eq!(events[4]["fields"]["stage"], "sandbox");
-    assert_eq!(events[4]["fields"]["sandbox_id"], "sandbox");
-    assert!(events[4]["fields"]["policy"].is_null());
+    assert_eq!(events[1]["protocol"], "udp");
+    assert_eq!(events[1]["action"], "deny");
+    assert_eq!(events[2]["reason"], "no_matching_rule");
+    assert!(events[2].get("policy").is_none());
+    assert!(events[2].get("rule_index").is_none());
+    assert_eq!(events[3]["reason"], "no_egress_policy");
+    assert_eq!(events[4]["stage"], "sandbox");
+    assert_eq!(events[4]["sandbox_id"], "sandbox");
+    assert_eq!(events[4]["rule_index"], 0);
+    assert!(events[4].get("policy").is_none());
 }
 
 #[tokio::test]

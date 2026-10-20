@@ -55,7 +55,71 @@ Copy the same benchmark source into a checkout without Porter TrafficPolicy auth
 
 Lifecycle and ADS connection events use structured tracing fields. Each ADS attempt has an `xds` span with its connection ID and address. Retry/NACK/forced-shutdown events are warnings, service failures are errors, and request rejection reasons are debug events. Certificate contents and tokens are never logged. The existing `AGENTIO_LOG_LEVEL` and `AGENTIO_LOG_FORMAT=text|json` settings remain the configuration interface.
 
-Completed TrafficPolicy evaluations emit one DEBUG event, `CONNECT policy evaluated`, under the `agentio_porter::policy` target. Set `AGENTIO_LOG_LEVEL=info,agentio_porter::policy=debug` to enable these events without enabling discovery debug logs. Fields include `workload` (canonical UID), `sandbox_id`, `destination` (IP:port), `protocol`, the deciding `stage` (`sandbox` or `workload`), `action` (`allow` or `deny`), and `reason` (`rule_match`, `no_matching_rule`, or `no_egress_policy`). A matching Workload rule includes its xDS resource name in `policy`; `rule_index` is zero-based. Sandbox policies are inline and have no separate policy resource name. Unmatched/default decisions have no `policy` or `rule_index`. A Sandbox ALLOW proceeds to Workload evaluation; only a Sandbox DENY or the final Workload decision emits this event. Identity/discovery failures before evaluation retain their separate diagnostics. INFO, the default, does not emit these per-CONNECT events.
+Logging writes synchronously to stderr. Policy decisions are emitted at INFO for audit collection; a slow log sink can apply backpressure to request processing.
+
+`POST /logging` on port 9004 follows ztunnel's logging API. It accepts only loopback connections; invoke it from the gateway Pod. A request without parameters returns `current log level is <filter>`. `level` merges directives into the current configuration; `reset` restores the startup configuration before applying any supplied `level`. Its value is ignored, as in ztunnel. Invalid levels return 400 without changing the filter; non-POST methods return 405. Startup `AGENTIO_LOG_LEVEL` now uses ztunnel's target filter semantics: a bare level applies globally, and more specific module directives override it. The existing `none` startup alias for `off` remains supported.
+
+```sh
+curl -X POST http://127.0.0.1:9004/logging
+curl -X POST 'http://127.0.0.1:9004/logging?level=agentio_porter::policy=debug'
+curl -X POST 'http://127.0.0.1:9004/logging?reset&level=warn'
+curl -X POST 'http://127.0.0.1:9004/logging?reset'
+```
+
+Completed TrafficPolicy evaluations emit one INFO event, `CONNECT policy evaluated`, under the `agentio_porter::policy` target. These events are enabled by the default `AGENTIO_LOG_LEVEL=info`. Fields include `workload` (canonical WDS resource name), `sandbox_id`, `destination` (IP:port), `protocol`, the deciding `stage` (`sandbox` or `workload`), `action` (`allow` or `deny`), and `reason` (`rule_match`, `no_matching_rule`, or `no_egress_policy`). A matching Workload rule includes its xDS resource name in `policy`; `rule_index` is zero-based. Sandbox policies are inline and have no separate policy resource name. Unmatched/default decisions have no `policy` or `rule_index`. A Sandbox ALLOW proceeds to Workload evaluation; only a Sandbox DENY or the final Workload decision emits this event. Identity/discovery failures before evaluation retain their separate diagnostics. These events cover completed policy evaluations, not all CONNECT attempts: identity/discovery failures before evaluation are not included. Raising the policy target filter above INFO or setting it to off suppresses these audit events.
+
+## Log format contract
+
+`AGENTIO_LOG_FORMAT=json` emits one JSON object per line for both operational logs and policy decisions. The envelope follows [ztunnel's Istio JSON format](https://github.com/openkruise/ztunnel/blob/f4e7257075c7eb4d1c45abb4b9a20e549516a6d3/src/telemetry.rs). `AGENTIO_LOG_FORMAT=text` remains the default human-readable tracing format, with the same event fields and span context; its layout is not a machine parsing contract. Both formats write synchronously to stderr and respect the same dynamic level filter.
+
+| JSON field | Type | Meaning |
+|---|---|---|
+| `time` | string | UTC RFC 3339 event timestamp |
+| `level` | string | Lowercase `trace`, `debug`, `info`, `warn`, or `error` |
+| `scope` | string | Full tracing target, e.g. `agentio_porter::policy` |
+| `message` | string | Human-readable description; wording is not a stable query key |
+| `event` | string, when defined | Stable machine event identifier; policy decisions use `traffic_policy_decision` |
+| `spans` | array, when present | Context from root to leaf as `{ "name": ..., "fields": {...} }`; includes the xDS connection ID and address |
+
+Business fields live at the top level, use snake_case and preserve JSON numeric/boolean types. `time`, `level`, `scope`, and `spans` are reserved for the formatter. Span fields stay inside `spans`, so they do not overwrite event fields. Unlike ztunnel's dynamic top-level span keys, the array preserves nested spans with the same name. Standard tracing JSON span fields support subsequent `span.record` updates.
+
+Policy decisions retain `workload`, `sandbox_id`, `destination`, `protocol`, `stage`, `action`, and `reason`. `workload` is the canonical WDS resource name, not an immutable Kubernetes Pod UID. An empty `sandbox_id` means this request has no Sandbox identity. `stage` is `sandbox` or `workload`; `action` is `allow` or `deny`; `reason` is `rule_match`, `no_matching_rule`, or `no_egress_policy`. A matched rule in either stage includes `rule_index`, a zero-based integer within the deciding policy. A matched Workload rule also includes `policy`, its canonical xDS resource name. Sandbox rules are inline and have no independent `policy` name. Unmatched/default decisions omit both fields; missing values are not synthesized. This schema describes completed policy evaluation; it does not imply that identity/discovery errors are covered or that the destination connection succeeded. INFO decisions are not sampled. Raising the logging filter can suppress them.
+
+```json
+{"time":"2026-10-20T10:20:30.123456Z","level":"info","scope":"agentio_porter::policy","event":"traffic_policy_decision","workload":"cluster1//Pod/demo/client","sandbox_id":"","destination":"203.0.113.10:443","protocol":"tcp","stage":"workload","policy":"namespaces/demo/trafficPolicies/allow-egress","rule_index":0,"action":"allow","reason":"rule_match","message":"CONNECT policy evaluated"}
+```
+
+Operational events retain their descriptive `message` and diagnostic fields. Lifecycle events are INFO, retry/NACK events WARN, service failures ERROR, and detailed cache/processing diagnostics DEBUG. No duration or request ID is added to policy decisions: latency is available in metrics, and an Envoy correlation ID requires a verified propagation path. Certificate contents and tokens must never be logged.
+
+### Operational events and error handling
+
+| Event | Level | Trigger and fields |
+|---|---|---|
+| `log_level_changed` | INFO | A successful effective filter change. `previous_filter` and `current_filter` are canonical filter strings; `source_address` is the HTTP peer socket address; `reset` is a boolean indicating that startup defaults were used as the base. Reads, rejected requests and no-op updates emit no change event. |
+| `porter_failed` | ERROR | A returned runtime/startup-service failure after logging initialization. `error` contains the full diagnostic chain, including the failing task when applicable. Porter exits with failure status. |
+
+Filter updates merge atomically against the current configuration. The change event is emitted after the update and respects the new filter: for example, warn → info is visible, while info → warn normally suppresses this INFO event. `source_address` identifies the transport peer, not an authenticated human operator. This is an operational event, not an unfiltered administrative audit trail. The `/logging` HTTP behavior remains unchanged.
+
+The process entry point reports the primary returned failure once, after bounded service shutdown. Additional failures encountered during shutdown are logged separately. Errors before logging is initialized (including invalid CLI/configuration) retain the CLI's stderr diagnostics. These, along with Rust panic-hook diagnostics, are outside the JSON tracing contract.
+
+Startup configuration logs use numeric `request_timeout_seconds` and `cache_idle_ttl_seconds`, preserving fractional seconds. The forced-shutdown warning uses numeric `timeout_seconds`. These replace the former Debug strings in `request_timeout`, `cache_idle_ttl` and `timeout`. Existing diagnostic measurements retain their explicit units, such as `retry_ms` and `total_us`.
+
+### Adding or extending a log event
+
+- Give events intended for stable machine queries or auditing a constant, Porter-wide unique `event` name in snake_case. Keep the same meaning across module moves; do not embed workload names, policy names or other variable data in the identifier. Ordinary diagnostic events may use only `message`. Document a new machine event's trigger, required/optional fields, types and reason values alongside this contract.
+- Use the module's default tracing target for operational logs. Use an explicit category target, such as `agentio_porter::policy`, when operators need to control that category independently. `scope` identifies the logging source/category; `event` identifies what occurred.
+- Keep `message` readable. Use `reason` for a documented, event-specific machine reason and `error` for variable diagnostic text. Consumers must not parse `message` or `error` to classify decisions. Record only outcomes known at the emission point: a policy allow is not proof of a successful connection. Identity fields must distinguish verified identity from unverified claims when introducing events before identity validation.
+- Record strings, bools, i64/u64 and finite f64 values directly. `%value` and `?value` produce text, even for numbers. The current visitor also represents i128/u128 through debug text; convert values that are known to fit, such as bounded retry milliseconds, to u64. Put units in numeric field names (`retry_ms`, `total_us`). Do not reuse formatter-reserved field names.
+- Keep existing event identifiers, field meanings, types and reason values stable. Optional additive fields are allowed; incompatible semantics require a distinct event identifier and corresponding documentation. Omit unavailable optional fields and explain what their absence means; do not use fabricated values. Existing `sandbox_id=""` remains the explicit no-Sandbox convention.
+- For a new machine event, test its actual emitted fields and important outcomes with the production JSON formatter, including absent optional fields. Reuse the existing formatter and span support rather than adding another logging abstraction.
+
+For example, the existing operational reconnect warning needs no new event identifier: its message explains the failure, `error` provides diagnostic detail, `retry_ms` remains numeric, and the span identifies the ADS connection.
+
+```json
+{"time":"2026-10-20T10:20:30.123456Z","level":"warn","scope":"agentio_porter::discovery::transport","message":"ADS disconnected","error":"connection reset","retry_ms":100,"spans":[{"name":"xds","fields":{"connection_id":4,"address":"agentiod:15012"}}]}
+```
+
+This replaces the previous JSON layout: `timestamp` becomes `time`, uppercase `level` becomes lowercase, `target` becomes `scope`, and event `fields.*` move to the top level. The previous `span`/`spans` representations become a single `spans` array with explicit `name` and `fields`. Log collectors and queries must be updated together with this change; old and new fields are not emitted in parallel.
 
 ## Build and run
 
@@ -128,3 +192,7 @@ Without Prometheus Operator, add a separate scrape job:
 ```
 
 The Agentio Grafana dashboard includes CONNECT mean/P95/P99 duration, retained cache entries, ADS connection state, demand wait P95/P99 duration and current demand waiters.
+
+### TrafficPolicy opt-in
+
+Porter TrafficPolicy enforcement is disabled by default. Set `ENABLE_TRAFFIC_POLICY=true` on the Porter container and restart it to enable both Sandbox and Workload egress evaluation. The variable accepts `true` or `false`; invalid values fail startup. With the flag disabled, Porter retains identity checks, Workload/Sandbox discovery and metadata projection, but skips TrafficPolicy resource demands, binding requirements, target IP parsing and policy evaluation. Keep ztunnel enforcement enabled until Porter enforcement has been explicitly enabled on all gateways and verified.

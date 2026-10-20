@@ -25,7 +25,7 @@ const READINESS_SERVICES: [&str; 3] = [
     "envoy.service.ext_proc.v3.ExternalProcessor",
 ];
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run(config: Config, logging: crate::telemetry::Logging) -> Result<()> {
     // Install handlers before starting services so failures cannot leave an unsupervised process.
     let mut terminate = signal(SignalKind::terminate()).context("install SIGTERM handler")?;
     let mut interrupt = signal(SignalKind::interrupt()).context("install SIGINT handler")?;
@@ -36,8 +36,9 @@ pub async fn run(config: Config) -> Result<()> {
         health_address = %config.health_address,
         metrics_address = %config.metrics_address,
         worker_threads = config.worker_threads,
-        request_timeout = ?config.request_timeout,
-        cache_idle_ttl = ?config.cache.idle_ttl,
+        enable_traffic_policy = config.enable_traffic_policy,
+        request_timeout_seconds = config.request_timeout.as_secs_f64(),
+        cache_idle_ttl_seconds = config.cache.idle_ttl.as_secs_f64(),
         cache_max_entries = config.cache.max_entries,
         "starting Porter"
     );
@@ -47,6 +48,7 @@ pub async fn run(config: Config) -> Result<()> {
         client: client.clone(),
         cluster_id: config.cluster_id,
         timeout: config.request_timeout,
+        enable_traffic_policy: config.enable_traffic_policy,
     };
     let stop = CancellationToken::new();
     let (health, service) = tonic_health::server::health_reporter();
@@ -111,7 +113,7 @@ pub async fn run(config: Config) -> Result<()> {
     });
     let token = stop.clone();
     tasks.spawn("metrics", async move {
-        serve_metrics(metrics, config.metrics_address, token).await
+        serve_metrics(metrics, config.metrics_address, token, logging).await
     });
     let result = tokio::select! {
         _ = terminate.recv() => {
@@ -125,7 +127,7 @@ pub async fn run(config: Config) -> Result<()> {
         outcome = tasks.join_next() => {
             let (task, result) = outcome.expect("services have been started");
             let error = result.err().unwrap_or_else(|| anyhow!("task {task} exited unexpectedly"));
-            error!(task, error = %format_args!("{error:#}"), "service stopped; starting shutdown");
+            info!(task, "service stopped; starting shutdown");
             Err(error)
         }
     };
@@ -175,9 +177,10 @@ impl Tasks {
                 match outcome {
                     Ok(()) => debug!(task, "task stopped"),
                     Err(error) => {
-                        error!(task, error = %format_args!("{error:#}"), "task failed during shutdown");
                         if result.is_ok() {
                             result = Err(error);
+                        } else {
+                            error!(task, error = %format_args!("{error:#}"), "task failed during shutdown");
                         }
                     }
                 }
@@ -187,7 +190,7 @@ impl Tasks {
         .is_err()
         {
             warn!(remaining_tasks = self.running.len(),
-                tasks = ?self.names, timeout = ?SHUTDOWN_TIMEOUT, "shutdown timed out; aborting tasks");
+                tasks = ?self.names, timeout_seconds = SHUTDOWN_TIMEOUT.as_secs_f64(), "shutdown timed out; aborting tasks");
             self.running.abort_all();
             // Observe panics/errors already racing with cancellation; expected aborts are silent.
             while let Some(outcome) = self.running.join_next_with_id().await {
@@ -201,9 +204,10 @@ impl Tasks {
                 };
                 let task = self.names.remove(&id).expect("spawned task has a name");
                 if let Err(error) = outcome {
-                    error!(task, error = %format_args!("{error:#}"), "task failed while aborting");
                     if result.is_ok() {
                         result = Err(error).with_context(|| format!("task {task} failed"));
+                    } else {
+                        error!(task, error = %format_args!("{error:#}"), "task failed while aborting");
                     }
                 }
             }
@@ -216,35 +220,41 @@ async fn serve_metrics(
     metrics: Arc<Metrics>,
     address: SocketAddr,
     stop: CancellationToken,
+    logging: crate::telemetry::Logging,
 ) -> Result<()> {
-    let app = axum::Router::new().route(
-        "/metrics",
-        axum::routing::get(move || {
-            let metrics = metrics.clone();
-            async move {
-                match metrics.encode() {
-                    Ok(body) => Ok((
-                        [(
-                            "content-type",
-                            "application/openmetrics-text; version=1.0.0; charset=utf-8",
-                        )],
-                        body,
-                    )),
-                    Err(error) => {
-                        error!(%error, "encode metrics response");
-                        Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+    let app = axum::Router::new()
+        .route(
+            "/metrics",
+            axum::routing::get(move || {
+                let metrics = metrics.clone();
+                async move {
+                    match metrics.encode() {
+                        Ok(body) => Ok((
+                            [(
+                                "content-type",
+                                "application/openmetrics-text; version=1.0.0; charset=utf-8",
+                            )],
+                            body,
+                        )),
+                        Err(error) => {
+                            error!(%error, "failed to encode metrics response");
+                            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                        }
                     }
                 }
-            }
-        }),
-    );
+            }),
+        )
+        .merge(crate::telemetry::router(logging));
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .with_context(|| format!("bind metrics listener at {address}"))?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(stop.cancelled_owned())
-        .await
-        .context("serve metrics")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(stop.cancelled_owned())
+    .await
+    .context("serve metrics")?;
     Ok(())
 }
 

@@ -13,7 +13,7 @@ use std::{
 use futures_util::Stream;
 use prost_types::{Struct, value::Kind};
 use tonic::{Request, Response, Status, Streaming};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     discovery::{Client, DemandError},
@@ -32,6 +32,7 @@ pub struct Processor {
     pub client: Arc<Client>,
     pub cluster_id: String,
     pub timeout: Duration,
+    pub enable_traffic_policy: bool,
 }
 
 fn attribute<'a>(attributes: Option<&'a Struct>, key: &str) -> &'a str {
@@ -88,9 +89,13 @@ impl Processor {
                     "expected CONNECT with an authority",
                 ));
             }
-            let target = Target::parse(&authority, udp).map_err(|error| {
-                Status::invalid_argument(format!("invalid CONNECT target: {error}"))
-            })?;
+            let target = if self.enable_traffic_policy {
+                Some(Target::parse(&authority, udp).map_err(|error| {
+                    Status::invalid_argument(format!("invalid CONNECT target: {error}"))
+                })?)
+            } else {
+                None
+            };
             (udp, target)
         };
         let mut measurement = ConnectMeasurement {
@@ -112,7 +117,7 @@ impl Processor {
                 peer_ip,
                 principal,
                 sandbox_id,
-                target,
+                (udp, target),
                 request_deadline,
             ),
         )
@@ -151,10 +156,9 @@ impl Processor {
         peer_ip: &str,
         principal: &str,
         sandbox_id: &str,
-        target: Target,
+        (udp, target): (bool, Option<Target>),
         request_deadline: tokio::time::Instant,
     ) -> Result<extproc::ProcessingResponse, DemandError> {
-        let udp = target.protocol == crate::wire::agentio::security::traffic_policy::Protocol::Udp;
         let instance = match certificate_instance(certificate) {
             Ok(instance) => instance,
             Err(error) => {
@@ -208,57 +212,61 @@ impl Processor {
                 debug!(reason = "sandbox_workload_mismatch", "CONNECT denied");
                 return Ok(denied());
             }
-            let evaluation = traffic::evaluate(sandbox.traffic_policy.iter(), target);
-            if !evaluation.allowed {
-                log_policy(
-                    &workload.uid,
-                    sandbox_id,
-                    target,
-                    "sandbox",
-                    None,
-                    &evaluation,
-                );
-                return Ok(denied());
+            if let Some(target) = target {
+                let evaluation = traffic::evaluate(sandbox.traffic_policy.iter(), target);
+                if !evaluation.allowed {
+                    log_policy(
+                        &workload.uid,
+                        sandbox_id,
+                        target,
+                        "sandbox",
+                        None,
+                        &evaluation,
+                    );
+                    return Ok(denied());
+                }
             }
             if !udp {
                 rules.extend(view::project_rules(&sandbox.rules));
             }
         }
-        let Some(references) = &workload.traffic_policies else {
-            debug!(reason = "traffic_binding_missing", "CONNECT denied");
-            return Ok(denied());
-        };
-        // Resolve the complete stage before an early ALLOW can take effect.
-        let policies = self
-            .client
-            .demand_many(
-                ResourceKind::TrafficPolicy,
-                references,
-                Some(request_deadline),
-            )
-            .await?;
-        let evaluation = traffic::evaluate(
-            policies.iter().map(|value| {
-                let View::TrafficPolicy(policy) = value.as_ref() else {
-                    unreachable!("typed TrafficPolicy watch")
-                };
-                policy
-            }),
-            target,
-        );
-        let policy = evaluation
-            .matched_rule
-            .map(|(index, _)| references[index].as_str());
-        log_policy(
-            &workload.uid,
-            sandbox_id,
-            target,
-            "workload",
-            policy,
-            &evaluation,
-        );
-        if !evaluation.allowed {
-            return Ok(denied());
+        if let Some(target) = target {
+            let Some(references) = &workload.traffic_policies else {
+                debug!(reason = "traffic_binding_missing", "CONNECT denied");
+                return Ok(denied());
+            };
+            // Resolve the complete stage before an early ALLOW can take effect.
+            let policies = self
+                .client
+                .demand_many(
+                    ResourceKind::TrafficPolicy,
+                    references,
+                    Some(request_deadline),
+                )
+                .await?;
+            let evaluation = traffic::evaluate(
+                policies.iter().map(|value| {
+                    let View::TrafficPolicy(policy) = value.as_ref() else {
+                        unreachable!("typed TrafficPolicy watch")
+                    };
+                    policy
+                }),
+                target,
+            );
+            let policy = evaluation
+                .matched_rule
+                .map(|(index, _)| references[index].as_str());
+            log_policy(
+                &workload.uid,
+                sandbox_id,
+                target,
+                "workload",
+                policy,
+                &evaluation,
+            );
+            if !evaluation.allowed {
+                return Ok(denied());
+            }
         }
         let mut metadata = BTreeMap::new();
         metadata.insert(
@@ -303,8 +311,9 @@ fn log_policy(
     policy: Option<&str>,
     evaluation: &traffic::Evaluation,
 ) {
-    debug!(
+    info!(
         target: "agentio_porter::policy",
+        event = "traffic_policy_decision",
         workload,
         sandbox_id,
         destination = %target.address,
@@ -458,6 +467,7 @@ mod tests {
                 ),
                 cluster_id: "Kubernetes".into(),
                 timeout: Duration::from_secs(1),
+                enable_traffic_policy: true,
             };
             let mut headers = vec![
                 header(":authority", "192.0.2.1:443", b""),

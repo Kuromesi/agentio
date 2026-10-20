@@ -312,6 +312,7 @@ async fn connect_traffic_policy_benchmark() {
             client,
             cluster_id: "Kubernetes".into(),
             timeout: Duration::from_secs(4),
+            enable_traffic_policy: true,
         };
 
         // Unique Workload AND policy names: each sample requires fresh TLS ADS requests.
