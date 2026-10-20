@@ -155,14 +155,14 @@ fn compile_rules(value: proto::RuleSet) -> Result<Vec<Rule>> {
 
 /// One ordered stage: first match wins; configured but unmatched means deny.
 /// Callers must resolve every reference before invoking this function.
-pub fn allows<'a>(policies: impl IntoIterator<Item = &'a Policy>, target: Target) -> bool {
+pub fn evaluate<'a>(policies: impl IntoIterator<Item = &'a Policy>, target: Target) -> Evaluation {
     let mut configured = false;
-    for policy in policies {
+    for (policy_index, policy) in policies.into_iter().enumerate() {
         let Some(rules) = &policy.egress else {
             continue;
         };
         configured = true;
-        for rule in rules {
+        for (rule_index, rule) in rules.iter().enumerate() {
             if (rule.destinations.is_empty()
                 || rule
                     .destinations
@@ -170,16 +170,40 @@ pub fn allows<'a>(policies: impl IntoIterator<Item = &'a Policy>, target: Target
                     .any(|net| net.contains(target.address.ip())))
                 && (rule.ports.is_empty() || rule.ports.iter().any(|port| port.matches(target)))
             {
-                return rule.allow;
+                return Evaluation {
+                    allowed: rule.allow,
+                    matched_rule: Some((policy_index, rule_index)),
+                    reason: "rule_match",
+                };
             }
         }
     }
-    !configured
+    Evaluation {
+        allowed: !configured,
+        matched_rule: None,
+        reason: if configured {
+            "no_matching_rule"
+        } else {
+            "no_egress_policy"
+        },
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Evaluation {
+    pub allowed: bool,
+    /// Zero-based indexes in the ordered policy bindings and the matched rule set.
+    pub matched_rule: Option<(usize, usize)>,
+    pub reason: &'static str,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn allows<'a>(policies: impl IntoIterator<Item = &'a Policy>, target: Target) -> bool {
+        evaluate(policies, target).allowed
+    }
 
     fn rule(
         action: proto::Action,
@@ -202,6 +226,48 @@ mod tests {
             ..Default::default()
         })
         .unwrap()
+    }
+
+    #[test]
+    fn evaluation_identifies_the_deciding_rule_and_default_reason() {
+        let target = Target::parse("192.0.2.1:443", false).unwrap();
+        let absent = Policy::compile(TrafficPolicy::default()).unwrap();
+        let empty = policy(vec![]);
+        let matched = policy(vec![
+            rule(
+                proto::Action::Deny,
+                vec![],
+                vec![proto::PortMatch {
+                    port: Some(80),
+                    ..Default::default()
+                }],
+            ),
+            rule(proto::Action::Allow, vec![], vec![]),
+        ]);
+        assert_eq!(
+            evaluate([&absent, &empty, &matched], target),
+            Evaluation {
+                allowed: true,
+                matched_rule: Some((2, 1)),
+                reason: "rule_match",
+            }
+        );
+        assert_eq!(
+            evaluate([&empty], target),
+            Evaluation {
+                allowed: false,
+                matched_rule: None,
+                reason: "no_matching_rule",
+            }
+        );
+        assert_eq!(
+            evaluate([&absent], target),
+            Evaluation {
+                allowed: true,
+                matched_rule: None,
+                reason: "no_egress_policy",
+            }
+        );
     }
 
     #[test]

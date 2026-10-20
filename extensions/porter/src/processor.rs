@@ -208,8 +208,16 @@ impl Processor {
                 debug!(reason = "sandbox_workload_mismatch", "CONNECT denied");
                 return Ok(denied());
             }
-            if !traffic::allows(sandbox.traffic_policy.iter(), target) {
-                debug!(reason = "sandbox_egress_denied", "CONNECT denied");
+            let evaluation = traffic::evaluate(sandbox.traffic_policy.iter(), target);
+            if !evaluation.allowed {
+                log_policy(
+                    &workload.uid,
+                    sandbox_id,
+                    target,
+                    "sandbox",
+                    None,
+                    &evaluation,
+                );
                 return Ok(denied());
             }
             if !udp {
@@ -229,7 +237,7 @@ impl Processor {
                 Some(request_deadline),
             )
             .await?;
-        if !traffic::allows(
+        let evaluation = traffic::evaluate(
             policies.iter().map(|value| {
                 let View::TrafficPolicy(policy) = value.as_ref() else {
                     unreachable!("typed TrafficPolicy watch")
@@ -237,8 +245,19 @@ impl Processor {
                 policy
             }),
             target,
-        ) {
-            debug!(reason = "workload_egress_denied", "CONNECT denied");
+        );
+        let policy = evaluation
+            .matched_rule
+            .map(|(index, _)| references[index].as_str());
+        log_policy(
+            &workload.uid,
+            sandbox_id,
+            target,
+            "workload",
+            policy,
+            &evaluation,
+        );
+        if !evaluation.allowed {
             return Ok(denied());
         }
         let mut metadata = BTreeMap::new();
@@ -274,6 +293,33 @@ impl Processor {
             }),
         })
     }
+}
+
+fn log_policy(
+    workload: &str,
+    sandbox_id: &str,
+    target: Target,
+    stage: &str,
+    policy: Option<&str>,
+    evaluation: &traffic::Evaluation,
+) {
+    debug!(
+        target: "agentio_porter::policy",
+        workload,
+        sandbox_id,
+        destination = %target.address,
+        protocol = if target.protocol == crate::wire::agentio::security::traffic_policy::Protocol::Udp {
+            "udp"
+        } else {
+            "tcp"
+        },
+        stage,
+        policy,
+        rule_index = evaluation.matched_rule.map(|(_, index)| index),
+        action = if evaluation.allowed { "allow" } else { "deny" },
+        reason = evaluation.reason,
+        "CONNECT policy evaluated"
+    );
 }
 
 struct ConnectMeasurement {

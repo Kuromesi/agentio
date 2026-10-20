@@ -138,6 +138,115 @@ fn allowed(response: extproc::ProcessingResponse) -> bool {
 }
 
 #[tokio::test]
+async fn policy_logs_identify_destination_binding_and_final_decision() {
+    use tracing::instrument::WithSubscriber;
+
+    let output = tempfile::tempfile().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_env_filter("agentio_porter::policy=debug")
+        .with_writer(output.try_clone().unwrap())
+        .finish();
+    async {
+        let p = processor();
+        seed(
+            &p.client,
+            ResourceKind::Workload,
+            "/10.0.0.1",
+            workload(Some(&["demo/allow"])),
+        );
+        seed(
+            &p.client,
+            ResourceKind::TrafficPolicy,
+            "demo/allow",
+            any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+        );
+        assert!(allowed(p.handle(request("", false)).await.unwrap()));
+
+        seed(
+            &p.client,
+            ResourceKind::TrafficPolicy,
+            "demo/allow",
+            any(view::TRAFFIC_POLICY, policy(proto::Action::Deny)),
+        );
+        assert!(!allowed(p.handle(request("", true)).await.unwrap()));
+
+        seed(
+            &p.client,
+            ResourceKind::TrafficPolicy,
+            "demo/allow",
+            any(
+                view::TRAFFIC_POLICY,
+                TrafficPolicy {
+                    egress: Some(proto::RuleSet { rules: vec![] }),
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(!allowed(p.handle(request("", false)).await.unwrap()));
+
+        seed(
+            &p.client,
+            ResourceKind::Workload,
+            "/10.0.0.1",
+            workload(Some(&[])),
+        );
+        assert!(allowed(p.handle(request("", false)).await.unwrap()));
+
+        seed(
+            &p.client,
+            ResourceKind::Sandbox,
+            "sandbox",
+            any(
+                view::SANDBOX,
+                Sandbox {
+                    uid: "sandbox".into(),
+                    attester: Some(Attester {
+                        workload_uid: UID.into(),
+                    }),
+                    traffic_policy: Some(policy(proto::Action::Deny)),
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(!allowed(p.handle(request("sandbox", false)).await.unwrap()));
+    }
+    .with_subscriber(subscriber)
+    .await;
+
+    use std::io::{Read, Seek};
+    let mut reader = output;
+    reader.rewind().unwrap();
+    let mut text = String::new();
+    reader.read_to_string(&mut text).unwrap();
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.len(), 5);
+    for event in &events {
+        assert_eq!(event["level"], "DEBUG");
+        assert_eq!(event["target"], "agentio_porter::policy");
+        assert_eq!(event["fields"]["workload"], UID);
+        assert_eq!(event["fields"]["destination"], "192.0.2.1:443");
+    }
+    let fields = &events[0]["fields"];
+    assert_eq!(fields["policy"], "demo/allow");
+    assert_eq!(fields["rule_index"], 0);
+    assert_eq!(fields["action"], "allow");
+    assert_eq!(fields["reason"], "rule_match");
+    assert_eq!(events[1]["fields"]["protocol"], "udp");
+    assert_eq!(events[1]["fields"]["action"], "deny");
+    assert_eq!(events[2]["fields"]["reason"], "no_matching_rule");
+    assert!(events[2]["fields"]["policy"].is_null());
+    assert!(events[2]["fields"]["rule_index"].is_null());
+    assert_eq!(events[3]["fields"]["reason"], "no_egress_policy");
+    assert_eq!(events[4]["fields"]["stage"], "sandbox");
+    assert_eq!(events[4]["fields"]["sandbox_id"], "sandbox");
+    assert!(events[4]["fields"]["policy"].is_null());
+}
+
+#[tokio::test]
 async fn ordered_policy_stages_and_binding_presence() {
     for udp in [false, true] {
         let p = processor();
@@ -432,8 +541,8 @@ async fn hot_dependency_batch_preserves_order_metrics_ttl_and_invalidation() {
     let View::TrafficPolicy(second) = values[1].as_ref() else {
         panic!()
     };
-    assert!(!crate::traffic::allows([first], target));
-    assert!(crate::traffic::allows([second], target));
+    assert!(!crate::traffic::evaluate([first], target).allowed);
+    assert!(crate::traffic::evaluate([second], target).allowed);
     assert_eq!(
         c.metrics
             .cache_lookups
