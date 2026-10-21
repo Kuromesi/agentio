@@ -54,6 +54,18 @@ func Authorize(
 				"address", address.String(), "action", string(decision.Action),
 				"policy", decision.PolicyName, "ruleIndex", decision.RuleIndex)
 		}
+		record := filter.AuthorizationDecision{
+			Action:      "deny",
+			Destination: address.String(),
+			Reason:      filter.AuthorizationReasonPolicyDenied,
+		}
+		if decision.PolicyName != "" {
+			record.Policy, record.RuleIndex = decision.PolicyName, &decision.RuleIndex
+		}
+		if decision.Action == Allow {
+			record.Action, record.Reason = "allow", ""
+		}
+		stream.Info.RecordAuthorization(record)
 		return decision
 	}
 	// An explicit route is a fixed target, not a DNS candidate. Authorize its
@@ -69,14 +81,22 @@ func Authorize(
 	}
 	addresses, err := resolveDNS(ctx, client, stream, cfg.Family)
 	if err != nil {
+		stream.Info.RecordAuthorization(
+			filter.AuthorizationDecision{
+				Action: "error",
+				Reason: filter.AuthorizationReasonResolutionFailed,
+			},
+		)
 		return nil, nil, fmt.Errorf("egressauthz: %w", err)
 	}
-	if original := stream.Request.OriginalDestination; original.IsValid() &&
+	original := stream.Request.OriginalDestination
+	if original.IsValid() &&
 		slices.Contains(addresses, original.Addr().Unmap()) {
 		address := netip.AddrPortFrom(original.Addr().Unmap(), uint16(stream.Request.Port))
 		if evaluate(address).Action == Allow {
 			return selectTarget(address), nil, nil
 		}
+		return denied()
 	}
 	// The same request snapshot governs DNS completion and every candidate.
 	// Publishing a new Config cannot change this invocation's policy decisions.
@@ -87,6 +107,9 @@ func Authorize(
 			continue
 		}
 		return selectTarget(address), nil, nil
+	}
+	if len(addresses) != 1 {
+		stream.Info.RecordAuthorization(filter.AuthorizationDecision{Action: "deny", Reason: filter.AuthorizationReasonPolicyDenied})
 	}
 	return denied()
 }

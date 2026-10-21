@@ -172,8 +172,12 @@ func TestRequestAuthorization(t *testing.T) {
 						response.GetDynamicMetadata() != nil {
 						t.Fatalf("want denial %d without target, got %v", wantStatus, response)
 					}
-					if len(response.GetImmediateResponse().GetHeaders().GetSetHeaders()) != 0 ||
-						response.GetModeOverride() != nil {
+					for _, h := range response.GetImmediateResponse().GetHeaders().GetSetHeaders() {
+						if h.GetHeader().GetKey() != "content-type" {
+							t.Fatalf("denial leaked pending header: %v", h)
+						}
+					}
+					if response.GetModeOverride() != nil {
 						t.Fatalf("denial leaked pending token or mode override: %v", response)
 					}
 				} else {

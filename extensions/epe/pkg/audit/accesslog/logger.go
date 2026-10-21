@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 )
 
 // DefaultBufferSize is the channel capacity used when the caller does not
@@ -57,16 +58,17 @@ const DefaultBufferSize = 4096
 // A filter that ran and simply allowed the request records nothing in either.
 // Units counts matched policy units (rules), not profiles.
 type Entry struct {
-	RequestID string
-	Pod       types.NamespacedName
-	Method    string
-	Host      string
-	Path      string
-	Units     int
-	Outcome   string
-	Actions   []string
-	Skipped   []string
-	Error     string
+	RequestID     string
+	Pod           types.NamespacedName
+	Method        string
+	Host          string
+	Path          string
+	Units         int
+	Outcome       string
+	Actions       []string
+	Skipped       []string
+	Error         string
+	Authorization *filter.AuthorizationDecision
 }
 
 // Logger is the contract the request handler invokes once per request via
@@ -139,10 +141,19 @@ func (l *BufferedLogger) emit(e Entry) {
 		"method", e.Method,
 		"host", e.Host,
 		"path", e.Path,
-		"units", e.Units,
 		"outcome", e.Outcome,
-		"actions", e.Actions,
-		"skipped", e.Skipped,
+	}
+	if e.Units > 0 {
+		kvs = append(kvs, "units", e.Units)
+	}
+	if len(e.Actions) > 0 {
+		kvs = append(kvs, "actions", e.Actions)
+	}
+	if len(e.Skipped) > 0 {
+		kvs = append(kvs, "skipped", e.Skipped)
+	}
+	if e.Authorization != nil {
+		kvs = append(kvs, "authorization", e.Authorization)
 	}
 	if e.Error != "" {
 		kvs = append(kvs, "error", e.Error)

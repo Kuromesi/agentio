@@ -39,7 +39,7 @@ type Stream struct {
 	Upstream *UpstreamTarget
 	// Response is populated from OnResponseHeaders onward.
 	Response httpreq.HTTPResponse
-	// Info accumulates per-stream observations; the engine writes it, the
+	// Info accumulates observations from the engine and authorizer; the
 	// stream loggers read it at stream end.
 	Info *StreamInfo
 }

@@ -14,11 +14,19 @@
 package accesslog
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/go-logr/zapr"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
@@ -280,4 +288,66 @@ func kvMap(kvs []any) map[string]any {
 func counterValue(t *testing.T, c prometheus.Collector) float64 {
 	t.Helper()
 	return testutil.ToFloat64(c)
+}
+
+func TestAuthorizationJSONFields(t *testing.T) {
+	var output bytes.Buffer
+	logger := zapr.NewLogger(
+		zap.New(
+			zapcore.NewCore(
+				zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
+				zapcore.AddSync(&output),
+				zapcore.InfoLevel,
+			),
+		),
+	)
+	rule := 0
+	entry := Entry{
+		Outcome: "blocked",
+		Authorization: &filter.AuthorizationDecision{
+			Action:      "deny",
+			Reason:      filter.AuthorizationReasonPolicyDenied,
+			Destination: "1.1.1.1:80",
+			Policy:      "sandbox/deny-test",
+			RuleIndex:   &rule,
+		},
+	}
+	auditLogger := NewBufferedLogger(logger, 1)
+	auditLogger.emit(entry)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(output.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"units", "actions", "skipped", "error"} {
+		if _, found := fields[key]; found {
+			t.Fatalf("empty field %s emitted: %s", key, output.String())
+		}
+	}
+	var auth map[string]json.RawMessage
+	if err := json.Unmarshal(fields["authorization"], &auth); err != nil {
+		t.Fatal(err)
+	}
+	if string(auth["ruleIndex"]) != "0" || string(auth["action"]) != `"deny"` ||
+		string(auth["reason"]) != `"traffic_policy_denied"` ||
+		string(auth["policy"]) != `"sandbox/deny-test"` {
+		t.Fatalf("authorization: %s", fields["authorization"])
+	}
+	if _, found := auth["candidates"]; found {
+		t.Fatal("authorization must not include candidate details")
+	}
+
+	output.Reset()
+	entry.Outcome = "passthrough"
+	entry.Authorization.Action, entry.Authorization.Reason = "allow", ""
+	auditLogger.emit(entry)
+	if err := json.Unmarshal(output.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	auth = nil
+	if err := json.Unmarshal(fields["authorization"], &auth); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := auth["reason"]; found {
+		t.Fatalf("allowed request includes reason: %s", fields["authorization"])
+	}
 }

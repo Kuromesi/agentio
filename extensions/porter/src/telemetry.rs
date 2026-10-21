@@ -61,7 +61,11 @@ pub fn init(config: &Config) -> Logging {
             )
             .init(),
         Format::Text => subscriber
-            .with(tracing_subscriber::fmt::layer().with_writer(writer))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(writer),
+            )
             .init(),
     }
     Logging {

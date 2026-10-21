@@ -16,6 +16,7 @@ package egressauthz_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -211,7 +212,7 @@ func TestScenario_EgressAuthzReplacesCallerPolicySnapshots(t *testing.T) {
 	publishPolicies(t, current, team)
 	h.Run(t, authRequest("api.example.com:443")).RequireUpstream(t, "192.0.2.1:443")
 	publishPolicies(t, current)
-	requireDenied(t, h.Run(t, authRequest("api.example.com:443")))
+	h.Run(t, authRequest("api.example.com:443")).RequireUpstream(t, "192.0.2.1:443")
 }
 
 func TestScenario_EgressAuthzFailuresNeverEmitTarget(t *testing.T) {
@@ -266,7 +267,7 @@ func TestScenario_EgressAuthzInFlightRequestKeepsSnapshot(t *testing.T) {
 	}
 
 	// Publish a separate object; never mutate the old request's Config or slices.
-	current.Store(&egressauthz.Config{})
+	publishPolicies(t, current, egressauthz.Policy{Name: "empty"})
 	close(release)
 	err := <-done
 	v := enginetest.ParseVerdict(stream.Responses(), err)
@@ -300,14 +301,19 @@ func TestScenario_EgressAuthzDenialHasNoPolicyPayload(t *testing.T) {
 	)
 	v := authHarness(t, client, current).Run(t, authRequest("api.example.com:443"))
 	requireDenied(t, v)
-	if v.ImmediateBody != "" {
-		t.Fatalf("denial must have no body: %q", v.ImmediateBody)
+	var body map[string]string
+	if err := json.Unmarshal([]byte(v.ImmediateBody), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 3 || body["code"] != "epe_egress_denied" ||
+		body["message"] != "Outbound destination is denied by policy." {
+		t.Fatalf("unexpected public error: %v", body)
 	}
 	for _, response := range v.Raw {
-		if headers := response.GetImmediateResponse().
-			GetHeaders(); len(headers.GetSetHeaders()) != 0 ||
+		headers := response.GetImmediateResponse().GetHeaders()
+		if len(headers.GetSetHeaders()) != 1 || headers.GetSetHeaders()[0].GetHeader().GetKey() != "content-type" ||
 			len(headers.GetRemoveHeaders()) != 0 {
-			t.Fatalf("denial must not add policy headers: %v", headers)
+			t.Fatalf("unexpected denial headers: %v", headers)
 		}
 	}
 }

@@ -48,14 +48,15 @@ var committedKinds = map[filter.UnitActionKind]bool{
 // Log implements filter.StreamLogger.
 func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.StreamInfo) {
 	entry := Entry{
-		RequestID: st.RequestID,
-		Pod:       st.Peer.Pod,
-		Method:    st.Request.Method,
-		Host:      st.Request.Host,
-		Path:      st.Request.Path,
-		Units:     len(info.Matched),
-		Outcome:   info.Outcome.String(),
-		Error:     info.Error,
+		RequestID:     st.RequestID,
+		Pod:           st.Peer.Pod,
+		Method:        st.Request.Method,
+		Host:          st.Request.Host,
+		Path:          st.Request.Path,
+		Units:         len(info.Matched),
+		Outcome:       info.Outcome.String(),
+		Error:         info.Error,
+		Authorization: info.Authorization,
 	}
 
 	// A filter that asked for the body is owed an entry until it resolves. Both

@@ -91,7 +91,11 @@ func TestPresenceAndMalformed(t *testing.T) {
 		name string
 		p    *sec.TrafficPolicy
 		want egressauthz.Action
-	}{{"absent", &sec.TrafficPolicy{}, egressauthz.Allow}, {"empty", &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{}}, egressauthz.Deny}} {
+	}{
+		{"absent", &sec.TrafficPolicy{}, egressauthz.Deny},
+		{"ingress only", &sec.TrafficPolicy{Ingress: &sec.TrafficPolicy_RuleSet{}}, egressauthz.Deny},
+		{"empty", &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{}}, egressauthz.Deny},
+	} {
 		cfg, err := Compile([]NamedPolicy{{Name: tc.name, Policy: tc.p}})
 		if err != nil {
 			t.Fatal(err)
@@ -147,5 +151,82 @@ func TestEgressIgnoresSourceAddresses(t *testing.T) {
 				t.Fatalf("%s: got %s, want %s", tc.address, got, tc.want)
 			}
 		}
+	}
+}
+
+func TestDecisionPreservesSourceRuleIndex(t *testing.T) {
+	cfg, err := Compile(
+		[]NamedPolicy{
+			{
+				Name: "mixed",
+				Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{Rules: []*sec.TrafficPolicy_Rule{
+					{
+						Match: &sec.TrafficPolicy_Match{
+							Ports: []*sec.TrafficPolicy_PortMatch{{Protocol: sec.TrafficPolicy_UDP}},
+						},
+					},
+					{Action: sec.TrafficPolicy_DENY, Match: &sec.TrafficPolicy_Match{}},
+				}}},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Evaluate(netip.MustParseAddrPort("1.1.1.1:80"))
+	if d.PolicyName != "mixed" || d.RuleIndex != 1 {
+		t.Fatalf("decision: %+v", d)
+	}
+	cfg, err = Compile(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d = cfg.Evaluate(netip.MustParseAddrPort("1.1.1.1:80"))
+	if d.Action != egressauthz.Allow || d.PolicyName != "" || d.RuleIndex != -1 {
+		t.Fatalf("unexpected default decision: %+v", d)
+	}
+}
+
+func TestPolicyChainDefaultDeny(t *testing.T) {
+	absent := NamedPolicy{Name: "absent", Policy: &sec.TrafficPolicy{}}
+	empty := NamedPolicy{Name: "empty", Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{}}}
+	allow := NamedPolicy{Name: "allow", Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
+		Rules: []*sec.TrafficPolicy_Rule{{Action: sec.TrafficPolicy_ALLOW, Match: &sec.TrafficPolicy_Match{}}},
+	}}}
+	deny := NamedPolicy{Name: "deny", Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
+		Rules: []*sec.TrafficPolicy_Rule{{Action: sec.TrafficPolicy_DENY, Match: &sec.TrafficPolicy_Match{}}},
+	}}}
+	missing := NamedPolicy{Name: "missing"}
+	for _, tc := range []struct {
+		name      string
+		policies  []NamedPolicy
+		want      egressauthz.Action
+		wantError bool
+	}{
+		{name: "no policies", want: egressauthz.Allow},
+		{name: "absent direction", policies: []NamedPolicy{absent}, want: egressauthz.Deny},
+		{name: "empty then allow", policies: []NamedPolicy{empty, allow}, want: egressauthz.Allow},
+		{name: "allow then deny", policies: []NamedPolicy{allow, deny}, want: egressauthz.Allow},
+		{name: "deny then allow", policies: []NamedPolicy{deny, allow}, want: egressauthz.Deny},
+		{name: "empty then absent", policies: []NamedPolicy{empty, absent}, want: egressauthz.Deny},
+		{name: "missing then allow", policies: []NamedPolicy{missing, allow}, wantError: true},
+		{name: "allow then missing", policies: []NamedPolicy{allow, missing}, wantError: true},
+		{name: "empty then missing", policies: []NamedPolicy{empty, missing}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Compile(tc.policies)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("missing dependency accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Evaluate(netip.MustParseAddrPort("192.0.2.1:443")).Action; got != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
