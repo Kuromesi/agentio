@@ -251,7 +251,8 @@ func resources(n int) []model.Resource {
 						Action: security.TrafficPolicy_ALLOW,
 						Match: &security.TrafficPolicy_Match{
 							Ports: []*security.TrafficPolicy_PortMatch{{
-								Protocol: security.TrafficPolicy_TCP, Port: &port,
+								Protocol: security.TrafficPolicy_TCP,
+								Port:     &port,
 							}},
 						},
 					})

@@ -276,11 +276,14 @@ func TestNativeGatewayNamedTrafficPolicySubscriptions(t *testing.T) {
 	done := server.start(stream)
 	stream.send(nodeRequest(model.TrafficPolicyType, name, unbound.Key.Name))
 	response := stream.awaitResponses(t, model.TrafficPolicyType, 1)[0]
-	if !reflect.DeepEqual(resourceNames(response), []string{name}) || !reflect.DeepEqual(response.RemovedResources, []string{unbound.Key.Name}) {
+	if !reflect.DeepEqual(resourceNames(response), []string{name}) ||
+		!reflect.DeepEqual(response.RemovedResources, []string{unbound.Key.Name}) {
 		t.Fatalf("native gateway named scope = %v", response)
 	}
 	stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.TrafficPolicyType, ResponseNonce: response.Nonce})
-	server.resources.publish(selectionSnapshot(t, []model.Resource{workloadWithTrafficRefs(t, worker), shared, unbound}))
+	server.resources.publish(
+		selectionSnapshot(t, []model.Resource{workloadWithTrafficRefs(t, worker), shared, unbound}),
+	)
 	response = stream.awaitResponses(t, model.TrafficPolicyType, 2)[1]
 	if !reflect.DeepEqual(response.RemovedResources, []string{name}) {
 		t.Fatalf("native gateway retained policy after binding removal: %v", response)
