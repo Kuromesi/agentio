@@ -405,7 +405,7 @@ func epePinnedAddress(response *extprocv3.ProcessingResponse) string {
 		GetFields()["upstream"].GetStructValue().GetFields()["address"].GetStringValue()
 }
 
-// The fixture uses the gateway identity for ADS and the existing EPE role for Kubernetes watches.
+// The fixture uses the gateway identity for ADS and the EPE roles for Kubernetes watches.
 const egressEPEYAML = `
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -415,6 +415,20 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: agentio-epe-{{ .Namespace }}
+subjects:
+- kind: ServiceAccount
+  name: egress-gateway
+  namespace: {{ .Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: epe-egressauthz
+  namespace: {{ .Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentio-epe
 subjects:
 - kind: ServiceAccount
   name: egress-gateway
