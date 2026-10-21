@@ -159,7 +159,7 @@ func TestScenario_EgressAuthzOriginalMustBelongToHost(t *testing.T) {
 	}{
 		{name: "matching original is preferred", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.2:443", want: "192.0.2.2:443", port: 443},
 		{name: "allowed unrelated original is replaced", answers: []string{"192.0.2.1"}, original: "192.0.2.2:443", want: "192.0.2.1:443", port: 443},
-		{name: "denied matching original uses allowed answer", answers: []string{"192.0.2.99", "192.0.2.1"}, original: "192.0.2.99:443", want: "192.0.2.1:443", port: 443},
+		{name: "denied matching original does not fall back", answers: []string{"192.0.2.99", "192.0.2.1"}, original: "192.0.2.99:443", port: 443},
 		{name: "allowed original cannot rescue denied answers", answers: []string{"192.0.2.99"}, original: "192.0.2.2:443", port: 443},
 		{name: "original port is authorized", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.2:8443", want: "192.0.2.2:8443", port: 8443},
 		{name: "replacement keeps routing port", answers: []string{"192.0.2.1"}, original: "192.0.2.2:8443", want: "192.0.2.1:8443", port: 8443},

@@ -55,7 +55,7 @@ Copy the same benchmark source into a checkout without Porter TrafficPolicy auth
 
 Lifecycle and ADS connection events use structured tracing fields. Each ADS attempt has an `xds` span with its connection ID and address. Retry/NACK/forced-shutdown events are warnings, service failures are errors, and request rejection reasons are debug events. Certificate contents and tokens are never logged. The existing `AGENTIO_LOG_LEVEL` and `AGENTIO_LOG_FORMAT=text|json` settings remain the configuration interface.
 
-Logging writes synchronously to stderr. Policy decisions are emitted at INFO for audit collection; a slow log sink can apply backpressure to request processing.
+Logging writes synchronously to stderr. Text output contains no ANSI color or style escape sequences. Policy decisions are emitted at INFO for audit collection; a slow log sink can apply backpressure to request processing.
 
 `POST /logging` on port 9004 follows ztunnel's logging API. It accepts only loopback connections; invoke it from the gateway Pod. A request without parameters returns `current log level is <filter>`. `level` merges directives into the current configuration; `reset` restores the startup configuration before applying any supplied `level`. Its value is ignored, as in ztunnel. Invalid levels return 400 without changing the filter; non-POST methods return 405. Startup `AGENTIO_LOG_LEVEL` now uses ztunnel's target filter semantics: a bare level applies globally, and more specific module directives override it. The existing `none` startup alias for `off` remains supported.
 

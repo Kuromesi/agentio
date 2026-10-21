@@ -71,11 +71,28 @@ type FilterRecord struct {
 	Err error
 }
 
-// StreamInfo accumulates what happened to one stream. It holds only what
-// filters cannot provide themselves; Peer/Request/Response live on Stream.
+// Authorization reasons classify denials and errors in request audit logs.
+const (
+	AuthorizationReasonPolicyDenied     = "traffic_policy_denied"
+	AuthorizationReasonResolutionFailed = "target_resolution_failed"
+	AuthorizationReasonPolicyLoadFailed = "policy_load_failed"
+	AuthorizationReasonFailed           = "authorization_failed"
+)
+
+// AuthorizationDecision records the request's target authorization result.
+type AuthorizationDecision struct {
+	Action      string `json:"action"`
+	Reason      string `json:"reason,omitempty"`
+	Destination string `json:"destination,omitempty"`
+	Policy      string `json:"policy,omitempty"`
+	RuleIndex   *int   `json:"ruleIndex,omitempty"`
+}
+
+// StreamInfo accumulates observations for the stream-end loggers.
 type StreamInfo struct {
-	Matched []UnitRecord
-	Filters []FilterRecord
+	Matched       []UnitRecord
+	Filters       []FilterRecord
+	Authorization *AuthorizationDecision
 	// Outcome is written exactly once, at stream end, by the ext_proc layer —
 	// derived from the responses it actually sent, the stream's error, and
 	// len(Matched). The engine deliberately does not accumulate it: an outcome
@@ -156,4 +173,11 @@ func (i *StreamInfo) RecordFilter(rec FilterRecord) {
 // block.
 type StreamLogger interface {
 	Log(ctx context.Context, st *Stream, info *StreamInfo)
+}
+
+// RecordAuthorization replaces the request's target decision; nil follows the other recording methods.
+func (i *StreamInfo) RecordAuthorization(record AuthorizationDecision) {
+	if i != nil {
+		i.Authorization = &record
+	}
 }

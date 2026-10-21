@@ -15,6 +15,7 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -54,9 +55,31 @@ func (s *Server) authorize(
 	}
 	if err != nil {
 		log.FromContext(ctx).Error(err, "request authorization failed")
-		return nil, &filter.Reply{Status: 500, Details: "epe_request_authorization_failed"}
+		stream.Info.Error = err.Error()
+		if stream.Info.Authorization == nil || stream.Info.Authorization.Action != "error" {
+			stream.Info.RecordAuthorization(
+				filter.AuthorizationDecision{
+					Action: "error",
+					Reason: filter.AuthorizationReasonFailed,
+				},
+			)
+		}
+		return nil, authorizationReply(
+			500,
+			"epe_request_authorization_failed",
+			"Unable to authorize outbound destination.",
+			stream.RequestID,
+		)
 	}
 	if reply != nil {
+		if reply.Details == "epe_egress_denied" {
+			return nil, authorizationReply(
+				reply.Status,
+				reply.Details,
+				"Outbound destination is denied by policy.",
+				stream.RequestID,
+			)
+		}
 		return nil, reply
 	}
 	if target == nil {
@@ -67,4 +90,18 @@ func (s *Server) authorize(
 		result.ClearCache = route.ClearCache
 	}
 	return &result, nil
+}
+
+func authorizationReply(status int, code, message, requestID string) *filter.Reply {
+	body, _ := json.Marshal(struct { //nolint:errcheck // String-only fields cannot fail JSON encoding.
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"requestID"`
+	}{code, message, requestID})
+	return &filter.Reply{
+		Status:    status,
+		Details:   code,
+		Body:      body,
+		HeaderOps: []filter.HeaderOp{{Kind: filter.HeaderSet, Name: "content-type", Value: "application/json"}},
+	}
 }

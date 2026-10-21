@@ -32,7 +32,7 @@ type Config struct {
 }
 
 // Validate checks the complete snapshot without modifying or sorting it.
-// The zero Config is valid and denies all destinations.
+// The zero Config is valid and imposes no policy restriction.
 func (c Config) Validate() error {
 	if c.Family > dns.IPv6Only {
 		return dns.ErrInvalidFamily
@@ -51,16 +51,22 @@ func (c Config) Validate() error {
 }
 
 // Evaluate traverses a validated snapshot in policy order and then rule order.
-// The first match decides; no match means deny.
+// The first match decides. No policies means allow; otherwise no match means deny.
 func (c Config) Evaluate(address netip.AddrPort) Decision {
 	unmatched := Decision{Action: Deny, RuleIndex: -1}
 	if !address.IsValid() || address.Port() == 0 || address.Addr().Zone() != "" {
 		return unmatched
 	}
+	if len(c.Policies) == 0 {
+		return Decision{Action: Allow, RuleIndex: -1}
+	}
 	ip, port := address.Addr().Unmap(), address.Port()
 	for _, policy := range c.Policies {
 		for i, rule := range policy.Rules {
 			if rule.matches(ip, port) {
+				if rule.SourceIndex != nil {
+					i = *rule.SourceIndex
+				}
 				return Decision{Action: rule.Action, PolicyName: policy.Name, RuleIndex: i}
 			}
 		}

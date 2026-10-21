@@ -30,20 +30,16 @@ var allIPs = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParseP
 // Workload bindings select applicable policies; egress matches only destinations.
 func Compile(policies []NamedPolicy) (egressauthz.Config, error) {
 	cfg := egressauthz.Config{}
-	configured := false
 	for _, p := range policies {
 		if p.Policy == nil {
 			return cfg, fmt.Errorf("TrafficPolicy %q is missing", p.Name)
 		}
 		out := egressauthz.Policy{Name: p.Name}
-		if p.Policy.Egress != nil {
-			configured = true
-		}
 		for i, r := range p.Policy.GetEgress().GetRules() {
 			if r == nil || r.Match == nil {
 				return cfg, fmt.Errorf("TrafficPolicy %q egress rule %d: missing match", p.Name, i)
 			}
-			rule := egressauthz.Rule{Action: egressauthz.Allow}
+			rule := egressauthz.Rule{Action: egressauthz.Allow, SourceIndex: &i}
 			switch r.Action {
 			case sec.TrafficPolicy_ALLOW:
 			case sec.TrafficPolicy_DENY:
@@ -70,17 +66,6 @@ func Compile(policies []NamedPolicy) (egressauthz.Config, error) {
 			out.Rules = append(out.Rules, rule)
 		}
 		cfg.Policies = append(cfg.Policies, out)
-	}
-	// An absent direction imposes no restriction. A present empty direction is
-	// default deny; do not turn unresolved peer lists into an allow-all rule.
-	if !configured {
-		cfg.Policies = append(
-			cfg.Policies,
-			egressauthz.Policy{
-				Name:  "@unconfigured-egress",
-				Rules: []egressauthz.Rule{{Action: egressauthz.Allow, CIDRs: append([]netip.Prefix(nil), allIPs...)}},
-			},
-		)
 	}
 	return cfg, cfg.Validate()
 }

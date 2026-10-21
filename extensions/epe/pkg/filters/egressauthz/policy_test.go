@@ -65,8 +65,8 @@ func TestPolicyCIDRAndPortMatching(t *testing.T) {
 			t.Errorf("%s allowed=%v, want %v", tc.address, got, tc.allow)
 		}
 	}
-	if (Config{}).Evaluate(netip.MustParseAddrPort("192.0.2.2:443")).Action == Allow {
-		t.Fatal("uninitialized policy must deny")
+	if (Config{}).Evaluate(netip.MustParseAddrPort("192.0.2.2:443")).Action != Allow {
+		t.Fatal("no policies must allow")
 	}
 }
 

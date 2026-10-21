@@ -41,9 +41,11 @@ const (
 // CIDRs must be non-empty; use 0.0.0.0/0 and/or ::/0 to match all addresses.
 // Empty Ports matches every non-zero port.
 type Rule struct {
-	Action Action
-	CIDRs  []netip.Prefix
-	Ports  []PortRange
+	// SourceIndex preserves the xDS rule ordinal when non-TCP rules are omitted.
+	SourceIndex *int
+	Action      Action
+	CIDRs       []netip.Prefix
+	Ports       []PortRange
 }
 
 // PortRange is inclusive. End == 0 means the single port Start.
@@ -53,7 +55,7 @@ type PortRange struct {
 }
 
 // Decision identifies the first matching policy and its zero-based rule index.
-// An unmatched destination is denied with PolicyName empty and RuleIndex -1.
+// A default decision has PolicyName empty and RuleIndex -1.
 type Decision struct {
 	Action     Action
 	PolicyName string

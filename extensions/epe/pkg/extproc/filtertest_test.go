@@ -106,7 +106,12 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 // report passthrough rather than fail. A green test asserting an outcome the
 // product never produced is exactly the false enforcement claim the derived
 // outcome exists to prevent, so the observation is not left to the caller.
-func sendRequestBody(t *testing.T, s *Server, state *streamState, body *extProcPb.HttpBody) ([]*extProcPb.ProcessingResponse, error) {
+func sendRequestBody(
+	t *testing.T,
+	s *Server,
+	state *streamState,
+	body *extProcPb.HttpBody,
+) ([]*extProcPb.ProcessingResponse, error) {
 	t.Helper()
 	responses, err := s.HandleRequestBody(context.Background(), body, state)
 	for _, resp := range responses {

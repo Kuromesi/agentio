@@ -23,6 +23,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
+
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -204,11 +206,16 @@ func TestAuthorizerUsesWorkloadBinding(t *testing.T) {
 	f := testStore()
 	f.bind()
 	authorize := NewAuthorizer(testAggregate(f), dns.NewClient(nil, 0))
-	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443}}
+	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443}, Info: filter.NewStreamInfo()}
 	stream.Peer.Pod.Namespace, stream.Peer.Pod.Name = "ns", "pod"
 	target, reply, err := authorize(t.Context(), stream)
 	if err != nil || reply != nil || target == nil || target.Address.String() != "203.0.113.7:443" {
 		t.Fatalf("empty binding should allow: target=%v reply=%v err=%v", target, reply, err)
+	}
+	decision := stream.Info.Authorization
+	if decision == nil || decision.Action != "allow" || decision.Reason != "" ||
+		decision.Policy != "" || decision.RuleIndex != nil {
+		t.Fatalf("unexpected default authorization: %+v", decision)
 	}
 }
 
@@ -421,5 +428,19 @@ func TestLookupPollTermination(t *testing.T) {
 				t.Fatalf("polling spun without waiting: %d fetches in 50ms", calls)
 			}
 		})
+	}
+}
+
+func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
+	source := testStore()
+	source.err = errors.New("xDS unavailable")
+	stream := &filter.Stream{
+		Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+		Info: filter.NewStreamInfo(),
+	}
+	_, _, err := NewAuthorizer(testAggregate(source), nil)(t.Context(), stream)
+	if err == nil || stream.Info.Authorization == nil ||
+		stream.Info.Authorization.Reason != filter.AuthorizationReasonPolicyLoadFailed {
+		t.Fatalf("error=%v audit=%+v", err, stream.Info.Authorization)
 	}
 }

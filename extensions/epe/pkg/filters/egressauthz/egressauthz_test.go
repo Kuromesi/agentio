@@ -160,8 +160,8 @@ func TestAuthorizationSelectsAndPinsAllowedCandidate(t *testing.T) {
 		t.Fatalf("unauthorized or changed target: %+v", route)
 	}
 	assertDenied(t, f, "example.com", 80)
-	// An empty snapshot is an active deny-all policy, not a missing filter.
-	empty := authorizer(Config{}, client)
+	// A configured policy with no rules denies all destinations.
+	empty := authorizer(Config{Policies: []Policy{{Name: "empty"}}}, client)
 	assertDenied(t, empty, "example.com", 443)
 	assertDenied(t, empty, "192.0.2.1", 443)
 }
@@ -181,5 +181,95 @@ type authorizeFunc func(context.Context, *filter.Stream) (*filter.UpstreamTarget
 func authorizer(cfg Config, client *dns.Client) authorizeFunc {
 	return func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
 		return Authorize(ctx, cfg, client, stream)
+	}
+}
+
+func TestAuthorizationAuditDecision(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		ips         []string
+		original    string
+		allowSecond bool
+		wantAllowed bool
+		want        string
+	}{
+		{name: "single deny", ips: []string{"192.0.2.1"}, want: filter.AuthorizationReasonPolicyDenied},
+		{name: "no matching rule", ips: []string{"192.0.2.3"}, want: filter.AuthorizationReasonPolicyDenied},
+		{name: "multiple denied", ips: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.99:80", want: filter.AuthorizationReasonPolicyDenied},
+		{name: "allowed candidate", ips: []string{"192.0.2.1", "192.0.2.2"}, allowSecond: true, wantAllowed: true},
+		{name: "denied original does not fall back", ips: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.1:80", allowSecond: true, want: filter.AuthorizationReasonPolicyDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := dns.NewClient(nil, time.Second)
+			ips := make([]netip.Addr, 0, len(tc.ips))
+			for _, ip := range tc.ips {
+				ips = append(ips, netip.MustParseAddr(ip))
+			}
+			if err := client.SetRecord("example.com", ips); err != nil {
+				t.Fatal(err)
+			}
+			action := Deny
+			if tc.allowSecond {
+				action = Allow
+			}
+			cfg := Config{
+				Policies: []Policy{
+					{
+						Name:  "first",
+						Rules: []Rule{{Action: Deny, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}}},
+					},
+					{
+						Name:  "second",
+						Rules: []Rule{{Action: action, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/32")}}},
+					},
+				},
+			}
+			stream := &filter.Stream{
+				Request: httpreq.HTTPRequest{Host: "example.com", Port: 80},
+				Info:    filter.NewStreamInfo(),
+			}
+			if tc.original != "" {
+				stream.Request.OriginalDestination = netip.MustParseAddrPort(tc.original)
+			}
+			target, reply, err := Authorize(t.Context(), cfg, client, stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := stream.Info.Authorization
+			if got == nil || got.Reason != tc.want {
+				t.Fatalf("audit: %+v", got)
+			}
+			if tc.wantAllowed {
+				if reply != nil || got.Action != "allow" || got.Policy != "second" ||
+					got.Destination != "192.0.2.2:80" {
+					t.Fatalf("allow: %+v reply=%v", got, reply)
+				}
+			} else if tc.original == "192.0.2.1:80" {
+				if target != nil || reply == nil || reply.Status != 403 || got.Action != "deny" ||
+					got.Destination != tc.original || got.Policy != "first" ||
+					got.RuleIndex == nil || *got.RuleIndex != 0 {
+					t.Fatalf("original denial: target=%v reply=%v audit=%+v", target, reply, got)
+				}
+			} else if tc.name == "multiple denied" {
+				if target != nil || reply == nil || reply.Status != 403 || got.Action != "deny" ||
+					got.Policy != "" || got.RuleIndex != nil || got.Destination != "" {
+					t.Fatalf("host denial: target=%v reply=%v audit=%+v", target, reply, got)
+				}
+			} else if tc.name == "no matching rule" && (got.Policy != "" || got.RuleIndex != nil) {
+				t.Fatalf("invented match: %+v", got)
+			}
+		})
+	}
+}
+
+func TestAuthorizationAuditResolutionFailure(t *testing.T) {
+	client := dns.NewClient(lookupFunc(func(context.Context, string, dns.Family) (dns.LookupResult, error) {
+		return dns.LookupResult{}, errors.New("DNS unavailable")
+	}), time.Second)
+	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "example.com", Port: 80}, Info: filter.NewStreamInfo()}
+	_, _, err := Authorize(t.Context(), Config{}, client, stream)
+	if err == nil || stream.Info.Authorization.Action != "error" ||
+		stream.Info.Authorization.Reason != filter.AuthorizationReasonResolutionFailed {
+		t.Fatalf("error=%v audit=%+v", err, stream.Info.Authorization)
 	}
 }

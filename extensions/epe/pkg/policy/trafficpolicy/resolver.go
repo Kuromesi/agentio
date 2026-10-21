@@ -46,6 +46,9 @@ func NewAuthorizer(source Resources, client *dns.Client) engine.RequestAuthorize
 			Labels:    peer.Labels,
 		})
 		if err != nil {
+			stream.Info.RecordAuthorization(
+				filter.AuthorizationDecision{Action: "error", Reason: filter.AuthorizationReasonPolicyLoadFailed},
+			)
 			return nil, nil, err
 		}
 		return egressauthz.Authorize(ctx, cfg, client, stream)
