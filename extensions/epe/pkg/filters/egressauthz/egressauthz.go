@@ -109,7 +109,9 @@ func Authorize(
 		return selectTarget(address), nil, nil
 	}
 	if len(addresses) != 1 {
-		stream.Info.RecordAuthorization(filter.AuthorizationDecision{Action: "deny", Reason: filter.AuthorizationReasonPolicyDenied})
+		stream.Info.RecordAuthorization(
+			filter.AuthorizationDecision{Action: "deny", Reason: filter.AuthorizationReasonPolicyDenied},
+		)
 	}
 	return denied()
 }

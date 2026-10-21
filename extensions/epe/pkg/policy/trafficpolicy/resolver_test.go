@@ -439,7 +439,8 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 		Info: filter.NewStreamInfo(),
 	}
 	_, _, err := NewAuthorizer(testAggregate(source), nil)(t.Context(), stream)
-	if err == nil || stream.Info.Authorization == nil || stream.Info.Authorization.Reason != filter.AuthorizationReasonPolicyLoadFailed {
+	if err == nil || stream.Info.Authorization == nil ||
+		stream.Info.Authorization.Reason != filter.AuthorizationReasonPolicyLoadFailed {
 		t.Fatalf("error=%v audit=%+v", err, stream.Info.Authorization)
 	}
 }
