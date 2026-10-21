@@ -79,15 +79,15 @@ var (
 		"agentio-epe-config-primary",
 		"Primary EPEConfig ConfigMap applied after the base; empty disables the overlay",
 	)
-	epeConfigNamespace = flag.String(
-		"epe-config-namespace",
-		"agentio-system",
-		"Namespace of EPEConfig and default namespace for its resource references",
+	systemNamespace = flag.String(
+		"namespace",
+		os.Getenv("POD_NAMESPACE"),
+		"System namespace where EPE runs and its EPEConfig lives; defaults to POD_NAMESPACE",
 	)
-	watchSecretsAllNamespaces = flag.Bool(
-		"watch-secrets-all-namespaces",
-		false,
-		"Watch token credential Secrets in all namespaces instead of the EPEConfig namespace; requires cluster-wide Secret list/watch permission",
+	secretWatchScope = flag.String(
+		"secret-watch-scope",
+		"system",
+		"Token Secret watch scope: system (EPE system namespace) or cluster (all namespaces; requires cluster-wide Secret list/watch permission)",
 	)
 	logVerbosity = flag.Int("v", 0, "number for the log level verbosity")
 
@@ -201,6 +201,13 @@ func run() error {
 			},
 		})
 	}
+	if *epeConfigName == "" {
+		return fmt.Errorf("--epe-config must not be empty")
+	}
+	secretNamespace, err := tokenSecretNamespace(*systemNamespace, *secretWatchScope)
+	if err != nil {
+		return err
+	}
 	logLevel := initLogging(&opts)
 
 	flags := make(map[string]any)
@@ -256,9 +263,6 @@ func run() error {
 		group.Add(runnable.Func(resourceStore.Run))
 		group.Add(runnable.Func(xds.Run))
 	}
-	if *epeConfigName == "" || *epeConfigNamespace == "" {
-		return fmt.Errorf("--epe-config and --epe-config-namespace must not be empty")
-	}
 	servingTLS, err := buildExtProcTLS(extProcTLSOptions{
 		Source:   *tlsSource,
 		CertPath: *tlsCertPath,
@@ -282,19 +286,15 @@ func run() error {
 	cms.Start(ctx.Done())
 	configMaps := krt.WrapClient(cms, krt.WithName("EPEConfigMaps"), krt.WithStop(ctx.Done()))
 	configs := config.NewCollection(configMaps, config.Options[*configv1.EPEConfig]{
-		Namespace: *epeConfigNamespace,
+		Namespace: *systemNamespace,
 		Names:     []string{*epeConfigName, *epeConfigPrimaryName},
 		Defaults:  defaults,
 		Apply:     extensionprovider.ApplyConfig,
 		Validate:  extensionprovider.Validate,
 	}, krt.WithName("EPEConfig"), krt.WithStop(ctx.Done())).AsCollection()
-	providerConfigs := extensionprovider.NewCollection(client, *epeConfigNamespace,
+	providerConfigs := extensionprovider.NewCollection(client, *systemNamespace,
 		configs, configMaps, nil, ctx.Done())
 	providerReg := providers.RegisterCollection(providerConfigs)
-	secretNamespace := *epeConfigNamespace
-	if *watchSecretsAllNamespaces {
-		secretNamespace = metav1.NamespaceAll
-	}
 	secrets := krt.NewFilteredInformer[*corev1.Secret](client,
 		kclient.Filter{Namespace: secretNamespace},
 		krt.WithName("TokenSecrets"), krt.WithStop(ctx.Done()))
@@ -428,6 +428,20 @@ func run() error {
 	}
 	setupLog.Info("EPE terminated")
 	return nil
+}
+
+func tokenSecretNamespace(namespace, scope string) (string, error) {
+	if namespace == "" {
+		return "", fmt.Errorf("--namespace or POD_NAMESPACE must specify the EPE system namespace")
+	}
+	switch scope {
+	case "system":
+		return namespace, nil
+	case "cluster":
+		return metav1.NamespaceAll, nil
+	default:
+		return "", fmt.Errorf("--secret-watch-scope must be system or cluster; got %q", scope)
+	}
 }
 
 func startExtProc(ctx context.Context, server runnable.Runnable, caches ...krt.Syncer) error {

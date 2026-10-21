@@ -159,3 +159,56 @@ func TestExtProcWaitsForInitialCaches(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenSecretNamespace(t *testing.T) {
+	for _, tc := range []struct {
+		namespace string
+		scope     string
+		want      string
+		wantErr   bool
+	}{
+		{"custom-system", "system", "custom-system", false},
+		{"custom-system", "cluster", "", false},
+		{"custom-system", "", "", true},
+		{"custom-system", "Cluster", "", true},
+		{"", "system", "", true},
+		{"", "cluster", "", true},
+	} {
+		t.Run(tc.namespace+"/"+tc.scope, func(t *testing.T) {
+			got, err := tokenSecretNamespace(tc.namespace, tc.scope)
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("tokenSecretNamespace = %q, %v; want %q, error=%t", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestSystemNamespaceFlag(t *testing.T) {
+	if os.Getenv("EPE_NAMESPACE_TEST_HELPER") == "true" {
+		if err := flag.CommandLine.Parse(strings.Fields(os.Getenv("EPE_NAMESPACE_TEST_ARGS"))); err != nil {
+			t.Fatal(err)
+		}
+		if *systemNamespace != os.Getenv("EPE_NAMESPACE_TEST_WANT") || *secretWatchScope != "system" {
+			t.Fatalf("namespace=%q scope=%q", *systemNamespace, *secretWatchScope)
+		}
+		return
+	}
+	for _, tc := range []struct {
+		name string
+		args string
+		want string
+	}{
+		{"pod namespace", "", "pod-system"},
+		{"explicit namespace", "--namespace=explicit-system", "explicit-system"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("POD_NAMESPACE", "pod-system")
+			command := exec.Command(os.Args[0], "-test.run=^TestSystemNamespaceFlag$")
+			command.Env = append(os.Environ(), "EPE_NAMESPACE_TEST_HELPER=true",
+				"EPE_NAMESPACE_TEST_ARGS="+tc.args, "EPE_NAMESPACE_TEST_WANT="+tc.want)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("namespace flag: %v\n%s", err, output)
+			}
+		})
+	}
+}

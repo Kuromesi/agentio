@@ -458,7 +458,7 @@ spec:
     args:
     - --epe-config=epe-egressauthz
     - --epe-config-primary=epe-egressauthz-primary
-    - --epe-config-namespace={{ .Namespace }}
+    - --namespace={{ .Namespace }}
     - --enable-egressauthz
     - --xds-address=agentiod.{{ .Namespace }}.svc:15012
     - --xds-root-path=/var/run/xds-root/root-cert.pem

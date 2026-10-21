@@ -620,7 +620,7 @@ spec:
     args:
     - -epe-config={{ .Name }}
     - -epe-config-primary={{ .Name }}-primary
-    - -epe-config-namespace={{ .Namespace }}
+    - -namespace={{ .Namespace }}
     - -tls-source=ca
     - -ca-address=agentiod.{{ .Namespace }}.svc:15012
     - -tls-spiffe-id=spiffe://cluster.local/ns/{{ .Namespace }}/sa/agentio-epe

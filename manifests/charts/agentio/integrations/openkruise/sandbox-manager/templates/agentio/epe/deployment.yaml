@@ -49,8 +49,8 @@ spec:
           args:
             - -epe-config={{ include "agentio.epe.fullname" . }}-config
             - -epe-config-primary={{ include "agentio.epe.fullname" . }}-config-primary
-            - -epe-config-namespace={{ (include "agentio.namespace" .) }}
-            - -watch-secrets-all-namespaces={{ .Values.agentio.epe.watchSecretsAllNamespaces }}
+            - -namespace={{ (include "agentio.namespace" .) }}
+            - -secret-watch-scope={{ .Values.agentio.epe.secretWatchScope }}
             {{- if .Values.agentio.epe.tls.enabled }}
             {{- if $caMode }}
             - -tls-source=ca
@@ -70,6 +70,10 @@ spec:
             - -metrics-port={{ .Values.agentio.epe.service.metricsPort }}
             - -audit-webhook-insecure-skip-verify={{ .Values.agentio.epe.auditWebhook.insecureSkipVerify }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: IDENTITY_PROVIDER_URL
               value: {{ .Values.agentio.epe.credentialProvider.url | quote }}
             - name: TOKEN_CACHE_TTL

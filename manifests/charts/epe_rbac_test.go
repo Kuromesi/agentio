@@ -101,7 +101,7 @@ func TestEPESecretSourceAllowsExplicitNamespace(t *testing.T) {
 				t.Fatal(err)
 			}
 			container := deployment.Spec.Template.Spec.Containers[0]
-			if !slices.Contains(container.Args, "-epe-config-namespace=sandbox-traffic-system") {
+			if !slices.Contains(container.Args, "-namespace=sandbox-traffic-system") {
 				t.Fatalf("configuration namespace lost: %v", container.Args)
 			}
 			for _, env := range container.Env {
@@ -114,5 +114,36 @@ func TestEPESecretSourceAllowsExplicitNamespace(t *testing.T) {
 			}
 			t.Fatal("missing Secret namespace environment variable")
 		})
+	}
+}
+
+func TestEPESecretWatchScope(t *testing.T) {
+	for _, scope := range []string{"system", "cluster"} {
+		t.Run(scope, func(t *testing.T) {
+			manifest := renderAgentio(t, "--namespace", "custom-system",
+				"--set", "epe.mode=managed,epe.secretWatchScope="+scope,
+				"--show-only", "templates/epe/deployment.yaml")
+			var deployment appsv1.Deployment
+			if err := yaml.Unmarshal([]byte(manifest), &deployment); err != nil {
+				t.Fatal(err)
+			}
+			container := deployment.Spec.Template.Spec.Containers[0]
+			if deployment.Namespace != "custom-system" ||
+				!slices.Contains(container.Args, "-namespace=custom-system") ||
+				!slices.Contains(container.Args, "-secret-watch-scope="+scope) {
+				t.Fatalf("namespace or scope mismatch: namespace=%q args=%v", deployment.Namespace, container.Args)
+			}
+			for _, env := range container.Env {
+				if env.Name == "POD_NAMESPACE" && env.ValueFrom != nil && env.ValueFrom.FieldRef != nil &&
+					env.ValueFrom.FieldRef.FieldPath == "metadata.namespace" {
+					return
+				}
+			}
+			t.Fatal("POD_NAMESPACE must come from Pod metadata")
+		})
+	}
+	output, err := helmTemplate(t, "--set", "epe.mode=managed,epe.secretWatchScope=invalid")
+	if err == nil || !strings.Contains(output, "epe.secretWatchScope must be system or cluster") {
+		t.Fatalf("invalid Secret scope: %v\n%s", err, output)
 	}
 }

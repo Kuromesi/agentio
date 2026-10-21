@@ -47,7 +47,7 @@ func (s *SecretSource) Fetch(_ context.Context, ref Ref) (Credential, error) {
 		return Credential{}, fmt.Errorf("secret credential source is not configured")
 	}
 	if s.namespace != "" && ref.Namespace != s.namespace {
-		return Credential{}, fmt.Errorf("%w: secret %s/%s is outside EPEConfig namespace %s",
+		return Credential{}, fmt.Errorf("%w: secret %s/%s is outside EPE system namespace %s",
 			ErrNoPermission, ref.Namespace, ref.Name, s.namespace)
 	}
 	cached := s.secrets.GetKey(ref.Namespace + "/" + ref.Name)
