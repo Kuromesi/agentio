@@ -190,12 +190,18 @@ func TestDecisionPreservesSourceRuleIndex(t *testing.T) {
 func TestPolicyChainDefaultDeny(t *testing.T) {
 	absent := NamedPolicy{Name: "absent", Policy: &sec.TrafficPolicy{}}
 	empty := NamedPolicy{Name: "empty", Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{}}}
-	allow := NamedPolicy{Name: "allow", Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
-		Rules: []*sec.TrafficPolicy_Rule{{Action: sec.TrafficPolicy_ALLOW, Match: &sec.TrafficPolicy_Match{}}},
-	}}}
-	deny := NamedPolicy{Name: "deny", Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
-		Rules: []*sec.TrafficPolicy_Rule{{Action: sec.TrafficPolicy_DENY, Match: &sec.TrafficPolicy_Match{}}},
-	}}}
+	allow := NamedPolicy{
+		Name: "allow",
+		Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
+			Rules: []*sec.TrafficPolicy_Rule{{Action: sec.TrafficPolicy_ALLOW, Match: &sec.TrafficPolicy_Match{}}},
+		}},
+	}
+	deny := NamedPolicy{
+		Name: "deny",
+		Policy: &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
+			Rules: []*sec.TrafficPolicy_Rule{{Action: sec.TrafficPolicy_DENY, Match: &sec.TrafficPolicy_Match{}}},
+		}},
+	}
 	missing := NamedPolicy{Name: "missing"}
 	for _, tc := range []struct {
 		name      string
