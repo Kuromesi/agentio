@@ -130,6 +130,8 @@ func TestEnvoyServiceEntryAuthorization(t *testing.T) {
 								},
 							}}},
 					}
+					// Supply the restored address missing from this direct HTTP listener.
+					stream.Request.OriginalDestination = replacement
 					return egressauthz.Authorize(ctx, cfg, dnsClient, stream)
 				}
 			}
@@ -425,6 +427,9 @@ func TestEnvoyServiceEntryAuthorization(t *testing.T) {
 				check("denied.invalid", "/rewrite", 403, "")
 				check("denied.invalid", "/explicit", 200, "127.0.0.3")
 				check("unmapped.invalid", "/no-service", 500, "")
+				check(net.JoinHostPort("localhost", strconv.Itoa(port)), "/", 200, "127.0.0.1")
+				check(net.JoinHostPort("multiple.invalid", strconv.Itoa(port)), "/", 200, "127.0.0.3")
+				check(net.JoinHostPort("127.0.0.2", strconv.Itoa(port)), "/", 403, "")
 				if noServiceCalls.Load() != 1 {
 					t.Fatal("absent candidate rejected before normal authorization")
 				}
@@ -508,12 +513,17 @@ func (f *serviceEntryTestFilter) OnRequestHeaders(ctx context.Context, st *filte
 	}
 }
 
-// Only localhost has a DNS record in the authorization fixture.
 type serviceEntryDNS struct{}
 
 func (serviceEntryDNS) Lookup(_ context.Context, host string, _ dns.Family) (dns.LookupResult, error) {
 	if host == "localhost" {
 		return dns.LookupResult{Addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")}, TTL: time.Minute}, nil
+	}
+	if host == "multiple.invalid" {
+		return dns.LookupResult{
+			Addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("127.0.0.3")},
+			TTL:       time.Minute,
+		}, nil
 	}
 	return dns.LookupResult{}, fmt.Errorf("no test DNS record for %s", host)
 }

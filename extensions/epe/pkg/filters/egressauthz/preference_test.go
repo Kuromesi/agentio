@@ -149,52 +149,68 @@ func TestScenario_EgressAuthzDeniedRouteDoesNotFallBack(t *testing.T) {
 	)
 }
 
-func TestScenario_EgressAuthzPrefersAllowedOriginalDestination(t *testing.T) {
-	client := dns.NewClient(nil, time.Second)
-	if err := client.SetRecord("api.example.com", []netip.Addr{netip.MustParseAddr("192.0.2.1")}); err != nil {
-		t.Fatal(err)
-	}
+func TestScenario_EgressAuthzOriginalMustBelongToHost(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
+		answers  []string
 		original string
 		want     string
 		port     int32
 	}{
-		{"allowed original is kept", "192.0.2.2:443", "192.0.2.2:443", 443},
-		{"denied original falls back to DNS", "192.0.2.99:443", "192.0.2.1:443", 443},
-		{"original port is authorized", "192.0.2.2:8443", "192.0.2.2:8443", 8443},
+		{name: "matching original is preferred", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.2:443", want: "192.0.2.2:443", port: 443},
+		{name: "allowed unrelated original is replaced", answers: []string{"192.0.2.1"}, original: "192.0.2.2:443", want: "192.0.2.1:443", port: 443},
+		{name: "denied matching original uses allowed answer", answers: []string{"192.0.2.99", "192.0.2.1"}, original: "192.0.2.99:443", want: "192.0.2.1:443", port: 443},
+		{name: "allowed original cannot rescue denied answers", answers: []string{"192.0.2.99"}, original: "192.0.2.2:443", port: 443},
+		{name: "original port is authorized", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.2:8443", want: "192.0.2.2:8443", port: 8443},
+		{name: "replacement keeps routing port", answers: []string{"192.0.2.1"}, original: "192.0.2.2:8443", want: "192.0.2.1:8443", port: 8443},
+		{name: "mapped original matches IPv4 answer", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "[::ffff:192.0.2.2]:443", want: "192.0.2.2:443", port: 443},
+		{name: "IPv6 original is preferred", answers: []string{"2001:db8::1", "2001:db8::2"}, original: "[2001:db8::2]:443", want: "[2001:db8::2]:443", port: 443},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			client := dns.NewClient(nil, time.Second)
+			addresses := make([]netip.Addr, 0, len(tc.answers))
+			for _, ip := range tc.answers {
+				addresses = append(addresses, netip.MustParseAddr(ip))
+			}
+			if err := client.SetRecord("api.example.com", addresses); err != nil {
+				t.Fatal(err)
+			}
 			cfg := &atomic.Pointer[egressauthz.Config]{}
-			publishPolicies(t, cfg, egressauthz.Policy{Name: "allow",
+			publishPolicies(t, cfg, egressauthz.Policy{
+				Name: "allow",
 				Rules: []egressauthz.Rule{
-					authRule(
-						egressauthz.Allow,
-						"192.0.2.1/32",
-						443,
-					),
+					authRule(egressauthz.Allow, "192.0.2.1/32", uint16(tc.port)),
 					authRule(egressauthz.Allow, "192.0.2.2/32", uint16(tc.port)),
+					authRule(egressauthz.Allow, "2001:db8::/64", uint16(tc.port)),
 				}})
 			h := authHarness(t, client, cfg)
-			h.Run(t, authRequest("api.example.com:443").DestinationAddress(tc.original).DestinationPort(tc.port)).
-				RequireUpstream(t, tc.want)
+			v := h.Run(t, authRequest("api.example.com:443").DestinationAddress(tc.original).DestinationPort(tc.port))
+			if tc.want == "" {
+				requireDenied(t, v)
+			} else {
+				v.RequireUpstream(t, tc.want)
+			}
 		})
 	}
 }
 
-func TestEgressAuthzAllowedOriginalDoesNotRequireDNS(t *testing.T) {
-	cfg := egressauthz.Config{
-		Family: dns.IPv4Only,
-		Policies: []egressauthz.Policy{
-			{Name: "allow", Rules: []egressauthz.Rule{authRule(egressauthz.Allow, "2001:db8::2/128", 8443)}},
-		},
-	}
-	target, reply, err := egressauthz.Authorize(t.Context(), cfg, nil, &filter.Stream{Request: httpreq.HTTPRequest{
-		Host:                "unresolved.invalid",
-		Port:                443,
-		OriginalDestination: netip.MustParseAddrPort("[2001:db8::2]:8443"),
-	}})
-	if err != nil || reply != nil || target == nil || target.Address.String() != "[2001:db8::2]:8443" {
+func TestEgressAuthzOriginalMustMatchLiteralHost(t *testing.T) {
+	cfg := egressauthz.Config{Policies: []egressauthz.Policy{{
+		Name: "allow",
+		Rules: []egressauthz.Rule{
+			authRule(egressauthz.Allow, "192.0.2.0/24", 443),
+		}}}}
+	target, reply, err := egressauthz.Authorize(
+		t.Context(),
+		cfg,
+		dns.NewClient(nil, time.Second),
+		&filter.Stream{Request: httpreq.HTTPRequest{
+			Host:                "192.0.2.1",
+			Port:                443,
+			OriginalDestination: netip.MustParseAddrPort("192.0.2.2:443"),
+		}},
+	)
+	if err != nil || reply != nil || target == nil || target.Address.String() != "192.0.2.1:443" {
 		t.Fatalf("target=%v reply=%v err=%v", target, reply, err)
 	}
 }

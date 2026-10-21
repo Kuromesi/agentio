@@ -364,7 +364,7 @@ func TestServiceEntryTargetAuthorization(t *testing.T) {
 		{name: "invalid input fails locally", candidate: "invalid", status: 500},
 		{name: "invalid input fails with authorization disabled", candidate: "invalid", disabled: true, status: 500},
 		{name: "disabled does not publish candidate", candidate: "192.0.2.99:8443", disabled: true},
-		{name: "absent uses original", want: "192.0.2.1:8443"},
+		{name: "absent target requires Host resolution", status: 500},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			regs := []filter.Registration{fixedRegHeaders("mutation", tc.action)}
