@@ -91,6 +91,14 @@ func (s *Server) HandleRequestHeaders(
 	peer, req := attributes.Extract(ctx, headers, attrs)
 	st.Peer = peer
 	st.Request = req
+	target, err := attributes.ExtractUpstream(attrs)
+	if err != nil {
+		return []*extProcPb.ProcessingResponse{immediateFromReply(filter.Reply{
+			Status:  500,
+			Details: "epe_invalid_route_upstream",
+		})}, nil
+	}
+	st.Upstream = target
 	isConnect := strings.EqualFold(req.Method, "CONNECT")
 
 	if !peer.Valid() {

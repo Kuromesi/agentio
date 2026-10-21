@@ -147,7 +147,7 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		t.Error("CONNECT local rate-limit filter not found")
 	}
 	forwardHCM := findHCM(t, listeners[MainForward])
-	if hasHTTPFilter(forwardHCM, staticEndpointFilterStateFilter) {
+	if hasHTTPFilter(forwardHCM, staticEndpointCandidateFilter) {
 		t.Fatalf("main_forward without service entries gained static endpoint filter: %v", httpFilterNames(forwardHCM))
 	}
 	if !hasHTTPFilter(forwardHCM, "envoy.filters.http.rbac") ||
@@ -344,11 +344,11 @@ func TestBuildStaticEgressServiceEntriesPreserveDestinationPort(t *testing.T) {
 	for _, listenerName := range []string{MainInternal, MainForward} {
 		hcm := findHCM(t, listeners[listenerName])
 		filterNames := httpFilterNames(hcm)
-		stateIndex := slices.Index(filterNames, "agentio.static_endpoint_filter_state")
+		stateIndex := slices.Index(filterNames, staticEndpointCandidateFilter)
 		dfpIndex := slices.Index(filterNames, "envoy.filters.http.dynamic_forward_proxy")
-		if stateIndex < 0 || dfpIndex != stateIndex+1 {
+		if stateIndex < 0 || dfpIndex != stateIndex+2 || filterNames[stateIndex+1] != "agentio.route_upstream" {
 			t.Fatalf(
-				"%s HTTP filters = %v, want static endpoint state immediately before DFP",
+				"%s HTTP filters = %v, want endpoint capture and target consumption before DFP",
 				listenerName,
 				filterNames,
 			)

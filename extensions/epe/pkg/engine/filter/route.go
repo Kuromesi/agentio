@@ -24,7 +24,7 @@ import (
 type RouteMutation struct {
 	// Upstream is nil when the upstream target is unchanged.
 	Upstream *UpstreamTarget
-	// ClearCache requests route re-evaluation. Requests from multiple mutations
+	// ClearCache invalidates Envoy's route cache without replacing Upstream. Requests from multiple mutations
 	// are combined with OR. Setting Upstream does not imply ClearCache.
 	ClearCache bool
 }

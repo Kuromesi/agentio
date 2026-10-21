@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"slices"
 
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -66,16 +67,16 @@ func Authorize(
 		}
 		return denied()
 	}
-	// Prefer the restored destination when it is allowed, even if DNS would
-	// return another address. An unavailable or denied original target may fall
-	// back to host resolution; it does not have an explicit route's fixed intent.
-	if address := stream.Request.OriginalDestination; address.IsValid() && evaluate(address).Action == Allow {
-		address = netip.AddrPortFrom(address.Addr().Unmap(), address.Port())
-		return selectTarget(address), nil, nil
-	}
 	addresses, err := resolveDNS(ctx, client, stream, cfg.Family)
 	if err != nil {
 		return nil, nil, fmt.Errorf("egressauthz: %w", err)
+	}
+	if original := stream.Request.OriginalDestination; original.IsValid() &&
+		slices.Contains(addresses, original.Addr().Unmap()) {
+		address := netip.AddrPortFrom(original.Addr().Unmap(), uint16(stream.Request.Port))
+		if evaluate(address).Action == Allow {
+			return selectTarget(address), nil, nil
+		}
 	}
 	// The same request snapshot governs DNS completion and every candidate.
 	// Publishing a new Config cannot change this invocation's policy decisions.

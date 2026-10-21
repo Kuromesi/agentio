@@ -567,12 +567,9 @@ func (w *requestWalk) streamView() (*filter.Stream, error) {
 	w.viewed = len(w.pending)
 	if w.view == nil || route != w.route {
 		w.view = w.st
-		if route != nil || w.st.Upstream != nil {
+		if route != nil && route.Upstream != nil {
 			view := *w.st
-			view.Upstream = nil
-			if route != nil {
-				view.Upstream = route.Upstream
-			}
+			view.Upstream = route.Upstream
 			w.view = &view
 		}
 		w.route = route
@@ -641,7 +638,7 @@ func (e *Engine) EvalRequestBody(
 	walk := requestWalk{actionWalk: newActionWalk(st), scope: prior.ResponseScope}
 	walk.pending = append([]filter.Mutation(nil), prior.pending...)
 	view := *st
-	if prior.Route != nil {
+	if prior.Route != nil && prior.Route.Upstream != nil {
 		view.Upstream = prior.Route.Upstream
 	}
 	var err error

@@ -32,14 +32,17 @@ const (
 	FilterStateLocalPrincipal    = "agentio.local.principal"
 	// FilterStateSNIPolicy must match POLICY_KEY in extensions/envoy/sni-policy.
 	FilterStateSNIPolicy = "agentio.sni.policy"
+	// FilterStateRouteUpstream holds the gateway-selected IP:port for this request.
+	FilterStateRouteUpstream = "agentio.route.upstream"
 )
 
-// ExtProc attributes requested by Envoy and consumed by Porter.
+// ExtProc attributes requested by Envoy and consumed by Porter and EPE.
 const (
 	ExtProcAttributesKey       = "envoy.filters.http.ext_proc"
 	AttributeWorkloadLabels    = "filter_state['" + FilterStateWorkloadLabels + "']"
 	AttributeWorkloadName      = "filter_state['" + FilterStateWorkloadName + "']"
 	AttributeWorkloadNamespace = "filter_state['" + FilterStateWorkloadNamespace + "']"
+	AttributeRouteUpstream     = "filter_state['" + FilterStateRouteUpstream + "']"
 	AttributeSandboxID         = "filter_state['" + FilterStateSandboxID + "']"
 	AttributePeerCertificate   = "filter_state['" + FilterStatePeerCertificate + "']"
 	AttributePeerIP            = "filter_state['" + FilterStatePeerIP + "']"

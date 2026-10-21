@@ -111,7 +111,11 @@ func TestInputFailuresDoNotProduceMutations(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target, _, err := tc.input(context.Background(), &filter.Stream{
-				Request: httpreq.HTTPRequest{Host: tc.host, Port: tc.port},
+				Request: httpreq.HTTPRequest{
+					Host:                tc.host,
+					Port:                tc.port,
+					OriginalDestination: netip.MustParseAddrPort("192.0.2.1:443"),
+				},
 			})
 			if err == nil || target != nil {
 				t.Fatalf("target=%+v, err=%v", target, err)
