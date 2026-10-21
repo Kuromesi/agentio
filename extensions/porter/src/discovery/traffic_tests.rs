@@ -219,6 +219,29 @@ async fn disabled_policy_preserves_identity_and_skips_policy_demands() {
 async fn policy_logs_identify_destination_binding_and_final_decision() {
     use tracing::instrument::WithSubscriber;
 
+    // tracing's callsite interest cache is process-wide. Other parallel tests can
+    // first register the policy callsite without this test's local subscriber.
+    // Isolate log capture while keeping the rest of the suite parallel.
+    const ISOLATED: &str = "PORTER_POLICY_LOG_TEST_ISOLATED";
+    if std::env::var_os(ISOLATED).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "discovery::traffic_tests::policy_logs_identify_destination_binding_and_final_decision",
+                "--nocapture",
+            ])
+            .env(ISOLATED, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated policy logging test failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
     let output = tempfile::tempfile().unwrap();
     let subscriber = tracing_subscriber::fmt()
         .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
