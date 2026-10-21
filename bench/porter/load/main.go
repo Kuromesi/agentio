@@ -62,6 +62,7 @@ import (
 
 	ext "github.com/openkruise/agentio/api/extensions/v1"
 	sandbox "github.com/openkruise/agentio/api/sandbox/v1"
+	security "github.com/openkruise/agentio/api/security/v1"
 	workload "github.com/openkruise/agentio/api/workload/v1"
 	loadgen "github.com/openkruise/agentio/bench/load"
 	"github.com/openkruise/agentio/pkg/features"
@@ -153,9 +154,19 @@ func instanceExtension(src model.SourceRef) *anypb.Any {
 }
 
 var instanceWireName bool
+var trafficPolicies, trafficRules, policySharing int
+
+func trafficReferences(i int) []string {
+	names := make([]string, trafficPolicies)
+	for j := range names {
+		names[j] = policy((i/policySharing)*trafficPolicies + j)
+	}
+	return names
+}
 
 func workloadResource(i, revision int) model.Resource {
 	src := source(i)
+	refs := trafficReferences(i)
 	w := &workload.Workload{
 		Uid:            uid(i),
 		Name:           fmt.Sprintf("workload-%05d", i),
@@ -173,7 +184,7 @@ func workloadResource(i, revision int) model.Resource {
 			{Name: "sni-traffic-policy", Config: sniPolicy(ext.SniAction_SNI_ACTION_TLS_TERMINATION)},
 			{
 				Name:   "traffic-policy-reference",
-				Config: anyOf(&ext.PolicyReference{TypeUrl: model.TrafficPolicyType}),
+				Config: anyOf(&ext.PolicyReference{TypeUrl: model.TrafficPolicyType, ResourceNames: refs}),
 			},
 			{
 				Name:   "security-profile-reference",
@@ -194,11 +205,12 @@ func workloadResource(i, revision int) model.Resource {
 		[]string{"/" + ip(i), src.WorkloadAlias()},
 		model.ResourceFacts{
 			Workload: &model.WorkloadResourceFacts{
-				Namespace:   "perf",
-				WorkloadUID: uid(i),
-				Source:      src,
-				Principal:   p,
-				NodeName:    w.Node,
+				Namespace:         "perf",
+				WorkloadUID:       uid(i),
+				Source:            src,
+				Principal:         p,
+				NodeName:          w.Node,
+				TrafficPolicyRefs: refs,
 			},
 		},
 	)
@@ -225,6 +237,34 @@ func resources(n int) []model.Resource {
 		)
 		must(e)
 		out = append(out, r)
+	}
+	if trafficPolicies > 0 {
+		for group := range (n + policySharing - 1) / policySharing {
+			for j := range trafficPolicies {
+				p := &security.TrafficPolicy{Egress: &security.TrafficPolicy_RuleSet{}}
+				for k := range trafficRules {
+					port := uint32(10000 + k)
+					if j == trafficPolicies-1 && k == trafficRules-1 {
+						port = 443
+					}
+					p.Egress.Rules = append(p.Egress.Rules, &security.TrafficPolicy_Rule{
+						Action: security.TrafficPolicy_ALLOW,
+						Match: &security.TrafficPolicy_Match{
+							Ports: []*security.TrafficPolicy_PortMatch{{
+								Protocol: security.TrafficPolicy_TCP,
+								Port:     &port,
+							}},
+						},
+					})
+				}
+				r, e := model.NewResource(
+					model.ResourceKey{TypeURL: model.TrafficPolicyType, Name: policy(group*trafficPolicies + j)},
+					"", anyOf(p), nil, model.ResourceFacts{},
+				)
+				must(e)
+				out = append(out, r)
+			}
+		}
 	}
 	return out
 }
@@ -303,6 +343,9 @@ func cpu() float64 {
 func server(args []string) {
 	f := flag.NewFlagSet("server", flag.ExitOnError)
 	n := f.Int("resources", 50000, "")
+	f.IntVar(&trafficPolicies, "traffic-policies", 0, "ordered TrafficPolicies per Workload")
+	f.IntVar(&trafficRules, "traffic-rules", 16, "rules per policy; only the final policy's final rule matches")
+	f.IntVar(&policySharing, "policy-sharing", 100, "consecutive Workloads sharing one policy set")
 	f.BoolVar(
 		&instanceWireName,
 		"instance-wire-name",
@@ -310,6 +353,9 @@ func server(args []string) {
 		"diagnostic: make the demand alias the canonical wire name",
 	)
 	must(f.Parse(args))
+	if trafficPolicies < 0 || trafficRules < 1 || trafficRules > 55536 || policySharing < 1 {
+		log.Fatal("invalid TrafficPolicy inventory parameters")
+	}
 	if *n < 50000 {
 		log.Fatal("at least 50000 workloads required")
 	}
@@ -345,9 +391,10 @@ func server(args []string) {
 		},
 		features.ClientQueueSize,
 		map[string]xds.ResourceGenerator{
-			model.AddressType:  xds.WorkloadGenerator{},
-			model.WorkloadType: xds.WorkloadGenerator{},
-			model.SandboxType:  xds.SandboxGenerator{},
+			model.AddressType:       xds.WorkloadGenerator{},
+			model.WorkloadType:      xds.WorkloadGenerator{},
+			model.SandboxType:       xds.SandboxGenerator{},
+			model.TrafficPolicyType: xds.TrafficPolicyGenerator{},
 		},
 		features.PushConcurrency,
 		features.RequestRateLimit,

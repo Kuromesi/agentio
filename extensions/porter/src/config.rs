@@ -23,6 +23,7 @@ pub struct Config {
     pub request_timeout: Duration,
     pub worker_threads: usize,
     pub logging: telemetry::Config,
+    pub enable_traffic_policy: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -96,6 +97,11 @@ fn construct(args: Args, read_env: impl Fn(&str) -> Result<Option<String>>) -> R
     if worker_threads == 0 {
         bail!("TOKIO_WORKER_THREADS must be positive");
     }
+    let enable_traffic_policy = read_env("ENABLE_TRAFFIC_POLICY")?
+        .map(|value| value.parse::<bool>())
+        .transpose()
+        .context("invalid ENABLE_TRAFFIC_POLICY: expected true or false")?
+        .unwrap_or(false);
     let logging = telemetry::Config::new(
         read_env("AGENTIO_LOG_LEVEL")?.as_deref().unwrap_or("info"),
         read_env("AGENTIO_LOG_FORMAT")?.as_deref().unwrap_or("text"),
@@ -142,6 +148,7 @@ fn construct(args: Args, read_env: impl Fn(&str) -> Result<Option<String>>) -> R
         request_timeout: args.request_timeout,
         worker_threads,
         logging,
+        enable_traffic_policy,
     })
 }
 
@@ -178,6 +185,25 @@ mod tests {
         assert_eq!(config.cache.max_entries, 10_000);
         assert_eq!(config.worker_threads, 2);
         assert_eq!(config.grpc_address.to_string(), "127.0.0.1:9002");
+    }
+
+    #[test]
+    fn traffic_policy_requires_explicit_opt_in() {
+        assert!(!config(&[], &[]).unwrap().enable_traffic_policy);
+        assert!(
+            !config(&[], &[("ENABLE_TRAFFIC_POLICY", "false")])
+                .unwrap()
+                .enable_traffic_policy
+        );
+        assert!(
+            config(&[], &[("ENABLE_TRAFFIC_POLICY", "true")])
+                .unwrap()
+                .enable_traffic_policy
+        );
+        let error = config(&[], &[("ENABLE_TRAFFIC_POLICY", "invalid")])
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("ENABLE_TRAFFIC_POLICY"));
     }
 
     #[test]

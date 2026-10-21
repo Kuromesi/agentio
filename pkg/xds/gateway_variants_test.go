@@ -124,7 +124,7 @@ func TestGatewayVariantsRemainIsolatedAcrossSnapshotUpdates(t *testing.T) {
 }
 
 func TestGatewayVariantSubscriptions(t *testing.T) {
-	for _, typ := range []string{model.AddressType, model.WorkloadAuthorizationType, model.TrafficPolicyType, model.ProxyConfigType} {
+	for _, typ := range []string{model.AddressType, model.WorkloadAuthorizationType, model.ProxyConfigType} {
 		if known, allowed := typeAccess(model.ClientEgressGateway, typ); !known || !allowed {
 			t.Fatalf("legacy subscription denied: %s", typ)
 		}
@@ -133,7 +133,7 @@ func TestGatewayVariantSubscriptions(t *testing.T) {
 		}
 	}
 	for _, class := range []model.ClientClass{model.ClientEgressGateway, model.ClientAgentioEgress} {
-		for _, typ := range []string{model.WorkloadType, model.SandboxType, model.ClusterType, model.EndpointType, model.ListenerType, model.RouteType, model.SecretType, model.ExtensionConfigurationType} {
+		for _, typ := range []string{model.WorkloadType, model.TrafficPolicyType, model.SandboxType, model.ClusterType, model.EndpointType, model.ListenerType, model.RouteType, model.SecretType, model.ExtensionConfigurationType} {
 			if _, allowed := typeAccess(class, typ); !allowed {
 				t.Fatalf("%s cannot subscribe to %s", class, typ)
 			}

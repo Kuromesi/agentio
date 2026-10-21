@@ -192,3 +192,83 @@ func TestDemandTrafficPolicyStillRequiresWorkloadReference(t *testing.T) {
 		t.Fatal("denied demand removed earlier policy")
 	}
 }
+
+func TestTrafficPolicyEvictionReconcilesOnlyNewDemands(t *testing.T) {
+	a := sharedTrafficResource(t, "a", securityv1.TrafficPolicy_ALLOW)
+	b := sharedTrafficResource(t, "b", securityv1.TrafficPolicy_ALLOW)
+	c := sharedTrafficResource(t, "c", securityv1.TrafficPolicy_ALLOW)
+	orphan := sharedTrafficResource(t, "orphan", securityv1.TrafficPolicy_ALLOW)
+	workload := workloadWithTrafficRefs(t, addressResource(t, "w", "w"), "a", "b", "c")
+	recorder := &demandRecordingGenerator{inner: TrafficPolicyGenerator{}}
+	scope := gatewayScope()
+	scope.Class = model.ClientAgentioEgress
+	server := newTestServerWithGenerators(t, scope, []model.Resource{a, b, c, orphan, workload},
+		map[string]ResourceGenerator{model.TrafficPolicyType: recorder})
+	stream := newFakeStream(t.Context(), 1)
+	subscription := server.resources.Subscribe(t.Context())
+	watches := map[string]*watchState{}
+	send := func(subscribed, unsubscribed []string) *discoveryv3.DeltaDiscoveryResponse {
+		t.Helper()
+		req := nodeRequest(model.TrafficPolicyType, subscribed...)
+		req.ResourceNamesUnsubscribe = unsubscribed
+		if err := server.server.handleRequest(stream, scope, log, watches, subscription, req); err != nil {
+			t.Fatal(err)
+		}
+		responses := stream.sent()
+		return responses[len(responses)-1]
+	}
+	send([]string{"a", "b"}, nil)
+	response := send([]string{"c", "missing", "orphan"}, []string{"a"})
+	if !slices.Equal(recorder.last.Subscription.Names(), []string{"c", "missing", "orphan"}) {
+		t.Fatalf("eviction reselected retained policies: %v", recorder.last.Subscription.Names())
+	}
+	if !slices.Equal(resourceNames(response), []string{"c"}) ||
+		!slices.Equal(response.RemovedResources, []string{"missing", "orphan"}) {
+		t.Fatalf("eviction lost new demand or widened scope: %v", response)
+	}
+	watch := watches[model.TrafficPolicyType]
+	if _, retained := watch.sent["a"]; retained || watch.sent["b"] != b.Hash || watch.sent["c"] != c.Hash {
+		t.Fatalf("eviction corrupted sent versions: %v", watch.sent)
+	}
+	response = send(nil, []string{"c"})
+	if len(recorder.last.Subscription.Names()) != 0 || len(response.Resources) != 0 ||
+		len(response.RemovedResources) != 0 || watch.sent["b"] != b.Hash {
+		t.Fatalf("unsubscribe-only request must preserve unrelated policies without regeneration: %v", response)
+	}
+	response = send([]string{"c"}, nil)
+	if !slices.Equal(resourceNames(response), []string{"c"}) {
+		t.Fatalf("unchanged policy was not returned after eviction: %v", response)
+	}
+	// A retained subscription must still receive subsequent policy updates.
+	changed := sharedTrafficResource(t, "b", securityv1.TrafficPolicy_DENY)
+	before := server.resources.Snapshot()
+	change := model.ResourceChange{Key: b.Key, Old: &b, New: &changed}
+	after, _, err := before.Apply([]model.ResourceChange{change})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.resources.publish(after)
+	if err := server.server.pushUpdate(stream, scope, log, watches,
+		updateBetween(before, after, []model.ResourceChange{change})); err != nil {
+		t.Fatal(err)
+	}
+	responses := stream.sent()
+	response = responses[len(responses)-1]
+	if !slices.Equal(resourceNames(response), []string{"b"}) || watch.sent["b"] != changed.Hash {
+		t.Fatalf("retained policy stopped receiving updates: %v", response)
+	}
+}
+
+func TestTrafficPolicyEvictionPreservesExpandedReconciliation(t *testing.T) {
+	a := sharedTrafficResource(t, "a", securityv1.TrafficPolicy_ALLOW)
+	a.Aliases = []string{"alias-a"}
+	b := sharedTrafficResource(t, "b", securityv1.TrafficPolicy_ALLOW)
+	snapshot := selectionSnapshot(t, []model.Resource{a, b})
+	for _, unsubscribed := range []string{"a", "alias-a", "*", "missing", "b"} {
+		// b also appears in subscribed: unsubscribe precedence stays on the full path.
+		if _, ok := demandReconciliationView(snapshot, model.TrafficPolicyType,
+			gatewayScope(), &watchState{}, []string{"b"}, []string{unsubscribed}); ok {
+			t.Fatalf("unsubscribe %q must retain full reconciliation semantics", unsubscribed)
+		}
+	}
+}

@@ -154,7 +154,7 @@ impl Client {
                 warn!(
                     parent: &span,
                     error = %format_args!("{error:#}"),
-                    retry_ms = delay.as_millis(),
+                    retry_ms = delay.as_millis() as u64,
                     "ADS disconnected"
                 );
             }

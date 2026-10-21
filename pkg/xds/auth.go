@@ -40,6 +40,7 @@ func typeAccess(class model.ClientClass, typeURL string) (known, allowed bool) {
 	if class == model.ClientAgentioEgress {
 		switch typeURL {
 		case model.WorkloadType,
+			model.TrafficPolicyType,
 			model.SandboxType,
 			model.ClusterType,
 			model.EndpointType,

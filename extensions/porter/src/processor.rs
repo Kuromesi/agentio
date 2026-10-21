@@ -13,12 +13,13 @@ use std::{
 use futures_util::Stream;
 use prost_types::{Struct, value::Kind};
 use tonic::{Request, Response, Status, Streaming};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     discovery::{Client, DemandError},
     identity::certificate_instance,
     metrics::{ConnectResult, Metrics, Protocol},
+    traffic::{self, Target},
     view::{self, ResourceKind, View},
     wire::extproc::{
         self, external_processor_server::ExternalProcessor,
@@ -31,6 +32,7 @@ pub struct Processor {
     pub client: Arc<Client>,
     pub cluster_id: String,
     pub timeout: Duration,
+    pub enable_traffic_policy: bool,
 }
 
 fn attribute<'a>(attributes: Option<&'a Struct>, key: &str) -> &'a str {
@@ -62,7 +64,7 @@ impl Processor {
         message: extproc::ProcessingRequest,
     ) -> Result<extproc::ProcessingResponse, Status> {
         let started = Instant::now();
-        let udp = {
+        let (udp, target) = {
             let headers = message
                 .request_headers
                 .ok_or_else(|| Status::invalid_argument("CONNECT requires request headers"))?;
@@ -87,7 +89,14 @@ impl Processor {
                     "expected CONNECT with an authority",
                 ));
             }
-            udp
+            let target = if self.enable_traffic_policy {
+                Some(Target::parse(&authority, udp).map_err(|error| {
+                    Status::invalid_argument(format!("invalid CONNECT target: {error}"))
+                })?)
+            } else {
+                None
+            };
+            (udp, target)
         };
         let mut measurement = ConnectMeasurement {
             metrics: self.client.metrics.clone(),
@@ -108,7 +117,7 @@ impl Processor {
                 peer_ip,
                 principal,
                 sandbox_id,
-                udp,
+                (udp, target),
                 request_deadline,
             ),
         )
@@ -147,7 +156,7 @@ impl Processor {
         peer_ip: &str,
         principal: &str,
         sandbox_id: &str,
-        udp: bool,
+        (udp, target): (bool, Option<Target>),
         request_deadline: tokio::time::Instant,
     ) -> Result<extproc::ProcessingResponse, DemandError> {
         let instance = match certificate_instance(certificate) {
@@ -203,8 +212,60 @@ impl Processor {
                 debug!(reason = "sandbox_workload_mismatch", "CONNECT denied");
                 return Ok(denied());
             }
+            if let Some(target) = target {
+                let evaluation = traffic::evaluate(sandbox.traffic_policy.iter(), target);
+                if !evaluation.allowed {
+                    log_policy(
+                        &workload.uid,
+                        sandbox_id,
+                        target,
+                        "sandbox",
+                        None,
+                        &evaluation,
+                    );
+                    return Ok(denied());
+                }
+            }
             if !udp {
                 rules.extend(view::project_rules(&sandbox.rules));
+            }
+        }
+        if let Some(target) = target {
+            let Some(references) = &workload.traffic_policies else {
+                debug!(reason = "traffic_binding_missing", "CONNECT denied");
+                return Ok(denied());
+            };
+            // Resolve the complete stage before an early ALLOW can take effect.
+            let policies = self
+                .client
+                .demand_many(
+                    ResourceKind::TrafficPolicy,
+                    references,
+                    Some(request_deadline),
+                )
+                .await?;
+            let evaluation = traffic::evaluate(
+                policies.iter().map(|value| {
+                    let View::TrafficPolicy(policy) = value.as_ref() else {
+                        unreachable!("typed TrafficPolicy watch")
+                    };
+                    policy
+                }),
+                target,
+            );
+            let policy = evaluation
+                .matched_rule
+                .map(|(index, _)| references[index].as_str());
+            log_policy(
+                &workload.uid,
+                sandbox_id,
+                target,
+                "workload",
+                policy,
+                &evaluation,
+            );
+            if !evaluation.allowed {
+                return Ok(denied());
             }
         }
         let mut metadata = BTreeMap::new();
@@ -240,6 +301,34 @@ impl Processor {
             }),
         })
     }
+}
+
+fn log_policy(
+    workload: &str,
+    sandbox_id: &str,
+    target: Target,
+    stage: &str,
+    policy: Option<&str>,
+    evaluation: &traffic::Evaluation,
+) {
+    info!(
+        target: "agentio_porter::policy",
+        event = "traffic_policy_decision",
+        workload,
+        sandbox_id,
+        destination = %target.address,
+        protocol = if target.protocol == crate::wire::agentio::security::traffic_policy::Protocol::Udp {
+            "udp"
+        } else {
+            "tcp"
+        },
+        stage,
+        policy,
+        rule_index = evaluation.matched_rule.map(|(_, index)| index),
+        action = if evaluation.allowed { "allow" } else { "deny" },
+        reason = evaluation.reason,
+        "CONNECT policy evaluated"
+    );
 }
 
 struct ConnectMeasurement {
@@ -358,12 +447,12 @@ mod tests {
                 None,
             ),
             (
-                "authority retains lossy UTF-8 behavior",
+                "malformed authority is rejected",
                 vec![
                     header(":method", "CONNECT", b""),
                     header(":authority", "", b"\xff"),
                 ],
-                Some("tcp"),
+                None,
             ),
         ];
         for (name, selected_headers, expected_protocol) in cases {
@@ -378,9 +467,10 @@ mod tests {
                 ),
                 cluster_id: "Kubernetes".into(),
                 timeout: Duration::from_secs(1),
+                enable_traffic_policy: true,
             };
             let mut headers = vec![
-                header(":authority", "example:443", b""),
+                header(":authority", "192.0.2.1:443", b""),
                 header("unrelated", "", b"\xff"),
             ];
             headers.extend(selected_headers);
