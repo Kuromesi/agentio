@@ -350,6 +350,8 @@ epe:
   # Providers merge by name across environment defaults, base, and primary.
   # The environment provider is named agentio-default-credential-provider.
   config: null
+  # Requires a separately managed ClusterRoleBinding granting Secret list/watch.
+  watchSecretsAllNamespaces: false
   mode: disabled
   nameOverride: agentio-epe
   fullnameOverride: ""

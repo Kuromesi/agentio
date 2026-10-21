@@ -50,6 +50,7 @@ spec:
             - -epe-config={{ include "agentio.epe.fullname" . }}-config
             - -epe-config-primary={{ include "agentio.epe.fullname" . }}-config-primary
             - -epe-config-namespace={{ (include "agentio.namespace" .) }}
+            - -watch-secrets-all-namespaces={{ .Values.agentio.epe.watchSecretsAllNamespaces }}
             {{- if .Values.agentio.epe.tls.enabled }}
             {{- if $caMode }}
             - -tls-source=ca

@@ -17,6 +17,12 @@ package securityprofile
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
+	"github.com/openkruise/agentio/pkg/krt"
+	"github.com/openkruise/agentio/pkg/kube/kclient"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
@@ -34,8 +40,9 @@ type Options struct {
 	Filters       []filter.Registration
 	StreamLoggers []filter.StreamLogger
 	AuditRouter   *audit.Router
-	// Kube backs Secret reads in token plugins. Nil means an empty fake cluster.
+	// Kube backs the token Secret cache. Nil means an empty fake cluster.
 	Kube                   kube.Client
+	SecretNamespace        string
 	DisableResolutionProbe bool
 }
 
@@ -60,7 +67,17 @@ func New(t testing.TB, opts Options) *Harness {
 	// the resolver evaluates against an empty one.
 	if len(regs) == 0 {
 		var err error
-		deps := wiring.Deps{Kube: kubeClient}
+		namespace := opts.SecretNamespace
+		if namespace == "" {
+			namespace = "test-ns"
+		}
+		secrets := krt.NewFilteredInformer[*corev1.Secret](kubeClient, kclient.Filter{Namespace: namespace},
+			krt.WithStop(t.Context().Done()))
+		kubeClient.Run(t.Context().Done())
+		if !secrets.WaitUntilSynced(t.Context().Done()) {
+			t.Fatal("token Secret cache failed to sync")
+		}
+		deps := wiring.Deps{Secrets: tokentransform.NewSecretSource(secrets, namespace)}
 		if providers == nil {
 			providers = &extensionprovider.Registry{}
 			t.Cleanup(providers.Close)

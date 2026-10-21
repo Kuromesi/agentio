@@ -32,7 +32,6 @@ import (
 	"text/template"
 
 	"github.com/google/cel-go/cel"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
@@ -70,9 +69,8 @@ const (
 	SourceKindProvider SourceKind = "provider"
 )
 
-// ErrNoPermission is returned by a CredentialSource when the read is
-// denied for lack of RBAC permission. The filter treats it as "warn
-// (rate-limited) and pass through" regardless of FailStrategy.
+// ErrNoPermission reports a credential access denial. The filter logs a
+// rate-limited warning and applies the configured failure strategy.
 var ErrNoPermission = errors.New("tokentransform: no permission to read credential")
 
 // Ref is one fully-resolved credential fetch. The filter fills every
@@ -252,6 +250,6 @@ type STSProvider interface {
 type Deps struct {
 	// ProviderSource resolves credential references; production injects the registry.
 	ProviderSource CredentialSource
-	Kube           kubernetes.Interface
+	SecretSource   CredentialSource
 	Limiter        *Limiter
 }

@@ -20,7 +20,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
+
+	"github.com/openkruise/agentio/pkg/krt"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential"
 )
@@ -30,7 +31,13 @@ func secretObj(ns, name string, data map[string][]byte) *corev1.Secret {
 }
 
 func TestSecretSourceTokenKind(t *testing.T) {
-	src := NewSecretSource(k8sfake.NewClientset(secretObj("ns1", "s", map[string][]byte{"apiKey": []byte("k-1")})))
+	src := NewSecretSource(
+		krt.NewStaticCollection(
+			nil,
+			[]*corev1.Secret{secretObj("ns1", "s", map[string][]byte{"apiKey": []byte("k-1")})},
+		),
+		"ns1",
+	)
 	cred, err := src.Fetch(context.Background(), Ref{Kind: CredentialKindToken, Name: "s", Namespace: "ns1"})
 	if err != nil || cred.Token != "k-1" {
 		t.Fatalf("Fetch = %q, %v; want token k-1", cred.Token, err)
@@ -38,9 +45,9 @@ func TestSecretSourceTokenKind(t *testing.T) {
 }
 
 func TestSecretSourceSTSKind(t *testing.T) {
-	src := NewSecretSource(k8sfake.NewClientset(secretObj("ns1", "s", map[string][]byte{
+	src := NewSecretSource(krt.NewStaticCollection(nil, []*corev1.Secret{secretObj("ns1", "s", map[string][]byte{
 		"accessKeyId": []byte("ak"), "accessKeySecret": []byte("sk"), "securityToken": []byte("tok"),
-	})))
+	})}), "ns1")
 	cred, err := src.Fetch(context.Background(), Ref{Kind: CredentialKindSTS, Name: "s", Namespace: "ns1"})
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +58,10 @@ func TestSecretSourceSTSKind(t *testing.T) {
 }
 
 func TestSecretSourceMissingKey(t *testing.T) {
-	src := NewSecretSource(k8sfake.NewClientset(secretObj("ns1", "s", map[string][]byte{})))
+	src := NewSecretSource(
+		krt.NewStaticCollection(nil, []*corev1.Secret{secretObj("ns1", "s", map[string][]byte{})}),
+		"ns1",
+	)
 	_, err := src.Fetch(context.Background(), Ref{Kind: CredentialKindToken, Name: "s", Namespace: "ns1"})
 	if err == nil || !strings.Contains(err.Error(), `missing data key "apiKey"`) {
 		t.Fatalf("err = %v, want missing data key", err)
@@ -59,7 +69,7 @@ func TestSecretSourceMissingKey(t *testing.T) {
 }
 
 func TestSecretSourceNotFound(t *testing.T) {
-	src := NewSecretSource(k8sfake.NewClientset())
+	src := NewSecretSource(krt.NewStaticCollection[*corev1.Secret](nil, nil), "ns1")
 	_, err := src.Fetch(context.Background(), Ref{Kind: CredentialKindToken, Name: "gone", Namespace: "ns1"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want not found", err)
@@ -67,9 +77,9 @@ func TestSecretSourceNotFound(t *testing.T) {
 }
 
 func TestSecretSourceUnconfigured(t *testing.T) {
-	src := NewSecretSource(nil)
+	src := NewSecretSource(nil, "ns1")
 	if _, err := src.Fetch(context.Background(), Ref{}); err == nil {
-		t.Fatal("nil clientset must error")
+		t.Fatal("nil collection must error")
 	}
 }
 

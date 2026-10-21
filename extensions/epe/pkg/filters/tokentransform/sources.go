@@ -18,9 +18,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+
+	"github.com/openkruise/agentio/pkg/krt"
 )
 
 // Sources carries the two built-in credential sources. Fields are the
@@ -30,34 +29,32 @@ type Sources struct {
 	Provider CredentialSource
 }
 
-// SecretSource reads credentials from Kubernetes Secrets using the typed
-// clientset (one-shot Get; no informers).
+// SecretSource reads cached credentials within the configured watch scope.
 type SecretSource struct {
-	client kubernetes.Interface
+	secrets   krt.Collection[*corev1.Secret]
+	namespace string
 }
 
-// NewSecretSource returns a SecretSource backed by the given clientset.
-func NewSecretSource(c kubernetes.Interface) *SecretSource { return &SecretSource{client: c} }
+// NewSecretSource shares a collection across token filters. An empty namespace
+// permits references in all namespaces, matching the Kubernetes informer scope.
+func NewSecretSource(secrets krt.Collection[*corev1.Secret], namespace string) *SecretSource {
+	return &SecretSource{secrets: secrets, namespace: namespace}
+}
 
-// Fetch reads ref.Name in ref.Namespace. CredentialKindToken uses the "apiKey"
-// data key; CredentialKindSTS uses accessKeyId/accessKeySecret/securityToken.
-// Forbidden/Unauthorized map to ErrNoPermission, which the filter treats
-// as warn-and-pass-through.
-func (s *SecretSource) Fetch(ctx context.Context, ref Ref) (Credential, error) {
-	if s.client == nil {
+// Fetch reads apiKey for tokens or accessKeyId/accessKeySecret/securityToken for STS.
+func (s *SecretSource) Fetch(_ context.Context, ref Ref) (Credential, error) {
+	if s.secrets == nil {
 		return Credential{}, fmt.Errorf("secret credential source is not configured")
 	}
-	sec, err := s.client.CoreV1().Secrets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	if err != nil {
-		switch {
-		case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
-			return Credential{}, fmt.Errorf("%w: %v", ErrNoPermission, err)
-		case apierrors.IsNotFound(err):
-			return Credential{}, fmt.Errorf("secret %s/%s not found", ref.Namespace, ref.Name)
-		default:
-			return Credential{}, fmt.Errorf("get secret %s/%s: %w", ref.Namespace, ref.Name, err)
-		}
+	if s.namespace != "" && ref.Namespace != s.namespace {
+		return Credential{}, fmt.Errorf("%w: secret %s/%s is outside EPEConfig namespace %s",
+			ErrNoPermission, ref.Namespace, ref.Name, s.namespace)
 	}
+	cached := s.secrets.GetKey(ref.Namespace + "/" + ref.Name)
+	if cached == nil {
+		return Credential{}, fmt.Errorf("secret %s/%s not found", ref.Namespace, ref.Name)
+	}
+	sec := *cached
 	switch ref.Kind {
 	case CredentialKindToken:
 		v, err := secretValue(sec, "apiKey")

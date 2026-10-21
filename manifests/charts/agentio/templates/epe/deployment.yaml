@@ -48,6 +48,7 @@ spec:
             - -epe-config={{ include "epe.fullname" . }}-config
             - -epe-config-primary={{ include "epe.fullname" . }}-config-primary
             - -epe-config-namespace={{ .Release.Namespace }}
+            - -watch-secrets-all-namespaces={{ .Values.epe.watchSecretsAllNamespaces }}
             {{- if .Values.epe.tls.enabled }}
             {{- if $caMode }}
             - -tls-source=ca

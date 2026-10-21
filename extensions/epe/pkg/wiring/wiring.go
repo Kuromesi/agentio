@@ -23,8 +23,6 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/client-go/kubernetes"
-
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
@@ -34,26 +32,14 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/oauth2"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform/signers/aliyun" // registers the AliyunSTS signer
-	"github.com/openkruise/agentio/pkg/kube"
 )
 
 // Deps carries what plugin builders may need.
 type Deps struct {
 	// Providers resolves the effective EPEConfig. BuildFilters requires a registry.
 	Providers *extensionprovider.Registry
-	// Kube backs token filters' one-shot Secret reads. Nil disables Secret sources.
-	Kube kube.Client
-}
-
-// typedClientset returns the typed clientset for filters that do one-shot
-// reads, or nil when no cluster is wired. A nil kube.Client cannot be
-// dereferenced, and those filters already treat a nil clientset as
-// "no Secret source configured".
-func typedClientset(deps Deps) kubernetes.Interface {
-	if deps.Kube == nil {
-		return nil
-	}
-	return deps.Kube.Kube()
+	// Secrets supplies cached credentials within the configured watch scope.
+	Secrets tokentransform.CredentialSource
 }
 
 // BuildFilters returns the production action order used inside every rule.
@@ -71,7 +57,7 @@ func BuildFilters(deps Deps) ([]filter.Registration, error) {
 		return nil, fmt.Errorf("provider registry is required")
 	}
 	ttDeps := tokentransform.Deps{
-		Kube:           typedClientset(deps),
+		SecretSource:   deps.Secrets,
 		Limiter:        tokentransform.NewLimiter(time.Minute, nil),
 		ProviderSource: deps.Providers,
 	}

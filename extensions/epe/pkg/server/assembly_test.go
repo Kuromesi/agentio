@@ -37,7 +37,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
-	"github.com/openkruise/agentio/pkg/kube"
 )
 
 // listenLocal binds a loopback socket and keeps it, for handing to
@@ -82,7 +81,7 @@ spec:
 	lis := listenLocal(t)
 	providers := &extensionprovider.Registry{}
 	t.Cleanup(providers.Close)
-	deps := wiring.Deps{Kube: kube.NewFakeClient(), Providers: providers}
+	deps := wiring.Deps{Providers: providers}
 	regs, err := wiring.BuildFilters(deps)
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
