@@ -1163,7 +1163,8 @@
                           "filter_state['sandbox.labels']",
                           "source.address",
                           "destination.address",
-                          "destination.port"
+                          "destination.port",
+                          "filter_state['agentio.route.upstream']"
                         ],
                         "responseAttributes": [
                           "response.code"
@@ -1177,6 +1178,24 @@
                             ]
                           }
                         }
+                      }
+                    },
+                    {
+                      "name": "agentio.route_upstream",
+                      "typedConfig": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+                        "onRequestHeaders": [
+                          {
+                            "objectKey": "envoy.upstream.dynamic_host",
+                            "formatString": {
+                              "textFormatSource": {
+                                "inlineString": "%FILTER_STATE(agentio.route.upstream:PLAIN)%"
+                              },
+                              "omitEmptyValues": true
+                            },
+                            "skipIfEmpty": true
+                          }
+                        ]
                       }
                     },
                     {
@@ -1866,7 +1885,8 @@
                           "filter_state['sandbox.labels']",
                           "source.address",
                           "destination.address",
-                          "destination.port"
+                          "destination.port",
+                          "filter_state['agentio.route.upstream']"
                         ],
                         "responseAttributes": [
                           "response.code"
@@ -1880,6 +1900,24 @@
                             ]
                           }
                         }
+                      }
+                    },
+                    {
+                      "name": "agentio.route_upstream",
+                      "typedConfig": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+                        "onRequestHeaders": [
+                          {
+                            "objectKey": "envoy.upstream.dynamic_host",
+                            "formatString": {
+                              "textFormatSource": {
+                                "inlineString": "%FILTER_STATE(agentio.route.upstream:PLAIN)%"
+                              },
+                              "omitEmptyValues": true
+                            },
+                            "skipIfEmpty": true
+                          }
+                        ]
                       }
                     },
                     {

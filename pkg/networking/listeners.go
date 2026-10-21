@@ -16,6 +16,7 @@ package networking
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	xdscorev3 "github.com/cncf/xds/go/xds/core/v3"
@@ -63,21 +64,21 @@ import (
 )
 
 const (
-	forwardHTTPChain                = "forward-http"
-	forwardTCPChain                 = "forward-tcp"
-	tlsTerminateChain               = "tls-terminate"
-	sniDenyChain                    = "sni-traffic-policy-deny"
-	tlsActionKey                    = "agentio.tls.action"
-	noSNISentinel                   = "_no_sni_"
-	forwardHCMStatPrefix            = "inbound_0.0.0.0_0;"
-	outerSNIKey                     = "io.kruise.outer_sni"
-	upstreamServerNameKey           = "envoy.network.upstream_server_name"
-	upstreamSubjectAltNamesKey      = "envoy.network.upstream_subject_alt_names"
-	connectProxyTLSIdentityFilter   = "connect-proxy-tls-identity"
-	connectAuthorityKey             = "io.istio.connect_authority"
-	dynamicHostKey                  = "envoy.upstream.dynamic_host"
-	dynamicPortKey                  = "envoy.upstream.dynamic_port"
-	staticEndpointFilterStateFilter = "agentio.static_endpoint_filter_state"
+	forwardHTTPChain              = "forward-http"
+	forwardTCPChain               = "forward-tcp"
+	tlsTerminateChain             = "tls-terminate"
+	sniDenyChain                  = "sni-traffic-policy-deny"
+	tlsActionKey                  = "agentio.tls.action"
+	noSNISentinel                 = "_no_sni_"
+	forwardHCMStatPrefix          = "inbound_0.0.0.0_0;"
+	outerSNIKey                   = "io.kruise.outer_sni"
+	upstreamServerNameKey         = "envoy.network.upstream_server_name"
+	upstreamSubjectAltNamesKey    = "envoy.network.upstream_subject_alt_names"
+	connectProxyTLSIdentityFilter = "connect-proxy-tls-identity"
+	connectAuthorityKey           = "io.istio.connect_authority"
+	dynamicHostKey                = "envoy.upstream.dynamic_host"
+	dynamicPortKey                = "envoy.upstream.dynamic_port"
+	staticEndpointCandidateFilter = "agentio.static_endpoint_candidate"
 
 	sniPolicyMetadataFormat = "%DYNAMIC_METADATA(" + model.GatewayMetadataNamespace + ":sni:policy)%"
 )
@@ -374,16 +375,18 @@ func (b *resourceBuilder) buildForwardHCM(
 		// ext_proc or DFP can observe or resolve the attacker-controlled host.
 		filters = append(filters, sniHostMatchRBACFilter)
 	}
+	if len(config.gateway.GetServiceEntries()) > 0 {
+		filters = append(filters, httpFilter(staticEndpointCandidateFilter, b.pack(&setstatehttpv3.Config{})))
+	}
 	if config.extProc != nil {
-		filter, err := b.extProcFilter(config.extProc)
+		filter, err := b.extProcFilter(config)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, filter)
 	}
-	staticEndpoints := len(config.gateway.GetServiceEntries()) > 0
-	if staticEndpoints {
-		filters = append(filters, httpFilter(staticEndpointFilterStateFilter, b.pack(&setstatehttpv3.Config{})))
+	if !b.legacyGateway || len(config.gateway.GetServiceEntries()) > 0 {
+		filters = append(filters, b.routeUpstreamFilter())
 	}
 	if config.extProc != nil {
 		filters = append(filters, b.egressTargetFilters()...)
@@ -433,27 +436,6 @@ func (b *resourceBuilder) buildForwardHCM(
 		}
 	}
 	return hcm, nil
-}
-
-func (b *resourceBuilder) staticEndpointFilterStateConfig(address string) *anypb.Any {
-	host := formatString(address)
-	host.OmitEmptyValues = false
-	config := b.pack(&setstatehttpv3.Config{OnRequestHeaders: []*setstatecommonv3.FilterStateValue{
-		{
-			Key:      &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: dynamicHostKey},
-			Value:    &setstatecommonv3.FilterStateValue_FormatString{FormatString: host},
-			ReadOnly: false,
-		},
-		{
-			Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: dynamicPortKey},
-			Value: &setstatecommonv3.FilterStateValue_FormatString{FormatString: formatString(
-				"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%",
-			)},
-			ReadOnly:    false,
-			SkipIfEmpty: true,
-		},
-	}})
-	return config
 }
 
 func mustParseCEL(expression string) *exprpb.Expr {
@@ -531,7 +513,8 @@ func buildConnectProxyTLSIdentityHTTPFilter() *hcmv3.HttpFilter {
 	return httpFilter(connectProxyTLSIdentityFilter, mustPack(wrapper))
 }
 
-func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hcmv3.HttpFilter, error) {
+func (b *resourceBuilder) extProcFilter(config effectiveConfig) (*hcmv3.HttpFilter, error) {
+	provider := config.extProc
 	timeout := (*durationpb.Duration)(nil)
 	if provider.GetMessageTimeout() != "" {
 		parsed, err := time.ParseDuration(provider.GetMessageTimeout())
@@ -564,6 +547,10 @@ func (b *resourceBuilder) extProcFilter(provider *configv1.ExtProcProvider) (*hc
 		if !found {
 			attributes = append(attributes, attribute)
 		}
+	}
+	if (!b.legacyGateway || len(config.gateway.GetServiceEntries()) > 0) &&
+		!slices.Contains(attributes, model.AttributeRouteUpstream) {
+		attributes = append(attributes, model.AttributeRouteUpstream)
 	}
 	return httpFilter("envoy.filters.http.ext_proc", b.pack(&extprocv3.ExternalProcessor{
 		GrpcService: &corev3.GrpcService{

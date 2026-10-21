@@ -261,3 +261,30 @@ func TestIncrementalRoutePreservesPrior(t *testing.T) {
 		t.Fatal("incremental route merge changed a published route or lost its target")
 	}
 }
+
+func TestRequestStreamViewPreservesGatewayTarget(t *testing.T) {
+	initial := routeMutation("192.0.2.1:8443", false).Route.Upstream
+	st := &filter.Stream{Upstream: initial}
+	walk := requestWalk{actionWalk: newActionWalk(st)}
+	for _, mutation := range []filter.Mutation{
+		filter.SetPath("/rewritten", true),
+		{Route: &filter.RouteMutation{ClearCache: true}},
+		routeMutation("192.0.2.2:9443", false),
+	} {
+		walk.pending = append(walk.pending, mutation)
+		view, err := walk.streamView()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "192.0.2.1:8443"
+		if mutation.Route != nil && mutation.Route.Upstream != nil {
+			want = "192.0.2.2:9443"
+		}
+		if view.Upstream == nil || view.Upstream.Address.String() != want {
+			t.Fatalf("view target=%v, want %s", view.Upstream, want)
+		}
+	}
+	if st.Upstream.Address.String() != "192.0.2.1:8443" {
+		t.Fatal("mutated gateway target")
+	}
+}

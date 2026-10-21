@@ -41,40 +41,29 @@ func testGateway(config *configv1.EgressGateway) model.Gateway {
 
 func assertStaticEndpointState(t *testing.T, typedConfig map[string]*anypb.Any, wantAddress string) {
 	t.Helper()
-	value := typedConfig["agentio.static_endpoint_filter_state"]
-	if value == nil {
-		t.Fatal("static endpoint set-filter-state config not found")
+	candidate := &setstatehttpv3.Config{}
+	if err := typedConfig[staticEndpointCandidateFilter].UnmarshalTo(candidate); err != nil {
+		t.Fatal(err)
 	}
-	config := &setstatehttpv3.Config{}
-	if err := value.UnmarshalTo(config); err != nil {
-		t.Fatalf("decode static endpoint set-filter-state: %v", err)
+	candidateValue := candidate.GetOnRequestHeaders()[0]
+	if candidateValue.GetObjectKey() != model.FilterStateRouteUpstream || !candidateValue.ReadOnly ||
+		candidateValue.GetFactoryKey() != "envoy.string" {
+		t.Fatalf("unexpected candidate state: %v", candidateValue)
 	}
-	values := config.GetOnRequestHeaders()
-	if got, want := len(values), 2; got != want {
-		t.Fatalf("static endpoint state values = %d, want %d", got, want)
-	}
-	if got := values[0].GetObjectKey(); got != "envoy.upstream.dynamic_host" {
-		t.Fatalf("static host state key = %q", got)
-	}
-	if got := values[0].GetFormatString().GetTextFormatSource().GetInlineString(); got != wantAddress {
-		t.Fatalf("static host state value = %q, want %q", got, wantAddress)
-	}
-	if values[0].GetReadOnly() {
-		t.Fatal("static host state must allow EPE target overrides")
-	}
-	if got := values[1].GetObjectKey(); got != "envoy.upstream.dynamic_port" {
-		t.Fatalf("static port state key = %q", got)
-	}
-	if got, want := values[1].GetFormatString().GetTextFormatSource().GetInlineString(),
-		"%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%"; got != want {
-		t.Fatalf("static port state value = %q, want %q", got, want)
-	}
-	if values[1].GetReadOnly() || !values[1].GetSkipIfEmpty() {
-		t.Fatal("static port state must allow EPE overrides and skip empty values")
+	if got, want := candidateValue.GetFormatString().
+		GetTextFormatSource().
+		GetInlineString(),
+		wantAddress+":%FILTER_STATE(envoy.filters.listener.original_dst.local_ip:FIELD:port)%"; got != want {
+		t.Fatalf("candidate = %q, want %q", got, want)
 	}
 }
 
-func messagesOf[T proto.Message](t *testing.T, resources []model.Resource, typeURL string, newMessage func() T) map[string]T {
+func messagesOf[T proto.Message](
+	t *testing.T,
+	resources []model.Resource,
+	typeURL string,
+	newMessage func() T,
+) map[string]T {
 	t.Helper()
 	result := map[string]T{}
 	for _, resource := range resources {

@@ -656,3 +656,39 @@ func TestWorkloadLabelsRollingUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractUpstream(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   any
+		present bool
+		invalid bool
+		want    string
+	}{
+		{name: "absent"},
+		{name: "IPv4", value: "192.0.2.10:8443", present: true, want: "192.0.2.10:8443"},
+		{name: "IPv6", value: "[2001:db8::1]:443", present: true, want: "[2001:db8::1]:443"},
+		{name: "empty", value: "", present: true, invalid: true},
+		{name: "hostname", value: "service.example:443", present: true, invalid: true},
+		{name: "zero port", value: "192.0.2.10:0", present: true, invalid: true},
+		{name: "scoped address", value: "[fe80::1%eth0]:443", present: true, invalid: true},
+		{name: "wrong type", value: 443, present: true, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]any{}
+			if tc.present {
+				fields[FilterStateRouteUpstream] = tc.value
+			}
+			target, err := ExtractUpstream(makeAttrs(t, fields))
+			if (err != nil) != tc.invalid {
+				t.Fatalf("target=%v error=%v", target, err)
+			}
+			if tc.want != "" && (target == nil || target.Address.String() != tc.want) {
+				t.Fatalf("target=%v", target)
+			}
+			if tc.want == "" && target != nil {
+				t.Fatalf("unexpected target=%v", target)
+			}
+		})
+	}
+}

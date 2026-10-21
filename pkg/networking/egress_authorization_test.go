@@ -28,7 +28,16 @@ import (
 
 func TestEgressAuthorizationPinsDFPTarget(t *testing.T) {
 	in := Inputs{
-		Gateway:          testGateway(&configv1.EgressGateway{}),
+		Gateway: testGateway(
+			&configv1.EgressGateway{
+				ServiceEntries: []*configv1.EgressServiceEntry{
+					{
+						Hosts:     []string{"test.invalid"},
+						Endpoints: []*configv1.EgressServiceEntryEndpoint{{Address: "192.0.2.1"}},
+					},
+				},
+			},
+		),
 		DiscoveryAddress: "agentiod:15012",
 		TrustDomain:      "cluster.local",
 	}
@@ -73,10 +82,21 @@ func TestEgressAuthorizationPinsDFPTarget(t *testing.T) {
 					cfg.GetProcessingMode().GetRequestHeaderMode() != extproc.ProcessingMode_SKIP {
 					t.Fatal("provider failure and header modes must be preserved")
 				}
+				if !slices.Contains(cfg.RequestAttributes, model.AttributeRouteUpstream) {
+					t.Fatal("route candidate not forwarded")
+				}
 				if !slices.Contains(cfg.GetMetadataOptions().GetReceivingNamespaces().GetUntyped(), "agentio.route") {
 					t.Fatal("route metadata discarded")
 				}
 			}
+		}
+		if slices.Index(names, staticEndpointCandidateFilter) < 0 ||
+			slices.Index(names, staticEndpointCandidateFilter) >= slices.Index(names, "envoy.filters.http.ext_proc") {
+			t.Fatalf("candidate must precede EPE: %v", names)
+		}
+		if slices.Index(names, "agentio.route_upstream") <= slices.Index(names, "envoy.filters.http.ext_proc") ||
+			slices.Index(names, "agentio.route_upstream") >= slices.Index(names, "agentio.egress_target") {
+			t.Fatalf("explicit target consumption must follow EPE and precede authorized override: %v", names)
 		}
 		if slices.Index(names, "agentio.egress_target") <= slices.Index(names, "envoy.filters.http.ext_proc") ||
 			slices.Index(
@@ -88,5 +108,32 @@ func TestEgressAuthorizationPinsDFPTarget(t *testing.T) {
 			) {
 			t.Fatalf("filter order %v", names)
 		}
+	}
+}
+
+func TestRouteUpstreamConsumerWithoutEPEOrServiceEntries(t *testing.T) {
+	b := &resourceBuilder{}
+	h, err := b.buildForwardHCM(HTTPDynamicForwardProxy, effectiveConfig{gateway: &configv1.EgressGateway{}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := httpFilterNames(h); !slices.Equal(got, []string{
+		"agentio.route_upstream",
+		"envoy.filters.http.dynamic_forward_proxy",
+		"envoy.filters.http.router",
+	}) {
+		t.Fatalf("unexpected filters: %v", got)
+	}
+	cfg := &state.Config{}
+	if err := h.HttpFilters[0].GetTypedConfig().UnmarshalTo(cfg); err != nil {
+		t.Fatal(err)
+	}
+	value := cfg.OnRequestHeaders[0]
+	if value.GetObjectKey() != dynamicHostKey || !value.SkipIfEmpty || value.ReadOnly ||
+		value.GetFormatString().
+			GetTextFormatSource().
+			GetInlineString() !=
+			"%FILTER_STATE(agentio.route.upstream:PLAIN)%" {
+		t.Fatalf("explicit target must allow EPE overrides and leave absent targets alone: %v", value)
 	}
 }

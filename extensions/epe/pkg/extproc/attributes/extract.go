@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"strings"
 
@@ -57,6 +58,7 @@ const (
 	// FilterStateSandboxLabels is the legacy label attribute used during rolling upgrades.
 	FilterStateSandboxLabels = "filter_state['sandbox.labels']"
 	FilterStateSandboxToken  = "filter_state['sandbox.token']"
+	FilterStateRouteUpstream = "filter_state['agentio.route.upstream']"
 
 	AttrDestinationPort    = "destination.port"
 	AttrDestinationAddress = "destination.address"
@@ -296,4 +298,21 @@ func extractHeaderMap(headers *extProcPb.HttpHeaders) map[string]string {
 		}
 	}
 	return result
+}
+
+// ExtractUpstream parses the gateway-selected target, returning nil when absent.
+func ExtractUpstream(attrs map[string]*structpb.Struct) (*filter.UpstreamTarget, error) {
+	value, present := attrs[ExtProcAttrsKey].GetFields()[FilterStateRouteUpstream]
+	if !present {
+		return nil, nil
+	}
+	address, err := netip.ParseAddrPort(value.GetStringValue())
+	if err != nil {
+		return nil, fmt.Errorf("invalid route upstream: %w", err)
+	}
+	target := &filter.UpstreamTarget{Address: &address}
+	if err := (&filter.RouteMutation{Upstream: target}).Validate(); err != nil {
+		return nil, err
+	}
+	return target, nil
 }

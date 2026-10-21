@@ -208,8 +208,8 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		}
 	}
 	for listenerName, want := range map[string][]string{
-		MainInternal: {"envoy.filters.http.ext_proc", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "envoy.filters.http.router"},
-		MainForward:  {"envoy.filters.http.rbac", "envoy.filters.http.ext_proc", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "connect-proxy-tls-identity", "envoy.filters.http.router"},
+		MainInternal: {"envoy.filters.http.ext_proc", "agentio.route_upstream", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "envoy.filters.http.router"},
+		MainForward:  {"envoy.filters.http.rbac", "envoy.filters.http.ext_proc", "agentio.route_upstream", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "connect-proxy-tls-identity", "envoy.filters.http.router"},
 	} {
 		if got := httpFilterNames(findHCM(t, listeners[listenerName])); !equalStrings(got, want) {
 			t.Errorf("listener %s HTTP filter order = %v, want %v", listenerName, got, want)
@@ -489,7 +489,7 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 					// Explicit target forwarding postdates the legacy snapshot and is
 					// covered by TestEgressAuthorizationPinsDFPTarget.
 					hcm.HttpFilters = slices.DeleteFunc(hcm.HttpFilters, func(f *hcmv3.HttpFilter) bool {
-						return f.Name == "agentio.egress_target"
+						return f.Name == "agentio.egress_target" || f.Name == "agentio.route_upstream"
 					})
 					for _, f := range hcm.HttpFilters {
 						switch f.Name {
@@ -511,6 +511,7 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 								func(attribute string) bool {
 									return slices.Contains(
 										[]string{
+											model.AttributeRouteUpstream,
 											"filter_state['agentio.workload.name']",
 											"filter_state['agentio.workload.namespace']",
 											"source.address",

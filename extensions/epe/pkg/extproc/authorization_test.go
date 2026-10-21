@@ -17,8 +17,14 @@ package extproc
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -338,5 +344,74 @@ func TestHeaderBypassRetainsBodyChecks(t *testing.T) {
 				t.Fatal("terminal body result was not finalized")
 			}
 		}
+	}
+}
+
+func TestServiceEntryTargetAuthorization(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		candidate string
+		want      string
+		action    filter.Action
+		disabled  bool
+		status    int
+	}{
+		{name: "allowed without DNS", candidate: "192.0.2.2:8443", want: "192.0.2.2:8443"},
+		{name: "denied does not fall back to allowed original", candidate: "192.0.2.99:8443", status: 403},
+		{name: "path rewrite preserves selected endpoint", candidate: "192.0.2.2:8443", action: filter.Continue(filter.SetPath("/rewritten", true)), want: "192.0.2.2:8443"},
+		{name: "explicit route replaces candidate", candidate: "192.0.2.99:8443", action: filter.Continue(filter.Mutation{Route: upstreamRoute("192.0.2.2:8443", true)}), want: "192.0.2.2:8443"},
+		{name: "bypass still authorizes", candidate: "192.0.2.99:8443", action: filter.Bypass(), status: 403},
+		{name: "invalid input fails locally", candidate: "invalid", status: 500},
+		{name: "invalid input fails with authorization disabled", candidate: "invalid", disabled: true, status: 500},
+		{name: "disabled does not publish candidate", candidate: "192.0.2.99:8443", disabled: true},
+		{name: "absent uses original", want: "192.0.2.1:8443"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			regs := []filter.Registration{fixedRegHeaders("mutation", tc.action)}
+			deps := ServerDeps{
+				Registrations: regs,
+				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+					return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{struct{}{}}}}}, nil
+				},
+			}
+			if !tc.disabled {
+				deps.AuthorizeRequest = func(ctx context.Context, st *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
+					cfg := egressauthz.Config{Policies: []egressauthz.Policy{{
+						Name: "allow",
+						Rules: []egressauthz.Rule{{
+							Action: egressauthz.Allow,
+							CIDRs:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/30")},
+						}}}}}
+					return egressauthz.Authorize(ctx, cfg, nil, st)
+				}
+			}
+			attrs := makeAttrsWithLabels("ns", "pod", "")
+			fields := attrs[attributes.ExtProcAttrsKey].Fields
+			fields[attributes.AttrDestinationAddress] = structpb.NewStringValue("192.0.2.1:8443")
+			if tc.candidate != "" {
+				fields[attributes.FilterStateRouteUpstream] = structpb.NewStringValue(tc.candidate)
+			}
+			state := newStreamState()
+			responses, err := NewServer(
+				deps,
+			).HandleRequestHeaders(t.Context(), makeRequestHeaders("unresolved.invalid:443", "/", "GET"), attrs, state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.disabled && tc.status == 0 && state.stream.Upstream.Address.String() != tc.candidate {
+				t.Fatal("routing input lost with authorization disabled")
+			}
+			response := responses[0]
+			if got := int(response.GetImmediateResponse().GetStatus().GetCode()); got != tc.status {
+				t.Fatalf("status=%d want=%d response=%v", got, tc.status, response)
+			}
+			if tc.want != "" {
+				if got := responseUpstream(response).GetFields()["address"].GetStringValue(); got != tc.want {
+					t.Fatalf("target=%s want=%s", got, tc.want)
+				}
+			} else if response.GetDynamicMetadata() != nil {
+				t.Fatalf("candidate escaped as output: %v", response)
+			}
+		})
 	}
 }

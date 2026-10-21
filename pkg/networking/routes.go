@@ -169,7 +169,7 @@ func (b *resourceBuilder) staticEndpointRoute(cluster string, settings *configv1
 	result := forwardRoute(cluster, settings)
 	if len(addresses) == 1 {
 		result.TypedPerFilterConfig = map[string]*anypb.Any{
-			staticEndpointFilterStateFilter: b.staticEndpointFilterStateConfig(addresses[0]),
+			staticEndpointCandidateFilter: b.staticEndpointCandidateConfig(addresses[0]),
 		}
 		return result
 	}
@@ -179,7 +179,7 @@ func (b *resourceBuilder) staticEndpointRoute(cluster string, settings *configv1
 			Name:   cluster,
 			Weight: wrapperspb.UInt32(1),
 			TypedPerFilterConfig: map[string]*anypb.Any{
-				staticEndpointFilterStateFilter: b.staticEndpointFilterStateConfig(address),
+				staticEndpointCandidateFilter: b.staticEndpointCandidateConfig(address),
 			},
 		})
 	}
