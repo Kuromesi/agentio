@@ -211,6 +211,7 @@ jobs:
       E2E_DIAGNOSTICS_MAX_FULL_DUMPS: "1"
       AGENTIO_E2E_PROFILE: ${{ matrix.profile }}
       AGENTIO_E2E_GROUP: ${{ matrix.id }}
+      AGENTIO_E2E_SUITES: ${{ join(matrix.invocations.*.suite, ',') }}
       AGENTIO_E2E_AGENTIOD_IMAGE: ${{ inputs.agentiod_image }}
       AGENTIO_E2E_EPE_IMAGE: ${{ inputs.epe_image }}
       AGENTIO_E2E_PORTER_IMAGE: ${{ inputs.porter_image }}

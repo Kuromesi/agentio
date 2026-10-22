@@ -69,8 +69,8 @@ func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 	if condition, found := job["if"]; found {
 		t.Fatalf("reusable product E2E has job restriction %q; callers own branch policy", condition)
 	}
-	if got := stringValue(t, job, "name"); got != "${{ matrix.id }}" {
-		t.Errorf("product E2E job name = %q, want generated group identity", got)
+	if got := stringValue(t, job, "name"); got != "${{ inputs.epe_only && 'epe' || matrix.id }}" {
+		t.Errorf("product E2E job name = %q, want EPE identity or generated product group identity", got)
 	}
 	if !slices.Contains(jobNeeds(t, jobs, "product-e2e"), "plan") {
 		t.Fatal("product E2E must wait for coverage planning")
@@ -98,8 +98,8 @@ func TestProductE2EUsesGeneratedCoveragePlan(t *testing.T) {
 	if environment["AGENTIO_E2E_GROUP"] != "${{ matrix.id }}" {
 		t.Fatal("runner must execute the selected generated group")
 	}
-	if _, duplicated := environment["AGENTIO_E2E_SUITES"]; duplicated {
-		t.Fatal("workflow must not maintain a second suite list")
+	if environment["AGENTIO_E2E_SUITES"] != "${{ join(matrix.invocations.*.suite, ',') }}" {
+		t.Fatal("runner must select only the suites in its generated group")
 	}
 	for _, variable := range []string{
 		"AGENTIO_E2E_AGENTIOD_IMAGE", "AGENTIO_E2E_EPE_IMAGE", "AGENTIO_E2E_PORTER_IMAGE", "AGENTIO_E2E_CNI_IMAGE",
