@@ -153,7 +153,10 @@ func TestInvalidCoverageFailsBeforeExecution(t *testing.T) {
 		name   string
 		change func([]Suite, map[string][]string) []Suite
 	}{
-		{"renamed-test", func(c []Suite, i map[string][]string) []Suite { i["trafficpolicy"] = []string{"TestRenamed"}; return c }},
+		{"renamed-test", func(c []Suite, i map[string][]string) []Suite {
+			i["trafficpolicy"] = []string{"TestRenamed"}
+			return c
+		}},
 		{"unregistered-suite", func(c []Suite, i map[string][]string) []Suite { i["newfeature"] = []string{"TestFeature"}; return c }},
 		{"missing-suite", func(c []Suite, i map[string][]string) []Suite { delete(i, "clienttrust"); return c }},
 		{"duplicate-suite", func(c []Suite, _ map[string][]string) []Suite { return append(c, c[0]) }},

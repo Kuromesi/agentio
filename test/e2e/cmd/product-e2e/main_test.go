@@ -41,7 +41,12 @@ func TestPlanCLIProducesMatrixAndArtifact(t *testing.T) {
 	cleanSelection(t)
 	var output bytes.Buffer
 	path := filepath.Join(t.TempDir(), "plan.json")
-	err := execute(t.Context(), []string{"plan", "--root", "../..", "--group", "sidecar-auto", "--format=json", "--out", path}, &output, io.Discard)
+	err := execute(
+		t.Context(),
+		[]string{"plan", "--root", "../..", "--group", "sidecar-auto", "--format=json", "--out", path},
+		&output,
+		io.Discard,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +79,11 @@ func TestCLIRejectsEmptyRunsBeforeSetup(t *testing.T) {
 func TestCLIRespectsBorrowedClusterFromConfigurationFile(t *testing.T) {
 	cleanSelection(t)
 	path := filepath.Join(t.TempDir(), "framework.yaml")
-	if err := os.WriteFile(path, []byte("cluster:\n  mode: kind\n  name: borrowed\n  reuse: true\n"), 0600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("cluster:\n  mode: kind\n  name: borrowed\n  reuse: true\n"),
+		0600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("E2E_CONFIG", path)
@@ -88,7 +97,12 @@ func TestPlanCLIWithMatrixEnvironment(t *testing.T) {
 	cleanSelection(t)
 	for _, suites := range []string{"trafficpolicy,gateway,securitypolicy,clienttrust", "epe"} {
 		var output bytes.Buffer
-		if err := execute(t.Context(), []string{"plan", "--root", "../..", "--suites", suites, "--format=json"}, &output, io.Discard); err != nil {
+		if err := execute(
+			t.Context(),
+			[]string{"plan", "--root", "../..", "--suites", suites, "--format=json"},
+			&output,
+			io.Discard,
+		); err != nil {
 			t.Fatal(err)
 		}
 		var matrix product.Plan
@@ -106,7 +120,12 @@ func TestPlanCLIWithMatrixEnvironment(t *testing.T) {
 				t.Setenv("AGENTIO_E2E_FIREWALL_BACKEND", group.Backend)
 				t.Setenv("AGENTIO_E2E_GROUP", group.ID)
 				var output bytes.Buffer
-				if err := execute(t.Context(), []string{"plan", "--root", "../..", "--format=json"}, &output, io.Discard); err != nil {
+				if err := execute(
+					t.Context(),
+					[]string{"plan", "--root", "../..", "--format=json"},
+					&output,
+					io.Discard,
+				); err != nil {
 					t.Fatal(err)
 				}
 				var actual product.Plan

@@ -18,9 +18,10 @@ import (
 	"encoding/json"
 	"testing"
 
+	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 func TestHTTPCalloutProjection(t *testing.T) {
@@ -29,30 +30,47 @@ func TestHTTPCalloutProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, action string
-		invalid      bool
-		check        func(*testing.T, httpcallout.Config)
+		name    string
+		action  string
+		invalid bool
+		check   func(*testing.T, httpcallout.Config)
 	}{
-		{name: "metadata only", action: `{"provider":{"name":"scanner"},"request":{}}`, check: func(t *testing.T, c httpcallout.Config) {
-			if c.Request == nil || c.Response != nil || c.Request.Body || c.Request.Headers.Mode != httpcallout.HeaderModeNone || c.FailOpen {
-				t.Fatalf("config = %+v", c)
-			}
-		}},
-		{name: "independent phases", action: `{"provider":{"name":"scanner"},"request":{"headers":{"enabled":true,"filter":{"allowList":["X-ID"]}},"body":{"enabled":true,"maxBytes":3}},"response":{"headers":{"enabled":true,"filter":{"denyList":["Set-Cookie"]}},"body":{"enabled":true,"maxBytes":5}},"failStrategy":"Allow"}`, check: func(t *testing.T, c httpcallout.Config) {
-			if !c.FailOpen || !c.Request.Body || !c.Response.Body || c.Request.MaxBodyBytes != 3 || c.Response.MaxBodyBytes != 5 || c.Request.Headers.Allowlist[0] != "x-id" || c.Response.Headers.Denylist[0] != "set-cookie" {
-				t.Fatalf("config = %+v, request=%+v, response=%+v", c, c.Request, c.Response)
-			}
-		}},
-		{name: "all headers", action: `{"provider":{"name":"scanner"},"response":{"headers":{"enabled":true}},"failStrategy":"Ignore"}`, check: func(t *testing.T, c httpcallout.Config) {
-			if c.Request != nil || !c.FailOpen || c.Response.Headers.Mode != httpcallout.HeaderModeAll {
-				t.Fatalf("config = %+v", c)
-			}
-		}},
-		{name: "disabled settings ignored", action: `{"provider":{"name":"scanner"},"request":{"headers":{"filter":{}},"body":{"maxBytes":-1}}}`, check: func(t *testing.T, c httpcallout.Config) {
-			if c.Request.Body || c.Request.Headers.Mode != httpcallout.HeaderModeNone {
-				t.Fatalf("phase = %+v", c.Request)
-			}
-		}},
+		{
+			name:   "metadata only",
+			action: `{"provider":{"name":"scanner"},"request":{}}`,
+			check: func(t *testing.T, c httpcallout.Config) {
+				if c.Request == nil || c.Response != nil || c.Request.Body || c.Request.Headers.Mode != httpcallout.HeaderModeNone || c.FailOpen {
+					t.Fatalf("config = %+v", c)
+				}
+			},
+		},
+		{
+			name:   "independent phases",
+			action: `{"provider":{"name":"scanner"},"request":{"headers":{"enabled":true,"filter":{"allowList":["X-ID"]}},"body":{"enabled":true,"maxBytes":3}},"response":{"headers":{"enabled":true,"filter":{"denyList":["Set-Cookie"]}},"body":{"enabled":true,"maxBytes":5}},"failStrategy":"Allow"}`,
+			check: func(t *testing.T, c httpcallout.Config) {
+				if !c.FailOpen || !c.Request.Body || !c.Response.Body || c.Request.MaxBodyBytes != 3 || c.Response.MaxBodyBytes != 5 || c.Request.Headers.Allowlist[0] != "x-id" || c.Response.Headers.Denylist[0] != "set-cookie" {
+					t.Fatalf("config = %+v, request=%+v, response=%+v", c, c.Request, c.Response)
+				}
+			},
+		},
+		{
+			name:   "all headers",
+			action: `{"provider":{"name":"scanner"},"response":{"headers":{"enabled":true}},"failStrategy":"Ignore"}`,
+			check: func(t *testing.T, c httpcallout.Config) {
+				if c.Request != nil || !c.FailOpen || c.Response.Headers.Mode != httpcallout.HeaderModeAll {
+					t.Fatalf("config = %+v", c)
+				}
+			},
+		},
+		{
+			name:   "disabled settings ignored",
+			action: `{"provider":{"name":"scanner"},"request":{"headers":{"filter":{}},"body":{"maxBytes":-1}}}`,
+			check: func(t *testing.T, c httpcallout.Config) {
+				if c.Request.Body || c.Request.Headers.Mode != httpcallout.HeaderModeNone {
+					t.Fatalf("phase = %+v", c.Request)
+				}
+			},
+		},
 		{name: "no phase", action: `{"provider":{"name":"scanner"}}`, invalid: true},
 		{name: "no provider", action: `{"request":{}}`, invalid: true},
 		{name: "empty filter", action: `{"provider":{"name":"scanner"},"request":{"headers":{"enabled":true,"filter":{}}}}`, invalid: true},
@@ -67,7 +85,9 @@ func TestHTTPCalloutProjection(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.action), &action); err != nil {
 				t.Fatal(err)
 			}
-			profile := &Profile{Rules: []Rule{{Name: "scan", Actions: v1alpha1.SecurityRuleActions{HTTPCallout: &action}}}}
+			profile := &Profile{
+				Rules: []Rule{{Name: "scan", Actions: v1alpha1.SecurityRuleActions{HTTPCallout: &action}}},
+			}
 			err := profile.Project(regs)
 			if tc.invalid {
 				if err == nil {
@@ -89,7 +109,12 @@ func TestHTTPCalloutProjection(t *testing.T) {
 
 func TestHTTPCalloutPreservedWithOAuth2(t *testing.T) {
 	var actions v1alpha1.SecurityRuleActions
-	if err := json.Unmarshal([]byte(`{"httpCallout":{"provider":{"name":"scanner"},"request":{}},"tokenTransformation":{"type":"OAuth2","credentialRef":{"credentialProvider":{"name":"identity"}},"oauth2":{"operation":{"resource":{}}}}}`), &actions); err != nil {
+	if err := json.Unmarshal(
+		[]byte(
+			`{"httpCallout":{"provider":{"name":"scanner"},"request":{}},"tokenTransformation":{"type":"OAuth2","credentialRef":{"credentialProvider":{"name":"identity"}},"oauth2":{"operation":{"resource":{}}}}}`,
+		),
+		&actions,
+	); err != nil {
 		t.Fatal(err)
 	}
 	payloads, err := payloadsFor(&Rule{Actions: actions})

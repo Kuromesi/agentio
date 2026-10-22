@@ -85,7 +85,12 @@ func TestBuildRequestInvocationMapsEveryField(t *testing.T) {
 	cfg := testConfig(t, Config{Request: &PhaseConfig{Body: true}})
 	st := testStream()
 
-	inv, err := buildRequestInvocation(cfg, testUnitID(), st, filter.Body{Bytes: []byte(`{"input":"hi"}`), Complete: true})
+	inv, err := buildRequestInvocation(
+		cfg,
+		testUnitID(),
+		st,
+		filter.Body{Bytes: []byte(`{"input":"hi"}`), Complete: true},
+	)
 	if err != nil {
 		t.Fatalf("buildRequestInvocation: %v", err)
 	}
@@ -225,12 +230,20 @@ func TestBuildRequestInvocationNeverAliasesStreamHeaders(t *testing.T) {
 
 func TestBuildResponseInvocationOmitsTheRequestBodyAndHeaders(t *testing.T) {
 	cfg := testConfig(t, Config{
-		Request:  &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true},
-		Response: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"x-upstream"}}, Body: true},
+		Request: &PhaseConfig{Headers: HeadersConfig{Mode: HeaderModeAll}, Body: true},
+		Response: &PhaseConfig{
+			Headers: HeadersConfig{Mode: HeaderModeAllowlist, Allowlist: []string{"x-upstream"}},
+			Body:    true,
+		},
 	})
 	st := testStream()
 
-	inv, err := buildResponseInvocation(cfg, testUnitID(), st, filter.Body{Bytes: []byte("response text"), Complete: true})
+	inv, err := buildResponseInvocation(
+		cfg,
+		testUnitID(),
+		st,
+		filter.Body{Bytes: []byte("response text"), Complete: true},
+	)
 	if err != nil {
 		t.Fatalf("buildResponseInvocation: %v", err)
 	}
@@ -445,7 +458,11 @@ func TestBuildResponseInvocationKeepsStatusAndContentTypeUnderEveryMode(t *testi
 				t.Errorf("statusCode = %d, want 201 under mode %q", inv.Response.StatusCode, mode)
 			}
 			if inv.Response.ContentType != "text/plain" {
-				t.Errorf("contentType = %q, want it preserved independently of headers under mode %q", inv.Response.ContentType, mode)
+				t.Errorf(
+					"contentType = %q, want it preserved independently of headers under mode %q",
+					inv.Response.ContentType,
+					mode,
+				)
 			}
 		})
 	}
@@ -506,7 +523,12 @@ func TestBuildInvocationRejectsOversizedBody(t *testing.T) {
 	}
 
 	t.Run("at the limit", func(t *testing.T) {
-		inv, err := buildRequestInvocation(cfg, testUnitID(), testStream(), filter.Body{Bytes: []byte("12345678"), Complete: true})
+		inv, err := buildRequestInvocation(
+			cfg,
+			testUnitID(),
+			testStream(),
+			filter.Body{Bytes: []byte("12345678"), Complete: true},
+		)
 		if err != nil {
 			t.Fatalf("a body exactly at the limit was rejected: %v", err)
 		}
@@ -601,7 +623,12 @@ func TestBodyTextPhaseLimits(t *testing.T) {
 		{"shared fallback", 0, 100, false}, {"shared overflow", 0, 101, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := bodyText(cfg, PhaseConfig{Body: true, MaxBodyBytes: tc.limit}, filter.Body{Bytes: make([]byte, tc.size)}, tc.name)
+			_, err := bodyText(
+				cfg,
+				PhaseConfig{Body: true, MaxBodyBytes: tc.limit},
+				filter.Body{Bytes: make([]byte, tc.size)},
+				tc.name,
+			)
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v, want failure=%v", err, tc.fail)
 			}

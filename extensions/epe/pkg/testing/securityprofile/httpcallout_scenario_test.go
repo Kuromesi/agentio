@@ -41,21 +41,47 @@ func TestScenario_HTTPCalloutPublicAPI(t *testing.T) {
 				}
 				calls.Add(1)
 				if inv.Phase == httpcallout.PhaseRequest {
-					if inv.Request.Body == nil || *inv.Request.Body != "abc" || inv.Request.Headers["x-id"] != "123" || len(inv.Request.Headers) != 1 {
+					if inv.Request.Body == nil || *inv.Request.Body != "abc" || inv.Request.Headers["x-id"] != "123" ||
+						len(inv.Request.Headers) != 1 {
 						t.Errorf("request disclosure = %+v", inv.Request)
 					}
-					fmt.Fprint(w, `{"version":"0.1","action":"continue","request":{"headers":[{"operation":"set","name":"x-scanned","value":"yes"}]}}`)
+					if _, err := fmt.Fprint(
+						w,
+						`{"version":"0.1","action":"continue","request":{"headers":[{"operation":"set","name":"x-scanned","value":"yes"}]}}`,
+					); err != nil {
+						t.Error(err)
+					}
 				} else {
-					if inv.Response.Body == nil || *inv.Response.Body != "12345" || inv.Response.Headers["set-cookie"] != "" || inv.Request.Body != nil || len(inv.Request.Headers) != 0 {
+					if inv.Response.Body == nil || *inv.Response.Body != "12345" ||
+						inv.Response.Headers["set-cookie"] != "" ||
+						inv.Request.Body != nil ||
+						len(inv.Request.Headers) != 0 {
 						t.Errorf("response disclosure = %+v request=%+v", inv.Response, inv.Request)
 					}
-					fmt.Fprint(w, `{"version":"0.1","action":"continue","response":{"headers":[{"operation":"set","name":"x-scanned","value":"yes"}]}}`)
+					if _, err := fmt.Fprint(
+						w,
+						`{"version":"0.1","action":"continue","response":{"headers":[{"operation":"set","name":"x-scanned","value":"yes"}]}}`,
+					); err != nil {
+						t.Error(err)
+					}
 				}
 			}))
 			defer endpoint.Close()
 			providers := &extensionprovider.Registry{}
 			defer providers.Close()
-			if err := providers.Apply(&configv1.EPEConfig{ExtensionProviders: []*configv1.ExtensionProvider{{Name: "scanner", Provider: &configv1.ExtensionProvider_HttpCallout{HttpCallout: &configv1.HTTPCalloutProvider{Url: endpoint.URL}}}}}, nil); err != nil {
+			if err := providers.Apply(
+				&configv1.EPEConfig{
+					ExtensionProviders: []*configv1.ExtensionProvider{
+						{
+							Name: "scanner",
+							Provider: &configv1.ExtensionProvider_HttpCallout{
+								HttpCallout: &configv1.HTTPCalloutProvider{Url: endpoint.URL},
+							},
+						},
+					},
+				},
+				nil,
+			); err != nil {
 				t.Fatal(err)
 			}
 			h := New(t, Options{Providers: providers})
@@ -83,7 +109,17 @@ metadata:
           headers: {enabled: true, filter: {denyList: [set-cookie]}}
           body: {enabled: true, maxBytes: 5}
 `, kind, namespace))
-			v := h.Run(t, enginetest.NewRequest("POST", "api.example.com", "/").Peer("test-ns", "sandbox", nil).Header("x-id", "123").Header("authorization", "secret").Body([]byte("abc")).ResponseHeaders(200).ResponseHeader("set-cookie", "secret").ResponseBody([]byte("12345")))
+			v := h.Run(
+				t,
+				enginetest.NewRequest("POST", "api.example.com", "/").
+					Peer("test-ns", "sandbox", nil).
+					Header("x-id", "123").
+					Header("authorization", "secret").
+					Body([]byte("abc")).
+					ResponseHeaders(200).
+					ResponseHeader("set-cookie", "secret").
+					ResponseBody([]byte("12345")),
+			)
 			v.RequireHeader(t, "x-scanned", "yes")
 			v.RequireResponseHeader(t, "x-scanned", "yes")
 			if calls.Load() != 2 {

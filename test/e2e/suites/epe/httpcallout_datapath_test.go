@@ -59,10 +59,17 @@ func TestEPEHTTPCallout(t *testing.T) {
 	applyEPEProviderConfig(t, scope, name)
 
 	for _, tc := range []struct {
-		name, kind, provider, request, response, strategy string
-		status                                            int
-		body                                              string
-		requestCalled, responseCalled, originCalled       bool
+		name           string
+		kind           string
+		provider       string
+		request        string
+		response       string
+		strategy       string
+		status         int
+		body           string
+		requestCalled  bool
+		responseCalled bool
+		originCalled   bool
 	}{
 		{"dual-body", "SecurityProfile", "mutate", `{"headers":{"enabled":true,"filter":{"allowList":["X-Visible"]}},"body":{"enabled":true,"maxBytes":3}}`, `{"headers":{"enabled":true,"filter":{"denyList":["Set-Cookie"]}},"body":{"enabled":true,"maxBytes":5}}`, "Block", 200, "changed by callout", true, true, true},
 		{"global-metadata", "GlobalSecurityProfile", "continue", `{}`, `{}`, "Block", 200, "12345", true, true, true},
