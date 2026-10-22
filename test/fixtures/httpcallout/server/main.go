@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openkruise/agentio/bench/epe/callout"
+	"github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
 func main() {
@@ -28,7 +28,7 @@ func main() {
 	flag.Parse()
 	server := &http.Server{
 		Addr:              *listen,
-		Handler:           &callout.Handler{},
+		Handler:           &httpcallout.Handler{},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      65 * time.Second,

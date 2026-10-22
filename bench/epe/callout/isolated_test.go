@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/prometheus/procfs"
+
+	calloutfixture "github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
 var (
@@ -58,7 +60,7 @@ func TestCalloutProcess(t *testing.T) {
 	var url string
 	switch *processRole {
 	case "endpoint":
-		s := httptest.NewServer(&Handler{})
+		s := httptest.NewServer(&calloutfixture.Handler{})
 		defer s.Close()
 		url = s.URL
 	case "upstream":

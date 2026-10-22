@@ -44,6 +44,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	calloutfixture "github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
 var (
@@ -68,7 +69,7 @@ var (
 
 type fixture struct {
 	url         string
-	handler     *Handler
+	handler     *calloutfixture.Handler
 	upstream    atomic.Int64
 	recover     atomic.Bool
 	client      *http.Client
@@ -86,7 +87,7 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 	if *envoyImage == "" {
 		t.Skip("set -envoy-image to run real Envoy e2e on Linux Docker")
 	}
-	f := &fixture{handler: &Handler{}, client: &http.Client{Timeout: 10 * time.Second}}
+	f := &fixture{handler: &calloutfixture.Handler{}, client: &http.Client{Timeout: 10 * time.Second}}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConns, tr.MaxIdleConnsPerHost = 512, 256
 	f.client.Transport = tr
@@ -503,3 +504,10 @@ const envoyConfig = `static_resources:
       - lb_endpoints:
         - endpoint: {address: {socket_address: {address: 127.0.0.1, port_value: %s}}}
 `
+
+func closeBody(t *testing.T, body io.Closer) {
+	t.Helper()
+	if err := body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
+}

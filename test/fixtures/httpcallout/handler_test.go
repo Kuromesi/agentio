@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package callout
+package httpcallout
 
 import (
 	"bytes"
@@ -22,21 +22,21 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
+	protocol "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 )
 
 func TestHandler(t *testing.T) {
 	h := &Handler{}
 	s := httptest.NewServer(h)
 	defer s.Close()
-	for _, phase := range []httpcallout.Phase{httpcallout.PhaseRequest, httpcallout.PhaseResponse} {
-		inv := httpcallout.Invocation{
-			Version: httpcallout.ProtocolVersion,
+	for _, phase := range []protocol.Phase{protocol.PhaseRequest, protocol.PhaseResponse} {
+		inv := protocol.Invocation{
+			Version: protocol.ProtocolVersion,
 			Phase:   phase,
-			Request: &httpcallout.HTTPRequest{Method: "POST"},
+			Request: &protocol.HTTPRequest{Method: "POST"},
 		}
-		if phase == httpcallout.PhaseResponse {
-			inv.Response = &httpcallout.HTTPResponse{StatusCode: 200}
+		if phase == protocol.PhaseResponse {
+			inv.Response = &protocol.HTTPResponse{StatusCode: 200}
 		}
 		raw, err := json.Marshal(inv)
 		if err != nil {
@@ -47,7 +47,7 @@ func TestHandler(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var d httpcallout.Decision
+			var d protocol.Decision
 			err = json.NewDecoder(resp.Body).Decode(&d)
 			closeBody(t, resp.Body)
 			if err != nil {

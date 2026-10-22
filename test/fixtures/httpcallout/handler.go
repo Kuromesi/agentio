@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package callout provides a deterministic HTTPCallout protocol test endpoint.
-package callout
+// Package httpcallout provides a deterministic HTTPCallout protocol test endpoint.
+package httpcallout
 
 import (
 	"encoding/json"
@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
+	protocol "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/pkg/log"
 )
 
@@ -69,7 +69,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var inv httpcallout.Invocation
+	var inv protocol.Invocation
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err := decoder.Decode(&inv); err != nil {
 		http.Error(w, "invalid invocation", 400)
@@ -91,7 +91,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) respond(
 	w http.ResponseWriter,
 	r *http.Request,
-	inv httpcallout.Invocation,
+	inv protocol.Invocation,
 	delay time.Duration,
 ) error {
 	h.Calls.Add(1)
@@ -126,22 +126,22 @@ func (h *Handler) respond(
 		}
 		return conn.Close()
 	}
-	d := httpcallout.Decision{Version: httpcallout.ProtocolVersion}
+	d := protocol.Decision{Version: protocol.ProtocolVersion}
 	switch r.URL.Path {
 	case "/mutate":
 		value, body := "clean", "changed by callout"
-		headers := []httpcallout.HeaderMutation{
-			{Operation: httpcallout.HeaderSet, Name: "x-callout-verdict", Value: &value},
+		headers := []protocol.HeaderMutation{
+			{Operation: protocol.HeaderSet, Name: "x-callout-verdict", Value: &value},
 		}
-		if inv.Phase == httpcallout.PhaseRequest {
-			d.Request = &httpcallout.RequestMutation{Headers: headers, Body: &body}
+		if inv.Phase == protocol.PhaseRequest {
+			d.Request = &protocol.RequestMutation{Headers: headers, Body: &body}
 		} else {
-			d.Response = &httpcallout.ResponseMutation{Headers: headers, Body: &body}
+			d.Response = &protocol.ResponseMutation{Headers: headers, Body: &body}
 		}
 	case "/respond":
-		action, status, body := httpcallout.ActionRespond, 403, "blocked by callout"
+		action, status, body := protocol.ActionRespond, 403, "blocked by callout"
 		d.Action = &action
-		d.Response = &httpcallout.ResponseMutation{StatusCode: &status, Body: &body}
+		d.Response = &protocol.ResponseMutation{StatusCode: &status, Body: &body}
 	}
 	return json.NewEncoder(w).Encode(d)
 }
