@@ -24,9 +24,12 @@ import (
 	"strings"
 	"testing"
 
+	structpb "google.golang.org/protobuf/types/known/structpb"
+
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential/credentialtest"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
+	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/pkg/kube"
 )
@@ -270,7 +273,7 @@ spec:
 		RequirePassthrough(t)
 }
 
-func providerRegistry(t *testing.T, endpoint string) *extensionprovider.Registry {
+func providerRegistry(t testing.TB, endpoint string) *extensionprovider.Registry {
 	t.Helper()
 	registry := &extensionprovider.Registry{}
 	t.Cleanup(registry.Close)
@@ -287,4 +290,27 @@ func providerRegistry(t *testing.T, endpoint string) *extensionprovider.Registry
 		t.Fatal(err)
 	}
 	return registry
+}
+
+func TestScenario_MalformedSandboxTokenOnlyAffectsProviderRule(t *testing.T) {
+	provider := credentialtest.NewAPIKeyProvider(t, "provider-token")
+	h := New(t, Options{Providers: providerRegistry(t, provider.Server.URL)})
+	h.Fixture.ApplyYAML(strings.Replace(secretInjectionProfileYAML(""), "kind: Secret", "kind: CredentialProvider", 1))
+	for _, path := range []string{"/unmatched", injectionPath} {
+		t.Run(path, func(t *testing.T) {
+			msgs := benchRequest(path).Build()
+			msgs[0].Attributes[attributes.ExtProcAttrsKey].Fields[attributes.FilterStateSandboxToken] = structpb.NewStringValue(
+				"malformed-token",
+			)
+			verdict := h.RunMessages(t, msgs)
+			if path == injectionPath {
+				verdict.RequireBlocked(t, 403)
+			} else {
+				verdict.RequirePassthrough(t)
+			}
+		})
+	}
+	if got := provider.Calls.Load(); got != 0 {
+		t.Fatalf("provider calls = %d, want none", got)
+	}
 }

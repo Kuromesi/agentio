@@ -19,8 +19,6 @@ package attributes
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -73,7 +71,7 @@ const (
 // port is retained. When pod identity is missing from filter_state it returns a
 // partial Peer and a zero HTTPRequest; callers must check Peer.Valid and decide
 // the disposition (the ext-proc server passes such requests through unless its
-// fail-closed switch is set). A malformed sandbox token leaves Peer.Token nil.
+// fail-closed switch is set). Sandbox token decoding is deferred until a credential consumer needs it.
 // Log lines use the logger from ctx, so request-scoped key/values are carried
 // on them.
 func Extract(
@@ -127,7 +125,7 @@ func Extract(
 	}
 	peer.Labels = podLabels
 
-	peer.Token = parseSandboxToken(ctx, extractFilterStateString(attrs, FilterStateSandboxToken))
+	peer.Token = filter.NewSandboxToken(extractFilterStateString(attrs, FilterStateSandboxToken))
 
 	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
 
@@ -170,26 +168,6 @@ func extractOriginalDestination(attrs map[string]*structpb.Struct) netip.AddrPor
 		return netip.AddrPort{}
 	}
 	return netip.AddrPortFrom(address.Addr().Unmap(), address.Port())
-}
-
-// parseSandboxToken parses the raw filter_state['sandbox.token'] string:
-// base64-decoded JSON, falling back to raw JSON when the value is not valid
-// base64. On success the parsed token is returned; on failure a DEBUG line
-// is logged and nil is returned. Returns nil when the raw value is empty.
-func parseSandboxToken(ctx context.Context, raw string) *filter.SandboxToken {
-	if raw == "" {
-		return nil
-	}
-	tokenJSON, decErr := base64.StdEncoding.DecodeString(raw)
-	if decErr != nil {
-		tokenJSON = []byte(raw)
-	}
-	var st filter.SandboxToken
-	if err := json.Unmarshal(tokenJSON, &st); err != nil {
-		log.FromContext(ctx).V(logging.DEBUG).Info("failed to parse sandbox.token", "error", err)
-		return nil
-	}
-	return &st
 }
 
 // extractPodIP returns the caller pod IP from Envoy's source.address

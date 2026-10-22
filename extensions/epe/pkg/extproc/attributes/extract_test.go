@@ -79,7 +79,6 @@ func TestExtract(t *testing.T) {
 		}
 	}
 	tokenJSON := `{"requestId":"r1","accessToken":"tok","sandboxClientId":"c1"}`
-	parsedToken := &filter.SandboxToken{RequestID: "r1", AccessToken: "tok", SandboxClientID: "c1"}
 
 	tests := []struct {
 		name       string
@@ -104,7 +103,7 @@ func TestExtract(t *testing.T) {
 				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
 				IP:     "10.0.0.1",
 				Labels: map[string]string{"app": "sleep", "tier": "web"},
-				Token:  parsedToken,
+				Token:  filter.NewSandboxToken(b64(tokenJSON)),
 			},
 			wantReq:   fullReq(9443, fullHeaders),
 			wantValid: true,
@@ -161,7 +160,7 @@ func TestExtract(t *testing.T) {
 			wantValid: true,
 		},
 		{
-			name: "unparseable sandbox.token leaves Token nil",
+			name: "unparseable sandbox.token retained without parsing",
 			attrFields: map[string]any{
 				FilterStateDownstreamPeerNamespace: "default",
 				FilterStateDownstreamPeerName:      "pod-a",
@@ -171,12 +170,13 @@ func TestExtract(t *testing.T) {
 			wantPeer: filter.Peer{
 				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
 				Labels: map[string]string{},
+				Token:  filter.NewSandboxToken("!!!not-base64-and-not-json!!!"),
 			},
 			wantReq:   fullReq(8443, fullHeaders),
 			wantValid: true,
 		},
 		{
-			name: "raw JSON sandbox.token parsed eagerly",
+			name: "raw JSON sandbox.token retained without parsing",
 			attrFields: map[string]any{
 				FilterStateDownstreamPeerNamespace: "default",
 				FilterStateDownstreamPeerName:      "pod-a",
@@ -186,7 +186,7 @@ func TestExtract(t *testing.T) {
 			wantPeer: filter.Peer{
 				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
 				Labels: map[string]string{},
-				Token:  parsedToken,
+				Token:  filter.NewSandboxToken(tokenJSON),
 			},
 			wantReq:   fullReq(8443, fullHeaders),
 			wantValid: true,
@@ -232,52 +232,6 @@ func TestExtract(t *testing.T) {
 			}
 			if gotPeer.Valid() != tt.wantValid {
 				t.Errorf("Valid() = %t, want %t", gotPeer.Valid(), tt.wantValid)
-			}
-		})
-	}
-}
-
-func TestParseSandboxToken(t *testing.T) {
-	tokenJSON := `{"requestId":"r1","accessToken":"tok","sandboxClientId":"c1"}`
-	parsed := &filter.SandboxToken{RequestID: "r1", AccessToken: "tok", SandboxClientID: "c1"}
-
-	tests := []struct {
-		name string
-		raw  string
-		want *filter.SandboxToken
-	}{
-		{
-			name: "valid base64 token parsed",
-			raw:  b64(tokenJSON),
-			want: parsed,
-		},
-		{
-			name: "raw JSON fallback when not base64",
-			raw:  tokenJSON,
-			want: parsed,
-		},
-		{
-			name: "garbage neither base64 nor JSON returns nil",
-			raw:  "!!!not-base64-and-not-json!!!",
-			want: nil,
-		},
-		{
-			name: "base64 of non-JSON returns nil",
-			raw:  b64("not json at all"),
-			want: nil,
-		},
-		{
-			name: "empty raw value returns nil",
-			raw:  "",
-			want: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseSandboxToken(context.Background(), tt.raw)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("parseSandboxToken() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

@@ -240,15 +240,16 @@ func (f *Filter) call(
 	grantType string,
 	params url.Values,
 ) (*credential.OAuth2Response, error) {
-	if f.source == nil || st.Peer.Token == nil || st.Peer.Token.AccessToken == "" ||
-		st.Peer.Token.SandboxClientID == "" {
+	token := st.Peer.Token.Parse(ctx)
+	if f.source == nil || token == nil || token.AccessToken == "" ||
+		token.SandboxClientID == "" {
 		return nil, fmt.Errorf("OAuth identity or credential connection is unavailable")
 	}
 	request := credential.OAuth2Request{
 		Operation:              f.cfg.Operation,
 		GrantType:              grantType,
 		CredentialProviderName: f.cfg.CredentialProviderName,
-		ResourceID:             st.Peer.Token.SandboxClientID,
+		ResourceID:             token.SandboxClientID,
 		Parameters:             make(map[string]string),
 	}
 	var names []string
@@ -272,5 +273,5 @@ func (f *Filter) call(
 			request.Parameters[name] = values[0]
 		}
 	}
-	return f.source.CallOAuth2(ctx, st.Peer.Token.AccessToken, request)
+	return f.source.CallOAuth2(ctx, token.AccessToken, request)
 }
