@@ -320,9 +320,11 @@ func (s *Server) HandleResponseHeaders(
 	state.awaitResponseHeaders = false
 	responses := translateResponseHeadersResult(respHeadersRes)
 	if respHeadersRes.Disposition != engine.DispositionBlocked && respHeadersRes.NeedsBody() {
+		// DEFAULT restores Envoy's configured SKIP, which suppresses content-length mutations.
 		override := &extProcV3.ProcessingMode{
-			RequestBodyMode:  extProcV3.ProcessingMode_NONE,
-			ResponseBodyMode: responseBodyMode,
+			RequestBodyMode:    extProcV3.ProcessingMode_NONE,
+			ResponseHeaderMode: extProcV3.ProcessingMode_SEND,
+			ResponseBodyMode:   responseBodyMode,
 		}
 		resp := cloneResponse(responses[0])
 		resp.ModeOverride = override

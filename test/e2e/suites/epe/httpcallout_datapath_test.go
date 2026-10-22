@@ -134,6 +134,7 @@ func TestEPEHTTPCallout(t *testing.T) {
 					"--noproxy",
 					"*",
 					"--include",
+					"--raw",
 					"--header",
 					"x-visible: visible",
 					"--header",
