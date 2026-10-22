@@ -31,10 +31,8 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 )
 
-// The SecurityProfile CRD cannot yet carry an httpcallout action, so these
-// scenarios project a hand-written payload and hand-roll the resolver. What is
-// still end-to-end is everything that matters here: the real extproc server,
-// the real engine walk, and a real HTTP endpoint reached over a socket.
+// These filter scenarios exercise the real extproc server, engine, and HTTP endpoint.
+// Public API integration scenarios live in pkg/testing/securityprofile.
 
 // decisionFunc answers one invocation. It is called once per callout, possibly
 // concurrently, so it must not close over mutable state.

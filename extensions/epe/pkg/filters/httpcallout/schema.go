@@ -36,8 +36,9 @@ type spec struct {
 
 // phaseSpec is the wire form of PhaseConfig.
 type phaseSpec struct {
-	Headers *headersSpec `json:"headers,omitempty"`
-	Body    bool         `json:"body,omitempty"`
+	Headers      *headersSpec `json:"headers,omitempty"`
+	Body         bool         `json:"body,omitempty"`
+	MaxBodyBytes int64        `json:"maxBodyBytes,omitempty"`
 }
 
 // headersSpec is the wire form of HeadersConfig, shared by both directions
@@ -95,7 +96,7 @@ func phaseFromSpec(s *phaseSpec) *PhaseConfig {
 	if s == nil {
 		return nil
 	}
-	phase := &PhaseConfig{Body: s.Body}
+	phase := &PhaseConfig{Body: s.Body, MaxBodyBytes: s.MaxBodyBytes}
 	if s.Headers != nil {
 		phase.Headers = HeadersConfig{
 			Mode:      HeaderMode(s.Headers.Mode),

@@ -33,6 +33,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/bypass"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/headermutation"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/mcpacl"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/oauth2"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
@@ -168,6 +169,13 @@ func payloadsFor(rule *Rule) (map[string]json.RawMessage, error) {
 			return nil, fmt.Errorf("build headerManipulation payload: %w", err)
 		}
 		m[headermutation.FilterName] = raw
+	}
+	if a := rule.Actions.HTTPCallout; a != nil {
+		raw, err := httpCalloutPayload(a)
+		if err != nil {
+			return nil, fmt.Errorf("build httpCallout payload: %w", err)
+		}
+		m[httpcallout.FilterName] = raw
 	}
 	// Disabled is absorbed here: an open payload map expresses "off" by
 	// omitting the key, so a disabled action simply produces no payload.

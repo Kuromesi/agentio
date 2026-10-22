@@ -37,6 +37,7 @@ import (
 // statement of "this is the smallest thing my Parse accepts"; a missing
 // entry fails the suite by name.
 var minimalPayloads = map[string]string{
+	"httpcallout":    `{"provider":"scanner","request":{}}`,
 	"bypass":         `{}`,
 	"block":          `{}`,
 	"mcpacl":         `{"defaultAction":"deny"}`,

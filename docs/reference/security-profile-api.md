@@ -696,6 +696,31 @@ for credentials.
 <td>false</td>
 </tr>
 <tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcallout">httpCallout</a></b></td>
+<td>object</td>
+<td>
+
+HTTPCallout delegates the request, the upstream response, or both to a
+named HTTP callout provider. Non-terminal unless the provider returns an
+immediate response or a fail-closed error occurs. For example:
+
+    httpCallout:
+      provider:
+        name: content-scanner
+      request:
+        headers:
+          enabled: true
+          filter:
+            allowList: [content-type, x-request-id]
+        body:
+          enabled: true
+          maxBytes: 1048576
+      failStrategy: Block
+
+</td>
+<td>false</td>
+</tr>
+<tr>
 <td><b><a href="#globalsecurityprofilespecrulesactionsmcptoolpolicy">mcpToolPolicy</a></b></td>
 <td>object</td>
 <td>
@@ -1102,6 +1127,457 @@ Value is stored and injected verbatim. NOT for credentials.
 
 </td>
 <td>true</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout
+
+HTTPCallout delegates the request, the upstream response, or both to a
+named HTTP callout provider. Non-terminal unless the provider returns an
+immediate response or a fail-closed error occurs. For example:
+
+    httpCallout:
+      provider:
+        name: content-scanner
+      request:
+        headers:
+          enabled: true
+          filter:
+            allowList: [content-type, x-request-id]
+        body:
+          enabled: true
+          maxBytes: 1048576
+      failStrategy: Block
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutprovider">provider</a></b></td>
+<td>object</td>
+<td>
+
+Provider identifies the HTTP callout provider. The provider owns the
+URL, timeout, TLS, and decision-response size limit. A missing, unavailable,
+or wrong-type provider is an execution failure handled by FailStrategy;
+no other provider is used as a fallback.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>failStrategy</b></td>
+<td>enum</td>
+<td>
+
+FailStrategy controls execution failures, including provider lookup,
+transport, timeout, body-disclosure, and protocol errors. Defaults to
+Block. Allow and Ignore skip the failed callout's mutations and continue.
+A valid immediate response from the provider is always honored.
+
+<i>Enum</i>: Allow, Block, Ignore<br/>
+<i>Default</i>: Block<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutrequest">request</a></b></td>
+<td>object</td>
+<td>
+
+Request enables a callout before the request is forwarded upstream.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutresponse">response</a></b></td>
+<td>object</td>
+<td>
+
+Response enables a callout on the upstream response. Its invocation
+includes request correlation metadata, but no request headers or body.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.provider
+
+Provider identifies the HTTP callout provider. The provider owns the
+URL, timeout, TLS, and decision-response size limit. A missing, unavailable,
+or wrong-type provider is an execution failure handled by FailStrategy;
+no other provider is used as a fallback.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name identifies the provider.
+It is required and has no default.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.request
+
+Request enables a callout before the request is forwarded upstream.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutrequestbody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body controls body disclosure. Omission disables body disclosure.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutrequestheaders">headers</a></b></td>
+<td>object</td>
+<td>
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.request.body
+
+Body controls body disclosure. Omission disables body disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled buffers and sends the complete body when true. The callout then
+runs after buffering, instead of at the headers phase. Defaults to false.
+An empty body is valid. Bodies must be valid UTF-8 and fit within
+MaxBytes; they are never truncated. In the response phase, only the
+response body is sent.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>maxBytes</b></td>
+<td>integer</td>
+<td>
+
+MaxBytes limits the body disclosed in this phase. Defaults to 1 MiB and
+may not exceed 8 MiB. Oversized content is an execution failure, not
+truncated input. This has no effect when Enabled is false and does not
+configure Envoy's buffering limit or the provider's decision-response
+size limit.
+
+<i>Format</i>: int64<br/>
+<i>Default</i>: 1048576<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 8.388608e+06<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.request.headers
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled sends headers when true. Defaults to false. When false, Filter
+has no effect. Request metadata such as authority, path, and content
+type remains part of the invocation regardless of this setting.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutrequestheadersfilter">filter</a></b></td>
+<td>object</td>
+<td>
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.request.headers.filter
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>allowList</b></td>
+<td>[]string</td>
+<td>
+
+AllowList names the only headers sent. Header names are case-insensitive.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>denyList</b></td>
+<td>[]string</td>
+<td>
+
+DenyList names the headers omitted. Header names are case-insensitive.
+Credentials are sent unless explicitly excluded.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.response
+
+Response enables a callout on the upstream response. Its invocation
+includes request correlation metadata, but no request headers or body.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutresponsebody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body controls body disclosure. Omission disables body disclosure.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutresponseheaders">headers</a></b></td>
+<td>object</td>
+<td>
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.response.body
+
+Body controls body disclosure. Omission disables body disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled buffers and sends the complete body when true. The callout then
+runs after buffering, instead of at the headers phase. Defaults to false.
+An empty body is valid. Bodies must be valid UTF-8 and fit within
+MaxBytes; they are never truncated. In the response phase, only the
+response body is sent.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>maxBytes</b></td>
+<td>integer</td>
+<td>
+
+MaxBytes limits the body disclosed in this phase. Defaults to 1 MiB and
+may not exceed 8 MiB. Oversized content is an execution failure, not
+truncated input. This has no effect when Enabled is false and does not
+configure Envoy's buffering limit or the provider's decision-response
+size limit.
+
+<i>Format</i>: int64<br/>
+<i>Default</i>: 1048576<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 8.388608e+06<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.response.headers
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled sends headers when true. Defaults to false. When false, Filter
+has no effect. Request metadata such as authority, path, and content
+type remains part of the invocation regardless of this setting.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#globalsecurityprofilespecrulesactionshttpcalloutresponseheadersfilter">filter</a></b></td>
+<td>object</td>
+<td>
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### GlobalSecurityProfile.spec.rules[].actions.httpCallout.response.headers.filter
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>allowList</b></td>
+<td>[]string</td>
+<td>
+
+AllowList names the only headers sent. Header names are case-insensitive.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>denyList</b></td>
+<td>[]string</td>
+<td>
+
+DenyList names the headers omitted. Header names are case-insensitive.
+Credentials are sent unless explicitly excluded.
+
+</td>
+<td>false</td>
 </tr>
 </tbody>
 </table>
@@ -3127,6 +3603,31 @@ for credentials.
 <td>false</td>
 </tr>
 <tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcallout">httpCallout</a></b></td>
+<td>object</td>
+<td>
+
+HTTPCallout delegates the request, the upstream response, or both to a
+named HTTP callout provider. Non-terminal unless the provider returns an
+immediate response or a fail-closed error occurs. For example:
+
+    httpCallout:
+      provider:
+        name: content-scanner
+      request:
+        headers:
+          enabled: true
+          filter:
+            allowList: [content-type, x-request-id]
+        body:
+          enabled: true
+          maxBytes: 1048576
+      failStrategy: Block
+
+</td>
+<td>false</td>
+</tr>
+<tr>
 <td><b><a href="#securityprofilespecrulesactionsmcptoolpolicy">mcpToolPolicy</a></b></td>
 <td>object</td>
 <td>
@@ -3533,6 +4034,457 @@ Value is stored and injected verbatim. NOT for credentials.
 
 </td>
 <td>true</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout
+
+HTTPCallout delegates the request, the upstream response, or both to a
+named HTTP callout provider. Non-terminal unless the provider returns an
+immediate response or a fail-closed error occurs. For example:
+
+    httpCallout:
+      provider:
+        name: content-scanner
+      request:
+        headers:
+          enabled: true
+          filter:
+            allowList: [content-type, x-request-id]
+        body:
+          enabled: true
+          maxBytes: 1048576
+      failStrategy: Block
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutprovider">provider</a></b></td>
+<td>object</td>
+<td>
+
+Provider identifies the HTTP callout provider. The provider owns the
+URL, timeout, TLS, and decision-response size limit. A missing, unavailable,
+or wrong-type provider is an execution failure handled by FailStrategy;
+no other provider is used as a fallback.
+
+</td>
+<td>true</td>
+</tr>
+<tr>
+<td><b>failStrategy</b></td>
+<td>enum</td>
+<td>
+
+FailStrategy controls execution failures, including provider lookup,
+transport, timeout, body-disclosure, and protocol errors. Defaults to
+Block. Allow and Ignore skip the failed callout's mutations and continue.
+A valid immediate response from the provider is always honored.
+
+<i>Enum</i>: Allow, Block, Ignore<br/>
+<i>Default</i>: Block<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutrequest">request</a></b></td>
+<td>object</td>
+<td>
+
+Request enables a callout before the request is forwarded upstream.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutresponse">response</a></b></td>
+<td>object</td>
+<td>
+
+Response enables a callout on the upstream response. Its invocation
+includes request correlation metadata, but no request headers or body.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.provider
+
+Provider identifies the HTTP callout provider. The provider owns the
+URL, timeout, TLS, and decision-response size limit. A missing, unavailable,
+or wrong-type provider is an execution failure handled by FailStrategy;
+no other provider is used as a fallback.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>name</b></td>
+<td>string</td>
+<td>
+
+Name identifies the provider.
+It is required and has no default.
+
+</td>
+<td>true</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.request
+
+Request enables a callout before the request is forwarded upstream.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutrequestbody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body controls body disclosure. Omission disables body disclosure.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutrequestheaders">headers</a></b></td>
+<td>object</td>
+<td>
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.request.body
+
+Body controls body disclosure. Omission disables body disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled buffers and sends the complete body when true. The callout then
+runs after buffering, instead of at the headers phase. Defaults to false.
+An empty body is valid. Bodies must be valid UTF-8 and fit within
+MaxBytes; they are never truncated. In the response phase, only the
+response body is sent.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>maxBytes</b></td>
+<td>integer</td>
+<td>
+
+MaxBytes limits the body disclosed in this phase. Defaults to 1 MiB and
+may not exceed 8 MiB. Oversized content is an execution failure, not
+truncated input. This has no effect when Enabled is false and does not
+configure Envoy's buffering limit or the provider's decision-response
+size limit.
+
+<i>Format</i>: int64<br/>
+<i>Default</i>: 1048576<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 8.388608e+06<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.request.headers
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled sends headers when true. Defaults to false. When false, Filter
+has no effect. Request metadata such as authority, path, and content
+type remains part of the invocation regardless of this setting.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutrequestheadersfilter">filter</a></b></td>
+<td>object</td>
+<td>
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.request.headers.filter
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>allowList</b></td>
+<td>[]string</td>
+<td>
+
+AllowList names the only headers sent. Header names are case-insensitive.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>denyList</b></td>
+<td>[]string</td>
+<td>
+
+DenyList names the headers omitted. Header names are case-insensitive.
+Credentials are sent unless explicitly excluded.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.response
+
+Response enables a callout on the upstream response. Its invocation
+includes request correlation metadata, but no request headers or body.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutresponsebody">body</a></b></td>
+<td>object</td>
+<td>
+
+Body controls body disclosure. Omission disables body disclosure.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutresponseheaders">headers</a></b></td>
+<td>object</td>
+<td>
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.response.body
+
+Body controls body disclosure. Omission disables body disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled buffers and sends the complete body when true. The callout then
+runs after buffering, instead of at the headers phase. Defaults to false.
+An empty body is valid. Bodies must be valid UTF-8 and fit within
+MaxBytes; they are never truncated. In the response phase, only the
+response body is sent.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>maxBytes</b></td>
+<td>integer</td>
+<td>
+
+MaxBytes limits the body disclosed in this phase. Defaults to 1 MiB and
+may not exceed 8 MiB. Oversized content is an execution failure, not
+truncated input. This has no effect when Enabled is false and does not
+configure Envoy's buffering limit or the provider's decision-response
+size limit.
+
+<i>Format</i>: int64<br/>
+<i>Default</i>: 1048576<br/>
+<i>Minimum</i>: 1<br/>
+<i>Maximum</i>: 8.388608e+06<br/>
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.response.headers
+
+Headers controls header disclosure. Omission disables header disclosure.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>enabled</b></td>
+<td>boolean</td>
+<td>
+
+Enabled sends headers when true. Defaults to false. When false, Filter
+has no effect. Request metadata such as authority, path, and content
+type remains part of the invocation regardless of this setting.
+
+<i>Default</i>: false<br/>
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b><a href="#securityprofilespecrulesactionshttpcalloutresponseheadersfilter">filter</a></b></td>
+<td>object</td>
+<td>
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+
+### SecurityProfile.spec.rules[].actions.httpCallout.response.headers.filter
+
+Filter selects the headers sent when Enabled is true. Omission sends
+every header, including credentials and cookies. When present, exactly
+one non-empty list must be set; an empty filter is invalid.
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><b>allowList</b></td>
+<td>[]string</td>
+<td>
+
+AllowList names the only headers sent. Header names are case-insensitive.
+
+</td>
+<td>false</td>
+</tr>
+<tr>
+<td><b>denyList</b></td>
+<td>[]string</td>
+<td>
+
+DenyList names the headers omitted. Header names are case-insensitive.
+Credentials are sent unless explicitly excluded.
+
+</td>
+<td>false</td>
 </tr>
 </tbody>
 </table>

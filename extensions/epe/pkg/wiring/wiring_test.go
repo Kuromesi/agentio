@@ -28,7 +28,7 @@ func TestBuildFiltersOrderIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
-	want := []string{"bypass", "block", "mcpacl", "headermutation", "tokentransform", "oauth2"}
+	want := []string{"bypass", "block", "mcpacl", "headermutation", "httpcallout", "tokentransform", "oauth2"}
 	if len(regs) != len(want) {
 		t.Fatalf("got %d registrations, want %d", len(regs), len(want))
 	}

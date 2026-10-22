@@ -28,6 +28,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/bypass"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/headermutation"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/mcpacl"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/oauth2"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
@@ -50,8 +51,7 @@ type Deps struct {
 // header. OAuth endpoint handling has its own filter; the remaining credential
 // transformations use the tokentransform signer registry. Invalid configuration
 // fails closed at projection time.
-// HTTPCallout providers are available through the registry; the HTTPCallout filter is
-// not mounted until the SecurityProfile API and its payload conversion are added.
+// HTTP callouts run after header mutation and before credential transformations.
 func BuildFilters(deps Deps) ([]filter.Registration, error) {
 	if deps.Providers == nil {
 		return nil, fmt.Errorf("provider registry is required")
@@ -66,6 +66,7 @@ func BuildFilters(deps Deps) ([]filter.Registration, error) {
 		block.Definition(),
 		mcpacl.Definition(),
 		headermutation.Definition(),
+		httpcallout.NewDefinition(httpcallout.Deps{Client: httpcallout.NewHTTPClient(deps.Providers)}),
 		tokentransform.NewDefinition(ttDeps),
 		oauth2.Definition(deps.Providers),
 	}

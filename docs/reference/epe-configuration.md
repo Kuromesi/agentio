@@ -4,7 +4,7 @@ The Egress Policy Enforcer (EPE) is deployed by the Agentio chart as `agentio-ep
 
 ## Watched EPEConfig
 
-EPE always watches its base and primary configuration ConfigMaps and referenced Secrets, CA ConfigMaps, and certificate files. The chart selects `<epe-name>-config` and `<epe-name>-config-primary` in the installation namespace; standalone EPE defaults to `agentio-epe-config` and `agentio-epe-config-primary` in `agentio-system`. Set `epe.config` to have Helm create the base with named `httpCallout` and `credentialProvider` extensions. SecurityProfile HTTPCallout API integration is deferred. `epe.config: null` leaves the base externally managed; primary is always externally managed.
+EPE always watches its base and primary configuration ConfigMaps and referenced Secrets, CA ConfigMaps, and certificate files. The chart selects `<epe-name>-config` and `<epe-name>-config-primary` in the installation namespace; standalone EPE defaults to `agentio-epe-config` and `agentio-epe-config-primary` in `agentio-system`. Set `epe.config` to have Helm create the base with named `httpCallout` and `credentialProvider` extensions. SecurityProfile rules select a named provider with `actions.httpCallout.provider.name`; see [HTTP callouts](security-profile.md#http-callouts). `epe.config: null` leaves the base externally managed; primary is always externally managed.
 
 Environment settings supply the default EPEConfig layer, followed by base and primary. Missing ConfigMaps or blank `data.config` leave the lower layer unchanged; EPE watches for later creation. Invalid content is logged and discarded, retaining the last good configuration, or the defaults before any valid configuration has been loaded.
 
@@ -227,7 +227,7 @@ Invalid TLS flag combinations, unreadable initial certificate/key files, or an i
 
 The cache environment variables configure every credential provider, whether registered by the environment defaults or EPEConfig. Providers retain independent caches with the same limits. Cache settings are read at startup and require a restart to change; they are not part of EPEConfig.
 
-`HTTP_CALLOUT_MAX_RESPONSE_BYTES` bounds the Decision response read by each HTTPCallout client. It defaults to `1048576` bytes (1 MiB); non-positive or invalid values use that default. The client reads the setting once at initialization, so changing it in a deployment requires restarting EPE. It does not affect credential lookups or the rule's `maxBodyBytes` disclosure limit. The HTTPCallout client supports this setting; production SecurityProfile integration remains deferred.
+`HTTP_CALLOUT_MAX_RESPONSE_BYTES` bounds the Decision response read by each HTTPCallout client. It defaults to `1048576` bytes (1 MiB); non-positive or invalid values use that default. The client reads the setting once at initialization, so changing it in a deployment requires restarting EPE. It does not affect credential lookups or the rule's `maxBodyBytes` disclosure limit. Each SecurityProfile callout uses this client limit.
 
 The following table is generated from EPE's credential-provider, token-cache, STS-cache, HTTPCallout, and audit-webhook registrations. It shows binary defaults; in particular, the chart sets `TOKEN_CACHE_MAX_SIZE=10000` while the binary defaults to `100000`.
 

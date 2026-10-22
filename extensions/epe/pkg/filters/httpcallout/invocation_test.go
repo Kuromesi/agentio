@@ -587,3 +587,24 @@ func TestBuildInvocationNeverForwardsTheSandboxToken(t *testing.T) {
 		}
 	}
 }
+
+func TestBodyTextPhaseLimits(t *testing.T) {
+	cfg := Config{MaxBodyBytes: 100}
+	for _, tc := range []struct {
+		name  string
+		limit int64
+		size  int
+		fail  bool
+	}{
+		{"request boundary", 3, 3, false}, {"request overflow", 3, 4, true},
+		{"response boundary", 5, 5, false}, {"response overflow", 5, 6, true},
+		{"shared fallback", 0, 100, false}, {"shared overflow", 0, 101, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := bodyText(cfg, PhaseConfig{Body: true, MaxBodyBytes: tc.limit}, filter.Body{Bytes: make([]byte, tc.size)}, tc.name)
+			if (err != nil) != tc.fail {
+				t.Fatalf("error=%v, want failure=%v", err, tc.fail)
+			}
+		})
+	}
+}

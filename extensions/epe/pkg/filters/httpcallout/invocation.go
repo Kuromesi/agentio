@@ -193,8 +193,12 @@ func bodyText(cfg Config, phase PhaseConfig, body filter.Body, direction string)
 	if !phase.Body {
 		return nil, nil
 	}
-	if int64(len(body.Bytes)) > cfg.MaxBodyBytes {
-		return nil, fmt.Errorf("callout %s body is %d bytes, over the %d byte limit", direction, len(body.Bytes), cfg.MaxBodyBytes)
+	limit := phase.MaxBodyBytes
+	if limit == 0 {
+		limit = cfg.MaxBodyBytes
+	}
+	if int64(len(body.Bytes)) > limit {
+		return nil, fmt.Errorf("callout %s body is %d bytes, over the %d byte limit", direction, len(body.Bytes), limit)
 	}
 	text := string(body.Bytes)
 	return &text, nil
