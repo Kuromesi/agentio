@@ -136,7 +136,11 @@ func main() {
 		0,
 		"serve the credential-provider HTTP fixture instead of ext-proc",
 	)
+	calloutPort := flag.Int("http-callout-port", 0, "serve the HTTP callout and origin fixture instead of ext-proc")
 	flag.Parse()
+	if *calloutPort != 0 {
+		log.Fatalf("serve HTTP callout: %v", serveHTTPCallout(*calloutPort))
+	}
 	if *credentialPort != 0 {
 		log.Fatalf("serve credential provider: %v", serveCredentialProvider(*credentialPort))
 	}
