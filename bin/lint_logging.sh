@@ -86,7 +86,7 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
   #    exempt because the ones that assert a bridge must call it.
   if ! is_test "${f}"; then
     case "${f}" in
-      cmd/agentiod/logging.go | extensions/epe/cmd/epe/main.go | test/fixtures/extproc/main.go | bench/xds/load/main.go | bench/porter/load/main.go) ;;
+      cmd/agentiod/logging.go | extensions/epe/cmd/epe/main.go | test/fixtures/extproc/main.go | bench/epe/callout/server/main.go | bench/xds/load/main.go | bench/porter/load/main.go) ;;
       *)
         scan "${f}" '(^|[^[:alnum:]_."])klog\.' \
           "klog is bridged once in the process entrypoint; use the package logger"
