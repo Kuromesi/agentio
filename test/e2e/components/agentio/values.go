@@ -29,10 +29,6 @@ func chartValues(config Config) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agentiod image: %w", err)
 	}
-	cniImage, err := pinnedImageValues(config.CNIImage)
-	if err != nil {
-		return nil, fmt.Errorf("CNI image: %w", err)
-	}
 	ztunnelImage, err := pinnedImageValues(config.ZtunnelImage)
 	if err != nil {
 		return nil, fmt.Errorf("ztunnel image: %w", err)
@@ -81,7 +77,6 @@ func chartValues(config Config) ([]byte, error) {
 				"egressPolicies": []any{map[string]any{"policy": "PASSTHROUGH"}},
 			}},
 		},
-		"cni": map[string]any{"image": cniImage},
 		"ztunnel": map[string]any{
 			"image":               ztunnelImage,
 			"enableFirewallRules": config.EnableFirewallRules,
@@ -119,6 +114,13 @@ func chartValues(config Config) ([]byte, error) {
 				"limits":   map[string]any{"cpu": "1", "memory": "512Mi"},
 			},
 		},
+	}
+	if config.Profile == ProfileAmbient {
+		cniImage, err := pinnedImageValues(config.CNIImage)
+		if err != nil {
+			return nil, fmt.Errorf("CNI image: %w", err)
+		}
+		values["cni"] = map[string]any{"image": cniImage}
 	}
 	if config.GatewayDataplane == "agentgateway" {
 		values["agentiod"].(map[string]any)["enableSNITrafficPolicy"] = false

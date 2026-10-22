@@ -263,6 +263,9 @@ func (c Config) Validate() error {
 		{name: "ext-proc", value: c.ExtProcImage},
 		{name: "forward-proxy", value: c.ForwardProxyImage},
 	} {
+		if image.name == "cni" && c.Profile != ProfileAmbient {
+			continue
+		}
 		if !immutableImage.MatchString(image.value) {
 			return fmt.Errorf("%s image must use repository@sha256 followed by a 64-character digest", image.name)
 		}

@@ -33,7 +33,7 @@ import (
 func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	config := validConfig(t)
 	config.AgentiodImage = immutableImageRef("agentiod", "b")
-	config.CNIImage = immutableImageRef("install-cni", "1")
+	config.CNIImage = ""
 	config.ZtunnelImage = immutableImageRef("ztunnel", "c")
 	config.ProxyInitImage = immutableImageRef("proxy-init", "d")
 	config.GatewayImage = immutableImageRef("gateway", "e")
@@ -68,8 +68,9 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	if got := injector["proxyInit"].(map[string]any)["image"]; got != config.ProxyInitImage {
 		t.Fatalf("proxy-init image = %#v, want %q", got, config.ProxyInitImage)
 	}
-	cni := values["cni"].(map[string]any)
-	assertPinnedImage(t, cni["image"], "registry.example/install-cni", "sha256:"+strings.Repeat("1", 64))
+	if _, ok := values["cni"]; ok {
+		t.Fatal("sidecar values must not configure CNI")
+	}
 	topLevelZtunnel := values["ztunnel"].(map[string]any)
 	assertPinnedImage(t, topLevelZtunnel["image"], "registry.example/ztunnel", "sha256:"+strings.Repeat("c", 64))
 
@@ -98,6 +99,7 @@ func TestProductionChartRendersSuiteValues(t *testing.T) {
 		t.Skip("helm is not installed")
 	}
 	config := validConfig(t)
+	config.CNIImage = ""
 	chartPath, err := findProductionChart()
 	if err != nil {
 		t.Fatal(err)

@@ -117,6 +117,5 @@ jobs:
     with:
       epe_only: true
       candidate_image_artifact: agentio-presubmit-candidate-images
-      cni_image: ${{ needs.build-candidates.outputs.cni_image }}
       proxy_init_image: ${{ needs.build-candidates.outputs.proxy_init_image }}
       gateway_image: "" # Resolved from the same-run candidate artifact.

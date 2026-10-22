@@ -32,8 +32,9 @@ on:
         default: ""
         type: string
       cni_image:
-        description: Immutable CNI image (repository@sha256:digest)
-        required: true
+        description: Immutable CNI image required for ambient product tests; unused by EPE
+        required: false
+        default: ""
         type: string
       ztunnel_image:
         description: Immutable ztunnel image; supplied by candidate archive for presubmit
@@ -83,8 +84,9 @@ on:
         required: true
         type: string
       cni_image:
-        description: Immutable CNI image (repository@sha256:digest)
-        required: true
+        description: Immutable CNI image required for ambient product tests; unused by EPE
+        required: false
+        default: ""
         type: string
       ztunnel_image:
         description: Immutable ztunnel image (repository@sha256:digest)
