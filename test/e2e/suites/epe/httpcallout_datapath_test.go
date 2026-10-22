@@ -34,8 +34,8 @@ import (
 )
 
 // TestEPEHTTPCallout drives curl -> ztunnel -> Envoy -> EPE -> HTTP provider
-// and origin, using candidate images and public CRDs. It runs in both capture
-// profiles. Port-forwarding is used only to inspect observations and readiness.
+// and origin, using candidate images and public CRDs in the sidecar test environment.
+// Port-forwarding is used only to inspect observations and readiness.
 func TestEPEHTTPCallout(t *testing.T) {
 	environment, scope := rig.BeginScenario(t)
 	namespace := resolvedAgentioConfig.Namespace

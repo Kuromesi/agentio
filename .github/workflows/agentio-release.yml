@@ -258,8 +258,24 @@ jobs:
       forward_proxy_image: ${{ needs.validate-release.outputs.forward_proxy_image }}
       chart_artifact: agentio-release-chart-candidate
 
+  epe-e2e:
+    needs: [validate-release, release-unit, build-candidates, prepare-chart]
+    uses: ./.github/workflows/agentio-e2e.yml
+    with:
+      epe_only: true
+      agentiod_image: ${{ needs.build-candidates.outputs.agentiod_image }}
+      epe_image: ${{ needs.build-candidates.outputs.epe_image }}
+      porter_image: ${{ needs.build-candidates.outputs.porter_image }}
+      cni_image: ${{ needs.validate-release.outputs.cni_image }}
+      ztunnel_image: ${{ needs.build-candidates.outputs.ztunnel_image }}
+      proxy_init_image: ${{ needs.validate-release.outputs.proxy_init_image }}
+      gateway_image: ${{ needs.validate-release.outputs.gateway_image || needs.build-candidates.outputs.gateway_agent_image }}
+      ext_proc_image: ${{ needs.validate-release.outputs.ext_proc_image }}
+      forward_proxy_image: ${{ needs.validate-release.outputs.forward_proxy_image }}
+      chart_artifact: agentio-release-chart-candidate
+
   tag-agentio:
-    needs: [validate-release, release-unit, product-e2e]
+    needs: [validate-release, release-unit, product-e2e, epe-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release

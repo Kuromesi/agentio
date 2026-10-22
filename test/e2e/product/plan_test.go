@@ -46,7 +46,7 @@ func TestRequiredCoverage(t *testing.T) {
 	}
 	want := map[string][]string{
 		"sidecar-auto":     {"trafficpolicy", "gateway", "securitypolicy", "epe", "clienttrust"},
-		"ambient-auto":     {"trafficpolicy", "gateway", "securitypolicy", "epe"},
+		"ambient-auto":     {"trafficpolicy", "gateway", "securitypolicy"},
 		"sidecar-iptables": {"trafficpolicy"},
 		"ambient-iptables": {"trafficpolicy"},
 	}
@@ -76,19 +76,24 @@ func TestRequiredCoverage(t *testing.T) {
 			t.Fatal("clienttrust fixture scheduled unnecessarily")
 		}
 	}
-	if invocations != 11 {
-		t.Fatalf("invocations=%d, want 11", invocations)
+	if invocations != 10 {
+		t.Fatalf("invocations=%d, want 10", invocations)
 	}
 	for test, want := range map[string]int{
 		"trafficpolicy/TestControlPlaneConfigDebug":        1,
 		"trafficpolicy/TestSandboxTrafficPolicyProtocol":   4,
 		"trafficpolicy/TestTrafficPolicyLowerPriorityWins": 4,
 		"epe/TestEPEServiceAccountCanWatchItsInputs":       1,
-		"epe/TestPodIdentityReachesEPE":                    2,
+		"epe/TestPodIdentityReachesEPE":                    1,
 		"clienttrust/TestClientTrustHTTPS":                 1,
 	} {
 		if counts[test] != want {
 			t.Errorf("%s scheduled %d times, want %d", test, counts[test], want)
+		}
+	}
+	for _, test := range inventory["epe"] {
+		if counts["epe/"+test] != 1 {
+			t.Errorf("EPE test %s must run exactly once, got %d", test, counts["epe/"+test])
 		}
 	}
 	again, err := Build(Catalog(), inventory, Selection{})
@@ -107,6 +112,8 @@ func TestSelectionAndManualCoverage(t *testing.T) {
 		{"ambient", Selection{Profile: "ambient"}, 2, ""},
 		{"iptables", Selection{Backend: "iptables"}, 2, ""},
 		{"clienttrust", Selection{Suites: []string{"clienttrust"}}, 1, ""},
+		{"epe", Selection{Suites: []string{"epe"}}, 1, ""},
+		{"epe-ambient", Selection{Suites: []string{"epe"}, Profile: "ambient"}, 0, "no tests"},
 		{"opt-in", Selection{Suites: []string{"agentgateway"}}, 2, ""},
 		{"outside-coverage", Selection{Suites: []string{"clienttrust"}, Backend: "iptables"}, 0, "no tests"},
 		{"manual-backend", Selection{Suites: []string{"clienttrust"}, Profile: "sidecar", Backend: "iptables", Force: true}, 1, ""},
@@ -146,7 +153,7 @@ func TestInvalidCoverageFailsBeforeExecution(t *testing.T) {
 		name   string
 		change func([]Suite, map[string][]string) []Suite
 	}{
-		{"renamed-test", func(c []Suite, i map[string][]string) []Suite { i["epe"] = []string{"TestRenamed"}; return c }},
+		{"renamed-test", func(c []Suite, i map[string][]string) []Suite { i["trafficpolicy"] = []string{"TestRenamed"}; return c }},
 		{"unregistered-suite", func(c []Suite, i map[string][]string) []Suite { i["newfeature"] = []string{"TestFeature"}; return c }},
 		{"missing-suite", func(c []Suite, i map[string][]string) []Suite { delete(i, "clienttrust"); return c }},
 		{"duplicate-suite", func(c []Suite, _ map[string][]string) []Suite { return append(c, c[0]) }},
