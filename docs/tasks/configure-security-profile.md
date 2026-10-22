@@ -9,6 +9,7 @@ Complete [Get started with EPE](../getting-started/epe.md), including the egress
 Set the namespace and calling workload label for the examples:
 
 ```console
+$ export AGENTIO_EPE_NAMESPACE=agentio-system
 $ export AGENTIO_PROFILE_NAMESPACE=agentio-demo
 $ export AGENTIO_PROFILE_WORKLOAD_LABEL=curl
 ```
@@ -29,7 +30,7 @@ Each rule requires `domains`. Add `paths`, `methods`, `ports`, `schemes`, `heade
 
 ## Apply a non-terminal transformation
 
-The following complete manifest stores a demonstration API key and applies a non-terminal token transformation. The transformation replaces the outbound `Authorization` header for matching requests, then lets later rules and the upstream request continue. The Secret must use the `apiKey` data key for the `ApiKey` transformation.
+The following complete manifest stores a demonstration API key and applies a non-terminal token transformation. The transformation replaces the outbound `Authorization` header for matching requests, then lets later rules and the upstream request continue. The Secret must be in the EPE system namespace (`AGENTIO_EPE_NAMESPACE`, matching `--namespace`) and use the `apiKey` data key for the `ApiKey` transformation.
 
 ```console
 $ kubectl apply -f - <<EOF
@@ -37,7 +38,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: epe-demo-api-key
-  namespace: ${AGENTIO_PROFILE_NAMESPACE}
+  namespace: ${AGENTIO_EPE_NAMESPACE}
 type: Opaque
 stringData:
   apiKey: demo-api-key
@@ -64,6 +65,7 @@ spec:
         credentialRef:
           secret:
             name: epe-demo-api-key
+            namespace: ${AGENTIO_EPE_NAMESPACE}
         apiKey:
           targetHeaders:
             names:

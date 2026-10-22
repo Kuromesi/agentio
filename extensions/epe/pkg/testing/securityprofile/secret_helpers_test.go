@@ -17,11 +17,6 @@ package securityprofile
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
-	k8stesting "k8s.io/client-go/testing"
-
-	"github.com/openkruise/agentio/pkg/kube"
 )
 
 func newAPIKeySecret(namespace, name, apiKey string) *corev1.Secret {
@@ -40,15 +35,4 @@ func newSTSSecret(namespace, name, ak, sk, token string) *corev1.Secret {
 			"securityToken":   []byte(token),
 		},
 	}
-}
-
-// newSecretGetErrorClient returns a fake kube client whose Secret reads
-// always fail with the given error (e.g. a Forbidden error simulating
-// missing RBAC, or a plain error simulating an apiserver outage).
-func newSecretGetErrorClient(err error) kube.Client {
-	c := kube.NewFakeClient()
-	c.Kube().(*k8sfake.Clientset).PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, err
-	})
-	return c
 }

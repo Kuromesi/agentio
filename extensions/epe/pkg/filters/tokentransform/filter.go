@@ -55,7 +55,7 @@ func NewDescriptor(deps Deps) filter.Descriptor[Config] {
 		New: func(rule filter.RuleConfig[Config]) filter.Filter {
 			return &Filter{
 				sources: Sources{
-					Secret:   NewSecretSource(deps.Kube),
+					Secret:   deps.SecretSource,
 					Provider: deps.ProviderSource,
 				},
 				signers: signerMap(),
@@ -211,6 +211,9 @@ func (f *Filter) fetchFromSource(
 	spec := rc.Cfg.Source
 	switch spec.Kind {
 	case SourceKindSecret:
+		if f.sources.Secret == nil {
+			return Credential{}, fmt.Errorf("secret credential source is not configured")
+		}
 		return f.sources.Secret.Fetch(ctx, Ref{Kind: kind, Name: spec.Name, Namespace: secretNamespace(rc, st)})
 	case SourceKindProvider:
 		if f.sources.Provider == nil {

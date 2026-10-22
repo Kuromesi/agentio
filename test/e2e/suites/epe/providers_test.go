@@ -317,7 +317,7 @@ spec:
   containers:
   - name: epe
     image: {{ .EPEImage }}
-    args: ["-epe-config={{ .Name }}", "-epe-config-primary={{ .Name }}-primary", "-epe-config-namespace={{ .Namespace }}", "-fail-closed-on-missing-identity=true"]
+    args: ["-epe-config={{ .Name }}", "-epe-config-primary={{ .Name }}-primary", "-namespace={{ .Namespace }}", "-fail-closed-on-missing-identity=true"]
     env:
     - {name: IDENTITY_PROVIDER_URL, value: {{ .EnvironmentURL | printf "%q" }}}
     - {name: CREDENTIAL_PROVIDER_MTLS_SOURCE, value: none}

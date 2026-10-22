@@ -79,6 +79,9 @@
 {{- end -}}
 {{- end -}}
 {{- if eq .Values.epe.mode "managed" -}}
+{{- if not (has .Values.epe.secretWatchScope (list "system" "cluster")) -}}
+{{- fail "epe.secretWatchScope must be system or cluster" -}}
+{{- end -}}
 {{- $source := .Values.epe.credentialProvider.mtls.source -}}
 {{- if not (has $source (list "secret" "none")) -}}
 {{- fail (printf "epe.credentialProvider.mtls.source must be secret or none; got %q" $source) -}}

@@ -24,13 +24,16 @@ import (
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
-	"github.com/openkruise/agentio/pkg/kube"
+	"github.com/openkruise/agentio/pkg/krt"
 )
 
 // staticMatcher serves hand-compiled profiles, bypassing the store so tests
@@ -73,7 +76,7 @@ func TestScenario_BlockRuleEnforcedWithUnavailableInputs(t *testing.T) {
 		Match:   []v1alpha1.RuleMatch{{Domains: []string{"evil.example.com"}}},
 		Actions: v1alpha1.SecurityRuleActions{Block: &v1alpha1.BlockAction{StatusCode: 403}},
 	}})
-	regs, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{}, Kube: kube.NewFakeClient()})
+	regs, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{}})
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)
 	}
@@ -117,8 +120,15 @@ func TestScenario_TokenTransformFailStrategyWithUnavailableInputs(t *testing.T) 
 	}
 	run := func(t *testing.T, failStrategy v1alpha1.FailStrategy, valueTemplate string) *enginetest.Verdict {
 		t.Helper()
-		regs, err := wiring.BuildFilters(wiring.Deps{Providers: &extensionprovider.Registry{},
-			Kube: kube.NewFakeClient(newAPIKeySecret("test-ns", "api-cred", "secret-token-123")),
+		regs, err := wiring.BuildFilters(wiring.Deps{
+			Providers: &extensionprovider.Registry{},
+			Secrets: tokentransform.NewSecretSource(
+				krt.NewStaticCollection(
+					nil,
+					[]*corev1.Secret{newAPIKeySecret("test-ns", "api-cred", "secret-token-123")},
+				),
+				"test-ns",
+			),
 		})
 		if err != nil {
 			t.Fatalf("BuildFilters: %v", err)

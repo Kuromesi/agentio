@@ -171,6 +171,8 @@ agentio:
     # Providers merge by name across environment defaults, base, and primary.
     # The environment provider is named agentio-default-credential-provider.
     config: null
+    # system watches the EPE namespace; cluster watches all namespaces and grants global Secret list/watch.
+    secretWatchScope: system
     mode: managed
     nameOverride: agentio-epe
     fullnameOverride: ""

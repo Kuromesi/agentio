@@ -25,7 +25,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
+
+	"github.com/openkruise/agentio/pkg/krt"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/credential/credentialtest"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
@@ -117,13 +118,7 @@ func newInjectHarnessWithDeps(
 	objects ...*corev1.Secret,
 ) *enginetest.Harness {
 	t.Helper()
-	cs := k8sfake.NewClientset()
-	for _, s := range objects {
-		if _, err := cs.CoreV1().Secrets(s.Namespace).Create(t.Context(), s, metav1.CreateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	deps.Kube = cs
+	deps.SecretSource = tokentransform.NewSecretSource(krt.NewStaticCollection(nil, objects), "test-ns")
 	return enginetest.NewSingleFilter(t, enginetest.SingleFilter{
 		Definition: tokentransform.NewDefinition(deps),
 		Payload:    payload,

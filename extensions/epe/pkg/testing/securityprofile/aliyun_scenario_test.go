@@ -21,13 +21,10 @@
 package securityprofile
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/pkg/kube"
@@ -116,16 +113,9 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 	}
 }
 
-// TestScenario_ForbiddenSecretHonoursBlockStrategy proves end to end that a
-// denied Secret read consumes the fail strategy like any other fetch failure.
-// It used to be carved out and passed through, so an RBAC regression forwarded
-// the request with whatever credential the client sent — a silent fail-open
-// under the profile's Block strategy, which stsProfileYAML leaves at the CRD
-// default.
-func TestScenario_ForbiddenSecretHonoursBlockStrategy(t *testing.T) {
-	forbidden := newSecretGetErrorClient(
-		apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "sts-creds", errors.New("rbac denied")))
-	h := New(t, Options{Kube: forbidden})
+// An out-of-scope Secret follows the default Block strategy.
+func TestScenario_OutsideSecretNamespaceHonoursBlockStrategy(t *testing.T) {
+	h := New(t, Options{Kube: kube.NewFakeClient(stsSecret()), SecretNamespace: "agentio-system"})
 	h.Fixture.ApplyYAML(stsProfileYAML)
 
 	h.Run(t, v3Request()).RequireBlocked(t, 403)

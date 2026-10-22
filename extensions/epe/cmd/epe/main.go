@@ -36,6 +36,7 @@ import (
 	grpchealth "google.golang.org/grpc/health"
 	healthPb "google.golang.org/grpc/health/grpc_health_v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -49,6 +50,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout" // Register environment settings.
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
@@ -77,10 +79,15 @@ var (
 		"agentio-epe-config-primary",
 		"Primary EPEConfig ConfigMap applied after the base; empty disables the overlay",
 	)
-	epeConfigNamespace = flag.String(
-		"epe-config-namespace",
-		"agentio-system",
-		"Namespace of EPEConfig and default namespace for its resource references",
+	systemNamespace = flag.String(
+		"namespace",
+		os.Getenv("POD_NAMESPACE"),
+		"System namespace where EPE runs and its EPEConfig lives; defaults to POD_NAMESPACE",
+	)
+	secretWatchScope = flag.String(
+		"secret-watch-scope",
+		"system",
+		"Token Secret watch scope: system (EPE system namespace) or cluster (all namespaces; requires cluster-wide Secret list/watch permission)",
 	)
 	logVerbosity = flag.Int("v", 0, "number for the log level verbosity")
 
@@ -194,6 +201,13 @@ func run() error {
 			},
 		})
 	}
+	if *epeConfigName == "" {
+		return fmt.Errorf("--epe-config must not be empty")
+	}
+	secretNamespace, err := tokenSecretNamespace(*systemNamespace, *secretWatchScope)
+	if err != nil {
+		return err
+	}
 	logLevel := initLogging(&opts)
 
 	flags := make(map[string]any)
@@ -233,7 +247,6 @@ func run() error {
 	}
 	providers := &extensionprovider.Registry{}
 	defer providers.Close()
-	chainDeps := wiring.Deps{Kube: client, Providers: providers}
 	var resourceStore *resourcestore.Aggregate
 	if *enableEgressAuthz {
 		xds, conn, err := newEgressXDS()
@@ -249,9 +262,6 @@ func run() error {
 		trafficpolicy.RegisterQueries(resourceStore, *xdsClusterID)
 		group.Add(runnable.Func(resourceStore.Run))
 		group.Add(runnable.Func(xds.Run))
-	}
-	if *epeConfigName == "" || *epeConfigNamespace == "" {
-		return fmt.Errorf("--epe-config and --epe-config-namespace must not be empty")
 	}
 	servingTLS, err := buildExtProcTLS(extProcTLSOptions{
 		Source:   *tlsSource,
@@ -276,15 +286,22 @@ func run() error {
 	cms.Start(ctx.Done())
 	configMaps := krt.WrapClient(cms, krt.WithName("EPEConfigMaps"), krt.WithStop(ctx.Done()))
 	configs := config.NewCollection(configMaps, config.Options[*configv1.EPEConfig]{
-		Namespace: *epeConfigNamespace,
+		Namespace: *systemNamespace,
 		Names:     []string{*epeConfigName, *epeConfigPrimaryName},
 		Defaults:  defaults,
 		Apply:     extensionprovider.ApplyConfig,
 		Validate:  extensionprovider.Validate,
 	}, krt.WithName("EPEConfig"), krt.WithStop(ctx.Done())).AsCollection()
-	providerConfigs := extensionprovider.NewCollection(client, *epeConfigNamespace,
+	providerConfigs := extensionprovider.NewCollection(client, *systemNamespace,
 		configs, configMaps, nil, ctx.Done())
 	providerReg := providers.RegisterCollection(providerConfigs)
+	secrets := krt.NewFilteredInformer[*corev1.Secret](client,
+		kclient.Filter{Namespace: secretNamespace},
+		krt.WithName("TokenSecrets"), krt.WithStop(ctx.Done()))
+	chainDeps := wiring.Deps{
+		Providers: providers,
+		Secrets:   tokentransform.NewSecretSource(secrets, secretNamespace),
+	}
 	registrations, err := wiring.BuildFilters(chainDeps)
 	if err != nil {
 		setupLog.Error(err, "failed to build filter chain")
@@ -312,7 +329,8 @@ func run() error {
 		if resourceStore != nil {
 			resourcesReady = resourceStore.Ready()
 		}
-		if servingTLS.Ready() != nil || !resourcesReady {
+		if !providerReg.HasSynced() || !profileReg.HasSynced() || !secrets.HasSynced() ||
+			servingTLS.Ready() != nil || !resourcesReady {
 			state = healthPb.HealthCheckResponse_NOT_SERVING
 		}
 		for _, service := range []string{"", "readiness", extProcPb.ExternalProcessor_ServiceDesc.ServiceName} {
@@ -374,7 +392,7 @@ func run() error {
 	if resourceStore != nil {
 		authorize = trafficpolicy.NewAuthorizer(resourceStore, dns.NewClient(nil, 0))
 	}
-	group.Add(runserver.New(runserver.Config{
+	extProcServer := runserver.New(runserver.Config{
 		GrpcPort:                    *grpcPort,
 		PluginBudget:                *pluginBudget,
 		AuthorizeRequest:            authorize,
@@ -385,7 +403,10 @@ func run() error {
 		Resolve:                     resolve,
 		AuditLogger:                 auditLogger,
 		Registrations:               registrations,
-	}, ctrllog.Log.WithName("ext-proc")))
+	}, ctrllog.Log.WithName("ext-proc"))
+	group.Add(runnable.Func(func(ctx context.Context) error {
+		return startExtProc(ctx, extProcServer, providerReg, profileReg, secrets)
+	}))
 
 	// Start pprof server if enabled.
 	if *enablePprof {
@@ -397,19 +418,8 @@ func run() error {
 		}()
 	}
 
-	// Start the shared informer machinery and CRD watcher once. Each collection
-	// owns its sync condition, so readiness waits on both registrations.
+	// Health and admin endpoints remain available while ext-proc waits for caches.
 	client.Run(ctx.Done())
-	if !providerReg.WaitUntilSynced(ctx.Done()) {
-		return fmt.Errorf("EPEConfig collection sync interrupted")
-	}
-
-	// Block until the initial profile state has been applied to the store so
-	// ext-proc never serves from an empty snapshot during startup.
-	if !profileReg.WaitUntilSynced(ctx.Done()) {
-		setupLog.Info("profile collection sync interrupted")
-		return fmt.Errorf("profile collection sync interrupted")
-	}
 
 	setupLog.Info("EPE starting")
 	if err := group.Start(ctx); err != nil {
@@ -418,6 +428,29 @@ func run() error {
 	}
 	setupLog.Info("EPE terminated")
 	return nil
+}
+
+func tokenSecretNamespace(namespace, scope string) (string, error) {
+	if namespace == "" {
+		return "", fmt.Errorf("--namespace or POD_NAMESPACE must specify the EPE system namespace")
+	}
+	switch scope {
+	case "system":
+		return namespace, nil
+	case "cluster":
+		return metav1.NamespaceAll, nil
+	default:
+		return "", fmt.Errorf("--secret-watch-scope must be system or cluster; got %q", scope)
+	}
+}
+
+func startExtProc(ctx context.Context, server runnable.Runnable, caches ...krt.Syncer) error {
+	for _, cache := range caches {
+		if !cache.WaitUntilSynced(ctx.Done()) {
+			return fmt.Errorf("ext-proc cache sync interrupted: %w", ctx.Err())
+		}
+	}
+	return server.Start(ctx)
 }
 
 // initLogging maps the klog-style -v flag onto the zap level unless the user

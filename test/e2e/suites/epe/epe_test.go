@@ -286,42 +286,15 @@ func TestWorkloadSecretTokenInjection(t *testing.T) {
 	e2econfig.New(scope).Eval(trafficFixture.Namespace.Name(), map[string]any{
 		"Namespace":     trafficFixture.Namespace.Name(),
 		"EPENamespace":  resolvedAgentioConfig.Namespace,
-		"EPEAccount":    epeName,
 		"TokenTemplate": "Bearer {{ .Token }}",
 	}, `
 apiVersion: v1
 kind: Secret
 metadata:
   name: workload-api-key
-  namespace: {{ .Namespace }}
+  namespace: {{ .EPENamespace }}
 stringData:
   apiKey: workload-e2e-test-token
----
-# Workload Secret credentials require an explicit grant outside the EPE namespace.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: workload-api-key-reader
-  namespace: {{ .Namespace }}
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  resourceNames: ["workload-api-key"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: workload-api-key-reader
-  namespace: {{ .Namespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: workload-api-key-reader
-subjects:
-- kind: ServiceAccount
-  name: {{ .EPEAccount }}
-  namespace: {{ .EPENamespace }}
 ---
 apiVersion: agents.kruise.io/v1alpha1
 kind: SecurityProfile
@@ -345,6 +318,7 @@ spec:
         credentialRef:
           secret:
             name: workload-api-key
+            namespace: {{ .EPENamespace }}
         apiKey:
           targetHeader: Authorization
           valueTemplate: "{{ .TokenTemplate }}"

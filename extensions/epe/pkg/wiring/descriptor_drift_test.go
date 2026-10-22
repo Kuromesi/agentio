@@ -24,7 +24,6 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
-	"github.com/openkruise/agentio/pkg/kube"
 )
 
 // phaseOfMethod maps a Filter method name to its Phase bit.
@@ -49,7 +48,7 @@ func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 		"oauth2":         "../filters/oauth2",
 	}
 	regs, err := BuildFilters(
-		Deps{Providers: &extensionprovider.Registry{}, Kube: kube.NewFakeClient()},
+		Deps{Providers: &extensionprovider.Registry{}},
 	)
 	if err != nil {
 		t.Fatalf("BuildFilters: %v", err)

@@ -425,7 +425,7 @@ func TestManagedEPE(t *testing.T) {
 		"port: 9002",
 		"- -epe-config=agentio-epe-config",
 		"- -epe-config-primary=agentio-epe-config-primary",
-		"- -epe-config-namespace=agentio-system",
+		"- -namespace=agentio-system",
 		"- -grpc-port=9002",
 		"- -grpc-health-port=9003",
 		"- -metrics-port=9090",
