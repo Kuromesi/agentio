@@ -26,6 +26,7 @@ import (
 	"github.com/openkruise/agentio/test/e2e"
 	e2econfig "github.com/openkruise/agentio/test/e2e/config"
 	"github.com/openkruise/agentio/test/e2e/kube"
+	"github.com/openkruise/agentio/test/e2e/suites/internal/harness"
 )
 
 // SecurityProfile has no HTTPCallout action yet. This checks the deployed
@@ -60,7 +61,20 @@ func TestHTTPCalloutFixture(t *testing.T) {
 		}
 		return strings.TrimSuffix(out, suffix)
 	}
-	request(t, "/healthz", "", 200)
+	// Pod readiness can precede Service routing convergence at the caller.
+	harness.RetryAssertion(t, time.Minute, time.Second, func() error {
+		out, stderr, err := trafficFixture.Client.Exec(ctx, []string{
+			"curl", "--silent", "--show-error", "--max-time", "5", "--noproxy", "*",
+			"--write-out", "%{http_code}", endpoint + "/healthz",
+		})
+		if err != nil {
+			return fmt.Errorf("wait for callout Service: %w: %s", err, stderr)
+		}
+		if out != "200" {
+			return fmt.Errorf("callout health response = %q, want HTTP 200 with an empty body", out)
+		}
+		return nil
+	})
 	for _, phase := range []string{"request", "response"} {
 		for _, mode := range []string{"continue", "mutate", "respond", "status", "malformed", "oversize", "delay"} {
 			t.Run(phase+"/"+mode, func(t *testing.T) {
