@@ -14,7 +14,10 @@
 package filter
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -83,5 +86,80 @@ func TestPeerValid(t *testing.T) {
 				t.Errorf("Valid(): want %v, got %v", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestParseSandboxToken(t *testing.T) {
+	tokenJSON := `{"requestId":"r1","accessToken":"tok","sandboxClientId":"c1"}`
+	parsed := &SandboxToken{RequestID: "r1", AccessToken: "tok", SandboxClientID: "c1"}
+
+	tests := []struct {
+		name string
+		raw  string
+		want *SandboxToken
+	}{
+		{
+			name: "valid base64 token parsed",
+			raw:  base64.StdEncoding.EncodeToString([]byte(tokenJSON)),
+			want: parsed,
+		},
+		{
+			name: "raw JSON fallback when not base64",
+			raw:  tokenJSON,
+			want: parsed,
+		},
+		{
+			name: "garbage neither base64 nor JSON returns nil",
+			raw:  "!!!not-base64-and-not-json!!!",
+			want: nil,
+		},
+		{
+			name: "base64 of non-JSON returns nil",
+			raw:  base64.StdEncoding.EncodeToString([]byte("not json at all")),
+			want: nil,
+		},
+		{
+			name: "empty raw value returns nil",
+			raw:  "",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token := NewSandboxToken(tt.raw)
+			got := token.Parse(context.Background())
+			if token != nil && token.raw != "" {
+				t.Fatal("raw token retained after parse")
+			}
+			if again := token.Parse(context.Background()); again != got {
+				t.Fatal("second access did not reuse parse result")
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Parse() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSandboxTokenSharedAcrossStreamViews(t *testing.T) {
+	original := Stream{Peer: Peer{Token: NewSandboxToken(`{"accessToken":"opaque","sandboxClientId":"c1"}`)}}
+	view := original
+	parsed := view.Peer.Token.Parse(t.Context())
+	if parsed == nil || parsed.AccessToken != "opaque" {
+		t.Fatal("token was not parsed")
+	}
+	if original.Peer.Token.raw != "" {
+		t.Fatal("view did not share lazy parse state")
+	}
+	if got := original.Peer.Token.Parse(t.Context()); got != parsed {
+		t.Fatal("request views did not reuse token")
+	}
+}
+
+func TestSandboxTokenPredecoded(t *testing.T) {
+	token := &SandboxToken{AccessToken: "opaque", SandboxClientID: "c1"}
+	if token.Parse(t.Context()) != token {
+		t.Fatal("pre-decoded token was not preserved")
 	}
 }

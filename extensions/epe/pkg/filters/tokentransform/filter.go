@@ -104,10 +104,11 @@ func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filte
 	f.preparedSignerCfg = signerCfg
 	f.hasPreparedCfg = true
 
-	if cfg.Source.Kind == SourceKindProvider &&
-		(st.Peer.Token == nil || st.Peer.Token.AccessToken == "") {
-		return f.resolveFailure(ctx, cfg, st,
-			fmt.Errorf("sandbox token unavailable for CredentialProvider")), nil
+	if cfg.Source.Kind == SourceKindProvider {
+		token := st.Peer.Token.Parse(ctx)
+		if token == nil || token.AccessToken == "" {
+			return f.resolveFailure(ctx, cfg, st, fmt.Errorf("sandbox token unavailable for CredentialProvider")), nil
+		}
 	}
 
 	if bw, ok := signer.(BodyWanter); ok {
