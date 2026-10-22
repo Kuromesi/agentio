@@ -47,7 +47,9 @@ EPE registers actions in this fixed order within each matched rule:
 1. `bypass`
 2. `block`
 3. `mcpToolPolicy`
-4. `tokenTransformation`
+4. `headerManipulation`
+5. `httpCallout`
+6. `tokenTransformation`
 
 `bypass` skips all remaining actions and rules across every matching profile while preserving mutations already made by earlier rules. `block` stops immediately, discards pending mutations, and returns `statusCode` (default 403) with optional `body`.
 
@@ -71,6 +73,32 @@ An unavailable signer type or malformed credential reference — including an un
 `AliyunSTS` detects ACS3/V3, V1-ROA, and OSS V4 from the trimmed `Authorization` header. Their required prefixes are `ACS3-HMAC-SHA256`, `acs` (also requiring a `:`), and `OSS4-HMAC-SHA256`, respectively, each followed by a space. When none matches, V1-RPC is detected from a parseable raw query containing non-empty `Signature` and `AccessKeyId` parameters and exactly `SignatureMethod=HMAC-SHA1`. A request that meets none of these requirements is unsupported; detection fails and the action follows its configured `failStrategy` (`Block` by default, or unmodified forwarding for `Allow`/`Ignore`).
 
 OAuth2 branch selection, credential-source restrictions, and response-field constraints are validated during EPE policy projection. The CRDs provide basic types and grant-set constraints without OAuth2 cross-field CEL. An invalid OAuth2 action rejects the profile version under the same collection rules described above. See [Configure OAuth credential isolation](../tasks/broker-oauth-credentials.md) for Content-Type decoding, scope and session boundaries, and a complete example.
+
+## HTTP callouts
+
+`rules[].actions.httpCallout` delegates request processing, response processing, or both to the named `httpCallout` extension provider in [EPE configuration](epe-configuration.md). The provider supplies the URL, timeout, and TLS settings.
+
+```yaml
+httpCallout:
+  provider:
+    name: content-scanner
+  request:
+    headers:
+      enabled: true
+      filter:
+        allowList: [content-type, x-request-id]
+    body:
+      enabled: true
+      maxBytes: 1048576
+  response: {}
+  failStrategy: Block
+```
+
+Omitting a phase disables it; `{}` enables a metadata-only callout. Headers and bodies are hidden by default. With headers enabled, omitting `filter` sends all headers, including credentials and cookies. A filter must contain exactly one non-empty `allowList` or `denyList`; matching is case-insensitive. Disabled headers ignore their filter.
+
+Enabling a body buffers and sends the complete UTF-8 body. Each phase has its own `maxBytes` (default 1 MiB, maximum 8 MiB); oversized content fails without truncation. Disabled bodies ignore the limit. These limits do not configure Envoy buffering or the provider's decision-response size limit. Response invocations include request correlation metadata, but no request headers or body.
+
+`failStrategy` defaults to `Block`. Provider lookup, transport, timeout, disclosure, and protocol errors follow this strategy; `Allow` and `Ignore` skip the failed callout's mutations and continue. A valid immediate response is always honored. Missing or wrong-type providers fail at execution time without fallback. Invalid phase, header-filter, or action configuration rejects the profile version during compilation and retains its last valid version.
 
 ## Audit configuration
 

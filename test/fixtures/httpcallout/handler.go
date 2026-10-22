@@ -32,6 +32,10 @@ var logger = log.New("httpcallout-test")
 // Handler supports /continue, /mutate, /respond, /status, /malformed,
 // /oversize, /delay and /reset. Counters exclude health and stats requests.
 type Handler struct {
+	// Observe receives each validated invocation synchronously, before the decision.
+	// Tests can inspect disclosure without duplicating the protocol handler.
+	Observe func(protocol.Invocation)
+
 	Calls    atomic.Int64
 	Active   atomic.Int64
 	Canceled atomic.Int64
@@ -82,6 +86,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := inv.Validate(); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
+	}
+	if h.Observe != nil {
+		h.Observe(inv)
 	}
 	if err := h.respond(w, r, inv, delay); err != nil {
 		logger.Debug("callout response interrupted", "error", err)

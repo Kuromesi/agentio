@@ -29,8 +29,8 @@ import (
 	"github.com/openkruise/agentio/test/e2e/suites/internal/harness"
 )
 
-// SecurityProfile has no HTTPCallout action yet. This checks the deployed
-// fixture contract; bench/epe/callout checks the Envoy/EPE engine integration.
+// This checks the shared deployed fixture contract. TestEPEHTTPCallout covers
+// SecurityProfile distribution and the Envoy/EPE data path.
 func TestHTTPCalloutFixture(t *testing.T) {
 	rig.RequireLive(t)
 	environment, scope := rig.BeginScenario(t)

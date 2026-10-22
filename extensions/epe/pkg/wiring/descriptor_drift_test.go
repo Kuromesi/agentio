@@ -40,6 +40,7 @@ var phaseOfMethod = map[string]filter.Phase{
 // package rather than promoted from the embedded PassThrough.
 func TestDescriptorPhasesMatchOverriddenMethods(t *testing.T) {
 	srcDirs := map[string]string{
+		"httpcallout":    "../filters/httpcallout",
 		"bypass":         "../filters/bypass",
 		"block":          "../filters/block",
 		"headermutation": "../filters/headermutation",

@@ -44,19 +44,8 @@ func Catalog() []Suite {
 			Overrides: map[string]Coverage{"TestControlPlaneConfigDebug": once}},
 		{Name: "gateway", Coverage: Coverage{Profiles: both}, Fixtures: []string{"extproc", "forwardproxy"}},
 		{Name: "securitypolicy", Coverage: Coverage{Profiles: both}},
-		{
-			Name:     "epe",
-			Coverage: Coverage{Profiles: both},
-			Fixtures: []string{"extproc"},
-			Overrides: map[string]Coverage{
-				"TestEPEServiceAccountCanWatchItsInputs": once,
-				// The credential fixture mounts a sandbox token into the caller's
-				// dedicated sidecar; ambient token delivery is a separate contract.
-				"TestEPECredentialProviderConfigUpdates": once,
-				// Gateway-to-EPE transport does not depend on workload capture mode.
-				"TestEPEGatewayMTLS":                once,
-				"TestEPEHelmMTLSCertificateSources": once,
-			}},
+		// EPE behavior is independent of workload capture mode; sidecar is its test environment.
+		{Name: "epe", Coverage: once, Fixtures: []string{"extproc"}},
 		{Name: "clienttrust", Coverage: once, SupportedProfiles: []string{"sidecar"}, Fixtures: []string{"clienttrust"}},
 		{Name: "agentgateway", Coverage: Coverage{Profiles: both}, GatewayDataplane: "agentgateway", Fixtures: []string{"extproc"}, OptIn: true},
 	}

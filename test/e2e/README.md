@@ -35,15 +35,15 @@ The Agentio product tests are split into per-domain suites. Each suite is an ind
 - `suites/clienttrust`: sidecar CA injection, container/template selection, runtime environment variables, verified Python/Node/curl HTTPS, and CA source update/retention. Runs in the sidecar-auto CI scenario; see [client trust suite](suites/clienttrust/README.md).
 - `suites/agentgateway`: native static configuration, Gateway API deployment lifecycle, and shared outbound protocol/ext-proc/port-selection checks. See [agentgateway suite](suites/agentgateway/README.md) for its separate image input and scope.
 - `suites/securitypolicy`: SNI SecurityProfile and GlobalSecurityProfile lifecycle against dedicated SNI fixture namespaces.
-- `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, profile-priority, and ordinary-Workload Secret token injection contracts against Envoy. A dedicated EPE fixture also covers native Workload/TrafficPolicy xDS updates, selector rebinding, policy deletion, destination IP/port checks, DNS target pinning, and request-header authorization before body processing. Direct ext_proc probes isolate EPE decisions from ztunnel enforcement; real Envoy traffic verifies body checks survive header bypass. Agentgateway EPE coverage is deferred until production peer attributes are available. `TestHTTPCalloutFixture` deploys the shared [HTTPCallout test server](../fixtures/httpcallout/README.md) and verifies its HTTP protocol from a workload; it does not exercise EPE callout policy distribution because SecurityProfile HTTPCallout action integration is deferred.
+- `suites/epe`: the Egress Policy Enforcer attribute, RBAC, metrics, profile-priority, and ordinary-Workload Secret token injection contracts against Envoy. A dedicated EPE fixture also covers native Workload/TrafficPolicy xDS updates, selector rebinding, policy deletion, destination IP/port checks, DNS target pinning, and request-header authorization before body processing. `TestHTTPCalloutFixture` verifies the shared HTTPCallout service contract. `TestEPEHTTPCallout` reuses that service and covers real curl → ztunnel → Envoy → EPE → HTTP provider/origin traffic in the sidecar test environment: bidirectional header/body mutation, disclosure filters, GlobalSecurityProfile metadata-only calls, immediate denial even with Allow, provider failures under Block/Allow/Ignore, and independent request/response body limits. The fixture records actual invocations and origin traffic so a bypassed policy cannot satisfy the assertions. Direct ext_proc probes isolate EPE decisions from ztunnel enforcement; real Envoy traffic verifies body checks survive header bypass. Agentgateway EPE coverage is deferred until production peer attributes are available.
 
 The shared product conventions (the `AGENTIO_E2E` gate, baseline ConfigMap, scenario ledgers with contamination tracking, and profile-neutral echo fixtures) live in `suites/internal/harness`. Each product fixture namespace is enrolled with `agentio.kruise.io/dataplane-mode`; ordinary Echo workloads carry only workload labels. In sidecar mode the namespace selector activates the default ztunnel injection template, while ambient mode uses CNI redirection and the node-level ztunnel. Every scenario owns its transient policies and endpoint objects through a scoped ledger: successful scenarios clean up before the next scenario, while a failed scenario retains its evidence and causes later scenarios in the same suite to skip instead of running against contaminated state.
 
 Policy checks read workload-scoped JSON from both sidecar and ambient proxies. Native checks require a Workload TrafficPolicy reference and the corresponding cached policy body; an unrelated cached policy does not count as applied. Legacy checks identify each source policy by its ingress/egress Authorization names and verify its Workload reference or applicable global/namespace scope. Real-traffic convergence assertions then verify enforcement. Egress routing tests use `GATEWAY`/`PASSTHROUGH`, with separate TrafficPolicy tests for rejection.
 
-All supplied suite images must be immutable digest references. The forward proxy fixture uses a framework-owned Envoy digest by default; set `AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. Release and manual E2E workflows build the repository's ext-proc fixture into each job's local registry when no `ext_proc_image` override or candidate archive is supplied. CI generates four isolated environment groups from the same planner used locally. The two `auto` groups run the suites that require their profile; the two `iptables` groups run only trafficpolicy. This schedules 11 suite executions instead of 18. clienttrust runs only in `sidecar-auto`. Suite setup verifies the requested `FIREWALL_BACKEND` on the injected sidecar or ambient ztunnel Pod before any product assertion runs.
+All supplied suite images must be immutable digest references. The forward proxy fixture uses a framework-owned Envoy digest by default; set `AGENTIO_E2E_FORWARD_PROXY_IMAGE` only to override it. Release and manual E2E workflows build the repository's ext-proc fixture into each job's local registry when no `ext_proc_image` override or candidate archive is supplied. CI uses separate `product-e2e` and `epe-e2e` jobs generated by the same planner used locally. Product E2E has four isolated environment groups: its two `auto` groups run gateway, securitypolicy, trafficpolicy, and the profile-specific suites; its two `iptables` groups run only trafficpolicy. EPE behavior is independent of workload capture mode, so it runs once in a separate sidecar cluster with the `auto` backend. This schedules 10 suite executions, with no EPE tests duplicated in product jobs. clienttrust runs only in `sidecar-auto`. Suite setup verifies the requested `FIREWALL_BACKEND` on the injected sidecar or ambient ztunnel Pod before any product assertion runs.
 
-Pull requests and master pushes use `agentio-e2e-presubmit.yml`. It builds agentiod, EPE, gateway-agent with community Envoy and its dynamic modules, Porter, ztunnel from the source SHA in `agentio.deps`, and the ext-proc test fixture once, transfers them to each matrix job as a same-run artifact, and publishes them only to that job's KinD-local registry. Presubmit caches the ztunnel binary by source repository, commit, architecture, runner OS, and build workflow; cache hits skip compilation but still verify the architecture and smoke-test the runtime image. Published release candidates always compile from source. CNI and proxy-init remain the immutable public images recorded in `agentio.deps`, so presubmit needs no registry credentials. Release calls the same product workflow with an immutable candidate BOM and promotes only the digests that passed it.
+Pull requests and master pushes use `agentio-e2e-presubmit.yml`. It builds agentiod, EPE, gateway-agent with community Envoy and its dynamic modules, Porter, ztunnel from the source SHA in `agentio.deps`, and the ext-proc test fixture once, transfers them to each matrix job as a same-run artifact, and publishes them only to that job's KinD-local registry. Presubmit caches the ztunnel binary by source repository, commit, architecture, runner OS, and build workflow; cache hits skip compilation but still verify the architecture and smoke-test the runtime image. Published release candidates always compile from source. CNI and proxy-init remain the immutable public images recorded in `agentio.deps`, so presubmit needs no registry credentials. Both jobs consume the same candidate image artifact and can run concurrently; failures in other product suites do not prevent EPE from running. Release calls both jobs with the same immutable candidate BOM and requires both to pass before tagging or promoting images. EPE does not require a CNI image; CNI is required only for ambient tests. For a manual EPE-only run, dispatch `agentio-e2e.yml` with `epe_only: true`; its default runs the other product suites. Concurrency groups, cluster names, ext-proc artifacts, and diagnostic artifacts are scoped separately for EPE and product runs.
 
 A complete local run of all product suites is:
 
@@ -60,7 +60,7 @@ export AGENTIO_E2E_EXT_PROC_IMAGE='registry.example/ext-proc@sha256:<64-hex-dige
 export AGENTIO_E2E_CLIENT_TRUST_IMAGE='registry.example/clienttrust@sha256:<64-hex-digest>'
 # Preview all required combinations without installing anything.
 go run ./cmd/product-e2e plan
-# Execute the same coverage plan used by CI.
+# Execute all required coverage (CI splits EPE into a separate job).
 go run ./cmd/product-e2e run
 ```
 
@@ -77,6 +77,8 @@ Examples from this module directory:
 # Select one environment or one test; filters that select nothing are errors.
 go run ./cmd/product-e2e plan --group ambient-iptables --format=json
 go run ./cmd/product-e2e run --suites trafficpolicy --tests '^TestSandboxTrafficPolicyProtocol$'
+# HTTPCallout real-traffic scenarios (same image/cluster prerequisites).
+go run ./cmd/product-e2e run --suites epe --tests '^TestEPEHTTPCallout$'
 # Manually verify a supported backend beyond the required CI coverage.
 go run ./cmd/product-e2e run --suites clienttrust --profile sidecar --backend iptables --force
 ```
@@ -111,10 +113,10 @@ except the framework smoke suite must have a declaration, including opt-in
 suites. Set the profiles that must run; omitted backends mean only `auto`.
 Existing suites automatically include new top-level Go tests. An exact-name
 `Overrides` entry inherits unspecified dimensions from the suite. The config
-debug test and EPE informer RBAC test run only in sidecar-auto; traffic-policy
-protocol tests still run in all four groups, and EPE identity tests in both
-profiles. Pure helper tests within suite packages inherit the same coverage;
-they also remain part of `make test`.
+debug test runs only in sidecar-auto; traffic-policy protocol tests still run
+in all four groups. All EPE tests run once in the sidecar environment. Pure
+helper tests within suite packages inherit the same coverage; they also remain
+part of `make test`.
 
 Discovery uses `go list` build-selected test files and Go syntax parsing. It does
 not execute `TestMain` or need runtime image inputs. Invalid or stale overrides,

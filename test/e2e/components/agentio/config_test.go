@@ -73,6 +73,7 @@ func TestResolveConfigRequiresImmutableImages(t *testing.T) {
 	}{
 		{name: "missing agentiod", component: "agentiod", image: ""},
 		{name: "tagged cni", component: "cni", image: "repo/cni:v1"},
+		{name: "missing cni", component: "cni", image: ""},
 		{name: "tagged ztunnel", component: "ztunnel", image: "repo/ztunnel:v1"},
 		{name: "short proxy init digest", component: "proxy-init", image: "repo/proxy@sha256:abc"},
 		{name: "missing gateway", component: "gateway", image: ""},
@@ -86,6 +87,9 @@ func TestResolveConfigRequiresImmutableImages(t *testing.T) {
 			fs := flag.NewFlagSet("agentio", flag.ContinueOnError)
 			inputs := RegisterFlags(fs)
 			args := validImageArgs(valid)
+			if tt.component == "cni" {
+				args = append(args, "-agentio.profile=ambient")
+			}
 			for index, argument := range args {
 				if strings.HasPrefix(argument, "-agentio."+tt.component+"-image=") {
 					args[index] = "-agentio." + tt.component + "-image=" + tt.image

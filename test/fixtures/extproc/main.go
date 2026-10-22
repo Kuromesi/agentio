@@ -34,8 +34,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	"github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
 type processorConfig struct {
@@ -144,7 +142,7 @@ func main() {
 	if *calloutPort != 0 {
 		server := &http.Server{
 			Addr:              fmt.Sprintf(":%d", *calloutPort),
-			Handler:           &httpcallout.Handler{},
+			Handler:           newCalloutFixture(),
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      65 * time.Second,

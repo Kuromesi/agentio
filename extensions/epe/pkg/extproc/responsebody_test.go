@@ -90,6 +90,9 @@ func TestHandleResponseHeaders_ArmsBufferedResponseBodyObligation(t *testing.T) 
 	if mode == nil || mode.GetResponseBodyMode() != extProcV3.ProcessingMode_BUFFERED {
 		t.Fatalf("response body mode = %v, want BUFFERED", mode)
 	}
+	if mode.GetResponseHeaderMode() != extProcV3.ProcessingMode_SEND {
+		t.Fatalf("response header mode = %v, want SEND", mode.GetResponseHeaderMode())
+	}
 	if mutation := responses[0].GetResponseHeaders().GetResponse().GetHeaderMutation(); mutation != nil {
 		t.Fatalf("suspended headers leaked mutation: %+v", mutation)
 	}

@@ -83,6 +83,8 @@ type PhaseConfig struct {
 	// false runs it in the headers phase, so Envoy buffers nothing for a
 	// header-only callout. See Filter.
 	Body bool
+	// MaxBodyBytes overrides the shared limit for this direction.
+	MaxBodyBytes int64
 }
 
 // Config is the CRD-free configuration for one policy unit's callout.
@@ -140,7 +142,10 @@ func effectivePhase(in *PhaseConfig, direction string) (*PhaseConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PhaseConfig{Headers: headers, Body: in.Body}, nil
+	if in.MaxBodyBytes < 0 {
+		return nil, fmt.Errorf("%s maximum body bytes must not be negative", direction)
+	}
+	return &PhaseConfig{Headers: headers, Body: in.Body, MaxBodyBytes: in.MaxBodyBytes}, nil
 }
 
 // effectiveHeaders validates and normalizes one direction's disclosure config.
