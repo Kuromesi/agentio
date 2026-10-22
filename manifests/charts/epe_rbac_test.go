@@ -25,13 +25,26 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestEPESecretRBACIsNamespaced(t *testing.T) {
-	for _, namespace := range []string{"agentio-system", "custom-system"} {
-		t.Run(namespace, func(t *testing.T) {
+func TestEPESecretRBAC(t *testing.T) {
+	for _, tc := range []struct {
+		namespace string
+		scope     string
+	}{
+		{namespace: "agentio-system"},
+		{namespace: "custom-system", scope: "system"},
+		{namespace: "agentio-system", scope: "cluster"},
+		{namespace: "custom-system", scope: "cluster"},
+	} {
+		t.Run(tc.namespace+"/"+tc.scope, func(t *testing.T) {
+			namespace := tc.namespace
+			values := "epe.mode=managed,epe.serviceAccount.name=custom-epe"
+			if tc.scope != "" {
+				values += ",epe.secretWatchScope=" + tc.scope
+			}
 			manifest := renderAgentio(t, "--namespace", namespace,
-				"--set", "epe.mode=managed,epe.serviceAccount.name=custom-epe",
+				"--set", values,
 				"--show-only", "templates/epe/rbac.yaml")
-			foundRole, foundBinding, foundClusterRole := false, false, false
+			foundRole, foundBinding, foundClusterRole, foundClusterBinding := false, false, false, false
 			for document := range strings.SplitSeq(manifest, "\n---") {
 				var object renderedObject
 				if err := yaml.Unmarshal([]byte(document), &object); err != nil {
@@ -44,11 +57,42 @@ func TestEPESecretRBACIsNamespaced(t *testing.T) {
 						t.Fatal(err)
 					}
 					foundClusterRole = true
+					var secretRules []rbacv1.PolicyRule
 					for _, rule := range role.Rules {
 						if slices.Contains(rule.Resources, "secrets") || slices.Contains(rule.Resources, "*") {
-							t.Fatalf("EPE received cluster-wide Secret permissions: %+v", rule)
+							secretRules = append(secretRules, rule)
 						}
 					}
+					var want []rbacv1.PolicyRule
+					if tc.scope == "cluster" {
+						want = []rbacv1.PolicyRule{{
+							APIGroups: []string{""},
+							Resources: []string{"secrets"},
+							Verbs:     []string{"list", "watch"},
+						}}
+					}
+					if role.Name != "agentio-epe-"+namespace || !reflect.DeepEqual(secretRules, want) {
+						t.Fatalf("unexpected ClusterRole for scope %q: %+v", tc.scope, role)
+					}
+				case "ClusterRoleBinding":
+					var binding rbacv1.ClusterRoleBinding
+					if err := yaml.Unmarshal([]byte(document), &binding); err != nil {
+						t.Fatal(err)
+					}
+					wantRef := rbacv1.RoleRef{
+						APIGroup: rbacv1.GroupName,
+						Kind:     "ClusterRole",
+						Name:     "agentio-epe-" + namespace,
+					}
+					wantSubjects := []rbacv1.Subject{{
+						Kind:      "ServiceAccount",
+						Name:      "custom-epe",
+						Namespace: namespace,
+					}}
+					if binding.RoleRef != wantRef || !reflect.DeepEqual(binding.Subjects, wantSubjects) {
+						t.Fatalf("unexpected EPE ClusterRoleBinding: %+v", binding)
+					}
+					foundClusterBinding = true
 				case "Role":
 					var role rbacv1.Role
 					if err := yaml.Unmarshal([]byte(document), &role); err != nil {
@@ -82,7 +126,7 @@ func TestEPESecretRBACIsNamespaced(t *testing.T) {
 					foundBinding = true
 				}
 			}
-			if !foundRole || !foundBinding || !foundClusterRole {
+			if !foundRole || !foundBinding || !foundClusterRole || !foundClusterBinding {
 				t.Fatal("missing EPE RBAC resources")
 			}
 		})

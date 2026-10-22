@@ -17,6 +17,11 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
+{{- if eq .Values.agentio.epe.secretWatchScope "cluster" }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "watch"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
