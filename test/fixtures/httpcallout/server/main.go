@@ -25,6 +25,7 @@ import (
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:18080", "HTTP listen address")
+	transport := httpcallout.RegisterTransportFlags(flag.CommandLine)
 	flag.Parse()
 	server := &http.Server{
 		Addr:              *listen,
@@ -33,6 +34,9 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      65 * time.Second,
 		IdleTimeout:       90 * time.Second,
+	}
+	if err := transport.Configure(server); err != nil {
+		log.Fatal(err)
 	}
 	log.Printf("httpcallout test server listening on %s", *listen)
 	log.Fatal(server.ListenAndServe())

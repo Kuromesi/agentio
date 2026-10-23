@@ -34,6 +34,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
 type processorConfig struct {
@@ -138,16 +140,22 @@ func main() {
 		"serve the credential-provider HTTP fixture instead of ext-proc",
 	)
 	calloutPort := flag.Int("http-callout-port", 0, "serve the HTTPCallout fixture instead of ext-proc")
+	calloutTransport := httpcallout.RegisterTransportFlags(flag.CommandLine)
 	flag.Parse()
 	if *calloutPort != 0 {
+		fixture := newCalloutFixture()
 		server := &http.Server{
 			Addr:              fmt.Sprintf(":%d", *calloutPort),
-			Handler:           newCalloutFixture(),
+			Handler:           fixture,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      65 * time.Second,
 			IdleTimeout:       90 * time.Second,
 		}
+		if err := calloutTransport.Configure(server); err != nil {
+			log.Fatal(err)
+		}
+		fixture.observeConnections(server)
 		log.Fatalf("serve HTTPCallout: %v", server.ListenAndServe())
 	}
 	if *credentialPort != 0 {

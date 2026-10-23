@@ -242,6 +242,10 @@ func TestEPEHTTPCallout(t *testing.T) {
 			t.FailNow()
 		}
 	}
+	t.Run(
+		"transport-lifecycle",
+		func(t *testing.T) { testDeployedCalloutTransport(t, environment, scope, name, admin, observer, origin) },
+	)
 }
 
 func readCalloutJSON(ctx context.Context, endpoint string, out any) (err error) {
@@ -298,7 +302,7 @@ spec:
   containers:
   - name: http
     image: {{ .FixtureImage }}
-    args: ["-http-callout-port=8080"]
+    args: ["-http-callout-port=8080", "-h2c", "-http2-max-streams=4"]
     readinessProbe:
       tcpSocket: {port: 8080}
       periodSeconds: 1
@@ -313,6 +317,8 @@ metadata:
 data:
   config: |
     extensionProviders:
+    - name: transport
+      httpCallout: {url: "http://{{ .Name }}-http.{{ .Namespace }}.svc.cluster.local:8080/continue", timeout: 30s, protocol: HTTP2, http2: {maxConcurrentStreams: 32}, connectionPool: {maxConnections: 8}}
     - name: mutate
       httpCallout: {url: "http://{{ .Name }}-http.{{ .Namespace }}.svc.cluster.local:8080/mutate", timeout: 2s}
     - name: continue

@@ -17,6 +17,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -35,12 +36,21 @@ type calloutObservation struct {
 }
 
 type calloutFixture struct {
+	handler      http.Handler
+	release      chan struct{}
+	releaseOnce  sync.Once
+	transport    map[string]*calloutConnection
+	refused      int
 	mu           sync.Mutex
 	observations map[string]*calloutObservation
 }
 
-func newCalloutFixture() http.Handler {
-	f := &calloutFixture{observations: map[string]*calloutObservation{}}
+func newCalloutFixture() *calloutFixture {
+	f := &calloutFixture{
+		observations: map[string]*calloutObservation{},
+		release:      make(chan struct{}),
+		transport:    map[string]*calloutConnection{},
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", &httpcallout.Handler{Observe: func(inv protocol.Invocation) {
 		f.mu.Lock()
@@ -55,7 +65,8 @@ func newCalloutFixture() http.Handler {
 			http.Error(w, err.Error(), 500)
 		}
 	})
-	return mux
+	f.handler = mux
+	return f
 }
 
 func (f *calloutFixture) observation(path string) *calloutObservation {
@@ -84,5 +95,108 @@ func (f *calloutFixture) origin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Set-Cookie", "origin-secret")
 	if _, err := io.Copy(w, strings.NewReader("12345")); err != nil {
 		return
+	}
+}
+
+// Connection observations let E2E assert draining, not just successful responses.
+type calloutConnection struct {
+	Path     string
+	Protocol int
+	Active   int
+	Peak     int
+	Calls    int
+	Closed   bool
+	release  chan struct{}
+}
+
+func (f *calloutFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/transport" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if err := json.NewEncoder(w).Encode(struct {
+			Connections map[string]*calloutConnection
+			Refused     int
+		}{f.transport, f.refused}); err != nil {
+			http.Error(w, err.Error(), 500)
+		}
+		return
+	}
+	if r.URL.Path == "/release" && r.Method == http.MethodPost {
+		if addr := r.URL.Query().Get("connection"); addr != "" {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			c := f.transport[addr]
+			if c == nil {
+				http.Error(w, "unknown connection", http.StatusNotFound)
+				return
+			}
+			if c.release != nil {
+				close(c.release)
+				c.release = nil
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		f.releaseOnce.Do(func() { close(f.release) })
+		w.WriteHeader(204)
+		return
+	}
+	if r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/origin/") {
+		f.handler.ServeHTTP(w, r)
+		return
+	}
+	f.mu.Lock()
+	c := f.transport[r.RemoteAddr]
+	if c == nil {
+		c = &calloutConnection{Protocol: r.ProtoMajor, release: make(chan struct{})}
+		f.transport[r.RemoteAddr] = c
+	}
+	c.Path = r.URL.Path
+	c.Active++
+	c.Calls++
+	c.Peak = max(c.Peak, c.Active)
+	release := c.release
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		c.Active--
+		f.mu.Unlock()
+	}()
+	if r.URL.Path == "/hold" {
+		select {
+		case <-f.release:
+		case <-r.Context().Done():
+			return
+		}
+		r.URL.Path = "/continue"
+	}
+	if strings.HasPrefix(r.URL.Path, "/controlled/") {
+		if release != nil {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		r.URL.Path = "/continue"
+	}
+	f.handler.ServeHTTP(w, r)
+}
+func (f *calloutFixture) observeConnections(server *http.Server) {
+	server.ConnState = func(c net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			f.mu.Lock()
+			if record := f.transport[c.RemoteAddr().String()]; record != nil {
+				record.Closed = true
+			}
+			f.mu.Unlock()
+		}
+	}
+	server.HTTP2.CountError = func(kind string) {
+		if kind == "stream_REFUSED_STREAM_over_max_streams_race" {
+			f.mu.Lock()
+			f.refused++
+			f.mu.Unlock()
+		}
 	}
 }
