@@ -242,7 +242,7 @@ func run() error {
 	// See wiring.BuildFilters for ordering semantics.
 	defaults, err := wiring.DefaultEPEConfig()
 	if err != nil {
-		return fmt.Errorf("initialize extension providers: %w", err)
+		return fmt.Errorf("initialize EPE config: %w", err)
 	}
 	providers := &extensionprovider.Registry{}
 	defer providers.Close()
@@ -288,7 +288,7 @@ func run() error {
 		Namespace: *systemNamespace,
 		Names:     []string{*epeConfigName, *epeConfigPrimaryName},
 		Defaults:  defaults,
-		Apply:     extensionprovider.ApplyConfig,
+		Apply:     wiring.ApplyEPEConfig,
 		Validate:  validateEPEConfig,
 	}, krt.WithName("EPEConfig"), krt.WithStop(ctx.Done())).AsCollection()
 	authorize, authorizationReg := newRequestAuthorizer(configs, resourceStore, dns.NewClient(nil, 0))
@@ -396,7 +396,7 @@ func run() error {
 		GrpcPort:                    *grpcPort,
 		PluginBudget:                *pluginBudget,
 		AuthorizeRequest:            authorize,
-		FailClosedOnMissingIdentity: *failClosedOnMissingIdentity || *enableXDSEgressAuthz,
+		FailClosedOnMissingIdentity: *failClosedOnMissingIdentity,
 		SecureServing:               servingTLS.Secure,
 		CertProvider:                servingTLS.Provider,
 		RequireClientCert:           servingTLS.RequireClientCert,

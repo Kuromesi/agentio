@@ -39,7 +39,7 @@ import (
 // TrafficPolicy xDS -> EPE authorization. Calling ext_proc directly isolates
 // EPE enforcement from the caller's ztunnel, which also consumes TrafficPolicy.
 func TestEPEXDSTrafficPolicyLifecycle(t *testing.T) {
-	fixture, scope := newEgressEPE(t)
+	fixture, scope := newEgressEPE(t, true)
 	target := net.JoinHostPort(trafficFixture.Server.ServiceIPOrFail(t), "80")
 	fixture.wantHeaders(t, target, "/xds-lifecycle", true, 0)
 
@@ -71,6 +71,17 @@ spec:
 		}
 	}
 	initial := policy("reject", trafficFixture.Client.Name())
+	step("missing_identity_is_rejected_by_xds", func(t *testing.T) {
+		request := fixture.request(target, "/xds-lifecycle", true)
+		request.Attributes = nil
+		response, err := fixture.sendHeaders(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := checkEPEHeaders(response, target, 403); err != nil {
+			t.Fatal(err)
+		}
+	})
 	step("create_reject", func(t *testing.T) {
 		initial.ApplyOrFail(t, kube.CreateOnly)
 		fixture.wantHeaders(t, target, "/xds-lifecycle", true, 403)
@@ -107,6 +118,14 @@ spec:
 			t.Fatal(err)
 		}
 	})
+	step("global_deny_wins_over_xds_allow", func(t *testing.T) {
+		global := egressEPEConfig(scope, "epe-egressauthz", fmt.Sprintf(
+			"egressAuthorization: {deniedCIDRs: [%s/32]}", trafficFixture.Server.ServiceIPOrFail(t)))
+		global.ApplyOrFail(t, kube.CreateOnly)
+		fixture.wantHeaders(t, target, "/xds-lifecycle", true, 403)
+		global.DeleteOrFail(t)
+		fixture.wantHeaders(t, target, "/xds-lifecycle", true, 0)
+	})
 	step("update_reject", func(t *testing.T) {
 		policy("reject", trafficFixture.Client.Name()).ApplyOrFail(t, kube.ReconcileOwned)
 		fixture.wantHeaders(t, target, "/xds-lifecycle", true, 403)
@@ -129,7 +148,7 @@ spec:
 // proves a header block wins and destination authorization need not wait for
 // body input, including when the headers declare an empty body.
 func TestEPERequestPhases(t *testing.T) {
-	fixture, scope := newEgressEPE(t)
+	fixture, scope := newEgressEPE(t, true)
 	target := net.JoinHostPort(trafficFixture.Server.ServiceIPOrFail(t), "80")
 	e2econfig.New(scope).YAML(trafficFixture.Namespace.Name(), `
 apiVersion: agents.kruise.io/v1alpha1
@@ -298,7 +317,7 @@ type egressEPE struct {
 	namespace string
 }
 
-func newEgressEPE(t *testing.T) (*egressEPE, *kube.ResourceScope) {
+func newEgressEPE(t *testing.T, enableXDS bool) (*egressEPE, *kube.ResourceScope) {
 	t.Helper()
 	environment, scope := rig.BeginScenario(t)
 	namespace := resolvedAgentioConfig.Namespace
@@ -315,6 +334,7 @@ func newEgressEPE(t *testing.T) (*egressEPE, *kube.ResourceScope) {
 	e2econfig.New(scope).Eval(namespace, map[string]any{
 		"Namespace": namespace,
 		"Image":     resolvedAgentioConfig.EPEImage,
+		"EnableXDS": enableXDS,
 	}, egressEPEYAML).ApplyOrFail(t, kube.CreateOnly)
 	ctx, cancel := e2e.Context(t, 2*time.Minute)
 	defer cancel()
@@ -361,13 +381,20 @@ func (f *egressEPE) request(target, path string, end bool) *extprocv3.Processing
 }
 
 func (f *egressEPE) headers(ctx context.Context, target, path string, end bool) (*extprocv3.ProcessingResponse, error) {
+	return f.sendHeaders(ctx, f.request(target, path, end))
+}
+
+func (f *egressEPE) sendHeaders(
+	ctx context.Context,
+	request *extprocv3.ProcessingRequest,
+) (*extprocv3.ProcessingResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	stream, err := f.client.Process(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := stream.Send(f.request(target, path, end)); err != nil {
+	if err := stream.Send(request); err != nil {
 		return nil, err
 	}
 	// Do not send a body or close the send side: a response proves the header
@@ -459,10 +486,12 @@ spec:
     - --epe-config=epe-egressauthz
     - --epe-config-primary=epe-egressauthz-primary
     - --namespace={{ .Namespace }}
+    {{- if .EnableXDS }}
     - --enable-xds-egressauthz
     - --xds-address=agentiod.{{ .Namespace }}.svc:15012
     - --xds-root-path=/var/run/xds-root/root-cert.pem
     - --xds-token-path=/var/run/xds-token/token
+    {{- end }}
     env:
     - name: POD_NAME
       valueFrom: {fieldRef: {fieldPath: metadata.name}}

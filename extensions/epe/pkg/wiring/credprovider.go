@@ -21,7 +21,6 @@ import (
 	"istio.io/istio/pkg/env"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
-	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 )
 
 // Default-provider environment settings are resolved at the composition root.
@@ -45,8 +44,6 @@ const (
 	credProviderSourceSecret = "secret"
 )
 
-const defaultCredentialProviderName = "agentio-default-credential-provider"
-
 // Where the credential provider's mTLS material comes from. This is the
 // default configuration's concern; resolution happens after all layers merge.
 var (
@@ -65,16 +62,11 @@ var (
 		"Name of the Secret holding the credential provider mTLS certificate, key, and CA").Get()
 )
 
-// DefaultEPEConfig combines built-in destination restrictions and environment
-// settings into the lowest configuration layer. It neither resolves certificate material nor creates provider clients.
-func DefaultEPEConfig() (*configv1.EPEConfig, error) {
-	cfg := &configv1.EPEConfig{
-		EgressAuthorization: &configv1.EgressAuthorization{
-			DeniedCidrs: []string{"127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"},
-		},
-	}
+// credentialProviderFromEnv builds the optional default credential provider.
+// It neither resolves certificate material nor creates provider clients.
+func credentialProviderFromEnv() (*configv1.CredentialProvider, error) {
 	if identityProviderURL == "" {
-		return cfg, nil
+		return nil, nil
 	}
 	provider := &configv1.CredentialProvider{
 		Url:     identityProviderURL,
@@ -108,10 +100,5 @@ func DefaultEPEConfig() (*configv1.EPEConfig, error) {
 		}
 		provider.Tls = tlsConfig
 	}
-	cfg.ExtensionProviders = []*configv1.ExtensionProvider{{
-		Name:     defaultCredentialProviderName,
-		Provider: &configv1.ExtensionProvider_CredentialProvider{CredentialProvider: provider},
-	}}
-	cfg.DefaultProviders = &configv1.DefaultExtensionProviders{CredentialProvider: defaultCredentialProviderName}
-	return cfg, extensionprovider.Validate(cfg)
+	return provider, nil
 }

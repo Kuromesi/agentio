@@ -15,14 +15,22 @@
 package epe
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+
 	agentiocomponent "github.com/openkruise/agentio/test/e2e/components/agentio"
+	"github.com/openkruise/agentio/test/e2e/kube"
 )
 
 func TestSetupOrder(t *testing.T) {
@@ -70,5 +78,50 @@ func TestWaitForPrometheusMetricsRetriesTransientConnectionFailure(t *testing.T)
 	}
 	if !strings.Contains(output, "# HELP epe_ready") {
 		t.Fatalf("metrics output = %q", output)
+	}
+}
+
+func TestEgressEPEFixtureXDSArguments(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("xds=%t", enabled), func(t *testing.T) {
+			manifest := template.Must(template.New("epe").Option("missingkey=error").Parse(egressEPEYAML))
+			var rendered bytes.Buffer
+			if err := manifest.Execute(&rendered, map[string]any{
+				"Namespace": "agentio-system",
+				"Image":     "registry.example/epe@sha256:" + strings.Repeat("b", 64),
+				"EnableXDS": enabled,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			objects, err := kube.DecodeYAML(&rendered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, object := range objects {
+				if object.GetKind() != "Pod" {
+					continue
+				}
+				found = true
+				var pod corev1.Pod
+				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &pod); err != nil {
+					t.Fatal(err)
+				}
+				args := pod.Spec.Containers[0].Args
+				if slices.Contains(args, "--enable-xds-egressauthz") != enabled {
+					t.Fatalf("xds=%t, args=%v", enabled, args)
+				}
+				if !enabled {
+					for _, arg := range args {
+						if strings.HasPrefix(arg, "--xds-") {
+							t.Fatalf("static fixture unexpectedly configures xDS: %s", arg)
+						}
+					}
+				}
+			}
+			if !found {
+				t.Fatal("fixture did not render a Pod")
+			}
+		})
 	}
 }

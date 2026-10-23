@@ -23,13 +23,13 @@ import (
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
-// resolveDNS returns candidates using the client's cache/custom records.
-// Authorization and target selection happen together in Authorize.
+// resolveDNS resolves hostnames as IPv4-only to match the gateway's V4_ONLY
+// DNS cache. IPv4 and IPv6 literals remain direct authorization candidates.
+// Authorization and target selection happen together in Aggregate.Authorize.
 func resolveDNS(
 	ctx context.Context,
 	client *dns.Client,
 	stream *filter.Stream,
-	family dns.Family,
 ) ([]netip.Addr, error) {
 	if client == nil {
 		return nil, fmt.Errorf("DNS client is required")
@@ -50,11 +50,8 @@ func resolveDNS(
 		if ip.Zone() != "" {
 			return nil, fmt.Errorf("scoped upstream address is not supported")
 		}
-		if family == dns.IPv4Only && !ip.Is4() || family == dns.IPv6Only && !ip.Is6() {
-			return nil, dns.ErrNoAddresses
-		}
 	} else {
-		result, err := client.Resolve(ctx, request.Host, family)
+		result, err := client.Resolve(ctx, request.Host, dns.IPv4Only)
 		if err != nil {
 			return nil, err
 		}

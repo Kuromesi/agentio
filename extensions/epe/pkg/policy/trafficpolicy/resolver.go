@@ -16,6 +16,7 @@ package trafficpolicy
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
@@ -32,17 +33,32 @@ func (s *resolver) config(ctx context.Context, pod inputs.Pod) (egressauthz.Conf
 	return snapshot.entry.compiled.config, snapshot.entry.compiled.err
 }
 
-// NewResolver loads the workload's policies for the common request authorizer.
+// NewAuthorizer loads immutable workload policies for aggregate authorization.
 // It is independent of SecurityProfile resolution and bypass semantics.
-func NewResolver(source Resources) egressauthz.ConfigResolver {
-	s := &resolver{source: source}
-	return func(ctx context.Context, stream *filter.Stream) (egressauthz.Config, error) {
-		peer := stream.Peer
-		cfg, err := s.config(ctx, inputs.Pod{
-			Namespace: peer.Pod.Namespace,
-			Name:      peer.Pod.Name,
-			Labels:    peer.Labels,
+func NewAuthorizer(source Resources) egressauthz.Authorizer {
+	return &resolver{source: source}
+}
+
+func (s *resolver) Authorize(
+	ctx context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	peer := stream.Peer
+	if !peer.Valid() {
+		stream.Info.RecordAuthorization(filter.AuthorizationDecision{
+			Action: "deny",
+			Reason: filter.AuthorizationReasonMissingIdentity,
 		})
-		return cfg, err
+		return nil, nil
 	}
+	cfg, err := s.config(ctx, inputs.Pod{
+		Namespace: peer.Pod.Namespace,
+		Name:      peer.Pod.Name,
+		Labels:    peer.Labels,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Authorize(ctx, stream, candidates)
 }

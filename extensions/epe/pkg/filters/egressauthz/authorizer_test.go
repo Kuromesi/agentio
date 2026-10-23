@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
@@ -55,10 +56,10 @@ func TestGlobalDeniedCIDRs(t *testing.T) {
 	} {
 		for _, xds := range []bool{false, true} {
 			name := tc.name + "/static"
-			var policies ConfigResolver
+			authorizers := []Authorizer{NewStaticAuthorizer(global)}
 			if xds {
 				name = tc.name + "/xds-allow-all"
-				policies = func(context.Context, *filter.Stream) (Config, error) { return allowAll, nil }
+				authorizers = append(authorizers, NewStaticAuthorizer(allowAll))
 			}
 			t.Run(name, func(t *testing.T) {
 				lookups := 0
@@ -77,7 +78,7 @@ func TestGlobalDeniedCIDRs(t *testing.T) {
 				if tc.original != "" {
 					stream.Request.OriginalDestination = netip.MustParseAddrPort(tc.original)
 				}
-				authorize := NewAuthorizer(client, func() Config { return global }, policies)
+				authorize := NewAggregate(client, authorizers...).Authorize
 				target, reply, err := authorize(t.Context(), stream)
 				if err != nil {
 					t.Fatal(err)
@@ -104,33 +105,248 @@ func TestGlobalDeniedCIDRs(t *testing.T) {
 	}
 }
 
-func TestGlobalSnapshotAndWorkloadPolicies(t *testing.T) {
+func TestGlobalUpdateAndWorkloadPolicies(t *testing.T) {
 	denied := Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
-	current := denied
+	global := NewStaticAuthorizer(denied)
 	workload := Config{}
-	var policyErr error
-	authorize := NewAuthorizer(dns.NewClient(nil, 0), func() Config { return current },
-		func(context.Context, *filter.Stream) (Config, error) {
-			// An update during policy loading must affect only later requests.
-			current = Config{}
-			return workload, policyErr
-		})
+	client := dns.NewClient(lookupFunc(func(context.Context, string, dns.Family) (dns.LookupResult, error) {
+		return dns.LookupResult{Addresses: []netip.Addr{
+			netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("192.0.2.1"),
+		}}, nil
+	}), 0)
+	authorize := NewAggregate(
+		client,
+		global,
+		authorizerFunc(
+			func(ctx context.Context, stream *filter.Stream, candidates []netip.AddrPort) ([]netip.AddrPort, error) {
+				// Publishing a new config cannot restore candidates already denied.
+				global.Update(Config{})
+				return workload.Authorize(ctx, stream, candidates)
+			},
+		),
+	).Authorize
 	request := func(host string) (*filter.UpstreamTarget, *filter.Reply, error) {
 		return authorize(t.Context(), &filter.Stream{Request: httpreq.HTTPRequest{Host: host, Port: 443}})
 	}
-	if target, reply, err := request("127.0.0.1"); err != nil || reply == nil || target != nil {
-		t.Fatalf("snapshot lost: %v %v %v", target, reply, err)
+	if target, reply, err := request("mixed.example"); err != nil || reply != nil || target == nil ||
+		target.Address.String() != "192.0.2.1:443" {
+		t.Fatalf("denied candidate restored: %v %v %v", target, reply, err)
 	}
-	if target, reply, err := request("127.0.0.1"); err != nil || reply != nil || target == nil {
+	if target, reply, err := request("127.0.0.1"); err != nil || reply != nil || target == nil ||
+		target.Address.String() != "127.0.0.1:443" {
 		t.Fatalf("update ignored: %v %v %v", target, reply, err)
 	}
-	current = denied
+	global.Update(denied)
 	workload.Policies = []Policy{{Name: "default-deny"}}
 	if target, reply, err := request("192.0.2.1"); err != nil || reply == nil || target != nil {
 		t.Fatalf("workload restriction bypassed: %v %v %v", target, reply, err)
 	}
-	policyErr = errors.New("xDS unavailable")
-	if target, reply, err := request("192.0.2.1"); !errors.Is(err, policyErr) || reply != nil || target != nil {
-		t.Fatalf("policy error ignored: %v %v %v", target, reply, err)
+}
+
+type authorizerFunc func(context.Context, *filter.Stream, []netip.AddrPort) ([]netip.AddrPort, error)
+
+func (f authorizerFunc) Authorize(
+	ctx context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	return f(ctx, stream, candidates)
+}
+
+func TestAggregateRequiresCommonCandidate(t *testing.T) {
+	ips := []netip.Addr{
+		netip.MustParseAddr("192.0.2.1"),
+		netip.MustParseAddr("192.0.2.2"),
+		netip.MustParseAddr("192.0.2.3"),
+	}
+	for _, tc := range []struct {
+		name            string
+		allowed         [][]int
+		want            []string
+		candidateCounts []int
+	}{
+		{
+			name:            "three authorizers share only the last candidate",
+			allowed:         [][]int{{1, 2}, {0, 2}, {2}},
+			want:            []string{"192.0.2.3:443"},
+			candidateCounts: []int{3, 2, 1},
+		},
+		{
+			name:            "individual allows do not imply a common allowed IP",
+			allowed:         [][]int{{0}, {1}},
+			candidateCounts: []int{3, 1},
+		},
+		{
+			name: "empty aggregate still pins a destination",
+			want: []string{"192.0.2.1:443", "192.0.2.2:443", "192.0.2.3:443"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := make([]int, len(tc.allowed))
+			authorizers := make([]Authorizer, 0, len(tc.allowed))
+			for i, allowed := range tc.allowed {
+				rules := make([]Rule, 0, len(allowed))
+				for _, j := range allowed {
+					rules = append(rules, Rule{Action: Allow, CIDRs: []netip.Prefix{netip.PrefixFrom(ips[j], 32)}})
+				}
+				cfg := Config{Policies: []Policy{{Name: "test-policy", Rules: rules}}}
+				authorizers = append(authorizers, authorizerFunc(
+					func(ctx context.Context, stream *filter.Stream, candidates []netip.AddrPort) ([]netip.AddrPort, error) {
+						calls[i]++
+						if len(candidates) != tc.candidateCounts[i] {
+							t.Fatalf("authorizer %d: candidates=%d, want %d", i, len(candidates), tc.candidateCounts[i])
+						}
+						return cfg.Authorize(ctx, stream, candidates)
+					},
+				))
+			}
+			lookups := 0
+			client := dns.NewClient(lookupFunc(func(context.Context, string, dns.Family) (dns.LookupResult, error) {
+				lookups++
+				return dns.LookupResult{Addresses: ips}, nil
+			}), 0)
+			stream := &filter.Stream{
+				Request: httpreq.HTTPRequest{Host: "multiple.example", Port: 443},
+				Info:    filter.NewStreamInfo(),
+			}
+			target, reply, err := NewAggregate(client, authorizers...).Authorize(t.Context(), stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.want) == 0 {
+				if reply == nil || reply.Status != 403 || target != nil {
+					t.Fatalf("target=%v reply=%v", target, reply)
+				}
+			} else if reply != nil || target == nil || !slices.Contains(tc.want, target.Address.String()) {
+				t.Fatalf("target=%v reply=%v, want %v", target, reply, tc.want)
+			}
+			if lookups != 1 {
+				t.Fatalf("DNS lookups=%d, want 1", lookups)
+			}
+			for i, count := range calls {
+				if count != 1 {
+					t.Fatalf("authorizer %d: calls=%d, want 1", i, count)
+				}
+			}
+		})
+	}
+}
+
+func TestAggregateStopsAfterDenialOrError(t *testing.T) {
+	failure := errors.New("policy unavailable")
+	for _, tc := range []struct {
+		name    string
+		first   Authorizer
+		wantErr error
+		reason  string
+	}{
+		{
+			name:   "global denial skips workload policy loading",
+			first:  NewStaticAuthorizer(Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}),
+			reason: filter.AuthorizationReasonPolicyDenied,
+		},
+		{
+			name: "authorizer error stops the chain",
+			first: authorizerFunc(func(context.Context, *filter.Stream, []netip.AddrPort) ([]netip.AddrPort, error) {
+				return nil, failure
+			}),
+			wantErr: failure,
+			reason:  filter.AuthorizationReasonPolicyLoadFailed,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewAggregate(dns.NewClient(nil, 0), tc.first,
+				authorizerFunc(func(context.Context, *filter.Stream, []netip.AddrPort) ([]netip.AddrPort, error) {
+					t.Fatal("later authorizers must not run after a denial or error")
+					return nil, nil
+				}))
+			stream := &filter.Stream{
+				Request: httpreq.HTTPRequest{Host: "127.0.0.1", Port: 443},
+				Info:    filter.NewStreamInfo(),
+			}
+			target, reply, err := a.Authorize(t.Context(), stream)
+			if !errors.Is(err, tc.wantErr) || target != nil {
+				t.Fatalf("target=%v reply=%v err=%v", target, reply, err)
+			}
+			if tc.wantErr == nil {
+				if reply == nil || reply.Status != 403 {
+					t.Fatalf("reply=%v, want denial", reply)
+				}
+			} else if reply != nil {
+				t.Fatalf("reply=%v, want error only", reply)
+			}
+			if stream.Info.Authorization.Reason != tc.reason {
+				t.Fatalf("audit=%+v", stream.Info.Authorization)
+			}
+		})
+	}
+}
+
+func TestAggregateAuditsSelectedCandidate(t *testing.T) {
+	client := dns.NewClient(lookupFunc(func(context.Context, string, dns.Family) (dns.LookupResult, error) {
+		return dns.LookupResult{Addresses: []netip.Addr{
+			netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("192.0.2.2"),
+		}}, nil
+	}), 0)
+	cfg := Config{Policies: []Policy{{
+		Name: "workload",
+		Rules: []Rule{
+			{Action: Allow, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}},
+			{Action: Allow, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/32")}},
+		},
+	}}}
+	for _, tc := range []struct {
+		name   string
+		next   Config
+		want   map[string]int
+		policy string
+	}{
+		{
+			name:   "no policy preserves selected candidate match",
+			want:   map[string]int{"192.0.2.1:443": 0, "192.0.2.2:443": 1},
+			policy: "workload",
+		},
+		{
+			name:   "later filter selects second candidate match",
+			next:   Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}},
+			want:   map[string]int{"192.0.2.2:443": 1},
+			policy: "workload",
+		},
+		{
+			name: "later matching rule replaces earlier match",
+			next: Config{Policies: []Policy{{
+				Name:  "later-policy",
+				Rules: []Rule{{Action: Allow, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}},
+			}}},
+			want:   map[string]int{"192.0.2.1:443": 0, "192.0.2.2:443": 0},
+			policy: "later-policy",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := make(map[string]bool)
+			for range 128 {
+				stream := &filter.Stream{
+					Request: httpreq.HTTPRequest{Host: "multiple.example", Port: 443},
+					Info:    filter.NewStreamInfo(),
+				}
+				target, reply, err := NewAggregate(client, cfg, tc.next).Authorize(t.Context(), stream)
+				if err != nil || reply != nil || target == nil {
+					t.Fatalf("target=%v reply=%v err=%v", target, reply, err)
+				}
+				rule, ok := tc.want[target.Address.String()]
+				if !ok {
+					t.Fatalf("unexpected target: %v", target.Address)
+				}
+				seen[target.Address.String()] = true
+				audit := stream.Info.Authorization
+				if audit.Destination != target.Address.String() || audit.Policy != tc.policy ||
+					audit.RuleIndex == nil || *audit.RuleIndex != rule || audit.Action != "allow" {
+					t.Fatalf("audit=%+v", audit)
+				}
+			}
+			if len(seen) != len(tc.want) {
+				t.Fatalf("selection did not cover allowed candidates: %v", seen)
+			}
+		})
 	}
 }

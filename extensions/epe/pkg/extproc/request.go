@@ -103,7 +103,8 @@ func (s *Server) HandleRequestHeaders(
 
 	if !peer.Valid() {
 		// Static destination authorization does not require a workload identity.
-		// Only identity-dependent policies need to fail closed here.
+		// Authorizers enforce their own identity requirements unless the caller
+		// explicitly requires identity at the request boundary.
 		logger.V(logging.DEFAULT).Info("pod identity missing from filter_state",
 			"podNamespace", peer.Pod.Namespace, "podName", peer.Pod.Name,
 			"failClosed", s.failClosedOnMissingIdentity)

@@ -14,33 +14,13 @@
 package wiring
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 )
 
-func TestDefaultEPEConfigWithoutEndpoint(t *testing.T) {
-	testsupport.SetForTest(t, &identityProviderURL, "")
-	testsupport.SetForTest(t, &credProviderMTLSSource, "invalid")
-	cfg, err := DefaultEPEConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.ExtensionProviders) != 0 || cfg.DefaultProviders != nil {
-		t.Fatal("an unset endpoint must not create an unusable default provider")
-	}
-	if got := cfg.GetEgressAuthorization().
-		GetDeniedCidrs(); !slices.Equal(
-		got,
-		[]string{"127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"},
-	) {
-		t.Fatalf("missing built-in destination restrictions: %v", got)
-	}
-}
-
-func TestDefaultEPEConfigSources(t *testing.T) {
+func TestCredentialProviderFromEnvSources(t *testing.T) {
 	testsupport.SetForTest(t, &identityProviderURL, "https://credentials.example")
 	testsupport.SetForTest(t, &insecureSkipVerify, true)
 	testsupport.SetForTest(t, &credProviderSecretNamespace, "credentials")
@@ -48,15 +28,10 @@ func TestDefaultEPEConfigSources(t *testing.T) {
 	for _, source := range []string{credProviderSourceSecret, credProviderSourceNone} {
 		t.Run(source, func(t *testing.T) {
 			testsupport.SetForTest(t, &credProviderMTLSSource, source)
-			cfg, err := DefaultEPEConfig()
+			p, err := credentialProviderFromEnv()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(cfg.ExtensionProviders) != 1 || cfg.ExtensionProviders[0].Name != defaultCredentialProviderName ||
-				cfg.GetDefaultProviders().GetCredentialProvider() != defaultCredentialProviderName {
-				t.Fatal("missing default configuration")
-			}
-			p := cfg.ExtensionProviders[0].GetCredentialProvider()
 			if p.Url != identityProviderURL || p.Timeout != "10s" {
 				t.Fatalf("environment settings lost: %v", p)
 			}
@@ -79,14 +54,14 @@ func TestDefaultEPEConfigSources(t *testing.T) {
 	}
 }
 
-func TestDefaultEPEConfigRejectsMisconfiguredSource(t *testing.T) {
+func TestCredentialProviderFromEnvRejectsMisconfiguredSource(t *testing.T) {
 	testsupport.SetForTest(t, &identityProviderURL, "https://credentials.example")
 	testsupport.SetForTest(t, &credProviderSecretNamespace, "")
 	testsupport.SetForTest(t, &credProviderSecretName, "")
 	for source, expected := range map[string]string{"unknown": "not one of", "files": "not one of", "secret": "namespace and a name"} {
 		t.Run(source, func(t *testing.T) {
 			testsupport.SetForTest(t, &credProviderMTLSSource, source)
-			_, err := DefaultEPEConfig()
+			_, err := credentialProviderFromEnv()
 			if err == nil || !strings.Contains(err.Error(), expected) {
 				t.Fatalf("unexpected error: %v", err)
 			}

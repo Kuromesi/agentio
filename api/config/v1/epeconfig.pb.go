@@ -172,13 +172,35 @@ func (x *EPEConfig) GetEgressAuthorization() *EgressAuthorization {
 }
 
 // EgressAuthorization applies to every request processed by EPE authorization.
+// Examples below are EPEConfig content for a watched ConfigMap's data.config.
+//
+// Example: deny additional IPv4/IPv6 IPs. Built-in restrictions are appended
+// automatically, so they do not need to be repeated here.
+//
+//	egressAuthorization:
+//	  deniedCIDRs:
+//	  - 192.0.2.10/32
+//	  - 2001:db8::10/128
+//
+// Example: inherit the lower layer's restrictions in a primary ConfigMap.
+// Omitting egressAuthorization has the same effect as null.
+//
+//	egressAuthorization: null
+//
+// Example: clear inherited user restrictions. Built-in restrictions remain,
+// and optional xDS TrafficPolicy authorization still applies when enabled.
+//
+//	egressAuthorization:
+//	  deniedCIDRs: []
 type EgressAuthorization struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Deny these destination CIDRs on every port, before any TrafficPolicy rules.
 	// Use /32 for a single IPv4 address or /128 for a single IPv6 address.
 	// IPv4-mapped IPv6 prefixes are not accepted; use the IPv4 prefix instead.
-	// EPE startup defaults deny 127.0.0.0/8, ::1/128, 0.0.0.0/32, and ::/128.
-	// An explicitly empty list removes global restrictions, not TrafficPolicy.
+	// EPE always appends 127.0.0.0/8, ::1/128, 0.0.0.0/32, ::/128,
+	// 169.254.0.0/16, and fe80::/10.
+	// Alibaba Cloud metadata (100.100.100.200/32) requires an explicit operator entry.
+	// An empty list removes only user restrictions; built-ins cannot be disabled.
 	DeniedCidrs   []string `protobuf:"bytes,1,rep,name=denied_cidrs,json=deniedCIDRs,proto3" json:"denied_cidrs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -41,8 +41,8 @@ type Server struct {
 	eng              *engine.Engine
 	loggers          []filter.StreamLogger
 	// failClosedOnMissingIdentity denies requests when the source pod
-	// identity is absent from filter_state; otherwise only identity-independent
-	// authorization runs.
+	// identity is absent from filter_state; otherwise authorizers enforce
+	// their own identity requirements.
 	failClosedOnMissingIdentity bool
 }
 

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,10 +64,8 @@ func preferenceHarness(
 		t.Fatal(err)
 	}
 	return enginetest.New(t, enginetest.Options{
-		Registrations: regs,
-		AuthorizeRequest: func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
-			return egressauthz.Authorize(ctx, cfg, client, stream)
-		},
+		Registrations:    regs,
+		AuthorizeRequest: egressauthz.NewAggregate(client, cfg).Authorize,
 		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: units}, nil
 		},
@@ -164,7 +161,7 @@ func TestScenario_EgressAuthzOriginalMustBelongToHost(t *testing.T) {
 		{name: "original port is authorized", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "192.0.2.2:8443", want: "192.0.2.2:8443", port: 8443},
 		{name: "replacement keeps routing port", answers: []string{"192.0.2.1"}, original: "192.0.2.2:8443", want: "192.0.2.1:8443", port: 8443},
 		{name: "mapped original matches IPv4 answer", answers: []string{"192.0.2.1", "192.0.2.2"}, original: "[::ffff:192.0.2.2]:443", want: "192.0.2.2:443", port: 443},
-		{name: "IPv6 original is preferred", answers: []string{"2001:db8::1", "2001:db8::2"}, original: "[2001:db8::2]:443", want: "[2001:db8::2]:443", port: 443},
+		{name: "IPv6 original is excluded for hostname", answers: []string{"2001:db8::2", "192.0.2.1"}, original: "[2001:db8::2]:443", want: "192.0.2.1:443", port: 443},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := dns.NewClient(nil, time.Second)
@@ -175,7 +172,7 @@ func TestScenario_EgressAuthzOriginalMustBelongToHost(t *testing.T) {
 			if err := client.SetRecord("api.example.com", addresses); err != nil {
 				t.Fatal(err)
 			}
-			cfg := &atomic.Pointer[egressauthz.Config]{}
+			cfg := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 			publishPolicies(t, cfg, egressauthz.Policy{
 				Name: "allow",
 				Rules: []egressauthz.Rule{
@@ -200,10 +197,8 @@ func TestEgressAuthzOriginalMustMatchLiteralHost(t *testing.T) {
 		Rules: []egressauthz.Rule{
 			authRule(egressauthz.Allow, "192.0.2.0/24", 443),
 		}}}}
-	target, reply, err := egressauthz.Authorize(
+	target, reply, err := egressauthz.NewAggregate(dns.NewClient(nil, time.Second), cfg).Authorize(
 		t.Context(),
-		cfg,
-		dns.NewClient(nil, time.Second),
 		&filter.Stream{Request: httpreq.HTTPRequest{
 			Host:                "192.0.2.1",
 			Port:                443,
@@ -245,7 +240,7 @@ func TestScenario_EgressAuthzChecksRewrittenAuthority(t *testing.T) {
 						},
 						AuthorizeRequest: func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
 							calls++
-							return egressauthz.Authorize(ctx, cfg, client, stream)
+							return egressauthz.NewAggregate(client, cfg).Authorize(ctx, stream)
 						},
 					})
 					request := authRequest(

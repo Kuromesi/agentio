@@ -132,7 +132,7 @@ func TestEnvoyServiceEntryAuthorization(t *testing.T) {
 					}
 					// Supply the restored address missing from this direct HTTP listener.
 					stream.Request.OriginalDestination = replacement
-					return egressauthz.Authorize(ctx, cfg, dnsClient, stream)
+					return egressauthz.NewAggregate(dnsClient, cfg).Authorize(ctx, stream)
 				}
 			}
 			processor := grpc.NewServer(grpc.StreamInterceptor(func(

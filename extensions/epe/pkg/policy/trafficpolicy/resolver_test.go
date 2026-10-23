@@ -205,11 +205,10 @@ func TestResolverCacheUpdates(t *testing.T) {
 func TestAuthorizerUsesWorkloadBinding(t *testing.T) {
 	f := testStore()
 	f.bind()
-	authorize := egressauthz.NewAuthorizer(
+	authorize := egressauthz.NewAggregate(
 		dns.NewClient(nil, 0),
-		func() egressauthz.Config { return egressauthz.Config{} },
-		NewResolver(testAggregate(f)),
-	)
+		NewAuthorizer(testAggregate(f)),
+	).Authorize
 	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443}, Info: filter.NewStreamInfo()}
 	stream.Peer.Pod.Namespace, stream.Peer.Pod.Name = "ns", "pod"
 	target, reply, err := authorize(t.Context(), stream)
@@ -439,14 +438,14 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 	source := testStore()
 	source.err = errors.New("xDS unavailable")
 	stream := &filter.Stream{
-		Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
-		Info: filter.NewStreamInfo(),
+		Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+		Request: httpreq.HTTPRequest{Host: "192.0.2.1", Port: 443},
+		Info:    filter.NewStreamInfo(),
 	}
-	_, _, err := egressauthz.NewAuthorizer(
-		nil,
-		func() egressauthz.Config { return egressauthz.Config{} },
-		NewResolver(testAggregate(source)),
-	)(
+	_, _, err := egressauthz.NewAggregate(
+		dns.NewClient(nil, 0),
+		NewAuthorizer(testAggregate(source)),
+	).Authorize(
 		t.Context(),
 		stream,
 	)
@@ -459,11 +458,11 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 func TestGlobalDenyPrecedesXDSPolicy(t *testing.T) {
 	f := testStore() // Workload policy allows 203.0.113.0/24.
 	global := egressauthz.Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/32")}}
-	authorize := egressauthz.NewAuthorizer(
+	authorize := egressauthz.NewAggregate(
 		dns.NewClient(nil, 0),
-		func() egressauthz.Config { return global },
-		NewResolver(testAggregate(f)),
-	)
+		egressauthz.NewStaticAuthorizer(global),
+		NewAuthorizer(testAggregate(f)),
+	).Authorize
 	for _, tc := range []struct {
 		host    string
 		allowed bool
@@ -487,5 +486,35 @@ func TestGlobalDenyPrecedesXDSPolicy(t *testing.T) {
 		} else if target != nil || reply == nil || reply.Status != 403 {
 			t.Fatalf("%s: target=%v reply=%v", tc.host, target, reply)
 		}
+	}
+}
+
+func TestAuthorizerRejectsMissingIdentityBeforeLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pod  types.NamespacedName
+	}{
+		{name: "absent"},
+		{name: "missing namespace", pod: types.NamespacedName{Name: "pod"}},
+		{name: "missing name", pod: types.NamespacedName{Namespace: "ns"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := &filter.Stream{
+				Peer: filter.Peer{Pod: tc.pod},
+				Info: filter.NewStreamInfo(),
+			}
+			// No resource store is needed: rejection must precede any lookup.
+			allowed, err := NewAuthorizer(nil).Authorize(t.Context(), stream, []netip.AddrPort{
+				netip.MustParseAddrPort("203.0.113.7:443"),
+			})
+			if err != nil || len(allowed) != 0 {
+				t.Fatalf("allowed=%v err=%v", allowed, err)
+			}
+			audit := stream.Info.Authorization
+			if audit == nil || audit.Action != "deny" || audit.Reason != filter.AuthorizationReasonMissingIdentity ||
+				audit.Policy != "" || audit.Destination != "" {
+				t.Fatalf("audit=%+v", audit)
+			}
+		})
 	}
 }

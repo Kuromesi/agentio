@@ -17,17 +17,13 @@ package egressauthz
 import (
 	"fmt"
 	"net/netip"
-
-	"github.com/openkruise/agentio/pkg/dns"
 )
 
 // Config is an immutable, caller-owned snapshot for one authorization scope.
 // The caller validates and orders Policies before publishing a new Config.
-// The request authorizer combines it with the global destination restrictions.
+// Each authorizer filters its candidate set against one immutable configuration.
 // Slices and nested rules must not be mutated after publication.
 type Config struct {
-	// Family constrains host resolution, not an already selected or restored IP.
-	Family dns.Family
 	// DeniedCIDRs are global restrictions checked before workload policies.
 	DeniedCIDRs []netip.Prefix
 	Policies    []Policy
@@ -36,9 +32,6 @@ type Config struct {
 // Validate checks the complete snapshot without modifying or sorting it.
 // The zero Config is valid and imposes no policy restriction.
 func (c Config) Validate() error {
-	if c.Family > dns.IPv6Only {
-		return dns.ErrInvalidFamily
-	}
 	for _, prefix := range c.DeniedCIDRs {
 		if !prefix.IsValid() || prefix.Addr().Is4In6() {
 			return fmt.Errorf("invalid or IPv4-mapped denied CIDR: %s", prefix)

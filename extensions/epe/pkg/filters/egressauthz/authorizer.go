@@ -16,33 +16,102 @@ package egressauthz
 
 import (
 	"context"
+	"net/netip"
+	"slices"
+	"sync/atomic"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
+	log "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
+	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
-// ConfigResolver optionally supplies workload policies for the current request.
-type ConfigResolver func(context.Context, *filter.Stream) (Config, error)
+// Authorizer filters a request's candidates once, returning only allowed entries
+// in their original order. It must not add or change destination addresses.
+// Implementations load their configuration once for the entire candidate set.
+type Authorizer interface {
+	Authorize(context.Context, *filter.Stream, []netip.AddrPort) ([]netip.AddrPort, error)
+}
 
-// NewAuthorizer snapshots global restrictions and optional workload policies,
-// then resolves, authorizes, and pins the destination in one pass.
-// global must return a validated immutable snapshot; policies may be nil.
-func NewAuthorizer(client *dns.Client, global func() Config, policies ConfigResolver) engine.RequestAuthorizer {
-	return func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
-		cfg := global()
-		if policies != nil {
-			workload, err := policies(ctx, stream)
-			if err != nil {
-				stream.Info.RecordAuthorization(filter.AuthorizationDecision{
-					Action: "error",
-					Reason: filter.AuthorizationReasonPolicyLoadFailed,
-				})
-				return nil, nil, err
-			}
-			cfg.Policies = workload.Policies
-			cfg.Family = workload.Family
+// StaticAuthorizer publishes immutable configurations for global authorization.
+// Construct with NewStaticAuthorizer before serving requests.
+type StaticAuthorizer struct {
+	current atomic.Pointer[Config]
+}
+
+// NewStaticAuthorizer creates an authorizer with an initial configuration.
+func NewStaticAuthorizer(cfg Config) *StaticAuthorizer {
+	a := &StaticAuthorizer{}
+	a.Update(cfg)
+	return a
+}
+
+// Update publishes a caller-validated configuration. Its slices must not be
+// mutated afterward; an authorization already in progress keeps the old version.
+func (a *StaticAuthorizer) Update(cfg Config) {
+	a.current.Store(&cfg)
+}
+
+// Authorize filters all candidates against the current immutable configuration.
+func (a *StaticAuthorizer) Authorize(
+	ctx context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	return a.current.Load().Authorize(ctx, stream, candidates)
+}
+
+// Authorize filters candidates against this validated configuration and records
+// matching allow rules in StreamInfo for audit. If every candidate is denied,
+// the denial is recorded instead.
+func (c Config) Authorize(
+	ctx context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	logger := log.FromContext(ctx).V(logging.DEBUG)
+	allowed := make([]netip.AddrPort, 0, len(candidates))
+	var last Decision
+	for _, candidate := range candidates {
+		decision := c.Evaluate(candidate)
+		if logger.Enabled() {
+			logger.Info("egress destination evaluated",
+				"address", candidate.String(), "action", string(decision.Action),
+				"policy", decision.PolicyName, "ruleIndex", decision.RuleIndex)
 		}
-		return Authorize(ctx, cfg, client, stream)
+		last = decision
+		if decision.Action != Allow {
+			continue
+		}
+		if decision.PolicyName != "" {
+			stream.Info.RecordAuthorizationMatch(candidate, decision.PolicyName, decision.RuleIndex)
+		}
+		allowed = append(allowed, candidate)
 	}
+	if len(allowed) == 0 {
+		if len(candidates) == 1 {
+			recordDenial(stream, candidates[0], last)
+		} else {
+			stream.Info.RecordAuthorization(filter.AuthorizationDecision{
+				Action: "deny",
+				Reason: filter.AuthorizationReasonPolicyDenied,
+			})
+		}
+	}
+	return allowed, nil
+}
+
+// Aggregate intersects an ordered list of authorizers. It owns DNS resolution
+// and target selection, so children filter the same addresses without resolving
+// or pinning targets independently.
+type Aggregate struct {
+	client      *dns.Client
+	authorizers []Authorizer
+}
+
+// NewAggregate evaluates authorizers in the supplied order. An empty list
+// imposes no restrictions but still resolves and pins the target.
+func NewAggregate(client *dns.Client, authorizers ...Authorizer) *Aggregate {
+	return &Aggregate{client: client, authorizers: slices.Clone(authorizers)}
 }

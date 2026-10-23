@@ -17,7 +17,6 @@ package main
 import (
 	"fmt"
 	"net/netip"
-	"sync/atomic"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
@@ -48,19 +47,19 @@ func newRequestAuthorizer(
 	resources *resourcestore.Aggregate,
 	client *dns.Client,
 ) (engine.RequestAuthorizer, krt.HandlerRegistration) {
-	var current atomic.Pointer[egressauthz.Config]
+	global := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	reg := configs.Register(func(event krt.Event[config.Config[*configv1.EPEConfig]]) {
-		cfg := &egressauthz.Config{}
+		cfg := egressauthz.Config{}
 		for _, raw := range event.Latest().Value.GetEgressAuthorization().GetDeniedCidrs() {
 			// The upstream EPEConfig collection validates every published value.
 			cfg.DeniedCIDRs = append(cfg.DeniedCIDRs, netip.MustParsePrefix(raw).Masked())
 		}
-		current.Store(cfg)
+		global.Update(cfg)
 	})
-	var policies egressauthz.ConfigResolver
+	authorizers := []egressauthz.Authorizer{global}
 	if resources != nil {
-		policies = trafficpolicy.NewResolver(resources)
+		authorizers = append(authorizers, trafficpolicy.NewAuthorizer(resources))
 	}
-	// Serving waits for reg to sync, so the first request always sees a snapshot.
-	return egressauthz.NewAuthorizer(client, func() egressauthz.Config { return *current.Load() }, policies), reg
+	// Serving waits for reg to sync, so the first request sees the configured restrictions.
+	return egressauthz.NewAggregate(client, authorizers...).Authorize, reg
 }

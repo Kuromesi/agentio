@@ -25,7 +25,6 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
-	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 	"github.com/openkruise/agentio/pkg/config"
@@ -83,7 +82,7 @@ func TestStaticAuthorizationConfigLifecycle(t *testing.T) {
 			Namespace: "system",
 			Names:     []string{"base", "primary"},
 			Defaults:  defaults,
-			Apply:     extensionprovider.ApplyConfig,
+			Apply:     wiring.ApplyEPEConfig,
 			Validate:  validateEPEConfig,
 		}, krt.WithStop(ctx.Done()))
 		// No resource store, xDS connection, workload binding, or source identity.
@@ -106,31 +105,62 @@ func TestStaticAuthorizationConfigLifecycle(t *testing.T) {
 				t.Fatalf("%s: target=%v reply=%v", host, target, reply)
 			}
 		}
-		// Built-in restrictions apply without any ConfigMap, including mapped IPv4.
-		for _, host := range []string{"127.0.0.1", "127.255.255.254", "::1", "0.0.0.0", "::", "::ffff:127.0.0.1", "::ffff:0.0.0.0"} {
-			check(host, true)
+		mandatoryHosts := []string{
+			"127.0.0.1", "127.255.255.254", "::1", "0.0.0.0", "::",
+			"::ffff:127.0.0.1", "::ffff:0.0.0.0",
+			"169.254.169.254", "169.254.1.1", "fe80::1", "febf::1",
+			"::ffff:169.254.169.254",
 		}
-		check("192.0.2.1", false)
+		checkMandatory := func() {
+			t.Helper()
+			for _, host := range mandatoryHosts {
+				check(host, true)
+			}
+		}
+		optionalHosts := []string{"100.100.100.200", "::ffff:100.100.100.200"}
+		checkOptional := func(denied bool) {
+			t.Helper()
+			for _, host := range optionalHosts {
+				check(host, denied)
+			}
+		}
+		checkMandatory()
+		checkOptional(false)
+		for _, host := range []string{"192.0.2.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "fd00::1"} {
+			check(host, false) // Business private networks are not implicitly denied.
+		}
 		sources.UpdateObject(cm("base", "egressAuthorization: {deniedCIDRs: [invalid]}"))
-		check("127.0.0.1", true) // Invalid initial user configuration retains defaults.
-		check("0.0.0.0", true)
-		sources.UpdateObject(cm("base", "egressAuthorization: {deniedCIDRs: [127.0.0.0/8]}"))
-		check("127.0.0.1", true)
-		check("192.0.2.1", false)
+		checkMandatory() // Invalid initial configuration retains built-ins.
+		sources.UpdateObject(cm("base", "egressAuthorization: {deniedCIDRs: [192.0.2.1/32]}"))
+		check("192.0.2.1", true)
+		checkMandatory()
 		sources.UpdateObject(cm("primary", "egressAuthorization: null"))
-		check("127.0.0.1", true) // Null inherits the lower layer.
-		sources.UpdateObject(cm("primary", "egressAuthorization: {deniedCIDRs: ['::1/128']}"))
-		check("::1", true)
-		check("127.0.0.1", false) // Supplied block replaces the lower layer.
+		check("192.0.2.1", true) // Null inherits user entries from the lower layer.
+		checkMandatory()
+		sources.UpdateObject(cm("primary", "egressAuthorization: {deniedCIDRs: ['2001:db8::1/128']}"))
+		check("2001:db8::1", true)
+		check("192.0.2.1", false) // Replacing the block only replaces user entries.
+		checkMandatory()
 		sources.UpdateObject(cm("primary", "egressAuthorization: {deniedCIDRs: [invalid]}"))
-		check("::1", true) // Invalid update keeps the last good snapshot.
-		check("127.0.0.1", false)
+		check("2001:db8::1", true) // Invalid updates keep the last good configuration.
+		checkMandatory()
 		sources.UpdateObject(cm("primary", "egressAuthorization: {deniedCIDRs: []}"))
-		check("::1", false)
+		check("2001:db8::1", false)
+		check("192.0.2.1", false)
+		checkMandatory() // Explicit clearing cannot remove mandatory restrictions.
 		sources.DeleteObject("system/primary")
-		check("127.0.0.1", true)
+		check("192.0.2.1", true)
+		checkMandatory()
 		sources.DeleteObject("system/base")
-		check("127.0.0.1", true) // Deleting overrides restores built-in restrictions.
-		check("0.0.0.0", true)
+		check("192.0.2.1", false)
+		checkMandatory()
+		checkOptional(false)
+		sources.UpdateObject(cm("primary", `egressAuthorization:
+  deniedCIDRs: [100.100.100.200/32]`))
+		checkOptional(true) // Operators can explicitly deny Alibaba Cloud metadata.
+		checkMandatory()
+		sources.UpdateObject(cm("primary", "egressAuthorization: {deniedCIDRs: []}"))
+		checkOptional(false)
+		checkMandatory()
 	})
 }

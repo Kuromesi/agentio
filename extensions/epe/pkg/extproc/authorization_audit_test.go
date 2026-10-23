@@ -54,9 +54,7 @@ func TestAuthorizationDenialHasCorrelatedJSONResponse(t *testing.T) {
 			Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
 				return engine.Resolution{}, nil
 			},
-			AuthorizeRequest: func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
-				return egressauthz.Authorize(ctx, cfg, client, stream)
-			},
+			AuthorizeRequest: egressauthz.NewAggregate(client, cfg).Authorize,
 		},
 	)
 	headers := makeRequestHeaders("1.1.1.1:80", "/", "GET")
