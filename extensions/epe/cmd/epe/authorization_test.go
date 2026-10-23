@@ -27,6 +27,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 	"github.com/openkruise/agentio/pkg/config"
 	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/krt"
@@ -73,11 +74,15 @@ func TestStaticAuthorizationConfigLifecycle(t *testing.T) {
 				Data:       map[string]string{"config": content},
 			}
 		}
+		defaults, err := wiring.DefaultEPEConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
 		sources := krt.NewMutableCollection(nil, []*corev1.ConfigMap{}, krt.WithStop(ctx.Done()))
 		configs := config.NewCollection(sources.AsCollection(), config.Options[*configv1.EPEConfig]{
 			Namespace: "system",
 			Names:     []string{"base", "primary"},
-			Defaults:  &configv1.EPEConfig{},
+			Defaults:  defaults,
 			Apply:     extensionprovider.ApplyConfig,
 			Validate:  validateEPEConfig,
 		}, krt.WithStop(ctx.Done()))
@@ -101,7 +106,14 @@ func TestStaticAuthorizationConfigLifecycle(t *testing.T) {
 				t.Fatalf("%s: target=%v reply=%v", host, target, reply)
 			}
 		}
-		check("127.0.0.1", false) // Empty configuration still resolves and pins.
+		// Built-in restrictions apply without any ConfigMap, including mapped IPv4.
+		for _, host := range []string{"127.0.0.1", "127.255.255.254", "::1", "0.0.0.0", "::", "::ffff:127.0.0.1", "::ffff:0.0.0.0"} {
+			check(host, true)
+		}
+		check("192.0.2.1", false)
+		sources.UpdateObject(cm("base", "egressAuthorization: {deniedCIDRs: [invalid]}"))
+		check("127.0.0.1", true) // Invalid initial user configuration retains defaults.
+		check("0.0.0.0", true)
 		sources.UpdateObject(cm("base", "egressAuthorization: {deniedCIDRs: [127.0.0.0/8]}"))
 		check("127.0.0.1", true)
 		check("192.0.2.1", false)
@@ -118,6 +130,7 @@ func TestStaticAuthorizationConfigLifecycle(t *testing.T) {
 		sources.DeleteObject("system/primary")
 		check("127.0.0.1", true)
 		sources.DeleteObject("system/base")
-		check("127.0.0.1", false)
+		check("127.0.0.1", true) // Deleting overrides restores built-in restrictions.
+		check("0.0.0.0", true)
 	})
 }

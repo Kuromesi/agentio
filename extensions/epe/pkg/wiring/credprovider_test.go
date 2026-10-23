@@ -14,6 +14,7 @@
 package wiring
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,6 +30,13 @@ func TestDefaultEPEConfigWithoutEndpoint(t *testing.T) {
 	}
 	if len(cfg.ExtensionProviders) != 0 || cfg.DefaultProviders != nil {
 		t.Fatal("an unset endpoint must not create an unusable default provider")
+	}
+	if got := cfg.GetEgressAuthorization().
+		GetDeniedCidrs(); !slices.Equal(
+		got,
+		[]string{"127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"},
+	) {
+		t.Fatalf("missing built-in destination restrictions: %v", got)
 	}
 }
 

@@ -65,10 +65,14 @@ var (
 		"Name of the Secret holding the credential provider mTLS certificate, key, and CA").Get()
 )
 
-// DefaultEPEConfig converts environment settings into the lowest configuration
-// layer. It neither resolves certificate material nor creates provider clients.
+// DefaultEPEConfig combines built-in destination restrictions and environment
+// settings into the lowest configuration layer. It neither resolves certificate material nor creates provider clients.
 func DefaultEPEConfig() (*configv1.EPEConfig, error) {
-	cfg := &configv1.EPEConfig{}
+	cfg := &configv1.EPEConfig{
+		EgressAuthorization: &configv1.EgressAuthorization{
+			DeniedCidrs: []string{"127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"},
+		},
+	}
 	if identityProviderURL == "" {
 		return cfg, nil
 	}

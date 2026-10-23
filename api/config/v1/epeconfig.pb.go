@@ -177,7 +177,8 @@ type EgressAuthorization struct {
 	// Deny these destination CIDRs on every port, before any TrafficPolicy rules.
 	// Use /32 for a single IPv4 address or /128 for a single IPv6 address.
 	// IPv4-mapped IPv6 prefixes are not accepted; use the IPv4 prefix instead.
-	// Empty imposes no global restriction. It does not bypass TrafficPolicy.
+	// EPE startup defaults deny 127.0.0.0/8, ::1/128, 0.0.0.0/32, and ::/128.
+	// An explicitly empty list removes global restrictions, not TrafficPolicy.
 	DeniedCidrs   []string `protobuf:"bytes,1,rep,name=denied_cidrs,json=deniedCIDRs,proto3" json:"denied_cidrs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
