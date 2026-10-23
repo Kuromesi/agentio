@@ -20,14 +20,20 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	servicev3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -41,10 +47,12 @@ import (
 type processorConfig struct {
 	requestHeaders  map[string]string
 	responseHeaders map[string]string
+	chainName       string
 }
 
 func configFromEnvironment(getenv func(string) string) processorConfig {
 	return processorConfig{
+		chainName:       getenv("CHAIN_NAME"),
 		requestHeaders:  parseHeaderPairs(getenv("REQUEST_HEADERS_TO_ADD")),
 		responseHeaders: parseHeaderPairs(getenv("RESPONSE_HEADERS_TO_ADD")),
 	}
@@ -65,10 +73,11 @@ func parseHeaderPairs(value string) map[string]string {
 
 type processor struct {
 	servicev3.UnimplementedExternalProcessorServer
-	config processorConfig
+	config    processorConfig
+	bodyCalls atomic.Uint64
 }
 
-func (p processor) Process(stream servicev3.ExternalProcessor_ProcessServer) error {
+func (p *processor) Process(stream servicev3.ExternalProcessor_ProcessServer) error {
 	for {
 		request, err := stream.Recv()
 		if err == io.EOF {
@@ -83,7 +92,10 @@ func (p processor) Process(stream servicev3.ExternalProcessor_ProcessServer) err
 	}
 }
 
-func (p processor) responseFor(request *servicev3.ProcessingRequest) *servicev3.ProcessingResponse {
+func (p *processor) responseFor(request *servicev3.ProcessingRequest) *servicev3.ProcessingResponse {
+	if p.config.chainName != "" {
+		return p.chainResponse(request)
+	}
 	switch request.Request.(type) {
 	case *servicev3.ProcessingRequest_RequestHeaders:
 		return &servicev3.ProcessingResponse{Response: &servicev3.ProcessingResponse_RequestHeaders{
@@ -167,7 +179,7 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 	server := grpc.NewServer(grpc.MaxConcurrentStreams(1000))
-	servicev3.RegisterExternalProcessorServer(server, processor{config: configFromEnvironment(os.Getenv)})
+	servicev3.RegisterExternalProcessorServer(server, &processor{config: configFromEnvironment(os.Getenv)})
 	serveError := make(chan error, 1)
 	go func() { serveError <- server.Serve(listener) }()
 
@@ -190,4 +202,60 @@ func main() {
 			server.Stop()
 		}
 	}
+}
+
+// chainResponse exposes traversal and body delivery to the chain integration test.
+func (p *processor) chainResponse(request *servicev3.ProcessingRequest) *servicev3.ProcessingResponse {
+	name := p.config.chainName
+	switch value := request.Request.(type) {
+	case *servicev3.ProcessingRequest_RequestHeaders:
+		headers := maps.Clone(p.config.requestHeaders)
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers["x-chain-request"] = chainHeader(value.RequestHeaders.Headers, "x-chain-request") + "," + name
+		response := &servicev3.ProcessingResponse{
+			Response: &servicev3.ProcessingResponse_RequestHeaders{RequestHeaders: headerResponse(headers)},
+		}
+		if slices.Contains(strings.Split(chainHeader(value.RequestHeaders.Headers, "x-extproc-body"), ","), name) {
+			response.ModeOverride = &extprocv3.ProcessingMode{
+				RequestHeaderMode:  extprocv3.ProcessingMode_SEND,
+				ResponseHeaderMode: extprocv3.ProcessingMode_SEND,
+				RequestBodyMode:    extprocv3.ProcessingMode_BUFFERED,
+			}
+		}
+		return response
+	case *servicev3.ProcessingRequest_RequestBody:
+		p.bodyCalls.Add(1)
+		mutation := headerResponse(map[string]string{"x-chain-body-" + name: string(value.RequestBody.Body)}).Response
+		return &servicev3.ProcessingResponse{
+			Response: &servicev3.ProcessingResponse_RequestBody{
+				RequestBody: &servicev3.BodyResponse{Response: mutation},
+			},
+		}
+	case *servicev3.ProcessingRequest_ResponseHeaders:
+		return &servicev3.ProcessingResponse{
+			Response: &servicev3.ProcessingResponse_ResponseHeaders{ResponseHeaders: headerResponse(map[string]string{
+				"x-chain-response": chainHeader(
+					value.ResponseHeaders.Headers,
+					"x-chain-response",
+				) + "," + name,
+				"x-chain-body-count-" + name: strconv.FormatUint(p.bodyCalls.Load(), 10),
+			})},
+		}
+	default:
+		return &servicev3.ProcessingResponse{}
+	}
+}
+
+func chainHeader(headers *corev3.HeaderMap, name string) string {
+	for _, h := range headers.GetHeaders() {
+		if h.Key == name {
+			if len(h.RawValue) > 0 {
+				return string(h.RawValue)
+			}
+			return h.Value
+		}
+	}
+	return ""
 }

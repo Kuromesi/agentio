@@ -109,6 +109,7 @@ In this example the primary `egressPolicies` list replaces the complete list gen
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `sandboxExtProc` | `ExtProcProvider` | Unset | Global external-processing provider used by egress gateways unless a gateway supplies an override. |
+| `additionalExtProcs` | `ExtProcProvider[]` | Empty | Ordered processors appended after the effective sandbox provider. Disabled when that provider is absent or explicitly disabled. |
 | `egressPolicies` | `EgressPolicy[]` | Empty | Ordered egress routing rules. The first matching policy is applied. |
 | `sandboxIgnoredLabels` | `string[]` | Built-in list | Label names or path-style patterns removed from sandbox workload metadata to reduce xDS size. |
 | `egressGateways` | `EgressGateway[]` | Empty | Per-gateway TLS termination, `ext_proc`, connection pool, and CONNECT rate-limit settings. |
@@ -166,11 +167,12 @@ Legacy egress DENY may combine ordering with routing decisions. Review the effec
 
 ## External processing provider
 
-An `ExtProcProvider` can be set globally at `sandboxExtProc` or per gateway at `egressGateways[].extProc`.
+An `ExtProcProvider` can be set globally at `sandboxExtProc`, in `additionalExtProcs`, or per gateway at `egressGateways[].extProc`.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `service` | String | Empty | Hostname or address of the gRPC external-processing service. |
+| `name` | String | Empty | Required, unique DNS label for each additional processor; ignored for the primary provider. Identifies filters, clusters, and statistics independently of list position. |
+| `service` | String | Empty | Hostname or address of the gRPC external-processing service. Required for additional processors. |
 | `port` | Integer | `0` | Service port. |
 | `request.headerMode` | Enum | `SEND` | `DEFAULT`, `SEND`, or `SKIP` for request headers and trailers. `DEFAULT` uses Agentio's request default. |
 | `request.attributes` | `string[]` | Empty | Envoy attributes included with request processing messages. |
@@ -186,6 +188,53 @@ If an egress gateway has no `extProc` field, it inherits `sandboxExtProc`. A gat
 The chart generates `sandboxExtProc` automatically when `epe.mode` is `managed` or `external`. Its generated `messageTimeout` is `5s`, rather than the raw API default of `200ms`; set `epe.messageTimeout` or use `agentiod.config.values.sandboxExtProc` to override it.
 
 See [EPE configuration](epe-configuration.md) for the deployed EPE service, listeners, Helm values, and process settings.
+
+## Additional external processors
+
+Configure trusted processors after the default EPE without replacing it:
+
+```yaml
+additionalExtProcs:
+- name: policy
+  service: policy.extensions.svc.cluster.local
+  port: 9002
+  messageTimeout: 200ms
+  failureModeAllow: false
+- name: transform
+  service: transform.extensions.svc.cluster.local
+  port: 9002
+  response:
+    headerMode: SEND
+```
+
+Requests run through the effective primary provider, then `policy`, then
+`transform`. Responses run in reverse order, including the primary provider if
+it subscribes to responses. The list applies to inspected HTTP, including HTTP
+after gateway TLS termination. It does not apply to CONNECT setup, raw TCP, or
+TLS passthrough. A gateway-level primary override still uses the global list;
+`extProc: {}` disables the entire chain for that gateway. With no effective
+primary provider, additional processors are inactive.
+
+Each entry reuses the provider's timeout, failure mode, TLS, connection pool,
+and processing attributes. Names must be unique lowercase DNS labels (up to
+63 characters). Services must be nonempty, ports are 1–65535 (`0` selects
+9002), and an explicit message timeout must be positive. Invalid updates retain
+the last-known-good configuration. Changing the order, endpoints, or options
+updates xDS without restarting gateway Pods. Supplying `additionalExtProcs: []`
+removes the list; an omitted or null list preserves the lower configuration layer.
+
+Initially only request headers are sent by default. `allow_mode_override` is
+enabled: a processor can return a `mode_override` in its header response to
+request a buffered request or response body. This decision is per HTTP stream;
+body delivery to one processor does not subscribe the others. Each processor
+receives its own body messages, not another processor's parsed objects.
+
+Additional processors see mutations already committed by EPE, including any
+injected credentials, and may modify that request further. Their decisions do
+not re-enter EPE policy evaluation or its rule audit. Only grant this capability
+to trusted services. Additional processors cannot publish EPE's `agentio.route`
+metadata; they have independent clusters, filter names, and statistics named
+`agentio.additional-ext-proc.<name>`.
 
 ## Egress gateway settings
 

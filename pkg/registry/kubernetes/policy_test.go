@@ -501,3 +501,43 @@ func TestGatewayConfigurationUpstreamTLS(t *testing.T) {
 		})
 	}
 }
+
+func TestAdditionalExtProcOverlay(t *testing.T) {
+	base, err := applyAgentioConfig(
+		"additionalExtProcs: [{name: first, service: first}, {name: second, service: second}]",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		yaml  string
+		names []string
+	}{
+		{"{}", []string{"first", "second"}},
+		{"additionalExtProcs: null", []string{"first", "second"}},
+		{"additionalExtProcs: []", []string{}},
+		{"additionalExtProcs: [{name: second, service: replacement}]", []string{"second"}},
+	} {
+		got, err := applyAgentioConfig(tc.yaml, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := []string{}
+		for _, p := range got.AdditionalExtProcs {
+			names = append(names, p.Name)
+		}
+		if !reflect.DeepEqual(names, tc.names) {
+			t.Fatalf("%s: got %v, want %v", tc.yaml, names, tc.names)
+		}
+	}
+	if len(base.AdditionalExtProcs) != 2 {
+		t.Fatal("overlay mutated base")
+	}
+	if _, err := applyAgentioConfig(
+		"additionalExtProcs: [{name: first, service: a}, {name: first, service: b}]",
+		base,
+	); err == nil {
+		t.Fatal("duplicate names accepted")
+	}
+}
