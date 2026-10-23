@@ -12,7 +12,80 @@ Environment settings supply the default EPEConfig layer, followed by base and pr
 
 Environment defaults use the ordinary name `agentio-default-credential-provider`, which ConfigMaps may redefine. Adding only HTTPCallout providers preserves this credential provider and its default selection. No environment provider is generated when `IDENTITY_PROVIDER_URL` is empty. Omitting `defaultProviders` inherits the lower layer's selection; `defaultProviders: {credentialProvider: ""}` (or `defaultProviders: {}`) clears it. A missing or wrong-type selected default fails at call time; there is no fallback to another provider. TLS material or call failures likewise do not change the selected provider.
 
-An `httpCallout` provider owns its URL, timeout, and TLS settings. The HTTPCallout client implements the Invocation/Decision protocol and enforces the process-wide `HTTP_CALLOUT_MAX_RESPONSE_BYTES` response limit (default 1 MiB). Audit webhooks still use their existing configuration and do not yet reference EPEConfig providers.
+An `httpCallout` provider owns its URL, timeout, TLS settings, protocol selection and connection pool. The HTTPCallout client implements the Invocation/Decision protocol and enforces the process-wide `HTTP_CALLOUT_MAX_RESPONSE_BYTES` response limit (default 1 MiB). Audit webhooks still use their existing configuration and do not yet reference EPEConfig providers.
+
+## HTTPCallout transport
+
+For a runnable server, wire examples and EPE integration, see [Develop an HTTPCallout server](../development/httpcallout-server.md).
+
+Protocol selection is separate from HTTP/2 tuning:
+
+```yaml
+extensionProviders:
+  - name: scanner
+    httpCallout:
+      url: http://scanner.agentio-system.svc:8080/continue
+      timeout: 2s
+      protocol: HTTP2
+      connectionPool:
+        maxConnections: 16
+        maxIdleConnections: 8
+        idleTimeout: 90s
+      http2:
+        maxConcurrentStreams: 32
+```
+
+| Field | Default | Behavior |
+| --- | --- | --- |
+| `protocol` | `AUTO` | `AUTO` uses HTTP/1.1 for `http://` and ALPN negotiation for `https://`. `HTTP1` forces HTTP/1.1. `HTTP2` uses prior-knowledge h2c for `http://` and requires ALPN h2 for `https://`, failing if the peer does not support it. HTTP/1.1 Upgrade is not used. |
+| `connectionPool.maxConnections` | HTTP2: 32; AUTO/HTTP1: 128 | Maximum simultaneous connections per provider per EPE process; positive integer up to 2,147,483,647. When all connections are full, calls queue within their callout timeout. |
+| `connectionPool.maxIdleConnections` | HTTP2: 8; AUTO/HTTP1: 64; capped by `maxConnections` | Maximum retained idle connections; zero disables retention. Must not exceed `maxConnections`. |
+| `connectionPool.idleTimeout` | `90s` | Positive duration after which an idle connection closes. |
+| `http2.maxConcurrentStreams` | 32 | Maximum concurrent outbound HTTP/2 calls per connection, further limited by the peer's SETTINGS. Positive integer up to 2,147,483,647. Additional connections open when needed, up to the pool cap. |
+
+`http2` may accompany `AUTO` or `HTTP2`; its presence with `HTTP1` is invalid. With `AUTO`, HTTP/2 settings apply only to connections that negotiate h2. Existing configurations without these fields preserve protocol selection: cleartext HTTP/1.1 and HTTPS ALPN. HTTPCallout still exchanges JSON Invocation/Decision messages over either protocol; it is not gRPC.
+
+A new HTTP/2 connection processes peer SETTINGS before admitting the first request, avoiding speculative streams that exceed a low server limit. The provider's `timeout` covers waiting for pool capacity, connection establishment, SETTINGS synchronization and the response body. It defaults to 500ms when omitted.
+
+Pool defaults depend on the configured protocol, not the negotiated result: `AUTO` keeps the HTTP1-sized pool even when TLS negotiates HTTP/2. Connections open on demand; `maxIdleConnections` is retention after a burst, not a prewarming target.
+
+Changing a provider's protocol, pool settings, stream limit, URL or TLS material installs a new pool. Calls that already selected the old provider finish on that version; old connections close after their last response body is consumed or closed. Idle old connections close immediately. Unchanged providers retain their pools. The connection cap applies to each configuration version, so old and new pools may briefly overlap during draining.
+
+Choose `HTTP2` when the configured endpoint supports it and multiplexing is desired. A larger stream cap is not necessarily faster: large request bodies can contend for the peer's connection receive window. EPE's stream cap limits sharing; the callout server controls its receive window. Start with the default 32 and compare throughput, tail latency and connection counts for the actual workload.
+
+### Capacity planning and measured defaults
+
+Use per-provider callout RPS on one EPE process when sizing the pool, rather than total ingress RPS across replicas. A request can invoke a provider in multiple phases, and only requests matching the callout policy contribute to that provider's load. Estimate occupied capacity from the mean time a call holds a connection or stream, including network and body transfer, before adding headroom for bursts and tail latency:
+
+```text
+concurrent calls ≈ callout RPS × mean occupied time in seconds
+HTTP1 connections ≈ ceil(concurrent calls / target utilization)
+HTTP2 connections ≈ ceil(concurrent calls / (target utilization × effective streams per connection))
+effective streams per connection = min(http2.maxConcurrentStreams, peer SETTINGS limit)
+```
+
+A target utilization of 70% is a planning starting point, not an enforced limit or a measured optimum. For example, 1,000 callouts/s with a 200ms mean occupied time suggests about 286 HTTP1 connections or nine HTTP2 connections at 32 streams per connection. The default HTTP1 pool of 128 cannot sustain that workload; the HTTP2 pool of 32 has capacity headroom. The default HTTP2 pool provides at most 1,024 concurrent calls only when the peer permits at least 32 streams per connection.
+
+The following results informed the defaults. Tests ran on 2026-10-23 through Envoy → EPE → callout, with a 1 KiB body over local TCP without TLS, separate generator/EPE/endpoint/upstream processes (GOMAXPROCS 4/4/8/4), Go 1.26.8, Envoy v1.39.4 with two workers, and a server permitting 250 HTTP2 streams. The final default matrix covered 34 cases, 46 rounds and 352,352 attempts. Three deliberately overloaded HTTP1 cases produced 12,385 errors; every other case passed response and exact-call-count checks. All final rounds recorded zero refused HTTP2 streams. HTTP1 used the 128/64 pool and HTTP2 used the 32/8 pool with 32 streams per connection. Fixed-rate and closed-loop rows are individual trials, so use them as capacity references rather than universal performance guarantees.
+
+| Workload | Provider timeout | HTTP1 result | HTTP2 result |
+| --- | --- | --- | --- |
+| 5ms endpoint delay, 1,000 offered RPS, 32 workers | Default 500ms | Zero errors; P99 7.5ms; eight peak connections | Zero errors; P99 7.6ms; one peak connection |
+| 50ms endpoint delay, 2,000 offered RPS, 256 workers | Default 500ms | Zero errors; P99 150.7ms; reached 128 connections | Zero errors; P99 136.7ms; eight peak connections |
+| 200ms endpoint delay, 1,000 offered RPS, 512 workers | Default 500ms | Overloaded: 5,508 failures out of 6,000 attempts | Zero errors; P99 223.5ms; eight peak connections |
+| 200ms endpoint delay, 1,024 workers in a closed loop | Explicit 2s | 611.7 RPS; P99 1,776.7ms; zero errors | 3,228.4 RPS; P99 499.8ms; zero errors; 32 peak connections |
+
+Zero errors alone do not prove that a pool can sustain the offered rate. With a 500ms endpoint delay, 2,500 offered RPS and an explicit 2s timeout, the default HTTP2 pool completed about 2,048 requests/s during steady intervals and accumulated backlog. The whole-run rate, including draining, was 1,950.1 RPS and P99 reached 2.28s despite zero errors. Fixed-rate latency includes waiting in the load generator before the provider timeout starts. A larger pool kept up with the offered rate using 50 peak connections and had P99 near 600ms. For this workload, the 70% utilization estimate suggests about 56 connections; configuring `maxConnections: 64` is a reasonable starting point to validate.
+
+Retaining eight idle HTTP2 connections trades fewer idle sockets for more connection establishment. Across three repeated burst trials at 1,536 workers and 50ms endpoint delay, the new 32/8 pool had warm-round median throughput of 13,093 RPS and P99 of 164.9ms, comparable to 12,794 RPS and 163.2ms with the former 128/64 pool. All burst requests succeeded. However, the new pool opened 122–137 connections cumulatively across three rounds per trial, compared with 45–48 for the old pool. For frequent bursts over higher RTT or TLS, measure whether retaining 16 or 32 idle connections reduces latency; this local TCP result does not establish an optimal idle limit for those networks.
+
+A longer timeout permits more waiting but does not increase sustained capacity. Set it to cover expected service latency, body transfer, connection establishment and acceptable queueing; a service that itself takes around 500ms needs more than the default 500ms budget. Before increasing connections or streams, check the provider's own capacity, CPU, tail latency and HTTP2 receive windows. Measure successful RPS, errors, queue growth, P99 and peak connections together.
+
+A separate controlled 1 MiB-body comparison at concurrency 256 ran 10,000 requests per trial, with three trials per variant. The production HTTP2 client with 32 streams and a 4 MiB server connection receive window achieved median 857.7 RPS and P99 396.7ms, compared with 834.2 RPS and P99 751.0ms for the original experimental Go h2c client with 250 streams and a 1 MiB window. Replacing the client while keeping the original stream cap and window gave little improvement; most of the gain came from tuning the server receive window. These results do not establish a general HTTP2 speedup or predict performance over TLS or higher RTT networks.
+
+Cold-start validation before the default retuning completed two fresh-process runs of 4,096 requests each at concurrency 256, with a 200ms endpoint delay, a peer limit of 16 streams and a client limit of 32. Both runs had zero errors and zero refused streams, and neither exceeded 16 simultaneous handlers per connection. The deployed `TestEPEHTTPCallout` was rerun on the final defaults and passed all eight datapath cases plus the ConfigMap transport-lifecycle test. It covers 64 cold calls against a four-stream server, a protocol change while an old response remains active, and eight isolated configuration updates with the URL and protocol held fixed: maximum connections (2 → 1), retained idle connections (2 → 1), and idle timeout (30s → 500ms) for both HTTP1 and HTTP2, plus HTTP2 streams per connection (1 → 2 and 2 → 1). Each isolated update verifies closure of the retired idle connection, enforcement of the new pool capacity and idle limits, queuing of an extra call, successful completion of old active calls, and closure of their drained connection. All these calls completed successfully with zero refused streams.
+
+See the [benchmark instructions](../../bench/epe/callout/README.md#protocol-default-capacity-matrix) to reproduce the matrix. Test conclusions are maintained here; generated measurements and execution logs are kept outside the repository.
 
 ## Helm values
 

@@ -100,6 +100,8 @@ Enabling a body buffers and sends the complete UTF-8 body. Each phase has its ow
 
 `failStrategy` defaults to `Block`. Provider lookup, transport, timeout, disclosure, and protocol errors follow this strategy; `Allow` and `Ignore` skip the failed callout's mutations and continue. A valid immediate response is always honored. Missing or wrong-type providers fail at execution time without fallback. Invalid phase, header-filter, or action configuration rejects the profile version during compilation and retains its last valid version.
 
+For a runnable server, wire examples and EPE integration, see [Develop an HTTPCallout server](../development/httpcallout-server.md).
+
 ## Audit configuration
 
 `spec.audit` defines profile defaults. A non-empty `rules[].actions.audit` list replaces those defaults for that rule; an empty rule list inherits the profile list. Every audit action has a unique `name`, a required webhook `url`, optional boolean CEL `when`, and a webhook request:

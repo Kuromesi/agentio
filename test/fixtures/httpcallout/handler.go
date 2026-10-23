@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	protocol "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/pkg/log"
 )
 
@@ -34,7 +34,7 @@ var logger = log.New("httpcallout-test")
 type Handler struct {
 	// Observe receives each validated invocation synchronously, before the decision.
 	// Tests can inspect disclosure without duplicating the protocol handler.
-	Observe func(protocol.Invocation)
+	Observe func(httpcallout.Invocation)
 
 	Calls    atomic.Int64
 	Active   atomic.Int64
@@ -73,7 +73,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var inv protocol.Invocation
+	var inv httpcallout.Invocation
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err := decoder.Decode(&inv); err != nil {
 		http.Error(w, "invalid invocation", 400)
@@ -98,7 +98,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) respond(
 	w http.ResponseWriter,
 	r *http.Request,
-	inv protocol.Invocation,
+	inv httpcallout.Invocation,
 	delay time.Duration,
 ) error {
 	h.Calls.Add(1)
@@ -126,6 +126,9 @@ func (h *Handler) respond(
 		_, err := io.WriteString(w, strings.Repeat(" ", (1<<20)+1))
 		return err
 	case "/reset":
+		if r.ProtoMajor == 2 {
+			panic(http.ErrAbortHandler)
+		}
 		conn, _, err := http.NewResponseController(w).Hijack()
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -133,22 +136,16 @@ func (h *Handler) respond(
 		}
 		return conn.Close()
 	}
-	d := protocol.Decision{Version: protocol.ProtocolVersion}
+	builder := httpcallout.Continue(inv.Phase)
 	switch r.URL.Path {
 	case "/mutate":
-		value, body := "clean", "changed by callout"
-		headers := []protocol.HeaderMutation{
-			{Operation: protocol.HeaderSet, Name: "x-callout-verdict", Value: &value},
-		}
-		if inv.Phase == protocol.PhaseRequest {
-			d.Request = &protocol.RequestMutation{Headers: headers, Body: &body}
-		} else {
-			d.Response = &protocol.ResponseMutation{Headers: headers, Body: &body}
-		}
+		builder.SetHeader("x-callout-verdict", "clean").Body("changed by callout")
 	case "/respond":
-		action, status, body := protocol.ActionRespond, 403, "blocked by callout"
-		d.Action = &action
-		d.Response = &protocol.ResponseMutation{StatusCode: &status, Body: &body}
+		builder = httpcallout.Respond(inv.Phase, http.StatusForbidden).Body("blocked by callout")
+	}
+	d, err := builder.Build()
+	if err != nil {
+		return err
 	}
 	return json.NewEncoder(w).Encode(d)
 }

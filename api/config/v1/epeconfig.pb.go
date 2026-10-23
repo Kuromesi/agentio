@@ -35,6 +35,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type HTTPCalloutProvider_Protocol int32
+
+const (
+	HTTPCalloutProvider_AUTO  HTTPCalloutProvider_Protocol = 0
+	HTTPCalloutProvider_HTTP1 HTTPCalloutProvider_Protocol = 1
+	HTTPCalloutProvider_HTTP2 HTTPCalloutProvider_Protocol = 2
+)
+
+// Enum value maps for HTTPCalloutProvider_Protocol.
+var (
+	HTTPCalloutProvider_Protocol_name = map[int32]string{
+		0: "AUTO",
+		1: "HTTP1",
+		2: "HTTP2",
+	}
+	HTTPCalloutProvider_Protocol_value = map[string]int32{
+		"AUTO":  0,
+		"HTTP1": 1,
+		"HTTP2": 2,
+	}
+)
+
+func (x HTTPCalloutProvider_Protocol) Enum() *HTTPCalloutProvider_Protocol {
+	p := new(HTTPCalloutProvider_Protocol)
+	*p = x
+	return p
+}
+
+func (x HTTPCalloutProvider_Protocol) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (HTTPCalloutProvider_Protocol) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_config_v1_epeconfig_proto_enumTypes[0].Descriptor()
+}
+
+func (HTTPCalloutProvider_Protocol) Type() protoreflect.EnumType {
+	return &file_api_config_v1_epeconfig_proto_enumTypes[0]
+}
+
+func (x HTTPCalloutProvider_Protocol) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use HTTPCalloutProvider_Protocol.Descriptor instead.
+func (HTTPCalloutProvider_Protocol) EnumDescriptor() ([]byte, []int) {
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{3, 0}
+}
+
 // EPEConfig configures EPE's outbound extension providers.
 // YAML or JSON is decoded from each watched ConfigMap's data.config entry.
 // Base and primary ConfigMaps overlay startup defaults in that order. Missing
@@ -263,16 +312,39 @@ func (x *DefaultExtensionProviders) GetCredentialProvider() string {
 // This is distinct from the Envoy ext_proc service that EPE implements.
 // Redirects are not followed. The client's response size limit is configured by
 // HTTP_CALLOUT_MAX_RESPONSE_BYTES, independently of the rule's body disclosure limit.
+//
+// Example: require HTTP/2 with explicit connection and stream limits.
+// Use an http:// URL with protocol: HTTP2 for prior-knowledge h2c.
+//
+//	extensionProviders:
+//	- name: policy-check
+//	  httpCallout:
+//	    url: https://policy.example.com/check
+//	    timeout: 2s
+//	    protocol: HTTP2
+//	    connectionPool:
+//	      maxConnections: 16
+//	      maxIdleConnections: 8
+//	      idleTimeout: 90s
+//	    http2:
+//	      maxConcurrentStreams: 32
 type HTTPCalloutProvider struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Absolute HTTP(S) endpoint, without userinfo or a fragment.
 	Url string `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
 	// Positive Go duration, such as "500ms" or "2s". Defaults to 500ms.
-	// Bounds the HTTP request, including response body reads. An earlier caller
-	// deadline takes precedence; time spent queued by the caller is not included.
+	// Includes pool queueing, connection/SETTINGS establishment and response body reads.
+	// An earlier caller deadline takes precedence.
 	Timeout string `protobuf:"bytes,2,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	// HTTPS transport settings. Omission uses system roots without a client certificate.
-	Tls           *ClientTLS `protobuf:"bytes,4,opt,name=tls,proto3" json:"tls,omitempty"`
+	Tls *ClientTLS `protobuf:"bytes,4,opt,name=tls,proto3" json:"tls,omitempty"`
+	// AUTO preserves the default: HTTP/1.1 for http, ALPN negotiation for https.
+	// HTTP2 requires h2c prior knowledge for http, or h2 over TLS for https.
+	Protocol HTTPCalloutProvider_Protocol `protobuf:"varint,5,opt,name=protocol,proto3,enum=agentio.config.v1.HTTPCalloutProvider_Protocol" json:"protocol,omitempty"`
+	// Connection limits apply independently to each provider in each EPE process.
+	ConnectionPool *HTTPCalloutConnectionPool `protobuf:"bytes,6,opt,name=connection_pool,json=connectionPool,proto3" json:"connection_pool,omitempty"`
+	// Applied whenever HTTP/2 is used, including AUTO negotiation.
+	Http2         *HTTPCalloutHTTP2 `protobuf:"bytes,7,opt,name=http2,proto3" json:"http2,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -328,6 +400,138 @@ func (x *HTTPCalloutProvider) GetTls() *ClientTLS {
 	return nil
 }
 
+func (x *HTTPCalloutProvider) GetProtocol() HTTPCalloutProvider_Protocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return HTTPCalloutProvider_AUTO
+}
+
+func (x *HTTPCalloutProvider) GetConnectionPool() *HTTPCalloutConnectionPool {
+	if x != nil {
+		return x.ConnectionPool
+	}
+	return nil
+}
+
+func (x *HTTPCalloutProvider) GetHttp2() *HTTPCalloutHTTP2 {
+	if x != nil {
+		return x.Http2
+	}
+	return nil
+}
+
+type HTTPCalloutConnectionPool struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Maximum connections, including idle and connecting connections. Defaults to 32 for HTTP2 and 128 for AUTO/HTTP1.
+	// Must be between 1 and 2147483647.
+	MaxConnections *uint32 `protobuf:"varint,1,opt,name=max_connections,json=maxConnections,proto3,oneof" json:"max_connections,omitempty"`
+	// Maximum idle connections. Defaults to 8 for HTTP2 and 64 for AUTO/HTTP1, bounded by max_connections.
+	// Zero disables idle retention; must not exceed max_connections.
+	MaxIdleConnections *uint32 `protobuf:"varint,2,opt,name=max_idle_connections,json=maxIdleConnections,proto3,oneof" json:"max_idle_connections,omitempty"`
+	// Positive Go duration. Defaults to 90s.
+	IdleTimeout   string `protobuf:"bytes,3,opt,name=idle_timeout,json=idleTimeout,proto3" json:"idle_timeout,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HTTPCalloutConnectionPool) Reset() {
+	*x = HTTPCalloutConnectionPool{}
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HTTPCalloutConnectionPool) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HTTPCalloutConnectionPool) ProtoMessage() {}
+
+func (x *HTTPCalloutConnectionPool) ProtoReflect() protoreflect.Message {
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HTTPCalloutConnectionPool.ProtoReflect.Descriptor instead.
+func (*HTTPCalloutConnectionPool) Descriptor() ([]byte, []int) {
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *HTTPCalloutConnectionPool) GetMaxConnections() uint32 {
+	if x != nil && x.MaxConnections != nil {
+		return *x.MaxConnections
+	}
+	return 0
+}
+
+func (x *HTTPCalloutConnectionPool) GetMaxIdleConnections() uint32 {
+	if x != nil && x.MaxIdleConnections != nil {
+		return *x.MaxIdleConnections
+	}
+	return 0
+}
+
+func (x *HTTPCalloutConnectionPool) GetIdleTimeout() string {
+	if x != nil {
+		return x.IdleTimeout
+	}
+	return ""
+}
+
+type HTTPCalloutHTTP2 struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Local outbound stream limit per connection, further bounded by peer SETTINGS.
+	// Defaults to 32. Must be between 1 and 2147483647.
+	MaxConcurrentStreams *uint32 `protobuf:"varint,1,opt,name=max_concurrent_streams,json=maxConcurrentStreams,proto3,oneof" json:"max_concurrent_streams,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *HTTPCalloutHTTP2) Reset() {
+	*x = HTTPCalloutHTTP2{}
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HTTPCalloutHTTP2) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HTTPCalloutHTTP2) ProtoMessage() {}
+
+func (x *HTTPCalloutHTTP2) ProtoReflect() protoreflect.Message {
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HTTPCalloutHTTP2.ProtoReflect.Descriptor instead.
+func (*HTTPCalloutHTTP2) Descriptor() ([]byte, []int) {
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *HTTPCalloutHTTP2) GetMaxConcurrentStreams() uint32 {
+	if x != nil && x.MaxConcurrentStreams != nil {
+		return *x.MaxConcurrentStreams
+	}
+	return 0
+}
+
 // CredentialProvider defines the connection to a credential service.
 // Its local ExtensionProvider name selects this connection; the credential
 // request's credentialProviderName selects the remote credential configuration.
@@ -347,7 +551,7 @@ type CredentialProvider struct {
 
 func (x *CredentialProvider) Reset() {
 	*x = CredentialProvider{}
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[4]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -359,7 +563,7 @@ func (x *CredentialProvider) String() string {
 func (*CredentialProvider) ProtoMessage() {}
 
 func (x *CredentialProvider) ProtoReflect() protoreflect.Message {
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[4]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -372,7 +576,7 @@ func (x *CredentialProvider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialProvider.ProtoReflect.Descriptor instead.
 func (*CredentialProvider) Descriptor() ([]byte, []int) {
-	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{4}
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CredentialProvider) GetUrl() string {
@@ -470,7 +674,7 @@ type ClientTLS struct {
 
 func (x *ClientTLS) Reset() {
 	*x = ClientTLS{}
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[5]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +686,7 @@ func (x *ClientTLS) String() string {
 func (*ClientTLS) ProtoMessage() {}
 
 func (x *ClientTLS) ProtoReflect() protoreflect.Message {
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[5]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +699,7 @@ func (x *ClientTLS) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientTLS.ProtoReflect.Descriptor instead.
 func (*ClientTLS) Descriptor() ([]byte, []int) {
-	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{5}
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ClientTLS) GetServerName() string {
@@ -648,7 +852,7 @@ type TargetReference struct {
 
 func (x *TargetReference) Reset() {
 	*x = TargetReference{}
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[6]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -660,7 +864,7 @@ func (x *TargetReference) String() string {
 func (*TargetReference) ProtoMessage() {}
 
 func (x *TargetReference) ProtoReflect() protoreflect.Message {
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[6]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -673,7 +877,7 @@ func (x *TargetReference) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetReference.ProtoReflect.Descriptor instead.
 func (*TargetReference) Descriptor() ([]byte, []int) {
-	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{6}
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *TargetReference) GetName() string {
@@ -705,7 +909,7 @@ type ProviderClientCertificateFiles struct {
 
 func (x *ProviderClientCertificateFiles) Reset() {
 	*x = ProviderClientCertificateFiles{}
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[7]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -717,7 +921,7 @@ func (x *ProviderClientCertificateFiles) String() string {
 func (*ProviderClientCertificateFiles) ProtoMessage() {}
 
 func (x *ProviderClientCertificateFiles) ProtoReflect() protoreflect.Message {
-	mi := &file_api_config_v1_epeconfig_proto_msgTypes[7]
+	mi := &file_api_config_v1_epeconfig_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -730,7 +934,7 @@ func (x *ProviderClientCertificateFiles) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderClientCertificateFiles.ProtoReflect.Descriptor instead.
 func (*ProviderClientCertificateFiles) Descriptor() ([]byte, []int) {
-	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{7}
+	return file_api_config_v1_epeconfig_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProviderClientCertificateFiles) GetCertificateFile() string {
@@ -762,11 +966,27 @@ const file_api_config_v1_epeconfig_proto_rawDesc = "" +
 	"\n" +
 	"\bprovider\"L\n" +
 	"\x19DefaultExtensionProviders\x12/\n" +
-	"\x13credential_provider\x18\x01 \x01(\tR\x12credentialProvider\"q\n" +
+	"\x13credential_provider\x18\x01 \x01(\tR\x12credentialProvider\"\xfc\x02\n" +
 	"\x13HTTPCalloutProvider\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x18\n" +
 	"\atimeout\x18\x02 \x01(\tR\atimeout\x12.\n" +
-	"\x03tls\x18\x04 \x01(\v2\x1c.agentio.config.v1.ClientTLSR\x03tls\"p\n" +
+	"\x03tls\x18\x04 \x01(\v2\x1c.agentio.config.v1.ClientTLSR\x03tls\x12K\n" +
+	"\bprotocol\x18\x05 \x01(\x0e2/.agentio.config.v1.HTTPCalloutProvider.ProtocolR\bprotocol\x12U\n" +
+	"\x0fconnection_pool\x18\x06 \x01(\v2,.agentio.config.v1.HTTPCalloutConnectionPoolR\x0econnectionPool\x129\n" +
+	"\x05http2\x18\a \x01(\v2#.agentio.config.v1.HTTPCalloutHTTP2R\x05http2\"*\n" +
+	"\bProtocol\x12\b\n" +
+	"\x04AUTO\x10\x00\x12\t\n" +
+	"\x05HTTP1\x10\x01\x12\t\n" +
+	"\x05HTTP2\x10\x02\"\xd0\x01\n" +
+	"\x19HTTPCalloutConnectionPool\x12,\n" +
+	"\x0fmax_connections\x18\x01 \x01(\rH\x00R\x0emaxConnections\x88\x01\x01\x125\n" +
+	"\x14max_idle_connections\x18\x02 \x01(\rH\x01R\x12maxIdleConnections\x88\x01\x01\x12!\n" +
+	"\fidle_timeout\x18\x03 \x01(\tR\vidleTimeoutB\x12\n" +
+	"\x10_max_connectionsB\x17\n" +
+	"\x15_max_idle_connections\"h\n" +
+	"\x10HTTPCalloutHTTP2\x129\n" +
+	"\x16max_concurrent_streams\x18\x01 \x01(\rH\x00R\x14maxConcurrentStreams\x88\x01\x01B\x19\n" +
+	"\x17_max_concurrent_streams\"p\n" +
 	"\x12CredentialProvider\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x18\n" +
 	"\atimeout\x18\x02 \x01(\tR\atimeout\x12.\n" +
@@ -803,33 +1023,40 @@ func file_api_config_v1_epeconfig_proto_rawDescGZIP() []byte {
 	return file_api_config_v1_epeconfig_proto_rawDescData
 }
 
-var file_api_config_v1_epeconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_api_config_v1_epeconfig_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_api_config_v1_epeconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_api_config_v1_epeconfig_proto_goTypes = []any{
-	(*EPEConfig)(nil),                      // 0: agentio.config.v1.EPEConfig
-	(*ExtensionProvider)(nil),              // 1: agentio.config.v1.ExtensionProvider
-	(*DefaultExtensionProviders)(nil),      // 2: agentio.config.v1.DefaultExtensionProviders
-	(*HTTPCalloutProvider)(nil),            // 3: agentio.config.v1.HTTPCalloutProvider
-	(*CredentialProvider)(nil),             // 4: agentio.config.v1.CredentialProvider
-	(*ClientTLS)(nil),                      // 5: agentio.config.v1.ClientTLS
-	(*TargetReference)(nil),                // 6: agentio.config.v1.TargetReference
-	(*ProviderClientCertificateFiles)(nil), // 7: agentio.config.v1.ProviderClientCertificateFiles
+	(HTTPCalloutProvider_Protocol)(0),      // 0: agentio.config.v1.HTTPCalloutProvider.Protocol
+	(*EPEConfig)(nil),                      // 1: agentio.config.v1.EPEConfig
+	(*ExtensionProvider)(nil),              // 2: agentio.config.v1.ExtensionProvider
+	(*DefaultExtensionProviders)(nil),      // 3: agentio.config.v1.DefaultExtensionProviders
+	(*HTTPCalloutProvider)(nil),            // 4: agentio.config.v1.HTTPCalloutProvider
+	(*HTTPCalloutConnectionPool)(nil),      // 5: agentio.config.v1.HTTPCalloutConnectionPool
+	(*HTTPCalloutHTTP2)(nil),               // 6: agentio.config.v1.HTTPCalloutHTTP2
+	(*CredentialProvider)(nil),             // 7: agentio.config.v1.CredentialProvider
+	(*ClientTLS)(nil),                      // 8: agentio.config.v1.ClientTLS
+	(*TargetReference)(nil),                // 9: agentio.config.v1.TargetReference
+	(*ProviderClientCertificateFiles)(nil), // 10: agentio.config.v1.ProviderClientCertificateFiles
 }
 var file_api_config_v1_epeconfig_proto_depIdxs = []int32{
-	1,  // 0: agentio.config.v1.EPEConfig.extension_providers:type_name -> agentio.config.v1.ExtensionProvider
-	2,  // 1: agentio.config.v1.EPEConfig.default_providers:type_name -> agentio.config.v1.DefaultExtensionProviders
-	3,  // 2: agentio.config.v1.ExtensionProvider.http_callout:type_name -> agentio.config.v1.HTTPCalloutProvider
-	4,  // 3: agentio.config.v1.ExtensionProvider.credential_provider:type_name -> agentio.config.v1.CredentialProvider
-	5,  // 4: agentio.config.v1.HTTPCalloutProvider.tls:type_name -> agentio.config.v1.ClientTLS
-	5,  // 5: agentio.config.v1.CredentialProvider.tls:type_name -> agentio.config.v1.ClientTLS
-	6,  // 6: agentio.config.v1.ClientTLS.ca_secret_ref:type_name -> agentio.config.v1.TargetReference
-	6,  // 7: agentio.config.v1.ClientTLS.ca_config_map_ref:type_name -> agentio.config.v1.TargetReference
-	6,  // 8: agentio.config.v1.ClientTLS.client_certificate_secret_ref:type_name -> agentio.config.v1.TargetReference
-	7,  // 9: agentio.config.v1.ClientTLS.client_certificate_files:type_name -> agentio.config.v1.ProviderClientCertificateFiles
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	2,  // 0: agentio.config.v1.EPEConfig.extension_providers:type_name -> agentio.config.v1.ExtensionProvider
+	3,  // 1: agentio.config.v1.EPEConfig.default_providers:type_name -> agentio.config.v1.DefaultExtensionProviders
+	4,  // 2: agentio.config.v1.ExtensionProvider.http_callout:type_name -> agentio.config.v1.HTTPCalloutProvider
+	7,  // 3: agentio.config.v1.ExtensionProvider.credential_provider:type_name -> agentio.config.v1.CredentialProvider
+	8,  // 4: agentio.config.v1.HTTPCalloutProvider.tls:type_name -> agentio.config.v1.ClientTLS
+	0,  // 5: agentio.config.v1.HTTPCalloutProvider.protocol:type_name -> agentio.config.v1.HTTPCalloutProvider.Protocol
+	5,  // 6: agentio.config.v1.HTTPCalloutProvider.connection_pool:type_name -> agentio.config.v1.HTTPCalloutConnectionPool
+	6,  // 7: agentio.config.v1.HTTPCalloutProvider.http2:type_name -> agentio.config.v1.HTTPCalloutHTTP2
+	8,  // 8: agentio.config.v1.CredentialProvider.tls:type_name -> agentio.config.v1.ClientTLS
+	9,  // 9: agentio.config.v1.ClientTLS.ca_secret_ref:type_name -> agentio.config.v1.TargetReference
+	9,  // 10: agentio.config.v1.ClientTLS.ca_config_map_ref:type_name -> agentio.config.v1.TargetReference
+	9,  // 11: agentio.config.v1.ClientTLS.client_certificate_secret_ref:type_name -> agentio.config.v1.TargetReference
+	10, // 12: agentio.config.v1.ClientTLS.client_certificate_files:type_name -> agentio.config.v1.ProviderClientCertificateFiles
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_api_config_v1_epeconfig_proto_init() }
@@ -841,7 +1068,9 @@ func file_api_config_v1_epeconfig_proto_init() {
 		(*ExtensionProvider_HttpCallout)(nil),
 		(*ExtensionProvider_CredentialProvider)(nil),
 	}
-	file_api_config_v1_epeconfig_proto_msgTypes[5].OneofWrappers = []any{
+	file_api_config_v1_epeconfig_proto_msgTypes[4].OneofWrappers = []any{}
+	file_api_config_v1_epeconfig_proto_msgTypes[5].OneofWrappers = []any{}
+	file_api_config_v1_epeconfig_proto_msgTypes[7].OneofWrappers = []any{
 		(*ClientTLS_CaSecretRef)(nil),
 		(*ClientTLS_CaConfigMapRef)(nil),
 		(*ClientTLS_CaCertificateFile)(nil),
@@ -853,13 +1082,14 @@ func file_api_config_v1_epeconfig_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_config_v1_epeconfig_proto_rawDesc), len(file_api_config_v1_epeconfig_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      1,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_api_config_v1_epeconfig_proto_goTypes,
 		DependencyIndexes: file_api_config_v1_epeconfig_proto_depIdxs,
+		EnumInfos:         file_api_config_v1_epeconfig_proto_enumTypes,
 		MessageInfos:      file_api_config_v1_epeconfig_proto_msgTypes,
 	}.Build()
 	File_api_config_v1_epeconfig_proto = out.File

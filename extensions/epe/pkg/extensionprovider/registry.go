@@ -79,10 +79,15 @@ type Registry struct {
 }
 
 // closeIdleConnections leaves active calls intact. Old instances remain alive
-// through their callers; any later idle connections expire via IdleConnTimeout.
+// through their callers. Retired callout connections close as their last response
+// finishes; credential transports retain their existing idle-timeout behavior.
 func (p *instance) closeIdleConnections() {
 	if p.client != nil {
-		p.client.CloseIdleConnections()
+		if retiring, ok := p.client.Transport.(interface{ Retire() }); ok {
+			retiring.Retire()
+		} else {
+			p.client.CloseIdleConnections()
+		}
 	}
 }
 
@@ -166,6 +171,15 @@ func build(p *configv1.ExtensionProvider, fingerprint [32]byte, material TLSMate
 	}
 	client := httpclient.New(httpclient.DefaultOptions())
 	client.Transport.(*http.Transport).TLSClientConfig = tlsConfig
+	if h := p.GetHttpCallout(); h != nil {
+		opts, err := calloutOptions(h)
+		if err != nil {
+			i.err = err
+			return i
+		}
+		opts.TLS = tlsConfig
+		client = httpclient.NewCallout(opts)
+	}
 	client.Timeout = d
 	i.client = client
 	if p.GetHttpCallout() != nil {

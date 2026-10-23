@@ -24,6 +24,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/httpclient"
 	"github.com/openkruise/agentio/pkg/config"
 )
 
@@ -70,6 +71,11 @@ func Validate(cfg *configv1.EPEConfig) error {
 			return fmt.Errorf("duplicate extension provider %q", p.Name)
 		}
 		names[p.Name] = p
+		if h := p.GetHttpCallout(); h != nil {
+			if _, err := calloutOptions(h); err != nil {
+				return fmt.Errorf("provider %q: %w", p.Name, err)
+			}
+		}
 		endpoint, timeout, tlsCfg := settings(p)
 		u, err := url.Parse(endpoint)
 		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil ||
@@ -182,4 +188,51 @@ func validateReference(provider, kind, name, namespace string) error {
 		return fmt.Errorf("provider %q has invalid %s namespace %q", provider, kind, namespace)
 	}
 	return nil
+}
+
+func calloutOptions(h *configv1.HTTPCalloutProvider) (httpclient.CalloutOptions, error) {
+	o := httpclient.CalloutOptions{
+		Options:              httpclient.DefaultOptions(),
+		Protocol:             h.Protocol.String(),
+		MaxConcurrentStreams: 32,
+	}
+	switch h.Protocol {
+	case configv1.HTTPCalloutProvider_AUTO, configv1.HTTPCalloutProvider_HTTP1:
+	case configv1.HTTPCalloutProvider_HTTP2:
+		o.MaxConnsPerHost = 32
+		o.MaxIdleConnsPerHost = 8
+	default:
+		return o, fmt.Errorf("unknown HTTPCallout protocol %d", h.Protocol)
+	}
+	if h.Protocol == configv1.HTTPCalloutProvider_HTTP1 && h.Http2 != nil {
+		return o, fmt.Errorf("http2 parameters cannot be used with HTTP1")
+	}
+	if h.Http2 != nil && h.Http2.MaxConcurrentStreams != nil {
+		v := h.Http2.GetMaxConcurrentStreams()
+		if v == 0 || v > 2147483647 {
+			return o, fmt.Errorf("maxConcurrentStreams must be between 1 and 2147483647")
+		}
+		o.MaxConcurrentStreams = int(v)
+	}
+	if pool := h.ConnectionPool; pool != nil {
+		if pool.MaxConnections != nil {
+			if *pool.MaxConnections == 0 || *pool.MaxConnections > 2147483647 {
+				return o, fmt.Errorf("maxConnections must be between 1 and 2147483647")
+			}
+			o.MaxConnsPerHost = int(*pool.MaxConnections)
+		}
+		o.MaxIdleConnsPerHost = min(o.MaxIdleConnsPerHost, o.MaxConnsPerHost)
+		if pool.MaxIdleConnections != nil {
+			if *pool.MaxIdleConnections > uint32(o.MaxConnsPerHost) {
+				return o, fmt.Errorf("maxIdleConnections must not exceed maxConnections")
+			}
+			o.MaxIdleConnsPerHost = int(*pool.MaxIdleConnections)
+		}
+		var err error
+		o.IdleConnTimeout, err = duration(pool.IdleTimeout, o.IdleConnTimeout)
+		if err != nil {
+			return o, fmt.Errorf("idleTimeout: %w", err)
+		}
+	}
+	return o, nil
 }

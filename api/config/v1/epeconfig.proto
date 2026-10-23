@@ -75,15 +75,60 @@ message DefaultExtensionProviders {
 // This is distinct from the Envoy ext_proc service that EPE implements.
 // Redirects are not followed. The client's response size limit is configured by
 // HTTP_CALLOUT_MAX_RESPONSE_BYTES, independently of the rule's body disclosure limit.
+//
+// Example: require HTTP/2 with explicit connection and stream limits.
+// Use an http:// URL with protocol: HTTP2 for prior-knowledge h2c.
+//
+//   extensionProviders:
+//   - name: policy-check
+//     httpCallout:
+//       url: https://policy.example.com/check
+//       timeout: 2s
+//       protocol: HTTP2
+//       connectionPool:
+//         maxConnections: 16
+//         maxIdleConnections: 8
+//         idleTimeout: 90s
+//       http2:
+//         maxConcurrentStreams: 32
 message HTTPCalloutProvider {
   // Absolute HTTP(S) endpoint, without userinfo or a fragment.
   string url = 1;
   // Positive Go duration, such as "500ms" or "2s". Defaults to 500ms.
-  // Bounds the HTTP request, including response body reads. An earlier caller
-  // deadline takes precedence; time spent queued by the caller is not included.
+  // Includes pool queueing, connection/SETTINGS establishment and response body reads.
+  // An earlier caller deadline takes precedence.
   string timeout = 2;
   // HTTPS transport settings. Omission uses system roots without a client certificate.
   ClientTLS tls = 4;
+  // AUTO preserves the default: HTTP/1.1 for http, ALPN negotiation for https.
+  // HTTP2 requires h2c prior knowledge for http, or h2 over TLS for https.
+  Protocol protocol = 5;
+  enum Protocol {
+    AUTO = 0;
+    HTTP1 = 1;
+    HTTP2 = 2;
+  }
+  // Connection limits apply independently to each provider in each EPE process.
+  HTTPCalloutConnectionPool connection_pool = 6;
+  // Applied whenever HTTP/2 is used, including AUTO negotiation.
+  HTTPCalloutHTTP2 http2 = 7;
+}
+
+message HTTPCalloutConnectionPool {
+  // Maximum connections, including idle and connecting connections. Defaults to 32 for HTTP2 and 128 for AUTO/HTTP1.
+  // Must be between 1 and 2147483647.
+  optional uint32 max_connections = 1;
+  // Maximum idle connections. Defaults to 8 for HTTP2 and 64 for AUTO/HTTP1, bounded by max_connections.
+  // Zero disables idle retention; must not exceed max_connections.
+  optional uint32 max_idle_connections = 2;
+  // Positive Go duration. Defaults to 90s.
+  string idle_timeout = 3;
+}
+
+message HTTPCalloutHTTP2 {
+  // Local outbound stream limit per connection, further bounded by peer SETTINGS.
+  // Defaults to 32. Must be between 1 and 2147483647.
+  optional uint32 max_concurrent_streams = 1;
 }
 
 // CredentialProvider defines the connection to a credential service.

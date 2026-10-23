@@ -60,7 +60,7 @@ func TestCalloutProcess(t *testing.T) {
 	var url string
 	switch *processRole {
 	case "endpoint":
-		s := httptest.NewServer(&calloutfixture.Handler{})
+		s := newCalloutEndpoint(t, &calloutfixture.Handler{})
 		defer s.Close()
 		url = s.URL
 	case "upstream":
@@ -115,6 +115,14 @@ func newIsolatedFixture(t *testing.T) *fixture {
 			"-test.v",
 			"-test.timeout=15m",
 			"-callout-process-role=" + role,
+			"-callout-http2=" + strconv.FormatBool(*calloutHTTP2),
+			"-callout-client-streams=" + strconv.FormatUint(uint64(*calloutClientStreams), 10),
+			"-callout-max-connections=" + strconv.FormatUint(uint64(*calloutMaxConnections), 10),
+			"-callout-max-idle=" + strconv.Itoa(*calloutMaxIdle),
+			"-callout-timeout=" + *calloutTimeout,
+			"-callout-max-streams=" + strconv.Itoa(*calloutMaxStreams),
+			"-callout-response-delay=" + calloutResponseDelay.String(),
+			"-callout-connection-window=" + strconv.Itoa(*calloutConnectionWindow),
 			"-callout-process-ready=" + ready,
 			"-envoy-image=" + *envoyImage,
 			"-callout-forward-headers=" + strconv.FormatBool(*forwardHeaders),
@@ -123,6 +131,8 @@ func newIsolatedFixture(t *testing.T) *fixture {
 		}
 		if *processArtifacts != "" {
 			args = append(args, "-test.cpuprofile="+filepath.Join(dir, role+".pprof"))
+			args = append(args, "-test.mutexprofile="+filepath.Join(dir, role+"-mutex.pprof"))
+			args = append(args, "-test.blockprofile="+filepath.Join(dir, role+"-block.pprof"))
 		}
 		cmd := exec.Command(binary, args...)
 		for _, v := range os.Environ() {
@@ -181,11 +191,12 @@ func newIsolatedFixture(t *testing.T) *fixture {
 	t.Cleanup(tr.CloseIdleConnections)
 	// The parent owns only load generation; child profiles exclude other roles.
 	return &fixture{
-		url:         proxy,
-		statsURL:    endpoint + "/stats",
-		client:      &http.Client{Transport: tr, Timeout: 10 * time.Second},
-		epePID:      pid,
-		endpointPID: endpointPID,
+		url:          proxy,
+		statsURL:     endpoint + "/stats",
+		transportURL: endpoint + "/transport-stats",
+		client:       &http.Client{Transport: tr, Timeout: 10 * time.Second},
+		epePID:       pid,
+		endpointPID:  endpointPID,
 	}
 }
 

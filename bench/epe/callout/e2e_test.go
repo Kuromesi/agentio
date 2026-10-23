@@ -68,14 +68,15 @@ var (
 )
 
 type fixture struct {
-	url         string
-	handler     *calloutfixture.Handler
-	upstream    atomic.Int64
-	recover     atomic.Bool
-	client      *http.Client
-	statsURL    string
-	epePID      int
-	endpointPID int
+	url          string
+	handler      *calloutfixture.Handler
+	upstream     atomic.Int64
+	recover      atomic.Bool
+	client       *http.Client
+	statsURL     string
+	transportURL string
+	epePID       int
+	endpointPID  int
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -93,7 +94,7 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 	f.client.Transport = tr
 	t.Cleanup(tr.CloseIdleConnections)
 	if endpointURL == "" {
-		endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		endpoint := newCalloutEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if f.recover.Load() {
 				r.URL.Path = "/continue"
 			}
@@ -104,6 +105,7 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 	} else {
 		f.statsURL = endpointURL + "/stats"
 	}
+	f.transportURL = endpointURL + "/transport-stats"
 	if upstreamURL == "" {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			f.upstream.Add(1)
@@ -129,7 +131,10 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 	modes := []string{"continue", "mutate", "respond", "status", "malformed", "oversize", "delay", "reset"}
 	for _, mode := range modes {
 		suffix := "/" + mode
-		timeout := "2s"
+		timeout := *calloutTimeout
+		if mode == "continue" && *calloutResponseDelay > 0 {
+			suffix = "/delay?duration=" + calloutResponseDelay.String()
+		}
 		if mode == "delay" {
 			suffix += "?duration=500ms"
 			timeout = "50ms"
@@ -139,7 +144,7 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 			&configv1.ExtensionProvider{
 				Name: mode,
 				Provider: &configv1.ExtensionProvider_HttpCallout{
-					HttpCallout: &configv1.HTTPCalloutProvider{Url: endpointURL + suffix, Timeout: timeout},
+					HttpCallout: benchmarkProvider(endpointURL+suffix, timeout),
 				},
 			},
 		)
@@ -410,9 +415,6 @@ func TestEnvoyLoad(t *testing.T) {
 		if *loadPath == "/baseline" {
 			expectedCalls = 0
 		}
-		if delta := f.callCount(t) - calls; delta != expectedCalls {
-			t.Fatalf("callouts=%d expected=%d", delta, expectedCalls)
-		}
 		cpuAfter, rss := f.epeResources(t)
 		endpointCPUAfter, endpointRSS := processResources(t, f.endpointPID)
 		runtime.GC()
@@ -423,22 +425,27 @@ func TestEnvoyLoad(t *testing.T) {
 			t.Fatal(err)
 		}
 		record := struct {
-			EndpointCPU float64     `json:"endpoint_cpu_seconds"`
-			EndpointRSS int         `json:"endpoint_rss_bytes"`
-			EPECPU      float64     `json:"epe_cpu_seconds"`
-			EPERSS      int         `json:"epe_rss_bytes"`
-			Round       int         `json:"round"`
-			Result      load.Result `json:"result"`
-			Heap        uint64      `json:"heap_alloc"`
-			Goroutines  int         `json:"goroutines"`
-			FDs         int         `json:"fds"`
-			Active      int64       `json:"active_callouts"`
-		}{endpointCPUAfter - endpointCPUBefore, endpointRSS, cpuAfter - cpuBefore, rss, round, result, mem.HeapAlloc, runtime.NumGoroutine(), len(fds), f.activeCalls(t)}
+			Transport   transportStats `json:"transport"`
+			EndpointCPU float64        `json:"endpoint_cpu_seconds"`
+			EndpointRSS int            `json:"endpoint_rss_bytes"`
+			EPECPU      float64        `json:"epe_cpu_seconds"`
+			EPERSS      int            `json:"epe_rss_bytes"`
+			Round       int            `json:"round"`
+			Result      load.Result    `json:"result"`
+			Heap        uint64         `json:"heap_alloc"`
+			Goroutines  int            `json:"goroutines"`
+			FDs         int            `json:"fds"`
+			Active      int64          `json:"active_callouts"`
+		}{f.transportStats(t), endpointCPUAfter - endpointCPUBefore, endpointRSS, cpuAfter - cpuBefore, rss, round, result, mem.HeapAlloc, runtime.NumGoroutine(), len(fds), f.activeCalls(t)}
 		raw, err := json.Marshal(record)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("RESULT %s", raw)
+		if delta := f.callCount(t) - calls; delta != expectedCalls {
+			t.Fatalf("callouts=%d expected=%d errors=%d first_error=%s transport=%+v",
+				delta, expectedCalls, result.Errors, result.FirstError, f.transportStats(t))
+		}
 		if result.Errors != 0 || result.Operations != *loadRequests {
 			t.Fatalf("errors=%d completed=%d: %s", result.Errors, result.Operations, result.FirstError)
 		}
@@ -490,6 +497,9 @@ const envoyConfig = `static_resources:
     type: STATIC
     connect_timeout: 1s
     http2_protocol_options: {}
+    # Keep ext_proc circuit breaking above the callout capacity under test.
+    circuit_breakers:
+      thresholds: [{max_requests: 8192, max_pending_requests: 8192}]
     load_assignment:
       cluster_name: epe
       endpoints:
@@ -510,4 +520,28 @@ func closeBody(t *testing.T, body io.Closer) {
 	if err := body.Close(); err != nil {
 		t.Errorf("close response body: %v", err)
 	}
+}
+
+func benchmarkProvider(url, timeout string) *configv1.HTTPCalloutProvider {
+	p := &configv1.HTTPCalloutProvider{
+		Url:     url,
+		Timeout: timeout,
+	}
+	if *calloutMaxConnections != 0 || *calloutMaxIdle >= 0 {
+		p.ConnectionPool = &configv1.HTTPCalloutConnectionPool{}
+		if *calloutMaxConnections != 0 {
+			connections := uint32(*calloutMaxConnections)
+			p.ConnectionPool.MaxConnections = &connections
+		}
+		if *calloutMaxIdle >= 0 {
+			idle := uint32(*calloutMaxIdle)
+			p.ConnectionPool.MaxIdleConnections = &idle
+		}
+	}
+	if *calloutHTTP2 {
+		p.Protocol = configv1.HTTPCalloutProvider_HTTP2
+		streams := uint32(*calloutClientStreams)
+		p.Http2 = &configv1.HTTPCalloutHTTP2{MaxConcurrentStreams: &streams}
+	}
+	return p
 }
