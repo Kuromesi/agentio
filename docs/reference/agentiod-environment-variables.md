@@ -98,6 +98,7 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 | <code>AGENTIO_MITM_CA_SECRET_NAMESPACE</code> | String | empty | Namespace of the MITM CA Secret. Empty uses the control-plane root namespace. |
 | <code>AGENTIO_MITM_LEAF_LIFETIME</code> | Duration | <code>15m0s</code> | Validity of on-demand domain certificates. |
 | <code>AGENTIO_MITM_RENEW_BEFORE</code> | Duration | <code>1m0s</code> | How long before expiry SDS TTL removes an on-demand certificate; new demand re-issues it. |
+| <code>AGENTIO_MITM_RESOURCE_TTL</code> | Duration | <code>15m0s</code> | Maximum SDS residency from certificate signing time; replay never extends this deadline. |
 | <code>AGENTIO_MITM_ROOT_LIFETIME</code> | Duration | <code>87600h0m0s</code> | Validity of the control-plane-managed root CA in MITM SELF&#95;SIGN mode. |
 | <code>AGENTIO_MITM_ROOT_RENEW_BEFORE</code> | Duration | <code>8760h0m0s</code> | How long before expiry the control-plane-managed MITM root CA is renewed in SELF&#95;SIGN mode. |
 | <code>AGENTIO_MITM_ROTATION_CHECK_INTERVAL</code> | Duration | <code>1h0m0s</code> | How often each replica checks whether the control-plane-managed MITM root CA needs CAS renewal. |
