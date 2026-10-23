@@ -226,6 +226,19 @@ New Kind runs require Docker and Kind. The framework smoke test additionally exp
 
 The unit, vet, race, and dependency-boundary gates do not require a cluster. Do not treat a skipped live suite or a failed prerequisite check as a passing Kubernetes E2E run.
 
+## On-demand CA rotation
+
+`TestSandboxOnDemandCARotation` runs in the default gateway suite for both sidecar and ambient profiles. It uses the production Helm installation and real Kubernetes Secret updates. It verifies ECDSA leaves, live CA/key rotation, and a CA change while all issuer Pods are stopped followed by a cold SDS reconnect. Each phase checks verified HTTPS with the new root, rejection with the old root, warm certificate reuse, and that the gateway Pod and containers did not restart. The test requires a suite-owned installation (`agentio.reuse=false`) with one issuer replica; it restores the original CA Secret and issuer settings before the next scenario.
+
+To run just this case with the normal immutable image inputs:
+
+```sh
+cd test/e2e
+go run ./cmd/product-e2e run --suites gateway --tests '^TestSandboxOnDemandCARotation$'
+```
+
+The `gateway-runtime` PR job also runs `TestSDSEnvoyECDSACompatibility` against real Envoy via `bin/test_gateway_runtime.sh`, including an ADS outage spanning X.509 expiry. That faster integration test uses fake Kubernetes CA events and gateway identity; the cluster suite above validates the actual Kubernetes and authentication path. Deterministic issuer/ADS tests cover precise concurrent cancellation interleavings. The 30,000-certificate pressure scenario stays opt-in.
+
 ## On-demand certificate rotation (opt-in)
 
 `TestSandboxOnDemandCertificateRotation` in `suites/gateway` is built only with `-tags=certrotation`. The default product planner therefore does not discover or schedule it, and ordinary E2E runs add no certificate expiry waits. With the usual immutable Agentio image inputs and a dedicated test cluster configured, run it separately:
@@ -235,6 +248,6 @@ AGENTIO_E2E=1 \
   go test -tags=certrotation ./suites/gateway -run '^TestSandboxOnDemandCertificateRotation$' -v -count=1 -timeout=15m
 ```
 
-The test requires `agentio.reuse=false` and one Agentiod replica. It temporarily sets a 75-second leaf lifetime with a 45-second renewal window, verifies two serial changes through fresh CA-verified HTTPS requests to the local TLS fixture, then scales Agentiod to zero. It checks cached-certificate availability before expiry, the target secret disappearing from Envoy's active SDS config dump after expiry, and HTTPS recovery with a new certificate after Agentiod returns. It also asserts that the gateway did not restart. Issuer settings and replica count are restored on failure as well as success.
+The test requires `agentio.reuse=false` and one Agentiod replica. It temporarily sets a 75-second leaf lifetime with a 45-second renewal window, verifies two serial changes through fresh CA-verified HTTPS requests to the local TLS fixture, then scales Agentiod to zero. It checks the target SDS secret remaining cached before expiry, then disappearing from Envoy's active SDS config dump after expiry, and HTTPS recovery with a new certificate after Agentiod returns. It also asserts that the gateway did not restart. Issuer settings and replica count are restored on failure as well as success. Porter intentionally drops identity readiness when ADS disconnects and rejects new HBONE CONNECTs during the outage, so this test uses Envoy's exact SDS inventory for offline retention/expiry assertions rather than treating a failed handshake as proof of certificate eviction.
 
 Once the fixtures are ready, certificate-clock waits take roughly 135 seconds; rollout, setup, recovery and cleanup add time. Each successful rotation logs the number of fresh connections and maximum probe latency. This is a correctness check, not a throughput benchmark, a CA private-key rotation test, or proof of zero interruption at production load. Normal-rotation probe failures fail the test immediately; only initial convergence and fault recovery use retries.
