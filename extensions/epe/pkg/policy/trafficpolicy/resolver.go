@@ -17,11 +17,9 @@ package trafficpolicy
 import (
 	"context"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
-	"github.com/openkruise/agentio/pkg/dns"
 )
 
 type resolver struct{ source Resources }
@@ -34,23 +32,17 @@ func (s *resolver) config(ctx context.Context, pod inputs.Pod) (egressauthz.Conf
 	return snapshot.entry.compiled.config, snapshot.entry.compiled.err
 }
 
-// NewAuthorizer loads the workload's policies when request rules have completed.
+// NewResolver loads the workload's policies for the common request authorizer.
 // It is independent of SecurityProfile resolution and bypass semantics.
-func NewAuthorizer(source Resources, client *dns.Client) engine.RequestAuthorizer {
+func NewResolver(source Resources) egressauthz.ConfigResolver {
 	s := &resolver{source: source}
-	return func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
+	return func(ctx context.Context, stream *filter.Stream) (egressauthz.Config, error) {
 		peer := stream.Peer
 		cfg, err := s.config(ctx, inputs.Pod{
 			Namespace: peer.Pod.Namespace,
 			Name:      peer.Pod.Name,
 			Labels:    peer.Labels,
 		})
-		if err != nil {
-			stream.Info.RecordAuthorization(
-				filter.AuthorizationDecision{Action: "error", Reason: filter.AuthorizationReasonPolicyLoadFailed},
-			)
-			return nil, nil, err
-		}
-		return egressauthz.Authorize(ctx, cfg, client, stream)
+		return cfg, err
 	}
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/pkg/dns"
 )
 
 func TestRequestAuthorization(t *testing.T) {
@@ -417,5 +418,60 @@ func TestServiceEntryTargetAuthorization(t *testing.T) {
 				t.Fatalf("candidate escaped as output: %v", response)
 			}
 		})
+	}
+}
+
+func TestStaticAuthorizationWithoutIdentityAndWithBypass(t *testing.T) {
+	cfg := egressauthz.Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
+	for _, mode := range []string{"missing-identity", "no-profile", "bypass", "identity-required"} {
+		for _, host := range []string{"127.0.0.1:15000", "192.0.2.1:15000"} {
+			t.Run(mode+"/"+host, func(t *testing.T) {
+				resolves := 0
+				server := NewServer(ServerDeps{
+					Registrations: []filter.Registration{fixedRegHeaders("bypass", filter.Bypass())},
+					Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+						resolves++
+						if mode == "bypass" {
+							return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{struct{}{}}}}}, nil
+						}
+						return engine.Resolution{}, nil
+					},
+					AuthorizeRequest: egressauthz.NewAuthorizer(
+						dns.NewClient(nil, 0),
+						func() egressauthz.Config { return cfg },
+						nil,
+					),
+					FailClosedOnMissingIdentity: mode == "identity-required",
+				})
+				attrs := makeAttrsWithLabels("ns", "pod", "")
+				if mode == "missing-identity" || mode == "identity-required" {
+					attrs = nil
+				}
+				responses, err := server.HandleRequestHeaders(
+					t.Context(),
+					makeRequestHeaders(host, "/", "GET"),
+					attrs,
+					newStreamState(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == "identity-required" {
+					if responses[0].GetImmediateResponse() == nil {
+						t.Fatal("missing identity was allowed")
+					}
+				} else if host == "127.0.0.1:15000" {
+					if reply := responses[0].GetImmediateResponse(); reply.GetStatus().GetCode() != 403 ||
+						reply.GetDetails() != "epe_egress_denied" {
+						t.Fatalf("global deny bypassed: %v", responses)
+					}
+				} else if got := responseUpstream(responses[0]).GetFields()[upstreamAddressField].GetStringValue(); got != host {
+					t.Fatalf("allowed target not pinned: %s", got)
+				}
+				if attrs == nil && resolves != 0 {
+					t.Fatal("profile resolution ran without identity")
+				}
+			})
+		}
 	}
 }

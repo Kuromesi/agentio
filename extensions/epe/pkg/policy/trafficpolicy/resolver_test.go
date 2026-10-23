@@ -205,7 +205,11 @@ func TestResolverCacheUpdates(t *testing.T) {
 func TestAuthorizerUsesWorkloadBinding(t *testing.T) {
 	f := testStore()
 	f.bind()
-	authorize := NewAuthorizer(testAggregate(f), dns.NewClient(nil, 0))
+	authorize := egressauthz.NewAuthorizer(
+		dns.NewClient(nil, 0),
+		func() egressauthz.Config { return egressauthz.Config{} },
+		NewResolver(testAggregate(f)),
+	)
 	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443}, Info: filter.NewStreamInfo()}
 	stream.Peer.Pod.Namespace, stream.Peer.Pod.Name = "ns", "pod"
 	target, reply, err := authorize(t.Context(), stream)
@@ -438,9 +442,50 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 		Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
 		Info: filter.NewStreamInfo(),
 	}
-	_, _, err := NewAuthorizer(testAggregate(source), nil)(t.Context(), stream)
+	_, _, err := egressauthz.NewAuthorizer(
+		nil,
+		func() egressauthz.Config { return egressauthz.Config{} },
+		NewResolver(testAggregate(source)),
+	)(
+		t.Context(),
+		stream,
+	)
 	if err == nil || stream.Info.Authorization == nil ||
 		stream.Info.Authorization.Reason != filter.AuthorizationReasonPolicyLoadFailed {
 		t.Fatalf("error=%v audit=%+v", err, stream.Info.Authorization)
+	}
+}
+
+func TestGlobalDenyPrecedesXDSPolicy(t *testing.T) {
+	f := testStore() // Workload policy allows 203.0.113.0/24.
+	global := egressauthz.Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/32")}}
+	authorize := egressauthz.NewAuthorizer(
+		dns.NewClient(nil, 0),
+		func() egressauthz.Config { return global },
+		NewResolver(testAggregate(f)),
+	)
+	for _, tc := range []struct {
+		host    string
+		allowed bool
+	}{
+		{"203.0.113.7", false}, // Global restriction overrides workload allow.
+		{"203.0.113.8", true},
+		{"192.0.2.1", false}, // Global miss preserves workload default-deny.
+	} {
+		stream := &filter.Stream{
+			Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+			Request: httpreq.HTTPRequest{Host: tc.host, Port: 443},
+		}
+		target, reply, err := authorize(t.Context(), stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.allowed {
+			if target == nil || reply != nil {
+				t.Fatalf("%s: target=%v reply=%v", tc.host, target, reply)
+			}
+		} else if target != nil || reply == nil || reply.Status != 403 {
+			t.Fatalf("%s: target=%v reply=%v", tc.host, target, reply)
+		}
 	}
 }

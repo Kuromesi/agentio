@@ -47,7 +47,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/accesslog"
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit/sinks/webhook"
 	"github.com/openkruise/agentio/extensions/epe/pkg/certs/certsource"
-	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	_ "github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout" // Register environment settings.
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
@@ -124,7 +123,7 @@ var (
 			"enabling this disables server identity verification and is unsafe")
 	failClosedOnMissingIdentity = flag.Bool("fail-closed-on-missing-identity", false,
 		"Deny requests when the source pod identity is missing from filter_state "+
-			"(e.g. a misconfigured metadata exchange); by default such requests pass through")
+			"(e.g. a misconfigured metadata exchange); by default global destination authorization still runs")
 	tlsSource = flag.String("tls-source", "none", "Serving certificate source: none, ca or file")
 	caAddress = flag.String(
 		"ca-address",
@@ -248,7 +247,7 @@ func run() error {
 	providers := &extensionprovider.Registry{}
 	defer providers.Close()
 	var resourceStore *resourcestore.Aggregate
-	if *enableEgressAuthz {
+	if *enableXDSEgressAuthz {
 		xds, conn, err := newEgressXDS()
 		if err != nil {
 			return err
@@ -290,8 +289,9 @@ func run() error {
 		Names:     []string{*epeConfigName, *epeConfigPrimaryName},
 		Defaults:  defaults,
 		Apply:     extensionprovider.ApplyConfig,
-		Validate:  extensionprovider.Validate,
+		Validate:  validateEPEConfig,
 	}, krt.WithName("EPEConfig"), krt.WithStop(ctx.Done())).AsCollection()
+	authorize, authorizationReg := newRequestAuthorizer(configs, resourceStore, dns.NewClient(nil, 0))
 	providerConfigs := extensionprovider.NewCollection(client, *systemNamespace,
 		configs, configMaps, nil, ctx.Done())
 	providerReg := providers.RegisterCollection(providerConfigs)
@@ -329,8 +329,12 @@ func run() error {
 		if resourceStore != nil {
 			resourcesReady = resourceStore.Ready()
 		}
-		if !providerReg.HasSynced() || !profileReg.HasSynced() || !secrets.HasSynced() ||
-			servingTLS.Ready() != nil || !resourcesReady {
+		if !authorizationReg.HasSynced() ||
+			!providerReg.HasSynced() ||
+			!profileReg.HasSynced() ||
+			!secrets.HasSynced() ||
+			servingTLS.Ready() != nil ||
+			!resourcesReady {
 			state = healthPb.HealthCheckResponse_NOT_SERVING
 		}
 		for _, service := range []string{"", "readiness", extProcPb.ExternalProcessor_ServiceDesc.ServiceName} {
@@ -388,15 +392,11 @@ func run() error {
 	// Assemble the ext-proc gRPC server around the shared filter chain built
 	// above.
 	resolve := securityprofile.NewResolver(store, registrations, auditRouter)
-	var authorize engine.RequestAuthorizer
-	if resourceStore != nil {
-		authorize = trafficpolicy.NewAuthorizer(resourceStore, dns.NewClient(nil, 0))
-	}
 	extProcServer := runserver.New(runserver.Config{
 		GrpcPort:                    *grpcPort,
 		PluginBudget:                *pluginBudget,
 		AuthorizeRequest:            authorize,
-		FailClosedOnMissingIdentity: *failClosedOnMissingIdentity || *enableEgressAuthz,
+		FailClosedOnMissingIdentity: *failClosedOnMissingIdentity || *enableXDSEgressAuthz,
 		SecureServing:               servingTLS.Secure,
 		CertProvider:                servingTLS.Provider,
 		RequireClientCert:           servingTLS.RequireClientCert,
@@ -405,7 +405,7 @@ func run() error {
 		Registrations:               registrations,
 	}, ctrllog.Log.WithName("ext-proc"))
 	group.Add(runnable.Func(func(ctx context.Context) error {
-		return startExtProc(ctx, extProcServer, providerReg, profileReg, secrets)
+		return startExtProc(ctx, extProcServer, authorizationReg, providerReg, profileReg, secrets)
 	}))
 
 	// Start pprof server if enabled.

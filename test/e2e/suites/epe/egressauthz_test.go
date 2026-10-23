@@ -459,7 +459,7 @@ spec:
     - --epe-config=epe-egressauthz
     - --epe-config-primary=epe-egressauthz-primary
     - --namespace={{ .Namespace }}
-    - --enable-egressauthz
+    - --enable-xds-egressauthz
     - --xds-address=agentiod.{{ .Namespace }}.svc:15012
     - --xds-root-path=/var/run/xds-root/root-cert.pem
     - --xds-token-path=/var/run/xds-token/token

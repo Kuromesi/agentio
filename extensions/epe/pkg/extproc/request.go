@@ -102,30 +102,27 @@ func (s *Server) HandleRequestHeaders(
 	isConnect := strings.EqualFold(req.Method, "CONNECT")
 
 	if !peer.Valid() {
-		// Without a source pod identity no SecurityProfile can be applied.
-		// The default passes such requests through so a misconfigured
-		// metadata exchange degrades policy coverage, not connectivity;
-		// FailClosedOnMissingIdentity turns it into a deny for deployments
-		// that require enforcement over availability.
-		resp, disposition := defaultPassThrough, "passed through"
-		if s.failClosedOnMissingIdentity {
-			resp, disposition = missingIdentityDeny, "denied"
-		}
+		// Static destination authorization does not require a workload identity.
+		// Only identity-dependent policies need to fail closed here.
 		logger.V(logging.DEFAULT).Info("pod identity missing from filter_state",
 			"podNamespace", peer.Pod.Namespace, "podName", peer.Pod.Name,
-			"disposition", disposition)
-		return resp, nil
+			"failClosed", s.failClosedOnMissingIdentity)
+		if s.failClosedOnMissingIdentity {
+			return missingIdentityDeny, nil
+		}
 	}
 
-	// Profile lookup, rule matching and config projection all live behind
-	// the resolver, so this adapter never names a policy type.
-	pod := inputs.Pod{
-		Name:      peer.Pod.Name,
-		Namespace: peer.Pod.Namespace,
-		IP:        peer.IP,
-		Labels:    peer.Labels,
+	// Resolve identity-dependent profiles only when a source pod is known.
+	// Empty resolution still passes through the independent authorizer below.
+	var res engine.Resolution
+	if peer.Valid() {
+		res, err = s.resolve(ctx, inputs.Pod{
+			Name:      peer.Pod.Name,
+			Namespace: peer.Pod.Namespace,
+			IP:        peer.IP,
+			Labels:    peer.Labels,
+		}, &req)
 	}
-	res, err := s.resolve(ctx, pod, &req)
 	// Installed before the error is honoured: a resolver that fails may still
 	// have matched rules worth recording, and finishStream promotes the error
 	// to the disposition the logger reports. Without this, a resolve failure

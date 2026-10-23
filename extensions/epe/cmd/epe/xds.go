@@ -28,15 +28,15 @@ import (
 )
 
 var (
-	enableEgressAuthz = flag.Bool(
-		"enable-egressauthz",
+	enableXDSEgressAuthz = flag.Bool(
+		"enable-xds-egressauthz",
 		false,
-		"Authorize and pin HTTP destinations using native Workload and TrafficPolicy xDS resources",
+		"Apply native Workload and TrafficPolicy xDS policies in addition to global egress authorization",
 	)
 	xdsAddress = flag.String(
 		"xds-address",
 		"",
-		"Agentiod TLS ADS endpoint (host:port); required with --enable-egressauthz",
+		"Agentiod TLS ADS endpoint (host:port); required with --enable-xds-egressauthz",
 	)
 	xdsRootPath  = flag.String("xds-root-path", "", "PEM trust bundle for Agentiod ADS")
 	xdsTokenPath = flag.String(

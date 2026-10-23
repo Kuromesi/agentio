@@ -192,7 +192,7 @@ func TestExtract(t *testing.T) {
 			wantValid: true,
 		},
 		{
-			name: "missing pod name fails identity and skips further extraction",
+			name: "missing pod name preserves target for static authorization",
 			attrFields: map[string]any{
 				FilterStateDownstreamPeerNamespace: "default",
 				FilterStateWorkloadLabels:          b64("app=sleep"),
@@ -200,10 +200,11 @@ func TestExtract(t *testing.T) {
 			},
 			headers: fullHeaders,
 			wantPeer: filter.Peer{
-				Pod: types.NamespacedName{Namespace: "default"},
-				IP:  "10.0.0.2",
+				Pod:    types.NamespacedName{Namespace: "default"},
+				IP:     "10.0.0.2",
+				Labels: map[string]string{"app": "sleep"},
 			},
-			wantReq:   httpreq.HTTPRequest{},
+			wantReq:   fullReq(8443, fullHeaders),
 			wantValid: false,
 		},
 		{
@@ -213,9 +214,10 @@ func TestExtract(t *testing.T) {
 			},
 			headers: fullHeaders,
 			wantPeer: filter.Peer{
-				Pod: types.NamespacedName{Name: "pod-a"},
+				Pod:    types.NamespacedName{Name: "pod-a"},
+				Labels: map[string]string{},
 			},
-			wantReq:   httpreq.HTTPRequest{},
+			wantReq:   fullReq(8443, fullHeaders),
 			wantValid: false,
 		},
 	}

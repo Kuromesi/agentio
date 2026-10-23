@@ -41,7 +41,8 @@ type Server struct {
 	eng              *engine.Engine
 	loggers          []filter.StreamLogger
 	// failClosedOnMissingIdentity denies requests when the source pod
-	// identity is absent from filter_state; the default passes them through.
+	// identity is absent from filter_state; otherwise only identity-independent
+	// authorization runs.
 	failClosedOnMissingIdentity bool
 }
 
@@ -67,7 +68,7 @@ type ServerDeps struct {
 	PluginBudget time.Duration
 	// FailClosedOnMissingIdentity denies requests when the source pod
 	// identity is absent from filter_state (e.g. a misconfigured metadata
-	// exchange). The default (false) passes them through.
+	// exchange). With the default (false), independent authorization still runs.
 	FailClosedOnMissingIdentity bool
 }
 

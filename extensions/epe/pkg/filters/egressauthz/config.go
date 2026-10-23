@@ -22,13 +22,15 @@ import (
 )
 
 // Config is an immutable, caller-owned snapshot for one authorization scope.
-// The caller validates and orders Policies before publishing a new Config,
-// then supplies the current snapshot through the request resolver's Unit.Cfgs.
-// Neither this slice nor its nested rules may be mutated after publication.
+// The caller validates and orders Policies before publishing a new Config.
+// The request authorizer combines it with the global destination restrictions.
+// Slices and nested rules must not be mutated after publication.
 type Config struct {
 	// Family constrains host resolution, not an already selected or restored IP.
-	Family   dns.Family
-	Policies []Policy
+	Family dns.Family
+	// DeniedCIDRs are global restrictions checked before workload policies.
+	DeniedCIDRs []netip.Prefix
+	Policies    []Policy
 }
 
 // Validate checks the complete snapshot without modifying or sorting it.
@@ -36,6 +38,11 @@ type Config struct {
 func (c Config) Validate() error {
 	if c.Family > dns.IPv6Only {
 		return dns.ErrInvalidFamily
+	}
+	for _, prefix := range c.DeniedCIDRs {
+		if !prefix.IsValid() || prefix.Addr().Is4In6() {
+			return fmt.Errorf("invalid or IPv4-mapped denied CIDR: %s", prefix)
+		}
 	}
 	names := make(map[string]struct{}, len(c.Policies))
 	for _, policy := range c.Policies {
@@ -51,16 +58,22 @@ func (c Config) Validate() error {
 }
 
 // Evaluate traverses a validated snapshot in policy order and then rule order.
-// The first match decides. No policies means allow; otherwise no match means deny.
+// Global denies take precedence. Otherwise the first policy match decides.
+// No policies means allow; otherwise no match means deny.
 func (c Config) Evaluate(address netip.AddrPort) Decision {
 	unmatched := Decision{Action: Deny, RuleIndex: -1}
 	if !address.IsValid() || address.Port() == 0 || address.Addr().Zone() != "" {
 		return unmatched
 	}
+	ip, port := address.Addr().Unmap(), address.Port()
+	for i, prefix := range c.DeniedCIDRs {
+		if prefix.Contains(ip) {
+			return Decision{Action: Deny, PolicyName: "EPEConfig/egressAuthorization", RuleIndex: i}
+		}
+	}
 	if len(c.Policies) == 0 {
 		return Decision{Action: Allow, RuleIndex: -1}
 	}
-	ip, port := address.Addr().Unmap(), address.Port()
 	for _, policy := range c.Policies {
 		for i, rule := range policy.Rules {
 			if rule.matches(ip, port) {

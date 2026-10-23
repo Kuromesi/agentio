@@ -6,7 +6,7 @@ EPE is Agentio's Envoy external processor for applying `SecurityProfile` and `Gl
 
 The `tokenTransformation` action can fetch short-lived credentials from an external credential provider; the HTTP contract a provider must implement is documented in [docs/reference/credential-provider.md](../../docs/reference/credential-provider.md).
 
-The optional native TrafficPolicy authorization (`--enable-egressauthz`) retrieves Workload and TrafficPolicy xDS resources on demand and binds HTTP upstream connections to authorized destinations. Its reusable Delta ADS client lives in [`pkg/xdsclient`](../../pkg/xdsclient).
+Destination authorization is enabled by default: EPE resolves the final HTTP target, checks the global `EPEConfig.egressAuthorization.deniedCIDRs` list, and pins an allowed IP for forwarding. This works without xDS or workload identity. The optional `--enable-xds-egressauthz` flag adds Workload and TrafficPolicy xDS authorization; global denies always take precedence. Its reusable Delta ADS client lives in [`pkg/xdsclient`](../../pkg/xdsclient). See [global destination authorization](../../docs/reference/epe-configuration.md#global-destination-authorization) for configuration, rollout, and coverage.
 
 Both watches start empty. The first request for a source Pod fetches its Workload and then the TrafficPolicies referenced by that Workload. Subsequent updates arrive over Delta ADS; deletion releases the named subscription, and a later request subscribes again. Cached resources are decoded once and shared as immutable values. EPE retains requested subscriptions until resource deletion or process shutdown; idle TTL and capacity eviction are not enabled for this consumer.
 
