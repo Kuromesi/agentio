@@ -48,7 +48,9 @@ func TestResponseForMutatesRequestAndResponseHeaders(t *testing.T) {
 			Headers: &corev3.HeaderMap{},
 		}},
 	})
-	if got := mutationMap(requestResponse.GetRequestHeaders().GetResponse().GetHeaderMutation().GetSetHeaders()); got["x-request"] != "one" {
+	if got := mutationMap(
+		requestResponse.GetRequestHeaders().GetResponse().GetHeaderMutation().GetSetHeaders(),
+	); got["x-request"] != "one" {
 		t.Fatalf("request mutations = %#v", got)
 	}
 
@@ -57,7 +59,9 @@ func TestResponseForMutatesRequestAndResponseHeaders(t *testing.T) {
 			Headers: &corev3.HeaderMap{},
 		}},
 	})
-	if got := mutationMap(responseResponse.GetResponseHeaders().GetResponse().GetHeaderMutation().GetSetHeaders()); got["x-response"] != "two" {
+	if got := mutationMap(
+		responseResponse.GetResponseHeaders().GetResponse().GetHeaderMutation().GetSetHeaders(),
+	); got["x-response"] != "two" {
 		t.Fatalf("response mutations = %#v", got)
 	}
 }
@@ -68,4 +72,48 @@ func mutationMap(options []*corev3.HeaderValueOption) map[string]string {
 		result[option.GetHeader().GetKey()] = string(option.GetHeader().GetRawValue())
 	}
 	return result
+}
+
+func TestChainRequestsBodyOnlyWhenSelected(t *testing.T) {
+	p := processor{config: processorConfig{chainName: "a"}}
+	headers := &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: "x-chain-request", RawValue: []byte("epe")}}}
+	request := &servicev3.ProcessingRequest{
+		Request: &servicev3.ProcessingRequest_RequestHeaders{RequestHeaders: &servicev3.HttpHeaders{Headers: headers}},
+	}
+	response := p.responseFor(request)
+	if response.ModeOverride != nil {
+		t.Fatal("unsolicited body subscription")
+	}
+	if got := mutationMap(response.GetRequestHeaders().GetResponse().GetHeaderMutation().GetSetHeaders())["x-chain-request"]; got != "epe,a" {
+		t.Fatalf("trace %q", got)
+	}
+	headers.Headers = append(headers.Headers, &corev3.HeaderValue{Key: "x-extproc-body", RawValue: []byte("a")})
+	if p.responseFor(request).ModeOverride == nil {
+		t.Fatal("missing body subscription")
+	}
+	body := p.responseFor(
+		&servicev3.ProcessingRequest{
+			Request: &servicev3.ProcessingRequest_RequestBody{
+				RequestBody: &servicev3.HttpBody{Body: []byte("payload")},
+			},
+		},
+	)
+	if got := mutationMap(body.GetRequestBody().GetResponse().GetHeaderMutation().GetSetHeaders())["x-chain-body-a"]; got != "payload" {
+		t.Fatalf("body %q", got)
+	}
+	response = p.responseFor(
+		&servicev3.ProcessingRequest{
+			Request: &servicev3.ProcessingRequest_ResponseHeaders{
+				ResponseHeaders: &servicev3.HttpHeaders{
+					Headers: &corev3.HeaderMap{
+						Headers: []*corev3.HeaderValue{{Key: "x-chain-response", RawValue: []byte(",b")}},
+					},
+				},
+			},
+		},
+	)
+	mutations := mutationMap(response.GetResponseHeaders().GetResponse().GetHeaderMutation().GetSetHeaders())
+	if mutations["x-chain-response"] != ",b,a" || mutations["x-chain-body-count-a"] != "1" {
+		t.Fatalf("response %v", mutations)
+	}
 }

@@ -234,6 +234,7 @@ func TestGatewayResourcesCarryClusterOptions(t *testing.T) {
 			Config:    &configv1.EgressGateway{},
 		},
 		nil,
+		nil,
 		"agentiod.agentio-system.svc:15012",
 		"cluster.local",
 		nil,
@@ -1118,4 +1119,103 @@ func TestGatewayWDSResourcesCarryOwnership(t *testing.T) {
 			t.Fatalf("lookalike resource %v has Gateway ownership: %v", key, resource.Facts)
 		}
 	}
+}
+
+func TestAdditionalExtProcHotUpdate(t *testing.T) {
+	fixture := newIncrementalFixture(t)
+	first := &configv1.ExtProcProvider{Name: "first", Service: "first.demo.svc", Port: 9002}
+	second := &configv1.ExtProcProvider{Name: "second", Service: "second.demo.svc", Port: 9002}
+	config := &configv1.AgentioConfig{
+		SandboxExtProc: &configv1.ExtProcProvider{Service: "epe.demo.svc"},
+		EgressGateways: []*configv1.EgressGateway{{Namespace: "demo", Name: "egress"}},
+	}
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{Value: config})
+	key := gatewayResourceName(model.ListenerType, "demo/egress", networking.MainForward)
+	waitSynced(t, fixture.compiler)
+	awaitSteadyState(t, fixture.compiler, key)
+	readNames := func() []string {
+		resource := fixture.compiler.graph.resources.GetKey(key)
+		if resource == nil {
+			return nil
+		}
+		listener := &listenerv3.Listener{}
+		if err := resource.Value.UnmarshalTo(listener); err != nil {
+			t.Fatal(err)
+		}
+		for _, chain := range listener.FilterChains {
+			for _, f := range chain.Filters {
+				if f.Name != "envoy.filters.network.http_connection_manager" {
+					continue
+				}
+				hcm := &hcmv3.HttpConnectionManager{}
+				if err := f.GetTypedConfig().UnmarshalTo(hcm); err != nil {
+					t.Fatal(err)
+				}
+				names := []string{}
+				for _, hf := range hcm.HttpFilters {
+					if name, ok := strings.CutPrefix(hf.Name, "agentio.additional-ext-proc."); ok {
+						names = append(names, name)
+					}
+				}
+				return names
+			}
+		}
+		return nil
+	}
+	for _, tc := range []struct {
+		name      string
+		providers []*configv1.ExtProcProvider
+		want      []string
+	}{
+		{"add", []*configv1.ExtProcProvider{first, second}, []string{"first", "second"}},
+		{"reorder", []*configv1.ExtProcProvider{second, first}, []string{"second", "first"}},
+		{"remove", []*configv1.ExtProcProvider{second}, []string{"second"}},
+		{"clear", nil, []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := proto.Clone(config).(*configv1.AgentioConfig)
+			next.AdditionalExtProcs = tc.providers
+			// Keep ResourceVersion unchanged: content alone must invalidate the projection.
+			fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{Value: next})
+			eventually(t, func() bool {
+				if !slices.Equal(readNames(), tc.want) {
+					return false
+				}
+				for _, name := range []string{"first", "second"} {
+					clusterKey := gatewayResourceName(
+						model.ClusterType,
+						"demo/egress",
+						"agentio.additional-ext-proc."+name,
+					)
+					if (fixture.compiler.graph.resources.GetKey(clusterKey) != nil) != slices.Contains(tc.want, name) {
+						return false
+					}
+				}
+				return true
+			}, "list content changes LDS and CDS")
+		})
+	}
+	config.AdditionalExtProcs = []*configv1.ExtProcProvider{first}
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{Value: config})
+	eventually(t, func() bool { return slices.Equal(readNames(), []string{"first"}) }, "restore processor")
+	next := proto.Clone(config).(*configv1.AgentioConfig)
+	next.AdditionalExtProcs[0].Service = "replacement.demo.svc"
+	fixture.agentioConfig.ConditionalUpdateObject(model.AgentioConfiguration{Value: next})
+	eventually(t, func() bool {
+		resource := fixture.compiler.graph.resources.GetKey(
+			gatewayResourceName(model.ClusterType, "demo/egress", "agentio.additional-ext-proc.first"),
+		)
+		if resource == nil {
+			return false
+		}
+		cluster := &clusterv3.Cluster{}
+		if err := resource.Value.UnmarshalTo(cluster); err != nil {
+			t.Fatal(err)
+		}
+		return cluster.GetLoadAssignment().GetEndpoints()[0].GetLbEndpoints()[0].GetEndpoint().
+			GetAddress().
+			GetSocketAddress().
+			GetAddress() ==
+			"replacement.demo.svc"
+	}, "endpoint change updates named CDS resource")
 }

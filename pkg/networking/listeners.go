@@ -379,7 +379,15 @@ func (b *resourceBuilder) buildForwardHCM(
 		filters = append(filters, httpFilter(staticEndpointCandidateFilter, b.pack(&setstatehttpv3.Config{})))
 	}
 	if config.extProc != nil {
-		filter, err := b.extProcFilter(config)
+		filter, err := b.extProcFilter(config, config.extProc, "envoy.filters.http.ext_proc", ExtProcCluster)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
+	for _, provider := range config.additionalExtProcs {
+		name := additionalExtProcName(provider)
+		filter, err := b.extProcFilter(config, provider, name, name)
 		if err != nil {
 			return nil, err
 		}
@@ -513,8 +521,11 @@ func buildConnectProxyTLSIdentityHTTPFilter() *hcmv3.HttpFilter {
 	return httpFilter(connectProxyTLSIdentityFilter, mustPack(wrapper))
 }
 
-func (b *resourceBuilder) extProcFilter(config effectiveConfig) (*hcmv3.HttpFilter, error) {
-	provider := config.extProc
+func (b *resourceBuilder) extProcFilter(
+	config effectiveConfig,
+	provider *configv1.ExtProcProvider,
+	name, cluster string,
+) (*hcmv3.HttpFilter, error) {
 	timeout := (*durationpb.Duration)(nil)
 	if provider.GetMessageTimeout() != "" {
 		parsed, err := time.ParseDuration(provider.GetMessageTimeout())
@@ -531,8 +542,15 @@ func (b *resourceBuilder) extProcFilter(config effectiveConfig) (*hcmv3.HttpFilt
 	if response := provider.GetResponse(); response != nil {
 		responseMode = headerMode(response.GetHeaderMode(), responseMode)
 	}
-	metadataOptions := &extprocv3.MetadataOptions{
-		ReceivingNamespaces: &extprocv3.MetadataOptions_MetadataNamespaces{Untyped: []string{"agentio.route"}},
+	// Only the primary EPE may publish the authorized upstream target.
+	var metadataOptions *extprocv3.MetadataOptions
+	statPrefix := ""
+	if name == "envoy.filters.http.ext_proc" {
+		metadataOptions = &extprocv3.MetadataOptions{
+			ReceivingNamespaces: &extprocv3.MetadataOptions_MetadataNamespaces{Untyped: []string{"agentio.route"}},
+		}
+	} else {
+		statPrefix = name
 	}
 	attributes := append([]string(nil), provider.GetRequest().GetAttributes()...)
 	for _, attribute := range []string{model.AttributeWorkloadName, model.AttributeWorkloadNamespace, model.AttributeWorkloadLabels, "filter_state['sandbox.labels']", "source.address", "destination.address", "destination.port"} {
@@ -552,13 +570,14 @@ func (b *resourceBuilder) extProcFilter(config effectiveConfig) (*hcmv3.HttpFilt
 		!slices.Contains(attributes, model.AttributeRouteUpstream) {
 		attributes = append(attributes, model.AttributeRouteUpstream)
 	}
-	return httpFilter("envoy.filters.http.ext_proc", b.pack(&extprocv3.ExternalProcessor{
+	return httpFilter(name, b.pack(&extprocv3.ExternalProcessor{
 		GrpcService: &corev3.GrpcService{
 			TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
-				EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{ClusterName: ExtProcCluster},
+				EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{ClusterName: cluster},
 			},
 		},
 		FailureModeAllow:   provider.GetFailureModeAllow(),
+		StatPrefix:         statPrefix,
 		AllowModeOverride:  true,
 		ProcessingMode:     &extprocv3.ProcessingMode{RequestHeaderMode: requestMode, ResponseHeaderMode: responseMode},
 		RequestAttributes:  attributes,

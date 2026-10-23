@@ -59,15 +59,15 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		b.buildTLSProxyOriginateCluster(config.gateway.GetUpstreamTls()),
 	}
 	if !b.legacyGateway {
-		cluster := b.buildExtProcCluster(&configv1.ExtProcProvider{Service: "127.0.0.1", Port: 9002})
-		cluster.Name = PorterCluster
-		cluster.AltStatName = delimitedStatsPrefix(PorterCluster)
-		cluster.LoadAssignment.ClusterName = PorterCluster
+		cluster := b.buildExtProcCluster(&configv1.ExtProcProvider{Service: "127.0.0.1", Port: 9002}, PorterCluster)
 		cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STATIC}
 		result = append(result, cluster)
 	}
 	if config.extProc != nil {
-		result = append(result, b.buildExtProcCluster(config.extProc))
+		result = append(result, b.buildExtProcCluster(config.extProc, ExtProcCluster))
+	}
+	for _, provider := range config.additionalExtProcs {
+		result = append(result, b.buildExtProcCluster(provider, additionalExtProcName(provider)))
 	}
 	if features.EnableUDPProxy {
 		result = append(result, b.buildUDPCluster())
@@ -254,7 +254,7 @@ func (b *resourceBuilder) buildDFPCluster(
 	return cluster
 }
 
-func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider) *clusterv3.Cluster {
+func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider, name string) *clusterv3.Cluster {
 	port := provider.GetPort()
 	if port == 0 {
 		port = 9002
@@ -281,8 +281,8 @@ func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider
 	}
 	protocolAny := b.pack(protocol)
 	cluster := &clusterv3.Cluster{
-		Name:                 ExtProcCluster,
-		AltStatName:          delimitedStatsPrefix(ExtProcCluster),
+		Name:                 name,
+		AltStatName:          delimitedStatsPrefix(name),
 		ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
 		ConnectTimeout:       durationpb.New(10 * time.Second),
 		LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
@@ -295,7 +295,7 @@ func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider
 			MaxEjectionPercent:                 wrapperspb.UInt32(34),
 		},
 		LoadAssignment: &endpointv3.ClusterLoadAssignment{
-			ClusterName: ExtProcCluster,
+			ClusterName: name,
 			Endpoints: []*endpointv3.LocalityLbEndpoints{
 				{
 					LbEndpoints: []*endpointv3.LbEndpoint{

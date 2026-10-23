@@ -16,6 +16,7 @@ package compiler
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
@@ -30,18 +31,23 @@ import (
 )
 
 type gatewayGlobalExtProc struct {
-	Provider *configv1.ExtProcProvider
+	Provider   *configv1.ExtProcProvider
+	Additional []*configv1.ExtProcProvider
 }
 
 func (g gatewayGlobalExtProc) ResourceName() string { return "gateway-global-ext-proc" }
 
 func (g gatewayGlobalExtProc) Equals(other gatewayGlobalExtProc) bool {
-	return proto.Equal(g.Provider, other.Provider)
+	return proto.Equal(g.Provider, other.Provider) &&
+		slices.EqualFunc(
+			g.Additional,
+			other.Additional,
+			func(a, b *configv1.ExtProcProvider) bool { return proto.Equal(a, b) },
+		)
 }
 
-// newGatewayGlobalExtProc projects the global sandbox ext-proc provider from
-// AgentioConfig. Per-Gateway overrides win over it in the final networking
-// transform.
+// newGatewayGlobalExtProc projects the primary provider and ordered additions.
+// Per-gateway overrides replace only the primary provider in the networking transform.
 func newGatewayGlobalExtProc(
 	configurations krt.Singleton[configuration],
 	options collectionOptions,
@@ -49,10 +55,16 @@ func newGatewayGlobalExtProc(
 	return krt.NewSingleton(func(ctx krt.HandlerContext) *gatewayGlobalExtProc {
 		current := krt.FetchOne(ctx, configurations.AsCollection())
 		var provider *configv1.ExtProcProvider
+		var additional []*configv1.ExtProcProvider
 		if current != nil && current.Config.GetSandboxExtProc() != nil {
 			provider = proto.Clone(current.Config.GetSandboxExtProc()).(*configv1.ExtProcProvider)
 		}
-		return &gatewayGlobalExtProc{Provider: provider}
+		if current != nil {
+			for _, p := range current.Config.GetAdditionalExtProcs() {
+				additional = append(additional, proto.Clone(p).(*configv1.ExtProcProvider))
+			}
+		}
+		return &gatewayGlobalExtProc{Provider: provider, Additional: additional}
 	}, options("gateway-global-ext-proc")...)
 }
 
@@ -125,12 +137,15 @@ func newGatewayResources(
 			providerOverride := krt.FetchOne(ctx, providerOverrides)
 			current := krt.FetchOne(ctx, extProcs)
 			var provider *configv1.ExtProcProvider
+			var additional []*configv1.ExtProcProvider
 			if current != nil {
 				provider = current.Provider
+				additional = current.Additional
 			}
 			resources, err := gatewayResourcesFor(
 				item,
 				provider,
+				additional,
 				inputs.DiscoveryAddress,
 				inputs.TrustDomain,
 				gatewayPatches,
@@ -168,6 +183,7 @@ func recordGatewayFailureIfCurrent(
 func gatewayResourcesFor(
 	item model.Gateway,
 	globalExtProc *configv1.ExtProcProvider,
+	additional []*configv1.ExtProcProvider,
 	discoveryAddress string,
 	trustDomain string,
 	gatewayPatches []model.GatewayPatch,
@@ -179,6 +195,7 @@ func gatewayResourcesFor(
 	inputs := networking.Inputs{
 		Gateway:                    item,
 		GlobalExtProc:              globalExtProc,
+		AdditionalExtProcs:         additional,
 		DiscoveryAddress:           discoveryAddress,
 		TrustDomain:                trustDomain,
 		GatewayPatches:             gatewayPatches,

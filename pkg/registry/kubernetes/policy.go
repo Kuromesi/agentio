@@ -52,6 +52,9 @@ func defaultAgentioConfiguration() *configv1.AgentioConfig {
 }
 
 func validateAgentioConfig(value *configv1.AgentioConfig) error {
+	if err := model.ValidateAdditionalExtProcs(value.GetAdditionalExtProcs()); err != nil {
+		return err
+	}
 	if err := model.ValidateExtProcTLS(value.GetSandboxExtProc().GetTls()); err != nil {
 		return err
 	}

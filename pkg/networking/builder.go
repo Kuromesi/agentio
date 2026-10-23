@@ -56,6 +56,7 @@ type Inputs struct {
 	LegacyGateway              bool
 	Gateway                    model.Gateway
 	GlobalExtProc              *configv1.ExtProcProvider
+	AdditionalExtProcs         []*configv1.ExtProcProvider
 	GatewayPatches             []model.GatewayPatch
 	TelemetryRootNamespace     string
 	TelemetryClusterID         string
@@ -66,9 +67,10 @@ type Inputs struct {
 }
 
 type effectiveConfig struct {
-	gateway   *configv1.EgressGateway
-	extProc   *configv1.ExtProcProvider
-	telemetry *telemetry.Output
+	gateway            *configv1.EgressGateway
+	extProc            *configv1.ExtProcProvider
+	additionalExtProcs []*configv1.ExtProcProvider
+	telemetry          *telemetry.Output
 }
 
 func Build(inputs Inputs) ([]model.Resource, error) {
@@ -94,6 +96,12 @@ func Build(inputs Inputs) ([]model.Resource, error) {
 	effective, err := resolveConfig(inputs.Gateway, inputs.GlobalExtProc)
 	if err != nil {
 		return nil, err
+	}
+	if err := model.ValidateAdditionalExtProcs(inputs.AdditionalExtProcs); err != nil {
+		return nil, err
+	}
+	if effective.extProc != nil {
+		effective.additionalExtProcs = inputs.AdditionalExtProcs
 	}
 	if inputs.TelemetryRootNamespace != "" || inputs.Telemetry != nil || inputs.TelemetryProviderOverrides != nil ||
 		inputs.Gateway.Config.GetAccessLogFormat() != nil {
@@ -252,4 +260,8 @@ func scopedResource(gateway model.Gateway, typeURL, name string, message proto.M
 		Value:   value,
 		Facts:   model.ResourceFacts{GatewayOwner: gateway.ResourceName()},
 	}, nil
+}
+
+func additionalExtProcName(provider *configv1.ExtProcProvider) string {
+	return "agentio.additional-ext-proc." + provider.GetName()
 }

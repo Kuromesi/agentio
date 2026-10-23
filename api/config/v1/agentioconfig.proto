@@ -43,6 +43,13 @@ message AgentioConfig {
   // SDS can authorize on-demand cert pulls per gateway.
   repeated EgressGateway egress_gateways = 4;
 
+  // Trusted processors appended in list order after the effective sandbox
+  // processor. Responses run in reverse order. An absent/disabled sandbox
+  // processor disables this list too, including per-gateway ext_proc: {}.
+  // Only inspected HTTP traffic is processed, not CONNECT setup or TLS passthrough.
+  // Names must be unique DNS labels. Empty lists remove all additional processors.
+  repeated ExtProcProvider additional_ext_procs = 5;
+
 }
 
 // EgressGateway describes one sandbox egress gateway's behavior. The same
@@ -202,6 +209,12 @@ message ExtProcProvider {
 
   // TLS for the gateway-to-processor connection. Omission uses plaintext.
   ExtProcTLSSettings tls = 8;
+
+  // Required, unique DNS label in additional_ext_procs; ignored for the primary
+  // sandbox_ext_proc and per-gateway ext_proc. Identifies filters and clusters
+  // independently of list position. The processor may request buffered bodies
+  // using mode_override; the initial mode sends only request headers by default.
+  string name = 9;
 }
 
 // ExtProcTLSSettings configures the gateway's transport to an external processor.
