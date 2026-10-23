@@ -201,6 +201,93 @@ func TestSelfSignModeCreatesOneSharedSecret(t *testing.T) {
 	}
 }
 
+func TestSelfSignModeRecoversExpiredRootAtStartup(t *testing.T) {
+	for _, conflict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("conflict=%v", conflict), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			secret := newMITMSecret(t, "agentio-system", "mitm", time.Hour, time.Now().Add(-2*time.Hour))
+			oldKey := append([]byte(nil), secret.Data[mitmCAKeyKey]...)
+			client := kube.NewFakeClient(secret)
+			var winner *corev1.Secret
+			if conflict {
+				ca, err := pki.ParseSelfSignedCAForRenewal(secret.Data[mitmCACertKey], oldKey, time.Now(), true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				renewed, err := pki.RenewSelfSignedCA(ca, 48*time.Hour, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				winner = secret.DeepCopy()
+				winner.ResourceVersion = "2"
+				winner.Data[mitmCACertKey] = renewed.BundlePEM()
+				winner.Data[mitmBundleKey] = renewed.BundlePEM()
+				fakeClient := client.Kube().(*kubefake.Clientset)
+				fakeClient.PrependReactor("update", "secrets", func(kubetesting.Action) (bool, runtime.Object, error) {
+					// Model another replica winning the resourceVersion compare-and-swap
+					// after our read. Its successful write still reaches the KRT watcher.
+					if err := fakeClient.Tracker().
+						Update(corev1.SchemeGroupVersion.WithResource("secrets"), winner, winner.Namespace); err != nil {
+						return true, nil, err
+					}
+					return true, nil, apierrors.NewConflict(
+						schema.GroupResource{Resource: "secrets"},
+						secret.Name,
+						errors.New("another replica renewed the CA"),
+					)
+				})
+			}
+			go client.Run(ctx.Done())
+			signer, err := NewMITMSigner(ctx, client, MITMSignerOptions{
+				Mode:                  MITMSignModeSelfSign,
+				Namespace:             secret.Namespace,
+				SecretName:            secret.Name,
+				RootLifetime:          24 * time.Hour,
+				RootRenewBefore:       time.Hour,
+				RotationCheckInterval: time.Hour,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitForMITM(
+				t,
+				func() bool { return signer.State().Get() != nil && signer.TrustBundles().Get() != nil },
+				"recovered SELF_SIGN state",
+			)
+			signed, err := signer.SignDNS(ctx, "api.example.com", 15*time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updated, err := client.Kube().CoreV1().Secrets(secret.Namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if conflict && !bytes.Equal(updated.Data[mitmCACertKey], winner.Data[mitmCACertKey]) {
+				t.Fatal("recovery overwrote the concurrent winner")
+			}
+			if !bytes.Equal(oldKey, updated.Data[mitmCAKeyKey]) {
+				t.Fatal("startup recovery replaced the CA private key")
+			}
+			if got := signer.TrustBundles().
+				Get(); got.PEM != string(updated.Data[mitmCACertKey]) ||
+				got.Revision != signed.SignerRevision {
+				t.Fatal("recovered signer and public trust did not converge")
+			}
+			leafBlock, _ := pem.Decode(signed.CertificateChain)
+			leaf, err := x509.ParseCertificate(leafBlock.Bytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roots := x509.NewCertPool()
+			roots.AppendCertsFromPEM(updated.Data[mitmCACertKey])
+			if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "api.example.com"}); err != nil {
+				t.Fatalf("recovered signer issued an invalid chain: %v", err)
+			}
+		})
+	}
+}
+
 func TestSelfSignDeletionFailsClosedBeforeRecreation(t *testing.T) {
 	now := time.Now()
 	secret := newMITMSecret(t, "agentio-system", "mitm", 24*time.Hour, now)

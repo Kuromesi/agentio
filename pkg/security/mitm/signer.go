@@ -375,7 +375,9 @@ func (s *MITMSigner) reconcileSelfSignedCA(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read MITM CA Secret %s/%s: %w", s.options.Namespace, s.options.SecretName, err)
 		}
-		return nil
+		// An existing Secret can contain a root that expired while this
+		// process was stopped. Recover it without waiting for the rotation tick.
+		return s.renewSelfSignedCA(ctx)
 	}
 	s.setUnavailable(s.currentSecretUID())
 	_, err = casecret.LoadOrCreate(ctx, s.client.Kube(), s.options.Namespace, s.options.SecretName,

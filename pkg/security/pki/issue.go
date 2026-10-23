@@ -98,7 +98,7 @@ func (ca SigningCA) sign(ctx context.Context, publicKey any, privateKeyPEM []byt
 		now = time.Now()
 	}
 	notAfter := now.Add(options.Lifetime)
-	if limit := ca.certificate.NotAfter.Add(-options.IssuerExpiryMargin); notAfter.After(limit) {
+	if limit := ca.chainNotAfter.Add(-options.IssuerExpiryMargin); notAfter.After(limit) {
 		notAfter = limit
 	}
 	if !notAfter.After(now.Add(options.MinimumLifetime)) {

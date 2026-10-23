@@ -46,6 +46,7 @@ type SigningCA struct {
 	privateKeyPEM  []byte
 	bundlePEM      []byte
 	revision       string
+	chainNotAfter  time.Time
 }
 
 func (ca SigningCA) Available() bool {
@@ -87,23 +88,33 @@ func (ca SigningCA) BundlePEM() []byte {
 
 // ParseSigningCA parses exactly one PEM-encoded signing certificate.
 func ParseSigningCA(certPEM, keyPEM []byte, now time.Time) (SigningCA, error) {
-	return parseSigningCA(certPEM, keyPEM, now, false)
+	return parseSigningCA(certPEM, keyPEM, now, false, false)
 }
 
 // ParseSigningCABundle parses a signing certificate followed by zero or more
 // CA certificates. The first certificate must match keyPEM; the complete
 // bundle is preserved for delivery with issued leaves.
 func ParseSigningCABundle(bundlePEM, keyPEM []byte, now time.Time) (SigningCA, error) {
-	return parseSigningCA(bundlePEM, keyPEM, now, true)
+	return parseSigningCA(bundlePEM, keyPEM, now, true, false)
 }
 
-func parseSigningCA(certPEM, keyPEM []byte, now time.Time, allowBundle bool) (SigningCA, error) {
-	certificates, err := parseCACertificates(certPEM, now)
+// ParseSelfSignedCAForRenewal permits an expired active root only for SELF_SIGN
+// maintenance. Key matching, self-signature, NotBefore and any trailing CAs are
+// still validated. Normal signer loading must use ParseSigningCA[Bundle].
+func ParseSelfSignedCAForRenewal(certPEM, keyPEM []byte, now time.Time, allowBundle bool) (SigningCA, error) {
+	return parseSigningCA(certPEM, keyPEM, now, allowBundle, true)
+}
+
+func parseSigningCA(certPEM, keyPEM []byte, now time.Time, allowBundle, renewal bool) (SigningCA, error) {
+	certificates, err := parseCACertificates(certPEM, now, renewal)
 	if err != nil {
 		return SigningCA{}, err
 	}
 	if !allowBundle && len(certificates) != 1 {
 		return SigningCA{}, fmt.Errorf("CA certificate has trailing data")
+	}
+	if renewal && !isSelfSigned(certificates[0]) {
+		return SigningCA{}, fmt.Errorf("active CA certificate is not self-signed")
 	}
 
 	keyBlock, err := DecodeSinglePEMBlock(keyPEM, "CA private key")
@@ -133,10 +144,44 @@ func parseSigningCA(certPEM, keyPEM []byte, now time.Time, allowBundle bool) (Si
 		privateKeyPEM:  append([]byte(nil), keyPEM...),
 		bundlePEM:      append([]byte(nil), certPEM...),
 		revision:       hex.EncodeToString(digest.Sum(nil)),
+		chainNotAfter:  signingChainExpiry(certificates),
 	}, nil
 }
 
-func parseCACertificates(value []byte, now time.Time) ([]*x509.Certificate, error) {
+// signingChainExpiry follows verified issuer links, regardless of bundle order.
+// Unrelated staged roots do not shorten the active chain's lifetime. If the
+// bundle offers alternative issuer certificates, cap at the earliest expiry so
+// the leaf remains bounded by every supplied path a client might select.
+func signingChainExpiry(certificates []*x509.Certificate) time.Time {
+	expires := certificates[0].NotAfter
+	chain := []*x509.Certificate{certificates[0]}
+	seen := map[*x509.Certificate]bool{certificates[0]: true}
+	for len(chain) > 0 {
+		certificate := chain[0]
+		chain = chain[1:]
+		if certificate.NotAfter.Before(expires) {
+			expires = certificate.NotAfter
+		}
+		if isSelfSigned(certificate) {
+			continue
+		}
+		for _, parent := range certificates {
+			if !seen[parent] && bytes.Equal(certificate.RawIssuer, parent.RawSubject) &&
+				certificate.CheckSignatureFrom(parent) == nil {
+				seen[parent] = true
+				chain = append(chain, parent)
+			}
+		}
+	}
+	return expires
+}
+
+func isSelfSigned(certificate *x509.Certificate) bool {
+	return bytes.Equal(certificate.RawIssuer, certificate.RawSubject) &&
+		certificate.CheckSignatureFrom(certificate) == nil
+}
+
+func parseCACertificates(value []byte, now time.Time, renewal bool) ([]*x509.Certificate, error) {
 	remaining := bytes.Trim(value, asciiWhitespace)
 	if len(remaining) == 0 {
 		return nil, fmt.Errorf("CA certificate is empty")
@@ -159,7 +204,12 @@ func parseCACertificates(value []byte, now time.Time) ([]*x509.Certificate, erro
 		if err != nil {
 			return nil, fmt.Errorf("parse CA certificate %d: %w", index, err)
 		}
-		if err := validateCACertificate(certificate, now, fmt.Sprintf("CA certificate %d", index)); err != nil {
+		if err := validateCACertificate(
+			certificate,
+			now,
+			fmt.Sprintf("CA certificate %d", index),
+			renewal && index == 1,
+		); err != nil {
 			return nil, err
 		}
 		certificates = append(certificates, certificate)
@@ -168,7 +218,7 @@ func parseCACertificates(value []byte, now time.Time) ([]*x509.Certificate, erro
 	return certificates, nil
 }
 
-func validateCACertificate(certificate *x509.Certificate, now time.Time, name string) error {
+func validateCACertificate(certificate *x509.Certificate, now time.Time, name string, allowExpired bool) error {
 	if !certificate.BasicConstraintsValid || !certificate.IsCA {
 		return fmt.Errorf("%s does not have valid CA basic constraints", name)
 	}
@@ -178,7 +228,7 @@ func validateCACertificate(certificate *x509.Certificate, now time.Time, name st
 	if now.Before(certificate.NotBefore) {
 		return fmt.Errorf("%s is not valid before %s", name, certificate.NotBefore.UTC().Format(time.RFC3339))
 	}
-	if now.After(certificate.NotAfter) {
+	if !allowExpired && now.After(certificate.NotAfter) {
 		return fmt.Errorf("%s expired at %s", name, certificate.NotAfter.UTC().Format(time.RFC3339))
 	}
 	return nil
@@ -274,6 +324,9 @@ func RenewSelfSignedCA(ca SigningCA, lifetime time.Duration, now time.Time) (Sig
 	if !ca.Available() {
 		return SigningCA{}, fmt.Errorf("signing CA is not available")
 	}
+	if !isSelfSigned(ca.certificate) {
+		return SigningCA{}, fmt.Errorf("active CA certificate is not self-signed")
+	}
 	if lifetime <= 0 {
 		return SigningCA{}, fmt.Errorf("CA lifetime must be positive")
 	}
@@ -339,7 +392,12 @@ func ValidateTrustBundle(bundle []byte, active SigningCA, now time.Time) error {
 		if err != nil {
 			return fmt.Errorf("parse trust bundle certificate %d: %w", index, err)
 		}
-		if err := validateCACertificate(certificate, now, fmt.Sprintf("trust bundle certificate %d", index)); err != nil {
+		if err := validateCACertificate(
+			certificate,
+			now,
+			fmt.Sprintf("trust bundle certificate %d", index),
+			false,
+		); err != nil {
 			return err
 		}
 		if !bytes.Equal(certificate.RawIssuer, certificate.RawSubject) || certificate.CheckSignatureFrom(certificate) != nil {
