@@ -92,12 +92,12 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 | <code>AGENTIO_LOG_LEVEL</code> | String | <code>info</code> | Minimum agentiod log level: debug, info, warn, error, or none. |
 | <code>AGENTIO_MAX_REQUESTS_PER_SECOND</code> | Floating-point | <code>0</code> | Maximum new xDS streams accepted per second across the process; does not throttle ACKs or server pushes. Zero automatically selects min(15 + 5 &#42; GOMAXPROCS, 100). |
 | <code>AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY</code> | String | <code>PEER&#95;AWARE</code> | Controls how mesh-internal (east-west) traffic is handled for sandbox tunnel proxies. Allowed values are PEER&#95;AWARE and PASSTHROUGH. |
-| <code>AGENTIO_MITM_CACHE_MAX_AGE</code> | Duration | <code>168h0m0s</code> | Maximum age of an on-demand certificate cache entry, regardless of remaining validity. |
+| <code>AGENTIO_MITM_CACHE_MAX_AGE</code> | Duration | <code>168h0m0s</code> | Maximum local issuer cache age; eviction does not remove certificates from gateways. |
 | <code>AGENTIO_MITM_CACHE_MAX_ENTRIES</code> | Integer | <code>10000</code> | Maximum number of on-demand certificates the cache may hold; the entry closest to eviction makes room when full. |
 | <code>AGENTIO_MITM_CA_SECRET_NAME</code> | String | <code>agentio-mitm-ca</code> | Secret holding the CA that signs on-demand domain certificates. SECRET mode reads it; SELF&#95;SIGN mode owns it. |
 | <code>AGENTIO_MITM_CA_SECRET_NAMESPACE</code> | String | empty | Namespace of the MITM CA Secret. Empty uses the control-plane root namespace. |
-| <code>AGENTIO_MITM_LEAF_LIFETIME</code> | Duration | <code>24h0m0s</code> | Validity of on-demand domain certificates. |
-| <code>AGENTIO_MITM_RENEW_BEFORE</code> | Duration | <code>1h0m0s</code> | How long before expiry an on-demand certificate is re-issued. |
+| <code>AGENTIO_MITM_LEAF_LIFETIME</code> | Duration | <code>15m0s</code> | Validity of on-demand domain certificates. |
+| <code>AGENTIO_MITM_RENEW_BEFORE</code> | Duration | <code>1m0s</code> | How long before expiry SDS TTL removes an on-demand certificate; new demand re-issues it. |
 | <code>AGENTIO_MITM_ROOT_LIFETIME</code> | Duration | <code>87600h0m0s</code> | Validity of the control-plane-managed root CA in MITM SELF&#95;SIGN mode. |
 | <code>AGENTIO_MITM_ROOT_RENEW_BEFORE</code> | Duration | <code>8760h0m0s</code> | How long before expiry the control-plane-managed MITM root CA is renewed in SELF&#95;SIGN mode. |
 | <code>AGENTIO_MITM_ROTATION_CHECK_INTERVAL</code> | Duration | <code>1h0m0s</code> | How often each replica checks whether the control-plane-managed MITM root CA needs CAS renewal. |
@@ -169,6 +169,10 @@ agentiod:
 ## On-demand TLS certificates
 
 On-demand domain certificates use the `AGENTIO_MITM_*` settings. The chart maps `agentiod.mitm.secretName`, `agentiod.mitm.secretNamespace`, and `agentiod.mitm.signMode` to the corresponding CA variables. Lifetime, renewal, cache, and concurrency settings can be supplied through `agentiod.env`.
+
+Domain certificates default to a 15-minute lifetime with a 1-minute renewal margin. SDS sets each resource's TTL to the time remaining until `NotAfter - RenewBefore`. Reusing a cached certificate after reconnect does not extend that deadline. Expiry removes the secret from the gateway; the next request for the domain obtains a certificate on demand. Certificates whose remaining lifetime does not cover the renewal margin are refused, including certificates shortened by an expiring external CA.
+
+`AGENTIO_MITM_CACHE_MAX_AGE` and `AGENTIO_MITM_CACHE_MAX_ENTRIES` control only the issuer's local cache. Cache eviction does not remove certificates already delivered to gateways. CA rotation or loss of gateway authorization still actively invalidates sent secrets. See [SDS lifecycle and reconnect behavior](../development/sds-lifecycle.md) for the stream design and upgrade behavior.
 
 `AGENTIO_MITM_SIGN_MODE` accepts:
 

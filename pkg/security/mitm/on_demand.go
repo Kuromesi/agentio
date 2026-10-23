@@ -17,7 +17,6 @@ package mitm
 import (
 	"container/heap"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -34,11 +33,6 @@ import (
 type GatewayCertificateAuthorizer interface {
 	Authorize(model.ClientScope) error
 }
-
-// ErrDomainCertificateEvicted reports that SDS must remove a watched secret
-// whose certificate is absent or no longer valid in the cache. An explicit
-// subscription may issue it again; passive refreshes never start signing.
-var ErrDomainCertificateEvicted = errors.New("on-demand domain certificate is evicted")
 
 const (
 	// Built-in bounds applied when OnDemandOptions leaves them non-positive.
@@ -71,7 +65,6 @@ type OnDemandIssuer struct {
 	mu               sync.RWMutex
 	cache            map[string]*certificateCacheEntry
 	heap             certHeap
-	evicted          sets.Set[string]
 	cacheUpdated     chan struct{}
 	rotationEpoch    uint64
 	changes          krt.StaticSingleton[CertificateGeneration]
@@ -87,7 +80,8 @@ func NewOnDemandIssuer(
 	authorizer GatewayCertificateAuthorizer,
 	options OnDemandOptions,
 ) (*OnDemandIssuer, error) {
-	if nilutil.IsNilInterface(ctx) || nilutil.IsNilInterface(source.Signer) || nilutil.IsNilInterface(source.State) || nilutil.IsNilInterface(authorizer) {
+	if nilutil.IsNilInterface(ctx) || nilutil.IsNilInterface(source.Signer) || nilutil.IsNilInterface(source.State) ||
+		nilutil.IsNilInterface(authorizer) {
 		return nil, fmt.Errorf("context, signer, signer state, and gateway certificate authorizer are required")
 	}
 	if options.LeafLifetime <= 0 {
@@ -116,7 +110,6 @@ func NewOnDemandIssuer(
 		options:      options,
 		cache:        make(map[string]*certificateCacheEntry),
 		heap:         make(certHeap, 0),
-		evicted:      sets.New[string](),
 		cacheUpdated: make(chan struct{}, 1),
 		flights:      make(map[string]*certificateFlight),
 		signSlots:    make(chan struct{}, options.SignConcurrency),
@@ -127,17 +120,14 @@ func NewOnDemandIssuer(
 	issuer.rotation = source.State.Register(func(krt.Event[SignerState]) {
 		issuer.mu.Lock()
 		issuer.rotationEpoch++
-		issuer.markRotatedCacheEvictedLocked()
-		evictedCount := len(issuer.evicted)
 		issuer.cache = make(map[string]*certificateCacheEntry)
 		clear(issuer.heap)
 		issuer.heap = issuer.heap[:0]
 		issuer.mu.Unlock()
 		metrics.Default.SetOnDemandCerts(0)
 		issuer.scheduleCacheEviction()
-		if evictedCount > 0 {
-			issuer.notifyChanges()
-		}
+		// Rotation invalidates certificates already sent even when the local cache is empty.
+		issuer.notifyChanges()
 	})
 	go func() {
 		defer close(issuer.done)
@@ -151,6 +141,7 @@ func (i *OnDemandIssuer) Done() <-chan struct{} {
 	return i.done
 }
 
+// Changes reports signer transitions only; local cache expiry and capacity eviction are silent.
 func (i *OnDemandIssuer) Changes() krt.Singleton[CertificateGeneration] {
 	return i.changes
 }
@@ -160,7 +151,8 @@ func (i *OnDemandIssuer) notifyChanges() {
 	i.changes.Set(&CertificateGeneration{Generation: generation})
 }
 
-func (i *OnDemandIssuer) signerRevision() string {
+// SignerRevision identifies the committed signer; empty means signing is unavailable.
+func (i *OnDemandIssuer) SignerRevision() string {
 	state := i.signerState.Get()
 	if state == nil {
 		return ""
@@ -168,43 +160,14 @@ func (i *OnDemandIssuer) signerRevision() string {
 	return state.Revision
 }
 
-// Evicted returns an immutable, unordered snapshot of certificate domains
-// removed by the deadline reaper and not successfully re-signed since.
-func (i *OnDemandIssuer) Evicted() []string {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
-	if len(i.evicted) == 0 {
-		return nil
-	}
-	result := make([]string, 0, len(i.evicted))
-	for domain := range i.evicted {
-		result = append(result, domain)
-	}
-	return result
+// Authorize checks current gateway eligibility without touching the certificate cache.
+func (i *OnDemandIssuer) Authorize(scope model.ClientScope) error {
+	return i.authorizer.Authorize(scope)
 }
 
+// Get signs only in response to explicit demand. Cache eviction is local housekeeping;
+// it does not revoke certificates already delivered to a gateway.
 func (i *OnDemandIssuer) Get(ctx context.Context, scope model.ClientScope, name string) (SignedCertificate, error) {
-	return i.get(ctx, scope, name, true)
-}
-
-// GetForSDS reads a valid cached certificate. Only an explicit subscription for
-// this name may set allowSigning to issue a missing or expired certificate.
-// Passive refreshes do not rely on bounded eviction history to prohibit signing.
-func (i *OnDemandIssuer) GetForSDS(
-	ctx context.Context,
-	scope model.ClientScope,
-	name string,
-	allowSigning bool,
-) (SignedCertificate, error) {
-	return i.get(ctx, scope, name, allowSigning)
-}
-
-func (i *OnDemandIssuer) get(
-	ctx context.Context,
-	scope model.ClientScope,
-	name string,
-	allowSigning bool,
-) (SignedCertificate, error) {
 	if nilutil.IsNilInterface(ctx) {
 		return SignedCertificate{}, fmt.Errorf("on-demand certificate request context is required")
 	}
@@ -218,13 +181,7 @@ func (i *OnDemandIssuer) get(
 	if err := i.authorizer.Authorize(scope); err != nil {
 		return SignedCertificate{}, fmt.Errorf("authorize on-demand certificate for %s: %w", scope.GatewayKey, err)
 	}
-	var certificate SignedCertificate
-	var err error
-	if allowSigning {
-		certificate, err = i.certificate(ctx, name)
-	} else {
-		certificate, err = i.cachedForSDS(ctx, name)
-	}
+	certificate, err := i.certificate(ctx, name)
 	if err != nil {
 		return SignedCertificate{}, err
 	}
@@ -237,30 +194,14 @@ func cloneSignedCertificate(certificate SignedCertificate) SignedCertificate {
 	return certificate
 }
 
-// cachedForSDS linearizes the lookup against eviction under the cache lock.
-// A miss also covers forgotten eviction records, preventing refresh/sign loops.
-func (i *OnDemandIssuer) cachedForSDS(ctx context.Context, domain string) (SignedCertificate, error) {
-	if err := i.requestCancellationError(ctx); err != nil {
-		return SignedCertificate{}, err
-	}
-	revision := i.signerRevision()
-	i.mu.RLock()
-	defer i.mu.RUnlock()
-	entry, found := i.cache[domain]
-	if i.evicted.Contains(domain) || !found || !i.cacheEntryValid(entry.certificate, revision) || i.signerRevision() != revision {
-		return SignedCertificate{}, domainCertificateEvictedError(domain)
-	}
-	return entry.certificate, nil
-}
-
 func (i *OnDemandIssuer) certificate(ctx context.Context, domain string) (SignedCertificate, error) {
 	if err := i.requestCancellationError(ctx); err != nil {
 		return SignedCertificate{}, err
 	}
-	signerRevision := i.signerRevision()
+	signerRevision := i.SignerRevision()
 	i.mu.RLock()
 	cached, found := i.cache[domain]
-	if found && i.cacheEntryValid(cached.certificate, signerRevision) && i.signerRevision() == signerRevision {
+	if found && i.cacheEntryValid(cached.certificate, signerRevision) && i.SignerRevision() == signerRevision {
 		i.mu.RUnlock()
 		if err := i.requestCancellationError(ctx); err != nil {
 			return SignedCertificate{}, err
@@ -276,7 +217,7 @@ func (i *OnDemandIssuer) certificate(ctx context.Context, domain string) (Signed
 		return SignedCertificate{}, err
 	}
 	if cached, found = i.cache[domain]; found && i.cacheEntryValid(cached.certificate, signerRevision) &&
-		i.signerRevision() == signerRevision {
+		i.SignerRevision() == signerRevision {
 		i.mu.Unlock()
 		if err := i.requestCancellationError(ctx); err != nil {
 			return SignedCertificate{}, err
@@ -326,7 +267,7 @@ func (i *OnDemandIssuer) cacheEntryValid(certificate SignedCertificate, signerRe
 	if signerRevision == "" || certificate.SignerRevision != signerRevision {
 		return false
 	}
-	deadline, _ := certificateEvictionDeadline(certificate, i.options.RenewBefore)
+	deadline := certificate.NotAfter.Add(-i.options.RenewBefore)
 	return time.Now().Before(deadline)
 }
 
@@ -341,7 +282,7 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 		if resultErr = i.flightCancellationError(domain, flight); resultErr != nil {
 			return
 		}
-		signerRevision := i.signerRevision()
+		signerRevision := i.SignerRevision()
 		if signerRevision == "" {
 			resultErr = fmt.Errorf("domain certificate signer is unavailable")
 			return
@@ -377,11 +318,6 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 		if resultErr = i.flightCancellationError(domain, flight); resultErr != nil {
 			return
 		}
-		if err != nil {
-			resultErr = err
-			return
-		}
-
 		i.mu.Lock()
 		// This is the final cancellation check immediately before the epoch-validated cache commit.
 		if resultErr = i.flightCancellationErrorLocked(domain, flight); resultErr != nil {
@@ -392,9 +328,15 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 			i.mu.Unlock()
 			continue
 		}
-		if currentRevision := i.signerRevision(); currentRevision != signerRevision {
+		if currentRevision := i.SignerRevision(); currentRevision != signerRevision {
 			i.mu.Unlock()
 			continue
+		}
+		// A failure from a superseded CA must not fail demand for the current CA.
+		if err != nil {
+			resultErr = err
+			i.mu.Unlock()
+			return
 		}
 		if generated.SignerRevision != signerRevision {
 			resultErr = fmt.Errorf("domain signer returned revision %q while state revision is %q",
@@ -402,36 +344,31 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 			i.mu.Unlock()
 			return
 		}
+		generated.UsableUntil = generated.NotAfter.Add(-i.options.RenewBefore)
+		if !time.Now().Before(generated.UsableUntil) {
+			resultErr = fmt.Errorf("domain certificate for %q has no lifetime outside the renewal window", domain)
+			i.mu.Unlock()
+			return
+		}
 		if old := i.cache[domain]; old != nil && old.index >= 0 {
 			heap.Remove(&i.heap, old.index)
 		}
-		var capacityEvicted bool
 		if _, exists := i.cache[domain]; !exists {
 			// Evict entries closest to their deadline to stay under CacheMaxEntries.
 			for len(i.cache) >= i.options.CacheMaxEntries && i.heap.Len() > 0 {
 				victim := heap.Pop(&i.heap).(*certificateCacheEntry)
 				delete(i.cache, victim.domain)
-				i.markEvictedLocked(victim.domain)
-				capacityEvicted = true
 			}
 		}
 		entry := newCertificateCacheEntry(domain, generated, time.Now(), i.options)
 		i.cache[domain] = entry
-		i.evicted.Delete(domain)
 		heap.Push(&i.heap, entry)
 		metrics.Default.SetOnDemandCerts(len(i.cache))
 		i.mu.Unlock()
-		if capacityEvicted {
-			i.notifyChanges()
-		}
 		i.scheduleCacheEviction()
 		certificate = generated
 		return
 	}
-}
-
-func domainCertificateEvictedError(domain string) error {
-	return fmt.Errorf("domain %q: %w", domain, ErrDomainCertificateEvicted)
 }
 
 func (i *OnDemandIssuer) flightCancellationError(domain string, flight *certificateFlight) error {
@@ -524,44 +461,18 @@ func stopAndDrainTimer(timer *time.Timer) {
 }
 
 func (i *OnDemandIssuer) reap(now time.Time) (time.Duration, bool) {
-	wait, scheduled, changed := i.evictDue(now)
-	if changed {
-		i.notifyChanges()
-	}
-	return wait, scheduled
-}
-
-func (i *OnDemandIssuer) evictDue(now time.Time) (time.Duration, bool, bool) {
 	i.mu.Lock()
-	changed := false
+	defer i.mu.Unlock()
+	defer func() { metrics.Default.SetOnDemandCerts(len(i.cache)) }()
 	for i.heap.Len() > 0 {
 		next := i.heap[0]
-		wait := next.deadline.Sub(now)
-		if wait <= 0 {
-			heap.Pop(&i.heap)
-			delete(i.cache, next.domain)
-			i.markEvictedLocked(next.domain)
-			changed = true
-			continue
+		if wait := next.deadline.Sub(now); wait > 0 {
+			return wait, true
 		}
-		if next.reason == certificateEvictionMaxAge && !next.maxAgeDeferred && wait < minCertificateEvictionInterval {
-			next.deadline = now.Add(minCertificateEvictionInterval)
-			if !next.certificateDeadline.After(next.deadline) {
-				next.deadline = next.certificateDeadline
-				next.reason = next.certificateReason
-			} else {
-				next.maxAgeDeferred = true
-			}
-			heap.Fix(&i.heap, next.index)
-			continue
-		}
-		metrics.Default.SetOnDemandCerts(len(i.cache))
-		i.mu.Unlock()
-		return wait, true, changed
+		heap.Pop(&i.heap)
+		delete(i.cache, next.domain)
 	}
-	metrics.Default.SetOnDemandCerts(len(i.cache))
-	i.mu.Unlock()
-	return 0, false, changed
+	return 0, false
 }
 
 func (i *OnDemandIssuer) scheduleCacheEviction() {
@@ -569,34 +480,6 @@ func (i *OnDemandIssuer) scheduleCacheEviction() {
 	case i.cacheUpdated <- struct{}{}:
 	default:
 	}
-}
-
-// markEvictedLocked records an eviction so SDS removes the secret; the set is kept bounded.
-func (i *OnDemandIssuer) markEvictedLocked(domain string) {
-	if len(i.evicted) >= i.options.CacheMaxEntries {
-		for stale := range i.evicted {
-			i.evicted.Delete(stale)
-			break
-		}
-	}
-	i.evicted.Insert(domain)
-}
-
-// markRotatedCacheEvictedLocked prioritizes every certificate invalidated by
-// the current rotation, then retains older removals only while capacity remains.
-func (i *OnDemandIssuer) markRotatedCacheEvictedLocked() {
-	rotated := sets.New[string]()
-	for domain, entry := range i.cache {
-		rotated.Insert(domain)
-		entry.index = -1
-	}
-	for domain := range i.evicted {
-		if len(rotated) >= i.options.CacheMaxEntries {
-			break
-		}
-		rotated.Insert(domain)
-	}
-	i.evicted = rotated
 }
 
 func (i *OnDemandIssuer) cachedCertificate(domain string) []byte {

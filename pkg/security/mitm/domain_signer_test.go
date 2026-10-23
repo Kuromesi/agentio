@@ -17,11 +17,15 @@ package mitm
 import (
 	"bytes"
 	"context"
-	"crypto/rsa"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -42,7 +46,7 @@ import (
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
-func TestCanceledSigningIsRejectedBeforeMITMKeyGeneration(t *testing.T) {
+func TestCanceledSigningIsRejectedBeforeMITMSigning(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -62,7 +66,7 @@ func TestMITMSignerPreservesCertificateContractAndCapsExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer := newInstalledMITMSigner(ca, secret.UID, 30*time.Minute)
+	signer := newInstalledMITMSigner(t, ca, secret.UID, 30*time.Minute)
 
 	signed, err := signer.SignDNS(context.Background(), "api.example.com", 3*time.Hour)
 	if err != nil {
@@ -108,18 +112,22 @@ func TestMITMSignerPreservesCertificateContractAndCapsExpiry(t *testing.T) {
 		t.Fatalf("verify signed certificate: %v", err)
 	}
 	keyBlock, trailing := pem.Decode(signed.PrivateKey)
-	if keyBlock == nil || keyBlock.Type != "RSA PRIVATE KEY" || len(trailing) != 0 {
-		t.Fatal("private key is not one RSA PRIVATE KEY PEM block")
+	if keyBlock == nil || keyBlock.Type != "PRIVATE KEY" || len(trailing) != 0 {
+		t.Fatal("private key is not one PKCS#8 PEM block")
 	}
-	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	parsed, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bits := key.N.BitLen(); bits != 2048 {
-		t.Fatalf("RSA key size = %d, want 2048", bits)
+	key, ok := parsed.(*ecdsa.PrivateKey)
+	if !ok || key.Curve != elliptic.P256() {
+		t.Fatalf("private key = %T, want ECDSA P-256", parsed)
 	}
-	if _, ok := leaf.PublicKey.(*rsa.PublicKey); !ok {
-		t.Fatalf("leaf public key type = %T, want RSA", leaf.PublicKey)
+	if !key.PublicKey.Equal(leaf.PublicKey) {
+		t.Fatal("leaf public key does not match private key")
+	}
+	if leaf.KeyUsage != x509.KeyUsageDigitalSignature {
+		t.Fatalf("KeyUsage = %v, want DigitalSignature", leaf.KeyUsage)
 	}
 }
 
@@ -201,7 +209,7 @@ func TestSelfSignDeletionFailsClosedBeforeRecreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := kube.NewFakeClient()
-	signer := newInstalledMITMSigner(ca, secret.UID, time.Hour)
+	signer := newInstalledMITMSigner(t, ca, secret.UID, time.Hour)
 	signer.client = client
 	signer.options.Mode = MITMSignModeSelfSign
 	signer.options.Namespace = secret.Namespace
@@ -221,10 +229,15 @@ func TestSelfSignDeletionFailsClosedBeforeRecreation(t *testing.T) {
 	}
 }
 
-func newInstalledMITMSigner(ca pki.SigningCA, uid types.UID, expiryMargin time.Duration) *MITMSigner {
+func newInstalledMITMSigner(t testing.TB, ca pki.SigningCA, uid types.UID, expiryMargin time.Duration) *MITMSigner {
+	t.Helper()
+	state, err := newCAState(ca, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &MITMSigner{
 		options:     MITMSignerOptions{LeafExpiryMargin: expiryMargin},
-		caSingleton: krt.NewStatic(&caState{ca: ca, secretUID: uid}, true),
+		caSingleton: krt.NewStatic(state, true),
 		signerState: krt.NewStatic(&SignerState{Revision: ca.Revision()}, true),
 		trustBundle: krt.NewStatic(&TrustBundle{PEM: string(ca.BundlePEM()), Revision: ca.Revision()}, true),
 	}
@@ -310,7 +323,7 @@ func TestMITMPublicTrustRejectsStaleGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer := newInstalledMITMSigner(next, "next-uid", time.Hour)
+	signer := newInstalledMITMSigner(t, next, "next-uid", time.Hour)
 	if signer.acceptAvailable(caState{ca: old, secretUID: "old-uid"}) {
 		t.Fatal("accepted stale CA event")
 	}
@@ -378,6 +391,142 @@ func TestMITMSecretInformerWaitsForReadPermission(t *testing.T) {
 			}
 			if action.GetNamespace() != secret.Namespace || selector != "metadata.name="+secret.Name {
 				t.Fatalf("MITM informer escaped its fixed Secret: %v", action)
+			}
+		}
+	})
+}
+func TestMITMSignerSharesLeafKeyAndRotatesWithCA(t *testing.T) {
+	ctx := t.Context()
+	secret := newMITMSecret(t, "agentio-system", "mitm", 24*time.Hour, time.Now())
+	client := kube.NewFakeClient(secret)
+	go client.Run(ctx.Done())
+	signer, err := NewMITMSigner(ctx, client, MITMSignerOptions{
+		Mode:       MITMSignModeSecret,
+		Namespace:  secret.Namespace,
+		SecretName: secret.Name,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMITM(t, func() bool { return signer.State().Get() != nil }, "initial CA")
+	first, err := signer.SignDNS(ctx, "first.example.com", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for n := range 24 {
+		wg.Go(func() {
+			domain := fmt.Sprintf("domain-%d.example.com", n)
+			cert, err := signer.SignDNS(ctx, domain, time.Hour)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if !bytes.Equal(cert.PrivateKey, first.PrivateKey) {
+				t.Error("domains did not share leaf key")
+			}
+			pair, err := tls.X509KeyPair(cert.CertificateChain, cert.PrivateKey)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := pair.Leaf.VerifyHostname(domain); err != nil {
+				t.Error(err)
+			}
+			if bytes.Equal(cert.CertificateChain, first.CertificateChain) {
+				t.Error("domains shared a certificate")
+			}
+		})
+	}
+	wg.Wait()
+	// A separate signer is equivalent to a separate process: CA shared, leaf key local.
+	replica, err := NewMITMSigner(ctx, client, MITMSignerOptions{
+		Mode:       MITMSignModeSecret,
+		Namespace:  secret.Namespace,
+		SecretName: secret.Name,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMITM(t, func() bool { return replica.State().Get() != nil }, "replica CA")
+	other, err := replica.SignDNS(ctx, "first.example.com", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first.PrivateKey, other.PrivateKey) {
+		t.Fatal("replicas shared leaf key")
+	}
+	rotated := newMITMSecret(t, secret.Namespace, secret.Name, 24*time.Hour, time.Now())
+	secret.Data = rotated.Data
+	if _, err := client.Kube().
+		CoreV1().
+		Secrets(secret.Namespace).
+		Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitForMITM(
+		t,
+		func() bool {
+			s := signer.State().Get()
+			return s != nil && s.Revision != first.SignerRevision
+		},
+		"rotated CA",
+	)
+	next, err := signer.SignDNS(ctx, "first.example.com", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first.PrivateKey, next.PrivateKey) {
+		t.Fatal("CA rotation reused old leaf key")
+	}
+	pair, err := tls.X509KeyPair(next.CertificateChain, next.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(rotated.Data[mitmCACertKey])
+	if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "first.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func BenchmarkMITMLeafSigning(b *testing.B) {
+	ca, err := pki.NewSelfSignedCA("benchmark", 24*time.Hour, time.Now())
+	if err != nil {
+		b.Fatal(err)
+	}
+	options := pki.LeafOptions{
+		CommonName: "bench.example.com",
+		DNSNames:   []string{"bench.example.com"},
+		Lifetime:   15 * time.Minute,
+		Server:     true,
+	}
+	b.Run("RSA2048PerCertificate", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := ca.GenerateRSA(b.Context(), options); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("ECDSAP256PerCertificate", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			state, err := newCAState(ca, "bench")
+			if err != nil {
+				b.Fatal(err)
+			}
+			if _, err := ca.Sign(b.Context(), state.leafPublicKey, options); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("ECDSAP256Shared", func(b *testing.B) {
+		signer := newInstalledMITMSigner(b, ca, "bench", time.Hour)
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := signer.SignDNS(b.Context(), "bench.example.com", 15*time.Minute); err != nil {
+				b.Fatal(err)
 			}
 		}
 	})

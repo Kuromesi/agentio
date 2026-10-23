@@ -54,18 +54,18 @@ var (
 	).Get()
 	MITMLeafLifetime = env.Register(
 		"AGENTIO_MITM_LEAF_LIFETIME",
-		24*time.Hour,
+		15*time.Minute,
 		"Validity of on-demand domain certificates.",
 	).Get()
 	MITMRenewBefore = env.Register(
 		"AGENTIO_MITM_RENEW_BEFORE",
-		time.Hour,
-		"How long before expiry an on-demand certificate is re-issued.",
+		time.Minute,
+		"How long before expiry SDS TTL removes an on-demand certificate; new demand re-issues it.",
 	).Get()
 	MITMCacheMaxAge = env.Register(
 		"AGENTIO_MITM_CACHE_MAX_AGE",
 		7*24*time.Hour,
-		"Maximum age of an on-demand certificate cache entry, regardless of remaining validity.",
+		"Maximum local issuer cache age; eviction does not remove certificates from gateways.",
 	).Get()
 	MITMCacheMaxEntries = env.Register(
 		"AGENTIO_MITM_CACHE_MAX_ENTRIES",

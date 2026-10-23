@@ -16,6 +16,11 @@ package mitm
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -69,6 +74,26 @@ type MITMSignerOptions struct {
 type caState struct {
 	ca        pki.SigningCA
 	secretUID types.UID
+	// Leaf material belongs to this immutable CA generation and is local to this process.
+	leafPublicKey     *ecdsa.PublicKey
+	leafPrivateKeyPEM []byte
+}
+
+func newCAState(ca pki.SigningCA, uid types.UID) (*caState, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate MITM leaf key: %w", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("encode MITM leaf key: %w", err)
+	}
+	return &caState{
+		ca:                ca,
+		secretUID:         uid,
+		leafPublicKey:     &key.PublicKey,
+		leafPrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
+	}, nil
 }
 
 func (caState) ResourceName() string {
@@ -226,19 +251,13 @@ func newCASecretSingleton(
 			log.Error("parse MITM CA Secret", "namespace", options.Namespace, "secret", options.SecretName, "error", err)
 			return nil
 		}
-		return &caState{ca: ca, secretUID: secret.UID}
+		state, err := newCAState(ca, secret.UID)
+		if err != nil {
+			log.Error("initialize MITM signing generation", "error", err)
+			return nil
+		}
+		return state
 	}, options.KrtOptions.WithName("MITM_CA")...)
-}
-
-func (s *MITMSigner) currentCA() pki.SigningCA {
-	if s.unavailable.Load() {
-		return pki.SigningCA{}
-	}
-	state := s.caSingleton.Get()
-	if state == nil {
-		return pki.SigningCA{}
-	}
-	return state.ca
 }
 
 func (s *MITMSigner) State() krt.Singleton[SignerState] {
@@ -257,12 +276,13 @@ func (s *MITMSigner) SignDNS(ctx context.Context, domain string, lifetime time.D
 	if err := ctx.Err(); err != nil {
 		return SignedCertificate{}, fmt.Errorf("sign MITM certificate for %s: %w", domain, err)
 	}
-	ca := s.currentCA()
+	generation := s.caSingleton.Get()
 	state := s.signerState.Get()
-	if !ca.Available() || state == nil || state.Revision != ca.Revision() {
+	if s.unavailable.Load() || generation == nil || state == nil || state.Revision != generation.ca.Revision() {
 		return SignedCertificate{}, fmt.Errorf("MITM CA is not loaded")
 	}
-	issued, err := ca.GenerateRSA(ctx, pki.LeafOptions{
+	ca := generation.ca
+	issued, err := ca.Sign(ctx, generation.leafPublicKey, pki.LeafOptions{
 		CommonName:         domain,
 		DNSNames:           []string{domain},
 		Lifetime:           lifetime,
@@ -275,7 +295,7 @@ func (s *MITMSigner) SignDNS(ctx context.Context, domain string, lifetime time.D
 	}
 	return SignedCertificate{
 		CertificateChain: pki.AppendCertificateChain(issued.CertificatePEM, ca.BundlePEM()),
-		PrivateKey:       append([]byte(nil), issued.PrivateKeyPEM...),
+		PrivateKey:       append([]byte(nil), generation.leafPrivateKeyPEM...),
 		NotAfter:         issued.NotAfter,
 		SignedAt:         issued.IssuedAt,
 		SignerRevision:   ca.Revision(),

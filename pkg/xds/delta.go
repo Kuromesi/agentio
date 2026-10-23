@@ -116,6 +116,26 @@ func (s *Server) handleRequest(
 	if !changed && request.GetResponseNonce() != "" && !explicitSecretSubscribe && !explicitDemandSubscribe {
 		return nil
 	}
+	if generator, ok := s.generator(typeURL).(*SDSGenerator); ok {
+		if watch.sds == nil {
+			watch.sds = newSDSSession(stream.Context(), generator, scope)
+		}
+		watch.sds.subscribe(request.GetResourceNamesSubscribe())
+		watch.sds.unsubscribe(request.GetResourceNamesUnsubscribe())
+		watch.sds.start(s.resources.Snapshot())
+		if initial {
+			view := newSubscriptionView(watch)
+			// Validate every retained version before asynchronous replacements finish.
+			return s.generateAndSend(stream, connLog, watch, GenerationRequest{
+				Scope:        scope,
+				TypeURL:      typeURL,
+				Subscription: view,
+				Snapshot:     s.resources.Snapshot(),
+				Full:         true,
+			}, len(watch.sds.jobs) == 0)
+		}
+		return nil
+	}
 	if !initial && !watch.wildcard &&
 		(scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress) {
 		snapshot := s.resources.Snapshot()
@@ -389,6 +409,9 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 			Aliases:  resource.Aliases,
 			Version:  resource.Hash,
 			Resource: resource.Value,
+		}
+		if version, ok := delta.versions[resource.XDSName]; ok {
+			item.Version = version
 		}
 		if deadline, ok := delta.expiresAt[resource.XDSName]; ok {
 			ttl := time.Until(deadline)

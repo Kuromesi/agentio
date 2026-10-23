@@ -124,8 +124,11 @@ func (ca SigningCA) sign(ctx context.Context, publicKey any, privateKeyPEM []byt
 		IPAddresses:     append([]net.IP(nil), options.IPAddresses...),
 		URIs:            append([]*url.URL(nil), options.URIs...),
 		ExtraExtensions: append([]pkix.Extension(nil), options.ExtraExtensions...),
-		KeyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:        x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:     extKeyUsage,
+	}
+	if _, ok := publicKey.(*rsa.PublicKey); ok {
+		template.KeyUsage |= x509.KeyUsageKeyEncipherment
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.certificate, publicKey, ca.privateKey)
 	if err != nil {

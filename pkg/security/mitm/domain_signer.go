@@ -24,9 +24,11 @@ import (
 type SignedCertificate struct {
 	CertificateChain []byte
 	PrivateKey       []byte
-	NotAfter         time.Time
-	SignedAt         time.Time
-	SignerRevision   string
+	// UsableUntil is set by the issuer to NotAfter - RenewBefore and never slides on cache hits.
+	UsableUntil    time.Time
+	NotAfter       time.Time
+	SignedAt       time.Time
+	SignerRevision string
 }
 
 type DomainCertificateSigner interface {
@@ -74,8 +76,8 @@ func (TrustBundle) ResourceName() string { return "mitm-trust-bundle" }
 // Equals compares public material and its signing revision.
 func (b TrustBundle) Equals(other TrustBundle) bool { return b == other }
 
-// CertificateGeneration changes whenever cached SDS certificate visibility
-// changes and consumers need to regenerate Secret resources.
+// CertificateGeneration changes on signer transitions, including signer unavailability.
+// Local cache eviction does not change this generation.
 type CertificateGeneration struct {
 	Generation uint64
 }

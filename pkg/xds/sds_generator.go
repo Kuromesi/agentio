@@ -16,8 +16,10 @@ package xds
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -30,26 +32,31 @@ import (
 	"github.com/openkruise/agentio/pkg/util/nilutil"
 )
 
-// DomainCertificateProvider returns authorized certificate-domain values. SDS
-// owns their Envoy wire representation.
+// DomainCertificateProvider separates explicit issuance from passive validation.
+// Get must return a certificate with its fixed UsableUntil deadline and signing
+// revision. Passive refreshes must never consult the local certificate cache or sign.
 type DomainCertificateProvider interface {
-	// allowSigning is true only for explicitly subscribed names. With false,
-	// return a valid cached certificate or an error without starting signing.
-	GetForSDS(ctx context.Context, scope model.ClientScope, name string, allowSigning bool) (mitm.SignedCertificate, error)
-	Evicted() []string
+	Get(context.Context, model.ClientScope, string) (mitm.SignedCertificate, error)
+	Authorize(model.ClientScope) error
+	SignerRevision() string
 }
 
 var _ DomainCertificateProvider = (*mitm.OnDemandIssuer)(nil)
 
-type SDSGenerator struct {
-	provider DomainCertificateProvider
-}
+// SDSGenerator issues explicit domain demands and invalidates revoked signing generations.
+type SDSGenerator struct{ provider DomainCertificateProvider }
 
 func NewSDSGenerator(provider DomainCertificateProvider) (*SDSGenerator, error) {
 	if nilutil.IsNilInterface(provider) {
 		return nil, fmt.Errorf("domain certificate provider is required")
 	}
 	return &SDSGenerator{provider: provider}, nil
+}
+
+// sdsVersionPrefix makes CA invalidation independent of cache contents, including
+// across reconnects to another replica. xDS resource versions are opaque to Envoy.
+func sdsVersionPrefix(revision string) string {
+	return "sds/" + base64.RawURLEncoding.EncodeToString([]byte(revision)) + "/"
 }
 
 func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
@@ -59,8 +66,6 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 	if err := ctx.Err(); err != nil {
 		return GeneratedDelta{}, err
 	}
-	// On-demand certificates are only issued for full generations; incremental pushes
-	// use the snapshot generator.
 	if !request.Full {
 		return (SnapshotGenerator{}).Generate(ctx, request)
 	}
@@ -71,73 +76,78 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 			selected[resource.XDSName] = resource
 		}
 	}
-	result := GeneratedDelta{
-		allowed:   make([]string, 0, len(request.Subscription.names)),
-		expiresAt: make(map[string]time.Time),
-	}
-	evicted := sets.New[string]()
-	for _, name := range g.provider.Evicted() {
-		evicted.Insert(mitm.CanonicalDomain(name))
-	}
-	subscribed := sets.NewWithLength[string](len(request.SubscribedNames))
-	for _, name := range request.SubscribedNames {
-		subscribed.Insert(mitm.CanonicalDomain(name))
-	}
+	result := GeneratedDelta{expiresAt: make(map[string]time.Time), versions: make(map[string]string)}
 	removed := sets.New[string]()
-	if !request.Subscription.Wildcard() {
-		for _, requestedName := range request.Subscription.Names() {
-			canonicalName := mitm.CanonicalDomain(requestedName)
-			explicitlySubscribed := subscribed.Contains(canonicalName)
-			if evicted.Contains(canonicalName) {
-				removed.Insert(requestedName)
+	explicit := sets.New(request.SubscribedNames...)
+	revision := g.provider.SignerRevision()
+	authErr := g.provider.Authorize(request.Scope)
+	for name, version := range request.Subscription.sent {
+		if _, static := selected[name]; static || explicit.Contains(name) {
+			continue
+		}
+		// Only successful sent versions are candidates for passive invalidation.
+		// An absent local cache entry says nothing about Envoy's copy. Legacy
+		// versions without a signing generation are invalidated once on upgrade.
+		if authErr != nil || revision == "" || !strings.HasPrefix(version, sdsVersionPrefix(revision)) {
+			removed.Insert(name)
+			if authErr != nil {
+				result.denied = append(result.denied, generatedDenial{name: name, err: authErr})
 			}
-			certificate, err := g.provider.GetForSDS(ctx, request.Scope, requestedName, explicitlySubscribed)
-			if err != nil {
-				delete(selected, requestedName)
-				removed.Insert(requestedName)
-				result.denied = append(result.denied, generatedDenial{name: requestedName, err: err})
-				continue
-			}
-			removed.Delete(requestedName)
-			result.allowed = append(result.allowed, requestedName)
-			secret := &tlsv3.Secret{
-				Name: requestedName,
-				Type: &tlsv3.Secret_TlsCertificate{TlsCertificate: &tlsv3.TlsCertificate{
-					CertificateChain: inlineDataSource(certificate.CertificateChain),
-					PrivateKey:       inlineDataSource(certificate.PrivateKey),
-				}},
-			}
-			value, err := anypb.New(secret)
-			if err != nil {
-				return GeneratedDelta{}, fmt.Errorf("encode SDS secret %q: %w", requestedName, err)
-			}
-			resource, err := model.NewResource(
-				model.ResourceKey{TypeURL: model.SecretType, Name: request.Scope.GatewayKey + "|" + requestedName},
-				requestedName,
-				value,
-				nil,
-				model.ResourceFacts{GatewayOwner: request.Scope.GatewayKey},
-			)
-			if err != nil {
-				return GeneratedDelta{}, fmt.Errorf("build SDS secret %q: %w", requestedName, err)
-			}
-			selected[requestedName] = resource
-			result.expiresAt[requestedName] = certificate.NotAfter
 		}
 	}
-	delta := diffSubscribed(request.Subscription, selected, request.SubscribedNames)
-	for _, name := range delta.Removed {
-		removed.Insert(name)
+	for name := range explicit {
+		if name == "*" {
+			continue
+		}
+		if _, static := selected[name]; static {
+			continue
+		}
+		certificate, err := g.provider.Get(ctx, request.Scope, name)
+		if err != nil {
+			if ctx.Err() != nil {
+				return GeneratedDelta{}, ctx.Err()
+			}
+			removed.Insert(name)
+			result.denied = append(result.denied, generatedDenial{name: name, err: err})
+			continue
+		}
+		secret := &tlsv3.Secret{
+			Name: name,
+			Type: &tlsv3.Secret_TlsCertificate{TlsCertificate: &tlsv3.TlsCertificate{
+				CertificateChain: inlineDataSource(certificate.CertificateChain),
+				PrivateKey:       inlineDataSource(certificate.PrivateKey),
+			}},
+		}
+		value, err := anypb.New(secret)
+		if err != nil {
+			return GeneratedDelta{}, fmt.Errorf("encode SDS secret %q: %w", name, err)
+		}
+		resource, err := model.NewResource(
+			model.ResourceKey{TypeURL: model.SecretType, Name: request.Scope.GatewayKey + "|" + name},
+			name, value, nil, model.ResourceFacts{GatewayOwner: request.Scope.GatewayKey})
+		if err != nil {
+			return GeneratedDelta{}, fmt.Errorf("build SDS secret %q: %w", name, err)
+		}
+		selected[name] = resource
+		result.allowed = append(result.allowed, name)
+		result.expiresAt[name] = certificate.UsableUntil
+		result.versions[name] = sdsVersionPrefix(certificate.SignerRevision) + resource.Hash
 	}
-	delta.Removed = delta.Removed[:0]
-	for name := range removed {
-		delta.Removed = append(delta.Removed, name)
+	for name, resource := range selected {
+		version := resource.Hash
+		if dynamic, ok := result.versions[name]; ok {
+			version = dynamic
+		}
+		if explicit.Contains(name) || request.Subscription.sent[name] != version {
+			result.Resources = append(result.Resources, resource)
+		}
 	}
-	sort.Strings(delta.Removed)
-	delta.denied = result.denied
-	delta.allowed = result.allowed
-	delta.expiresAt = result.expiresAt
-	return delta, nil
+	result.Removed = sortedNames(removed)
+	sort.Slice(
+		result.Resources,
+		func(i, j int) bool { return result.Resources[i].XDSName < result.Resources[j].XDSName },
+	)
+	return result, nil
 }
 
 func inlineDataSource(value []byte) *corev3.DataSource {
