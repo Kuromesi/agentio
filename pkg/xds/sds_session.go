@@ -19,7 +19,6 @@ import (
 	"context"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	agentlog "github.com/openkruise/agentio/pkg/log"
@@ -38,10 +37,11 @@ type sdsJob struct {
 }
 
 type sdsCompletion struct {
-	job     *sdsJob
-	delta   GeneratedDelta
-	err     error
-	started time.Time
+	job        *sdsJob
+	delta      GeneratedDelta
+	err        error
+	started    time.Time
+	generation uint64
 }
 
 // Only the ADS loop owns jobs, pending, active and the watch. Workers return
@@ -115,6 +115,7 @@ func (q *sdsSession) start(snapshot model.ResourceSet) {
 		go func() {
 			defer cancel()
 			started := time.Now()
+			generation := q.generator.provider.SignerGeneration()
 			delta, err := q.generator.Generate(ctx, GenerationRequest{
 				Scope:           q.scope,
 				TypeURL:         model.SecretType,
@@ -124,7 +125,7 @@ func (q *sdsSession) start(snapshot model.ResourceSet) {
 				SubscribedNames: []string{job.name},
 			})
 			select {
-			case q.ready <- sdsCompletion{job: job, delta: delta, err: err, started: started}:
+			case q.ready <- sdsCompletion{job: job, delta: delta, err: err, started: started, generation: generation}:
 			case <-q.ctx.Done():
 			}
 		}()
@@ -167,9 +168,15 @@ drained:
 			delta.denied = append(delta.denied, generatedDenial{name: job.name, err: err})
 			continue
 		}
+		// Failed issuance is just as generation-sensitive as a successful leaf.
+		if completion.generation != q.generator.provider.SignerGeneration() &&
+			q.generator.provider.SignerRevision() != "" {
+			q.subscribe([]string{job.name})
+			continue
+		}
 		if version, dynamic := completion.delta.versions[job.name]; dynamic {
 			revision := q.generator.provider.SignerRevision()
-			if revision == "" || !strings.HasPrefix(version, sdsVersionPrefix(revision)) ||
+			if !sdsVersionCurrent(version, revision, time.Now()) ||
 				!time.Now().Before(completion.delta.expiresAt[job.name]) {
 				// State changed after issuance completed. Re-enter the issuer, which
 				// returns the current generation or an explicit unavailable error.

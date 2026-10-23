@@ -57,6 +57,11 @@ var (
 		15*time.Minute,
 		"Validity of on-demand domain certificates.",
 	).Get()
+	MITMResourceTTL = env.Register(
+		"AGENTIO_MITM_RESOURCE_TTL",
+		15*time.Minute,
+		"Maximum SDS residency from certificate signing time; replay never extends this deadline.",
+	).Get()
 	MITMRenewBefore = env.Register(
 		"AGENTIO_MITM_RENEW_BEFORE",
 		time.Minute,
@@ -83,7 +88,8 @@ func validateMITM() error {
 	switch MITMSignMode {
 	case "SECRET":
 	case "SELF_SIGN":
-		if MITMRootLifetime <= 0 || MITMRootRenewBefore <= 0 || MITMRootRenewBefore >= MITMRootLifetime || MITMRotationCheckInterval <= 0 {
+		if MITMRootLifetime <= 0 || MITMRootRenewBefore <= 0 || MITMRootRenewBefore >= MITMRootLifetime ||
+			MITMRotationCheckInterval <= 0 {
 			return fmt.Errorf("invalid self-signed MITM CA rotation durations")
 		}
 		if MITMRootRenewBefore <= MITMLeafLifetime {
@@ -92,7 +98,8 @@ func validateMITM() error {
 	default:
 		return fmt.Errorf("unsupported MITM sign mode %q", MITMSignMode)
 	}
-	if MITMLeafLifetime <= 0 || MITMRenewBefore <= 0 || MITMRenewBefore >= MITMLeafLifetime || MITMCacheMaxAge <= 0 {
+	if MITMResourceTTL <= 0 || MITMLeafLifetime <= 0 || MITMRenewBefore <= 0 || MITMRenewBefore >= MITMLeafLifetime ||
+		MITMCacheMaxAge <= 0 {
 		return fmt.Errorf("invalid MITM certificate durations")
 	}
 	if MITMCacheMaxEntries <= 0 || MITMSignConcurrency <= 0 {

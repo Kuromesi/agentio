@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,8 @@ type DomainCertificateProvider interface {
 	Get(context.Context, model.ClientScope, string) (mitm.SignedCertificate, error)
 	Authorize(model.ClientScope) error
 	SignerRevision() string
+	// SignerGeneration changes on local signer transitions, including unavailability.
+	SignerGeneration() uint64
 }
 
 var _ DomainCertificateProvider = (*mitm.OnDemandIssuer)(nil)
@@ -57,6 +60,30 @@ func NewSDSGenerator(provider DomainCertificateProvider) (*SDSGenerator, error) 
 // across reconnects to another replica. xDS resource versions are opaque to Envoy.
 func sdsVersionPrefix(revision string) string {
 	return "sds/" + base64.RawURLEncoding.EncodeToString([]byte(revision)) + "/"
+}
+
+func sdsResourceVersion(revision string, deadline time.Time, content string) string {
+	return sdsVersionPrefix(revision) + strconv.FormatInt(deadline.UnixNano(), 10) + "/" + content
+}
+
+func staticSDSNames(snapshot model.ResourceSet, scope model.ClientScope) sets.Set[string] {
+	names := sets.New[string]()
+	for _, resource := range snapshot.List(model.SecretType) {
+		if scopeAllows(scope, resource) {
+			names.Insert(resource.XDSName)
+		}
+	}
+	return names
+}
+
+func sdsVersionCurrent(version, revision string, now time.Time) bool {
+	parts := strings.Split(version, "/")
+	if revision == "" || len(parts) != 4 || parts[0] != "sds" ||
+		parts[1] != base64.RawURLEncoding.EncodeToString([]byte(revision)) || parts[3] == "" {
+		return false
+	}
+	deadline, err := strconv.ParseInt(parts[2], 10, 64)
+	return err == nil && now.Before(time.Unix(0, deadline))
 }
 
 func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
@@ -88,7 +115,7 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 		// Only successful sent versions are candidates for passive invalidation.
 		// An absent local cache entry says nothing about Envoy's copy. Legacy
 		// versions without a signing generation are invalidated once on upgrade.
-		if authErr != nil || revision == "" || !strings.HasPrefix(version, sdsVersionPrefix(revision)) {
+		if authErr != nil || !sdsVersionCurrent(version, revision, time.Now()) {
 			removed.Insert(name)
 			if authErr != nil {
 				result.denied = append(result.denied, generatedDenial{name: name, err: authErr})
@@ -131,7 +158,7 @@ func (g *SDSGenerator) Generate(ctx context.Context, request GenerationRequest) 
 		selected[name] = resource
 		result.allowed = append(result.allowed, name)
 		result.expiresAt[name] = certificate.UsableUntil
-		result.versions[name] = sdsVersionPrefix(certificate.SignerRevision) + resource.Hash
+		result.versions[name] = sdsResourceVersion(certificate.SignerRevision, certificate.UsableUntil, resource.Hash)
 	}
 	for name, resource := range selected {
 		version := resource.Hash

@@ -26,6 +26,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"google.golang.org/protobuf/types/known/anypb"
 	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/krt"
@@ -37,6 +39,7 @@ type pendingCertificate struct {
 	name   string
 	ctx    context.Context
 	result chan mitm.SignedCertificate
+	err    chan error
 }
 
 type controlledCertificates struct {
@@ -45,6 +48,7 @@ type controlledCertificates struct {
 	ignoreCancellation bool
 	mu                 sync.Mutex
 	revision           string
+	generation         uint64
 	authErr            error
 }
 
@@ -54,7 +58,12 @@ func (p *controlledCertificates) Get(
 	name string,
 ) (mitm.SignedCertificate, error) {
 	p.calls.Add(1)
-	request := pendingCertificate{name: name, ctx: ctx, result: make(chan mitm.SignedCertificate, 1)}
+	request := pendingCertificate{
+		name:   name,
+		ctx:    ctx,
+		result: make(chan mitm.SignedCertificate, 1),
+		err:    make(chan error, 1),
+	}
 	p.requests <- request
 	if p.ignoreCancellation {
 		return <-request.result, nil
@@ -62,6 +71,8 @@ func (p *controlledCertificates) Get(
 	select {
 	case certificate := <-request.result:
 		return certificate, nil
+	case err := <-request.err:
+		return mitm.SignedCertificate{}, err
 	case <-ctx.Done():
 		return mitm.SignedCertificate{}, ctx.Err()
 	}
@@ -246,14 +257,16 @@ func TestSDSUnsubscribeWinsWithinOneRequest(t *testing.T) {
 	})
 }
 
-func TestSDSReconnectInvalidatesOldCABeforeSlowReplacement(t *testing.T) {
+func TestSDSReconnectInvalidatesOldCAWithoutIssuance(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		provider := &controlledCertificates{requests: make(chan pendingCertificate, 1), revision: "two"}
 		server := newTestServer(t, gatewayScope(), nil, provider)
 		stream := newFakeStream(ctx, 1)
 		initial := nodeRequest(model.SecretType, "api.example.com")
-		initial.InitialResourceVersions = map[string]string{"api.example.com": sdsVersionPrefix("one") + "old-cert"}
+		initial.InitialResourceVersions = map[string]string{
+			"api.example.com": sdsResourceVersion("one", time.Now().Add(time.Hour), "old-cert"),
+		}
 		stream.send(initial)
 		done := make(chan error, 1)
 		go func() { done <- server.server.serveDelta(stream) }()
@@ -262,6 +275,9 @@ func TestSDSReconnectInvalidatesOldCABeforeSlowReplacement(t *testing.T) {
 			<-done
 		}()
 		synctest.Wait()
+		if provider.calls.Load() != 0 {
+			t.Fatal("old history caused issuance")
+		}
 		for _, r := range stream.sent() {
 			if slices.Contains(r.RemovedResources, "api.example.com") {
 				return
@@ -329,9 +345,19 @@ func TestSDSExpiryCoincidingWithReconnect(t *testing.T) {
 		if err := server.run(t, second); err != nil {
 			t.Fatal(err)
 		}
-		newer := second.sent()[0].Resources[0]
+		response := second.sent()[0]
+		if signer.calls.Load() != 1 || len(response.Resources) != 0 ||
+			!slices.Equal(response.RemovedResources, []string{"api.example.com"}) {
+			t.Fatalf("expired history was reissued: calls=%d response=%v", signer.calls.Load(), response)
+		}
+		third := newFakeStream(ctx, 1)
+		third.send(nodeRequest(model.SecretType, "api.example.com"))
+		if err := server.run(t, third); err != nil {
+			t.Fatal(err)
+		}
+		newer := third.sent()[0].Resources[0]
 		if signer.calls.Load() != 2 || old.Version == newer.Version || newer.Ttl.AsDuration() != 14*time.Minute {
-			t.Fatalf("expiry reconnect did not renew: calls=%d old=%s new=%v", signer.calls.Load(), old.Version, newer)
+			t.Fatalf("new demand did not renew: calls=%d old=%s new=%v", signer.calls.Load(), old.Version, newer)
 		}
 	})
 }
@@ -381,4 +407,254 @@ func TestSDSNewStreamSurvivesOldStreamCancellation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+func (p *controlledCertificates) SignerGeneration() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.generation
+}
+
+func TestSDSReconnectThirtyThousandVersionsOnlySignsNewDemand(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mixed=%t", mixed), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				provider := &controlledCertificates{requests: make(chan pendingCertificate, 2), revision: "one"}
+				server := newTestServer(t, gatewayScope(), nil, provider)
+				ctx, cancel := context.WithCancel(t.Context())
+				stream := newFakeStream(ctx, 4)
+				names := make([]string, 30000)
+				versions := make(map[string]string, len(names))
+				deadline := time.Now().Add(14 * time.Minute)
+				for index := range names {
+					names[index] = fmt.Sprintf("history-%d.example.com", index)
+					versions[names[index]] = sdsResourceVersion("one", deadline, fmt.Sprintf("cert-%d", index))
+				}
+				if mixed {
+					names = append(names, "new.example.com")
+				}
+				initial := nodeRequest(model.SecretType, names...)
+				initial.InitialResourceVersions = versions
+				stream.send(initial)
+				done := make(chan error, 1)
+				go func() { done <- server.server.serveDelta(stream) }()
+				defer func() {
+					cancel()
+					<-done
+				}()
+				synctest.Wait()
+				wantCalls := int32(0)
+				if mixed {
+					wantCalls = 1
+				}
+				if got := provider.calls.Load(); got != wantCalls {
+					t.Fatalf("issuance calls = %d, want %d", got, wantCalls)
+				}
+				for _, response := range stream.sent() {
+					if len(response.Resources) != 0 || len(response.RemovedResources) != 0 {
+						t.Fatal("restored certificates were resent or removed")
+					}
+				}
+				if !mixed {
+					stream.send(request(model.SecretType, "new.example.com"))
+					synctest.Wait()
+				}
+				pending := <-provider.requests
+				if pending.name != "new.example.com" {
+					t.Fatalf("signed %q", pending.name)
+				}
+				pending.result <- testSDSCertificate()
+				synctest.Wait()
+				// A subsequent same-name subscribe is fresh demand even with a stale nonce.
+				repeated := request(model.SecretType, names[0])
+				repeated.ResponseNonce = "stale"
+				stream.send(repeated)
+				synctest.Wait()
+				pending = <-provider.requests
+				if pending.name != names[0] {
+					t.Fatalf("resubscription signed %q", pending.name)
+				}
+				pending.result <- testSDSCertificate()
+				synctest.Wait()
+				if provider.calls.Load() != 2 {
+					t.Fatalf("total calls = %d", provider.calls.Load())
+				}
+				var emitted []string
+				for _, response := range stream.sent() {
+					if len(response.RemovedResources) != 0 {
+						t.Fatalf("unexpected removals: %v", response.RemovedResources)
+					}
+					emitted = append(emitted, resourceNames(response)...)
+				}
+				if !slices.Equal(emitted, []string{"new.example.com", names[0]}) {
+					t.Fatalf("emitted %v", emitted)
+				}
+			})
+		})
+	}
+}
+
+func TestSDSFailedCompletionRetriesOnlyAfterSignerChanges(t *testing.T) {
+	for _, change := range []string{"unchanged", "recovered", "ABA"} {
+		t.Run(change, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				provider := &controlledCertificates{requests: make(chan pendingCertificate, 2), revision: "one"}
+				if change == "recovered" {
+					provider.revision = ""
+				}
+				server := newTestServer(t, gatewayScope(), nil, provider)
+				q := newSDSSession(t.Context(), newTestSDSGenerator(t, provider), gatewayScope())
+				defer q.cancel()
+				const name = "api.example.com"
+				watch := &watchState{names: sets.New(name), sent: make(map[string]string), sds: q}
+				stream := newFakeStream(t.Context(), 2)
+				q.subscribe([]string{name})
+				q.start(server.resources.Snapshot())
+				pending := <-provider.requests
+				pending.err <- errors.New("old signer failure")
+				failed := <-q.ready
+				if change != "unchanged" {
+					provider.mu.Lock()
+					provider.revision = "one"
+					provider.generation += 2
+					provider.mu.Unlock()
+				}
+				if err := server.server.sendSDSCompletions(stream, log, watch, failed); err != nil {
+					t.Fatal(err)
+				}
+				if change == "unchanged" {
+					responses := stream.sent()
+					if len(responses) != 1 || !slices.Equal(responses[0].RemovedResources, []string{name}) ||
+						provider.calls.Load() != 1 {
+						t.Fatalf("stable failure did not terminate: %v", responses)
+					}
+					return
+				}
+				if len(stream.sent()) != 0 {
+					t.Fatal("old failure removed current demand")
+				}
+				pending = <-provider.requests
+				pending.result <- testSDSCertificate()
+				if err := server.server.sendSDSCompletions(stream, log, watch, <-q.ready); err != nil {
+					t.Fatal(err)
+				}
+				responses := stream.sent()
+				if len(responses) != 1 || !slices.Equal(resourceNames(responses[0]), []string{name}) ||
+					len(responses[0].RemovedResources) != 0 {
+					t.Fatalf("recovery response = %v", responses)
+				}
+			})
+		})
+	}
+}
+
+func TestSDSRotationPreservesPendingDemand(t *testing.T) {
+	for _, change := range []string{"rotation", "unavailable", "authorization"} {
+		t.Run(change, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				provider := &controlledCertificates{requests: make(chan pendingCertificate, 2), revision: "one"}
+				server := newTestServer(t, gatewayScope(), nil, provider)
+				q := newSDSSession(t.Context(), newTestSDSGenerator(t, provider), gatewayScope())
+				defer q.cancel()
+				const active, history = "active.example.com", "history.example.com"
+				version := sdsResourceVersion("one", time.Now().Add(time.Hour), "old-cert")
+				watch := &watchState{
+					names: sets.New(active, history),
+					sent:  map[string]string{active: version, history: version},
+					sds:   q,
+				}
+				stream := newFakeStream(t.Context(), 2)
+				q.subscribe([]string{active})
+				q.start(server.resources.Snapshot())
+				pending := <-provider.requests
+				provider.mu.Lock()
+				provider.revision = "two"
+				provider.generation++
+				if change == "unavailable" {
+					provider.revision = ""
+				}
+				if change == "authorization" {
+					provider.authErr = errors.New("gateway revoked")
+				}
+				provider.mu.Unlock()
+				if err := server.server.generateAndSend(
+					stream,
+					log,
+					watch,
+					GenerationRequest{
+						Scope:        gatewayScope(),
+						TypeURL:      model.SecretType,
+						Subscription: newSubscriptionView(watch),
+						Snapshot:     server.resources.Snapshot(),
+						Full:         true,
+					},
+					false,
+				); err != nil {
+					t.Fatal(err)
+				}
+				responses := stream.sent()
+				wantRemoved := []string{history}
+				if change != "rotation" {
+					wantRemoved = []string{active, history}
+				}
+				if len(responses) != 1 || !slices.Equal(responses[0].RemovedResources, wantRemoved) {
+					t.Fatalf("rotation removal = %v", responses)
+				}
+				if change != "rotation" {
+					return
+				}
+				pending.result <- testSDSCertificate()
+				if err := server.server.sendSDSCompletions(stream, log, watch, <-q.ready); err != nil {
+					t.Fatal(err)
+				}
+				pending = <-provider.requests
+				cert := testSDSCertificate()
+				cert.SignerRevision = "two"
+				pending.result <- cert
+				if err := server.server.sendSDSCompletions(stream, log, watch, <-q.ready); err != nil {
+					t.Fatal(err)
+				}
+				responses = stream.sent()
+				if len(responses) != 2 || !slices.Equal(resourceNames(responses[1]), []string{active}) ||
+					len(responses[1].RemovedResources) != 0 {
+					t.Fatalf("replacement response = %v", responses)
+				}
+			})
+		})
+	}
+}
+
+func TestSDSReconnectStillRespondsToStaticSecretSubscription(t *testing.T) {
+	const name = "gateway-cert"
+	value, err := anypb.New(&tlsv3.Secret{Name: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.SecretType, Name: "demo/egress|" + name},
+		name,
+		value,
+		nil,
+		model.ResourceFacts{GatewayOwner: "demo/egress"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &controlledCertificates{revision: "one"}
+	server := newTestServer(t, gatewayScope(), []model.Resource{resource}, provider)
+	stream := newFakeStream(t.Context(), 1)
+	initial := nodeRequest(model.SecretType, name)
+	initial.InitialResourceVersions = map[string]string{name: resource.Hash}
+	stream.send(initial)
+	if err := server.run(t, stream); err != nil {
+		t.Fatal(err)
+	}
+	responses := stream.responsesFor(model.SecretType)
+	if len(responses) != 1 || len(responses[0].Resources) != 1 || len(responses[0].RemovedResources) != 0 {
+		t.Fatalf("static response = %v", responses)
+	}
+	wire := responses[0].Resources[0]
+	if wire.Name != name || wire.Version != resource.Hash || wire.Ttl != nil || provider.calls.Load() != 0 {
+		t.Fatalf("static subscription entered on-demand lifecycle: %v", wire)
+	}
 }

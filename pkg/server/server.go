@@ -296,6 +296,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	onDemandIssuer, err := mitm.NewOnDemandIssuer(ctx, domainSigner,
 		kubernetesregistry.NewGatewayCertificateAuthorizer(resourceCompiler.Gateways()), mitm.OnDemandOptions{
 			LeafLifetime:    features.MITMLeafLifetime,
+			ResourceTTL:     features.MITMResourceTTL,
 			RenewBefore:     features.MITMRenewBefore,
 			CacheMaxAge:     features.MITMCacheMaxAge,
 			CacheMaxEntries: features.MITMCacheMaxEntries,

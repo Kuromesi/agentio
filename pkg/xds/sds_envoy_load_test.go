@@ -38,8 +38,11 @@ import (
 )
 
 type compatibilityWireCounts struct {
-	resources atomic.Int64
-	nacks     atomic.Int64
+	resources  atomic.Int64
+	nacks      atomic.Int64
+	responses  atomic.Int64
+	restored   atomic.Int64
+	overlapped atomic.Int64
 }
 type compatibilityWireStream struct {
 	grpc.ServerStream
@@ -50,6 +53,7 @@ func (s *compatibilityWireStream) SendMsg(value any) error {
 	err := s.ServerStream.SendMsg(value)
 	if err == nil {
 		if response, ok := value.(*discoveryv3.DeltaDiscoveryResponse); ok {
+			s.counts.responses.Add(1)
 			for _, resource := range response.Resources {
 				if strings.HasPrefix(resource.Name, "load-") {
 					s.counts.resources.Add(1)
@@ -62,8 +66,20 @@ func (s *compatibilityWireStream) SendMsg(value any) error {
 func (s *compatibilityWireStream) RecvMsg(value any) error {
 	err := s.ServerStream.RecvMsg(value)
 	if err == nil {
-		if request, ok := value.(*discoveryv3.DeltaDiscoveryRequest); ok && request.ErrorDetail != nil {
-			s.counts.nacks.Add(1)
+		if request, ok := value.(*discoveryv3.DeltaDiscoveryRequest); ok {
+			if request.ErrorDetail != nil {
+				s.counts.nacks.Add(1)
+			}
+			for name := range request.InitialResourceVersions {
+				if strings.HasPrefix(name, "load-") {
+					s.counts.restored.Add(1)
+				}
+			}
+			for _, name := range request.ResourceNamesSubscribe {
+				if _, held := request.InitialResourceVersions[name]; held && strings.HasPrefix(name, "load-") {
+					s.counts.overlapped.Add(1)
+				}
+			}
 		}
 	}
 	return err
@@ -252,10 +268,17 @@ func runEnvoyCertificateLoad(
 		reportMemory(phase)
 	}
 	populate("initial-cold")
-	// Only the stream is recreated: all cached certificates should survive and replay without signing.
+	// Envoy restores both subscriptions and versions; neither a warm nor a cold
+	// control plane should resend these certificate bodies or reset their TTLs.
 	start, cpuStart, sentBefore, signBefore := time.Now(), cpuSeconds(), wire.resources.Load(), counted.calls.Load()
+	restoredBefore, overlapBefore, responsesBefore := wire.restored.Load(), wire.overlapped.Load(), wire.responses.Load()
 	restartADS()
-	waitCertificateReplay(t, func() bool { return wire.resources.Load()-sentBefore >= int64(count) }, "warm replay")
+	waitCertificateReplay(t, func() bool {
+		return wire.restored.Load()-restoredBefore >= int64(count) && wire.responses.Load() > responsesBefore
+	}, "warm reconciliation")
+	if wire.overlapped.Load()-overlapBefore < int64(count) {
+		t.Fatal("Envoy did not restore subscriptions alongside versions")
+	}
 	t.Logf(
 		"REPLAY phase=warm domains=%d wall=%s sign_calls=%d cpu_seconds=%.2f",
 		count,
@@ -263,14 +286,15 @@ func runEnvoyCertificateLoad(
 		counted.calls.Load()-signBefore,
 		cpuSeconds()-cpuStart,
 	)
-	if counted.calls.Load() != signBefore {
-		t.Fatal("warm replay unexpectedly signed certificates")
+	if counted.calls.Load() != signBefore || wire.resources.Load() != sentBefore {
+		t.Fatal("warm reconnect signed or resent held certificates")
 	}
 	populate("warm-handshakes")
 	// Replace the issuer AND signer, retaining the CA but losing cache and process-local leaf key.
 	cancelIssuer()
 	counted, cancelIssuer = installIssuer()
 	start, cpuStart, sentBefore = time.Now(), cpuSeconds(), wire.resources.Load()
+	restoredBefore, overlapBefore, responsesBefore = wire.restored.Load(), wire.overlapped.Load(), wire.responses.Load()
 	restartADS()
 	// Submit genuine new demand while cold replay is in flight.
 	freshStart := time.Now()
@@ -280,7 +304,15 @@ func runEnvoyCertificateLoad(
 	}
 	closeCompatibilityConnection(t, fresh)
 	t.Logf("REPLAY fresh_demand_latency=%s", time.Since(freshStart))
-	waitCertificateReplay(t, func() bool { return wire.resources.Load()-sentBefore >= int64(count) }, "cold replay")
+	waitCertificateReplay(t, func() bool {
+		return wire.restored.Load()-restoredBefore >= int64(count) && wire.responses.Load() > responsesBefore
+	}, "cold reconciliation")
+	if wire.overlapped.Load()-overlapBefore < int64(count) || wire.resources.Load() != sentBefore {
+		t.Fatal("cold reconnect failed zero-payload restoration")
+	}
+	if counted.calls.Load() != 1 {
+		t.Fatalf("cold reconnect signed %d certificates, want only the fresh domain", counted.calls.Load())
+	}
 	t.Logf(
 		"REPLAY phase=cold domains=%d wall=%s sign_calls=%d cpu_seconds=%.2f",
 		count,
@@ -289,6 +321,9 @@ func runEnvoyCertificateLoad(
 		cpuSeconds()-cpuStart,
 	)
 	populate("after-cold-replay")
+	if counted.calls.Load() != 1 || wire.resources.Load() != sentBefore {
+		t.Fatal("held certificates were reissued during post-reconnect handshakes")
+	}
 	if wire.nacks.Load() != 0 {
 		t.Fatalf("Envoy NACKs=%d", wire.nacks.Load())
 	}

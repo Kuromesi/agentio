@@ -24,7 +24,7 @@ import (
 type SignedCertificate struct {
 	CertificateChain []byte
 	PrivateKey       []byte
-	// UsableUntil is set by the issuer to NotAfter - RenewBefore and never slides on cache hits.
+	// UsableUntil is the fixed SDS deadline set by the issuer; cache hits never extend it.
 	UsableUntil    time.Time
 	NotAfter       time.Time
 	SignedAt       time.Time
@@ -92,8 +92,10 @@ func (g CertificateGeneration) Equals(other CertificateGeneration) bool {
 
 type OnDemandOptions struct {
 	LeafLifetime time.Duration
-	RenewBefore  time.Duration
-	CacheMaxAge  time.Duration
+	// ResourceTTL bounds SDS residency from signing time; zero selects 15 minutes.
+	ResourceTTL time.Duration
+	RenewBefore time.Duration
+	CacheMaxAge time.Duration
 	// CacheMaxEntries bounds cache size; when full the entry closest to eviction is replaced. Non-positive selects the default.
 	CacheMaxEntries int
 	// SignConcurrency bounds concurrent SignDNS calls; non-positive selects the default.

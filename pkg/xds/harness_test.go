@@ -923,3 +923,5 @@ func initializedSubscription(t testing.TB, generator ResourceGenerator, scope mo
 	}
 	return subscription
 }
+
+func (*fakeSecrets) SignerGeneration() uint64 { return 0 }

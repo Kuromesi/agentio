@@ -63,11 +63,13 @@ func TestSandboxOnDemandCARotation(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	host := fmt.Sprintf("upstream-tls.%s.svc.cluster.local", namespace)
+	const serviceName = "upstream-tls-ca"
+	host := fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, namespace)
 	key, chain, ca := generateConnectProxyCertificate(t, host)
 	applyGatewayTLSTerminationProfile(t, scope, host)
 	e2econfig.New(scope).EvalFile(namespace, map[string]any{
 		"Namespace":         namespace,
+		"ServiceName":       serviceName,
 		"ServerKey":         key,
 		"ServerCertChain":   chain,
 		"ServerCA":          ca,

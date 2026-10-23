@@ -120,7 +120,19 @@ func (s *Server) handleRequest(
 		if watch.sds == nil {
 			watch.sds = newSDSSession(stream.Context(), generator, scope)
 		}
-		watch.sds.subscribe(request.GetResourceNamesSubscribe())
+		demand := request.GetResourceNamesSubscribe()
+		// Envoy re-subscribes held resources on a new stream; their initial versions
+		// restore state without turning history into cold signing demand.
+		if initial {
+			staticNames := staticSDSNames(s.resources.Snapshot(), scope)
+			demand = make([]string, 0, len(demand))
+			for _, name := range request.GetResourceNamesSubscribe() {
+				if _, restored := request.GetInitialResourceVersions()[name]; !restored || staticNames.Contains(name) {
+					demand = append(demand, name)
+				}
+			}
+		}
+		watch.sds.subscribe(demand)
 		watch.sds.unsubscribe(request.GetResourceNamesUnsubscribe())
 		watch.sds.start(s.resources.Snapshot())
 		if initial {
@@ -257,6 +269,17 @@ func (s *Server) generateAndSend(
 	force bool,
 ) error {
 	started := time.Now()
+	// A removal tears down Envoy's pending certificate request. Keep real demand
+	// alive during normal rotation; its worker will replace the old certificate.
+	if q := watch.sds; q != nil && request.Full && q.generator.provider.SignerRevision() != "" &&
+		q.generator.provider.Authorize(q.scope) == nil {
+		staticNames := staticSDSNames(request.Snapshot, q.scope)
+		for name := range q.jobs {
+			if !staticNames.Contains(name) {
+				delete(request.Subscription.sent, name)
+			}
+		}
+	}
 	delta, err := s.generator(request.TypeURL).Generate(stream.Context(), request)
 	if err != nil {
 		metrics.Default.RecordXDSPushFailure(metrics.XDSPushFailureGenerate, request.TypeURL)

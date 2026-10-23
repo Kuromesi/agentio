@@ -305,11 +305,12 @@ func TestSDSPassiveValidationUsesSigningGeneration(t *testing.T) {
 		authErr     error
 		wantRemoved bool
 	}{
-		{name: "same generation", version: sdsVersionPrefix("one") + "hash", revision: "one"},
-		{name: "rotated CA", version: sdsVersionPrefix("one") + "hash", revision: "two", wantRemoved: true},
-		{name: "signer unavailable", version: sdsVersionPrefix("one") + "hash", wantRemoved: true},
+		{name: "same generation", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), revision: "one"},
+		{name: "rotated CA", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), revision: "two", wantRemoved: true},
+		{name: "signer unavailable", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), wantRemoved: true},
+		{name: "expired", version: sdsResourceVersion("one", time.Now().Add(-time.Second), "hash"), revision: "one", wantRemoved: true},
 		{name: "legacy version", version: "old-content-hash", revision: "one", wantRemoved: true},
-		{name: "gateway revoked", version: sdsVersionPrefix("one") + "hash", revision: "one", authErr: errors.New("gateway revoked"), wantRemoved: true},
+		{name: "gateway revoked", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), revision: "one", authErr: errors.New("gateway revoked"), wantRemoved: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := &fakeCertificateProvider{revision: tc.revision, authErr: tc.authErr}
@@ -343,7 +344,7 @@ func TestSDSExplicitDemandDoesNotResignOtherNames(t *testing.T) {
 	names := []string{"a.example.com", "b.example.com", "c.example.com"}
 	sent := map[string]string{}
 	for _, name := range names {
-		sent[name] = sdsVersionPrefix("one") + "cached"
+		sent[name] = sdsResourceVersion("one", time.Now().Add(time.Hour), "cached")
 	}
 	delta, err := generator.Generate(t.Context(), GenerationRequest{
 		Scope:           gatewayScope(),
@@ -360,3 +361,5 @@ func TestSDSExplicitDemandDoesNotResignOtherNames(t *testing.T) {
 		t.Fatalf("explicit demand affected unrelated names: %v", delta)
 	}
 }
+
+func (*fakeCertificateProvider) SignerGeneration() uint64 { return 0 }

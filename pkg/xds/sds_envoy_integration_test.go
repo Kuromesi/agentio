@@ -386,7 +386,15 @@ type compatibilityCertificates struct {
 func (p *compatibilityCertificates) Authorize(scope model.ClientScope) error {
 	return p.current.Load().Authorize(scope)
 }
-func (p *compatibilityCertificates) SignerRevision() string { return p.current.Load().SignerRevision() }
+func (p *compatibilityCertificates) SignerRevision() string {
+	if !p.ecdsa.Load() {
+		return "legacy-rsa/" + p.legacyCA.Revision()
+	}
+	return p.current.Load().SignerRevision()
+}
+func (p *compatibilityCertificates) SignerGeneration() uint64 {
+	return p.current.Load().SignerGeneration()
+}
 
 func (p *compatibilityCertificates) Get(
 	ctx context.Context,
@@ -409,7 +417,7 @@ func (p *compatibilityCertificates) Get(
 		NotAfter:         cert.NotAfter,
 		UsableUntil:      cert.NotAfter,
 		SignedAt:         cert.IssuedAt,
-		SignerRevision:   p.legacyCA.Revision(),
+		SignerRevision:   "legacy-rsa/" + p.legacyCA.Revision(),
 	}, nil
 }
 func closeCompatibilityConnection(t *testing.T, conn *tls.Conn) {

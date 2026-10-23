@@ -31,7 +31,7 @@ func newCertificateCacheEntry(
 	insertedAt time.Time,
 	options OnDemandOptions,
 ) *certificateCacheEntry {
-	deadline := certificate.NotAfter.Add(-options.RenewBefore)
+	deadline := certificate.UsableUntil
 	if options.CacheMaxAge > 0 && insertedAt.Add(options.CacheMaxAge).Before(deadline) {
 		deadline = insertedAt.Add(options.CacheMaxAge)
 	}

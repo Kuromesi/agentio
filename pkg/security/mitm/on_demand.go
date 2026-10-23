@@ -90,6 +90,12 @@ func NewOnDemandIssuer(
 	if options.RenewBefore < 0 || options.RenewBefore >= options.LeafLifetime {
 		return nil, fmt.Errorf("on-demand certificate renew-before must be non-negative and less than leaf lifetime")
 	}
+	if options.ResourceTTL < 0 {
+		return nil, fmt.Errorf("on-demand certificate resource TTL must be non-negative")
+	}
+	if options.ResourceTTL == 0 {
+		options.ResourceTTL = 15 * time.Minute
+	}
 	if options.CacheMaxAge < 0 {
 		return nil, fmt.Errorf("on-demand certificate cache max age must be non-negative")
 	}
@@ -158,6 +164,13 @@ func (i *OnDemandIssuer) SignerRevision() string {
 		return ""
 	}
 	return state.Revision
+}
+
+// SignerGeneration is local to this issuer and never appears in wire versions.
+func (i *OnDemandIssuer) SignerGeneration() uint64 {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.rotationEpoch
 }
 
 // Authorize checks current gateway eligibility without touching the certificate cache.
@@ -267,8 +280,7 @@ func (i *OnDemandIssuer) cacheEntryValid(certificate SignedCertificate, signerRe
 	if signerRevision == "" || certificate.SignerRevision != signerRevision {
 		return false
 	}
-	deadline := certificate.NotAfter.Add(-i.options.RenewBefore)
-	return time.Now().Before(deadline)
+	return time.Now().Before(certificate.UsableUntil)
 }
 
 func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificateFlight) {
@@ -345,6 +357,9 @@ func (i *OnDemandIssuer) runCertificateFlight(domain string, flight *certificate
 			return
 		}
 		generated.UsableUntil = generated.NotAfter.Add(-i.options.RenewBefore)
+		if deadline := generated.SignedAt.Add(i.options.ResourceTTL); deadline.Before(generated.UsableUntil) {
+			generated.UsableUntil = deadline
+		}
 		if !time.Now().Before(generated.UsableUntil) {
 			resultErr = fmt.Errorf("domain certificate for %q has no lifetime outside the renewal window", domain)
 			i.mu.Unlock()
