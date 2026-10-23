@@ -53,6 +53,12 @@ func TestScenario_OAuth2PublishedAPI(t *testing.T) {
 				{"poll", "operation: {token: {}}", "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=session", "application/x-www-form-urlencoded",
 					"PollOAuth2DeviceSession", `{"status":"Authorized","accessToken":"private-access","tokenType":"Bearer","accessTokenExpiresInSeconds":3600}`, 200,
 					map[string]string{"deviceSessionId": "session"}},
+				{"authorization_pending", "operation: {token: {}}", "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=session", "application/x-www-form-urlencoded",
+					"PollOAuth2DeviceSession", `{"status":"InProgress","outcome":{"retryable":true,"requiresNewAuthorization":false,"oauth2Error":{"errorCode":"authorization_pending","errorDescription":"Awaiting user authorization.","httpStatus":200}}}`, 200,
+					map[string]string{"deviceSessionId": "session"}},
+				{"slow_down", "operation: {token: {}}", "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=session", "application/x-www-form-urlencoded",
+					"PollOAuth2DeviceSession", `{"status":"InProgress","outcome":{"retryable":true,"requiresNewAuthorization":false,"oauth2Error":{"errorCode":"slow_down","errorDescription":"Poll less frequently.","httpStatus":200}}}`, 200,
+					map[string]string{"deviceSessionId": "session"}},
 				{"JSON refresh", "operation: {token: {allowedGrantTypes: [refresh_token]}}\ncustomResponse:\n  success: {code: 0}",
 					`{"grant_type":"refresh_token","refresh_token":"unused","client_id":"untrusted","client_secret":"private"}`, "application/json; charset=utf-8",
 					"GetOAuth2DeviceAccessToken", `{"status":"Ready","accessToken":"private-access","tokenType":"Bearer","refreshToken":"private-refresh","appSecret":"private-secret"}`, 200, map[string]string{}},
@@ -132,6 +138,10 @@ func TestScenario_OAuth2PublishedAPI(t *testing.T) {
 						case "unsupported grant":
 							if body["error"] != "unsupported_grant_type" {
 								t.Fatalf("unsupported grant reply: %v", body)
+							}
+						case "authorization_pending", "slow_down":
+							if body["error"] != tc.name || body["access_token"] != nil || body["refresh_token"] != nil {
+								t.Fatalf("device polling error reply: %v", body)
 							}
 						}
 					}

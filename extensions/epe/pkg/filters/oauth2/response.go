@@ -211,7 +211,8 @@ func validFailure(r *credential.OAuth2Response) bool {
 		return false
 	}
 	e := r.Outcome.OAuth2Error
-	if e.ErrorCode == "" || e.HTTPStatus < 400 || e.HTTPStatus > 599 {
+	// The credential service may preserve an upstream OAuth error carried in HTTP 200.
+	if e.ErrorCode == "" || (e.HTTPStatus != 200 && (e.HTTPStatus < 400 || e.HTTPStatus > 599)) {
 		return false
 	}
 	switch r.Status {

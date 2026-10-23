@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -449,6 +450,48 @@ func TestFinalOutcomesAndStandardOptionalTokenFields(t *testing.T) {
 			t.Fatal(err)
 		}
 		replyJSON(t, action, tc.status)
+	}
+}
+
+func TestHTTP200DeviceErrors(t *testing.T) {
+	f := &Filter{cfg: tokenConfig(credential.OAuth2GrantDeviceCode)}
+	for _, tc := range []struct {
+		name   string
+		result *credential.OAuth2Response
+		status int
+		code   string
+	}{
+		{"pending", failure("InProgress", "authorization_pending", true, false), 200, "authorization_pending"},
+		{"slow down", failure("InProgress", "slow_down", true, false), 200, "slow_down"},
+		{"denied", failure("Denied", "access_denied", false, true), 200, "access_denied"},
+		{"expired", failure("Expired", "expired_token", false, true), 200, "expired_token"},
+		{"conflicting pending", failure("RecoveryRequired", "authorization_pending", false, true), 502, "temporarily_unavailable"},
+		{"conflicting authorized", failure("Authorized", "access_denied", false, true), 502, "temporarily_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.result.Outcome.OAuth2Error.HTTPStatus = http.StatusOK
+			tc.result.RetryAfterSeconds = 5
+			action, err := f.protocolReply(credential.OAuth2GrantDeviceCode, tc.result, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := replyJSON(t, action, tc.status)
+			if body["error"] != tc.code || body["access_token"] != nil || body["refresh_token"] != nil {
+				t.Fatalf("unexpected error reply: %v", body)
+			}
+			if tc.status == http.StatusOK {
+				if body["error_description"] != "final description" {
+					t.Fatalf("lost error description: %v", body)
+				}
+				reply, _ := action.Reply()
+				if !slices.Contains(
+					reply.HeaderOps,
+					filter.HeaderOp{Kind: filter.HeaderSet, Name: "retry-after", Value: "5"},
+				) {
+					t.Fatalf("lost retry interval: %v", reply.HeaderOps)
+				}
+			}
+		})
 	}
 }
 
