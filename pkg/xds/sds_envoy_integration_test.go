@@ -258,15 +258,15 @@ func TestSDSEnvoyECDSACompatibility(t *testing.T) {
 		c := handshake("second.example.com", version)
 		leaf := c.ConnectionState().PeerCertificates[0]
 		key, ok := leaf.PublicKey.(*ecdsa.PublicKey)
-		if !ok || !key.Equal(upgraded.PublicKey) {
-			t.Fatal("domains did not share ECDSA public key")
+		if !ok || key.Equal(upgraded.PublicKey) {
+			t.Fatal("different domains reused an ECDSA public key")
 		}
 	}
 	if c, err := dial("second.example.com", tls.VersionTLS12, rsaOnly); err == nil {
 		closeCompatibilityConnection(t, c)
 		t.Fatal("RSA-only client unexpectedly accepted ECDSA")
 	}
-	t.Log("PASS: verified TLS 1.2/1.3, shared domain key, RSA-only client rejected as expected")
+	t.Log("PASS: verified TLS 1.2/1.3, independent domain keys, RSA-only client rejected as expected")
 	if _, err := exec.LookPath("curl"); err == nil {
 		caFile := filepath.Join(dir, "ca.pem")
 		if err := os.WriteFile(caFile, ca.CertificatePEM(), 0600); err != nil {
@@ -297,7 +297,8 @@ func TestSDSEnvoyECDSACompatibility(t *testing.T) {
 		}
 		defer closeCompatibilityConnection(t, c)
 		next := c.ConnectionState().PeerCertificates[0]
-		return !bytes.Equal(next.Raw, upgraded.Raw)
+		return !bytes.Equal(next.Raw, upgraded.Raw) &&
+			!bytes.Equal(next.RawSubjectPublicKeyInfo, upgraded.RawSubjectPublicKeyInfo)
 	}, "TTL removal and on-demand renewal across reconnect")
 	t.Log("PASS: SDS TTL expiry across reconnect triggers a fresh certificate")
 	nextCA, err := pki.NewSelfSignedCA("compat-new", 24*time.Hour, time.Now())
@@ -321,7 +322,7 @@ func TestSDSEnvoyECDSACompatibility(t *testing.T) {
 		leaf := c.ConnectionState().PeerCertificates[0]
 		return leaf.Issuer.CommonName == "compat-new" && !leaf.PublicKey.(*ecdsa.PublicKey).Equal(upgraded.PublicKey)
 	}, "CA rotation and leaf key replacement")
-	t.Log("PASS: CA rotation replaces the CA and shared leaf key through live SDS")
+	t.Log("PASS: CA rotation replaces the CA and leaf key through live SDS")
 
 	if os.Getenv("AGENTIO_TEST_SDS_HARD_EXPIRY") == "1" {
 		hardIssuer, err := mitm.NewOnDemandIssuer(ctx,

@@ -231,10 +231,7 @@ func TestSelfSignDeletionFailsClosedBeforeRecreation(t *testing.T) {
 
 func newInstalledMITMSigner(t testing.TB, ca pki.SigningCA, uid types.UID, expiryMargin time.Duration) *MITMSigner {
 	t.Helper()
-	state, err := newCAState(ca, uid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := &caState{ca: ca, secretUID: uid}
 	return &MITMSigner{
 		options:     MITMSignerOptions{LeafExpiryMargin: expiryMargin},
 		caSingleton: krt.NewStatic(state, true),
@@ -395,7 +392,7 @@ func TestMITMSecretInformerWaitsForReadPermission(t *testing.T) {
 		}
 	})
 }
-func TestMITMSignerSharesLeafKeyAndRotatesWithCA(t *testing.T) {
+func TestMITMSignerIndependentLeafKeysAndCARotation(t *testing.T) {
 	ctx := t.Context()
 	secret := newMITMSecret(t, "agentio-system", "mitm", 24*time.Hour, time.Now())
 	client := kube.NewFakeClient(secret)
@@ -413,17 +410,19 @@ func TestMITMSignerSharesLeafKeyAndRotatesWithCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var keys sync.Map
+	keys.Store(string(first.PrivateKey), true)
 	var wg sync.WaitGroup
 	for n := range 24 {
 		wg.Go(func() {
-			domain := fmt.Sprintf("domain-%d.example.com", n)
+			domain := fmt.Sprintf("domain-%d.example.com", n%4)
 			cert, err := signer.SignDNS(ctx, domain, time.Hour)
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			if !bytes.Equal(cert.PrivateKey, first.PrivateKey) {
-				t.Error("domains did not share leaf key")
+			if _, loaded := keys.LoadOrStore(string(cert.PrivateKey), true); loaded {
+				t.Error("separate issuances reused a leaf key")
 			}
 			pair, err := tls.X509KeyPair(cert.CertificateChain, cert.PrivateKey)
 			if err != nil {
@@ -439,7 +438,7 @@ func TestMITMSignerSharesLeafKeyAndRotatesWithCA(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	// A separate signer is equivalent to a separate process: CA shared, leaf key local.
+	// A separate signer shares the CA but independently generates each leaf key.
 	replica, err := NewMITMSigner(ctx, client, MITMSignerOptions{
 		Mode:       MITMSignModeSecret,
 		Namespace:  secret.Namespace,
@@ -495,39 +494,11 @@ func BenchmarkMITMLeafSigning(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	options := pki.LeafOptions{
-		CommonName: "bench.example.com",
-		DNSNames:   []string{"bench.example.com"},
-		Lifetime:   15 * time.Minute,
-		Server:     true,
+	signer := newInstalledMITMSigner(b, ca, "bench", time.Hour)
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := signer.SignDNS(b.Context(), "bench.example.com", 15*time.Minute); err != nil {
+			b.Fatal(err)
+		}
 	}
-	b.Run("RSA2048PerCertificate", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			if _, err := ca.GenerateRSA(b.Context(), options); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	b.Run("ECDSAP256PerCertificate", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			state, err := newCAState(ca, "bench")
-			if err != nil {
-				b.Fatal(err)
-			}
-			if _, err := ca.Sign(b.Context(), state.leafPublicKey, options); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	b.Run("ECDSAP256Shared", func(b *testing.B) {
-		signer := newInstalledMITMSigner(b, ca, "bench", time.Hour)
-		b.ReportAllocs()
-		for b.Loop() {
-			if _, err := signer.SignDNS(b.Context(), "bench.example.com", 15*time.Minute); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
 }

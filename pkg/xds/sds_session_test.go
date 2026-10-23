@@ -640,7 +640,7 @@ func TestSDSReconnectStillRespondsToStaticSecretSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &controlledCertificates{revision: "one"}
+	provider := &controlledCertificates{revision: "one", authErr: errors.New("on-demand authorization denied")}
 	server := newTestServer(t, gatewayScope(), []model.Resource{resource}, provider)
 	stream := newFakeStream(t.Context(), 1)
 	initial := nodeRequest(model.SecretType, name)
@@ -656,5 +656,113 @@ func TestSDSReconnectStillRespondsToStaticSecretSubscription(t *testing.T) {
 	wire := responses[0].Resources[0]
 	if wire.Name != name || wire.Version != resource.Hash || wire.Ttl != nil || provider.calls.Load() != 0 {
 		t.Fatalf("static subscription entered on-demand lifecycle: %v", wire)
+	}
+}
+
+func TestSDSStaticSecretUpdatesWhileSigningBlocked(t *testing.T) {
+	for _, mixedInitial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mixed_initial=%t", mixedInitial), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const name = "gateway-cert"
+				makeResource := func(marker string) model.Resource {
+					value, err := anypb.New(&tlsv3.Secret{
+						Name: name,
+						Type: &tlsv3.Secret_TlsCertificate{
+							TlsCertificate: &tlsv3.TlsCertificate{CertificateChain: inlineDataSource([]byte(marker))},
+						},
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					resource, err := model.NewResource(
+						model.ResourceKey{TypeURL: model.SecretType, Name: "demo/egress|" + name},
+						name,
+						value,
+						nil,
+						model.ResourceFacts{GatewayOwner: "demo/egress"},
+					)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return resource
+				}
+				old, current := makeResource("old"), makeResource("current")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				provider := &controlledCertificates{
+					requests: make(chan pendingCertificate, sdsStreamConcurrency),
+					revision: "one",
+				}
+				server := newTestServer(t, gatewayScope(), []model.Resource{old}, provider)
+				stream := newFakeStream(ctx, 4)
+				done := make(chan error, 1)
+				go func() { done <- server.server.serveDelta(stream) }()
+				names := make([]string, sdsStreamConcurrency)
+				for i := range names {
+					names[i] = fmt.Sprintf("cold-%d.example.com", i)
+				}
+				if mixedInitial {
+					names = append(names, name)
+				}
+				stream.send(nodeRequest(model.SecretType, names...))
+				synctest.Wait()
+				if !mixedInitial {
+					stream.send(request(model.SecretType, name))
+					synctest.Wait()
+				}
+				responses := stream.responsesFor(model.SecretType)
+				if len(responses) != 1 || len(responses[0].Resources) != 1 ||
+					responses[0].Resources[0].Version != old.Hash {
+					t.Fatalf("static Secret blocked by on-demand issuance: %v", responses)
+				}
+				// An explicit subscription must resend an unchanged ordinary Secret.
+				stream.send(request(model.SecretType, name))
+				synctest.Wait()
+				if got := len(stream.responsesFor(model.SecretType)); got != 2 {
+					t.Fatalf("static resubscribe responses = %d", got)
+				}
+				next, err := model.NewResourceSet([]model.Resource{current})
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.resources.publish(next)
+				synctest.Wait()
+				responses = stream.responsesFor(model.SecretType)
+				if len(responses) != 3 || len(responses[2].Resources) != 1 ||
+					responses[2].Resources[0].Version != current.Hash {
+					t.Fatalf("static update = %v", responses)
+				}
+				empty, err := model.NewResourceSet(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.resources.publish(empty)
+				synctest.Wait()
+				responses = stream.responsesFor(model.SecretType)
+				if len(responses) != 4 || !slices.Equal(responses[3].RemovedResources, []string{name}) {
+					t.Fatalf("static removal = %v", responses)
+				}
+				// Draining the signing queue must not resurrect an old static snapshot.
+				for range sdsStreamConcurrency {
+					pending := <-provider.requests
+					pending.result <- testSDSCertificate()
+				}
+				synctest.Wait()
+				for _, response := range stream.responsesFor(model.SecretType)[4:] {
+					for _, resource := range response.Resources {
+						if resource.Name == name {
+							t.Fatal("late completion resurrected static Secret")
+						}
+					}
+				}
+				if got := provider.calls.Load(); got != sdsStreamConcurrency {
+					t.Fatalf("sign calls = %d", got)
+				}
+				cancel()
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			})
+		})
 	}
 }

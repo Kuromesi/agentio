@@ -120,31 +120,41 @@ func (s *Server) handleRequest(
 		if watch.sds == nil {
 			watch.sds = newSDSSession(stream.Context(), generator, scope)
 		}
-		demand := request.GetResourceNamesSubscribe()
-		// Envoy re-subscribes held resources on a new stream; their initial versions
-		// restore state without turning history into cold signing demand.
-		if initial {
-			staticNames := staticSDSNames(s.resources.Snapshot(), scope)
-			demand = make([]string, 0, len(demand))
-			for _, name := range request.GetResourceNamesSubscribe() {
-				if _, restored := request.GetInitialResourceVersions()[name]; !restored || staticNames.Contains(name) {
-					demand = append(demand, name)
-				}
+		snapshot := s.resources.Snapshot()
+		staticNames := staticSDSNames(snapshot, scope)
+		var demand, staticDemand []string
+		unsubscribed := sets.New(request.GetResourceNamesUnsubscribe()...)
+		for _, name := range request.GetResourceNamesSubscribe() {
+			if unsubscribed.Contains(name) {
+				continue
 			}
+			if staticNames.Contains(name) {
+				// Ordinary Secrets use the current snapshot synchronously, outside
+				// the on-demand signing queue and its authorization lifecycle.
+				staticDemand = append(staticDemand, name)
+				continue
+			}
+			// Envoy re-subscribes held resources on a new stream. Restore history
+			// without turning it into cold signing demand.
+			if _, restored := request.GetInitialResourceVersions()[name]; initial && restored {
+				continue
+			}
+			demand = append(demand, name)
 		}
 		watch.sds.subscribe(demand)
 		watch.sds.unsubscribe(request.GetResourceNamesUnsubscribe())
-		watch.sds.start(s.resources.Snapshot())
-		if initial {
+		watch.sds.start(snapshot)
+		if initial || len(staticDemand) > 0 {
 			view := newSubscriptionView(watch)
 			// Validate every retained version before asynchronous replacements finish.
 			return s.generateAndSend(stream, connLog, watch, GenerationRequest{
-				Scope:        scope,
-				TypeURL:      typeURL,
-				Subscription: view,
-				Snapshot:     s.resources.Snapshot(),
-				Full:         true,
-			}, len(watch.sds.jobs) == 0)
+				Scope:           scope,
+				TypeURL:         typeURL,
+				Subscription:    view,
+				Snapshot:        snapshot,
+				Full:            true,
+				SubscribedNames: staticDemand,
+			}, initial && len(watch.sds.jobs) == 0)
 		}
 		return nil
 	}

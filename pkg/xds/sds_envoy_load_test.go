@@ -290,7 +290,7 @@ func runEnvoyCertificateLoad(
 		t.Fatal("warm reconnect signed or resent held certificates")
 	}
 	populate("warm-handshakes")
-	// Replace the issuer AND signer, retaining the CA but losing cache and process-local leaf key.
+	// Replace the issuer AND signer, retaining the CA but losing the certificate cache.
 	cancelIssuer()
 	counted, cancelIssuer = installIssuer()
 	start, cpuStart, sentBefore = time.Now(), cpuSeconds(), wire.resources.Load()

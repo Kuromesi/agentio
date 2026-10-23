@@ -74,26 +74,6 @@ type MITMSignerOptions struct {
 type caState struct {
 	ca        pki.SigningCA
 	secretUID types.UID
-	// Leaf material belongs to this immutable CA generation and is local to this process.
-	leafPublicKey     *ecdsa.PublicKey
-	leafPrivateKeyPEM []byte
-}
-
-func newCAState(ca pki.SigningCA, uid types.UID) (*caState, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generate MITM leaf key: %w", err)
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("encode MITM leaf key: %w", err)
-	}
-	return &caState{
-		ca:                ca,
-		secretUID:         uid,
-		leafPublicKey:     &key.PublicKey,
-		leafPrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
-	}, nil
 }
 
 func (caState) ResourceName() string {
@@ -251,12 +231,7 @@ func newCASecretSingleton(
 			log.Error("parse MITM CA Secret", "namespace", options.Namespace, "secret", options.SecretName, "error", err)
 			return nil
 		}
-		state, err := newCAState(ca, secret.UID)
-		if err != nil {
-			log.Error("initialize MITM signing generation", "error", err)
-			return nil
-		}
-		return state
+		return &caState{ca: ca, secretUID: secret.UID}
 	}, options.KrtOptions.WithName("MITM_CA")...)
 }
 
@@ -281,8 +256,16 @@ func (s *MITMSigner) SignDNS(ctx context.Context, domain string, lifetime time.D
 	if s.unavailable.Load() || generation == nil || state == nil || state.Revision != generation.ca.Revision() {
 		return SignedCertificate{}, fmt.Errorf("MITM CA is not loaded")
 	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return SignedCertificate{}, fmt.Errorf("generate MITM leaf key: %w", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return SignedCertificate{}, fmt.Errorf("encode MITM leaf key: %w", err)
+	}
 	ca := generation.ca
-	issued, err := ca.Sign(ctx, generation.leafPublicKey, pki.LeafOptions{
+	issued, err := ca.Sign(ctx, &key.PublicKey, pki.LeafOptions{
 		CommonName:         domain,
 		DNSNames:           []string{domain},
 		Lifetime:           lifetime,
@@ -295,7 +278,7 @@ func (s *MITMSigner) SignDNS(ctx context.Context, domain string, lifetime time.D
 	}
 	return SignedCertificate{
 		CertificateChain: pki.AppendCertificateChain(issued.CertificatePEM, ca.BundlePEM()),
-		PrivateKey:       append([]byte(nil), generation.leafPrivateKeyPEM...),
+		PrivateKey:       pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
 		NotAfter:         issued.NotAfter,
 		SignedAt:         issued.IssuedAt,
 		SignerRevision:   ca.Revision(),
