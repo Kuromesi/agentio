@@ -171,9 +171,11 @@ agentiod:
 
 On-demand domain certificates use the `AGENTIO_MITM_*` settings. The chart maps `agentiod.mitm.secretName`, `agentiod.mitm.secretNamespace`, and `agentiod.mitm.signMode` to the corresponding CA variables. Lifetime, renewal, cache, and concurrency settings can be supplied through `agentiod.env`.
 
-Domain certificates default to a 15-minute lifetime with a 1-minute renewal margin. SDS sets each resource's TTL to the time remaining until `NotAfter - RenewBefore`. Reusing a cached certificate after reconnect does not extend that deadline. Expiry removes the secret from the gateway; the next request for the domain obtains a certificate on demand. Certificates whose remaining lifetime does not cover the renewal margin are refused, including certificates shortened by an expiring external CA.
+Domain certificates default to a 15-minute lifetime with a 1-minute renewal margin and a 15-minute resource TTL. SDS sets each resource's TTL to the time remaining until `min(SignedAt + ResourceTTL, NotAfter - RenewBefore)`, giving at most 14 minutes with the defaults. `AGENTIO_MITM_RESOURCE_TTL` can shorten that window. Reusing a cached certificate after reconnect does not extend that deadline. Expiry removes the secret from the gateway; the next request for the domain obtains a certificate on demand. Certificates whose remaining lifetime does not cover the renewal margin are refused, including certificates shortened by an expiring external CA.
 
-`AGENTIO_MITM_CACHE_MAX_AGE` and `AGENTIO_MITM_CACHE_MAX_ENTRIES` control only the issuer's local cache. Cache eviction does not remove certificates already delivered to gateways. CA rotation or loss of gateway authorization still actively invalidates sent secrets. See [SDS lifecycle and reconnect behavior](../development/sds-lifecycle.md) for the stream design and upgrade behavior.
+`AGENTIO_MITM_CACHE_MAX_AGE` and `AGENTIO_MITM_CACHE_MAX_ENTRIES` control only the issuer's local cache. Cache eviction does not remove certificates already delivered to gateways. CA rotation or loss of gateway authorization still actively invalidates sent secrets.
+
+Each actual issuance generates an independent ECDSA P-256 leaf key, including renewal for the same domain. Cache hits and concurrent requests sharing one issuance reuse the existing certificate and key. Clients must support ECDSA certificates; RSA-only clients cannot use these leaves.
 
 `AGENTIO_MITM_SIGN_MODE` accepts:
 

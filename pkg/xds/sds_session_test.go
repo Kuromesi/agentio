@@ -766,3 +766,150 @@ func TestSDSStaticSecretUpdatesWhileSigningBlocked(t *testing.T) {
 		})
 	}
 }
+
+func TestSDSStaticSecretSupersedesPendingIssuance(t *testing.T) {
+	for _, outcome := range []string{"success", "failure", "deleted"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const name = "api.example.com"
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				provider := &controlledCertificates{
+					requests:           make(chan pendingCertificate, 1),
+					revision:           "one",
+					ignoreCancellation: outcome != "failure",
+				}
+				server := newTestServer(t, gatewayScope(), nil, provider)
+				stream := newFakeStream(ctx, 1)
+				done := make(chan error, 1)
+				go func() { done <- server.server.serveDelta(stream) }()
+				stream.send(nodeRequest(model.SecretType, name))
+				synctest.Wait()
+				pending := <-provider.requests
+				// Publish the static resource before the old issuance finishes.
+				// Both successes and failures must become stale.
+				value, err := anypb.New(&tlsv3.Secret{
+					Name: name,
+					Type: &tlsv3.Secret_TlsCertificate{TlsCertificate: &tlsv3.TlsCertificate{
+						CertificateChain: inlineDataSource([]byte("static-current")),
+					}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				resource, err := model.NewResource(
+					model.ResourceKey{TypeURL: model.SecretType, Name: "demo/egress|" + name},
+					name, value, nil, model.ResourceFacts{GatewayOwner: "demo/egress"},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				snapshot, err := model.NewResourceSet([]model.Resource{resource})
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.resources.publish(snapshot)
+				synctest.Wait()
+				responses := stream.responsesFor(model.SecretType)
+				if len(responses) != 1 || len(responses[0].Resources) != 1 ||
+					responses[0].Resources[0].Version != resource.Hash || responses[0].Resources[0].Ttl != nil {
+					t.Fatalf("static publication = %v", responses)
+				}
+				if outcome == "deleted" {
+					empty, err := model.NewResourceSet(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					server.resources.publish(empty)
+					synctest.Wait()
+					responses = stream.responsesFor(model.SecretType)
+					if len(responses) != 2 || !slices.Equal(responses[1].RemovedResources, []string{name}) {
+						t.Fatalf("static removal = %v", responses)
+					}
+				}
+				before := len(responses)
+				if outcome == "failure" {
+					pending.err <- errors.New("old issuance failed")
+				} else {
+					pending.result <- testSDSCertificate()
+				}
+				synctest.Wait()
+				if responses = stream.responsesFor(model.SecretType); len(responses) != before {
+					t.Fatalf("late issuance changed the static resource: %v", responses[before:])
+				}
+				cancel()
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
+}
+
+func TestSDSStaticSnapshotSupersedesQueuedAndCompletedDemand(t *testing.T) {
+	const name = "api.example.com"
+	value, err := anypb.New(&tlsv3.Secret{Name: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := model.NewResource(
+		model.ResourceKey{TypeURL: model.SecretType, Name: "demo/egress|" + name},
+		name, value, nil, model.ResourceFacts{GatewayOwner: "demo/egress"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := model.NewResourceSet([]model.Resource{resource})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"queued", "completed", "failed"} {
+		t.Run(phase, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				provider := &controlledCertificates{
+					requests: make(chan pendingCertificate, 1),
+					revision: "one",
+				}
+				server := newTestServer(t, gatewayScope(), nil, provider)
+				q := newSDSSession(t.Context(), newTestSDSGenerator(t, provider), gatewayScope())
+				defer q.cancel()
+				watch := &watchState{names: sets.New(name), sent: make(map[string]string), sds: q}
+				stream := newFakeStream(t.Context(), 1)
+				q.subscribe([]string{name})
+				if phase != "queued" {
+					q.start(server.resources.Snapshot())
+					pending := <-provider.requests
+					if phase == "failed" {
+						pending.err <- errors.New("old issuance failed")
+					} else {
+						pending.result <- testSDSCertificate()
+					}
+					synctest.Wait()
+				}
+				// The snapshot is current before its publication notice reaches ADS.
+				server.resources.publish(snapshot)
+				if phase == "queued" {
+					q.start(snapshot)
+					synctest.Wait()
+					// Queued demand must not capture a static resource and later
+					// resurrect it after the snapshot removes it.
+					empty, err := model.NewResourceSet(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					server.resources.publish(empty)
+				}
+				select {
+				case ready := <-q.ready:
+					if err := server.server.sendSDSCompletions(stream, log, watch, ready); err != nil {
+						t.Fatal(err)
+					}
+				default:
+				}
+				if responses := stream.sent(); len(responses) != 0 {
+					t.Fatalf("async demand sent a resource owned by the static snapshot: %v", responses)
+				}
+			})
+		})
+	}
+}

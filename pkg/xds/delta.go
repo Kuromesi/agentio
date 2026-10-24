@@ -279,13 +279,16 @@ func (s *Server) generateAndSend(
 	force bool,
 ) error {
 	started := time.Now()
-	// A removal tears down Envoy's pending certificate request. Keep real demand
-	// alive during normal rotation; its worker will replace the old certificate.
-	if q := watch.sds; q != nil && request.Full && q.generator.provider.SignerRevision() != "" &&
-		q.generator.provider.Authorize(q.scope) == nil {
+	if q := watch.sds; q != nil {
 		staticNames := staticSDSNames(request.Snapshot, q.scope)
-		for name := range q.jobs {
-			if !staticNames.Contains(name) {
+		// Publishing a static Secret supersedes same-name issuance, even if the
+		// static resource is later removed before the old worker finishes.
+		q.unsubscribe(staticNames.UnsortedList())
+		// A removal tears down Envoy's pending certificate request. Keep real
+		// demand alive during rotation; its worker will replace the certificate.
+		if request.Full && q.generator.provider.SignerRevision() != "" &&
+			q.generator.provider.Authorize(q.scope) == nil {
+			for name := range q.jobs {
 				delete(request.Subscription.sent, name)
 			}
 		}

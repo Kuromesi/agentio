@@ -104,6 +104,9 @@ func (q *sdsSession) unsubscribe(names []string) {
 }
 
 func (q *sdsSession) start(snapshot model.ResourceSet) {
+	// Static Secrets belong to the synchronous snapshot path, including names
+	// that became static while their issuance was queued.
+	q.unsubscribe(staticSDSNames(snapshot, q.scope).UnsortedList())
 	for q.active < sdsStreamConcurrency && q.pending.Len() > 0 {
 		element := q.pending.Front()
 		job := element.Value.(*sdsJob)
@@ -150,6 +153,10 @@ func (s *Server) sendSDSCompletions(
 		}
 	}
 drained:
+	snapshot := s.resources.Snapshot()
+	// A publication may reach the snapshot before ADS handles its push notice.
+	// Discard completed issuance as soon as a static Secret owns the name.
+	q.unsubscribe(staticSDSNames(snapshot, q.scope).UnsortedList())
 	delta := GeneratedDelta{expiresAt: make(map[string]time.Time), versions: make(map[string]string)}
 	for _, completion := range batch {
 		q.active--
@@ -191,10 +198,10 @@ drained:
 		maps.Copy(delta.expiresAt, completion.delta.expiresAt)
 		maps.Copy(delta.versions, completion.delta.versions)
 	}
-	q.start(s.resources.Snapshot())
+	q.start(snapshot)
 	return s.sendGeneratedDelta(stream, connLog, watch, GenerationRequest{
 		Scope:    q.scope,
 		TypeURL:  model.SecretType,
-		Snapshot: s.resources.Snapshot(),
+		Snapshot: snapshot,
 	}, delta, false, first.started)
 }
