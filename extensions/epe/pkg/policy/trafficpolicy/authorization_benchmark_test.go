@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/types"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -45,7 +47,10 @@ func BenchmarkEgressAuthorization(b *testing.B) {
 			_, aggregate, _, _ := benchFixture(count)
 			for _, mode := range []string{"original", "literal", "cachedDNS", "denied"} {
 				b.Run(mode, func(b *testing.B) {
-					authorize := NewAuthorizer(aggregate, dns.NewClient(benchmarkLookup{}, time.Second))
+					authorize := egressauthz.NewAggregate(
+						dns.NewClient(benchmarkLookup{}, time.Second),
+						NewAuthorizer(aggregate),
+					).Authorize
 					st := &filter.Stream{
 						Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod-0"}},
 						Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443},

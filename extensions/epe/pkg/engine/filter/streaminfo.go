@@ -15,6 +15,7 @@ package filter
 
 import (
 	"context"
+	"net/netip"
 	"time"
 )
 
@@ -73,6 +74,7 @@ type FilterRecord struct {
 
 // Authorization reasons classify denials and errors in request audit logs.
 const (
+	AuthorizationReasonMissingIdentity  = "missing_source_identity"
 	AuthorizationReasonPolicyDenied     = "traffic_policy_denied"
 	AuthorizationReasonResolutionFailed = "target_resolution_failed"
 	AuthorizationReasonPolicyLoadFailed = "policy_load_failed"
@@ -93,6 +95,9 @@ type StreamInfo struct {
 	Matched       []UnitRecord
 	Filters       []FilterRecord
 	Authorization *AuthorizationDecision
+	// authorizationMatches holds rule matches until the final destination is selected.
+	// It is audit data only; authorizers do not consult it when making decisions.
+	authorizationMatches map[netip.AddrPort]AuthorizationDecision
 	// Outcome is written exactly once, at stream end, by the ext_proc layer —
 	// derived from the responses it actually sent, the stream's error, and
 	// len(Matched). The engine deliberately does not accumulate it: an outcome
@@ -179,5 +184,30 @@ type StreamLogger interface {
 func (i *StreamInfo) RecordAuthorization(record AuthorizationDecision) {
 	if i != nil {
 		i.Authorization = &record
+		i.authorizationMatches = nil
 	}
+}
+
+// RecordAuthorizationMatch remembers a matching allow rule for a candidate.
+// Later matches for the same address replace earlier ones.
+func (i *StreamInfo) RecordAuthorizationMatch(address netip.AddrPort, policy string, ruleIndex int) {
+	if i == nil {
+		return
+	}
+	if i.authorizationMatches == nil {
+		i.authorizationMatches = make(map[netip.AddrPort]AuthorizationDecision)
+	}
+	i.authorizationMatches[address] = AuthorizationDecision{Policy: policy, RuleIndex: &ruleIndex}
+}
+
+// RecordAuthorizedDestination records the final allowed target and its latest
+// matching rule, if any. Candidate matches are discarded with the final result.
+func (i *StreamInfo) RecordAuthorizedDestination(address netip.AddrPort) {
+	if i == nil {
+		return
+	}
+	record := i.authorizationMatches[address]
+	record.Action = "allow"
+	record.Destination = address.String()
+	i.RecordAuthorization(record)
 }

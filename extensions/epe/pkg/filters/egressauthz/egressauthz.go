@@ -19,105 +19,113 @@ package egressauthz
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/netip"
 	"slices"
 
-	log "sigs.k8s.io/controller-runtime/pkg/log"
-
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
-	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
-// Authorize checks the selected or resolved destination against one immutable
-// config. It runs independently of the request rule chain and needs no body.
-func Authorize(
+// Authorize invokes each child once with the remaining candidates. An empty
+// result or an error stops the chain. Selection is random within the first
+// surviving candidate's address family; explicit and original targets stay fixed.
+func (a *Aggregate) Authorize(
 	ctx context.Context,
-	cfg Config,
-	client *dns.Client,
 	stream *filter.Stream,
 ) (*filter.UpstreamTarget, *filter.Reply, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("egressauthz config: %w", err)
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	if stream == nil {
 		return nil, nil, fmt.Errorf("request stream is required")
 	}
-	logger := log.FromContext(ctx).V(logging.DEBUG)
-	evaluate := func(address netip.AddrPort) Decision {
-		decision := cfg.Evaluate(address)
-		if logger.Enabled() {
-			logger.Info("egress destination evaluated",
-				"address", address.String(), "action", string(decision.Action),
-				"policy", decision.PolicyName, "ruleIndex", decision.RuleIndex)
-		}
-		record := filter.AuthorizationDecision{
-			Action:      "deny",
-			Destination: address.String(),
-			Reason:      filter.AuthorizationReasonPolicyDenied,
-		}
-		if decision.PolicyName != "" {
-			record.Policy, record.RuleIndex = decision.PolicyName, &decision.RuleIndex
-		}
-		if decision.Action == Allow {
-			record.Action, record.Reason = "allow", ""
-		}
-		stream.Info.RecordAuthorization(record)
-		return decision
-	}
-	// An explicit route is a fixed target, not a DNS candidate. Authorize its
-	// actual IP and port and retain it; denying it must not choose another target.
-	if stream.Upstream != nil {
-		if err := (&filter.RouteMutation{Upstream: stream.Upstream}).Validate(); err != nil {
-			return nil, nil, fmt.Errorf("egressauthz upstream: %w", err)
-		}
-		if evaluate(*stream.Upstream.Address).Action == Allow {
-			return stream.Upstream, nil, nil
-		}
-		return denied()
-	}
-	addresses, err := resolveDNS(ctx, client, stream, cfg.Family)
+	candidates, err := resolveCandidates(ctx, a.client, stream)
 	if err != nil {
-		stream.Info.RecordAuthorization(
-			filter.AuthorizationDecision{
+		return nil, nil, err
+	}
+	for _, authorizer := range a.authorizers {
+		candidates, err = authorizer.Authorize(ctx, stream, candidates)
+		if err != nil {
+			stream.Info.RecordAuthorization(filter.AuthorizationDecision{
 				Action: "error",
-				Reason: filter.AuthorizationReasonResolutionFailed,
-			},
-		)
-		return nil, nil, fmt.Errorf("egressauthz: %w", err)
-	}
-	original := stream.Request.OriginalDestination
-	if original.IsValid() &&
-		slices.Contains(addresses, original.Addr().Unmap()) {
-		address := netip.AddrPortFrom(original.Addr().Unmap(), uint16(stream.Request.Port))
-		if evaluate(address).Action == Allow {
-			return selectTarget(address), nil, nil
+				Reason: filter.AuthorizationReasonPolicyLoadFailed,
+			})
+			return nil, nil, err
 		}
-		return denied()
-	}
-	// The same request snapshot governs DNS completion and every candidate.
-	// Publishing a new Config cannot change this invocation's policy decisions.
-	for _, ip := range addresses {
-		address := netip.AddrPortFrom(ip, uint16(stream.Request.Port))
-		decision := evaluate(address)
-		if decision.Action != Allow {
-			continue
+		if len(candidates) == 0 {
+			return denied()
 		}
-		return selectTarget(address), nil, nil
 	}
-	if len(addresses) != 1 {
-		stream.Info.RecordAuthorization(
-			filter.AuthorizationDecision{Action: "deny", Reason: filter.AuthorizationReasonPolicyDenied},
-		)
+	selected := selectRandomCandidate(candidates)
+	stream.Info.RecordAuthorizedDestination(selected)
+	if stream.Upstream != nil {
+		return stream.Upstream, nil, nil
 	}
-	return denied()
+	return &filter.UpstreamTarget{Address: &selected}, nil, nil
 }
 
-func selectTarget(address netip.AddrPort) *filter.UpstreamTarget {
-	return &filter.UpstreamTarget{Address: &address}
+// selectRandomCandidate selects uniformly within the first candidate's address
+// family. The caller supplies a non-empty list of authorized candidates.
+func selectRandomCandidate(candidates []netip.AddrPort) netip.AddrPort {
+	selected := candidates[0]
+	// Reservoir sampling gives each allowed candidate in the preferred family
+	// equal probability without reordering or copying the candidate list.
+	count := 1
+	for _, candidate := range candidates[1:] {
+		if candidate.Addr().Is4() != selected.Addr().Is4() {
+			continue
+		}
+		count++
+		if rand.IntN(count) == 0 {
+			selected = candidate
+		}
+	}
+	return selected
+}
+
+// Explicit routes and an original destination found in DNS are fixed targets:
+// expose only that candidate so denial cannot fall back to another address.
+func resolveCandidates(
+	ctx context.Context,
+	client *dns.Client,
+	stream *filter.Stream,
+) ([]netip.AddrPort, error) {
+	if stream.Upstream != nil {
+		if err := (&filter.RouteMutation{Upstream: stream.Upstream}).Validate(); err != nil {
+			return nil, fmt.Errorf("egressauthz upstream: %w", err)
+		}
+		return []netip.AddrPort{*stream.Upstream.Address}, nil
+	}
+	addresses, err := resolveDNS(ctx, client, stream)
+	if err != nil {
+		stream.Info.RecordAuthorization(filter.AuthorizationDecision{
+			Action: "error",
+			Reason: filter.AuthorizationReasonResolutionFailed,
+		})
+		return nil, fmt.Errorf("egressauthz: %w", err)
+	}
+	original := stream.Request.OriginalDestination
+	if original.IsValid() && slices.Contains(addresses, original.Addr().Unmap()) {
+		return []netip.AddrPort{netip.AddrPortFrom(original.Addr().Unmap(), uint16(stream.Request.Port))}, nil
+	}
+	candidates := make([]netip.AddrPort, 0, len(addresses))
+	for _, ip := range addresses {
+		candidates = append(candidates, netip.AddrPortFrom(ip, uint16(stream.Request.Port)))
+	}
+	return candidates, nil
+}
+
+func recordDenial(stream *filter.Stream, address netip.AddrPort, decision Decision) {
+	record := filter.AuthorizationDecision{
+		Action:      "deny",
+		Destination: address.String(),
+		Reason:      filter.AuthorizationReasonPolicyDenied,
+	}
+	if decision.PolicyName != "" {
+		record.Policy, record.RuleIndex = decision.PolicyName, &decision.RuleIndex
+	}
+	stream.Info.RecordAuthorization(record)
 }
 
 func denied() (*filter.UpstreamTarget, *filter.Reply, error) {

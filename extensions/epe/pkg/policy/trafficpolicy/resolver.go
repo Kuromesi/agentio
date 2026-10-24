@@ -16,12 +16,11 @@ package trafficpolicy
 
 import (
 	"context"
+	"net/netip"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
-	"github.com/openkruise/agentio/pkg/dns"
 )
 
 type resolver struct{ source Resources }
@@ -34,23 +33,32 @@ func (s *resolver) config(ctx context.Context, pod inputs.Pod) (egressauthz.Conf
 	return snapshot.entry.compiled.config, snapshot.entry.compiled.err
 }
 
-// NewAuthorizer loads the workload's policies when request rules have completed.
+// NewAuthorizer loads immutable workload policies for aggregate authorization.
 // It is independent of SecurityProfile resolution and bypass semantics.
-func NewAuthorizer(source Resources, client *dns.Client) engine.RequestAuthorizer {
-	s := &resolver{source: source}
-	return func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
-		peer := stream.Peer
-		cfg, err := s.config(ctx, inputs.Pod{
-			Namespace: peer.Pod.Namespace,
-			Name:      peer.Pod.Name,
-			Labels:    peer.Labels,
+func NewAuthorizer(source Resources) egressauthz.Authorizer {
+	return &resolver{source: source}
+}
+
+func (s *resolver) Authorize(
+	ctx context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	peer := stream.Peer
+	if !peer.Valid() {
+		stream.Info.RecordAuthorization(filter.AuthorizationDecision{
+			Action: "deny",
+			Reason: filter.AuthorizationReasonMissingIdentity,
 		})
-		if err != nil {
-			stream.Info.RecordAuthorization(
-				filter.AuthorizationDecision{Action: "error", Reason: filter.AuthorizationReasonPolicyLoadFailed},
-			)
-			return nil, nil, err
-		}
-		return egressauthz.Authorize(ctx, cfg, client, stream)
+		return nil, nil
 	}
+	cfg, err := s.config(ctx, inputs.Pod{
+		Namespace: peer.Pod.Namespace,
+		Name:      peer.Pod.Name,
+		Labels:    peer.Labels,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Authorize(ctx, stream, candidates)
 }

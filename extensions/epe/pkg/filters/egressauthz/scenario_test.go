@@ -18,14 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/netip"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
-	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
@@ -33,20 +30,14 @@ import (
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
-// Each completed request captures one config, including an empty rule chain.
-func authHarness(t *testing.T, client *dns.Client, current *atomic.Pointer[egressauthz.Config]) *enginetest.Harness {
+// Each request uses the production aggregate and reloadable authorizer, even with an empty rule chain.
+func authHarness(t *testing.T, client *dns.Client, current *egressauthz.StaticAuthorizer) *enginetest.Harness {
 	t.Helper()
 	return enginetest.New(t, enginetest.Options{
 		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{}, nil
 		},
-		AuthorizeRequest: func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
-			cfg := current.Load()
-			if cfg == nil {
-				return nil, nil, fmt.Errorf("egress policy snapshot is not ready")
-			}
-			return egressauthz.Authorize(ctx, *cfg, client, stream)
-		},
+		AuthorizeRequest: egressauthz.NewAggregate(client, current).Authorize,
 	})
 }
 
@@ -62,18 +53,18 @@ func authRule(action egressauthz.Action, cidr string, port uint16) egressauthz.R
 	}
 }
 
-func updateRules(t *testing.T, current *atomic.Pointer[egressauthz.Config], rules ...egressauthz.Rule) {
+func updateRules(t *testing.T, current *egressauthz.StaticAuthorizer, rules ...egressauthz.Rule) {
 	t.Helper()
 	publishPolicies(t, current, egressauthz.Policy{Name: "test", Rules: rules})
 }
 
-func publishPolicies(t *testing.T, current *atomic.Pointer[egressauthz.Config], policies ...egressauthz.Policy) {
+func publishPolicies(t *testing.T, current *egressauthz.StaticAuthorizer, policies ...egressauthz.Policy) {
 	t.Helper()
-	cfg := &egressauthz.Config{Policies: policies}
+	cfg := egressauthz.Config{Policies: policies}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	current.Store(cfg)
+	current.Update(cfg)
 }
 
 func requireDenied(t *testing.T, v *enginetest.Verdict) {
@@ -100,7 +91,7 @@ func TestScenario_EgressAuthzFirstMatchAndLiveReordering(t *testing.T) {
 			TTL:       time.Minute,
 		}, nil
 	}), time.Second)
-	policy := &atomic.Pointer[egressauthz.Config]{}
+	policy := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	allow := authRule(egressauthz.Allow, "192.0.2.0/24", 443)
 	deny := authRule(egressauthz.Deny, "192.0.2.1/32", 443)
 	updateRules(t, policy, allow, deny)
@@ -143,7 +134,7 @@ func TestScenario_EgressAuthzPinsOnlyAuthorizedCustomAddress(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	policy := &atomic.Pointer[egressauthz.Config]{}
+	policy := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	updateRules(t, policy,
 		authRule(egressauthz.Deny, "192.0.2.1/32", 443),
 		authRule(egressauthz.Allow, "192.0.2.0/24", 443),
@@ -162,7 +153,7 @@ func TestScenario_EgressAuthzChecksLiteralCONNECTDestination(t *testing.T) {
 	client := dns.NewClient(scenarioLookup(func(context.Context, string, dns.Family) (dns.LookupResult, error) {
 		return dns.LookupResult{}, errors.New("literal target must not query DNS")
 	}), time.Second)
-	policy := &atomic.Pointer[egressauthz.Config]{}
+	policy := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	updateRules(t, policy, authRule(egressauthz.Allow, "2001:db8::/32", 8443))
 	h := authHarness(t, client, policy)
 	request := func(port string) *enginetest.RequestBuilder {
@@ -193,7 +184,7 @@ func TestScenario_EgressAuthzReplacesCallerPolicySnapshots(t *testing.T) {
 		Rules: []egressauthz.Rule{
 			authRule(egressauthz.Deny, "0.0.0.0/0", 443),
 		}}
-	current := &atomic.Pointer[egressauthz.Config]{}
+	current := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	publishPolicies(t, current, skip, team, global)
 	h := authHarness(t, client, current)
 	h.Run(t, authRequest("api.example.com:443")).RequireUpstream(t, "192.0.2.1:443")
@@ -215,33 +206,21 @@ func TestScenario_EgressAuthzReplacesCallerPolicySnapshots(t *testing.T) {
 	h.Run(t, authRequest("api.example.com:443")).RequireUpstream(t, "192.0.2.1:443")
 }
 
-func TestScenario_EgressAuthzFailuresNeverEmitTarget(t *testing.T) {
+func TestScenario_EgressAuthzDNSFailureNeverEmitsTarget(t *testing.T) {
 	client := dns.NewClient(scenarioLookup(func(context.Context, string, dns.Family) (dns.LookupResult, error) {
 		return dns.LookupResult{}, errors.New("DNS unavailable")
 	}), time.Second)
-	policy := &atomic.Pointer[egressauthz.Config]{}
+	policy := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	updateRules(t, policy, authRule(egressauthz.Allow, "0.0.0.0/0", 443))
-	for _, tc := range []struct {
-		name string
-		cfg  egressauthz.Config
-	}{
-		{"DNS failure", *policy.Load()},
-		{"invalid policy", egressauthz.Config{Policies: []egressauthz.Policy{{Name: ""}}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			current := &atomic.Pointer[egressauthz.Config]{}
-			current.Store(&tc.cfg)
-			v := authHarness(t, client, current).Run(t, authRequest("api.example.com:443"))
-			v.RequireBlocked(t, 500)
-			v.RequireNoUpstream(t)
-			if v.ImmediateDetails != "epe_request_authorization_failed" {
-				t.Fatalf("unexpected failure detail: %q", v.ImmediateDetails)
-			}
-		})
+	v := authHarness(t, client, policy).Run(t, authRequest("api.example.com:443"))
+	v.RequireBlocked(t, 500)
+	v.RequireNoUpstream(t)
+	if v.ImmediateDetails != "epe_request_authorization_failed" {
+		t.Fatalf("unexpected failure detail: %q", v.ImmediateDetails)
 	}
 }
 
-func TestScenario_EgressAuthzInFlightRequestKeepsSnapshot(t *testing.T) {
+func TestScenario_EgressAuthzLoadsCurrentPolicyAfterDNS(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	calls := 0
 	client := dns.NewClient(scenarioLookup(func(ctx context.Context, _ string, _ dns.Family) (dns.LookupResult, error) {
@@ -254,7 +233,7 @@ func TestScenario_EgressAuthzInFlightRequestKeepsSnapshot(t *testing.T) {
 			return dns.LookupResult{}, ctx.Err()
 		}
 	}), 5*time.Second)
-	current := &atomic.Pointer[egressauthz.Config]{}
+	current := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	updateRules(t, current, authRule(egressauthz.Allow, "192.0.2.0/24", 443))
 	h := authHarness(t, client, current)
 	stream := enginetest.NewScriptedStream(context.Background(), authRequest("api.example.com:443").Build()...)
@@ -266,12 +245,12 @@ func TestScenario_EgressAuthzInFlightRequestKeepsSnapshot(t *testing.T) {
 		t.Fatalf("request completed before lookup: %v", err)
 	}
 
-	// Publish a separate object; never mutate the old request's Config or slices.
+	// Policies are loaded after DNS completes, so this request must use the update.
 	publishPolicies(t, current, egressauthz.Policy{Name: "empty"})
 	close(release)
 	err := <-done
 	v := enginetest.ParseVerdict(stream.Responses(), err)
-	v.RequireUpstream(t, "192.0.2.1:443")
+	requireDenied(t, v)
 	requireDenied(t, h.Run(t, authRequest("api.example.com:443")))
 	if calls != 1 {
 		t.Fatalf("DNS calls=%d, want cache hit on the next request", calls)
@@ -287,7 +266,7 @@ func TestScenario_EgressAuthzDenialHasNoPolicyPayload(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	current := &atomic.Pointer[egressauthz.Config]{}
+	current := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
 	publishPolicies(t, current,
 		egressauthz.Policy{Name: "TrafficPolicy/team/first",
 			Rules: []egressauthz.Rule{

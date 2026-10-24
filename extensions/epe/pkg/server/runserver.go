@@ -51,7 +51,7 @@ type Config struct {
 	AuthorizeRequest engine.RequestAuthorizer
 	// FailClosedOnMissingIdentity denies requests when the source pod
 	// identity never reached the filter (e.g. a misconfigured metadata
-	// exchange). The default (false) passes them through.
+	// exchange). With the default (false), independent authorization still runs.
 	FailClosedOnMissingIdentity bool
 
 	// SecureServing enables TLS. When true, CertProvider supplies the

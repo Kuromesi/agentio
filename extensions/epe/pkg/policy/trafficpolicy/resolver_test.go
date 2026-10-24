@@ -205,7 +205,10 @@ func TestResolverCacheUpdates(t *testing.T) {
 func TestAuthorizerUsesWorkloadBinding(t *testing.T) {
 	f := testStore()
 	f.bind()
-	authorize := NewAuthorizer(testAggregate(f), dns.NewClient(nil, 0))
+	authorize := egressauthz.NewAggregate(
+		dns.NewClient(nil, 0),
+		NewAuthorizer(testAggregate(f)),
+	).Authorize
 	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443}, Info: filter.NewStreamInfo()}
 	stream.Peer.Pod.Namespace, stream.Peer.Pod.Name = "ns", "pod"
 	target, reply, err := authorize(t.Context(), stream)
@@ -435,12 +438,83 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 	source := testStore()
 	source.err = errors.New("xDS unavailable")
 	stream := &filter.Stream{
-		Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
-		Info: filter.NewStreamInfo(),
+		Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+		Request: httpreq.HTTPRequest{Host: "192.0.2.1", Port: 443},
+		Info:    filter.NewStreamInfo(),
 	}
-	_, _, err := NewAuthorizer(testAggregate(source), nil)(t.Context(), stream)
+	_, _, err := egressauthz.NewAggregate(
+		dns.NewClient(nil, 0),
+		NewAuthorizer(testAggregate(source)),
+	).Authorize(
+		t.Context(),
+		stream,
+	)
 	if err == nil || stream.Info.Authorization == nil ||
 		stream.Info.Authorization.Reason != filter.AuthorizationReasonPolicyLoadFailed {
 		t.Fatalf("error=%v audit=%+v", err, stream.Info.Authorization)
+	}
+}
+
+func TestGlobalDenyPrecedesXDSPolicy(t *testing.T) {
+	f := testStore() // Workload policy allows 203.0.113.0/24.
+	global := egressauthz.Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/32")}}
+	authorize := egressauthz.NewAggregate(
+		dns.NewClient(nil, 0),
+		egressauthz.NewStaticAuthorizer(global),
+		NewAuthorizer(testAggregate(f)),
+	).Authorize
+	for _, tc := range []struct {
+		host    string
+		allowed bool
+	}{
+		{"203.0.113.7", false}, // Global restriction overrides workload allow.
+		{"203.0.113.8", true},
+		{"192.0.2.1", false}, // Global miss preserves workload default-deny.
+	} {
+		stream := &filter.Stream{
+			Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+			Request: httpreq.HTTPRequest{Host: tc.host, Port: 443},
+		}
+		target, reply, err := authorize(t.Context(), stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.allowed {
+			if target == nil || reply != nil {
+				t.Fatalf("%s: target=%v reply=%v", tc.host, target, reply)
+			}
+		} else if target != nil || reply == nil || reply.Status != 403 {
+			t.Fatalf("%s: target=%v reply=%v", tc.host, target, reply)
+		}
+	}
+}
+
+func TestAuthorizerRejectsMissingIdentityBeforeLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pod  types.NamespacedName
+	}{
+		{name: "absent"},
+		{name: "missing namespace", pod: types.NamespacedName{Name: "pod"}},
+		{name: "missing name", pod: types.NamespacedName{Namespace: "ns"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := &filter.Stream{
+				Peer: filter.Peer{Pod: tc.pod},
+				Info: filter.NewStreamInfo(),
+			}
+			// No resource store is needed: rejection must precede any lookup.
+			allowed, err := NewAuthorizer(nil).Authorize(t.Context(), stream, []netip.AddrPort{
+				netip.MustParseAddrPort("203.0.113.7:443"),
+			})
+			if err != nil || len(allowed) != 0 {
+				t.Fatalf("allowed=%v err=%v", allowed, err)
+			}
+			audit := stream.Info.Authorization
+			if audit == nil || audit.Action != "deny" || audit.Reason != filter.AuthorizationReasonMissingIdentity ||
+				audit.Policy != "" || audit.Destination != "" {
+				t.Fatalf("audit=%+v", audit)
+			}
+		})
 	}
 }

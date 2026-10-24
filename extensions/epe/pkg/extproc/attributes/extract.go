@@ -68,10 +68,10 @@ const (
 // destination.port overrides the authority port so a forged Host cannot evade
 // port policy. CONNECT is the exception: its authority names the tunnel target
 // while destination.port names the explicit proxy, so the target authority
-// port is retained. When pod identity is missing from filter_state it returns a
-// partial Peer and a zero HTTPRequest; callers must check Peer.Valid and decide
-// the disposition (the ext-proc server passes such requests through unless its
-// fail-closed switch is set). Sandbox token decoding is deferred until a credential consumer needs it.
+// port is retained. Missing pod identity returns a partial Peer but still extracts
+// the request target for identity-independent destination authorization.
+// Callers must check Peer.Valid before selecting workload policies.
+// Sandbox token decoding is deferred until a credential consumer needs it.
 // Log lines use the logger from ctx, so request-scoped key/values are carried
 // on them.
 func Extract(
@@ -99,15 +99,6 @@ func Extract(
 		labelsKey = FilterStateSandboxLabels
 	}
 	workloadLabelsEncoded := extractFilterStateString(attrs, labelsKey)
-
-	if podNamespace == "" || podName == "" {
-		// Envoy must supply the captured workload headers or legacy peer
-		// metadata. Without a complete identity the caller decides the
-		// disposition and logs it at the operator-visible level.
-		loggerD.Info("pod identity missing from filter_state",
-			"podNamespace", podNamespace, "podName", podName)
-		return peer, httpreq.HTTPRequest{}
-	}
 
 	// Workload labels use the new attribute when present, including empty values.
 	// Both attribute names carry the same base64-encoded

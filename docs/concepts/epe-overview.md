@@ -15,11 +15,11 @@ enrolled workload
 
 ## Control-plane boundaries
 
-`TrafficPolicy` and `GlobalTrafficPolicy` govern L3/L4 egress authorization for selected workloads. `agentiod` compiles and distributes those resources to the Agentio data plane; EPE neither watches nor evaluates them.
+`TrafficPolicy` and `GlobalTrafficPolicy` govern L3/L4 egress authorization for selected workloads. `agentiod` compiles and distributes those resources to the Agentio data plane; EPE can additionally retrieve the compiled Workload/TrafficPolicy resources over xDS with `--enable-xds-egressauthz` and evaluate destination IPs before HTTP forwarding. Independently, EPE always checks its global `EPEConfig.egressAuthorization.deniedCIDRs` restrictions and pins allowed HTTP destinations.
 
 The ordered `AgentioConfig.egressPolicies` list independently decides whether matching traffic uses `PASSTHROUGH` or `GATEWAY`. Native Sandbox routing does not support legacy egress `DENY`; express rejection in TrafficPolicy. A `GATEWAY` decision sends traffic to an egress gateway whose Envoy configuration invokes EPE, but EPE does not select that route.
 
-`SecurityProfile` and `GlobalSecurityProfile` provide the L7 rules that EPE evaluates. They select workloads, match HTTP requests, and can block a request, bypass remaining EPE work, manipulate request headers, transform credentials, enforce an MCP tool policy, or emit an audit event. A SecurityProfile cannot make an otherwise direct passthrough request visit EPE. Conversely, EPE cannot override a `TrafficPolicy` denial because the data plane enforces that decision before the request reaches EPE.
+`SecurityProfile` and `GlobalSecurityProfile` provide the L7 rules that EPE evaluates. They select workloads, match HTTP requests, and can block a request, bypass remaining profile rules, manipulate request headers, transform credentials, enforce an MCP tool policy, or emit an audit event. A SecurityProfile cannot make an otherwise direct passthrough request visit EPE. Conversely, EPE cannot override a `TrafficPolicy` denial because the data plane enforces that decision before the request reaches EPE.
 
 ## Primary resources and actions
 
@@ -32,7 +32,7 @@ The ordered `AgentioConfig.egressPolicies` list independently decides whether ma
 
 EPE is a network hop on each gateway-routed request. Its work adds processing latency, and policies that need a request body require Envoy to buffer the complete body before the decision. Size EPE independently of the gateway and keep the chart's `agentio-epe` Deployment healthy; its headless Service exposes ext-proc on port `9002`, health on `9003`, and metrics on `9090` by default.
 
-EPE needs the caller identity and labels that the gateway sends as ext_proc attributes. If that identity is absent, EPE cannot select a profile and the request passes through unmodified. This is an availability-friendly but security-significant failure mode: validate enforcement with real gateway-routed traffic and monitor the EPE logs and metrics.
+EPE uses the caller identity and labels sent as ext_proc attributes to select profiles. Missing identity skips profile selection but still runs global IP restrictions and target pinning. With xDS authorization or `--fail-closed-on-missing-identity` enabled, missing identity rejects the request. Validate enforcement with real gateway-routed traffic and monitor the EPE logs and metrics.
 
 Profile inputs, request headers, pod labels, and audit payloads can contain sensitive information. Give EPE's cluster-wide read permissions and audit webhook destinations the same review as other security control-plane components. EPE's expression scope intentionally excludes request bodies and sandbox identity tokens, but an audit template can disclose the request and profile data that it is given; send audit events only to trusted endpoints.
 

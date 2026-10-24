@@ -4,9 +4,9 @@ The Egress Policy Enforcer (EPE) is deployed by the Agentio chart as `agentio-ep
 
 ## Watched EPEConfig
 
-EPE always watches its base and primary configuration ConfigMaps and referenced Secrets, CA ConfigMaps, and certificate files. The chart selects `<epe-name>-config` and `<epe-name>-config-primary` in the installation namespace; standalone EPE defaults to `agentio-epe-config` and `agentio-epe-config-primary` in `agentio-system`. Set `epe.config` to have Helm create the base with named `httpCallout` and `credentialProvider` extensions. SecurityProfile rules select a named provider with `actions.httpCallout.provider.name`; see [HTTP callouts](security-profile.md#http-callouts). `epe.config: null` leaves the base externally managed; primary is always externally managed.
+EPE always watches its base and primary configuration ConfigMaps and referenced Secrets, CA ConfigMaps, and certificate files. The chart selects `<epe-name>-config` and `<epe-name>-config-primary` in the installation namespace; standalone EPE defaults to `agentio-epe-config` and `agentio-epe-config-primary` in `agentio-system`. Set `epe.config` to have Helm create the base with global destination restrictions and named `httpCallout` and `credentialProvider` extensions. SecurityProfile rules select a named provider with `actions.httpCallout.provider.name`; see [HTTP callouts](security-profile.md#http-callouts). `epe.config: null` leaves the base externally managed; primary is always externally managed.
 
-Environment settings supply the default EPEConfig layer, followed by base and primary. Missing ConfigMaps or blank `data.config` leave the lower layer unchanged; EPE watches for later creation. Invalid content is logged and discarded, retaining the last good configuration, or the defaults before any valid configuration has been loaded.
+Environment settings supply the default EPEConfig layer, alongside built-in destination restrictions, followed by base and primary. Missing ConfigMaps or blank `data.config` leave the lower layer unchanged; EPE watches for later creation. Invalid content is logged and discarded, retaining the last good configuration, or the defaults before any valid configuration has been loaded.
 
 `extensionProviders` merges by name across layers. New names are added; a same-name entry replaces the whole provider, including its type, timeout, and TLS settings. Omitted or null lists inherit the lower layer; an explicit `extensionProviders: []` clears the inherited list. Duplicate names within one layer are invalid. Each update recomputes from defaults: removing an entry or deleting a ConfigMap restores any lower-layer definition. Unchanged providers keep their clients and caches; replaced providers are recreated when restored.
 
@@ -86,6 +86,46 @@ A separate controlled 1 MiB-body comparison at concurrency 256 ran 10,000 reques
 Cold-start validation before the default retuning completed two fresh-process runs of 4,096 requests each at concurrency 256, with a 200ms endpoint delay, a peer limit of 16 streams and a client limit of 32. Both runs had zero errors and zero refused streams, and neither exceeded 16 simultaneous handlers per connection. The deployed `TestEPEHTTPCallout` was rerun on the final defaults and passed all eight datapath cases plus the ConfigMap transport-lifecycle test. It covers 64 cold calls against a four-stream server, a protocol change while an old response remains active, and eight isolated configuration updates with the URL and protocol held fixed: maximum connections (2 → 1), retained idle connections (2 → 1), and idle timeout (30s → 500ms) for both HTTP1 and HTTP2, plus HTTP2 streams per connection (1 → 2 and 2 → 1). Each isolated update verifies closure of the retired idle connection, enforcement of the new pool capacity and idle limits, queuing of an extra call, successful completion of old active calls, and closure of their drained connection. All these calls completed successfully with zero refused streams.
 
 See the [benchmark instructions](../../bench/epe/callout/README.md#protocol-default-capacity-matrix) to reproduce the matrix. Test conclusions are maintained here; generated measurements and execution logs are kept outside the repository.
+
+## Global destination authorization
+
+EPE authorizes and pins HTTP destinations by default, independently of xDS and SecurityProfile selection. Configure `egressAuthorization.deniedCIDRs` in the watched EPEConfig to reject destination IP ranges on every port for all requests that reach this authorization path. No per-Sandbox selector or policy binding is required. For example, these Helm values add two deployment-specific destinations to the mandatory built-in restrictions:
+
+```yaml
+epe:
+  mode: managed
+  config:
+    egressAuthorization:
+      deniedCIDRs:
+        - 192.0.2.10/32
+        - 2001:db8::10/128
+```
+
+For an externally managed ConfigMap, put the `egressAuthorization` block directly inside `data.config`, without the `epe.config` wrapper. Mandatory restrictions are appended after user entries on every configuration layer, without duplicating entries already present:
+
+| Destination | Purpose |
+| --- | --- |
+| `127.0.0.0/8`, `::1/128` | Loopback |
+| `0.0.0.0/32`, `::/128` | Unspecified addresses |
+| `169.254.0.0/16`, `fe80::/10` | IPv4/IPv6 link-local |
+
+The [Alibaba Cloud metadata endpoint](https://www.alibabacloud.com/help/en/ecs/user-guide/view-instance-metadata/), `100.100.100.200`, is outside these link-local ranges and is not denied by default, to avoid disrupting components that depend on it. Operators can explicitly add `100.100.100.200/32` to `deniedCIDRs` for their deployment. Metadata endpoints within the link-local ranges, such as `169.254.169.254`, remain denied.
+
+These restrictions cannot be disabled through EPEConfig. Private service networks are not blocked wholesale; add deployment-specific gateway, node, control-plane, and other sensitive destination IPs as needed. A fixed built-in list cannot identify those addresses automatically. Use `/32` for one IPv4 address and `/128` for one IPv6 address. Hostnames, bare IPs, scoped IPv6 addresses, and IPv4-mapped IPv6 CIDRs are invalid. Destination IPv4-mapped addresses are normalized to IPv4 before matching.
+
+Global denies run before TrafficPolicy matching and cannot be overridden by an allow-all policy or a SecurityProfile `bypass`. A global miss continues to the existing workload policy semantics: no workload policies means allow, while configured policies with no matching rule mean deny. A missing workload identity skips profile selection but still runs static destination authorization. `--fail-closed-on-missing-identity` remains available for deployments that also require identity.
+
+Without an explicit upstream, EPE resolves hostname targets with IPv4-only (`A`) queries, matching the gateway's `V4_ONLY` DNS cache, and checks candidate IPs. AAAA queries are not issued, and IPv6 addresses in custom DNS records are excluded. A hostname with no IPv4 candidates fails resolution; denied IPv4 candidates cannot fall back to IPv6. IPv4 and IPv6 literal hosts and explicit upstream targets still undergo authorization without DNS. A domain resolving to a forbidden address is therefore covered. Denied DNS candidates are skipped. EPE retains the address family of the first surviving candidate and selects an allowed candidate uniformly at random within that family, pinning it for the gateway to connect to. This distributes requests across allowed IPs without adding health checks or connection-failure failover. If the original destination is a DNS candidate and is denied, EPE rejects the request without choosing another candidate. Explicit ServiceEntry or route targets are checked directly and cannot fall back to another address. If no address is allowed, EPE returns HTTP 403 (`epe_egress_denied`). Resolution and policy-loading failures return a local error, never an allow decision.
+
+Omitting or setting `egressAuthorization` to null inherits the lower configuration layer. Supplying the block replaces inherited user entries; mandatory restrictions are appended again. `egressAuthorization: {deniedCIDRs: []}` clears only the inherited user entries, preserving mandatory restrictions and workload policies. Updates apply without a restart and each authorizer uses one immutable configuration for its entire candidate set. Invalid updates retain the last valid EPEConfig; an invalid initial configuration uses the startup defaults, including all mandatory destination restrictions. Check the configuration logs and verify rejection after applying a restriction. Initial synchronization of the authorization configuration gates EPE readiness and listener startup.
+
+### Optional xDS policies and migration
+
+Set `--enable-xds-egressauthz=true` to additionally retrieve the calling Workload and its TrafficPolicy resources from Agentiod. Supply `--xds-address` and the existing xDS TLS/token settings. The xDS authorizer rejects missing or incomplete workload identity with HTTP 403 before querying resources; audit records use the reason `missing_source_identity`. Unavailable policies also fail closed. Enabling xDS does not change `--fail-closed-on-missing-identity`: that separate flag rejects missing identity at the request boundary, before any authorizer runs. `--enable-xds-egressauthz` defaults to false; when this xDS flag is disabled, authorization does not connect to xDS or query Workload/TrafficPolicy resources.
+
+Replace the former `--enable-egressauthz` argument with `--enable-xds-egressauthz` when upgrading a deployment that used native TrafficPolicy authorization. The old argument is removed. Deployments without either argument now perform target resolution and pinning too, and enforce the mandatory destination restrictions even when the user list is empty. EPE must be able to resolve the destination names previously resolved by the gateway; DNS failure now rejects the request.
+
+Keep gateway request header processing at `SEND` and `failureModeAllow: false`, and upgrade gateway and EPE together so the gateway consumes the pinned IP. Coverage is for HTTP forwarding through EPE, including HTTPS terminated into that path. This is not a blanket TCP/TLS passthrough or UDP restriction. Application-level CONNECT forwards through a separate upstream-proxy route; this HTTP DFP target-pinning guarantee does not describe that route or the proxy's eventual tunnel destination. Traffic that bypasses EPE is unaffected.
 
 ## Helm values
 
