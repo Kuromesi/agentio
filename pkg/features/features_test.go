@@ -16,6 +16,8 @@ package features
 
 import (
 	"math"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +74,11 @@ func TestValidateDomains(t *testing.T) {
 				test.SetForTest(t, &MITMSignMode, "unsupported")
 			},
 			wantErr: "unsupported MITM sign mode",
+		},
+		{
+			name:    "MITM resource TTL",
+			mutate:  func(t *testing.T) { test.SetForTest(t, &MITMResourceTTL, time.Duration(0)) },
+			wantErr: "invalid MITM certificate durations",
 		},
 		{
 			name: "workload certificates",
@@ -189,5 +196,43 @@ func TestValidateAllowsDisabledPushDebounce(t *testing.T) {
 	test.SetForTest(t, &PushDebounceAfter, -time.Millisecond)
 	if err := Validate(); err == nil {
 		t.Fatal("negative push debounce accepted")
+	}
+}
+
+func TestMITMResourceTTLEnvironment(t *testing.T) {
+	const expectedEnv = "AGENTIO_MITM_RESOURCE_TTL_TEST_EXPECTED"
+	if expected := os.Getenv(expectedEnv); expected != "" {
+		if got := MITMResourceTTL.String(); got != expected {
+			t.Fatalf("resource TTL = %s, want %s", got, expected)
+		}
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		value    string
+		expected string
+	}{
+		{"default", "", "15m0s"}, {"override", "37s", "37s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command := exec.Command(executable, "-test.run=^TestMITMResourceTTLEnvironment$")
+			for _, variable := range os.Environ() {
+				if !strings.HasPrefix(variable, "AGENTIO_MITM_RESOURCE_TTL=") &&
+					!strings.HasPrefix(variable, expectedEnv+"=") {
+					command.Env = append(command.Env, variable)
+				}
+			}
+			command.Env = append(command.Env, expectedEnv+"="+tc.expected)
+			if tc.value != "" {
+				command.Env = append(command.Env, "AGENTIO_MITM_RESOURCE_TTL="+tc.value)
+			}
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("environment test: %v\n%s", err, output)
+			}
+		})
 	}
 }

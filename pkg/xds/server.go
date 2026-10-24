@@ -251,15 +251,23 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 
 	subscription := s.resources.Subscribe(stream.Context())
 	watches := make(map[string]*watchState)
+	defer func() {
+		if watch := watches[model.SecretType]; watch != nil && watch.sds != nil {
+			watch.sds.cancel()
+		}
+	}()
 	connection := newPushConnection(stream.Context())
 	defer s.pushScheduler.cancel(connection)
 	if err := s.handleRequest(stream, scope, connLog, watches, subscription, first.request); err != nil {
 		return err
 	}
+	inputClosed := false
 	handleIncoming := func(incoming streamRequest) (bool, error) {
 		if incoming.err != nil {
 			if incoming.err == io.EOF {
-				return true, nil
+				inputClosed = true
+				requests = nil
+				return false, nil
 			}
 			return true, incoming.err
 		}
@@ -281,12 +289,26 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 			}
 		default:
 		}
+		var certificates <-chan sdsCompletion
+		secretWatch := watches[model.SecretType]
+		pendingCertificates := false
+		if secretWatch != nil && secretWatch.sds != nil {
+			certificates = secretWatch.sds.ready
+			pendingCertificates = len(secretWatch.sds.jobs) > 0
+		}
+		if inputClosed && !pendingCertificates {
+			return nil
+		}
 		select {
 		case <-stream.Context().Done():
 			return stream.Context().Err()
 		case incoming := <-requests:
 			stop, err := handleIncoming(incoming)
 			if stop || err != nil {
+				return err
+			}
+		case completion := <-certificates:
+			if err := s.sendSDSCompletions(stream, connLog, secretWatch, completion); err != nil {
 				return err
 			}
 		case update := <-subscription.Updates():

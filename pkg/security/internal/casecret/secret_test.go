@@ -73,6 +73,78 @@ func TestRotatePreservesTrailingCertificateChain(t *testing.T) {
 	}
 }
 
+func TestRotateRecoversExpiredRoot(t *testing.T) {
+	now := time.Date(2026, time.October, 23, 12, 0, 0, 0, time.UTC)
+	for _, allowBundle := range []bool{false, true} {
+		keys := Keys{
+			Certificate:           "ca.crt",
+			PrivateKey:            "ca.key",
+			Bundle:                "root-cert.pem",
+			AllowCertificateChain: allowBundle,
+		}
+		secret, err := New("agentio-system", "ca", keys, "expired root", time.Hour, now.Add(-2*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldKey := append([]byte(nil), secret.Data[keys.PrivateKey]...)
+		oldCert := parseTestCertificates(t, secret.Data[keys.Certificate])[0]
+		client := fake.NewSimpleClientset(secret)
+		if err := Rotate(
+			context.Background(),
+			client,
+			secret.Namespace,
+			secret.Name,
+			keys,
+			24*time.Hour,
+			time.Hour,
+			now,
+		); err != nil {
+			t.Fatal(err)
+		}
+		updated, err := client.CoreV1().
+			Secrets(secret.Namespace).
+			Get(context.Background(), secret.Name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(oldKey, updated.Data[keys.PrivateKey]) {
+			t.Fatal("recovery replaced the CA private key")
+		}
+		ca, err := pki.ParseSigningCABundle(updated.Data[keys.Certificate], updated.Data[keys.PrivateKey], now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert := parseTestCertificates(t, ca.CertificatePEM())[0]
+		if !bytes.Equal(cert.RawSubject, oldCert.RawSubject) || !cert.NotAfter.Equal(now.Add(24*time.Hour)) {
+			t.Fatal("recovery did not preserve the subject and renew the expiry")
+		}
+		if !bytes.Equal(updated.Data[keys.Bundle], ca.BundlePEM()) {
+			t.Fatal("recovery did not update the public trust bundle")
+		}
+		if err := Rotate(
+			context.Background(),
+			client,
+			secret.Namespace,
+			secret.Name,
+			keys,
+			24*time.Hour,
+			time.Hour,
+			now,
+		); err != nil {
+			t.Fatal(err)
+		}
+		updates := 0
+		for _, action := range client.Actions() {
+			if action.GetVerb() == "update" {
+				updates++
+			}
+		}
+		if updates != 1 {
+			t.Fatalf("repeated reconciliation performed %d updates, want 1", updates)
+		}
+	}
+}
+
 func parseTestCertificates(t *testing.T, value []byte) []*x509.Certificate {
 	t.Helper()
 	var certificates []*x509.Certificate

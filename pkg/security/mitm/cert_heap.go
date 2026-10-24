@@ -16,32 +16,13 @@ package mitm
 
 import "time"
 
-const (
-	// Agentio floors max-age reaper wakes to batch close-spaced SDS pushes.
-	// Certificate renewal and expiry deadlines are never floored.
-	minCertificateEvictionInterval = 30 * time.Second
-)
-
-type certificateEvictionReason uint8
-
-const (
-	certificateEvictionRenewal certificateEvictionReason = iota
-	certificateEvictionExpiry
-	certificateEvictionMaxAge
-)
-
-// certificateCacheEntry couples a cached certificate to its heap position.
-// The issuer mutex owns entries and their indexes.
+// certificateCacheEntry couples a local cache entry to its heap position.
+// This deadline has no effect on certificates already sent through SDS.
 type certificateCacheEntry struct {
-	domain              string
-	certificate         SignedCertificate
-	insertedAt          time.Time
-	deadline            time.Time
-	reason              certificateEvictionReason
-	certificateDeadline time.Time
-	certificateReason   certificateEvictionReason
-	maxAgeDeferred      bool
-	index               int
+	domain      string
+	certificate SignedCertificate
+	deadline    time.Time
+	index       int
 }
 
 func newCertificateCacheEntry(
@@ -50,33 +31,11 @@ func newCertificateCacheEntry(
 	insertedAt time.Time,
 	options OnDemandOptions,
 ) *certificateCacheEntry {
-	certificateDeadline, certificateReason := certificateEvictionDeadline(certificate, options.RenewBefore)
-	entry := &certificateCacheEntry{
-		domain:              domain,
-		certificate:         certificate,
-		insertedAt:          insertedAt,
-		deadline:            certificateDeadline,
-		reason:              certificateReason,
-		certificateDeadline: certificateDeadline,
-		certificateReason:   certificateReason,
-		index:               -1,
+	deadline := certificate.UsableUntil
+	if options.CacheMaxAge > 0 && insertedAt.Add(options.CacheMaxAge).Before(deadline) {
+		deadline = insertedAt.Add(options.CacheMaxAge)
 	}
-	if options.CacheMaxAge > 0 {
-		maxAgeDeadline := insertedAt.Add(options.CacheMaxAge)
-		if maxAgeDeadline.Before(entry.deadline) {
-			entry.deadline = maxAgeDeadline
-			entry.reason = certificateEvictionMaxAge
-		}
-	}
-	return entry
-}
-
-func certificateEvictionDeadline(certificate SignedCertificate, renewBefore time.Duration) (time.Time, certificateEvictionReason) {
-	fullLifetime := certificate.NotAfter.Sub(certificate.SignedAt)
-	if fullLifetime > 0 && fullLifetime < renewBefore {
-		return certificate.NotAfter, certificateEvictionExpiry
-	}
-	return certificate.NotAfter.Add(-renewBefore), certificateEvictionRenewal
+	return &certificateCacheEntry{domain: domain, certificate: certificate, deadline: deadline, index: -1}
 }
 
 // certHeap orders cache entries by their next effective eviction deadline.

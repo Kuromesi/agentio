@@ -22,8 +22,8 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
@@ -1567,12 +1567,13 @@ func TestUnauthorizedSecretDomainDoesNotTearDownTheStream(t *testing.T) {
 	}
 	// And it got the domain it is allowed to have, without the one it is not.
 	secretResponses := stream.responsesFor(model.SecretType)
-	if len(secretResponses) != 1 {
-		t.Fatalf("secret responses = %d, want 1", len(secretResponses))
+	var names, removed []string
+	for _, response := range secretResponses {
+		names = append(names, resourceNames(response)...)
+		removed = append(removed, response.RemovedResources...)
 	}
-	got := resourceNames(secretResponses[0])
-	if !slices.Equal(got, []string{"allowed.example.com"}) {
-		t.Fatalf("secrets = %v, want only the authorized domain", got)
+	if !slices.Equal(names, []string{"allowed.example.com"}) || !slices.Equal(removed, []string{"denied.example.com"}) {
+		t.Fatalf("secrets = %v removed = %v", names, removed)
 	}
 }
 
@@ -1597,26 +1598,33 @@ func TestExplicitSecretRequestReissuesEvictedDomain(t *testing.T) {
 }
 
 func TestRepeatedSecretSubscribeReissuesEvictedDomain(t *testing.T) {
-	ctx := t.Context()
-	secrets := newFakeSecrets("old.example.com")
-	server := newTestServer(t, gatewayScope(), nil, secrets)
-	stream := newFakeStream(ctx, 3)
-	var evictOnce sync.Once
-	stream.beforeSend = func() { evictOnce.Do(func() { secrets.evict("old.example.com") }) }
-	stream.send(nodeRequest(model.SecretType, "old.example.com"))
-	reRequest := request(model.SecretType, "old.example.com")
-	reRequest.ResponseNonce = "1"
-	stream.send(reRequest)
-
-	if err := server.run(t, stream); err != nil {
-		t.Fatal(err)
-	}
-	if responses := stream.responsesFor(model.SecretType); len(responses) != 2 {
-		t.Fatalf("secret responses = %d, want initial response and explicit re-request", len(responses))
-	}
-	if evicted := secrets.Evicted(); len(evicted) != 0 {
-		t.Fatalf("explicit re-request left eviction state: %v", evicted)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		secrets := newFakeSecrets("old.example.com")
+		server := newTestServer(t, gatewayScope(), nil, secrets)
+		stream := newFakeStream(t.Context(), 3)
+		done := make(chan error, 1)
+		go func() { done <- server.server.serveDelta(stream) }()
+		stream.send(nodeRequest(model.SecretType, "old.example.com"))
+		synctest.Wait()
+		if len(stream.responsesFor(model.SecretType)) != 1 {
+			t.Fatal("missing initial response")
+		}
+		secrets.evict("old.example.com")
+		repeated := request(model.SecretType, "old.example.com")
+		repeated.ResponseNonce = "1"
+		stream.send(repeated)
+		synctest.Wait()
+		if len(stream.responsesFor(model.SecretType)) != 2 {
+			t.Fatal("missing repeated response")
+		}
+		if len(secrets.Evicted()) != 0 {
+			t.Fatal("explicit request did not reissue")
+		}
+		stream.closeRequests()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 // The first request has to identify the client, since everything else is
@@ -1754,7 +1762,8 @@ func TestFailedSendDoesNotCommitGeneratedDelta(t *testing.T) {
 	if err == nil || err.Error() != "send failed" {
 		t.Fatalf("send error = %v, want send failed", err)
 	}
-	if !slices.Equal(watchSentNames(watch), []string{oldResource.XDSName}) || watch.sent[oldResource.XDSName] != oldResource.Hash {
+	if !slices.Equal(watchSentNames(watch), []string{oldResource.XDSName}) ||
+		watch.sent[oldResource.XDSName] != oldResource.Hash {
 		t.Fatalf("failed send committed sent state: %v", watch.sent)
 	}
 	if watch.nonceSent != "previous" {
@@ -1802,31 +1811,39 @@ func TestUnsupportedTypeSubscriptionReturnsEmptyResponseWithoutClosingStream(t *
 }
 
 func TestRepeatedSecretSubscribeRestoresCachedVersion(t *testing.T) {
-	const name = "api.example.com"
-	server := newTestServer(t, gatewayScope(), nil, newFakeSecrets(name))
-	stream := newFakeStream(t.Context(), 3)
-	stream.send(nodeRequest(model.SecretType, name))
-	repeated := request(model.SecretType, name)
-	repeated.ResponseNonce = "1"
-	stream.send(repeated)
-	ack := request(model.SecretType)
-	ack.ResponseNonce = "2"
-	stream.send(ack)
-	if err := server.run(t, stream); err != nil {
-		t.Fatal(err)
-	}
-	responses := stream.responsesFor(model.SecretType)
-	if len(responses) != 2 {
-		t.Fatalf("responses = %d, want 2 (ACK must not trigger a push)", len(responses))
-	}
-	for _, response := range responses {
-		if !slices.Equal(resourceNames(response), []string{name}) {
-			t.Fatalf("explicit subscription did not restore secret: %v", response)
+	synctest.Test(t, func(t *testing.T) {
+		const name = "api.example.com"
+		server := newTestServer(t, gatewayScope(), nil, newFakeSecrets(name))
+		stream := newFakeStream(t.Context(), 3)
+		done := make(chan error, 1)
+		go func() { done <- server.server.serveDelta(stream) }()
+		stream.send(nodeRequest(model.SecretType, name))
+		synctest.Wait()
+		repeated := request(model.SecretType, name)
+		repeated.ResponseNonce = "1"
+		stream.send(repeated)
+		synctest.Wait()
+		ack := request(model.SecretType)
+		ack.ResponseNonce = "2"
+		stream.send(ack)
+		stream.closeRequests()
+		if err := <-done; err != nil {
+			t.Fatal(err)
 		}
-	}
-	if responses[0].Resources[0].Version != responses[1].Resources[0].Version {
-		t.Fatal("cached certificate version changed")
-	}
+		responses := stream.responsesFor(model.SecretType)
+		if len(responses) != 2 {
+			t.Fatalf("responses = %d, want 2 (ACK must not trigger a push)", len(responses))
+		}
+		for _, response := range responses {
+			if !slices.Equal(resourceNames(response), []string{name}) {
+				t.Fatalf("explicit subscription did not restore secret: %v", response)
+			}
+		}
+		if responses[0].Resources[0].Version != responses[1].Resources[0].Version {
+			t.Fatal("cached certificate version changed")
+		}
+
+	})
 }
 
 func TestExpiredSecretSendCommitsOnlyWireResources(t *testing.T) {

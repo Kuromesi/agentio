@@ -32,11 +32,23 @@ import (
 )
 
 type fakeCertificateProvider struct {
-	certificate        mitm.SignedCertificate
-	evicted            []string
-	signCalls          int
-	err                error
-	evictAfterSnapshot bool
+	certificate mitm.SignedCertificate
+	signCalls   int
+	err         error
+	revision    string
+	authErr     error
+}
+
+func (f *fakeCertificateProvider) Get(context.Context, model.ClientScope, string) (mitm.SignedCertificate, error) {
+	f.signCalls++
+	return f.certificate, f.err
+}
+func (f *fakeCertificateProvider) Authorize(model.ClientScope) error { return f.authErr }
+func (f *fakeCertificateProvider) SignerRevision() string {
+	if f.revision != "" {
+		return f.revision
+	}
+	return f.certificate.SignerRevision
 }
 
 func TestNewSDSGeneratorRejectsNilProvider(t *testing.T) {
@@ -54,254 +66,11 @@ func newTestSDSGenerator(t testing.TB, provider DomainCertificateProvider) *SDSG
 	return generator
 }
 
-func (f *fakeCertificateProvider) Get(_ context.Context, _ model.ClientScope, name string) (mitm.SignedCertificate, error) {
-	f.signCalls++
-	if f.err != nil {
-		return mitm.SignedCertificate{}, f.err
-	}
-	retained := f.evicted[:0]
-	for _, evicted := range f.evicted {
-		if mitm.CanonicalDomain(evicted) != mitm.CanonicalDomain(name) {
-			retained = append(retained, evicted)
-		}
-	}
-	f.evicted = retained
-	return f.certificate, nil
-}
-
-func (f *fakeCertificateProvider) GetForSDS(
-	ctx context.Context,
-	scope model.ClientScope,
-	name string,
-	allowSigning bool,
-) (mitm.SignedCertificate, error) {
-	if !allowSigning {
-		for _, evicted := range f.evicted {
-			if mitm.CanonicalDomain(evicted) == mitm.CanonicalDomain(name) {
-				return mitm.SignedCertificate{}, mitm.ErrDomainCertificateEvicted
-			}
-		}
-		return f.certificate, f.err
-	}
-	return f.Get(ctx, scope, name)
-}
-
-func (f *fakeCertificateProvider) Evicted() []string {
-	result := append([]string(nil), f.evicted...)
-	if f.evictAfterSnapshot {
-		f.evicted = append(f.evicted, "old.example.com")
-		f.evictAfterSnapshot = false
-	}
-	return result
-}
-
-func TestSDSGeneratorEvictionAndResign(t *testing.T) {
-	tests := []struct {
-		name               string
-		evicted            []string
-		signErr            error
-		evictAfterSnapshot bool
-		watched            []string
-		sent               map[string]string
-		subscribedNames    []string
-		wantResources      []string
-		wantRemoved        []string
-		wantSignCalls      int
-		wantEvicted        []string
-	}{
-		{
-			name:          "evicted domain removed without immediate resign",
-			evicted:       []string{"old.example.com"},
-			watched:       []string{"old.example.com"},
-			sent:          map[string]string{"old.example.com": "old-version"},
-			wantRemoved:   []string{"old.example.com"},
-			wantSignCalls: 0,
-			wantEvicted:   []string{"old.example.com"},
-		},
-		{
-			name:               "eviction between snapshot and get does not resign",
-			evictAfterSnapshot: true,
-			watched:            []string{"old.example.com"},
-			sent:               map[string]string{"old.example.com": "old-version"},
-			wantRemoved:        []string{"old.example.com"},
-			wantSignCalls:      0,
-			wantEvicted:        []string{"old.example.com"},
-		},
-		{
-			name:          "evicted watched domain without sent version removed",
-			evicted:       []string{"old.example.com"},
-			watched:       []string{"old.example.com"},
-			sent:          map[string]string{},
-			wantRemoved:   []string{"old.example.com"},
-			wantSignCalls: 0,
-			wantEvicted:   []string{"old.example.com"},
-		},
-		{
-			name:          "removals sorted from unordered eviction snapshot",
-			evicted:       []string{"z.example.com", "a.example.com", "m.example.com"},
-			watched:       []string{"a.example.com", "m.example.com", "z.example.com"},
-			sent:          map[string]string{},
-			wantRemoved:   []string{"a.example.com", "m.example.com", "z.example.com"},
-			wantSignCalls: 0,
-			wantEvicted:   []string{"z.example.com", "a.example.com", "m.example.com"},
-		},
-		{
-			name:            "explicit request resigns and clears evicted domain",
-			evicted:         []string{"old.example.com"},
-			watched:         []string{"old.example.com"},
-			sent:            map[string]string{},
-			subscribedNames: []string{"old.example.com"},
-			wantResources:   []string{"old.example.com"},
-			wantSignCalls:   1,
-			wantEvicted:     []string{},
-		},
-		{
-			name:            "subscribing another domain does not resign evicted domain",
-			evicted:         []string{"old.example.com"},
-			watched:         []string{"old.example.com", "new.example.com"},
-			sent:            map[string]string{"old.example.com": "old-version"},
-			subscribedNames: []string{"new.example.com"},
-			wantResources:   []string{"new.example.com"},
-			wantRemoved:     []string{"old.example.com"},
-			wantSignCalls:   1,
-			wantEvicted:     []string{"old.example.com"},
-		},
-		{
-			name:            "failed explicit resign leaves domain evicted",
-			evicted:         []string{"old.example.com"},
-			signErr:         errors.New("sign failed"),
-			watched:         []string{"old.example.com"},
-			sent:            map[string]string{"old.example.com": "old-version"},
-			subscribedNames: []string{"old.example.com"},
-			wantRemoved:     []string{"old.example.com"},
-			wantSignCalls:   1,
-			wantEvicted:     []string{"old.example.com"},
-		},
-		{
-			name:            "failed explicit resign without sent version removes domain",
-			evicted:         []string{"old.example.com"},
-			signErr:         errors.New("sign failed"),
-			watched:         []string{"old.example.com"},
-			sent:            map[string]string{},
-			subscribedNames: []string{"old.example.com"},
-			wantRemoved:     []string{"old.example.com"},
-			wantSignCalls:   1,
-			wantEvicted:     []string{"old.example.com"},
-		},
-		{
-			name:          "refresh reads cached replacement certificate",
-			watched:       []string{"old.example.com"},
-			sent:          map[string]string{"old.example.com": "old-version"},
-			wantResources: []string{"old.example.com"},
-			wantSignCalls: 0,
-			wantEvicted:   []string{},
-		},
-		{
-			name:            "failed initial secret request removed",
-			signErr:         errors.New("sign failed"),
-			watched:         []string{"API.Example.COM."},
-			sent:            map[string]string{},
-			subscribedNames: []string{"API.Example.COM."},
-			wantRemoved:     []string{"API.Example.COM."},
-			wantSignCalls:   1,
-			wantEvicted:     []string{},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := &fakeCertificateProvider{
-				certificate:        testSDSCertificate(),
-				evicted:            tt.evicted,
-				err:                tt.signErr,
-				evictAfterSnapshot: tt.evictAfterSnapshot,
-			}
-			watch := &watchState{started: true, names: sets.New(tt.watched...), sent: tt.sent}
-
-			delta, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-				Scope:           gatewayScope(),
-				TypeURL:         model.SecretType,
-				Subscription:    newSubscriptionView(watch),
-				Full:            true,
-				SubscribedNames: tt.subscribedNames,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var gotResources []string
-			for _, resource := range delta.Resources {
-				gotResources = append(gotResources, resource.XDSName)
-			}
-			if !slices.Equal(gotResources, tt.wantResources) || !slices.Equal(delta.Removed, tt.wantRemoved) {
-				t.Fatalf("delta = resources:%v removed:%v, want resources:%v removed:%v",
-					gotResources, delta.Removed, tt.wantResources, tt.wantRemoved)
-			}
-			if provider.signCalls != tt.wantSignCalls {
-				t.Fatalf("sign calls = %d, want %d", provider.signCalls, tt.wantSignCalls)
-			}
-			if got := provider.Evicted(); !slices.Equal(got, tt.wantEvicted) {
-				t.Fatalf("evicted after generate = %v, want %v", got, tt.wantEvicted)
-			}
-		})
-	}
-}
-
-func TestLaggingSubscriberRefreshesRestoredDomainAndRemovesRemainingEviction(t *testing.T) {
-	provider := &fakeCertificateProvider{
-		certificate: testSDSCertificate(),
-		evicted:     []string{"a.example.com", "b.example.com"},
-	}
-	firstWatch := &watchState{
-		started: true,
-		names:   sets.New("a.example.com", "b.example.com"),
-		sent:    map[string]string{"a.example.com": "old-a", "b.example.com": "old-b"},
-	}
-	first, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-		Scope:        gatewayScope(),
-		TypeURL:      model.SecretType,
-		Subscription: newSubscriptionView(firstWatch),
-		Full:         true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestWatch := &watchState{started: true, names: sets.New("a.example.com"), sent: map[string]string{}}
-	if _, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-		Scope:           gatewayScope(),
-		TypeURL:         model.SecretType,
-		Subscription:    newSubscriptionView(requestWatch),
-		Full:            true,
-		SubscribedNames: []string{"a.example.com"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	secondWatch := &watchState{
-		started: true,
-		names:   sets.New("a.example.com", "b.example.com"),
-		sent:    map[string]string{"a.example.com": "old-a", "b.example.com": "old-b"},
-	}
-	second, err := newTestSDSGenerator(t, provider).Generate(context.Background(), GenerationRequest{
-		Scope:        gatewayScope(),
-		TypeURL:      model.SecretType,
-		Subscription: newSubscriptionView(secondWatch),
-		Full:         true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first.Removed) != 2 || len(second.Resources) != 1 || second.Resources[0].XDSName != "a.example.com" ||
-		len(second.Removed) != 1 || second.Removed[0] != "b.example.com" {
-		t.Fatalf("deltas = first removed:%v second resources:%v removed:%v", first.Removed, second.Resources, second.Removed)
-	}
-	if len(provider.Evicted()) != 1 || provider.Evicted()[0] != "b.example.com" {
-		t.Fatalf("provider after restored refresh = calls:%d evicted:%v, want only b.example.com evicted",
-			provider.signCalls, provider.Evicted())
-	}
-}
-
 func TestSDSGeneratorBuildsEnvoySecret(t *testing.T) {
 	certificate := mitm.SignedCertificate{
 		CertificateChain: []byte("certificate-chain"),
 		PrivateKey:       []byte("private-key"),
+		UsableUntil:      time.Now().Add(59 * time.Minute),
 		NotAfter:         time.Now().Add(time.Hour),
 		SignedAt:         time.Now(),
 		SignerRevision:   "one",
@@ -310,10 +79,11 @@ func TestSDSGeneratorBuildsEnvoySecret(t *testing.T) {
 	generated, err := newTestSDSGenerator(t, &fakeCertificateProvider{certificate: certificate}).Generate(
 		context.Background(),
 		GenerationRequest{
-			Scope:        gatewayScope(),
-			TypeURL:      model.SecretType,
-			Subscription: newSubscriptionView(watch),
-			Full:         true,
+			Scope:           gatewayScope(),
+			TypeURL:         model.SecretType,
+			Subscription:    newSubscriptionView(watch),
+			Full:            true,
+			SubscribedNames: []string{"api.example.com"},
 		},
 	)
 	if err != nil {
@@ -373,14 +143,14 @@ func testSDSCertificate() mitm.SignedCertificate {
 	return mitm.SignedCertificate{
 		CertificateChain: []byte("certificate-chain"),
 		PrivateKey:       []byte("private-key"),
+		UsableUntil:      now.Add(59 * time.Minute),
 		NotAfter:         now.Add(time.Hour),
 		SignedAt:         now,
 		SignerRevision:   "one",
 	}
 }
 
-// Use the real issuer and SDS generator so bounded eviction history cannot hide
-// a passive refresh that signs again and emits another eviction notification.
+// Use the real issuer to verify cache eviction has no wire effect.
 type countingSDSSigner struct{ calls atomic.Int32 }
 
 func (s *countingSDSSigner) SignDNS(context.Context, string, time.Duration) (mitm.SignedCertificate, error) {
@@ -389,17 +159,22 @@ func (s *countingSDSSigner) SignDNS(context.Context, string, time.Duration) (mit
 }
 func (*countingSDSSigner) Authorize(model.ClientScope) error { return nil }
 
-func TestSDSEvictionRefreshConvergesAfterHistoryIsForgotten(t *testing.T) {
+func TestSDSLocalEvictionDoesNotInvalidateSentCertificates(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	signer := &countingSDSSigner{}
 	state := krt.NewStatic(&mitm.SignerState{Revision: "one"}, true, krt.WithStop(ctx.Done()))
-	issuer, err := mitm.NewOnDemandIssuer(ctx, mitm.DomainSignerSource{Signer: signer, State: state}, signer, mitm.OnDemandOptions{
-		LeafLifetime:    time.Hour,
-		RenewBefore:     time.Minute,
-		CacheMaxAge:     time.Hour,
-		CacheMaxEntries: 1,
-		SignConcurrency: 1,
-	})
+	issuer, err := mitm.NewOnDemandIssuer(
+		ctx,
+		mitm.DomainSignerSource{Signer: signer, State: state},
+		signer,
+		mitm.OnDemandOptions{
+			LeafLifetime:    time.Hour,
+			RenewBefore:     time.Minute,
+			CacheMaxAge:     time.Hour,
+			CacheMaxEntries: 1,
+			SignConcurrency: 1,
+		},
+	)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -426,7 +201,7 @@ func TestSDSEvictionRefreshConvergesAfterHistoryIsForgotten(t *testing.T) {
 			delete(sent, name)
 		}
 		for _, resource := range delta.Resources {
-			sent[resource.XDSName] = resource.Hash
+			sent[resource.XDSName] = delta.versions[resource.XDSName]
 		}
 		return delta
 	}
@@ -434,29 +209,29 @@ func TestSDSEvictionRefreshConvergesAfterHistoryIsForgotten(t *testing.T) {
 	if len(initial.Resources) != 3 || signer.calls.Load() != 3 {
 		t.Fatal("initial explicit subscriptions were not signed")
 	}
-	if evicted := issuer.Evicted(); !slices.Equal(evicted, []string{"b.example.com"}) {
-		t.Fatalf("eviction history = %v, want A forgotten and B evicted", evicted)
-	}
 	generation := issuer.Changes().Get().Generation
 	request.SubscribedNames = nil
 	for pass := range 3 {
 		delta := generate()
-		if len(delta.Resources) != 0 || !slices.Equal(delta.Removed, []string{"a.example.com", "b.example.com"}) {
+		if len(delta.Resources) != 0 || len(delta.Removed) != 0 {
 			t.Fatalf("passive pass %d = resources:%v removed:%v", pass, selectedNames(delta.Resources), delta.Removed)
 		}
 		if signer.calls.Load() != 3 || issuer.Changes().Get().Generation != generation {
 			t.Fatal("passive eviction refresh signed or generated another notification")
 		}
 	}
+	if _, err := issuer.Get(ctx, gatewayScope(), "other.example.com"); err != nil {
+		t.Fatal(err)
+	}
 	request.SubscribedNames = []string{"a.example.com"}
 	restored := generate()
-	if !slices.Equal(selectedNames(restored.Resources), []string{"a.example.com"}) || signer.calls.Load() != 4 {
+	if !slices.Equal(selectedNames(restored.Resources), []string{"a.example.com"}) || signer.calls.Load() != 5 {
 		t.Fatal("explicit resubscription did not restore A exactly once")
 	}
 	generation = issuer.Changes().Get().Generation
 	request.SubscribedNames = nil
 	generate()
-	if signer.calls.Load() != 4 || issuer.Changes().Get().Generation != generation {
+	if signer.calls.Load() != 5 || issuer.Changes().Get().Generation != generation {
 		t.Fatal("passive refresh after restoration restarted signing")
 	}
 }
@@ -467,7 +242,8 @@ func TestSDSCertificateRemainingTTL(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				const name = "API.example.com"
 				certificate := testSDSCertificate()
-				certificate.NotAfter = time.Now().Add(lifetime)
+				certificate.NotAfter = time.Now().Add(lifetime + time.Minute)
+				certificate.UsableUntil = certificate.NotAfter.Add(-time.Minute)
 				provider := &fakeCertificateProvider{certificate: certificate}
 				generator := newTestSDSGenerator(t, provider)
 				watch := &watchState{started: true, names: sets.New(name), sent: map[string]string{}}
@@ -520,3 +296,70 @@ func TestSDSCertificateRemainingTTL(t *testing.T) {
 		})
 	}
 }
+
+func TestSDSPassiveValidationUsesSigningGeneration(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		version     string
+		revision    string
+		authErr     error
+		wantRemoved bool
+	}{
+		{name: "same generation", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), revision: "one"},
+		{name: "rotated CA", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), revision: "two", wantRemoved: true},
+		{name: "signer unavailable", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), wantRemoved: true},
+		{name: "expired", version: sdsResourceVersion("one", time.Now().Add(-time.Second), "hash"), revision: "one", wantRemoved: true},
+		{name: "legacy version", version: "old-content-hash", revision: "one", wantRemoved: true},
+		{name: "gateway revoked", version: sdsResourceVersion("one", time.Now().Add(time.Hour), "hash"), revision: "one", authErr: errors.New("gateway revoked"), wantRemoved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &fakeCertificateProvider{revision: tc.revision, authErr: tc.authErr}
+			generator := newTestSDSGenerator(t, provider)
+			watch := &watchState{names: sets.New[string](), sent: make(map[string]string)}
+			initial := request(model.SecretType)
+			initial.InitialResourceVersions = map[string]string{"api.example.com": tc.version}
+			applySubscription(watch, initial)
+			delta, err := generator.Generate(t.Context(), GenerationRequest{
+				Scope:        gatewayScope(),
+				TypeURL:      model.SecretType,
+				Subscription: newSubscriptionView(watch),
+				Full:         true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(delta.Resources) != 0 || provider.signCalls != 0 {
+				t.Fatal("initial versions alone caused issuance")
+			}
+			if tc.wantRemoved != slices.Equal(delta.Removed, []string{"api.example.com"}) {
+				t.Fatalf("removed = %v", delta.Removed)
+			}
+		})
+	}
+}
+
+func TestSDSExplicitDemandDoesNotResignOtherNames(t *testing.T) {
+	provider := &fakeCertificateProvider{certificate: testSDSCertificate()}
+	generator := newTestSDSGenerator(t, provider)
+	names := []string{"a.example.com", "b.example.com", "c.example.com"}
+	sent := map[string]string{}
+	for _, name := range names {
+		sent[name] = sdsResourceVersion("one", time.Now().Add(time.Hour), "cached")
+	}
+	delta, err := generator.Generate(t.Context(), GenerationRequest{
+		Scope:           gatewayScope(),
+		TypeURL:         model.SecretType,
+		Subscription:    SubscriptionView{names: names, sent: sent},
+		Full:            true,
+		SubscribedNames: []string{"b.example.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.signCalls != 1 || len(delta.Removed) != 0 ||
+		!slices.Equal(selectedNames(delta.Resources), []string{"b.example.com"}) {
+		t.Fatalf("explicit demand affected unrelated names: %v", delta)
+	}
+}
+
+func (*fakeCertificateProvider) SignerGeneration() uint64 { return 0 }

@@ -20,15 +20,14 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
-
-	"istio.io/istio/pkg/util/sets"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/metrics"
@@ -111,6 +110,7 @@ type blockingRotationDomainSigner struct {
 	calls    int
 	started  chan int
 	blocks   map[int]chan struct{}
+	errors   map[int]error
 	onReturn func()
 	state    krt.StaticSingleton[SignerState]
 }
@@ -144,6 +144,7 @@ func (f *blockingRotationDomainSigner) SignDNS(context.Context, string, time.Dur
 	call := f.calls
 	result := f.result
 	block := f.blocks[call]
+	err := f.errors[call]
 	f.mu.Unlock()
 	if f.started != nil {
 		f.started <- call
@@ -154,7 +155,7 @@ func (f *blockingRotationDomainSigner) SignDNS(context.Context, string, time.Dur
 	if f.onReturn != nil {
 		f.onReturn()
 	}
-	return result, nil
+	return result, err
 }
 
 func (f *blockingRotationDomainSigner) source() DomainSignerSource {
@@ -190,10 +191,7 @@ func (f *rotationDomainSigner) rotate() {
 }
 
 func TestOnDemandIssuerRotationUpdatesCacheGaugeSynchronously(t *testing.T) {
-	previousMetrics := metrics.Default
-	registry := metrics.NewRegistry()
-	metrics.Default = registry
-	t.Cleanup(func() { metrics.Default = previousMetrics })
+	registry := metrics.Default
 
 	now := time.Now()
 	signer := &rotationDomainSigner{
@@ -233,82 +231,39 @@ func TestOnDemandIssuerRotationUpdatesCacheGaugeSynchronously(t *testing.T) {
 	}
 }
 
-func TestShortCertificateIsReusedUntilExpiry(t *testing.T) {
-	now := time.Now()
-	signer := &fakeDomainSigner{
-		revision: "one",
-		result: SignedCertificate{
-			CertificateChain: []byte("certificate-chain"),
-			PrivateKey:       []byte("private-key"),
-			SignedAt:         now,
-			NotAfter:         now.Add(2 * time.Minute),
-			SignerRevision:   "one",
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime: time.Hour,
-		RenewBefore:  10 * time.Minute,
-		CacheMaxAge:  time.Hour,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	first, err := issuer.certificate(context.Background(), "api.example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := issuer.certificate(context.Background(), "api.example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(second.CertificateChain), string(first.CertificateChain); got != want {
-		t.Fatalf("second certificate chain = %q, want reused %q", got, want)
-	}
-	signer.mu.Lock()
-	signCalls := signer.calls
-	signer.mu.Unlock()
-	if got, want := signCalls, 1; got != want {
-		t.Fatalf("SignDNS calls = %d, want %d", got, want)
-	}
-
-	tests := []struct {
-		name        string
-		certificate SignedCertificate
-		wantValid   bool
-	}{
-		{
-			name: "expired short certificate",
-			certificate: SignedCertificate{
-				SignedAt:       now.Add(-3 * time.Minute),
-				NotAfter:       now.Add(-time.Minute),
-				SignerRevision: "one",
-			},
-		},
-		{
-			name: "ordinary certificate inside renewal window",
-			certificate: SignedCertificate{
-				SignedAt:       now.Add(-30 * time.Minute),
-				NotAfter:       now.Add(5 * time.Minute),
-				SignerRevision: "one",
-			},
-		},
-		{
-			name: "ordinary certificate outside renewal window",
-			certificate: SignedCertificate{
-				SignedAt:       now.Add(-30 * time.Minute),
-				NotAfter:       now.Add(20 * time.Minute),
-				SignerRevision: "one",
-			},
-			wantValid: true,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := issuer.cacheEntryValid(test.certificate, "one"); got != test.wantValid {
-				t.Fatalf("cacheEntryValid() = %t, want %t", got, test.wantValid)
+func TestCertificateMustHaveUsableLifetime(t *testing.T) {
+	for _, lifetime := range []time.Duration{2 * time.Minute, 10 * time.Minute, 20 * time.Minute} {
+		t.Run(lifetime.String(), func(t *testing.T) {
+			signer := &fakeDomainSigner{
+				revision: "one",
+				result:   testSignedCertificateAt(time.Now().Add(lifetime), time.Now()),
+			}
+			issuer, err := NewOnDemandIssuer(t.Context(), signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
+				LeafLifetime: time.Hour,
+				RenewBefore:  10 * time.Minute,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert, err := issuer.Get(t.Context(), model.ClientScope{}, "api.example.com")
+			if lifetime <= 10*time.Minute {
+				if err == nil {
+					t.Fatal("accepted certificate without a renewal margin")
+				}
+				if issuer.cachedCertificate("api.example.com") != nil {
+					t.Fatal("unusable certificate cached")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !cert.UsableUntil.Equal(cert.NotAfter.Add(-10 * time.Minute)) {
+					t.Fatal("wrong usable deadline")
+				}
+				second, err := issuer.Get(t.Context(), model.ClientScope{}, "api.example.com")
+				if err != nil || !second.UsableUntil.Equal(cert.UsableUntil) || signer.calls != 1 {
+					t.Fatal("cache hit changed lifetime or re-signed")
+				}
 			}
 		})
 	}
@@ -317,9 +272,24 @@ func TestShortCertificateIsReusedUntilExpiry(t *testing.T) {
 func TestCertificateHeapOrdersAndUpdatesThreeEntries(t *testing.T) {
 	now := time.Now()
 	options := OnDemandOptions{RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour}
-	early := newCertificateCacheEntry("early.example.com", testSignedCertificateAt(now.Add(3*time.Hour), now), now.Add(-3*time.Minute), options)
-	middle := newCertificateCacheEntry("middle.example.com", testSignedCertificateAt(now.Add(3*time.Hour), now), now.Add(-2*time.Minute), options)
-	late := newCertificateCacheEntry("late.example.com", testSignedCertificateAt(now.Add(3*time.Hour), now), now.Add(-time.Minute), options)
+	early := newCertificateCacheEntry(
+		"early.example.com",
+		testSignedCertificateAt(now.Add(3*time.Hour), now),
+		now.Add(-3*time.Minute),
+		options,
+	)
+	middle := newCertificateCacheEntry(
+		"middle.example.com",
+		testSignedCertificateAt(now.Add(3*time.Hour), now),
+		now.Add(-2*time.Minute),
+		options,
+	)
+	late := newCertificateCacheEntry(
+		"late.example.com",
+		testSignedCertificateAt(now.Add(3*time.Hour), now),
+		now.Add(-time.Minute),
+		options,
+	)
 	entries := certHeap{}
 	for _, entry := range []*certificateCacheEntry{late, early, middle} {
 		heap.Push(&entries, entry)
@@ -343,7 +313,7 @@ func TestCertificateHeapOrdersAndUpdatesThreeEntries(t *testing.T) {
 	}
 }
 
-func TestCertificateDeadlineReaperNotifiesAtRenewal(t *testing.T) {
+func TestCertificateDeadlineReaperIsLocalAtRenewal(t *testing.T) {
 	now := time.Now()
 	issuer := newDeadlineTestIssuer(OnDemandOptions{RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour})
 	entry := addDeadlineTestCertificate(issuer, "normal.example.com",
@@ -358,141 +328,8 @@ func TestCertificateDeadlineReaperNotifiesAtRenewal(t *testing.T) {
 	if _, found := issuer.cache[entry.domain]; found {
 		t.Fatal("ordinary certificate remained cached at its renewal threshold")
 	}
-	if notifications != 1 {
-		t.Fatalf("renewal notifications = %d, want 1", notifications)
-	}
-}
-
-func TestOnDemandIssuerKeepsEvictionUntilSuccessfulResign(t *testing.T) {
-	now := time.Now()
-	signer := &failingDomainSigner{revision: "one", result: testSignedCertificate("one")}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime: time.Hour,
-		RenewBefore:  10 * time.Minute,
-		CacheMaxAge:  time.Hour,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := model.ClientScope{Class: model.ClientEgressGateway, GatewayKey: "demo/egress"}
-	if _, err := issuer.Get(context.Background(), scope, "old.example.com"); err != nil {
-		t.Fatal(err)
-	}
-	issuer.mu.Lock()
-	entry := issuer.cache["old.example.com"]
-	entry.deadline = now.Add(-time.Second)
-	heap.Fix(&issuer.heap, entry.index)
-	issuer.mu.Unlock()
-	issuer.reap(now)
-
-	evicted := issuer.Evicted()
-	if len(evicted) != 1 || evicted[0] != "old.example.com" {
-		t.Fatalf("evicted domains = %v, want old.example.com", evicted)
-	}
-	evicted[0] = "mutated.example.com"
-	if got := issuer.Evicted(); len(got) != 1 || got[0] != "old.example.com" {
-		t.Fatalf("mutating eviction snapshot changed issuer state: %v", got)
-	}
-	if _, err := issuer.GetForSDS(context.Background(), scope, "old.example.com", false); !errors.Is(err, ErrDomainCertificateEvicted) {
-		t.Fatalf("non-retry SDS lookup error = %v, want evicted sentinel", err)
-	}
-	if got := issuer.Evicted(); len(got) != 1 || got[0] != "old.example.com" {
-		t.Fatalf("non-retry SDS lookup cleared eviction: %v", got)
-	}
-
-	signer.mu.Lock()
-	signer.err = errors.New("sign failed")
-	signer.mu.Unlock()
-	if _, err := issuer.Get(context.Background(), scope, "old.example.com"); err == nil {
-		t.Fatal("failed re-sign returned no error")
-	}
-	if got := issuer.Evicted(); len(got) != 1 || got[0] != "old.example.com" {
-		t.Fatalf("failed re-sign cleared eviction: %v", got)
-	}
-
-	signer.mu.Lock()
-	signer.err = nil
-	signer.mu.Unlock()
-	if _, err := issuer.Get(context.Background(), scope, "old.example.com"); err != nil {
-		t.Fatal(err)
-	}
-	if got := issuer.Evicted(); len(got) != 0 {
-		t.Fatalf("successful re-sign left eviction state: %v", got)
-	}
-}
-
-func TestOnDemandIssuerEvictedSnapshotIsImmutableAndUnordered(t *testing.T) {
-	issuer := &OnDemandIssuer{evicted: sets.New(
-		"z.example.com",
-		"a.example.com",
-	)}
-	snapshot := issuer.Evicted()
-	if len(snapshot) != 2 || !slices.Contains(snapshot, "a.example.com") || !slices.Contains(snapshot, "z.example.com") {
-		t.Fatalf("evicted snapshot = %v, want both domains in any order", snapshot)
-	}
-	snapshot[0] = "mutated.example.com"
-	second := issuer.Evicted()
-	if len(second) != 2 || !slices.Contains(second, "a.example.com") || !slices.Contains(second, "z.example.com") {
-		t.Fatalf("mutating snapshot changed issuer state: %v", second)
-	}
-}
-
-func TestPassiveSDSReadDoesNotSignExpiredCertificate(t *testing.T) {
-	signer := &fakeDomainSigner{revision: "one", result: testSignedCertificate("one")}
-	ctx, cancel := context.WithCancel(t.Context())
-	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime: time.Hour,
-		RenewBefore:  10 * time.Minute,
-		CacheMaxAge:  time.Hour,
-	})
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cancel(); <-issuer.Done() })
-	if _, err := issuer.Get(ctx, model.ClientScope{}, "old.example.com"); err != nil {
-		t.Fatal(err)
-	}
-	issuer.mu.Lock()
-	issuer.cache["old.example.com"].certificate.NotAfter = time.Now().Add(-time.Second)
-	issuer.mu.Unlock()
-	if _, err := issuer.GetForSDS(ctx, model.ClientScope{}, "old.example.com", false); !errors.Is(err, ErrDomainCertificateEvicted) {
-		t.Fatalf("passive expired lookup = %v, want removal", err)
-	}
-	signer.mu.Lock()
-	calls := signer.calls
-	signer.mu.Unlock()
-	if calls != 1 {
-		t.Fatalf("passive lookup signed %d certificates, want initial certificate only", calls)
-	}
-	if _, err := issuer.GetForSDS(ctx, model.ClientScope{}, "old.example.com", true); err != nil {
-		t.Fatal(err)
-	}
-	signer.mu.Lock()
-	calls = signer.calls
-	signer.mu.Unlock()
-	if calls != 2 {
-		t.Fatalf("explicit renewal signed %d certificates, want 2", calls)
-	}
-}
-
-func TestCertificateDeadlineReaperNotifiesAtShortExpiry(t *testing.T) {
-	now := time.Now()
-	issuer := newDeadlineTestIssuer(OnDemandOptions{RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour})
-	entry := addDeadlineTestCertificate(issuer, "short.example.com",
-		testSignedCertificateAt(now, now.Add(-5*time.Minute)), now)
-	notifications := 0
-	registration := watchCertificateChanges(issuer, func() { notifications++ })
-	t.Cleanup(registration.UnregisterHandler)
-
-	issuer.reap(now)
-	if _, found := issuer.cache[entry.domain]; found {
-		t.Fatal("short certificate remained cached at its actual expiry")
-	}
-	if notifications != 1 {
-		t.Fatalf("expiry notifications = %d, want 1", notifications)
+	if notifications != 0 {
+		t.Fatalf("local eviction sent %d notifications", notifications)
 	}
 }
 
@@ -515,58 +352,17 @@ func TestCertificateMaxAgeUsesLocalInsertionTime(t *testing.T) {
 	}
 }
 
-func TestCertificateMaxAgeBatchingDoesNotDelayRenewal(t *testing.T) {
+func TestCertificateMaxAgeDoesNotDeferEviction(t *testing.T) {
 	now := time.Now()
-	issuer := newDeadlineTestIssuer(OnDemandOptions{RenewBefore: 10 * time.Minute, CacheMaxAge: time.Hour})
-	longCertificate := testSignedCertificateAt(now.Add(5*time.Hour), now)
-	addDeadlineTestCertificate(issuer, "max-due.example.com", longCertificate, now.Add(-time.Hour))
-	closeOne := addDeadlineTestCertificate(issuer, "max-five.example.com", longCertificate, now.Add(-time.Hour+5*time.Second))
-	closeTwo := addDeadlineTestCertificate(issuer, "max-ten.example.com", longCertificate, now.Add(-time.Hour+10*time.Second))
-	renewal := addDeadlineTestCertificate(issuer, "renewal.example.com",
-		testSignedCertificateAt(now.Add(10*time.Minute+12*time.Second), now.Add(-50*time.Minute)),
-		now.Add(-time.Hour+7*time.Second))
-	notifications := 0
-	registration := watchCertificateChanges(issuer, func() { notifications++ })
-	t.Cleanup(registration.UnregisterHandler)
-
-	wait, scheduled := issuer.reap(now)
-	if !scheduled || wait != 12*time.Second {
-		t.Fatalf("wake after first max-age eviction = (%v, %t), want renewal in 12s", wait, scheduled)
+	issuer := newDeadlineTestIssuer(OnDemandOptions{RenewBefore: time.Minute, CacheMaxAge: time.Hour})
+	cert := testSignedCertificateAt(now.Add(2*time.Hour), now)
+	addDeadlineTestCertificate(issuer, "a.example.com", cert, now.Add(-time.Hour))
+	addDeadlineTestCertificate(issuer, "b.example.com", cert, now.Add(-time.Hour+5*time.Second))
+	if wait, scheduled := issuer.reap(now); !scheduled || wait != 5*time.Second {
+		t.Fatalf("next eviction = %v %v", wait, scheduled)
 	}
-	if closeOne.deadline != now.Add(minCertificateEvictionInterval) || closeTwo.deadline != closeOne.deadline {
-		t.Fatalf("batched max-age deadlines = (%v, %v), want %v", closeOne.deadline, closeTwo.deadline,
-			now.Add(minCertificateEvictionInterval))
-	}
-	if renewal.deadline != now.Add(12*time.Second) || renewal.reason != certificateEvictionRenewal {
-		t.Fatalf("max-age-capped renewal deadline = (%v, %d), want renewal at %v",
-			renewal.deadline, renewal.reason, now.Add(12*time.Second))
-	}
-	if notifications != 1 {
-		t.Fatalf("notifications after first max-age eviction = %d, want 1", notifications)
-	}
-
-	wait, scheduled = issuer.reap(now.Add(12 * time.Second))
-	if !scheduled || wait != 18*time.Second {
-		t.Fatalf("wake after renewal eviction = (%v, %t), want batched max-age wake in 18s", wait, scheduled)
-	}
-	if _, found := issuer.cache[renewal.domain]; found {
-		t.Fatal("renewal certificate was delayed by max-age batching")
-	}
-	if notifications != 2 {
-		t.Fatalf("notifications after renewal eviction = %d, want 2", notifications)
-	}
-
-	if _, scheduled = issuer.reap(now.Add(minCertificateEvictionInterval)); scheduled {
-		t.Fatal("reaper scheduled another wake after evicting the max-age batch")
-	}
-	if _, found := issuer.cache[closeOne.domain]; found {
-		t.Fatal("first close-spaced max-age certificate remained cached")
-	}
-	if _, found := issuer.cache[closeTwo.domain]; found {
-		t.Fatal("second close-spaced max-age certificate remained cached")
-	}
-	if notifications != 3 {
-		t.Fatalf("notifications after max-age batch = %d, want 3", notifications)
+	if _, scheduled := issuer.reap(now.Add(5 * time.Second)); scheduled || len(issuer.cache) != 0 {
+		t.Fatal("eviction deferred")
 	}
 }
 
@@ -578,7 +374,6 @@ func newDeadlineTestIssuer(options OnDemandOptions) *OnDemandIssuer {
 		options: options,
 		cache:   make(map[string]*certificateCacheEntry),
 		heap:    make(certHeap, 0),
-		evicted: sets.New[string](),
 		changes: krt.NewStatic(&CertificateGeneration{}, true),
 	}
 }
@@ -598,6 +393,7 @@ func addDeadlineTestCertificate(
 	certificate SignedCertificate,
 	insertedAt time.Time,
 ) *certificateCacheEntry {
+	certificate.UsableUntil = certificate.NotAfter.Add(-issuer.options.RenewBefore)
 	entry := newCertificateCacheEntry(domain, certificate, insertedAt, issuer.options)
 	issuer.cache[domain] = entry
 	heap.Push(&issuer.heap, entry)
@@ -605,7 +401,7 @@ func addDeadlineTestCertificate(
 }
 
 func testSignedCertificateAt(notAfter, signedAt time.Time) SignedCertificate {
-	return SignedCertificate{NotAfter: notAfter, SignedAt: signedAt, SignerRevision: "one"}
+	return SignedCertificate{NotAfter: notAfter, UsableUntil: notAfter, SignedAt: signedAt, SignerRevision: "one"}
 }
 
 func TestCanceledSigningIsNeverCachedOrReturned(t *testing.T) {
@@ -914,12 +710,17 @@ func TestOnDemandIssuerAuthorizesGatewayAndCachesCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer := newInstalledMITMSigner(ca, secret.UID, time.Hour)
-	issuer, err := NewOnDemandIssuer(context.Background(), DomainSignerSource{Signer: signer, State: signer.State()}, &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime: time.Hour,
-		RenewBefore:  10 * time.Minute,
-		CacheMaxAge:  time.Hour,
-	})
+	signer := newInstalledMITMSigner(t, ca, secret.UID, time.Hour)
+	issuer, err := NewOnDemandIssuer(
+		context.Background(),
+		DomainSignerSource{Signer: signer, State: signer.State()},
+		&fakeGatewayAuthorizer{},
+		OnDemandOptions{
+			LeafLifetime: time.Hour,
+			RenewBefore:  10 * time.Minute,
+			CacheMaxAge:  time.Hour,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -936,7 +737,8 @@ func TestOnDemandIssuerAuthorizesGatewayAndCachesCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(first.CertificateChain) != string(second.CertificateChain) || string(first.PrivateKey) != string(second.PrivateKey) {
+	if string(first.CertificateChain) != string(second.CertificateChain) ||
+		string(first.PrivateKey) != string(second.PrivateKey) {
 		t.Fatal("certificate was not cached")
 	}
 	leafPEM := issuer.cachedCertificate("api.example.com")
@@ -954,7 +756,7 @@ func TestOnDemandIssuerAuthorizesGatewayAndCachesCertificate(t *testing.T) {
 	}
 }
 
-func TestOnDemandIssuerMarksCachedDomainsEvictedOnRotation(t *testing.T) {
+func TestOnDemandIssuerClearsCacheOnRotation(t *testing.T) {
 	now := time.Now()
 	signer := &rotationDomainSigner{
 		fakeDomainSigner: fakeDomainSigner{
@@ -980,9 +782,6 @@ func TestOnDemandIssuerMarksCachedDomainsEvictedOnRotation(t *testing.T) {
 	if _, err := issuer.certificate(context.Background(), "api.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	issuer.mu.Lock()
-	issuer.evicted.Insert("old.example.com")
-	issuer.mu.Unlock()
 	notified := make(chan struct{})
 	changes := watchCertificateChanges(issuer, func() {
 		if cached := issuer.cachedCertificate("api.example.com"); cached != nil {
@@ -1000,14 +799,6 @@ func TestOnDemandIssuerMarksCachedDomainsEvictedOnRotation(t *testing.T) {
 	if cached := issuer.cachedCertificate("api.example.com"); cached != nil {
 		t.Fatalf("cached certificate after rotation = %q, want nil", cached)
 	}
-	evicted := issuer.Evicted()
-	slices.Sort(evicted)
-	if want := []string{"api.example.com", "old.example.com"}; !slices.Equal(evicted, want) {
-		t.Fatalf("evicted domains after rotation = %v, want %v", evicted, want)
-	}
-	if _, err := issuer.GetForSDS(context.Background(), model.ClientScope{}, "api.example.com", false); !errors.Is(err, ErrDomainCertificateEvicted) {
-		t.Fatalf("non-explicit SDS refresh after rotation = %v, want ErrDomainCertificateEvicted", err)
-	}
 	issuer.mu.RLock()
 	heapEntries := issuer.heap.Len()
 	issuer.mu.RUnlock()
@@ -1018,61 +809,22 @@ func TestOnDemandIssuerMarksCachedDomainsEvictedOnRotation(t *testing.T) {
 	cancel()
 }
 
-func TestOnDemandIssuerBoundsRotationEvictions(t *testing.T) {
-	signer := &fakeDomainSigner{
-		revision: "one",
-		result:   testSignedCertificate("one"),
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
-		LeafLifetime:    time.Hour,
-		RenewBefore:     10 * time.Minute,
-		CacheMaxAge:     time.Hour,
-		CacheMaxEntries: 2,
+func TestOnDemandIssuerNotifiesRotationWithEmptyCache(t *testing.T) {
+	signer := &fakeDomainSigner{revision: "one", result: testSignedCertificate("one")}
+	issuer, err := NewOnDemandIssuer(t.Context(), signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
+		LeafLifetime: time.Hour,
+		RenewBefore:  time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotated := make(chan struct{}, 2)
-	changes := watchCertificateChanges(issuer, func() {
-		rotated <- struct{}{}
-	})
-	t.Cleanup(changes.UnregisterHandler)
-	waitForRotation := func() {
-		t.Helper()
-		select {
-		case <-rotated:
-		case <-time.After(time.Second):
-			t.Fatal("issuer rotation callback did not notify certificate changes")
-		}
-	}
-
-	for _, domain := range []string{"a.example.com", "b.example.com"} {
-		if _, err := issuer.certificate(context.Background(), domain); err != nil {
-			t.Fatal(err)
-		}
-	}
+	before := issuer.Changes().Get().Generation
 	signer.rotate("two")
-	waitForRotation()
-
-	for _, domain := range []string{"c.example.com", "d.example.com"} {
-		if _, err := issuer.certificate(context.Background(), domain); err != nil {
-			t.Fatal(err)
-		}
+	if issuer.Changes().Get().Generation <= before {
+		t.Fatal("empty-cache rotation was not published")
 	}
-	signer.rotate("three")
-	waitForRotation()
-
-	evicted := issuer.Evicted()
-	slices.Sort(evicted)
-	if want := []string{"c.example.com", "d.example.com"}; !slices.Equal(evicted, want) {
-		t.Fatalf("evicted domains after repeated rotations = %v, want current rotation domains %v", evicted, want)
-	}
-	for _, domain := range evicted {
-		if _, err := issuer.GetForSDS(context.Background(), model.ClientScope{}, domain, false); !errors.Is(err, ErrDomainCertificateEvicted) {
-			t.Fatalf("non-explicit SDS refresh for %q after rotation = %v, want ErrDomainCertificateEvicted", domain, err)
-		}
+	if issuer.SignerRevision() != "two" {
+		t.Fatal("wrong signing revision")
 	}
 }
 
@@ -1342,19 +1094,16 @@ func TestOnDemandIssuerCapsCacheEntries(t *testing.T) {
 	}
 	issuer.mu.RLock()
 	cacheSize := len(issuer.cache)
-	firstEvicted := issuer.evicted.Contains("a.example.com")
+	_, firstPresent := issuer.cache["a.example.com"]
 	issuer.mu.RUnlock()
 	if cacheSize != 2 {
 		t.Fatalf("cache holds %d entries, want 2", cacheSize)
 	}
-	if !firstEvicted {
-		t.Fatal("capacity eviction did not record the evicted domain")
+	if firstPresent {
+		t.Fatal("capacity eviction kept the earliest entry")
 	}
-	if _, err := issuer.GetForSDS(context.Background(), scope, "a.example.com", false); !errors.Is(err, ErrDomainCertificateEvicted) {
-		t.Fatalf("non-retry SDS read of evicted domain = %v, want ErrDomainCertificateEvicted", err)
-	}
-	if _, err := issuer.GetForSDS(context.Background(), scope, "a.example.com", true); err != nil {
-		t.Fatalf("retry SDS read of evicted domain: %v", err)
+	if _, err := issuer.Get(t.Context(), scope, "a.example.com"); err != nil {
+		t.Fatal(err)
 	}
 	issuer.mu.RLock()
 	cacheSize = len(issuer.cache)
@@ -1475,5 +1224,137 @@ func assertSignInFlightNeverExceeds(t *testing.T, signer *concurrencyTrackingSig
 				t.Fatalf("SignDNS calls in flight = %d, want at most %d", got, limit)
 			}
 		}
+	}
+}
+
+func TestOnDemandIssuerRetriesSupersededCAError(t *testing.T) {
+	for _, scenario := range []string{"rotate", "stable", "cancel"} {
+		t.Run(scenario, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				release := make(chan struct{})
+				signErr := errors.New("old CA expired")
+				signer := &blockingRotationDomainSigner{
+					revision: "one",
+					result:   testSignedCertificate("one"),
+					blocks:   map[int]chan struct{}{1: release},
+					errors:   map[int]error{1: signErr},
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				issuer, err := NewOnDemandIssuer(ctx, signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
+					LeafLifetime: time.Hour,
+					RenewBefore:  time.Minute,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result := make(chan error, 1)
+				go func() {
+					cert, err := issuer.certificate(ctx, "api.example.com")
+					if err == nil && cert.SignerRevision != "two" {
+						err = fmt.Errorf("received revision %q", cert.SignerRevision)
+					}
+					result <- err
+				}()
+				synctest.Wait()
+				if scenario != "stable" {
+					signer.rotate("two")
+				}
+				if scenario == "cancel" {
+					cancel()
+				}
+				close(release)
+				synctest.Wait()
+				wantCalls := 1
+				wantErr := signErr
+				if scenario == "rotate" {
+					wantCalls, wantErr = 2, nil
+				} else if scenario == "cancel" {
+					wantErr = context.Canceled
+				}
+				if err := <-result; !errors.Is(err, wantErr) {
+					t.Fatalf("issuance error = %v, want %v", err, wantErr)
+				}
+				signer.mu.Lock()
+				defer signer.mu.Unlock()
+				if signer.calls != wantCalls {
+					t.Fatalf("sign calls = %d, want %d", signer.calls, wantCalls)
+				}
+			})
+		})
+	}
+}
+
+func TestOnDemandResourceTTLBoundsCacheAndNeverSlides(t *testing.T) {
+	for _, resourceTTL := range []time.Duration{0, 30 * time.Second, 2 * time.Hour} {
+		t.Run(resourceTTL.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				signer := &fakeDomainSigner{revision: "one", result: testSignedCertificate("one")}
+				issuer, err := NewOnDemandIssuer(
+					ctx,
+					signer.source(),
+					&fakeGatewayAuthorizer{},
+					OnDemandOptions{LeafLifetime: time.Hour, RenewBefore: time.Minute, ResourceTTL: resourceTTL},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					cancel()
+					<-issuer.Done()
+				}()
+				cert, err := issuer.Get(ctx, model.ClientScope{}, "api.example.com")
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantTTL := resourceTTL
+				if wantTTL == 0 {
+					wantTTL = 15 * time.Minute
+				}
+				if wantTTL > 59*time.Minute {
+					wantTTL = 59 * time.Minute
+				}
+				if !cert.UsableUntil.Equal(time.Now().Add(wantTTL)) {
+					t.Fatalf("deadline=%v, want TTL=%v", cert.UsableUntil, wantTTL)
+				}
+				time.Sleep(wantTTL / 2)
+				cached, err := issuer.Get(ctx, model.ClientScope{}, "api.example.com")
+				if err != nil || !cached.UsableUntil.Equal(cert.UsableUntil) || signer.calls != 1 {
+					t.Fatal("cache hit moved deadline")
+				}
+				time.Sleep(wantTTL / 2)
+				synctest.Wait()
+				if issuer.cachedCertificate("api.example.com") != nil {
+					t.Fatal("cache outlived SDS deadline")
+				}
+				signer.mu.Lock()
+				signer.result = testSignedCertificate("one")
+				signer.mu.Unlock()
+				renewed, err := issuer.Get(ctx, model.ClientScope{}, "api.example.com")
+				if err != nil || !renewed.UsableUntil.After(cert.UsableUntil) || signer.calls != 2 {
+					t.Fatalf("new demand did not renew: %v", err)
+				}
+			})
+		})
+	}
+}
+
+func TestOnDemandExpiredResourceWindowFailsWithoutRetry(t *testing.T) {
+	signer := &fakeDomainSigner{revision: "one", result: testSignedCertificate("one")}
+	signer.result.SignedAt = time.Now().Add(-time.Minute)
+	issuer, err := NewOnDemandIssuer(t.Context(), signer.source(), &fakeGatewayAuthorizer{}, OnDemandOptions{
+		LeafLifetime: time.Hour,
+		RenewBefore:  time.Minute,
+		ResourceTTL:  30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := issuer.Get(t.Context(), model.ClientScope{}, "api.example.com"); err == nil {
+		t.Fatal("expired SDS window accepted")
+	}
+	if signer.calls != 1 || issuer.cachedCertificate("api.example.com") != nil {
+		t.Fatal("unusable window retried or cached")
 	}
 }

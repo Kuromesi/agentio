@@ -28,6 +28,7 @@ import (
 )
 
 type watchState struct {
+	sds      *sdsSession
 	wildcard bool
 	names    sets.Set[string]
 	sent     map[string]string

@@ -182,7 +182,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: upstream-tls
+  name: {{ if index . "ServiceName" }}{{ index . "ServiceName" }}{{ else }}upstream-tls{{ end }}
 spec:
   selector: {app: upstream-tls}
   ports:

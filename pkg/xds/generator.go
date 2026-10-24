@@ -67,6 +67,8 @@ type GeneratedDelta struct {
 
 	// expiresAt is converted to a remaining TTL at send time. Expired resources
 	// become removals instead of being sent with stale certificate contents.
+	// versions overrides content versions for resources with a signing generation.
+	versions       map[string]string
 	expiresAt      map[string]time.Time
 	denied         []generatedDenial
 	allowed        []string

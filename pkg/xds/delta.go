@@ -116,6 +116,48 @@ func (s *Server) handleRequest(
 	if !changed && request.GetResponseNonce() != "" && !explicitSecretSubscribe && !explicitDemandSubscribe {
 		return nil
 	}
+	if generator, ok := s.generator(typeURL).(*SDSGenerator); ok {
+		if watch.sds == nil {
+			watch.sds = newSDSSession(stream.Context(), generator, scope)
+		}
+		snapshot := s.resources.Snapshot()
+		staticNames := staticSDSNames(snapshot, scope)
+		var demand, staticDemand []string
+		unsubscribed := sets.New(request.GetResourceNamesUnsubscribe()...)
+		for _, name := range request.GetResourceNamesSubscribe() {
+			if unsubscribed.Contains(name) {
+				continue
+			}
+			if staticNames.Contains(name) {
+				// Ordinary Secrets use the current snapshot synchronously, outside
+				// the on-demand signing queue and its authorization lifecycle.
+				staticDemand = append(staticDemand, name)
+				continue
+			}
+			// Envoy re-subscribes held resources on a new stream. Restore history
+			// without turning it into cold signing demand.
+			if _, restored := request.GetInitialResourceVersions()[name]; initial && restored {
+				continue
+			}
+			demand = append(demand, name)
+		}
+		watch.sds.subscribe(demand)
+		watch.sds.unsubscribe(request.GetResourceNamesUnsubscribe())
+		watch.sds.start(snapshot)
+		if initial || len(staticDemand) > 0 {
+			view := newSubscriptionView(watch)
+			// Validate every retained version before asynchronous replacements finish.
+			return s.generateAndSend(stream, connLog, watch, GenerationRequest{
+				Scope:           scope,
+				TypeURL:         typeURL,
+				Subscription:    view,
+				Snapshot:        snapshot,
+				Full:            true,
+				SubscribedNames: staticDemand,
+			}, initial && len(watch.sds.jobs) == 0)
+		}
+		return nil
+	}
 	if !initial && !watch.wildcard &&
 		(scope.Class == model.ClientEgressGateway || scope.Class == model.ClientAgentioEgress) {
 		snapshot := s.resources.Snapshot()
@@ -237,6 +279,20 @@ func (s *Server) generateAndSend(
 	force bool,
 ) error {
 	started := time.Now()
+	if q := watch.sds; q != nil {
+		staticNames := staticSDSNames(request.Snapshot, q.scope)
+		// Publishing a static Secret supersedes same-name issuance, even if the
+		// static resource is later removed before the old worker finishes.
+		q.unsubscribe(staticNames.UnsortedList())
+		// A removal tears down Envoy's pending certificate request. Keep real
+		// demand alive during rotation; its worker will replace the certificate.
+		if request.Full && q.generator.provider.SignerRevision() != "" &&
+			q.generator.provider.Authorize(q.scope) == nil {
+			for name := range q.jobs {
+				delete(request.Subscription.sent, name)
+			}
+		}
+	}
 	delta, err := s.generator(request.TypeURL).Generate(stream.Context(), request)
 	if err != nil {
 		metrics.Default.RecordXDSPushFailure(metrics.XDSPushFailureGenerate, request.TypeURL)
@@ -389,6 +445,9 @@ func validateGeneratedDelta(typeURL string, delta GeneratedDelta) ([]*discoveryv
 			Aliases:  resource.Aliases,
 			Version:  resource.Hash,
 			Resource: resource.Value,
+		}
+		if version, ok := delta.versions[resource.XDSName]; ok {
+			item.Version = version
 		}
 		if deadline, ok := delta.expiresAt[resource.XDSName]; ok {
 			ttl := time.Until(deadline)

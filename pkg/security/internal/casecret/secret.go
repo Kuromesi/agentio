@@ -102,7 +102,12 @@ func Rotate(
 	if err != nil {
 		return err
 	}
-	ca, err := parse(secret.Data[keys.Certificate], secret.Data[keys.PrivateKey], keys.AllowCertificateChain, now)
+	ca, err := pki.ParseSelfSignedCAForRenewal(
+		secret.Data[keys.Certificate],
+		secret.Data[keys.PrivateKey],
+		now,
+		keys.AllowCertificateChain,
+	)
 	if err != nil {
 		return err
 	}
@@ -127,11 +132,4 @@ func Rotate(
 	}
 	_, err = client.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
 	return err
-}
-
-func parse(certPEM, keyPEM []byte, allowCertificateChain bool, now time.Time) (pki.SigningCA, error) {
-	if allowCertificateChain {
-		return pki.ParseSigningCABundle(certPEM, keyPEM, now)
-	}
-	return pki.ParseSigningCA(certPEM, keyPEM, now)
 }

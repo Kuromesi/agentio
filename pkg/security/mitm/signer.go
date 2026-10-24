@@ -16,6 +16,11 @@ package mitm
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -230,17 +235,6 @@ func newCASecretSingleton(
 	}, options.KrtOptions.WithName("MITM_CA")...)
 }
 
-func (s *MITMSigner) currentCA() pki.SigningCA {
-	if s.unavailable.Load() {
-		return pki.SigningCA{}
-	}
-	state := s.caSingleton.Get()
-	if state == nil {
-		return pki.SigningCA{}
-	}
-	return state.ca
-}
-
 func (s *MITMSigner) State() krt.Singleton[SignerState] {
 	return s.signerState
 }
@@ -257,12 +251,21 @@ func (s *MITMSigner) SignDNS(ctx context.Context, domain string, lifetime time.D
 	if err := ctx.Err(); err != nil {
 		return SignedCertificate{}, fmt.Errorf("sign MITM certificate for %s: %w", domain, err)
 	}
-	ca := s.currentCA()
+	generation := s.caSingleton.Get()
 	state := s.signerState.Get()
-	if !ca.Available() || state == nil || state.Revision != ca.Revision() {
+	if s.unavailable.Load() || generation == nil || state == nil || state.Revision != generation.ca.Revision() {
 		return SignedCertificate{}, fmt.Errorf("MITM CA is not loaded")
 	}
-	issued, err := ca.GenerateRSA(ctx, pki.LeafOptions{
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return SignedCertificate{}, fmt.Errorf("generate MITM leaf key: %w", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return SignedCertificate{}, fmt.Errorf("encode MITM leaf key: %w", err)
+	}
+	ca := generation.ca
+	issued, err := ca.Sign(ctx, &key.PublicKey, pki.LeafOptions{
 		CommonName:         domain,
 		DNSNames:           []string{domain},
 		Lifetime:           lifetime,
@@ -275,7 +278,7 @@ func (s *MITMSigner) SignDNS(ctx context.Context, domain string, lifetime time.D
 	}
 	return SignedCertificate{
 		CertificateChain: pki.AppendCertificateChain(issued.CertificatePEM, ca.BundlePEM()),
-		PrivateKey:       append([]byte(nil), issued.PrivateKeyPEM...),
+		PrivateKey:       pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
 		NotAfter:         issued.NotAfter,
 		SignedAt:         issued.IssuedAt,
 		SignerRevision:   ca.Revision(),
@@ -372,7 +375,9 @@ func (s *MITMSigner) reconcileSelfSignedCA(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read MITM CA Secret %s/%s: %w", s.options.Namespace, s.options.SecretName, err)
 		}
-		return nil
+		// An existing Secret can contain a root that expired while this
+		// process was stopped. Recover it without waiting for the rotation tick.
+		return s.renewSelfSignedCA(ctx)
 	}
 	s.setUnavailable(s.currentSecretUID())
 	_, err = casecret.LoadOrCreate(ctx, s.client.Kube(), s.options.Namespace, s.options.SecretName,

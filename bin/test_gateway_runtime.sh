@@ -34,3 +34,15 @@ docker run --rm --platform linux/amd64 --user 1337:1337 \
   -e AGENTIO_TEST_NETWORK_FAULTS=1 \
   "$image" -test.v -test.timeout=90s \
   -test.run='TestGatewayAgentLifecycle|TestCommunityEnvoyWasmECDS|TestADSDetectsSilentBlackhole|TestEnvoyConfiguredBootstrap|TestCommunityEnvoyDynamicMetrics'
+
+# Exercise production MITM signing and Delta SDS against real Envoy, including
+# an ADS outage that spans X.509 expiry. The large load run remains opt-in.
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o "$artifacts/sds.test" ./pkg/xds
+chmod 755 "$artifacts/sds.test"
+docker run --rm --platform linux/amd64 --user 1337:1337 \
+  --entrypoint /tests/sds.test \
+  --mount "type=bind,src=$artifacts/sds.test,dst=/tests/sds.test,readonly" \
+  -e AGENTIO_TEST_ENVOY_BINARY=/usr/local/bin/envoy \
+  -e AGENTIO_TEST_SDS_HARD_EXPIRY=1 \
+  "$image" -test.v -test.timeout=3m \
+  -test.run='^TestSDSEnvoyECDSACompatibility$'

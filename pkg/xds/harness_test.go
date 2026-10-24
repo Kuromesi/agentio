@@ -288,25 +288,15 @@ func (f *fakeSecrets) getLocked(name string) (mitm.SignedCertificate, error) {
 	return mitm.SignedCertificate{
 		CertificateChain: []byte("certificate-chain-" + name),
 		PrivateKey:       []byte("private-key-" + name),
+		UsableUntil:      time.Now().Add(59 * time.Minute),
 		NotAfter:         time.Now().Add(time.Hour),
 		SignedAt:         time.Now(),
 		SignerRevision:   "one",
 	}, nil
 }
 
-func (f *fakeSecrets) GetForSDS(
-	_ context.Context,
-	_ model.ClientScope,
-	name string,
-	retryEvicted bool,
-) (mitm.SignedCertificate, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.evicted.Contains(name) && !retryEvicted {
-		return mitm.SignedCertificate{}, mitm.ErrDomainCertificateEvicted
-	}
-	return f.getLocked(name)
-}
+func (f *fakeSecrets) Authorize(model.ClientScope) error { return nil }
+func (f *fakeSecrets) SignerRevision() string            { return "one" }
 
 func (f *fakeSecrets) Evicted() []string {
 	f.mu.Lock()
@@ -933,3 +923,5 @@ func initializedSubscription(t testing.TB, generator ResourceGenerator, scope mo
 	}
 	return subscription
 }
+
+func (*fakeSecrets) SignerGeneration() uint64 { return 0 }

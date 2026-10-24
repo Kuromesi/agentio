@@ -24,9 +24,11 @@ import (
 type SignedCertificate struct {
 	CertificateChain []byte
 	PrivateKey       []byte
-	NotAfter         time.Time
-	SignedAt         time.Time
-	SignerRevision   string
+	// UsableUntil is the fixed SDS deadline set by the issuer; cache hits never extend it.
+	UsableUntil    time.Time
+	NotAfter       time.Time
+	SignedAt       time.Time
+	SignerRevision string
 }
 
 type DomainCertificateSigner interface {
@@ -74,8 +76,8 @@ func (TrustBundle) ResourceName() string { return "mitm-trust-bundle" }
 // Equals compares public material and its signing revision.
 func (b TrustBundle) Equals(other TrustBundle) bool { return b == other }
 
-// CertificateGeneration changes whenever cached SDS certificate visibility
-// changes and consumers need to regenerate Secret resources.
+// CertificateGeneration changes on signer transitions, including signer unavailability.
+// Local cache eviction does not change this generation.
 type CertificateGeneration struct {
 	Generation uint64
 }
@@ -90,8 +92,10 @@ func (g CertificateGeneration) Equals(other CertificateGeneration) bool {
 
 type OnDemandOptions struct {
 	LeafLifetime time.Duration
-	RenewBefore  time.Duration
-	CacheMaxAge  time.Duration
+	// ResourceTTL bounds SDS residency from signing time; zero selects 15 minutes.
+	ResourceTTL time.Duration
+	RenewBefore time.Duration
+	CacheMaxAge time.Duration
 	// CacheMaxEntries bounds cache size; when full the entry closest to eviction is replaced. Non-positive selects the default.
 	CacheMaxEntries int
 	// SignConcurrency bounds concurrent SignDNS calls; non-positive selects the default.
