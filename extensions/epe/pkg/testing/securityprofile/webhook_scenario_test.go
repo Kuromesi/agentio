@@ -172,29 +172,65 @@ func TestScenario_AuditBufferedModeDelivers(t *testing.T) {
 	receiver.WaitFor(t, marker, 5*time.Second)
 }
 
-func TestScenario_AuditBypassWithAuthorizationDeliversWebhook(t *testing.T) {
-	receiver := enginetest.NewAuditReceiver(t)
-	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditBuffered})
-	client := dns.NewClient(nil, time.Second)
-	if err := client.SetRecord("server.example.com", []netip.Addr{netip.MustParseAddr("192.0.2.1")}); err != nil {
-		t.Fatal(err)
-	}
-	h := New(t, Options{
-		AuditRouter:      wiring.Router,
-		AuthorizeRequest: egressauthz.NewAggregate(client).Authorize,
-	})
-	profile := strings.NewReplacer(
-		`result == "blocked"`, `result == "bypassed"`,
-		"      block:\n        statusCode: 451\n        body: blocked-audited", "      bypass: true",
-	).Replace(webhookAuditProfileYAML(receiver.URL("")))
-	h.Fixture.ApplyYAML(profile)
+func TestScenario_AuditAuthorizationConditions(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		when       string
+		deny       bool
+		path       string
+		want       string
+		deliveries int
+	}{
+		{name: "bypass delivers", when: "bypassed", path: "/audited", want: "bypassed", deliveries: 1},
+		{name: "pinning does not trigger mutated audit", when: "mutated", path: "/audited", want: "bypassed"},
+		{name: "allow does not trigger blocked audit", when: "blocked", path: "/audited", want: "bypassed"},
+		{name: "denial suppresses bypass audit", when: "bypassed", deny: true, path: "/audited", want: "blocked"},
+		{name: "denial triggers blocked audit", when: "blocked", deny: true, path: "/audited", want: "blocked", deliveries: 1},
+		{name: "unmatched rule does not deliver", when: "passthrough", path: "/not-audited", want: "passthrough"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			receiver := enginetest.NewAuditReceiver(t)
+			wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditBuffered})
+			client := dns.NewClient(nil, time.Second)
+			if err := client.SetRecord(
+				"server.example.com",
+				[]netip.Addr{netip.MustParseAddr("192.0.2.1")},
+			); err != nil {
+				t.Fatal(err)
+			}
+			cfg := egressauthz.Config{}
+			if tc.deny {
+				cfg.DeniedCIDRs = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+			}
+			h := New(t, Options{
+				AuditRouter:      wiring.Router,
+				AuthorizeRequest: egressauthz.NewAggregate(client, cfg).Authorize,
+			})
+			profile := strings.NewReplacer(
+				`result == "blocked"`, fmt.Sprintf(`result == %q`, tc.when),
+				"      block:\n        statusCode: 451\n        body: blocked-audited", "      bypass: true",
+				"            path:", "            result: '{{ .Result }}'\n            path:",
+			).Replace(webhookAuditProfileYAML(receiver.URL("")))
+			h.Fixture.ApplyYAML(profile)
 
-	marker := "authorized-bypass"
-	verdict := h.Run(t, auditedRequest("/audited").DestinationPort(80).Header("x-audit-marker", marker))
-	verdict.RequireOutcome(t, "bypassed")
-	verdict.RequireUpstream(t, "192.0.2.1:80")
-	wiring.Drain(t)
-	if hits := receiver.Matching(marker); len(hits) != 1 {
-		t.Fatalf("audit deliveries containing %q = %d, want 1", marker, len(hits))
+			marker := "authorized-audit"
+			verdict := h.Run(t, auditedRequest(tc.path).DestinationPort(80).Header("x-audit-marker", marker))
+			verdict.RequireOutcome(t, tc.want)
+			if tc.deny {
+				verdict.RequireBlocked(t, 403)
+				verdict.RequireNoUpstream(t)
+			} else {
+				verdict.RequireUpstream(t, "192.0.2.1:80")
+			}
+			// Drain accepted events before asserting absence; no timing window or sleep.
+			wiring.Drain(t)
+			hits := receiver.Matching(marker)
+			if len(hits) != tc.deliveries {
+				t.Fatalf("audit deliveries = %d, want %d", len(hits), tc.deliveries)
+			}
+			if len(hits) > 0 && !strings.Contains(string(hits[0].Body), fmt.Sprintf(`"result":%q`, tc.want)) {
+				t.Fatalf("webhook body does not contain final outcome %q: %s", tc.want, hits[0].Body)
+			}
+		})
 	}
 }
