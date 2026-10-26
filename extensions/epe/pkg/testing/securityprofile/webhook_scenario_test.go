@@ -19,11 +19,14 @@ package securityprofile
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
+	"github.com/openkruise/agentio/pkg/dns"
 )
 
 func webhookAuditProfileYAML(receiverURL string) string {
@@ -167,4 +170,31 @@ func TestScenario_AuditBufferedModeDelivers(t *testing.T) {
 		RequireBlockedBody(t, 451, "blocked-audited")
 
 	receiver.WaitFor(t, marker, 5*time.Second)
+}
+
+func TestScenario_AuditBypassWithAuthorizationDeliversWebhook(t *testing.T) {
+	receiver := enginetest.NewAuditReceiver(t)
+	wiring := enginetest.WireAudit(t, enginetest.AuditOptions{Mode: enginetest.AuditBuffered})
+	client := dns.NewClient(nil, time.Second)
+	if err := client.SetRecord("server.example.com", []netip.Addr{netip.MustParseAddr("192.0.2.1")}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(t, Options{
+		AuditRouter:      wiring.Router,
+		AuthorizeRequest: egressauthz.NewAggregate(client).Authorize,
+	})
+	profile := strings.NewReplacer(
+		`result == "blocked"`, `result == "bypassed"`,
+		"      block:\n        statusCode: 451\n        body: blocked-audited", "      bypass: true",
+	).Replace(webhookAuditProfileYAML(receiver.URL("")))
+	h.Fixture.ApplyYAML(profile)
+
+	marker := "authorized-bypass"
+	verdict := h.Run(t, auditedRequest("/audited").DestinationPort(80).Header("x-audit-marker", marker))
+	verdict.RequireOutcome(t, "bypassed")
+	verdict.RequireUpstream(t, "192.0.2.1:80")
+	wiring.Drain(t)
+	if hits := receiver.Matching(marker); len(hits) != 1 {
+		t.Fatalf("audit deliveries containing %q = %d, want 1", marker, len(hits))
+	}
 }

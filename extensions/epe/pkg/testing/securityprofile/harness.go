@@ -24,6 +24,7 @@ import (
 	"github.com/openkruise/agentio/pkg/kube/kclient"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
+	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
@@ -35,7 +36,8 @@ import (
 
 // Options configures the SecurityProfile-specific test harness.
 type Options struct {
-	Providers *extensionprovider.Registry
+	Providers        *extensionprovider.Registry
+	AuthorizeRequest engine.RequestAuthorizer
 	// Filters overrides the production filter chain.
 	Filters       []filter.Registration
 	StreamLoggers []filter.StreamLogger
@@ -99,6 +101,7 @@ func New(t testing.TB, opts Options) *Harness {
 	core := enginetest.New(t, enginetest.Options{
 		Resolve:                policysecurityprofile.NewResolver(fixture.Store, regs, auditSink),
 		Registrations:          regs,
+		AuthorizeRequest:       opts.AuthorizeRequest,
 		StreamLoggers:          opts.StreamLoggers,
 		DisableResolutionProbe: opts.DisableResolutionProbe,
 	})

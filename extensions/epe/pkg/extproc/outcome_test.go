@@ -185,7 +185,7 @@ func TestClassifyResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := classifyResponse(tt.resp); got != tt.want {
+			if got := classifyResponse(tt.resp, true); got != tt.want {
 				t.Errorf("classifyResponse() = %v, want %v", got, tt.want)
 			}
 		})
@@ -201,7 +201,7 @@ func TestClassifyResponse_ModeOverrideOnlyIsNotAMutation(t *testing.T) {
 		RequestBodyMode: extProcV3.ProcessingMode_BUFFERED,
 	}
 
-	if got := classifyResponse(resp); got != effectNone {
+	if got := classifyResponse(resp, true); got != effectNone {
 		t.Errorf("classifyResponse(ModeOverride only) = %v, want effectNone", got)
 	}
 }

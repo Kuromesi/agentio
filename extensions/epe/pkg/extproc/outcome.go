@@ -54,18 +54,19 @@ func (e *messageEffect) observe(other messageEffect) {
 //
 // ModeOverride is deliberately not consulted: asking for a body changes no
 // message. ClearRouteCache alone is also not a message modification. An
-// explicit upstream in request metadata counts as a target change sent to Envoy.
-func classifyResponse(resp *extProcPb.ProcessingResponse) messageEffect {
+// explicit policy upstream in request metadata counts as a target change;
+// authorization-only target pinning does not.
+func classifyResponse(resp *extProcPb.ProcessingResponse, upstreamMutation bool) messageEffect {
 	switch r := resp.GetResponse().(type) {
 	case *extProcPb.ProcessingResponse_ImmediateResponse:
 		return effectBlocked
 	case *extProcPb.ProcessingResponse_RequestHeaders:
-		if responseUpstream(resp) != nil {
+		if upstreamMutation && responseUpstream(resp) != nil {
 			return effectMutated
 		}
 		return commonEffect(r.RequestHeaders.GetResponse())
 	case *extProcPb.ProcessingResponse_RequestBody:
-		if responseUpstream(resp) != nil {
+		if upstreamMutation && responseUpstream(resp) != nil {
 			return effectMutated
 		}
 		return commonEffect(r.RequestBody.GetResponse())

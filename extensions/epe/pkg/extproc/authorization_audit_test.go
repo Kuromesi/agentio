@@ -147,3 +147,107 @@ func TestAuthorizationFailureResponseDoesNotExposeInternalError(t *testing.T) {
 		t.Fatalf("audit: %+v", entry)
 	}
 }
+
+func TestAuthorizationPreservesOutcome(t *testing.T) {
+	bypass := fixedRegHeaders("bypass", filter.Bypass())
+	header := fixedRegHeaders("header", filter.Continue(filter.SetHeader("x-policy", "applied")))
+	route := fixedRegHeaders("route", filter.Continue(filter.Mutation{Route: upstreamRoute("192.0.2.2:80", false)}))
+	body := &extProcPb.ProcessingRequest{
+		Request: &extProcPb.ProcessingRequest_RequestBody{
+			RequestBody: &extProcPb.HttpBody{Body: []byte("payload"), EndOfStream: true},
+		},
+	}
+	for _, tc := range []struct {
+		name     string
+		regs     []filter.Registration
+		followup *extProcPb.ProcessingRequest
+		want     string
+		target   string
+	}{
+		{name: "no matching policy", want: "passthrough"},
+		{name: "no-op filter", regs: []filter.Registration{fixedRegHeaders("allow", filter.Continue())}, want: "passthrough"},
+		{name: "bypass", regs: []filter.Registration{bypass}, want: "bypassed"},
+		{name: "header mutation before bypass", regs: []filter.Registration{header, bypass}, want: "mutated"},
+		{name: "explicit upstream before bypass", regs: []filter.Registration{route, bypass}, want: "mutated", target: "192.0.2.2:80"},
+		{
+			name:     "body inspection before bypass",
+			regs:     []filter.Registration{fixedReg("body", &bodyProbe{}), bypass},
+			followup: body,
+			want:     "bypassed",
+		},
+		{
+			name: "body mutation after header bypass",
+			regs: []filter.Registration{
+				fixedReg("body", &bodyProbe{bodyAct: filter.Continue(filter.Mutation{Body: []byte("replaced")})}),
+				bypass,
+			},
+			followup: body,
+			want:     "mutated",
+		},
+		{
+			name: "response mutation after bypass",
+			regs: []filter.Registration{
+				respReg("response", &wantRespFilter{responseOp: []filter.Mutation{filter.SetHeader("x-policy", "applied")}}),
+				bypass,
+			},
+			followup: &extProcPb.ProcessingRequest{
+				Request: &extProcPb.ProcessingRequest_ResponseHeaders{ResponseHeaders: responseHeaderMsg("200")},
+			},
+			want: "mutated",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var units []engine.Unit
+			if len(tc.regs) > 0 {
+				cfgs := make([]any, len(tc.regs))
+				for i := range cfgs {
+					cfgs[i] = struct{}{}
+				}
+				units = []engine.Unit{{Cfgs: cfgs}}
+			}
+			audit := &capturedAuditLogger{}
+			server := NewServer(ServerDeps{
+				AuditLogger:   audit,
+				Registrations: tc.regs,
+				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+					return engine.Resolution{Units: units}, nil
+				},
+				AuthorizeRequest: egressauthz.NewAggregate(dns.NewClient(nil, time.Second)).Authorize,
+			})
+			stream := &collectingStream{
+				ctx: t.Context(),
+				msgs: []*extProcPb.ProcessingRequest{{
+					Request: &extProcPb.ProcessingRequest_RequestHeaders{
+						RequestHeaders: makeRequestHeaders("192.0.2.1:80", "/", "POST"),
+					},
+					Attributes: makeAttrsWithLabels("sandbox", "client", ""),
+				}},
+			}
+			if tc.followup != nil {
+				stream.msgs = append(stream.msgs, tc.followup)
+			}
+			if err := server.Process(stream); err != nil {
+				t.Fatal(err)
+			}
+			if len(audit.entries) != 1 {
+				t.Fatalf("audit entries: %v", audit.entries)
+			}
+			entry := audit.entries[0]
+			if entry.Outcome != tc.want {
+				t.Errorf("outcome = %q, want %q", entry.Outcome, tc.want)
+			}
+			target := tc.target
+			if target == "" {
+				target = "192.0.2.1:80"
+			}
+			if entry.Authorization == nil || entry.Authorization.Action != "allow" ||
+				entry.Authorization.Destination != target {
+				t.Fatalf("authorization = %+v, want allow %s", entry.Authorization, target)
+			}
+			if len(stream.sent) == 0 ||
+				responseUpstream(stream.sent[0]).GetFields()[upstreamAddressField].GetStringValue() != target {
+				t.Fatalf("authorized target %s was not sent: %v", target, stream.sent)
+			}
+		})
+	}
+}

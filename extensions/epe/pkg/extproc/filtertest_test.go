@@ -94,6 +94,7 @@ func pendingBodyState(t *testing.T, regs []filter.Registration, auditLogger *cap
 		t.Fatal("test setup: engine did not register a body need")
 	}
 	state.requestBodyContinuation = er
+	state.upstreamMutation = er.Route != nil && er.Route.Upstream != nil
 	return s, state
 }
 
@@ -115,7 +116,7 @@ func sendRequestBody(
 	t.Helper()
 	responses, err := s.HandleRequestBody(context.Background(), body, state)
 	for _, resp := range responses {
-		state.effect.observe(classifyResponse(resp))
+		state.effect.observe(classifyResponse(resp, state.upstreamMutation))
 	}
 	return responses, err
 }

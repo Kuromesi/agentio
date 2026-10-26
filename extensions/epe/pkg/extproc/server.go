@@ -208,7 +208,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 				logger.Error(err, "send failed")
 				return status.Errorf(codes.Unknown, "failed to send response back to Envoy: %v", err)
 			}
-			state.effect.observe(classifyResponse(resp))
+			state.effect.observe(classifyResponse(resp, state.upstreamMutation))
 		}
 		s.finishAfterSend(ctx, state)
 	}
@@ -286,6 +286,8 @@ type streamState struct {
 	// once by the body phase. Non-nil is what "a request body is owed" means;
 	// there is deliberately no separate flag that could drift from it.
 	requestBodyContinuation *engine.RequestHeadersResult
+	// upstreamMutation distinguishes a policy rewrite from authorization-only pinning.
+	upstreamMutation bool
 
 	// Response phase — the walk's bypass point plus the protocol obligations.
 	// responseScope is zero until a walk bypasses; a bypass can happen in the

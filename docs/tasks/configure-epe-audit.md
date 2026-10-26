@@ -88,6 +88,8 @@ CEL exposes these variables:
 | `inputs` | Profile-scoped inputs |
 | `response` | `status`; zero when EPE did not observe a response |
 
+`result` summarizes the final stream outcome, with precedence `error > blocked > mutated > bypassed > passthrough`. `bypassed` means a policy unit has a recorded action but the message was not modified; it does not necessarily mean a bypass action ran. A no-op filter that only continues does not add a matched-unit record. Successful destination authorization and upstream address pinning alone do not count as a mutation; explicit policy rewrites of headers, bodies, status, or upstream targets do. Authorization denials still produce `blocked` when the local reply is sent successfully.
+
 For example, `result == "blocked" && request.path.startsWith("/admin")` fires only for denied administrative paths. Go templates use the same data via accessors such as `{{ .Request.Host }}`, `{{ .Request.Header "X-Request-Id" }}`, `{{ .Request.QueryParam "page" }}`, `{{ .Pod.Label "app" }}`, and `{{ .MatchedCriteria.Host }}`. `MatchedCriteria` contains the dimensions of the rule match that fired: host, method, path, port, matched headers, and matched query parameters.
 
 EPE deliberately does not expose the sandbox token, request body, credentials, or secrets in this context. Request headers, query values, Pod labels, and profile inputs can still be sensitive. Do not render them into a URL, header, or webhook body unless the receiver is authorized to retain them. Prefer a dedicated HTTPS receiver, minimal fields, and receiver-side access controls.

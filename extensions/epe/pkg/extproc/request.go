@@ -197,6 +197,8 @@ func (s *Server) requestHeadersResponse(
 ) ([]*extProcPb.ProcessingResponse, error) {
 	loggerD := log.FromContext(ctx).V(logging.DEBUG)
 
+	// Authorization pins the approved target but does not itself rewrite policy traffic.
+	state.upstreamMutation = reqHeadersRes.Route != nil && reqHeadersRes.Route.Upstream != nil
 	if s.authorizeRequest != nil && reqHeadersRes.Disposition != engine.DispositionBlocked {
 		route, reply := s.authorize(ctx, state.stream, reqHeadersRes.HeaderOps, reqHeadersRes.Route)
 		if reply != nil {

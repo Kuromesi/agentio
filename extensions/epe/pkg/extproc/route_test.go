@@ -49,8 +49,11 @@ func TestRouteTranslation(t *testing.T) {
 				&engine.RequestBodyResult{Disposition: engine.DispositionMutated, Route: route},
 			)
 			for _, response := range []*extProcPb.ProcessingResponse{headers[0], body[0]} {
-				if classifyResponse(response) != effectMutated {
+				if classifyResponse(response, true) != effectMutated {
 					t.Fatal("upstream metadata was not recorded as a mutation")
+				}
+				if classifyResponse(response, false) != effectNone {
+					t.Fatal("authorization-only target pinning was recorded as a mutation")
 				}
 				fields := responseUpstream(response).GetFields()
 				if fields[upstreamAddressField].GetStringValue() != address ||
