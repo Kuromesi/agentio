@@ -448,7 +448,12 @@ dynamic_resources:
   ads_config:
     api_type: DELTA_GRPC
     transport_api_version: V3
-    grpc_services: [{envoy_grpc: {cluster_name: ads}}]
+    grpc_services:
+    - envoy_grpc:
+        cluster_name: ads
+        # Keep reconnect backoff below the test's 15s recovery deadline after a long outage.
+        retry_policy:
+          retry_back_off: {base_interval: 0.1s, max_interval: 1s}
 static_resources:
   clusters:
   - name: ads

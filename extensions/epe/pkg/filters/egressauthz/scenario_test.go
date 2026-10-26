@@ -101,7 +101,7 @@ func TestScenario_EgressAuthzFirstMatchAndLiveReordering(t *testing.T) {
 	// matches the same destination more specifically.
 	v := h.Run(t, authRequest("api.example.com:443"))
 	response := v.RequireUpstream(t, "192.0.2.1:443")
-	v.RequireOutcome(t, "mutated")
+	v.RequireOutcome(t, "passthrough")
 	if response.GetRequestHeaders().GetResponse().GetClearRouteCache() || len(v.RequestHeaderOps) != 0 {
 		t.Fatal("authorization unexpectedly changed request headers or route cache")
 	}
