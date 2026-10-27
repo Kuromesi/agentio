@@ -64,7 +64,7 @@ var (
 		"AGENTIO_MAX_REQUESTS_PER_SECOND",
 		0.0,
 		"Maximum new xDS streams accepted per second across the process; does not throttle ACKs or server pushes. "+
-			"Zero selects 200 streams per second, independent of push concurrency.",
+			"Zero automatically selects min(15 + 5 * GOMAXPROCS, 100).",
 	).Get())
 )
 
@@ -109,7 +109,7 @@ func defaultPushConcurrency() int {
 
 func effectiveRequestRateLimit(configured float64) float64 {
 	if configured <= 0 || math.IsNaN(configured) || math.IsInf(configured, 0) {
-		return 200
+		return float64(defaultPushConcurrency())
 	}
 	return configured
 }

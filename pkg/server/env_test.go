@@ -84,9 +84,9 @@ func TestPilotCAConfigMapVariableIsIgnored(t *testing.T) {
 
 func TestPilotRequestRateLimitVariableIsIgnored(t *testing.T) {
 	if os.Getenv("AGENTIO_REQUEST_RATE_HELPER") == "true" {
-		if features.RequestRateLimit != 200 {
-			t.Fatalf("request rate limit = %v, want Agentio default %v",
-				features.RequestRateLimit, 200)
+		if features.RequestRateLimit != float64(features.PushConcurrency) {
+			t.Fatalf("request rate limit = %v, want derived Agentio default %v",
+				features.RequestRateLimit, features.PushConcurrency)
 		}
 		return
 	}
