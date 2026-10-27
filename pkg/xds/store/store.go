@@ -38,16 +38,22 @@ type Store struct {
 	current     model.ResourceSet
 	subscribers map[uint64]*subscriber
 	// subscribersByType indexes subscribers by watched type.
-	subscribersByType map[string]map[uint64]*subscriber
-	nextID            uint64
+	subscribersByType         map[string]map[uint64]*subscriber
+	wildcardSubscribersByType map[string]map[uint64]*subscriber
+	subscribersByName         map[model.ResourceKey]map[uint64]*subscriber
+	subscribersByWorkload     map[model.ResourceKey]map[uint64]*subscriber
+	nextID                    uint64
 }
 
 // New creates a store with an initial snapshot and no subscribers.
 func New(initial model.ResourceSet) *Store {
 	return &Store{
-		current:           initial,
-		subscribers:       make(map[uint64]*subscriber),
-		subscribersByType: make(map[string]map[uint64]*subscriber),
+		current:                   initial,
+		subscribers:               make(map[uint64]*subscriber),
+		subscribersByType:         make(map[string]map[uint64]*subscriber),
+		wildcardSubscribersByType: make(map[string]map[uint64]*subscriber),
+		subscribersByName:         make(map[model.ResourceKey]map[uint64]*subscriber),
+		subscribersByWorkload:     make(map[model.ResourceKey]map[uint64]*subscriber),
 	}
 }
 
@@ -136,7 +142,8 @@ func (s *Store) NotifyType(typeURL string) {
 }
 
 func (s *Store) notifyLocked(update Update) {
-	for _, subscriber := range s.affectedSubscribersLocked(update) {
+	for subscriber, notice := range s.notificationsLocked(update) {
+		update := *notice
 		// Capacity-one, type-aware mailbox; the first coalescing boundary.
 		// PushScheduler merges later duplicates.
 		select {

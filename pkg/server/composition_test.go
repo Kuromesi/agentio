@@ -37,7 +37,10 @@ func TestWithTrafficPolicySourceReplacesCollection(t *testing.T) {
 	source := krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{policy}, krt.WithStop(stop))
 
 	composition := applyOptions([]Option{WithTrafficPolicySource(source)})
-	resolved, err := applySourceCollectionTransforms(testSourceCollections(stop), composition.sourceCollectionTransforms)
+	resolved, err := applySourceCollectionTransforms(
+		testSourceCollections(stop),
+		composition.sourceCollectionTransforms,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +136,11 @@ func TestSourceCollectionsRejectMissingTelemetrySources(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := applySourceCollectionTransforms(testSourceCollections(stop), []SourceCollectionsTransform{transform}); err == nil || !strings.Contains(err.Error(), "Telemetry") {
+			if _, err := applySourceCollectionTransforms(
+				testSourceCollections(stop),
+				[]SourceCollectionsTransform{transform},
+			); err == nil ||
+				!strings.Contains(err.Error(), "Telemetry") {
 				t.Fatalf("missing Telemetry source error = %v", err)
 			}
 		})
@@ -184,7 +191,7 @@ func TestWithScopeFuncRegistersAndRequiresKubernetes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeScopeFuncs() returned error: %v", err)
 	}
-	scope, err := merged.ResolveScope(nil, model.PeerIdentity{AttestedBy: fakeAttestation})
+	scope, err := merged.ResolveScope(t.Context(), nil, model.PeerIdentity{AttestedBy: fakeAttestation})
 	if err != nil || scope != fakeScope {
 		t.Fatalf("registered scope function not effective: scope=%#v err=%v", scope, err)
 	}
@@ -192,13 +199,19 @@ func TestWithScopeFuncRegistersAndRequiresKubernetes(t *testing.T) {
 	// Overriding Kubernetes with nil removes the mandatory entry and must fail
 	// construction rather than fail open at runtime.
 	overridden := applyOptions([]Option{WithScopeFunc(model.AttestationKubernetes, nil)})
-	if _, err := mergeScopeFuncs(xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc}, overridden.scopeFuncs); err == nil {
+	if _, err := mergeScopeFuncs(
+		xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc},
+		overridden.scopeFuncs,
+	); err == nil {
 		t.Fatal("missing kubernetes scope function passed construction")
 	}
 
 	// Any nil registration is a construction error, never a runtime fail-open.
 	nilEntry := applyOptions([]Option{WithScopeFunc(fakeAttestation, nil)})
-	if _, err := mergeScopeFuncs(xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc}, nilEntry.scopeFuncs); err == nil {
+	if _, err := mergeScopeFuncs(
+		xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc},
+		nilEntry.scopeFuncs,
+	); err == nil {
 		t.Fatal("nil scope function registration passed construction")
 	}
 }

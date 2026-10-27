@@ -26,7 +26,7 @@ import (
 func TestAgentioKubernetesAPILimits(t *testing.T) {
 	const helper = "AGENTIO_KUBERNETES_RATE_HELPER"
 	if mode := os.Getenv(helper); mode != "" {
-		wantQPS, wantBurst := float32(80), 160
+		wantQPS, wantBurst := float32(200), 400
 		if mode == "override" {
 			wantQPS, wantBurst = 41.5, 83
 		}
@@ -55,7 +55,14 @@ users:
 			t.Fatal(err)
 		}
 		if config.Host != "https://127.0.0.1:6443" || config.QPS != wantQPS || config.Burst != wantBurst {
-			t.Fatalf("REST config host=%q QPS=%v burst=%v, want kubeconfig host and %v/%v", config.Host, config.QPS, config.Burst, wantQPS, wantBurst)
+			t.Fatalf(
+				"REST config host=%q QPS=%v burst=%v, want kubeconfig host and %v/%v",
+				config.Host,
+				config.QPS,
+				config.Burst,
+				wantQPS,
+				wantBurst,
+			)
 		}
 		client, err := kube.NewClient(config)
 		if err != nil {

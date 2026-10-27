@@ -218,8 +218,11 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 	if first.request == nil || first.request.GetNode() == nil {
 		return status.Error(codes.InvalidArgument, "first DeltaDiscoveryRequest must include node metadata")
 	}
-	scope, err := s.scopeFuncs.ResolveScope(first.request.GetNode(), caller)
+	scope, err := s.scopeFuncs.ResolveScope(stream.Context(), first.request.GetNode(), caller)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return status.FromContextError(err).Err()
+		}
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
 	if err := scope.Validate(); err != nil {

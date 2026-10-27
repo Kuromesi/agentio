@@ -348,6 +348,9 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	}
 	defer discoveryServer.Close()
 	grpcServer := grpc.NewServer(
+		// ADS clients mostly send small ACKs and demands. Avoid a 32 KiB read
+		// buffer per resident connection; larger messages are still supported.
+		grpc.ReadBufferSize(4*1024),
 		grpc.MaxRecvMsgSize(math.MaxInt32),
 		grpc.Creds(credentials.NewTLS(authority.TLSConfig())),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{

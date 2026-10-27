@@ -15,10 +15,14 @@
 package xds
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/openkruise/agentio/pkg/model"
 )
@@ -30,12 +34,42 @@ type ScopeFunc func(node *corev3.Node, peer model.PeerIdentity) (model.ClientSco
 // an unregistered attestation fails closed.
 type ScopeFuncs map[model.Attestation]ScopeFunc
 
-func (s ScopeFuncs) ResolveScope(node *corev3.Node, peer model.PeerIdentity) (model.ClientScope, error) {
+// ResolveScope waits for local cache readiness after resolving authenticated identity.
+func (s ScopeFuncs) ResolveScope(
+	ctx context.Context,
+	node *corev3.Node,
+	peer model.PeerIdentity,
+) (model.ClientScope, error) {
 	scopeFunc, found := s[peer.AttestedBy]
 	if !found || scopeFunc == nil {
 		return model.ClientScope{}, fmt.Errorf("no scope function is registered for attestation %q", peer.AttestedBy)
 	}
-	return scopeFunc(node, peer)
+	scope, err := scopeFunc(node, peer)
+	if !errors.Is(err, model.ErrScopeNotReady) {
+		return scope, err
+	}
+	// TokenReview can observe a newly created Pod before our informer and derived
+	// Workload do. Retry local lookups only; invalid ownership is never retried.
+	pending := err
+	err = wait.PollUntilContextTimeout(
+		ctx,
+		25*time.Millisecond,
+		5*time.Second,
+		false,
+		func(context.Context) (bool, error) {
+			var resolveErr error
+			scope, resolveErr = scopeFunc(node, peer)
+			if errors.Is(resolveErr, model.ErrScopeNotReady) {
+				pending = resolveErr
+				return false, nil
+			}
+			return resolveErr == nil, resolveErr
+		},
+	)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return model.ClientScope{}, fmt.Errorf("waiting for client scope (%s): %w", pending.Error(), err)
+	}
+	return scope, err
 }
 
 // KubernetesScopeFunc verifies self-reported metadata against the token-bound

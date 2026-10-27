@@ -86,11 +86,11 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 | <code>AGENTIO_KEEPALIVE_MAX_SERVER_CONNECTION_AGE</code> | String | <code>30m</code> | Maximum lifetime of a server-side gRPC connection before a graceful close. Zero disables periodic connection expiry. |
 | <code>AGENTIO_KRT_DEBOUNCE</code> | Duration | <code>200ms</code> | Quiet period before TrafficPolicy and SecurityProfile events are distributed, including Sandbox inline policies; other resources are not debounced. |
 | <code>AGENTIO_KRT_DEBOUNCE_MAX</code> | Duration | <code>1s</code> | Maximum wait for policy event distribution during continuous policy updates. |
-| <code>AGENTIO_KUBERNETES_API_BURST</code> | Integer | <code>160</code> | Client-side Kubernetes API request burst. Must be positive. |
-| <code>AGENTIO_KUBERNETES_API_QPS</code> | Floating-point | <code>80</code> | Client-side Kubernetes API requests per second. Must be finite and positive. |
+| <code>AGENTIO_KUBERNETES_API_BURST</code> | Integer | <code>400</code> | Client-side Kubernetes API request burst. Must be positive. |
+| <code>AGENTIO_KUBERNETES_API_QPS</code> | Floating-point | <code>200</code> | Client-side Kubernetes API requests per second. Must be finite and positive. |
 | <code>AGENTIO_LOG_FORMAT</code> | String | <code>text</code> | agentiod log encoding: text or json. |
 | <code>AGENTIO_LOG_LEVEL</code> | String | <code>info</code> | Minimum agentiod log level: debug, info, warn, error, or none. |
-| <code>AGENTIO_MAX_REQUESTS_PER_SECOND</code> | Floating-point | <code>0</code> | Maximum new xDS streams accepted per second across the process; does not throttle ACKs or server pushes. Zero automatically selects min(15 + 5 &#42; GOMAXPROCS, 100). |
+| <code>AGENTIO_MAX_REQUESTS_PER_SECOND</code> | Floating-point | <code>0</code> | Maximum new xDS streams accepted per second across the process; does not throttle ACKs or server pushes. Zero selects 200 streams per second, independent of push concurrency. |
 | <code>AGENTIO_MESH_INTERNAL_TRAFFIC_POLICY</code> | String | <code>PEER&#95;AWARE</code> | Controls how mesh-internal (east-west) traffic is handled for sandbox tunnel proxies. Allowed values are PEER&#95;AWARE and PASSTHROUGH. |
 | <code>AGENTIO_MITM_CACHE_MAX_AGE</code> | Duration | <code>168h0m0s</code> | Maximum local issuer cache age; eviction does not remove certificates from gateways. |
 | <code>AGENTIO_MITM_CACHE_MAX_ENTRIES</code> | Integer | <code>10000</code> | Maximum number of on-demand certificates the cache may hold; the entry closest to eviction makes room when full. |
@@ -124,20 +124,22 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 
 ## Kubernetes API and xDS connection limits
 
-Agentiod configures its Kubernetes clients with **80 QPS** and a **burst of 160**. This avoids falling back to client-go's lower defaults during informer startup, relists, and TokenReview calls. Both settings must be positive; QPS must also be finite and representable as a positive float32.
+Agentiod configures its Kubernetes clients with **200 QPS** and a **burst of 400**. This avoids falling back to client-go's lower defaults during informer startup, relists, and TokenReview calls. Both settings must be positive; QPS must also be finite and representable as a positive float32.
 
 Override them through the existing Helm environment map:
 
 ```yaml
 agentiod:
   env:
-    AGENTIO_KUBERNETES_API_QPS: "80"
-    AGENTIO_KUBERNETES_API_BURST: "160"
+    AGENTIO_KUBERNETES_API_QPS: "200"
+    AGENTIO_KUBERNETES_API_BURST: "400"
 ```
 
 These settings configure client-side throttling, not the Kubernetes API server's limits or a single aggregate budget shared by all clientsets and replicas. Higher settings allow more API traffic; choose values appropriate for the API server's capacity.
 
-`AGENTIO_MAX_REQUESTS_PER_SECOND` separately limits **new xDS streams** before authentication. Its default is `min(15 + 5 * GOMAXPROCS, 100)`, with a burst of 1 and up to 1 second of waiting before rejection. An explicit positive value overrides that default; zero selects the automatic default. This limit does not throttle ACKs on established streams or server-initiated configuration pushes, and increasing it does not fix slow-client push accumulation.
+`AGENTIO_MAX_REQUESTS_PER_SECOND` separately limits **new xDS streams** before authentication. Its default is 200 streams/s, independent of push concurrency, with a burst of 1 and up to 1 second of waiting before rejection. An explicit positive value overrides that default; zero selects the default. This limit does not throttle ACKs on established streams or server-initiated configuration pushes, and increasing it does not fix slow-client push accumulation.
+
+After authentication, a stream can wait up to 5 seconds for its bound Pod and derived Workload to appear in local caches. This performs local key lookups, not additional API requests. A timeout returns `DeadlineExceeded`; identity mismatches still return `PermissionDenied` immediately. No configuration is sent before scope resolution completes.
 
 ## Shared Secret informer
 

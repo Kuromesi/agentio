@@ -25,8 +25,11 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
@@ -141,14 +144,25 @@ func TestNewServerRejectsNonFiniteRequestRateLimit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, err := NewServer(
-				fakeAuthenticator{}, fakeResolver{}.scopeFuncs(), newFakeResourceStore(snapshot), func() bool { return true },
-				1, nil, 1, tc.limit,
+				fakeAuthenticator{},
+				fakeResolver{}.scopeFuncs(),
+				newFakeResourceStore(snapshot),
+				func() bool { return true },
+				1,
+				nil,
+				1,
+				tc.limit,
 			)
 			if server != nil {
 				server.Close()
 			}
 			if err == nil || server != nil {
-				t.Fatalf("NewServer(requestRateLimit=%v) = (%#v, %v), want nil server and validation error", tc.limit, server, err)
+				t.Fatalf(
+					"NewServer(requestRateLimit=%v) = (%#v, %v), want nil server and validation error",
+					tc.limit,
+					server,
+					err,
+				)
 			}
 		})
 	}
@@ -315,7 +329,8 @@ func TestDeltaRequestLogsSubscriptionCountsWithoutResourceNames(t *testing.T) {
 		!strings.Contains(watchStarted, "resources=2") {
 		t.Fatalf("watch-start log = %q, want DEBUG with resource count:\n%s", watchStarted, logs)
 	}
-	if strings.Contains(logs, "resource_names=") || strings.Contains(logs, firstName) || strings.Contains(logs, secondName) {
+	if strings.Contains(logs, "resource_names=") || strings.Contains(logs, firstName) ||
+		strings.Contains(logs, secondName) {
 		t.Fatalf("subscription resource names leaked into logs:\n%s", logs)
 	}
 }
@@ -513,5 +528,75 @@ func TestServerDispatchesGeneratorByTypeURL(t *testing.T) {
 	}
 	if got := responses[0].GetResources()[0].GetName(); got != "api.example.com" {
 		t.Fatalf("resource name = %q, want api.example.com", got)
+	}
+}
+
+func TestStreamWaitsForScopeBeforeSendingConfiguration(t *testing.T) {
+	ts := newTestServer(t, ztunnelScope(), nil, nil)
+	var ready atomic.Bool
+	attempted := make(chan struct{}, 1)
+	ts.server.scopeFuncs = ScopeFuncs{
+		model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+			if ready.Load() {
+				return ztunnelScope(), nil
+			}
+			select {
+			case attempted <- struct{}{}:
+			default:
+			}
+			return model.ClientScope{}, model.ErrScopeNotReady
+		},
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	stream := newFakeStream(ctx, 1)
+	stream.send(nodeRequest(model.AddressType))
+	sent := make(chan struct{}, 1)
+	stream.beforeSend = func() { sent <- struct{}{} }
+	done := make(chan error, 1)
+	go func() { done <- ts.server.serveDelta(stream) }()
+	select {
+	case <-attempted:
+	case <-ctx.Done():
+		t.Fatal("scope was not resolved")
+	}
+	if len(stream.sent()) != 0 {
+		t.Fatal("configuration sent before scope was ready")
+	}
+	ready.Store(true)
+	select {
+	case <-sent:
+	case err := <-done:
+		t.Fatalf("stream ended before ready: %v", err)
+	case <-ctx.Done():
+		t.Fatal("no configuration after readiness")
+	}
+	cancel()
+	<-done
+}
+
+func TestStreamScopeWaitStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		resolveErr error
+		want       codes.Code
+	}{
+		{name: "pending times out", resolveErr: model.ErrScopeNotReady, want: codes.DeadlineExceeded},
+		{name: "invalid ownership", resolveErr: errors.New("Pod UID does not match"), want: codes.PermissionDenied},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := newTestServer(t, ztunnelScope(), nil, nil)
+			ts.server.scopeFuncs = fakeResolver{err: tt.resolveErr}.scopeFuncs()
+			ctx, cancel := context.WithTimeout(t.Context(), 75*time.Millisecond)
+			defer cancel()
+			stream := newFakeStream(ctx, 1)
+			stream.send(nodeRequest(model.AddressType))
+			if err := ts.server.serveDelta(stream); status.Code(err) != tt.want {
+				t.Fatalf("err=%v, want %v", err, tt.want)
+			}
+			if len(stream.sent()) != 0 {
+				t.Fatal("sent configuration without an authorized scope")
+			}
+		})
 	}
 }

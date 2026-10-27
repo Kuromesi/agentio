@@ -21,6 +21,8 @@ import (
 	"sort"
 	"time"
 
+	"istio.io/istio/pkg/util/sets"
+
 	"github.com/openkruise/agentio/pkg/model"
 	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
@@ -100,16 +102,28 @@ func diffSubscribed(
 	subscribedNames []string,
 ) GeneratedDelta {
 	delta := diffSelected(subscription, selected)
+	if len(subscribedNames) == 0 {
+		return delta
+	}
+	// Reconnects can replay the entire interest set. Index the diff once rather
+	// than scanning a growing response for every explicitly subscribed name.
+	resourceNames := sets.NewWithLength[string](len(delta.Resources))
+	for _, resource := range delta.Resources {
+		resourceNames.Insert(resource.XDSName)
+	}
+	removedNames := sets.New(delta.Removed...)
 	for _, name := range subscribedNames {
 		if name == "*" {
 			continue
 		}
 		if resource, ok := selected[name]; ok {
-			if !slices.ContainsFunc(delta.Resources, func(r model.Resource) bool { return r.XDSName == name }) {
+			if !resourceNames.Contains(name) {
 				delta.Resources = append(delta.Resources, resource)
+				resourceNames.Insert(resource.XDSName)
 			}
-		} else if !slices.Contains(delta.Removed, name) {
+		} else if !removedNames.Contains(name) {
 			delta.Removed = append(delta.Removed, name)
+			removedNames.Insert(name)
 		}
 	}
 	return delta

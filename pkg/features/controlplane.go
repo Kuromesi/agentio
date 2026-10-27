@@ -45,13 +45,13 @@ var (
 	// KubernetesAPIQPS configures client-side Kubernetes API request throttling.
 	KubernetesAPIQPS = env.Register(
 		"AGENTIO_KUBERNETES_API_QPS",
-		80.0,
+		200.0,
 		"Client-side Kubernetes API requests per second. Must be finite and positive.",
 	).Get()
 	// KubernetesAPIBurst bounds bursts allowed by Kubernetes client throttling.
 	KubernetesAPIBurst = env.Register(
 		"AGENTIO_KUBERNETES_API_BURST",
-		160,
+		400,
 		"Client-side Kubernetes API request burst. Must be positive.",
 	).Get()
 	TokenAudience = env.Register(

@@ -187,6 +187,15 @@ func (f *fakeResourceSubscription) Watch(typeURL string) {
 	f.store.mu.Unlock()
 }
 
+// Selection tests use coarse notifications; routing tests use the real Store.
+func (f *fakeResourceSubscription) WatchNames(typeURL string, _ bool, _, _ []string) {
+	f.Watch(typeURL)
+}
+
+func (f *fakeResourceSubscription) WatchWorkload(typeURL, _ string) {
+	f.Watch(typeURL)
+}
+
 func (f *fakeResourceSubscription) Updates() <-chan xdsstore.Update { return f.updates }
 
 // updateReversedFrom builds a store update whose before publication is derived

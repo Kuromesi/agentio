@@ -70,13 +70,31 @@ func (s *Server) handleRequest(
 	if watch == nil {
 		watch = &watchState{names: sets.New[string](), sent: make(map[string]string)}
 		watches[typeURL] = watch
-		subscription.Watch(typeURL)
 	}
 	initial := !watch.started
 
 	// Subscription changes are applied before nonce checks: a stale nonce must
 	// not drop a subscription carried in the same request.
 	changed := applySubscription(watch, request)
+	if changed {
+		if typeURL == model.SandboxType {
+			subscribed := request.GetResourceNamesSubscribe()
+			if initial {
+				subscribed = make([]string, 0, len(watch.names))
+				for name := range watch.names {
+					subscribed = append(subscribed, name)
+				}
+			}
+			subscription.WatchNames(typeURL, watch.wildcard, subscribed, request.GetResourceNamesUnsubscribe())
+		} else if initial {
+			if scope.Class == model.ClientDedicatedZTunnel &&
+				(typeURL == model.AddressType || typeURL == model.WorkloadType) {
+				subscription.WatchWorkload(typeURL, scope.WorkloadUID)
+			} else {
+				subscription.Watch(typeURL)
+			}
+		}
+	}
 
 	matched := watch.recordAcknowledgement(request)
 	if nonce := request.GetResponseNonce(); nonce != "" && !matched {
