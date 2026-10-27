@@ -118,7 +118,9 @@ func TestCanceledRunCleansOwnedNamespace(t *testing.T) {
 func TestExecStreamsAndExitStatus(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "failure"}[failed], func(t *testing.T) {
+			handlerDone := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				defer close(handlerDone)
 				if req.Method != "POST" || req.URL.Path != "/api/v1/namespaces/test/pods/porter-0/exec" ||
 					req.URL.Query().Get("container") != "load" ||
 					!reflect.DeepEqual(req.URL.Query()["command"], []string{"/bench", "client", "--requests=50000"}) {
@@ -143,7 +145,8 @@ func TestExecStreamsAndExitStatus(t *testing.T) {
 				}
 				defer func() {
 					if err := conn.Close(); err != nil {
-						t.Error(err)
+						// The client can close after reading the status, before our GOAWAY.
+						t.Logf("close completed exec connection: %v", err)
 					}
 				}()
 				byType := map[string]httpstream.Stream{}
@@ -187,6 +190,11 @@ func TestExecStreamsAndExitStatus(t *testing.T) {
 			defer cancel()
 			var stdout, stderr bytes.Buffer
 			err = r.exec(ctx, "porter-0", []string{"/bench", "client", "--requests=50000"}, &stdout, &stderr)
+			select {
+			case <-handlerDone:
+			case <-ctx.Done():
+				t.Fatal("exec handler did not finish")
+			}
 			if (err != nil) != failed || stdout.String() != "result\n" || stderr.String() != "LOAD_STARTED\n" {
 				t.Fatalf("stdout=%q stderr=%q error=%v", &stdout, &stderr, err)
 			}
