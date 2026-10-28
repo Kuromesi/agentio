@@ -84,7 +84,7 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 | <code>AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME</code> | String | empty | Agentio MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root. |
 | <code>AGENTIO_INJECTOR_CONFIGMAP_NAME</code> | String | <code>agentio-sidecar-injector</code> | ConfigMap carrying the ztunnel and egress-gateway templates and their shared values. |
 | <code>AGENTIO_KEEPALIVE_MAX_SERVER_CONNECTION_AGE</code> | String | <code>30m</code> | Maximum lifetime of a server-side gRPC connection before a graceful close. Zero disables periodic connection expiry. |
-| <code>AGENTIO_KRT_DEBOUNCE</code> | Duration | <code>200ms</code> | Quiet period before TrafficPolicy and SecurityProfile events are distributed, including Sandbox inline policies; other resources are not debounced. |
+| <code>AGENTIO_KRT_DEBOUNCE</code> | Duration | <code>200ms</code> | Quiet period before platform TrafficPolicy and SecurityProfile events are distributed; Sandbox inputs and their embedded policies are not debounced. |
 | <code>AGENTIO_KRT_DEBOUNCE_MAX</code> | Duration | <code>1s</code> | Maximum wait for policy event distribution during continuous policy updates. |
 | <code>AGENTIO_KUBERNETES_API_BURST</code> | Integer | <code>160</code> | Client-side Kubernetes API request burst. Must be positive. |
 | <code>AGENTIO_KUBERNETES_API_QPS</code> | Floating-point | <code>80</code> | Client-side Kubernetes API requests per second. Must be finite and positive. |
