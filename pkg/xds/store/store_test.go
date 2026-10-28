@@ -20,12 +20,64 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
+	"istio.io/istio/pkg/util/sets"
 
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
 var _ Subscription = (*subscription)(nil)
+
+func TestNotificationsPreserveTypeSubscriptions(t *testing.T) {
+	store := New(newSnapshot(t))
+	subscriptions := map[string]Subscription{}
+	for name, types := range map[string][]string{
+		"address": {model.AddressType},
+		"cluster": {model.ClusterType},
+		"both":    {model.AddressType, model.ClusterType},
+		"secret":  {model.SecretType},
+	} {
+		sub := store.Subscribe(t.Context())
+		for _, typeURL := range types {
+			sub.Watch(typeURL)
+		}
+		subscriptions[name] = sub
+	}
+
+	// Single-type notifications after a union must not inherit subscribers
+	// from the other type, regardless of which index was borrowed first.
+	for _, test := range []struct {
+		name  string
+		types []string
+		want  []string
+	}{
+		{"unwatched", []string{model.RouteType}, nil},
+		{"union", []string{model.AddressType, model.ClusterType}, []string{"address", "cluster", "both"}},
+		{"address after union", []string{model.AddressType}, []string{"address", "both"}},
+		{"cluster after union", []string{model.ClusterType}, []string{"cluster", "both"}},
+		{"empty alias", []string{model.AddressType, model.WorkloadType}, []string{"address", "both"}},
+		{"all", nil, []string{"address", "cluster", "both", "secret"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store.mu.Lock()
+			store.notifyLocked(Update{full: true, fullTypes: sets.New(test.types...)})
+			store.mu.Unlock()
+			want := sets.New(test.want...)
+			for name, sub := range subscriptions {
+				select {
+				case <-sub.Updates():
+					if !want.Contains(name) {
+						t.Errorf("unexpected notification for %s", name)
+					}
+				default:
+					if want.Contains(name) {
+						t.Errorf("missing notification for %s", name)
+					}
+				}
+			}
+		})
+	}
+}
 
 // Publication returns the committed snapshot on every path, so Controller can
 // record metrics without racing a later Store commit by rereading it.

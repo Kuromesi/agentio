@@ -83,11 +83,13 @@ func (s *Store) Subscribe(ctx context.Context) Subscription {
 	return &subscription{store: s, id: id, updates: updates}
 }
 
+// The returned map may borrow an index; callers must only read it while holding s.mu.
 func (s *Store) affectedSubscribersLocked(update Update) map[uint64]*subscriber {
 	if update.full && len(update.fullTypes) == 0 {
 		return s.subscribers
 	}
-	result := make(map[uint64]*subscriber)
+	var result map[uint64]*subscriber
+	borrowed := false
 	affectedTypes := sets.NewWithLength[string](len(update.fullTypes) + len(update.affectedTypes))
 	for typeURL := range update.fullTypes {
 		affectedTypes.Insert(typeURL)
@@ -96,7 +98,20 @@ func (s *Store) affectedSubscribersLocked(update Update) map[uint64]*subscriber 
 		affectedTypes.Insert(typeURL)
 	}
 	for typeURL := range affectedTypes {
-		maps.Copy(result, s.subscribersByType[typeURL])
+		subscribers := s.subscribersByType[typeURL]
+		if len(subscribers) == 0 {
+			continue
+		}
+		if result == nil {
+			result = subscribers
+			borrowed = true
+			continue
+		}
+		if borrowed {
+			result = maps.Clone(result)
+			borrowed = false
+		}
+		maps.Copy(result, subscribers)
 	}
 	return result
 }
