@@ -18,6 +18,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -25,10 +26,47 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"slices"
+
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
+
+func TestSandboxResourceVersionDoesNotChangeModel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		options := []krt.CollectionOption{krt.WithStop(t.Context().Done())}
+		source := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "demo",
+			Name:            "sandbox",
+			UID:             "source",
+			ResourceVersion: "1",
+			Labels:          map[string]string{agentsv1alpha1.LabelSandboxID: "delivery"},
+		}}
+		objects := krt.NewMutableCollection(nil, []*agentsv1alpha1.Sandbox{source}, options...)
+		pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, options...)
+		groups := newSandboxesByUID(objects.AsCollection()).AsCollection(options...)
+		sandboxes := newSandboxes(groups, pods, newPodsByUID(pods), "cluster", options...)
+		synctest.Wait()
+		before := sandboxes.GetKey("kruise:delivery")
+		if before == nil {
+			t.Fatal("initial Sandbox model missing")
+		}
+		updates := 0
+		registration := sandboxes.RegisterBatch(func(events []krt.Event[model.Sandbox]) {
+			updates += len(events)
+		}, false)
+		defer registration.UnregisterHandler()
+		changed := source.DeepCopy()
+		changed.ResourceVersion = "2"
+		objects.UpdateObject(changed)
+		synctest.Wait()
+		after := sandboxes.GetKey("kruise:delivery")
+		if after == nil || !before.Equals(*after) || updates != 0 {
+			t.Fatalf("resourceVersion-only update changed Sandbox model: updates=%d, before=%+v, after=%+v", updates, before, after)
+		}
+	})
+}
 
 func TestSandboxSecurityRulesProjection(t *testing.T) {
 	stop := make(chan struct{})
@@ -44,7 +82,6 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 	pods := krt.NewStaticCollection[*corev1.Pod](nil, nil, options...)
 	groups := newSandboxesByUID(objects.AsCollection()).AsCollection(options...)
 	sandboxes := newSandboxes(groups, pods, newPodsByUID(pods), "cluster", options...)
-	profiles := newSecurityProfiles(groups, options...)
 	for _, step := range []struct {
 		raw     string
 		host    string
@@ -84,11 +121,7 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 			t.Fatal("stripped annotations alias the original object")
 		}
 		objects.UpdateObject(obj)
-		if step.invalid {
-			// Let the rejected update propagate before asserting the unchanged result.
-			time.Sleep(200 * time.Millisecond)
-		}
-		if !sandboxes.WaitUntilSynced(stop) || !profiles.WaitUntilSynced(stop) {
+		if !sandboxes.WaitUntilSynced(stop) {
 			t.Fatal("Sandbox collection did not sync")
 		}
 		err = wait.PollUntilContextTimeout(
@@ -98,15 +131,16 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 			true,
 			func(context.Context) (bool, error) {
 				current := sandboxes.GetKey("kruise:delivery-uid")
-				profile := profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid"))
-				validProfile := profile == nil && want == nil
-				if profile != nil {
-					validProfile = profile.Dedicated && profile.SandboxUID == "kruise:delivery-uid" &&
-						profile.Namespace == "demo" &&
-						reflect.DeepEqual(profile.Spec.Rules, want)
+				if current == nil {
+					return false, nil
 				}
-				return current != nil && current.Attester == nil &&
-					validProfile, nil
+				inline := current.Policies
+				valid := inline == nil && step.raw == ""
+				if inline != nil {
+					valid = (step.invalid && inline.InputError != "") ||
+						(!step.invalid && inline.InputError == "" && reflect.DeepEqual(inline.SecurityRules, want))
+				}
+				return current.Attester == nil && valid, nil
 			},
 		)
 		if err != nil {
@@ -123,7 +157,8 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 		time.Second,
 		true,
 		func(context.Context) (bool, error) {
-			return profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) != nil, nil
+			current := sandboxes.GetKey("kruise:delivery-uid")
+			return current != nil && current.Policies != nil && current.Policies.InputError == "", nil
 		},
 	); err != nil {
 		t.Fatal("inline profile did not recover before deletion")
@@ -135,8 +170,7 @@ func TestSandboxSecurityRulesProjection(t *testing.T) {
 		time.Second,
 		true,
 		func(context.Context) (bool, error) {
-			return sandboxes.GetKey("kruise:delivery-uid") == nil &&
-				profiles.GetKey(model.SandboxSecurityProfileName("kruise:delivery-uid")) == nil, nil
+			return sandboxes.GetKey("kruise:delivery-uid") == nil, nil
 		},
 	)
 	if err != nil {
@@ -409,5 +443,111 @@ func TestKruiseClassifiesHostWithoutSandboxDiscovery(t *testing.T) {
 		if got == nil || OwnsPod(pod) != (pod.Name == "host") {
 			t.Fatalf("Pod %s classification = %+v", pod.Name, got)
 		}
+	}
+}
+
+func TestSourceDeleteNotifications(t *testing.T) {
+	for _, action := range []string{"delete", "unclaim", "rename", "terminating", "update"} {
+		t.Run(action, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				source := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+					Namespace:       "demo",
+					Name:            "sandbox",
+					UID:             "source",
+					ResourceVersion: "1",
+					Annotations:     map[string]string{agentsv1alpha1.AnnotationSecurityRules: "[]"},
+					Labels: map[string]string{
+						agentsv1alpha1.LabelSandboxPool:      "pool",
+						agentsv1alpha1.LabelSandboxIsClaimed: agentsv1alpha1.True,
+						agentsv1alpha1.LabelSandboxID:        "delivery",
+					},
+				}}
+				objects := krt.NewMutableCollection(
+					nil,
+					[]*agentsv1alpha1.Sandbox{source},
+					krt.WithStop(t.Context().Done()),
+				)
+				notifications := make(chan []model.ResourceKey, 2)
+				config := newSandboxSources(objects.AsCollection())
+				synctest.Wait()
+				unregister := config.RegisterDeletes(func(changed []model.ResourceKey) {
+					notifications <- changed
+				})
+				defer unregister()
+				key := model.ResourceKey{TypeURL: model.SandboxType, Name: "kruise:delivery"}
+				if identity, found := config.Lookup(
+					key,
+				); !found ||
+					identity != (model.SourceIdentity{UID: "source"}) {
+					t.Fatalf("source lookup failed before deletion: %v, %v", identity, found)
+				}
+				changed := source.DeepCopy()
+				changed.ResourceVersion = "2"
+				switch action {
+				case "delete":
+					objects.DeleteObject("demo/sandbox")
+				case "unclaim":
+					delete(changed.Labels, agentsv1alpha1.LabelSandboxIsClaimed)
+				case "rename":
+					changed.Labels[agentsv1alpha1.LabelSandboxID] = "replacement"
+				case "terminating":
+					now := metav1.Now()
+					changed.DeletionTimestamp = &now
+				}
+				if action != "delete" {
+					objects.UpdateObject(changed)
+				}
+				synctest.Wait()
+				var keys []model.ResourceKey
+				for len(notifications) > 0 {
+					keys = append(keys, (<-notifications)...)
+				}
+				if action == "update" {
+					if len(keys) != 0 {
+						t.Fatalf("ordinary update invalidated source: %v", keys)
+					}
+					return
+				}
+				want := []model.ResourceKey{
+					{TypeURL: model.SandboxType, Name: "kruise:delivery"},
+				}
+				if len(keys) != len(want) || !slices.Contains(keys, want[0]) {
+					t.Fatalf("source invalidations = %v, want %v", keys, want)
+				}
+				if _, found := config.Lookup(keys[0]); found {
+					t.Fatal("deleted key remains observable")
+				}
+			})
+		})
+	}
+}
+
+func TestSandboxSourceConflictAndInlineAbsence(t *testing.T) {
+	first := &agentsv1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+		Name:            "first",
+		Namespace:       "demo",
+		UID:             "first",
+		ResourceVersion: "1",
+		Labels:          map[string]string{agentsv1alpha1.LabelSandboxID: "duplicate"},
+	}}
+	second := first.DeepCopy()
+	second.Name, second.UID = "second", "second"
+	objects := krt.NewMutableCollection(nil, []*agentsv1alpha1.Sandbox{first, second}, krt.WithStop(t.Context().Done()))
+	sandboxes := newSandboxSources(objects.AsCollection())
+	key := model.ResourceKey{TypeURL: model.SandboxType, Name: "kruise:duplicate"}
+	if got, found := sandboxes.Lookup(key); !found || got != (model.SourceIdentity{}) {
+		t.Fatalf("ambiguous source must stay present without a selected identity: %v, %v", got, found)
+	}
+	if _, found := sandboxes.Lookup(
+		model.ResourceKey{
+			TypeURL: model.SecurityProfileType,
+			Name:    "sandboxes/kruise:duplicate/securityProfiles/inline",
+		},
+	); found {
+		t.Fatal("absent inline policy reported as present")
+	}
+	objects.DeleteObject("demo/second")
+	if got, found := sandboxes.Lookup(key); !found || got != (model.SourceIdentity{UID: "first"}) {
+		t.Fatalf("resolved source not visible: %v, %v", got, found)
 	}
 }

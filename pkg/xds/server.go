@@ -292,6 +292,7 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 			}
 		default:
 		}
+		pendingConfigs := hasPendingConfigs(watches)
 		var certificates <-chan sdsCompletion
 		secretWatch := watches[model.SecretType]
 		pendingCertificates := false
@@ -299,7 +300,7 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 			certificates = secretWatch.sds.ready
 			pendingCertificates = len(secretWatch.sds.jobs) > 0
 		}
-		if inputClosed && !pendingCertificates {
+		if inputClosed && !pendingCertificates && !pendingConfigs {
 			return nil
 		}
 		select {

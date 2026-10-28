@@ -82,11 +82,8 @@ func newPolicyCollections(
 
 	trafficPolicies := krt.NewCollection(inputs.TrafficPolicies,
 		func(ctx krt.HandlerContext, source model.TrafficPolicy) *policy.CompiledTrafficPolicy {
-			if source.Dedicated && !inputs.SandboxMode {
-				return nil
-			}
 			compiled, err := policy.CompileTrafficPolicy(ctx, source, trafficPolicyInputs)
-			if err == nil && !source.Dedicated {
+			if err == nil {
 				compiled.AsAuthorization, err = policy.TrafficPolicyAsAuthorizations(
 					*compiled,
 					source,
@@ -94,10 +91,11 @@ func newPolicyCollections(
 				)
 			}
 			if err != nil {
-				failures.record("TrafficPolicy", source.ResourceName(), err)
-				if !source.Dedicated {
-					ctx.DiscardResult()
-				}
+				failures.recordIf("TrafficPolicy", source.ResourceName(), err, func() bool {
+					current := inputs.TrafficPolicies.GetKey(source.ResourceName())
+					return current != nil && current.Equals(source)
+				})
+				ctx.DiscardResult()
 				return nil
 			}
 			failures.clear("TrafficPolicy", source.ResourceName())
@@ -106,12 +104,12 @@ func newPolicyCollections(
 
 	securityProfiles := krt.NewCollection(inputs.SecurityProfiles,
 		func(ctx krt.HandlerContext, profile model.SecurityProfile) *policy.CompiledSecurityProfile {
-			if profile.Dedicated && !inputs.SandboxMode {
-				return nil
-			}
 			compiled, err := policy.CompileSecurityProfile(profile)
 			if err != nil {
-				failures.record("SecurityProfile", profile.ResourceName(), err)
+				failures.recordIf("SecurityProfile", profile.ResourceName(), err, func() bool {
+					current := inputs.SecurityProfiles.GetKey(profile.ResourceName())
+					return current != nil && current.Equals(profile)
+				})
 				// Retain binding metadata and SNI together on invalid updates.
 				ctx.DiscardResult()
 				return nil
@@ -207,10 +205,6 @@ func trafficPolicyResources(compiled policy.CompiledTrafficPolicy) ([]model.Reso
 			return nil, err
 		}
 		resources = append(resources, resource)
-	}
-	if compiled.Attachment == nil {
-		// Native Sandbox-owned policies are embedded in their owner's resource.
-		return resources, nil
 	}
 	value, err := marshalDeterministicAny(compiled.Policy)
 	if err != nil {

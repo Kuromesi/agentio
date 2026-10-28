@@ -49,9 +49,9 @@ type GenerationRequest struct {
 	// Full selects the snapshot diff path instead of indexed update generation.
 	// It is set for initial reads, new subscriptions, and full-rebuild updates.
 	Full bool
-	// SubscribedNames is the immutable set of names explicitly subscribed by
-	// this Delta request. Server-driven refreshes and unsubscribe-only requests
-	// leave it empty.
+	// SubscribedNames contains explicit initial demands, including deferred
+	// demands rechecked after a source notification. Other server refreshes
+	// and unsubscribe-only requests leave it empty.
 	SubscribedNames []string
 }
 
@@ -66,6 +66,8 @@ type generatedDenial struct {
 type GeneratedDelta struct {
 	Resources []model.Resource
 	Removed   []string
+	// pending retains initial demands whose source exists but is not published.
+	pending []string
 
 	// expiresAt is converted to a remaining TTL at send time. Expired resources
 	// become removals instead of being sent with stale certificate contents.

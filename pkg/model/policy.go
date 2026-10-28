@@ -21,6 +21,7 @@ import (
 	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // PolicyKind identifies an independently stored shared policy family.
@@ -64,20 +65,18 @@ type TrafficPolicyRules struct {
 }
 
 type TrafficPolicy struct {
-	// Dedicated policies belong exclusively to SandboxUID and are not shared.
-	Dedicated    bool
+	UID          string
 	Name         string
 	Namespace    string
-	SandboxUID   string
 	Global       bool
 	CreationTime time.Time
 	Spec         agentsv1alpha1.TrafficPolicySpec
 }
 
+// GetUID returns the source object's UID.
+func (p TrafficPolicy) GetUID() types.UID { return types.UID(p.UID) }
+
 func (p TrafficPolicy) ResourceName() string {
-	if p.Dedicated {
-		return SandboxTrafficPolicyName(p.SandboxUID)
-	}
 	if p.Global {
 		return "global/" + p.Name
 	}
@@ -85,28 +84,26 @@ func (p TrafficPolicy) ResourceName() string {
 }
 
 func (p TrafficPolicy) Equals(other TrafficPolicy) bool {
-	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace &&
-		p.SandboxUID == other.SandboxUID &&
+	return p.UID == other.UID && p.Name == other.Name &&
+		p.Namespace == other.Namespace &&
 		p.Global == other.Global &&
 		p.CreationTime.Equal(other.CreationTime) &&
 		reflect.DeepEqual(p.Spec, other.Spec)
 }
 
 type SecurityProfile struct {
-	// Dedicated profiles belong exclusively to SandboxUID and are not shared.
-	Dedicated    bool
+	UID          string
 	Name         string
 	Namespace    string
-	SandboxUID   string
 	Global       bool
 	CreationTime time.Time
 	Spec         agentsv1alpha1.SecurityProfileSpec
 }
 
+// GetUID returns the source object's UID.
+func (p SecurityProfile) GetUID() types.UID { return types.UID(p.UID) }
+
 func (p SecurityProfile) ResourceName() string {
-	if p.Dedicated {
-		return SandboxSecurityProfileName(p.SandboxUID)
-	}
 	if p.Global {
 		return "global/" + p.Name
 	}
@@ -114,19 +111,15 @@ func (p SecurityProfile) ResourceName() string {
 }
 
 func (p SecurityProfile) Equals(other SecurityProfile) bool {
-	return p.Dedicated == other.Dedicated && p.Name == other.Name && p.Namespace == other.Namespace &&
-		p.SandboxUID == other.SandboxUID &&
+	return p.UID == other.UID &&
+		p.Name == other.Name &&
+		p.Namespace == other.Namespace &&
 		p.Global == other.Global &&
 		p.CreationTime.Equal(other.CreationTime) &&
 		reflect.DeepEqual(p.Spec, other.Spec)
 }
 
-// SandboxTrafficPolicyName identifies the one inline policy independently of CR names.
-func SandboxTrafficPolicyName(uid string) string {
-	return "sandboxes/" + uid + "/trafficPolicies/inline"
-}
-
-// SandboxSecurityProfileName identifies the one inline profile independently of CR names.
+// SandboxSecurityProfileName preserves the execution-plane reference for Sandbox security rules.
 func SandboxSecurityProfileName(uid string) string {
 	return "sandboxes/" + uid + "/securityProfiles/inline"
 }

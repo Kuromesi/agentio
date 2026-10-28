@@ -389,3 +389,33 @@ func TestSubscriberIsReleasedOnContextCancel(t *testing.T) {
 		})
 	}
 }
+
+func TestNotifyKeysBeforePublication(t *testing.T) {
+	store := New(newSnapshot(t))
+	version := store.Snapshot().Version()
+	subscription := store.Subscribe(t.Context())
+	subscription.Watch(model.SandboxType)
+	other := store.Subscribe(t.Context())
+	other.Watch(model.TrafficPolicyType)
+	for _, name := range []string{"pending-a", "pending-b", "pending-a"} {
+		store.NotifyKeys([]model.ResourceKey{{TypeURL: model.SandboxType, Name: name}})
+	}
+	select {
+	case update := <-subscription.Updates():
+		candidates := update.Candidates(model.SandboxType)
+		if update.FullFor(model.SandboxType) || len(candidates) != 2 ||
+			candidates[0].Key.Name != "pending-a" || candidates[1].Key.Name != "pending-b" {
+			t.Fatalf("source invalidations were lost or broadened: %+v", update)
+		}
+	default:
+		t.Fatal("source deletion did not wake subscriber")
+	}
+	select {
+	case <-other.Updates():
+		t.Fatal("source deletion woke unrelated resource type")
+	default:
+	}
+	if store.Snapshot().Version() != version || len(store.Snapshot().List(model.SandboxType)) != 0 {
+		t.Fatal("source invalidation modified published snapshot")
+	}
+}

@@ -29,6 +29,7 @@ import (
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/kclient"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
 	"github.com/openkruise/agentio/pkg/registry/kubernetes/kruise"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
@@ -68,7 +69,7 @@ type Registry struct {
 	// Consumers wait for it separately from the compiler's registry synchronization.
 	Secrets krt.Collection[*corev1.Secret]
 
-	Sandboxes                  krt.Collection[model.Sandbox]
+	Sandboxes                  *registry.Source[model.Sandbox]
 	Workloads                  krt.Collection[model.Workload]
 	Services                   krt.Collection[model.Service]
 	Endpoints                  krt.Collection[model.Endpoint]
@@ -105,7 +106,7 @@ func New(
 		options.ClusterDomain = defaultClusterDomain
 	}
 
-	// Only policy sources debounce. Identity and networking events propagate immediately.
+	// Platform policy sources debounce. Sandbox identity and policies propagate immediately.
 	policyOptions := func(name string) []krt.CollectionOption {
 		return []krt.CollectionOption{
 			krt.WithName(name),
@@ -173,19 +174,14 @@ func New(
 	r.KubernetesServices = services
 	r.EndpointSlices = slices
 	// Ordinary Pods are Workloads only. Runtime integration adds real Sandboxes.
-	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, nil, derivedOptions("sandboxes")...)
-	securityProfiles := []krt.Collection[model.SecurityProfile]{
-		newSecurityProfileModels(securityProfileObjects, globalSecurityObjects, derivedOptions),
-	}
+	r.Sandboxes = registry.NewSource(krt.NewStaticCollection[model.Sandbox](nil, nil, derivedOptions("sandboxes")...))
+	r.SecurityProfiles = newSecurityProfileModels(securityProfileObjects, globalSecurityObjects, derivedOptions)
 	if options.EnableKruise {
 		sandboxSource := kruise.NewSource(kubeClient, pods, kruise.Options{
-			ClusterID:     options.ClusterID,
-			TrustDomain:   options.TrustDomain,
-			DebounceAfter: options.DebounceAfter,
-			DebounceMax:   options.DebounceMax,
+			ClusterID:   options.ClusterID,
+			TrustDomain: options.TrustDomain,
 		}, stop)
 		r.Sandboxes = sandboxSource.Sandboxes
-		securityProfiles = append(securityProfiles, sandboxSource.SecurityProfiles)
 	}
 	// Every eligible Pod remains a communication endpoint, regardless of the
 	// runtime it hosts or the runtime's lifecycle.
@@ -238,7 +234,6 @@ func New(
 
 	r.TrafficPolicies = newTrafficPolicyModels(trafficPolicyObjects, globalTrafficObjects, derivedOptions)
 	r.Workloads = r.certificateWorkloads(derivedOptions("certificate-workloads")...)
-	r.SecurityProfiles = krt.JoinCollection(securityProfiles, derivedOptions("all-security-profiles")...)
 
 	r.collections = []krt.Syncer{
 		r.Sandboxes, r.Workloads, r.Services, r.Endpoints, r.Gateways,

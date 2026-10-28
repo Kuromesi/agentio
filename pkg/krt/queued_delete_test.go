@@ -17,14 +17,59 @@ package krt
 import (
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openkruise/agentio/pkg/kube/controllers"
 )
 
-type queuedDeleteItem struct{ Name, Value string }
+type queuedDeleteItem struct {
+	Name  string
+	Value string
+	UID   types.UID
+}
 
 func (x queuedDeleteItem) ResourceName() string { return x.Name }
+func (x queuedDeleteItem) GetUID() types.UID    { return x.UID }
+
+func TestCollectionDiscardUsesRetainedUID(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		options := []CollectionOption{WithStop(t.Context().Done())}
+		parent := NewMutableCollection[queuedDeleteItem](nil, nil, options...)
+		out := NewCollection(parent.AsCollection(), func(ctx HandlerContext, item queuedDeleteItem) *queuedDeleteItem {
+			if item.Value == "invalid" || item.Value == "invalid-again" {
+				ctx.DiscardResult()
+				return nil
+			}
+			return &item
+		}, options...)
+		for _, step := range []struct {
+			uid   types.UID
+			value string
+			want  string
+		}{
+			{uid: "old", value: "valid", want: "valid"},
+			{uid: "old", value: "invalid", want: "valid"},
+			{uid: "old", value: "invalid-again", want: "valid"},
+			{uid: "new", value: "invalid"},
+			{uid: "new", value: "invalid-again"},
+			{uid: "new", value: "recovered", want: "recovered"},
+		} {
+			parent.UpdateObject(queuedDeleteItem{Name: "same-key", UID: step.uid, Value: step.value})
+			synctest.Wait()
+			got := out.GetKey("same-key")
+			if step.want == "" {
+				if got != nil {
+					t.Fatalf("%s/%s retained another object's result: %+v", step.uid, step.value, got)
+				}
+			} else if got == nil || got.UID != step.uid || got.Value != step.want {
+				t.Fatalf("%s/%s: got %+v, want %s", step.uid, step.value, got, step.want)
+			}
+		}
+	})
+}
 
 // Exercise real parent events while a queue barrier models a busy consumer.
 // Check intermediate deletions as well as convergence: a later Add can hide
@@ -33,9 +78,13 @@ func TestCollectionQueuedDelete(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		replacement string
+		uid         types.UID
+		wantValue   string
 		wantDeletes int
 	}{
-		{name: "same key recreated", replacement: "new", wantDeletes: 0},
+		{name: "same key recreated", replacement: "new", uid: "new", wantValue: "new", wantDeletes: 0},
+		{name: "same object failed update", replacement: "invalid", uid: "old", wantValue: "old", wantDeletes: 0},
+		{name: "recreated object failed compilation", replacement: "invalid", uid: "new", wantDeletes: 1},
 		{name: "replacement no longer matches", replacement: "excluded", wantDeletes: 1},
 		{name: "parent remains deleted", wantDeletes: 1},
 	} {
@@ -45,9 +94,13 @@ func TestCollectionQueuedDelete(t *testing.T) {
 			opts := NewOptionsBuilder(stop, "queued-delete", nil)
 			parent := NewMutableCollection(
 				nil,
-				[]queuedDeleteItem{{Name: "same-key", Value: "old"}},
+				[]queuedDeleteItem{{Name: "same-key", Value: "old", UID: "old"}},
 				opts.WithName("parent")...)
-			out := NewCollection(parent.AsCollection(), func(_ HandlerContext, x queuedDeleteItem) *queuedDeleteItem {
+			out := NewCollection(parent.AsCollection(), func(ctx HandlerContext, x queuedDeleteItem) *queuedDeleteItem {
+				if x.Value == "invalid" {
+					ctx.DiscardResult()
+					return nil
+				}
 				if x.Value == "excluded" {
 					return nil
 				}
@@ -76,10 +129,12 @@ func TestCollectionQueuedDelete(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("queue barrier timeout")
 			}
-			parent.UpdateObject(queuedDeleteItem{Name: "same-key", Value: "intermediate"})
-			parent.DeleteObject("same-key")
+			parent.UpdateObject(queuedDeleteItem{Name: "same-key", Value: "intermediate", UID: "old"})
+			if tt.uid != "old" {
+				parent.DeleteObject("same-key")
+			}
 			if tt.replacement != "" {
-				parent.UpdateObject(queuedDeleteItem{Name: "same-key", Value: tt.replacement})
+				parent.UpdateObject(queuedDeleteItem{Name: "same-key", Value: tt.replacement, UID: tt.uid})
 			}
 			parent.UpdateObject(queuedDeleteItem{Name: "marker", Value: "queue drained"})
 			unblock()
@@ -99,8 +154,8 @@ func TestCollectionQueuedDelete(t *testing.T) {
 						t.Fatalf("got %d downstream Deletes, want %d", deletes, tt.wantDeletes)
 					}
 					got := out.GetKey("same-key")
-					if tt.replacement == "new" {
-						if got == nil || got.Value != "new" {
+					if tt.wantValue != "" {
+						if got == nil || got.Value != tt.wantValue {
 							t.Fatalf("replacement output missing or outdated: %v", got)
 						}
 					} else if got != nil {

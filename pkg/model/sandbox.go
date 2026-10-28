@@ -16,7 +16,11 @@ package model
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
+
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Attester identifies the one Workload currently hosting a Sandbox.
@@ -35,11 +39,22 @@ func SandboxUID(kind, instanceID string) string {
 }
 
 // Sandbox is an execution unit discovered from a sandbox runtime.
-// Owned policies enter the TrafficPolicy and SecurityProfile input collections.
+// Sandbox policies share the identity and binding source version.
 type Sandbox struct {
-	Attester  *Attester
-	UID       string
-	Namespace string
+	SourceIdentity SourceIdentity
+	Attester       *Attester
+	UID            string
+	Namespace      string
+	Policies       *SandboxPolicies
+}
+
+// SandboxPolicies contains rules owned by the Sandbox, including source parse errors.
+// A nil value means the source declares no Sandbox policies.
+type SandboxPolicies struct {
+	TrafficRules *TrafficPolicyRules
+	// Nil means no Sandbox SecurityProfile; an empty slice declares an empty profile.
+	SecurityRules []agentsv1alpha1.SecurityRule
+	InputError    string
 }
 
 func (s Sandbox) Validate() error {
@@ -56,9 +71,11 @@ func (s Sandbox) ResourceName() string {
 	return s.UID
 }
 
-// Equals compares identity and host binding.
+// Equals compares identity, host binding, and Sandbox policy inputs.
 func (s Sandbox) Equals(other Sandbox) bool {
 	return s.UID == other.UID &&
+		s.SourceIdentity == other.SourceIdentity &&
+		reflect.DeepEqual(s.Policies, other.Policies) &&
 		s.Namespace == other.Namespace &&
 		attestersEqual(s.Attester, other.Attester)
 }
@@ -68,4 +85,15 @@ func attestersEqual(left, right *Attester) bool {
 		return left == right
 	}
 	return *left == *right
+}
+
+// GetUID returns the source object's UID, independently of the Sandbox delivery ID.
+func (s Sandbox) GetUID() types.UID { return types.UID(s.SourceIdentity.UID) }
+
+// GetSourceIdentity exposes input provenance to generic source adapters.
+func (s Sandbox) GetSourceIdentity() SourceIdentity { return s.SourceIdentity }
+
+// SourceKey uses the Sandbox delivery identity, independently of the source UID.
+func (s Sandbox) SourceKey() ResourceKey {
+	return ResourceKey{TypeURL: SandboxType, Name: s.UID}
 }

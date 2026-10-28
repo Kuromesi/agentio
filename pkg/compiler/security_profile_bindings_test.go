@@ -154,15 +154,16 @@ func TestSandboxSecurityProfileReferences(t *testing.T) {
 	sibling := model.Sandbox{UID: "kruise:two", Namespace: "demo", Attester: &model.Attester{WorkloadUID: workload.UID}}
 	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	fixture.sandboxes.ConditionalUpdateObject(sibling)
-	profile := model.SecurityProfile{Dedicated: true, SandboxUID: sandbox.UID, Namespace: "demo"}
-	fixture.securityProfiles.ConditionalUpdateObject(profile)
+	profileName := model.SandboxSecurityProfileName(sandbox.UID)
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: []agentsv1alpha1.SecurityRule{}}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	shared := model.SecurityProfile{Name: "shared", Namespace: "demo"}
 	fixture.securityProfiles.ConditionalUpdateObject(shared)
 	waitSynced(t, fixture.compiler)
 	key := model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.UID}
 	eventually(t, func() bool {
 		refs, _ := securityReferencesAt(t, fixture.compiler, key)
-		return refs != nil && slices.Equal(refs.ResourceNames, []string{profile.ResourceName()})
+		return refs != nil && slices.Equal(refs.ResourceNames, []string{profileName})
 	}, "Sandbox binds owned profile without SNI rules")
 	eventually(t, func() bool {
 		refs, _ := securityReferencesAt(
@@ -186,10 +187,11 @@ func TestSandboxSecurityProfileReferences(t *testing.T) {
 		return manifestAt(t, fixture.compiler, sandbox.UID).GetAttester().GetWorkloadUid() == "new-host"
 	}, "Sandbox migration")
 	refs, _ := securityReferencesAt(t, fixture.compiler, key)
-	if refs == nil || !slices.Equal(refs.ResourceNames, []string{profile.ResourceName()}) {
+	if refs == nil || !slices.Equal(refs.ResourceNames, []string{profileName}) {
 		t.Fatalf("migration lost owned reference: %v", refs)
 	}
-	fixture.securityProfiles.DeleteObject(profile.ResourceName())
+	sandbox.Policies = nil
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	eventually(t, func() bool {
 		refs, _ := securityReferencesAt(t, fixture.compiler, key)
 		return refs != nil && len(refs.ResourceNames) == 0

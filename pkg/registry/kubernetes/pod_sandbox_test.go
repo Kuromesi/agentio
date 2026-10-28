@@ -216,7 +216,7 @@ func TestPodPoliciesReachWorkloadsWithoutSandboxes(t *testing.T) {
 				Pods:                       r.Pods,
 				KubernetesServices:         r.KubernetesServices,
 				EndpointSlices:             r.EndpointSlices,
-				Sandboxes:                  r.Sandboxes,
+				Sandboxes:                  r.Sandboxes.Collection,
 				Workloads:                  r.Workloads,
 				Services:                   r.Services,
 				Endpoints:                  r.Endpoints,

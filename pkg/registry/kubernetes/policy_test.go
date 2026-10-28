@@ -299,17 +299,16 @@ func TestPolicyCollectionsTrackTypedResources(t *testing.T) {
 	if got := r.SecurityProfiles.List(); len(got) != 2 {
 		t.Fatalf("security profile collection size = %d, want 2", len(got))
 	}
-	if got := r.TrafficPolicies.GetKey("namespaced/demo/traffic"); got == nil || got.Namespace != "demo" ||
-		got.SandboxUID != "" || got.Global {
+	if got := r.TrafficPolicies.GetKey("namespaced/demo/traffic"); got == nil || got.Namespace != "demo" || got.Global {
 		t.Fatalf("namespaced traffic policy = %+v", got)
 	}
-	if got := r.TrafficPolicies.GetKey("global/global-traffic"); got == nil || got.SandboxUID != "" || !got.Global {
+	if got := r.TrafficPolicies.GetKey("global/global-traffic"); got == nil || !got.Global {
 		t.Fatalf("global traffic policy = %+v", got)
 	}
-	if got := r.SecurityProfiles.GetKey("namespaced/demo/security"); got == nil || got.SandboxUID != "" || got.Global {
+	if got := r.SecurityProfiles.GetKey("namespaced/demo/security"); got == nil || got.Global {
 		t.Fatalf("namespaced security profile = %+v", got)
 	}
-	if got := r.SecurityProfiles.GetKey("global/global-security"); got == nil || got.SandboxUID != "" || !got.Global {
+	if got := r.SecurityProfiles.GetKey("global/global-security"); got == nil || !got.Global {
 		t.Fatalf("global security profile = %+v", got)
 	}
 }

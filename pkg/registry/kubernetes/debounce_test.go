@@ -80,6 +80,7 @@ func TestPolicyDebounceDoesNotDelayIdentityAndNetworking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	client.Run(ctx.Done())
 	// Establish the empty policy subscription before creating the Sandbox, so
 	// this exercises update distribution rather than initial snapshot replay.
@@ -122,7 +123,8 @@ func TestPolicyDebounceDoesNotDelayIdentityAndNetworking(t *testing.T) {
 			w := registry.Workloads.GetKey("test//Pod/agentio-system/gateway")
 			return w != nil && w.GatewayKey == "agentio-system/egress" &&
 				len(registry.Services.List()) == 1 && len(registry.Endpoints.List()) == 1 &&
-				registry.Sandboxes.GetKey("kruise:sandbox-id") != nil, nil
+				registry.Sandboxes.GetKey("kruise:sandbox-id") != nil &&
+				registry.Sandboxes.GetKey("kruise:sandbox-id").Policies != nil, nil
 		},
 	); err != nil {
 		t.Fatalf(
@@ -137,12 +139,14 @@ func TestPolicyDebounceDoesNotDelayIdentityAndNetworking(t *testing.T) {
 	if len(registry.TrafficPolicies.List()) != 0 {
 		t.Fatal("TrafficPolicy bypassed its debounce window")
 	}
-	// KRT debounce delays notifications, not reads of the collection's cache.
-	eventually(t, func() bool { return len(registry.SecurityProfiles.List()) == 1 }, "inline policy computed")
+	// Sandbox policies belong to the Sandbox input, not the shared profile collection.
+	if len(registry.SecurityProfiles.List()) != 0 {
+		t.Fatal("inline policy leaked into shared profiles")
+	}
 	select {
 	case <-policyEvents:
-		t.Fatal("inline policy notification bypassed its debounce window")
-	case <-time.After(100 * time.Millisecond):
+		t.Fatal("inline policy emitted an independent profile notification")
+	default:
 	}
 	if err := client.Kube().CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)

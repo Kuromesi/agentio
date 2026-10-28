@@ -95,8 +95,8 @@ func TestSandboxInlineSecurityRulesLifecycle(t *testing.T) {
 	awaitHosts("inline")
 	awaitHosts("other")
 	other := manifestAt(t, fixture.compiler, "other")
-	inline := model.SecurityProfile{Dedicated: true, SandboxUID: sandbox.UID, Namespace: sandbox.Namespace}
-	inline.Spec.Rules = []agentsv1alpha1.SecurityRule{{
+	inline := model.SandboxPolicies{}
+	inline.SecurityRules = []agentsv1alpha1.SecurityRule{{
 		Name: "inline",
 		Match: []agentsv1alpha1.RuleMatch{
 			{Domains: []string{"API.Example.", "*.Example", "api.example"}},
@@ -104,48 +104,54 @@ func TestSandboxInlineSecurityRulesLifecycle(t *testing.T) {
 			{Domains: []string{"http.example"}, Schemes: []string{"http"}},
 		},
 	}}
-	fixture.securityProfiles.ConditionalUpdateObject(inline)
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.SecurityRules}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	awaitHosts("inline", []string{"api.example", "*.example", "https.example"})
 
-	inline.Spec.Rules = []agentsv1alpha1.SecurityRule{
+	inline.SecurityRules = []agentsv1alpha1.SecurityRule{
 		{Name: "updated", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"updated.example"}}}},
 	}
-	fixture.securityProfiles.ConditionalUpdateObject(inline)
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.SecurityRules}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	awaitHosts("inline", []string{"updated.example"})
 
 	// Reject the whole inline policy, including valid rules preceding the bad one.
-	inline.Spec.Rules = []agentsv1alpha1.SecurityRule{
+	inline.SecurityRules = []agentsv1alpha1.SecurityRule{
 		{Name: "valid", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"updated.example"}}}},
 		{Name: "invalid", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"*bad.example"}}}},
 	}
-	fixture.securityProfiles.ConditionalUpdateObject(inline)
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.SecurityRules}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	eventually(t, func() bool {
-		return fixture.compiler.Failures()["SecurityProfile/"+inline.ResourceName()] != ""
+		return fixture.compiler.Failures()["SandboxPolicies/"+sandbox.UID] != ""
 	}, "invalid SNI records a compilation failure")
 	awaitHosts("inline", []string{"updated.example"})
 
-	inline.Spec.Rules = []agentsv1alpha1.SecurityRule{
+	inline.SecurityRules = []agentsv1alpha1.SecurityRule{
 		{
 			Name:  "http-only",
 			Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"http.example"}, Schemes: []string{"http"}}},
 		},
 	}
-	fixture.securityProfiles.ConditionalUpdateObject(inline)
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.SecurityRules}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	awaitHosts("inline")
 	eventually(
 		t,
-		func() bool { return fixture.compiler.Failures()["SecurityProfile/"+inline.ResourceName()] == "" },
+		func() bool { return fixture.compiler.Failures()["SandboxPolicies/"+sandbox.UID] == "" },
 		"valid rules clear the failure",
 	)
 
 	fixture.securityProfiles.DeleteObject(shared.ResourceName())
 	awaitHosts("inline")
-	inline.Spec.Rules = []agentsv1alpha1.SecurityRule{
+	inline.SecurityRules = []agentsv1alpha1.SecurityRule{
 		{Name: "inline", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"*"}}}},
 	}
-	fixture.securityProfiles.ConditionalUpdateObject(inline)
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.SecurityRules}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	awaitHosts("inline", []string{"*"})
-	fixture.securityProfiles.DeleteObject(inline.ResourceName())
+	sandbox.Policies = nil
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	awaitHosts("inline")
 
 	// Shared policy updates must not change an unrelated Sandbox.
@@ -155,7 +161,6 @@ func TestSandboxInlineSecurityRulesLifecycle(t *testing.T) {
 		t.Fatal("inline security rules changed another Sandbox")
 	}
 	fixture.sandboxes.DeleteObject("inline")
-	fixture.securityProfiles.DeleteObject(inline.ResourceName())
 	eventually(
 		t,
 		func() bool { return manifestAt(t, fixture.compiler, "inline") == nil },
@@ -299,18 +304,17 @@ func TestWorkloadSelectorMetadataUpdateRecomputesBindings(t *testing.T) {
 func TestSandboxTrafficPolicyTracksPeerUpdates(t *testing.T) {
 	fixture := newIncrementalFixture(t)
 	fixture.setResolved("api.example.com", netip.MustParseAddr("192.0.2.1"))
-	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "a", Namespace: "tenant"})
-	fixture.trafficPolicies.ConditionalUpdateObject(model.TrafficPolicy{
-		Dedicated:  true,
-		SandboxUID: "a",
-		Namespace:  "tenant",
-		Spec: agentsv1alpha1.TrafficPolicySpec{
+	sandbox := model.Sandbox{
+		UID:       "a",
+		Namespace: "tenant",
+		Policies: &model.SandboxPolicies{TrafficRules: &model.TrafficPolicyRules{
 			Egress: &agentsv1alpha1.TrafficPolicyDirection{Rules: []agentsv1alpha1.TrafficPolicyRule{{
 				Action: agentsv1alpha1.RuleActionAllow,
 				To:     []agentsv1alpha1.TrafficPolicyPeer{{FQDN: "api.example.com"}},
 			}}},
-		},
-	})
+		}},
+	}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	waitSynced(t, fixture.compiler)
 	awaitAddress := func(last byte) {
 		t.Helper()
@@ -321,16 +325,19 @@ func TestSandboxTrafficPolicyTracksPeerUpdates(t *testing.T) {
 		}, "inline policy follows the peer resolver dependency")
 	}
 	awaitAddress(1)
-	calls := fixture.resolutionCount("api.example.com")
-	fixture.sandboxes.ConditionalUpdateObject(model.Sandbox{UID: "a",
-		Namespace: "tenant",
-		Attester:  &model.Attester{WorkloadUID: "new-worker"}})
+	refs, _ := securityReferencesAt(t, fixture.compiler, sandbox.SourceKey())
+	if refs == nil || len(refs.ResourceNames) != 0 {
+		t.Fatal("traffic-only Sandbox acquired a SecurityProfile reference")
+	}
+	if len(currentSnapshot(t, fixture.compiler).List(model.TrafficPolicyType)) != 0 {
+		t.Fatal("inline traffic rules published an independent TrafficPolicy resource")
+	}
+	sandbox.Attester = &model.Attester{WorkloadUID: "new-worker"}
+	fixture.sandboxes.ConditionalUpdateObject(sandbox)
 	eventually(t, func() bool {
 		return manifestAt(t, fixture.compiler, "a").GetAttester().GetWorkloadUid() == "new-worker"
-	}, "runtime binding advances independently of policy compilation")
-	if got := fixture.resolutionCount("api.example.com"); got != calls {
-		t.Fatalf("runtime-only update repeated peer resolution: %d -> %d", calls, got)
-	}
+	}, "binding and inline rules publish together")
+	awaitAddress(1)
 	fixture.setResolved("api.example.com", netip.MustParseAddr("192.0.2.2"))
 	awaitAddress(2)
 }

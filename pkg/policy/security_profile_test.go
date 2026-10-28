@@ -66,12 +66,7 @@ func TestSecurityProfileAttachment(t *testing.T) {
 		!global.Selects(model.Workload{Namespace: "other", Labels: map[string]string{"app": "client"}}) {
 		t.Fatalf("global attachment: %+v, %v", global, err)
 	}
-	profile.Dedicated = true
-	profile.SandboxUID = "kruise:one"
-	if owned, err := SecurityProfileAttachment(profile); err != nil || owned != nil {
-		t.Fatalf("dedicated profile entered shared selection: %+v, %v", owned, err)
-	}
-	profile.Dedicated = false
+
 	profile.Spec.Priority = new(int32(-1))
 	if _, err := SecurityProfileAttachment(profile); err == nil {
 		t.Fatal("negative priority accepted")
@@ -128,26 +123,22 @@ func TestSecurityProfileAttachmentOrder(t *testing.T) {
 }
 
 func TestCompileSecurityProfileWithoutSNI(t *testing.T) {
-	for _, dedicated := range []bool{false, true} {
-		profile := model.SecurityProfile{
-			Name:       "http-only",
-			Namespace:  "demo",
-			Dedicated:  dedicated,
-			SandboxUID: "kruise:one",
-			Spec: agentsv1alpha1.SecurityProfileSpec{
-				Rules: []agentsv1alpha1.SecurityRule{{Match: []agentsv1alpha1.RuleMatch{{Schemes: []string{"http"}}}}},
-			},
-		}
-		compiled, err := CompileSecurityProfile(profile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if compiled.ResourceName() != profile.ResourceName() || compiled.SNIPolicy != nil {
-			t.Fatalf("expected a named profile without an SNI projection: %+v", compiled)
-		}
-		if attachment := compiled.PolicyAttachment(); (attachment == nil) != dedicated {
-			t.Fatalf("dedicated=%v: unexpected binding metadata %+v", dedicated, attachment)
-		}
+	profile := model.SecurityProfile{
+		Name:      "http-only",
+		Namespace: "demo",
+		Spec: agentsv1alpha1.SecurityProfileSpec{
+			Rules: []agentsv1alpha1.SecurityRule{{Match: []agentsv1alpha1.RuleMatch{{Schemes: []string{"http"}}}}},
+		},
+	}
+	compiled, err := CompileSecurityProfile(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.ResourceName() != profile.ResourceName() || compiled.SNIPolicy != nil {
+		t.Fatalf("expected a named profile without an SNI projection: %+v", compiled)
+	}
+	if compiled.PolicyAttachment() == nil {
+		t.Fatal("shared profile has no binding metadata")
 	}
 }
 

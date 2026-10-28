@@ -639,7 +639,7 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		securityProfiles: payloads.AsCollection(),
 		trafficPolicies:  krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
 	}
-	compatibility := newWorkloadPolicies(inputs, policies, failures, options)
+	compatibility := newWorkloadPolicies(inputs, policies, krt.NewStaticCollection[compiledSandbox](nil, nil, options("compiled-sandboxes")...), failures, options)
 	metadata := krt.NewStatic[workloadMetadataConfiguration](nil, true, options("metadata")...)
 	resolved := newWorkloadResources(inputs, newBaseIndexes(inputs), metadata,
 		compatibility, failures, options)
@@ -808,7 +808,7 @@ func TestSNIRulesOnlyUpdateDoesNotRecomputeWorkloadBindings(t *testing.T) {
 		policyBindings:   bindings,
 		securityProfiles: compiled,
 		trafficPolicies:  krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options...),
-	}, newFailureRecorder(), builder.WithName)
+	}, krt.NewStaticCollection[compiledSandbox](nil, nil, options...), newFailureRecorder(), builder.WithName)
 	if !observedBindings.WaitUntilSynced(stop) || !resources.WaitUntilSynced(stop) {
 		t.Fatal("test policy graph did not sync")
 	}

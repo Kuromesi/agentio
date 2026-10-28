@@ -19,7 +19,6 @@ package kruise
 import (
 	"context"
 	"maps"
-	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +31,7 @@ import (
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/kclient"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
 )
 
 var sandboxResource = schema.GroupVersionResource{
@@ -43,16 +43,13 @@ var sandboxResource = schema.GroupVersionResource{
 // Options contains only the Kubernetes source settings needed by the Kruise
 // runtime adapter.
 type Options struct {
-	ClusterID     string
-	TrustDomain   string
-	DebounceAfter time.Duration
-	DebounceMax   time.Duration
+	ClusterID   string
+	TrustDomain string
 }
 
 // Source holds explicitly defined Kruise Sandboxes.
 type Source struct {
-	Sandboxes        krt.Collection[model.Sandbox]
-	SecurityProfiles krt.Collection[model.SecurityProfile]
+	Sandboxes *registry.Source[model.Sandbox]
 }
 
 // NewSource constructs the optional, delayed-informer-backed Kruise source.
@@ -80,17 +77,13 @@ func NewSource(
 		derivedOptions("kruise-sandboxes-by-uid")...,
 	)
 	podsByUID := newPodsByUID(pods)
+	sandboxSources := newSandboxSources(objects)
 	return Source{
-		// Inline policy updates debounce independently of Sandbox identity and binding updates.
-		SecurityProfiles: newSecurityProfiles(sandboxGroups, append(derivedOptions("kruise-security-profiles"),
-			krt.WithDebounce(options.DebounceAfter, options.DebounceMax))...),
-		Sandboxes: newSandboxes(
-			sandboxGroups,
-			pods,
-			podsByUID,
-			options.ClusterID,
-			derivedOptions("kruise-sandboxes")...,
-		),
+		Sandboxes: &registry.Source[model.Sandbox]{
+			Collection: newSandboxes(sandboxGroups, pods, podsByUID, options.ClusterID,
+				derivedOptions("kruise-sandboxes")...),
+			Registry: sandboxSources,
+		},
 	}
 }
 

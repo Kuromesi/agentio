@@ -24,15 +24,12 @@ import (
 type CompiledAuthorization = CompiledPolicy[*securityv1.Authorization]
 
 // TrafficPolicyAsAuthorizations projects a shared policy into the Workload wire
-// format. Dedicated policies stay on their Sandbox and produce no Authorizations.
+// format. Sandbox inline rules are compiled separately and never enter this path.
 func TrafficPolicyAsAuthorizations(
 	compiled CompiledTrafficPolicy,
 	source model.TrafficPolicy,
 	rootNamespace string,
 ) ([]CompiledAuthorization, error) {
-	if source.Dedicated {
-		return nil, nil
-	}
 	name, namespace, priority := source.Name, source.Namespace, source.Spec.Priority
 	scope := securityv1.Scope_NAMESPACE
 	if source.Global {

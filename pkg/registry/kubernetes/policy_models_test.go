@@ -27,6 +27,7 @@ import (
 
 func TestPolicyModelsUseSelector(t *testing.T) {
 	metadata := metav1.ObjectMeta{
+		UID:         "policy-source",
 		Name:        "policy",
 		Namespace:   "demo",
 		Annotations: map[string]string{agentsv1alpha1.AnnotationSandboxID: "kruise:annotation"},
@@ -73,8 +74,9 @@ func TestPolicyModelsUseSelector(t *testing.T) {
 						},
 					},
 				}, global)
-				if traffic.SandboxUID != "" || profile.SandboxUID != "" {
-					t.Fatalf("global=%t: annotation or selector inferred a Sandbox UID", global)
+
+				if traffic.GetUID() != "policy-source" || profile.GetUID() != "policy-source" {
+					t.Fatal("policy model lost the source object UID")
 				}
 				if !reflect.DeepEqual(traffic.Spec.Selector, test.selector) ||
 					!reflect.DeepEqual(profile.Spec.Selector, test.selector) {

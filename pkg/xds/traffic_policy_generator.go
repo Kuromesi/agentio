@@ -24,9 +24,11 @@ import (
 )
 
 // TrafficPolicyGenerator serves shared policies referenced by authorized
-// Workloads. Named subscriptions never widen that scope.
+// Workloads from the published snapshot, allowing platform-policy propagation
+// delay. Named subscriptions never widen that scope.
 type TrafficPolicyGenerator struct{}
 
+// Generate serves the shared policies visible to the authenticated scope.
 func (TrafficPolicyGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedDelta{}, err

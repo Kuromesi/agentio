@@ -851,18 +851,7 @@ func TestCompilerProjectsSandboxSNIWithoutInlineAttachment(t *testing.T) {
 	workload := testWorkload("demo", "client", "10.1.0.2")
 	workload.Source = model.SourceRef{Registry: "kubernetes/cluster", Key: "pod-uid"}
 	workloads.ConditionalUpdateObject(workload)
-	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
-		Name:       "terminate",
-		Dedicated:  true,
-		SandboxUID: workload.UID,
-		Namespace:  "demo",
-		Spec: agentsv1alpha1.SecurityProfileSpec{
-			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "does-not-match"}},
-			Rules: []agentsv1alpha1.SecurityRule{
-				{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}},
-			},
-		},
-	})
+
 	securityProfiles.ConditionalUpdateObject(model.SecurityProfile{
 		Name:      "pod-policy",
 		Namespace: "demo",
@@ -880,6 +869,9 @@ func TestCompilerProjectsSandboxSNIWithoutInlineAttachment(t *testing.T) {
 	inputs.Sandboxes = krt.NewStaticCollection(nil, []model.Sandbox{{
 		UID:      workload.UID,
 		Attester: &model.Attester{WorkloadUID: workload.UID},
+		Policies: &model.SandboxPolicies{SecurityRules: []agentsv1alpha1.SecurityRule{
+			{Name: "api", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}}},
+		}},
 	}}, options...)
 	inputs.Workloads = workloads.AsCollection()
 	inputs.Services = services

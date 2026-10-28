@@ -52,6 +52,16 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 								UID:       "actor",
 								Namespace: "demo",
 								Attester:  &model.Attester{WorkloadUID: worker.UID},
+								Policies: &model.SandboxPolicies{
+									TrafficRules: &model.TrafficPolicyRules{
+										Egress: &agentsv1alpha1.TrafficPolicyDirection{
+											Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}},
+										},
+									},
+									SecurityRules: []agentsv1alpha1.SecurityRule{
+										{Name: "secret", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}}},
+									},
+								},
 							},
 						},
 						opts...)
@@ -71,15 +81,6 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 							},
 						},
 					},
-				}, {
-					Dedicated:  true,
-					SandboxUID: "actor",
-					Namespace:  "demo",
-					Spec: agentsv1alpha1.TrafficPolicySpec{
-						Egress: &agentsv1alpha1.TrafficPolicyDirection{
-							Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}},
-						},
-					},
 				}}, opts...)
 				inputs.SecurityProfiles = krt.NewStaticCollection(nil, []model.SecurityProfile{
 					{
@@ -91,20 +92,6 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 								{
 									Name:  "api",
 									Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"api.example.com"}}},
-								},
-							},
-						},
-					},
-					{
-						Name:       "actor-only",
-						Dedicated:  true,
-						Namespace:  "demo",
-						SandboxUID: "actor",
-						Spec: agentsv1alpha1.SecurityProfileSpec{
-							Rules: []agentsv1alpha1.SecurityRule{
-								{
-									Name:  "secret",
-									Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}},
 								},
 							},
 						},

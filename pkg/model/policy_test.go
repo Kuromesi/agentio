@@ -16,18 +16,11 @@ package model
 
 import "testing"
 
-func TestPolicyEqualityTracksSandboxUID(t *testing.T) {
-	traffic := TrafficPolicy{Name: "allow", Namespace: "demo", SandboxUID: "sandbox-a"}
-	changedTraffic := traffic
-	changedTraffic.SandboxUID = "sandbox-b"
-	if traffic.Equals(changedTraffic) {
-		t.Fatal("TrafficPolicy equality ignored SandboxUID")
-	}
-
-	profile := SecurityProfile{Name: "tls", Namespace: "demo", SandboxUID: "sandbox-a"}
+func TestSecurityProfileEqualityTracksUID(t *testing.T) {
+	profile := SecurityProfile{Name: "tls", Namespace: "demo", UID: "source"}
 	changedProfile := profile
-	changedProfile.SandboxUID = "sandbox-b"
+	changedProfile.UID = "replacement"
 	if profile.Equals(changedProfile) {
-		t.Fatal("SecurityProfile equality ignored SandboxUID")
+		t.Fatal("SecurityProfile equality ignored source UID")
 	}
 }
