@@ -154,7 +154,6 @@ func serveStatusOn(status http.Handler, port int) (func(), <-chan error, error) 
 	server := &http.Server{
 		Handler:           status,
 		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       30 * time.Second,
 	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
