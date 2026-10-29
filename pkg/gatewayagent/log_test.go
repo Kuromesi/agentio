@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -176,7 +177,7 @@ func TestADSSessionTerminationLogLevel(t *testing.T) {
 	}
 }
 
-func TestReadinessTransitionLogs(t *testing.T) {
+func TestReadinessTransitions(t *testing.T) {
 	logs := captureGatewayLogs(t)
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := fmt.Fprintln(
@@ -212,9 +213,24 @@ func TestReadinessTransitionLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stop()
-	for _, state := range []string{"certificate pending", "certificate pending", "certificate expired", "", "", "certificate expired", ""} {
+	client := &http.Client{Transport: &http.Transport{}, Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
+	for i, state := range []string{"certificate pending", "certificate pending", "certificate expired", "", "", "certificate expired", ""} {
+		if i == 4 {
+			// Cross the former idle timeout without losing the connection Envoy would reuse.
+			time.Sleep(31 * time.Second)
+		}
 		reason.Store(state)
-		response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz/ready", c.StatusPort))
+		var reused bool
+		ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+		})
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("http://127.0.0.1:%d/healthz/ready", c.StatusPort), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,8 +246,8 @@ func TestReadinessTransitionLogs(t *testing.T) {
 		if response.StatusCode != want {
 			t.Fatalf("status %d, want %d", response.StatusCode, want)
 		}
-		if !response.Close {
-			t.Errorf("readiness response %d allows reuse of an idle connection", response.StatusCode)
+		if i > 0 && !reused {
+			t.Errorf("probe %d did not reuse the previous connection", i)
 		}
 	}
 	if strings.Count(logs.String(), "gateway is waiting for readiness") != 2 ||

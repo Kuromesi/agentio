@@ -48,8 +48,6 @@ func startStatus(ctx context.Context, c Config, agent *envoy.Agent, cancel conte
 	var everReady bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz/ready", func(w http.ResponseWriter, _ *http.Request) {
-		// Prevent Envoy from reusing a connection as the status server's idle timeout closes it.
-		w.Header().Set("Connection", "close")
 		probeMu.Lock()
 		defer probeMu.Unlock()
 		reason := ""
@@ -156,7 +154,6 @@ func serveStatusOn(status http.Handler, port int) (func(), <-chan error, error) 
 	server := &http.Server{
 		Handler:           status,
 		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       30 * time.Second,
 	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
