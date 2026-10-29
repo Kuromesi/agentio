@@ -137,9 +137,8 @@ func (b *resourceBuilder) buildPassthroughCluster() *clusterv3.Cluster {
 	}
 }
 
-// buildTLSProxyOriginateCluster reconnects to the original HTTPS proxy while
-// request-scoped filter state supplies the outer SNI and SAN. The inner CONNECT
-// authority must never become the proxy certificate identity.
+// buildTLSProxyOriginateCluster reconnects to the original TLS destination for
+// application CONNECT and non-HTTP payloads. Filter state supplies the outer SNI and SAN.
 func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.UpstreamTlsSettings) *clusterv3.Cluster {
 	cluster := b.buildPassthroughCluster()
 	cluster.Name = TLSProxyOriginate
@@ -169,7 +168,7 @@ func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.Upstr
 					},
 				},
 			},
-			AlpnProtocols: []string{"h2", "http/1.1"},
+			// HTTP pools supply ALPN; TCP must not advertise HTTP protocols.
 		},
 	})
 	cluster.TransportSocket = &corev3.TransportSocket{

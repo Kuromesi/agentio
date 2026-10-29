@@ -18,6 +18,17 @@ inspection or policies that depend on detecting TLS/SNI through the timeout
 fallback. Traffic that completes protocol detection retains its normal routing
 and policy behavior. This applies to both native and legacy gateways.
 
+After TLS termination, the gateway detects HTTP only. Non-HTTP payloads,
+including another TLS stream, are forwarded unchanged to the original
+destination IP and port over a new TLS connection. Upstream SNI and certificate
+name validation use the outer TLS SNI; an inner ClientHello never selects a new
+destination. HTTP requests retain their existing routing and policy processing.
+
+The TCP path does not run HTTP request-level EPE authorization or ServiceEntry
+selection. Allowing TLS termination is not equivalent to authorizing an HTTP
+request. TCP forwarding does not advertise HTTP ALPN upstream; protocols that
+require a custom ALPN are not supported by this termination path.
+
 ## Before you begin
 
 Complete one onboarding path from [Getting started](../getting-started.md). The selected guide exports these variables:

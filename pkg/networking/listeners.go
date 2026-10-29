@@ -41,7 +41,6 @@ import (
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
-	dfpnetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/sni_dynamic_forward_proxy/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	matchinginputv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	rlexprv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/rate_limit_descriptors/expr/v3"
@@ -153,9 +152,22 @@ var (
 	// across different outer SNIs and spuriously fail the SNI/Host guard.
 	captureSNIFilter = buildCaptureSNIFilter("envoy.hashable_string")
 
-	sniDFPFilter = networkFilter("envoy.filters.network.sni_dynamic_forward_proxy", mustPack(&dfpnetworkv3.FilterConfig{
-		DnsCacheConfig: dnsCacheConfig(),
-		PortSpecifier:  &dfpnetworkv3.FilterConfig_PortValue{PortValue: 443},
+	// TCP payload cannot supply a new destination or TLS identity after termination.
+	outerTLSIdentityFilter = networkFilter("envoy.filters.network.set_filter_state", mustPack(&setstatenetworkv3.Config{
+		OnNewConnection: []*setstatecommonv3.FilterStateValue{
+			{
+				Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: upstreamServerNameKey},
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"),
+				},
+			},
+			{
+				Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: upstreamSubjectAltNamesKey},
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"),
+				},
+			},
+		},
 	}))
 
 	originalDstFilter  = listenerFilter("envoy.filters.listener.original_dst", mustPack(&originaldstv3.OriginalDst{}))
@@ -166,7 +178,6 @@ var (
 		"envoy.filters.listener.http_inspector",
 		mustPack(&httpinspectorv3.HttpInspector{}),
 	)
-	inspectorsTLSFirst  = []*listenerv3.ListenerFilter{originalDstFilter, tlsInspectorFilter, httpInspectorFilter}
 	inspectorsHTTPFirst = []*listenerv3.ListenerFilter{originalDstFilter, httpInspectorFilter, tlsInspectorFilter}
 )
 
@@ -275,7 +286,7 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 			InternalListener: &listenerv3.Listener_InternalListenerConfig{},
 		},
 		TrafficDirection: corev3.TrafficDirection_INBOUND,
-		ListenerFilters:  inspectorsTLSFirst,
+		ListenerFilters:  []*listenerv3.ListenerFilter{originalDstFilter, httpInspectorFilter},
 		FilterChains: []*listenerv3.FilterChain{
 			{
 				Name: forwardHTTPChain,
@@ -287,13 +298,13 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 				Name: forwardTCPChain,
 				Filters: b.applicationTCPFilters(
 					config,
-					[]*listenerv3.Filter{sniDFPFilter},
-					TLSConnectOriginate,
+					[]*listenerv3.Filter{outerTLSIdentityFilter},
+					TLSProxyOriginate,
 					connectionPool,
 				),
 			},
 		},
-		FilterChainMatcher: b.protocolMatcher(b.toChain(forwardTCPChain)),
+		FilterChainMatcher: b.applicationMatcher(),
 		// Apply the same close-on-timeout behavior after TLS termination.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
 		ContinueOnListenerFiltersTimeout: false,

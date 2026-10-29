@@ -42,7 +42,7 @@ func BenchmarkStaticFilters(b *testing.B) {
 		{"RelayDownstream", func() proto.Message { return relayDownstreamFilter }},
 		{"SNIDenialReason", func() proto.Message { return sniDenialReasonFilter }},
 		{"CaptureSNI", func() proto.Message { return captureSNIFilter }},
-		{"SNIDFP", func() proto.Message { return sniDFPFilter }},
+		{"OuterTLSIdentity", func() proto.Message { return outerTLSIdentityFilter }},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			test.SetForTest(b, &features.EnableSNITrafficPolicy, true)

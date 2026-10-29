@@ -346,11 +346,7 @@
                 "trustedCa": {
                   "filename": "/etc/ssl/cert.pem"
                 }
-              },
-              "alpnProtocols": [
-                "h2",
-                "http/1.1"
-              ]
+              }
             },
             "maxSessionKeys": 0
           }
@@ -2057,22 +2053,37 @@
           {
             "filters": [
               {
-                "name": "envoy.filters.network.sni_dynamic_forward_proxy",
+                "name": "envoy.filters.network.set_filter_state",
                 "typedConfig": {
-                  "@type": "type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig",
-                  "dnsCacheConfig": {
-                    "name": "agentio_dns_cache",
-                    "dnsLookupFamily": "V4_ONLY"
-                  },
-                  "portValue": 443
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "envoy.network.upstream_server_name",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      }
+                    },
+                    {
+                      "objectKey": "envoy.network.upstream_subject_alt_names",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      }
+                    }
+                  ]
                 }
               },
               {
                 "name": "envoy.filters.network.tcp_proxy",
                 "typedConfig": {
                   "@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-                  "statPrefix": "tls_connect_originate",
-                  "cluster": "tls_connect_originate",
+                  "statPrefix": "tls_proxy_originate",
+                  "cluster": "tls_proxy_originate",
                   "idleTimeout": "120s",
                   "maxDownstreamConnectionDuration": "600s"
                 }
@@ -2084,19 +2095,28 @@
         "filterChainMatcher": {
           "matcherTree": {
             "input": {
-              "name": "transport-protocol",
+              "name": "application-protocol",
               "typedConfig": {
-                "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.TransportProtocolInput"
+                "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.ApplicationProtocolInput"
               }
             },
             "exactMatchMap": {
               "map": {
-                "tls": {
+                "'h2c'": {
                   "action": {
-                    "name": "forward-tcp",
+                    "name": "forward-http",
                     "typedConfig": {
                       "@type": "type.googleapis.com/google.protobuf.StringValue",
-                      "value": "forward-tcp"
+                      "value": "forward-http"
+                    }
+                  }
+                },
+                "'http/1.1'": {
+                  "action": {
+                    "name": "forward-http",
+                    "typedConfig": {
+                      "@type": "type.googleapis.com/google.protobuf.StringValue",
+                      "value": "forward-http"
                     }
                   }
                 }
@@ -2104,45 +2124,11 @@
             }
           },
           "onNoMatch": {
-            "matcher": {
-              "matcherTree": {
-                "input": {
-                  "name": "application-protocol",
-                  "typedConfig": {
-                    "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.ApplicationProtocolInput"
-                  }
-                },
-                "exactMatchMap": {
-                  "map": {
-                    "'h2c'": {
-                      "action": {
-                        "name": "forward-http",
-                        "typedConfig": {
-                          "@type": "type.googleapis.com/google.protobuf.StringValue",
-                          "value": "forward-http"
-                        }
-                      }
-                    },
-                    "'http/1.1'": {
-                      "action": {
-                        "name": "forward-http",
-                        "typedConfig": {
-                          "@type": "type.googleapis.com/google.protobuf.StringValue",
-                          "value": "forward-http"
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              "onNoMatch": {
-                "action": {
-                  "name": "forward-tcp",
-                  "typedConfig": {
-                    "@type": "type.googleapis.com/google.protobuf.StringValue",
-                    "value": "forward-tcp"
-                  }
-                }
+            "action": {
+              "name": "forward-tcp",
+              "typedConfig": {
+                "@type": "type.googleapis.com/google.protobuf.StringValue",
+                "value": "forward-tcp"
               }
             }
           }
@@ -2152,13 +2138,6 @@
             "name": "envoy.filters.listener.original_dst",
             "typedConfig": {
               "@type": "type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst"
-            }
-          },
-          {
-            "name": "envoy.filters.listener.tls_inspector",
-            "typedConfig": {
-              "@type": "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector",
-              "initialReadBufferSize": 16384
             }
           },
           {

@@ -28,6 +28,8 @@ import (
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
+	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	httpupstreamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
@@ -268,6 +270,59 @@ func TestBuildStaticSNIMatcherOmitsEmptyHostGroups(t *testing.T) {
 	}
 }
 
+func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		resources := buildGatewayGraph(t, legacy)
+		listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+		forward := listeners[MainForward]
+		var inspectors []string
+		for _, filter := range forward.GetListenerFilters() {
+			inspectors = append(inspectors, filter.GetName())
+		}
+		if !equalStrings(inspectors, []string{"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector"}) {
+			t.Errorf("legacy=%v: post-TLS inspectors = %v, want original_dst and HTTP only", legacy, inspectors)
+		}
+		chain := findFilterChain(t, forward, forwardTCPChain)
+		if !equalStrings(networkFilterNames(chain), []string{"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy"}) {
+			t.Errorf("legacy=%v: TCP filters = %v, want outer TLS identity and TCP proxy", legacy, networkFilterNames(chain))
+			continue
+		}
+		identity := &setstatenetworkv3.Config{}
+		if err := chain.GetFilters()[0].GetTypedConfig().UnmarshalTo(identity); err != nil {
+			t.Fatal(err)
+		}
+		values := identity.GetOnNewConnection()
+		if len(values) != 2 {
+			t.Fatalf("TCP TLS identity = %v, want SNI and SAN", values)
+		}
+		for i, key := range []string{upstreamServerNameKey, upstreamSubjectAltNamesKey} {
+			if values[i].GetObjectKey() != key || values[i].GetFormatString().GetTextFormatSource().GetInlineString() !=
+				"%FILTER_STATE(io.kruise.outer_sni:PLAIN)%" {
+				t.Errorf("legacy=%v: TLS identity %s must use outer SNI: %v", legacy, key, values[i])
+			}
+		}
+		proxy := &tcpproxyv3.TcpProxy{}
+		if err := chain.GetFilters()[1].GetTypedConfig().UnmarshalTo(proxy); err != nil {
+			t.Fatal(err)
+		}
+		if proxy.GetCluster() != TLSProxyOriginate {
+			t.Errorf("TCP cluster = %q, want original-destination TLS", proxy.GetCluster())
+		}
+		clusters := messagesOf(t, resources, model.ClusterType, func() *clusterv3.Cluster { return &clusterv3.Cluster{} })
+		cluster := clusters[TLSProxyOriginate]
+		if cluster.GetType() != clusterv3.Cluster_ORIGINAL_DST {
+			t.Fatal("TCP must preserve the original destination address and port")
+		}
+		context := &tlsv3.UpstreamTlsContext{}
+		if err := cluster.GetTransportSocket().GetTypedConfig().UnmarshalTo(context); err != nil {
+			t.Fatal(err)
+		}
+		if alpn := context.GetCommonTlsContext().GetAlpnProtocols(); len(alpn) != 0 {
+			t.Errorf("TCP must not advertise HTTP ALPN: %v", alpn)
+		}
+	}
+}
+
 func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	resources, err := Build(Inputs{
@@ -287,7 +342,7 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 
 	for name, want := range map[string][]string{
 		MainInternal: {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.dynamic_modules"},
-		MainForward:  {"envoy.filters.listener.original_dst", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.http_inspector"},
+		MainForward:  {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector"},
 	} {
 		listener := listeners[name]
 		got := make([]string, 0, len(listener.GetListenerFilters()))
