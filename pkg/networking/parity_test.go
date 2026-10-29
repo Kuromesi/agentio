@@ -139,13 +139,6 @@ func TestSupportedGatewayListenerRouteParity(t *testing.T) {
 		t,
 		readNormalizedGatewayGolden(t, "testdata/agentio-egress-gateway.json"),
 	)
-	// The legacy listeners did not allow silent, server-first clients to reach
-	// TCP forwarding. Both inspection stages now bound that wait to one second.
-	for _, name := range []string{MainInternal, MainForward} {
-		listener := want[gatewayResourceKey(model.ListenerType, name)].(*listenerv3.Listener)
-		listener.ListenerFiltersTimeout = durationpb.New(time.Second)
-		listener.ContinueOnListenerFiltersTimeout = true
-	}
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
 		t.Fatalf("supported gateway listener/route differences:\n%s", strings.Join(diff, "\n"))
 	}
@@ -922,6 +915,11 @@ func displayGatewayResourceKey(key string) string {
 func TestLegacyGatewayGraphParity(t *testing.T) {
 	got := normalizeGatewayResources(buildGatewayGraph(t, true))
 	want := readNormalizedGatewayGolden(t, "testdata/agentio-supported-gateway.json")
+	// Timeout now closes connections for legacy gateways too; keep the frozen oracle intact.
+	for _, name := range []string{MainInternal, MainForward} {
+		listener := want[gatewayResourceKey(model.ListenerType, name)].(*listenerv3.Listener)
+		listener.ContinueOnListenerFiltersTimeout = false
+	}
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
 		t.Fatalf("legacy gateway compatibility regressed:\n%s", strings.Join(diff, "\n"))
 	}

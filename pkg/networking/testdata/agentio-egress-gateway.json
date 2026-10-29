@@ -1609,7 +1609,7 @@
           }
         ],
         "listenerFiltersTimeout": "1s",
-        "continueOnListenerFiltersTimeout": true,
+        "continueOnListenerFiltersTimeout": false,
         "trafficDirection": "INBOUND",
         "internalListener": {}
       }
@@ -2169,7 +2169,7 @@
           }
         ],
         "listenerFiltersTimeout": "1s",
-        "continueOnListenerFiltersTimeout": true,
+        "continueOnListenerFiltersTimeout": false,
         "trafficDirection": "INBOUND",
         "internalListener": {}
       }

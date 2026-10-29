@@ -259,10 +259,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFilters:    inspectorsHTTPFirst,
 		FilterChains:       internalChains,
 		FilterChainMatcher: internalChainMatcher,
-		// Server-first protocols cannot supply bytes until the TCP chain connects
-		// upstream. Bound inspection and let unclassified connections fall through.
+		// Close on timeout so delayed client bytes cannot bypass inspection.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
-		ContinueOnListenerFiltersTimeout: true,
+		ContinueOnListenerFiltersTimeout: false,
 	}
 	if features.EnableSNITrafficPolicy && !b.legacyGateway {
 		mainInternal.ListenerFilters = append(
@@ -295,9 +294,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 			},
 		},
 		FilterChainMatcher: b.protocolMatcher(b.toChain(forwardTCPChain)),
-		// Decrypted application traffic can also be server-first.
+		// Apply the same close-on-timeout behavior after TLS termination.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
-		ContinueOnListenerFiltersTimeout: true,
+		ContinueOnListenerFiltersTimeout: false,
 	}
 	for _, listener := range []*listenerv3.Listener{connect, mainInternal, mainForward} {
 		if config.telemetry != nil {

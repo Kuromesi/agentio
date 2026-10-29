@@ -346,21 +346,26 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	}
 }
 
-// A silent client must reach TCP forwarding after inspection expires, including
+// A silent client must be disconnected after inspection expires, including
 // when TLS termination or SNI policy changes the listener's matcher tree.
-func TestGatewayServerFirstFallback(t *testing.T) {
+func TestGatewayProtocolDetectionTimeoutClosesConnection(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
+		legacyGateway  bool
 		sniPolicy      bool
 		tlsTermination *configv1.TlsTerminationConfig
 	}{
 		{name: "passthrough"},
 		{name: "static TLS", tlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"*.example.com"}}},
 		{name: "SNI policy", sniPolicy: true},
+		{name: "legacy passthrough", legacyGateway: true},
+		{name: "legacy static TLS", legacyGateway: true, tlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"*.example.com"}}},
+		{name: "legacy SNI policy", legacyGateway: true, sniPolicy: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			test.SetForTest(t, &features.EnableSNITrafficPolicy, tc.sniPolicy)
 			resources, err := Build(Inputs{
+				LegacyGateway:    tc.legacyGateway,
 				DiscoveryAddress: "agentiod.agentio-system.svc:15012",
 				TrustDomain:      "cluster.local",
 				Gateway:          testGateway(&configv1.EgressGateway{TlsTermination: tc.tlsTermination}),
@@ -380,17 +385,16 @@ func TestGatewayServerFirstFallback(t *testing.T) {
 					timeout.AsDuration() != time.Second {
 					t.Errorf("%s inspection timeout = %v, want 1s", name, timeout)
 				}
-				if !listener.GetContinueOnListenerFiltersTimeout() {
-					t.Errorf("%s must continue after inspection times out", name)
+				if listener.GetContinueOnListenerFiltersTimeout() {
+					t.Errorf("%s must close the connection when inspection times out", name)
 				}
-				// No SNI, transport protocol, or application protocol was detected:
-				// follow the unmatched branch at each layer to the selected chain.
+				// Non-HTTP traffic that completes inspection retains TCP forwarding.
 				fallback := listener.GetFilterChainMatcher().GetOnNoMatch()
 				for fallback.GetMatcher() != nil {
 					fallback = fallback.GetMatcher().GetOnNoMatch()
 				}
 				if got := fallback.GetAction().GetName(); got != forwardTCPChain {
-					t.Fatalf("%s silent-client chain = %q, want %q", name, got, forwardTCPChain)
+					t.Fatalf("%s TCP fallback chain = %q, want %q", name, got, forwardTCPChain)
 				}
 				chain := findFilterChain(t, listener, forwardTCPChain)
 				if got := chain.GetFilters()[len(chain.GetFilters())-1].GetName(); got != "envoy.filters.network.tcp_proxy" {
