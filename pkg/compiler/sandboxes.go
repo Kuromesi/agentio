@@ -83,7 +83,12 @@ func compileSandbox(
 			return nil, fmt.Errorf("sandbox policies: %s", policies.InputError)
 		}
 		if policies.TrafficRules != nil {
-			traffic, err := policy.CompileTrafficPolicyRules(ctx, *policies.TrafficRules, sandbox.Namespace, trafficInputs)
+			traffic, err := policy.CompileTrafficPolicyRules(
+				ctx,
+				*policies.TrafficRules,
+				sandbox.Namespace,
+				trafficInputs,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("sandbox traffic rules: %w", err)
 			}

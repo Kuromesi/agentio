@@ -174,7 +174,11 @@ func TestSandboxInlineRemoval(t *testing.T) {
 	}
 	f.sandboxes.UpdateObject(sandbox)
 	waitSynced(t, f.compiler)
-	eventually(t, func() bool { return len(manifestAt(t, f.compiler, sandbox.UID).GetExtensions()) == 2 }, "initial inline policy")
+	eventually(
+		t,
+		func() bool { return len(manifestAt(t, f.compiler, sandbox.UID).GetExtensions()) == 2 },
+		"initial inline policy",
+	)
 	sandbox.Policies = nil
 	f.sandboxes.UpdateObject(sandbox)
 	eventually(t, func() bool {
@@ -248,7 +252,11 @@ func TestSandboxTrafficFailureRetainsCompleteResult(t *testing.T) {
 		},
 	}
 	f.sandboxes.UpdateObject(sandbox)
-	eventually(t, func() bool { return f.compiler.Failures()["SandboxPolicies/"+sandbox.UID] != "" }, "traffic failure recorded")
+	eventually(
+		t,
+		func() bool { return f.compiler.Failures()["SandboxPolicies/"+sandbox.UID] != "" },
+		"traffic failure recorded",
+	)
 	after, found := currentSnapshot(t, f.compiler).Get(sandbox.SourceKey())
 	if !found || after.Hash != before.Hash {
 		t.Fatal("failed traffic rules partially published new security rules")

@@ -279,7 +279,8 @@ func TestRegistrySandboxPolicies(t *testing.T) {
 			}
 			eventually(t, func() bool {
 				current := r.Sandboxes.GetKey("kruise:sandbox-id")
-				return current != nil && current.Policies != nil && current.Policies.InputError != "" && r.SecurityProfiles.GetKey(sharedKey) != nil
+				return current != nil && current.Policies != nil && current.Policies.InputError != "" &&
+					r.SecurityProfiles.GetKey(sharedKey) != nil
 			}, "invalid annotation remains an observed failed input without removing Sandbox identity")
 		})
 	}

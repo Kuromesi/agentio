@@ -63,7 +63,12 @@ func TestSandboxResourceVersionDoesNotChangeModel(t *testing.T) {
 		synctest.Wait()
 		after := sandboxes.GetKey("kruise:delivery")
 		if after == nil || !before.Equals(*after) || updates != 0 {
-			t.Fatalf("resourceVersion-only update changed Sandbox model: updates=%d, before=%+v, after=%+v", updates, before, after)
+			t.Fatalf(
+				"resourceVersion-only update changed Sandbox model: updates=%d, before=%+v, after=%+v",
+				updates,
+				before,
+				after,
+			)
 		}
 	})
 }

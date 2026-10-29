@@ -55,11 +55,16 @@ func TestCompilerOptionalSandboxInputs(t *testing.T) {
 								Policies: &model.SandboxPolicies{
 									TrafficRules: &model.TrafficPolicyRules{
 										Egress: &agentsv1alpha1.TrafficPolicyDirection{
-											Rules: []agentsv1alpha1.TrafficPolicyRule{{Action: agentsv1alpha1.RuleActionAllow}},
+											Rules: []agentsv1alpha1.TrafficPolicyRule{
+												{Action: agentsv1alpha1.RuleActionAllow},
+											},
 										},
 									},
 									SecurityRules: []agentsv1alpha1.SecurityRule{
-										{Name: "secret", Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}}},
+										{
+											Name:  "secret",
+											Match: []agentsv1alpha1.RuleMatch{{Domains: []string{"actor.example.com"}}},
+										},
 									},
 								},
 							},

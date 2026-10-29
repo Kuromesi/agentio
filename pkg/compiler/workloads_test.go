@@ -639,7 +639,13 @@ func TestWorkloadInlineSNIPolicyLifecycle(t *testing.T) {
 		securityProfiles: payloads.AsCollection(),
 		trafficPolicies:  krt.NewStaticCollection[policy.CompiledTrafficPolicy](nil, nil, options("traffic")...),
 	}
-	compatibility := newWorkloadPolicies(inputs, policies, krt.NewStaticCollection[compiledSandbox](nil, nil, options("compiled-sandboxes")...), failures, options)
+	compatibility := newWorkloadPolicies(
+		inputs,
+		policies,
+		krt.NewStaticCollection[compiledSandbox](nil, nil, options("compiled-sandboxes")...),
+		failures,
+		options,
+	)
 	metadata := krt.NewStatic[workloadMetadataConfiguration](nil, true, options("metadata")...)
 	resolved := newWorkloadResources(inputs, newBaseIndexes(inputs), metadata,
 		compatibility, failures, options)
