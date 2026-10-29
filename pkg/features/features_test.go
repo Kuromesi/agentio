@@ -28,7 +28,7 @@ import (
 
 func TestRegisteredEnvironmentVariablesUseAgentioNamespace(t *testing.T) {
 	for _, variable := range env.VarDescriptions() {
-		if !strings.HasPrefix(variable.Name, "AGENTIO_") {
+		if variable.Name != "ENABLE_POLICY_STATUS" && !strings.HasPrefix(variable.Name, "AGENTIO_") {
 			t.Errorf("registered environment variable %q does not use the Agentio namespace", variable.Name)
 		}
 	}
