@@ -25,6 +25,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/mitm"
 	"github.com/openkruise/agentio/pkg/xds"
@@ -37,7 +38,10 @@ func TestWithTrafficPolicySourceReplacesCollection(t *testing.T) {
 	source := krt.NewStaticCollection[model.TrafficPolicy](nil, []model.TrafficPolicy{policy}, krt.WithStop(stop))
 
 	composition := applyOptions([]Option{WithTrafficPolicySource(source)})
-	resolved, err := applySourceCollectionTransforms(testSourceCollections(stop), composition.sourceCollectionTransforms)
+	resolved, err := applySourceCollectionTransforms(
+		testSourceCollections(stop),
+		composition.sourceCollectionTransforms,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,8 +61,13 @@ func TestSourceCollectionsApplyTransformsInOrder(t *testing.T) {
 
 	got, err := applySourceCollectionTransforms(defaults, []SourceCollectionsTransform{
 		func(sources SourceCollections) (SourceCollections, error) {
-			sources.Sandboxes = krt.JoinCollection(
-				[]krt.Collection[model.Sandbox]{sources.Sandboxes, extraSandboxes}, krt.WithStop(stop))
+			sources.Sandboxes = registry.JoinSources(
+				[]*registry.Source[model.Sandbox]{
+					sources.Sandboxes,
+					registry.NewSource(extraSandboxes),
+				},
+				krt.WithStop(stop),
+			)
 			return sources, nil
 		},
 		func(sources SourceCollections) (SourceCollections, error) {
@@ -133,7 +142,11 @@ func TestSourceCollectionsRejectMissingTelemetrySources(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := applySourceCollectionTransforms(testSourceCollections(stop), []SourceCollectionsTransform{transform}); err == nil || !strings.Contains(err.Error(), "Telemetry") {
+			if _, err := applySourceCollectionTransforms(
+				testSourceCollections(stop),
+				[]SourceCollectionsTransform{transform},
+			); err == nil ||
+				!strings.Contains(err.Error(), "Telemetry") {
 				t.Fatalf("missing Telemetry source error = %v", err)
 			}
 		})
@@ -143,12 +156,12 @@ func TestSourceCollectionsRejectMissingTelemetrySources(t *testing.T) {
 func testSourceCollections(stop <-chan struct{}) SourceCollections {
 	options := []krt.CollectionOption{krt.WithStop(stop)}
 	return SourceCollections{
-		Sandboxes: krt.NewStaticCollection[model.Sandbox](
+		Sandboxes: registry.NewSource(krt.NewStaticCollection[model.Sandbox](
 			nil,
 			[]model.Sandbox{
 				{UID: "sandbox-1", Attester: &model.Attester{WorkloadUID: "cluster//Pod/default/pod-1"}},
 			},
-			options...),
+			options...)),
 		Workloads: krt.NewStaticCollection[model.Workload](nil,
 			[]model.Workload{{
 				UID:       "cluster//Pod/default/pod-1",
@@ -184,7 +197,7 @@ func TestWithScopeFuncRegistersAndRequiresKubernetes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeScopeFuncs() returned error: %v", err)
 	}
-	scope, err := merged.ResolveScope(nil, model.PeerIdentity{AttestedBy: fakeAttestation})
+	scope, err := merged.ResolveScope(t.Context(), nil, model.PeerIdentity{AttestedBy: fakeAttestation})
 	if err != nil || scope != fakeScope {
 		t.Fatalf("registered scope function not effective: scope=%#v err=%v", scope, err)
 	}
@@ -192,13 +205,19 @@ func TestWithScopeFuncRegistersAndRequiresKubernetes(t *testing.T) {
 	// Overriding Kubernetes with nil removes the mandatory entry and must fail
 	// construction rather than fail open at runtime.
 	overridden := applyOptions([]Option{WithScopeFunc(model.AttestationKubernetes, nil)})
-	if _, err := mergeScopeFuncs(xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc}, overridden.scopeFuncs); err == nil {
+	if _, err := mergeScopeFuncs(
+		xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc},
+		overridden.scopeFuncs,
+	); err == nil {
 		t.Fatal("missing kubernetes scope function passed construction")
 	}
 
 	// Any nil registration is a construction error, never a runtime fail-open.
 	nilEntry := applyOptions([]Option{WithScopeFunc(fakeAttestation, nil)})
-	if _, err := mergeScopeFuncs(xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc}, nilEntry.scopeFuncs); err == nil {
+	if _, err := mergeScopeFuncs(
+		xds.ScopeFuncs{model.AttestationKubernetes: kubernetesFunc},
+		nilEntry.scopeFuncs,
+	); err == nil {
 		t.Fatal("nil scope function registration passed construction")
 	}
 }
@@ -288,4 +307,41 @@ func (a *countingAuthenticator) Authenticate(context.Context) (model.PeerIdentit
 func (a appendedAuthenticator) Authenticate(context.Context) (model.PeerIdentity, error) {
 	*a.called = true
 	return model.PeerIdentity{AttestedBy: attestationFirecracker}, nil
+}
+
+func TestSourceReplacementCarriesObservedState(t *testing.T) {
+	defaults := testSourceCollections(t.Context().Done())
+	old := model.Sandbox{
+		UID:            "old",
+		Namespace:      "demo",
+		SourceIdentity: model.SourceIdentity{UID: "old"},
+	}
+	defaults.Sandboxes = registry.NewSource(
+		krt.NewStaticCollection(nil, []model.Sandbox{old}, krt.WithStop(t.Context().Done())),
+	)
+	replacement := model.Sandbox{
+		UID:            "new",
+		Namespace:      "demo",
+		SourceIdentity: model.SourceIdentity{UID: "new"},
+	}
+	objects := krt.NewMutableCollection(nil, []model.Sandbox{replacement}, krt.WithStop(t.Context().Done()))
+	options := applyOptions([]Option{WithSourceCollections(func(sources SourceCollections) (SourceCollections, error) {
+		sources.Sandboxes = registry.NewSource(objects.AsCollection())
+		return sources, nil
+	})})
+	resolved, err := applySourceCollectionTransforms(defaults, options.sourceCollectionTransforms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := resolved.Sandboxes.Registry
+	if got, found := sources.Lookup(replacement.SourceKey()); !found || got != replacement.SourceIdentity {
+		t.Fatalf("replacement source missing: %v, %v", got, found)
+	}
+	if _, found := sources.Lookup(old.SourceKey()); found {
+		t.Fatal("replaced source remained in lookup")
+	}
+	objects.DeleteObject(replacement.ResourceName())
+	if _, found := sources.Lookup(replacement.SourceKey()); found {
+		t.Fatal("replacement deletion not visible")
+	}
 }

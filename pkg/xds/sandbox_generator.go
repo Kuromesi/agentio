@@ -26,10 +26,12 @@ import (
 // SandboxGenerator serves bindings and inline rules from one immutable
 // publication. Scope is recomputed from Sandbox attesters, never from a UID claimed
 // in a subscribe request. Gateways retain their existing cluster discovery scope.
-type SandboxGenerator struct{}
+type SandboxGenerator struct {
+	Source model.SourceReader
+}
 
 // Generate returns the Sandbox delta visible to the authenticated client scope.
-func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
+func (g SandboxGenerator) Generate(ctx context.Context, request GenerationRequest) (GeneratedDelta, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedDelta{}, err
 	}
@@ -38,11 +40,22 @@ func (SandboxGenerator) Generate(ctx context.Context, request GenerationRequest)
 	}
 	if request.Full || request.Update.FullFor(request.TypeURL) {
 		selected := selectSandboxResources(request.Scope, request.Snapshot, request.TypeURL, request.Subscription)
-		return diffSubscribed(request.Subscription, selected, request.SubscribedNames), nil
+		for name, resource := range selected {
+			if !matchesSource(resource, g.Source) {
+				delete(selected, name)
+			}
+		}
+		delta := diffSubscribed(request.Subscription, selected, request.SubscribedNames)
+		deferUnpublishedRemovals(request, &delta, g.Source)
+		return delta, nil
 	}
 	return generateIncremental(request, func(resource model.Resource) bool {
 		return request.Subscription.allows(resource) &&
-			sandboxResourceVisible(request.Scope, request.Snapshot, resource)
+			sandboxResourceVisible(
+				request.Scope,
+				request.Snapshot,
+				resource,
+			) && matchesSource(resource, g.Source)
 	}, nil), nil
 }
 

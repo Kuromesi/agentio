@@ -15,6 +15,7 @@
 package kubernetes
 
 import (
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -426,5 +427,60 @@ func gatewayTestService(namespace, name string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
 		Spec:       corev1.ServiceSpec{Selector: map[string]string{"member": name}},
+	}
+}
+
+// Local cache lag may be retried, but stale or invalid ownership must not be.
+func TestResolveScopeDistinguishesPendingFromDenied(t *testing.T) {
+	peer := model.PeerIdentity{
+		AttestedBy: model.AttestationKubernetes,
+		Kubernetes: model.KubernetesPeer{
+			Namespace:      "demo",
+			ServiceAccount: "worker",
+			WorkloadName:   "worker",
+			WorkloadUID:    "pod-uid",
+		},
+	}
+	for _, tt := range []struct {
+		name    string
+		missing bool
+		mutate  func(*corev1.Pod)
+		pending bool
+	}{
+		{name: "Pod not observed", missing: true, pending: true},
+		{name: "Workload not computed", pending: true},
+		{name: "replacement Pod", mutate: func(p *corev1.Pod) { p.UID = "replacement" }},
+		{name: "different service account", mutate: func(p *corev1.Pod) { p.Spec.ServiceAccountName = "other" }},
+		{
+			name: "deleted Pod",
+			mutate: func(p *corev1.Pod) {
+				now := metav1.Now()
+				p.DeletionTimestamp = &now
+			},
+		},
+		{name: "completed Pod", mutate: func(p *corev1.Pod) { p.Status.Phase = corev1.PodSucceeded }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "demo", Name: "worker", UID: "pod-uid"},
+				Spec:       corev1.PodSpec{ServiceAccountName: "worker"},
+			}
+			if tt.mutate != nil {
+				tt.mutate(pod)
+			}
+			var pods []*corev1.Pod
+			if !tt.missing {
+				pods = append(pods, pod)
+			}
+			resolver := &PodScopeResolver{
+				pods:      krt.NewStaticCollection(nil, pods, krt.WithStop(t.Context().Done())),
+				workloads: krt.NewStaticCollection[model.Workload](nil, nil, krt.WithStop(t.Context().Done())),
+				synced:    func() bool { return true },
+			}
+			_, err := resolver.ResolveScope(peer, "")
+			if err == nil || errors.Is(err, model.ErrScopeNotReady) != tt.pending {
+				t.Fatalf("ResolveScope() = %v, want pending=%t", err, tt.pending)
+			}
+		})
 	}
 }

@@ -54,6 +54,7 @@ func (p workloadPolicies) Equals(other workloadPolicies) bool {
 func newWorkloadPolicies(
 	inputs Inputs,
 	policies policyCollections,
+	compiledSandboxes krt.Collection[compiledSandbox],
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[workloadPolicies] {
@@ -70,8 +71,10 @@ func newWorkloadPolicies(
 			sandboxes := krt.Fetch(ctx, inputs.Sandboxes, krt.FilterIndex(sandboxesByWorkload, workload.UID))
 			// shortcut: only project a single Sandbox; shared hosts need Sandbox-aware consumers.
 			if len(sandboxes) == 1 {
-				if compiled := krt.FetchOne(ctx, policies.securityProfiles,
-					krt.FilterKey(model.SandboxSecurityProfileName(sandboxes[0].UID))); compiled != nil {
+				if compiled := krt.FetchOne(ctx, compiledSandboxes,
+					krt.FilterKey(sandboxes[0].UID)); compiled != nil &&
+					compiled.SourceIdentity.UID == sandboxes[0].SourceIdentity.UID &&
+					compiled.Payload.GetAttester().GetWorkloadUid() == workload.UID {
 					result.appendSNI(compiled.SNIPolicy)
 				}
 			}

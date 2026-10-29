@@ -49,7 +49,7 @@ func (r *Registry) PodScopeResolver(workloads krt.Collection[model.Workload]) *P
 
 func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string) (model.ClientScope, error) {
 	if !s.synced() {
-		return model.ClientScope{}, fmt.Errorf("registry is not synced")
+		return model.ClientScope{}, fmt.Errorf("registry is not synced: %w", model.ErrScopeNotReady)
 	}
 	pod, err := activeCallerPod(s.pods, peer)
 	if err != nil {
@@ -81,7 +81,7 @@ func (s *PodScopeResolver) ResolveScope(peer model.PeerIdentity, nodeName string
 		return model.ClientScope{Class: model.ClientSharedZTunnel, Source: source, NodeName: pod.Spec.NodeName}, nil
 	}
 	if workload == nil {
-		return model.ClientScope{}, fmt.Errorf("client Pod has no active Workload")
+		return model.ClientScope{}, fmt.Errorf("client Pod has no active Workload: %w", model.ErrScopeNotReady)
 	}
 	return model.ClientScope{
 		Class:       model.ClientDedicatedZTunnel,

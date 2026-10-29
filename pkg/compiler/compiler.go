@@ -26,7 +26,7 @@ import (
 )
 
 type Inputs struct {
-	// SandboxMode enables Sandbox resources and their dedicated inline policies.
+	// SandboxMode enables Sandbox resources and their Sandbox policies.
 	// Shared system policies remain on Workload resources in both modes.
 	SandboxMode   bool
 	ClusterID     string

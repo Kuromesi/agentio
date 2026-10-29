@@ -20,12 +20,64 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
+	"istio.io/istio/pkg/util/sets"
 
 	workloadv1 "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
 var _ Subscription = (*subscription)(nil)
+
+func TestNotificationsPreserveTypeSubscriptions(t *testing.T) {
+	store := New(newSnapshot(t))
+	subscriptions := map[string]Subscription{}
+	for name, types := range map[string][]string{
+		"address": {model.AddressType},
+		"cluster": {model.ClusterType},
+		"both":    {model.AddressType, model.ClusterType},
+		"secret":  {model.SecretType},
+	} {
+		sub := store.Subscribe(t.Context())
+		for _, typeURL := range types {
+			sub.Watch(typeURL)
+		}
+		subscriptions[name] = sub
+	}
+
+	// Single-type notifications after a union must not inherit subscribers
+	// from the other type, regardless of which index was borrowed first.
+	for _, test := range []struct {
+		name  string
+		types []string
+		want  []string
+	}{
+		{"unwatched", []string{model.RouteType}, nil},
+		{"union", []string{model.AddressType, model.ClusterType}, []string{"address", "cluster", "both"}},
+		{"address after union", []string{model.AddressType}, []string{"address", "both"}},
+		{"cluster after union", []string{model.ClusterType}, []string{"cluster", "both"}},
+		{"empty alias", []string{model.AddressType, model.WorkloadType}, []string{"address", "both"}},
+		{"all", nil, []string{"address", "cluster", "both", "secret"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store.mu.Lock()
+			store.notifyLocked(Update{full: true, fullTypes: sets.New(test.types...)})
+			store.mu.Unlock()
+			want := sets.New(test.want...)
+			for name, sub := range subscriptions {
+				select {
+				case <-sub.Updates():
+					if !want.Contains(name) {
+						t.Errorf("unexpected notification for %s", name)
+					}
+				default:
+					if want.Contains(name) {
+						t.Errorf("missing notification for %s", name)
+					}
+				}
+			}
+		})
+	}
+}
 
 // Publication returns the committed snapshot on every path, so Controller can
 // record metrics without racing a later Store commit by rereading it.
@@ -387,5 +439,35 @@ func TestSubscriberIsReleasedOnContextCancel(t *testing.T) {
 				return len(store.subscribers) == 0 && len(store.subscribersByType) == 0
 			}, "subscriber and watched-type index released after cancel")
 		})
+	}
+}
+
+func TestNotifyKeysBeforePublication(t *testing.T) {
+	store := New(newSnapshot(t))
+	version := store.Snapshot().Version()
+	subscription := store.Subscribe(t.Context())
+	subscription.Watch(model.SandboxType)
+	other := store.Subscribe(t.Context())
+	other.Watch(model.TrafficPolicyType)
+	for _, name := range []string{"pending-a", "pending-b", "pending-a"} {
+		store.NotifyKeys([]model.ResourceKey{{TypeURL: model.SandboxType, Name: name}})
+	}
+	select {
+	case update := <-subscription.Updates():
+		candidates := update.Candidates(model.SandboxType)
+		if update.FullFor(model.SandboxType) || len(candidates) != 2 ||
+			candidates[0].Key.Name != "pending-a" || candidates[1].Key.Name != "pending-b" {
+			t.Fatalf("source invalidations were lost or broadened: %+v", update)
+		}
+	default:
+		t.Fatal("source deletion did not wake subscriber")
+	}
+	select {
+	case <-other.Updates():
+		t.Fatal("source deletion woke unrelated resource type")
+	default:
+	}
+	if store.Snapshot().Version() != version || len(store.Snapshot().List(model.SandboxType)) != 0 {
+		t.Fatal("source invalidation modified published snapshot")
 	}
 }

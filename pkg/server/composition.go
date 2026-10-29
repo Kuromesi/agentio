@@ -20,6 +20,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/mitm"
 	"github.com/openkruise/agentio/pkg/util/nilutil"
@@ -40,7 +41,7 @@ type composition struct {
 // SourceCollections is the registry input boundary consumed by DNS and the
 // compiler.
 type SourceCollections struct {
-	Sandboxes                  krt.Collection[model.Sandbox]
+	Sandboxes                  *registry.Source[model.Sandbox]
 	Workloads                  krt.Collection[model.Workload]
 	Services                   krt.Collection[model.Service]
 	Endpoints                  krt.Collection[model.Endpoint]
@@ -131,7 +132,7 @@ func applySourceCollectionTransforms(
 
 func validateSourceCollections(sources SourceCollections) error {
 	switch {
-	case nilutil.IsNilInterface(sources.Sandboxes):
+	case sources.Sandboxes == nil || sources.Sandboxes.Collection == nil || sources.Sandboxes.Registry == nil:
 		return fmt.Errorf("sandbox source collection is required")
 	case nilutil.IsNilInterface(sources.Workloads):
 		return fmt.Errorf("workload source collection is required")
@@ -158,7 +159,10 @@ func validateSourceCollections(sources SourceCollections) error {
 	}
 }
 
-func mergeAuthenticators(defaults attestation.AuthenticatorChain, registered []attestation.Authenticator) attestation.AuthenticatorChain {
+func mergeAuthenticators(
+	defaults attestation.AuthenticatorChain,
+	registered []attestation.Authenticator,
+) attestation.AuthenticatorChain {
 	merged := make(attestation.AuthenticatorChain, 0, len(registered)+len(defaults))
 	merged = append(merged, registered...)
 	merged = append(merged, defaults...)
@@ -180,7 +184,9 @@ func mergeScopeFuncs(defaults, overrides xds.ScopeFuncs) (xds.ScopeFuncs, error)
 	return merged, nil
 }
 
-func mergeDelegatedAuthorizers(defaults, overrides attestation.DelegatedIdentityAuthorizers) attestation.DelegatedIdentityAuthorizers {
+func mergeDelegatedAuthorizers(
+	defaults, overrides attestation.DelegatedIdentityAuthorizers,
+) attestation.DelegatedIdentityAuthorizers {
 	merged := make(attestation.DelegatedIdentityAuthorizers, len(defaults)+len(overrides))
 	maps.Copy(merged, defaults)
 	maps.Copy(merged, overrides)

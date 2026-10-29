@@ -27,7 +27,7 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
-// CompiledTrafficPolicy contains native rules and their optional shared attachment.
+// CompiledTrafficPolicy contains native rules and their shared-policy attachment.
 type CompiledTrafficPolicy struct {
 	CompiledPolicy[*securityv1.TrafficPolicy]
 
@@ -42,29 +42,12 @@ func (p CompiledTrafficPolicy) Equals(other CompiledTrafficPolicy) bool {
 }
 
 // CompileTrafficPolicy preserves rule actions and both directions in one
-// payload. Shared policies use attachments; dedicated policies are fetched by their Sandbox.
+// payload with shared-policy attachment metadata.
 func CompileTrafficPolicy(
 	ctx krt.HandlerContext,
 	source model.TrafficPolicy,
 	inputs TrafficPolicyInputs,
 ) (*CompiledTrafficPolicy, error) {
-	if source.Dedicated {
-		if strings.TrimSpace(source.SandboxUID) == "" {
-			return nil, fmt.Errorf("dedicated traffic policy requires a Sandbox UID")
-		}
-		payload, err := CompileTrafficPolicyRules(ctx, model.TrafficPolicyRules{
-			Ingress: source.Spec.Ingress,
-			Egress:  source.Spec.Egress,
-		}, source.Namespace, inputs)
-		if err != nil {
-			return nil, err
-		}
-		return &CompiledTrafficPolicy{CompiledPolicy: CompiledPolicy[*securityv1.TrafficPolicy]{
-			Name:   source.ResourceName(),
-			Policy: payload,
-		}}, nil
-	}
-
 	selector, err := metav1.LabelSelectorAsSelector(&source.Spec.Selector)
 	if err != nil {
 		return nil, err

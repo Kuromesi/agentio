@@ -70,6 +70,7 @@ func trafficPolicyModel(
 		namespace = ""
 	}
 	return &model.TrafficPolicy{
+		UID:          string(metadata.UID),
 		Name:         metadata.Name,
 		Namespace:    namespace,
 		Global:       global,
@@ -88,6 +89,7 @@ func securityProfileModel(
 		namespace = ""
 	}
 	return &model.SecurityProfile{
+		UID:          string(metadata.UID),
 		Name:         metadata.Name,
 		Namespace:    namespace,
 		Global:       global,

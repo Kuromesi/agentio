@@ -158,7 +158,10 @@ func activeCallerPod(pods krt.Collection[*corev1.Pod], caller model.PeerIdentity
 		return nil, fmt.Errorf("a Pod-bound token is required")
 	}
 	pod := pods.GetKey(evidence.Namespace + "/" + evidence.WorkloadName)
-	if pod == nil || string((*pod).UID) != evidence.WorkloadUID ||
+	if pod == nil {
+		return nil, fmt.Errorf("bound Pod not yet observed: %w", model.ErrScopeNotReady)
+	}
+	if string((*pod).UID) != evidence.WorkloadUID ||
 		(*pod).Spec.ServiceAccountName != evidence.ServiceAccount ||
 		(*pod).DeletionTimestamp != nil ||
 		(*pod).Status.Phase == corev1.PodFailed ||

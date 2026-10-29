@@ -119,7 +119,9 @@ func (c *Controller) takePending() (bool, []model.ResourceChange) {
 	for _, change := range c.changes {
 		changes = append(changes, change)
 	}
-	clear(c.changes)
+	// Drop the drained map: retaining a large initial batch's capacity makes
+	// subsequent sparse drains scan that capacity on every publication.
+	c.changes = make(map[model.ResourceKey]model.ResourceChange)
 	return full, changes
 }
 

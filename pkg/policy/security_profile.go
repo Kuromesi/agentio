@@ -16,7 +16,6 @@ package policy
 
 import (
 	"fmt"
-	"strings"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	"google.golang.org/protobuf/proto"
@@ -61,18 +60,16 @@ func CompileSecurityProfile(profile model.SecurityProfile) (*CompiledSecurityPro
 	if err != nil {
 		return nil, fmt.Errorf("security profile %s: %w", profile.ResourceName(), err)
 	}
-	return &CompiledSecurityProfile{Name: profile.ResourceName(), Attachment: attachment, SNIPolicy: payload}, nil
+	return &CompiledSecurityProfile{
+		Name:       profile.ResourceName(),
+		Attachment: attachment,
+		SNIPolicy:  payload,
+	}, nil
 }
 
 // SecurityProfileAttachment selects shared profiles independently of their
-// rules or SNI projection. Dedicated profiles bind only to their owning Sandbox.
+// rules or SNI projection. Sandbox rules use their aggregate compilation path.
 func SecurityProfileAttachment(profile model.SecurityProfile) (*PolicyAttachment, error) {
-	if profile.Dedicated {
-		if strings.TrimSpace(profile.SandboxUID) == "" {
-			return nil, fmt.Errorf("dedicated security profile requires a Sandbox UID")
-		}
-		return nil, nil
-	}
 	priority := agentsv1alpha1.DefaultSecurityProfilePriority
 	if profile.Spec.Priority != nil {
 		priority = *profile.Spec.Priority

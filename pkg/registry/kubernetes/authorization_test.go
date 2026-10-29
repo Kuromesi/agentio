@@ -29,6 +29,7 @@ import (
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 )
 
@@ -344,9 +345,9 @@ func TestCertificateRolesUseRegistryMembership(t *testing.T) {
 		nil,
 		Options{EnableKruise: true},
 	)
-	r.Sandboxes = krt.NewStaticCollection[model.Sandbox](nil, []model.Sandbox{
+	r.Sandboxes = registry.NewSource(krt.NewStaticCollection[model.Sandbox](nil, []model.Sandbox{
 		{UID: "kruise:sandbox", Namespace: app.Namespace, Attester: &model.Attester{WorkloadUID: "test//Pod/demo/app"}},
-	})
+	}))
 	auth := r.DelegatedIdentityAuthorizer()
 	resolve := func(p *corev1.Pod) attestation.WorkloadIdentity {
 		t.Helper()

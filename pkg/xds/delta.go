@@ -225,6 +225,9 @@ func (s *Server) pushUpdate(
 		}, false); err != nil {
 			return err
 		}
+		if err := s.pushPendingConfigs(stream, scope, connLog, typeURL, watch, snapshot, update); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -325,6 +328,12 @@ func (s *Server) sendGeneratedDelta(
 		removed = nil
 	}
 	applyGenerationOutcomes(watch, request.Scope, connLog, delta)
+	if len(delta.pending) > 0 {
+		if watch.pending == nil {
+			watch.pending = sets.New[string]()
+		}
+		watch.pending.InsertAll(delta.pending...)
+	}
 	if len(resources) == 0 && len(removed) == 0 && !force {
 		return nil
 	}
@@ -345,6 +354,12 @@ func (s *Server) sendGeneratedDelta(
 		metrics.Default.RecordXDSPushFailure(metrics.XDSPushFailureSend, request.TypeURL)
 		logPushFailure(connLog, "send", request.TypeURL, started, err)
 		return err
+	}
+	for _, name := range removed {
+		watch.pending.Delete(name)
+	}
+	for _, resource := range resources {
+		watch.pending.Delete(resource.Name)
 	}
 	duration := time.Since(started)
 	metrics.Default.RecordXDSPush(duration, len(resources)+len(removed), sizeBytes)

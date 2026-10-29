@@ -21,6 +21,8 @@ import (
 	"sort"
 	"time"
 
+	"istio.io/istio/pkg/util/sets"
+
 	"github.com/openkruise/agentio/pkg/model"
 	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
@@ -47,9 +49,9 @@ type GenerationRequest struct {
 	// Full selects the snapshot diff path instead of indexed update generation.
 	// It is set for initial reads, new subscriptions, and full-rebuild updates.
 	Full bool
-	// SubscribedNames is the immutable set of names explicitly subscribed by
-	// this Delta request. Server-driven refreshes and unsubscribe-only requests
-	// leave it empty.
+	// SubscribedNames contains explicit initial demands, including deferred
+	// demands rechecked after a source notification. Other server refreshes
+	// and unsubscribe-only requests leave it empty.
 	SubscribedNames []string
 }
 
@@ -64,6 +66,8 @@ type generatedDenial struct {
 type GeneratedDelta struct {
 	Resources []model.Resource
 	Removed   []string
+	// pending retains initial demands whose source exists but is not published.
+	pending []string
 
 	// expiresAt is converted to a remaining TTL at send time. Expired resources
 	// become removals instead of being sent with stale certificate contents.
@@ -100,16 +104,28 @@ func diffSubscribed(
 	subscribedNames []string,
 ) GeneratedDelta {
 	delta := diffSelected(subscription, selected)
+	if len(subscribedNames) == 0 {
+		return delta
+	}
+	// Reconnects can replay the entire interest set. Index the diff once rather
+	// than scanning a growing response for every explicitly subscribed name.
+	resourceNames := sets.NewWithLength[string](len(delta.Resources))
+	for _, resource := range delta.Resources {
+		resourceNames.Insert(resource.XDSName)
+	}
+	removedNames := sets.New(delta.Removed...)
 	for _, name := range subscribedNames {
 		if name == "*" {
 			continue
 		}
 		if resource, ok := selected[name]; ok {
-			if !slices.ContainsFunc(delta.Resources, func(r model.Resource) bool { return r.XDSName == name }) {
+			if !resourceNames.Contains(name) {
 				delta.Resources = append(delta.Resources, resource)
+				resourceNames.Insert(resource.XDSName)
 			}
-		} else if !slices.Contains(delta.Removed, name) {
+		} else if !removedNames.Contains(name) {
 			delta.Removed = append(delta.Removed, name)
+			removedNames.Insert(name)
 		}
 	}
 	return delta

@@ -111,45 +111,22 @@ func newSandboxes(
 			if pod != nil && pod.DeletionTimestamp == nil && podsource.IsEligible(pod) {
 				attester = &model.Attester{WorkloadUID: podsource.WorkloadUID(clusterID, pod)}
 			}
+			var policies *model.SandboxPolicies
+			if sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules] != "" {
+				rules, err := sandboxSecurityRules(sandbox)
+				policies = &model.SandboxPolicies{SecurityRules: rules}
+				if err != nil {
+					policies.InputError = err.Error()
+				}
+			}
 			return &model.Sandbox{
-				Attester:  attester,
-				UID:       group.Key,
-				Namespace: sandbox.Namespace,
+				SourceIdentity: model.SourceIdentity{UID: string(sandbox.UID)},
+				Policies:       policies,
+				Attester:       attester,
+				UID:            group.Key,
+				Namespace:      sandbox.Namespace,
 			}
 		}, options...)
-}
-
-// newSecurityProfiles projects owned policy inputs independently of runtime metadata.
-func newSecurityProfiles(
-	sandboxes krt.IndexCollection[string, *agentsv1alpha1.Sandbox],
-	options ...krt.CollectionOption,
-) krt.Collection[model.SecurityProfile] {
-	return krt.NewCollection(
-		sandboxes,
-		func(ctx krt.HandlerContext, group krt.IndexObject[string, *agentsv1alpha1.Sandbox]) *model.SecurityProfile {
-			if len(group.Objects) != 1 || !isPolicySubject(group.Objects[0]) {
-				return nil
-			}
-			sandbox := group.Objects[0]
-			rules, err := sandboxSecurityRules(sandbox)
-			if err != nil {
-				log.Warn("invalid Sandbox security rules; retaining previous inline profile",
-					"namespace", sandbox.Namespace, "sandbox", sandbox.Name, "error", err)
-				ctx.DiscardResult()
-				return nil
-			}
-			if len(rules) == 0 {
-				return nil
-			}
-			return &model.SecurityProfile{
-				Dedicated:  true,
-				SandboxUID: group.Key,
-				Namespace:  sandbox.Namespace,
-				Name:       sandbox.Name,
-				Spec:       agentsv1alpha1.SecurityProfileSpec{Rules: rules},
-			}
-		},
-		options...)
 }
 
 func sandboxSecurityRules(sandbox *agentsv1alpha1.Sandbox) ([]agentsv1alpha1.SecurityRule, error) {

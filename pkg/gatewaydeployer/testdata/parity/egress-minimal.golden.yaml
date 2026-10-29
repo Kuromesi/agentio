@@ -175,8 +175,8 @@ spec:
           - --cluster-id=test-cluster
           - --grpc-port=9002
           - --grpc-health-port=9003
-          - --xds-cache-idle-ttl=1m
-          - --xds-cache-max-entries=10000
+          - --xds-cache-idle-ttl=10m
+          - --xds-cache-max-entries=0
         env:
           - name: POD_NAME
             valueFrom: {fieldRef: {fieldPath: metadata.name}}

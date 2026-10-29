@@ -85,7 +85,7 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 | <code>AGENTIO_INJECTION_WEBHOOK_CONFIG_NAME</code> | String | empty | Agentio MutatingWebhookConfiguration whose caBundle is kept in sync with the workload root. |
 | <code>AGENTIO_INJECTOR_CONFIGMAP_NAME</code> | String | <code>agentio-sidecar-injector</code> | ConfigMap carrying the ztunnel and egress-gateway templates and their shared values. |
 | <code>AGENTIO_KEEPALIVE_MAX_SERVER_CONNECTION_AGE</code> | String | <code>30m</code> | Maximum lifetime of a server-side gRPC connection before a graceful close. Zero disables periodic connection expiry. |
-| <code>AGENTIO_KRT_DEBOUNCE</code> | Duration | <code>200ms</code> | Quiet period before TrafficPolicy and SecurityProfile events are distributed, including Sandbox inline policies; other resources are not debounced. |
+| <code>AGENTIO_KRT_DEBOUNCE</code> | Duration | <code>200ms</code> | Quiet period before platform TrafficPolicy and SecurityProfile events are distributed; Sandbox inputs and their embedded policies are not debounced. |
 | <code>AGENTIO_KRT_DEBOUNCE_MAX</code> | Duration | <code>1s</code> | Maximum wait for policy event distribution during continuous policy updates. |
 | <code>AGENTIO_KUBERNETES_API_BURST</code> | Integer | <code>160</code> | Client-side Kubernetes API request burst. Must be positive. |
 | <code>AGENTIO_KUBERNETES_API_QPS</code> | Floating-point | <code>80</code> | Client-side Kubernetes API requests per second. Must be finite and positive. |
@@ -140,6 +140,10 @@ agentiod:
 These settings configure client-side throttling, not the Kubernetes API server's limits or a single aggregate budget shared by all clientsets and replicas. Higher settings allow more API traffic; choose values appropriate for the API server's capacity.
 
 `AGENTIO_MAX_REQUESTS_PER_SECOND` separately limits **new xDS streams** before authentication. Its default is `min(15 + 5 * GOMAXPROCS, 100)`, with a burst of 1 and up to 1 second of waiting before rejection. An explicit positive value overrides that default; zero selects the automatic default. This limit does not throttle ACKs on established streams or server-initiated configuration pushes, and increasing it does not fix slow-client push accumulation.
+
+After authentication, a stream can wait up to 5 seconds for its bound Pod and derived Workload to appear in local caches. This performs local key lookups, not additional API requests. A timeout returns `DeadlineExceeded`; identity mismatches still return `PermissionDenied` immediately. No configuration is sent before scope resolution completes.
+
+For large clusters, provision control-plane CPU, memory, and replicas, and configure the existing stream-admission and Kubernetes API limits to match the measured capacity of the deployment.
 
 ## Shared Secret informer
 

@@ -15,6 +15,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -121,6 +122,9 @@ func validIdentitySegment(value string) bool {
 	}
 	return true
 }
+
+// ErrScopeNotReady means authenticated ownership cannot yet be resolved from local state.
+var ErrScopeNotReady = errors.New("client scope is not ready")
 
 type ClientScope struct {
 	// WorkloadUID + Source bind a dedicated stream to its authenticated

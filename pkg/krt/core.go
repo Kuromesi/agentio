@@ -19,6 +19,7 @@ import (
 	"cmp"
 
 	"istio.io/istio/pkg/slices"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openkruise/agentio/pkg/kube/controllers"
 	agentlog "github.com/openkruise/agentio/pkg/log"
@@ -215,6 +216,7 @@ type HandlerContext interface {
 	// This allows a collection to mark that the current state is *invalid* and should use the last-known state.
 	//
 	// Note: this differs from returning `nil`, which would otherwise wipe out the last known state.
+	// For inputs implementing UIDer, the last known state is retained only within the same object UID.
 	//
 	// Note: if the current resource has never been computed, the result will not be discarded if it is non-nil. This allows
 	// setting a default. For example, you may always return a static default config if the initial results are invalid,
@@ -255,6 +257,13 @@ type Key[O any] string
 // If implemented, this can be used to determine the Key for an object
 type ResourceNamer interface {
 	ResourceName() string
+}
+
+// UIDer identifies a source object's lifetime independently of its collection key.
+// It matches Kubernetes objects' GetUID method. DiscardResult cannot retain output
+// from a different UID. Inputs without this interface retain the usual key-based behavior.
+type UIDer interface {
+	GetUID() types.UID
 }
 
 // Equaler is an optional interface that can be implemented by collection types.

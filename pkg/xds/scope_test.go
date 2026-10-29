@@ -15,8 +15,12 @@
 package xds
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -66,7 +70,7 @@ func TestScopeFuncsDispatchesByAuthenticatedAttestation(t *testing.T) {
 		Kubernetes: model.KubernetesPeer{Namespace: "agentio-system", ServiceAccount: "ztunnel"},
 	}
 
-	scope, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer)
+	scope, err := scopeFuncs.ResolveScope(t.Context(), &corev3.Node{}, peer)
 	if err != nil {
 		t.Fatalf("kubernetes scope rejected: %v", err)
 	}
@@ -77,13 +81,15 @@ func TestScopeFuncsDispatchesByAuthenticatedAttestation(t *testing.T) {
 
 func TestScopeFuncsFailsClosedForUnregisteredAttestation(t *testing.T) {
 	calls := 0
-	scopeFuncs := ScopeFuncs{model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
-		calls++
-		return model.ClientScope{}, nil
-	}}
+	scopeFuncs := ScopeFuncs{
+		model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+			calls++
+			return model.ClientScope{}, nil
+		},
+	}
 	peer := model.PeerIdentity{AttestedBy: model.Attestation("firecracker")}
 
-	if _, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer); err == nil {
+	if _, err := scopeFuncs.ResolveScope(t.Context(), &corev3.Node{}, peer); err == nil {
 		t.Fatal("unregistered attestation resolved a scope")
 	}
 	if calls != 0 {
@@ -94,7 +100,7 @@ func TestScopeFuncsFailsClosedForUnregisteredAttestation(t *testing.T) {
 func TestScopeFuncsFailsClosedOnNilEntry(t *testing.T) {
 	scopeFuncs := ScopeFuncs{model.AttestationKubernetes: nil}
 	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes}
-	if _, err := scopeFuncs.ResolveScope(&corev3.Node{}, peer); err == nil {
+	if _, err := scopeFuncs.ResolveScope(t.Context(), &corev3.Node{}, peer); err == nil {
 		t.Fatal("nil scope function entry resolved a scope")
 	}
 }
@@ -275,5 +281,79 @@ func TestKubernetesScopeFuncMatchesProxyTypeToResolvedScope(t *testing.T) {
 				t.Fatalf("matching proxy type rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestScopeFuncsWaitsForLocalState(t *testing.T) {
+	peer := model.PeerIdentity{AttestedBy: model.AttestationKubernetes}
+	denied := errors.New("Pod UID changed")
+	for _, tt := range []struct {
+		name     string
+		terminal error
+	}{
+		{name: "ready"}, {name: "ownership changed", terminal: denied},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			want := ztunnelScope()
+			funcs := ScopeFuncs{peer.AttestedBy: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+				calls++
+				if calls <= 2 {
+					return model.ClientScope{}, fmt.Errorf("Pod not yet observed: %w", model.ErrScopeNotReady)
+				}
+				return want, tt.terminal
+			}}
+			got, err := funcs.ResolveScope(t.Context(), &corev3.Node{}, peer)
+			if !errors.Is(err, tt.terminal) || calls != 3 {
+				t.Fatalf("scope=%v err=%v calls=%d", got, err, calls)
+			}
+			if err == nil && got != want {
+				t.Fatalf("scope=%v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestScopeFuncsWaitHonorsContext(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		cancel bool
+		want   error
+	}{
+		{name: "deadline", want: context.DeadlineExceeded},
+		{name: "cancel", cancel: true, want: context.Canceled},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+			defer cancel()
+			funcs := ScopeFuncs{
+				model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+					if tt.cancel {
+						cancel()
+					}
+					return model.ClientScope{}, model.ErrScopeNotReady
+				},
+			}
+			_, err := funcs.ResolveScope(
+				ctx,
+				&corev3.Node{},
+				model.PeerIdentity{AttestedBy: model.AttestationKubernetes},
+			)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("err=%v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestScopeFuncsBoundsWaitWithoutClientDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	funcs := ScopeFuncs{model.AttestationKubernetes: func(*corev3.Node, model.PeerIdentity) (model.ClientScope, error) {
+		return model.ClientScope{}, model.ErrScopeNotReady
+	}}
+	_, err := funcs.ResolveScope(ctx, &corev3.Node{}, model.PeerIdentity{AttestedBy: model.AttestationKubernetes})
+	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		t.Fatalf("scope wait must time out independently of client: err=%v client=%v", err, ctx.Err())
 	}
 }

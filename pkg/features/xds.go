@@ -27,7 +27,7 @@ var (
 	KRTDebounceAfter = env.Register(
 		"AGENTIO_KRT_DEBOUNCE",
 		200*time.Millisecond,
-		"Quiet period before TrafficPolicy and SecurityProfile events are distributed, including Sandbox inline policies; other resources are not debounced.",
+		"Quiet period before platform TrafficPolicy and SecurityProfile events are distributed; Sandbox inputs and their embedded policies are not debounced.",
 	).Get()
 	KRTDebounceMax = env.Register(
 		"AGENTIO_KRT_DEBOUNCE_MAX",

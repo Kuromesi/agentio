@@ -58,6 +58,9 @@ const (
 // matching the resource's type; other resource types leave all four nil.
 // GatewayOwner may be set independently for any gateway-owned resource.
 type ResourceFacts struct {
+	// SourceIdentity identifies the source of a complete Sandbox publication,
+	// independently of its payload version. Other resource families leave it empty.
+	SourceIdentity SourceIdentity
 	// Workload records endpoint identity, placement, and service and policy references for resource selection.
 	Workload *WorkloadResourceFacts
 	// Sandbox links a Sandbox to its attesting Workload for visibility checks.
@@ -85,7 +88,7 @@ type WorkloadResourceFacts struct {
 	TrafficPolicyRefs []string
 }
 
-// SandboxResourceFacts records discovery dependencies owned by a Sandbox.
+// SandboxResourceFacts records the Workload binding used for discovery visibility.
 type SandboxResourceFacts struct {
 	AttesterWorkloadUID string
 }
@@ -124,6 +127,10 @@ func (r Resource) IsWorkloadAddress() bool {
 type ResourceKey struct {
 	TypeURL string
 	Name    string
+}
+
+func (k ResourceKey) String() string {
+	return k.TypeURL + "/" + k.Name
 }
 
 // ResourceChange is the immutable boundary between the KRT resource graph and
@@ -340,7 +347,11 @@ func validateWorkloadResourcePrincipal(principal Principal) error {
 }
 
 func cloneResourceFacts(facts ResourceFacts) ResourceFacts {
-	result := ResourceFacts{GatewayOwner: facts.GatewayOwner, AgentioEgress: facts.AgentioEgress}
+	result := ResourceFacts{
+		SourceIdentity: facts.SourceIdentity,
+		GatewayOwner:   facts.GatewayOwner,
+		AgentioEgress:  facts.AgentioEgress,
+	}
 	if facts.Sandbox != nil {
 		sandbox := *facts.Sandbox
 		result.Sandbox = &sandbox
@@ -386,6 +397,9 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(value))
 	}
+	if facts.SourceIdentity != (SourceIdentity{}) {
+		write("source-uid", facts.SourceIdentity.UID)
+	}
 	if facts.Sandbox != nil {
 		write("family", "sandbox")
 		write("attester-workload-uid", facts.Sandbox.AttesterWorkloadUID)
@@ -428,7 +442,8 @@ func hashResourceFacts(hasher hash.Hash, facts ResourceFacts) {
 }
 
 func (facts ResourceFacts) Equal(other ResourceFacts) bool {
-	if facts.GatewayOwner != other.GatewayOwner || facts.AgentioEgress != other.AgentioEgress ||
+	if facts.SourceIdentity != other.SourceIdentity || facts.GatewayOwner != other.GatewayOwner ||
+		facts.AgentioEgress != other.AgentioEgress ||
 		(facts.Workload == nil) != (other.Workload == nil) ||
 		(facts.Sandbox == nil) != (other.Sandbox == nil) ||
 		(facts.Service == nil) != (other.Service == nil) ||

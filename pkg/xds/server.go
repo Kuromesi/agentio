@@ -218,8 +218,11 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 	if first.request == nil || first.request.GetNode() == nil {
 		return status.Error(codes.InvalidArgument, "first DeltaDiscoveryRequest must include node metadata")
 	}
-	scope, err := s.scopeFuncs.ResolveScope(first.request.GetNode(), caller)
+	scope, err := s.scopeFuncs.ResolveScope(stream.Context(), first.request.GetNode(), caller)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return status.FromContextError(err).Err()
+		}
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
 	if err := scope.Validate(); err != nil {
@@ -289,6 +292,7 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 			}
 		default:
 		}
+		pendingConfigs := hasPendingConfigs(watches)
 		var certificates <-chan sdsCompletion
 		secretWatch := watches[model.SecretType]
 		pendingCertificates := false
@@ -296,7 +300,7 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 			certificates = secretWatch.sds.ready
 			pendingCertificates = len(secretWatch.sds.jobs) > 0
 		}
-		if inputClosed && !pendingCertificates {
+		if inputClosed && !pendingCertificates && !pendingConfigs {
 			return nil
 		}
 		select {

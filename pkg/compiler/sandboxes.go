@@ -15,88 +15,153 @@
 package compiler
 
 import (
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
+
 	extensionsv1 "github.com/openkruise/agentio/api/extensions/v1"
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/policy"
 )
 
-// Runtime metadata and policies are published independently. SNI compilation
-// retains the last valid policy on failed updates, matching legacy EPE behavior.
-func newSandboxResources(
+// compiledSandbox is the complete result shared by Sandbox delivery and the
+// single-Sandbox Workload compatibility projection.
+type compiledSandbox struct {
+	Payload        *sandboxv1.Sandbox
+	SNIPolicy      *extensionsv1.SniTrafficPolicy
+	SourceIdentity model.SourceIdentity
+}
+
+func (s compiledSandbox) ResourceName() string { return s.Payload.Uid }
+
+func (s compiledSandbox) Equals(other compiledSandbox) bool {
+	return s.SourceIdentity == other.SourceIdentity &&
+		proto.Equal(s.Payload, other.Payload) && proto.Equal(s.SNIPolicy, other.SNIPolicy)
+}
+
+func newCompiledSandboxes(
 	inputs Inputs,
-	policies policyCollections,
+	trafficInputs policy.TrafficPolicyInputs,
+	failures *failureRecorder,
+	options collectionOptions,
+) krt.Collection[compiledSandbox] {
+	clearFailureOnSourceDelete(inputs.Sandboxes, failures, "SandboxPolicies")
+	return krt.NewCollection(inputs.Sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *compiledSandbox {
+		result, err := compileSandbox(ctx, sandbox, trafficInputs)
+		currentInput := func() bool {
+			current := inputs.Sandboxes.GetKey(sandbox.UID)
+			return current != nil && current.Equals(sandbox)
+		}
+		if err != nil {
+			failures.recordIf("SandboxPolicies", sandbox.UID, err, currentInput)
+			ctx.DiscardResult()
+			return nil
+		}
+		failures.clearIf("SandboxPolicies", sandbox.UID, currentInput)
+		return result
+	}, options("compiled-sandboxes")...)
+}
+
+func compileSandbox(
+	ctx krt.HandlerContext,
+	sandbox model.Sandbox,
+	trafficInputs policy.TrafficPolicyInputs,
+) (*compiledSandbox, error) {
+	result := &compiledSandbox{
+		Payload:        &sandboxv1.Sandbox{Uid: sandbox.UID},
+		SourceIdentity: sandbox.SourceIdentity,
+	}
+	if sandbox.Attester != nil {
+		result.Payload.Attester = &sandboxv1.Sandbox_Attester{WorkloadUid: sandbox.Attester.WorkloadUID}
+	}
+
+	references := &extensionsv1.PolicyReference{TypeUrl: model.SecurityProfileType}
+	if policies := sandbox.Policies; policies != nil {
+		if policies.InputError != "" {
+			return nil, fmt.Errorf("sandbox policies: %s", policies.InputError)
+		}
+		if policies.TrafficRules != nil {
+			traffic, err := policy.CompileTrafficPolicyRules(
+				ctx,
+				*policies.TrafficRules,
+				sandbox.Namespace,
+				trafficInputs,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("sandbox traffic rules: %w", err)
+			}
+			result.Payload.TrafficPolicy = traffic
+		}
+		if policies.SecurityRules != nil {
+			sni, err := policy.CompileSNIRules(policies.SecurityRules)
+			if err != nil {
+				return nil, fmt.Errorf("sandbox security rules: %w", err)
+			}
+			result.SNIPolicy = sni
+			if len(sni.GetRules()) > 0 {
+				extension, err := marshalDeterministicAny(sni)
+				if err != nil {
+					return nil, err
+				}
+				result.Payload.Extensions = append(result.Payload.Extensions, extension)
+			}
+			references.ResourceNames = []string{model.SandboxSecurityProfileName(sandbox.UID)}
+		}
+	}
+	extension, err := marshalDeterministicAny(references)
+	if err != nil {
+		return nil, err
+	}
+	result.Payload.Extensions = append(result.Payload.Extensions, extension)
+	return result, nil
+}
+
+func newSandboxResources(
+	inputs krt.Collection[model.Sandbox],
+	sandboxes krt.Collection[compiledSandbox],
 	failures *failureRecorder,
 	options collectionOptions,
 ) krt.Collection[model.Resource] {
-	sandboxes := inputs.Sandboxes
-	for _, kind := range []string{"SandboxResource", "SandboxInlinePolicies"} {
-		clearFailureOnSourceDelete(sandboxes, failures, kind)
-	}
-	return krt.NewCollection(sandboxes, func(ctx krt.HandlerContext, sandbox model.Sandbox) *model.Resource {
-		payload := &sandboxv1.Sandbox{Uid: sandbox.UID}
-		if sandbox.Attester != nil {
-			payload.Attester = &sandboxv1.Sandbox_Attester{WorkloadUid: sandbox.Attester.WorkloadUID}
-		}
-		currentInput := func() bool {
-			current := sandboxes.GetKey(sandbox.ResourceName())
-			return current != nil && current.Equals(sandbox)
-		}
-		record := func(kind string, err error) {
-			if err != nil {
-				failures.recordIf(kind, sandbox.UID, err, currentInput)
-			} else {
-				failures.clearIf(kind, sandbox.UID, currentInput)
-			}
-		}
-		if compiled := krt.FetchOne(
-			ctx,
-			policies.trafficPolicies,
-			krt.FilterKey(model.SandboxTrafficPolicyName(sandbox.UID)),
-		); compiled != nil {
-			payload.TrafficPolicy = compiled.Policy
-		}
-		var inlineErr error
-		profile := krt.FetchOne(ctx, policies.securityProfiles,
-			krt.FilterKey(model.SandboxSecurityProfileName(sandbox.UID)))
-		if profile != nil && len(profile.SNIPolicy.GetRules()) > 0 {
-			extension, err := marshalDeterministicAny(profile.SNIPolicy)
-			inlineErr = err
-			if err == nil {
-				payload.Extensions = append(payload.Extensions, extension)
-			}
-		}
-		record("SandboxInlinePolicies", inlineErr)
-
-		references := &extensionsv1.PolicyReference{TypeUrl: model.SecurityProfileType}
-		if profile != nil {
-			references.ResourceNames = []string{profile.ResourceName()}
-		}
-		extension, err := marshalDeterministicAny(references)
-		if err != nil {
-			record("SandboxResource", err)
+	clearFailureOnSourceDelete(inputs, failures, "SandboxResource")
+	return krt.NewCollection(inputs, func(ctx krt.HandlerContext, source model.Sandbox) *model.Resource {
+		sandbox := krt.FetchOne(ctx, sandboxes, krt.FilterKey(source.UID))
+		if sandbox == nil || sandbox.SourceIdentity.UID != source.SourceIdentity.UID {
 			return nil
 		}
-		payload.Extensions = append(payload.Extensions, extension)
-
-		facts := &model.SandboxResourceFacts{AttesterWorkloadUID: payload.GetAttester().GetWorkloadUid()}
-		value, err := marshalDeterministicAny(payload)
+		workloadUID := ""
+		if source.Attester != nil {
+			workloadUID = source.Attester.WorkloadUID
+		}
+		// Failed policy updates may retain a complete result, but cannot retain an obsolete binding.
+		if sandbox.Payload.GetAttester().GetWorkloadUid() != workloadUID {
+			return nil
+		}
+		currentInput := func() bool {
+			current := inputs.GetKey(source.UID)
+			return current != nil && current.Equals(source)
+		}
+		value, err := marshalDeterministicAny(sandbox.Payload)
 		if err != nil {
-			record("SandboxResource", err)
+			failures.recordIf("SandboxResource", sandbox.ResourceName(), err, currentInput)
 			return nil
 		}
 		resource, err := model.NewResource(
-			model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.UID},
+			model.ResourceKey{TypeURL: model.SandboxType, Name: sandbox.ResourceName()},
 			"",
 			value,
 			nil,
-			model.ResourceFacts{Sandbox: facts},
+			model.ResourceFacts{
+				SourceIdentity: sandbox.SourceIdentity,
+				Sandbox:        &model.SandboxResourceFacts{AttesterWorkloadUID: workloadUID},
+			},
 		)
 		if err != nil {
-			record("SandboxResource", err)
+			failures.recordIf("SandboxResource", sandbox.ResourceName(), err, currentInput)
 			return nil
 		}
-		record("SandboxResource", nil)
+		failures.clearIf("SandboxResource", sandbox.ResourceName(), currentInput)
 		return &resource
 	}, options("sandbox-resources")...)
 }

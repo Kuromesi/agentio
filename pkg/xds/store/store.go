@@ -135,6 +135,21 @@ func (s *Store) NotifyType(typeURL string) {
 	s.mu.Unlock()
 }
 
+// NotifyKeys invalidates source keys even when they have never been published.
+// It reuses the type-scoped subscriber mailboxes without changing the snapshot.
+func (s *Store) NotifyKeys(keys []model.ResourceKey) {
+	if len(keys) == 0 {
+		return
+	}
+	candidates := make(map[model.ResourceKey]Candidate, len(keys))
+	for _, key := range keys {
+		candidates[key] = Candidate{Key: key}
+	}
+	s.mu.Lock()
+	s.notifyLocked(indexedUpdate(s.current.Version(), candidates))
+	s.mu.Unlock()
+}
+
 func (s *Store) notifyLocked(update Update) {
 	for _, subscriber := range s.affectedSubscribersLocked(update) {
 		// Capacity-one, type-aware mailbox; the first coalescing boundary.

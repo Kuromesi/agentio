@@ -44,6 +44,8 @@ type watchState struct {
 	lastErrorCode codes.Code
 	// denied tracks refused names so each refusal is logged once per stream.
 	denied sets.Set[string]
+	// pending contains initial demands deferred until publication or source removal.
+	pending sets.Set[string]
 }
 
 // recordAcknowledgement ignores spontaneous requests and acknowledgements of
@@ -117,6 +119,7 @@ func applySubscription(watch *watchState, request *discoveryv3.DeltaDiscoveryReq
 			changed = true
 		}
 		watch.names.Delete(name)
+		watch.pending.Delete(name)
 		// Unsubscribing is not a deletion; a late removal could fail a new demand.
 		delete(watch.sent, name)
 	}

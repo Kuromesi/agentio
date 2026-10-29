@@ -44,7 +44,8 @@ func buildGraph(inputs Inputs, failures *failureRecorder, builder krt.OptionsBui
 	trafficPolicyInputs := newTrafficPolicyInputs(inputs)
 	policies := newPolicyCollections(inputs, configuration, trafficPolicyInputs, failures, collectionOptions, builder)
 
-	selectedWorkloadPolicies := newWorkloadPolicies(inputs, policies, failures, collectionOptions)
+	compiledSandboxes := newCompiledSandboxes(inputs, trafficPolicyInputs, failures, collectionOptions)
+	selectedWorkloadPolicies := newWorkloadPolicies(inputs, policies, compiledSandboxes, failures, collectionOptions)
 
 	// Each key must identify exactly one family; build resources via model.NewResource.
 	workloadResources := newWorkloadResources(
@@ -55,7 +56,7 @@ func buildGraph(inputs Inputs, failures *failureRecorder, builder krt.OptionsBui
 		failures,
 		collectionOptions,
 	)
-	sandboxResources := newSandboxResources(inputs, policies, failures, collectionOptions)
+	sandboxResources := newSandboxResources(inputs.Sandboxes, compiledSandboxes, failures, collectionOptions)
 	resources := krt.JoinCollection([]krt.Collection[model.Resource]{
 		sandboxResources,
 		newTrafficPolicyResources(policies.trafficPolicies, failures, collectionOptions),

@@ -551,6 +551,18 @@ func (h *manyCollection[I, O]) handleChangedPrimaryInputEvents(items []Event[I])
 			results := recomputedResults[idx]
 			// Discard retains output, but must still watch newly missing dependencies.
 			h.dependencyState.update(iKey, ctx.d)
+			// A queued delete may be reconciled as an update after the same key is recreated.
+			// Compare against the input associated with the retained output so a new UID
+			// cannot inherit the previous object's result when its own computation fails.
+			if ctx.discardUpdate {
+				if previous, found := h.collectionState.inputs[iKey]; found {
+					currentUID, hasUID := any(i).(UIDer)
+					previousUID, hadUID := any(previous).(UIDer)
+					if hasUID && hadUID && currentUID.GetUID() != previousUID.GetUID() {
+						ctx.discardUpdate = false
+					}
+				}
+			}
 			if ctx.discardUpdate {
 				// Called when the collection explicitly calls DiscardResult() on the context.
 				// This is typically used when we want to retain the last-correct state.

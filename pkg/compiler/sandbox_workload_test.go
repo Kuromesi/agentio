@@ -98,13 +98,9 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 		},
 	}
 	f.trafficPolicies.UpdateObject(shared)
-	security := model.SecurityProfile{
-		Dedicated:  true,
-		SandboxUID: s.UID,
-		Namespace:  "demo",
-		Spec:       compatibilitySecurity("first.example"),
-	}
-	f.securityProfiles.UpdateObject(security)
+	security := compatibilitySecurity("first.example")
+	s.Policies = &model.SandboxPolicies{SecurityRules: security.Rules}
+	f.sandboxes.UpdateObject(s)
 	await := func(uid string, sniCount int) model.ResourceSet {
 		t.Helper()
 		var snap model.ResourceSet
@@ -142,10 +138,11 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 	if got := f.resolutionCount("api.example") - calls; got != 1 {
 		t.Fatalf("policy was re-resolved during projection: %d calls", got)
 	}
-	security.Spec = compatibilitySecurity("*bad.example")
-	f.securityProfiles.UpdateObject(security)
+	security = compatibilitySecurity("*bad.example")
+	s.Policies = &model.SandboxPolicies{SecurityRules: security.Rules}
+	f.sandboxes.UpdateObject(s)
 	eventually(t, func() bool {
-		return f.compiler.Failures()["SecurityProfile/"+security.ResourceName()] != ""
+		return f.compiler.Failures()["SandboxPolicies/"+s.UID] != ""
 	}, "invalid SNI retains the last valid policy")
 	await(a.UID, 1)
 	if manifestAt(t, f.compiler, s.UID) == nil {
@@ -154,8 +151,9 @@ func TestSandboxLifecycleKeepsSharedWorkloadPolicies(t *testing.T) {
 	if _, ok := currentSnapshot(t, f.compiler).Get(authKey); !ok {
 		t.Fatal("SNI failure removed TrafficPolicy compatibility")
 	}
-	security.Spec = compatibilitySecurity("restored.example")
-	f.securityProfiles.UpdateObject(security)
+	security = compatibilitySecurity("restored.example")
+	s.Policies = &model.SandboxPolicies{SecurityRules: security.Rules}
+	f.sandboxes.UpdateObject(s)
 	await(a.UID, 1)
 	s.Attester = &model.Attester{WorkloadUID: b.UID}
 	f.sandboxes.UpdateObject(s)
@@ -196,13 +194,11 @@ func TestMultipleSandboxesShareWorkloadWithoutProjection(t *testing.T) {
 	host := testWorkload("demo", "pool", "10.0.0.1")
 	f.workloads.UpdateObject(host)
 	for _, uid := range []string{"a", "b"} {
-		f.sandboxes.UpdateObject(
-			model.Sandbox{UID: uid, Namespace: "demo", Attester: &model.Attester{WorkloadUID: host.UID}},
-		)
-		f.securityProfiles.UpdateObject(model.SecurityProfile{
-			Dedicated:  true,
-			SandboxUID: uid,
-			Spec:       compatibilitySecurity(uid + ".example"),
+		f.sandboxes.UpdateObject(model.Sandbox{
+			UID:       uid,
+			Namespace: "demo",
+			Attester:  &model.Attester{WorkloadUID: host.UID},
+			Policies:  &model.SandboxPolicies{SecurityRules: compatibilitySecurity(uid + ".example").Rules},
 		})
 	}
 	eventually(t, func() bool {
@@ -324,12 +320,7 @@ func TestSandboxInlineSNIHostProjection(t *testing.T) {
 		Namespace: target.Namespace,
 	}
 	f.sandboxes.UpdateObject(sandbox)
-	inline := model.SecurityProfile{
-		Dedicated:  true,
-		SandboxUID: sandbox.UID,
-		Name:       target.Name,
-		Namespace:  target.Namespace,
-	}
+	inline := agentsv1alpha1.SecurityProfileSpec{}
 	projectedUID := ""
 	check := func(host string) {
 		t.Helper()
@@ -379,8 +370,9 @@ func TestSandboxInlineSNIHostProjection(t *testing.T) {
 	}
 	check("")
 	for _, host := range []string{"first.example", "updated.example"} {
-		inline.Spec = compatibilitySecurity(host)
-		f.securityProfiles.UpdateObject(inline)
+		inline = compatibilitySecurity(host)
+		sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.Rules}
+		f.sandboxes.UpdateObject(sandbox)
 		check(host)
 	}
 	// Bind to a differently named Workload: follow the recorded relation, not the profile name.
@@ -396,22 +388,26 @@ func TestSandboxInlineSNIHostProjection(t *testing.T) {
 	f.sandboxes.DeleteObject(second.UID)
 	projectedUID = other.UID
 	check("updated.example")
-	inline.Spec = compatibilitySecurity("*bad.example")
-	f.securityProfiles.UpdateObject(inline)
+	inline = compatibilitySecurity("*bad.example")
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.Rules}
+	f.sandboxes.UpdateObject(sandbox)
 	eventually(t, func() bool {
-		return f.compiler.Failures()["SecurityProfile/"+inline.ResourceName()] != ""
+		return f.compiler.Failures()["SandboxPolicies/"+sandbox.UID] != ""
 	}, "invalid inline SNI was processed")
 	check("updated.example")
-	inline.Spec = compatibilitySecurity("http.example")
-	inline.Spec.Rules[0].Match[0].Schemes = []string{"http"}
-	f.securityProfiles.UpdateObject(inline)
+	inline = compatibilitySecurity("http.example")
+	inline.Rules[0].Match[0].Schemes = []string{"http"}
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.Rules}
+	f.sandboxes.UpdateObject(sandbox)
 	check("")
-	inline.Spec = compatibilitySecurity("restored.example")
-	f.securityProfiles.UpdateObject(inline)
+	inline = compatibilitySecurity("restored.example")
+	sandbox.Policies = &model.SandboxPolicies{SecurityRules: inline.Rules}
+	f.sandboxes.UpdateObject(sandbox)
 	check("restored.example")
 	f.securityProfiles.DeleteObject(shared.ResourceName())
 	sharedActive = false
 	check("restored.example")
-	f.securityProfiles.DeleteObject(inline.ResourceName())
+	sandbox.Policies = nil
+	f.sandboxes.UpdateObject(sandbox)
 	check("")
 }

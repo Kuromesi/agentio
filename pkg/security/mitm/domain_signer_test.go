@@ -150,7 +150,8 @@ func TestSecretModeReadsExistingSecretWithoutMutatingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, action := range client.Kube().(*kubefake.Clientset).Actions() {
-		if action.GetResource().Resource == "secrets" && (action.GetVerb() == "create" || action.GetVerb() == "update") {
+		if action.GetResource().Resource == "secrets" &&
+			(action.GetVerb() == "create" || action.GetVerb() == "update") {
 			t.Fatalf("SECRET mode mutated its CA Secret with %s", action.GetVerb())
 		}
 	}
@@ -209,6 +210,15 @@ func TestSelfSignModeRecoversExpiredRootAtStartup(t *testing.T) {
 			secret := newMITMSecret(t, "agentio-system", "mitm", time.Hour, time.Now().Add(-2*time.Hour))
 			oldKey := append([]byte(nil), secret.Data[mitmCAKeyKey]...)
 			client := kube.NewFakeClient(secret)
+			fakeClient := client.Kube().(*kubefake.Clientset)
+			// The fake tracker cannot replay writes between the initial LIST and WATCH.
+			// Establish its watch before startup reconciliation can update the Secret.
+			secretWatch, err := fakeClient.Tracker().
+				Watch(corev1.SchemeGroupVersion.WithResource("secrets"), secret.Namespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fakeClient.PrependWatchReactor("secrets", kubetesting.DefaultWatchReactor(secretWatch, nil))
 			var winner *corev1.Secret
 			if conflict {
 				ca, err := pki.ParseSelfSignedCAForRenewal(secret.Data[mitmCACertKey], oldKey, time.Now(), true)
@@ -223,7 +233,6 @@ func TestSelfSignModeRecoversExpiredRootAtStartup(t *testing.T) {
 				winner.ResourceVersion = "2"
 				winner.Data[mitmCACertKey] = renewed.BundlePEM()
 				winner.Data[mitmBundleKey] = renewed.BundlePEM()
-				fakeClient := client.Kube().(*kubefake.Clientset)
 				fakeClient.PrependReactor("update", "secrets", func(kubetesting.Action) (bool, runtime.Object, error) {
 					// Model another replica winning the resourceVersion compare-and-swap
 					// after our read. Its successful write still reaches the KRT watcher.
@@ -374,28 +383,50 @@ func TestMITMPublicTrustBundleLifecycle(t *testing.T) {
 	assertBundle(secret.Data[mitmCACertKey])
 	old := signer.TrustBundles().Get()
 	staged := newMITMSecret(t, secret.Namespace, secret.Name, 24*time.Hour, time.Now())
-	secret.Data[mitmCACertKey] = append(append([]byte(nil), secret.Data[mitmCACertKey]...), staged.Data[mitmCACertKey]...)
-	if _, err := client.Kube().CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+	secret.Data[mitmCACertKey] = append(
+		append([]byte(nil), secret.Data[mitmCACertKey]...),
+		staged.Data[mitmCACertKey]...)
+	if _, err := client.Kube().
+		CoreV1().
+		Secrets(secret.Namespace).
+		Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertBundle(secret.Data[mitmCACertKey])
 	if old.PEM == signer.TrustBundles().Get().PEM {
 		t.Fatal("staged roots did not change public trust")
 	}
-	if err := client.Kube().CoreV1().Secrets(secret.Namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
+	if err := client.Kube().
+		CoreV1().
+		Secrets(secret.Namespace).
+		Delete(ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	waitForMITM(t, func() bool { return signer.State().Get() == nil && signer.TrustBundles().Get() == nil }, "CA deletion")
+	waitForMITM(
+		t,
+		func() bool { return signer.State().Get() == nil && signer.TrustBundles().Get() == nil },
+		"CA deletion",
+	)
 	staged.UID = "recreated-mitm"
-	if _, err := client.Kube().CoreV1().Secrets(staged.Namespace).Create(ctx, staged, metav1.CreateOptions{}); err != nil {
+	if _, err := client.Kube().
+		CoreV1().
+		Secrets(staged.Namespace).
+		Create(ctx, staged, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertBundle(staged.Data[mitmCACertKey])
 	staged.Data[mitmCACertKey] = []byte("invalid")
-	if _, err := client.Kube().CoreV1().Secrets(staged.Namespace).Update(ctx, staged, metav1.UpdateOptions{}); err != nil {
+	if _, err := client.Kube().
+		CoreV1().
+		Secrets(staged.Namespace).
+		Update(ctx, staged, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	waitForMITM(t, func() bool { return signer.State().Get() == nil && signer.TrustBundles().Get() == nil }, "invalid CA removal")
+	waitForMITM(
+		t,
+		func() bool { return signer.State().Get() == nil && signer.TrustBundles().Get() == nil },
+		"invalid CA removal",
+	)
 }
 
 func TestMITMPublicTrustRejectsStaleGeneration(t *testing.T) {
@@ -449,7 +480,8 @@ func TestMITMSecretInformerWaitsForReadPermission(t *testing.T) {
 			t.Fatal("MITM signer became ready before read access was granted")
 		}
 		for _, action := range fake.Actions() {
-			if action.GetResource().Resource == "secrets" && (action.GetVerb() == "list" || action.GetVerb() == "watch") {
+			if action.GetResource().Resource == "secrets" &&
+				(action.GetVerb() == "list" || action.GetVerb() == "watch") {
 				t.Fatal("MITM informer started before read access was granted")
 			}
 		}

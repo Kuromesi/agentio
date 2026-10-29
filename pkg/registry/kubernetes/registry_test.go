@@ -17,7 +17,6 @@ package kubernetes
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 
@@ -209,7 +208,7 @@ func TestDelegatedAuthorizationUsesEffectivePrincipalIndex(t *testing.T) {
 	}
 }
 
-func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
+func TestRegistrySandboxPolicies(t *testing.T) {
 	for _, kruiseEnabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("kruise=%t", kruiseEnabled), func(t *testing.T) {
 			ctx := t.Context()
@@ -252,20 +251,23 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 			client.Run(ctx.Done())
 			eventually(t, r.HasSynced, "registry synchronization")
 			sharedKey := "namespaced/tenant/same-name"
-			if p := r.SecurityProfiles.GetKey(sharedKey); p == nil || p.Dedicated {
+			if p := r.SecurityProfiles.GetKey(sharedKey); p == nil {
 				t.Fatal("shared profile missing or replaced by inline profile")
 			}
-			inlineKey := model.SandboxSecurityProfileName("kruise:sandbox-id")
-			profile := r.SecurityProfiles.GetKey(inlineKey)
+			current := r.Sandboxes.GetKey("kruise:sandbox-id")
 			if !kruiseEnabled {
-				if profile != nil {
+				if current != nil {
 					t.Fatal("Sandbox rules entered ordinary mode")
 				}
 				return
 			}
-			if profile == nil || !profile.Dedicated || profile.SandboxUID != "kruise:sandbox-id" ||
-				profile.Spec.Rules[0].Match[0].Domains[0] != "inline.example" {
-				t.Fatalf("owned profile not joined into SecurityProfiles: %+v", profile)
+			if current == nil || current.Policies == nil ||
+				len(current.Policies.SecurityRules) != 1 ||
+				current.Policies.SecurityRules[0].Match[0].Domains[0] != "inline.example" {
+				t.Fatalf("inline rules missing from Sandbox: %+v", current)
+			}
+			if len(r.SecurityProfiles.List()) != 1 {
+				t.Fatal("inline rules must not enter shared SecurityProfiles")
 			}
 			sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules] = `[{"name":`
 			sandbox.Status.Phase = agentsv1alpha1.SandboxPending
@@ -275,14 +277,11 @@ func TestRegistrySandboxOwnedSecurityProfiles(t *testing.T) {
 				Update(ctx, sandbox, metav1.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			// The expected profile is unchanged; allow the rejected update to propagate.
-			time.Sleep(200 * time.Millisecond)
 			eventually(t, func() bool {
 				current := r.Sandboxes.GetKey("kruise:sandbox-id")
-				retained := r.SecurityProfiles.GetKey(inlineKey)
-				return retained != nil && retained.Equals(*profile) && r.SecurityProfiles.GetKey(sharedKey) != nil &&
-					current != nil
-			}, "invalid annotation retains inline rules and Sandbox identity")
+				return current != nil && current.Policies != nil && current.Policies.InputError != "" &&
+					r.SecurityProfiles.GetKey(sharedKey) != nil
+			}, "invalid annotation remains an observed failed input without removing Sandbox identity")
 		})
 	}
 }

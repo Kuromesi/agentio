@@ -241,7 +241,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		SandboxMode:                features.SandboxMode,
 		ClusterID:                  options.ClusterID,
 		RootNamespace:              options.RootNamespace,
-		Sandboxes:                  sources.Sandboxes,
+		Sandboxes:                  sources.Sandboxes.Collection,
 		Workloads:                  sources.Workloads,
 		Pods:                       registry.Pods,
 		KubernetesServices:         registry.KubernetesServices,
@@ -318,6 +318,9 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	secretChanges := onDemandIssuer.Changes().AsCollection().RegisterBatch(
 		func([]krt.Event[mitm.CertificateGeneration]) { store.NotifyType(model.SecretType) }, false)
 	defer secretChanges.UnregisterHandler()
+	sandboxSources := sources.Sandboxes.Registry
+	unregisterSourceDeletes := sandboxSources.RegisterDeletes(store.NotifyKeys)
+	defer unregisterSourceDeletes()
 	controller, err := xds.NewController(resourceCompiler, store, features.PushDebounceAfter, features.PushDebounceMax)
 	if err != nil {
 		return err
@@ -346,7 +349,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 			model.WorkloadType:              workloadGenerator,
 			model.WorkloadAuthorizationType: xds.AuthorizationGenerator{},
 			model.TrafficPolicyType:         xds.TrafficPolicyGenerator{},
-			model.SandboxType:               xds.SandboxGenerator{},
+			model.SandboxType:               xds.SandboxGenerator{Source: sandboxSources},
 			model.SecretType:                sdsGenerator,
 		},
 		features.PushConcurrency,
