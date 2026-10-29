@@ -91,8 +91,16 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 	for _, mode := range []string{"tcp", "nested_tls", "bad_certificate", "idle", "http1", "http2", "connect_http1", "connect_http2"} {
 		t.Run(mode, func(t *testing.T) {
 			isHTTP := strings.Contains(mode, "http")
+			closeResource := func(resource io.Closer) {
+				if err := resource.Close(); err != nil {
+					t.Logf("close test transport: %v", err)
+				}
+			}
 			var handshakes atomic.Int32
-			upstreamTLS := &tls.Config{Certificates: []tls.Certificate{certificates["localhost"]}, MinVersion: tls.VersionTLS12}
+			upstreamTLS := &tls.Config{
+				Certificates: []tls.Certificate{certificates["localhost"]},
+				MinVersion:   tls.VersionTLS12,
+			}
 			if mode == "bad_certificate" {
 				upstreamTLS.Certificates = []tls.Certificate{certificates["inner.invalid"]}
 			}
@@ -116,8 +124,13 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 							t.Errorf("hijack CONNECT: %v", err)
 							return
 						}
-						defer conn.Close()
-						if _, err := fmt.Fprintf(buffer, "HTTP/1.1 200 Connection Established\r\n\r\n%s %s", r.Method, r.Proto); err != nil {
+						defer closeResource(conn)
+						if _, err := fmt.Fprintf(
+							buffer,
+							"HTTP/1.1 200 Connection Established\r\n\r\n%s %s",
+							r.Method,
+							r.Proto,
+						); err != nil {
 							t.Errorf("CONNECT response: %v", err)
 						}
 						if err := buffer.Flush(); err != nil {
@@ -139,7 +152,7 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { _ = origin.Close() })
+				t.Cleanup(func() { closeResource(origin) })
 				upstreamAddress = origin.Addr().String()
 				go func() {
 					conn, err := origin.Accept()
@@ -147,13 +160,19 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 						completed <- err
 						return
 					}
-					defer conn.Close()
+					defer closeResource(conn)
 					if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 						completed <- err
 						return
 					}
 					if mode == "nested_tls" {
-						conn = tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{certificates["inner.invalid"]}, MinVersion: tls.VersionTLS12})
+						conn = tls.Server(
+							conn,
+							&tls.Config{
+								Certificates: []tls.Certificate{certificates["inner.invalid"]},
+								MinVersion:   tls.VersionTLS12,
+							},
+						)
 					}
 					data := make([]byte, len(payload))
 					if _, err := io.ReadFull(conn, data); err != nil {
@@ -175,11 +194,14 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer conn.Close()
+				defer closeResource(conn)
 				if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := io.WriteString(conn, "CONNECT inner.invalid:443 HTTP/1.1\r\nHost: inner.invalid:443\r\n\r\n"); err != nil {
+				if _, err := io.WriteString(
+					conn,
+					"CONNECT inner.invalid:443 HTTP/1.1\r\nHost: inner.invalid:443\r\n\r\n",
+				); err != nil {
 					t.Fatal(err)
 				}
 				reader := bufio.NewReader(conn)
@@ -187,7 +209,7 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer response.Body.Close()
+				defer closeResource(response.Body)
 				body := make([]byte, len("CONNECT HTTP/1.1"))
 				if _, err := io.ReadFull(reader, body); err != nil {
 					t.Fatal(err)
@@ -226,7 +248,7 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer response.Body.Close()
+				defer closeResource(response.Body)
 				protocol := "HTTP/1.1"
 				if strings.HasSuffix(mode, "http2") {
 					protocol = "HTTP/2.0"
@@ -236,7 +258,13 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 					t.Fatal(err)
 				}
 				if response.StatusCode != 200 || string(body) != method+" "+protocol || response.Proto != protocol {
-					t.Fatalf("response = %s %s %q, want %s on both hops", response.Status, response.Proto, body, protocol)
+					t.Fatalf(
+						"response = %s %s %q, want %s on both hops",
+						response.Status,
+						response.Proto,
+						body,
+						protocol,
+					)
 				}
 				return
 			}
@@ -244,12 +272,15 @@ func TestEnvoyPostTLSForwarding(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conn.Close()
+			defer closeResource(conn)
 			if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			if mode == "nested_tls" {
-				conn = tls.Client(conn, &tls.Config{RootCAs: roots, ServerName: "inner.invalid", MinVersion: tls.VersionTLS12})
+				conn = tls.Client(
+					conn,
+					&tls.Config{RootCAs: roots, ServerName: "inner.invalid", MinVersion: tls.VersionTLS12},
+				)
 			}
 			if mode != "idle" {
 				if _, err := conn.Write(payload); err != nil {
@@ -296,24 +327,39 @@ func startPostTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Is
 		}
 	}
 	manager := findHCM(t, forward)
-	manager.RouteSpecifier = &hcm.HttpConnectionManager_RouteConfig{RouteConfig: b.buildForwardRoute(TLSConnectOriginate, config.gateway)}
-	findFilterChain(t, forward, forwardHTTPChain).Filters[0] = networkFilter("envoy.filters.network.http_connection_manager", b.pack(manager))
+	manager.RouteSpecifier = &hcm.HttpConnectionManager_RouteConfig{
+		RouteConfig: b.buildForwardRoute(TLSConnectOriginate, config.gateway),
+	}
+	findFilterChain(t, forward, forwardHTTPChain).Filters[0] = networkFilter(
+		"envoy.filters.network.http_connection_manager",
+		b.pack(manager),
+	)
 	chain := b.buildTLSTerminateChain(nil)
-	chain.TransportSocket.ConfigType = &core.TransportSocket_TypedConfig{TypedConfig: b.pack(&tlsconfig.DownstreamTlsContext{
-		CommonTlsContext: &tlsconfig.CommonTlsContext{
-			AlpnProtocols: []string{"h2", "http/1.1"},
-			TlsCertificates: []*tlsconfig.TlsCertificate{{
-				CertificateChain: &core.DataSource{Specifier: &core.DataSource_InlineBytes{InlineBytes: certificate.CertificatePEM}},
-				PrivateKey:       &core.DataSource{Specifier: &core.DataSource_InlineBytes{InlineBytes: certificate.PrivateKeyPEM}},
+	chain.TransportSocket.ConfigType = &core.TransportSocket_TypedConfig{
+		TypedConfig: b.pack(&tlsconfig.DownstreamTlsContext{
+			CommonTlsContext: &tlsconfig.CommonTlsContext{
+				AlpnProtocols: []string{"h2", "http/1.1"},
+				TlsCertificates: []*tlsconfig.TlsCertificate{
+					{
+						CertificateChain: &core.DataSource{
+							Specifier: &core.DataSource_InlineBytes{InlineBytes: certificate.CertificatePEM},
+						},
+						PrivateKey: &core.DataSource{
+							Specifier: &core.DataSource_InlineBytes{InlineBytes: certificate.PrivateKeyPEM},
+						},
+					},
+				},
+			},
+		}),
+	}
+	chain.Filters = append(
+		[]*listener.Filter{networkFilter("envoy.filters.network.set_filter_state", b.pack(&state.Config{
+			OnNewConnection: []*common.FilterStateValue{{
+				Key:   &common.FilterStateValue_ObjectKey{ObjectKey: "envoy.filters.listener.original_dst.local_ip"},
+				Value: &common.FilterStateValue_FormatString{FormatString: formatString(upstream)},
 			}},
-		},
-	})}
-	chain.Filters = append([]*listener.Filter{networkFilter("envoy.filters.network.set_filter_state", b.pack(&state.Config{
-		OnNewConnection: []*common.FilterStateValue{{
-			Key:   &common.FilterStateValue_ObjectKey{ObjectKey: "envoy.filters.listener.original_dst.local_ip"},
-			Value: &common.FilterStateValue_FormatString{FormatString: formatString(upstream)},
-		}},
-	}))}, chain.Filters...)
+		}))},
+		chain.Filters...)
 	port, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +369,9 @@ func startPostTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Is
 		t.Fatal(err)
 	}
 	bootstrapConfig := &bootstrap.Bootstrap{
-		BootstrapExtensions: []*core.TypedExtensionConfig{{Name: "envoy.bootstrap.internal_listener", TypedConfig: b.pack(&internal.InternalListener{})}},
+		BootstrapExtensions: []*core.TypedExtensionConfig{
+			{Name: "envoy.bootstrap.internal_listener", TypedConfig: b.pack(&internal.InternalListener{})},
+		},
 		StaticResources: &bootstrap.Bootstrap_StaticResources{
 			Listeners: []*listener.Listener{forward, {
 				Name:            "outer",
@@ -331,7 +379,11 @@ func startPostTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Is
 				ListenerFilters: []*listener.ListenerFilter{tlsInspectorFilter},
 				FilterChains:    []*listener.FilterChain{chain},
 			}},
-			Clusters: []*cluster.Cluster{b.buildInternalCluster(MainForward), b.buildTLSProxyOriginateCluster(nil), b.buildDFPCluster(TLSConnectOriginate, false, true, nil)},
+			Clusters: []*cluster.Cluster{
+				b.buildInternalCluster(MainForward),
+				b.buildTLSProxyOriginateCluster(nil),
+				b.buildDFPCluster(TLSConnectOriginate, false, true, nil),
+			},
 		},
 	}
 	if b.err != nil {

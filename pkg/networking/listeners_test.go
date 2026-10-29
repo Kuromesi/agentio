@@ -273,18 +273,33 @@ func TestBuildStaticSNIMatcherOmitsEmptyHostGroups(t *testing.T) {
 func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		resources := buildGatewayGraph(t, legacy)
-		listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+		listeners := messagesOf(
+			t,
+			resources,
+			model.ListenerType,
+			func() *listenerv3.Listener { return &listenerv3.Listener{} },
+		)
 		forward := listeners[MainForward]
 		var inspectors []string
 		for _, filter := range forward.GetListenerFilters() {
 			inspectors = append(inspectors, filter.GetName())
 		}
-		if !equalStrings(inspectors, []string{"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector"}) {
+		if !equalStrings(
+			inspectors,
+			[]string{"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector"},
+		) {
 			t.Errorf("legacy=%v: post-TLS inspectors = %v, want original_dst and HTTP only", legacy, inspectors)
 		}
 		chain := findFilterChain(t, forward, forwardTCPChain)
-		if !equalStrings(networkFilterNames(chain), []string{"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy"}) {
-			t.Errorf("legacy=%v: TCP filters = %v, want outer TLS identity and TCP proxy", legacy, networkFilterNames(chain))
+		if !equalStrings(
+			networkFilterNames(chain),
+			[]string{"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy"},
+		) {
+			t.Errorf(
+				"legacy=%v: TCP filters = %v, want outer TLS identity and TCP proxy",
+				legacy,
+				networkFilterNames(chain),
+			)
 			continue
 		}
 		identity := &setstatenetworkv3.Config{}
@@ -308,7 +323,12 @@ func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
 		if proxy.GetCluster() != TLSProxyOriginate {
 			t.Errorf("TCP cluster = %q, want original-destination TLS", proxy.GetCluster())
 		}
-		clusters := messagesOf(t, resources, model.ClusterType, func() *clusterv3.Cluster { return &clusterv3.Cluster{} })
+		clusters := messagesOf(
+			t,
+			resources,
+			model.ClusterType,
+			func() *clusterv3.Cluster { return &clusterv3.Cluster{} },
+		)
 		cluster := clusters[TLSProxyOriginate]
 		if cluster.GetType() != clusterv3.Cluster_ORIGINAL_DST {
 			t.Fatal("TCP must preserve the original destination address and port")
