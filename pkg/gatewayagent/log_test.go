@@ -230,6 +230,9 @@ func TestReadinessTransitionLogs(t *testing.T) {
 		if response.StatusCode != want {
 			t.Fatalf("status %d, want %d", response.StatusCode, want)
 		}
+		if !response.Close {
+			t.Errorf("readiness response %d allows reuse of an idle connection", response.StatusCode)
+		}
 	}
 	if strings.Count(logs.String(), "gateway is waiting for readiness") != 2 ||
 		strings.Count(logs.String(), "gateway is not ready") != 1 ||
