@@ -124,7 +124,9 @@ func TestSandboxNotificationBatchAndCancellation(t *testing.T) {
 	}
 	// Combining watched types must not mutate the reusable type or owner indexes.
 	address := newSnapshot(t, "address").List(model.AddressType)[0]
-	if _, err := store.Apply([]model.ResourceChange{{Key: a.Key, New: &a}, {Key: address.Key, New: &address}}); err != nil {
+	if _, err := store.Apply(
+		[]model.ResourceChange{{Key: a.Key, New: &a}, {Key: address.Key, New: &address}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	<-sub.Updates()
@@ -132,7 +134,8 @@ func TestSandboxNotificationBatchAndCancellation(t *testing.T) {
 	eventually(t, func() bool {
 		store.mu.RLock()
 		defer store.mu.RUnlock()
-		return len(store.subscribers) == 0 && len(store.subscribersByType) == 0 && len(store.sandboxSubscribersByWorkload) == 0
+		return len(store.subscribers) == 0 && len(store.subscribersByType) == 0 &&
+			len(store.sandboxSubscribersByWorkload) == 0
 	}, "scope indexes released")
 }
 
@@ -143,13 +146,19 @@ func BenchmarkSandboxNotificationFanout(b *testing.B) {
 			store := New(newSnapshot(b))
 			var owner Subscription
 			for i := range clients {
-				sub := store.Subscribe(ctx, model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: fmt.Sprint(i)})
+				sub := store.Subscribe(
+					ctx,
+					model.ClientScope{Class: model.ClientDedicatedZTunnel, WorkloadUID: fmt.Sprint(i)},
+				)
 				sub.Watch(model.SandboxType)
 				if i == 0 {
 					owner = sub
 				}
 			}
-			variants := []model.Resource{sandboxNoticeResource(b, "sandbox", "0", "a"), sandboxNoticeResource(b, "sandbox", "0", "b")}
+			variants := []model.Resource{
+				sandboxNoticeResource(b, "sandbox", "0", "a"),
+				sandboxNoticeResource(b, "sandbox", "0", "b"),
+			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := range b.N {

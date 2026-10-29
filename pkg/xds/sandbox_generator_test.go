@@ -409,7 +409,9 @@ func TestScopedStoreSandboxLifecycle(t *testing.T) {
 	}
 	for i, step := range steps {
 		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: response.Nonce})
-		if _, err := resources.Apply([]model.ResourceChange{{Key: step.resource.Key, New: &step.resource}}); err != nil {
+		if _, err := resources.Apply(
+			[]model.ResourceChange{{Key: step.resource.Key, New: &step.resource}},
+		); err != nil {
 			t.Fatal(err)
 		}
 		response = stream.awaitResponses(t, model.SandboxType, i+2)[i+1]

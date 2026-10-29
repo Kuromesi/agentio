@@ -204,35 +204,7 @@ func mergeCandidates(older, newer []Candidate) ([]Candidate, bool) {
 	if len(newer) == 0 {
 		return older, false
 	}
-	// Count repeated keys before allocating so pending notices retain only
-	// enough capacity for their union, including heavily overlapping updates.
-	count := len(older) + len(newer)
-	unchanged := true
-	for i, j := 0, 0; i < len(older) && j < len(newer); {
-		switch {
-		case older[i].Key.Name < newer[j].Key.Name:
-			i++
-		case older[i].Key.Name > newer[j].Key.Name:
-			j++
-		default:
-			count--
-			for _, incoming := range newer[j].Identities {
-				found := false
-				for _, existing := range older[i].Identities {
-					if existing.Name == incoming.Name && existing.Facts.Equal(incoming.Facts) && existing.Workloads.SupersetOf(incoming.Workloads) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					unchanged = false
-					break
-				}
-			}
-			i++
-			j++
-		}
-	}
+	count, unchanged := candidateUnionSize(older, newer)
 	// Repeated rule changes retain the same names and ownership evidence.
 	// Reuse their immutable union instead of copying it for every queued client.
 	if unchanged && count == len(older) {
@@ -282,6 +254,41 @@ func mergeCandidates(older, newer []Candidate) ([]Candidate, bool) {
 	}
 	merged = append(merged, older...)
 	return append(merged, newer...), true
+}
+
+// candidateUnionSize also reports whether the union retains only existing evidence.
+func candidateUnionSize(older, newer []Candidate) (int, bool) {
+	// Count repeated keys before allocating so pending notices retain only
+	// enough capacity for their union, including heavily overlapping updates.
+	count := len(older) + len(newer)
+	unchanged := true
+	for i, j := 0, 0; i < len(older) && j < len(newer); {
+		switch {
+		case older[i].Key.Name < newer[j].Key.Name:
+			i++
+		case older[i].Key.Name > newer[j].Key.Name:
+			j++
+		default:
+			count--
+			for _, incoming := range newer[j].Identities {
+				found := false
+				for _, existing := range older[i].Identities {
+					if existing.Name == incoming.Name && existing.Facts.Equal(incoming.Facts) &&
+						existing.Workloads.SupersetOf(incoming.Workloads) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					unchanged = false
+					break
+				}
+			}
+			i++
+			j++
+		}
+	}
+	return count, unchanged
 }
 
 func coalesceChanges(changes []model.ResourceChange) []model.ResourceChange {
