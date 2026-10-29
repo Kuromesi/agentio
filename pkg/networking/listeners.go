@@ -921,9 +921,9 @@ func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimit
 	if settings.GetTokenBucket() != nil {
 		config.TokenBucket = tokenBucket(settings.GetTokenBucket())
 	}
-	actions := map[string]*routev3.RateLimit_Action{}
 	for _, descriptor := range settings.GetDescriptors() {
 		converted := &ratelimitv3.LocalRateLimitDescriptor{TokenBucket: tokenBucket(descriptor.GetTokenBucket())}
+		rateLimit := &routev3.RateLimit{}
 		for _, entry := range descriptor.GetEntries() {
 			converted.Entries = append(
 				converted.Entries,
@@ -935,29 +935,26 @@ func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimit
 					ExprSpecifier: &rlexprv3.Descriptor_Text{Text: entry.GetCel()},
 					SkipIfError:   true,
 				})
-				actions[entry.GetKey()] = &routev3.RateLimit_Action{
+				rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
 					ActionSpecifier: &routev3.RateLimit_Action_Extension{
 						Extension: &corev3.TypedExtensionConfig{
 							Name:        "envoy.rate_limit_descriptors.expr",
 							TypedConfig: configAny,
 						},
 					},
-				}
+				})
+			} else {
+				rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
+					ActionSpecifier: &routev3.RateLimit_Action_GenericKey_{
+						GenericKey: &routev3.RateLimit_Action_GenericKey{
+							DescriptorKey: entry.GetKey(), DescriptorValue: entry.GetValue(),
+						},
+					},
+				})
 			}
 		}
 		config.Descriptors = append(config.Descriptors, converted)
-	}
-	if len(actions) > 0 {
-		rateLimit := &routev3.RateLimit{}
-		for _, descriptor := range settings.GetDescriptors() {
-			for _, entry := range descriptor.GetEntries() {
-				if action := actions[entry.GetKey()]; action != nil {
-					rateLimit.Actions = append(rateLimit.Actions, action)
-					delete(actions, entry.GetKey())
-				}
-			}
-		}
-		config.RateLimits = []*routev3.RateLimit{rateLimit}
+		config.RateLimits = append(config.RateLimits, rateLimit)
 	}
 	if err := config.ValidateAll(); err != nil {
 		return nil, fmt.Errorf("validate connect rate limit: %w", err)

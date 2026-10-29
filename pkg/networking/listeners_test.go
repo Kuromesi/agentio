@@ -25,19 +25,68 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	extensionmatchingv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
+	localratelimitv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	rlexprv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/rate_limit_descriptors/expr/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	httpupstreamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/ext"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"istio.io/istio/pkg/test"
 
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
 )
+
+func TestConnectRateLimitPreservesDescriptorGroupsAndValues(t *testing.T) {
+	b := &resourceBuilder{}
+	bucket := &configv1.TokenBucket{MaxTokens: 10, TokensPerFill: 10, FillInterval: durationpb.New(time.Second)}
+	settings := &configv1.LocalRateLimitSettings{Descriptors: []*configv1.RateLimitDescriptor{
+		{Entries: []*configv1.RateLimitEntry{{Key: "namespace", Cel: `"demo"`}}, TokenBucket: bucket},
+		{Entries: []*configv1.RateLimitEntry{
+			{Key: "namespace", Cel: `"other"`},
+			{Key: "workload", Cel: `"app"`},
+			{Key: "scope", Value: "gateway"},
+		}, TokenBucket: bucket},
+	}}
+	filter, err := b.localRateLimitFilter(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &localratelimitv3.LocalRateLimit{}
+	if err := filter.GetTypedConfig().UnmarshalTo(config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.GetRateLimits()) != 2 {
+		t.Fatalf("rate limit groups = %d, want 2", len(config.GetRateLimits()))
+	}
+	for i, descriptor := range settings.GetDescriptors() {
+		actions := config.GetRateLimits()[i].GetActions()
+		if len(actions) != len(descriptor.GetEntries()) {
+			t.Fatalf("descriptor %d: wrong action count %d", i, len(actions))
+		}
+		for j, entry := range descriptor.GetEntries() {
+			if entry.GetCel() == "" {
+				generic := actions[j].GetGenericKey()
+				if generic.GetDescriptorKey() != entry.GetKey() || generic.GetDescriptorValue() != entry.GetValue() {
+					t.Fatalf("static descriptor entry lost: %v", generic)
+				}
+				continue
+			}
+			expression := &rlexprv3.Descriptor{}
+			if err := actions[j].GetExtension().GetTypedConfig().UnmarshalTo(expression); err != nil {
+				t.Fatal(err)
+			}
+			if expression.GetDescriptorKey() != entry.GetKey() || expression.GetText() != entry.GetCel() {
+				t.Fatalf("descriptor %d entry %d changed key, order, or expression: %v", i, j, expression)
+			}
+		}
+	}
+}
 
 // Application CONNECT is proxied to the original explicit proxy; it is not the
 // HBONE CONNECT terminator.

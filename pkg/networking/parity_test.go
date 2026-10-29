@@ -922,6 +922,10 @@ func displayGatewayResourceKey(key string) string {
 func TestLegacyGatewayGraphParity(t *testing.T) {
 	got := normalizeGatewayResources(buildGatewayGraph(t, true))
 	want := readNormalizedGatewayGolden(t, "testdata/agentio-supported-gateway.json")
+	// Both gateway modes match configured hostnames independently of request ports.
+	for _, name := range []string{HTTPDynamicForwardProxy, TLSConnectOriginate} {
+		want[gatewayResourceKey(model.RouteType, name)].(*routev3.RouteConfiguration).IgnorePortInHostMatching = true
+	}
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
 		t.Fatalf("legacy gateway compatibility regressed:\n%s", strings.Join(diff, "\n"))
 	}

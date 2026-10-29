@@ -15,6 +15,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -51,6 +52,24 @@ func TestGatewaysFromAgentioConfigNormalizesAndClones(t *testing.T) {
 	gateway.Config.ExtProc.Service = "changed"
 	if source.GetExtProc().GetService() != "gateway-ext-proc.agentio-system.svc.cluster.local" {
 		t.Fatal("normalization mutated the source protobuf")
+	}
+}
+
+func TestGatewayValidateForUseRejectsDuplicateRouteOverrideHosts(t *testing.T) {
+	for _, hosts := range [][]string{
+		{"api.example.com", "API.EXAMPLE.COM"},
+		{"*.example.com", "*.example.com"},
+		{"*", "*"},
+	} {
+		gateway := Gateway{Namespace: "demo", Name: "egress", Config: &configv1.EgressGateway{
+			ConnectionPool: &configv1.ConnectionPoolSettings{Http: &configv1.ConnectionPoolHttpSettings{
+				RouteOverrides: []*configv1.HttpRouteOverride{{Hosts: hosts[:1]}, {Hosts: hosts[1:]}},
+			}},
+		}}
+		if err := gateway.ValidateForUse(); err == nil ||
+			!strings.Contains(err.Error(), "duplicate route override host") {
+			t.Fatalf("hosts %v: expected duplicate host error, got %v", hosts, err)
+		}
 	}
 }
 
@@ -135,7 +154,8 @@ func TestMergeGatewaySources(t *testing.T) {
 		Source:    GatewaySourceLegacyFallback,
 	}
 	selected := MergeGatewaySources([]Gateway{legacy, gatewayAPI})
-	if selected == nil || selected.Source != GatewaySourceGatewayAPI || !proto.Equal(selected.Config, gatewayAPI.Config) {
+	if selected == nil || selected.Source != GatewaySourceGatewayAPI ||
+		!proto.Equal(selected.Config, gatewayAPI.Config) {
 		t.Fatalf("legacy fallback plus Gateway API declaration = %+v, want Gateway API declaration", selected)
 	}
 	if selected.Config == gatewayAPI.Config {
@@ -187,13 +207,30 @@ func TestGatewayValidateForUseRejectsInvalidStaticServiceEntries(t *testing.T) {
 		{name: "nil service entry", entries: []*configv1.EgressServiceEntry{nil}},
 		{name: "missing hosts", entries: []*configv1.EgressServiceEntry{entry(nil, endpoint("10.10.20.30"))}},
 		{name: "missing endpoints", entries: []*configv1.EgressServiceEntry{entry([]string{"api.example.com"})}},
-		{name: "noncanonical host", entries: []*configv1.EgressServiceEntry{entry([]string{"API.Example.COM."}, endpoint("10.10.20.30"))}},
-		{name: "wildcard host", entries: []*configv1.EgressServiceEntry{entry([]string{"*.example.com"}, endpoint("10.10.20.30"))}},
-		{name: "numeric top-level domain", entries: []*configv1.EgressServiceEntry{entry([]string{"api.123"}, endpoint("10.10.20.30"))}},
+		{
+			name:    "noncanonical host",
+			entries: []*configv1.EgressServiceEntry{entry([]string{"API.Example.COM."}, endpoint("10.10.20.30"))},
+		},
+		{
+			name:    "wildcard host",
+			entries: []*configv1.EgressServiceEntry{entry([]string{"*.example.com"}, endpoint("10.10.20.30"))},
+		},
+		{
+			name:    "numeric top-level domain",
+			entries: []*configv1.EgressServiceEntry{entry([]string{"api.123"}, endpoint("10.10.20.30"))},
+		},
 		{name: "duplicate host", entries: []*configv1.EgressServiceEntry{validEntry(), validEntry()}},
 		{name: "nil endpoint", entries: []*configv1.EgressServiceEntry{entry([]string{"api.example.com"}, nil)}},
-		{name: "IPv6 endpoint", entries: []*configv1.EgressServiceEntry{entry([]string{"api.example.com"}, endpoint("2001:db8::1"))}},
-		{name: "duplicate endpoint", entries: []*configv1.EgressServiceEntry{entry([]string{"api.example.com"}, endpoint("10.10.20.30"), endpoint("10.10.20.30"))}},
+		{
+			name:    "IPv6 endpoint",
+			entries: []*configv1.EgressServiceEntry{entry([]string{"api.example.com"}, endpoint("2001:db8::1"))},
+		},
+		{
+			name: "duplicate endpoint",
+			entries: []*configv1.EgressServiceEntry{
+				entry([]string{"api.example.com"}, endpoint("10.10.20.30"), endpoint("10.10.20.30")),
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
