@@ -329,7 +329,7 @@ func TestSlowClientBurstConvergesFromFirstUnsentToFinalPublication(t *testing.T)
 	}
 	store := xdsstore.New(initial)
 	ctx := t.Context()
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 
 	scheduler := NewPushScheduler(1)

@@ -26,6 +26,7 @@ import (
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	securityv1 "github.com/openkruise/agentio/api/security/v1"
 	"github.com/openkruise/agentio/pkg/model"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 func sandboxResource(t *testing.T, uid string, policies ...*securityv1.TrafficPolicy) model.Resource {
@@ -378,5 +379,51 @@ func TestSandboxAttesterMigrationUpdatesVisibilityWithoutWorkloadChanges(t *test
 				t.Fatalf("new attester did not gain visibility: %+v", delta)
 			}
 		}
+	}
+}
+
+// Exercise the real Store subscription index together with the generator: a
+// binding move and a replacement Pod must withdraw the old stream's Sandbox.
+func TestScopedStoreSandboxLifecycle(t *testing.T) {
+	worker := workerResource(t, "pod-1")
+	sandbox := sandboxResourceWithAttester(t, "sandbox", "worker")
+	server := newTestServer(t, workerScope(worker), []model.Resource{worker, sandbox}, nil)
+	resources := xdsstore.New(selectionSnapshot(t, []model.Resource{worker, sandbox}))
+	server.server.resources = resources
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stream := newFakeStream(ctx, 16)
+	done := server.start(stream)
+	stream.send(nodeRequest(model.SandboxType, "*"))
+	response := stream.awaitResponses(t, model.SandboxType, 1)[0]
+	if len(response.Resources) != 1 {
+		t.Fatal("initial Sandbox missing")
+	}
+	steps := []struct {
+		resource model.Resource
+		removed  bool
+	}{
+		{sandboxResourceWithAttester(t, "sandbox", "other"), true},
+		{sandbox, false},
+		{workerResource(t, "pod-2"), true},
+	}
+	for i, step := range steps {
+		stream.send(&discoveryv3.DeltaDiscoveryRequest{TypeUrl: model.SandboxType, ResponseNonce: response.Nonce})
+		if _, err := resources.Apply(
+			[]model.ResourceChange{{Key: step.resource.Key, New: &step.resource}},
+		); err != nil {
+			t.Fatal(err)
+		}
+		response = stream.awaitResponses(t, model.SandboxType, i+2)[i+1]
+		if step.removed {
+			if !reflect.DeepEqual(response.RemovedResources, []string{"sandbox"}) || len(response.Resources) != 0 {
+				t.Fatalf("withdrawal: %v", response)
+			}
+		} else if len(response.Resources) != 1 || response.Resources[0].Name != "sandbox" {
+			t.Fatalf("rebind: %v", response)
+		}
+	}
+	if err := server.finish(t, stream, done); err != nil {
+		t.Fatal(err)
 	}
 }
