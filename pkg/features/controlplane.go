@@ -23,6 +23,12 @@ import (
 )
 
 var (
+	// EnablePolicyStatus enables advisory policy validation and status reporting.
+	EnablePolicyStatus = env.Register(
+		"ENABLE_POLICY_STATUS",
+		true,
+		"Enable advisory validation and status reporting for SecurityProfile and TrafficPolicy resources, including global variants. False disables the status controller and its leader election; existing status is retained.",
+	).Get()
 	// SandboxMode enables runtime discovery and Sandbox resources alongside Workloads.
 	SandboxMode = env.Register(
 		"AGENTIO_SANDBOX_MODE",

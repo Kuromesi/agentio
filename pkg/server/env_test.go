@@ -197,6 +197,7 @@ func TestPrintEnvironmentListsRegisteredVariables(t *testing.T) {
 	body := out.String()
 	for _, variable := range []string{
 		"AGENTIO_TOKEN_AUDIENCE",
+		"ENABLE_POLICY_STATUS",
 		"AGENTIO_SCOPED_SECRETS",
 		"AGENTIO_CONFIGMAP_NAME",
 		"AGENTIO_ENABLE_DEBUG_ON_HTTP",
@@ -254,6 +255,30 @@ func TestSecretNamespaceScopeFeatureFlag(t *testing.T) {
 	}
 	for _, value := range []string{"", "true", "false"} {
 		command := exec.Command(os.Args[0], "-test.run=^TestSecretNamespaceScopeFeatureFlag$")
+		command.Env = environmentWithout(os.Environ(), variable, helper)
+		expected := "true"
+		if value != "" {
+			command.Env = append(command.Env, variable+"="+value)
+			expected = value
+		}
+		command.Env = append(command.Env, helper+"="+expected)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("flag %q failed: %v\n%s", value, err, output)
+		}
+	}
+}
+
+func TestPolicyStatusFeatureFlag(t *testing.T) {
+	const variable = "ENABLE_POLICY_STATUS"
+	const helper = "AGENTIO_POLICY_STATUS_TEST_HELPER"
+	if expected := os.Getenv(helper); expected != "" {
+		if features.EnablePolicyStatus != (expected == "true") {
+			t.Fatalf("EnablePolicyStatus = %v, want %s", features.EnablePolicyStatus, expected)
+		}
+		return
+	}
+	for _, value := range []string{"", "true", "false"} {
+		command := exec.Command(os.Args[0], "-test.run=^TestPolicyStatusFeatureFlag$")
 		command.Env = environmentWithout(os.Environ(), variable, helper)
 		expected := "true"
 		if value != "" {
