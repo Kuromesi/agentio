@@ -115,7 +115,10 @@ func startProcess(cpus []int, binary string, args []string, env []string, log io
 		return nil, err
 	}
 	p := &process{cmd: cmd, done: make(chan struct{})}
-	go func() { p.err = cmd.Wait(); close(p.done) }()
+	go func() {
+		p.err = cmd.Wait()
+		close(p.done)
+	}()
 	return p, nil
 }
 

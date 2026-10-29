@@ -47,13 +47,15 @@ func concurrencyConfig(t *testing.T, l object, combined bool) {
 		setFilters(l, []any{fs[0], concurrency, fs[2]})
 		return
 	}
-	ratelimit := object{"name": "envoy.filters.http.local_ratelimit", "typed_config": object{
-		"@type":           "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-		"stat_prefix":     "connect_rate",
-		"token_bucket":    object{"max_tokens": 1000, "tokens_per_fill": 1000, "fill_interval": "1s"},
-		"filter_enabled":  object{"default_value": object{"numerator": 100, "denominator": "HUNDRED"}},
-		"filter_enforced": object{"default_value": object{"numerator": 100, "denominator": "HUNDRED"}},
-	}}
+	ratelimit := object{
+		"name": "envoy.filters.http.local_ratelimit",
+		"typed_config": object{
+			"@type":           "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+			"stat_prefix":     "connect_rate",
+			"token_bucket":    object{"max_tokens": 1000, "tokens_per_fill": 1000, "fill_interval": "1s"},
+			"filter_enabled":  object{"default_value": object{"numerator": 100, "denominator": "HUNDRED"}},
+			"filter_enforced": object{"default_value": object{"numerator": 100, "denominator": "HUNDRED"}},
+		}}
 	setFilters(l, []any{fs[0], ratelimit, concurrency, fs[1], fs[2]})
 }
 func TestEnvoyConcurrency(t *testing.T) {

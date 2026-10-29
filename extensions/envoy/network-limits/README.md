@@ -6,7 +6,7 @@ Currently, this Rust HTTP dynamic module provides independent bandwidth and conc
 
 The gateway image includes `libenvoy_agentio_network_limits.so`. Enable it with `egressGateways[].bandwidthLimit` in [AgentioConfig](../../../docs/reference/agentio-configuration.md#connect-bandwidth-limits); see the [configuration example](../../../manifests/examples/gateway-bandwidth-config.yaml). The controller generates the filter placement, module path and stable `agentio/<namespace>/<name>/bandwidth` budget name. Gateway API parameters use the same settings. Do not derive production identity from arbitrary client headers. The module targets the community Envoy gateway, not legacy proxyv2.
 
-Enabling either network limit publishes only the community Envoy resource variant for that gateway. Upgrade all legacy proxyv2 instances before enabling these limits; their old listener resources are withdrawn rather than forwarding traffic without enforcement. Existing draining connections are not retroactively limited.
+Enabling either network limit publishes only the community Envoy resource variant for that gateway. Upgrade all legacy proxyv2 instances before enabling these limits; their old listener resources are withdrawn rather than forwarding traffic without enforcement. Initial filter installation also requires existing community Envoy HBONE connections to drain: new CONNECT streams on those pooled connections can still use the old filter chain until draining completes. A config dump showing the new filters does not mean every connection is already limited. Subsequent quota updates share the existing module budgets and do not require this drain.
 
 ## Independent concurrency filter
 

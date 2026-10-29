@@ -171,7 +171,9 @@ func runLoad(parent context.Context, c config) (map[string]any, error) {
 	ctx, cancel := context.WithCancel(parent)
 	t := &transfers{config: c, ctx: ctx, received: make([]atomic.Uint64, c.Streams), failures: map[int]error{}}
 	for range min(c.Streams, c.Connections) {
-		t.transports = append(t.transports, &http2.Transport{AllowHTTP: true, StrictMaxConcurrentStreams: true,
+		t.transports = append(t.transports, &http2.Transport{
+			AllowHTTP:                  true,
+			StrictMaxConcurrentStreams: true,
 			DialTLSContext: func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
 				t.dials.Add(1)
 				return (&net.Dialer{}).DialContext(ctx, "tcp", c.Target)

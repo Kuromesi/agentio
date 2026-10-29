@@ -126,7 +126,10 @@ func startOrigin(t *testing.T, encrypted bool) *origin {
 		default:
 			close(o.release)
 		}
-		o.conns.Range(func(c, _ any) bool { closeTest(t, c.(net.Conn)); return true })
+		o.conns.Range(func(c, _ any) bool {
+			closeTest(t, c.(net.Conn))
+			return true
+		})
 		o.workers.Wait()
 	})
 	return o
@@ -207,10 +210,11 @@ func (o *origin) serve(c net.Conn) {
 }
 
 type runtime struct {
-	port, admin int
-	cmd         *exec.Cmd
-	listener    object
-	lds         string
+	port     int
+	admin    int
+	cmd      *exec.Cmd
+	listener object
+	lds      string
 }
 
 func filters(listener object) []any {
@@ -374,7 +378,11 @@ type stream struct {
 	cancel   context.CancelFunc
 }
 
-func (s *stream) close() { s.cancel(); closeTest(s.t, s.writer); closeTest(s.t, s.response.Body) }
+func (s *stream) close() {
+	s.cancel()
+	closeTest(s.t, s.writer)
+	closeTest(s.t, s.response.Body)
+}
 
 type h2client struct{ conn *http2.ClientConn }
 

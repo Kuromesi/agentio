@@ -187,11 +187,13 @@ func envoyConfig(c config, s scenario) ([]byte, error) {
 				},
 			},
 		}
-		filter := map[string]any{"name": "agentio.connect_concurrency", "typed_config": map[string]any{
-			"@type":    "type.googleapis.com/udpa.type.v1.TypedStruct",
-			"type_url": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
-			"value":    admission,
-		}}
+		filter := map[string]any{
+			"name": "agentio.connect_concurrency",
+			"typed_config": map[string]any{
+				"@type":    "type.googleapis.com/udpa.type.v1.TypedStruct",
+				"type_url": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
+				"value":    admission,
+			}}
 		filters = append([]any{filters[0], filter}, filters[1:]...)
 	}
 	hcm["http_filters"] = filters

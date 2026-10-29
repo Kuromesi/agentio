@@ -47,7 +47,10 @@ func serveOrigin(ctx context.Context, address, statsAddress string) (result erro
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bytes", func(w http.ResponseWriter, _ *http.Request) {
 		values := map[string]uint64{}
-		counts.Range(func(k, v any) bool { values[k.(string)] = v.(*atomic.Uint64).Load(); return true })
+		counts.Range(func(k, v any) bool {
+			values[k.(string)] = v.(*atomic.Uint64).Load()
+			return true
+		})
 		if err := json.NewEncoder(w).Encode(values); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}

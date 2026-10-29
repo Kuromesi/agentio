@@ -99,7 +99,7 @@ data:
 	})
 }
 
-func connectStat(ctx context.Context, environment *e2e.Environment, name string) (int, error) {
+func gatewayStat(ctx context.Context, environment *e2e.Environment, name string) (int, error) {
 	stdout, stderr, err := execFirstReadyPod(
 		ctx,
 		environment,
@@ -111,15 +111,18 @@ func connectStat(ctx context.Context, environment *e2e.Environment, name string)
 			"-fsS",
 			"--max-time",
 			"5",
-			"http://localhost:15000/stats?format=json&filter=http.connect_terminate." + name,
+			"http://localhost:15000/stats?format=json&filter=" + name,
 		},
 	)
 	if err != nil {
-		return 0, fmt.Errorf("CONNECT stats: %w: %s", err, stderr)
+		return 0, fmt.Errorf("gateway stats: %w: %s", err, stderr)
 	}
 	var result struct{ Stats []struct{ Value int } }
 	if err = json.Unmarshal([]byte(stdout), &result); err != nil {
 		return 0, err
+	}
+	if len(result.Stats) == 0 {
+		return 0, fmt.Errorf("gateway stat %q is missing", name)
 	}
 	total := 0
 	for _, s := range result.Stats {
@@ -128,9 +131,26 @@ func connectStat(ctx context.Context, environment *e2e.Environment, name string)
 	return total, nil
 }
 
+func waitForNetworkLimitsDrain(t *testing.T, ctx context.Context, environment *e2e.Environment) {
+	t.Helper()
+	// Initial filter installation cannot retrofit the previous scenarios' pooled HBONE connections.
+	harness.RetryAssertion(t, time.Minute, 200*time.Millisecond, func() error {
+		for _, name := range []string{"total_filter_chains_draining", "total_listeners_draining"} {
+			n, err := gatewayStat(ctx, environment, "listener_manager."+name)
+			if err != nil {
+				return err
+			}
+			if n != 0 {
+				return fmt.Errorf("%s=%d, waiting for the old filter chains to drain", name, n)
+			}
+		}
+		return nil
+	})
+}
+
 func TestSandboxNetworkConcurrency(t *testing.T) {
 	environment, scope := rig.BeginScenario(t)
-	ctx, cancel := e2e.Context(t, time.Minute)
+	ctx, cancel := e2e.Context(t, 2*time.Minute)
 	defer cancel()
 	pods, err := environment.Kube.ReadyPods(ctx, resolvedAgentioConfig.Namespace, harness.GatewayPodSelector)
 	if err != nil {
@@ -140,6 +160,7 @@ func TestSandboxNetworkConcurrency(t *testing.T) {
 		t.Fatal("per-process concurrency scenario requires the default single gateway replica")
 	}
 	applyNetworkLimits(t, environment, scope, 1, 16*1024*1024)
+	waitForNetworkLimitsDrain(t, ctx, environment)
 	target := trafficFixture.AnotherServer.Address()
 	done := make(chan error, 1)
 	go func() {
@@ -147,7 +168,7 @@ func TestSandboxNetworkConcurrency(t *testing.T) {
 		done <- err
 	}()
 	harness.RetryAssertion(t, 10*time.Second, 100*time.Millisecond, func() error {
-		n, err := connectStat(ctx, environment, "downstream_rq_active")
+		n, err := gatewayStat(ctx, environment, "http.connect_terminate.downstream_rq_active")
 		if err != nil {
 			return err
 		}
@@ -210,6 +231,7 @@ func TestSandboxNetworkBandwidth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	applyNetworkLimits(t, environment, scope, 8, 8192)
+	waitForNetworkLimitsDrain(t, ctx, environment)
 	target := trafficFixture.AnotherServer.Address()
 	// Echo includes the URI in its response. Two fresh tunnels must pay shared
 	// byte debt even when each individual response fits in the initial batch.

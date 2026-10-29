@@ -30,8 +30,10 @@ import (
 )
 
 type transfer struct {
-	tenant, sandbox, direction string
-	size                       int
+	tenant    string
+	sandbox   string
+	direction string
+	size      int
 }
 
 func multiplex(t *testing.T, port int, transfers []transfer) []time.Duration {
