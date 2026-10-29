@@ -61,17 +61,23 @@ func (b *resourceBuilder) buildRoutes(gateway *configv1.EgressGateway) ([]*route
 		VirtualHosts: []*routev3.VirtualHost{{
 			Name:    "default",
 			Domains: []string{"*"},
-			Routes: []*routev3.Route{{
-				Match: &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_ConnectMatcher_{ConnectMatcher: &routev3.RouteMatch_ConnectMatcher{}}},
-				Action: &routev3.Route_Route{Route: &routev3.RouteAction{
-					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: MainInternal},
-					Timeout:          durationpb.New(0),
-					UpgradeConfigs: []*routev3.RouteAction_UpgradeConfig{{
-						UpgradeType:   "CONNECT",
-						ConnectConfig: &routev3.RouteAction_UpgradeConfig_ConnectConfig{},
+			Routes: []*routev3.Route{
+				{
+					Match: &routev3.RouteMatch{
+						PathSpecifier: &routev3.RouteMatch_ConnectMatcher_{
+							ConnectMatcher: &routev3.RouteMatch_ConnectMatcher{},
+						},
+					},
+					Action: &routev3.Route_Route{Route: &routev3.RouteAction{
+						ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: MainInternal},
+						Timeout:          durationpb.New(0),
+						UpgradeConfigs: []*routev3.RouteAction_UpgradeConfig{{
+							UpgradeType:   "CONNECT",
+							ConnectConfig: &routev3.RouteAction_UpgradeConfig_ConnectConfig{},
+						}},
 					}},
-				}},
-			}},
+				},
+			},
 		}},
 	}
 	if features.EnableUDPProxy {
@@ -91,8 +97,11 @@ func (b *resourceBuilder) buildRoutes(gateway *configv1.EgressGateway) ([]*route
 // buildForwardRoute keeps the existing DFP cluster for static routes and
 // replaces only the route-selected host and original port state.
 func (b *resourceBuilder) buildForwardRoute(name string, gateway *configv1.EgressGateway) *routev3.RouteConfiguration {
-	result := &routev3.RouteConfiguration{Name: name, ValidateClusters: wrapperspb.Bool(false)}
+	result := &routev3.RouteConfiguration{
+		Name: name, ValidateClusters: wrapperspb.Bool(false), IgnorePortInHostMatching: true,
+	}
 	settings := gateway.GetConnectionPool().GetHttp()
+	defaultSettings := settings.GetDefaultRoute()
 	staticDomains := make(map[string]struct{})
 	for serviceIndex, service := range gateway.GetServiceEntries() {
 		addresses := make([]string, 0, len(service.GetEndpoints()))
@@ -118,6 +127,10 @@ func (b *resourceBuilder) buildForwardRoute(name string, gateway *configv1.Egres
 	for index, override := range settings.GetRouteOverrides() {
 		domains := make([]string, 0, len(override.GetHosts()))
 		for _, domain := range override.GetHosts() {
+			if domain == "*" {
+				defaultSettings = override.GetSettings()
+				continue
+			}
 			if _, found := staticDomains[strings.ToLower(domain)]; !found {
 				domains = append(domains, domain)
 			}
@@ -134,7 +147,7 @@ func (b *resourceBuilder) buildForwardRoute(name string, gateway *configv1.Egres
 	result.VirtualHosts = append(result.VirtualHosts, &routev3.VirtualHost{
 		Name:    "sandbox|default|0",
 		Domains: []string{"*"},
-		Routes:  []*routev3.Route{forwardRoute(name, settings.GetDefaultRoute())},
+		Routes:  []*routev3.Route{forwardRoute(name, defaultSettings)},
 	})
 	connectCluster := PassthroughCluster
 	if name == TLSConnectOriginate {
@@ -165,7 +178,11 @@ func forwardProxyConnectRoute(cluster string) *routev3.Route {
 	}
 }
 
-func (b *resourceBuilder) staticEndpointRoute(cluster string, settings *configv1.HttpRouteSettings, addresses []string) *routev3.Route {
+func (b *resourceBuilder) staticEndpointRoute(
+	cluster string,
+	settings *configv1.HttpRouteSettings,
+	addresses []string,
+) *routev3.Route {
 	result := forwardRoute(cluster, settings)
 	if len(addresses) == 1 {
 		result.TypedPerFilterConfig = map[string]*anypb.Any{

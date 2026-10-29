@@ -605,7 +605,8 @@
             ]
           }
         ],
-        "validateClusters": false
+        "validateClusters": false,
+        "ignorePortInHostMatching": true
       }
     },
     {
@@ -708,7 +709,8 @@
             ]
           }
         ],
-        "validateClusters": false
+        "validateClusters": false,
+        "ignorePortInHostMatching": true
       }
     },
     {

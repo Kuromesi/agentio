@@ -387,7 +387,7 @@ Gateway API `parametersRef` ConfigMaps accept the same `upstreamTls` block in `d
 | `http.streamIdleTimeout` | `30m` | Closes an idle HTTP stream, including WebSocket and server-sent event streams. |
 | `http.defaultRoute.timeout` | `0s` | Total timeout for the fallback route. `0s` disables the timeout. |
 | `http.defaultRoute.retries` | Unset | Retry policy using Istio's [`HTTPRetry`](https://istio.io/latest/docs/reference/config/networking/virtual-service/#HTTPRetry) fields. |
-| `http.routeOverrides[].hosts` | Empty | Exact or wildcard destination host patterns for a dedicated Envoy virtual host. |
+| `http.routeOverrides[].hosts` | Empty | Exact or wildcard destination host patterns, matched independently of the request port. `*` overrides the default route settings; duplicate patterns across or within overrides are rejected case-insensitively. |
 | `http.routeOverrides[].settings` | Unset | `timeout` and `retries` applied to the matching hosts. |
 
 ### CONNECT rate limiting
@@ -399,10 +399,10 @@ Each accepted HTTP/2 CONNECT stream consumes one token.
 | `tokenBucket.maxTokens` | `0` | Bucket capacity and initial token count. |
 | `tokenBucket.tokensPerFill` | `1` | Tokens added on each fill interval when omitted or zero. |
 | `tokenBucket.fillInterval` | Unset | Refill interval; it must be at least `50ms`. |
-| `descriptors[]` | Empty | Descriptor-specific buckets. The first descriptor whose entries all match is used. |
+| `descriptors[]` | Empty | Independent descriptor-specific buckets. Each matching descriptor must have available tokens, as must the global bucket when configured. |
 | `descriptors[].entries[].key` | Empty | Descriptor key. |
 | `descriptors[].entries[].value` | Empty | Exact value. Empty acts as a wildcard and creates a bucket for each distinct runtime value. |
-| `descriptors[].entries[].cel` | Empty | CEL expression that produces the runtime descriptor value. |
+| `descriptors[].entries[].cel` | Empty | CEL expression that produces the runtime descriptor value. When omitted, the non-empty `value` is used as a constant. Entry order and expressions are preserved independently for each descriptor. |
 | `descriptors[].tokenBucket` | Unset | Bucket used by the matching descriptor. |
 | `perDownstreamConnection` | `false` | Creates a token bucket for each ztunnel-to-gateway connection. It cannot be combined with wildcard descriptor values. |
 

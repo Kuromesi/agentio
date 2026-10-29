@@ -921,6 +921,10 @@ func TestLegacyGatewayGraphParity(t *testing.T) {
 	}
 	context.CommonTlsContext.AlpnProtocols = nil
 	cluster.TransportSocket.ConfigType = &corev3.TransportSocket_TypedConfig{TypedConfig: mustPack(context)}
+	// Both gateway modes match configured hostnames independently of request ports.
+	for _, name := range []string{HTTPDynamicForwardProxy, TLSConnectOriginate} {
+		want[gatewayResourceKey(model.RouteType, name)].(*routev3.RouteConfiguration).IgnorePortInHostMatching = true
+	}
 	if diff := semanticGatewayDiff(want, got); len(diff) != 0 {
 		t.Fatalf("legacy gateway compatibility regressed:\n%s", strings.Join(diff, "\n"))
 	}
