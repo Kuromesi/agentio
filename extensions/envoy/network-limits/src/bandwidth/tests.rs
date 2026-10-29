@@ -80,8 +80,8 @@ fn shared_byte_budget_survives_reconnect_and_is_directional() {
     );
     assert_eq!(ledger.charge(&key, 1, 200, now), None);
     assert_eq!(ledger.charge(&other, 0, 100, now), None);
-    ledger.release(&key);
-    ledger.release(&key);
+    ledger.release(&key, now);
+    ledger.release(&key, now);
     ledger.acquire(&key, now).unwrap();
     assert_eq!(
         ledger.charge(&key, 0, 1, now),
@@ -99,12 +99,24 @@ fn capacity_retains_live_and_unpaid_buckets() {
     config.max_dynamic_buckets = 1;
     let first = keys(&config, "a", "one");
     let next = keys(&config, "a", "two");
+    let exact = keys(&config, "vip", "one");
     let now = Instant::now();
     let mut ledger = Ledger::new(config.clone());
     ledger.acquire(&first, now).unwrap();
+    ledger.acquire(&exact, now).unwrap();
+    ledger.release(&exact, now);
     assert!(ledger.acquire(&next, now).is_err());
+    ledger.acquire(&exact, now).unwrap();
+    ledger.charge(&exact, 1, 100, now);
+    ledger.release(&exact, now);
+    ledger.reap(now + Duration::from_millis(100));
+    assert!(
+        ledger
+            .acquire(&next, now + Duration::from_millis(100))
+            .is_err()
+    );
     ledger.charge(&first, 0, 100, now);
-    ledger.release(&first);
+    ledger.release(&first, now);
     assert!(ledger.acquire(&next, now).is_err());
     ledger.acquire(&next, now + Duration::from_secs(1)).unwrap();
 }
@@ -207,7 +219,7 @@ fn rejected_candidate_restores_previous_rates_without_replacing_buckets() {
         100
     );
     assert!(ledger.charge(&key, 0, 1, Instant::now()).is_some());
-    ledger.release(&key);
+    ledger.release(&key, Instant::now());
 }
 
 #[test]
@@ -228,10 +240,8 @@ fn protojson_rates_accept_uint64_strings_and_reject_zero() {
 }
 
 fn filter() -> Filter {
-    let budget = Arc::new(Budget {
-        ledger: Mutex::new(Ledger::new(Config::parse(CONFIG.as_bytes()).unwrap())),
-    });
-    let timer = Arc::new(Timer::new().unwrap());
+    let budget = Arc::new(Budget::new(Config::parse(CONFIG.as_bytes()).unwrap()).unwrap());
+    let timer = budget.timer.clone();
     Filter {
         budget,
         id: timer.id(),

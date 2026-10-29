@@ -1,11 +1,11 @@
 // Copyright 2026 The Kruise Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use super::config::Config;
+use super::{config::Config, timer::Timer};
 use crate::descriptor::Key;
 use envoy_proxy_dynamic_modules_rust_sdk::EnvoyHttpFilterScheduler;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, hash_map::Entry},
     num::NonZeroU64,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
@@ -14,6 +14,8 @@ use std::{
 pub struct Ledger {
     pub config: Config,
     buckets: HashMap<Key, Bucket>,
+    dynamic_buckets: usize,
+    expirations: BTreeSet<(Instant, Key)>,
     registrations: BTreeMap<u64, Config>,
     next_registration: u64,
     pub waiters: HashMap<u64, Arc<dyn EnvoyHttpFilterScheduler>>,
@@ -26,7 +28,9 @@ struct Bucket {
 }
 
 pub struct Budget {
-    pub ledger: Mutex<Ledger>,
+    pub ledger: Arc<Mutex<Ledger>>,
+    pub timer: Arc<Timer>,
+    reaper_id: u64,
 }
 
 // The newest live Envoy configuration supplies rates. Dropping a rejected
@@ -44,10 +48,30 @@ impl Drop for Registration {
             let config = config.clone();
             ledger.update(config, Instant::now());
         }
+        let due = ledger.next_expiration();
+        drop(ledger);
+        self.budget.reap_at(due);
     }
 }
 
 impl Budget {
+    pub fn new(config: Config) -> Result<Self, String> {
+        let ledger = Arc::new(Mutex::new(Ledger::new(config)));
+        let timer = Timer::shared().map_err(|e| e.to_string())?;
+        let reaper_id = timer.id();
+        Ok(Self {
+            ledger,
+            timer,
+            reaper_id,
+        })
+    }
+
+    pub fn reap_at(&self, due: Option<Instant>) {
+        if let Some(due) = due {
+            self.timer.reap_at(self.reaper_id, due, self.ledger.clone());
+        }
+    }
+
     pub fn shared(config: Config) -> Result<Registration, String> {
         static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<Budget>>>> = OnceLock::new();
         let mut registry = REGISTRY.get_or_init(Mutex::default).lock().unwrap();
@@ -55,14 +79,10 @@ impl Budget {
         registry.retain(|_, budget| {
             Arc::strong_count(budget) > 1 || !budget.ledger.lock().unwrap().idle(now)
         });
-        let budget = registry
-            .entry(config.budget_name.clone())
-            .or_insert_with(|| {
-                Arc::new(Self {
-                    ledger: Mutex::new(Ledger::new(config.clone())),
-                })
-            })
-            .clone();
+        let budget = match registry.entry(config.budget_name.clone()) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => entry.insert(Arc::new(Self::new(config.clone())?)).clone(),
+        };
         let mut ledger = budget.ledger.lock().unwrap();
         if !ledger.config.same_layout(&config) {
             return Err("bandwidth grouping is still in use; drain it before changing actions or descriptor entries".into());
@@ -71,7 +91,9 @@ impl Budget {
         let id = ledger.next_registration;
         ledger.registrations.insert(id, config.clone());
         ledger.update(config, now);
+        let due = ledger.next_expiration();
         drop(ledger);
+        budget.reap_at(due);
         Ok(Registration { budget, id })
     }
 }
@@ -81,6 +103,8 @@ impl Ledger {
         Self {
             config,
             buckets: HashMap::new(),
+            dynamic_buckets: 0,
+            expirations: BTreeSet::new(),
             registrations: BTreeMap::new(),
             next_registration: 0,
             waiters: HashMap::new(),
@@ -96,6 +120,7 @@ impl Ledger {
     fn update(&mut self, config: Config, now: Instant) {
         let changed = self.config.descriptors != config.descriptors;
         if changed {
+            self.expirations.clear();
             for (key, bucket) in &mut self.buckets {
                 let new = &config.descriptors[key.0].bandwidth_limit;
                 for (direction, new) in [new.upload_bytes_per_second, new.download_bytes_per_second]
@@ -121,6 +146,10 @@ impl Ledger {
                         bucket.debt_rates[direction] = new;
                     }
                 }
+                if bucket.users == 0 {
+                    self.expirations
+                        .insert((*bucket.ready.iter().max().unwrap(), key.clone()));
+                }
             }
         }
         self.config = config;
@@ -133,46 +162,65 @@ impl Ledger {
     }
 
     pub fn acquire(&mut self, keys: &[Key], now: Instant) -> Result<(), ()> {
+        self.reap(now);
         let needed = keys
             .iter()
             .filter(|k| self.config.descriptors[k.0].dynamic() && !self.buckets.contains_key(*k))
             .count();
-        if needed > 0 {
-            // Retain unpaid debt after the last stream closes: reconnecting must not refill a bucket.
-            self.buckets
-                .retain(|_, b| b.users > 0 || b.ready.iter().any(|t| *t > now));
-            let needed = keys
-                .iter()
-                .filter(|k| {
-                    self.config.descriptors[k.0].dynamic() && !self.buckets.contains_key(*k)
-                })
-                .count();
-            let dynamic = self
-                .buckets
-                .keys()
-                .filter(|k| self.config.descriptors[k.0].dynamic())
-                .count();
-            if dynamic + needed > self.config.max_dynamic_buckets {
-                return Err(());
-            }
+        if needed > 0 && self.dynamic_buckets + needed > self.config.max_dynamic_buckets {
+            return Err(());
         }
+        self.dynamic_buckets += needed;
         for key in keys {
-            self.buckets
-                .entry(key.clone())
-                .or_insert(Bucket {
-                    users: 0,
-                    ready: [now; 2],
-                    debt_rates: [None; 2],
-                })
-                .users += 1;
+            let bucket = self.buckets.entry(key.clone()).or_insert(Bucket {
+                users: 0,
+                ready: [now; 2],
+                debt_rates: [None; 2],
+            });
+            if bucket.users == 0 {
+                self.expirations
+                    .remove(&(*bucket.ready.iter().max().unwrap(), key.clone()));
+            }
+            bucket.users += 1;
         }
         Ok(())
     }
 
-    pub fn release(&mut self, keys: &[Key]) {
+    pub fn release(&mut self, keys: &[Key], now: Instant) -> Option<Instant> {
         for key in keys {
-            self.buckets.get_mut(key).unwrap().users -= 1;
+            let bucket = self.buckets.get_mut(key).unwrap();
+            bucket.users -= 1;
+            if bucket.users == 0 {
+                let due = *bucket.ready.iter().max().unwrap();
+                if due <= now {
+                    self.remove_bucket(key);
+                } else {
+                    self.expirations.insert((due, key.clone()));
+                }
+            }
         }
+        self.next_expiration()
+    }
+
+    fn remove_bucket(&mut self, key: &Key) {
+        self.buckets.remove(key).unwrap();
+        self.dynamic_buckets -= usize::from(self.config.descriptors[key.0].dynamic());
+    }
+
+    fn next_expiration(&self) -> Option<Instant> {
+        self.expirations.first().map(|(due, _)| *due)
+    }
+
+    pub fn reap(&mut self, now: Instant) -> Option<Instant> {
+        // Bound time under the shared ledger lock; the timer continues any remaining batch.
+        for _ in 0..64 {
+            if self.next_expiration().is_none_or(|due| due > now) {
+                break;
+            }
+            let (_, key) = self.expirations.pop_first().unwrap();
+            self.remove_bucket(&key);
+        }
+        self.next_expiration()
     }
 
     pub fn charge(
@@ -224,6 +272,138 @@ impl Ledger {
 mod tests {
     use super::*;
     use envoy_proxy_dynamic_modules_rust_sdk::MockEnvoyHttpFilterScheduler;
+
+    fn config() -> Config {
+        Config::parse(br#"{"rate_limits":[{"actions":[{"filter_state":{"key":"id","descriptor_key":"id"}}]}],
+            "descriptors":[{"entries":[{"key":"id"}],"bandwidth_limit":{"upload_bytes_per_second":100,"download_bytes_per_second":200}}]}"#).unwrap()
+    }
+
+    #[test]
+    fn last_release_removes_settled_buckets_immediately() {
+        let config = config();
+        let keys = config.resolve(|_| Some("a".into())).unwrap();
+        let mut ledger = Ledger::new(config);
+        let now = Instant::now();
+        ledger.acquire(&keys, now).unwrap();
+        ledger.acquire(&keys, now).unwrap();
+        ledger.charge(&keys, 0, 100, now);
+        ledger.release(&keys, now + Duration::from_secs(1));
+        assert_eq!(ledger.buckets[&keys[0]].users, 1);
+        assert!(ledger.expirations.is_empty());
+        ledger.release(&keys, now + Duration::from_secs(1));
+        assert!(ledger.buckets.is_empty());
+        assert_eq!(ledger.dynamic_buckets, 0);
+    }
+
+    #[test]
+    fn reconnect_cancels_expiration_without_resetting_debt() {
+        let config = config();
+        let keys = config.resolve(|_| Some("a".into())).unwrap();
+        let mut ledger = Ledger::new(config);
+        let now = Instant::now();
+        ledger.acquire(&keys, now).unwrap();
+        ledger.charge(&keys, 0, 100, now);
+        ledger.charge(&keys, 1, 400, now);
+        let due = now + Duration::from_secs(2);
+        for _ in 0..100 {
+            assert_eq!(ledger.release(&keys, now), Some(due));
+            assert_eq!(ledger.expirations.len(), 1);
+            ledger.acquire(&keys, now).unwrap();
+            assert!(ledger.expirations.is_empty());
+            assert_eq!(ledger.charge(&keys, 1, 1, now), Some(due));
+        }
+        ledger.reap(due);
+        assert_eq!(ledger.buckets[&keys[0]].users, 1);
+        ledger.release(&keys, due);
+        assert!(ledger.buckets.is_empty());
+        assert_eq!(ledger.dynamic_buckets, 0);
+    }
+
+    #[test]
+    fn idle_expiration_tracks_rate_updates_and_rollback() {
+        let mut config = config();
+        let original = config.clone();
+        let keys = config.resolve(|_| Some("a".into())).unwrap();
+        let mut ledger = Ledger::new(config.clone());
+        let now = Instant::now();
+        ledger.acquire(&keys, now).unwrap();
+        ledger.charge(&keys, 0, 1000, now);
+        ledger.release(&keys, now);
+        config.descriptors[0]
+            .bandwidth_limit
+            .upload_bytes_per_second = Some(200.try_into().unwrap());
+        ledger.update(config, now + Duration::from_secs(2));
+        assert_eq!(ledger.next_expiration(), Some(now + Duration::from_secs(6)));
+        ledger.update(original, now + Duration::from_secs(3));
+        assert_eq!(ledger.next_expiration(), Some(now + Duration::from_secs(9)));
+        assert_eq!(ledger.expirations.len(), 1);
+        ledger.reap(now + Duration::from_secs(6));
+        assert_eq!(ledger.buckets.len(), 1);
+        ledger.reap(now + Duration::from_secs(9));
+        assert!(ledger.buckets.is_empty());
+        assert_eq!(ledger.dynamic_buckets, 0);
+    }
+
+    #[test]
+    fn expiration_reclaims_only_a_bounded_batch() {
+        let config = config();
+        let mut ledger = Ledger::new(config.clone());
+        let now = Instant::now();
+        for i in 0..130 {
+            let keys = config.resolve(|_| Some(i.to_string())).unwrap();
+            ledger.acquire(&keys, now).unwrap();
+            ledger.charge(&keys, 0, 100, now);
+            ledger.release(&keys, now);
+        }
+        let due = now + Duration::from_secs(1);
+        assert_eq!(ledger.reap(due), Some(due));
+        assert_eq!(ledger.buckets.len(), 66);
+        assert_eq!(ledger.dynamic_buckets, 66);
+        assert_eq!(ledger.reap(due), Some(due));
+        assert_eq!(ledger.buckets.len(), 2);
+        assert_eq!(ledger.reap(due), None);
+        assert!(ledger.buckets.is_empty());
+        assert_eq!(ledger.dynamic_buckets, 0);
+    }
+
+    #[test]
+    fn timer_reclaims_idle_buckets_after_config_drop_without_new_traffic() {
+        let mut config = config();
+        config.budget_name = "idle-reaper-test".into();
+        let registration = Budget::shared(config.clone()).unwrap();
+        let budget = registration.budget.clone();
+        assert!(Arc::ptr_eq(
+            &budget.timer,
+            &Budget::new(config.clone()).unwrap().timer
+        ));
+        let now = Instant::now();
+        let mut ledger = budget.ledger.lock().unwrap();
+        for i in 0..130 {
+            let keys = config.resolve(|_| Some(i.to_string())).unwrap();
+            ledger.acquire(&keys, now).unwrap();
+            ledger.charge(&keys, 0, 10, now);
+            ledger.release(&keys, now);
+        }
+        let due = ledger.next_expiration();
+        assert_eq!(ledger.expirations.len(), 130);
+        drop(ledger);
+        budget.reap_at(due);
+        let ledger = budget.ledger.clone();
+        drop(registration);
+        drop(budget);
+        let timeout = Instant::now() + Duration::from_secs(2);
+        loop {
+            let ledger = ledger.lock().unwrap();
+            if ledger.buckets.is_empty() {
+                assert!(ledger.expirations.is_empty());
+                assert_eq!(ledger.dynamic_buckets, 0);
+                break;
+            }
+            assert!(Instant::now() < timeout, "idle bucket was not reclaimed");
+            drop(ledger);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 
     #[test]
     fn rate_updates_preserve_unpaid_bytes_and_wake_waiters() {

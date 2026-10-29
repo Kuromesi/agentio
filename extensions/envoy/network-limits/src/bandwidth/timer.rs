@@ -1,6 +1,7 @@
 // Copyright 2026 The Kruise Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use super::budget::Ledger;
 use envoy_proxy_dynamic_modules_rust_sdk::EnvoyHttpFilterScheduler;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -12,11 +13,32 @@ use std::{
     time::Instant,
 };
 
+enum Task {
+    Resume(Arc<dyn EnvoyHttpFilterScheduler>),
+    Reap(Arc<Mutex<Ledger>>),
+}
+
 #[derive(Default)]
 struct Queue {
-    deadlines: BTreeMap<(Instant, u64), Arc<dyn EnvoyHttpFilterScheduler>>,
-    streams: HashMap<u64, Instant>,
+    deadlines: BTreeMap<(Instant, u64), Task>,
+    pending: HashMap<u64, Instant>,
     stop: bool,
+}
+
+impl Queue {
+    fn insert(&mut self, id: u64, due: Instant, task: Task) {
+        if let Some(old) = self.pending.insert(id, due) {
+            self.deadlines.remove(&(old, id));
+        }
+        self.deadlines.insert((due, id), task);
+    }
+
+    fn reap_at(&mut self, id: u64, due: Instant, ledger: Arc<Mutex<Ledger>>) {
+        // An earlier alarm safely rechecks the ledger; stale updates must not postpone cleanup.
+        if self.pending.get(&id).is_none_or(|old| due < *old) {
+            self.insert(id, due, Task::Reap(ledger));
+        }
+    }
 }
 
 pub struct Timer {
@@ -25,7 +47,17 @@ pub struct Timer {
 }
 
 impl Timer {
-    pub fn new() -> std::io::Result<Self> {
+    pub fn shared() -> std::io::Result<Arc<Self>> {
+        // Cleanup must outlive filter configurations without leaving one idle thread per retired budget.
+        static TIMER: Mutex<Option<Arc<Timer>>> = Mutex::new(None);
+        let mut timer = TIMER.lock().unwrap();
+        if timer.is_none() {
+            *timer = Some(Arc::new(Self::new()?));
+        }
+        Ok(timer.as_ref().unwrap().clone())
+    }
+
+    fn new() -> std::io::Result<Self> {
         let inner = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let shared = inner.clone();
         let thread = thread::Builder::new()
@@ -46,10 +78,23 @@ impl Timer {
                         queue = changed.wait_timeout(queue, due - now).unwrap().0;
                         continue;
                     }
-                    let (_, scheduler) = queue.deadlines.pop_first().unwrap();
-                    queue.streams.remove(&id);
-                    // Hold the lock through commit so cancel() quiesces callbacks before stream teardown.
-                    scheduler.commit(0);
+                    let (_, task) = queue.deadlines.pop_first().unwrap();
+                    queue.pending.remove(&id);
+                    match task {
+                        Task::Resume(scheduler) => {
+                            // cancel() must quiesce commits before stream teardown.
+                            scheduler.commit(0);
+                        }
+                        Task::Reap(ledger) => {
+                            drop(queue);
+                            let next = ledger.lock().unwrap().reap(now);
+                            queue = mutex.lock().unwrap();
+                            if let Some(next) = next {
+                                // Give already-due stream callbacks a turn between cleanup batches.
+                                queue.reap_at(id, next.max(Instant::now()), ledger);
+                            }
+                        }
+                    }
                 }
             })?;
         Ok(Self {
@@ -63,18 +108,23 @@ impl Timer {
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     }
 
+    pub fn reap_at(&self, id: u64, due: Instant, ledger: Arc<Mutex<Ledger>>) {
+        self.inner.0.lock().unwrap().reap_at(id, due, ledger);
+        self.inner.1.notify_one();
+    }
+
     pub fn schedule(&self, id: u64, due: Instant, scheduler: Arc<dyn EnvoyHttpFilterScheduler>) {
-        let mut queue = self.inner.0.lock().unwrap();
-        if let Some(old) = queue.streams.insert(id, due) {
-            queue.deadlines.remove(&(old, id));
-        }
-        queue.deadlines.insert((due, id), scheduler);
+        self.inner
+            .0
+            .lock()
+            .unwrap()
+            .insert(id, due, Task::Resume(scheduler));
         self.inner.1.notify_one();
     }
 
     pub fn cancel(&self, id: u64) {
         let mut queue = self.inner.0.lock().unwrap();
-        if let Some(due) = queue.streams.remove(&id) {
+        if let Some(due) = queue.pending.remove(&id) {
             queue.deadlines.remove(&(due, id));
         }
     }

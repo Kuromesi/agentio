@@ -31,8 +31,8 @@ impl FilterConfig {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let config = Config::parse(bytes)?;
         let buffer_limit = config.buffer_limit_bytes;
-        let timer = Arc::new(Timer::new().map_err(|e| e.to_string())?);
         let registration = Budget::shared(config)?;
+        let timer = registration.budget.timer.clone();
         Ok(Self {
             registration,
             timer,
@@ -207,7 +207,9 @@ impl Drop for Filter {
         self.timer.cancel(self.id);
         let mut ledger = self.budget.ledger.lock().unwrap();
         ledger.waiters.remove(&self.id);
-        ledger.release(&self.keys);
+        let due = ledger.release(&self.keys, Instant::now());
+        drop(ledger);
+        self.budget.reap_at(due);
     }
 }
 

@@ -109,6 +109,40 @@ func rss(t *testing.T, pid int) int64 {
 	t.Fatal("VmRSS missing")
 	return 0
 }
+
+func TestEnvoyBandwidthBucketRelease(t *testing.T) {
+	if os.Getenv("AGENTIO_TEST_ENVOY_BINARY") == "" {
+		t.Skip("real Envoy test; run bin/test_network_limits.sh")
+	}
+	origin := startOrigin(t, false)
+	r := startEnvoy(t, origin.port(), freePort(t), func(l object) {
+		policy(filters(l)[1])["max_dynamic_buckets"] = 1
+	})
+	a, b := newClient(t, r.port), newClient(t, r.port)
+	first := a.open(t, "test", "a", "plain:80", 200)
+	second := b.open(t, "test", "a", "plain:80", 200)
+	a.open(t, "test", "b", "plain:80", 503).close()
+	first.close()
+	a.open(t, "test", "b", "plain:80", 503).close()
+	second.close()
+	for _, sandbox := range []string{"b", "c", "d"} {
+		var admitted *stream
+		eventually(t, func() bool {
+			s := b.open(t, "test", sandbox, "plain:80", 0)
+			if s.response.StatusCode == 200 {
+				admitted = s
+				return true
+			}
+			if s.response.StatusCode != 503 {
+				t.Fatalf("unexpected admission status: %d", s.response.StatusCode)
+			}
+			s.close()
+			return false
+		})
+		admitted.close()
+	}
+}
+
 func TestEnvoyBandwidth(t *testing.T) {
 	if os.Getenv("AGENTIO_TEST_ENVOY_BINARY") == "" {
 		t.Skip("real Envoy test; run bin/test_network_limits.sh")
