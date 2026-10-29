@@ -138,6 +138,272 @@ fn allowed(response: extproc::ProcessingResponse) -> bool {
     )
 }
 
+#[tokio::test(start_paused = true)]
+async fn sandbox_and_workload_policies_load_concurrently() {
+    for udp in [false, true] {
+        let p = processor();
+        let c = &p.client;
+        let mut pending = Box::pin(p.handle(request("sandbox", udp)));
+        assert!(futures_util::poll!(&mut pending).is_pending());
+        let mut sent = Default::default();
+        let requests = c.outgoing(&mut sent);
+        assert!(requests.iter().any(|r| {
+            r.type_url == view::WORKLOAD && r.resource_names_subscribe == ["/10.0.0.1"]
+        }));
+        assert!(
+            requests.iter().any(|r| {
+                r.type_url == view::SANDBOX && r.resource_names_subscribe == ["sandbox"]
+            }),
+            "Sandbox demand must start before Workload arrives"
+        );
+
+        seed(
+            c,
+            ResourceKind::Workload,
+            "/10.0.0.1",
+            workload(Some(&["allow"])),
+        );
+        assert!(futures_util::poll!(&mut pending).is_pending());
+        assert!(
+            c.outgoing(&mut sent).iter().any(|r| {
+                r.type_url == view::TRAFFIC_POLICY && r.resource_names_subscribe == ["allow"]
+            }),
+            "Platform policy demand must not wait for Sandbox"
+        );
+        seed(
+            c,
+            ResourceKind::TrafficPolicy,
+            "allow",
+            any(view::TRAFFIC_POLICY, policy(proto::Action::Allow)),
+        );
+        assert!(
+            futures_util::poll!(&mut pending).is_pending(),
+            "Platform ALLOW must still wait for Sandbox"
+        );
+        seed(
+            c,
+            ResourceKind::Sandbox,
+            "sandbox",
+            any(
+                view::SANDBOX,
+                Sandbox {
+                    uid: "sandbox".into(),
+                    attester: Some(Attester {
+                        workload_uid: UID.into(),
+                    }),
+                    traffic_policy: Some(policy(proto::Action::Allow)),
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(allowed(pending.await.unwrap()));
+    }
+}
+
+fn assert_denied(response: extproc::ProcessingResponse) {
+    let Some(extproc::processing_response::Response::ImmediateResponse(response)) =
+        response.response
+    else {
+        panic!("expected immediate denial");
+    };
+    assert_eq!(response.status.unwrap().code, 403);
+}
+
+#[tokio::test(start_paused = true)]
+async fn sandbox_rejection_does_not_wait_for_platform_policy() {
+    for udp in [false, true] {
+        for (sandbox_id, workload_uid, action) in [
+            ("sandbox", UID, proto::Action::Deny),
+            ("sandbox", "other-workload", proto::Action::Allow),
+            ("other-sandbox", UID, proto::Action::Allow),
+        ] {
+            let p = processor();
+            seed(
+                &p.client,
+                ResourceKind::Workload,
+                "/10.0.0.1",
+                workload(Some(&["pending"])),
+            );
+            let mut pending = Box::pin(p.handle(request("sandbox", udp)));
+            assert!(futures_util::poll!(&mut pending).is_pending());
+            // Both independent demands have started before the rejecting Sandbox arrives.
+            assert!(
+                p.client.state.lock().unwrap().types[ResourceKind::TrafficPolicy.index()]
+                    .entries
+                    .contains_key("pending")
+            );
+            seed(
+                &p.client,
+                ResourceKind::Sandbox,
+                "sandbox",
+                any(
+                    view::SANDBOX,
+                    Sandbox {
+                        uid: sandbox_id.into(),
+                        attester: Some(Attester {
+                            workload_uid: workload_uid.into(),
+                        }),
+                        traffic_policy: Some(policy(action)),
+                        ..Default::default()
+                    },
+                ),
+            );
+            let std::task::Poll::Ready(response) = futures_util::poll!(&mut pending) else {
+                panic!("Sandbox rejection waited for platform policy");
+            };
+            assert_denied(response.unwrap());
+            assert_eq!(
+                p.client
+                    .metrics
+                    .waiters
+                    .get_or_create(&ResourceType {
+                        resource_type: view::TRAFFIC_POLICY,
+                    })
+                    .get(),
+                0,
+                "rejection must cancel the outstanding policy wait"
+            );
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn sandbox_denial_does_not_wait_for_workload() {
+    for udp in [false, true] {
+        let p = processor();
+        let mut pending = Box::pin(p.handle(request("sandbox", udp)));
+        assert!(futures_util::poll!(&mut pending).is_pending());
+        seed(
+            &p.client,
+            ResourceKind::Sandbox,
+            "sandbox",
+            any(
+                view::SANDBOX,
+                Sandbox {
+                    uid: "sandbox".into(),
+                    attester: Some(Attester {
+                        workload_uid: UID.into(),
+                    }),
+                    traffic_policy: Some(policy(proto::Action::Deny)),
+                    ..Default::default()
+                },
+            ),
+        );
+        let std::task::Poll::Ready(response) = futures_util::poll!(&mut pending) else {
+            panic!("Sandbox DENY waited for Workload");
+        };
+        assert_denied(response.unwrap());
+        assert_eq!(
+            p.client
+                .metrics
+                .waiters
+                .get_or_create(&ResourceType {
+                    resource_type: view::WORKLOAD,
+                })
+                .get(),
+            0
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn workload_rejection_does_not_wait_for_sandbox() {
+    for udp in [false, true] {
+        for reason in ["policy", "identity", "binding"] {
+            let p = processor();
+            let mut pending = Box::pin(p.handle(request("sandbox", udp)));
+            assert!(futures_util::poll!(&mut pending).is_pending());
+            let mut body = Workload::decode(
+                workload(if reason == "binding" {
+                    None
+                } else {
+                    Some(&["policy"])
+                })
+                .value
+                .as_slice(),
+            )
+            .unwrap();
+            if reason == "identity" {
+                body.service_account = "other-account".into();
+            }
+            seed(
+                &p.client,
+                ResourceKind::Workload,
+                "/10.0.0.1",
+                any(view::WORKLOAD, body),
+            );
+            if reason == "policy" {
+                assert!(futures_util::poll!(&mut pending).is_pending());
+                seed(
+                    &p.client,
+                    ResourceKind::TrafficPolicy,
+                    "policy",
+                    any(view::TRAFFIC_POLICY, policy(proto::Action::Deny)),
+                );
+            }
+            let std::task::Poll::Ready(response) = futures_util::poll!(&mut pending) else {
+                panic!("Workload {reason} rejection waited for Sandbox");
+            };
+            assert_denied(response.unwrap());
+            assert_eq!(
+                p.client
+                    .metrics
+                    .waiters
+                    .get_or_create(&ResourceType {
+                        resource_type: view::SANDBOX,
+                    })
+                    .get(),
+                0
+            );
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn sandbox_allow_still_waits_for_platform_policy() {
+    for udp in [false, true] {
+        for action in [proto::Action::Allow, proto::Action::Deny] {
+            let p = processor();
+            seed(
+                &p.client,
+                ResourceKind::Workload,
+                "/10.0.0.1",
+                workload(Some(&["policy"])),
+            );
+            seed(
+                &p.client,
+                ResourceKind::Sandbox,
+                "sandbox",
+                any(
+                    view::SANDBOX,
+                    Sandbox {
+                        uid: "sandbox".into(),
+                        attester: Some(Attester {
+                            workload_uid: UID.into(),
+                        }),
+                        traffic_policy: Some(policy(proto::Action::Allow)),
+                        ..Default::default()
+                    },
+                ),
+            );
+            let mut pending = Box::pin(p.handle(request("sandbox", udp)));
+            assert!(futures_util::poll!(&mut pending).is_pending());
+            seed(
+                &p.client,
+                ResourceKind::TrafficPolicy,
+                "policy",
+                any(view::TRAFFIC_POLICY, policy(action)),
+            );
+            let response = pending.await.unwrap();
+            if action == proto::Action::Allow {
+                assert!(allowed(response));
+            } else {
+                assert_denied(response);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn disabled_policy_preserves_identity_and_skips_policy_demands() {
     for udp in [false, true] {
