@@ -1,0 +1,22 @@
+# Merge this fragment into your existing AgentioConfig. egressGateways is a
+# replacement list: preserve the other gateways and their existing settings.
+# Do not patch router retries onto the bandwidth-shaped CONNECT chain.
+egressGateways:
+  - name: agentio-egress
+    namespace: agentio-system
+    connectRateLimit:
+      tokenBucket:
+        maxTokens: 100
+        tokensPerFill: 100
+        fillInterval: 1s
+    bandwidthLimit:
+      rateLimits:
+        - actions:
+            # sandbox.id is validated by Porter before this filter runs.
+            - filterState: {key: sandbox.id, descriptorKey: sandbox}
+      descriptors:
+        - entries:
+            - key: sandbox
+          bandwidthLimit:
+            uploadBytesPerSecond: 10485760
+            downloadBytesPerSecond: 52428800

@@ -1,0 +1,28 @@
+# Merge into AgentioConfig, preserving other gateways and their existing settings.
+# Values are examples; size them for your workload and gateway capacity.
+egressGateways:
+  - name: agentio-egress
+    namespace: agentio-system
+    connectRateLimit:
+      tokenBucket: {maxTokens: 100, tokensPerFill: 100, fillInterval: 1s}
+    connectConcurrencyLimit:
+      rateLimits:
+        - actions:
+            # sandbox.id must be a globally unique identity validated by Porter.
+            - filterState: {key: sandbox.id, descriptorKey: sandbox}
+        - actions:
+            - genericKey: {descriptorKey: scope, descriptorValue: gateway}
+      descriptors:
+        - entries: [{key: sandbox}]
+          maxConcurrentStreams: 64
+        - entries: [{key: scope, value: gateway}]
+          maxConcurrentStreams: 4096
+    bandwidthLimit:
+      rateLimits:
+        - actions:
+            - filterState: {key: sandbox.id, descriptorKey: sandbox}
+      descriptors:
+        - entries: [{key: sandbox}]
+          bandwidthLimit:
+            uploadBytesPerSecond: 10485760
+            downloadBytesPerSecond: 52428800

@@ -71,6 +71,12 @@ func validateAgentioConfig(value *configv1.AgentioConfig) error {
 		if err := model.ValidateAccessLogFormat(gateway.GetAccessLogFormat()); err != nil {
 			return fmt.Errorf("egressGateways[%d].%w", i, err)
 		}
+		if err := model.ValidateBandwidthLimit(gateway.GetBandwidthLimit()); err != nil {
+			return fmt.Errorf("egressGateways[%d].%w", i, err)
+		}
+		if err := model.ValidateConnectConcurrencyLimit(gateway.GetConnectConcurrencyLimit()); err != nil {
+			return fmt.Errorf("egressGateways[%d].%w", i, err)
+		}
 	}
 	return nil
 }

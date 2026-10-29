@@ -29,6 +29,7 @@ import (
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"istio.io/istio/pkg/test"
@@ -1218,4 +1219,58 @@ func TestAdditionalExtProcHotUpdate(t *testing.T) {
 			GetAddress() ==
 			"replacement.demo.svc"
 	}, "endpoint change updates named CDS resource")
+}
+
+func TestNetworkLimitsCompileCommunityVariant(t *testing.T) {
+	for _, field := range []string{"bandwidthLimit", "connectConcurrencyLimit"} {
+		t.Run(field, func(t *testing.T) {
+			settings := new(configv1.EgressGateway)
+			limit := `"bandwidthLimit":{"downloadBytesPerSecond":1024}`
+			if field == "connectConcurrencyLimit" {
+				limit = `"maxConcurrentStreams":2`
+			}
+			raw := `{"` + field + `":{"rateLimits":[{"actions":[{"filterState":{"key":"sandbox.id","descriptorKey":"sandbox"}}]}],"descriptors":[{"entries":[{"key":"sandbox"}],` + limit + `}]}}`
+			if err := protojson.Unmarshal([]byte(raw), settings); err != nil {
+				t.Fatal(err)
+			}
+			resources, err := gatewayResourcesFor(
+				model.Gateway{Name: "egress", Namespace: "demo", Config: settings},
+				nil,
+				nil,
+				"agentiod:15012",
+				"cluster.local",
+				nil,
+				"Kubernetes",
+				"agentio-system",
+				nil,
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(resources) == 0 {
+				t.Fatal("community gateway resources missing")
+			}
+			found := false
+			for _, resource := range resources {
+				if !resource.Facts.AgentioEgress {
+					t.Fatalf("unsupported legacy variant published: %v", resource.Key)
+				}
+				if resource.Key.TypeURL == model.ListenerType {
+					message := new(listenerv3.Listener)
+					if err := resource.Value.UnmarshalTo(message); err != nil {
+						t.Fatal(err)
+					}
+					data, err := protojson.Marshal(message)
+					if err != nil {
+						t.Fatal(err)
+					}
+					found = found || strings.Contains(string(data), "libenvoy_agentio_network_limits.so")
+				}
+			}
+			if !found {
+				t.Fatal("network limits module not present in compiled listener")
+			}
+		})
+	}
 }

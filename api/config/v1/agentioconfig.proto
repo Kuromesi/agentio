@@ -102,6 +102,87 @@ message EgressGateway {
   // empty means the built-in JSON format. Telemetry still controls log enablement
   // and filtering; explicitly overridden providers keep their own formats.
   AccessLogFormat access_log_format = 9;
+
+  // Shapes TCP payload bytes on the CONNECT termination chain, independently
+  // of connect_rate_limit (which counts new CONNECT streams). Requires the
+  // community gateway image containing the bandwidth dynamic module.
+  BandwidthLimitSettings bandwidth_limit = 10;
+
+  // Limits active TCP CONNECT streams by trusted filter state, independently
+  // of creation rate and byte bandwidth. Requires the community gateway image.
+  ConnectConcurrencyLimitSettings connect_concurrency_limit = 11;
+}
+
+// CONNECT admission limits shared across workers/connections in one process.
+message ConnectConcurrencyLimitSettings {
+  // Uses the same ordered descriptor actions and distinct wildcard semantics
+  // as bandwidthLimit; every matching group must have an available slot.
+  repeated BandwidthRateLimit rate_limits = 1;
+  repeated ConnectConcurrencyDescriptor descriptors = 2;
+  // Maximum live wildcard-derived counters. Defaults to 10000; must be positive.
+  optional uint32 max_dynamic_buckets = 3;
+}
+
+message ConnectConcurrencyDescriptor {
+  repeated BandwidthDescriptorEntry entries = 1;
+  // Must be positive. Lowering the limit preserves existing streams and blocks
+  // new admission until the active count is below the new limit.
+  uint32 max_concurrent_streams = 2;
+}
+
+// BandwidthLimitSettings groups CONNECT streams by trusted filter state and
+// shares byte budgets across connections/workers within one gateway process.
+message BandwidthLimitSettings {
+  repeated BandwidthRateLimit rate_limits = 1;
+  repeated BandwidthDescriptor descriptors = 2;
+
+  // Maximum wildcard-derived buckets. Defaults to 10000; must be positive.
+  optional uint32 max_dynamic_buckets = 3;
+
+  // Soft streaming watermark, not a hard memory/burst cap. Defaults to 65536.
+  optional uint32 buffer_limit_bytes = 4;
+}
+
+// Each group generates an ordered descriptor. Matching groups apply together.
+message BandwidthRateLimit {
+  repeated BandwidthAction actions = 1;
+}
+
+message BandwidthAction {
+  // Exactly one source is required. Separate fields allow the controller's
+  // JSON decoder to detect conflicting sources rather than silently pick one.
+  BandwidthFilterStateAction filter_state = 1;
+  BandwidthGenericKeyAction generic_key = 2;
+}
+
+message BandwidthFilterStateAction {
+  // Required serialized UTF-8 filter-state value, read at CONNECT headers.
+  string key = 1;
+  string descriptor_key = 2;
+}
+
+message BandwidthGenericKeyAction {
+  string descriptor_key = 1;
+  string descriptor_value = 2;
+}
+
+message BandwidthDescriptor {
+  // Must match an action group's keys in order. Full exact matches take
+  // priority, then the first matching wildcard descriptor is selected.
+  repeated BandwidthDescriptorEntry entries = 1;
+  BandwidthRates bandwidth_limit = 2;
+}
+
+message BandwidthDescriptorEntry {
+  string key = 1;
+  // Empty/omitted means a separate bucket for each distinct runtime value.
+  string value = 2;
+}
+
+message BandwidthRates {
+  // Positive bytes per second. An omitted direction is unlimited.
+  optional uint64 upload_bytes_per_second = 1;
+  optional uint64 download_bytes_per_second = 2;
 }
 
 // AccessLogFormat replaces the complete built-in access-log format for a gateway.

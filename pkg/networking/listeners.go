@@ -336,6 +336,20 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 		}
 		filters = append(filters, filter)
 	}
+	if concurrency := gateway.GetConnectConcurrencyLimit(); concurrency != nil {
+		filter, err := b.concurrencyFilter(config.gatewayIdentity, concurrency)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
+	if bandwidth := gateway.GetBandwidthLimit(); bandwidth != nil {
+		filter, err := b.bandwidthFilter(config.gatewayIdentity, bandwidth)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
 	filters = append(filters, httpFilter("envoy.filters.http.router", b.pack(&routerv3.Router{})))
 	hcm := &hcmv3.HttpConnectionManager{
 		StatPrefix:        ConnectTerminate,
