@@ -106,6 +106,10 @@ func transferOrigin(conn net.Conn, counts *sync.Map) error {
 		return nil
 	} // Readiness probes and canceled streams have no command.
 	fields := strings.Fields(line)
+	if len(fields) == 2 && fields[0] == "B" {
+		_, err := conn.Write([]byte("K"))
+		return err
+	}
 	if len(fields) != 2 || (fields[0] != "D" && fields[0] != "U") {
 		return fmt.Errorf("invalid transfer command %q", line)
 	}

@@ -26,7 +26,7 @@ import (
 )
 
 func TestSuitesPreserveCasesAndRepeats(t *testing.T) {
-	for suite, want := range map[string]int{"bandwidth": 57, "capacity": 33, "isolation": 9, "pilot": 12} {
+	for suite, want := range map[string]int{"bandwidth": 57, "capacity": 33, "isolation": 9, "pilot": 12, "buckets": 3} {
 		c := config{Suite: suite, Repeats: 3}
 		cases := schedule(c)
 		if len(cases) != want || !reflect.DeepEqual(cases, schedule(c)) {
@@ -91,6 +91,12 @@ func TestConfigVariantsAndIndependentConcurrency(t *testing.T) {
 }
 
 func TestInputsAndCPUParsing(t *testing.T) {
+	if _, err := parseConfig(
+		[]string{"-output=x", "-suite=buckets", "-base-port=65528", "-repeats=3"},
+		io.Discard,
+	); err == nil {
+		t.Fatal("bucket repeats exceed the port range")
+	}
 	for _, args := range [][]string{{}, {"-output=x", "-suite=unknown"}, {"-output=x", "-repeats=0"}, {"-output=x", "-base-port=65534"}, {"-output=x", "-concurrency-limit=-1"}} {
 		if _, err := parseConfig(args, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)
@@ -102,6 +108,37 @@ func TestInputsAndCPUParsing(t *testing.T) {
 	}
 	if _, err := parseCPUs("3-1"); err == nil {
 		t.Fatal("reversed range accepted")
+	}
+}
+
+func TestBucketFixtureSeparatesResidentDebtAndProbeTraffic(t *testing.T) {
+	data, err := envoyConfig(config{Suite: "buckets", BasePort: 19000, ResidentBuckets: 100000}, scenario{Mode: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b map[string]any
+	if err := json.Unmarshal(data, &b); err != nil {
+		t.Fatal(err)
+	}
+	resources := object(b["static_resources"])
+	listener := object(resources["listeners"].([]any)[0])
+	hcm := object(object(object(listener["filter_chains"].([]any)[0])["filters"].([]any)[0])["typed_config"])
+	if object(hcm["http2_protocol_options"])["max_concurrent_streams"] != float64(200000) {
+		t.Fatal("fixture stream ceiling")
+	}
+	module := object(object(object(hcm["http_filters"].([]any)[1])["typed_config"])["value"])
+	policy := object(object(module["filter_config"])["value"])
+	if policy["max_dynamic_buckets"] != float64(101024) {
+		t.Fatal("insufficient probe headroom")
+	}
+	descriptors := policy["descriptors"].([]any)
+	for i, tenant := range []string{"perf", "resident"} {
+		if object(object(descriptors[i])["entries"].([]any)[0])["value"] != tenant {
+			t.Fatal("probe and resident budgets overlap")
+		}
+	}
+	if object(object(descriptors[1])["bandwidth_limit"])["upload_bytes_per_second"] != "1" {
+		t.Fatal("seed byte/time conversion changed")
 	}
 }
 

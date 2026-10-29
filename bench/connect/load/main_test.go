@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -169,4 +170,28 @@ func TestOriginUploadCounters(t *testing.T) {
 	if !ok || count.(*atomic.Uint64).Load() != 5 {
 		t.Fatal("upload not counted at origin")
 	}
+}
+
+func TestOriginAcknowledgesBucketSeedWithoutRetainingCounter(t *testing.T) {
+	client, server := net.Pipe()
+	var counts sync.Map
+	done := make(chan error, 1)
+	go func() { done <- errors.Join(transferOrigin(server, &counts), server.Close()) }()
+	if _, err := io.WriteString(client, "B "+strings.Repeat("x", 125)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	var ack [1]byte
+	if _, err := io.ReadFull(client, ack[:]); err != nil || ack[0] != 'K' {
+		t.Fatalf("ack=%q err=%v", ack, err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	counts.Range(func(_, _ any) bool {
+		t.Error("bucket seed retained origin counters")
+		return false
+	})
 }

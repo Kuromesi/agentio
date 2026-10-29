@@ -50,6 +50,7 @@ The default run uses three repeats, two seconds of warmup and six seconds of mea
 | `capacity` | 11 | Unbounded baseline/bypass/high cases with exact worker connection balancing. |
 | `isolation` | 3 | One fast sandbox beside 0/32/256 noisy streams; exact worker connection balancing. |
 | `pilot` | 4 | 32-stream download: baseline, high, shared, distinct. |
+| `buckets` | 1 | Populate background buckets, probe 5,000 CONNECT open/close cycles, then measure 32-stream download. |
 
 Modes:
 
@@ -62,7 +63,40 @@ Modes:
 
 For concurrency-filter overhead, run the same suite twice with and without `-concurrency-limit=1024`, each into its own output directory. A positive value installs the independent concurrency filter in **every case, including baseline**. Choose a nonbinding limit for overhead comparisons: rejected CONNECTs fail the benchmark rather than count as successful throughput. This option does not implement a rejection/churn load scenario. Native CONNECT creation-rate limiting is not installed by these suites.
 
-Other runner flags: `-envoy`, `-load`, `-module`, and `-base-port`. These allow different compatible binaries and port ranges without changing source. `connect-load -h` documents standalone generator arguments, including outer connection count, target address, origin counters and setup timeout. All runner suites use at most four HTTP/2 connections and two Envoy workers.
+Other runner flags: `-envoy`, `-load`, `-module`, and `-base-port`. These allow different compatible binaries and port ranges without changing source. `connect-load -h` documents standalone generator arguments, including outer connection count, target address, origin counters and setup timeout. All suites use two Envoy workers; the original suites use at most four HTTP/2 connections, while `buckets` adds a separate background connection pool.
+
+### Large bucket populations
+
+The `buckets` suite separates background identities from probe identities. `-resident-mode=active` keeps one idle CONNECT open per background key; `-resident-mode=debt` sends an acknowledged body at a 1 byte/s upload rate and closes the stream, retaining byte debt without retaining upstream connections. `-resident-buckets` defaults to 10000 and accepts zero for the empty-table control. `-probe-requests` defaults to 5000 and can extend the admission probe. For example:
+
+```sh
+connect-bench run -suite=buckets -resident-mode=debt -resident-buckets=100000 \
+  -repeats=3 -warmup=2s -duration=6s -output=/results/debt-100k
+```
+
+Each repeat starts a fresh Envoy. Population and the 5,000 unique probe identities use the shared Go load scheduler at concurrency 32. Active populations settle for `-warmup` before the probes, separating steady occupancy from the mass-setup transient. Probe cycles close gracefully and include both establishment and closure in their latency; this avoids confusing HTTP/2 reset-flood protection with bucket overhead. The subsequent throughput phase uses a nonbinding byte limit and reports CONNECT establishment latency separately. Background and throughput/probe traffic each use up to four outer HTTP/2 connections. Active upstream gauges verify that background connections remain open in active mode and have closed in debt mode.
+
+The fixture sets dynamic capacity to background count plus 1024 probe slots and raises its HTTP/2 and upstream circuit-breaker ceilings to 200000. It intentionally isolates the bandwidth filter; combining this suite with `-concurrency-limit` is rejected. For active populations, raise the process file-descriptor limit and stay within the host's available TCP source ports and memory. Start with 1000 and 10000 active buckets; disconnected debt populations can be much larger without that many concurrent sockets.
+
+Each bucket-suite repeat uses a fresh four-port range starting at `base-port + 4 * (case - 1)`. Across separate invocations in the same network namespace, choose nonoverlapping base-port ranges or allow prior TCP connections to expire. Many active connections plus short-lived probe connections to one origin can exhaust the source-port range or increase kernel port-search costs through TIME_WAIT accumulation. Extending `-probe-requests` can hit that limit within a single case; inspect TCP states before attributing tail latency to the module.
+
+For large active-population comparisons, prefer one fresh Pod per trial with `-repeats=1`, which resets the network namespace as well as the Envoy process. Changing only the origin port does not reset all kernel connection state. Keep exploratory runs with reused namespaces separate from these controlled results.
+
+When profiling confirms source-port allocation is dominating, an isolated test Pod can use a wider range:
+
+```yaml
+spec:
+  securityContext:
+    sysctls:
+      - name: net.ipv4.ip_local_port_range
+        value: "1024 65535"
+```
+
+Record this setting and apply it equally to both compared versions. It changes the test Pod's network namespace, not the host-wide range; it is not a production tuning recommendation.
+
+`-debt-bytes` defaults to 1024 (1024 seconds at the fixture's rate), accepts 4–16384, and fails the case if the earliest seeded debt could expire before the probes finish. `-recovery-wait` adds a quiet period after releasing streams, sampling Envoy CPU and RSS once per second without sending new CONNECT requests. For an expiry observation, use a smaller seed and a wait longer than its lifetime, for example `-debt-bytes=128 -recovery-wait=140s`. No module bucket-count gauge is exposed: debt population is established by successful seed acknowledgements and elapsed time, while recovery samples measure resource usage rather than an exact live-bucket count.
+
+Additional result fields include `population` and `admission` scheduler summaries, Envoy CPU seconds for each phase, `rss_empty_mib`, `rss_populated_mib`, `rss_released_mib`, `release_ms`, and the quiet `recovery` samples. Compare the same counts and modes across module versions, repeat runs, and retain the individual samples; allocator retention means RSS after closure need not return to its empty-table value.
 
 For Kubernetes, use the same image and command in a `restartPolicy: Never` Pod with a writable output volume and enough unquotaed CPU availability. Retain logs and output before removing its disposable namespace. The runner manages its child processes, not cluster resources; follow the existing bench convention of an explicit kubeconfig/context for deployment and cleanup.
 

@@ -108,7 +108,7 @@ func run(ctx context.Context, c config, out io.Writer) (result error) {
 	defer func() { result = errors.Join(result, rows.Close()) }()
 	encoder := json.NewEncoder(io.MultiWriter(rows, out))
 	balance := "default"
-	if c.Suite == "capacity" || c.Suite == "isolation" {
+	if c.Suite == "capacity" || c.Suite == "isolation" || c.Suite == "buckets" {
 		balance = "exact"
 	}
 	env := map[string]any{
@@ -126,6 +126,9 @@ func run(ctx context.Context, c config, out io.Writer) (result error) {
 		"concurrency_limit":  c.ConcurrencyLimit,
 		"ticks":              ticks,
 		"module":             c.Module,
+	}
+	if c.Suite == "buckets" {
+		env["resident_buckets"], env["resident_mode"] = c.ResidentBuckets, c.ResidentMode
 	}
 	if err := encoder.Encode(env); err != nil {
 		return err
@@ -165,6 +168,10 @@ func runCase(
 	cpus []int,
 	ticks float64,
 ) (row map[string]any, result error) {
+	if c.Suite == "buckets" {
+		// Reusing one origin tuple carries TIME_WAIT pressure from earlier churn cases.
+		c.BasePort += 4 * (index - 1)
+	}
 	root := filepath.Join(c.Output, fmt.Sprintf("%03d-%s-%d-%s-r%d", index, s.Mode, s.Streams, s.Direction, s.Repeat))
 	if err := os.Mkdir(root, 0700); err != nil {
 		return nil, err
@@ -223,7 +230,11 @@ func runCase(
 	if err := envoy.ready(ctx, target); err != nil {
 		return nil, err
 	}
-	loadCtx, cancel := context.WithTimeout(ctx, c.Duration+c.Warmup+45*time.Second)
+	loadTimeout := c.Duration + c.Warmup + 45*time.Second
+	if c.Suite == "buckets" {
+		loadTimeout += 10*time.Minute + c.RecoveryWait
+	}
+	loadCtx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
 	cmd := pinnedCommand(
 		loadCtx,
@@ -244,6 +255,13 @@ func runCase(
 		fmt.Sprintf("-origin-pid=%d", origin.cmd.Process.Pid),
 		fmt.Sprintf("-ticks=%g", ticks),
 	)
+	if c.Suite == "buckets" {
+		cmd.Args = append(cmd.Args,
+			fmt.Sprintf("-probe-requests=%d", c.ProbeRequests),
+			fmt.Sprintf("-resident-buckets=%d", c.ResidentBuckets), "-resident-mode="+c.ResidentMode,
+			fmt.Sprintf("-debt-bytes=%d", c.DebtBytes), "-recovery-wait="+c.RecoveryWait.String(),
+			fmt.Sprintf("-admin=127.0.0.1:%d", c.BasePort+1), "-setup-timeout=5m")
+	}
 	cmd.Env = append(os.Environ(), "GOMAXPROCS=4")
 	loadLog, err := os.Create(filepath.Join(root, "load.log"))
 	if err != nil {

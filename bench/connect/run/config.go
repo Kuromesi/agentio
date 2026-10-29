@@ -37,6 +37,11 @@ type config struct {
 	Output           string
 	BasePort         int
 	ConcurrencyLimit int
+	ResidentBuckets  int
+	ResidentMode     string
+	DebtBytes        int
+	RecoveryWait     time.Duration
+	ProbeRequests    int
 }
 
 type scenario struct {
@@ -46,11 +51,12 @@ type scenario struct {
 	Repeat    int
 }
 
+//nolint:gocyclo // CLI validation enumerates independent input constraints.
 func parseConfig(args []string, w io.Writer) (config, error) {
 	c := config{}
 	f := flag.NewFlagSet("connect-bench run", flag.ContinueOnError)
 	f.SetOutput(w)
-	f.StringVar(&c.Suite, "suite", "bandwidth", "bandwidth, capacity, isolation, pilot")
+	f.StringVar(&c.Suite, "suite", "bandwidth", "bandwidth, capacity, isolation, pilot, buckets")
 	f.IntVar(&c.Repeats, "repeats", 3, "repetitions per case")
 	f.DurationVar(&c.Duration, "duration", 6*time.Second, "measurement window")
 	f.DurationVar(&c.Warmup, "warmup", 2*time.Second, "warmup window")
@@ -60,6 +66,11 @@ func parseConfig(args []string, w io.Writer) (config, error) {
 	f.StringVar(&c.Output, "output", "", "empty output directory for JSONL, configs and logs")
 	f.IntVar(&c.BasePort, "base-port", 17900, "four consecutive loopback ports")
 	f.IntVar(&c.ConcurrencyLimit, "concurrency-limit", 0, "optional per-sandbox active-stream cap; 0 omits the filter")
+	f.IntVar(&c.ResidentBuckets, "resident-buckets", 10000, "background distinct buckets for the buckets suite")
+	f.StringVar(&c.ResidentMode, "resident-mode", "debt", "active or debt background buckets")
+	f.IntVar(&c.DebtBytes, "debt-bytes", 1024, "seed bytes at 1 byte/s for debt buckets")
+	f.DurationVar(&c.RecoveryWait, "recovery-wait", 0, "quiet observation after releasing background streams")
+	f.IntVar(&c.ProbeRequests, "probe-requests", 5000, "CONNECT open/close probes after bucket population")
 	if err := f.Parse(args); err != nil {
 		return c, err
 	}
@@ -67,15 +78,22 @@ func parseConfig(args []string, w io.Writer) (config, error) {
 		c.BasePort > 65532 ||
 		c.ConcurrencyLimit < 0 ||
 		uint64(c.ConcurrencyLimit) > 1<<32-1 ||
-		!slices.Contains([]string{"bandwidth", "capacity", "isolation", "pilot"}, c.Suite) {
+		!slices.Contains([]string{"bandwidth", "capacity", "isolation", "pilot", "buckets"}, c.Suite) ||
+		c.ResidentBuckets < 0 || !slices.Contains([]string{"active", "debt"}, c.ResidentMode) ||
+		c.DebtBytes < 4 || c.DebtBytes > 16384 || c.RecoveryWait < 0 || c.ProbeRequests <= 0 || (c.Suite == "buckets" && c.ConcurrencyLimit != 0) {
 		return c, fmt.Errorf("invalid suite, output, counts, duration, port or concurrency limit")
+	}
+	if c.Suite == "buckets" && c.Repeats > (65536-c.BasePort)/4 {
+		return c, fmt.Errorf("bucket repeats need four distinct ports per case starting at base-port")
 	}
 	return c, nil
 }
 
 func schedule(c config) []scenario {
 	var cases []scenario
-	if c.Suite == "isolation" {
+	if c.Suite == "buckets" {
+		cases = append(cases, scenario{Mode: "high", Streams: 32, Direction: "D"})
+	} else if c.Suite == "isolation" {
 		for _, n := range []int{1, 33, 257} {
 			cases = append(cases, scenario{Mode: "isolation", Streams: n, Direction: "D"})
 		}
@@ -115,6 +133,7 @@ func schedule(c config) []scenario {
 
 func object(value any) map[string]any { return value.(map[string]any) }
 
+//nolint:funlen // Keep mode overrides together with their shared identity and module placement.
 func envoyConfig(c config, s scenario) ([]byte, error) {
 	var b map[string]any
 	if err := json.Unmarshal(fixture.Bootstrap, &b); err != nil {
@@ -124,14 +143,23 @@ func envoyConfig(c config, s scenario) ([]byte, error) {
 	resources := object(b["static_resources"])
 	listener := object(resources["listeners"].([]any)[0])
 	object(object(listener["address"])["socket_address"])["port_value"] = c.BasePort + 2
-	if c.Suite == "capacity" || c.Suite == "isolation" {
+	if c.Suite == "capacity" || c.Suite == "isolation" || c.Suite == "buckets" {
 		listener["connection_balance_config"] = map[string]any{"exact_balance": map[string]any{}}
 	}
 	for _, cluster := range resources["clusters"].([]any) {
+		if c.Suite == "buckets" {
+			object(cluster)["circuit_breakers"] = map[string]any{"thresholds": []any{map[string]any{
+				"max_connections": 200000,
+				"max_requests":    200000,
+			}}}
+		}
 		endpoint := object(object(object(cluster)["load_assignment"])["endpoints"].([]any)[0])["lb_endpoints"].([]any)[0]
 		object(object(object(object(endpoint)["endpoint"])["address"])["socket_address"])["port_value"] = c.BasePort
 	}
 	hcm := object(object(object(listener["filter_chains"].([]any)[0])["filters"].([]any)[0])["typed_config"])
+	if c.Suite == "buckets" {
+		object(hcm["http2_protocol_options"])["max_concurrent_streams"] = 200000
+	}
 	filters := hcm["http_filters"].([]any)
 	module := object(object(object(filters[1])["typed_config"])["value"])
 	object(object(object(module["dynamic_module_config"])["module"])["local"])["filename"] = c.Module
@@ -162,6 +190,17 @@ func envoyConfig(c config, s scenario) ([]byte, error) {
 	}
 	policy["descriptors"] = descriptors
 	policy["max_dynamic_buckets"] = 10000
+	if c.Suite == "buckets" {
+		object(object(descriptors[0])["entries"].([]any)[0])["value"] = "perf"
+		policy["descriptors"] = append(descriptors, map[string]any{
+			"entries": []any{
+				map[string]any{"key": "tenant", "value": "resident"},
+				map[string]any{"key": "sandbox"},
+			},
+			"bandwidth_limit": map[string]any{"upload_bytes_per_second": "1"},
+		})
+		policy["max_dynamic_buckets"] = c.ResidentBuckets + 1024
+	}
 	if s.Mode == "baseline" {
 		filters = []any{filters[0], filters[2]}
 	}

@@ -25,15 +25,17 @@ import (
 )
 
 type measurement struct {
-	Event      string  `json:"event"`
-	Mode       string  `json:"mode"`
-	Streams    int     `json:"streams"`
-	Direction  string  `json:"direction"`
-	Limit      int     `json:"concurrency_limit"`
-	Errors     int     `json:"errors"`
-	Throughput float64 `json:"mib_per_s"`
-	CPU        float64 `json:"envoy_cpu_cores"`
-	RSS        float64 `json:"envoy_rss_peak_mib"`
+	Event           string  `json:"event"`
+	Mode            string  `json:"mode"`
+	Streams         int     `json:"streams"`
+	Direction       string  `json:"direction"`
+	Limit           int     `json:"concurrency_limit"`
+	Errors          int     `json:"errors"`
+	Throughput      float64 `json:"mib_per_s"`
+	CPU             float64 `json:"envoy_cpu_cores"`
+	RSS             float64 `json:"envoy_rss_peak_mib"`
+	ResidentBuckets int     `json:"resident_buckets"`
+	ResidentMode    string  `json:"resident_mode"`
 }
 
 func analyze(path string, w io.Writer) (result error) {
@@ -56,6 +58,9 @@ func analyze(path string, w io.Writer) (result error) {
 			return fmt.Errorf("measurement contains %d errors", m.Errors)
 		}
 		key := fmt.Sprintf("%s / %s / %d / %d", m.Mode, m.Direction, m.Streams, m.Limit)
+		if m.ResidentMode != "" {
+			key += fmt.Sprintf(" / %s:%d", m.ResidentMode, m.ResidentBuckets)
+		}
 		groups[key] = append(groups[key], m)
 	}
 	if err := scanner.Err(); err != nil {
@@ -66,7 +71,7 @@ func analyze(path string, w io.Writer) (result error) {
 	}
 	if _, err := fmt.Fprintln(
 		w,
-		"| Mode / direction / streams / concurrency cap | Runs | MiB/s median [min, max] | Envoy cores median | RSS MiB median |\n| --- | ---: | ---: | ---: | ---: |",
+		"| Mode / direction / streams / concurrency cap / background (if set) | Runs | MiB/s median [min, max] | Envoy cores median | RSS MiB median |\n| --- | ---: | ---: | ---: | ---: |",
 	); err != nil {
 		return err
 	}

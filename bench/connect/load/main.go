@@ -28,20 +28,26 @@ import (
 )
 
 type config struct {
-	Streams      int
-	Connections  int
-	Direction    string
-	Distinct     bool
-	FastStream   bool
-	Duration     time.Duration
-	Warmup       time.Duration
-	SetupTimeout time.Duration
-	Target       string
-	Origin       string
-	Stats        string
-	EnvoyPID     int
-	OriginPID    int
-	Ticks        float64
+	Streams         int
+	Connections     int
+	Direction       string
+	Distinct        bool
+	FastStream      bool
+	Duration        time.Duration
+	Warmup          time.Duration
+	SetupTimeout    time.Duration
+	Target          string
+	Origin          string
+	Stats           string
+	EnvoyPID        int
+	OriginPID       int
+	Ticks           float64
+	ResidentBuckets int
+	ResidentMode    string
+	DebtBytes       int
+	RecoveryWait    time.Duration
+	Admin           string
+	ProbeRequests   int
 }
 
 func main() {
@@ -65,13 +71,19 @@ func command(ctx context.Context, args []string) error {
 	if originMode {
 		return serveOrigin(ctx, c.Origin, c.Stats)
 	}
-	result, err := runLoad(ctx, c)
+	var result map[string]any
+	if c.ResidentBuckets > 0 || c.ResidentMode != "" {
+		result, err = runBuckets(ctx, c)
+	} else {
+		result, err = runLoad(ctx, c)
+	}
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
+//nolint:gocyclo // CLI validation enumerates independent input constraints.
 func parseConfig(args []string) (config, error) {
 	c := config{}
 	f := flag.NewFlagSet("connect-load [origin]", flag.ContinueOnError)
@@ -89,15 +101,23 @@ func parseConfig(args []string) (config, error) {
 	f.IntVar(&c.EnvoyPID, "envoy-pid", 0, "Envoy PID in this process namespace")
 	f.IntVar(&c.OriginPID, "origin-pid", 0, "origin PID in this process namespace")
 	f.Float64Var(&c.Ticks, "ticks", 100, "Linux CLK_TCK, runner obtains this with getconf")
+	f.IntVar(&c.ResidentBuckets, "resident-buckets", 0, "background distinct buckets to populate before probes")
+	f.StringVar(&c.ResidentMode, "resident-mode", "", "active or debt; enables bucket occupancy probes")
+	f.IntVar(&c.DebtBytes, "debt-bytes", 1024, "debt seed body bytes at the fixture's 1 byte/s upload rate")
+	f.DurationVar(&c.RecoveryWait, "recovery-wait", 0, "quiet observation after releasing background streams")
+	f.StringVar(&c.Admin, "admin", "127.0.0.1:17901", "Envoy admin address for active-connection verification")
+	f.IntVar(&c.ProbeRequests, "probe-requests", 5000, "CONNECT open/close probes after bucket population")
 	if err := f.Parse(args); err != nil {
 		return c, err
 	}
 	if f.NArg() != 0 || c.Streams <= 0 || c.Connections <= 0 || c.Duration <= 0 || c.Warmup < 0 ||
 		c.SetupTimeout <= 0 ||
 		c.Ticks <= 0 ||
-		(c.Direction != "D" && c.Direction != "U") {
+		(c.Direction != "D" && c.Direction != "U") || c.ResidentBuckets < 0 ||
+		(c.ResidentMode != "" && c.ResidentMode != "active" && c.ResidentMode != "debt") ||
+		(c.ResidentBuckets > 0 && c.ResidentMode == "") || c.DebtBytes < 4 || c.DebtBytes > 16384 || c.RecoveryWait < 0 || c.ProbeRequests <= 0 {
 		return c, fmt.Errorf(
-			"invalid arguments: require positive counts/durations/ticks, nonnegative warmup, direction D or U",
+			"invalid load counts, durations, ticks, direction, resident mode or seed bytes",
 		)
 	}
 	return c, nil
