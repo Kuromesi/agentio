@@ -212,3 +212,35 @@ func TestMergeVisibilitySubsets(t *testing.T) {
 		})
 	}
 }
+
+// A queued invalidation contains names and visibility, not rule payloads. A new
+// revision with the same evidence should advance the version without allocations.
+func TestMergeReusesUnchangedCandidates(t *testing.T) {
+	older := mergeTestUpdate(15, "same")
+	newer := mergeTestUpdate(3, "same")
+	newer.version = "next"
+	var merged Update
+	allocations := testing.AllocsPerRun(100, func() { merged = Merge(older, newer) })
+	if allocations != 0 {
+		t.Fatalf("unchanged union allocated %g times", allocations)
+	}
+	if merged.Version() != "next" || !reflect.DeepEqual(merged, referenceCandidateUnion(older, newer)) {
+		t.Fatal("reuse lost candidate evidence or the latest version")
+	}
+	// A later branch must not mutate the shared maps or nested identities.
+	before := referenceCandidateUnion(older, newer)
+	_ = Merge(merged, mergeTestUpdate(15, "new-owner"))
+	if !reflect.DeepEqual(merged, before) {
+		t.Fatal("later merge mutated a reused union")
+	}
+}
+
+func BenchmarkMergeRepeatedInvalidations(b *testing.B) {
+	older := mergeTestUpdate(15, "same")
+	newer := mergeTestUpdate(3, "same")
+	newer.version = "next"
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = Merge(older, newer)
+	}
+}

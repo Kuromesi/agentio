@@ -35,7 +35,7 @@ func BenchmarkStorePublish(b *testing.B) {
 			store := New(initial)
 			subscriptions := make([]Subscription, clientCount)
 			for client := range subscriptions {
-				subscriptions[client] = store.Subscribe(ctx)
+				subscriptions[client] = store.Subscribe(ctx, model.ClientScope{})
 				subscriptions[client].Watch(model.AddressType)
 			}
 			next := 1

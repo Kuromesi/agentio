@@ -218,7 +218,7 @@ func TestExplicitWildcardReconnectWithLargeCache(t *testing.T) {
 	stream := newFakeStream(ctx, 4)
 	watch := &watchState{names: sets.New[string](), sent: map[string]string{}}
 	watches := map[string]*watchState{model.AddressType: watch}
-	subscription := server.resources.Subscribe(ctx)
+	subscription := server.resources.Subscribe(ctx, model.ClientScope{})
 	if err := server.server.handleRequest(stream, server.scope, log, watches, subscription,
 		&discoveryv3.DeltaDiscoveryRequest{
 			TypeUrl:                 model.AddressType,
@@ -355,7 +355,7 @@ func TestWildcardWDSInitialVersionsIncrementalRemovalAndSubscriptionTransitions(
 	watch := &watchState{names: sets.New[string](), sent: map[string]string{}}
 	initialSentStorage := watch.sent
 	watches := map[string]*watchState{model.AddressType: watch}
-	subscription := server.resources.Subscribe(ctx)
+	subscription := server.resources.Subscribe(ctx, model.ClientScope{})
 
 	if err := server.server.handleRequest(stream, server.scope, log, watches, subscription,
 		&discoveryv3.DeltaDiscoveryRequest{
@@ -1006,7 +1006,7 @@ func TestDeltaAcknowledgementsTrackLatestResponse(t *testing.T) {
 	}, nil)
 	stream := newFakeStream(t.Context(), 8)
 	watches := map[string]*watchState{}
-	subscription := server.resources.Subscribe(t.Context())
+	subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 	handle := func(request *discoveryv3.DeltaDiscoveryRequest) {
 		t.Helper()
 		if err := server.server.handleRequest(stream, server.scope, log, watches, subscription, request); err != nil {
@@ -1090,7 +1090,7 @@ func TestDeltaAcknowledgementsPreserveSubscriptionChanges(t *testing.T) {
 				}, nil)
 				stream := newFakeStream(t.Context(), 4)
 				watches := map[string]*watchState{}
-				subscription := server.resources.Subscribe(t.Context())
+				subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 				handle := func(req *discoveryv3.DeltaDiscoveryRequest) {
 					t.Helper()
 					if err := server.server.handleRequest(stream, server.scope, log, watches, subscription, req); err != nil {

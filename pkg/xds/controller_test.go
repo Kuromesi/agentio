@@ -305,15 +305,15 @@ func TestPublicationSummaryIsBoundedAndExcludesResourceContents(t *testing.T) {
 		changes[i] = model.ResourceChange{Key: resource.Key, New: &resource}
 	}
 	store := xdsstore.New(newSnapshot(t))
-	store.Subscribe(t.Context()).Watch(model.AddressType)
-	store.Subscribe(t.Context()).Watch(model.ClusterType)
+	store.Subscribe(t.Context(), model.ClientScope{}).Watch(model.AddressType)
+	store.Subscribe(t.Context(), model.ClientScope{}).Watch(model.ClusterType)
 	publication, err := store.Apply(changes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Logging must retain the publication-time total, including the unaffected
 	// Cluster subscriber, even if another client connects before the log write.
-	store.Subscribe(t.Context()).Watch(model.AddressType)
+	store.Subscribe(t.Context(), model.ClientScope{}).Watch(model.AddressType)
 	logPublication(t.Context(), false, changes, publication, time.Second, time.Millisecond)
 	// Replaying the same changes must not emit a second INFO summary.
 	unchanged, err := store.Apply(changes)
@@ -607,7 +607,7 @@ func TestFailedCompilePreservesLastKnownGood(t *testing.T) {
 	eventually(t, func() bool { return store.Snapshot().Version() == good.Version() }, "good snapshot published")
 	subscriptionCtx, cancelSubscription := context.WithCancel(context.Background())
 	t.Cleanup(cancelSubscription)
-	subscription := store.Subscribe(subscriptionCtx)
+	subscription := store.Subscribe(subscriptionCtx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 
 	source.set(model.ResourceSet{}, fmt.Errorf("compilation exploded"))
