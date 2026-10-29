@@ -52,9 +52,9 @@ struct Args {
     cluster_id: String,
     #[arg(long, default_value = "4s", value_parser = duration)]
     request_timeout: Duration,
-    #[arg(long, default_value = "1m", value_parser = duration)]
+    #[arg(long, default_value = "10m", value_parser = duration)]
     xds_cache_idle_ttl: Duration,
-    #[arg(long, default_value_t = 10000)]
+    #[arg(long, default_value_t = 0)]
     xds_cache_max_entries: usize,
 }
 
@@ -181,8 +181,8 @@ mod tests {
             config.transport.node.id,
             "agentio-porter~10.0.0.1~gateway.agentio~agentio.svc.cluster.local"
         );
-        assert_eq!(config.cache.idle_ttl, Duration::from_secs(60));
-        assert_eq!(config.cache.max_entries, 10_000);
+        assert_eq!(config.cache.idle_ttl, Duration::from_secs(600));
+        assert_eq!(config.cache.max_entries, 0);
         assert_eq!(config.worker_threads, 2);
         assert_eq!(config.grpc_address.to_string(), "127.0.0.1:9002");
     }

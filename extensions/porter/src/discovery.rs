@@ -156,8 +156,8 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            idle_ttl: Duration::from_secs(60),
-            max_entries: 10000,
+            idle_ttl: Duration::from_secs(600),
+            max_entries: 0,
         }
     }
 }

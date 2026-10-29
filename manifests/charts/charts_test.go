@@ -316,6 +316,8 @@ func TestStaticEgressGateway(t *testing.T) {
 		"gateway.networking.k8s.io/gateway-name: agentio-egress",
 		"name: AGENTIO_XDS_ADDRESS",
 		"name: agentio-porter",
+		"--xds-cache-idle-ttl=10m",
+		"--xds-cache-max-entries=0",
 		"agentiod.agentio-system.svc.cluster.local:15012",
 		"egressGateways:",
 		"name: agentio-egress",
