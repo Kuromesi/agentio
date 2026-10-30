@@ -1,5 +1,7 @@
 # Production chart inputs for a shared kind cluster. Virtual Pods are not injected.
 profile: sidecar
+sandbox:
+  enabled: true
 global:
   caCertConfigMap: sandbox-scale-ca-certs
   imagePullPolicy: IfNotPresent
@@ -18,8 +20,6 @@ agentiod:
     limits: {cpu: "4", memory: 6Gi}
   logging: {level: warn, format: json}
   env:
-    AGENTIO_SANDBOX_MODE: "true"
-    AGENTIO_SANDBOX_RUNTIMES: kruise
     AGENTIO_KUBERNETES_API_QPS: "200"
     AGENTIO_KUBERNETES_API_BURST: "400"
     AGENTIO_ENABLE_SIDECAR_INJECTOR: "false"

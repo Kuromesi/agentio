@@ -133,13 +133,20 @@ func NewCollection(
 		},
 		opts.WithName("CompiledGlobalSecurityProfiles")...)
 
+	profiles := &Collection{
+		Source: registry.Source[securityprofile.Profile]{Registry: registry.NewSourceRegistry()},
+	}
+	collections := []krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs}
+	if features.SandboxMode {
+		profiles = newSandboxCollection(client, regs, opts, log)
+		collections = append(collections, profiles.Collection)
+	}
+
 	// Debounce on the checked-mode join coalesces event bursts into one
 	// batch per window (KRT_EVENT_DISTRIBUTE_DEBOUNCE[_MAX], default off),
 	// so RegisterCollection's applyBatch rebuilds the snapshot once per
 	// batch instead of once per profile change.
-	profiles := newSandboxCollection(client, regs, opts, log)
-	profiles.Collection = krt.JoinCollection(
-		[]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, profiles.Collection},
+	profiles.Collection = krt.JoinCollection(collections,
 		append(opts.WithName("CompiledProfiles"),
 			krt.WithDebounce(features.KRTDebounceAfter, features.KRTDebounceMax))...)
 	return profiles

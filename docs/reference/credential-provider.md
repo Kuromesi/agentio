@@ -16,11 +16,15 @@ sandbox ──> egress gateway ──ext_proc──> EPE ──HTTPS/mTLS──>
                                           └─ injects apiKey / signs with STS
 ```
 
-1. The data plane attaches the caller's identity as `filter_state['sandbox.token']`: base64-encoded (or raw) JSON of
+1. ztunnel sends the caller's identity in the HBONE CONNECT header `x-agentio-sandbox-metadata`. The gateway captures it as `filter_state['sandbox.metadata']`:
 
-   ```json
-   { "requestId": "...", "accessToken": "...", "sandboxClientId": "..." }
+   ```text
+   agent-identity.access-token=...,agent-identity.sandbox-client-id=...
    ```
+
+   Values are percent-encoded; `+` remains literal. Set Helm `sandbox.enabled=true` to enable the sidecar Sandbox Manager. Enable `SANDBOX_TOKEN_ENABLED=true` on the ztunnel container and mount the token producer's directory at `/var/opt/sandbox/agent-token` (or set `SANDBOX_TOKEN_PATH`). Token files still contain JSON with `accessToken` and `sandboxClientId`. The Sandbox switch does not enable token reading or supply credentials automatically. Ambient Sandbox Manager integration is not supported.
+
+   For older gateways and ztunnels, EPE accepts the existing base64/raw JSON `filter_state['sandbox.token']` only when the metadata attribute is absent. Present but malformed metadata does not fall back to a legacy identity.
 
 2. When a matched rule carries `tokenTransformation` with a `credentialRef.credentialProvider`, EPE calls the provider using `accessToken` as the bearer credential and `sandboxClientId` as the resource being acted for.
 

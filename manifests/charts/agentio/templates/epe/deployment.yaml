@@ -68,6 +68,8 @@ spec:
             - -metrics-port={{ .Values.epe.service.metricsPort }}
             - -audit-webhook-insecure-skip-verify={{ .Values.epe.auditWebhook.insecureSkipVerify }}
           env:
+            - name: AGENTIO_SANDBOX_MODE
+              value: {{ .Values.sandbox.enabled | quote }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

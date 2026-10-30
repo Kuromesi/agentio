@@ -56,9 +56,10 @@ const (
 	AttrSourceAddress         = "source.address"
 	FilterStateWorkloadLabels = "filter_state['agentio.workload.labels']"
 	// FilterStateSandboxLabels is the legacy label attribute used during rolling upgrades.
-	FilterStateSandboxLabels = "filter_state['sandbox.labels']"
-	FilterStateSandboxToken  = "filter_state['sandbox.token']"
-	FilterStateRouteUpstream = "filter_state['agentio.route.upstream']"
+	FilterStateSandboxLabels   = "filter_state['sandbox.labels']"
+	FilterStateSandboxToken    = "filter_state['sandbox.token']"
+	FilterStateSandboxMetadata = "filter_state['sandbox.metadata']"
+	FilterStateRouteUpstream   = "filter_state['agentio.route.upstream']"
 
 	AttrDestinationPort    = "destination.port"
 	AttrDestinationAddress = "destination.address"
@@ -125,7 +126,11 @@ func Extract(
 	workload.Labels = workloadLabels
 	caller.Subject.Workload = workload
 
-	caller.Token = filter.NewSandboxToken(extractFilterStateString(attrs, FilterStateSandboxToken))
+	if _, present := attrs[ExtProcAttrsKey].GetFields()[FilterStateSandboxMetadata]; present {
+		caller.Token = filter.NewSandboxMetadataToken(extractFilterStateString(attrs, FilterStateSandboxMetadata))
+	} else {
+		caller.Token = filter.NewSandboxToken(extractFilterStateString(attrs, FilterStateSandboxToken))
+	}
 
 	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
 

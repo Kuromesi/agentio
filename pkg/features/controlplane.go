@@ -17,6 +17,7 @@ package features
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 
 	"istio.io/istio/pkg/env"
@@ -29,17 +30,11 @@ var (
 		true,
 		"Enable advisory validation and status reporting for SecurityProfile and TrafficPolicy resources, including global variants. False disables the status controller and its leader election; existing status is retained.",
 	).Get()
-	// SandboxMode enables runtime discovery and Sandbox resources alongside Workloads.
+	// SandboxMode enables Kruise discovery and Sandbox resources alongside Workloads.
 	SandboxMode = env.Register(
 		"AGENTIO_SANDBOX_MODE",
 		false,
-		"Enable Sandbox discovery and xDS resources. Inline SNI also projects to the bound Workload when it hosts one Sandbox for legacy compatibility; shared policies remain on Workloads.",
-	).Get()
-	// SandboxRuntimes selects integrations used when SandboxMode is enabled.
-	SandboxRuntimes = env.Register(
-		"AGENTIO_SANDBOX_RUNTIMES",
-		"",
-		"Comma-separated Sandbox runtimes used when AGENTIO_SANDBOX_MODE is true. Supported: kruise. Empty enables no runtime integrations.",
+		"Enable Kruise Sandbox discovery and Sandbox xDS resources. Inline SNI also projects to the bound Workload when it hosts one Sandbox for legacy compatibility; shared policies remain on Workloads.",
 	).Get()
 	// ScopedSecrets restricts the shared Secret informer to the control-plane namespace.
 	// Dedicated named Secret informers keep their own scope.
@@ -105,6 +100,9 @@ var (
 )
 
 func validateControlPlane() error {
+	if _, set := os.LookupEnv("AGENTIO_SANDBOX_RUNTIMES"); set {
+		return fmt.Errorf("AGENTIO_SANDBOX_RUNTIMES is no longer supported; remove it and use AGENTIO_SANDBOX_MODE")
+	}
 	if strings.TrimSpace(TokenAudience) == "" {
 		return fmt.Errorf("token audience is required")
 	}

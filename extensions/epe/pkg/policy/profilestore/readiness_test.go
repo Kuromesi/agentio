@@ -23,6 +23,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"istio.io/istio/pkg/test"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
+	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
@@ -53,6 +55,7 @@ func testSandboxSource(subj subject.Subject, uid string) sandboxSource {
 }
 
 func TestResolveProfilesSandboxWithDistinctWorkloadName(t *testing.T) {
+	test.SetForTest(t, &features.SandboxMode, true)
 	for _, labeled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("delivery label=%t", labeled), func(t *testing.T) {
 			c := sandboxProfileTestClient{Client: kube.NewFakeClient()}
@@ -110,6 +113,7 @@ func TestResolveProfilesSandboxWithDistinctWorkloadName(t *testing.T) {
 }
 
 func TestSandboxUIDLookupBeforeWatch(t *testing.T) {
+	test.SetForTest(t, &features.SandboxMode, true)
 	for _, tc := range []struct {
 		name      string
 		rules     string
@@ -175,6 +179,7 @@ func TestSandboxUIDLookupBeforeWatch(t *testing.T) {
 }
 
 func TestSandboxFirstRequestWaitsForSource(t *testing.T) {
+	test.SetForTest(t, &features.SandboxMode, true)
 	for _, event := range []string{"publication", "delete", "remove rules", "publication by UID", "delete by UID", "remove rules by UID"} {
 		t.Run(event, func(t *testing.T) {
 			explicitUID := strings.HasSuffix(event, " by UID")
@@ -448,6 +453,7 @@ func TestResolveProfilesWorkloadMetadata(t *testing.T) {
 }
 
 func TestSandboxLookupBeforeWatch(t *testing.T) {
+	test.SetForTest(t, &features.SandboxMode, true)
 	// This client's Sandbox CRD watcher is absent, so only GET can see the object.
 	c := newProfileTestClient()
 	profiles := NewCollection(c, nil, nil, t.Context().Done())

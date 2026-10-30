@@ -40,6 +40,7 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 	config.EPEImage = immutableImageRef("epe", "f")
 	config.PorterImage = immutableImageRef("porter", "f")
 	config.EnableFirewallRules = true
+	config.EnableSandbox = true
 	config.FirewallBackend = "iptables"
 
 	data, err := chartValues(config)
@@ -55,6 +56,9 @@ func TestChartValuesPinSuiteImagesAndBehavior(t *testing.T) {
 		t.Fatalf("profile = %#v, want sidecar", got)
 	}
 	agentiod := values["agentiod"].(map[string]any)
+	if got := values["sandbox"].(map[string]any)["enabled"]; got != true {
+		t.Fatalf("sandbox.enabled = %#v, want true", got)
+	}
 	assertPinnedImage(t, agentiod["image"], "registry.example/agentiod", "sha256:"+strings.Repeat("b", 64))
 	if got := agentiod["trustedNodeServiceAccount"]; got != "agentio-system/ztunnel" {
 		t.Fatalf("trusted node account = %#v", got)

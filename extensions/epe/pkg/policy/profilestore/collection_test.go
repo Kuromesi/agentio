@@ -20,25 +20,34 @@ import (
 	"time"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"istio.io/istio/pkg/test"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	metadatafake "k8s.io/client-go/metadata/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
+	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
 )
 
 type profileTestClient struct {
 	kube.Client
+	sandboxCRD bool
 }
 
 func (c *profileTestClient) CrdWatcher() kube.CrdWatcher {
-	return knownCRDWatcher{securityProfileGVR: {}, globalSecurityProfileGVR: {}}
+	known := knownCRDWatcher{securityProfileGVR: {}, globalSecurityProfileGVR: {}}
+	if c.sandboxCRD {
+		known[sandboxGVR] = struct{}{}
+	}
+	return known
 }
 
 type knownCRDWatcher map[schema.GroupVersionResource]struct{}
@@ -287,6 +296,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 // pins the delayed-informer wiring (CRD-absent sync plus an empty result
 // set) so the intent documented here stays visible.
 func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
+	test.SetForTest(t, &features.SandboxMode, true)
 	c := newProfileTestClient()
 	// Deliberately no Sandbox CRD.
 	stop := t.Context().Done()
@@ -313,6 +323,47 @@ func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
 		got,
 	) != 0 {
 		t.Fatalf("Matches = %+v, want no profiles without the CRD", got)
+	}
+}
+
+func TestProfileCollectionSandboxMode(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			test.SetForTest(t, &features.SandboxMode, enabled)
+			profile := newTestProfile("workload", "ns-a", map[string]string{"app": "test"})
+			c := &profileTestClient{Client: kube.NewFakeClient(profile), sandboxCRD: true}
+			metadata := c.Metadata().(*metadatafake.FakeMetadataClient)
+			metadata.PrependReactor("list", "sandboxes", func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, &metav1.List{}, nil
+			})
+			stop := t.Context().Done()
+			store := NewStore()
+			profiles := NewCollection(c, nil, krt.GlobalDebugHandler, stop)
+			reg := store.RegisterCollection(profiles)
+			t.Cleanup(profiles.Registry.RegisterDeletes(store.NotifyKeys))
+			c.Run(stop)
+			if !reg.WaitUntilSynced(stop) {
+				t.Fatal("profile collection never synced")
+			}
+			testsupport.Eventually(t, 5*time.Second, func() error {
+				got := store.ProfilesFor(subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}},
+				})
+				if len(got) != 1 {
+					return fmt.Errorf("Workload profiles = %d, want 1 in either mode", len(got))
+				}
+				return nil
+			})
+			listed := false
+			for _, action := range metadata.Actions() {
+				if action.GetResource() == sandboxGVR && action.GetVerb() == "list" {
+					listed = true
+				}
+			}
+			if listed != enabled {
+				t.Fatalf("Sandbox discovery started = %v, want %v", listed, enabled)
+			}
+		})
 	}
 }
 

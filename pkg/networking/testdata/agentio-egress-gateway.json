@@ -821,6 +821,18 @@
                             "sharedWithUpstream": "TRANSITIVE"
                           },
                           {
+                            "objectKey": "sandbox.metadata",
+                            "factoryKey": "envoy.hashable_string",
+                            "formatString": {
+                              "textFormatSource": {
+                                "inlineString": "%REQ(X-AGENTIO-SANDBOX-METADATA)%"
+                              },
+                              "omitEmptyValues": true
+                            },
+                            "sharedWithUpstream": "TRANSITIVE",
+                            "skipIfEmpty": true
+                          },
+                          {
                             "objectKey": "agentio.peer.certificate",
                             "factoryKey": "envoy.string",
                             "formatString": {
