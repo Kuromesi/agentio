@@ -229,12 +229,7 @@ request a buffered request or response body. This decision is per HTTP stream;
 body delivery to one processor does not subscribe the others. Each processor
 receives its own body messages, not another processor's parsed objects.
 
-Additional processors see mutations already committed by EPE, including any
-injected credentials, and may modify that request further. Their decisions do
-not re-enter EPE policy evaluation or its rule audit. Only grant this capability
-to trusted services. Additional processors cannot publish EPE's `agentio.route`
-metadata; they have independent clusters, filter names, and statistics named
-`agentio.additional-ext-proc.<name>`.
+Additional processors see mutations already committed by EPE, including any injected credentials, and may modify that request further. Their decisions do not re-enter EPE policy evaluation or its rule audit. Only grant this capability to trusted services. Additional processors cannot publish EPE's `agentio.route` metadata; they have independent clusters, filter names, and statistics named `agentio.additional-ext-proc.<name>`.
 
 ## Egress gateway settings
 
@@ -255,6 +250,12 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `serviceEntries` | `EgressServiceEntry[]` | Empty | Static upstream endpoints that override DNS resolution for exact destination hosts at this gateway. |
 | `accessLogFormat` | `AccessLogFormat` | Built-in JSON | Format of the built-in `envoy` access-log provider on stdout for this gateway. See below. |
 
+### Gateway protocol names
+
+Native `agentio-egress` gateways capture TLS termination SNI in `agentio.tls.outer_sni`, log policy denials from `agentio.egress.denial_reason`, and store CONNECT authority in `agentio.connect.authority`. Native CONNECT filter instances use the `agentio.` prefix. Workload, peer, route, and SNI-policy fields retain their existing `agentio.*` names. Sandbox context retains `sandbox.id` and `sandbox.token`; the gateway writes resolved workload labels to both `agentio.workload.labels` and `sandbox.labels` and exports both to EPE. Configured ext_proc attribute names are passed through unchanged. Additional ext_proc filters, clusters, and statistics retain `agentio.additional-ext-proc.<name>`.
+
+Legacy waypoint gateways retain their existing keys, filter names, and default log expressions, including `io.kruise.outer_sni`, `io.kruise.egress_denial_reason`, and `io.istio.connect_authority`. Custom CEL expressions, log formats, and filter-name patches must use the names for the target gateway. Envoy built-in keys, HTTP headers, Kubernetes API domains, and protobuf type URLs retain their protocol names.
+
 ### Access-log format
 
 Set `egressGateways[].accessLogFormat` in AgentioConfig to customize a gateway's access logs. Choose either `json` for a JSON object or `text` for a text template. Both support [Envoy access-log substitution operators](https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage). The format applies to HTTP and TCP logs, CONNECT failures, listener filter-chain misses, and SNI denials when SNI policy enforcement is enabled. The TLS-termination relay itself does not emit duplicate application logs.
@@ -271,10 +272,10 @@ egressGateways:
       scheme: "%REQ(:SCHEME)%"
       protocol: "%PROTOCOL%"
       authority: "%REQ(:AUTHORITY)%"
-      requested_server_name: "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%"
+      requested_server_name: "%CEL('agentio.tls.outer_sni' in filter_state ? filter_state['agentio.tls.outer_sni'] : connection.requested_server_name)%"
       upstream_address: "%UPSTREAM_REMOTE_ADDRESS%"
       response_code: "%RESPONSE_CODE%"
-      denial_reason: "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%"
+      denial_reason: "%FILTER_STATE(agentio.egress.denial_reason:PLAIN)%"
 ```
 
 The JSON object replaces the complete default format; its fields are not merged with the defaults. Nested objects and typed values are supported. Unavailable JSON values may be omitted or appear as `null`; log consumers should accept both. This example's illustrative output after HTTPS termination is:
@@ -389,7 +390,7 @@ Gateway API `parametersRef` ConfigMaps accept the same `upstreamTls` block in `d
 | `http.streamIdleTimeout` | `30m` | Closes an idle HTTP stream, including WebSocket and server-sent event streams. |
 | `http.defaultRoute.timeout` | `0s` | Total timeout for the fallback route. `0s` disables the timeout. |
 | `http.defaultRoute.retries` | Unset | Retry policy using Istio's [`HTTPRetry`](https://istio.io/latest/docs/reference/config/networking/virtual-service/#HTTPRetry) fields. |
-| `http.routeOverrides[].hosts` | Empty | Exact or wildcard destination host patterns for a dedicated Envoy virtual host. |
+| `http.routeOverrides[].hosts` | Empty | Exact or wildcard destination host patterns, matched independently of the request port. `*` overrides the default route settings; duplicate patterns across or within overrides are rejected case-insensitively. |
 | `http.routeOverrides[].settings` | Unset | `timeout` and `retries` applied to the matching hosts. |
 
 ### CONNECT rate limiting
@@ -426,7 +427,7 @@ Burst is already supported through `maxTokens`: for example, `maxTokens: 100`, `
 | `descriptors[]` | Empty | Descriptor-specific token buckets. Entry keys/order must match an action group when `rateLimits` is configured. Matching follows the native Envoy filter. |
 | `descriptors[].entries[].key` | Empty | Descriptor key. |
 | `descriptors[].entries[].value` | Empty | Exact value. Empty acts as a wildcard and creates a bucket for each distinct runtime value. |
-| `descriptors[].entries[].cel` | Empty | Legacy CEL value source. Only supported when `rateLimits` is omitted. |
+| `descriptors[].entries[].cel` | Empty | Legacy CEL value source, supported only when `rateLimits` is omitted. In this form, each descriptor generates its own ordered action group; entries without CEL use their non-empty `value` as a constant. |
 | `descriptors[].tokenBucket` | Unset | Bucket used by the matching descriptor. |
 | `perDownstreamConnection` | `false` | Creates a token bucket for each ztunnel-to-gateway connection. It cannot be combined with wildcard descriptor values. |
 

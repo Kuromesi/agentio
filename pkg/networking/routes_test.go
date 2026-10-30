@@ -37,8 +37,14 @@ func TestRouteSettingsForStaticHostUsesEnvoyDomainPrecedence(t *testing.T) {
 			{Hosts: []string{"*"}, Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(2 * time.Second)}},
 			{Hosts: []string{"api.*"}, Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(3 * time.Second)}},
 			{Hosts: []string{"*.com"}, Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(4 * time.Second)}},
-			{Hosts: []string{"*.example.com"}, Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(5 * time.Second)}},
-			{Hosts: []string{"api.example.com"}, Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(6 * time.Second)}},
+			{
+				Hosts:    []string{"*.example.com"},
+				Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(5 * time.Second)},
+			},
+			{
+				Hosts:    []string{"api.example.com"},
+				Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(6 * time.Second)},
+			},
 		},
 	}
 	tests := []struct {
@@ -57,6 +63,65 @@ func TestRouteSettingsForStaticHostUsesEnvoyDomainPrecedence(t *testing.T) {
 				t.Fatalf("route settings timeout = %s, want %s", got, test.want)
 			}
 		})
+	}
+}
+
+func TestGatewayRouteOverridesUseOneWildcardAndIgnoreRequestPort(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		resources, err := Build(Inputs{
+			LegacyGateway:    legacy,
+			DiscoveryAddress: "agentiod.agentio-system.svc:15012",
+			TrustDomain:      "cluster.local",
+			Gateway: testGateway(&configv1.EgressGateway{
+				ConnectionPool: &configv1.ConnectionPoolSettings{Http: &configv1.ConnectionPoolHttpSettings{
+					DefaultRoute: &configv1.HttpRouteSettings{Timeout: durationpb.New(time.Second)},
+					RouteOverrides: []*configv1.HttpRouteOverride{
+						{
+							Hosts:    []string{"*", "api.example.com"},
+							Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(2 * time.Second)},
+						},
+						{
+							Hosts:    []string{"*.example.org"},
+							Settings: &configv1.HttpRouteSettings{Timeout: durationpb.New(3 * time.Second)},
+						},
+					},
+				}},
+			}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		routes := messagesOf(
+			t,
+			resources,
+			model.RouteType,
+			func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+		)
+		for _, name := range []string{HTTPDynamicForwardProxy, TLSConnectOriginate} {
+			rc := routes[name]
+			if !rc.GetIgnorePortInHostMatching() {
+				t.Fatalf("%s must match api.example.com:8443 and api.example.com identically", name)
+			}
+			seen := map[string]bool{}
+			for _, vh := range rc.GetVirtualHosts() {
+				for _, domain := range vh.GetDomains() {
+					if seen[domain] {
+						t.Fatalf("duplicate virtual-host domain %q", domain)
+					}
+					seen[domain] = true
+					want := 2 * time.Second
+					if domain == "*.example.org" {
+						want = 3 * time.Second
+					}
+					if got := vh.GetRoutes()[1].GetRoute().GetTimeout().AsDuration(); got != want {
+						t.Fatalf("domain %s timeout = %v, want %v", domain, got, want)
+					}
+				}
+			}
+			if len(seen) != 3 || !seen["*"] || !seen["api.example.com"] || !seen["*.example.org"] {
+				t.Fatalf("unexpected domains: %v", seen)
+			}
+		}
 	}
 }
 
@@ -79,7 +144,12 @@ func TestGatewayRoutesUseSupportedAgentioRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	routes := messagesOf(t, resources, model.RouteType, func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} })
+	routes := messagesOf(
+		t,
+		resources,
+		model.RouteType,
+		func() *routev3.RouteConfiguration { return &routev3.RouteConfiguration{} },
+	)
 	for _, name := range []string{HTTPDynamicForwardProxy, TLSConnectOriginate} {
 		config := routes[name]
 		configured := config.GetVirtualHosts()[0].GetRoutes()[1]
@@ -89,7 +159,9 @@ func TestGatewayRoutesUseSupportedAgentioRetries(t *testing.T) {
 			t.Errorf("route %s configured retry host selection = %+v", name, retry)
 		}
 		fallback := config.GetVirtualHosts()[1].GetRoutes()[1]
-		if retry := fallback.GetRoute().GetRetryPolicy(); retry.GetRetryOn() != "reset-before-request" || retry.GetNumRetries().GetValue() != 2 {
+		if retry := fallback.GetRoute().
+			GetRetryPolicy(); retry.GetRetryOn() != "reset-before-request" ||
+			retry.GetNumRetries().GetValue() != 2 {
 			t.Errorf("route %s default retry = %+v", name, retry)
 		}
 	}
@@ -124,8 +196,11 @@ func TestForwardRouteConvertsSupportedAgentioRetryFields(t *testing.T) {
 		},
 		{name: "attempts disabled", retries: &networkingv1alpha3.HTTPRetry{Attempts: 0}, wantNil: true},
 		{
-			name:              "ignore previous hosts enabled",
-			retries:           &networkingv1alpha3.HTTPRetry{Attempts: 2, RetryIgnorePreviousHosts: wrapperspb.Bool(true)},
+			name: "ignore previous hosts enabled",
+			retries: &networkingv1alpha3.HTTPRetry{
+				Attempts:                 2,
+				RetryIgnorePreviousHosts: wrapperspb.Bool(true),
+			},
 			wantRetryOn:       "connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes",
 			wantPreviousHosts: true,
 		},
@@ -137,15 +212,26 @@ func TestForwardRouteConvertsSupportedAgentioRetryFields(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			policy := forwardRoute("test", &configv1.HttpRouteSettings{Retries: test.retries}).GetRoute().GetRetryPolicy()
+			policy := forwardRoute(
+				"test",
+				&configv1.HttpRouteSettings{Retries: test.retries},
+			).GetRoute().
+				GetRetryPolicy()
 			if test.wantNil {
 				if policy != nil {
 					t.Fatalf("retry policy = %+v, want nil", policy)
 				}
 				return
 			}
-			if policy.GetRetryOn() != test.wantRetryOn || !slices.Equal(policy.GetRetriableStatusCodes(), test.wantCodes) {
-				t.Errorf("retry-on/codes = %q/%v, want %q/%v", policy.GetRetryOn(), policy.GetRetriableStatusCodes(), test.wantRetryOn, test.wantCodes)
+			if policy.GetRetryOn() != test.wantRetryOn ||
+				!slices.Equal(policy.GetRetriableStatusCodes(), test.wantCodes) {
+				t.Errorf(
+					"retry-on/codes = %q/%v, want %q/%v",
+					policy.GetRetryOn(),
+					policy.GetRetriableStatusCodes(),
+					test.wantRetryOn,
+					test.wantCodes,
+				)
 			}
 			if got := len(policy.GetRetryHostPredicate()) == 1; got != test.wantPreviousHosts {
 				t.Errorf("previous-host predicate = %v, want %v", got, test.wantPreviousHosts)

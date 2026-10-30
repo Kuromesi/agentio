@@ -41,7 +41,6 @@ import (
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
-	dfpnetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/sni_dynamic_forward_proxy/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	matchinginputv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	rlexprv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/rate_limit_descriptors/expr/v3"
@@ -71,10 +70,10 @@ const (
 	tlsActionKey                  = "agentio.tls.action"
 	noSNISentinel                 = "_no_sni_"
 	forwardHCMStatPrefix          = "inbound_0.0.0.0_0;"
-	outerSNIKey                   = "io.kruise.outer_sni"
+	outerSNIKey                   = model.FilterStateOuterSNI
 	upstreamServerNameKey         = "envoy.network.upstream_server_name"
 	upstreamSubjectAltNamesKey    = "envoy.network.upstream_subject_alt_names"
-	connectProxyTLSIdentityFilter = "connect-proxy-tls-identity"
+	connectProxyTLSIdentityFilter = "agentio.connect_proxy_tls_identity"
 	connectAuthorityKey           = "io.istio.connect_authority"
 	dynamicHostKey                = "envoy.upstream.dynamic_host"
 	dynamicPortKey                = "envoy.upstream.dynamic_port"
@@ -102,23 +101,9 @@ var (
 
 	sniHostMismatchExpr = mustParseCEL(sniHostMismatchExprText)
 
-	sniHostMatchRBACFilter = httpFilter("envoy.filters.http.rbac", mustPack(&rbachttpv3.RBAC{Rules: &rbacv3.RBAC{
-		Action: rbacv3.RBAC_DENY,
-		Policies: map[string]*rbacv3.Policy{
-			"deny-sni-host-mismatch": {
-				Permissions: []*rbacv3.Permission{{Rule: &rbacv3.Permission_Any{Any: true}}},
-				Principals:  []*rbacv3.Principal{{Identifier: &rbacv3.Principal_Any{Any: true}}},
-				Condition:   sniHostMismatchExpr,
-				CelConfig: &corev3.CelExpressionConfig{
-					EnableStringFunctions:  true,
-					EnableStringConcat:     true,
-					EnableStringConversion: true,
-				},
-			},
-		},
-	}}))
+	sniHostMatchRBACFilter = buildSNIHostMatchRBACFilter(sniHostMismatchExpr)
 
-	connectProxyTLSIdentityHTTPFilter = buildConnectProxyTLSIdentityHTTPFilter()
+	connectProxyTLSIdentityHTTPFilter = buildConnectProxyTLSIdentityHTTPFilter(outerSNIKey)
 
 	connectAuthorityHTTPFilter = buildConnectAuthorityFilter(
 		"envoy.hashable_string",
@@ -133,30 +118,11 @@ var (
 		model.FilterStateLocalPrincipal,
 	)
 
-	sniDenialReasonFilter = networkFilter(
-		"envoy.filters.network.set_filter_state",
-		mustPack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
-			{
-				Key: &setstatecommonv3.FilterStateValue_ObjectKey{
-					ObjectKey: telemetry.DenialReasonFilterStateKey,
-				},
-				FactoryKey: "envoy.string",
-				Value: &setstatecommonv3.FilterStateValue_FormatString{
-					FormatString: formatString("sni_policy_denied"),
-				},
-				ReadOnly: true,
-			},
-		}}),
-	)
+	sniDenialReasonFilter = buildSNIDenialReasonFilter(telemetry.DenialReasonFilterStateKey)
 
-	// Shared state must be Hashable so internal connections cannot be reused
-	// across different outer SNIs and spuriously fail the SNI/Host guard.
-	captureSNIFilter = buildCaptureSNIFilter("envoy.hashable_string")
-
-	sniDFPFilter = networkFilter("envoy.filters.network.sni_dynamic_forward_proxy", mustPack(&dfpnetworkv3.FilterConfig{
-		DnsCacheConfig: dnsCacheConfig(),
-		PortSpecifier:  &dfpnetworkv3.FilterConfig_PortValue{PortValue: 443},
-	}))
+	// Shared state must be Hashable to isolate internal connections by outer SNI.
+	captureSNIFilter       = buildCaptureSNIFilter("envoy.hashable_string", outerSNIKey)
+	outerTLSIdentityFilter = buildOuterTLSIdentityFilter(outerSNIKey)
 
 	originalDstFilter  = listenerFilter("envoy.filters.listener.original_dst", mustPack(&originaldstv3.OriginalDst{}))
 	tlsInspectorFilter = listenerFilter("envoy.filters.listener.tls_inspector", mustPack(&tlsinspectorv3.TlsInspector{
@@ -166,11 +132,70 @@ var (
 		"envoy.filters.listener.http_inspector",
 		mustPack(&httpinspectorv3.HttpInspector{}),
 	)
-	inspectorsTLSFirst  = []*listenerv3.ListenerFilter{originalDstFilter, tlsInspectorFilter, httpInspectorFilter}
 	inspectorsHTTPFirst = []*listenerv3.ListenerFilter{originalDstFilter, httpInspectorFilter, tlsInspectorFilter}
 )
 
+func buildSNIHostMatchRBACFilter(expression *exprpb.Expr) *hcmv3.HttpFilter {
+	return httpFilter("envoy.filters.http.rbac", mustPack(&rbachttpv3.RBAC{Rules: &rbacv3.RBAC{
+		Action: rbacv3.RBAC_DENY,
+		Policies: map[string]*rbacv3.Policy{
+			"deny-sni-host-mismatch": {
+				Permissions: []*rbacv3.Permission{{Rule: &rbacv3.Permission_Any{Any: true}}},
+				Principals:  []*rbacv3.Principal{{Identifier: &rbacv3.Principal_Any{Any: true}}},
+				Condition:   expression,
+				CelConfig: &corev3.CelExpressionConfig{
+					EnableStringFunctions:  true,
+					EnableStringConcat:     true,
+					EnableStringConversion: true,
+				},
+			},
+		},
+	}}))
+}
+
+func buildSNIDenialReasonFilter(key string) *listenerv3.Filter {
+	return networkFilter(
+		"envoy.filters.network.set_filter_state",
+		mustPack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
+			{
+				Key: &setstatecommonv3.FilterStateValue_ObjectKey{
+					ObjectKey: key,
+				},
+				FactoryKey: "envoy.string",
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("sni_policy_denied"),
+				},
+				ReadOnly: true,
+			},
+		}}),
+	)
+}
+
+// TCP payload cannot supply a new TLS identity after termination.
+func buildOuterTLSIdentityFilter(key string) *listenerv3.Filter {
+	return networkFilter("envoy.filters.network.set_filter_state", mustPack(&setstatenetworkv3.Config{
+		OnNewConnection: []*setstatecommonv3.FilterStateValue{
+			{
+				Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: upstreamServerNameKey},
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%FILTER_STATE(" + key + ":PLAIN)%"),
+				},
+			},
+			{
+				Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: upstreamSubjectAltNamesKey},
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%FILTER_STATE(" + key + ":PLAIN)%"),
+				},
+			},
+		},
+	}))
+}
+
 func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain string) ([]*listenerv3.Listener, error) {
+	denialReasonFilter, tcpTLSIdentityFilter := sniDenialReasonFilter, outerTLSIdentityFilter
+	if b.legacyGateway {
+		denialReasonFilter, tcpTLSIdentityFilter = legacySNIDenialReasonFilter, legacyOuterTLSIdentityFilter
+	}
 	connectHCM, err := b.buildConnectHCM(config)
 	if err != nil {
 		return nil, err
@@ -233,7 +258,7 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		if len(denyProxy.AccessLog) > 0 {
 			// Capture the policy decision before the black-hole proxy closes the
 			// connection, so logs need not expose internal cluster or chain names.
-			denyFilters = append(denyFilters, sniDenialReasonFilter)
+			denyFilters = append(denyFilters, denialReasonFilter)
 		}
 		denyFilters = append(denyFilters, networkFilter("envoy.filters.network.tcp_proxy", b.pack(denyProxy)))
 		internalChains = append(internalChains,
@@ -259,10 +284,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFilters:    inspectorsHTTPFirst,
 		FilterChains:       internalChains,
 		FilterChainMatcher: internalChainMatcher,
-		// Server-first protocols cannot supply bytes until the TCP chain connects
-		// upstream. Bound inspection and let unclassified connections fall through.
+		// Close on timeout so delayed client bytes cannot bypass inspection.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
-		ContinueOnListenerFiltersTimeout: true,
+		ContinueOnListenerFiltersTimeout: false,
 	}
 	if features.EnableSNITrafficPolicy && !b.legacyGateway {
 		mainInternal.ListenerFilters = append(
@@ -276,7 +300,7 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 			InternalListener: &listenerv3.Listener_InternalListenerConfig{},
 		},
 		TrafficDirection: corev3.TrafficDirection_INBOUND,
-		ListenerFilters:  inspectorsTLSFirst,
+		ListenerFilters:  []*listenerv3.ListenerFilter{originalDstFilter, httpInspectorFilter},
 		FilterChains: []*listenerv3.FilterChain{
 			{
 				Name: forwardHTTPChain,
@@ -288,16 +312,16 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 				Name: forwardTCPChain,
 				Filters: b.applicationTCPFilters(
 					config,
-					[]*listenerv3.Filter{sniDFPFilter},
-					TLSConnectOriginate,
+					[]*listenerv3.Filter{tcpTLSIdentityFilter},
+					TLSProxyOriginate,
 					connectionPool,
 				),
 			},
 		},
-		FilterChainMatcher: b.protocolMatcher(b.toChain(forwardTCPChain)),
-		// Decrypted application traffic can also be server-first.
+		FilterChainMatcher: b.applicationMatcher(),
+		// Apply the same close-on-timeout behavior after TLS termination.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
-		ContinueOnListenerFiltersTimeout: true,
+		ContinueOnListenerFiltersTimeout: false,
 	}
 	for _, listener := range []*listenerv3.Listener{connect, mainInternal, mainForward} {
 		if config.telemetry != nil {
@@ -387,7 +411,11 @@ func (b *resourceBuilder) buildForwardHCM(
 	if terminatedTLS {
 		// Reject an inner authority that differs from the ClientHello SNI before
 		// ext_proc or DFP can observe or resolve the attacker-controlled host.
-		filters = append(filters, sniHostMatchRBACFilter)
+		guard := sniHostMatchRBACFilter
+		if b.legacyGateway {
+			guard = legacySNIHostMatchRBACFilter
+		}
+		filters = append(filters, guard)
 	}
 	if len(config.gateway.GetServiceEntries()) > 0 {
 		filters = append(filters, httpFilter(staticEndpointCandidateFilter, b.pack(&setstatehttpv3.Config{})))
@@ -418,7 +446,11 @@ func (b *resourceBuilder) buildForwardHCM(
 		AllowDynamicHostFromFilterState: true,
 	})))
 	if terminatedTLS {
-		filters = append(filters, connectProxyTLSIdentityHTTPFilter)
+		identity := connectProxyTLSIdentityHTTPFilter
+		if b.legacyGateway {
+			identity = legacyConnectProxyTLSIdentityHTTPFilter
+		}
+		filters = append(filters, identity)
 	}
 	filters = append(filters, httpFilter("envoy.filters.http.router", b.pack(&routerv3.Router{})))
 	streamIdle := durationpb.New(30 * time.Minute)
@@ -479,8 +511,8 @@ func mustParseCEL(expression string) *exprpb.Expr {
 // buildConnectProxyTLSIdentityHTTPFilter copies the outer proxy SNI into Envoy's
 // upstream TLS identity keys only for CONNECT. Ordinary HTTPS requests retain
 // DFP auto-SNI/SAN behavior.
-func buildConnectProxyTLSIdentityHTTPFilter() *hcmv3.HttpFilter {
-	outerSNI := formatString(fmt.Sprintf("%%FILTER_STATE(%s:PLAIN)%%", outerSNIKey))
+func buildConnectProxyTLSIdentityHTTPFilter(key string) *hcmv3.HttpFilter {
+	outerSNI := formatString(fmt.Sprintf("%%FILTER_STATE(%s:PLAIN)%%", key))
 	setIdentity := &setstatehttpv3.Config{OnRequestHeaders: []*setstatecommonv3.FilterStateValue{
 		{
 			Key:         &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: upstreamServerNameKey},
@@ -532,7 +564,11 @@ func buildConnectProxyTLSIdentityHTTPFilter() *hcmv3.HttpFilter {
 		},
 		ExtensionConfig: typedCoreExtension("envoy.filters.http.set_filter_state", mustPack(setIdentity)),
 	}
-	return httpFilter(connectProxyTLSIdentityFilter, mustPack(wrapper))
+	name := connectProxyTLSIdentityFilter
+	if key == legacyOuterSNIKey {
+		name = "connect-proxy-tls-identity"
+	}
+	return httpFilter(name, mustPack(wrapper))
 }
 
 func (b *resourceBuilder) extProcFilter(
@@ -676,11 +712,11 @@ func connectWorkloadFilter() *hcmv3.HttpFilter {
 			SkipIfEmpty:        true,
 		})
 	}
-	return httpFilter("connect_workload", mustPack(config))
+	return httpFilter("agentio.connect_workload", mustPack(config))
 }
 
 func connectPolicyFilter() *hcmv3.HttpFilter {
-	return httpFilter("connect_sni_policy", mustPack(&setstatehttpv3.Config{
+	return httpFilter("agentio.connect_sni_policy", mustPack(&setstatehttpv3.Config{
 		OnRequestHeaders: []*setstatecommonv3.FilterStateValue{
 			{
 				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: model.FilterStateSNIPolicy},
@@ -787,6 +823,10 @@ func (b *resourceBuilder) buildTLSTerminateChain(pool *configv1.ConnectionPoolSe
 }
 
 func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, legacyAction bool) *hcmv3.HttpFilter {
+	authorityKey := connectAuthorityKey
+	if factory == "envoy.hashable_string" {
+		authorityKey = model.FilterStateConnectAuthority
+	}
 	value := func(key, format, factory string, sharing setstatecommonv3.FilterStateValue_SharedWithUpstream) *setstatecommonv3.FilterStateValue {
 		return &setstatecommonv3.FilterStateValue{
 			Key:                &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: key},
@@ -803,7 +843,7 @@ func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, 
 			setstatecommonv3.FilterStateValue_ONCE,
 		),
 		value(
-			connectAuthorityKey,
+			authorityKey,
 			"%REQ(:AUTHORITY)%",
 			factory,
 			setstatecommonv3.FilterStateValue_ONCE,
@@ -896,10 +936,18 @@ func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, 
 			SkipIfEmpty:        true,
 		})
 	}
-	return httpFilter("connect_authority", mustPack(&setstatehttpv3.Config{OnRequestHeaders: values}))
+	name := "connect_authority"
+	if factory == "envoy.hashable_string" {
+		name = "agentio.connect_authority"
+	}
+	return httpFilter(name, mustPack(&setstatehttpv3.Config{OnRequestHeaders: values}))
 }
 
 func buildRelayDownstreamFilter(factory, peerPrincipal, localPrincipal string) *listenerv3.Filter {
+	authorityKey := connectAuthorityKey
+	if factory == "envoy.hashable_string" {
+		authorityKey = model.FilterStateConnectAuthority
+	}
 	downstreamRelayKeys := []struct {
 		key     string
 		factory string
@@ -908,7 +956,7 @@ func buildRelayDownstreamFilter(factory, peerPrincipal, localPrincipal string) *
 		{key: "envoy.filters.listener.original_dst.remote_ip"},
 		{key: peerPrincipal, factory: factory},
 		{key: localPrincipal, factory: factory},
-		{key: connectAuthorityKey, factory: factory},
+		{key: authorityKey, factory: factory},
 	}
 	values := make([]*setstatecommonv3.FilterStateValue, 0, len(downstreamRelayKeys))
 	for _, relay := range downstreamRelayKeys {
@@ -922,7 +970,11 @@ func buildRelayDownstreamFilter(factory, peerPrincipal, localPrincipal string) *
 			SkipIfEmpty:        true,
 		})
 	}
-	return networkFilter("connect_downstream_peer", mustPack(&setstatenetworkv3.Config{OnNewConnection: values}))
+	name := "connect_downstream_peer"
+	if factory == "envoy.hashable_string" {
+		name = "agentio.connect_downstream_peer"
+	}
+	return networkFilter(name, mustPack(&setstatenetworkv3.Config{OnNewConnection: values}))
 }
 
 func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimitSettings) (*hcmv3.HttpFilter, error) {
@@ -935,31 +987,33 @@ func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimit
 	if settings.GetTokenBucket() != nil {
 		config.TokenBucket = tokenBucket(settings.GetTokenBucket())
 	}
-	actions := map[string]*routev3.RateLimit_Action{}
 	for _, descriptor := range settings.GetDescriptors() {
 		converted := &ratelimitv3.LocalRateLimitDescriptor{TokenBucket: tokenBucket(descriptor.GetTokenBucket())}
+		rateLimit := &routev3.RateLimit{}
 		for _, entry := range descriptor.GetEntries() {
 			converted.Entries = append(
 				converted.Entries,
 				&ratelimitv3.RateLimitDescriptor_Entry{Key: entry.GetKey(), Value: entry.GetValue()},
 			)
-			if entry.GetCel() != "" {
-				actions[entry.GetKey()] = b.rateLimitCELAction(entry.GetKey(), entry.GetCel())
-			}
-		}
-		config.Descriptors = append(config.Descriptors, converted)
-	}
-	if len(actions) > 0 {
-		rateLimit := &routev3.RateLimit{}
-		for _, descriptor := range settings.GetDescriptors() {
-			for _, entry := range descriptor.GetEntries() {
-				if action := actions[entry.GetKey()]; action != nil {
-					rateLimit.Actions = append(rateLimit.Actions, action)
-					delete(actions, entry.GetKey())
+			if len(settings.GetRateLimits()) == 0 {
+				if entry.GetCel() != "" {
+					rateLimit.Actions = append(rateLimit.Actions, b.rateLimitCELAction(entry.GetKey(), entry.GetCel()))
+				} else {
+					rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
+						ActionSpecifier: &routev3.RateLimit_Action_GenericKey_{
+							GenericKey: &routev3.RateLimit_Action_GenericKey{
+								DescriptorKey:   entry.GetKey(),
+								DescriptorValue: entry.GetValue(),
+							},
+						},
+					})
 				}
 			}
 		}
-		config.RateLimits = []*routev3.RateLimit{rateLimit}
+		config.Descriptors = append(config.Descriptors, converted)
+		if len(settings.GetRateLimits()) == 0 {
+			config.RateLimits = append(config.RateLimits, rateLimit)
+		}
 	}
 	for _, group := range settings.GetRateLimits() {
 		rateLimit := &routev3.RateLimit{}
@@ -1221,12 +1275,12 @@ func workloadSDSConfigSource() *corev3.ConfigSource {
 	}
 }
 
-func buildCaptureSNIFilter(factory string) *listenerv3.Filter {
+func buildCaptureSNIFilter(factory, key string) *listenerv3.Filter {
 	return networkFilter(
 		"envoy.filters.network.set_filter_state",
 		mustPack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
 			{
-				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: outerSNIKey},
+				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: key},
 				FactoryKey: factory,
 				Value: &setstatecommonv3.FilterStateValue_FormatString{
 					FormatString: formatString("%REQUESTED_SERVER_NAME%"),

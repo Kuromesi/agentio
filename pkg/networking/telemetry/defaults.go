@@ -33,7 +33,7 @@ import (
 const fileAccessLogName = "envoy.access_loggers.file"
 
 // DenialReasonFilterStateKey carries a gateway policy rejection reason for logs.
-const DenialReasonFilterStateKey = "io.kruise.egress_denial_reason"
+const DenialReasonFilterStateKey = model.FilterStateDenialReason
 
 // The TLS termination chain shares the original ClientHello SNI with the
 // plaintext internal listener. Keep it separate from the HTTP authority, which
@@ -57,7 +57,7 @@ var defaultAccessLogLabels = map[string]string{
 	"path":                     "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
 	"protocol":                 "%PROTOCOL%",
 	"request_id":               "%REQ(X-REQUEST-ID)%",
-	"requested_server_name":    "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%",
+	"requested_server_name":    "%CEL('agentio.tls.outer_sni' in filter_state ? filter_state['agentio.tls.outer_sni'] : connection.requested_server_name)%",
 	"response_code":            "%RESPONSE_CODE%",
 	"response_flags":           "%RESPONSE_FLAGS%",
 	"start_time":               "%START_TIME%",
@@ -71,9 +71,13 @@ var defaultAccessLogLabels = map[string]string{
 
 // defaultTelemetryProviders returns a fresh provider graph with the gateway's
 // format applied to the built-in envoy logger. Callers may mutate it safely.
-func defaultTelemetryProviders(format *configv1.AccessLogFormat) model.TelemetryProviders {
+func defaultTelemetryProviders(format *configv1.AccessLogFormat, legacy bool) model.TelemetryProviders {
 	fields := make(map[string]*structpb.Value, len(defaultAccessLogLabels))
 	for name, value := range defaultAccessLogLabels {
+		if legacy {
+			value = strings.ReplaceAll(value, "agentio.tls.outer_sni", "io.kruise.outer_sni")
+			value = strings.ReplaceAll(value, DenialReasonFilterStateKey, "io.kruise.egress_denial_reason")
+		}
 		fields[name] = structpb.NewStringValue(value)
 	}
 	fileLog := &fileaccesslogv3.FileAccessLog{

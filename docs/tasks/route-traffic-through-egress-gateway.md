@@ -6,19 +6,13 @@ You can create the gateway as a static chart workload or with the Kubernetes Gat
 
 ## Protocol detection and server-first connections
 
-The gateway waits up to one second for protocol detection, both inside the
-CONNECT tunnel and after TLS termination. If inspection times out, the gateway
-continues with the protocol information available. Connections with no detected
-protocol use TCP forwarding, allowing server-first protocols such as SMTP and
-MySQL to receive the server greeting without sending application data first.
-This adds about one second before the upstream connection is opened at each
-inspection stage that times out.
+The gateway waits up to one second for protocol detection, both inside the CONNECT tunnel and after TLS termination. If inspection times out, the gateway closes the connection instead of selecting a TCP forwarding chain. Server-first clients, such as SMTP and MySQL clients that wait for a server greeting without sending data, therefore time out and are disconnected on this path.
 
-A client that delays its first HTTP request or TLS ClientHello beyond this
-window can also enter TCP forwarding. The connection stays on that chain;
-HTTP inspection and policies that depend on detecting TLS/SNI do not apply to
-traffic classified as opaque TCP. Policies for successfully detected protocols
-retain their normal behavior.
+A client that delays its first HTTP request or TLS ClientHello beyond this window is also disconnected, preventing delayed traffic from bypassing HTTP inspection or policies that depend on detecting TLS/SNI through the timeout fallback. Traffic that completes protocol detection retains its normal routing and policy behavior. This applies to both native and legacy gateways.
+
+After TLS termination, the gateway detects HTTP only. Non-HTTP payloads, including another TLS stream, are forwarded unchanged to the original destination IP and port over a new TLS connection. Upstream SNI and certificate name validation use the outer TLS SNI; an inner ClientHello never selects a new destination. HTTP requests retain their existing routing and policy processing.
+
+The TCP path does not run HTTP request-level EPE authorization or ServiceEntry selection. Allowing TLS termination is not equivalent to authorizing an HTTP request. TCP forwarding does not advertise HTTP ALPN upstream; protocols that require a custom ALPN are not supported by this termination path.
 
 ## Before you begin
 

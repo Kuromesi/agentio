@@ -32,7 +32,7 @@ func connectAuthorityStates(t *testing.T, listener *listenerv3.Listener) map[str
 	t.Helper()
 	states := map[string]*setstatecommonv3.FilterStateValue{}
 	for _, filter := range findHCM(t, listener).GetHttpFilters() {
-		if filter.GetName() != "connect_authority" {
+		if filter.GetName() != "connect_authority" && filter.GetName() != "agentio.connect_authority" {
 			continue
 		}
 		config := &setstatehttpv3.Config{}

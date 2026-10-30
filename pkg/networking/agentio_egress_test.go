@@ -28,6 +28,36 @@ import (
 	"github.com/openkruise/agentio/pkg/model"
 )
 
+func TestGatewayFilterStateNamesStayIsolated(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		var graph strings.Builder
+		for _, resource := range buildGatewayGraph(t, legacy) {
+			data, err := protojson.Marshal(resource.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			graph.Write(data)
+		}
+		for _, pair := range [][2]string{
+			{outerSNIKey, legacyOuterSNIKey},
+			{model.FilterStateConnectAuthority, connectAuthorityKey},
+		} {
+			want, absent := pair[0], pair[1]
+			if legacy {
+				want, absent = absent, want
+			}
+			text := graph.String()
+			if !strings.Contains(text, `"`+want+`"`) || strings.Contains(text, `"`+absent+`"`) ||
+				strings.Contains(
+					text,
+					"filter_state['"+absent+"']",
+				) || strings.Contains(text, "%FILTER_STATE("+absent+":") {
+				t.Fatalf("legacy=%t: expected consistent %s references without %s", legacy, want, absent)
+			}
+		}
+	}
+}
+
 func TestAgentioEgressPolicyTransfer(t *testing.T) {
 	resources := buildCompleteGatewayGraph(t)
 	for _, r := range resources {
@@ -66,7 +96,7 @@ func TestAgentioEgressPolicyTransfer(t *testing.T) {
 			if cfg.GetProcessingMode().GetRequestBodyMode() != extprocv3.ProcessingMode_NONE {
 				t.Fatal("CONNECT processor must not consume tunnel data")
 			}
-		case "connect_sni_policy":
+		case "agentio.connect_sni_policy":
 			cfg := &setstatehttpv3.Config{}
 			if err := f.GetTypedConfig().UnmarshalTo(cfg); err != nil {
 				t.Fatal(err)
