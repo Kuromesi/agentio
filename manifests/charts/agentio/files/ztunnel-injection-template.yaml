@@ -314,6 +314,8 @@ spec:
       name: agentio-token
     - mountPath: /tmp
       name: tmp
+    - mountPath: /var/lib/ztunnel/sandbox
+      name: agentio-sandbox-state
     {{- if .Values.global.proxyZtunnel.peerCaCrl.enabled }}
     - mountPath: /var/run/secrets/istio/crl
       name: agentio-ca-crl
@@ -347,4 +349,6 @@ spec:
     {{- end }}
   # pprof needs a writable /tmp, and we don't have that thanks to `readOnlyRootFilesystem: true`, so mount one
   - name: tmp
+    emptyDir: {}
+  - name: agentio-sandbox-state
     emptyDir: {}

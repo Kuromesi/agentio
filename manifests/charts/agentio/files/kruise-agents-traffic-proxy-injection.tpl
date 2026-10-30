@@ -243,6 +243,10 @@
         {
           "mountPath": "/tmp",
           "name": "traffic-proxy-tmp"
+        },
+        {
+          "mountPath": "/var/lib/ztunnel/sandbox",
+          "name": "agentio-sandbox-state"
         }
       ]
     }
@@ -288,6 +292,10 @@
     {
       "emptyDir": {},
       "name": "traffic-proxy-tmp"
+    },
+    {
+      "emptyDir": {},
+      "name": "agentio-sandbox-state"
     }
   ]
 }

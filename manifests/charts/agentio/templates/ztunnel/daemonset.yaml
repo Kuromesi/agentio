@@ -51,7 +51,7 @@ spec:
             - name: XDS_ADDRESS
               value: {{ include "ztunnel.xdsAddress" . | quote }}
             - name: ENABLE_SANDBOX_MANAGER
-              value: "true"
+              value: "false"
             - name: AGENTIO_SANDBOX_MODE
               value: {{ index .Values.agentiod.env "AGENTIO_SANDBOX_MODE" | default false | quote }}
             - name: INPOD_ENABLED

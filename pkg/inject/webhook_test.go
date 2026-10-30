@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -446,6 +447,16 @@ func TestInjectSandboxMode(t *testing.T) {
 				webhook := newTestWebhookWithValues(t, NativeSidecarModeDisabled, config, custom)
 				pod := injectTestPod(t, webhook, testPod())
 				proxy := FindContainer("agentio-proxy", pod.Spec.Containers)
+				if !slices.Contains(proxy.VolumeMounts, corev1.VolumeMount{
+					Name: "agentio-sandbox-state", MountPath: "/var/lib/ztunnel/sandbox",
+				}) {
+					t.Fatal("injected ztunnel has no writable Sandbox state mount")
+				}
+				if !slices.ContainsFunc(pod.Spec.Volumes, func(v corev1.Volume) bool {
+					return v.Name == "agentio-sandbox-state" && v.EmptyDir != nil
+				}) {
+					t.Fatal("injected ztunnel has no Sandbox state emptyDir")
+				}
 				for _, env := range proxy.Env {
 					if env.Name == "AGENTIO_SANDBOX_MODE" {
 						if env.Value != want {

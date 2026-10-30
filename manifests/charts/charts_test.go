@@ -228,7 +228,7 @@ func TestAmbientProfile(t *testing.T) {
 	requireContains(t, manifest,
 		"AMBIENT_ENABLED: \"true\"",
 		"AMBIENT_ENABLEMENT_SELECTOR",
-		"name: ENABLE_SANDBOX_MANAGER",
+		"name: ENABLE_SANDBOX_MANAGER\n              value: \"false\"",
 		"name: INPOD_ENABLED",
 		"path: /var/run/ztunnel",
 	)
