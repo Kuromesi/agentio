@@ -799,7 +799,7 @@
                             "sharedWithUpstream": "ONCE"
                           },
                           {
-                            "objectKey": "agentio.sandbox.token",
+                            "objectKey": "sandbox.token",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
                               "textFormatSource": {
@@ -810,7 +810,7 @@
                             "sharedWithUpstream": "TRANSITIVE"
                           },
                           {
-                            "objectKey": "agentio.sandbox.id",
+                            "objectKey": "sandbox.id",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
                               "textFormatSource": {
@@ -859,7 +859,7 @@
                           "responseTrailerMode": "SKIP"
                         },
                         "requestAttributes": [
-                          "filter_state['agentio.sandbox.id']",
+                          "filter_state['sandbox.id']",
                           "filter_state['agentio.downstream.ip']",
                           "filter_state['agentio.peer.principal']",
                           "filter_state['agentio.peer.certificate']"
@@ -905,6 +905,18 @@
                           },
                           {
                             "objectKey": "agentio.workload.labels",
+                            "factoryKey": "envoy.hashable_string",
+                            "formatString": {
+                              "textFormatSource": {
+                                "inlineString": "%DYNAMIC_METADATA(agentio:workload_labels)%"
+                              },
+                              "omitEmptyValues": true
+                            },
+                            "sharedWithUpstream": "TRANSITIVE",
+                            "skipIfEmpty": true
+                          },
+                          {
+                            "objectKey": "sandbox.labels",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
                               "textFormatSource": {
@@ -1146,6 +1158,7 @@
                           "filter_state['agentio.workload.name']",
                           "filter_state['agentio.workload.namespace']",
                           "filter_state['agentio.workload.labels']",
+                          "filter_state['sandbox.labels']",
                           "source.address",
                           "destination.address",
                           "destination.port",
@@ -1867,6 +1880,7 @@
                           "filter_state['agentio.workload.name']",
                           "filter_state['agentio.workload.namespace']",
                           "filter_state['agentio.workload.labels']",
+                          "filter_state['sandbox.labels']",
                           "source.address",
                           "destination.address",
                           "destination.port",

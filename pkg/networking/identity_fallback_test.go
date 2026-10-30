@@ -121,10 +121,10 @@ func TestConnectIdentityFallbackTransfer(t *testing.T) {
 				if err := hcm.HttpFilters[index].GetTypedConfig().UnmarshalTo(restored); err != nil {
 					t.Fatal(err)
 				}
-				if len(restored.OnRequestHeaders) != 4 {
+				if len(restored.OnRequestHeaders) != 5 {
 					t.Fatalf("identity state=%v", restored)
 				}
-				for i, key := range []string{model.FilterStateWorkloadLabels} {
+				for i, key := range []string{model.FilterStateWorkloadLabels, "sandbox.labels"} {
 					state := restored.OnRequestHeaders[2+i]
 					if state.GetObjectKey() != key ||
 						state.GetFormatString().
@@ -132,7 +132,7 @@ func TestConnectIdentityFallbackTransfer(t *testing.T) {
 							GetInlineString() !=
 							"%DYNAMIC_METADATA(agentio:workload_labels)%" ||
 						state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_TRANSITIVE {
-						t.Fatalf("workload labels must carry the WDS value: %v", state)
+						t.Fatalf("new and legacy labels must share the same WDS value: %v", state)
 					}
 				}
 				for i, field := range []string{"name", "namespace"} {

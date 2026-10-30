@@ -1054,8 +1054,8 @@ func TestSandboxHeaderFilterState(t *testing.T) {
 		states = config.GetOnRequestHeaders()
 	}
 	for key, header := range map[string]string{
-		"agentio.sandbox.id":    "X-AGENTIO-SANDBOX-ID",
-		"agentio.sandbox.token": "X-AGENTIO-SANDBOX-TOKEN",
+		"sandbox.id":    "X-AGENTIO-SANDBOX-ID",
+		"sandbox.token": "X-AGENTIO-SANDBOX-TOKEN",
 	} {
 		index := slices.IndexFunc(
 			states,

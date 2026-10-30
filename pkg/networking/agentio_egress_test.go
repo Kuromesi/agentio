@@ -40,8 +40,6 @@ func TestGatewayFilterStateNamesStayIsolated(t *testing.T) {
 		}
 		for _, pair := range [][2]string{
 			{outerSNIKey, legacyOuterSNIKey},
-			{model.FilterStateSandboxID, legacySandboxID},
-			{model.FilterStateSandboxToken, legacySandboxToken},
 			{model.FilterStateConnectAuthority, connectAuthorityKey},
 		} {
 			want, absent := pair[0], pair[1]

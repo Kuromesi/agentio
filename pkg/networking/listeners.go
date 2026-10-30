@@ -414,7 +414,7 @@ func (b *resourceBuilder) buildForwardHCM(
 		filters = append(filters, filter)
 	}
 	for _, provider := range config.additionalExtProcs {
-		name := additionalExtProcName(provider, b.legacyGateway)
+		name := additionalExtProcName(provider)
 		filter, err := b.extProcFilter(config, provider, name, name)
 		if err != nil {
 			return nil, err
@@ -589,20 +589,9 @@ func (b *resourceBuilder) extProcFilter(
 		statPrefix = name
 	}
 	attributes := append([]string(nil), provider.GetRequest().GetAttributes()...)
-	if !b.legacyGateway {
-		for i, attribute := range attributes {
-			switch attribute {
-			case "filter_state['sandbox.id']":
-				attributes[i] = model.AttributeSandboxID
-			case "filter_state['sandbox.token']":
-				attributes[i] = "filter_state['" + model.FilterStateSandboxToken + "']"
-			case "filter_state['sandbox.labels']":
-				attributes[i] = model.AttributeWorkloadLabels
-			}
-		}
-	}
-	for _, attribute := range []string{model.AttributeWorkloadName, model.AttributeWorkloadNamespace, model.AttributeWorkloadLabels, "source.address", "destination.address", "destination.port"} {
-		if b.legacyGateway && attribute == model.AttributeWorkloadLabels {
+	for _, attribute := range []string{model.AttributeWorkloadName, model.AttributeWorkloadNamespace, model.AttributeWorkloadLabels, "filter_state['sandbox.labels']", "source.address", "destination.address", "destination.port"} {
+		if b.legacyGateway &&
+			(attribute == model.AttributeWorkloadLabels || attribute == "filter_state['sandbox.labels']") {
 			continue
 		}
 		found := false
@@ -695,6 +684,8 @@ func connectWorkloadFilter() *hcmv3.HttpFilter {
 		metadata string
 	}{
 		{model.FilterStateWorkloadLabels, "workload_labels"},
+		// Keep the old output while older EPE instances are still deployed.
+		{"sandbox.labels", "workload_labels"},
 		{"agentio.workload.instance", "workload_instance"},
 	} {
 		config.OnRequestHeaders = append(config.OnRequestHeaders, &setstatecommonv3.FilterStateValue{
@@ -818,9 +809,9 @@ func (b *resourceBuilder) buildTLSTerminateChain(pool *configv1.ConnectionPoolSe
 }
 
 func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, legacyAction bool) *hcmv3.HttpFilter {
-	authorityKey, sandboxID, sandboxToken := connectAuthorityKey, legacySandboxID, legacySandboxToken
+	authorityKey := connectAuthorityKey
 	if factory == "envoy.hashable_string" {
-		authorityKey, sandboxID, sandboxToken = model.FilterStateConnectAuthority, model.FilterStateSandboxID, model.FilterStateSandboxToken
+		authorityKey = model.FilterStateConnectAuthority
 	}
 	value := func(key, format, factory string, sharing setstatecommonv3.FilterStateValue_SharedWithUpstream) *setstatecommonv3.FilterStateValue {
 		return &setstatecommonv3.FilterStateValue{
@@ -862,7 +853,7 @@ func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, 
 			setstatecommonv3.FilterStateValue_ONCE,
 		),
 		value(
-			sandboxToken,
+			"sandbox.token",
 			"%REQ(X-AGENTIO-SANDBOX-TOKEN)%",
 			"envoy.string",
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
@@ -874,7 +865,7 @@ func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, 
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
 		),
 		value(
-			sandboxID,
+			model.FilterStateSandboxID,
 			"%REQ(X-AGENTIO-SANDBOX-ID)%",
 			"envoy.string",
 			setstatecommonv3.FilterStateValue_TRANSITIVE,
@@ -901,7 +892,7 @@ func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, 
 			switch state.GetObjectKey() {
 			case "sandbox.labels", model.FilterStateWorkloadName, model.FilterStateWorkloadNamespace:
 				continue
-			case sandboxID, sandboxToken:
+			case model.FilterStateSandboxID, "sandbox.token":
 				// Each CONNECT selects a sandbox; isolate its context in internal pools.
 				state.FactoryKey = factory
 			}

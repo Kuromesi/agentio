@@ -262,9 +262,6 @@ func scopedResource(gateway model.Gateway, typeURL, name string, message proto.M
 	}, nil
 }
 
-func additionalExtProcName(provider *configv1.ExtProcProvider, legacy bool) string {
-	if legacy {
-		return "agentio.additional-ext-proc." + provider.GetName()
-	}
-	return "agentio.additional_ext_proc." + provider.GetName()
+func additionalExtProcName(provider *configv1.ExtProcProvider) string {
+	return "agentio.additional-ext-proc." + provider.GetName()
 }

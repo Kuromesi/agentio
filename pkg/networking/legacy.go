@@ -30,8 +30,6 @@ const (
 	legacyPeerPrincipal   = "io.istio.peer_principal"
 	legacyLocalPrincipal  = "io.istio.local_principal"
 	legacyOuterSNIKey     = "io.kruise.outer_sni"
-	legacySandboxID       = "sandbox.id"
-	legacySandboxToken    = "sandbox.token"
 	sniPolicyMatcherName  = "kruise.matching.custom_matchers.sni_traffic_policy"
 	sniPolicyMatcherType  = "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniTrafficPolicyMatcher"
 	tlsActionHeaderFormat = `%CEL('x-agentio-tls' in request.headers ? ` +

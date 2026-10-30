@@ -229,12 +229,7 @@ request a buffered request or response body. This decision is per HTTP stream;
 body delivery to one processor does not subscribe the others. Each processor
 receives its own body messages, not another processor's parsed objects.
 
-Additional processors see mutations already committed by EPE, including any
-injected credentials, and may modify that request further. Their decisions do
-not re-enter EPE policy evaluation or its rule audit. Only grant this capability
-to trusted services. Additional processors cannot publish EPE's `agentio.route`
-metadata; they have independent clusters, filter names, and statistics named
-`agentio.additional_ext_proc.<name>` for native gateways and `agentio.additional-ext-proc.<name>` for legacy gateways.
+Additional processors see mutations already committed by EPE, including any injected credentials, and may modify that request further. Their decisions do not re-enter EPE policy evaluation or its rule audit. Only grant this capability to trusted services. Additional processors cannot publish EPE's `agentio.route` metadata; they have independent clusters, filter names, and statistics named `agentio.additional-ext-proc.<name>`.
 
 ## Egress gateway settings
 
@@ -255,9 +250,9 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 
 ### Gateway protocol names
 
-Native `agentio-egress` gateways use `agentio.*` for custom filter state and metadata. TLS termination captures `agentio.tls.outer_sni`, policy-denial logs read `agentio.egress.denial_reason`, CONNECT authority uses `agentio.connect.authority`, and Sandbox context uses `agentio.sandbox.id` and `agentio.sandbox.token`. Workload, peer, route, and SNI-policy fields retain their existing `agentio.*` names. Native CONNECT filter instances also use the `agentio.` prefix. Envoy built-in keys, HTTP headers, Kubernetes API domains, and protobuf type URLs retain their protocol names.
+Native `agentio-egress` gateways capture TLS termination SNI in `agentio.tls.outer_sni`, log policy denials from `agentio.egress.denial_reason`, and store CONNECT authority in `agentio.connect.authority`. Native CONNECT filter instances use the `agentio.` prefix. Workload, peer, route, and SNI-policy fields retain their existing `agentio.*` names. Sandbox context retains `sandbox.id` and `sandbox.token`; the gateway writes resolved workload labels to both `agentio.workload.labels` and `sandbox.labels` and exports both to EPE. Configured ext_proc attribute names are passed through unchanged. Additional ext_proc filters, clusters, and statistics retain `agentio.additional-ext-proc.<name>`.
 
-Legacy waypoint gateways retain their existing keys, filter names, and default log expressions, including `io.kruise.outer_sni`, `io.kruise.egress_denial_reason`, `io.istio.connect_authority`, `sandbox.id`, and `sandbox.token`. EPE accepts either token attribute, with the native attribute taking precedence whenever present, including an empty value. Native gateways use `agentio.workload.labels`; EPE retains `sandbox.labels` support for legacy gateways. For native gateways, exact legacy Sandbox attribute names in an ext_proc provider are translated to their native equivalents. Custom CEL expressions, log formats, and filter-name patches must use the names for the target gateway. Deploy the updated native gateway configuration, Porter, and EPE together; this naming change does not provide a mixed-version native upgrade protocol.
+Legacy waypoint gateways retain their existing keys, filter names, and default log expressions, including `io.kruise.outer_sni`, `io.kruise.egress_denial_reason`, and `io.istio.connect_authority`. Custom CEL expressions, log formats, and filter-name patches must use the names for the target gateway. Envoy built-in keys, HTTP headers, Kubernetes API domains, and protobuf type URLs retain their protocol names.
 
 ### Access-log format
 

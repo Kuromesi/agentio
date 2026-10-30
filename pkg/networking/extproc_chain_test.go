@@ -83,7 +83,7 @@ func TestAdditionalExtProcChain(t *testing.T) {
 							t.Fatal(err)
 						}
 						names := httpFilterNames(hcm)
-						index := slices.Index(names, additionalExtProcName(first, legacy))
+						index := slices.Index(names, additionalExtProcName(first))
 						if disabled || hcm.GetStatPrefix() == "connect_terminate" {
 							if index != -1 {
 								t.Fatalf("unexpected additional processor in %s: %v", listener.Name, names)
@@ -96,7 +96,7 @@ func TestAdditionalExtProcChain(t *testing.T) {
 						}
 						found++
 						if index == 0 || names[index-1] != "envoy.filters.http.ext_proc" || index+1 >= len(names) ||
-							names[index+1] != additionalExtProcName(second, legacy) {
+							names[index+1] != additionalExtProcName(second) {
 							t.Fatalf("wrong filter order: %v", names)
 						}
 						for j, provider := range inputs.AdditionalExtProcs {
@@ -104,7 +104,7 @@ func TestAdditionalExtProcChain(t *testing.T) {
 							if err := hcm.HttpFilters[index+j].GetTypedConfig().UnmarshalTo(cfg); err != nil {
 								t.Fatal(err)
 							}
-							name := additionalExtProcName(provider, legacy)
+							name := additionalExtProcName(provider)
 							if cfg.GetGrpcService().GetEnvoyGrpc().GetClusterName() != name ||
 								cfg.GetStatPrefix() != name ||
 								!cfg.GetAllowModeOverride() {
@@ -133,7 +133,7 @@ func TestAdditionalExtProcChain(t *testing.T) {
 				t.Fatalf("missing HTTP/TLS-terminated chains: %d", found)
 			}
 			for _, provider := range inputs.AdditionalExtProcs {
-				name := additionalExtProcName(provider, legacy)
+				name := additionalExtProcName(provider)
 				cluster := clusters[name]
 				if disabled {
 					if cluster != nil {

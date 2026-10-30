@@ -54,10 +54,9 @@ const (
 	AttrSourceAddress         = "source.address"
 	FilterStateWorkloadLabels = "filter_state['agentio.workload.labels']"
 	// FilterStateSandboxLabels is the legacy label attribute used during rolling upgrades.
-	FilterStateSandboxLabels      = "filter_state['sandbox.labels']"
-	FilterStateSandboxToken       = "filter_state['agentio.sandbox.token']"
-	LegacyFilterStateSandboxToken = "filter_state['sandbox.token']"
-	FilterStateRouteUpstream      = "filter_state['agentio.route.upstream']"
+	FilterStateSandboxLabels = "filter_state['sandbox.labels']"
+	FilterStateSandboxToken  = "filter_state['sandbox.token']"
+	FilterStateRouteUpstream = "filter_state['agentio.route.upstream']"
 
 	AttrDestinationPort    = "destination.port"
 	AttrDestinationAddress = "destination.address"
@@ -117,11 +116,7 @@ func Extract(
 	}
 	peer.Labels = podLabels
 
-	tokenKey := FilterStateSandboxToken
-	if _, present := attrs[ExtProcAttrsKey].GetFields()[tokenKey]; !present {
-		tokenKey = LegacyFilterStateSandboxToken
-	}
-	peer.Token = filter.NewSandboxToken(extractFilterStateString(attrs, tokenKey))
+	peer.Token = filter.NewSandboxToken(extractFilterStateString(attrs, FilterStateSandboxToken))
 
 	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
 
