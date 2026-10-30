@@ -68,6 +68,7 @@ type Inputs struct {
 
 type effectiveConfig struct {
 	gateway            *configv1.EgressGateway
+	gatewayIdentity    string
 	extProc            *configv1.ExtProcProvider
 	additionalExtProcs []*configv1.ExtProcProvider
 	telemetry          *telemetry.Output
@@ -76,6 +77,14 @@ type effectiveConfig struct {
 func Build(inputs Inputs) ([]model.Resource, error) {
 	if err := inputs.Gateway.ValidateForUse(); err != nil {
 		return nil, err
+	}
+	if inputs.LegacyGateway && inputs.Gateway.Config.GetBandwidthLimit() != nil {
+		return nil, fmt.Errorf("bandwidthLimit requires the community gateway image; legacy proxyv2 is unsupported")
+	}
+	if inputs.LegacyGateway && inputs.Gateway.Config.GetConnectConcurrencyLimit() != nil {
+		return nil, fmt.Errorf(
+			"connectConcurrencyLimit requires the community gateway image; legacy proxyv2 is unsupported",
+		)
 	}
 	if inputs.DiscoveryAddress == "" {
 		return nil, fmt.Errorf("discovery address is required")
@@ -233,7 +242,7 @@ func validatePatchedGroup[T interface{ ValidateAll() error }](messages []T) erro
 }
 
 func resolveConfig(gateway model.Gateway, globalExtProc *configv1.ExtProcProvider) (effectiveConfig, error) {
-	result := effectiveConfig{gateway: gateway.Config}
+	result := effectiveConfig{gateway: gateway.Config, gatewayIdentity: gateway.ResourceName()}
 	if override := gateway.Config.GetExtProc(); override != nil {
 		// An explicit empty service disables ext_proc for this gateway;
 		// only an absent override inherits the global provider.

@@ -83,6 +83,15 @@ func (g Gateway) ValidateForUse() error {
 	if err := ValidateAccessLogFormat(g.Config.GetAccessLogFormat()); err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
 	}
+	if err := ValidateBandwidthLimit(g.Config.GetBandwidthLimit()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
+	if err := ValidateConnectRateLimit(g.Config.GetConnectRateLimit()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
+	if err := ValidateConnectConcurrencyLimit(g.Config.GetConnectConcurrencyLimit()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
 	normalized, err := NormalizeEgressGatewayServiceEntries(g.Config)
 	if err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
