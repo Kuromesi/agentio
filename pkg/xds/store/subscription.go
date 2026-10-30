@@ -19,6 +19,8 @@ import (
 	"maps"
 
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // Subscription receives changes for resource types watched by a stream.
@@ -28,8 +30,9 @@ type Subscription interface {
 }
 
 type subscriber struct {
-	updates chan Update
-	types   sets.Set[string]
+	updates         chan Update
+	types           sets.Set[string]
+	sandboxWorkload string
 }
 
 // subscription allows an xDS stream to add watched types as requests arrive.
@@ -53,23 +56,42 @@ func (s *subscription) Watch(typeURL string) {
 				s.store.subscribersByType[typeURL] = byID
 			}
 			byID[s.id] = sub
+			if typeURL == model.SandboxType {
+				byWorkload := s.store.sandboxSubscribersByWorkload[sub.sandboxWorkload]
+				if byWorkload == nil {
+					byWorkload = make(map[uint64]*subscriber)
+					s.store.sandboxSubscribersByWorkload[sub.sandboxWorkload] = byWorkload
+				}
+				byWorkload[s.id] = sub
+			}
 		}
 	}
 	s.store.mu.Unlock()
 }
 
 // Subscribe registers a watcher that is released when ctx is canceled.
-func (s *Store) Subscribe(ctx context.Context) Subscription {
+func (s *Store) Subscribe(ctx context.Context, scope model.ClientScope) Subscription {
 	s.mu.Lock()
 	s.nextID++
 	id := s.nextID
 	updates := make(chan Update, 1)
-	s.subscribers[id] = &subscriber{updates: updates, types: sets.New[string]()}
+	sub := &subscriber{updates: updates, types: sets.New[string]()}
+	if scope.Class == model.ClientDedicatedZTunnel {
+		sub.sandboxWorkload = scope.WorkloadUID
+	}
+	s.subscribers[id] = sub
 	s.mu.Unlock()
 	go func() {
 		<-ctx.Done()
 		s.mu.Lock()
 		if subscriber := s.subscribers[id]; subscriber != nil {
+			if subscriber.types.Contains(model.SandboxType) {
+				byWorkload := s.sandboxSubscribersByWorkload[subscriber.sandboxWorkload]
+				delete(byWorkload, id)
+				if len(byWorkload) == 0 {
+					delete(s.sandboxSubscribersByWorkload, subscriber.sandboxWorkload)
+				}
+			}
 			for typeURL := range subscriber.types {
 				delete(s.subscribersByType[typeURL], id)
 				if len(s.subscribersByType[typeURL]) == 0 {
@@ -99,6 +121,9 @@ func (s *Store) affectedSubscribersLocked(update Update) map[uint64]*subscriber 
 	}
 	for typeURL := range affectedTypes {
 		subscribers := s.subscribersByType[typeURL]
+		if typeURL == model.SandboxType && !update.FullFor(typeURL) {
+			subscribers = s.sandboxSubscribersLocked(update.Candidates(typeURL))
+		}
 		if len(subscribers) == 0 {
 			continue
 		}
@@ -112,6 +137,29 @@ func (s *Store) affectedSubscribersLocked(update Update) map[uint64]*subscriber 
 			borrowed = false
 		}
 		maps.Copy(result, subscribers)
+	}
+	return result
+}
+
+// Empty workload keys retain broad subscribers (gateways and node-shared streams).
+// The generator still checks current ownership, source identity and visibility.
+func (s *Store) sandboxSubscribersLocked(candidates []Candidate) map[uint64]*subscriber {
+	result := make(map[uint64]*subscriber)
+	maps.Copy(result, s.sandboxSubscribersByWorkload[""])
+	for _, candidate := range candidates {
+		if len(candidate.Identities) == 0 {
+			// Unpublished source invalidations have no ownership evidence.
+			return s.subscribersByType[model.SandboxType]
+		}
+		for _, identity := range candidate.Identities {
+			if identity.Facts.Sandbox == nil {
+				return s.subscribersByType[model.SandboxType]
+			}
+			uid := identity.Facts.Sandbox.AttesterWorkloadUID
+			if uid != "" {
+				maps.Copy(result, s.sandboxSubscribersByWorkload[uid])
+			}
+		}
 	}
 	return result
 }

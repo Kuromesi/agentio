@@ -89,6 +89,31 @@ jobs:
       - name: Run tests with the race detector
         run: make racetest
 
+  network-limits-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and unit test network limits module
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.93.0
+          cd extensions/envoy/network-limits
+          bash build.sh
+          cargo clippy --release --locked --all-targets -- -D warnings
+      - name: Test CONNECT bandwidth and concurrency limits in Envoy
+        run: |
+          docker build --target runtime -t agentio-network-limits:test extensions/envoy/network-limits
+          ./bin/test_network_limits.sh agentio-network-limits:test
+
   gateway-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -46,7 +46,7 @@ type DeltaStream interface {
 // ResourceStore supplies immutable xDS snapshots and context-bound subscriptions.
 type ResourceStore interface {
 	Snapshot() model.ResourceSet
-	Subscribe(context.Context) xdsstore.Subscription
+	Subscribe(context.Context, model.ClientScope) xdsstore.Subscription
 }
 
 type Server struct {
@@ -252,7 +252,7 @@ func (s *Server) serveDelta(stream DeltaStream) (err error) {
 		connLog.Error("Delta ADS client disconnected", attrs...)
 	}()
 
-	subscription := s.resources.Subscribe(stream.Context())
+	subscription := s.resources.Subscribe(stream.Context(), scope)
 	watches := make(map[string]*watchState)
 	defer func() {
 		if watch := watches[model.SecretType]; watch != nil && watch.sds != nil {

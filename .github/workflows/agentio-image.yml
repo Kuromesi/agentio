@@ -97,11 +97,18 @@ jobs:
             AGENT_REVISION=${{ github.sha }}
           cache-from: type=gha,scope=publish-${{ matrix.image }}-${{ matrix.arch }}
           cache-to: type=gha,scope=publish-${{ matrix.image }}-${{ matrix.arch }},mode=max
-      - name: Smoke-test gateway agent candidate
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.image == 'agentio-gateway'
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test gateway candidate and network limits
         if: matrix.image == 'agentio-gateway'
         env:
           IMAGE: ${{ env.HUB }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
-        run: docker run --rm "$IMAGE" version
+        run: |
+          docker run --rm "$IMAGE" version
+          ./bin/test_network_limits.sh "$IMAGE"
       - name: Smoke-test Porter candidate
         if: matrix.image == 'agentio-porter'
         env:

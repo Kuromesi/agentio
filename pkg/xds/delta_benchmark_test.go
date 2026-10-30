@@ -535,7 +535,7 @@ func benchmarkIncrementalClientFanout(
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := xdsstore.New(initial)
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 	updates := subscription.Updates()
 	testServer := newTestServer(b, ztunnelScope(), resources, nil)

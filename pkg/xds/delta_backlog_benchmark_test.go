@@ -44,7 +44,7 @@ func BenchmarkDeltaPushBacklog(b *testing.B) {
 					store := xdsstore.New(before)
 					subscriptions := make([]xdsstore.Subscription, clients)
 					for i := range subscriptions {
-						subscriptions[i] = store.Subscribe(ctx)
+						subscriptions[i] = store.Subscribe(ctx, model.ClientScope{})
 						subscriptions[i].Watch(model.AddressType)
 					}
 					var scheduler *PushScheduler

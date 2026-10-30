@@ -245,6 +245,8 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `upstreamTls` | `UpstreamTlsSettings` | TLS 1.2–1.3 and eight cipher suites | Per-gateway upstream TLS defaults and overrides; see below. |
 | `connectionPool` | `ConnectionPoolSettings` | See below | TCP and HTTP connection and route timeouts. |
 | `connectRateLimit` | `LocalRateLimitSettings` | Unset | Local token-bucket limit for new HTTP/2 CONNECT streams. |
+| `connectConcurrencyLimit` | `ConnectConcurrencyLimitSettings` | Unset | Shared limits on active TCP CONNECT streams, grouped by trusted filter state. |
+| `bandwidthLimit` | `BandwidthLimitSettings` | Unset | Per-filter-state TCP byte shaping on CONNECT, shared across connections/workers in one community gateway process. |
 | `serviceEntries` | `EgressServiceEntry[]` | Empty | Static upstream endpoints that override DNS resolution for exact destination hosts at this gateway. |
 | `accessLogFormat` | `AccessLogFormat` | Built-in JSON | Format of the built-in `envoy` access-log provider on stdout for this gateway. See below. |
 
@@ -395,17 +397,136 @@ Gateway API `parametersRef` ConfigMaps accept the same `upstreamTls` block in `d
 
 Each accepted HTTP/2 CONNECT stream consumes one token.
 
+Use the same `rateLimits[].actions[]` and `descriptors[].entries[]` grouping format as concurrency and bandwidth limits. `filterState` reads a trusted string value; `genericKey` supplies a fixed value. Each action group produces a separate ordered descriptor, so sandbox and gateway-wide limits can apply together:
+
+```yaml
+connectRateLimit:
+  rateLimits:
+    - actions:
+        - filterState: {key: sandbox.id, descriptorKey: sandbox}
+    - actions:
+        - genericKey: {descriptorKey: scope, descriptorValue: gateway}
+  descriptors:
+    - entries: [{key: sandbox}]
+      tokenBucket: {maxTokens: 10, tokensPerFill: 2, fillInterval: 1s}
+    - entries: [{key: scope, value: gateway}]
+      tokenBucket: {maxTokens: 100, tokensPerFill: 20, fillInterval: 1s}
+```
+
+Only the configuration grouping is shared: CONNECT rate limiting still uses Envoy's native local rate limit filter, including its matching and bucket lifecycle. Filter-state actions compile to native CEL descriptor expressions; evaluation errors retain the native skip behavior rather than the dynamic modules' missing-identity 403. Supply identity in a preceding trusted filter. Legacy `entries[].cel` configurations remain accepted when `rateLimits` is omitted; combining the two forms is rejected. To migrate a string lookup such as `cel: 'filter_state["sandbox.id"]'`, move its source into a `filterState` action and leave just `key`/`value` in the descriptor entry.
+
+Burst is already supported through `maxTokens`: for example, `maxTokens: 100`, `tokensPerFill: 10`, `fillInterval: 1s` permits an initial burst of 100 attempts and replenishes 10 tokens per second. No separate burst field is needed. Keep `perDownstreamConnection: false` for a shared gateway budget.
+
 | Field | Default | Description |
 | --- | --- | --- |
+| `rateLimits[].actions[]` | Unset | Ordered `filterState` / `genericKey` sources, using the same format as bandwidth and concurrency. Multiple groups generate separate descriptors. |
+| `tokenBucket` | Unset | Optional gateway-wide bucket, charged in addition to matching descriptor buckets. Retained as a shorthand; a fixed `genericKey` group can express the gateway total instead. |
 | `tokenBucket.maxTokens` | `0` | Bucket capacity and initial token count. |
 | `tokenBucket.tokensPerFill` | `1` | Tokens added on each fill interval when omitted or zero. |
 | `tokenBucket.fillInterval` | Unset | Refill interval; it must be at least `50ms`. |
-| `descriptors[]` | Empty | Independent descriptor-specific buckets. Each matching descriptor must have available tokens, as must the global bucket when configured. |
+| `descriptors[]` | Empty | Descriptor-specific token buckets. Entry keys/order must match an action group when `rateLimits` is configured. Matching follows the native Envoy filter. |
 | `descriptors[].entries[].key` | Empty | Descriptor key. |
 | `descriptors[].entries[].value` | Empty | Exact value. Empty acts as a wildcard and creates a bucket for each distinct runtime value. |
-| `descriptors[].entries[].cel` | Empty | CEL expression that produces the runtime descriptor value. When omitted, the non-empty `value` is used as a constant. Entry order and expressions are preserved independently for each descriptor. |
+| `descriptors[].entries[].cel` | Empty | Legacy CEL value source, supported only when `rateLimits` is omitted. In this form, each descriptor generates its own ordered action group; entries without CEL use their non-empty `value` as a constant. |
 | `descriptors[].tokenBucket` | Unset | Bucket used by the matching descriptor. |
 | `perDownstreamConnection` | `false` | Creates a token bucket for each ztunnel-to-gateway connection. It cannot be combined with wildcard descriptor values. |
+
+### CONNECT concurrency limits
+
+`egressGateways[].connectConcurrencyLimit` limits **active TCP CONNECT streams**, including upstream connection establishment. It is independent of `connectRateLimit` (new-stream rate) and `bandwidthLimit` (payload byte rate). It works without either setting; all three can be enabled together. The order after trusted identity processing is rate limit, concurrency admission, bandwidth shaping, router. An attempt rejected by concurrency may already have consumed a connection-rate token.
+
+```yaml
+connectConcurrencyLimit:
+  rateLimits:
+    - actions:
+        - filterState: {key: sandbox.id, descriptorKey: sandbox}
+    - actions:
+        - genericKey: {descriptorKey: scope, descriptorValue: gateway}
+  descriptors:
+    - entries: [{key: sandbox}]
+      maxConcurrentStreams: 64
+    - entries: [{key: scope, value: gateway}]
+      maxConcurrentStreams: 4096
+```
+
+These numbers are examples, not capacity recommendations. Use a globally unique sandbox identity, or combine tenant and sandbox actions/entries. See the [three-limit example](../../manifests/examples/gateway-concurrency-config.yaml) for placement in AgentioConfig. Gateway API `parametersRef` accepts the same block.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `rateLimits[].actions[]` | Required | Same ordered `filterState` / `genericKey` sources as bandwidth limits. |
+| `descriptors[].entries[]` | Required | Same exact-match precedence and distinct wildcard semantics as bandwidth limits. |
+| `descriptors[].maxConcurrentStreams` | Required | Positive uint32 active-stream limit for each matched key. |
+| `maxDynamicBuckets` | `10000` | Positive maximum count of live wildcard-derived counters across this configuration. Exact descriptors do not consume this capacity. |
+
+All matching groups must have room; their counters are acquired together, with repeated matches counted once. No queue is created. A full stream quota returns 429 (`concurrency_limit_exceeded`); exhausted distinct-key capacity returns 503 (`concurrency_capacity`). Missing/empty/unserializable required identity returns 403 (`concurrency_missing_key`). Complete unmatched descriptors are unlimited: include a wildcard when every sandbox must be covered.
+
+Slots are held from admission before the router until stream destruction. Request half-close does not release a slot while a response is still active. Normal completion, resets, downstream disconnects and upstream failures release acquired slots. A counter is removed when its last stream closes. The module does not allocate a timer or buffer, and performs no per-body accounting.
+
+Enabling either network limit publishes only the community Envoy resource variant for that gateway. Upgrade all legacy proxyv2 instances before enabling these limits; their old listener resources are withdrawn rather than forwarding traffic without enforcement. Existing draining connections are not retroactively limited.
+
+The controller installs `envoy_agentio_connect_concurrency` from the same `libenvoy_agentio_network_limits.so` as the bandwidth filter, with an independent `agentio/<namespace>/<name>/connect_concurrency` scope. Counters are shared across workers, HTTP/2 connections and draining listeners **within one Envoy process**. There is no runtime module download. Legacy proxyv2, CONNECT-UDP and bypass traffic are unsupported by this integration.
+
+Changing limits preserves active counts. Lowering a limit does not evict existing streams; it blocks new admission until the count is below the new limit. Lowering dynamic capacity retains live counters and allows existing keys within their stream limits; new keys wait for space by retrying admission. Changes to actions or descriptor entries/order require draining/removing the previous configuration; incompatible layouts are rejected while in use. Removing the setting stops admission control on new listeners; existing streams retain their counters until destruction.
+
+As with bandwidth settings, the latest live module configuration supplies limits, including to old listeners. Changes take effect during configuration construction, before LDS activation/ACK; a rejected candidate restores preceding limits on destruction. This is not an atomic xDS transaction. Concurrent-stream bounds do not guarantee CPU isolation, fair bandwidth scheduling or pooled quotas across replicas. Gateway totals in the example cover this gateway scope, not other independently configured gateways in the same process.
+
+### CONNECT bandwidth limits
+
+`egressGateways[].bandwidthLimit` limits the TCP payload carried by CONNECT. HTTP, TLS records and other TCP payloads count toward the same budget. Outer HBONE/HTTP2 framing, outer TLS and IP overhead do not count. `connectRateLimit` continues to count **new CONNECT streams** and reject excess attempts; `bandwidthLimit` counts **bytes** and delays transmission with backpressure. Both settings can be enabled together.
+
+```yaml
+egressGateways:
+  - name: agentio-egress
+    namespace: agentio-system
+    bandwidthLimit:
+      rateLimits:
+        - actions:
+            - filterState:
+                key: sandbox.id
+                descriptorKey: sandbox
+      descriptors:
+        - entries:
+            - key: sandbox
+          bandwidthLimit:
+            uploadBytesPerSecond: 10485760
+            downloadBytesPerSecond: 52428800
+            uploadBurstBytes: 1048576
+            downloadBurstBytes: 5242880
+```
+
+Merge this fragment into the existing `data.config` or Helm `agentiod.config.values`; preserve other gateway entries and settings because `egressGateways` replaces the list. Gateway API `parametersRef` ConfigMaps accept the same `bandwidthLimit` block without the outer `egressGateways` list. A [combined example](../../manifests/examples/gateway-bandwidth-config.yaml) enables both connection-rate and bandwidth limits.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `rateLimits[].actions[]` | Required | Ordered sources forming one composite descriptor. Multiple groups can enforce multiple budgets together. |
+| `actions[].filterState.key` | Required for this source | Trusted filter state serialized as a nonempty UTF-8 string; read once at CONNECT headers. |
+| `actions[].filterState.descriptorKey` | Required for this source | Output descriptor key, unique within its group. |
+| `actions[].genericKey` | Unset | Alternative fixed source with nonempty `descriptorKey` and `descriptorValue`. Each action must specify exactly one source. |
+| `descriptors[].entries[]` | Required | Ordered `key`/`value` entries matching a complete action group. Empty or omitted `value` creates a distinct bucket for each actual value combination. |
+| `descriptors[].bandwidthLimit.uploadBytesPerSecond` | Unlimited | Positive bytes/second from downstream to upstream. |
+| `descriptors[].bandwidthLimit.downloadBytesPerSecond` | Unlimited | Positive bytes/second from upstream to downstream. At least one direction is required. |
+| `descriptors[].bandwidthLimit.uploadBurstBytes` | One-batch pacing | Positive upload burst capacity in bytes; requires `uploadBytesPerSecond`. |
+| `descriptors[].bandwidthLimit.downloadBurstBytes` | One-batch pacing | Positive download burst capacity in bytes; requires `downloadBytesPerSecond`. |
+| `maxDynamicBuckets` | `10000` | Maximum wildcard-derived buckets per gateway process. Must be positive. |
+| `bufferLimitBytes` | `65536` | Positive soft streaming watermark per stream, not a hard memory or burst cap. |
+
+Burst credit starts full and replenishes at the corresponding byte rate, capped at the configured capacity. All connections and workers matching the descriptor share it; reconnecting does not reset it. Omitting burst preserves existing batch pacing; explicitly setting zero is invalid. Capacity changes preserve consumed bytes, and an idle bucket is only reclaimed when its credit has fully refilled.
+
+Envoy forwards whole callback batches. A batch within burst capacity waits for sufficient credit; a larger batch waits for all prior consumption to refill, then passes whole and is charged in full. **Burst bytes are therefore not a strict wire-level burst cap:** oversized callbacks can exceed them, including with Envoy 1.40.2. Buffer watermarks are configured separately. CONNECT concurrency and distinct-bucket capacity remain hard admission limits without burst.
+
+For tenant/sandbox grouping, add two `filterState` actions and two matching descriptor entries. `(tenant=A, sandbox=X)` and `(tenant=B, sandbox=X)` then use different buckets. A complete exact descriptor takes precedence over wildcards; otherwise the first matching wildcard wins. Multiple matching action groups charge their budgets together. Missing required identity returns 403; a complete unmatched descriptor is unlimited. A new key exceeding dynamic capacity returns 503. Active buckets and unpaid byte debt are retained, including across reconnects. This API supports filter state and fixed sources, not CEL expressions.
+
+After the last CONNECT stream closes, its bucket is removed immediately if its byte debt is settled; otherwise it is reclaimed automatically once both directions' debt expires, even without new requests. This uses stream lifetime and accounting state, not sandbox deletion notifications.
+
+The controller validates settings and generates the Rust dynamic-module `filter_config` on `connect_terminate`, after identity processing and connection-rate limiting and before the router. It supplies a stable budget name derived from the gateway namespace/name. The `.so` is included in the gateway image; no runtime download is required. Legacy proxyv2 cannot use this module and compilation rejects this setting. CONNECT-UDP and bypass traffic are not shaped.
+
+**Router retry is unsupported on the bandwidth-shaped CONNECT chain.** The generated CONNECT route has no retry policy; do not add one at route or virtual-host level through patches, or use retry-policy extensions. The module returns 400 (`bandwidth_retry_unsupported`) for `x-envoy-retry-on` or `x-envoy-retry-grpc-on` headers that reach it. Internal redirects, buffered mirroring and other filters that retain already-forwarded bytes in the shared body buffer are also unsupported, because resuming that buffer can duplicate data. The module cannot inspect route retry policies through the current ABI. Retries on the separate inner HTTP chain remain supported and unchanged.
+
+Rate and capacity changes reuse the existing shared buckets, including streams on draining listeners. Unpaid bytes are converted to waiting time at the new rate, and waiting streams are notified. Lowering capacity retains existing buckets but blocks new keys until space is available. A watermark change affects streams created from the new filter configuration. Changing actions or descriptor entries/order requires draining/removing the old configuration and waiting for its outstanding debt; the module rejects incompatible grouping while it is in use. Removing the field stops installing the module on new listeners; existing streams keep their filter until they close.
+
+The latest live module configuration supplies rates. Updates take effect during Envoy configuration construction, which can precede LDS activation/ACK. If a later filter causes candidate construction to fail, destruction of the candidate restores the preceding live rates. This is not an atomic multi-resource xDS transaction. Check Envoy ACK/rejection and active configuration when verifying rollout.
+
+Limits are per Envoy process, not pooled across replicas. Shaping permits a callback-sized burst and does not guarantee minimum bandwidth or scheduling fairness. See the [module documentation](../../extensions/envoy/network-limits/README.md) for the verified Envoy CONNECT close limitation and runtime tests.
 
 ### Static service entries
 

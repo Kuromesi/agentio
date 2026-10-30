@@ -125,7 +125,7 @@ func TestPendingConfigDeletionAndUnsubscribe(t *testing.T) {
 	watches := map[string]*watchState{}
 	store := xdsstore.New(selectionSnapshot(t, nil))
 	server.server.resources = store
-	subscription := store.Subscribe(t.Context())
+	subscription := store.Subscribe(t.Context(), model.ClientScope{})
 	push := func(name string) {
 		t.Helper()
 		store.NotifyKeys([]model.ResourceKey{{TypeURL: typ, Name: name}})

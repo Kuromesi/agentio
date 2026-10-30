@@ -163,7 +163,7 @@ func (f *fakeResourceStore) Snapshot() model.ResourceSet {
 	return f.snapshot
 }
 
-func (f *fakeResourceStore) Subscribe(ctx context.Context) xdsstore.Subscription {
+func (f *fakeResourceStore) Subscribe(ctx context.Context, _ model.ClientScope) xdsstore.Subscription {
 	subscription := &fakeResourceSubscription{
 		store:   f,
 		updates: make(chan xdsstore.Update, 1),
@@ -633,7 +633,7 @@ func updateBetween(before, after model.ResourceSet, changes []model.ResourceChan
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	resources := xdsstore.New(before)
-	subscription := resources.Subscribe(ctx)
+	subscription := resources.Subscribe(ctx, model.ClientScope{})
 	for typeURL := range before.CountsByType() {
 		subscription.Watch(typeURL)
 	}
@@ -677,7 +677,7 @@ func fullUpdate(t testing.TB, name string) xdsstore.Update {
 	resources := xdsstore.New(newSnapshot(t, name))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	subscription := resources.Subscribe(ctx)
+	subscription := resources.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 	resources.Notify()
 	return <-subscription.Updates()

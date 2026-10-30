@@ -163,17 +163,29 @@ func mergeIdentity(identities []Identity, identity Identity) []Identity {
 func Merge(older, newer Update) Update {
 	merged := Update{
 		version:       newer.version,
-		candidates:    maps.Clone(older.candidates),
-		affectedTypes: sets.New[string](),
+		candidates:    older.candidates,
+		affectedTypes: older.affectedTypes,
 	}
+	copied := false
 	if merged.candidates == nil {
 		merged.candidates = make(map[string][]Candidate, len(newer.candidates))
+		copied = true
 	}
 	for typeURL, incoming := range newer.candidates {
-		merged.candidates[typeURL] = mergeCandidates(older.candidates[typeURL], incoming)
+		batch, changed := mergeCandidates(older.candidates[typeURL], incoming)
+		if changed {
+			if !copied {
+				merged.candidates = maps.Clone(older.candidates)
+				copied = true
+			}
+			merged.candidates[typeURL] = batch
+		}
 	}
-	merged.affectedTypes.Merge(older.affectedTypes)
-	merged.affectedTypes.Merge(newer.affectedTypes)
+	if merged.affectedTypes == nil || !older.affectedTypes.SupersetOf(newer.affectedTypes) {
+		merged.affectedTypes = sets.NewWithLength[string](len(older.affectedTypes) + len(newer.affectedTypes))
+		merged.affectedTypes.Merge(older.affectedTypes)
+		merged.affectedTypes.Merge(newer.affectedTypes)
+	}
 	merged.full = older.full || newer.full
 	if merged.full && !(older.full && len(older.fullTypes) == 0 || newer.full && len(newer.fullTypes) == 0) {
 		merged.fullTypes = sets.New[string]()
@@ -185,27 +197,18 @@ func Merge(older, newer Update) Update {
 
 // Both inputs are immutable, key-ordered sets. Disjoint types and identity
 // metadata remain shared; overlapping batches only need a linear merge.
-func mergeCandidates(older, newer []Candidate) []Candidate {
+func mergeCandidates(older, newer []Candidate) ([]Candidate, bool) {
 	if len(older) == 0 {
-		return newer
+		return newer, len(newer) != 0
 	}
 	if len(newer) == 0 {
-		return older
+		return older, false
 	}
-	// Count repeated keys before allocating so pending notices retain only
-	// enough capacity for their union, including heavily overlapping updates.
-	count := len(older) + len(newer)
-	for i, j := 0, 0; i < len(older) && j < len(newer); {
-		switch {
-		case older[i].Key.Name < newer[j].Key.Name:
-			i++
-		case older[i].Key.Name > newer[j].Key.Name:
-			j++
-		default:
-			count--
-			i++
-			j++
-		}
+	count, unchanged := candidateUnionSize(older, newer)
+	// Repeated rule changes retain the same names and ownership evidence.
+	// Reuse their immutable union instead of copying it for every queued client.
+	if unchanged && count == len(older) {
+		return older, false
 	}
 	merged := make([]Candidate, 0, count)
 	for len(older) != 0 && len(newer) != 0 {
@@ -250,7 +253,42 @@ func mergeCandidates(older, newer []Candidate) []Candidate {
 		}
 	}
 	merged = append(merged, older...)
-	return append(merged, newer...)
+	return append(merged, newer...), true
+}
+
+// candidateUnionSize also reports whether the union retains only existing evidence.
+func candidateUnionSize(older, newer []Candidate) (int, bool) {
+	// Count repeated keys before allocating so pending notices retain only
+	// enough capacity for their union, including heavily overlapping updates.
+	count := len(older) + len(newer)
+	unchanged := true
+	for i, j := 0, 0; i < len(older) && j < len(newer); {
+		switch {
+		case older[i].Key.Name < newer[j].Key.Name:
+			i++
+		case older[i].Key.Name > newer[j].Key.Name:
+			j++
+		default:
+			count--
+			for _, incoming := range newer[j].Identities {
+				found := false
+				for _, existing := range older[i].Identities {
+					if existing.Name == incoming.Name && existing.Facts.Equal(incoming.Facts) &&
+						existing.Workloads.SupersetOf(incoming.Workloads) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					unchanged = false
+					break
+				}
+			}
+			i++
+			j++
+		}
+	}
+	return count, unchanged
 }
 
 func coalesceChanges(changes []model.ResourceChange) []model.ResourceChange {

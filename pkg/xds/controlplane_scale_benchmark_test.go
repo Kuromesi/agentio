@@ -127,7 +127,7 @@ func BenchmarkControlPlaneDemandChurn(b *testing.B) {
 			}
 			server := newTestServer(b, gatewayScope(), resources, nil)
 			stream := discardDeltaStream{ctx: b.Context()}
-			subscription := server.resources.Subscribe(b.Context())
+			subscription := server.resources.Subscribe(b.Context(), model.ClientScope{})
 			watches := map[string]*watchState{}
 			if err := server.server.handleRequest(
 				stream,

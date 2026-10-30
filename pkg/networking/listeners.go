@@ -360,6 +360,20 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 		}
 		filters = append(filters, filter)
 	}
+	if concurrency := gateway.GetConnectConcurrencyLimit(); concurrency != nil {
+		filter, err := b.concurrencyFilter(config.gatewayIdentity, concurrency)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
+	if bandwidth := gateway.GetBandwidthLimit(); bandwidth != nil {
+		filter, err := b.bandwidthFilter(config.gatewayIdentity, bandwidth)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
 	filters = append(filters, httpFilter("envoy.filters.http.router", b.pack(&routerv3.Router{})))
 	hcm := &hcmv3.HttpConnectionManager{
 		StatPrefix:        ConnectTerminate,
@@ -981,38 +995,65 @@ func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimit
 				converted.Entries,
 				&ratelimitv3.RateLimitDescriptor_Entry{Key: entry.GetKey(), Value: entry.GetValue()},
 			)
-			if entry.GetCel() != "" {
-				configAny := b.pack(&rlexprv3.Descriptor{
-					DescriptorKey: entry.GetKey(),
-					ExprSpecifier: &rlexprv3.Descriptor_Text{Text: entry.GetCel()},
-					SkipIfError:   true,
-				})
-				rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
-					ActionSpecifier: &routev3.RateLimit_Action_Extension{
-						Extension: &corev3.TypedExtensionConfig{
-							Name:        "envoy.rate_limit_descriptors.expr",
-							TypedConfig: configAny,
+			if len(settings.GetRateLimits()) == 0 {
+				if entry.GetCel() != "" {
+					rateLimit.Actions = append(rateLimit.Actions, b.rateLimitCELAction(entry.GetKey(), entry.GetCel()))
+				} else {
+					rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
+						ActionSpecifier: &routev3.RateLimit_Action_GenericKey_{
+							GenericKey: &routev3.RateLimit_Action_GenericKey{
+								DescriptorKey:   entry.GetKey(),
+								DescriptorValue: entry.GetValue(),
+							},
 						},
-					},
-				})
+					})
+				}
+			}
+		}
+		config.Descriptors = append(config.Descriptors, converted)
+		if len(settings.GetRateLimits()) == 0 {
+			config.RateLimits = append(config.RateLimits, rateLimit)
+		}
+	}
+	for _, group := range settings.GetRateLimits() {
+		rateLimit := &routev3.RateLimit{}
+		for _, action := range group.GetActions() {
+			if state := action.GetFilterState(); state != nil {
+				rateLimit.Actions = append(rateLimit.Actions,
+					b.rateLimitCELAction(state.GetDescriptorKey(), fmt.Sprintf("filter_state[%q]", state.GetKey())))
 			} else {
+				fixed := action.GetGenericKey()
 				rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
 					ActionSpecifier: &routev3.RateLimit_Action_GenericKey_{
 						GenericKey: &routev3.RateLimit_Action_GenericKey{
-							DescriptorKey:   entry.GetKey(),
-							DescriptorValue: entry.GetValue(),
+							DescriptorKey:   fixed.GetDescriptorKey(),
+							DescriptorValue: fixed.GetDescriptorValue(),
 						},
 					},
 				})
 			}
 		}
-		config.Descriptors = append(config.Descriptors, converted)
 		config.RateLimits = append(config.RateLimits, rateLimit)
 	}
 	if err := config.ValidateAll(); err != nil {
 		return nil, fmt.Errorf("validate connect rate limit: %w", err)
 	}
 	return httpFilter("envoy.filters.http.local_ratelimit", b.pack(config)), nil
+}
+
+func (b *resourceBuilder) rateLimitCELAction(key, expression string) *routev3.RateLimit_Action {
+	return &routev3.RateLimit_Action{
+		ActionSpecifier: &routev3.RateLimit_Action_Extension{
+			Extension: &corev3.TypedExtensionConfig{
+				Name: "envoy.rate_limit_descriptors.expr",
+				TypedConfig: b.pack(&rlexprv3.Descriptor{
+					DescriptorKey: key,
+					ExprSpecifier: &rlexprv3.Descriptor_Text{Text: expression},
+					SkipIfError:   true,
+				}),
+			},
+		},
+	}
 }
 
 func tokenBucket(value *configv1.TokenBucket) *typev3.TokenBucket {

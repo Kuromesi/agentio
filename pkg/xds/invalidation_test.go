@@ -54,7 +54,7 @@ func TestDemandObservesIntermediatePublication(t *testing.T) {
 				}
 				server := newTestServer(t, gatewayScope(), initial, nil)
 				stream := newFakeStream(t.Context(), 1)
-				subscription := server.resources.Subscribe(t.Context())
+				subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 				watches := map[string]*watchState{}
 				name := "a"
 				if typeURL == model.AddressType {
@@ -295,7 +295,7 @@ func TestWildcardFullNotificationPreservesQueuedRemovals(t *testing.T) {
 	before := selectionSnapshot(t, []model.Resource{resource})
 	empty := selectionSnapshot(t, nil)
 	resources := xdsstore.New(before)
-	sub := resources.Subscribe(t.Context())
+	sub := resources.Subscribe(t.Context(), model.ClientScope{})
 	sub.Watch(model.AddressType)
 	resources.Replace(empty)
 	resources.Notify()

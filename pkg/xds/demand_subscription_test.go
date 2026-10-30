@@ -64,7 +64,7 @@ func TestDemandSubscriptionPreservesOtherResources(t *testing.T) {
 			server := newTestServerWithGenerators(t, gatewayScope(), append(dependencies, a, b),
 				map[string]ResourceGenerator{typeURL: recorder})
 			stream := newFakeStream(t.Context(), 1)
-			subscription := server.resources.Subscribe(t.Context())
+			subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 			watches := map[string]*watchState{}
 			send := func(request *discoveryv3.DeltaDiscoveryRequest) *discoveryv3.DeltaDiscoveryResponse {
 				t.Helper()
@@ -176,7 +176,7 @@ func TestDemandTrafficPolicyStillRequiresWorkloadReference(t *testing.T) {
 	workload := workloadWithTrafficRefs(t, addressResource(t, "w", "w"), "a")
 	server := newTestServer(t, gatewayScope(), []model.Resource{a, orphan, workload}, nil)
 	stream := newFakeStream(t.Context(), 1)
-	subscription := server.resources.Subscribe(t.Context())
+	subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 	watches := map[string]*watchState{}
 	for _, name := range []string{"a", "orphan"} {
 		if err := server.server.handleRequest(stream, server.scope, log, watches, subscription,
@@ -205,7 +205,7 @@ func TestTrafficPolicyEvictionReconcilesOnlyNewDemands(t *testing.T) {
 	server := newTestServerWithGenerators(t, scope, []model.Resource{a, b, c, orphan, workload},
 		map[string]ResourceGenerator{model.TrafficPolicyType: recorder})
 	stream := newFakeStream(t.Context(), 1)
-	subscription := server.resources.Subscribe(t.Context())
+	subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 	watches := map[string]*watchState{}
 	send := func(subscribed, unsubscribed []string) *discoveryv3.DeltaDiscoveryResponse {
 		t.Helper()

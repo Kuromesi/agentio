@@ -37,7 +37,7 @@ func TestNotificationsPreserveTypeSubscriptions(t *testing.T) {
 		"both":    {model.AddressType, model.ClusterType},
 		"secret":  {model.SecretType},
 	} {
-		sub := store.Subscribe(t.Context())
+		sub := store.Subscribe(t.Context(), model.ClientScope{})
 		for _, typeURL := range types {
 			sub.Watch(typeURL)
 		}
@@ -84,7 +84,7 @@ func TestNotificationsPreserveTypeSubscriptions(t *testing.T) {
 func TestStorePublicationCarriesCommittedSnapshot(t *testing.T) {
 	initial := newSnapshot(t, "a")
 	store := New(initial)
-	store.Subscribe(t.Context()).Watch(model.ClusterType)
+	store.Subscribe(t.Context(), model.ClientScope{}).Watch(model.ClusterType)
 
 	publication := store.Replace(newSnapshot(t, "a"))
 	if publication.Changed {
@@ -131,7 +131,7 @@ func TestStoreUpdateRetainsWireIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := New(snapshot)
-	sub := store.Subscribe(t.Context())
+	sub := store.Subscribe(t.Context(), model.ClientScope{})
 	sub.Watch(model.AddressType)
 	if _, err := store.Apply([]model.ResourceChange{{Key: next.Key, New: &next}}); err != nil {
 		t.Fatal(err)
@@ -237,7 +237,7 @@ func TestReplaceIgnoresUnchangedVersion(t *testing.T) {
 func TestSubscribersAreWokenAndCoalesced(t *testing.T) {
 	ctx := t.Context()
 	store := New(newSnapshot(t, "a"))
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 	updates := subscription.Updates()
 
@@ -260,7 +260,7 @@ func TestSubscribersAreWokenAndCoalesced(t *testing.T) {
 func TestTypedSubscriberIsOnlyWokenForWatchedType(t *testing.T) {
 	ctx := t.Context()
 	store := New(newSnapshot(t))
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 
 	cluster := model.Resource{
@@ -297,7 +297,7 @@ func TestTypedSubscriberIsOnlyWokenForWatchedType(t *testing.T) {
 func TestSubscriberCoalescingMergesChangedKeys(t *testing.T) {
 	ctx := t.Context()
 	store := New(newSnapshot(t))
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 
 	for _, name := range []string{"a", "b"} {
@@ -326,7 +326,7 @@ func TestSubscriberCoalescingMergesChangedKeys(t *testing.T) {
 func TestTypedFullUpdateDoesNotHideIncrementalOtherType(t *testing.T) {
 	ctx := t.Context()
 	store := New(newSnapshot(t))
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 	subscription.Watch(model.SecretType)
 	address := newSnapshot(t, "a").List(model.AddressType)[0]
@@ -357,7 +357,7 @@ func TestNotifyWakesSubscribersWithoutVersionChange(t *testing.T) {
 	ctx := t.Context()
 	store := New(newSnapshot(t, "a"))
 	version := store.Snapshot().Version()
-	subscription := store.Subscribe(ctx)
+	subscription := store.Subscribe(ctx, model.ClientScope{})
 	subscription.Watch(model.AddressType)
 	updates := subscription.Updates()
 
@@ -428,7 +428,7 @@ func TestSubscriberIsReleasedOnContextCancel(t *testing.T) {
 			store := New(newSnapshot(t, "a"))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			subscription := store.Subscribe(ctx)
+			subscription := store.Subscribe(ctx, model.ClientScope{})
 			if tc.watch {
 				subscription.Watch(model.AddressType)
 			}
@@ -445,9 +445,9 @@ func TestSubscriberIsReleasedOnContextCancel(t *testing.T) {
 func TestNotifyKeysBeforePublication(t *testing.T) {
 	store := New(newSnapshot(t))
 	version := store.Snapshot().Version()
-	subscription := store.Subscribe(t.Context())
+	subscription := store.Subscribe(t.Context(), model.ClientScope{})
 	subscription.Watch(model.SandboxType)
-	other := store.Subscribe(t.Context())
+	other := store.Subscribe(t.Context(), model.ClientScope{})
 	other.Watch(model.TrafficPolicyType)
 	for _, name := range []string{"pending-a", "pending-b", "pending-a"} {
 		store.NotifyKeys([]model.ResourceKey{{TypeURL: model.SandboxType, Name: name}})

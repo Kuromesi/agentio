@@ -34,7 +34,7 @@ func TestReconnectVersionsExplicitDemandStillResends(t *testing.T) {
 			for _, name := range names {
 				t.Run(name, func(t *testing.T) {
 					stream := newFakeStream(t.Context(), 4)
-					subscription := server.resources.Subscribe(t.Context())
+					subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 					watches := map[string]*watchState{}
 					first := nodeRequest(typ, name)
 					if err := server.server.handleRequest(
@@ -80,7 +80,7 @@ func TestReconnectVersionsWildcardSkipsUnchangedButWidensScope(t *testing.T) {
 	b := addressResource(t, "b", "b", "instance/b")
 	server := newTestServer(t, gatewayScope(), []model.Resource{a, b}, nil)
 	stream := newFakeStream(t.Context(), 4)
-	subscription := server.resources.Subscribe(t.Context())
+	subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 	if err := server.server.handleRequest(
 		stream,
 		server.scope,
@@ -131,7 +131,7 @@ func TestReconnectCanonicalInterestDoesNotTrackNewAliasOwner(t *testing.T) {
 			b := addressResource(t, "b", "b", shared)
 			server := newTestServer(t, gatewayScope(), []model.Resource{a}, nil)
 			stream := newFakeStream(t.Context(), 4)
-			subscription := server.resources.Subscribe(t.Context())
+			subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 			if err := server.server.handleRequest(
 				stream,
 				server.scope,
@@ -178,7 +178,7 @@ func TestReconnectVersionsReconcilesAliasRebindingAndRemoval(t *testing.T) {
 	replacement := addressResource(t, "replacement", "replacement", "instance/one")
 	server := newTestServer(t, gatewayScope(), []model.Resource{old}, nil)
 	stream := newFakeStream(t.Context(), 4)
-	subscription := server.resources.Subscribe(t.Context())
+	subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
 	if err := server.server.handleRequest(
 		stream,
 		server.scope,
