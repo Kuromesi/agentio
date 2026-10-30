@@ -150,7 +150,9 @@ fn multiple_descriptors_charge_atomically_and_deduplicate() {
 
 #[test]
 fn workers_cannot_multiply_the_budget() {
-    let config = Arc::new(Config::parse(CONFIG.as_bytes()).unwrap());
+    let mut config = Config::parse(CONFIG.as_bytes()).unwrap();
+    config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(400.try_into().unwrap());
+    let config = Arc::new(config);
     let keys = keys(&config, "a", "one");
     let now = Instant::now();
     let ledger = Arc::new(Mutex::new(Ledger::new((*config).clone())));
@@ -166,8 +168,122 @@ fn workers_cannot_multiply_the_budget() {
             .into_iter()
             .map(|t| usize::from(t.join().unwrap()))
             .sum::<usize>(),
-        1
+        4
     );
+}
+
+#[test]
+fn burst_credit_refills_without_accumulating_past_capacity() {
+    let mut config = Config::parse(CONFIG.as_bytes()).unwrap();
+    config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(400.try_into().unwrap());
+    config.descriptors[0].bandwidth_limit.download_burst_bytes = Some(800.try_into().unwrap());
+    let key = keys(&config, "a", "one");
+    let other = keys(&config, "a", "two");
+    let mut ledger = Ledger::new(config);
+    let now = Instant::now();
+    ledger.acquire(&key, now).unwrap();
+    ledger.acquire(&other, now).unwrap();
+    for _ in 0..4 {
+        assert_eq!(ledger.charge(&key, 0, 100, now), None);
+        assert_eq!(ledger.charge(&key, 1, 200, now), None);
+    }
+    let due = now + Duration::from_secs(1);
+    assert_eq!(ledger.charge(&key, 0, 100, now), Some(due));
+    assert_eq!(ledger.charge(&key, 1, 200, now), Some(due));
+    assert_eq!(ledger.charge(&other, 0, 400, now), None);
+    assert_eq!(ledger.charge(&key, 0, 100, due), None);
+    assert_eq!(
+        ledger.charge(&key, 0, 100, due),
+        Some(due + Duration::from_secs(1))
+    );
+    let idle = now + Duration::from_secs(60);
+    assert_eq!(ledger.charge(&key, 0, 400, idle), None);
+    assert_eq!(
+        ledger.charge(&key, 0, 100, idle),
+        Some(idle + Duration::from_secs(1))
+    );
+}
+
+#[test]
+fn oversized_batches_wait_for_full_refill_and_are_charged_in_full() {
+    let mut config = Config::parse(CONFIG.as_bytes()).unwrap();
+    config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(100.try_into().unwrap());
+    let key = keys(&config, "a", "one");
+    let mut ledger = Ledger::new(config);
+    let now = Instant::now();
+    ledger.acquire(&key, now).unwrap();
+    assert_eq!(ledger.charge(&key, 0, 50, now), None);
+    let due = now + Duration::from_millis(500);
+    assert_eq!(ledger.charge(&key, 0, 1000, now), Some(due));
+    assert_eq!(ledger.charge(&key, 0, 1000, due), None);
+    assert_eq!(
+        ledger.charge(&key, 0, 100, due),
+        Some(due + Duration::from_secs(10))
+    );
+    assert_eq!(ledger.charge(&key, 0, 0, due), None);
+}
+
+#[test]
+fn burst_and_legacy_budgets_are_charged_together() {
+    let mut config = Config::parse(CONFIG.as_bytes()).unwrap();
+    config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(400.try_into().unwrap());
+    config.descriptors[1]
+        .bandwidth_limit
+        .upload_bytes_per_second = Some(100.try_into().unwrap());
+    let mut both = keys(&config, "a", "one");
+    both.extend(keys(&config, "vip", "one"));
+    let mut ledger = Ledger::new(config);
+    let now = Instant::now();
+    ledger.acquire(&both, now).unwrap();
+    assert_eq!(ledger.charge(&both, 0, 100, now), None);
+    assert_eq!(
+        ledger.charge(&both, 0, 100, now),
+        Some(now + Duration::from_secs(1))
+    );
+    // The rejected joint charge must not consume the first budget's remaining credit.
+    assert_eq!(ledger.charge(&both[..1], 0, 300, now), None);
+    assert_eq!(
+        ledger.charge(&both[..1], 0, 100, now),
+        Some(now + Duration::from_secs(1))
+    );
+}
+
+#[test]
+fn burst_configuration_accepts_protojson_and_requires_positive_matching_rates() {
+    for value in ["500", "\"500\""] {
+        let json = CONFIG.replace(
+            "\"upload_bytes_per_second\":100",
+            &format!("\"upload_bytes_per_second\":100,\"upload_burst_bytes\":{value}"),
+        );
+        let config = Config::parse(json.as_bytes()).unwrap();
+        assert_eq!(
+            config.descriptors[0]
+                .bandwidth_limit
+                .upload_burst_bytes
+                .unwrap()
+                .get(),
+            500
+        );
+    }
+    for value in ["0", "\"0\"", "-1", "1.5"] {
+        let json = CONFIG.replace(
+            "\"upload_bytes_per_second\":100",
+            &format!("\"upload_bytes_per_second\":100,\"upload_burst_bytes\":{value}"),
+        );
+        assert!(Config::parse(json.as_bytes()).is_err(), "{json}");
+    }
+    for json in [
+        CONFIG.replace(
+            "\"upload_bytes_per_second\":100",
+            "\"upload_burst_bytes\":500",
+        ),
+        CONFIG.replace(
+            "\"download_bytes_per_second\":200",
+            "\"download_burst_bytes\":500",
+        ),
+    ] {
+        assert!(Config::parse(json.as_bytes()).is_err(), "{json}");
+    }
 }
 
 #[test]

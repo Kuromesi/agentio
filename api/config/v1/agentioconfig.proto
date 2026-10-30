@@ -183,6 +183,13 @@ message BandwidthRates {
   // Positive bytes per second. An omitted direction is unlimited.
   optional uint64 upload_bytes_per_second = 1;
   optional uint64 download_bytes_per_second = 2;
+  // Positive burst capacity in bytes, shared by all streams matching this descriptor.
+  // Requires the corresponding byte rate. Omitted means legacy one-batch pacing.
+  // Whole callback batches are forwarded: a batch larger than this capacity waits
+  // for prior consumption to refill, then passes whole and is charged in full.
+  // This is not a strict wire-level burst or memory cap.
+  optional uint64 upload_burst_bytes = 3;
+  optional uint64 download_burst_bytes = 4;
 }
 
 // AccessLogFormat replaces the complete built-in access-log format for a gateway.

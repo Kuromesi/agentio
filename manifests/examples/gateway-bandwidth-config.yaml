@@ -20,3 +20,6 @@ egressGateways:
           bandwidthLimit:
             uploadBytesPerSecond: 10485760
             downloadBytesPerSecond: 52428800
+            # Shared per sandbox; oversized callback batches still pass whole.
+            uploadBurstBytes: 1048576
+            downloadBurstBytes: 5242880

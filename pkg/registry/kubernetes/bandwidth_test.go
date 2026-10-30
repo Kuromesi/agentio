@@ -46,6 +46,7 @@ func TestBandwidthConfigWatchAndGeneratedListener(t *testing.T) {
 		if rate != 10485760 {
 			cm = cm.DeepCopy()
 			cm.Data["config"] = strings.ReplaceAll(cm.Data["config"], "10485760", rateText)
+			cm.Data["config"] = strings.ReplaceAll(cm.Data["config"], "1048576", strconv.FormatUint(rate/10, 10))
 			if _, err := r.client.CoreV1().
 				ConfigMaps(cm.Namespace).
 				Update(t.Context(), cm, metav1.UpdateOptions{}); err != nil {
@@ -58,7 +59,7 @@ func TestBandwidthConfigWatchAndGeneratedListener(t *testing.T) {
 			return gateway != nil &&
 				gateway.Config.GetBandwidthLimit().GetDescriptors()[0].GetBandwidthLimit().
 					GetUploadBytesPerSecond() ==
-					rate
+					rate && gateway.Config.GetBandwidthLimit().GetDescriptors()[0].GetBandwidthLimit().GetUploadBurstBytes() == rate/10
 		}, "bandwidth ConfigMap update")
 		resources, err := networking.Build(networking.Inputs{
 			Gateway:          *gateway,
@@ -102,6 +103,10 @@ func TestBandwidthConfigWatchAndGeneratedListener(t *testing.T) {
 				if limit.Fields["upload_bytes_per_second"].GetStringValue() != rateText {
 					t.Fatalf("updated ProtoJSON byte rate missing: %v", limit)
 				}
+				if limit.Fields["upload_burst_bytes"].GetStringValue() != strconv.FormatUint(rate/10, 10) ||
+					limit.Fields["download_burst_bytes"].GetStringValue() != "5242880" {
+					t.Fatalf("updated ProtoJSON burst capacity missing: %v", limit)
+				}
 			}
 		}
 		if !found {
@@ -126,6 +131,11 @@ func TestBandwidthValidationAtBothConfigEntrypoints(t *testing.T) {
 		valid   bool
 	}{
 		{"valid", valid, true},
+		{"burst", strings.Replace(valid, "uploadBytesPerSecond: 100", "uploadBytesPerSecond: 100, uploadBurstBytes: 500", 1), true},
+		{"zero burst", strings.Replace(valid, "uploadBytesPerSecond: 100", "uploadBytesPerSecond: 100, uploadBurstBytes: 0", 1), false},
+		{"negative burst", strings.Replace(valid, "uploadBytesPerSecond: 100", "uploadBytesPerSecond: 100, uploadBurstBytes: -1", 1), false},
+		{"burst without upload", strings.Replace(valid, "uploadBytesPerSecond: 100", "downloadBytesPerSecond: 100, uploadBurstBytes: 500", 1), false},
+		{"burst without download", strings.Replace(valid, "uploadBytesPerSecond: 100", "uploadBytesPerSecond: 100, downloadBurstBytes: 500", 1), false},
 		{"zero rate", strings.Replace(valid, "uploadBytesPerSecond: 100", "uploadBytesPerSecond: 0", 1), false},
 		{"missing rate", strings.Replace(valid, "{uploadBytesPerSecond: 100}", "{}", 1), false},
 		{"empty source", strings.Replace(valid, "key: sandbox.id", `key: ""`, 1), false},

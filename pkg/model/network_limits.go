@@ -50,6 +50,18 @@ func ValidateBandwidthLimit(config *configv1.BandwidthLimitSettings) error {
 				return fmt.Errorf("bandwidthLimit.descriptors[%d] byte rates must be positive when set", i)
 			}
 		}
+		for direction, burst := range []*uint64{rates.UploadBurstBytes, rates.DownloadBurstBytes} {
+			if burst == nil {
+				continue
+			}
+			if *burst == 0 || (direction == 0 && rates.GetUploadBytesPerSecond() == 0) ||
+				(direction == 1 && rates.GetDownloadBytesPerSecond() == 0) {
+				return fmt.Errorf(
+					"bandwidthLimit.descriptors[%d] burst bytes must be positive and require the corresponding byte rate",
+					i,
+				)
+			}
+		}
 		entries = append(entries, descriptor.GetEntries())
 	}
 	return validateDescriptorLayout("bandwidthLimit", config.GetRateLimits(), entries)

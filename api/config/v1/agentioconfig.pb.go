@@ -949,8 +949,15 @@ type BandwidthRates struct {
 	// Positive bytes per second. An omitted direction is unlimited.
 	UploadBytesPerSecond   *uint64 `protobuf:"varint,1,opt,name=upload_bytes_per_second,json=uploadBytesPerSecond,proto3,oneof" json:"upload_bytes_per_second,omitempty"`
 	DownloadBytesPerSecond *uint64 `protobuf:"varint,2,opt,name=download_bytes_per_second,json=downloadBytesPerSecond,proto3,oneof" json:"download_bytes_per_second,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Positive burst capacity in bytes, shared by all streams matching this descriptor.
+	// Requires the corresponding byte rate. Omitted means legacy one-batch pacing.
+	// Whole callback batches are forwarded: a batch larger than this capacity waits
+	// for prior consumption to refill, then passes whole and is charged in full.
+	// This is not a strict wire-level burst or memory cap.
+	UploadBurstBytes   *uint64 `protobuf:"varint,3,opt,name=upload_burst_bytes,json=uploadBurstBytes,proto3,oneof" json:"upload_burst_bytes,omitempty"`
+	DownloadBurstBytes *uint64 `protobuf:"varint,4,opt,name=download_burst_bytes,json=downloadBurstBytes,proto3,oneof" json:"download_burst_bytes,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *BandwidthRates) Reset() {
@@ -993,6 +1000,20 @@ func (x *BandwidthRates) GetUploadBytesPerSecond() uint64 {
 func (x *BandwidthRates) GetDownloadBytesPerSecond() uint64 {
 	if x != nil && x.DownloadBytesPerSecond != nil {
 		return *x.DownloadBytesPerSecond
+	}
+	return 0
+}
+
+func (x *BandwidthRates) GetUploadBurstBytes() uint64 {
+	if x != nil && x.UploadBurstBytes != nil {
+		return *x.UploadBurstBytes
+	}
+	return 0
+}
+
+func (x *BandwidthRates) GetDownloadBurstBytes() uint64 {
+	if x != nil && x.DownloadBurstBytes != nil {
+		return *x.DownloadBurstBytes
 	}
 	return 0
 }
@@ -2242,12 +2263,16 @@ const file_api_config_v1_agentioconfig_proto_rawDesc = "" +
 	"\x0fbandwidth_limit\x18\x02 \x01(\v2!.agentio.config.v1.BandwidthRatesR\x0ebandwidthLimit\"B\n" +
 	"\x18BandwidthDescriptorEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"\xc6\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xe0\x02\n" +
 	"\x0eBandwidthRates\x12:\n" +
 	"\x17upload_bytes_per_second\x18\x01 \x01(\x04H\x00R\x14uploadBytesPerSecond\x88\x01\x01\x12>\n" +
-	"\x19download_bytes_per_second\x18\x02 \x01(\x04H\x01R\x16downloadBytesPerSecond\x88\x01\x01B\x1a\n" +
+	"\x19download_bytes_per_second\x18\x02 \x01(\x04H\x01R\x16downloadBytesPerSecond\x88\x01\x01\x121\n" +
+	"\x12upload_burst_bytes\x18\x03 \x01(\x04H\x02R\x10uploadBurstBytes\x88\x01\x01\x125\n" +
+	"\x14download_burst_bytes\x18\x04 \x01(\x04H\x03R\x12downloadBurstBytes\x88\x01\x01B\x1a\n" +
 	"\x18_upload_bytes_per_secondB\x1c\n" +
-	"\x1a_download_bytes_per_second\"`\n" +
+	"\x1a_download_bytes_per_secondB\x15\n" +
+	"\x13_upload_burst_bytesB\x17\n" +
+	"\x15_download_burst_bytes\"`\n" +
 	"\x0fAccessLogFormat\x12\x17\n" +
 	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x88\x01\x01\x12+\n" +
 	"\x04json\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x04jsonB\a\n" +

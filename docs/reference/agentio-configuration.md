@@ -396,6 +396,8 @@ Gateway API `parametersRef` ConfigMaps accept the same `upstreamTls` block in `d
 
 Each accepted HTTP/2 CONNECT stream consumes one token.
 
+Burst is already supported through `maxTokens`: for example, `maxTokens: 100`, `tokensPerFill: 10`, `fillInterval: 1s` permits an initial burst of 100 attempts and replenishes 10 tokens per second. No separate burst field is needed. Keep `perDownstreamConnection: false` for a shared gateway budget.
+
 | Field | Default | Description |
 | --- | --- | --- |
 | `tokenBucket.maxTokens` | `0` | Bucket capacity and initial token count. |
@@ -467,6 +469,8 @@ egressGateways:
           bandwidthLimit:
             uploadBytesPerSecond: 10485760
             downloadBytesPerSecond: 52428800
+            uploadBurstBytes: 1048576
+            downloadBurstBytes: 5242880
 ```
 
 Merge this fragment into the existing `data.config` or Helm `agentiod.config.values`; preserve other gateway entries and settings because `egressGateways` replaces the list. Gateway API `parametersRef` ConfigMaps accept the same `bandwidthLimit` block without the outer `egressGateways` list. A [combined example](../../manifests/examples/gateway-bandwidth-config.yaml) enables both connection-rate and bandwidth limits.
@@ -480,8 +484,14 @@ Merge this fragment into the existing `data.config` or Helm `agentiod.config.val
 | `descriptors[].entries[]` | Required | Ordered `key`/`value` entries matching a complete action group. Empty or omitted `value` creates a distinct bucket for each actual value combination. |
 | `descriptors[].bandwidthLimit.uploadBytesPerSecond` | Unlimited | Positive bytes/second from downstream to upstream. |
 | `descriptors[].bandwidthLimit.downloadBytesPerSecond` | Unlimited | Positive bytes/second from upstream to downstream. At least one direction is required. |
+| `descriptors[].bandwidthLimit.uploadBurstBytes` | One-batch pacing | Positive upload burst capacity in bytes; requires `uploadBytesPerSecond`. |
+| `descriptors[].bandwidthLimit.downloadBurstBytes` | One-batch pacing | Positive download burst capacity in bytes; requires `downloadBytesPerSecond`. |
 | `maxDynamicBuckets` | `10000` | Maximum wildcard-derived buckets per gateway process. Must be positive. |
 | `bufferLimitBytes` | `65536` | Positive soft streaming watermark per stream, not a hard memory or burst cap. |
+
+Burst credit starts full and replenishes at the corresponding byte rate, capped at the configured capacity. All connections and workers matching the descriptor share it; reconnecting does not reset it. Omitting burst preserves existing batch pacing; explicitly setting zero is invalid. Capacity changes preserve consumed bytes, and an idle bucket is only reclaimed when its credit has fully refilled.
+
+Envoy forwards whole callback batches. A batch within burst capacity waits for sufficient credit; a larger batch waits for all prior consumption to refill, then passes whole and is charged in full. **Burst bytes are therefore not a strict wire-level burst cap:** oversized callbacks can exceed them, including with Envoy 1.40.2. Buffer watermarks are configured separately. CONNECT concurrency and distinct-bucket capacity remain hard admission limits without burst.
 
 For tenant/sandbox grouping, add two `filterState` actions and two matching descriptor entries. `(tenant=A, sandbox=X)` and `(tenant=B, sandbox=X)` then use different buckets. A complete exact descriptor takes precedence over wildcards; otherwise the first matching wildcard wins. Multiple matching action groups charge their budgets together. Missing required identity returns 403; a complete unmatched descriptor is unlimited. A new key exceeding dynamic capacity returns 503. Active buckets and unpaid byte debt are retained, including across reconnects. This API supports filter state and fixed sources, not CEL expressions.
 

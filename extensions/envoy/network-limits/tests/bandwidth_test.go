@@ -143,6 +143,36 @@ func TestEnvoyBandwidthBucketRelease(t *testing.T) {
 	}
 }
 
+func TestEnvoyBandwidthBurst(t *testing.T) {
+	if os.Getenv("AGENTIO_TEST_ENVOY_BINARY") == "" {
+		t.Skip("real Envoy test; run bin/test_network_limits.sh")
+	}
+	origin := startOrigin(t, false)
+	r := startEnvoy(t, origin.port(), freePort(t), func(l object) {
+		d := policy(filters(l)[1])["descriptors"].([]any)[0]
+		limit := nested(d, "bandwidth_limit")
+		limit["upload_burst_bytes"] = strconv.Itoa(size)
+		limit["download_burst_bytes"] = strconv.Itoa(size)
+	})
+	for _, direction := range []string{"U", "D"} {
+		t.Run(direction, func(t *testing.T) {
+			transfers := []transfer{
+				{"burst", direction, direction, size / 2},
+				{"burst", direction, direction, size / 2},
+			}
+			first := multiplex(t, r.port, transfers)
+			durationBetween(t, max(first[0], first[1]), 0, 1.5)
+			// multiplex opens a fresh H2 connection: reconnecting must not grant new credit.
+			next := multiplex(t, r.port, transfers)
+			durationBetween(t, max(next[0], next[1]), 2.5, 10)
+			t.Logf("initial shared burst: %s; same-key reconnect: %s",
+				max(first[0], first[1]), max(next[0], next[1]))
+			independent := multiplex(t, r.port, []transfer{{"burst", direction + "-other", direction, size / 2}})
+			durationBetween(t, independent[0], 0, 1.5)
+		})
+	}
+}
+
 func TestEnvoyBandwidth(t *testing.T) {
 	if os.Getenv("AGENTIO_TEST_ENVOY_BINARY") == "" {
 		t.Skip("real Envoy test; run bin/test_network_limits.sh")

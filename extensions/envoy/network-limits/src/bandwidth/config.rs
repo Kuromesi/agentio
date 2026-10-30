@@ -45,6 +45,10 @@ pub struct BandwidthLimit {
     pub upload_bytes_per_second: Option<NonZeroU64>,
     #[serde(default, deserialize_with = "byte_rate")]
     pub download_bytes_per_second: Option<NonZeroU64>,
+    #[serde(default, deserialize_with = "byte_rate")]
+    pub upload_burst_bytes: Option<NonZeroU64>,
+    #[serde(default, deserialize_with = "byte_rate")]
+    pub download_burst_bytes: Option<NonZeroU64>,
 }
 
 // ProtoJSON encodes uint64 as strings; standalone module configurations may use numbers.
@@ -75,6 +79,13 @@ impl Config {
         }
         validate_groups(&config.rate_limits, &config.descriptors)?;
         for descriptor in &config.descriptors {
+            let limit = &descriptor.bandwidth_limit;
+            if (limit.upload_burst_bytes.is_some() && limit.upload_bytes_per_second.is_none())
+                || (limit.download_burst_bytes.is_some()
+                    && limit.download_bytes_per_second.is_none())
+            {
+                return Err("burst bytes require the corresponding bandwidth rate".into());
+            }
             if descriptor.bandwidth_limit.upload_bytes_per_second.is_none()
                 && descriptor
                     .bandwidth_limit

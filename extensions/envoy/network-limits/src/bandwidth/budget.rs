@@ -23,6 +23,8 @@ pub struct Ledger {
 
 struct Bucket {
     users: usize,
+    // Time when all consumed credit has refilled, not the next batch's admission time.
+    // Keeping idle buckets until then prevents reconnects from replenishing burst credit.
     ready: [Instant; 2],
     debt_rates: [Option<NonZeroU64>; 2],
 }
@@ -233,26 +235,39 @@ impl Ledger {
         if bytes == 0 {
             return None;
         }
-        let rate = |key: &Key| {
+        let limits = |key: &Key| {
             let limit = &self.config.descriptors[key.0].bandwidth_limit;
             if direction == 0 {
-                limit.upload_bytes_per_second
+                (limit.upload_bytes_per_second, limit.upload_burst_bytes)
             } else {
-                limit.download_bytes_per_second
+                (limit.download_bytes_per_second, limit.download_burst_bytes)
             }
         };
         let due = keys
             .iter()
-            .filter(|k| rate(k).is_some())
-            .map(|k| self.buckets[k].ready[direction])
+            .filter_map(|k| {
+                let (rate, burst) = limits(k);
+                rate.map(|rate| {
+                    let remaining = self.buckets[k].ready[direction].saturating_duration_since(now);
+                    // Reserve enough credit for the whole batch. Oversized batches require a full
+                    // bucket; they pass whole and their entire cost remains payable afterward.
+                    let credit = burst.map_or(0, |b| b.get().saturating_sub(bytes as u64));
+                    let slack = Duration::from_secs(credit / rate.get())
+                        + Duration::from_nanos(
+                            ((credit % rate.get()) as u128 * 1_000_000_000 / rate.get() as u128)
+                                as u64,
+                        );
+                    now + remaining.saturating_sub(slack)
+                })
+            })
             .max();
         if let Some(due) = due.filter(|t| *t > now) {
             return Some(due);
         }
         // Check all budgets before charging any; a tenant and its sandbox must commit together.
-        // shortcut: pacing permits one callback-sized burst; strict burst caps need partial injection.
+        // shortcut: oversized callback batches can exceed burst capacity; strict caps need partial injection.
         for key in keys {
-            if let Some(rate) = rate(key) {
+            if let (Some(rate), _) = limits(key) {
                 let bucket = self.buckets.get_mut(key).unwrap();
                 bucket.debt_rates[direction] = Some(rate);
                 let bytes = bytes as u64;
@@ -261,7 +276,7 @@ impl Ledger {
                     + Duration::from_nanos(
                         ((bytes % rate) as u128 * 1_000_000_000).div_ceil(rate as u128) as u64,
                     );
-                bucket.ready[direction] = now + delay;
+                bucket.ready[direction] = bucket.ready[direction].max(now) + delay;
             }
         }
         None
@@ -293,6 +308,84 @@ mod tests {
         ledger.release(&keys, now + Duration::from_secs(1));
         assert!(ledger.buckets.is_empty());
         assert_eq!(ledger.dynamic_buckets, 0);
+    }
+
+    #[test]
+    fn partially_used_burst_survives_reconnect_until_fully_refilled() {
+        let mut config = config();
+        config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(1000.try_into().unwrap());
+        let keys = config.resolve(|_| Some("a".into())).unwrap();
+        let mut ledger = Ledger::new(config);
+        let now = Instant::now();
+        ledger.acquire(&keys, now).unwrap();
+        for i in 1..=10 {
+            assert_eq!(ledger.charge(&keys, 0, 100, now), None);
+            assert_eq!(
+                ledger.release(&keys, now),
+                Some(now + Duration::from_secs(i))
+            );
+            ledger.acquire(&keys, now).unwrap();
+        }
+        assert_eq!(
+            ledger.charge(&keys, 0, 100, now),
+            Some(now + Duration::from_secs(1))
+        );
+        ledger.release(&keys, now);
+        ledger.reap(now + Duration::from_secs(9));
+        assert_eq!(ledger.dynamic_buckets, 1);
+        ledger.reap(now + Duration::from_secs(10));
+        assert_eq!(ledger.dynamic_buckets, 0);
+        ledger
+            .acquire(&keys, now + Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            ledger.charge(&keys, 0, 1000, now + Duration::from_secs(10)),
+            None
+        );
+    }
+
+    #[test]
+    fn burst_resize_and_rate_update_preserve_consumption_and_wake_waiters() {
+        let mut config = config();
+        config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(1000.try_into().unwrap());
+        let original = config.clone();
+        let keys = config.resolve(|_| Some("a".into())).unwrap();
+        let mut ledger = Ledger::new(config.clone());
+        let now = Instant::now();
+        ledger.acquire(&keys, now).unwrap();
+        assert_eq!(ledger.charge(&keys, 0, 1000, now), None);
+        let mut scheduler = MockEnvoyHttpFilterScheduler::new();
+        scheduler.expect_commit().times(4).return_const(());
+        ledger.waiters.insert(1, Arc::new(scheduler));
+        config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(500.try_into().unwrap());
+        ledger.update(config.clone(), now);
+        assert_eq!(
+            ledger.charge(&keys, 0, 100, now),
+            Some(now + Duration::from_secs(6))
+        );
+        config.descriptors[0].bandwidth_limit.upload_burst_bytes = Some(2000.try_into().unwrap());
+        ledger.update(config, now);
+        assert_eq!(ledger.charge(&keys, 0, 1000, now), None);
+        ledger.update(original.clone(), now);
+        assert_eq!(
+            ledger.charge(&keys, 0, 100, now),
+            Some(now + Duration::from_secs(11))
+        );
+        ledger.release(&keys, now);
+        let mut faster = original;
+        faster.descriptors[0]
+            .bandwidth_limit
+            .upload_bytes_per_second = Some(200.try_into().unwrap());
+        ledger.update(faster, now + Duration::from_secs(2));
+        assert_eq!(
+            ledger.next_expiration(),
+            Some(now + Duration::from_secs(11))
+        );
+        ledger.acquire(&keys, now + Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            ledger.charge(&keys, 0, 100, now + Duration::from_secs(2)),
+            Some(now + Duration::from_millis(6500))
+        );
     }
 
     #[test]
