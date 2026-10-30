@@ -4,7 +4,12 @@ egressGateways:
   - name: agentio-egress
     namespace: agentio-system
     connectRateLimit:
-      tokenBucket: {maxTokens: 100, tokensPerFill: 100, fillInterval: 1s}
+      rateLimits:
+        - actions:
+            - genericKey: {descriptorKey: scope, descriptorValue: gateway}
+      descriptors:
+        - entries: [{key: scope, value: gateway}]
+          tokenBucket: {maxTokens: 100, tokensPerFill: 100, fillInterval: 1s}
     connectConcurrencyLimit:
       rateLimits:
         - actions:

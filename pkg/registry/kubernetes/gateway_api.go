@@ -67,6 +67,9 @@ func decodeEgressGateway(content string) (*configv1.EgressGateway, error) {
 	if err := model.ValidateBandwidthLimit(value.GetBandwidthLimit()); err != nil {
 		return nil, err
 	}
+	if err := model.ValidateConnectRateLimit(value.GetConnectRateLimit()); err != nil {
+		return nil, err
+	}
 	if err := model.ValidateConnectConcurrencyLimit(value.GetConnectConcurrencyLimit()); err != nil {
 		return nil, err
 	}

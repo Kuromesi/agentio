@@ -23,6 +23,31 @@ import (
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 )
 
+// ValidateConnectRateLimit validates the shared grouping format without changing legacy CEL rules.
+func ValidateConnectRateLimit(config *configv1.LocalRateLimitSettings) error {
+	if config == nil || len(config.GetRateLimits()) == 0 {
+		return nil
+	}
+	entries := make([][]*configv1.NetworkLimitDescriptorEntry, 0, len(config.GetDescriptors()))
+	for i, descriptor := range config.GetDescriptors() {
+		group := make([]*configv1.NetworkLimitDescriptorEntry, 0, len(descriptor.GetEntries()))
+		for _, entry := range descriptor.GetEntries() {
+			if entry.GetCel() != "" {
+				return fmt.Errorf(
+					"connectRateLimit.descriptors[%d].entries[].cel cannot be combined with rateLimits",
+					i,
+				)
+			}
+			if config.GetPerDownstreamConnection() && entry.GetValue() == "" {
+				return fmt.Errorf("connectRateLimit wildcard descriptors cannot use perDownstreamConnection")
+			}
+			group = append(group, &configv1.NetworkLimitDescriptorEntry{Key: entry.GetKey(), Value: entry.GetValue()})
+		}
+		entries = append(entries, group)
+	}
+	return validateDescriptorLayout("connectRateLimit", config.GetRateLimits(), entries)
+}
+
 // ValidateBandwidthLimit validates module configuration at both ingestion and compilation.
 func ValidateBandwidthLimit(config *configv1.BandwidthLimitSettings) error {
 	if config == nil {
@@ -36,7 +61,7 @@ func ValidateBandwidthLimit(config *configv1.BandwidthLimitSettings) error {
 			return fmt.Errorf("bandwidthLimit capacity and buffer limit must be positive")
 		}
 	}
-	entries := make([][]*configv1.BandwidthDescriptorEntry, 0, len(config.GetDescriptors()))
+	entries := make([][]*configv1.NetworkLimitDescriptorEntry, 0, len(config.GetDescriptors()))
 	for i, descriptor := range config.GetDescriptors() {
 		rates := descriptor.GetBandwidthLimit()
 		if rates.GetUploadBytesPerSecond() == 0 && rates.GetDownloadBytesPerSecond() == 0 {
@@ -75,7 +100,7 @@ func ValidateConnectConcurrencyLimit(config *configv1.ConnectConcurrencyLimitSet
 	if config.MaxDynamicBuckets != nil && *config.MaxDynamicBuckets == 0 {
 		return fmt.Errorf("connectConcurrencyLimit.maxDynamicBuckets must be positive")
 	}
-	entries := make([][]*configv1.BandwidthDescriptorEntry, 0, len(config.GetDescriptors()))
+	entries := make([][]*configv1.NetworkLimitDescriptorEntry, 0, len(config.GetDescriptors()))
 	for i, descriptor := range config.GetDescriptors() {
 		if descriptor.GetMaxConcurrentStreams() == 0 {
 			return fmt.Errorf("connectConcurrencyLimit.descriptors[%d].maxConcurrentStreams must be positive", i)
@@ -87,15 +112,15 @@ func ValidateConnectConcurrencyLimit(config *configv1.ConnectConcurrencyLimitSet
 
 func validateDescriptorLayout(
 	name string,
-	rules []*configv1.BandwidthRateLimit,
-	descriptors [][]*configv1.BandwidthDescriptorEntry,
+	rules []*configv1.NetworkLimitRule,
+	descriptors [][]*configv1.NetworkLimitDescriptorEntry,
 ) error {
 	if len(rules) == 0 || len(descriptors) == 0 {
 		return fmt.Errorf("%s requires rateLimits and descriptors", name)
 	}
 	groups := make([][]string, 0, len(rules))
 	for i, rule := range rules {
-		keys, err := bandwidthActionKeys(rule)
+		keys, err := networkLimitActionKeys(rule)
 		if err != nil {
 			return fmt.Errorf("%s.rateLimits[%d]: %w", name, i, err)
 		}
@@ -113,7 +138,7 @@ func validateDescriptorLayout(
 			if slices.EqualFunc(
 				previous,
 				entries,
-				func(a, b *configv1.BandwidthDescriptorEntry) bool { return proto.Equal(a, b) },
+				func(a, b *configv1.NetworkLimitDescriptorEntry) bool { return proto.Equal(a, b) },
 			) {
 				return fmt.Errorf("%s.descriptors[%d] duplicates earlier entries", name, i)
 			}
@@ -122,7 +147,7 @@ func validateDescriptorLayout(
 	return nil
 }
 
-func bandwidthActionKeys(rule *configv1.BandwidthRateLimit) ([]string, error) {
+func networkLimitActionKeys(rule *configv1.NetworkLimitRule) ([]string, error) {
 	if len(rule.GetActions()) == 0 {
 		return nil, fmt.Errorf("actions must not be empty")
 	}

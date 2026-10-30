@@ -58,10 +58,12 @@ data:
     - name: egress-gateway
       namespace: {{ .Namespace }}
       connectRateLimit:
-        tokenBucket:
-          maxTokens: 1000
-          tokensPerFill: 1000
-          fillInterval: 1s
+        rateLimits:
+        - actions:
+          - genericKey: {descriptorKey: scope, descriptorValue: gateway}
+        descriptors:
+        - entries: [{key: scope, value: gateway}]
+          tokenBucket: {maxTokens: 1000, tokensPerFill: 1000, fillInterval: 1s}
       connectConcurrencyLimit:
         rateLimits:
         - actions:

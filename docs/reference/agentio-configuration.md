@@ -396,17 +396,37 @@ Gateway API `parametersRef` ConfigMaps accept the same `upstreamTls` block in `d
 
 Each accepted HTTP/2 CONNECT stream consumes one token.
 
+Use the same `rateLimits[].actions[]` and `descriptors[].entries[]` grouping format as concurrency and bandwidth limits. `filterState` reads a trusted string value; `genericKey` supplies a fixed value. Each action group produces a separate ordered descriptor, so sandbox and gateway-wide limits can apply together:
+
+```yaml
+connectRateLimit:
+  rateLimits:
+    - actions:
+        - filterState: {key: sandbox.id, descriptorKey: sandbox}
+    - actions:
+        - genericKey: {descriptorKey: scope, descriptorValue: gateway}
+  descriptors:
+    - entries: [{key: sandbox}]
+      tokenBucket: {maxTokens: 10, tokensPerFill: 2, fillInterval: 1s}
+    - entries: [{key: scope, value: gateway}]
+      tokenBucket: {maxTokens: 100, tokensPerFill: 20, fillInterval: 1s}
+```
+
+Only the configuration grouping is shared: CONNECT rate limiting still uses Envoy's native local rate limit filter, including its matching and bucket lifecycle. Filter-state actions compile to native CEL descriptor expressions; evaluation errors retain the native skip behavior rather than the dynamic modules' missing-identity 403. Supply identity in a preceding trusted filter. Legacy `entries[].cel` configurations remain accepted when `rateLimits` is omitted; combining the two forms is rejected. To migrate a string lookup such as `cel: 'filter_state["sandbox.id"]'`, move its source into a `filterState` action and leave just `key`/`value` in the descriptor entry.
+
 Burst is already supported through `maxTokens`: for example, `maxTokens: 100`, `tokensPerFill: 10`, `fillInterval: 1s` permits an initial burst of 100 attempts and replenishes 10 tokens per second. No separate burst field is needed. Keep `perDownstreamConnection: false` for a shared gateway budget.
 
 | Field | Default | Description |
 | --- | --- | --- |
+| `rateLimits[].actions[]` | Unset | Ordered `filterState` / `genericKey` sources, using the same format as bandwidth and concurrency. Multiple groups generate separate descriptors. |
+| `tokenBucket` | Unset | Optional gateway-wide bucket, charged in addition to matching descriptor buckets. Retained as a shorthand; a fixed `genericKey` group can express the gateway total instead. |
 | `tokenBucket.maxTokens` | `0` | Bucket capacity and initial token count. |
 | `tokenBucket.tokensPerFill` | `1` | Tokens added on each fill interval when omitted or zero. |
 | `tokenBucket.fillInterval` | Unset | Refill interval; it must be at least `50ms`. |
-| `descriptors[]` | Empty | Descriptor-specific buckets. The first descriptor whose entries all match is used. |
+| `descriptors[]` | Empty | Descriptor-specific token buckets. Entry keys/order must match an action group when `rateLimits` is configured. Matching follows the native Envoy filter. |
 | `descriptors[].entries[].key` | Empty | Descriptor key. |
 | `descriptors[].entries[].value` | Empty | Exact value. Empty acts as a wildcard and creates a bucket for each distinct runtime value. |
-| `descriptors[].entries[].cel` | Empty | CEL expression that produces the runtime descriptor value. |
+| `descriptors[].entries[].cel` | Empty | Legacy CEL value source. Only supported when `rateLimits` is omitted. |
 | `descriptors[].tokenBucket` | Unset | Bucket used by the matching descriptor. |
 | `perDownstreamConnection` | `false` | Creates a token bucket for each ztunnel-to-gateway connection. It cannot be combined with wildcard descriptor values. |
 

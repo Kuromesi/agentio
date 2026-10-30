@@ -389,7 +389,7 @@ data:
 		})
 	})
 
-	rig.RunScenario(t, "per-client CEL descriptor bucketing", func(t *testing.T, scope *kube.ResourceScope) {
+	rig.RunScenario(t, "per-client filter-state descriptor bucketing", func(t *testing.T, scope *kube.ResourceScope) {
 		dst := trafficFixture.AnotherServer
 		targetHost := dst.Address()
 
@@ -410,11 +410,12 @@ data:
     - name: egress-gateway
       namespace: {{ .Namespace }}
       connectRateLimit:
+        rateLimits:
+        - actions:
+          - filterState: {key: agentio.workload.name, descriptorKey: peer_name}
         descriptors:
         - entries:
           - key: peer_name
-            value: ""
-            cel: 'filter_state["agentio.workload.name"]'
           tokenBucket:
             maxTokens: 1
             tokensPerFill: 1

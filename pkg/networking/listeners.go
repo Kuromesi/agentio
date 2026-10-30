@@ -944,19 +944,7 @@ func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimit
 				&ratelimitv3.RateLimitDescriptor_Entry{Key: entry.GetKey(), Value: entry.GetValue()},
 			)
 			if entry.GetCel() != "" {
-				configAny := b.pack(&rlexprv3.Descriptor{
-					DescriptorKey: entry.GetKey(),
-					ExprSpecifier: &rlexprv3.Descriptor_Text{Text: entry.GetCel()},
-					SkipIfError:   true,
-				})
-				actions[entry.GetKey()] = &routev3.RateLimit_Action{
-					ActionSpecifier: &routev3.RateLimit_Action_Extension{
-						Extension: &corev3.TypedExtensionConfig{
-							Name:        "envoy.rate_limit_descriptors.expr",
-							TypedConfig: configAny,
-						},
-					},
-				}
+				actions[entry.GetKey()] = b.rateLimitCELAction(entry.GetKey(), entry.GetCel())
 			}
 		}
 		config.Descriptors = append(config.Descriptors, converted)
@@ -973,10 +961,45 @@ func (b *resourceBuilder) localRateLimitFilter(settings *configv1.LocalRateLimit
 		}
 		config.RateLimits = []*routev3.RateLimit{rateLimit}
 	}
+	for _, group := range settings.GetRateLimits() {
+		rateLimit := &routev3.RateLimit{}
+		for _, action := range group.GetActions() {
+			if state := action.GetFilterState(); state != nil {
+				rateLimit.Actions = append(rateLimit.Actions,
+					b.rateLimitCELAction(state.GetDescriptorKey(), fmt.Sprintf("filter_state[%q]", state.GetKey())))
+			} else {
+				fixed := action.GetGenericKey()
+				rateLimit.Actions = append(rateLimit.Actions, &routev3.RateLimit_Action{
+					ActionSpecifier: &routev3.RateLimit_Action_GenericKey_{
+						GenericKey: &routev3.RateLimit_Action_GenericKey{
+							DescriptorKey:   fixed.GetDescriptorKey(),
+							DescriptorValue: fixed.GetDescriptorValue(),
+						},
+					},
+				})
+			}
+		}
+		config.RateLimits = append(config.RateLimits, rateLimit)
+	}
 	if err := config.ValidateAll(); err != nil {
 		return nil, fmt.Errorf("validate connect rate limit: %w", err)
 	}
 	return httpFilter("envoy.filters.http.local_ratelimit", b.pack(config)), nil
+}
+
+func (b *resourceBuilder) rateLimitCELAction(key, expression string) *routev3.RateLimit_Action {
+	return &routev3.RateLimit_Action{
+		ActionSpecifier: &routev3.RateLimit_Action_Extension{
+			Extension: &corev3.TypedExtensionConfig{
+				Name: "envoy.rate_limit_descriptors.expr",
+				TypedConfig: b.pack(&rlexprv3.Descriptor{
+					DescriptorKey: key,
+					ExprSpecifier: &rlexprv3.Descriptor_Text{Text: expression},
+					SkipIfError:   true,
+				}),
+			},
+		},
+	}
 }
 
 func tokenBucket(value *configv1.TokenBucket) *typev3.TokenBucket {
