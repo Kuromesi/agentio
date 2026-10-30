@@ -61,11 +61,15 @@ func TestGatewayValidateForUseRejectsDuplicateRouteOverrideHosts(t *testing.T) {
 		{"*.example.com", "*.example.com"},
 		{"*", "*"},
 	} {
-		gateway := Gateway{Namespace: "demo", Name: "egress", Config: &configv1.EgressGateway{
-			ConnectionPool: &configv1.ConnectionPoolSettings{Http: &configv1.ConnectionPoolHttpSettings{
-				RouteOverrides: []*configv1.HttpRouteOverride{{Hosts: hosts[:1]}, {Hosts: hosts[1:]}},
-			}},
-		}}
+		gateway := Gateway{
+			Namespace: "demo",
+			Name:      "egress",
+			Config: &configv1.EgressGateway{
+				ConnectionPool: &configv1.ConnectionPoolSettings{Http: &configv1.ConnectionPoolHttpSettings{
+					RouteOverrides: []*configv1.HttpRouteOverride{{Hosts: hosts[:1]}, {Hosts: hosts[1:]}},
+				}},
+			},
+		}
 		if err := gateway.ValidateForUse(); err == nil ||
 			!strings.Contains(err.Error(), "duplicate route override host") {
 			t.Fatalf("hosts %v: expected duplicate host error, got %v", hosts, err)

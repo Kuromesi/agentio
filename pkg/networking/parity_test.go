@@ -161,7 +161,7 @@ func TestTLSOuterSNISeparatesInternalConnectionPools(t *testing.T) {
 		t.Fatalf("decode SNI capture before TCP proxy: %v", err)
 	}
 	values := config.GetOnNewConnection()
-	if len(values) != 1 || values[0].GetObjectKey() != "io.kruise.outer_sni" {
+	if len(values) != 1 || values[0].GetObjectKey() != outerSNIKey {
 		t.Fatalf("SNI capture must propagate exactly the outer SNI: %v", values)
 	}
 	state := values[0]
@@ -205,7 +205,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	}
 	for listenerName, want := range map[string][]string{
 		MainInternal: {"envoy.filters.http.ext_proc", "agentio.route_upstream", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "envoy.filters.http.router"},
-		MainForward:  {"envoy.filters.http.rbac", "envoy.filters.http.ext_proc", "agentio.route_upstream", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", "connect-proxy-tls-identity", "envoy.filters.http.router"},
+		MainForward:  {"envoy.filters.http.rbac", "envoy.filters.http.ext_proc", "agentio.route_upstream", "agentio.egress_target", "envoy.filters.http.dynamic_forward_proxy", connectProxyTLSIdentityFilter, "envoy.filters.http.router"},
 	} {
 		if got := httpFilterNames(findHCM(t, listeners[listenerName])); !equalStrings(got, want) {
 			t.Errorf("listener %s HTTP filter order = %v, want %v", listenerName, got, want)
@@ -230,7 +230,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	}
 	connectHCM := findHCM(t, connect)
 	for _, filter := range connectHCM.GetHttpFilters() {
-		if filter.GetName() != "connect_authority" {
+		if filter.GetName() != "agentio.connect_authority" {
 			continue
 		}
 		config := &setstatehttpv3.Config{}
@@ -525,7 +525,7 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 				hcm.ForwardClientCertDetails = hcmv3.HttpConnectionManager_SANITIZE
 				hcm.SetCurrentClientCertDetails = nil
 				for _, filter := range hcm.GetHttpFilters() {
-					if filter.GetName() != "connect_authority" {
+					if filter.GetName() != "connect_authority" && filter.GetName() != "agentio.connect_authority" {
 						continue
 					}
 					config := &setstatehttpv3.Config{}
@@ -574,7 +574,7 @@ func supportedListenerRouteParityView(t *testing.T, resources map[string]proto.M
 							t.Fatalf("decode outer SNI capture: %v", err)
 						}
 						for _, state := range config.GetOnNewConnection() {
-							if state.GetObjectKey() == "io.kruise.outer_sni" {
+							if state.GetObjectKey() == outerSNIKey || state.GetObjectKey() == legacyOuterSNIKey {
 								state.FactoryKey = ""
 							}
 						}
@@ -906,7 +906,7 @@ func TestLegacyGatewayGraphParity(t *testing.T) {
 	})
 	forward.FilterChainMatcher = forward.GetFilterChainMatcher().GetOnNoMatch().GetMatcher()
 	chain := findFilterChain(t, forward, forwardTCPChain)
-	chain.Filters[0] = proto.Clone(outerTLSIdentityFilter).(*listenerv3.Filter)
+	chain.Filters[0] = proto.Clone(legacyOuterTLSIdentityFilter).(*listenerv3.Filter)
 	proxy := &tcpproxyv3.TcpProxy{}
 	if err := chain.Filters[1].GetTypedConfig().UnmarshalTo(proxy); err != nil {
 		t.Fatal(err)

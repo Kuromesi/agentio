@@ -234,7 +234,7 @@ injected credentials, and may modify that request further. Their decisions do
 not re-enter EPE policy evaluation or its rule audit. Only grant this capability
 to trusted services. Additional processors cannot publish EPE's `agentio.route`
 metadata; they have independent clusters, filter names, and statistics named
-`agentio.additional-ext-proc.<name>`.
+`agentio.additional_ext_proc.<name>` for native gateways and `agentio.additional-ext-proc.<name>` for legacy gateways.
 
 ## Egress gateway settings
 
@@ -253,6 +253,12 @@ Each entry in `egressGateways` matches a running gateway by verified workload id
 | `serviceEntries` | `EgressServiceEntry[]` | Empty | Static upstream endpoints that override DNS resolution for exact destination hosts at this gateway. |
 | `accessLogFormat` | `AccessLogFormat` | Built-in JSON | Format of the built-in `envoy` access-log provider on stdout for this gateway. See below. |
 
+### Gateway protocol names
+
+Native `agentio-egress` gateways use `agentio.*` for custom filter state and metadata. TLS termination captures `agentio.tls.outer_sni`, policy-denial logs read `agentio.egress.denial_reason`, CONNECT authority uses `agentio.connect.authority`, and Sandbox context uses `agentio.sandbox.id` and `agentio.sandbox.token`. Workload, peer, route, and SNI-policy fields retain their existing `agentio.*` names. Native CONNECT filter instances also use the `agentio.` prefix. Envoy built-in keys, HTTP headers, Kubernetes API domains, and protobuf type URLs retain their protocol names.
+
+Legacy waypoint gateways retain their existing keys, filter names, and default log expressions, including `io.kruise.outer_sni`, `io.kruise.egress_denial_reason`, `io.istio.connect_authority`, `sandbox.id`, and `sandbox.token`. EPE accepts either token attribute, with the native attribute taking precedence whenever present, including an empty value. Native gateways use `agentio.workload.labels`; EPE retains `sandbox.labels` support for legacy gateways. For native gateways, exact legacy Sandbox attribute names in an ext_proc provider are translated to their native equivalents. Custom CEL expressions, log formats, and filter-name patches must use the names for the target gateway. Deploy the updated native gateway configuration, Porter, and EPE together; this naming change does not provide a mixed-version native upgrade protocol.
+
 ### Access-log format
 
 Set `egressGateways[].accessLogFormat` in AgentioConfig to customize a gateway's access logs. Choose either `json` for a JSON object or `text` for a text template. Both support [Envoy access-log substitution operators](https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage). The format applies to HTTP and TCP logs, CONNECT failures, listener filter-chain misses, and SNI denials when SNI policy enforcement is enabled. The TLS-termination relay itself does not emit duplicate application logs.
@@ -269,10 +275,10 @@ egressGateways:
       scheme: "%REQ(:SCHEME)%"
       protocol: "%PROTOCOL%"
       authority: "%REQ(:AUTHORITY)%"
-      requested_server_name: "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%"
+      requested_server_name: "%CEL('agentio.tls.outer_sni' in filter_state ? filter_state['agentio.tls.outer_sni'] : connection.requested_server_name)%"
       upstream_address: "%UPSTREAM_REMOTE_ADDRESS%"
       response_code: "%RESPONSE_CODE%"
-      denial_reason: "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%"
+      denial_reason: "%FILTER_STATE(agentio.egress.denial_reason:PLAIN)%"
 ```
 
 The JSON object replaces the complete default format; its fields are not merged with the defaults. Nested objects and typed values are supported. Unavailable JSON values may be omitted or appear as `null`; log consumers should accept both. This example's illustrative output after HTTPS termination is:

@@ -67,7 +67,7 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		result = append(result, b.buildExtProcCluster(config.extProc, ExtProcCluster))
 	}
 	for _, provider := range config.additionalExtProcs {
-		result = append(result, b.buildExtProcCluster(provider, additionalExtProcName(provider)))
+		result = append(result, b.buildExtProcCluster(provider, additionalExtProcName(provider, b.legacyGateway)))
 	}
 	if features.EnableUDPProxy {
 		result = append(result, b.buildUDPCluster())

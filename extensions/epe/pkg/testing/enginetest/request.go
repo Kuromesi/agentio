@@ -86,7 +86,7 @@ func (b *RequestBuilder) Peer(namespace, name string, labels map[string]string) 
 	return b
 }
 
-// SandboxToken sets filter_state['sandbox.token'] as base64(JSON).
+// SandboxToken sets filter_state['agentio.sandbox.token'] as base64(JSON).
 func (b *RequestBuilder) SandboxToken(requestID, accessToken, clientID string) *RequestBuilder {
 	token, err := json.Marshal(map[string]string{
 		"requestId":       requestID,

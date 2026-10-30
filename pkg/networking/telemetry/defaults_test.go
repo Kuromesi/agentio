@@ -26,8 +26,28 @@ import (
 	fileaccesslogv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 )
 
+func TestLegacyDefaultLogsRetainFilterStateNames(t *testing.T) {
+	fileLog := &fileaccesslogv3.FileAccessLog{}
+	if err := defaultTelemetryProviders(
+		nil,
+		true,
+	).Provider("envoy").
+		HTTPAccessLog.GetTypedConfig().
+		UnmarshalTo(fileLog); err != nil {
+		t.Fatal(err)
+	}
+	fields := fileLog.GetLogFormat().GetJsonFormat().GetFields()
+	if got := fields["denial_reason"].GetStringValue(); got != "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%" {
+		t.Fatalf("legacy denial reason format changed: %s", got)
+	}
+	format := fields["requested_server_name"].GetStringValue()
+	if !strings.Contains(format, "io.kruise.outer_sni") || strings.Contains(format, "agentio.tls.outer_sni") {
+		t.Fatalf("legacy SNI format changed: %s", format)
+	}
+}
+
 func TestDefaultProviders(t *testing.T) {
-	defaults := defaultTelemetryProviders(nil)
+	defaults := defaultTelemetryProviders(nil, false)
 	if !slices.Equal(defaults.DefaultMetrics, []string{"prometheus"}) {
 		t.Fatalf("default metrics = %v", defaults.DefaultMetrics)
 	}
@@ -63,7 +83,7 @@ func TestDefaultProviders(t *testing.T) {
 			"scheme":                         "%REQ(:SCHEME)%",
 			"original_destination":           "%DOWNSTREAM_LOCAL_ADDRESS%",
 			"upstream_host":                  "%UPSTREAM_HOST%",
-			"denial_reason":                  "%FILTER_STATE(io.kruise.egress_denial_reason:PLAIN)%",
+			"denial_reason":                  "%FILTER_STATE(agentio.egress.denial_reason:PLAIN)%",
 			"response_code_details":          "%RESPONSE_CODE_DETAILS%",
 			"connection_termination_details": "%CONNECTION_TERMINATION_DETAILS%",
 			"log_type":                       "%ACCESS_LOG_TYPE%",
@@ -76,7 +96,7 @@ func TestDefaultProviders(t *testing.T) {
 			"path":                           "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
 			"protocol":                       "%PROTOCOL%",
 			"request_id":                     "%REQ(X-REQUEST-ID)%",
-			"requested_server_name":          "%CEL('io.kruise.outer_sni' in filter_state ? filter_state['io.kruise.outer_sni'] : connection.requested_server_name)%",
+			"requested_server_name":          "%CEL('agentio.tls.outer_sni' in filter_state ? filter_state['agentio.tls.outer_sni'] : connection.requested_server_name)%",
 			"response_code":                  "%RESPONSE_CODE%",
 			"response_flags":                 "%RESPONSE_FLAGS%",
 			"start_time":                     "%START_TIME%",
@@ -101,7 +121,7 @@ func TestDefaultProviders(t *testing.T) {
 func TestDefaultAccessLogPreservesOriginalSNI(t *testing.T) {
 	fileLog := &fileaccesslogv3.FileAccessLog{}
 	if err := defaultTelemetryProviders(
-		nil,
+		nil, false,
 	).Provider("envoy").
 		HTTPAccessLog.GetTypedConfig().
 		UnmarshalTo(fileLog); err != nil {
@@ -143,8 +163,8 @@ func testAccessLogSNI(t *testing.T, format string) {
 		{name: "plaintext HTTP", state: map[string][]byte{}, want: ""},
 		{name: "TLS passthrough", state: map[string][]byte{}, socketSNI: "passthrough.example.com", want: "passthrough.example.com"},
 		{name: "TLS without SNI", state: map[string][]byte{}, want: ""},
-		{name: "decrypted HTTPS", state: map[string][]byte{"io.kruise.outer_sni": []byte("api.example.com")}, want: "api.example.com"},
-		{name: "outer SNI wins over inner connection", state: map[string][]byte{"io.kruise.outer_sni": []byte("proxy.example.com")}, socketSNI: "inner.example.com", want: "proxy.example.com"},
+		{name: "decrypted HTTPS", state: map[string][]byte{"agentio.tls.outer_sni": []byte("api.example.com")}, want: "api.example.com"},
+		{name: "outer SNI wins over inner connection", state: map[string][]byte{"agentio.tls.outer_sni": []byte("proxy.example.com")}, socketSNI: "inner.example.com", want: "proxy.example.com"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			// Envoy exposes an unstructured filter-state string as CEL bytes. No
@@ -187,7 +207,7 @@ func TestDefaultAccessLogWorkloadIdentity(t *testing.T) {
 	}
 	fileLog := &fileaccesslogv3.FileAccessLog{}
 	if err := defaultTelemetryProviders(
-		nil,
+		nil, false,
 	).Provider("envoy").
 		HTTPAccessLog.GetTypedConfig().
 		UnmarshalTo(fileLog); err != nil {

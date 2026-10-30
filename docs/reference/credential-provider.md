@@ -16,7 +16,7 @@ sandbox ──> egress gateway ──ext_proc──> EPE ──HTTPS/mTLS──>
                                           └─ injects apiKey / signs with STS
 ```
 
-1. The data plane attaches the caller's identity as `filter_state['sandbox.token']`: base64-encoded (or raw) JSON of
+1. The data plane attaches the caller's identity as `filter_state['agentio.sandbox.token']`: base64-encoded (or raw) JSON of
 
    ```json
    { "requestId": "...", "accessToken": "...", "sandboxClientId": "..." }

@@ -44,7 +44,7 @@ type Peer struct {
 	// Labels is the source workload's label map, parsed from
 	// filter_state['agentio.workload.labels'] (or legacy sandbox.labels). Nil when pod identity is missing.
 	Labels map[string]string
-	// Token carries filter_state['sandbox.token']. Consumers must call Parse
+	// Token carries filter_state['agentio.sandbox.token']. Consumers must call Parse
 	// before reading its fields. Copies of Peer share the same lazy result.
 	Token *SandboxToken
 }

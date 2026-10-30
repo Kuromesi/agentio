@@ -52,6 +52,26 @@ func makeHTTPHeaders(kv map[string]string) *extProcPb.HttpHeaders {
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
+func TestExtractSandboxTokenNames(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		fields map[string]any
+		want   string
+	}{
+		{name: "native", fields: map[string]any{FilterStateSandboxToken: "new"}, want: "new"},
+		{name: "legacy", fields: map[string]any{LegacyFilterStateSandboxToken: "old"}, want: "old"},
+		{name: "native wins", fields: map[string]any{FilterStateSandboxToken: "new", LegacyFilterStateSandboxToken: "old"}, want: "new"},
+		{name: "empty native is authoritative", fields: map[string]any{FilterStateSandboxToken: "", LegacyFilterStateSandboxToken: "old"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			peer, _ := Extract(context.Background(), makeHTTPHeaders(nil), makeAttrs(t, tt.fields))
+			if !reflect.DeepEqual(peer.Token, filter.NewSandboxToken(tt.want)) {
+				t.Fatalf("token selection failed for %s", tt.name)
+			}
+		})
+	}
+}
+
 func TestExtract(t *testing.T) {
 	fullHeaders := map[string]string{
 		":authority": "api.example.com:8443",

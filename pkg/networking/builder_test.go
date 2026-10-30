@@ -124,7 +124,7 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 	tlsChain := findFilterChain(t, listeners[MainInternal], tlsTerminateChain)
 	if got, want := networkFilterNames(tlsChain), []string{
 		"envoy.filters.network.set_filter_state",
-		"connect_downstream_peer",
+		"agentio.connect_downstream_peer",
 		"envoy.filters.network.tcp_proxy",
 	}; !equalStrings(got, want) {
 		t.Fatalf("TLS termination filter order = %v, want %v", got, want)
@@ -134,10 +134,10 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		t.Fatalf("connect RDS name = %q", connectHCM.GetRds().GetRouteConfigName())
 	}
 	if got, want := httpFilterNames(connectHCM), []string{
-		"connect_authority",
+		"agentio.connect_authority",
 		"envoy.filters.http.ext_proc",
-		"connect_workload",
-		"connect_sni_policy",
+		"agentio.connect_workload",
+		"agentio.connect_sni_policy",
 		"envoy.filters.http.local_ratelimit",
 		"envoy.filters.http.router",
 	}; !equalStrings(got, want) {
@@ -1044,7 +1044,7 @@ func TestSandboxHeaderFilterState(t *testing.T) {
 	hcm := findHCM(t, listeners[ConnectTerminate])
 	var states []*setstatecommonv3.FilterStateValue
 	for _, filter := range hcm.GetHttpFilters() {
-		if filter.GetName() != "connect_authority" {
+		if filter.GetName() != "agentio.connect_authority" {
 			continue
 		}
 		config := &setstatehttpv3.Config{}
@@ -1054,8 +1054,8 @@ func TestSandboxHeaderFilterState(t *testing.T) {
 		states = config.GetOnRequestHeaders()
 	}
 	for key, header := range map[string]string{
-		"sandbox.id":    "X-AGENTIO-SANDBOX-ID",
-		"sandbox.token": "X-AGENTIO-SANDBOX-TOKEN",
+		"agentio.sandbox.id":    "X-AGENTIO-SANDBOX-ID",
+		"agentio.sandbox.token": "X-AGENTIO-SANDBOX-TOKEN",
 	} {
 		index := slices.IndexFunc(
 			states,

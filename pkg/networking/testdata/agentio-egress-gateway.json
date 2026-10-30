@@ -741,7 +741,7 @@
                   },
                   "httpFilters": [
                     {
-                      "name": "connect_authority",
+                      "name": "agentio.connect_authority",
                       "typedConfig": {
                         "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
                         "onRequestHeaders": [
@@ -756,7 +756,7 @@
                             "sharedWithUpstream": "ONCE"
                           },
                           {
-                            "objectKey": "io.istio.connect_authority",
+                            "objectKey": "agentio.connect.authority",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
                               "textFormatSource": {
@@ -799,7 +799,7 @@
                             "sharedWithUpstream": "ONCE"
                           },
                           {
-                            "objectKey": "sandbox.token",
+                            "objectKey": "agentio.sandbox.token",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
                               "textFormatSource": {
@@ -810,7 +810,7 @@
                             "sharedWithUpstream": "TRANSITIVE"
                           },
                           {
-                            "objectKey": "sandbox.id",
+                            "objectKey": "agentio.sandbox.id",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
                               "textFormatSource": {
@@ -859,7 +859,7 @@
                           "responseTrailerMode": "SKIP"
                         },
                         "requestAttributes": [
-                          "filter_state['sandbox.id']",
+                          "filter_state['agentio.sandbox.id']",
                           "filter_state['agentio.downstream.ip']",
                           "filter_state['agentio.peer.principal']",
                           "filter_state['agentio.peer.certificate']"
@@ -875,7 +875,7 @@
                       }
                     },
                     {
-                      "name": "connect_workload",
+                      "name": "agentio.connect_workload",
                       "typedConfig": {
                         "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
                         "onRequestHeaders": [
@@ -916,18 +916,6 @@
                             "skipIfEmpty": true
                           },
                           {
-                            "objectKey": "sandbox.labels",
-                            "factoryKey": "envoy.hashable_string",
-                            "formatString": {
-                              "textFormatSource": {
-                                "inlineString": "%DYNAMIC_METADATA(agentio:workload_labels)%"
-                              },
-                              "omitEmptyValues": true
-                            },
-                            "sharedWithUpstream": "TRANSITIVE",
-                            "skipIfEmpty": true
-                          },
-                          {
                             "objectKey": "agentio.workload.instance",
                             "factoryKey": "envoy.hashable_string",
                             "formatString": {
@@ -943,7 +931,7 @@
                       }
                     },
                     {
-                      "name": "connect_sni_policy",
+                      "name": "agentio.connect_sni_policy",
                       "typedConfig": {
                         "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
                         "onRequestHeaders": [
@@ -1158,7 +1146,6 @@
                           "filter_state['agentio.workload.name']",
                           "filter_state['agentio.workload.namespace']",
                           "filter_state['agentio.workload.labels']",
-                          "filter_state['sandbox.labels']",
                           "source.address",
                           "destination.address",
                           "destination.port",
@@ -1284,7 +1271,7 @@
                   "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
                   "onNewConnection": [
                     {
-                      "objectKey": "io.kruise.outer_sni",
+                      "objectKey": "agentio.tls.outer_sni",
                       "factoryKey": "envoy.hashable_string",
                       "formatString": {
                         "textFormatSource": {
@@ -1299,7 +1286,7 @@
                 }
               },
               {
-                "name": "connect_downstream_peer",
+                "name": "agentio.connect_downstream_peer",
                 "typedConfig": {
                   "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
                   "onNewConnection": [
@@ -1350,11 +1337,11 @@
                       "skipIfEmpty": true
                     },
                     {
-                      "objectKey": "io.istio.connect_authority",
+                      "objectKey": "agentio.connect.authority",
                       "factoryKey": "envoy.hashable_string",
                       "formatString": {
                         "textFormatSource": {
-                          "inlineString": "%FILTER_STATE(io.istio.connect_authority:PLAIN)%"
+                          "inlineString": "%FILTER_STATE(agentio.connect.authority:PLAIN)%"
                         },
                         "omitEmptyValues": true
                       },
@@ -1695,7 +1682,7 @@
                                                 {
                                                   "id": "5",
                                                   "constExpr": {
-                                                    "stringValue": "io.kruise.outer_sni"
+                                                    "stringValue": "agentio.tls.outer_sni"
                                                   }
                                                 },
                                                 {
@@ -1739,7 +1726,7 @@
                                                             {
                                                               "id": "12",
                                                               "constExpr": {
-                                                                "stringValue": "io.kruise.outer_sni"
+                                                                "stringValue": "agentio.tls.outer_sni"
                                                               }
                                                             }
                                                           ]
@@ -1830,7 +1817,7 @@
                                                                 {
                                                                   "id": "27",
                                                                   "constExpr": {
-                                                                    "stringValue": "io.kruise.outer_sni"
+                                                                    "stringValue": "agentio.tls.outer_sni"
                                                                   }
                                                                 }
                                                               ]
@@ -1880,7 +1867,6 @@
                           "filter_state['agentio.workload.name']",
                           "filter_state['agentio.workload.namespace']",
                           "filter_state['agentio.workload.labels']",
-                          "filter_state['sandbox.labels']",
                           "source.address",
                           "destination.address",
                           "destination.port",
@@ -1960,7 +1946,7 @@
                       }
                     },
                     {
-                      "name": "connect-proxy-tls-identity",
+                      "name": "agentio.connect_proxy_tls_identity",
                       "typedConfig": {
                         "@type": "type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher",
                         "xdsMatcher": {
@@ -2004,7 +1990,7 @@
                                 "objectKey": "envoy.network.upstream_server_name",
                                 "formatString": {
                                   "textFormatSource": {
-                                    "inlineString": "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"
+                                    "inlineString": "%FILTER_STATE(agentio.tls.outer_sni:PLAIN)%"
                                   },
                                   "omitEmptyValues": true
                                 },
@@ -2014,7 +2000,7 @@
                                 "objectKey": "envoy.network.upstream_subject_alt_names",
                                 "formatString": {
                                   "textFormatSource": {
-                                    "inlineString": "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"
+                                    "inlineString": "%FILTER_STATE(agentio.tls.outer_sni:PLAIN)%"
                                   },
                                   "omitEmptyValues": true
                                 },
@@ -2063,7 +2049,7 @@
                       "objectKey": "envoy.network.upstream_server_name",
                       "formatString": {
                         "textFormatSource": {
-                          "inlineString": "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"
+                          "inlineString": "%FILTER_STATE(agentio.tls.outer_sni:PLAIN)%"
                         },
                         "omitEmptyValues": true
                       }
@@ -2072,7 +2058,7 @@
                       "objectKey": "envoy.network.upstream_subject_alt_names",
                       "formatString": {
                         "textFormatSource": {
-                          "inlineString": "%FILTER_STATE(io.kruise.outer_sni:PLAIN)%"
+                          "inlineString": "%FILTER_STATE(agentio.tls.outer_sni:PLAIN)%"
                         },
                         "omitEmptyValues": true
                       }

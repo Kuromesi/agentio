@@ -55,7 +55,11 @@ func Build(inputs Inputs) (*Output, error) {
 	if err := inputs.Gateway.ValidateForUse(); err != nil {
 		return nil, err
 	}
-	providers, err := resolveTelemetryProviders(inputs.ProviderOverrides, inputs.Gateway.Config.GetAccessLogFormat())
+	providers, err := resolveTelemetryProviders(
+		inputs.ProviderOverrides,
+		inputs.Gateway.Config.GetAccessLogFormat(),
+		inputs.LegacyGateway,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve Telemetry providers: %w", err)
 	}

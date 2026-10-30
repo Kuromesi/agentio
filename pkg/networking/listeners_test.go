@@ -49,11 +49,14 @@ func TestConnectRateLimitPreservesDescriptorGroupsAndValues(t *testing.T) {
 	bucket := &configv1.TokenBucket{MaxTokens: 10, TokensPerFill: 10, FillInterval: durationpb.New(time.Second)}
 	settings := &configv1.LocalRateLimitSettings{Descriptors: []*configv1.RateLimitDescriptor{
 		{Entries: []*configv1.RateLimitEntry{{Key: "namespace", Cel: `"demo"`}}, TokenBucket: bucket},
-		{Entries: []*configv1.RateLimitEntry{
-			{Key: "namespace", Cel: `"other"`},
-			{Key: "workload", Cel: `"app"`},
-			{Key: "scope", Value: "gateway"},
-		}, TokenBucket: bucket},
+		{
+			Entries: []*configv1.RateLimitEntry{
+				{Key: "namespace", Cel: `"other"`},
+				{Key: "workload", Cel: `"app"`},
+				{Key: "scope", Value: "gateway"},
+			},
+			TokenBucket: bucket,
+		},
 	}}
 	filter, err := b.localRateLimitFilter(settings)
 	if err != nil {
@@ -171,12 +174,12 @@ func TestGatewayForwardProxyConnectSemantics(t *testing.T) {
 	if !clearHCM.GetHttp2ProtocolOptions().GetAllowConnect() || !tlsHCM.GetHttp2ProtocolOptions().GetAllowConnect() {
 		t.Fatal("both forward HCMs must allow HTTP/2 CONNECT")
 	}
-	if hasHTTPFilter(clearHCM, "connect-proxy-tls-identity") {
+	if hasHTTPFilter(clearHCM, connectProxyTLSIdentityFilter) {
 		t.Fatal("clear HTTP proxy gained TLS identity filter")
 	}
 	var identity *hcmv3.HttpFilter
 	for _, filter := range tlsHCM.GetHttpFilters() {
-		if filter.GetName() == "connect-proxy-tls-identity" {
+		if filter.GetName() == connectProxyTLSIdentityFilter {
 			identity = filter
 			break
 		}
@@ -359,9 +362,13 @@ func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
 		if len(values) != 2 {
 			t.Fatalf("TCP TLS identity = %v, want SNI and SAN", values)
 		}
+		wantSNIKey := outerSNIKey
+		if legacy {
+			wantSNIKey = legacyOuterSNIKey
+		}
 		for i, key := range []string{upstreamServerNameKey, upstreamSubjectAltNamesKey} {
 			if values[i].GetObjectKey() != key || values[i].GetFormatString().GetTextFormatSource().GetInlineString() !=
-				"%FILTER_STATE(io.kruise.outer_sni:PLAIN)%" {
+				"%FILTER_STATE("+wantSNIKey+":PLAIN)%" {
 				t.Errorf("legacy=%v: TLS identity %s must use outer SNI: %v", legacy, key, values[i])
 			}
 		}

@@ -116,7 +116,7 @@ impl Processor {
         let certificate = attribute(attributes, "filter_state['agentio.peer.certificate']");
         let peer_ip = attribute(attributes, "filter_state['agentio.downstream.ip']");
         let principal = attribute(attributes, "filter_state['agentio.peer.principal']");
-        let sandbox_id = attribute(attributes, "filter_state['sandbox.id']");
+        let sandbox_id = attribute(attributes, "filter_state['agentio.sandbox.id']");
         let request_deadline = tokio::time::Instant::now() + self.timeout;
         let result = tokio::time::timeout_at(
             request_deadline,

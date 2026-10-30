@@ -98,7 +98,9 @@ func (b *resourceBuilder) buildRoutes(gateway *configv1.EgressGateway) ([]*route
 // replaces only the route-selected host and original port state.
 func (b *resourceBuilder) buildForwardRoute(name string, gateway *configv1.EgressGateway) *routev3.RouteConfiguration {
 	result := &routev3.RouteConfiguration{
-		Name: name, ValidateClusters: wrapperspb.Bool(false), IgnorePortInHostMatching: true,
+		Name:                     name,
+		ValidateClusters:         wrapperspb.Bool(false),
+		IgnorePortInHostMatching: true,
 	}
 	settings := gateway.GetConnectionPool().GetHttp()
 	defaultSettings := settings.GetDefaultRoute()

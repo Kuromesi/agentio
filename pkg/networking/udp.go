@@ -110,7 +110,7 @@ func configureUDPHCM(hcm *hcmv3.HttpConnectionManager) {
 	router := hcm.HttpFilters[len(hcm.HttpFilters)-1]
 	filters := make([]*hcmv3.HttpFilter, 0, len(hcm.HttpFilters))
 	for _, filter := range hcm.HttpFilters[:len(hcm.HttpFilters)-1] {
-		if filter.Name != "connect_sni_policy" {
+		if filter.Name != "agentio.connect_sni_policy" {
 			filters = append(filters, filter)
 		}
 	}

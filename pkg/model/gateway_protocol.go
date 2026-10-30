@@ -22,10 +22,14 @@ const (
 
 // Filter-state keys shared by gateway configuration and CONNECT processing.
 const (
+	FilterStateOuterSNI          = "agentio.tls.outer_sni"
+	FilterStateDenialReason      = "agentio.egress.denial_reason"
 	FilterStateWorkloadLabels    = "agentio.workload.labels"
 	FilterStateWorkloadName      = "agentio.workload.name"
 	FilterStateWorkloadNamespace = "agentio.workload.namespace"
-	FilterStateSandboxID         = "sandbox.id"
+	FilterStateSandboxID         = "agentio.sandbox.id"
+	FilterStateSandboxToken      = "agentio.sandbox.token"
+	FilterStateConnectAuthority  = "agentio.connect.authority"
 	FilterStatePeerCertificate   = "agentio.peer.certificate"
 	FilterStatePeerIP            = "agentio.downstream.ip"
 	FilterStatePeerPrincipal     = "agentio.peer.principal"
