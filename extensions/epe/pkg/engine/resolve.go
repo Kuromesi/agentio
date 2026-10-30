@@ -18,7 +18,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // Resolution is what a Resolver hands back: the neutral units the engine
@@ -47,7 +47,7 @@ type Resolution struct {
 //
 // Returning zero units skips rule processing; independent request authorization
 // still applies when configured.
-type Resolver func(ctx context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (Resolution, error)
+type Resolver func(ctx context.Context, subject subject.Subject, req *httpreq.HTTPRequest) (Resolution, error)
 
 // RequestAuthorizer runs once after all request headers, including bypass
 // and empty resolutions, before any body callback. The stream contains

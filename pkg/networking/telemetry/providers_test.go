@@ -34,22 +34,33 @@ func TestResolveProvidersAppliesPresenceAwareOverrides(t *testing.T) {
 		Tracing:       model.OptionalProviderNames{Set: true, Names: []string{"trace"}},
 		AccessLogging: model.OptionalProviderNames{Set: true, Names: []string{"REMOTE"}},
 		Providers: []model.TelemetryProvider{
-			{Name: "remote", HTTPAccessLog: &accesslogv3.AccessLog{Name: "replacement"}, TCPAccessLog: &accesslogv3.AccessLog{Name: "replacement"}},
+			{
+				Name:          "remote",
+				HTTPAccessLog: &accesslogv3.AccessLog{Name: "replacement"},
+				TCPAccessLog:  &accesslogv3.AccessLog{Name: "replacement"},
+			},
 			{Name: "trace", Tracing: testTracingProvider(t)},
 		},
 		RemoveProviders: []string{"envoy"},
 	}
-	got, err := resolveTelemetryProviders(override, nil)
+	got, err := resolveTelemetryProviders(override, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.DefaultMetrics == nil || len(got.DefaultMetrics) != 0 {
 		t.Fatalf("explicit empty metrics = %#v", got.DefaultMetrics)
 	}
-	if !slices.Equal(got.DefaultTracing, []string{"trace"}) || !slices.Equal(got.DefaultAccessLogging, []string{"REMOTE"}) {
-		t.Fatalf("resolved defaults = metrics:%v tracing:%v logging:%v", got.DefaultMetrics, got.DefaultTracing, got.DefaultAccessLogging)
+	if !slices.Equal(got.DefaultTracing, []string{"trace"}) ||
+		!slices.Equal(got.DefaultAccessLogging, []string{"REMOTE"}) {
+		t.Fatalf(
+			"resolved defaults = metrics:%v tracing:%v logging:%v",
+			got.DefaultMetrics,
+			got.DefaultTracing,
+			got.DefaultAccessLogging,
+		)
 	}
-	if got.Provider("envoy") != nil || got.Provider("ReMoTe") == nil || got.Provider("remote").HTTPAccessLog.GetName() != "replacement" {
+	if got.Provider("envoy") != nil || got.Provider("ReMoTe") == nil ||
+		got.Provider("remote").HTTPAccessLog.GetName() != "replacement" {
 		t.Fatalf("resolved providers = %+v", got.Providers)
 	}
 	if override.Providers[0].HTTPAccessLog.GetName() != "replacement" {
@@ -106,7 +117,12 @@ func TestResolveProvidersRejectsInvalidOverrides(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := resolveTelemetryProviders(&test.override, nil); err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.want)) {
+			if _, err := resolveTelemetryProviders(
+				&test.override,
+				nil,
+				false,
+			); err == nil ||
+				!strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.want)) {
 				t.Fatalf("ResolveProviders error = %v, want containing %q", err, test.want)
 			}
 		})

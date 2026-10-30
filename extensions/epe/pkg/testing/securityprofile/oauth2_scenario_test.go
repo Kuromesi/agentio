@@ -98,7 +98,7 @@ func TestScenario_OAuth2PublishedAPI(t *testing.T) {
 					h := New(t, Options{Providers: providerRegistry(t, identity.URL)})
 					h.Fixture.ApplyYAML(oauth2ProfileYAML(kind, tc.config))
 					request := enginetest.NewRequest(http.MethodPost, "api.example.test", "/oauth").Scheme("https").
-						Peer("test-ns", "sandbox", map[string]string{"app": "sandbox"}).
+						Workload("test-ns", "sandbox", map[string]string{"app": "sandbox"}).
 						SandboxToken("request", "platform-token", "sandbox-client").
 						Header("authorization", "Bearer unused").Header("content-type", tc.contentType)
 					if tc.status != 0 {

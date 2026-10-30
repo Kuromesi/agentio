@@ -204,7 +204,7 @@ type ParamSource struct {
 
 // SourceSpec is the projected credentialRef: where the credential lives.
 // Namespace is the raw CRD value; the filter applies the ref -> profile
-// -> pod fallback per request.
+// -> workload fallback per request.
 type SourceSpec struct {
 	Kind       SourceKind
 	Name       string

@@ -25,13 +25,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 )
 
-// defaultPassThroughBody is the empty-mutation body response.
-var defaultPassThroughBody = []*extProcPb.ProcessingResponse{
-	{Response: &extProcPb.ProcessingResponse_RequestBody{
-		RequestBody: &extProcPb.BodyResponse{},
-	}},
-}
-
 // HandleRequestBody handles the complete request body delivered by Envoy
 // after the headers phase set ModeOverride to BUFFERED. It runs the body
 // callbacks registered during headers, without reauthorizing the fixed target.

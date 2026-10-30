@@ -25,19 +25,73 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	extensionmatchingv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
+	localratelimitv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	setstatehttpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
+	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
+	rlexprv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/rate_limit_descriptors/expr/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	httpupstreamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/ext"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"istio.io/istio/pkg/test"
 
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/model"
 )
+
+func TestConnectRateLimitPreservesDescriptorGroupsAndValues(t *testing.T) {
+	b := &resourceBuilder{}
+	bucket := &configv1.TokenBucket{MaxTokens: 10, TokensPerFill: 10, FillInterval: durationpb.New(time.Second)}
+	settings := &configv1.LocalRateLimitSettings{Descriptors: []*configv1.RateLimitDescriptor{
+		{Entries: []*configv1.RateLimitEntry{{Key: "namespace", Cel: `"demo"`}}, TokenBucket: bucket},
+		{
+			Entries: []*configv1.RateLimitEntry{
+				{Key: "namespace", Cel: `"other"`},
+				{Key: "workload", Cel: `"app"`},
+				{Key: "scope", Value: "gateway"},
+			},
+			TokenBucket: bucket,
+		},
+	}}
+	filter, err := b.localRateLimitFilter(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &localratelimitv3.LocalRateLimit{}
+	if err := filter.GetTypedConfig().UnmarshalTo(config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.GetRateLimits()) != 2 {
+		t.Fatalf("rate limit groups = %d, want 2", len(config.GetRateLimits()))
+	}
+	for i, descriptor := range settings.GetDescriptors() {
+		actions := config.GetRateLimits()[i].GetActions()
+		if len(actions) != len(descriptor.GetEntries()) {
+			t.Fatalf("descriptor %d: wrong action count %d", i, len(actions))
+		}
+		for j, entry := range descriptor.GetEntries() {
+			if entry.GetCel() == "" {
+				generic := actions[j].GetGenericKey()
+				if generic.GetDescriptorKey() != entry.GetKey() || generic.GetDescriptorValue() != entry.GetValue() {
+					t.Fatalf("static descriptor entry lost: %v", generic)
+				}
+				continue
+			}
+			expression := &rlexprv3.Descriptor{}
+			if err := actions[j].GetExtension().GetTypedConfig().UnmarshalTo(expression); err != nil {
+				t.Fatal(err)
+			}
+			if expression.GetDescriptorKey() != entry.GetKey() || expression.GetText() != entry.GetCel() {
+				t.Fatalf("descriptor %d entry %d changed key, order, or expression: %v", i, j, expression)
+			}
+		}
+	}
+}
 
 // Application CONNECT is proxied to the original explicit proxy; it is not the
 // HBONE CONNECT terminator.
@@ -120,12 +174,12 @@ func TestGatewayForwardProxyConnectSemantics(t *testing.T) {
 	if !clearHCM.GetHttp2ProtocolOptions().GetAllowConnect() || !tlsHCM.GetHttp2ProtocolOptions().GetAllowConnect() {
 		t.Fatal("both forward HCMs must allow HTTP/2 CONNECT")
 	}
-	if hasHTTPFilter(clearHCM, "connect-proxy-tls-identity") {
+	if hasHTTPFilter(clearHCM, connectProxyTLSIdentityFilter) {
 		t.Fatal("clear HTTP proxy gained TLS identity filter")
 	}
 	var identity *hcmv3.HttpFilter
 	for _, filter := range tlsHCM.GetHttpFilters() {
-		if filter.GetName() == "connect-proxy-tls-identity" {
+		if filter.GetName() == connectProxyTLSIdentityFilter {
 			identity = filter
 			break
 		}
@@ -268,6 +322,83 @@ func TestBuildStaticSNIMatcherOmitsEmptyHostGroups(t *testing.T) {
 	}
 }
 
+func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		resources := buildGatewayGraph(t, legacy)
+		listeners := messagesOf(
+			t,
+			resources,
+			model.ListenerType,
+			func() *listenerv3.Listener { return &listenerv3.Listener{} },
+		)
+		forward := listeners[MainForward]
+		var inspectors []string
+		for _, filter := range forward.GetListenerFilters() {
+			inspectors = append(inspectors, filter.GetName())
+		}
+		if !equalStrings(
+			inspectors,
+			[]string{"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector"},
+		) {
+			t.Errorf("legacy=%v: post-TLS inspectors = %v, want original_dst and HTTP only", legacy, inspectors)
+		}
+		chain := findFilterChain(t, forward, forwardTCPChain)
+		if !equalStrings(
+			networkFilterNames(chain),
+			[]string{"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy"},
+		) {
+			t.Errorf(
+				"legacy=%v: TCP filters = %v, want outer TLS identity and TCP proxy",
+				legacy,
+				networkFilterNames(chain),
+			)
+			continue
+		}
+		identity := &setstatenetworkv3.Config{}
+		if err := chain.GetFilters()[0].GetTypedConfig().UnmarshalTo(identity); err != nil {
+			t.Fatal(err)
+		}
+		values := identity.GetOnNewConnection()
+		if len(values) != 2 {
+			t.Fatalf("TCP TLS identity = %v, want SNI and SAN", values)
+		}
+		wantSNIKey := outerSNIKey
+		if legacy {
+			wantSNIKey = legacyOuterSNIKey
+		}
+		for i, key := range []string{upstreamServerNameKey, upstreamSubjectAltNamesKey} {
+			if values[i].GetObjectKey() != key || values[i].GetFormatString().GetTextFormatSource().GetInlineString() !=
+				"%FILTER_STATE("+wantSNIKey+":PLAIN)%" {
+				t.Errorf("legacy=%v: TLS identity %s must use outer SNI: %v", legacy, key, values[i])
+			}
+		}
+		proxy := &tcpproxyv3.TcpProxy{}
+		if err := chain.GetFilters()[1].GetTypedConfig().UnmarshalTo(proxy); err != nil {
+			t.Fatal(err)
+		}
+		if proxy.GetCluster() != TLSProxyOriginate {
+			t.Errorf("TCP cluster = %q, want original-destination TLS", proxy.GetCluster())
+		}
+		clusters := messagesOf(
+			t,
+			resources,
+			model.ClusterType,
+			func() *clusterv3.Cluster { return &clusterv3.Cluster{} },
+		)
+		cluster := clusters[TLSProxyOriginate]
+		if cluster.GetType() != clusterv3.Cluster_ORIGINAL_DST {
+			t.Fatal("TCP must preserve the original destination address and port")
+		}
+		context := &tlsv3.UpstreamTlsContext{}
+		if err := cluster.GetTransportSocket().GetTypedConfig().UnmarshalTo(context); err != nil {
+			t.Fatal(err)
+		}
+		if alpn := context.GetCommonTlsContext().GetAlpnProtocols(); len(alpn) != 0 {
+			t.Errorf("TCP must not advertise HTTP ALPN: %v", alpn)
+		}
+	}
+}
+
 func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	test.SetForTest(t, &features.EnableSNITrafficPolicy, true)
 	resources, err := Build(Inputs{
@@ -287,7 +418,7 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 
 	for name, want := range map[string][]string{
 		MainInternal: {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.dynamic_modules"},
-		MainForward:  {"envoy.filters.listener.original_dst", "envoy.filters.listener.tls_inspector", "envoy.filters.listener.http_inspector"},
+		MainForward:  {"envoy.filters.listener.original_dst", "envoy.filters.listener.http_inspector"},
 	} {
 		listener := listeners[name]
 		got := make([]string, 0, len(listener.GetListenerFilters()))
@@ -346,21 +477,26 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 	}
 }
 
-// A silent client must reach TCP forwarding after inspection expires, including
+// A silent client must be disconnected after inspection expires, including
 // when TLS termination or SNI policy changes the listener's matcher tree.
-func TestGatewayServerFirstFallback(t *testing.T) {
+func TestGatewayProtocolDetectionTimeoutClosesConnection(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
+		legacyGateway  bool
 		sniPolicy      bool
 		tlsTermination *configv1.TlsTerminationConfig
 	}{
 		{name: "passthrough"},
 		{name: "static TLS", tlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"*.example.com"}}},
 		{name: "SNI policy", sniPolicy: true},
+		{name: "legacy passthrough", legacyGateway: true},
+		{name: "legacy static TLS", legacyGateway: true, tlsTermination: &configv1.TlsTerminationConfig{IncludeHosts: []string{"*.example.com"}}},
+		{name: "legacy SNI policy", legacyGateway: true, sniPolicy: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			test.SetForTest(t, &features.EnableSNITrafficPolicy, tc.sniPolicy)
 			resources, err := Build(Inputs{
+				LegacyGateway:    tc.legacyGateway,
 				DiscoveryAddress: "agentiod.agentio-system.svc:15012",
 				TrustDomain:      "cluster.local",
 				Gateway:          testGateway(&configv1.EgressGateway{TlsTermination: tc.tlsTermination}),
@@ -380,17 +516,16 @@ func TestGatewayServerFirstFallback(t *testing.T) {
 					timeout.AsDuration() != time.Second {
 					t.Errorf("%s inspection timeout = %v, want 1s", name, timeout)
 				}
-				if !listener.GetContinueOnListenerFiltersTimeout() {
-					t.Errorf("%s must continue after inspection times out", name)
+				if listener.GetContinueOnListenerFiltersTimeout() {
+					t.Errorf("%s must close the connection when inspection times out", name)
 				}
-				// No SNI, transport protocol, or application protocol was detected:
-				// follow the unmatched branch at each layer to the selected chain.
+				// Non-HTTP traffic that completes inspection retains TCP forwarding.
 				fallback := listener.GetFilterChainMatcher().GetOnNoMatch()
 				for fallback.GetMatcher() != nil {
 					fallback = fallback.GetMatcher().GetOnNoMatch()
 				}
 				if got := fallback.GetAction().GetName(); got != forwardTCPChain {
-					t.Fatalf("%s silent-client chain = %q, want %q", name, got, forwardTCPChain)
+					t.Fatalf("%s TCP fallback chain = %q, want %q", name, got, forwardTCPChain)
 				}
 				chain := findFilterChain(t, listener, forwardTCPChain)
 				if got := chain.GetFilters()[len(chain.GetFilters())-1].GetName(); got != "envoy.filters.network.tcp_proxy" {

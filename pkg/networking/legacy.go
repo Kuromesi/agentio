@@ -15,6 +15,8 @@
 package networking
 
 import (
+	"strings"
+
 	udpatypev1 "github.com/cncf/xds/go/udpa/type/v1"
 	xdscorev3 "github.com/cncf/xds/go/xds/core/v3"
 	xdsmatcherv3 "github.com/cncf/xds/go/xds/type/matcher/v3"
@@ -27,6 +29,7 @@ import (
 const (
 	legacyPeerPrincipal   = "io.istio.peer_principal"
 	legacyLocalPrincipal  = "io.istio.local_principal"
+	legacyOuterSNIKey     = "io.kruise.outer_sni"
 	sniPolicyMatcherName  = "kruise.matching.custom_matchers.sni_traffic_policy"
 	sniPolicyMatcherType  = "type.googleapis.com/kruise.networking.policy_runtime.v1alpha1.SniTrafficPolicyMatcher"
 	tlsActionHeaderFormat = `%CEL('x-agentio-tls' in request.headers ? ` +
@@ -47,7 +50,13 @@ var (
 		legacyLocalPrincipal,
 		true,
 	)
-	legacyCaptureSNI      = buildCaptureSNIFilter("istio.hashable_string")
+	legacyCaptureSNI                        = buildCaptureSNIFilter("istio.hashable_string", legacyOuterSNIKey)
+	legacyOuterTLSIdentityFilter            = buildOuterTLSIdentityFilter(legacyOuterSNIKey)
+	legacyConnectProxyTLSIdentityHTTPFilter = buildConnectProxyTLSIdentityHTTPFilter(legacyOuterSNIKey)
+	legacySNIDenialReasonFilter             = buildSNIDenialReasonFilter("io.kruise.egress_denial_reason")
+	legacySNIHostMatchRBACFilter            = buildSNIHostMatchRBACFilter(
+		mustParseCEL(strings.ReplaceAll(sniHostMismatchExprText, outerSNIKey, legacyOuterSNIKey)),
+	)
 	legacyRelayDownstream = buildRelayDownstreamFilter(
 		"istio.hashable_string",
 		legacyPeerPrincipal,

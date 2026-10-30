@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
-
-	"k8s.io/apimachinery/pkg/types"
 )
 
 func TestSandboxTokenJSONRoundTrip(t *testing.T) {
@@ -48,42 +46,6 @@ func TestSandboxTokenJSONRoundTrip(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("SandboxToken: want %+v, got %+v", tt.want, got)
-			}
-		})
-	}
-}
-
-func TestPeerValid(t *testing.T) {
-	tests := []struct {
-		name string
-		peer Peer
-		want bool
-	}{
-		{
-			name: "namespace and name present",
-			peer: Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
-			want: true,
-		},
-		{
-			name: "missing name",
-			peer: Peer{Pod: types.NamespacedName{Namespace: "ns"}},
-			want: false,
-		},
-		{
-			name: "missing namespace",
-			peer: Peer{Pod: types.NamespacedName{Name: "pod"}},
-			want: false,
-		},
-		{
-			name: "zero peer",
-			peer: Peer{},
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.peer.Valid(); got != tt.want {
-				t.Errorf("Valid(): want %v, got %v", tt.want, got)
 			}
 		})
 	}
@@ -143,16 +105,16 @@ func TestParseSandboxToken(t *testing.T) {
 }
 
 func TestSandboxTokenSharedAcrossStreamViews(t *testing.T) {
-	original := Stream{Peer: Peer{Token: NewSandboxToken(`{"accessToken":"opaque","sandboxClientId":"c1"}`)}}
+	original := Stream{Caller: CallerContext{Token: NewSandboxToken(`{"accessToken":"opaque","sandboxClientId":"c1"}`)}}
 	view := original
-	parsed := view.Peer.Token.Parse(t.Context())
+	parsed := view.Caller.Token.Parse(t.Context())
 	if parsed == nil || parsed.AccessToken != "opaque" {
 		t.Fatal("token was not parsed")
 	}
-	if original.Peer.Token.raw != "" {
+	if original.Caller.Token.raw != "" {
 		t.Fatal("view did not share lazy parse state")
 	}
-	if got := original.Peer.Token.Parse(t.Context()); got != parsed {
+	if got := original.Caller.Token.Parse(t.Context()); got != parsed {
 		t.Fatal("request views did not reuse token")
 	}
 }

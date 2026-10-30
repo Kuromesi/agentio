@@ -24,6 +24,7 @@ import (
 	workload "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	podsource "github.com/openkruise/agentio/pkg/registry/kubernetes/pod"
 )
 
@@ -47,6 +48,7 @@ type indexedWorkload struct {
 type queryIndex struct {
 	clusterID string
 	workloads map[subjectKey]*indexedWorkload
+	byUID     map[string]*indexedWorkload
 	err       error
 }
 
@@ -68,16 +70,11 @@ func (b queryBuilder) build(view *store.Snapshot, previous store.Query) store.Qu
 		return index
 	}
 	index.workloads = make(map[subjectKey]*indexedWorkload, len(resources))
+	index.byUID = make(map[string]*indexedWorkload, len(resources))
 	old, _ := previous.(*queryIndex)
 	for _, resource := range resources {
 		w := resource.Value.(*workload.Workload)
 		key := subjectKey{w.Namespace, w.Name}
-		if _, found := index.workloads[key]; found {
-			index.workloads[key] = &indexedWorkload{
-				err: fmt.Errorf("ambiguous source Workload %s/%s", w.Namespace, w.Name),
-			}
-			continue
-		}
 		canonical, err := view.Get(resource.Key)
 		if err != nil {
 			index.err = err
@@ -85,9 +82,17 @@ func (b queryBuilder) build(view *store.Snapshot, previous store.Query) store.Qu
 		}
 		var prior *indexedWorkload
 		if old != nil {
-			prior = old.workloads[key]
+			prior = old.byUID[resource.Key.Name]
 		}
-		index.workloads[key] = buildWorkload(view, canonical, prior)
+		entry := buildWorkload(view, canonical, prior)
+		index.byUID[resource.Key.Name] = entry
+		if _, found := index.workloads[key]; found {
+			index.workloads[key] = &indexedWorkload{
+				err: fmt.Errorf("ambiguous source Workload %s/%s", w.Namespace, w.Name),
+			}
+		} else {
+			index.workloads[key] = entry
+		}
 	}
 	return index
 }
@@ -136,23 +141,33 @@ func buildWorkload(view *store.Snapshot, resource *store.Resource, previous *ind
 	return entry
 }
 
-func (i *queryIndex) forSubject(subject store.Subject) (*indexedWorkload, error) {
+func (i *queryIndex) forSubject(subject subject.Subject) (*indexedWorkload, error) {
 	if i.err != nil {
 		return nil, i.err
 	}
-	entry := i.workloads[subjectKey{subject.Namespace, subject.Name}]
+	if !subject.Workload.HasIdentity() {
+		return nil, fmt.Errorf("traffic policy lookup requires workload identity")
+	}
+	if subject.Workload.UID != "" {
+		entry := i.byUID[subject.Workload.UID]
+		if entry == nil {
+			return nil, &store.MissingResource{Key: store.Key{Type: store.Workload, Name: subject.Workload.UID}}
+		}
+		return entry, entry.err
+	}
+	entry := i.workloads[subjectKey{subject.Workload.Namespace, subject.Workload.Name}]
 	if entry == nil {
-		// EPE currently receives a Kubernetes Pod identity. Use the registry
-		// mapping rather than assuming that every Workload UID is Pod-shaped.
+		// Legacy requests supply Kubernetes namespace/name without a discovery UID.
+		// Use the registry mapping to fetch their Workload resource.
 		uid := podsource.WorkloadUID(i.clusterID, &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Namespace: subject.Namespace, Name: subject.Name},
+			ObjectMeta: metav1.ObjectMeta{Namespace: subject.Workload.Namespace, Name: subject.Workload.Name},
 		})
 		return nil, &store.MissingResource{Key: store.Key{Type: store.Workload, Name: uid}}
 	}
 	return entry, entry.err
 }
 
-func (i *queryIndex) ResourcesFor(typ store.Type, subject store.Subject) ([]store.Resource, error) {
+func (i *queryIndex) ResourcesFor(typ store.Type, subject subject.Subject) ([]store.Resource, error) {
 	entry, err := i.forSubject(subject)
 	// Workload lookup does not depend on its TrafficPolicy bindings.
 	if typ == store.Workload && entry != nil && entry.workload != nil {

@@ -28,7 +28,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 func upstreamRoute(address string, clear bool) *filter.RouteMutation {
@@ -43,7 +43,7 @@ func TestRouteTranslation(t *testing.T) {
 			headers := translateRequestHeadersResult(
 				&engine.RequestHeadersResult{Disposition: engine.DispositionMutated, Route: route},
 				logr.Discard(),
-				filter.Peer{},
+				filter.CallerContext{},
 			)
 			body := translateRequestBodyResult(
 				&engine.RequestBodyResult{Disposition: engine.DispositionMutated, Route: route},
@@ -124,7 +124,7 @@ func TestExplicitRouteThroughPolicyEvaluation(t *testing.T) {
 		}
 		server := NewServer(ServerDeps{
 			Registrations: regs,
-			Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 				return engine.Resolution{Units: []engine.Unit{{Cfgs: cfgs}}}, nil
 			},
 		})
@@ -169,7 +169,7 @@ func TestWithoutUpstreamDoesNotEmitTarget(t *testing.T) {
 			}
 			server := NewServer(ServerDeps{
 				Registrations: regs,
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					if len(regs) == 0 {
 						return engine.Resolution{}, nil
 					}

@@ -39,7 +39,7 @@ func benchRequest() inputs.Request {
 func benchActivation(extra map[string]any) cel.Activation {
 	return inputs.NewScope(
 		benchRequest(),
-		inputs.Pod{Namespace: "test-ns", Name: "sandbox-pod", Labels: map[string]string{"app": "sleep"}},
+		inputs.Workload{Namespace: "test-ns", Name: "sandbox-pod", Labels: map[string]string{"app": "sleep"}},
 		inputs.Profile{Name: "profile"},
 		inputs.Rule{Name: "rule"},
 		extra,
@@ -143,7 +143,7 @@ func BenchmarkActivation(b *testing.B) {
 		{"h40_q8_l15", 40, 8, 15},
 	}
 	for _, sz := range sizes {
-		req, pod := benchRequestSized(sz.h, sz.q), benchPodSized(sz.l)
+		req, pod := benchRequestSized(sz.h, sz.q), benchWorkloadSized(sz.l)
 		// Guard the fixture: the projection must actually carry the headers and
 		// labels the size claims, or every arm would measure the same trivial
 		// bag. Checked through CEL so the guard does not depend on the bag's
@@ -169,13 +169,13 @@ func BenchmarkActivation(b *testing.B) {
 // guardProjectionSize fails the benchmark unless the projected bag really
 // exposes nHeaders headers and nLabels labels, so a fixture that silently
 // stopped varying with size cannot produce believable numbers.
-func guardProjectionSize(b *testing.B, req inputs.Request, pod inputs.Pod, nHeaders, nLabels int) {
+func guardProjectionSize(b *testing.B, req inputs.Request, workload inputs.Workload, nHeaders, nLabels int) {
 	b.Helper()
 	prog, err := CompileBool(fmt.Sprintf(`size(request.headers) == %d && size(pod.labels) == %d`, nHeaders, nLabels))
 	if err != nil {
 		b.Fatalf("guard: compile: %v", err)
 	}
-	act := inputs.NewScope(req, pod, inputs.Profile{Name: "p"}, inputs.Rule{Name: "r"}, nil).Activation()
+	act := inputs.NewScope(req, workload, inputs.Profile{Name: "p"}, inputs.Rule{Name: "r"}, nil).Activation()
 	if ok, err := EvalBool(prog, act); err != nil || !ok {
 		b.Fatalf("guard: projection does not carry %d headers / %d labels: (%v, %v)", nHeaders, nLabels, ok, err)
 	}
@@ -201,12 +201,12 @@ func benchRequestSized(nHeaders, nQuery int) inputs.Request {
 	})
 }
 
-func benchPodSized(nLabels int) inputs.Pod {
+func benchWorkloadSized(nLabels int) inputs.Workload {
 	l := make(map[string]string, nLabels)
 	for i := 0; i < nLabels; i++ {
 		l[fmt.Sprintf("label-%d", i)] = "value"
 	}
-	return inputs.Pod{Name: "sandbox-pod", Namespace: "ns", IP: "10.0.0.1", Labels: l}
+	return inputs.Workload{Name: "sandbox-pod", Namespace: "ns", IP: "10.0.0.1", Labels: l}
 }
 
 // BenchmarkCompileBool measures one full compile (parse, type-check,

@@ -45,7 +45,7 @@ func TestProjectedPayloadRunsThroughEngine(t *testing.T) {
 		t.Fatalf("project payload: %v", errs[0])
 	}
 	scope := inputs.NewScope(
-		inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"},
+		inputs.Request{}, inputs.Workload{}, inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"},
 		map[string]any{"tag": "trusted"},
 	)
 	units := []engine.Unit{{ID: filter.UnitID{Scope: "default/profile", Name: "mutate"}, Scope: scope, Cfgs: cfgs}}
@@ -117,7 +117,7 @@ func TestProjectedResponsePayloadDeclaresDemand(t *testing.T) {
 				t.Fatalf("project payload: %v", errs[0])
 			}
 			scope := inputs.NewScope(
-				inputs.Request{}, inputs.Pod{},
+				inputs.Request{}, inputs.Workload{},
 				inputs.Profile{Name: "outbound"}, inputs.Rule{Name: "mutate"}, nil,
 			)
 			id := filter.UnitID{Scope: "default/profile", Name: "mutate"}

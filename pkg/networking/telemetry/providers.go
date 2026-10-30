@@ -21,12 +21,17 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 
-	"github.com/openkruise/agentio/pkg/model"
 	"istio.io/istio/pkg/util/sets"
+
+	"github.com/openkruise/agentio/pkg/model"
 )
 
-func resolveTelemetryProviders(overrides *model.TelemetryProviderOverrides, format *configv1.AccessLogFormat) (model.TelemetryProviders, error) {
-	result := defaultTelemetryProviders(format)
+func resolveTelemetryProviders(
+	overrides *model.TelemetryProviderOverrides,
+	format *configv1.AccessLogFormat,
+	legacy bool,
+) (model.TelemetryProviders, error) {
+	result := defaultTelemetryProviders(format, legacy)
 	if overrides != nil {
 		input := overrides.Clone()
 		providers := make(map[string]model.TelemetryProvider, len(result.Providers)+len(input.Providers))
@@ -91,7 +96,8 @@ func validateProviders(configuration model.TelemetryProviders) error {
 		if _, duplicate := providers[key]; duplicate {
 			return fmt.Errorf("provider %q is duplicated", provider.Name)
 		}
-		if !provider.Prometheus && provider.HTTPAccessLog == nil && provider.TCPAccessLog == nil && provider.Tracing == nil {
+		if !provider.Prometheus && provider.HTTPAccessLog == nil && provider.TCPAccessLog == nil &&
+			provider.Tracing == nil {
 			return fmt.Errorf("provider %q has no Telemetry capability", provider.Name)
 		}
 		if provider.HTTPAccessLog != nil {
@@ -117,7 +123,12 @@ func validateProviders(configuration model.TelemetryProviders) error {
 				return fmt.Errorf("provider %q cluster name is required", provider.Name)
 			}
 			if owner, duplicate := clusters[cluster.GetName()]; duplicate {
-				return fmt.Errorf("provider %q cluster %q duplicates provider %q", provider.Name, cluster.GetName(), owner)
+				return fmt.Errorf(
+					"provider %q cluster %q duplicates provider %q",
+					provider.Name,
+					cluster.GetName(),
+					owner,
+				)
 			}
 			clusters[cluster.GetName()] = provider.Name
 			if err := cluster.ValidateAll(); err != nil {
@@ -126,10 +137,20 @@ func validateProviders(configuration model.TelemetryProviders) error {
 		}
 		providers[key] = provider
 	}
-	if err := validateDefaultProviderNames("metrics", configuration.DefaultMetrics, providers, func(p model.TelemetryProvider) bool { return p.Prometheus }); err != nil {
+	if err := validateDefaultProviderNames(
+		"metrics",
+		configuration.DefaultMetrics,
+		providers,
+		func(p model.TelemetryProvider) bool { return p.Prometheus },
+	); err != nil {
 		return err
 	}
-	if err := validateDefaultProviderNames("tracing", configuration.DefaultTracing, providers, func(p model.TelemetryProvider) bool { return p.Tracing != nil }); err != nil {
+	if err := validateDefaultProviderNames(
+		"tracing",
+		configuration.DefaultTracing,
+		providers,
+		func(p model.TelemetryProvider) bool { return p.Tracing != nil },
+	); err != nil {
 		return err
 	}
 	return validateDefaultProviderNames("access logging", configuration.DefaultAccessLogging, providers,

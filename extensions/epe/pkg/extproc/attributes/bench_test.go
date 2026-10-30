@@ -104,8 +104,8 @@ func BenchmarkExtract(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					peer, req := Extract(ctx, headers, attrs)
-					benchSink = peer
+					caller, req := Extract(ctx, headers, attrs)
+					benchSink = caller
 					benchSink = req
 				}
 			})
@@ -138,16 +138,16 @@ func BenchmarkExtractHeaderMap(b *testing.B) {
 // the shape the codebase already uses for the body-chunk log in server.go.
 func BenchmarkDebugLogArgs(b *testing.B) {
 	loggerD := logr.Discard().V(logging.DEBUG)
-	podName, podNamespace := "agent-pod-abc123", "default"
-	podLabels := map[string]string{"app": "agent", "tier": "web", "version": "v2"}
+	workloadName, workloadNamespace := "agent-pod-abc123", "default"
+	workloadLabels := map[string]string{"app": "agent", "tier": "web", "version": "v2"}
 
 	b.Run("unguarded", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			loggerD.Info("extracted pod info from attributes",
-				"pod", podName, "namespace", podNamespace,
-				"labels", podLabels)
+			loggerD.Info("extracted workload info from attributes",
+				"workload", workloadName, "namespace", workloadNamespace,
+				"labels", workloadLabels)
 		}
 	})
 	b.Run("guarded", func(b *testing.B) {
@@ -155,9 +155,9 @@ func BenchmarkDebugLogArgs(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if loggerD.Enabled() {
-				loggerD.Info("extracted pod info from attributes",
-					"pod", podName, "namespace", podNamespace,
-					"labels", podLabels)
+				loggerD.Info("extracted workload info from attributes",
+					"workload", workloadName, "namespace", workloadNamespace,
+					"labels", workloadLabels)
 			}
 		}
 	})

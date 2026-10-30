@@ -40,7 +40,7 @@ type Server struct {
 	resolve          engine.Resolver
 	eng              *engine.Engine
 	loggers          []filter.StreamLogger
-	// failClosedOnMissingIdentity denies requests when the source pod
+	// failClosedOnMissingIdentity denies requests when the source workload or Sandbox
 	// identity is absent from filter_state; otherwise authorizers enforce
 	// their own identity requirements.
 	failClosedOnMissingIdentity bool
@@ -66,7 +66,7 @@ type ServerDeps struct {
 	// Should be set below Envoy's message_timeout so the filter is
 	// cancelled before Envoy gives up.
 	PluginBudget time.Duration
-	// FailClosedOnMissingIdentity denies requests when the source pod
+	// FailClosedOnMissingIdentity denies requests when the source workload or Sandbox
 	// identity is absent from filter_state (e.g. a misconfigured metadata
 	// exchange). With the default (false), independent authorization still runs.
 	FailClosedOnMissingIdentity bool

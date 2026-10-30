@@ -104,9 +104,9 @@ func TestUDPProxyGraph(t *testing.T) {
 	}
 	// Resolve identity once at tunnel establishment; do not transfer TCP SNI policy.
 	want := []string{
-		"connect_authority",
+		"agentio.connect_authority",
 		"envoy.filters.http.ext_proc",
-		"connect_workload",
+		"agentio.connect_workload",
 		"agentio.udp_target",
 		"agentio.udp_target_state",
 		"envoy.filters.http.router",

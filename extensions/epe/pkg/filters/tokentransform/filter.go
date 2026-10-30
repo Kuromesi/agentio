@@ -75,10 +75,7 @@ func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filte
 	// credential to the proxy without authenticating the target request. This
 	// protocol mismatch is always denied, independent of FailStrategy.
 	if strings.EqualFold(st.Request.Method, http.MethodConnect) {
-		return filter.Stop(filter.Reply{
-			Status: 403,
-			Body:   []byte("tokentransform: unsupported for CONNECT"),
-		}), nil
+		return filter.Stop(connectUnsupportedReply), nil
 	}
 
 	rc := &f.rule
@@ -105,7 +102,7 @@ func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filte
 	f.hasPreparedCfg = true
 
 	if cfg.Source.Kind == SourceKindProvider {
-		token := st.Peer.Token.Parse(ctx)
+		token := st.Caller.Token.Parse(ctx)
 		if token == nil || token.AccessToken == "" {
 			return f.resolveFailure(ctx, cfg, st, fmt.Errorf("sandbox token unavailable for CredentialProvider")), nil
 		}
@@ -166,7 +163,7 @@ func (f *Filter) complete(
 		return f.resolveFailure(ctx, cfg, st, err), nil
 	}
 	log.FromContext(ctx).V(logging.DEBUG).Info("token transformation applied",
-		"type", cfg.Type, "pod", st.Peer.Pod.String())
+		"type", cfg.Type, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 	return filter.Continue(muts...), nil
 }
 
@@ -186,7 +183,7 @@ func (f *Filter) fetch(
 	return cred.sanitized()
 }
 
-// secretNamespace resolves the ref -> profile -> pod namespace fallback for
+// secretNamespace resolves the ref -> profile -> workload namespace fallback for
 // Secret credential sources. One implementation so the no-permission warn can
 // never name a different namespace than the fetch reads.
 func secretNamespace(rc *filter.RuleConfig[Config], st *filter.Stream) string {
@@ -198,11 +195,11 @@ func secretNamespace(rc *filter.RuleConfig[Config], st *filter.Stream) string {
 			return ns
 		}
 	}
-	return st.Peer.Pod.Namespace
+	return st.Caller.Subject.Workload.Namespace
 }
 
 // fetchFromSource reads the credential from the configured source, applying the
-// ref -> profile -> pod namespace fallback for Secrets.
+// ref -> profile -> workload namespace fallback for Secrets.
 func (f *Filter) fetchFromSource(
 	ctx context.Context,
 	rc *filter.RuleConfig[Config],
@@ -215,7 +212,11 @@ func (f *Filter) fetchFromSource(
 		if f.sources.Secret == nil {
 			return Credential{}, fmt.Errorf("secret credential source is not configured")
 		}
-		return f.sources.Secret.Fetch(ctx, Ref{Kind: kind, Name: spec.Name, Namespace: secretNamespace(rc, st)})
+		namespace := secretNamespace(rc, st)
+		if namespace == "" {
+			return Credential{}, fmt.Errorf("secret credential source requires a namespace")
+		}
+		return f.sources.Secret.Fetch(ctx, Ref{Kind: kind, Name: spec.Name, Namespace: namespace})
 	case SourceKindProvider:
 		if f.sources.Provider == nil {
 			return Credential{}, fmt.Errorf("credential provider source is not configured")
@@ -227,8 +228,8 @@ func (f *Filter) fetchFromSource(
 		return f.sources.Provider.Fetch(ctx, Ref{
 			Kind:            kind,
 			Name:            spec.Name,
-			AccessToken:     st.Peer.Token.AccessToken,
-			SandboxClientID: st.Peer.Token.SandboxClientID,
+			AccessToken:     st.Caller.Token.AccessToken,
+			SandboxClientID: st.Caller.Token.SandboxClientID,
 			ExtraMetadata:   extra,
 		})
 	default:
@@ -242,10 +243,12 @@ func (f *Filter) fetchFromSource(
 // identically — a claimed unit already had its chance either way.
 func (f *Filter) resolveFailure(ctx context.Context, cfg Config, st *filter.Stream, err error) filter.Action {
 	if cfg.FailBlock {
-		log.FromContext(ctx).Error(err, "token transformation failed, blocking request", "pod", st.Peer.Pod.String())
+		log.FromContext(ctx).
+			Error(err, "token transformation failed, blocking request", "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		return blockReply(err)
 	}
-	log.FromContext(ctx).Error(err, "token transformation failed, passing through", "pod", st.Peer.Pod.String())
+	log.FromContext(ctx).
+		Error(err, "token transformation failed, passing through", "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 	return filter.Continue()
 }
 
@@ -257,10 +260,7 @@ func (f *Filter) resolveFailure(ctx context.Context, cfg Config, st *filter.Stre
 // endpoints. Operators lose nothing by keeping it generic — every caller logs
 // the full error alongside this reply, and it is recorded on the stream.
 func blockReply(error) filter.Action {
-	return filter.Stop(filter.Reply{
-		Status: 403,
-		Body:   []byte("tokentransform: credential unavailable"),
-	})
+	return filter.Stop(credentialUnavailableReply)
 }
 
 // warnNoPermission logs the no-Secret-permission warn, throttled per
@@ -270,6 +270,6 @@ func (f *Filter) warnNoPermission(ctx context.Context, rc *filter.RuleConfig[Con
 	key := ns + "/" + rc.Cfg.Source.Name + ":no_secret_permission"
 	if f.limiter == nil || f.limiter.Allow(key) {
 		log.FromContext(ctx).Info("tokentransform skipping rule: no permission to read credential",
-			"source", string(rc.Cfg.Source.Kind)+"/"+ns+"/"+rc.Cfg.Source.Name, "pod", st.Peer.Pod.String(), "error", err)
+			"source", string(rc.Cfg.Source.Kind)+"/"+ns+"/"+rc.Cfg.Source.Name, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String(), "error", err)
 	}
 }

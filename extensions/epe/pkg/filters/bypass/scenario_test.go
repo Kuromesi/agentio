@@ -33,7 +33,7 @@ func TestScenario_BypassResolvesStreamAsBypassed(t *testing.T) {
 		Payload:    `{}`,
 	})
 	verdict := h.Run(t, enginetest.NewRequest("GET", "api.example.com", "/v1").
-		Peer("test-ns", "sandbox-a", map[string]string{"app": "sandbox"}))
+		Workload("test-ns", "sandbox-a", map[string]string{"app": "sandbox"}))
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}

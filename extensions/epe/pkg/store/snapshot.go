@@ -14,20 +14,16 @@
 
 package store
 
-import "fmt"
+import (
+	"fmt"
 
-// Subject identifies the sandbox/workload and attributes needed by typed queries.
-type Subject struct {
-	Namespace string
-	Name      string
-	IP        string
-	Labels    map[string]string
-}
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
+)
 
 // Query is an immutable, resource-specific index built after source precedence.
 // Returned resources and slices are read-only.
 type Query interface {
-	ResourcesFor(Type, Subject) ([]Resource, error)
+	ResourcesFor(Type, subject.Subject) ([]Resource, error)
 }
 
 // QueryBuilder builds a typed query index on the update path. The previous index
@@ -73,7 +69,7 @@ func (s *Snapshot) List(typ Type) ([]Resource, error) {
 func (s *Snapshot) Query(typ Type) Query { return s.queries[typ] }
 
 // ResourcesFor uses a registered index, never a generic resource scan.
-func (s *Snapshot) ResourcesFor(typ Type, subject Subject) ([]Resource, error) {
+func (s *Snapshot) ResourcesFor(typ Type, subject subject.Subject) ([]Resource, error) {
 	if !s.ready {
 		return nil, fmt.Errorf("resource store is not synchronized")
 	}

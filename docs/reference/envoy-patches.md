@@ -4,6 +4,8 @@ Use a ConfigMap to patch the Envoy resources generated for an Agentio egress gat
 
 Use the [gateway configuration fields](agentio-configuration.md) for settings they already cover. Patches provide access to lower-level Envoy configuration.
 
+Configure CONNECT bandwidth through AgentioConfig's `bandwidthLimit`. When applying other patches to that CONNECT chain, preserve the [module's placement restrictions](../../extensions/envoy/network-limits/README.md): do not enable router retries or retain already-forwarded data for replay.
+
 ## Apply a configuration
 
 Create a ConfigMap in the control plane's root namespace, normally `agentio-system`, with the `manifests.agentio.kruise.io/type: gateway-patch` label and YAML in `data.patches`:

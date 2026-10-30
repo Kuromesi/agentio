@@ -30,7 +30,7 @@ type Body struct {
 // Stream is the per-request view handed to every filter. Filters must treat
 // its fields as read-only.
 type Stream struct {
-	Peer      Peer
+	Caller    CallerContext
 	Request   httpreq.HTTPRequest
 	RequestID string
 	// Upstream is the destination selected by preceding request filters.

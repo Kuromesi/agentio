@@ -206,6 +206,10 @@ func gatewayResourcesFor(
 	}
 	var built []model.Resource
 	for _, legacy := range []bool{true, false} {
+		// Limits require the community module; do not publish an unprotected legacy variant.
+		if legacy && (item.Config.GetBandwidthLimit() != nil || item.Config.GetConnectConcurrencyLimit() != nil) {
+			continue
+		}
 		inputs.LegacyGateway = legacy
 		variant, err := networking.Build(inputs)
 		if err != nil {

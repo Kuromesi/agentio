@@ -19,16 +19,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
+	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 func newTestProfile(name, namespace string, matchLabels map[string]string) *v1alpha1.SecurityProfile {
@@ -85,53 +86,53 @@ func TestProfileSetAndGet(t *testing.T) {
 // many profiles a pod with the given namespace/labels selects.
 func TestMatches(t *testing.T) {
 	tests := []struct {
-		name          string
-		profileLabels map[string]string
-		ns            string
-		podLabels     map[string]string
-		want          int
+		name           string
+		profileLabels  map[string]string
+		ns             string
+		workloadLabels map[string]string
+		want           int
 	}{
 		{
-			name:          "matching labels and namespace",
-			profileLabels: map[string]string{"app": "test"},
-			ns:            "default",
-			podLabels:     map[string]string{"app": "test"},
-			want:          1,
+			name:           "matching labels and namespace",
+			profileLabels:  map[string]string{"app": "test"},
+			ns:             "default",
+			workloadLabels: map[string]string{"app": "test"},
+			want:           1,
 		},
 		{
-			name:          "non-matching labels",
-			profileLabels: map[string]string{"app": "test"},
-			ns:            "default",
-			podLabels:     map[string]string{"app": "other"},
-			want:          0,
+			name:           "non-matching labels",
+			profileLabels:  map[string]string{"app": "test"},
+			ns:             "default",
+			workloadLabels: map[string]string{"app": "other"},
+			want:           0,
 		},
 		{
-			name:          "wrong namespace",
-			profileLabels: map[string]string{"app": "test"},
-			ns:            "other-ns",
-			podLabels:     map[string]string{"app": "test"},
-			want:          0, // namespace-scoped profiles never cross namespaces
+			name:           "wrong namespace",
+			profileLabels:  map[string]string{"app": "test"},
+			ns:             "other-ns",
+			workloadLabels: map[string]string{"app": "test"},
+			want:           0, // namespace-scoped profiles never cross namespaces
 		},
 		{
-			name:          "all selector labels present",
-			profileLabels: map[string]string{"app": "test", "env": "prod"},
-			ns:            "default",
-			podLabels:     map[string]string{"app": "test", "env": "prod"},
-			want:          1,
+			name:           "all selector labels present",
+			profileLabels:  map[string]string{"app": "test", "env": "prod"},
+			ns:             "default",
+			workloadLabels: map[string]string{"app": "test", "env": "prod"},
+			want:           1,
 		},
 		{
-			name:          "partial labels do not match",
-			profileLabels: map[string]string{"app": "test", "env": "prod"},
-			ns:            "default",
-			podLabels:     map[string]string{"app": "test", "env": "dev"},
-			want:          0,
+			name:           "partial labels do not match",
+			profileLabels:  map[string]string{"app": "test", "env": "prod"},
+			ns:             "default",
+			workloadLabels: map[string]string{"app": "test", "env": "dev"},
+			want:           0,
 		},
 		{
-			name:          "extra pod labels still match",
-			profileLabels: map[string]string{"app": "test", "env": "prod"},
-			ns:            "default",
-			podLabels:     map[string]string{"app": "test", "env": "prod", "extra": "label"},
-			want:          1,
+			name:           "extra pod labels still match",
+			profileLabels:  map[string]string{"app": "test", "env": "prod"},
+			ns:             "default",
+			workloadLabels: map[string]string{"app": "test", "env": "prod", "extra": "label"},
+			want:           1,
 		},
 	}
 
@@ -140,7 +141,9 @@ func TestMatches(t *testing.T) {
 			store := MakeFakeStore()
 			store.ProfileSet(newTestProfile("test-profile", "default", tt.profileLabels))
 
-			matched := store.ProfilesFor(inputs.Pod{Namespace: tt.ns, Labels: tt.podLabels})
+			matched := store.ProfilesFor(
+				subject.Subject{Workload: subject.Workload{Namespace: tt.ns, Labels: tt.workloadLabels}},
+			)
 			if len(matched) != tt.want {
 				t.Fatalf("expected %d profiles, got %d", tt.want, len(matched))
 			}
@@ -161,12 +164,14 @@ func TestMatches_IndexedAndFallbackSelectors(t *testing.T) {
 	store.ProfileSet(indexed)
 	store.ProfileSet(fallback)
 
-	got := profileNames(store.ProfilesFor(inputs.Pod{
+	got := profileNames(store.ProfilesFor(subject.Subject{Workload: subject.Workload{
 		Namespace: "default",
 		Labels: map[string]string{
-			"app": "agent", "sandbox-id": "pod-1", "team": "core",
+			"app":        "agent",
+			"sandbox-id": "pod-1",
+			"team":       "core",
 		},
-	}))
+	}}))
 	want := []string{"fallback", "indexed"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Matches() = %v, want %v", got, want)
@@ -189,7 +194,11 @@ func TestMatches_TieBreakOnName(t *testing.T) {
 			store.ProfileSet(p)
 		}
 
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "ai-agent"}})
+		matched := store.ProfilesFor(
+			subject.Subject{
+				Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "ai-agent"}},
+			},
+		)
 		if len(matched) != 4 {
 			t.Fatalf("attempt %d: expected 4 profiles, got %d", attempt, len(matched))
 		}
@@ -287,7 +296,11 @@ func TestMatches_PriorityOrdering(t *testing.T) {
 			for _, p := range tt.profiles {
 				store.ProfileSet(p)
 			}
-			matched := store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "test"}})
+			matched := store.ProfilesFor(
+				subject.Subject{
+					Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "test"}},
+				},
+			)
 			if len(matched) != len(tt.want) {
 				t.Fatalf("expected %d profiles, got %d", len(tt.want), len(matched))
 			}
@@ -336,19 +349,27 @@ func TestMatches_GlobalMatchesAllNamespaces(t *testing.T) {
 	store.ProfileSet(newTestProfile("ns-profile", "ns-a", map[string]string{"app": "test"}))
 
 	// Pod in ns-a: matched by both the global and the namespace profile.
-	matchedA := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+	matchedA := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}},
+	)
 	if got := profileNames(matchedA); len(got) != 2 {
 		t.Fatalf("ns-a: expected 2 profiles, got %v", got)
 	}
 
 	// Pod in ns-b: matched by the global profile only.
-	matchedB := store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})
+	matchedB := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "ns-b", Labels: map[string]string{"app": "test"}}},
+	)
 	if got := profileNames(matchedB); len(got) != 1 || got[0] != "g1" {
 		t.Fatalf("ns-b: expected [g1], got %v", got)
 	}
 
 	// Non-matching labels match nothing, even for the global profile.
-	if got := store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "other"}}); len(got) != 0 {
+	if got := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "ns-b", Labels: map[string]string{"app": "other"}}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("expected 0 profiles for non-matching labels, got %d", len(got))
 	}
 }
@@ -372,7 +393,9 @@ func TestMatches_GlobalAndNamespaceInterleaveByPriority(t *testing.T) {
 	nsLow.Spec.Priority = ptr.To[int32](10)
 	store.ProfileSet(nsLow)
 
-	matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+	matched := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}},
+	)
 	want := []string{"ns-high", "global-mid", "ns-low"}
 	got := profileNames(matched)
 	if len(got) != len(want) {
@@ -405,7 +428,11 @@ func TestProfileSet_InvalidSelectorIsSkipped(t *testing.T) {
 	if _, ok := store.ProfileGet(types.NamespacedName{Name: "bad", Namespace: "default"}); ok {
 		t.Fatal("expected invalid-selector profile to be skipped on initial Set, but it was stored")
 	}
-	if got := store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "ai-agent"}}); len(got) != 0 {
+	if got := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "ai-agent"}}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("expected 0 matched profiles, got %d", len(got))
 	}
 }
@@ -443,7 +470,11 @@ func TestProfileSet_InvalidSelectorOnUpdateRetainsLastKnownGood(t *testing.T) {
 	if got.Meta.Version != good.ResourceVersion {
 		t.Fatalf("effective version = %q, want original %q", got.Meta.Version, good.ResourceVersion)
 	}
-	if matched := store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "ai-agent"}}); len(matched) != 1 {
+	if matched := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "ai-agent"}}},
+	); len(
+		matched,
+	) != 1 {
 		t.Fatalf("expected last-known-good profile to keep matching, got %d", len(matched))
 	}
 }
@@ -469,7 +500,11 @@ func TestApplyBatch_AddUpdateDelete(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{New: compiledAdd, Event: controllers.EventAdd},
 	})
-	if matched := s.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "x"}}); len(matched) != 1 {
+	if matched := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "x"}}},
+	); len(
+		matched,
+	) != 1 {
 		t.Fatalf("after add: expected 1 match, got %d", len(matched))
 	}
 
@@ -481,10 +516,18 @@ func TestApplyBatch_AddUpdateDelete(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Old: compiledAdd, New: compiledUpdated, Event: controllers.EventUpdate},
 	})
-	if matched := s.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "y"}}); len(matched) != 1 {
+	if matched := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "y"}}},
+	); len(
+		matched,
+	) != 1 {
 		t.Fatalf("after update: expected 1 match for app=y, got %d", len(matched))
 	}
-	if matched := s.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "x"}}); len(matched) != 0 {
+	if matched := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "x"}}},
+	); len(
+		matched,
+	) != 0 {
 		t.Fatalf("after update: stale app=x entry still matches")
 	}
 
@@ -515,7 +558,9 @@ func TestApplyBatch_InvalidUpdateRetainsLastKnownGood(t *testing.T) {
 		{Old: compiled, New: invalid, Event: controllers.EventUpdate},
 	})
 
-	matched := s.ProfilesFor(inputs.Pod{Namespace: "default", Labels: map[string]string{"app": "x"}})
+	matched := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: map[string]string{"app": "x"}}},
+	)
 	if len(matched) != 1 {
 		t.Fatalf("matched profiles = %d, want retained last-known-good profile", len(matched))
 	}

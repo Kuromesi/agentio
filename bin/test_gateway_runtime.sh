@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test agent lifecycle, dynamic metrics, ADS recovery and Wasm/ECDS using community Envoy or an explicit gateway image.
+# Test gateway lifecycle, forwarding and extensions using community Envoy or an explicit gateway image.
 set -euo pipefail
 # Reuse the Dockerfile's pin so unit CI and the packaged runtime stay aligned.
 image=${1:-}
@@ -34,6 +34,16 @@ docker run --rm --platform linux/amd64 --user 1337:1337 \
   -e AGENTIO_TEST_NETWORK_FAULTS=1 \
   "$image" -test.v -test.timeout=90s \
   -test.run='TestGatewayAgentLifecycle|TestCommunityEnvoyWasmECDS|TestADSDetectsSilentBlackhole|TestEnvoyConfiguredBootstrap|TestCommunityEnvoyDynamicMetrics'
+
+# Exercise post-TLS TCP forwarding and HTTP/CONNECT ALPN against real Envoy.
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o "$artifacts/networking.test" ./pkg/networking
+chmod 755 "$artifacts/networking.test"
+docker run --rm --platform linux/amd64 --user 1337:1337 \
+  --entrypoint /tests/networking.test \
+  --mount "type=bind,src=$artifacts/networking.test,dst=/tests/networking.test,readonly" \
+  -e AGENTIO_TEST_ENVOY_BINARY=/usr/local/bin/envoy \
+  "$image" -test.v -test.timeout=90s \
+  -test.run='^TestEnvoyPostTLSForwarding$'
 
 # Exercise production MITM signing and Delta SDS against real Envoy, including
 # an ADS outage that spans X.509 expiry. The large load run remains opt-in.

@@ -27,7 +27,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/route"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/pkg/dns"
 )
@@ -66,7 +66,7 @@ func preferenceHarness(
 	return enginetest.New(t, enginetest.Options{
 		Registrations:    regs,
 		AuthorizeRequest: egressauthz.NewAggregate(client, cfg).Authorize,
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: units}, nil
 		},
 	})
@@ -235,7 +235,7 @@ func TestScenario_EgressAuthzChecksRewrittenAuthority(t *testing.T) {
 								}
 							},
 						}},
-						Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+						Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 							return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{true}}}}, nil
 						},
 						AuthorizeRequest: func(ctx context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {

@@ -54,7 +54,7 @@ var opKinds = map[string]filter.HeaderOpKind{
 // probeScope validates template field access during compilation while allowing
 // missing dynamic map keys.
 func probeScope() *inputs.Scope {
-	return inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
+	return inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil)
 }
 
 func parse(raw json.RawMessage) (Config, error) {

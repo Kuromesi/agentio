@@ -106,6 +106,11 @@ func validateControlPlane() error {
 	if strings.TrimSpace(TokenAudience) == "" {
 		return fmt.Errorf("token audience is required")
 	}
+	return ValidateKubernetesAPILimits()
+}
+
+// ValidateKubernetesAPILimits checks the settings shared by agentiod and EPE.
+func ValidateKubernetesAPILimits() error {
 	// client-go stores QPS as float32; validate the value it will actually use.
 	qps := float32(KubernetesAPIQPS)
 	if qps <= 0 || math.IsNaN(float64(qps)) || math.IsInf(float64(qps), 0) {

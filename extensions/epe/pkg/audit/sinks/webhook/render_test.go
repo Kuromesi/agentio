@@ -60,7 +60,7 @@ func TestRenderURL_ValidHTTP(t *testing.T) {
 			name: "url with template variables",
 			tmpl: "http://hook.example.com/{{.Profile.Name}}/{{.Rule.Name}}",
 			ctx: &audit.Scope{
-				Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{},
+				Scope: *inputs.NewScope(inputs.Request{}, inputs.Workload{},
 					inputs.Profile{Name: "p1"}, inputs.Rule{Name: "r1"}, nil),
 			},
 			wantURL: "http://hook.example.com/p1/r1",
@@ -161,7 +161,7 @@ func TestRenderHeaders_RendersTemplates(t *testing.T) {
 		},
 	}
 	ctx := &audit.Scope{
-		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "strict"}, inputs.Rule{}, nil),
+		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{Name: "strict"}, inputs.Rule{}, nil),
 		Result: "blocked",
 	}
 	headers, err := RenderHeaders(ca, ctx)
@@ -243,7 +243,7 @@ func TestRenderBody_JSONTemplate(t *testing.T) {
 		},
 	}
 	ctx := &audit.Scope{
-		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "p1"}, inputs.Rule{}, nil),
+		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{Name: "p1"}, inputs.Rule{}, nil),
 		Result: "blocked",
 	}
 	body, ct, err := RenderBody(ca, ctx)
@@ -285,7 +285,7 @@ func TestRenderBody_JSONNestedArray(t *testing.T) {
 		},
 	}
 	ctx := &audit.Scope{
-		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{Name: "r1"}, nil),
+		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{Name: "r1"}, nil),
 		Result: "blocked",
 	}
 	body, _, err := RenderBody(ca, ctx)

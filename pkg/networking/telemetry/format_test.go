@@ -110,7 +110,8 @@ func TestBuildGatewayAccessLogFormat(t *testing.T) {
 							t.Fatalf("%s: filters = %v", path, filters)
 						}
 						assertCELFilter(t, &accesslogv3.AccessLog{Filter: filters[1]}, expression)
-						if path == "CONNECT" && filters[0].GetStatusCodeFilter().GetComparison().GetValue().GetDefaultValue() != 400 {
+						if path == "CONNECT" &&
+							filters[0].GetStatusCodeFilter().GetComparison().GetValue().GetDefaultValue() != 400 {
 							t.Fatal("CONNECT failure filter was lost")
 						}
 						if path == "listener" && filters[0].GetResponseFlagFilter().GetFlags()[0] != "NR" {
@@ -133,7 +134,7 @@ func TestBuildGatewayAccessLogFormat(t *testing.T) {
 func TestGatewayFormatPreservesExplicitProviderOverride(t *testing.T) {
 	gateway := testTelemetryGateway()
 	gateway.Config.AccessLogFormat = &configv1.AccessLogFormat{Text: proto.String("custom")}
-	replacement := defaultTelemetryProviders(nil).Provider("envoy").Clone()
+	replacement := defaultTelemetryProviders(nil, false).Provider("envoy").Clone()
 	output, err := Build(Inputs{
 		Gateway:           gateway,
 		ProviderOverrides: &model.TelemetryProviderOverrides{Providers: []model.TelemetryProvider{replacement}},
@@ -141,7 +142,8 @@ func TestGatewayFormatPreservesExplicitProviderOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(output.HTTPAccessLogs[0], replacement.HTTPAccessLog) || !proto.Equal(output.TCPAccessLogs[0], replacement.TCPAccessLog) {
+	if !proto.Equal(output.HTTPAccessLogs[0], replacement.HTTPAccessLog) ||
+		!proto.Equal(output.TCPAccessLogs[0], replacement.TCPAccessLog) {
 		t.Fatal("gateway format replaced an explicitly configured provider")
 	}
 }

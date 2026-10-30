@@ -27,11 +27,12 @@ import (
 	structpb "google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // RequestBuilder assembles the ProcessingRequest sequence Envoy would send
 // for one HTTP request, including the ext_proc filter_state attributes that
-// carry the caller's pod identity.
+// carry the caller's Workload/Sandbox identity.
 type RequestBuilder struct {
 	method  string
 	host    string
@@ -39,9 +40,7 @@ type RequestBuilder struct {
 	scheme  string
 	headers [][2]string
 
-	peerNamespace   string
-	peerName        string
-	labels          map[string]string
+	subject         subject.Subject
 	sandboxToken    string
 	sandboxMetadata string
 	sourceAddress   string
@@ -59,8 +58,8 @@ type RequestBuilder struct {
 	responseBody       []byte
 }
 
-// NewRequest starts a builder with GET semantics and no identity. Call Peer
-// to attach a pod identity; without it the engine fails open.
+// NewRequest starts a builder with GET semantics and no identity. Call Workload
+// to attach workload metadata; missing identity follows the server configuration.
 func NewRequest(method, host, path string) *RequestBuilder {
 	return &RequestBuilder{method: method, host: host, path: path}
 }
@@ -79,12 +78,15 @@ func (b *RequestBuilder) RequestID(id string) *RequestBuilder {
 	return b.Header("x-request-id", id)
 }
 
-// Peer sets the caller pod identity and its labels, delivered as the
-// base64-encoded filter_state['agentio.workload.labels'] value.
-func (b *RequestBuilder) Peer(namespace, name string, labels map[string]string) *RequestBuilder {
-	b.peerNamespace = namespace
-	b.peerName = name
-	b.labels = labels
+// Workload sets the source workload metadata carried by gateway filter state.
+func (b *RequestBuilder) Workload(namespace, name string, labels map[string]string) *RequestBuilder {
+	b.subject.Workload = subject.Workload{Namespace: namespace, Name: name, Labels: labels}
+	return b
+}
+
+// Subject supplies independent Workload and Sandbox identities.
+func (b *RequestBuilder) Subject(subject subject.Subject) *RequestBuilder {
+	b.subject = subject
 	return b
 }
 
@@ -224,11 +226,16 @@ func (b *RequestBuilder) Attrs() map[string]*structpb.Struct {
 			fields[key] = structpb.NewStringValue(value)
 		}
 	}
-	setString(attributes.FilterStateDownstreamPeerNamespace, b.peerNamespace)
-	setString(attributes.FilterStateDownstreamPeerName, b.peerName)
-	if len(b.labels) > 0 {
-		encoded := base64.StdEncoding.EncodeToString([]byte(encodeLabelPairs(b.labels)))
+	workload := b.subject.Workload
+	setString(attributes.FilterStateWorkloadUID, workload.UID)
+	setString(attributes.FilterStateWorkloadNamespace, workload.Namespace)
+	setString(attributes.FilterStateWorkloadName, workload.Name)
+	if len(workload.Labels) > 0 {
+		encoded := base64.StdEncoding.EncodeToString([]byte(encodeLabelPairs(workload.Labels)))
 		setString(attributes.FilterStateWorkloadLabels, encoded)
+	}
+	if sandbox := b.subject.Sandbox; sandbox != nil {
+		setString(attributes.FilterStateSandboxID, sandbox.UID)
 	}
 	setString(attributes.FilterStateSandboxToken, b.sandboxToken)
 	setString(attributes.FilterStateSandboxMetadata, b.sandboxMetadata)

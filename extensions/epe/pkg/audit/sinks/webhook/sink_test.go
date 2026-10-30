@@ -188,7 +188,7 @@ func TestSink_Enqueue_SuccessDispatches(t *testing.T) {
 			},
 		},
 		Scope: &audit.Scope{
-			Scope:  *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{Name: "p1"}, inputs.Rule{}, nil),
+			Scope:  *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{Name: "p1"}, inputs.Rule{}, nil),
 			Result: "blocked",
 		},
 	})

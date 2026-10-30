@@ -83,6 +83,25 @@ func (g Gateway) ValidateForUse() error {
 	if err := ValidateAccessLogFormat(g.Config.GetAccessLogFormat()); err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
 	}
+	overrideHosts := make(map[string]bool)
+	for _, override := range g.Config.GetConnectionPool().GetHttp().GetRouteOverrides() {
+		for _, host := range override.GetHosts() {
+			key := strings.ToLower(host)
+			if overrideHosts[key] {
+				return fmt.Errorf("gateway %s: duplicate route override host %q", g.ResourceName(), host)
+			}
+			overrideHosts[key] = true
+		}
+	}
+	if err := ValidateBandwidthLimit(g.Config.GetBandwidthLimit()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
+	if err := ValidateConnectRateLimit(g.Config.GetConnectRateLimit()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
+	if err := ValidateConnectConcurrencyLimit(g.Config.GetConnectConcurrencyLimit()); err != nil {
+		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
+	}
 	normalized, err := NormalizeEgressGatewayServiceEntries(g.Config)
 	if err != nil {
 		return fmt.Errorf("gateway %s: %w", g.ResourceName(), err)
@@ -125,7 +144,11 @@ func NormalizeEgressGatewayServiceEntries(config *configv1.EgressGateway) (*conf
 			}
 			canonicalAddress := address.String()
 			if _, found := addresses[canonicalAddress]; found {
-				return nil, fmt.Errorf("%s.address duplicates endpoint %q in the same service entry", endpointField, canonicalAddress)
+				return nil, fmt.Errorf(
+					"%s.address duplicates endpoint %q in the same service entry",
+					endpointField,
+					canonicalAddress,
+				)
 			}
 			addresses[canonicalAddress] = struct{}{}
 			endpoint.Address = canonicalAddress

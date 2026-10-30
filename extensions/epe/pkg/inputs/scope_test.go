@@ -33,7 +33,7 @@ import (
 func TestScopeRendersTemplatePaths(t *testing.T) {
 	scope := inputs.NewScope(
 		inputs.RequestFrom(httpreq.HTTPRequest{Host: "api.example.com", Port: 443, Path: "/v1", Scheme: "https", Method: "GET", Query: map[string][]string{"q": {"1"}}, Headers: map[string]string{"x-id": "abc"}}),
-		inputs.Pod{Name: "p", Namespace: "ns", IP: "10.0.0.1", Labels: map[string]string{"app": "a"}},
+		inputs.Workload{Name: "p", Namespace: "ns", IP: "10.0.0.1", Labels: map[string]string{"app": "a"}},
 		inputs.Profile{Name: "sp", Namespace: "ns"},
 		inputs.Rule{Name: "r"},
 		map[string]any{"tier": "gold"},
@@ -167,7 +167,7 @@ func invariantScope() *inputs.Scope {
 			Headers: map[string]string{"x-tenant": "a"},
 			Query:   map[string][]string{"q": {"first", "second"}, "empty": {}},
 		}),
-		inputs.Pod{Name: "pn", Namespace: "pns", IP: "1.2.3.4", Labels: map[string]string{"app": "sleep"}},
+		inputs.Workload{Name: "pn", Namespace: "pns", IP: "1.2.3.4", Labels: map[string]string{"app": "sleep"}},
 		inputs.Profile{Name: "sp", Namespace: "spns"},
 		inputs.Rule{Name: "r"},
 		nil,
@@ -265,7 +265,7 @@ func TestScopeHidesAuditResult(t *testing.T) {
 func TestScopeWithInputsErrorPoisonsBothEngines(t *testing.T) {
 	poisoned := inputs.NewScope(
 		inputs.RequestFrom(httpreq.HTTPRequest{Host: "api.example.com"}),
-		inputs.Pod{Namespace: "ns"},
+		inputs.Workload{Namespace: "ns"},
 		inputs.Profile{Name: "sp"},
 		inputs.Rule{Name: "r"},
 		nil,

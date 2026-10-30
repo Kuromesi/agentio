@@ -39,7 +39,7 @@ func TestFilterRendersHeaderMutations(t *testing.T) {
 	}
 	scope := inputs.NewScope(
 		inputs.RequestFrom(httpreq.HTTPRequest{Headers: map[string]string{"x-source": "sandbox"}}),
-		inputs.Pod{Namespace: "payments"},
+		inputs.Workload{Namespace: "payments"},
 		inputs.Profile{Name: "outbound", Namespace: "payments"},
 		inputs.Rule{Name: "inject-context"},
 		map[string]any{"tag": "trusted"},
@@ -76,7 +76,7 @@ func TestFilterRendersResponseHeaderMutations(t *testing.T) {
 		Cfg: cfg,
 		Scope: inputs.NewScope(
 			inputs.Request{},
-			inputs.Pod{Namespace: "payments"},
+			inputs.Workload{Namespace: "payments"},
 			inputs.Profile{Name: "outbound"},
 			inputs.Rule{Name: "inject-context"},
 			map[string]any{"tag": "trusted"},
@@ -137,7 +137,7 @@ func TestFilterDeclaresResponseWantFromConfig(t *testing.T) {
 			f := New(filter.RuleConfig[Config]{
 				Cfg: cfg,
 				Scope: inputs.NewScope(
-					inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+					inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil,
 				),
 			})
 			// Response operations subscribe to response headers; empty response
@@ -169,7 +169,7 @@ func TestFilterResponsePhaseIgnoresRequestOnlyOperations(t *testing.T) {
 	f := New(filter.RuleConfig[Config]{
 		Cfg: cfg,
 		Scope: inputs.NewScope(
-			inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+			inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil,
 		),
 	})
 	got, err := f.OnResponseHeaders(context.Background(), &filter.Stream{})
@@ -210,7 +210,7 @@ func TestFilterRejectsMissingKeySentinel(t *testing.T) {
 			f := New(filter.RuleConfig[Config]{
 				Cfg: cfg,
 				Scope: inputs.NewScope(
-					inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{},
+					inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{},
 					map[string]any{"present": "yes"},
 				),
 			})
@@ -241,7 +241,7 @@ func TestFilterRejectsInvalidRenderedResponseValueWithoutPartialMutation(t *test
 	f := New(filter.RuleConfig[Config]{
 		Cfg: cfg,
 		Scope: inputs.NewScope(
-			inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+			inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil,
 		),
 	})
 
@@ -279,7 +279,7 @@ func TestFilterRejectsInvalidRenderedValueWithoutPartialMutation(t *testing.T) {
 	f := New(filter.RuleConfig[Config]{
 		Cfg: cfg,
 		Scope: inputs.NewScope(
-			inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+			inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil,
 		),
 	})
 

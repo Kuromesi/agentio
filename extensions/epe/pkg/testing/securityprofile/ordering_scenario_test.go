@@ -85,7 +85,7 @@ func bypassAdminRule(name string) v1alpha1.SecurityRule {
 // sleepPeerRequest builds a request from a pod carrying the app=sleep label.
 func sleepPeerRequest(namespace, pod, host, path string) *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", host, path).
-		Peer(namespace, pod, map[string]string{"app": "sleep"})
+		Workload(namespace, pod, map[string]string{"app": "sleep"})
 }
 
 // TestHandleRequestHeaders_MultipleProfiles_AlphabeticalOrder verifies that

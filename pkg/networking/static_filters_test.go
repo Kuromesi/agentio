@@ -19,8 +19,9 @@ import (
 	"testing"
 
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
-	dfpnetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/sni_dynamic_forward_proxy/v3"
+	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"istio.io/istio/pkg/test"
@@ -47,9 +48,11 @@ func TestStaticFiltersConcurrentBuildAndPatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dfpConfig, err := anypb.New(
-		&dfpnetworkv3.FilterConfig{PortSpecifier: &dfpnetworkv3.FilterConfig_PortValue{PortValue: 8443}},
-	)
+	identityConfig, err := anypb.New(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{{
+		Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: "test.patch"},
+		FactoryKey: "envoy.string",
+		Value:      &setstatecommonv3.FilterStateValue_FormatString{FormatString: formatString("patched")},
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +78,12 @@ func TestStaticFiltersConcurrentBuildAndPatch(t *testing.T) {
 					Name: MainForward,
 					FilterChain: &model.FilterChainMatch{
 						Name:   forwardTCPChain,
-						Filter: &model.FilterMatch{Name: sniDFPFilter.GetName()},
+						Filter: &model.FilterMatch{Name: outerTLSIdentityFilter.GetName()},
 					},
 				},
 				Value: &listenerv3.Filter{
-					Name:       sniDFPFilter.GetName(),
-					ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: dfpConfig},
+					Name:       outerTLSIdentityFilter.GetName(),
+					ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: identityConfig},
 				},
 			},
 		},
@@ -110,17 +113,17 @@ func TestStaticFiltersConcurrentBuildAndPatch(t *testing.T) {
 			if inspector.GetInitialReadBufferSize().GetValue() != 32768 {
 				t.Fatal("listener filter patch was not applied")
 			}
-			var patchedPort uint32
+			var patchedValues int
 			for _, chain := range listeners[MainForward].FilterChains {
 				if chain.Name == forwardTCPChain {
-					dfp := &dfpnetworkv3.FilterConfig{}
-					if err := chain.Filters[0].GetTypedConfig().UnmarshalTo(dfp); err != nil {
+					identity := &setstatenetworkv3.Config{}
+					if err := chain.Filters[0].GetTypedConfig().UnmarshalTo(identity); err != nil {
 						t.Fatal(err)
 					}
-					patchedPort = dfp.GetPortValue()
+					patchedValues = len(identity.GetOnNewConnection())
 				}
 			}
-			if patchedPort != 8443 {
+			if patchedValues != 3 {
 				t.Fatal("network filter patch was not applied")
 			}
 			got, err := Build(inputs)

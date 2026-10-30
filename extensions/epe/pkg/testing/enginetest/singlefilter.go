@@ -23,6 +23,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // SingleFilter configures a one-filter, one-rule wire harness: the given
@@ -81,8 +82,14 @@ func NewSingleFilter(t testing.TB, cfg SingleFilter) *Harness {
 		scopeOpts = append(scopeOpts, inputs.WithInputsError(cfg.InputsError))
 	}
 
-	resolve := func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
-		scope := inputs.NewScope(inputs.RequestFrom(*req), pod, profile, rule, cfg.Inputs, scopeOpts...)
+	resolve := func(_ context.Context, subject subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
+		scope := inputs.NewScope(
+			inputs.RequestFrom(*req),
+			inputs.WorkloadFromSubject(subject),
+			profile,
+			rule,
+			cfg.Inputs,
+			scopeOpts...)
 		return engine.Resolution{Units: []engine.Unit{{
 			ID:    filter.UnitID{Scope: profile.Namespace + "/" + profile.Name, Name: rule.Name},
 			Scope: scope,

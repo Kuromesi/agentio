@@ -67,7 +67,7 @@ spec:
 
 func injectionRequest() *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", "server.example.com", injectionPath).
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})
 }
 
 // TestScenario_SecretAPIKeyInjectedIntoDefaultHeader proves the ApiKey
@@ -85,7 +85,7 @@ func TestScenario_SecretAPIKeyInjectedIntoDefaultHeader(t *testing.T) {
 
 	// Near miss: a non-matching path must pass through untouched.
 	h.Run(t, enginetest.NewRequest("GET", "server.example.com", "/token/other").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})).
 		RequirePassthrough(t)
 }
 

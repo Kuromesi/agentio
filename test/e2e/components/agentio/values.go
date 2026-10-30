@@ -94,7 +94,9 @@ func chartValues(config Config) ([]byte, error) {
 			"podDisruptionBudget": map[string]any{"enabled": false},
 			"porter":              map[string]any{"image": porterImage},
 			"agentConfig": map[string]any{
-				"statsMatcher": map[string]any{"inclusionPrefixes": []string{"cluster.agentio-porter"}},
+				"statsMatcher": map[string]any{
+					"inclusionPrefixes": []string{"cluster.agentio-porter", "http.connect_terminate."},
+				},
 			},
 			"resources": map[string]any{
 				"requests": map[string]any{"cpu": "100m", "memory": "128Mi"},

@@ -17,9 +17,19 @@ import (
 	"testing"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
-func TestPodLabel(t *testing.T) {
+func TestWorkloadFromSubjectWithoutWorkload(t *testing.T) {
+	for _, subject := range []subject.Subject{{}, {Sandbox: &subject.Sandbox{UID: "kruise:sbx"}}} {
+		got := WorkloadFromSubject(subject)
+		if got.Name != "" || got.Namespace != "" || got.IP != "" || got.Labels != nil {
+			t.Fatalf("absent workload leaked into expression pod: %+v", got)
+		}
+	}
+}
+
+func TestWorkloadLabel(t *testing.T) {
 	tests := []struct {
 		name   string
 		labels map[string]string
@@ -32,7 +42,7 @@ func TestPodLabel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := Pod{Labels: tt.labels}
+			p := Workload{Labels: tt.labels}
 			if got := p.Label(tt.key); got != tt.want {
 				t.Errorf("Label(%q) = %q, want %q", tt.key, got, tt.want)
 			}

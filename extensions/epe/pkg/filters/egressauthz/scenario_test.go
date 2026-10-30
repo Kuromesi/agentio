@@ -25,7 +25,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/pkg/dns"
 )
@@ -34,7 +34,7 @@ import (
 func authHarness(t *testing.T, client *dns.Client, current *egressauthz.StaticAuthorizer) *enginetest.Harness {
 	t.Helper()
 	return enginetest.New(t, enginetest.Options{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{}, nil
 		},
 		AuthorizeRequest: egressauthz.NewAggregate(client, current).Authorize,
@@ -42,7 +42,7 @@ func authHarness(t *testing.T, client *dns.Client, current *egressauthz.StaticAu
 }
 
 func authRequest(host string) *enginetest.RequestBuilder {
-	return enginetest.NewRequest("GET", host, "/v1").Peer("default", "sandbox", nil)
+	return enginetest.NewRequest("GET", host, "/v1").Workload("default", "sandbox", nil)
 }
 
 func authRule(action egressauthz.Action, cidr string, port uint16) egressauthz.Rule {
@@ -158,7 +158,7 @@ func TestScenario_EgressAuthzChecksLiteralCONNECTDestination(t *testing.T) {
 	h := authHarness(t, client, policy)
 	request := func(port string) *enginetest.RequestBuilder {
 		return enginetest.NewRequest("CONNECT", "[2001:db8::10]:"+port, "").
-			Peer("default", "sandbox", nil)
+			Workload("default", "sandbox", nil)
 	}
 	h.Run(t, request("8443")).RequireUpstream(t, "[2001:db8::10]:8443")
 	requireDenied(t, h.Run(t, request("443")))

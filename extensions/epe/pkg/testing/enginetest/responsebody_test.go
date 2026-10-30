@@ -23,7 +23,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 type responseBodyObservation struct {
@@ -81,7 +81,7 @@ func TestHarness_ResponseBodyFiltersSeeOriginalInputAndFoldFinalWireResult(t *te
 		scenarioResponseBodyRegistration("first", "x-first", "first replacement", 201, first),
 		scenarioResponseBodyRegistration("second", "x-second", "final replacement", 202, second),
 	}
-	resolve := func(_ context.Context, _ inputs.Pod, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+	resolve := func(_ context.Context, _ subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
 		return engine.Resolution{Units: []engine.Unit{{
 			ID:   filter.UnitID{Scope: "test/profile", Name: "response"},
 			Cfgs: []any{struct{}{}, struct{}{}},
@@ -89,7 +89,7 @@ func TestHarness_ResponseBodyFiltersSeeOriginalInputAndFoldFinalWireResult(t *te
 	}
 	h := New(t, Options{Resolve: resolve, Registrations: regs})
 	verdict := h.Run(t, NewRequest("GET", "server.example.com", "/response").
-		Peer("test", "pod", map[string]string{"app": "test"}).
+		Workload("test", "pod", map[string]string{"app": "test"}).
 		RequestID("request-1").
 		ResponseHeaders(200).
 		ResponseHeader("x-original", "yes").

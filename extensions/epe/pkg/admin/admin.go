@@ -116,8 +116,13 @@ func (h *handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, "  GET|POST /debug/profiles                          list all loaded profiles\n")
 		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>           filter by namespace\n")
-		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>&pod_labels=k=v,k=v  match profiles for pod labels\n")
-		fmt.Fprintf(w, "  GET|POST /debug/profiles?namespace=<ns>&pod_name=<pod>      include the pod's own profile\n")
+		if _, err := fmt.Fprint(w,
+			"  GET|POST /debug/profiles?namespace=<ns>&workload_labels=k=v,k=v  match profiles for workload labels\n"+
+				"  GET|POST /debug/profiles?namespace=<ns>&workload_name=<name>     include the same-name Sandbox profile\n",
+		); err != nil {
+			log.Log.WithName("admin").Error(err, "failed to write admin index")
+			return
+		}
 		fmt.Fprintf(w, "  add ?full=true (POST: {\"full\":true}) for complete profile spec\n")
 	}
 }
@@ -133,7 +138,7 @@ func enabledText(enabled bool) string {
 func toView(p *securityprofile.Profile) ProfileView {
 	kind := kindSecurityProfile
 	switch {
-	case p.Meta.Match == securityprofile.MatchPod:
+	case p.Meta.Match == securityprofile.MatchSandbox:
 		kind = kindSandbox
 	case p.Meta.Namespace == "":
 		kind = kindGlobalSecurityProfile

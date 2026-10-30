@@ -343,7 +343,9 @@ The cache environment variables configure every credential provider, whether reg
 
 `HTTP_CALLOUT_MAX_RESPONSE_BYTES` bounds the Decision response read by each HTTPCallout client. It defaults to `1048576` bytes (1 MiB); non-positive or invalid values use that default. The client reads the setting once at initialization, so changing it in a deployment requires restarting EPE. It does not affect credential lookups or the rule's `maxBodyBytes` disclosure limit. Each SecurityProfile callout uses this client limit.
 
-The following table is generated from EPE's credential-provider, token-cache, STS-cache, HTTPCallout, and audit-webhook registrations. It shows binary defaults; in particular, the chart sets `TOKEN_CACHE_MAX_SIZE=10000` while the binary defaults to `100000`.
+EPE shares agentiod's Kubernetes client limits: `AGENTIO_KUBERNETES_API_QPS=80` and `AGENTIO_KUBERNETES_API_BURST=160`. These limits also apply to synchronous Sandbox metadata lookups. Ordinary workloads without a matching Sandbox still require an API lookup on each request; size these limits for that traffic until policy bindings are delivered through xDS.
+
+The following table is generated from EPE's Kubernetes client, credential-provider, token-cache, STS-cache, HTTPCallout, and audit-webhook registrations. It shows binary defaults; in particular, the chart sets `TOKEN_CACHE_MAX_SIZE=10000` while the binary defaults to `100000`.
 
 ```console
 $ epe -print-env -print-env-format=markdown
@@ -356,6 +358,8 @@ Use `epe -print-env` to inspect all visible registrations, including shared and 
 
 | Variable | Type | Binary default | Description |
 | --- | --- | --- | --- |
+| <code>AGENTIO_KUBERNETES_API_BURST</code> | Integer | <code>160</code> | Client-side Kubernetes API request burst. Must be positive. |
+| <code>AGENTIO_KUBERNETES_API_QPS</code> | Floating-point | <code>80</code> | Client-side Kubernetes API requests per second. Must be finite and positive. |
 | <code>AUDIT_WEBHOOK_DIAL_KEEPALIVE</code> | Duration | <code>30s</code> | Interval between TCP keep-alive probes for active connections in the audit webhook client |
 | <code>AUDIT_WEBHOOK_DIAL_TIMEOUT</code> | Duration | <code>5s</code> | Maximum duration for establishing a TCP connection in the audit webhook client |
 | <code>AUDIT_WEBHOOK_EXPECT_CONTINUE_TIMEOUT</code> | Duration | <code>1s</code> | Maximum time to wait for 100-continue response in the audit webhook client |

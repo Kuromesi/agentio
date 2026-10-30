@@ -30,7 +30,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/krt"
@@ -91,7 +91,9 @@ func TestProfileCollection_ConfigMapInputDependency(t *testing.T) {
 	}
 
 	assertState := func(wantInputs map[string]any, wantUnavailable bool) error {
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(
+			subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}},
+		)
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
@@ -140,7 +142,10 @@ func TestProfileCollection_ConfigMapInputDependency(t *testing.T) {
 			return fmt.Errorf("profile disappeared from the compiled collection")
 		}
 		if compiled.CompileError != "" {
-			return fmt.Errorf("missing ConfigMap must not reject the profile, got CompileError %q", compiled.CompileError)
+			return fmt.Errorf(
+				"missing ConfigMap must not reject the profile, got CompileError %q",
+				compiled.CompileError,
+			)
 		}
 		return assertState(nil, true)
 	})
@@ -181,7 +186,13 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 
 	// Initial state replay delivers the pre-existing profile.
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(
+			store.ProfilesFor(
+				subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}},
+				},
+			),
+		); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-a, got %d", n)
 		}
 		return nil
@@ -189,11 +200,19 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 
 	// Live SecurityProfile add.
 	live := newTestProfile("live", "ns-b", map[string]string{"app": "test"})
-	if _, err := agentsCS.AgentsV1alpha1().SecurityProfiles("ns-b").Create(ctx, live, metav1.CreateOptions{}); err != nil {
+	if _, err := agentsCS.AgentsV1alpha1().
+		SecurityProfiles("ns-b").
+		Create(ctx, live, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(
+			store.ProfilesFor(
+				subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-b", Labels: map[string]string{"app": "test"}},
+				},
+			),
+		); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-b, got %d", n)
 		}
 		return nil
@@ -201,11 +220,19 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 
 	// Live GlobalSecurityProfile add matches pods in every namespace.
 	gsp := newTestGlobalProfile("global", map[string]string{"app": "test"})
-	if _, err := agentsCS.AgentsV1alpha1().GlobalSecurityProfiles().Create(ctx, gsp, metav1.CreateOptions{}); err != nil {
+	if _, err := agentsCS.AgentsV1alpha1().
+		GlobalSecurityProfiles().
+		Create(ctx, gsp, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(
+			store.ProfilesFor(
+				subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-c", Labels: map[string]string{"app": "test"}},
+				},
+			),
+		); n != 1 {
 			return fmt.Errorf("expected global profile to match ns-c, got %d", n)
 		}
 		return nil
@@ -218,7 +245,9 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		Key:      "!",
 		Operator: metav1.LabelSelectorOpExists,
 	}}}
-	if _, err := agentsCS.AgentsV1alpha1().SecurityProfiles("ns-b").Update(ctx, bad, metav1.UpdateOptions{}); err != nil {
+	if _, err := agentsCS.AgentsV1alpha1().
+		SecurityProfiles("ns-b").
+		Update(ctx, bad, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
@@ -226,7 +255,9 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("compiled collection has not observed invalid update")
 		}
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(
+			subject.Subject{Workload: subject.Workload{Namespace: "ns-b", Labels: map[string]string{"app": "test"}}},
+		)
 		if len(matched) != 2 {
 			names := make([]string, 0, len(matched))
 			for _, sp := range matched {
@@ -238,11 +269,19 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 	})
 
 	// Delete removes the cluster-scoped profile.
-	if err := agentsCS.AgentsV1alpha1().GlobalSecurityProfiles().Delete(ctx, "global", metav1.DeleteOptions{}); err != nil {
+	if err := agentsCS.AgentsV1alpha1().
+		GlobalSecurityProfiles().
+		Delete(ctx, "global", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 0 {
+		if n := len(
+			store.ProfilesFor(
+				subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-c", Labels: map[string]string{"app": "test"}},
+				},
+			),
+		); n != 0 {
 			return fmt.Errorf("expected global profile removal, still %d matches", n)
 		}
 		return nil
@@ -278,7 +317,11 @@ func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("collection did not sync while the Sandbox CRD is absent")
 	}
-	if got := store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"}); len(got) != 0 {
+	if got := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("Matches = %+v, want no profiles without the CRD", got)
 	}
 }
@@ -295,13 +338,17 @@ func TestProfileCollectionSandboxMode(t *testing.T) {
 			})
 			stop := t.Context().Done()
 			store := NewStore()
-			reg := store.RegisterCollection(NewCollection(c, nil, krt.GlobalDebugHandler, stop))
+			profiles := NewCollection(c, nil, krt.GlobalDebugHandler, stop)
+			reg := store.RegisterCollection(profiles)
+			t.Cleanup(profiles.Registry.RegisterDeletes(store.NotifyKeys))
 			c.Run(stop)
 			if !reg.WaitUntilSynced(stop) {
 				t.Fatal("profile collection never synced")
 			}
 			testsupport.Eventually(t, 5*time.Second, func() error {
-				got := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+				got := store.ProfilesFor(subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}},
+				})
 				if len(got) != 1 {
 					return fmt.Errorf("Workload profiles = %d, want 1 in either mode", len(got))
 				}
@@ -347,7 +394,9 @@ func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
 	}
 
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(
+			subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}},
+		)
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1 despite the missing ConfigMap", len(matched))
 		}
@@ -374,7 +423,9 @@ func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(
+			subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}},
+		)
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
@@ -423,7 +474,13 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 	}
 
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(
+			store.ProfilesFor(
+				subject.Subject{
+					Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}},
+				},
+			),
+		); n != 1 {
 			return fmt.Errorf("expected 1 match, got %d", n)
 		}
 		return nil
@@ -440,7 +497,9 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 			Parameters: map[string]v1alpha1.ValueSource{"tenant": {Cel: &badCel}},
 		},
 	}
-	if _, err := agentsCS.AgentsV1alpha1().SecurityProfiles("ns-a").Update(ctx, bad, metav1.UpdateOptions{}); err != nil {
+	if _, err := agentsCS.AgentsV1alpha1().
+		SecurityProfiles("ns-a").
+		Update(ctx, bad, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
@@ -448,7 +507,9 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("projection error has not rejected the update")
 		}
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(
+			subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}},
+		)
 		if len(matched) != 1 {
 			return fmt.Errorf("expected last-known-good version to keep serving, got %d matches", len(matched))
 		}

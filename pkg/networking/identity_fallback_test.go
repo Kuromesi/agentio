@@ -67,7 +67,7 @@ func TestConnectIdentityFallbackTransfer(t *testing.T) {
 				listener := listeners[ConnectTerminate]
 				hcm := findHCM(t, listener)
 				names := httpFilterNames(hcm)
-				index := slices.Index(names, "connect_workload")
+				index := slices.Index(names, "agentio.connect_workload")
 				rateLimitIndex := slices.Index(names, "envoy.filters.http.local_ratelimit")
 				if rateLimitIndex < 0 || rateLimitIndex >= slices.Index(names, "envoy.filters.http.router") {
 					t.Fatalf("rate limiting must run before routing: %v", names)

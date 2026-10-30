@@ -46,16 +46,16 @@ type ProfileView struct {
 }
 
 // debugRequest is the input for the /debug/profiles endpoint when using POST.
-// It accepts namespace, pod_labels, and full fields.
+// It accepts namespace, workload_name, workload_labels, and full fields.
 type debugRequest struct {
-	// Namespace is the pod namespace. Required in match mode (when PodLabels is non-empty).
+	// Namespace is the workload namespace. Required when WorkloadLabels or WorkloadName is non-empty.
 	Namespace string `json:"namespace"`
-	// PodLabels is the pod label set to match selectors against. When non-empty,
+	// WorkloadLabels is the workload label set to match selectors against. When non-empty,
 	// triggers match mode and returns profiles in evaluation order.
-	PodLabels map[string]string `json:"pod_labels,omitempty"`
-	// PodName is the pod name. When set, match mode also includes the pod's
-	// per-Sandbox profile, which is keyed by exact identity.
-	PodName string `json:"pod_name,omitempty"`
+	WorkloadLabels map[string]string `json:"workload_labels,omitempty"`
+	// WorkloadName is the workload name. When set, match mode also includes the
+	// same-name Sandbox profile, which is keyed by exact identity.
+	WorkloadName string `json:"workload_name,omitempty"`
 	// Full requests the complete profile spec (fetched live from the
 	// apiserver via the typed clientset) in addition to the identity fields.
 	// Defaults to false.

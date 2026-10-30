@@ -87,7 +87,7 @@ type ApiKeyTemplateData struct {
 	Token   string
 	Header  HeaderTemplateData
 	Request inputs.Request
-	Pod     inputs.Pod
+	Pod     inputs.Workload
 	Profile inputs.Profile
 	Rule    inputs.Rule
 	scope   *inputs.Scope

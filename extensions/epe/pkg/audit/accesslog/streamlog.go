@@ -16,6 +16,8 @@ package accesslog
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/types"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 )
 
@@ -47,9 +49,10 @@ var committedKinds = map[filter.UnitActionKind]bool{
 
 // Log implements filter.StreamLogger.
 func (s *StreamLog) Log(_ context.Context, st *filter.Stream, info *filter.StreamInfo) {
+	workload := st.Caller.Subject.Workload
 	entry := Entry{
+		Workload:      types.NamespacedName{Namespace: workload.Namespace, Name: workload.Name},
 		RequestID:     st.RequestID,
-		Pod:           st.Peer.Pod,
 		Method:        st.Request.Method,
 		Host:          st.Request.Host,
 		Path:          st.Request.Path,

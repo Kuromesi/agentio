@@ -35,8 +35,36 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
+
+func TestUIDOnlyIdentityReachesResolver(t *testing.T) {
+	for _, attribute := range []string{attributes.FilterStateWorkloadUID, attributes.FilterStateSandboxID} {
+		t.Run(attribute, func(t *testing.T) {
+			called := false
+			unavailable := errors.New("binding unavailable")
+			srv := NewServer(ServerDeps{
+				FailClosedOnMissingIdentity: true,
+				Resolve: func(_ context.Context, subject subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+					called = true
+					if !subject.HasIdentity() {
+						t.Fatal("captured UID lost before policy lookup")
+					}
+					return engine.Resolution{}, unavailable
+				},
+			})
+			attrs := map[string]*structpb.Struct{attributes.ExtProcAttrsKey: {
+				Fields: map[string]*structpb.Value{attribute: structpb.NewStringValue("discovery:identity")},
+			}}
+			responses, err := srv.HandleRequestHeaders(t.Context(),
+				makeRequestHeaders("api.example.com", "/", "GET"), attrs, newStreamState())
+			if !called || !errors.Is(err, unavailable) || len(responses) != 1 ||
+				responses[0].GetImmediateResponse().GetDetails() != "epe_policy_unavailable" {
+				t.Fatalf("UID lookup: called=%v responses=%v err=%v", called, responses, err)
+			}
+		})
+	}
+}
 
 type responseHeadersProbe struct {
 	filter.PassThrough
@@ -195,7 +223,7 @@ func TestHandleRequestHeaders_ArmsOnlyRequestBodyObligation(t *testing.T) {
 	probe := &bodyProbe{}
 	regs := []filter.Registration{fixedReg("body-filter", probe)}
 	s := NewServer(ServerDeps{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: []engine.Unit{{
 				ID:   filter.UnitID{Scope: "default/p1", Name: "body"},
 				Cfgs: []any{struct{}{}},
@@ -324,7 +352,7 @@ func TestHandleRequestHeaders_ValidatesSubscriptionsBeforeEvaluation(t *testing.
 		Subscribes: func(any) filter.Phase { return filter.PhaseRequestBody },
 	}
 	s := NewServer(ServerDeps{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: []engine.Unit{{
 				ID:   filter.UnitID{Scope: "default/p1", Name: "invalid"},
 				Cfgs: []any{struct{}{}},
@@ -356,7 +384,7 @@ func TestHandleRequestHeaders_TerminalResultsArmFinalization(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			regs := []filter.Registration{fixedRegHeaders("terminal", tt.action)}
 			s := NewServer(ServerDeps{
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					return engine.Resolution{Units: []engine.Unit{{
 						ID:   filter.UnitID{Scope: "default/p1", Name: "terminal"},
 						Cfgs: []any{struct{}{}},
@@ -382,7 +410,7 @@ func TestHandleRequestHeaders_BodylessContinuationSharesMessageDeadline(t *testi
 	probe := &bodylessDeadlineProbe{}
 	regs := []filter.Registration{fixedReg("deadline-probe", probe)}
 	s := NewServer(ServerDeps{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: []engine.Unit{{
 				ID:   filter.UnitID{Scope: "default/p1", Name: "body"},
 				Cfgs: []any{struct{}{}},
@@ -584,13 +612,13 @@ var _ accesslog.Logger = (*capturedAuditLogger)(nil)
 // does not carry pod identity (e.g. the upstream metadata-exchange filter
 // is misconfigured), the handler passes the request through by default and
 // denies it only under the explicit fail-closed switch.
-func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
+func TestHandleRequestHeaders_NoCallerIdentity(t *testing.T) {
 	// attrs with empty pod name + namespace simulates Envoy not populating
 	// filter_state['downstream_peer'].
 	run := func(failClosed bool) ([]*extProcPb.ProcessingResponse, *capturedAuditLogger) {
 		cap := &capturedAuditLogger{}
 		srv := NewServer(ServerDeps{
-			Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 				t.Fatal("resolver called without a valid pod identity")
 				return engine.Resolution{}, nil
 			},
@@ -620,8 +648,8 @@ func TestHandleRequestHeaders_NoPodIdentity(t *testing.T) {
 			t.Fatalf("expected pass-through RequestHeaders, got %T", responses[0].Response)
 		}
 		entry := cap.last(t)
-		if entry.Pod.Name != "" || entry.Pod.Namespace != "" {
-			t.Errorf("expected empty Pod in audit entry, got %+v", entry.Pod)
+		if entry.Workload.Name != "" || entry.Workload.Namespace != "" {
+			t.Errorf("expected empty Pod in audit entry, got %+v", entry.Workload)
 		}
 	})
 
@@ -665,7 +693,7 @@ func TestTrailerPassThroughAndBodyOrderValidation(t *testing.T) {
 // passthrough response when ServerDeps.AuditLogger is nil.
 func TestHandleRequestHeaders_AuditEntry_NilLoggerDoesNotPanic(t *testing.T) {
 	srv := NewServer(ServerDeps{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{}, nil
 		},
 		// AuditLogger intentionally nil.
